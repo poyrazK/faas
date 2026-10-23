@@ -296,62 +296,47 @@ func TestSecrets_Rotate_RecipientMissing_503(t *testing.T) {
 	assertProblem(t, rec, 503, api.CodeCapacity)
 }
 
-func TestSecrets_Rotate_IdentitiesMissing_503(t *testing.T) {
-	// Apid started without host.age (no kid fingerprint
-	// possible): rotate refuses to seal with 503. Distinct
-	// from the recipient-missing case — the kid path runs
-	// before the seal path and fails first.
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "rot-no-id")
+// TestSecrets_Rotate_NeedsNoPrivateIdentity pins ADR 20261022111812: the
+// kid names the recipient the value is sealed to, so rotating needs the
+// public recipient only. apid may hold no private identity at all (or a
+// partially wired boot may leave the accessor nil) and must still rotate,
+// without calling the nil accessor.
+func TestSecrets_Rotate_NeedsNoPrivateIdentity(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		identities func() []*age.X25519Identity
+	}{
+		{"accessor returns no identities", func() []*age.X25519Identity { return nil }},
+		{"accessor not wired", nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := setup(t, api.PlanHobby)
+			app := createApp(t, e, "rot-no-id")
+			ident, err := age.GenerateX25519Identity()
+			if err != nil {
+				t.Fatal(err)
+			}
+			teardown := withTestRecipient(t)
+			defer teardown()
+			prevRcp := setSecretRecipient
+			prevIdents := mfaIdentities
+			setSecretRecipient = func() *age.X25519Recipient { return ident.Recipient() }
+			mfaIdentities = tc.identities
+			defer func() {
+				setSecretRecipient = prevRcp
+				mfaIdentities = prevIdents
+			}()
 
-	// Don't call withTestIdentities. Override setSecretRecipient
-	// to a real recipient so the seal path doesn't get to its
-	// own 503 — we want the identities check to fail first.
-	ident, err := age.GenerateX25519Identity()
-	if err != nil {
-		t.Fatal(err)
+			rec := e.do(t, "POST", rotateURL(app.Slug, "X"),
+				api.RotateAppSecretRequest{Value: "v"}, nil)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("rotate without a private identity: %d %s, want 200", rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), ident.Recipient().String()) {
+				t.Fatalf("rotate response %s does not name the seal recipient as its kid", rec.Body.String())
+			}
+		})
 	}
-	prevRcp := setSecretRecipient
-	prevIdents := mfaIdentities
-	setSecretRecipient = func() *age.X25519Recipient { return ident.Recipient() }
-	mfaIdentities = func() []*age.X25519Identity { return nil }
-	defer func() {
-		setSecretRecipient = prevRcp
-		mfaIdentities = prevIdents
-	}()
-
-	rec := e.do(t, "POST", rotateURL(app.Slug, "X"),
-		api.RotateAppSecretRequest{Value: "v"}, nil)
-	if rec.Code != 503 {
-		t.Fatalf("rotate with nil identities: %d %s, want 503", rec.Code, rec.Body.String())
-	}
-	assertProblem(t, rec, 503, api.CodeCapacity)
-}
-
-func TestSecrets_Rotate_IdentityAccessorMissing_503(t *testing.T) {
-	// A partially wired boot must fail closed with a Problem response. In
-	// particular, the handler must never call a nil identity accessor.
-	e := setup(t, api.PlanHobby)
-	app := createApp(t, e, "rot-no-id-accessor")
-	ident, err := age.GenerateX25519Identity()
-	if err != nil {
-		t.Fatal(err)
-	}
-	prevRcp := setSecretRecipient
-	prevIdents := mfaIdentities
-	setSecretRecipient = func() *age.X25519Recipient { return ident.Recipient() }
-	mfaIdentities = nil
-	defer func() {
-		setSecretRecipient = prevRcp
-		mfaIdentities = prevIdents
-	}()
-
-	rec := e.do(t, "POST", rotateURL(app.Slug, "X"),
-		api.RotateAppSecretRequest{Value: "v"}, nil)
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("rotate with nil identity accessor: %d %s, want 503", rec.Code, rec.Body.String())
-	}
-	assertProblem(t, rec, http.StatusServiceUnavailable, api.CodeCapacity)
 }
 
 func TestSecrets_Rotate_RoundTripsThroughOpenMulti(t *testing.T) {

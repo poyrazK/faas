@@ -46,7 +46,8 @@ func productPlanViewPG(ctx context.Context, tx pgx.Tx, s ProductPlanScope) (prod
 	if err != nil {
 		return v, err
 	}
-	v = productPlanView{head: head, current: current, customer: c, starts: map[string]int64{}, period: productcontrol.Period(time.Now())}
+	now := time.Now()
+	v = productPlanView{head: head, current: current, customer: c, starts: map[string]int64{}, period: productcontrol.Period(now), now: now}
 	rows, err := sqlc.New().ProductPlanStarts(ctx, tx, sqlc.ProductPlanStartsParams{AccountID: mustPgUUID(s.AccountID), AppID: mustPgUUID(s.AppID), TenantID: mustPgUUID(s.TenantID), Period: v.period, Features: productPlanFeatures(v)})
 	if err != nil {
 		return v, err

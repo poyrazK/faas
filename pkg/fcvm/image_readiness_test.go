@@ -97,7 +97,7 @@ func TestImageHealthcheckGatesNetworkAndWorkerReadiness(t *testing.T) {
 					close(done)
 					receipt = &characterizationReceipt{done: done, report: api.CharacterizationReport{ObservedClass: "worker", ExitCode: -1}}
 				}
-				err := v.waitApplicationReady(t.Context(), l, "", false, "", 0, mode, true, receipt)
+				err := v.waitApplicationReady(t.Context(), l, "", false, "", 0, mode, false, true, receipt)
 				if (err == nil) != healthy {
 					t.Fatalf("healthy=%v readiness error=%v", healthy, err)
 				}
@@ -125,10 +125,10 @@ func TestImageHealthcheckRejectsSnapshotPassAndMissingReports(t *testing.T) {
 		t.Fatal("restored old health result authorized readiness")
 	}
 	missing := &JailerVMM{chrootBase: t.TempDir(), readyTimeout: 30 * time.Millisecond, tcpReadinessDial: v.tcpReadinessDial}
-	if err := missing.waitApplicationReady(t.Context(), l, "", false, "", 0, "", true, nil); err == nil || !strings.Contains(err.Error(), "image_healthcheck") {
+	if err := missing.waitApplicationReady(t.Context(), l, "", false, "", 0, "", false, true, nil); err == nil || !strings.Contains(err.Error(), "image_healthcheck") {
 		t.Fatalf("TCP success bypassed missing command result: %v", err)
 	}
-	if err := missing.waitApplicationReady(t.Context(), l, "", false, "", 0, "", false, nil); err != nil {
+	if err := missing.waitApplicationReady(t.Context(), l, "", false, "", 0, "", false, false, nil); err != nil {
 		t.Fatalf("healthcheck-free legacy readiness broken: %v", err)
 	}
 }

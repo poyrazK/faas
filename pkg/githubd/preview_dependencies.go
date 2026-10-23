@@ -136,7 +136,7 @@ func makePRDependencyPreview(parent state.App, prNumber int, expiresAt time.Time
 		return state.App{}, err
 	}
 	return applyGitHubRootPolicy(state.App{
-		AccountID: parent.AccountID, OrgID: parent.OrgID, Slug: slug, Type: parent.Type,
+		AccountID: parent.AccountID, OrgID: parent.OrgID, Slug: slug, Visibility: parent.Visibility, Type: parent.Type,
 		Runtime: parent.Runtime, RAMMB: parent.RAMMB, MaxConcurrency: parent.MaxConcurrency,
 		IdleTimeoutS: parent.IdleTimeoutS, ProjectID: parent.ProjectID,
 		RootDir: parent.RootDir, WorkloadName: parent.WorkloadName,
@@ -153,11 +153,16 @@ func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, wo
 	preview.Manifest = previewManifest(preview.Manifest)
 	desired := reconcile.ApplyScannedWorkloadToApp(preview, workload, available)
 	desired = applyGitHubRootPolicy(desired, policy)
-	return s.Reconcile.Store.UpdateApp(ctx, preview.ID, state.UpdateAppParams{
+	params := state.UpdateAppParams{
 		RootDir: &desired.RootDir, WorkloadName: &desired.WorkloadName,
 		WorkloadClass: &desired.WorkloadClass, StartCommand: &desired.StartCommand,
 		Manifest: &desired.Manifest,
-	})
+	}
+	// A preview runs with the resources its head declares (ADR-20261023120000).
+	if !workload.Resources.IsZero() {
+		params.RAMMB, params.CPUMillicores, params.MaxConcurrency = &desired.RAMMB, &desired.CPUMillicores, &desired.MaxConcurrency
+	}
+	return s.Reconcile.Store.UpdateApp(ctx, preview.ID, params)
 }
 
 // closePRDependencies advances every sibling in the same project and PR to

@@ -393,6 +393,12 @@ func Fetch(ctx context.Context, fetcher PromQL, log *slog.Logger, appID, rng str
 	} else {
 		return degradedFromErr(resp, err, log, "wake_p95")
 	}
+	// The sample count is best-effort: without it clients show the p95
+	// as before (Hunt 12 H12-40).
+	if v, err := fetcher.QueryScalar(ctx, fmt.Sprintf(`sum(increase(gateway_wake_latency_seconds_count[%s]))`, rng)); err == nil {
+		n := int64(math.Round(SafeFloat(v)))
+		resp.WakeSamples = &n
+	}
 
 	// 7b. Issue #1233 / ADR-123 — per-app wake queue depth
 	// (gateway_queue_depth{app}). The alert preset

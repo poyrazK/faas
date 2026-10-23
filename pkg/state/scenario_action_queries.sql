@@ -20,6 +20,12 @@ SELECT NOT EXISTS (
  HAVING m.app_id IS NULL OR p.app_id IS NULL OR m.account_id<>p.account_id OR m.run_id<>p.run_id OR m.workload_name<>p.workload_name
 ) AS matches;
 
+-- name: ScenarioActionAppHasManagedBindings :one
+-- A contained member cannot reach real managed PostgreSQL or object storage;
+-- refuse it at enrollment instead of failing later (ADR-20261019180000).
+SELECT EXISTS(SELECT 1 FROM app_secrets WHERE app_id=sqlc.arg(app_id)::text::uuid
+ AND (managed_postgres_binding_id IS NOT NULL OR managed_object_storage_credential_id IS NOT NULL)) AS bound;
+
 -- name: ScenarioActionAppUnstarted :one
 SELECT NOT EXISTS(SELECT 1 FROM deployments WHERE app_id=sqlc.arg(app_id)::text::uuid)
  AND NOT EXISTS(SELECT 1 FROM instances WHERE app_id=sqlc.arg(app_id)::text::uuid)
@@ -116,6 +122,151 @@ FROM workflow_operation_effects e JOIN workflow_runs w ON w.id=e.run_id
 JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.account_id
 WHERE p.account_id=sqlc.arg(account_id)::text::uuid AND p.run_id=sqlc.arg(run_id)::text AND e.rehearsal_run_id=p.run_id
 ORDER BY workload,source,id LIMIT 257;
+
+-- name: ScenarioEventCapturePolicy :one
+-- Any enrolled app, contained or capture-only, publishes into its run's
+-- evidence instead of the account's event bus (ADR-20261020090000).
+SELECT account_id::text AS account_id,run_id,workload_name FROM scenario_test_action_policies
+WHERE app_id=sqlc.arg(app_id)::text::uuid;
+
+-- name: ScenarioEventCaptureState :one
+SELECT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE account_id=sqlc.arg(account_id)::text::uuid
+  AND run_id=sqlc.arg(run_id)::text AND sealed_at IS NOT NULL)::boolean AS sealed,
+ (SELECT count(*) FROM scenario_captured_events WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text)::bigint AS captured;
+
+-- name: InsertScenarioCapturedEvent :exec
+INSERT INTO scenario_captured_events(account_id,run_id,app_id,source,type,schema_version,data,oversized,event_id)
+VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(source)::text,
+ sqlc.arg(type)::text,sqlc.arg(schema_version)::text,sqlc.narg(data)::jsonb,sqlc.arg(oversized)::boolean,nullif(sqlc.arg(event_id)::text,''));
+
+-- name: ScenarioCapturedEventIdentity :one
+-- Whether a captured event with this source and ID carries the same type,
+-- schema version and data. A run's events are few and read under the run
+-- lock, so the run index bounds this lookup (ADR-20261021120000).
+SELECT (type=sqlc.arg(type)::text AND schema_version=sqlc.arg(schema_version)::text
+  AND data IS NOT DISTINCT FROM sqlc.narg(data)::jsonb AND oversized=sqlc.arg(oversized)::boolean)::boolean AS same
+FROM scenario_captured_events
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text
+ AND source=sqlc.arg(source)::text AND event_id=sqlc.arg(event_id)::text
+ORDER BY created_at,id LIMIT 1;
+
+-- name: ScenarioRehearsalNetworkPolicy :one
+SELECT run_id,account_id::text AS account_id FROM scenario_test_action_policies
+WHERE app_id=sqlc.arg(app_id)::text::uuid AND network_mode='contained';
+
+-- name: ScenarioCapturedEvents :many
+SELECT e.id::text AS id,p.workload_name AS workload,e.source,e.type,e.schema_version,e.data,e.oversized
+FROM scenario_captured_events e JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.account_id AND p.run_id=e.run_id
+WHERE e.account_id=sqlc.arg(account_id)::text::uuid AND e.run_id=sqlc.arg(run_id)::text
+ORDER BY e.created_at,e.id LIMIT 257;
+
+-- name: ScenarioQueueCaptureState :one
+SELECT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE account_id=sqlc.arg(account_id)::text::uuid
+  AND run_id=sqlc.arg(run_id)::text AND sealed_at IS NOT NULL)::boolean AS sealed,
+ (SELECT count(*) FROM scenario_captured_queue_messages WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text)::bigint AS captured;
+
+-- name: ScenarioQueueCaptureTarget :one
+-- A member of the same run is named by its workload, so sibling runs compare;
+-- any other app must exist in the caller's account, as for a real send.
+SELECT coalesce((SELECT 'workload:' || p.workload_name FROM scenario_test_action_policies p JOIN apps a ON a.id=p.app_id
+  WHERE p.account_id=sqlc.arg(account_id)::text::uuid AND p.run_id=sqlc.arg(run_id)::text AND p.workload_name<>''
+  AND (p.workload_name=sqlc.arg(slug)::text OR a.slug=sqlc.arg(slug)::text) ORDER BY p.workload_name LIMIT 1),
+ (SELECT 'app:' || a.slug FROM apps a WHERE a.slug=sqlc.arg(slug)::text AND a.account_id=sqlc.arg(account_id)::text::uuid),
+ '')::text AS target;
+
+-- name: InsertScenarioCapturedQueueMessage :one
+INSERT INTO scenario_captured_queue_messages(account_id,run_id,app_id,kind,target,queue_name,schedule,message,oversized,scheduled_at)
+VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(kind)::text,
+ sqlc.arg(target)::text,sqlc.arg(queue_name)::text,sqlc.arg(schedule)::text,sqlc.narg(message)::jsonb,sqlc.arg(oversized)::boolean,
+ sqlc.narg(scheduled_at)::timestamptz)
+RETURNING id::text AS id;
+
+-- name: ScenarioCapturedQueueMessageByID :one
+-- A capture is read back only inside its own run (ADR-20261022082721).
+SELECT kind,target,queue_name,schedule,message,oversized,scheduled_at,created_at
+FROM scenario_captured_queue_messages
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text;
+
+-- name: ScenarioCapturedPlatformCallByID :one
+SELECT kind,target,name,message,oversized,created_at FROM scenario_captured_platform_calls
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text;
+
+-- name: ScenarioCapturedEventByIdentity :one
+SELECT type,schema_version,created_at FROM scenario_captured_events
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text
+ AND source=sqlc.arg(source)::text AND event_id=sqlc.arg(event_id)::text
+ORDER BY created_at,id LIMIT 1;
+
+-- name: ScenarioCapturedQueueMessages :many
+SELECT m.id::text AS id,p.workload_name AS workload,m.kind,m.target,m.queue_name,m.schedule,m.message,m.oversized
+FROM scenario_captured_queue_messages m JOIN scenario_test_action_policies p ON p.app_id=m.app_id AND p.account_id=m.account_id AND p.run_id=m.run_id
+WHERE m.account_id=sqlc.arg(account_id)::text::uuid AND m.run_id=sqlc.arg(run_id)::text
+ORDER BY m.created_at,m.id LIMIT 257;
+
+-- name: ScenarioPlatformCaptureState :one
+SELECT EXISTS(SELECT 1 FROM scenario_test_action_policies WHERE account_id=sqlc.arg(account_id)::text::uuid
+  AND run_id=sqlc.arg(run_id)::text AND sealed_at IS NOT NULL)::boolean AS sealed,
+ (SELECT count(*) FROM scenario_captured_platform_calls WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text)::bigint AS captured;
+
+-- name: ScenarioPlatformCallsByIdempotencyKey :many
+-- Earlier captures under the same key; each kind applies the production
+-- replay rule to them (ADR-20261021150000).
+SELECT id::text AS id,name,(message IS NOT DISTINCT FROM sqlc.narg(message)::jsonb AND oversized=sqlc.arg(oversized)::boolean)::boolean AS same
+FROM scenario_captured_platform_calls
+WHERE account_id=sqlc.arg(account_id)::text::uuid AND run_id=sqlc.arg(run_id)::text AND app_id=sqlc.arg(app_id)::text::uuid
+ AND kind=sqlc.arg(kind)::text AND target=sqlc.arg(target)::text AND idempotency_key=sqlc.arg(idempotency_key)::text
+ORDER BY created_at,id LIMIT 257;
+
+-- name: ScenarioCapturedWorkflowRunReference :one
+-- A captured workflow run is named by its starter, target, workflow and
+-- start ordinal, so a later event to it compares across sibling runs.
+SELECT ('run:' || p.workload_name || '/' || c.target || '/' || c.name || '#' ||
+ (SELECT count(*) FROM scenario_captured_platform_calls x WHERE x.account_id=c.account_id AND x.run_id=c.run_id AND x.app_id=c.app_id
+   AND x.kind='workflow_run' AND x.target=c.target AND x.name=c.name AND (x.created_at,x.id)<=(c.created_at,c.id))::text)::text AS reference
+FROM scenario_captured_platform_calls c JOIN scenario_test_action_policies p ON p.app_id=c.app_id
+WHERE c.id=sqlc.arg(id)::text::uuid AND c.account_id=sqlc.arg(account_id)::text::uuid AND c.run_id=sqlc.arg(run_id)::text AND c.kind='workflow_run';
+
+-- name: ScenarioExternalWorkflowRunInAccount :one
+SELECT EXISTS(SELECT 1 FROM workflow_runs wr JOIN apps a ON a.id=wr.app_id
+ WHERE wr.id=sqlc.arg(id)::text::uuid AND a.account_id=sqlc.arg(account_id)::text::uuid)::boolean AS present;
+
+-- name: ScenarioRealtimeEndpointTarget :one
+-- A run member's endpoint is named by its workload and creation order, so
+-- sibling runs compare; another account app's endpoint keeps its ID. The
+-- endpoint must belong to the addressed app, as in production
+-- (ADR-20261021180000).
+SELECT coalesce((SELECT CASE WHEN p.app_id IS NOT NULL THEN 'workload:' || p.workload_name || '/endpoint#' ||
+   (SELECT count(*) FROM managed_realtime_endpoints x WHERE x.app_id=e.app_id AND (x.created_at,x.id)<=(e.created_at,e.id))::text
+  ELSE 'app:' || a.slug || '/endpoint:' || e.id::text END
+ FROM managed_realtime_endpoints e JOIN apps a ON a.id=e.app_id AND a.account_id=e.account_id
+ LEFT JOIN scenario_test_action_policies p ON p.app_id=e.app_id AND p.account_id=e.account_id AND p.run_id=sqlc.arg(run_id)::text AND p.workload_name<>''
+ WHERE e.id=sqlc.arg(endpoint_id)::text::uuid AND e.account_id=sqlc.arg(account_id)::text::uuid
+  AND (a.slug=sqlc.arg(slug)::text OR p.workload_name=sqlc.arg(slug)::text)),'')::text AS target;
+
+-- name: InsertScenarioCapturedPlatformCall :one
+INSERT INTO scenario_captured_platform_calls(account_id,run_id,app_id,kind,target,name,idempotency_key,message,oversized)
+VALUES(sqlc.arg(account_id)::text::uuid,sqlc.arg(run_id)::text,sqlc.arg(app_id)::text::uuid,sqlc.arg(kind)::text,sqlc.arg(target)::text,
+ sqlc.arg(name)::text,nullif(sqlc.arg(idempotency_key)::text,''),sqlc.narg(message)::jsonb,sqlc.arg(oversized)::boolean)
+RETURNING id::text AS id;
+
+-- name: ScenarioCapturedPlatformCalls :many
+SELECT c.id::text AS id,p.workload_name AS workload,c.kind,c.target,c.name,c.message,c.oversized
+FROM scenario_captured_platform_calls c JOIN scenario_test_action_policies p ON p.app_id=c.app_id AND p.account_id=c.account_id AND p.run_id=c.run_id
+WHERE c.account_id=sqlc.arg(account_id)::text::uuid AND c.run_id=sqlc.arg(run_id)::text
+ORDER BY c.created_at,c.id LIMIT 257;
+
+-- name: ScenarioSuppressedWebhookEvents :many
+-- Ordinary webhook deliveries the capture fence suppressed, attributed like
+-- the snapshot summary: the delivery's app first, then the receiver's app.
+-- Managed operation effects are accounted separately as captured intent.
+SELECT p.workload_name AS workload,d.event,count(*)::bigint AS count
+FROM app_webhook_deliveries d LEFT JOIN app_webhooks h ON h.id=d.webhook_id
+JOIN scenario_test_action_policies p ON p.account_id=d.account_id AND p.run_id=sqlc.arg(run_id)::text
+ AND p.app_id=CASE WHEN EXISTS(SELECT 1 FROM scenario_test_action_policies x WHERE x.app_id=d.app_id
+  AND x.account_id=d.account_id AND x.run_id=sqlc.arg(run_id)::text) THEN d.app_id ELSE h.app_id END
+WHERE d.account_id=sqlc.arg(account_id)::text::uuid
+ AND d.last_error='rehearsal: unsupported webhook delivery suppressed' AND d.event<>'operation.effect'
+GROUP BY p.workload_name,d.event ORDER BY p.workload_name,d.event LIMIT 257;
 
 -- name: ScenarioRehearsalNetworkRun :one
 SELECT run_id FROM scenario_test_action_policies

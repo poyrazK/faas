@@ -76,11 +76,40 @@ func productGrant(catalog api.ProductCatalog, customer api.ProductCustomer, feat
 	return grant, nil
 }
 
-func productReceipt(catalog api.ProductCatalog, customer api.ProductCustomer, feature string, grant api.ProductFeatureGrant, starts int64, op Operation, now time.Time) *api.ProductOperationReceipt {
+// productReceipt prices a start: 0 during the customer's trial or within the
+// grant's included starts, which count the month's starts outside the trial
+// (ADR-20261021154511, ADR-20261021195901).
+func productReceipt(catalog api.ProductCatalog, customer api.ProductCustomer, feature string, grant api.ProductFeatureGrant, starts, paid int64, op Operation, now time.Time) *api.ProductOperationReceipt {
+	price, trial, _ := productcontrol.StartPrice(grant, customer, paid, now)
+	evidence := &api.ProductAdmissionEvidence{DefinitionID: op.DefinitionID, DefinitionRevision: op.DefinitionRevision, DeploymentID: op.DeploymentID,
+		ReleaseID: op.ReleaseID, Scope: op.Scope, Name: op.Name, MonthlyStarts: grant.MonthlyStarts, StartsBefore: starts, IncludedStarts: grant.IncludedStarts, Trial: trial}
+	if customer.TrialEndsAt != nil {
+		evidence.PaidStartsBefore = &paid
+	}
 	return &api.ProductOperationReceipt{Revision: catalog.Revision, Feature: feature, Plan: customer.Plan, Currency: catalog.Spec.Currency,
-		Period: productcontrol.Period(now), UnitPriceMillicents: grant.UnitPriceMillicents, AdmittedAt: now,
-		Admission: &api.ProductAdmissionEvidence{DefinitionID: op.DefinitionID, DefinitionRevision: op.DefinitionRevision, DeploymentID: op.DeploymentID,
-			ReleaseID: op.ReleaseID, Scope: op.Scope, Name: op.Name, MonthlyStarts: grant.MonthlyStarts, StartsBefore: starts}}
+		Period: productcontrol.Period(now), UnitPriceMillicents: price, AdmittedAt: now, Admission: evidence}
+}
+
+// productTrialInMonth is the part of the customer's trial in now's UTC
+// month, ok false when they do not overlap.
+func productTrialInMonth(customer api.ProductCustomer, now time.Time) (from, until time.Time, ok bool) {
+	return productTrialInPeriod(customer, productcontrol.Period(now))
+}
+
+func productTrialInPeriod(customer api.ProductCustomer, period string) (from, until time.Time, ok bool) {
+	if customer.TrialStartsAt == nil || customer.TrialEndsAt == nil {
+		return time.Time{}, time.Time{}, false
+	}
+	start, end := productMonthBounds(period)
+	from, until = maxTime(customer.TrialStartsAt.UTC(), start), minTime(customer.TrialEndsAt.UTC(), end)
+	return from, until, from.Before(until)
+}
+
+func maxTime(a, b time.Time) time.Time {
+	if a.After(b) {
+		return a
+	}
+	return b
 }
 
 func productCatalogError(err error) error { return fmt.Errorf("%w: %w", ErrInvalidArgument, err) }
@@ -100,15 +129,18 @@ func productUsageLines(lines map[string]api.ProductUsageLine) []api.ProductUsage
 
 // Both stores call this inside the Operations admission transaction, after
 // checking the independent Product Control idempotency namespace.
-func prepareProductReceipt(op *Operation, admission OperationAdmission, catalog api.ProductCatalog, customer api.ProductCustomer, grant api.ProductFeatureGrant, starts int64, now time.Time) error {
-	quote := productcontrol.Quote(op.AccountID, op.AppID, op.PlatformTenantID, admission.ProductFeature, catalog, customer, productcontrol.Period(now))
+// starts are the month's starts of the feature; trialStarts those admitted
+// during the customer's trial, which count toward no included starts.
+func prepareProductReceipt(op *Operation, admission OperationAdmission, catalog api.ProductCatalog, customer api.ProductCustomer, grant api.ProductFeatureGrant, starts, trialStarts int64, now time.Time) error {
+	paid := starts - trialStarts
+	quote := productcontrol.Quote(op.AccountID, op.AppID, op.PlatformTenantID, admission.ProductFeature, catalog, customer, productcontrol.Period(now), paid, now)
 	if (admission.RequireProductQuote || admission.ExpectedProductQuote != "") && admission.ExpectedProductQuote != quote {
 		return ErrProductQuoteChanged
 	}
 	if starts >= grant.MonthlyStarts {
 		return NewOperationLimitError("product_monthly_starts", grant.MonthlyStarts, starts+1)
 	}
-	op.ProductControl = productReceipt(catalog, customer, admission.ProductFeature, grant, starts, *op, now)
+	op.ProductControl = productReceipt(catalog, customer, admission.ProductFeature, grant, starts, paid, *op, now)
 	if admission.ExpectedProductQuote != "" {
 		op.ProductControl.Admission.ConfirmedQuote = quote
 	}

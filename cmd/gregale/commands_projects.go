@@ -42,7 +42,7 @@ func cmdProjects(args []string) int {
 
 func cmdProjectsEnvironments(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|routes|policies|queues|diff|preview|promote|status|rollback|abort|recover|recover-migration>", "projects environments")
+		PrintUsage(os.Stderr, "usage: gregale projects environments <list|create|protect|unprotect|inspect|release-sets|releases|qualify|preflight|history|config|secrets|routes|policies|queues|diff|preview|promote|status|rollback|abort|recover|recover-migration>", "projects environments")
 		return 1
 	}
 	switch args[0] {
@@ -68,6 +68,8 @@ func cmdProjectsEnvironments(args []string) int {
 		return cmdProjectsEnvironmentHistory(args[1:])
 	case "config":
 		return cmdProjectsEnvironmentConfig(args[1:])
+	case "secrets":
+		return cmdProjectsEnvironmentSecrets(args[1:])
 	case "routes":
 		return cmdProjectsEnvironmentRoutes(args[1:])
 	case "policies":
@@ -959,7 +961,7 @@ func cmdProjectsEnvironmentsList(args []string) int {
 	}
 	environments, err := client.ListProjectEnvironments(context.Background(), args[0])
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list project environments", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(environments))
@@ -998,7 +1000,7 @@ func cmdProjectsEnvironmentCreate(args []string) int {
 		Slug: positional[1], Protected: protected, FromEnvironment: *from, ShareResources: *shareResources,
 	})
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create environment", err)
 	}
 	return renderProjectEnvironment(environment)
 }
@@ -1018,7 +1020,7 @@ func cmdProjectsEnvironmentProtection(args []string, protected bool) int {
 	}
 	environment, err := client.UpdateProjectEnvironment(context.Background(), args[0], args[1], api.UpdateProjectEnvironmentRequest{Protected: &protected})
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update environment protection", err)
 	}
 	return renderProjectEnvironment(environment)
 }
@@ -1052,7 +1054,7 @@ func cmdProjectsList(args []string) int {
 	}
 	projects, err := client.ListProjects(context.Background())
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list projects", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(projects))
@@ -1075,7 +1077,7 @@ func cmdProjectsInfo(args []string) int {
 	}
 	project, err := client.GetProject(context.Background(), args[0])
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not read project", err)
 	}
 	return renderProject(project)
 }
@@ -1111,7 +1113,7 @@ func cmdProjectsUpdate(args []string) int {
 	}
 	project, err := client.UpdateProject(context.Background(), positional[0], req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update project", err)
 	}
 	return renderProject(project)
 }
@@ -1145,7 +1147,7 @@ func cmdProjectsRemove(args []string) int {
 		return 0
 	}
 	if err := client.DeleteProject(context.Background(), positional[0]); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete project", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"slug": positional[0], "deleted": true, "workloads_detached": len(preview.Workloads)}))

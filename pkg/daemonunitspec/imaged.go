@@ -110,7 +110,9 @@ func UnitImaged() daemonunit.Unit {
 		// the write/delete lifecycle credential; request-serving daemons keep
 		// the read-only pull credential from storage.env. The optional '-'
 		// prefix keeps image-seeded nodes bootable before provisioning.
-		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/imaged-storage.env -/etc/faas/runtime-bases.env -/etc/faas/otel.env",
+		// profiling.env carries FAAS_PROFILING_ENABLED, which decides whether
+		// an app's continuous profiling setting reaches its guest (ADR-819).
+		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/storage.env -/etc/faas/imaged-storage.env -/etc/faas/runtime-bases.env -/etc/faas/profiling.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			// ProtectSystem=strict makes the host /tmp read-only. Keep OCI
 			// layer verification and upload scratch on the writable base disk.

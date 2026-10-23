@@ -76,9 +76,15 @@ func printFinancialAppCosts(w io.Writer, response api.FinancialAppCostsResponse)
 			tw := tabwriter.NewWriter(w, 0, 0, 2, ' ', 0)
 			_, _ = fmt.Fprintln(tw, "USAGE DRIVER\tQUANTITY\tNET COST")
 			for _, allocation := range meter.Allocations {
-				name := allocation.Attribution.Name
+				// Every row is this app, so the app name repeated on each
+				// (h12-py four times); the deployment tells them apart
+				// (Hunt 12 H12-43).
+				name := ""
+				if id := allocation.Attribution.DeploymentID; id != "" {
+					name = "deployment " + id
+				}
 				if name == "" {
-					name = allocation.Attribution.DeploymentID
+					name = allocation.Attribution.Name
 				}
 				if name == "" {
 					name = "application workload"

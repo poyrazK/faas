@@ -1522,6 +1522,17 @@ func (s *server) scanService(
 	if slugProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, slugProblem
 	}
+	projectsetup.SetAppSlugs(result.Workloads, appSlugs)
+	allocated, allocErr := reconcile.AllocateAppSlugs(r.Context(), s.store.AppBySlugIncludingDeleted, result.Workloads, acctApps, acct.ID, projectID, req.ProjectSlug)
+	if allocErr != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "allocate project app names",
+			"Gregale could not check app name availability.", "Retry the scan before deploying.", allocErr)
+	}
+	for _, w := range allocated {
+		if _, chosen := appSlugs[w.Name]; !chosen && w.AppSlug != "" {
+			appSlugs[w.Name] = w.AppSlug
+		}
+	}
 	req.AppSlugs = appSlugs
 	projectsetup.SetAppSlugs(result.Workloads, appSlugs)
 	if scheduleErr := validateScannedSchedules(result.Workloads); scheduleErr != nil {
@@ -1743,6 +1754,9 @@ func (s *server) scanService(
 	if routeWarning := projectAsyncRoutePlanWarning(resolvedManifest.AsyncRoutes, resolvedManifest.AsyncRoutesPresent, req.NoTriggers); routeWarning != "" {
 		warnings = append(warnings, routeWarning)
 	}
+	if routeWarning := projectPathRoutePlanWarning(resolvedManifest.Routes, resolvedManifest.RoutesPresent, req.NoTriggers); routeWarning != "" {
+		warnings = append(warnings, routeWarning)
+	}
 	if req.NoTriggers {
 		if len(crons) > 0 {
 			warnings = append(warnings, "triggers skipped by request (--no-triggers); existing trigger state left unchanged")
@@ -1794,6 +1808,11 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
 		if problem := projectAsyncRoutesPlanProblem(acct.Plan, resolvedManifest.AsyncRoutes, filteredW, projectApps); problem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
+	if resolvedManifest.RoutesPresent && !req.NoTriggers {
+		if problem := validateProjectManifestPathRoutes(resolvedManifest.Routes, result.Workloads, filteredW, projectApps, req.Exclude); problem != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}
@@ -1922,10 +1941,32 @@ func (s *server) scanService(
 	// the JSON marshal sees string Tier (matching OpenAPI enum +
 	// pkg/api.PlanWorkload.Tier) instead of the raw int the
 	// reposcan type carries. See toPlanWorkload / toPlanManaged.
+	// The Compose environment's values are read apart from the scan so they
+	// never enter a plan; an unreadable one only means nothing is imported.
+	composeEnv, composeEnvErr := reposcan.ReadComposeEnv(os.DirFS(req.ScanDir))
+	if composeEnvErr != nil {
+		composeEnv = reposcan.ComposeEnv{}
+	}
 	respWorkloads := make([]api.PlanWorkload, len(filteredW))
 	for i, w := range filteredW {
 		pw := toPlanWorkload(w)
-		if s.domain != "" && (string(w.Class) == "http" || string(w.Class) == "graphql") {
+		pw.Action = partition.WillDeploy[i].Action
+		pw.ExistingAppID = partition.WillDeploy[i].ID
+		var existing *state.App
+		for j := range acctApps {
+			if pw.ExistingAppID != "" && acctApps[j].ID == pw.ExistingAppID {
+				existing = &acctApps[j]
+				break
+			}
+		}
+		if existing != nil {
+			// Visibility is create-only; the plan shows what the app has.
+			pw.Visibility = ""
+			if api.NormalizeAppVisibility(existing.Visibility) == api.AppVisibilityInternal {
+				pw.Visibility = api.AppVisibilityInternal
+			}
+		}
+		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
 			slug := w.AppSlug
 			if slug == "" {
 				slug = w.Name
@@ -1937,17 +1978,17 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrValidation("invalid required-secret declaration for a selected workload")
 		}
 		pw.RequiredEnvKeys = required
-		pw.Action = partition.WillDeploy[i].Action
-		pw.ExistingAppID = partition.WillDeploy[i].ID
-		if w.ServiceBindingPolicy == "" {
-			if pw.ExistingAppID != "" {
-				for _, existing := range acctApps {
-					if existing.ID == pw.ExistingAppID {
-						pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
-						break
-					}
-				}
-			}
+		envScope := req.Environment
+		if envScope == "" {
+			envScope = api.DefaultEnvScope
+		}
+		unset, err := projectsetup.UnsetEnvKeys(r.Context(), s.store, acct.ID, envScope, existing, w.EnvKeys, required)
+		if err != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not read the configuration of a selected workload")
+		}
+		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(unset, projectsetup.PlanEnvImport(composeEnv, w.Name, limits))
+		if w.ServiceBindingPolicy == "" && existing != nil {
+			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}
 		respWorkloads[i] = pw
 	}
@@ -2387,7 +2428,7 @@ func (s *server) scanService(
 			removedSlugs = append(removedSlugs, slug)
 		}
 	}
-	needsProjectApps := len(req.RetryTargets) > 0 || (!req.NoTriggers && reconcileProductionEnvironment(req.Environment)) || len(req.Secrets) > 0 || len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers)
+	needsProjectApps := len(req.RetryTargets) > 0 || (!req.NoTriggers && reconcileProductionEnvironment(req.Environment)) || len(req.Secrets) > 0 || len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers) || (resolvedManifest.RoutesPresent && !req.NoTriggers)
 	var currentProjectApps []state.App
 	if needsProjectApps {
 		// Reconcile has already committed the project/app rows. A binding
@@ -2412,6 +2453,12 @@ func (s *server) scanService(
 	if resolvedManifest.AsyncRoutesPresent && !req.NoTriggers {
 		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
 		if prob := s.applyProjectManifestAsyncRoutes(r.Context(), acct, resolvedManifest.AsyncRoutes, true, false, selectedApps); prob != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+	}
+	if resolvedManifest.RoutesPresent && !req.NoTriggers {
+		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
+		if prob := s.applyProjectManifestPathRoutes(r.Context(), acct, resolvedManifest.Routes, true, false, selectedApps); prob != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 	}
@@ -2510,6 +2557,15 @@ func (s *server) scanService(
 		if problem != nil {
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
+	}
+	// Opted-in Compose values fill what is still unset, after the secrets
+	// above, so a key configured either way keeps that value.
+	importScope := req.Environment
+	if importScope == "" {
+		importScope = api.DefaultEnvScope
+	}
+	if problem := s.importComposeEnv(r, acct, project.ID, importScope, composeEnv, filteredW, limits); problem != nil {
+		return resp, state.Project{}, nil, nil, nil, nil, problem
 	}
 	buildAdded := rec.Added
 	if run := projectmigration.FromContext(r.Context()); run != nil {

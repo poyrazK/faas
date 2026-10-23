@@ -283,6 +283,14 @@ func (e *Engine) reconcileWorkerScopes(ctx context.Context, appID, onlyScope str
 		if dep.AppID != appID || api.ValidateScope(scope) != nil {
 			return state.ErrConflict
 		}
+		// A deployment still being deployed owns its worker: Prime publishes
+		// the worker RUNNING before apid marks the deployment live, and a
+		// reconcile in between would stop it as a retired generation. It
+		// stays out of the plan, neither kept nor stopped; the account cap
+		// still counts it.
+		if app.Status == state.AppActive && deploymentInFlight(dep.Status) {
+			continue
+		}
 		if onlyScope == "" || onlyScope == scope {
 			if state.State(ins.State) == state.StateMigrating {
 				return fmt.Errorf("worker environment %s is migrating: %w", scope, state.ErrConflict)
@@ -425,13 +433,33 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 	})
 	kept := 0
 	var stopErr error
+	var frozen []state.Instance
 	for _, ins := range plan.workers {
-		if ins.DeploymentID == plan.target && kept < plan.desired && state.State(ins.State).CountsForConcurrency() {
+		current := state.State(ins.State)
+		if ins.DeploymentID == plan.target && kept < plan.desired && current.CountsForConcurrency() {
 			kept++
-			if state.State(ins.State) != state.StateRunning {
+			if current != state.StateRunning {
 				attempt.observe("starting")
 			}
 			continue
+		}
+		// ADR-20261019103000: the live generation's frozen workers wait to be
+		// thawed; FrozenTTL stops them. A surplus running worker freezes when
+		// it can and stops otherwise. A project app's surplus workers take the
+		// release drain claim and stop instead (ADR-20261019120012): the claim
+		// outlives a thaw, so a thawed worker would stay drained.
+		if app.ProjectID == "" {
+			if current == state.StateFrozen {
+				if ins.DeploymentID == plan.target {
+					frozen = append(frozen, ins)
+					continue
+				}
+				stopErr = errors.Join(stopErr, e.ParkFrozen(ctx, ins.ID, "superseded"))
+				continue
+			}
+			if current == state.StateRunning && ins.DeploymentID == plan.target && e.freezeSurplusWorker(ctx, app, ins, leases) {
+				continue
+			}
 		}
 		if app.ProjectID != "" {
 			owner, ok := e.store.(state.ProjectReleaseWorkerStore)
@@ -449,6 +477,11 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 			if !claimed {
 				return state.ErrConflict
 			}
+			// A worker frozen before its app joined a project.
+			if current == state.StateFrozen {
+				stopErr = errors.Join(stopErr, e.ParkFrozen(ctx, ins.ID, "superseded"))
+				continue
+			}
 		}
 		attempt.observe("draining")
 		stopErr = errors.Join(stopErr, e.beginWorkerStop(ctx, ins, e.workerStopOptions(app)))
@@ -462,10 +495,27 @@ func (e *Engine) applyWorkerScopePlan(ctx context.Context, app state.App, plan *
 	if err != nil {
 		return err
 	}
+	if desired < plan.desired && e.stopFrozenWorkersForSlots(ctx, app, plan.workers, plan.desired-desired) {
+		if desired, blocker, err = e.capWorkerReplicasToAccount(ctx, app, plan.workers, plan.desired); err != nil {
+			return err
+		}
+	}
 	if desired < plan.desired {
 		plan.observeAdmission(e.now(), *blocker)
 		attempt.observe("waiting_capacity")
 		atCapacity = true
+	}
+	// A frozen worker resumes in milliseconds; thaw the most recently frozen
+	// before booting new ones (ADR-20261019103000).
+	sort.SliceStable(frozen, func(i, j int) bool { return frozen[i].LastRequestAt.After(frozen[j].LastRequestAt) })
+	for _, ins := range frozen {
+		if kept >= desired {
+			break
+		}
+		if e.thawFrozenWorker(ctx, app, plan.target, ins) {
+			admitted = true
+			kept++
+		}
 	}
 	for kept < desired {
 		if err := ctx.Err(); err != nil {
@@ -846,4 +896,14 @@ func (e *Engine) capWorkerReplicasToAccount(ctx context.Context, app state.App, 
 		return available, &b, nil
 	}
 	return desired, nil, nil
+}
+
+// deploymentInFlight reports whether a deployment is still being deployed:
+// not yet live, and neither failed, superseded nor cancelled.
+func deploymentInFlight(status state.DeploymentStatus) bool {
+	switch status {
+	case state.DeployPending, state.DeployBuilding, state.DeployImaging, state.DeploySnapshotting:
+		return true
+	}
+	return false
 }

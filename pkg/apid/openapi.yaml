@@ -13,7 +13,10 @@ info:
     durable inbound webhook ingress.
     Successful POSTs generally accept an `Idempotency-Key` header (24h TTL)
     and replay with `Idempotent-Replayed: true`; the one-time token-creation
-    endpoint deliberately does not cache plaintext for retries.
+    endpoint deliberately does not cache plaintext for retries. A key is
+    bound to the request it was first used for: the same key with a
+    different body, query or precondition header returns
+    `422 idempotency_key_reused` and does not run.
 
     Errors use RFC 9457 `application/problem+json` with a stable `code`
     field — see `Problem` schema. Authentication rate limits use the same
@@ -7244,6 +7247,316 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/consumer-billing/{slug}/plans:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose plans the consumer reads.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: listConsumerBillingPlans
+      summary: List the plans you can switch to with your consumer key (ADR-20261021183000).
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: Your current plan, the offered plans and what you may do on your own.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingPlansResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope to list plans.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Plan reads for this key are rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/plan:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose plan the consumer changes.
+        schema: { type: string }
+    put:
+      tags: [consumers]
+      operationId: changeConsumerBillingPlan
+      summary: Switch to another offered plan from the next minute with your consumer key.
+      description: |
+        Only when the app owner lets customers change plans. The app owner
+        gets a consumer.plan_changed webhook.
+      security:
+        - consumerKey: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ChangeConsumerBillingPlanRequest' }
+      responses:
+        '200':
+          description: The scheduled plan change.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingPlanChangeResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope to change plans.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Plan changes are not offered (`consumer_self_service_unavailable`), you are already on the plan, or a change is pending.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: The plan is not one of the offered plans.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Plan changes for this key are rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/portal:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose billing portal the consumer opens.
+        schema: { type: string }
+    post:
+      tags: [consumers]
+      operationId: createConsumerBillingPortalSession
+      summary: Open Stripe's customer portal to update your card and see invoices.
+      description: |
+        For consumers billed through the app owner's Stripe (external_ref
+        cus_...). The URL is short-lived; return_url defaults to the app's
+        sign-up return URL.
+      security:
+        - consumerKey: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateConsumerBillingPortalRequest' }
+      responses:
+        '200':
+          description: The portal URL to send the customer to.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingPortalResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope to open the portal.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: The account is not billed through Stripe, or the owner's Stripe portal is not set up (`consumer_self_service_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: return_url is not an https URL.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Portal sessions for this key are rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached for the portal (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-billing/{slug}/close:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose account the consumer closes.
+        schema: { type: string }
+    post:
+      tags: [consumers]
+      operationId: closeConsumerBillingAccount
+      summary: Close your account with your consumer key.
+      description: |
+        Only when the app owner lets customers close their account. Your
+        keys stop working at once; usage until then is still billed. The app
+        owner gets a consumer.closed webhook.
+      security:
+        - consumerKey: []
+      responses:
+        '200':
+          description: The closed account.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerBillingCloseResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: The consumer key lacks the billing scope to close the account.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '409':
+          description: Closing is not offered (`consumer_self_service_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Account closing for this key is rate limited.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-signup/{slug}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app customers sign up for.
+        schema: { type: string }
+    get:
+      tags: [consumers]
+      operationId: getConsumerSignupForm
+      summary: Read an app's public sign-up form (ADR-20261021143000).
+      description: For an app's prospective customers; needs no credential.
+      security: []
+      responses:
+        '200':
+          description: The app's display name, offered plans and their current prices.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerSignupFormResponse' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429':
+          description: Too many requests from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      tags: [consumers]
+      operationId: createConsumerSignup
+      summary: Start a sign-up and get a Stripe Checkout URL to save a card.
+      description: |
+        Needs no credential. Creates a Stripe customer in the app owner's
+        Stripe account and a setup-mode Checkout Session; nothing is charged.
+        The claim token is returned only here and completes the sign-up
+        within 24 hours.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateConsumerSignupRequest' }
+      responses:
+        '201':
+          description: The sign-up, its Checkout URL and claim token.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CreateConsumerSignupResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422':
+          description: An invalid email or name, or a plan that is not offered.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many sign-ups from this address (`consumer_signup_rate_limited`) or for the app today (`consumer_signup_daily_limit`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: The app's billing setup cannot take sign-ups (`consumer_signup_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
+  /v1/consumer-signup/{slug}/signups/{signup}/complete:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app the sign-up is for.
+        schema: { type: string }
+      - name: signup
+        in: path
+        required: true
+        description: The sign-up to complete.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [consumers]
+      operationId: completeConsumerSignup
+      summary: Complete a sign-up once the card is saved and get a consumer key.
+      description: |
+        Needs no credential: the claim token proves the sign-up. Each call
+        returns a new key and revokes the one the sign-up issued before.
+      security: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CompleteConsumerSignupRequest' }
+      responses:
+        '200':
+          description: The customer's consumer and its new key, shown only here.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CompleteConsumerSignupResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '403':
+          description: The app owner revoked this customer.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The card is not saved yet (`consumer_signup_checkout_incomplete`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '410':
+          description: The sign-up is more than 24 hours old (`consumer_signup_expired`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '429':
+          description: Too many completions from this address (`consumer_signup_rate_limited`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '502':
+          description: Stripe could not be reached to confirm the card (`billing_provider_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '503':
+          description: The app's billing setup cannot complete sign-ups (`consumer_signup_unavailable`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/preflight:
     get:
       tags: [status]
@@ -10014,6 +10327,16 @@ paths:
           required: true
           schema: { type: string, format: uuid }
           description: Account to evaluate.
+        - name: org_id
+          in: query
+          required: false
+          schema: { type: string, format: uuid }
+          description: Organization the request would act under (ADR 20261021080640); omit to evaluate outside any organization.
+        - name: at
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
+          description: Decide as of this moment instead of now, to check scheduled rules.
       responses:
         '200':
           description: Decision
@@ -11341,6 +11664,360 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/crash-snapshots/settings:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getCrashSnapshotSettings
+      summary: Read whether 5xx crash snapshots are on for an app.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The app's crash snapshot setting.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashSnapshotSettingsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    put:
+      tags: [apps]
+      operationId: putCrashSnapshotSettings
+      summary: Turn 5xx crash snapshots on or off for an app.
+      description: |
+        When on, the first 5xx answered by one of the app's instances
+        captures that instance's memory (ADR-733), at most one in flight and
+        none within 10 minutes of the last. Pro and Scale only. Answers 501
+        `crash_snapshots_not_enabled` until the operator enables the feature.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CrashSnapshotSettingsRequest' }
+      responses:
+        '200':
+          description: The saved setting.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashSnapshotSettingsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/crash-snapshots:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listCrashSnapshots
+      summary: List an app's crash snapshots, newest first.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The app's crash snapshots.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashCaptureListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [apps]
+      operationId: createCrashSnapshot
+      summary: Capture the app's newest running instance now.
+      description: |
+        Requests a crash snapshot of the app's newest running instance,
+        whether or not 5xx captures are on. Refused with 409
+        `crash_capture_refused` while another capture is in flight, within
+        10 minutes of the last, or when no instance is running.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Capture requested.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashCaptureResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/crash-snapshots/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/CrashCaptureID'
+    get:
+      tags: [apps]
+      operationId: getCrashSnapshot
+      summary: Read one crash snapshot.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The crash snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashCaptureResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/crash-snapshots/{id}/fork:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/CrashCaptureID'
+    post:
+      tags: [apps]
+      operationId: forkCrashSnapshot
+      summary: Open a ready crash snapshot as a production fork.
+      description: |
+        Creates an ADR-732 fork restored from this capture instead of the
+        deployment's newest snapshot. Same rules as `POST /v1/apps/{slug}/forks`:
+        the key needs `deploy:write` and `secrets:read`, the response carries
+        the one-time `access_token`, and the fork counts against the fork
+        limits. 409 `crash_capture_not_ready` unless the capture is ready and
+        unexpired.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppForkRequest' }
+      responses:
+        '202':
+          description: Fork of the crash snapshot admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listAppForks
+      summary: List production forks for an app.
+      description: |
+        Returns the app's production forks, newest first (ADR-732). Answers
+        501 `app_forks_not_enabled` until the operator enables forks.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+          description: Maximum number of forks to return.
+      responses:
+        '200':
+          description: The app's forks, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [apps]
+      operationId: createAppFork
+      summary: Fork the app's live deployment into a quarantined debug copy.
+      description: |
+        Queues a production fork (ADR-732): a restore of the app's newest
+        capture of its live deployment into an instance that never serves
+        traffic, cannot reach the network, and is destroyed at its TTL.
+        The fork holds a copy of production memory, secrets included, so
+        the key needs `secrets:read` as well as `deploy:write`, and every
+        create is audited. Pro and Scale only; one active fork per app and
+        two per account. Answers 501 `app_forks_not_enabled` until the
+        operator enables forks.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppForkRequest' }
+      responses:
+        '202':
+          description: Fork admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: An active-fork limit is full (`app_fork_limit`, with `limit` and `observed`), or the app has no live deployment (`app_fork_unavailable`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppForkID'
+    get:
+      tags: [apps]
+      operationId: getAppFork
+      summary: Read one production fork.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The fork.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    delete:
+      tags: [apps]
+      operationId: cancelAppFork
+      summary: Cancel a production fork.
+      description: |
+        Cancels a queued fork immediately. For a restoring or running fork
+        it records the request; the scheduler destroys the instance. A fork
+        that has already ended is returned unchanged.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Cancellation recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks/{id}/execs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppForkID'
+    get:
+      tags: [apps]
+      operationId: listAppForkExecs
+      summary: List the commands run in a production fork.
+      description: Newest first. Output can contain production data, so this needs `secrets:read` as well as `deploy:write`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of commands to return (default 100).
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: The fork's commands.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkExecListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [apps]
+      operationId: createAppForkExec
+      summary: Run a command inside a running production fork.
+      description: |
+        Queues one command to run inside the running fork (ADR-732), in the
+        app's working directory and user, with its manifest environment and
+        no secrets. The fork cannot reach the network. Poll the returned
+        command for its exit code and the tail of its output. A command never
+        runs in a serving instance. Needs `secrets:read` as well as
+        `deploy:write`; every request is audited (without its arguments).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppForkExecRequest' }
+      responses:
+        '202':
+          description: Command queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkExecResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The fork is not running, or already has 4 commands pending (`app_fork_exec_refused`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks/{id}/execs/{exec_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppForkID'
+      - name: exec_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Canonical UUID for a fork command.
+    get:
+      tags: [apps]
+      operationId: getAppForkExec
+      summary: Read one command run in a production fork, with its result.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The command.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkExecResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
 
   /v1/apps/{slug}/tasks:
     parameters:
@@ -18882,6 +19559,81 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/consumer-signup:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: getConsumerSignup
+      summary: Read the app's self-service sign-up settings (ADR-20261021143000).
+      responses:
+        '200':
+          description: The app's sign-up settings and hosted page URL.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerSignupSettingsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    put:
+      tags: [consumers]
+      operationId: putConsumerSignup
+      summary: Let the app's customers sign up themselves and save a card with Stripe Checkout.
+      description: |
+        Customers sign up on the hosted page (page_url) or through the public
+        sign-up API: they pick one of plan_ids (none offers the default
+        plan), save a card in the account's own Stripe account, and get a
+        consumer key with key_scopes. Needs the account's Stripe billing
+        connection. A restricted Stripe key needs write access to Customers
+        and Checkout Sessions and read access to SetupIntents.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutConsumerSignupRequest' }
+      responses:
+        '200':
+          description: The stored settings.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerSignupSettingsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: Stripe is not connected.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+        '422':
+          description: A provider other than Stripe, an unknown plan, an invalid scope or URL, or a value out of range.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [consumers]
+      operationId: deleteConsumerSignup
+      summary: Turn sign-up off; pending sign-ups can no longer complete.
+      responses:
+        '204': { description: Sign-up was turned off. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  /v1/apps/{slug}/consumer-signups:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [consumers]
+      operationId: listConsumerSignups
+      summary: List the app's latest 100 sign-ups, newest first.
+      responses:
+        '200':
+          description: The app's sign-ups.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsumerSignupListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+
   /v1/apps/{slug}/consumer-overdue-holds:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -23368,6 +24120,177 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/profiles/heap:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppHeapProfile
+      summary: Query the continuous live heap near a window end (ADR-1155).
+      description: Requires profiling.kinds to include heap. The query is narrowed to the last collection window before end so merged snapshots are not summed. Values are live heap bytes.
+      parameters:
+        - { name: deployment_id, in: query, required: true, description: Deployment whose live heap to read., schema: { type: string, format: uuid } }
+        - { name: runtime, in: query, required: true, description: Runtime the heap snapshots were collected under., schema: { type: string } }
+        - { name: start, in: query, required: true, description: Earliest acceptable snapshot time., schema: { type: string, format: date-time } }
+        - { name: end, in: query, required: true, description: Point in time to inspect., schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Live heap functions and call paths.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileHeapResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listProfileCaptures
+      summary: List the app's on-demand profile captures, newest first.
+      responses:
+        '200':
+          description: Up to 50 captures retained for 7 days.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [apps]
+      operationId: createProfileCapture
+      summary: Capture CPU and/or heap profiles from a running instance now (ADR-1155).
+      description: Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an account can start 60 per hour. Gregale also queues a heap capture automatically (trigger memory_pressure) when an instance runs low on memory, at most once per hour per app.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProfileCaptureRequest' }
+      responses:
+        '202':
+          description: Capture queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCapture' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Profile capture id., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getProfileCapture
+      summary: Read one on-demand profile capture.
+      responses:
+        '200':
+          description: Capture status and collected profile summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCapture' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/view:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Capture whose merged view to read., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getProfileCaptureView
+      summary: Merged functions and call paths of one capture kind.
+      parameters:
+        - { name: kind, in: query, required: false, description: 'cpu, heap, stacks, block or mutex; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+      responses:
+        '200':
+          description: CPU nanoseconds or live heap bytes merged across the instance's processes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureView' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/pprof:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Capture to download., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: downloadProfileCapture
+      summary: Download one capture kind as a merged gzip pprof profile.
+      parameters:
+        - { name: kind, in: query, required: false, description: 'Kind to download as pprof: cpu, heap, stacks, block or mutex; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+      responses:
+        '200':
+          description: gzip-compressed pprof protobuf for go tool pprof, speedscope or Pyroscope.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/diff:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Candidate capture id., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: diffProfileCaptures
+      summary: Compare one capture kind with an earlier capture of the same app.
+      description: Merges both captures and returns every call path and function with its baseline value, candidate value and difference, largest growth first. Values are not rescaled; captures of different durations or deployments carry warnings.
+      parameters:
+        - { name: base, in: query, required: true, description: Baseline capture id of the same app., schema: { type: string, format: uuid } }
+        - { name: kind, in: query, required: false, description: 'cpu, heap, stacks, block or mutex; defaults to a kind both captures collected, preferring heap.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+      responses:
+        '200':
+          description: Differential view in the kind's unit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureDiff' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/debug/coverage:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -25589,6 +26512,61 @@ paths:
         '402': { $ref: '#/components/responses/PaymentRequired' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/routes/insights/{id}/fix:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: The insight id from GET /v1/apps/{slug}/routes/insights.
+    post:
+      tags: [apps]
+      operationId: fixRouteInsight
+      summary: Apply a route insight's fix.
+      description: |
+        Applies the edge-rule change the insight's `fix` describes
+        (ADR-20261020161310): `create_cache_rule` creates an enabled `@app`
+        cache rule with the measured safe max-age, `set_cache_max_age` and
+        `disable_cache_rule` change the cache rule serving exactly this route,
+        and `add_cache_override` adds a narrower rule ahead of a rule that also
+        covers other routes. A `cache_stale` fix then purges the route's cached
+        responses. Rules are written through the same path as the edge-rules
+        API, so plan quotas, validation and fleet convergence apply.
+
+        `fix_id` must be the `fix.id` the insight lists now; if the insight or
+        the app's edge rules changed, the request fails with 409
+        `route_insight_fix_changed` and nothing is written. An insight that is
+        resolved or has no fix fails with 409 `route_insight_no_fix`. On
+        success the route's affected insights resolve with `fix_action` and
+        `fixed_at`, and stay resolved for at least one evidence window. Uses
+        the deploy-write scopes, completed MFA, the DebugTelemetryEnabled plan
+        gate and Idempotency-Key replay.
+      x-since: 2026-10
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RouteInsightFixRequest' }
+      responses:
+        '200':
+          description: The fix was applied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RouteInsightFixResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The insight has no fix to apply (`route_insight_no_fix`), or the fix changed since it was read (`route_insight_fix_changed`).
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
@@ -29151,6 +30129,28 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/scheduled-releases:
+    get:
+      tags: [deployments]
+      operationId: listScheduledReleases
+      summary: List scheduled releases (ADR-20261021152201).
+      description: "The account's scheduled releases: pending ones first, soonest first, then the most recently ended."
+      parameters:
+        - name: app
+          in: query
+          required: false
+          description: Only this app's schedules.
+          schema: { type: string }
+      responses:
+        '200':
+          description: The scheduled releases.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduledReleaseListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/freezes:
     get:
       tags: [deployments]
@@ -29294,6 +30294,77 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ReleaseGate' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/release-approval-policy:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: getReleaseApprovalPolicy
+      summary: Show an app's release approval policy (ADR-20261020085706).
+      description: "404 `release_approval_policy_not_found` when the app does not require approvals."
+      responses:
+        '200':
+          description: The app's approval policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseApprovalPolicy' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [deployments]
+      operationId: setReleaseApprovalPolicy
+      summary: Require approvals for an app's production releases (ADR-20261020085706).
+      description: "Creates or replaces the policy. Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetReleaseApprovalPolicyRequest' }
+            example: {"required_approvals": 2, "after_stage": 1, "timeout_minutes": 1440, "approvers": "admin"}
+      responses:
+        '200':
+          description: The saved policy.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseApprovalPolicy' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [deployments]
+      operationId: deleteReleaseApprovalPolicy
+      summary: Stop requiring release approvals (ADR-20261020085706).
+      description: "Releases waiting for approval continue on the canary's next step."
+      responses:
+        '204':
+          description: The policy was removed.
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/release-approvals:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listReleaseApprovals
+      summary: List an app's releases waiting for approval (ADR-20261020085706).
+      description: "Releases in state waiting, and those past their timeout that the canary worker is about to abort."
+      responses:
+        '200':
+          description: The waiting releases.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ListReleaseApprovalsResponse' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -30094,6 +31165,125 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/deployments/{id}/approvals:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getReleaseApproval
+      summary: Show a release's approvals (ADR-20261020085706).
+      description: "The release's approval state, the decisions so far, and when its wait expires."
+      responses:
+        '200':
+          description: The release's approval status.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseApprovalStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    post:
+      tags: [deployments]
+      operationId: decideReleaseApproval
+      summary: Approve or reject a release (ADR-20261020085706).
+      description: "Records one decision per person. A rejection is final and aborts the rollout, restoring the previous release. 403 `release_approval_self` when the deployer approves their own release and the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer accepts one."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DecideReleaseApprovalRequest' }
+            example: {"decision": "approve", "comment": "canary looks clean"}
+      responses:
+        '200':
+          description: The release's approval status after the decision.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseApprovalStatus' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/deployments/{id}/diff:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+      - name: against
+        in: query
+        required: false
+        description: The release to compare with; defaults to the release of the same scope that served before this one.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [deployments]
+      operationId: getReleaseDiff
+      summary: Show what changed between two releases (ADR-20261021101117).
+      description: "Compares the code, configuration keys, packages, runtime settings and release command of two releases of one app. Never returns variable values, secret fingerprints or SBOM files. A section whose history is missing reports known=false with a note."
+      responses:
+        '200':
+          description: The release diff.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ReleaseDiff' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/deployments/{id}/schedule:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    get:
+      tags: [deployments]
+      operationId: getDeploymentSchedule
+      summary: Show a release's schedule (ADR-20261021152201).
+      description: "The release's newest schedule: pending, or how it ended. 404 `scheduled_release_not_found` when the release was never scheduled."
+      responses:
+        '200':
+          description: The schedule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduledRelease' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [deployments]
+      operationId: scheduleDeployment
+      summary: Schedule, or move, the start of a release waiting without traffic (ADR-20261021152201).
+      description: "The release must be live without traffic and without a canary ladder, or still building to go live without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on apid's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless override_freeze gives a reason. An app that requires approvals needs a canary: 409 `release_approval_canary_required`. An app's earlier pending schedule is cancelled."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ScheduleReleaseRequest' }
+            example: {"release_at": "2026-10-22T02:00:00Z", "notify_channels": ["releases"]}
+      responses:
+        '200':
+          description: The pending schedule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduledRelease' }
+        '400': { $ref: '#/components/responses/ValidationError' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [deployments]
+      operationId: cancelDeploymentSchedule
+      summary: Cancel a release's pending schedule (ADR-20261021152201).
+      description: "The release stays live without traffic. 404 `scheduled_release_not_found` when it has no pending schedule."
+      responses:
+        '200':
+          description: The cancelled schedule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ScheduledRelease' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/deployments/{id}/canary/advance:
     parameters:
@@ -35958,6 +37148,123 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/projects/{slug}/environments/{environment}/secrets:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the listed secrets.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secrets are addressed.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+    get:
+      tags: [projects]
+      operationId: listProjectEnvironmentSecrets
+      summary: List the secrets shared by every service of a project environment.
+      description: |
+        Metadata only (ADR-1139): key, version, sealing key id and value
+        fingerprint. Values are write-only and never returned.
+      responses:
+        '200':
+          description: The environment's shared secrets and the plan's limit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecretsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/secrets/{key}:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the secret.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secret is addressed.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/SecretKey'
+    put:
+      tags: [projects]
+      operationId: setProjectEnvironmentSecret
+      summary: Set a secret shared by every service of a project environment.
+      description: |
+        Seals the value for the fleet and stores it once for the environment
+        (ADR-1139). Each service receives it at its next boot unless it sets
+        the same key itself; services' snapshots in the environment are
+        invalidated. Platform identity keys are rejected.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetProjectEnvironmentSharedSecretRequest' }
+      responses:
+        '200':
+          description: The stored secret's metadata.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecretResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/PlanLimitProjectSecrets' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/SecretValueTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [projects]
+      operationId: deleteProjectEnvironmentSecret
+      summary: Delete a secret shared by a project environment.
+      description: Services stop receiving it at their next boot.
+      responses:
+        '204': { description: The shared secret was removed. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/projects/{slug}/environments/{environment}/secrets/{key}/rotate:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: Project slug whose environment shares the rotated secret.
+        schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+      - name: environment
+        in: path
+        required: true
+        description: Environment whose shared secret is rotated.
+        schema: { type: string, pattern: '^[a-z0-9](?:[a-z0-9-]{0,31}[a-z0-9])?$' }
+      - $ref: '#/components/parameters/SecretKey'
+    post:
+      tags: [projects]
+      operationId: rotateProjectEnvironmentSecret
+      summary: Replace the value of an existing shared secret.
+      description: Like PUT, but an unknown key is 404 instead of being created.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetProjectEnvironmentSharedSecretRequest' }
+      responses:
+        '200':
+          description: The rotated secret's metadata, with its new version.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecretResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '413': { $ref: '#/components/responses/SecretValueTooLarge' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/projects/{slug}/environments/{environment}/releases:
     parameters:
       - name: slug
@@ -38424,6 +39731,11 @@ paths:
           required: false
           description: Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
           schema: { type: string, enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed] }
+        - name: request_id
+          in: query
+          required: false
+          description: Only events for this request ID, such as the reference a visitor without JavaScript sees on the challenge page (ADR-831 amendment 8).
+          schema: { type: string, maxLength: 128 }
         - name: since
           in: query
           required: false
@@ -49490,6 +50802,69 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/previews:
+    get:
+      tags: [account]
+      operationId: listPreviews
+      summary: List the platform previews you can join.
+      description: |
+        Self-serve platform previews (ADR 20261021080640): the previews an
+        operator opened to self-serve, plus any you joined that have since
+        closed, so you can still leave them. `eligible` says whether your plan
+        may join; `enabled` whether the preview is on for you now, for any
+        reason.
+      responses:
+        '200':
+          description: The previews.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/previews/{key}:
+    parameters:
+      - $ref: '#/components/parameters/PreviewKey'
+    put:
+      tags: [account]
+      operationId: joinPreview
+      summary: Join a platform preview.
+      description: |
+        Opts your account in. Joining twice changes nothing. A preview never
+        grants a plan entitlement, and an operator can still exclude an
+        account.
+      responses:
+        '200':
+          description: The preview after joining.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "`preview_plan_not_eligible`: your plan cannot join this preview."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404':
+          description: "`preview_not_offered`: not a preview open to self-serve."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '409':
+          description: "`preview_full` (with limit and observed) or a concurrent change."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [account]
+      operationId: leavePreview
+      summary: Leave a platform preview.
+      description: "Removes your account's opt-in. Leaving is always allowed, even after the preview closed; leaving one you never joined changes nothing."
+      responses:
+        '200':
+          description: The preview after leaving.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404':
+          description: "`preview_not_offered`: not a platform preview."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/invocations/{id}:
     get:
       tags: [invocations]
@@ -51027,6 +52402,68 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+  /v1/billing/budgets/{id}/channels:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        description: Stable identity of a live account-owned budget policy.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [billing]
+      operationId: getFinancialBudgetChannels
+      summary: List the notification channels a budget's threshold alerts also go to.
+      description: |
+        Requires usage:read and session MFA (ADR-20261019193500). Each channel
+        reports its latest delivery outcome. Alerts always go to the account
+        email; channels are in addition to it. Deleted or foreign policies
+        return 404.
+      responses:
+        '200':
+          description: Bound channels in name order; empty when only the account email is used.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetChannelsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+    put:
+      tags: [billing]
+      operationId: setFinancialBudgetChannels
+      summary: Replace the notification channels a budget's threshold alerts also go to.
+      description: |
+        Requires admin scope, session MFA and Idempotency-Key (ADR-20261019193500).
+        Every id must be one of the account's notification channels, at most 5,
+        without duplicates. Each threshold alert is delivered once per channel
+        and retried with backoff for up to 12 attempts. A channel added later
+        receives a threshold already crossed this month when it is next
+        re-evaluated. Removing a channel holds its pending deliveries; deleting
+        the channel discards them. Does not change the policy revision.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          description: Retry key for this replacement.
+          schema: { type: string, minLength: 1, maxLength: 255 }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/SetFinancialBudgetChannelsRequest' }
+      responses:
+        '200':
+          description: The budget's channels after the replacement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/FinancialBudgetChannelsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/billing/budgets/preview:
     post:
@@ -53972,6 +55409,81 @@ paths:
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/orgs/{slug}/previews:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+    get:
+      tags: [orgs]
+      operationId: listOrgPreviews
+      summary: List the platform previews the organization can join.
+      description: |
+        Like `GET /v1/previews`, for the organization: `joined` is the
+        company's opt-in, and `enabled` is decided for you acting under the
+        company. Previews released per account only are not listed. Requires
+        `org.view`.
+      responses:
+        '200':
+          description: The previews the organization can join or already joined.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/PreviewList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "`org_role_forbidden`: you are not a member of the organization."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/orgs/{slug}/previews/{key}:
+    parameters:
+      - $ref: '#/components/parameters/OrgSlug'
+      - $ref: '#/components/parameters/PreviewKey'
+    put:
+      tags: [orgs]
+      operationId: joinOrgPreview
+      summary: Join a platform preview for the organization.
+      description: |
+        Opts the organization in: every member gets the preview while acting
+        for the company, if their plan is eligible. Requires
+        `org.manage_previews` (owner or admin).
+      responses:
+        '200':
+          description: The preview after the organization joined.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "`org_role_forbidden` or `preview_plan_not_eligible`."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404':
+          description: "`preview_not_offered`, or the organization does not exist."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '409':
+          description: "`preview_full`, `preview_org_unsupported` (the preview is released per account only) or a concurrent change."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [orgs]
+      operationId: leaveOrgPreview
+      summary: Leave a platform preview for the organization.
+      description: "Removes the organization's opt-in. Requires `org.manage_previews` (owner or admin)."
+      responses:
+        '200':
+          description: The preview after the organization left.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Preview' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403':
+          description: "`org_role_forbidden`: only an owner or admin can leave for the organization."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '404':
+          description: "`preview_not_offered` (not a platform preview), or the organization does not exist."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '409':
+          description: "`preview_org_unsupported`."
+          content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/orgs/{slug}/members/{user_id}:
     parameters:
       - $ref: '#/components/parameters/OrgSlug'
@@ -54162,8 +55674,12 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
           description: |
-            `403 Forbidden` — the org is at the member cap. Stable
-            code `org_member_cap_exceeded`.
+            `403 Forbidden` — the org is at the member cap (stable code
+            `org_member_cap_exceeded`), the caller has no fresh step-up
+            (`step_up_required`), or the accepting account has not
+            verified its email address (`email_verification_required`).
+            The invitation's email match binds acceptance to the invitee
+            only for a verified address.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '409':
           description: |
@@ -64435,6 +65951,18 @@ components:
       required: true
       schema: { type: string, format: uuid }
       description: Canonical UUID for a deployment-attached app task.
+    CrashCaptureID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for a crash snapshot.
+    AppForkID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for a production fork.
     ManagedPostgresID:
       name: id
       in: path
@@ -64491,6 +66019,14 @@ components:
     # Slug matches the canonical regex in pkg/api/errors.go::OrgSlugPattern.
     # Max 32 chars (LoadOrg middleware caps at 64; oversize values
     # degrade to passthrough rather than a SQL CHECK 500).
+    PreviewKey:
+      name: key
+      in: path
+      required: true
+      description: "Platform preview key, as GET /v1/previews lists it."
+      schema:
+        type: string
+        pattern: '^[a-z][a-z0-9_-]{0,63}$'
     OrgSlug:
       name: slug
       in: path
@@ -75151,8 +76687,9 @@ components:
     RouteInsight:
       type: object
       description: "One finding for a route; also the payload of the routes.insight.detected and routes.insight.resolved webhooks."
-      required: [kind, method, route, state, message, evidence, first_detected_at, last_detected_at]
+      required: [id, kind, method, route, state, message, evidence, first_detected_at, last_detected_at]
       properties:
+        id: {"type": "string", "format": "uuid"}
         kind: {"type": "string", "enum": ["kept_awake", "cacheable", "cache_stale", "cache_too_short"]}
         method: {"type": "string"}
         route: {"type": "string", "description": "Route template, for example /catalog."}
@@ -75165,6 +76702,40 @@ components:
         first_detected_at: {"type": "string", "format": "date-time"}
         last_detected_at: {"type": "string", "format": "date-time"}
         resolved_at: {"type": "string", "format": "date-time"}
+        fixed_at: {"type": "string", "format": "date-time", "description": "When an applied fix resolved the insight."}
+        fix_action:
+          type: string
+          enum: [create_cache_rule, set_cache_max_age, add_cache_override, disable_cache_rule]
+          description: The fix that resolved the insight.
+        fix:
+          $ref: '#/components/schemas/RouteInsightFix'
+    RouteInsightFix:
+      type: object
+      description: "The edge-rule change applying an active insight would make now, planned from its evidence and the app's current rules (ADR-20261020161310). Absent when the platform has no fix; never in webhook payloads."
+      required: [id, action]
+      properties:
+        id: {"type": "string", "description": "Covers every value the fix would write; send it back to apply exactly this fix."}
+        action: {"type": "string", "enum": ["create_cache_rule", "set_cache_max_age", "add_cache_override", "disable_cache_rule"]}
+        summary: {"type": "string"}
+        max_age_seconds: {"type": "integer", "minimum": 1}
+        rule_id: {"type": "string", "description": "The cache rule the fix changes or overrides."}
+        purge_cache: {"type": "boolean", "description": "The fix also purges the route's cached responses."}
+    RouteInsightFixRequest:
+      type: object
+      description: "Applies the fix an insight listed; refused when the fix changed since (ADR-20261020161310)."
+      required: [fix_id]
+      properties:
+        fix_id: {"type": "string", "description": "The fix.id the insight lists now."}
+    RouteInsightFixResponse:
+      type: object
+      description: "An applied fix: the insight after it, the fix, the edge rule created or changed, the cache purge outcome, and how many of the route's insights it resolved."
+      required: [insight, fix, rule, resolved]
+      properties:
+        insight: { $ref: '#/components/schemas/RouteInsight' }
+        fix: { $ref: '#/components/schemas/RouteInsightFix' }
+        rule: { $ref: '#/components/schemas/EdgeRuleResponse' }
+        cache_purge: {"type": "string", "enum": ["requested", "failed"]}
+        resolved: {"type": "integer", "minimum": 0}
     RouteAdviceResponse:
       type: object
       description: "Route advisor suggestions derived from retained request telemetry (ADR-976). Nothing is applied."
@@ -76475,7 +78046,7 @@ components:
         verification_reason: { type: string, description: 'Empty for a supported managed contract; otherwise managed_service_verification_unsupported.' }
     ManagedServiceProbeSpec:
       type: object
-      description: Server-selected frozen context for a managed HTTPS route probe. Contains no credentials or application request. Changing context or policy invalidates the receipt.
+      description: Server-selected frozen context for a managed service route probe. Contains no credentials or application request. Changing context or policy invalidates the receipt.
       required: [version, caller_deployment_id, scope, service, binding, target_app_id, target_deployment_id, release_id, context_revision]
       properties:
         version: { type: integer, description: 'Managed probe contract version; currently 1.' }
@@ -76487,6 +78058,9 @@ components:
         target_deployment_id: { type: string, format: uuid }
         release_id: { type: string, format: uuid }
         context_revision: { type: string, pattern: '^[a-f0-9]{64}$' }
+        transport:
+          $ref: '#/components/schemas/ServiceBindingTransport'
+          description: "Caller transport the probe verifies (ADR-20261019200059). Absent means the original HTTPS probe; `http` probes the caller's plaintext `.svc.gregale` URL."
     AppBindingInventory:
       type: object
       description: Best-effort app binding metadata with explicit completeness and sanitized section issues.
@@ -76506,6 +78080,7 @@ components:
         requested_deployment_id: { type: string, format: uuid, description: 'Confirms that the explicit deployment_id selector was applied. Absent for default selection.' }
         verification_deployment_id: { type: string, format: uuid, description: 'Deployment selected for evidence: explicit selector or current manual-task deployment.' }
         verification_scope: { type: string, description: 'Scope of the selected verification deployment.' }
+        verification_probes_available: { type: boolean, description: 'Whether this control-plane host can run bindings verify probes (deployment-attached app tasks). False means probe evidence cannot be produced here; absent from older servers.' }
         runtime_freshness: { $ref: '#/components/schemas/BindingRuntimeFreshness' }
         complete: { type: boolean, description: 'All binding sections could be read; this does not mean that bindings are healthy or verified.' }
         bindings:
@@ -76831,12 +78406,15 @@ components:
         coverage_complete: { type: boolean }
         fresh: { type: boolean }
         reasons: { type: array, items: { type: string } }
+        projected_millicents: { type: integer, format: int64, minimum: 0, description: 'Month-end amount at the current run rate (ADR-20261019193500): an estimate, not an invoice. Absent, with projection_reason, when a selected meter has no forecast or the evidence is incomplete or stale.' }
+        projection_reason: { type: string, description: 'Why no projection is available, for example compute:insufficient_history (less than a day of evidence) or incomplete_evidence.' }
     FinancialBudgetAlert:
       type: object
       description: One threshold event per policy revision and UTC month. Edits re-evaluate monthly spending. Delivery is at least once with a stable transport idempotency key; delivered means accepted by the configured transport, not confirmed inbox receipt.
       required: [id, policy_revision, threshold_millicents, evaluation, state, attempts, next_attempt_at]
       properties:
         id: { type: string, format: uuid }
+        kind: { type: string, enum: [projection], description: 'Absent for a crossed threshold. projection marks a projected-overrun alert (ADR-20261019193500), whose threshold_millicents is the limit.' }
         policy_revision: { type: integer, format: int64, minimum: 1 }
         threshold_millicents: { type: integer, format: int64, minimum: 0 }
         evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
@@ -76894,8 +78472,10 @@ components:
         initialized: { type: boolean }
         app_id: { type: string, format: uuid }
         job_id: { type: string, format: uuid }
+        project_id: { type: string, format: uuid, description: 'The capped project of a strict project budget (ADR-1750, amendment 1): one gross book shared by every app in the project. Jobs are not covered.' }
+        environment_id: { type: string, format: uuid, description: 'The capped environment of a strict environment budget (ADR-1750, amendment 2): one gross book shared by every deployment that runs in the environment. Capacity floors and jobs are not covered.' }
         account_id: { type: string, format: uuid }
-        scope_kind: { type: string, enum: [account, app, job] }
+        scope_kind: { type: string, enum: [account, app, job, project, environment] }
         basis: { type: string, enum: [net_usage, gross_usage] }
         allowance_granted_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         allowance_committed_mb_seconds: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
@@ -76917,6 +78497,7 @@ components:
         compute: { $ref: '#/components/schemas/FinancialComputeBalance' }
         evaluation: { $ref: '#/components/schemas/FinancialBudgetEvaluation' }
         alerts: { type: array, maxItems: 9, items: { $ref: '#/components/schemas/FinancialBudgetAlert' } }
+        projection: { $ref: '#/components/schemas/FinancialBudgetAlert' }
         stops: { type: array, maxItems: 1, items: { $ref: '#/components/schemas/FinancialBudgetStop' } }
     FinancialBudgetListResponse:
       type: object
@@ -76943,6 +78524,19 @@ components:
       required: [expected_revision]
       properties:
         expected_revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740990 }
+    SetFinancialBudgetChannelsRequest:
+      type: object
+      description: The full replacement set of notification channels for a budget's alerts (ADR-20261019193500).
+      required: [channel_ids]
+      properties:
+        channel_ids: { type: array, maxItems: 5, uniqueItems: true, description: Account-owned notification channel ids; empty leaves only the account email., items: { type: string, format: uuid } }
+    FinancialBudgetChannelsResponse:
+      type: object
+      description: The notification channels a budget's threshold alerts also go to, with each channel's latest delivery outcome.
+      required: [policy_id, channels]
+      properties:
+        policy_id: { type: string, format: uuid }
+        channels: { type: array, maxItems: 5, items: { $ref: '#/components/schemas/NotificationChannelResponse' } }
     FinancialBudgetRevisionResponse:
       type: object
       description: Immutable intent audit written in the same transaction as the policy.
@@ -76976,7 +78570,7 @@ components:
         name: { type: string, minLength: 1, maxLength: 128, description: Nonblank name bounded to 128 UTF-8 bytes. }
         scope: { $ref: '#/components/schemas/FinancialBudgetScope' }
         currency: { type: string, enum: [USD, EUR], description: New writes require USD; EUR is retained only for historical policy responses. }
-        meters: { type: array, minItems: 1, maxItems: 2, uniqueItems: true, description: Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only., items: { type: string, enum: [compute, egress] } }
+        meters: { type: array, minItems: 1, maxItems: 3, uniqueItems: true, description: Sorted meter names; strict account net_usage may combine compute and egress under one paid limit; app/job strict covers compute only. object_storage (ADR-20261020160000) is priced from the live object-storage estimate and only monitored account budgets may select it., items: { type: string, enum: [compute, egress, object_storage] } }
         basis: { type: string, enum: [net_usage, gross_usage], description: Net usage after the shared account allowance or gross usage before it; strict resource scopes require gross usage. }
         limit_millicents: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         notify_millicents: { type: array, maxItems: 8, uniqueItems: true, description: Increasing nonnegative thresholds at or below the limit. Strict compute requires an empty array; configure a separate monitored policy for alerts., items: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 } }
@@ -77102,6 +78696,7 @@ components:
         currency: { type: string, enum: [USD] }
         projected_quantity: { type: integer, format: int64 }
         projected_net_millicents: { type: integer, format: int64 }
+        projected_gross_millicents: { type: integer, format: int64, description: 'Set only for account-level meters priced by more than one rate, such as object_storage (ADR-20261020160000).' }
     FinancialMeterCoverage:
       type: object
       description: Completeness and freshness of authoritative retained meter evidence.
@@ -80879,7 +82474,7 @@ components:
         label: { type: string }
         description: { type: string }
         category: { type: string }
-        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups] }
+        kind: { type: string, enum: [boolean, integer, duration, string, enum, secret_reference, platform_flag, platform_flag_groups, platform_flag_opt_ins] }
         default_value: {}
         desired_value: {}
         effective_value: {}
@@ -80947,8 +82542,29 @@ components:
 
     # ─── Platform flags (ADR-1700) ───────────────────────────────────────
 
+    Preview:
+      description: "One self-serve platform preview (ADR 20261021080640)."
+      type: object
+      required: [key, label, description, joined, eligible, enabled]
+      properties:
+        key: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
+        label: { type: string }
+        description: { type: string }
+        retire_by: { type: string, format: date, description: "Planned end of the preview, by general availability or removal." }
+        joined: { type: boolean, description: "Whether you (or, under /v1/orgs/{slug}, the organization) opted in." }
+        eligible: { type: boolean, description: "Whether the preview is open to self-serve and your plan may join it." }
+        enabled: { type: boolean, description: "Whether the preview is on for you now, for any reason." }
+
+    PreviewList:
+      description: "Platform previews you can join or already joined."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/Preview' }
     PlatformFlagRule:
-      description: "One targeting rule of a platform flag. Accounts, group, plans and rollout combine with AND; the first matching rule decides."
+      description: "One targeting rule of a platform flag. Accounts, orgs, group, plans and rollout combine with AND; the first matching rule decides. Orgs match the organization a request acts under (ADR 20261021080640)."
       type: object
       required: [id, value]
       properties:
@@ -80957,12 +82573,37 @@ components:
           type: array
           maxItems: 1000
           items: { type: string, format: uuid }
+        orgs:
+          type: array
+          maxItems: 1000
+          items: { type: string, format: uuid }
         group: { type: string, pattern: '^[a-z][a-z0-9_-]{0,63}$' }
         plans:
           type: array
           items: { type: string, enum: [free, hobby, pro, scale] }
         rollout: { type: integer, minimum: 0, maximum: 10000, description: "Basis points of the accounts the other constraints admit." }
+        starts_at: { type: string, format: date-time, description: "The rule applies from this moment (inclusive); stored in UTC." }
+        ends_at: { type: string, format: date-time, description: "The rule stops applying at this moment (exclusive); must be after starts_at." }
+        ramp: { $ref: '#/components/schemas/PlatformFlagRamp' }
         value: { type: boolean }
+
+    PlatformFlagRamp:
+      description: "Advances the rule's rollout stage by stage (ADR 20261021080640). The rollout is the current stage; apid moves it on once the flag's version has held for interval_seconds and its health routes stayed under max_5xx_basis_points over that window with at least min_requests requests. On a breach it pauses (and for rollback returns one stage); a paused ramp waits for an operator to clear paused."
+      type: object
+      required: [stages, interval_seconds, max_5xx_basis_points, min_requests, on_breach]
+      properties:
+        stages:
+          type: array
+          minItems: 2
+          maxItems: 10
+          description: "Strictly ascending basis points; the rollout must be one of them."
+          items: { type: integer, minimum: 1, maximum: 10000 }
+        interval_seconds: { type: integer, minimum: 300, maximum: 604800 }
+        max_5xx_basis_points: { type: integer, minimum: 0, maximum: 10000 }
+        min_requests: { type: integer, format: int64, minimum: 0 }
+        on_breach: { type: string, enum: [pause, rollback] }
+        paused: { type: boolean }
+        paused_reason: { type: string, maxLength: 500 }
 
     PlatformFlagDefinition:
       description: "Stored value of a platform flag. Enabled is the kill switch; default applies to accounts no rule matches."
@@ -80975,6 +82616,35 @@ components:
           type: array
           maxItems: 32
           items: { $ref: '#/components/schemas/PlatformFlagRule' }
+        self_serve: { $ref: '#/components/schemas/PlatformFlagSelfServe' }
+
+    PlatformFlagSelfServe:
+      description: "Lets customers join the preview themselves (ADR 20261021080640). An opted-in account or organization on an eligible plan gets the flag when no rule matched. Disabling it ignores existing opt-ins without deleting them."
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        plans:
+          type: array
+          description: "Eligible plans; empty means every plan. A flag that releases a paid capability must list only entitled plans."
+          items: { type: string, enum: [free, hobby, pro, scale] }
+        max_subjects: { type: integer, minimum: 0, maximum: 5000, description: "Cap on opted-in accounts plus organizations; 0 means 5000." }
+
+    PlatformFlagOptIns:
+      description: "Stored value of platform_flag_opt_ins.<key>: the accounts and organizations that joined a self-serve preview."
+      type: object
+      properties:
+        accounts: { type: array, items: { type: string, format: uuid } }
+        orgs: { type: array, items: { type: string, format: uuid } }
+
+    OperatorPlatformFlagOptIns:
+      description: "How many accounts and organizations joined a self-serve preview, and the opt-in row's version."
+      type: object
+      required: [accounts, orgs, version]
+      properties:
+        accounts: { type: integer, minimum: 0 }
+        orgs: { type: integer, minimum: 0 }
+        version: { type: integer, format: int64 }
 
     OperatorRuntimeConfigApplyReceipt:
       description: "What one daemon instance reported applying for a runtime-configuration key."
@@ -81001,8 +82671,8 @@ components:
     OperatorPlatformFlag:
       description: "One catalogued platform flag with its live definition, apply receipts and convergence."
       type: object
-      required: [key, config_key, label, description, adr, consumers, legacy_env, definition,
-                 source, version, status, receipts, convergence]
+      required: [key, config_key, label, description, adr, consumers, attributes, legacy_env, definition,
+                 source, version, status, receipts, convergence, opt_ins]
       properties:
         key: { type: string }
         config_key: { type: string, description: "Runtime-configuration key that stores the flag; write it with PATCH /v1/admin/config/{key}." }
@@ -81011,6 +82681,10 @@ components:
         capability: { type: string }
         adr: { type: string }
         consumers: { type: array, items: { type: string } }
+        attributes:
+          type: array
+          description: "Subject attributes every consumer can supply, so rules may constrain them; a write using any other is refused (ADR 20261021080640)."
+          items: { type: string, enum: [account, plan, org] }
         legacy_env: { type: array, items: { type: string } }
         retire_by: { type: string, format: date }
         definition: { $ref: '#/components/schemas/PlatformFlagDefinition' }
@@ -81023,6 +82697,7 @@ components:
           type: array
           items: { $ref: '#/components/schemas/OperatorRuntimeConfigApplyReceipt' }
         convergence: { $ref: '#/components/schemas/OperatorPlatformFlagConvergence' }
+        opt_ins: { $ref: '#/components/schemas/OperatorPlatformFlagOptIns' }
 
     OperatorPlatformFlagGroups:
       description: "Shared named account sets referenced by platform-flag rules."
@@ -81056,14 +82731,19 @@ components:
       properties:
         flag: { type: string }
         account_id: { type: string, format: uuid }
+        org_id: { type: string, format: uuid, description: "Organization the decision was made under, when the inspector was given one." }
         plan: { type: string }
         enabled: { type: boolean }
-        reason: { type: string, enum: [unknown_flag, flag_disabled, account_missing, rule_match, default] }
+        reason: { type: string, enum: [unknown_flag, flag_disabled, account_missing, rule_match, opt_in, default] }
         rule_id: { type: string }
         bucket: { type: integer, minimum: 0, maximum: 9999 }
         version: { type: integer, format: int64 }
         entitled: { type: boolean }
         available: { type: boolean }
+        scheduled_rule_id: { type: string, description: "First rule that matched but was outside its window." }
+        schedule_state: { type: string, enum: [rule_not_started, rule_ended] }
+        at: { type: string, format: date-time, description: "Decision time, when the inspector was asked about another moment than now." }
+        opt_in: { type: string, enum: [account, org], description: "Whose self-serve opt-in decided, when one did." }
 
     OperatorAccountPlatformFlags:
       description: "Every platform flag decided for one account."
@@ -83443,7 +85123,7 @@ components:
         plan_cpu_max_millicores: { type: integer, description: "Largest sustained CPU allowance the current plan permits, in millicores." }
         cpu_weight: { type: integer, description: "Relative cgroup CPU scheduling weight applied when the host is contended." }
         max_instances: { type: integer, description: "Effective per-app live-instance ceiling after applying the scaling policy." }
-        concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility." }
+        concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance: the app's scaling_policy.per_instance_concurrency when set, otherwise the plan's concurrency_per_vm." }
         concurrency_queue_depth: { type: integer, description: "Effective maximum number of requests allowed to wait for warm instance capacity." }
         concurrency_queue_wait_ms: { type: integer, format: int64, description: "Effective maximum warm saturation wait in milliseconds." }
         app_request_rate_rps: { type: integer, description: "Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime override." }
@@ -83495,9 +85175,9 @@ components:
           description: "Stable target app name used by private service discovery."
 
     ServiceBindingPolicy:
-      description: "Caller-side authorization policy for internal service requests. `account` preserves same-account reachability; `declared` permits only targets present in the caller's service bindings."
+      description: "Caller-side authorization policy for internal service requests. `account` preserves same-account reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits every service in the caller's own project (ADR-20261022111119)."
       type: string
-      enum: [account, declared]
+      enum: [account, declared, project]
 
     ServiceBindingTransport:
       description: "Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."
@@ -86099,7 +87779,7 @@ components:
     EdgeProtectionResponse:
       description: Edge rejection counts for one app over a range.
       type: object
-      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge]
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge, penalty]
       properties:
         app_id: { type: string }
         range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
@@ -86127,7 +87807,7 @@ components:
             type: object
             required: [gate, status, count]
             properties:
-              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge] }
+              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge, penalty] }
               status: { type: string, enum: ['401', '403', '413', '429', '503', other] }
               count: { type: integer, format: int64, minimum: 0 }
         waf:
@@ -86171,6 +87851,31 @@ components:
             passed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a pass from an earlier solve." }
             bypassed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a verified API key, consumer key or JWT." }
             invalid: { type: integer, format: int64, minimum: 0, description: "Solutions refused: wrong work or an expired token." }
+            raised: { type: integer, format: int64, minimum: 0, description: "The part of issued served at a difficulty raised under attack (ADR-831 amendment 8)." }
+        penalty:
+          type: object
+          description: Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty.
+          required: [boxed, rejected]
+          properties:
+            boxed: { type: integer, format: int64, minimum: 0, description: "Clients a rule's penalty boxed." }
+            rejected: { type: integer, format: int64, minimum: 0, description: "Requests refused from boxed clients." }
+
+    EdgeRulePenalty:
+      type: object
+      description: |
+        A rule's penalty box (ADR-20261022105846). Once the rule has refused
+        the same client `after` times within `within_seconds`, every request
+        from that client to the app is refused with 403 `penalty_box` and
+        Retry-After for `seconds`, whichever rule or path it targets. The
+        client is its IP address (an IPv6 client is its /64). Boxes are held
+        in each gateway node's memory. Allowed on ip, geo, throttle and waf
+        (block mode) rules; editing the rule's penalty away, disabling it or
+        putting it in log mode releases its clients.
+      required: [seconds]
+      properties:
+        seconds: { type: integer, minimum: 60, maximum: 86400, description: How long a boxed client is refused. }
+        after: { type: integer, minimum: 1, maximum: 1000, default: 1, description: Refusals by this rule that box the client. }
+        within_seconds: { type: integer, minimum: 1, maximum: 3600, default: 60, description: Window the refusals count in. }
 
     PreAuthEnforcementSuggestion:
       description: |
@@ -87238,6 +88943,52 @@ components:
         type: { type: string }
         payload: { description: Committed JSON business data bounded to 64 KiB per intent. }
 
+    ScenarioCapturedEvent:
+      description: An event an enrolled app published. It never reached the account's event bus; the sealed snapshot is its only record. Platform-generated IDs and times do not compare (ADR-20261020090000).
+      type: object
+      required: [id, workload, source, type, data]
+      properties:
+        id: { type: string, format: uuid }
+        workload: { type: string }
+        source: { type: string, maxLength: 256 }
+        type: { type: string, maxLength: 256 }
+        schema_version: { type: string, maxLength: 256 }
+        data: { description: Published JSON event data bounded to 64 KiB. }
+
+    ScenarioSuppressedWebhookEvents:
+      description: Count of ordinary webhook deliveries the capture fence suppressed for one workload and event type. Their payloads carry platform-generated identifiers, so only multiplicity compares.
+      type: object
+      required: [workload, event, count]
+      properties:
+        workload: { type: string }
+        event: { type: string, maxLength: 256 }
+        count: { type: integer, format: int64, minimum: 1 }
+
+    ScenarioCapturedQueueMessage:
+      description: A queue send, inbox message, delayed task or asynchronous invoke an enrolled app requested through the run-local platform API. It was never enqueued (ADR-20261021090000, ADR-20261022082721).
+      type: object
+      required: [id, workload, kind, target, message]
+      properties:
+        id: { type: string, format: uuid }
+        workload: { type: string }
+        kind: { type: string, enum: [queue, delayed_task, async_invoke] }
+        target: { type: string, pattern: '^(workload|app):[a-z0-9][a-z0-9-]{0,62}$', description: "A member of the same run is named workload:<name>; any other app is app:<slug>." }
+        queue_name: { type: string, maxLength: 256 }
+        schedule: { type: string, pattern: '^(absolute|delay:[0-9]{1,8})$', description: "A delayed task's requested delay, or absolute when it gave scheduled_at." }
+        message: { description: "The request's business content, bounded to 64 KiB." }
+
+    ScenarioCapturedPlatformCall:
+      description: A workflow or realtime call an enrolled app requested through the run-local platform API. It was never performed (ADR-20261021150000, ADR-20261021180000).
+      type: object
+      required: [id, workload, kind, target, name, message]
+      properties:
+        id: { type: string, format: uuid }
+        workload: { type: string }
+        kind: { type: string, enum: [workflow_run, workflow_event, realtime_publish, realtime_signal] }
+        target: { type: string, maxLength: 512, description: "What the call addressed, without platform IDs the run created." }
+        name: { type: string, maxLength: 256, description: "The workflow, event or channel name." }
+        message: { description: "The call's compared content, bounded to 64 KiB." }
+
     ScenarioActionSnapshot:
       description: Bounded evidence for a sealed action window. Version 1 covers managed webhooks. Version 2 adds declared simulated relay attempts and durable host recorder coverage. Incomplete snapshots never establish equivalent behavior.
       type: object
@@ -87279,6 +89030,28 @@ components:
         suppressed_deliveries: { type: integer, format: int64, minimum: 0, description: Unsupported ordinary deliveries blocked by the run policy; these are not successful business effects. }
         truncated: { type: boolean }
         reason: { type: string }
+        event_capture_version: { type: integer, enum: [1], description: Present from servers that capture published events. A comparison across capture versions is inconclusive. }
+        published_events:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioCapturedEvent' }
+        suppressed_webhook_events:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioSuppressedWebhookEvents' }
+        incomplete_captured_events: { type: integer, format: int64, minimum: 0 }
+        queue_capture_version: { type: integer, enum: [1], description: Present from servers that capture queue sends and delayed tasks. }
+        queue_messages:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioCapturedQueueMessage' }
+        incomplete_queue_messages: { type: integer, format: int64, minimum: 0 }
+        platform_capture_version: { type: integer, enum: [1], description: Present from servers that capture workflow and realtime calls. }
+        platform_calls:
+          type: array
+          maxItems: 256
+          items: { $ref: '#/components/schemas/ScenarioCapturedPlatformCall' }
+        incomplete_platform_calls: { type: integer, format: int64, minimum: 0 }
 
     RegisterScenarioTestResponse:
       description: Acknowledgement that the versioned webhook capture policy was committed before source deployment.
@@ -88117,6 +89890,11 @@ components:
           minimum: 0
           maximum: 60
           example: 30
+        per_instance_concurrency:
+          description: "Requests one instance serves at once (ADR-20261022203523). The gateway admits at most this many to an instance and scales out on the next request; requests over every instance's limit wait in the warm queue (30 s unless max_queue_wait_ms is set). 0 uses the plan's concurrency_per_vm, which is also the upper bound."
+          type: integer
+          minimum: 0
+          example: 2
         timezone:
           description: "IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app rather than one per schedule: a business has a working day, not a working day per rule."
           type: string
@@ -88612,6 +90390,7 @@ components:
           $ref: '#/components/schemas/ProfilingConfig'
         tracing:
           $ref: '#/components/schemas/TracingConfig'
+        profiling_on_demand: { type: boolean, description: 'Dormant on-demand profile collectors stamped by imaged (ADR-1155).' }
         entrypoint:
           type: array
           items: { type: string }
@@ -88649,6 +90428,11 @@ components:
           type: boolean
           default: false
           description: "Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal. Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506)."
+        secret_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecretFile'
+          description: "App secrets guest-init writes to /run/secrets for the main workload (ADR-20261023090000). Set from the app's Compose service secrets."
         stop_grace_period:
           type: [string, "null"]
           description: "OCI StopGracePeriod as a Go duration string (e.g. \"30s\"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4."
@@ -89248,6 +91032,15 @@ components:
           minLength: 1
           maxLength: 200
           description: "Commit this upload to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733)."
+        release_at:
+          type: string
+          format: date-time
+          description: "Build this upload now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time (ADR-20261021152201)."
+        release_notify:
+          type: array
+          maxItems: 5
+          items: { type: string, minLength: 1, maxLength: 256 }
+          description: "Slack or email notification channels told when this upload, scheduled with release_at, starts or cannot start."
 
     UploadStartResponse:
       description: "Body of POST /v1/uploads response. The session row persists for 24h; the reaper (cmd/apid/upload_session_reaper.go) flips `status='open'` rows whose `expires_at` has passed to 'expired' on a 5-min ticker. `chunk_size` is server-decided (8 MiB default; 16 MiB for Scale)."
@@ -89647,6 +91440,9 @@ components:
         promotion_hold:
           $ref: '#/components/schemas/DeploymentPromotionHold'
           description: Latest blocked automatic MCP task promotion; omitted once the candidate becomes live or terminal. A hold is not a failed deployment.
+        scheduled_release:
+          $ref: '#/components/schemas/ScheduledRelease'
+          description: The schedule of a release that waits live without traffic for its scheduled start, or how its latest schedule ended (ADR-20261021152201).
         durable_entity_validator:
           $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
@@ -90099,6 +91895,15 @@ components:
           minLength: 1
           maxLength: 200
           description: "Release this source tarball to production while a deploy freeze is active; the reason is audited (ADR-20261019071733)."
+        release_at:
+          type: string
+          format: date-time
+          description: "Build this source tarball now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time (ADR-20261021152201)."
+        release_notify:
+          type: array
+          maxItems: 5
+          items: { type: string, minLength: 1, maxLength: 256 }
+          description: "Slack or email notification channels told when this source tarball, scheduled with release_at, starts or cannot start."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-tarball deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -90192,7 +91997,7 @@ components:
         kind: { type: string, enum: [advance, hold, abort] }
         rule:
           type: string
-          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency, abort_release_gate, abort_post_release_gate]
+          enum: [advance_healthy, advance_probe_evidence, advance_low_traffic, advance_no_predecessor, advance_manual, hold_insufficient_samples, hold_signal_unavailable, hold_observation_unavailable, hold_health_alert, abort_5xx, abort_p95_latency, abort_cold_boot_p95, abort_cpu_per_request, abort_dependency_errors, abort_oom, abort_crash_loop, abort_manual, abort_worker_lease_expired, abort_post_release_5xx, abort_post_release_p95_latency, abort_release_gate, abort_post_release_gate, hold_awaiting_approval, abort_approval_rejected, abort_approval_timeout]
           description: "Closed set; the breaker rules reuse the canary_progression_circuit_breaker_total event names."
         summary: { type: string, maxLength: 256, description: "The circuit breaker's aggregate-only reason." }
         step: { type: integer, minimum: 0, description: "Zero-based canary step that was evaluated." }
@@ -93379,6 +95184,24 @@ components:
         overlap: { type: string, enum: [skip, allow], description: Omitted uses the published overlap behavior or skip. }
         enabled: { type: boolean, default: true, description: Whether this tenant's schedule is active. }
 
+    WorkflowCodeSpec:
+      description: "A code-first workflow's entry handler (ADR-20261021204307). Exactly one of run or path. Gregale POSTs the run's journal to it at every durable boundary; the SDKs (@gregale/sdk-node/workflows, faas_sdk.workflows) answer with the operations the code reaches next. A code workflow has an empty steps list."
+      type: object
+      additionalProperties: false
+      properties:
+        run:
+          type: string
+          description: "Handler name; the entry path is /<run>."
+        path:
+          type: string
+          description: "Explicit entry path starting with '/'."
+        timeout:
+          type: string
+          description: "Per-call timeout as a duration string; at most the plan's step timeout. Default 30s."
+          example: "60s"
+        retry:
+          $ref: '#/components/schemas/WorkflowRetrySpec'
+
     WorkflowRetrySpec:
       description: "Retry policy for one workflow step."
       type: object
@@ -93687,6 +95510,8 @@ components:
           type: array
           items:
             $ref: '#/components/schemas/WorkflowStepSpec'
+        code:
+          $ref: '#/components/schemas/WorkflowCodeSpec'
 
     PreviewEventRequest:
       description: Event fields to evaluate without persisting or delivering the event.
@@ -98175,7 +100000,7 @@ components:
       properties:
         code:
           type: string
-          enum: [run_not_failed, resume_limit_reached, cancelled, invalid_definition, incomplete_step_state, active_step, handler_executed, failed_control_step, failure_before_dispatch, unsafe_mutation, no_failed_actions, active_attempt, account_inactive, plan_not_allowed, app_deleted, maintenance, tenant_required, tenant_unavailable, deployment_unavailable, pinned_deployment_unavailable, integration_unavailable, active_run_quota, runtime_disabled]
+          enum: [run_not_failed, resume_limit_reached, cancelled, invalid_definition, code_workflow, incomplete_step_state, active_step, handler_executed, failed_control_step, failure_before_dispatch, unsafe_mutation, no_failed_actions, active_attempt, account_inactive, plan_not_allowed, app_deleted, maintenance, tenant_required, tenant_unavailable, deployment_unavailable, pinned_deployment_unavailable, integration_unavailable, active_run_quota, runtime_disabled]
         message: { type: string, description: Fixed explanation without private values. }
         step_name: { type: string, description: Affected step when the planner blocker is step-specific. }
 
@@ -98563,6 +100388,15 @@ components:
           minLength: 1
           maxLength: 200
           description: "Release this deployment to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733)."
+        release_at:
+          type: string
+          format: date-time
+          description: "Build this deployment now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time (ADR-20261021152201)."
+        release_notify:
+          type: array
+          maxItems: 5
+          items: { type: string, minLength: 1, maxLength: 256 }
+          description: "Slack or email notification channels told when this deployment, scheduled with release_at, starts or cannot start."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -100869,6 +102703,10 @@ components:
           type: integer
           minimum: 0
           description: Destination-to-source references copied under the new catalog environment identity. Git source bindings, ownership, overrides and runtime receipts are not copied.
+        project_secrets_copied:
+          type: integer
+          minimum: 0
+          description: Secrets the source environment shares with every service, copied to the new environment (ADR-1139). Values are never returned.
         workloads_copied: { type: integer, minimum: 0 }
         bindings_copied: { type: integer, minimum: 0 }
         routes_copied: { type: integer, minimum: 0 }
@@ -101311,6 +103149,46 @@ components:
           type: object
           additionalProperties: true
         updated_at: { type: string, format: date-time }
+
+    ProjectEnvironmentSharedSecret:
+      description: Metadata of one secret shared by every service of a project environment (ADR-1139). The value is write-only.
+      type: object
+      required: [key, version, kid, value_hash, created_at, updated_at]
+      properties:
+        key: { type: string }
+        version: { type: integer, format: int64, minimum: 1, description: "Increases on every value change." }
+        kid: { type: string, description: "Recipient of the fleet key that sealed the value." }
+        value_hash: { type: string, description: "HMAC fingerprint of the value, for comparing values without revealing them." }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ProjectEnvironmentSharedSecretsResponse:
+      description: The secrets a project environment shares with its services.
+      type: object
+      required: [project_slug, environment, secrets, limit]
+      properties:
+        project_slug: { type: string }
+        environment: { type: string }
+        secrets:
+          type: array
+          items: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecret' }
+        limit: { type: integer, description: "The plan's ProjectSecretCountMax for one environment." }
+
+    SetProjectEnvironmentSharedSecretRequest:
+      description: The plaintext value to seal. Never returned.
+      type: object
+      required: [value]
+      properties:
+        value: { type: string, minLength: 1 }
+
+    ProjectEnvironmentSharedSecretResponse:
+      description: A shared secret's metadata after a write.
+      type: object
+      required: [project_slug, environment, secret]
+      properties:
+        project_slug: { type: string }
+        environment: { type: string }
+        secret: { $ref: '#/components/schemas/ProjectEnvironmentSharedSecret' }
 
     ProjectEnvironmentConfigChange:
       description: One key-level change between two environment configuration snapshots.
@@ -102255,6 +104133,15 @@ components:
           minLength: 1
           maxLength: 200
           description: "Release this source ref to production while a deploy freeze is active; the reason is audited (ADR-20261019071733)."
+        release_at:
+          type: string
+          format: date-time
+          description: "Build this source ref now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time (ADR-20261021152201)."
+        release_notify:
+          type: array
+          maxItems: 5
+          items: { type: string, minLength: 1, maxLength: 256 }
+          description: "Slack or email notification channels told when this source ref, scheduled with release_at, starts or cannot start."
         disable_startup_cpu_boost:
           type: [boolean, "null"]
           description: "Opt this source-ref deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost."
@@ -102876,6 +104763,39 @@ components:
           type: integer
           minimum: 1
           description: "Seconds between the stop signal and SIGKILL, capped by the plan."
+    SecretFile:
+      type: object
+      description: "An app secret guest-init writes to /run/secrets/<name> in the main workload (ADR-20261023090000), from a Compose service's secrets. Names the secret; its value is never returned."
+      required: [secret, name]
+      properties:
+        secret:
+          type: string
+          description: "App secret whose value the file holds."
+        name:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+          description: "File name in /run/secrets."
+        mode:
+          type: integer
+          minimum: 0
+          maximum: 511
+          description: "Permission bits; omitted means 0444."
+    ComposeResources:
+      type: object
+      description: "A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings (ADR-20261023120000). Omitted fields are undeclared and keep the app's own settings."
+      properties:
+        replicas:
+          type: integer
+          minimum: 1
+          description: "Caps a request-mode app's instances (max_concurrency) and fixes a worker's or service's replica count."
+        memory_mb:
+          type: integer
+          minimum: 1
+          description: "App RAM in MB, rounded up from the declared size."
+        cpu_millicores:
+          type: integer
+          enum: [250, 500, 1000]
+          description: "App CPU share."
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
       type: object
@@ -102886,11 +104806,15 @@ components:
           description: Reviewed public HTTPS base URL derived from this app allocation and installation domain. Absent when wildcard app URLs are disabled.
         app_slug:
           type: string
-          description: "Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans and existing allocations."
+          description: "Reviewed Gregale app name. Repository name, dependencies and configuration keys retain their original identity. Present for migration scans, existing allocations, and new workloads whose name cannot be a slug, which get the project-prefixed name (ADR-20261022120205)."
         name: { type: string, example: api }
         platform_tenant_required:
           type: boolean
           description: "Requested customer identity policy from Compose x-gregale-platform-tenant-required or the request override. Omitted preserves existing app policy; new apps default to false."
+        visibility:
+          type: string
+          enum: [internal]
+          description: "Present when the app is or will be internal (no public route): an existing internal app, or a new Compose service without `ports:` (ADR-20261022131852). Omitted means public."
         root_dir:
           type: string
           example: ""
@@ -102913,6 +104837,13 @@ components:
           type: array
           items: { type: string }
           description: "Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."
+        secret_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecretFile'
+          description: "Compose secrets written to /run/secrets (ADR-20261023090000)."
+        resources:
+          $ref: '#/components/schemas/ComposeResources'
         command:
           type: array
           items: { type: string }
@@ -102928,7 +104859,7 @@ components:
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
-          description: "Effective policy selected by Compose `x-gregale-service-policy`. New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."
+          description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project` (ADR-20261022111119); existing workloads retain their persisted policy when the extension is omitted."
         service_reliability:
           $ref: '#/components/schemas/ServiceReliabilityPolicies'
           description: "Dependency-specific policy selected by Compose `x-gregale-service-reliability`."
@@ -102962,6 +104893,20 @@ components:
           type: array
           items: { type: string }
           description: "Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."
+        unset_env_keys:
+          type: array
+          items: { type: string }
+          description: "Names from env_keys and required_env_keys that will have no value in the selected environment: not configured on the app and not provided by the platform. Names only, never values."
+        unset_env_key_reasons:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [not_opted_in, secret, service_address, local_address, interpolated, host_value, empty, invalid]
+          description: "For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never values."
+        imported_env_keys:
+          type: array
+          items: { type: string }
+          description: "Compose environment names whose plain values apply will write, because the project sets x-gregale-env-import: true and they are unset (ADR-20261023085230). Names only."
         source:
           type: string
           description: "detector provenance, e.g. compose.yaml: api"
@@ -103802,6 +105747,7 @@ components:
             - edge_rule_hits
             - edge_rule_log_hits
             - edge_rule_activity
+            - route_insights_detected
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -103896,7 +105842,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -103976,7 +105922,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -104272,6 +106218,7 @@ components:
         expired: { type: boolean, description: True once expires_at has passed and the rule no longer applies. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
 
     DeploymentRoutePolicySnapshotResponse:
       description: Immutable gateway edge-rule state recorded on the deployment's first live transition.
@@ -104343,6 +106290,7 @@ components:
         expires_at: { type: string, format: date-time, description: Optional time after which the gateway stops applying the new rule. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: 'Start the rule enforced (default) or in log mode, where it is only matched and counted.' }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -104396,6 +106344,8 @@ components:
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         clear_match: { type: boolean, description: Remove the match condition. }
         mode: { type: string, enum: [enforce, log], description: 'Switch the rule to enforce, or to log so it is matched and counted but never acts.' }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
+        clear_penalty: { type: boolean, description: "Remove the rule's penalty box, releasing the clients it holds." }
 
     EdgeRuleMatchExpr:
       description: |
@@ -105592,6 +107542,11 @@ components:
           maximum: 86400
           default: 3600
           description: How long a solved challenge lets the browser through.
+        max_difficulty:
+          type: integer
+          minimum: 10
+          maximum: 22
+          description: When above difficulty, the gateway raises the difficulty up to this while the rule serves far more challenge pages than usual, two bits (4x the work) per minute, and lowers it again as the load eases (ADR-831 amendment 8). Must be at least difficulty. Omitted or equal to difficulty keeps the difficulty fixed.
     EdgeRuleAsyncAction:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).
@@ -107087,6 +109042,195 @@ components:
       required: [gates]
       properties:
         gates: { type: array, items: { $ref: '#/components/schemas/ReleaseGate' } }
+    ReleaseApprovalPolicy:
+      description: "An app's release approval policy (ADR-20261020085706)."
+      type: object
+      required: [app, required_approvals, after_stage, timeout_minutes, approvers, allow_self_approval, notify_channels, updated_by, created_at, updated_at]
+      properties:
+        app: { type: string }
+        required_approvals: { type: integer, minimum: 1, maximum: 5, description: "Distinct eligible people who must approve each production release." }
+        after_stage: { type: integer, minimum: 1, maximum: 10, description: "The canary stage a release waits in, counted from 1." }
+        timeout_minutes: { type: integer, minimum: 10, maximum: 10080, description: "How long a release may wait before its rollout is aborted." }
+        approvers: { type: string, enum: [admin, developer], description: "admin: organization owners and admins; developer: developers too." }
+        allow_self_approval: { type: boolean, description: "Whether the deployer's own approval counts." }
+        notify_channels: { type: array, maxItems: 5, items: { type: string }, description: "Notification channels told when a release waits, is approved or rejected, or times out." }
+        updated_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    SetReleaseApprovalPolicyRequest:
+      description: "Sets an app's approval policy. Omitted fields take the defaults: stage 1, a 24-hour timeout, owner or admin approvers, no self-approval."
+      type: object
+      required: [required_approvals]
+      properties:
+        required_approvals: { type: integer, minimum: 1, maximum: 5 }
+        after_stage: { type: integer, minimum: 1, maximum: 10, description: "Default 1." }
+        timeout_minutes: { type: integer, minimum: 10, maximum: 10080, description: "Default 1440." }
+        approvers: { type: string, enum: [admin, developer], description: "Default admin." }
+        allow_self_approval: { type: boolean, description: "Default false; always true for an app outside an organization." }
+        notify_channels: { type: array, maxItems: 5, uniqueItems: true, items: { type: string }, description: "Names of Slack or email notification channels; PagerDuty channels are refused. Slack messages link to the approval page." }
+    DecideReleaseApprovalRequest:
+      description: "One person's decision on a release. A rejection needs a comment."
+      type: object
+      required: [decision]
+      properties:
+        decision: { type: string, enum: [approve, reject] }
+        comment: { type: string, maxLength: 200, description: "Recorded with the decision; required to reject." }
+    ReleaseApprovalDecision:
+      description: "A decision recorded on a release."
+      type: object
+      required: [approver, role, decision, counted, decided_at]
+      properties:
+        approver: { type: string }
+        role: { type: string, enum: [owner, admin, developer, personal], description: "The approver's organization role when they decided; personal for an app outside an organization." }
+        decision: { type: string, enum: [approve, reject] }
+        comment: { type: string }
+        counted: { type: boolean, description: "Whether the approval counts toward the policy; the deployer's own approval does not unless self-approval is allowed." }
+        decided_at: { type: string, format: date-time }
+    ScheduledRelease:
+      description: "A release built ahead of time that starts its rollout at release_at (ADR-20261021152201)."
+      type: object
+      required: [id, app, deployment_id, release_at, state, notify_channels, scheduled_by, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app: { type: string }
+        deployment_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 0 }
+        release_at: { type: string, format: date-time }
+        state: { type: string, enum: [scheduled, started, blocked, expired, cancelled, superseded] }
+        canary: { $ref: '#/components/schemas/CanaryPresetSpec' }
+        notify_channels: { type: array, items: { type: string } }
+        override_freeze: { type: string, maxLength: 200, description: "The reason given for releasing into the freezes in overridden_freezes." }
+        overridden_freezes: { type: array, items: { type: string, format: uuid } }
+        outcome_code: { type: string, description: "Why a schedule ended without starting, such as release_frozen or not_ready." }
+        outcome_detail: { type: string, maxLength: 500 }
+        scheduled_by: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+    ScheduledReleaseListResponse:
+      description: "Scheduled releases, pending ones first."
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ScheduledRelease' } }
+    ScheduleReleaseRequest:
+      description: "When and how a release waiting without traffic starts its rollout (ADR-20261021152201)."
+      type: object
+      required: [release_at]
+      properties:
+        release_at: { type: string, format: date-time, description: "When the rollout starts; at most 7 days ahead. A time that has passed starts it on apid's next pass." }
+        canary: { $ref: '#/components/schemas/CanaryPresetSpec' }
+        notify_channels: { type: array, maxItems: 5, items: { type: string, minLength: 1, maxLength: 256 } }
+        override_freeze: { type: string, minLength: 1, maxLength: 200, description: "Release into the deploy freezes active at release_at; audited when the release starts." }
+    ReleaseApprovalStatus:
+      description: "A release's approval state (ADR-20261020085706)."
+      type: object
+      required: [deployment_id, app, state, approvals, decisions]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        app: { type: string }
+        state: { type: string, enum: [not_required, waiting, approved, rejected, expired] }
+        required_approvals: { type: integer, minimum: 1, maximum: 5 }
+        approvals: { type: integer, minimum: 0, description: "Approvals that count toward the policy." }
+        after_stage: { type: integer, minimum: 1, maximum: 10 }
+        deployed_by: { type: string }
+        waiting_since: { type: string, format: date-time, description: "When the canary entered its waiting stage." }
+        expires_at: { type: string, format: date-time, description: "When a release still waiting is aborted." }
+        decisions: { type: array, items: { $ref: '#/components/schemas/ReleaseApprovalDecision' } }
+    ListReleaseApprovalsResponse:
+      description: "An app's releases waiting for approval."
+      type: object
+      required: [items]
+      properties:
+        items: { type: array, items: { $ref: '#/components/schemas/ReleaseApprovalStatus' } }
+    ReleaseDiff:
+      description: "What changed between two releases of one app (ADR-20261021101117)."
+      type: object
+      required: [app, to, summary, code, config, dependencies, runtime, database]
+      properties:
+        app: { type: string }
+        from: { $ref: '#/components/schemas/ReleaseDiffSide' }
+        to: { $ref: '#/components/schemas/ReleaseDiffSide' }
+        summary: { type: string, description: "One line, such as \"new code, 2 config keys, 5 packages\"." }
+        code: { $ref: '#/components/schemas/ReleaseDiffCode' }
+        config: { $ref: '#/components/schemas/ReleaseDiffConfig' }
+        dependencies: { $ref: '#/components/schemas/ReleaseDiffDependencies' }
+        runtime: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffField' } }
+        database: { $ref: '#/components/schemas/ReleaseDiffDatabase' }
+    ReleaseDiffSide:
+      description: "One of the two compared releases."
+      type: object
+      required: [deployment_id, created_at]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        revision: { type: integer, minimum: 0 }
+        created_at: { type: string, format: date-time }
+        deployed_by: { type: string }
+        reason: { type: string }
+        tag: { type: string }
+        pr_number: { type: integer, minimum: 0 }
+        commit: { type: string }
+    ReleaseDiffCode:
+      description: "How the releases' source and image differ."
+      type: object
+      required: [changed, image_changed]
+      properties:
+        changed: { type: boolean }
+        from_commit: { type: string }
+        to_commit: { type: string }
+        compare_url: { type: string, format: uri, description: "GitHub's compare page when both releases came from the same GitHub repository." }
+        image_changed: { type: boolean }
+    ReleaseDiffKey:
+      description: "A configuration key that differs; values are never included."
+      type: object
+      required: [key, change]
+      properties:
+        key: { type: string }
+        change: { type: string, enum: [added, removed, changed] }
+    ReleaseDiffConfig:
+      description: "How the configuration each release started with differs, by key."
+      type: object
+      required: [known, variables, secrets]
+      properties:
+        known: { type: boolean, description: "False when the retained config history no longer reaches one of the releases." }
+        note: { type: string }
+        variables: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffKey' } }
+        secrets: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffKey' } }
+    ReleaseDiffPackage:
+      description: "A package whose presence or version differs between the builds."
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, description: "The package's purl without its version, or its group and name." }
+        from: { type: string }
+        to: { type: string }
+    ReleaseDiffDependencies:
+      description: "How the builds' SBOM packages differ. Each list holds at most 100 entries."
+      type: object
+      required: [known, added, removed, changed]
+      properties:
+        known: { type: boolean, description: "False when either release has no build SBOM." }
+        note: { type: string }
+        added: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffPackage' } }
+        removed: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffPackage' } }
+        changed: { type: array, items: { $ref: '#/components/schemas/ReleaseDiffPackage' } }
+        truncated: { type: boolean }
+    ReleaseDiffField:
+      description: "A runtime setting that differs; env overrides compare by key."
+      type: object
+      required: [field, from, to]
+      properties:
+        field: { type: string, enum: [kind, handler, runtime_base, port, entrypoint, command, min_instances, healthcheck, liveness_probe, readiness_probe, sidecars, workflows, env_override_keys] }
+        from: { type: string }
+        to: { type: string }
+    ReleaseDiffDatabase:
+      description: "How the releases' release commands, which run database migrations, differ (ADR-1448)."
+      type: object
+      required: [changed]
+      properties:
+        changed: { type: boolean }
+        from_release_command: { type: string }
+        to_release_command: { type: string }
     ReleaseGateResult:
       description: "One judged release gate in a rollout decision. Aggregates only: no routes, messages or metric labels."
       type: object
@@ -107821,6 +109965,11 @@ components:
           description: "FLEET p95 wake latency (the unlabeled histogram). Labelled as such in the UI."
           x-since: "2026-07"
           x-issue: "273"
+        wake_samples:
+          type: integer
+          format: int64
+          description: "Number of fleet wakes wake_p95_ms was computed from. Below 20 the p95 is not meaningful and clients show it as unavailable. Omitted when the count is unknown."
+          x-since: "2026-10"
         queue_depth:
           type: integer
           format: int64
@@ -110988,6 +113137,183 @@ components:
         code: { type: string, maxLength: 64 }
         message: { type: string, maxLength: 4096 }
 
+    CrashSnapshotSettingsRequest:
+      description: Body of `PUT /v1/apps/{slug}/crash-snapshots/settings`.
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    CrashSnapshotSettingsResponse:
+      description: Whether 5xx crash snapshots are on for the app.
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        updated_at: { type: string, format: date-time }
+    CrashCaptureResponse:
+      description: |
+        One crash snapshot (ADR-733). `status` moves from `requested` through
+        `capturing` to `ready`, then `expired`, or ends as `failed`. Storage
+        locations are never returned; open a ready capture as a fork.
+      type: object
+      required: [id, app_id, deployment_id, trigger, status, requested_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        trigger:
+          type: string
+          enum: [http_5xx, manual, sdk, live_fork]
+          description: |
+            `http_5xx` after a 5xx response, `manual` from this API, `sdk` from the
+            app itself through the guest metadata endpoint
+            (`POST http://169.254.169.254/v1/crash-snapshots:capture`), `live_fork`
+            for the capture a live fork took (kept only as long as a fork can live).
+        status_code: { type: integer, minimum: 500, maximum: 599 }
+        route: { type: string, description: Request path of the failing request (http_5xx, or sdk when the app passes one). }
+        reason: { type: string, maxLength: 256, description: The app's label for an sdk capture. }
+        status: { type: string, enum: [requested, capturing, ready, failed, expired] }
+        mem_bytes: { type: integer, format: int64 }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        requested_at: { type: string, format: date-time }
+        captured_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, description: When the capture is deleted. }
+    CrashCaptureListResponse:
+      description: An app's crash snapshots, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CrashCaptureResponse' }
+    CreateAppForkExecRequest:
+      description: Body of `POST /v1/apps/{slug}/forks/{id}/execs`.
+      type: object
+      additionalProperties: false
+      required: [command]
+      properties:
+        command:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { type: string, maxLength: 4096 }
+          description: The argv to run. With `shell`, exactly one string run by the app's shell.
+        shell: { type: boolean, description: Run the single command string through the app's shell. }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 600, description: "Default 60." }
+        max_output_bytes: { type: integer, minimum: 1024, maximum: 1048576, description: "Combined stdout/stderr kept (the tail). Default 65536." }
+    AppForkExecResponse:
+      description: One command run inside a production fork (ADR-732) and, once finished, its result.
+      type: object
+      required: [id, fork_id, command, timeout_seconds, max_output_bytes, status, output_truncated, stdout, stderr, requested_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        fork_id: { type: string, format: uuid }
+        command: { type: array, items: { type: string } }
+        shell: { type: boolean }
+        timeout_seconds: { type: integer }
+        max_output_bytes: { type: integer }
+        status: { type: string, enum: [queued, running, succeeded, failed, timed_out] }
+        exit_code: { type: integer }
+        output_truncated: { type: boolean }
+        stdout: { type: string, description: Tail of standard output. }
+        stderr: { type: string, description: Tail of standard error. }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        requested_by: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+    AppForkExecListResponse:
+      description: A fork's commands, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AppForkExecResponse' }
+    CreateAppForkRequest:
+      description: Body of `POST /v1/apps/{slug}/forks`. Every field is optional.
+      type: object
+      additionalProperties: false
+      properties:
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 14400
+          description: "How long the fork lives. Default 3600 (1 h), maximum 14400 (4 h)."
+        live:
+          type: boolean
+          description: |
+            Capture the app's newest running instance now and fork that
+            capture, instead of the deployment's last snapshot. The capture
+            pauses the instance briefly. Refused (409 `live_fork_refused`)
+            when no instance is running, a capture is in flight, or one was
+            taken in the last minute.
+    AppForkResponse:
+      description: |
+        One production fork (ADR-732). `status` moves from `queued` through
+        `restoring` to `running`, and ends as `expired`, `cancelled` or
+        `failed`. Scheduler leases and instance identifiers are never
+        returned.
+      type: object
+      required: [id, app_id, deployment_id, status, ttl_seconds, expires_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        access_token:
+          type: string
+          description: |
+            Returned only by `POST /v1/apps/{slug}/forks`, never again. To
+            reach the running fork, send a request to the app's hostname with
+            `X-Gregale-Fork: <id>` and `X-Gregale-Fork-Token: <access_token>`.
+            The gateway routes it to the fork, strips both headers, and never
+            wakes the app for it.
+        deployment_id:
+          type: string
+          format: uuid
+          description: The live deployment pinned when the fork was requested.
+        crash_capture_id:
+          type: string
+          format: uuid
+          description: The capture the fork restores, for a crash snapshot fork or a live fork.
+        status:
+          type: string
+          enum: [queued, restoring, running, expired, cancelled, failed]
+        ttl_seconds: { type: integer }
+        expires_at:
+          type: string
+          format: date-time
+          description: When the fork is destroyed (created_at + ttl_seconds).
+        cancel_requested_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AppForkListResponse:
+      description: An app's production forks, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AppForkResponse' }
+
     AppTaskResponse:
       description: |
         App-scoped receipt for a deployment-attached command. Scheduler lease
@@ -111736,6 +114062,8 @@ components:
           type: array
           items: { $ref: '#/components/schemas/ReleaseFreeze' }
           description: "release_frozen: the freezes refusing the release (ADR-20261019071733)."
+        release_approval:
+          $ref: '#/components/schemas/ReleaseApprovalStatus'
         type: { type: string, format: uri-reference, example: "https://gregale.dev/docs/errors/validation_failed"}
         title: { type: string , example: "Validation failed"}
         status: { type: integer , example: 422}
@@ -114231,7 +116559,7 @@ components:
     ConsumerBillingStatement:
       description: "One finalized statement as its consumer sees it."
       type: object
-      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents]
+      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents, credit_applied_millicents, amount_due_millicents]
       properties:
         id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
@@ -114240,6 +116568,8 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         billable_units: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64 }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when the statement was finalized (ADR-20261020211500)." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "amount_millicents less credit_applied_millicents: what is left to pay." }
         finalized_at: { type: string, format: date-time }
         invoice: { $ref: '#/components/schemas/ConsumerBillingInvoice' }
 
@@ -114251,6 +116581,252 @@ components:
         statements:
           type: array
           items: { $ref: '#/components/schemas/ConsumerBillingStatement' }
+
+    PutConsumerSignupRequest:
+      description: "Self-service sign-up settings (ADR-20261021143000). Omitted fields take their defaults."
+      type: object
+      required: [display_name]
+      properties:
+        enabled: { type: boolean, description: "Whether customers can start sign-ups (default true)." }
+        provider: { type: string, enum: [stripe], description: "Where cards are saved (default stripe)." }
+        plan_ids:
+          type: array
+          maxItems: 20
+          description: "Consumer plans customers choose from; none offers the app's default plan."
+          items: { type: string, format: uuid }
+        key_scopes:
+          type: array
+          minItems: 1
+          maxItems: 4
+          description: "Scopes of the key a customer gets (default write and billing)."
+          items: { type: string, enum: [read, write, admin, billing] }
+        display_name: { type: string, minLength: 1, maxLength: 80 }
+        terms_url: { type: string, format: uri, maxLength: 2048, description: "https URL customers accept before signing up." }
+        return_url: { type: string, format: uri, maxLength: 2048, description: "https URL shown after the key; it never carries the key." }
+        trial_days: { type: integer, minimum: 0, maximum: 365 }
+        daily_limit: { type: integer, minimum: 1, maximum: 1000, description: "Sign-ups per UTC day (default 100)." }
+        customer_plan_changes: { type: boolean, description: "Let customers switch between plan_ids with their own key (ADR-20261021183000)." }
+        customer_closing: { type: boolean, description: "Let customers close their account with their own key (ADR-20261021183000)." }
+
+    ConsumerSignupSettingsResponse:
+      description: "An app's sign-up settings."
+      type: object
+      required: [app, enabled, provider, plan_ids, key_scopes, display_name, daily_limit, page_url, customer_plan_changes, customer_closing, created_at, updated_at]
+      properties:
+        app: { type: string }
+        enabled: { type: boolean }
+        provider: { type: string, enum: [stripe] }
+        plan_ids:
+          type: array
+          items: { type: string, format: uuid }
+        key_scopes:
+          type: array
+          items: { type: string }
+        display_name: { type: string }
+        terms_url: { type: string }
+        return_url: { type: string }
+        trial_days: { type: integer }
+        daily_limit: { type: integer }
+        page_url: { type: string, format: uri, description: "The hosted sign-up page to link customers to." }
+        customer_plan_changes: { type: boolean }
+        customer_closing: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    ConsumerSignupResponse:
+      description: "One sign-up as the app owner sees it."
+      type: object
+      required: [id, email, name, status, livemode, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string }
+        name: { type: string }
+        plan_id: { type: string, format: uuid }
+        status: { type: string, enum: [pending, completed] }
+        livemode: { type: boolean }
+        provider_customer_id: { type: string, description: "The Stripe customer, also the consumer's external_ref." }
+        consumer_id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+
+    ConsumerSignupListResponse:
+      description: "An app's latest sign-ups, newest first."
+      type: object
+      required: [signups]
+      properties:
+        signups:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupResponse' }
+
+    ConsumerSignupPrice:
+      description: "One unit's current price on a plan."
+      type: object
+      required: [unit, currency, price_millicents_per_unit]
+      properties:
+        unit: { type: string }
+        currency: { type: string, pattern: '^[A-Z]{3}$' }
+        price_millicents_per_unit: { type: integer, format: int64 }
+        included_units_per_month: { type: integer, format: int64 }
+        tiered: { type: boolean }
+        base_fee_millicents_per_month: { type: integer, format: int64 }
+        minimum_millicents_per_month: { type: integer, format: int64 }
+
+    ConsumerSignupPlan:
+      description: "A plan customers can sign up for; no id is the app's default plan."
+      type: object
+      required: [name, prices]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        max_requests_per_minute: { type: integer, format: int64 }
+        max_units_per_month: { type: integer, format: int64 }
+        prices:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupPrice' }
+
+    ConsumerSignupFormResponse:
+      description: "What the sign-up page shows."
+      type: object
+      required: [app, display_name, livemode, plans]
+      properties:
+        app: { type: string }
+        display_name: { type: string }
+        terms_url: { type: string }
+        livemode: { type: boolean, description: "False while the owner's Stripe key is a test key." }
+        trial_days: { type: integer }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupPlan' }
+
+    CreateConsumerSignupRequest:
+      description: "A customer's sign-up."
+      type: object
+      required: [email, name]
+      properties:
+        email: { type: string, format: email, maxLength: 254 }
+        name: { type: string, minLength: 1, maxLength: 128 }
+        plan_id: { type: string, format: uuid, description: "One of the offered plans; may be omitted when one plan is offered." }
+
+    CreateConsumerSignupResponse:
+      description: "A started sign-up. Send the customer to checkout_url; keep claim_token to complete it."
+      type: object
+      required: [id, checkout_url, claim_token, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        checkout_url: { type: string, format: uri }
+        claim_token: { type: string }
+        expires_at: { type: string, format: date-time }
+
+    CompleteConsumerSignupRequest:
+      description: "Completes a sign-up."
+      type: object
+      required: [claim_token]
+      properties:
+        claim_token: { type: string }
+
+    CompleteConsumerSignupResponse:
+      description: "The customer's consumer and new key, shown only here."
+      type: object
+      required: [consumer_id, key, key_prefix, scopes]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        key: { type: string }
+        key_prefix: { type: string }
+        scopes:
+          type: array
+          items: { type: string }
+        plan_id: { type: string, format: uuid }
+        trial_ends_at: { type: string, format: date-time }
+        return_url: { type: string }
+
+    ConsumerBillingPlansResponse:
+      description: "The plans a consumer can switch between (ADR-20261021183000)."
+      type: object
+      required: [can_change, can_close, plans]
+      properties:
+        current_plan_id: { type: string, format: uuid, description: "Omitted on the app's default plan." }
+        can_change: { type: boolean }
+        can_close: { type: boolean }
+        plans:
+          type: array
+          items: { $ref: '#/components/schemas/ConsumerSignupPlan' }
+
+    ChangeConsumerBillingPlanRequest:
+      description: "Switches to one of the offered plans from the next minute."
+      type: object
+      required: [plan_id]
+      properties:
+        plan_id: { type: string, format: uuid }
+
+    ConsumerBillingPlanChangeResponse:
+      description: "A scheduled plan change."
+      type: object
+      required: [plan_id, effective_from]
+      properties:
+        plan_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+
+    CreateConsumerBillingPortalRequest:
+      description: "Opens the payment provider's customer portal."
+      type: object
+      properties:
+        return_url: { type: string, format: uri, maxLength: 2048 }
+
+    ConsumerBillingPortalResponse:
+      description: "A short-lived customer portal URL."
+      type: object
+      required: [url]
+      properties:
+        url: { type: string, format: uri }
+
+    ConsumerBillingCloseResponse:
+      description: "A closed consumer account."
+      type: object
+      required: [consumer_id, closed_at]
+      properties:
+        consumer_id: { type: string, format: uuid }
+        closed_at: { type: string, format: date-time }
+
+    APIConsumerSignedUpWebhookPayload:
+      type: object
+      description: Data delivered with consumer.signed_up once a customer's sign-up created their consumer (ADR-20261021183000). signup_id is stable across retries.
+      required: [signup_id, app_id, consumer_id, external_ref, name, email, livemode, signed_up_at]
+      properties:
+        signup_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string, description: "The customer's Stripe customer." }
+        name: { type: string }
+        email: { type: string }
+        plan_id: { type: string, format: uuid }
+        trial_ends_at: { type: string, format: date-time }
+        livemode: { type: boolean }
+        signed_up_at: { type: string, format: date-time }
+
+    APIConsumerPlanChangedWebhookPayload:
+      type: object
+      description: Data delivered with consumer.plan_changed when a customer switched plans with their own key. assignment_id is stable across retries; an omitted plan is the app's default plan.
+      required: [assignment_id, app_id, consumer_id, external_ref, effective_from, changed_at]
+      properties:
+        assignment_id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        from_plan_id: { type: string, format: uuid }
+        to_plan_id: { type: string, format: uuid }
+        effective_from: { type: string, format: date-time }
+        changed_at: { type: string, format: date-time }
+
+    APIConsumerClosedWebhookPayload:
+      type: object
+      description: Data delivered with consumer.closed when a customer closed their account with their own key.
+      required: [app_id, consumer_id, external_ref, closed_at]
+      properties:
+        app_id: { type: string, format: uuid }
+        consumer_id: { type: string, format: uuid }
+        external_ref: { type: string }
+        closed_at: { type: string, format: date-time }
 
     CreateBillingRunRequest:
       description: "A month-end billing run (ADR-1503). Omitted options bill both sources, finalize, do not export, and hold consumers with completeness gaps."
@@ -114728,6 +117304,9 @@ components:
               - operation.finished
               - usage_statement.finalized
               - consumer.usage_threshold
+              - consumer.signed_up
+              - consumer.plan_changed
+              - consumer.closed
               - outbound.ai_budget.threshold
               - outbound.ai_quality.drift
               - issue.created
@@ -114774,6 +117353,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -115784,6 +118365,9 @@ components:
               - operation.finished
               - usage_statement.finalized
               - consumer.usage_threshold
+              - consumer.signed_up
+              - consumer.plan_changed
+              - consumer.closed
               - outbound.ai_budget.threshold
               - outbound.ai_quality.drift
               - issue.created
@@ -115830,6 +118414,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -115966,6 +118552,9 @@ components:
               - operation.finished
               - usage_statement.finalized
               - consumer.usage_threshold
+              - consumer.signed_up
+              - consumer.plan_changed
+              - consumer.closed
               - outbound.ai_budget.threshold
               - outbound.ai_quality.drift
               - issue.created
@@ -116012,6 +118601,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -116565,6 +119156,163 @@ components:
       properties:
         enabled: { type: boolean }
         window_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+        kinds:
+          description: Continuous profile kinds (ADR-1155); defaults to cpu.
+          type: array
+          maxItems: 2
+          items: { type: string, enum: [cpu, heap] }
+        pprof_port:
+          description: Guest-local port where a Go application serves net/http/pprof (ADR-1155). The platform then collects CPU, heap and goroutine profiles from it, so the application needs no Gregale SDK. 9191 and 4318 are reserved.
+          type: integer
+          minimum: 1
+          maximum: 65535
+    CreateProfileCaptureRequest:
+      description: On-demand capture request (ADR-1155). Kinds defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go contention profiles (time goroutines spent blocked on channels or locks, or waiting for a mutex, during the window).
+      type: object
+      properties:
+        kinds: { type: array, maxItems: 5, items: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+        duration_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+        instance_id: { type: string, format: uuid, description: Running instance to profile; empty selects the earliest-started RUNNING instance. }
+    ProfileCaptureProfile:
+      description: One collector's stored profile.
+      type: object
+      required: [kind, bytes]
+      properties:
+        kind: { type: string, enum: [cpu, heap, stacks, block, mutex] }
+        process_id: { type: string }
+        bytes: { type: integer }
+    ProfileCapture:
+      description: An on-demand capture. processes counts instrumented processes that saw the capture; zero means the instance has no collector.
+      type: object
+      required: [id, app_id, status, kinds, duration_seconds, processes, profiles, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, capturing, ready, failed] }
+        kinds: { type: array, items: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+        duration_seconds: { type: integer }
+        requested_instance_id: { type: string, format: uuid }
+        trigger: { type: string, enum: [manual, memory_pressure, slow_request, cpu_saturation], description: 'Who started the capture; memory_pressure captures are queued automatically when an instance runs low on memory, slow_request captures (stacks and CPU) when a request stays in flight for 10 seconds, cpu_saturation captures (CPU) when an instance uses 90% of its CPU limit for 30 seconds.' }
+        request_id: { type: string, maxLength: 128, description: The x-faas-request-id of the in-flight request that started a slow_request capture. }
+        request_trace_id: { type: string, maxLength: 128, description: The trace id that request's telemetry is stored under. }
+        trigger_detail: { type: string }
+        instance_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        processes: { type: integer }
+        dropped: { type: integer, description: Profiles discarded by the reply bounds. }
+        reason: { type: string }
+        profiles: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/ProfileCaptureProfile' } }
+        partial: { type: boolean, description: 'The capture ended early, normally because the workload was OOM-killed; heap profiles are the last checkpoints before the kill.' }
+        oom_killed_at: { type: string, format: date-time, description: Set when the captured instance was OOM-killed within 15 minutes of the capture. }
+        oom_peak_mb: { type: integer, description: Memory in use when the instance was OOM-killed. }
+        oom_plan_mb: { type: integer, description: The instance's plan memory limit. }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    ProfileCaptureList:
+      description: An app's profile captures, newest first.
+      type: object
+      required: [captures]
+      properties:
+        captures: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/ProfileCapture' } }
+    ProfileCaptureWebhookPayload:
+      description: Payload of the profile.capture_ready and profile.capture_oom_linked app webhook events (ADR-1155). Carries the capture record and its paths, never profile samples.
+      type: object
+      required: [version, capture, capture_path, api_path]
+      properties:
+        version: { type: integer, minimum: 1, maximum: 1 }
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        capture_path: { type: string, description: Dashboard page of the capture. }
+        api_path: { type: string, description: API resource of the capture. }
+    ProfileCaptureFunction:
+      description: Self and inclusive cost of one function in the view's unit.
+      type: object
+      required: [name, self, total]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        self: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+    ProfileCaptureStack:
+      description: One frame in a bounded call-path tree.
+      type: object
+      required: [name, value]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        value: { type: integer, format: int64 }
+        children: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureStack' } }
+    ProfileCaptureView:
+      description: One profile kind merged across processes. unit is nanoseconds for cpu, bytes for heap and count (goroutines or threads) for stacks. Node and Python heap captures report memory allocated during the window and still live at its end; Go reports the sampled live heap.
+      type: object
+      required: [capture, kind, unit, total, functions, flamegraph, empty]
+      properties:
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [cpu, heap, stacks, block, mutex] }
+        unit: { type: string, enum: [nanoseconds, bytes, count] }
+        total: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
+        empty: { type: boolean }
+        source: { $ref: '#/components/schemas/ProfileSource' }
+    ProfileCaptureDiff:
+      description: One kind compared between two ready captures of an app (ADR-1155). Values keep the kind's unit and are not rescaled.
+      type: object
+      required: [baseline, candidate, kind, unit, baseline_total, candidate_total, delta, functions, flamegraph, warnings]
+      properties:
+        baseline: { $ref: '#/components/schemas/ProfileCapture' }
+        candidate: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [cpu, heap, stacks, block, mutex] }
+        unit: { type: string, enum: [nanoseconds, bytes, count] }
+        baseline_total: { type: integer, format: int64 }
+        candidate_total: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunctionDelta' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStackDelta' }
+        warnings: { type: array, items: { type: string } }
+    ProfileCaptureFunctionDelta:
+      description: One function's self cost in both captures; named functions aggregate across lines.
+      type: object
+      required: [name, baseline, candidate, delta]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        baseline: { type: integer, format: int64 }
+        candidate: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+    ProfileCaptureStackDelta:
+      description: One call path in both captures.
+      type: object
+      required: [name, baseline, candidate, delta]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        baseline: { type: integer, format: int64 }
+        candidate: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+        children: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureStackDelta' } }
+    ProfileHeapResponse:
+      description: Continuous live heap near query.end (ADR-1155).
+      type: object
+      required: [query, kind, unit, total, functions, flamegraph, empty]
+      properties:
+        query: { $ref: '#/components/schemas/ProfileQuery' }
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [heap] }
+        unit: { type: string, enum: [bytes] }
+        total: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
+        empty: { type: boolean }
+        source: { $ref: '#/components/schemas/ProfileSource' }
     TracingConfig:
       description: "Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched."
       type: object
@@ -116943,6 +119691,7 @@ components:
         image_digest: { type: string, description: "Immutable image/artifact digest associated with the deployment." }
         guest:
           $ref: '#/components/schemas/DebugGuestExecutionEvidence'
+        profile_capture_id: { type: string, format: uuid, description: "Stack snapshot taken while this request was in flight (ADR-1155 slow_request capture), when one exists." }
 
     DebugGuestExecutionEvidence:
       type: object
@@ -127266,6 +130015,12 @@ components:
 
     PlanLimitSecrets:
       description: 'code: plan_limit_secrets'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    PlanLimitProjectSecrets:
+      description: 'code: plan_limit_project_secrets'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

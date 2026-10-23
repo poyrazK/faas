@@ -178,6 +178,9 @@ func (s *server) getReleaseFreezeStatus(w http.ResponseWriter, r *http.Request, 
 // store that cannot read freezes lets the release through: a freeze is a
 // guard rail, not an availability dependency.
 func (s *server) releaseFreezeProblem(r *http.Request, acct state.Account, app state.App, scope, override string) *api.Problem {
+	if p := s.platformReleasePauseProblem(); p != nil {
+		return p
+	}
 	now := time.Now().UTC()
 	active, err := freeze.ActiveFor(r.Context(), s.store, acct.ID, app.ID, scope, now)
 	if err != nil {
@@ -274,4 +277,14 @@ func (s *server) freezeAfterAutomaticRollback(ctx context.Context, accountID str
 			"deployment": rolledBackID, "policy": policy.ID, "ends_at": end.Format(time.RFC3339), "actor": automaticFreezeActor,
 		})
 	}
+}
+
+// platformReleasePauseProblem refuses any release while the break-glass
+// release pause is on (ADR 20261022140000). Unlike a freeze it covers every
+// scope and nothing overrides it; rollbacks do not pass through here.
+func (s *server) platformReleasePauseProblem() *api.Problem {
+	if s.runtimeBool(runtimeConfigPlatformReleasePause, false) {
+		return api.ErrPlatformReleasePaused()
+	}
+	return nil
 }

@@ -17,7 +17,7 @@ func objectUploadRouteFromSQL(row sqlc.ObjectUploadRoute) (ObjectUploadRoute, er
 	return route, err
 }
 
-func (s *PgStore) ListObjectUploadRoutes(ctx context.Context, accountID, appID string) ([]ObjectUploadRoute, error) {
+func (s *pgCore) ListObjectUploadRoutes(ctx context.Context, accountID, appID string) ([]ObjectUploadRoute, error) {
 	rows, err := sqlc.New().ObjectUploadRoutesList(ctx, s.pool, sqlc.ObjectUploadRoutesListParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID)})
 	if err != nil {
 		return nil, mapErr(err)
@@ -41,7 +41,7 @@ func (s *pgCore) GetObjectUploadRoute(ctx context.Context, accountID, appID, nam
 	return objectUploadRouteFromSQL(row)
 }
 
-func (s *PgStore) UpsertObjectUploadRoute(ctx context.Context, route ObjectUploadRoute) (ObjectUploadRoute, error) {
+func (s *pgCore) UpsertObjectUploadRoute(ctx context.Context, route ObjectUploadRoute) (ObjectUploadRoute, error) {
 	if _, err := s.GetObjectBucket(ctx, route.AccountID, route.AppID, route.BucketID); err != nil {
 		return ObjectUploadRoute{}, err
 	}
@@ -59,7 +59,7 @@ func (s *PgStore) UpsertObjectUploadRoute(ctx context.Context, route ObjectUploa
 	return objectUploadRouteFromSQL(row)
 }
 
-func (s *PgStore) DeleteObjectUploadRoute(ctx context.Context, accountID, appID, name string) error {
+func (s *pgCore) DeleteObjectUploadRoute(ctx context.Context, accountID, appID, name string) error {
 	n, err := sqlc.New().ObjectUploadRouteDelete(ctx, s.pool, sqlc.ObjectUploadRouteDeleteParams{AccountID: mustPgUUID(accountID), AppID: mustPgUUID(appID), Name: name})
 	if err != nil {
 		return mapErr(err)

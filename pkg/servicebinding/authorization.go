@@ -24,7 +24,7 @@ type AuthorizationStore interface {
 
 // NewAuthorizer enforces the same-account boundary between a
 // calling workload and the service it names (ADR-168), then applies the
-// caller's opt-in declared-binding policy.
+// caller's declared or project binding policy.
 //
 // Ids are shape-checked before they reach the store. `apps.id` is a uuid
 // column, so a malformed id can never name an app — but passing one through
@@ -142,7 +142,11 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 		if projectAliases && target.WorkloadName != "" {
 			bindingTarget = target.WorkloadName
 		}
-		if caller.Manifest.EffectiveServiceBindingPolicy() == api.ServiceBindingPolicyDeclared {
+		// The project policy needs no declaration for a service in the caller's
+		// own project (ADR-20261022111119); every other target falls through to
+		// the declared check.
+		policy := caller.Manifest.EffectiveServiceBindingPolicy()
+		if policy == api.ServiceBindingPolicyDeclared || (policy == api.ServiceBindingPolicyProject && !projectAliases) {
 			declared := false
 			for _, binding := range caller.Manifest.ServiceBindings {
 				if strings.EqualFold(strings.TrimSpace(binding.Service), strings.TrimSpace(bindingTarget)) ||

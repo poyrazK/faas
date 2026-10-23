@@ -26,7 +26,9 @@ func testQueueReplayReceipt(t *testing.T, fx *Fixture) {
 	}
 	triggerID := binding.Changes[0].TriggerID
 	finisher := fx.Store.(state.TriggerClaimFinisher)
-	for _, surface := range []string{"queue", "invocation_event", "receipt", "receipt_event"} {
+	// A queue receipt has no unified dead-letter entry of its own
+	// (ADR-20261022203653); testQueueDeadLetterSingleEntry covers its absence.
+	for _, surface := range []string{"queue", "invocation_event", "receipt"} {
 		t.Run(surface, func(t *testing.T) {
 			inv, err := fx.Store.EnqueueInvocation(fx.Ctx, state.Invocation{AppID: app.ID, AccountID: fx.Account.ID,
 				Source: state.InvocationQueue, QueueName: "jobs", DeploymentScope: "staging", ReplayGeneration: 99,
@@ -63,13 +65,9 @@ func testQueueReplayReceipt(t *testing.T, fx *Fixture) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				wantedSource, wantedID := "invocation", inv.ID
-				if surface == "receipt_event" {
-					wantedSource, wantedID = "trigger_record", receiptID
-				}
 				found := false
 				for _, event := range events {
-					if event.Source == wantedSource && event.SourceID == wantedID {
+					if event.Source == "invocation" && event.SourceID == inv.ID {
 						_, err = fx.Store.ReplayDeadLetterEvent(fx.Ctx, fx.Account.ID, app.ID, event.ID)
 						found = true
 						break

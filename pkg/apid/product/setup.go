@@ -149,7 +149,10 @@ func setupSpec(r *http.Request, c *ownerContext, f url.Values) (setupPublication
 			plan.Features = map[string]api.ProductFeatureGrant{}
 		}
 		plan.Label = f.Get(prefix + "_label")
-		plan.Features[f.Get("feature")] = api.ProductFeatureGrant{MonthlyStarts: starts, UnitPriceMillicents: price}
+		// Setup edits starts and price; included starts set through the
+		// API stay (ADR-20261021154511).
+		included := plan.Features[f.Get("feature")].IncludedStarts
+		plan.Features[f.Get("feature")] = api.ProductFeatureGrant{MonthlyStarts: starts, UnitPriceMillicents: price, IncludedStarts: included}
 		p.Spec.Plans[name] = plan
 	}
 	catalog, err := productcontrol.Compile(p.Spec)
@@ -313,6 +316,9 @@ func (s *Service) publishSetup(r *http.Request, c *ownerContext, p setupPublicat
 	store, ok := s.Host.Store().(state.ProductSetupStore)
 	if !ok {
 		return state.ErrNotFound
+	}
+	if err := s.checkPlanPricing(p.Spec); err != nil {
+		return err
 	}
 	catalog, err := store.PublishProductCatalog(r.Context(), c.account.ID, c.app.ID, p.Spec, p.ExpectedHead)
 	if err != nil {

@@ -223,15 +223,13 @@ func releaseGateRequest(f releaseGateFlags) (api.CreateReleaseGateRequest, error
 func releaseGatesRemove(args []string) int {
 	fs := newFlagSet("release-gates rm", flag.ContinueOnError)
 	app := fs.String("app", "", "app slug (defaults to linked project app)")
-	var positional []string
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		positional, args = args[:1], args[1:]
-	}
-	if err := fs.Parse(args); err != nil {
+	// rm never prompts; --yes is accepted like webhooks rm (Hunt 12 H12-37).
+	fs.Bool("yes", false, "accepted for consistency; rm does not prompt")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	positional = append(positional, fs.Args()...)
-	usage := "usage: gregale release-gates rm <name> [--app <slug>]"
+	positional := fs.Args()
+	usage := "usage: gregale release-gates rm <name> [--app <slug>] [--yes]"
 	if len(positional) != 1 {
 		PrintUsage(os.Stderr, usage, "release-gates")
 		return 1

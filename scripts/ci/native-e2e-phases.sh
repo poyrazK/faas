@@ -77,6 +77,9 @@ native_e2e_phase_files() {
       direct_oci_port_metal_test.go \
       function_concurrency_metal_test.go \
       guest_tracing_metal_test.go \
+      profile_capture_metal_test.go \
+      profile_capture_pprof_metal_test.go \
+      profile_capture_pressure_metal_test.go \
       image_process_identity_metal_test.go \
       workload_identity_metal_test.go \
       image_process_identity_metal_test.go \
@@ -94,6 +97,8 @@ native_e2e_phase_files() {
     wake) printf '%s\n' \
       wake_timeline_metal_test.go \
       frozen_tier_metal_test.go \
+      worker_frozen_metal_test.go \
+      worker_scale_from_zero_metal_test.go \
       wake_platform_bench_metal_test.go \
       wake_burst_metal_test.go \
       wake_platform_bench_metal_test.go \
@@ -103,8 +108,10 @@ native_e2e_phase_files() {
       managed_operation_workflow_metal_test.go \
       customer_workflow_operations_metal_test.go \
       customer_workflow_operations_v1_metal_test.go \
+      customer_workflow_operations_features_metal_test.go \
       customer_http_operations_metal_test.go \
       customer_http_operations_v1_metal_test.go \
+      customer_http_operations_features_metal_test.go \
       feature_flags_native_restore_metal_test.go \
       before_checkpoint_metal_test.go \
       fleet_wake_dedup_e2e_test.go \
@@ -112,6 +119,11 @@ native_e2e_phase_files() {
       private_tcp_wake_ahead_metal_test.go \
       service_stale_endpoint_metal_test.go \
       wake_platform_bench_metal_test.go \
+      fork_metal_test.go \
+      live_fork_metal_test.go \
+      crash_snapshot_metal_test.go \
+      crash_snapshot_sdk_metal_test.go \
+      vmmd_restart_metal_test.go \
       cpu_fairness_test.go ;;
     # Response streaming and the h2c/gRPC inner leg (G19.3).
     streaming) printf '%s\n' streaming_metal_test.go bridge_h2c_terminator_metal_test.go function_streaming_metal_test.go ;;
@@ -125,6 +137,7 @@ native_e2e_phase_files() {
     # Real jobs harness and scratch-image workload. This phase remains
     # non-blocking until it passes on the dedicated KVM runner.
     jobs) printf '%s\n' jobs_metal_test.go customer_job_operations_metal_test.go \
+      customer_job_operations_features_metal_test.go \
       image_runs_metal_test.go job_task_logs_metal_test.go image_run_interactive_metal_test.go ;;
     *) echo "native-e2e-phases: unknown phase: $1" >&2; return 1 ;;
   esac
@@ -279,7 +292,9 @@ native_e2e_lane_tests() {
       printf '%s\n' "${NATIVE_E2E_MANAGED_OPERATION_TESTS[@]}"
       ;;
     customer-job-operations-only)
-      native_e2e_inventory "$root" --files customer_job_operations_metal_test.go
+      # Every customer_job_operations*_metal_test.go file, as the HTTP and
+      # workflow lanes do, so feature scenarios join without a selector edit.
+      native_e2e_inventory "$root" --files "$(native_e2e_sibling_files "$root" 'customer_job_operations*_metal_test.go')"
       ;;
     customer-workflow-operations-only)
       # Every customer_workflow_operations*_metal_test.go file, so the

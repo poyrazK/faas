@@ -277,8 +277,10 @@ reviews feature inclusion, per-success prices, monthly allowances, used starts
 and remaining starts, then explicitly confirms. Changes apply immediately to
 future starts. Already accepted runs keep their admitted price. Consumed starts
 carry across plans and catalog revisions within the UTC month; a downgrade below
-that count leaves zero starts available. There is no subscription fee, proration,
-payment collection or scheduled downgrade in this release.
+that count leaves zero starts available. A plan's monthly fee follows the
+[monthly fee](#monthly-plan-fees) rule: the month owes the highest fee among the
+plans held in it, so a downgrade lowers the fee from the next month, and the
+review says so. There is no scheduled downgrade.
 
 A review binds the current assignment, both sets of terms, latest catalog head,
 UTC month and relevant consumed starts. Confirmation rechecks these with current
@@ -582,7 +584,8 @@ Use **Preview plan change** to compare prices, access and monthly caps, then
 confirm. Existing Auth organization links are preserved automatically. First
 assignments can supply an organization UUID. Terms change immediately for future
 admissions; starts already used do not reset and accepted runs keep their original
-terms. No subscription proration occurs. An intervening assignment, identity,
+terms. The review shows the plans' monthly fees; the month owes the higher one
+(see [monthly plan fees](#monthly-plan-fees)). An intervening assignment, identity,
 catalog or UTC-month change requires a new preview. Confirmation IDs and
 before/after receipts are durable: retry the same confirmation after a lost
 response; an older retry cannot reapply itself over a newer change. Expired or
@@ -651,6 +654,211 @@ For an intentionally fixed binding, use `init --definition DEFINITION_UUID`.
 Fixed bindings keep the original contract; publish and explicitly assign a new
 catalog before retiring their code. Catalog references alone do not extend
 deployment retention.
+
+### Included starts and overage
+
+A grant can include starts at no charge before its unit price applies
+([ADR-20261021154511](../adr/20261021154511-product-control-plan-fees-and-overage.md)):
+
+```json
+"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}
+```
+
+- **Pricing.** The first 100 starts of the UTC month cost nothing. Starts 101 to
+  1,000 cost €0.20 per verified success. The 1,001st start is refused, as any
+  start beyond `monthly_starts` is. `included_starts` ranges from 0 (the
+  default, today's pricing) to `monthly_starts`.
+- **What counts.** Every admitted start counts, whether it succeeds, fails or is
+  cancelled, across plans and catalog revisions in the month. A customer who
+  moves to a plan with more included starts keeps the starts already used.
+- **Price at admission.** Each run records its own price: 0 for an included start,
+  the unit price otherwise. Statements show included runs as their own line at
+  price 0, which invoices describe as "… included at no charge". A statement that
+  charges nothing is not exported.
+- **Confirmation.** The portal shows the included runs left, then the price. Its
+  quote binds the next start's price, so if another start uses the last included
+  one first, the confirmation fails with 409 `product_quote_changed` and shows
+  the new price. `gregale product quote` returns `included_starts` and
+  `next_start_price_millicents`.
+- **Release gate.** Publishing a catalog with included starts needs the
+  operator's `product_control_plan_pricing_enabled` runtime setting. Without it
+  the publication is refused with 409 `product_plan_pricing_unavailable`. Enable
+  the setting only once every apid replica runs this release, because an earlier
+  apid would charge included starts at the full price. Guided setup edits starts
+  and prices and keeps included starts set through the API.
+
+### Monthly plan fees
+
+A plan can charge a monthly fee besides its run prices
+([ADR-20261021154511](../adr/20261021154511-product-control-plan-fees-and-overage.md)):
+
+```json
+"pro": {"label": "Pro", "monthly_fee_millicents": 2900000, "features": {"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}}}
+```
+
+- **Which fee.** Each UTC month owes, once, the highest monthly fee among the
+  plans (catalog revision and plan) the customer held in it. A customer who
+  upgrades on the 20th owes the higher fee for the month. One who downgrades owes
+  the lower fee from the next month, and the plan-change reviews say so.
+- **First month.** In the month of a customer's first assignment, the fee is
+  prorated by the minute from the assignment to the month's end, rounded half up
+  to the millicent. Included starts are not prorated; cap a late joiner with
+  `monthly_starts`.
+- **Suspension** does not stop the fee. To stop charging, move the customer to a
+  plan without one.
+- **Plan history.** Every assignment change (owner assignment, reviewed owner
+  change, self-service change, onboarding) is recorded with its time. A month's
+  plans are the one in force when it starts and those assigned during it.
+- **Statements.** The review's `fees` names the plan, revision, monthly fee, the
+  amount and `prorated_from`, and `amount_millicents` includes it. A customer
+  whose month owes a fee gets a statement without runs, and billing runs bill
+  such customers too. The invoice item reads "Monthly fee for plan pro", with
+  ", prorated from 2026-10-21" when partial.
+- **Credits.** Credit notes still credit runs only. Refund a fee in your billing
+  provider.
+- **Release gate.** Plan fees need the same `product_control_plan_pricing_enabled`
+  setting as included starts, because an earlier apid would finalize statements
+  without them.
+### Free trials
+
+A plan can offer a free trial
+([ADR-20261021195901](../adr/20261021195901-product-control-free-trials.md)):
+
+```json
+"pro": {"label": "Pro", "monthly_fee_millicents": 2900000, "trial_days": 14, "features": {"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}}}
+```
+
+- **Starting.** A customer's first assignment to a plan with `trial_days` starts
+  their trial, if they never had one in the app, by any assignment path: owner
+  assignment, reviewed change, self-service change or onboarding. It lasts the
+  plan's days from the assignment. A customer gets one trial per app. Changing
+  plans keeps its end, and a customer whose trial has ended starts no other.
+- **Runs.** Starts during the trial cost nothing and are marked `trial` in their
+  admission evidence. They count toward `monthly_starts`, which still limits the
+  trial, but not toward `included_starts`, so the plan's included starts are
+  counted afresh when the trial ends. Usage shows `trial_starts` per feature. A
+  confirmation made during the trial goes stale (409 `product_quote_changed`) once
+  the start price it bound changes.
+- **Fees.** A month's fee covers only its minutes outside the trial, from the
+  customer's first assignment. It is the highest fee among the plans held in those
+  minutes, prorated by their share of the month. A month wholly inside the trial
+  owes nothing. The review's fee names the trial it excludes, and the invoice item
+  reads "…, excluding the free trial from 2026-11-01 to 2026-11-04".
+- **Owner control.** `PUT /v1/apps/{slug}/product/customers/{tenant}/trial` with
+  `{"ends_at": "…"}` moves a running trial's end, no earlier than the next UTC
+  minute and no more than 90 days after it started. `DELETE` ends it at the next
+  minute. A customer without a running trial is refused with 409
+  `product_trial_unavailable`. Changes are audited as
+  `product.customer.trial_changed`.
+
+  ```sh
+  gregale product customers trial --app exports --tenant TENANT_UUID --ends-at 2026-11-30T00:00:00Z
+  gregale product customers trial --app exports --tenant TENANT_UUID --end
+  ```
+- **Where it shows.** Customers and `gregale product quote` show `trial_starts_at`
+  and `trial_ends_at`. The portal says runs are free until the trial ends, and its
+  plan comparison names a plan's trial. The owner's plan review shows the trial a
+  change keeps or starts.
+- **Release gate.** `trial_days` and the trial routes need the
+  `product_control_plan_pricing_enabled` setting, because an earlier apid would
+  charge the trial's runs and fee.
+
+### Self-serve signup and card on file
+
+A catalog can let new customers sign up through the portal
+([ADR-20261022100735](../adr/20261022100735-product-control-self-serve-signup.md)):
+
+```json
+"signup": {"plans": ["starter", "pro"], "provider": "stripe"}
+```
+
+- **Turning it on.** Signup needs the catalog's `signup` policy, an `auth_app`, and
+  the operator's `product_control_signup_enabled` runtime setting (off by
+  default). Turning the setting off hides every offer and refuses new signups at
+  once; existing workspaces keep working. `plans` are the plans offered at
+  signup. `provider` (`stripe`, `paddle` or omitted) is where each signup's
+  customer is created.
+- **Auth app.** Enable sign-up in the Auth app and allow
+  `https://<platform domain>/v1/product-control/portal?app=<product>` as a
+  redirect URL. The Auth app's own sign-up controls (domain rules, invitation or
+  waitlist mode, CAPTCHA) decide who can create an account; Gregale never creates
+  Auth users.
+- **Visitor flow.** The portal's "New here?" button shows the offered plans from
+  the public `GET /v1/product-control/customer/{product}/offer` and links to the
+  Auth app's sign-up page. After confirming their email the visitor signs in. A
+  user without a workspace then names one and picks a plan, and
+  `POST /v1/product-control/customer/{product}/signup` creates it:
+  1. the Auth organization, with the user's own session;
+  2. the provider customer: a Stripe customer, or the Paddle customer for the
+     user's email;
+  3. the guided onboarding, which creates the platform tenant with that customer
+     as its `external_ref`, links the organization, assigns the plan and starts
+     any trial.
+  A retry with the same request ID returns the same workspace. Signups are
+  audited as `product.customer.signed_up`.
+- **Limits.** A user owns at most 3 workspaces per product (409
+  `product_signup_limit`). The account's platform tenant quota applies as for
+  any onboarding. Paddle keeps one customer per email, so a second Paddle signup
+  with the same email is refused rather than taking over the first workspace's
+  customer.
+- **Card on file (Stripe).** A billing manager of a workspace billed through
+  Stripe sees "Payment method" in the portal. Adding a card requires ticking
+  consent to future charges by the product team. It opens Stripe Checkout in
+  setup mode on Stripe's own page. Returning to the portal makes the saved card
+  the customer's default for invoices; with Stripe collection `charge`
+  (ADR-1311), exported statements and fees are then charged to it. Gregale shows
+  only the brand, last four digits and expiry, and audits
+  `product.customer.payment_method_consented` and
+  `product.customer.payment_method_saved`. Paddle signups pay each emailed
+  invoice.
+- **Provider keys.** A Stripe restricted key needs write access to Customers and
+  Checkout Sessions and read access to SetupIntents and PaymentMethods. A Paddle
+  key needs customer read and write.
+
+### Trial to paid
+
+A plan with a trial can keep the customer after it only with a payment method on
+file ([ADR-20261022180921](../adr/20261022180921-product-control-trial-conversion.md)):
+
+```json
+"free": {"label": "Free", "features": {"export": {"unit_price_millicents": 20000, "monthly_starts": 10}}},
+"pro": {"label": "Pro", "monthly_fee_millicents": 2900000, "trial_days": 14, "requires_payment_method": true, "fallback_plan": "free", "features": {"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}}}
+```
+
+- **Offering.** `requires_payment_method` needs `trial_days` and a
+  `fallback_plan` naming another plan of the catalog. That plan has no monthly
+  fee, no trial and no payment method requirement. A Paddle signup cannot offer
+  such a plan, because Paddle keeps no card on file. The fields need the
+  `product_control_plan_pricing_enabled` setting, as trials do.
+- **Card on file.** The customer records `payment_method_at`, when a card was
+  last seen on file. Completing the portal's card Checkout records it. Each read
+  of the portal's payment method refreshes it: it is recorded when Stripe has a
+  default card and cleared when it has none. Gregale stores no card data.
+- **Trial end.** Every minute, apid resolves up to 100 ended trials, each once,
+  and records `trial_resolved_at`. A customer on such a plan, in their own
+  catalog revision, with no card on file moves to the fallback plan. The move is
+  recorded in the plan history effective at the trial's end, so the month's fee
+  never charges the paid plan after the trial. A customer whose plan changed
+  after the trial ended keeps it, as do customers with a card on file. Moves are
+  audited as `product.customer.trial_fell_back` and kept plans as
+  `product.customer.trial_converted`.
+- **Until resolved.** Between the trial's end and its resolution, a customer
+  without a card is refused new starts with 402
+  `product_payment_method_required`. Saving a card lifts it at once. Work
+  already admitted keeps running.
+- **Self-service.** A self-service change to such a plan is refused with 409
+  `product_payment_method_required` when the customer has no card on file and
+  would not be in a trial after it: neither one running nor one the change
+  starts. Owner assignments are not checked.
+- **Where it shows.** During the trial the portal says when it ends, that a card
+  keeps the plan and which plan follows. Billing managers get a link to the card
+  page, other members are told to ask one, and a workspace not billed through
+  Stripe is told to contact the product team. After the trial, a customer
+  awaiting a card sees why new runs wait. The plan comparison and the owner's
+  plan review name the requirement and the fallback. Customers show
+  `payment_method_at` and `trial_resolved_at`.
+- **Paddle and Lago.** No payment method is recorded for them, so a customer the
+  owner places on such a plan always falls back.
 
 ## Deployment bindings
 

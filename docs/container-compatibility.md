@@ -44,8 +44,10 @@ guaranteeing that amount of free scratch space; see [ADR-158](adr/158-ephemeral-
 While an image is assembled, its layers may write at most twice the plan's
 ephemeral disk allowance in file content (`LayerExtractionBudgetMultiple`).
 Content that a later layer replaces or deletes still counts toward this
-budget. An image that exceeds it fails with `app_layer_too_large` before
-assembly finishes. A registry blob download may wait up to 60 seconds for
+budget. The layers may also apply at most 2,000,000 entries in total (files,
+directories, links and whiteouts, `LayerExtractionMaxEntries`), twice the
+1,000,000 entries the runtime scan accepts. An image that exceeds either
+limit fails with `app_layer_too_large` before assembly finishes. A registry blob download may wait up to 60 seconds for
 headers or for its next bytes, and may take up to 30 minutes in total.
 
 Direct OCI images use TCP listener readiness by default; Gregale does not
@@ -184,9 +186,12 @@ apply within the startup deadline. A failed or missing result blocks promotion;
 boot, restore, and warm-pool resume cannot reuse a previous pass. `NONE` and
 absent checks retain ordinary readiness. Previously assembled deployments need
 reassembly or redeployment to gain this gate. Native boot/restore qualification
-remains pending. Compose dependency release gates are described above. Compose
-healthcheck overrides on source-built services are not applied and produce a
-scan warning.
+remains pending. Compose dependency release gates are described above. A Compose
+healthcheck on a source-built service is merged onto the built image's
+HEALTHCHECK and enforced the same way
+([ADR-20261019195000](adr/20261019195000-compose-healthcheck-on-built-services.md));
+a source build without one keeps ordinary readiness, even when its Dockerfile
+declares a HEALTHCHECK.
 See [ADR-682](adr/682-compose-image-healthchecks.md) and
 [ADR-683](adr/683-image-healthcheck-readiness.md).
 
@@ -236,12 +241,46 @@ optional `:group`, resolved against the image's `/etc/passwd` and `/etc/group`.
 guest-init delivers (SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2), and
 `stop_grace_period` is capped by the plan. Like commands, these overrides are
 captured per deployment, so queued deployments and rollbacks keep them.
-Source-built services set the same things in their Dockerfile; Compose
-overrides on them produce a scan warning.
+Source-built services take the same overrides
+([ADR-20261022160000](adr/20261022160000-compose-process-on-built-services.md)):
+an `entrypoint` is folded into the service's start command (the entrypoint,
+then the command), and `user`, `working_dir` and the stop contract are applied
+to the built image as a Dockerfile's USER, WORKDIR and STOPSIGNAL would be.
 
 `env_file` contributes variable names only. The scan lists them as required
 environment keys, exactly like `environment:`; values never leave the source,
-so set them with `gregale env set` or secrets. An env file missing from the
+so set them with `gregale env set` or secrets. The project plan shows, per
+service, each name that will have no value in the target environment under
+**Needs a value**: names already configured on the app, supplied by
+`--secrets-file`, or set by Gregale itself (`PORT`, `GREGALE_*`) are left out.
+
+A Compose file can opt in to importing the plain values of `environment:`
+([ADR-20261023085230](adr/20261023085230-compose-env-import.md)):
+
+```yaml
+x-gregale-env-import: true
+services:
+  api:
+    build: ./api
+    environment:
+      LOG_LEVEL: info                   # imported
+      STRIPE_KEY: sk_test_example       # not imported: looks like a secret
+      BILLING_URL: http://billing:8080  # not imported: Docker service address
+```
+
+A reviewed project apply (`gregale deploy`, the dashboard, or
+`gregale deploy --repo … --project`) writes each imported value into the
+service's app, in the deploy's environment, before any build starts; a GitHub
+push deploy imports nothing. Values are written only where the key is still unset: a
+value configured on the app, as a variable or a secret, is never replaced. The
+plan lists imported names under **Imported from Compose** and gives the reason
+for each value it skips: a secret-looking key or value, an address of another
+Compose service or the local machine, `$` interpolation, an entry read from the
+host, or an empty value. Values never appear in the plan, logs or audit events.
+`env_file` values are never imported. `compose.override.yaml` is part of the
+Compose model, so its values are imported too; keep local-only settings out of
+an opted-in project. Without the opt-in the plan marks importable values as
+"plain value in Compose" and shows the line that imports them. An env file missing from the
 source (for example a git-ignored `.env`) is a warning, or silent with
 `required: false`. Quoted values, including multi-line double- or
 single-quoted ones, are read to their closing quote; a malformed line is
@@ -280,23 +319,126 @@ same name as an argument wins. Build arguments end up in the image history, so
 keep secrets out of them and set those with `gregale secrets set`. Plans show the
 target and the argument names, not their values.
 
+Build-time secrets use `build.secrets`
+([ADR-20261022185329](adr/20261022185329-compose-build-secrets.md)):
+
+```yaml
+services:
+  api:
+    build:
+      context: ./api
+      secrets: [npm_token]          # RUN --mount=type=secret,id=npm_token ...
+secrets:
+  npm_token:
+    environment: NPM_TOKEN          # gregale secrets set NPM_TOKEN
+```
+
+Each entry names a top-level secret declared with `environment: NAME`; the
+build mounts the app secret `NAME` from the deployment's scope, under the id
+the entry gives (`{source, target}` sets the id to `target`). `file:` and
+external secrets are not uploaded and are left out with a warning. The value is
+opened only inside the builder VM, mounted with BuildKit's secret mount, and
+never stored in the image, its cache or Gregale's records; a build whose
+secret is not set fails with its name. Builds with secrets run on a fresh
+builder. At most 16 secrets per build (`DockerfileBuildSecretsMax`).
+
+A service's own `secrets` become files in `/run/secrets`
+([ADR-20261023090000](adr/20261023090000-compose-runtime-secret-files.md)):
+
+```yaml
+services:
+  db-client:
+    image: example/app:1
+    environment:
+      DB_PASSWORD_FILE: /run/secrets/db_password
+    secrets:
+      - db_password                 # /run/secrets/db_password, mode 0444
+      - source: api_key
+        target: api.key             # /run/secrets/api.key
+        mode: 0400
+secrets:
+  db_password:
+    environment: DB_PASSWORD        # gregale secrets set DB_PASSWORD
+  api_key:
+    environment: API_KEY
+```
+
+Each entry names a top-level secret declared with `environment: NAME`; the file
+holds the secret the app receives as `NAME`, which is also in its environment.
+`target` is a file name in `/run/secrets` (an absolute path there is the same);
+a target elsewhere, a `file:` or external source is left out with a warning,
+and an undeclared name fails the scan. `mode` defaults to `0444`; the file is
+owned by the user the service runs as, and `uid`/`gid` are ignored. The files
+live in a memory-backed `/run/secrets` written before the service starts. An
+image that opts into live secret reload gets them rewritten with each new
+value; otherwise they change on the next start. A secret that is not set has
+no file. Only the service's main process gets the files, not sidecars, jobs or
+app tasks. At most 16 files per service (`SecretFilesMax`).
+
+A service's size and count set its app's settings
+([ADR-20261023120000](adr/20261023120000-compose-deploy-resources.md)):
+
+```yaml
+services:
+  api:
+    image: example/api:1
+    deploy:
+      replicas: 3                   # max_concurrency 3 (instances still park when idle)
+      resources:
+        limits:
+          memory: 512M              # ram_mb 512
+          cpus: "0.5"               # cpu_millicores 500
+```
+
+`memory` (or `mem_limit`) takes bytes or a `k`, `m`, `g` suffix in powers of
+1024 and is rounded up to whole MiB; more than the plan's RAM per app fails the
+plan. `cpus` (or the service-level `cpus`) is rounded up to an app CPU share,
+0.25, 0.5 or 1, with a warning; more than 1 is lowered to 1. `replicas` (or
+`scale`) caps a request-mode app's instances and fixes a worker's or service's
+replica count, within the plan's cap for that mode; it does not apply to jobs,
+and `replicas: 0` is ignored with a warning. Declared values are written on
+every apply and replace values set with `gregale app <slug> --ram` and the like; settings the
+file does not declare keep the app's. Reservations and the other `deploy` keys
+are warned.
+
+`extends` and top-level `include` are resolved as Compose resolves them
+([ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)):
+
+```yaml
+include:
+  - services/api/compose.yaml        # build: . there builds services/api
+services:
+  worker:
+    extends: {file: common/base.yaml, service: node}
+    command: [node, worker.js]
+```
+
+A service is merged onto its base with the override-file rules: mappings merge,
+`ports`, `env_file`, `profiles`, `depends_on` and `environment` append, and
+other values are replaced. Build contexts and `env_file` paths in another
+directory stay relative to their own file. Included services join the project;
+a service defined in two files, an unknown base, a cycle or a missing file fails
+the scan, as in Compose. Remote includes are not loaded and warn. Variables are
+read from the root `.env` only, so an include's `project_directory` and
+`env_file` options, and a `.env` beside an included file, warn. At most 32 files
+are linked in one scan.
+
 The scan reports every other Compose key instead of dropping it silently:
 
 | Keys | Result |
 |---|---|
-| `build` (`context`, `dockerfile`, `args`, `target`), `command`, `depends_on`, `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `ports`, `profiles`, `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied (process keys and `healthcheck` only on prebuilt images). |
+| `build` (`context`, `dockerfile`, `args`, `target`, `secrets`), `command`, `cpus`, `depends_on`, `deploy` (`replicas`, `resources.limits.memory`, `resources.limits.cpus`), `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `mem_limit`, `ports`, `profiles`, `scale`, `secrets` (`environment:` sources), `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
 | `container_name`, `init`, `stdin_open`, `tty`, `platform: linux/amd64`, `x-*` extensions | Ignored without a warning; they have no effect on a microVM service. |
 | `volumes`, `tmpfs` | Warning: no persistent volumes or bind mounts; each start gets a fresh filesystem. |
-| `deploy`, `scale`, `cpus`, `mem_limit` and other resource keys | Warning: CPU, memory and replicas come from the plan and app scaling. |
+| Other `deploy` keys (`restart_policy`, `placement`, `update_config`, `resources.reservations`, …), `cpu_shares`, `cpu_quota`, `cpuset`, `mem_reservation`, `memswap_limit` | Warning, with the reason for each. |
 | `restart` | Warning: the platform starts, parks and restarts services. |
-| `secrets`, `configs` | Warning: use `gregale secrets set` or environment variables. |
+| `configs` | Warning: build the file into the image or use environment variables. |
 | `networks`, `network_mode`, `links`, `external_links` | Warning: services reach each other through `depends_on` service bindings. |
 | `cap_add`, `privileged`, `devices`, `security_opt`, `ulimits` and other kernel controls | Warning: each service runs in its own microVM. |
 | `dns`, `extra_hosts`, `hostname` and other guest networking keys | Warning: guest networking is managed by the platform. |
 | `labels`, `logging`, `pull_policy`, any other `platform` | Warning. |
-| `build.secrets`, `build.ssh`, `build.dockerfile_inline`, other `build.*` keys | Warning: the builder uses only `build.context`, `build.dockerfile`, `build.args` and `build.target`. |
+| `build.ssh`, `build.dockerfile_inline`, other `build.*` keys | Warning: the builder uses only `build.context`, `build.dockerfile`, `build.args`, `build.target` and `build.secrets`. |
 | Any other service key | Warning: not supported. |
-| `extends`, top-level `include` | Warning: not resolved. The warning names the inherited keys (or the extended file and service) and the included files whose services were not loaded; inline them. |
 
 Managed database and cache services (for example `postgres`) do not report
 their keys: the managed resource replaces the container.

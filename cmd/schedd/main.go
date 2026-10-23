@@ -634,6 +634,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return fmt.Errorf("schedd: init engine: %w", err)
 	}
+	// vmmd restart adoption ADR §3: creates retry through a planned vmmd
+	// restart instead of failing.
+	vmmRouter.WithRestartNotices(engine.RestartNotices())
 	validatorArtifacts, artifactErr := validatorbundle.OpenArtifacts(os.Getenv)
 	if artifactErr != nil {
 		return artifactErr
@@ -1600,6 +1603,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// interval through runDeps.heartbeatInterval.
 	hb := sched.NewHeartbeat(store, sched.HeartbeatDialerFunc(deps.dialVMM), vmmTLS, log).
 		WithOwnerNodeID(ownerNodeID).
+		WithRestartNotices(engine.RestartNotices()).
 		WithStalePeerObserver(ownerNodeID != "").
 		WithStoreOutageAtStartup(storeOutageAtStartup).
 		WithNodeRegistry(nodeRegistry).
@@ -1653,6 +1657,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithEgressAbuseHandler(func(ctx context.Context, row instancestats.InstanceStat, reason sched.EgressAbuseReason, observed, limit int64) error {
 			return engine.RecycleForEgressAbuse(ctx, row.InstanceID, reason, observed, limit)
 		})
+	if os.Getenv("FAAS_PROFILING_ON_DEMAND") == "1" {
+		statsPoller.WithCPUSaturationHandler(cpuSaturationCaptures{engine: engine, log: log})
+		log.Info("automatic CPU captures on CPU saturation enabled (ADR-1155)")
+	}
 	if cfg.MeasuredAdmission {
 		engine.Ledger().EnableMeasuredAdmission(func(nodeID string) (int, time.Time, bool) {
 			return reader.MeasuredMB(nodeID, time.Now())
@@ -1672,7 +1680,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.FrozenTierApps {
 			engine.EnableFrozenTierApps()
 		}
-		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps,
+		if cfg.FrozenTierWorkers {
+			engine.EnableFrozenTierWorkers()
+		}
+		if cfg.FrozenTierEarlyFreezeAfterS > 0 {
+			engine.EnableEarlyFreeze(time.Duration(cfg.FrozenTierEarlyFreezeAfterS) * time.Second)
+		}
+		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps, "workers", cfg.FrozenTierWorkers,
+			"early_freeze_after_s", cfg.FrozenTierEarlyFreezeAfterS,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
 	}
 	if cfg.FrozenFastPath {
@@ -1941,6 +1956,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("schedd: instance divergence sweep wired",
 		"interval_s", api.InstanceDivergenceIntervalSeconds,
 		"enforce", sched.DivergenceEnforceEnabled())
+	// vmmd restart adoption ADR §3: after a vmmd restart, fail the rows
+	// whose guests the new vmmd did not adopt. A node whose vmmd does not
+	// adopt never claims an epoch, so this stays idle there.
+	adoptionReports := sched.NewAdoptionReportReconciler(engine, log)
+	loop.WithAdoptionReports(sched.NewDeadNodeReconciler(
+		adoptionReports.Reconcile,
+		time.Duration(api.AdoptionReportIntervalSeconds)*time.Second,
+		log))
 	// Issue #171: share a single HTTPPromScraper between the gateway
 	// scrape path for the RPS scale-up trigger and the aggressive-
 	// reaper signal mirror.
@@ -2277,6 +2300,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}, log)
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}
+	crashForkMetrics := wire.NewCrashForkMetrics(ops.Registry())
+	var forkCoordinator *sched.ForkCoordinator
+	if appForksEnabled(os.Getenv("FAAS_APP_FORKS")) {
+		// ADR-732: the lease owner scopes TTL teardown to this scheduler,
+		// so it must name this process's node.
+		owner := strings.TrimSpace(ownerNodeID)
+		if owner == "" {
+			owner = "schedd"
+		}
+		forkCoordinator = sched.NewForkCoordinator(store, engine, sched.ForkCoordinatorConfig{Owner: owner, Metrics: crashForkMetrics}, log).
+			WithForkExecs(store, engine)
+		log.Info("schedd: production forks enabled", "owner", owner)
+	}
 	loopErr := make(chan error, 1)
 	loopDone := make(chan struct{})
 	go func() {
@@ -2330,6 +2366,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}()
 	}
+	if forkCoordinator != nil {
+		go forkCoordinator.Run(ctx)
+	}
+	if strings.TrimSpace(os.Getenv("FAAS_CRASH_SNAPSHOTS")) == "1" {
+		// ADR-733: captures pause a serving instance, so one coordinator
+		// runs them one at a time. vmmd seals every capture at the source,
+		// so plaintext never reaches storage (local or remote) or a node's
+		// read-through cache.
+		engine.WithSealedCrashCaptures(true)
+		go sched.NewCrashCaptureCoordinator(store, engine, 0, log).WithMetrics(crashForkMetrics).Run(ctx)
+		log.Info("schedd: crash snapshots enabled", "sealed_at_source", true)
+	}
 
 	// Issue #757 / ADR-0NN (commit #16): trigger dispatch
 	// wakeups. Subscribe to the trigger_ready + trigger_changed
@@ -2345,6 +2393,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// missed until the trigger re-fires. Pair the boot-fatal
 	// (sibling to the dial above) with a 5s retry ticker so a
 	// transient Postgres blip recovers without a daemon restart.
+	// A queue message also wakes its app's idle worker pool now rather than
+	// at the next targets tick (ADR-20261018101500).
+	onTriggerNotification := func(n db.Notification) {
+		if triggerWakeNotification(n) {
+			loop.WakeupTriggers()
+		}
+		if appID, ok := queueInvocationApp(n); ok {
+			targetsTrigger.WakeWorkerPool(ctx, appID)
+		}
+	}
 	triggerNotifC, triggerSubErr := db.SubscribeWithReconnect(ctx, pool,
 		[]string{db.NotifyTriggerReady, db.NotifyTriggerChanged, db.NotifyInvocationDue}, log)
 	if triggerSubErr != nil {
@@ -2380,9 +2438,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 							if !ok {
 								break
 							}
-							if triggerWakeNotification(n) {
-								loop.WakeupTriggers()
-							}
+							onTriggerNotification(n)
 						}
 					}
 				}
@@ -2398,9 +2454,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					if !ok {
 						return
 					}
-					if triggerWakeNotification(n) {
-						loop.WakeupTriggers()
-					}
+					onTriggerNotification(n)
 				}
 			}
 		}()
@@ -2543,6 +2597,22 @@ func triggerWakeNotification(n db.Notification) bool {
 		return false
 	}
 	return payload.Source == string(state.InvocationQueue) || payload.Source == string(state.InvocationDelayedTask)
+}
+
+// queueInvocationApp returns the app of an invocation_due notification for a
+// queue message.
+func queueInvocationApp(n db.Notification) (string, bool) {
+	if n.Channel != db.NotifyInvocationDue {
+		return "", false
+	}
+	var payload struct {
+		AppID  string `json:"app_id"`
+		Source string `json:"source"`
+	}
+	if json.Unmarshal([]byte(n.Payload), &payload) != nil || payload.Source != string(state.InvocationQueue) {
+		return "", false
+	}
+	return payload.AppID, payload.AppID != ""
 }
 
 // eventRecipientClaimsEnabled defaults to independent routing. Explicit values

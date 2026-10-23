@@ -23,15 +23,18 @@
 // Service-template next steps include `deploy --create-only` so an app can be
 // reserved before `secrets set` targets its slug.
 //
+// In a terminal, a missing --template or --path is asked for (category,
+// then template, then directory) instead of failing; scripts still get
+// the usage error.
+//
 // What this command does NOT do (UX spec §8 doesn't promise it):
-//   - list templates (`--list` is implicit; customers run with a bad
-//     name and see "unknown template foo (known: ...)")
 //   - update templates (`gregale init` is a one-time scaffolder)
 //   - set secrets from inline arguments (use a --secrets-file so values stay
 //     out of shell history)
 package main
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"flag"
@@ -39,6 +42,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
 
@@ -70,7 +74,7 @@ const initCmdDocsTopic = "init"
 // Returns 0 on success, 1 on user error (per UX spec §3.2).
 func cmdInit(args []string) int {
 	fs := newFlagSet("init", flag.ContinueOnError)
-	tpl := fs.String("template", "", "template name (run with a bad value to see available names)")
+	tpl := fs.String("template", "", "template name; list them with --list")
 	dest := fs.String("path", "", "destination directory (created if missing; refused if non-empty)")
 	deploy := fs.Bool("deploy", false, "after materializing, chain into `gregale deploy --template <name> --name <slug>`")
 	name := fs.String("name", "", "app slug to pass to --deploy (default: derive from --path basename)")
@@ -89,8 +93,28 @@ func cmdInit(args []string) int {
 	if *list {
 		return runCmdInitList(osStdout)
 	}
+	if (*tpl == "" || *dest == "") && initCanPrompt() {
+		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+		defer cancel()
+		// Prompts go to stderr, like the app picker, so stdout stays the result.
+		prompt := &startPrompt{reader: bufio.NewReader(osStdin), writer: osStderr}
+		var err error
+		if *tpl == "" {
+			*tpl, err = chooseInitTemplate(ctx, prompt)
+		}
+		if err == nil && *dest == "" {
+			*dest, err = prompt.text(ctx, "Directory", "./"+*tpl)
+		}
+		if errors.Is(err, context.Canceled) {
+			return 130
+		}
+		// Closed input is no answer: report what is still missing below.
+		if err != nil && !errors.Is(err, io.EOF) {
+			return printErr("Could not read your choice", err)
+		}
+	}
 	if *tpl == "" {
-		PrintUsage(os.Stderr, initCmdUsage+"\n  error: --template is required", initCmdDocsTopic)
+		PrintUsage(os.Stderr, initCmdUsage+"\n  error: --template is required; list templates with gregale init --list", initCmdDocsTopic)
 		return 1
 	}
 	if *dest == "" {
@@ -98,6 +122,53 @@ func cmdInit(args []string) int {
 		return 1
 	}
 	return runCmdInitWithSecrets(*tpl, *dest, *deploy, *name, *secretsFile, osStdout, os.Stderr)
+}
+
+// initCanPrompt reports whether missing init choices may be asked for
+// instead of failing: a person at a terminal, not a script.
+func initCanPrompt() bool {
+	return !jsonOutput && stdinIsTTY()
+}
+
+// chooseInitTemplate asks what to build, then which template of that kind.
+// A category with one template needs no second question.
+func chooseInitTemplate(ctx context.Context, prompt *startPrompt) (string, error) {
+	var categories, labels []string
+	for _, category := range templates.CategoryOrder {
+		if len(listedTemplatesIn(category)) > 0 {
+			categories = append(categories, category)
+			labels = append(labels, templates.CategoryLabels[category])
+		}
+	}
+	choice, err := prompt.choose(ctx, "What do you want to build?", labels, 0)
+	if err != nil {
+		return "", err
+	}
+	names := listedTemplatesIn(categories[choice])
+	if len(names) == 1 {
+		return names[0], nil
+	}
+	described := make([]string, len(names))
+	for i, name := range names {
+		described[i] = name + " · " + templates.Summary(name)
+	}
+	choice, err = prompt.choose(ctx, "Pick a template", described, 0)
+	if err != nil {
+		return "", err
+	}
+	return names[choice], nil
+}
+
+// listedTemplatesIn returns the customer-listed templates of one category in
+// catalog order.
+func listedTemplatesIn(category string) []string {
+	var names []string
+	for _, name := range templates.ListedNames() {
+		if templates.CategoryFor(name) == category {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 // runCmdInitList prints the built-in templates grouped by category, in the
@@ -116,19 +187,18 @@ func runCmdInitList(stdout io.Writer) int {
 			Templates []string `json:"templates"`
 		}{Templates: templates.ListedNames()}))
 	}
+	width := 0
+	for _, n := range templates.ListedNames() {
+		width = max(width, len(n))
+	}
 	for _, cat := range templates.CategoryOrder {
-		var inCat []string
-		for _, n := range templates.ListedNames() {
-			if templates.CategoryFor(n) == cat {
-				inCat = append(inCat, n)
-			}
-		}
+		inCat := listedTemplatesIn(cat)
 		if len(inCat) == 0 {
 			continue
 		}
 		_, _ = fmt.Fprintf(stdout, "%s (%d):\n", cat, len(inCat))
 		for _, n := range inCat {
-			_, _ = fmt.Fprintf(stdout, "  %s\n", n)
+			_, _ = fmt.Fprintln(stdout, strings.TrimRight(fmt.Sprintf("  %-*s  %s", width, n, templates.Summary(n)), " "))
 		}
 	}
 	_, _ = fmt.Fprintf(stdout, "Docs: %s\n", cliDocsURL)

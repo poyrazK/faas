@@ -43,7 +43,7 @@ func (r RuntimeConnectionReport) valid(a RuntimeConnectionAuthority, now time.Ti
 	return r.Version == 1 && validSHA256(r.DatabaseIdentity) && r.DatabaseGeneration > 0 && r.CredentialGeneration > 0 && len(r.Role) > 0 && len(r.Role) <= 63 &&
 		(r.State == "observed" || r.State == "unknown") && r.RuntimeModel == "postgrest-14.3-pools-v1" &&
 		r.EngineConnections >= 1 && r.RefreshConnections >= 0 && r.RefreshConnections <= 1 &&
-		r.EngineConnections+r.RefreshConnections == api.DataAPIMaxPoolConnections &&
+		r.EngineConnections+r.RefreshConnections <= api.DataAPIMaxPoolConnections &&
 		!r.ObservedAt.IsZero() && !r.ObservedAt.After(now) && now.Before(r.ObservedAt.Add(api.DataAPIConnectionBudgetMaxAge)) &&
 		now.Before(a.TokenExpiresAt)
 }

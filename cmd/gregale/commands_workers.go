@@ -152,11 +152,22 @@ func extractTriggerSource(t api.Trigger) (kind string, source string) {
 }
 
 func cmdWorkersList(args []string) int {
-	usage := "usage: gregale workers [list] [--json]"
+	usage := "usage: gregale workers [list] [<app>] [--json]"
+	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("workers list", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil {
+	if err := fs.Parse(flags); err != nil {
 		PrintUsage(osStderr, usage, "workers")
 		return 1
+	}
+	if len(positional) > 1 || rejectUnexpectedFlagArgs(fs) {
+		PrintUsage(osStderr, usage, "workers")
+		return 1
+	}
+	// An app argument narrows the list to that pool; it was once accepted and
+	// silently ignored, listing every pool on the account.
+	only := ""
+	if len(positional) == 1 {
+		only = positional[0]
 	}
 
 	client, err := authedClient()
@@ -172,7 +183,13 @@ func cmdWorkersList(args []string) int {
 
 	var workerSummaries []WorkerPoolSummary
 	for _, a := range apps {
+		if only != "" && a.Slug != only {
+			continue
+		}
 		if !isWorkerApp(a) {
+			if only != "" {
+				return printErr("Not a worker pool", fmt.Errorf("app %q has execution_mode=%q; list every worker pool with: %s workers list", only, a.Manifest.EffectiveExecutionMode(), recoveryCLI()))
+			}
 			continue
 		}
 
@@ -223,6 +240,9 @@ func cmdWorkersList(args []string) int {
 		workerSummaries = append(workerSummaries, summary)
 	}
 
+	if only != "" && len(workerSummaries) == 0 {
+		return printErr("Worker pool not found", fmt.Errorf("no app named %q; list every worker pool with: %s workers list", only, recoveryCLI()))
+	}
 	if jsonOutput {
 		return jsonOut(writeJSON(workerSummaries))
 	}
@@ -399,7 +419,7 @@ func cmdWorkersStatus(args []string) int {
 			_, _ = fmt.Fprintf(osStdout, "  Target:     %s\n", status.BrokerSource)
 		}
 		if status.DLQCount > 0 {
-			_, _ = fmt.Fprintf(osStdout, "  DLQ:        %d dead-letter messages ⚠️\n", status.DLQCount)
+			_, _ = fmt.Fprintf(osStdout, "  DLQ:        %d dead-letter messages (needs attention)\n", status.DLQCount)
 		} else {
 			_, _ = fmt.Fprintf(osStdout, "  DLQ:        0 dead-letter messages (healthy)\n")
 		}

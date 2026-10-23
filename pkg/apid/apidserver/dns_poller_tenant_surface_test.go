@@ -3,6 +3,8 @@ package apidserver_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -237,4 +239,116 @@ func TestDNSPoller_TenantHostname_FlagOffSkips(t *testing.T) {
 		t.Fatal("TenantSurfacesEnabled = true; want false (flag unset)")
 	}
 	_ = db.NotifyTenantSurfaceChanged // the constant is wired in pkg/db/notify.go (commit 6)
+}
+
+// The poller reads a pending hostname's token, then resolves TXT. If the
+// hostname is deleted and added again (here by another account) while the
+// lookup is in flight, the proof found belongs to the old row's token; it
+// must not verify the replacement, which proved nothing.
+func TestDNSPoller_TenantHostname_StaleProofDoesNotVerifyReplacement(t *testing.T) {
+	t.Setenv("FAAS_TENANT_SURFACES_ENABLED", "true")
+	ctx := context.Background()
+	e := apidserver.Setup(t, api.PlanPro)
+	store := *e.Store()
+	lim := api.Limits{TenantSurfacesAllowed: true, TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 10}
+	surface := func(email, slug string) state.TenantSurface {
+		acct, err := store.CreateAccount(ctx, email, api.PlanPro)
+		if err != nil {
+			t.Fatal(err)
+		}
+		app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: slug, RAMMB: 256, Status: state.AppActive})
+		if err != nil {
+			t.Fatal(err)
+		}
+		surf, err := store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{AccountID: acct.ID, AppID: app.ID, Name: slug}, lim)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return surf
+	}
+	owner, newcomer := surface("hostname-owner@example.com", "hostname-owner"), surface("hostname-newcomer@example.com", "hostname-newcomer")
+	const host = "shop.customer-a.com"
+	if _, err := store.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{SurfaceID: owner.ID, Hostname: host, ChallengeToken: "owner-token"}, lim); err != nil {
+		t.Fatal(err)
+	}
+
+	prev := *apidserver.TxtLookupFunc
+	*apidserver.TxtLookupFunc = func(context.Context, string) ([]string, error) {
+		if err := store.DeleteTenantHostname(ctx, host); err != nil {
+			t.Errorf("delete hostname mid-lookup: %v", err)
+		}
+		if _, err := store.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{SurfaceID: newcomer.ID, Hostname: host, ChallengeToken: "newcomer-token"}, lim); err != nil {
+			t.Errorf("re-add hostname mid-lookup: %v", err)
+		}
+		return []string{"owner-token"}, nil
+	}
+	t.Cleanup(func() { *apidserver.TxtLookupFunc = prev })
+
+	(*e.S()).RunVerifyOnce(ctx, slog.New(slog.DiscardHandler))
+
+	got, err := store.GetTenantHostnameByName(ctx, host)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.SurfaceID != newcomer.ID {
+		t.Fatalf("hostname surface = %s, want the replacement row %s", got.SurfaceID, newcomer.ID)
+	}
+	if got.Verified() {
+		t.Fatal("the old row's TXT proof verified the replacement hostname")
+	}
+}
+
+// The poller checks a batch of 50 pending hostnames per tick, least recently
+// checked first. A miss must be stamped, or the oldest 50 pending hostnames
+// fill every batch and no newer hostname is ever checked.
+func TestDNSPoller_TenantHostname_StaleBacklogDoesNotStarveNewHostnames(t *testing.T) {
+	t.Setenv("FAAS_TENANT_SURFACES_ENABLED", "true")
+	ctx := context.Background()
+	e := apidserver.Setup(t, api.PlanPro)
+	store := *e.Store()
+	// A real backlog spans many surfaces and accounts; one surface with a
+	// raised pending cap stands in for it.
+	lim := api.Limits{TenantSurfacesAllowed: true, TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 10, TenantHostnamesPendingPerSurface: 100}
+	app, err := store.CreateApp(ctx, state.App{AccountID: (*e.Acct()).ID, Slug: "hostname-backlog", RAMMB: 256, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	surf, err := store.CreateTenantSurfaceIfUnderQuota(ctx, state.CreateTenantSurfaceParams{AccountID: (*e.Acct()).ID, AppID: app.ID, Name: "backlog"}, lim)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 60; i++ {
+		if _, err := store.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{SurfaceID: surf.ID, Hostname: fmt.Sprintf("abandoned-%02d.customer.example", i), ChallengeToken: "never-published"}, lim); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const fresh = "fresh.customer.example"
+	if _, err := store.CreateTenantHostnameIfUnderQuota(ctx, state.CreateTenantHostnameParams{SurfaceID: surf.ID, Hostname: fresh, ChallengeToken: "fresh-token"}, lim); err != nil {
+		t.Fatal(err)
+	}
+	prev := *apidserver.TxtLookupFunc
+	*apidserver.TxtLookupFunc = func(_ context.Context, target string) ([]string, error) {
+		if target == "_faas-verify."+fresh {
+			return []string{"fresh-token"}, nil
+		}
+		return nil, nil
+	}
+	t.Cleanup(func() { *apidserver.TxtLookupFunc = prev })
+
+	log := slog.New(slog.DiscardHandler)
+	for tick := 0; tick < 2; tick++ {
+		(*e.S()).RunVerifyOnce(ctx, log)
+		time.Sleep(time.Millisecond)
+	}
+	got, err := store.GetTenantHostnameByName(ctx, fresh)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.Verified() {
+		t.Fatal("a hostname behind 60 stale pending ones was never checked in two ticks")
+	}
+	stale, err := store.GetTenantHostnameByName(ctx, "abandoned-00.customer.example")
+	if err != nil || stale.LastCheckAt.IsZero() || stale.LastError == "" {
+		t.Fatalf("checked stale hostname = %+v, %v; want last_check_at and last_error stamped", stale, err)
+	}
 }

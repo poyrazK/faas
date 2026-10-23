@@ -267,6 +267,18 @@ type ColdBootSpec struct {
 	// ExecutionMode constrains the host-derived characterization class. Empty
 	// preserves the legacy inference contract for older vmmd callers.
 	ExecutionMode string
+	// ProvenWorker boots a declared worker whose deployment already passed
+	// the full characterization window on this node with api.ProvenWorkerBootArg,
+	// so guest-init reports it after api.ProvenWorkerCharacterizationWindow
+	// (ADR-20261018101500).
+	ProvenWorker bool
+	// FunctionRunner boots a function's runner (WakeRequest.Runtime is set
+	// only for functions) with api.FunctionRunnerBootArg so guest-init skips
+	// characterization's L7 probes, which would run the customer's handler.
+	FunctionRunner bool
+	// WorkerPushDelivery lets a worker-mode app with a push queue binding
+	// bind its private delivery port at startup (WakeRequest field).
+	WorkerPushDelivery bool
 	// SkipReady suppresses readiness probing for builder VMs. Builder guests
 	// run a finite build and power off instead of binding port 8080.
 	// Networkless execution guests use the vsock execution protocol instead of
@@ -445,6 +457,12 @@ func BuildColdBootConfig(s ColdBootSpec, slot int) VMConfig {
 	bootArgs := withGuestTimer(coldBootArgs)
 	if s.Networkless {
 		bootArgs = withGuestTimer(executionBootArgs)
+	}
+	if s.ProvenWorker && s.ExecutionMode == api.ExecutionModeWorker {
+		bootArgs = strings.TrimSpace(bootArgs) + " " + api.ProvenWorkerBootArg
+	}
+	if s.FunctionRunner && !s.Networkless {
+		bootArgs = strings.TrimSpace(bootArgs) + " " + api.FunctionRunnerBootArg
 	}
 	return VMConfig{
 		BootSource:        BootSource{KernelImagePath: s.KernelKey, BootArgs: bootArgs},

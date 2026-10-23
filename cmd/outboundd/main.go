@@ -12,14 +12,13 @@ import (
 	"os"
 	"time"
 
-	"filippo.io/age"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apidgrpc"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/outbound"
 	"github.com/onebox-faas/faas/pkg/platformflags"
-	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -177,19 +176,25 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := handler.SetManagedAuthorizations(managedAuthorizations); err != nil {
 		return fmt.Errorf("outboundd: managed provider authorization: %w", err)
 	}
-	identityPath := os.Getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
-	if identityPath != "" {
-		identity, err := secretbox.LoadHostKey(identityPath)
+	// ADR 20261022111812: customer credentials open with the outbound seal
+	// domain identity once the seal_domains role stages it, and with the
+	// fleet identity (and either one's previous twin) until the re-seal
+	// moves every row to the domain.
+	domainPath := os.Getenv("FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH")
+	fleetPath := os.Getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
+	if domainPath != "" || fleetPath != "" {
+		identities, err := sealdomain.LoadReaderIdentities(domainPath, fleetPath)
 		if err != nil {
-			return fmt.Errorf("outboundd: load fleet credential identity: %w", err)
+			return fmt.Errorf("outboundd: load customer credential identities: %w", err)
 		}
-		credentialResolver, err := outbound.NewPostgresSealedCredentialResolver(pool, []*age.X25519Identity{identity}, customerCredentialIDs)
+		credentialResolver, err := outbound.NewPostgresSealedCredentialResolver(pool, identities, customerCredentialIDs)
 		if err != nil {
 			return fmt.Errorf("outboundd: customer credential resolver: %w", err)
 		}
 		handler.CredentialResolver = credentialResolver
+		log.Info("outbound customer credential identities loaded", "domain_identity", domainPath != "", "identities", len(identities))
 	} else if needCustomerCredentials {
-		return errors.New("outboundd: customer-sealed credentials require FAAS_FLEET_AGE_IDENTITY_PATH")
+		return errors.New("outboundd: customer-sealed credentials require FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH or FAAS_FLEET_AGE_IDENTITY_PATH")
 	}
 	handler.SimulationHandler = &outbound.SimulationHandler{Store: state.NewPgStore(pool)}
 	handler.IdentityVerifier = identityVerifier
@@ -237,6 +242,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 	go onlineEvaluationWorker.Run(ctx)
 	driftWorker := &outbound.AIQualityDriftWorker{Store: backend, Metrics: outboundMetrics, Log: log}
 	go driftWorker.Run(ctx)
+	// ADR-20261019152416: enforced GitOps candidates cannot reach the gateway,
+	// so their outbound bindings are probed here and receipted for activation.
+	qualificationWorker := &outbound.QualificationProbeWorker{Store: state.NewPgStore(pool), Handler: handler, Log: log}
+	go qualificationWorker.Run(ctx)
 	relayHandler := outbound.WithSimulationRelay(trace.HTTPHandler("outboundd-relay", handler), handler.SimulationHandler)
 	shutdownRelay, err := startRelay(ctx, cfg, pool, relayHandler, identityVerifier, outboundMetrics, log)
 	if err != nil {

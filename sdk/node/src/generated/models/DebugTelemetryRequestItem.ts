@@ -81,5 +81,9 @@ export type DebugTelemetryRequestItem = {
    */
   image_digest?: string;
   guest?: DebugGuestExecutionEvidence;
+  /**
+   * Stack snapshot taken while this request was in flight (ADR-1155 slow_request capture), when one exists.
+   */
+  profile_capture_id?: string;
 };
 

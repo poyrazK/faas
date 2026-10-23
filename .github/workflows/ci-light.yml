@@ -58,7 +58,7 @@ permissions:
 
 env:
   # Keep in lock-step with ci.yml and go.mod's toolchain directive.
-  GO_VERSION: "1.26.9"
+  GO_VERSION: "1.26.10"
   VACUUM_VERSION: "0.29.10"
   VACUUM_SHA256_LINUX_AMD64: "84a596d5f88dd42f6f020376e5d2c2a29e6e51cc4b5614828f03dda122457a03"
   SQLC_VERSION: "1.31.1"
@@ -406,6 +406,8 @@ jobs:
         run: make lint-drill
       - name: forbid mutating SQL in normal runbooks
         run: make runbook-sql-check
+      - name: forbid committed executables
+        run: make committed-binaries-check
       - name: post-mortem artifact check
         run: make test-postmortems
       - name: restore-drill evidence freshness (M8 claim)
@@ -485,6 +487,10 @@ jobs:
       # tens of MB. Only this change's additions fail.
       - name: test store embedding check
         run: go run ./scripts/ci/teststorecheck -base "$LIGHT_DIFF_BASE"
+      # Seal domains (ADR 20261022111812): new holders of private identities,
+      # new direct identity loaders and new unsealed bytea columns fail.
+      - name: seal domain scope check
+        run: go run ./scripts/ci/sealdomaincheck
       - name: migrations check (static)
         run: make migrations-check
       - name: select migration changes

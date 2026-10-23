@@ -1095,6 +1095,16 @@ type ScalingConfig struct {
 	MaxQueueDepth           int `yaml:"max_queue_depth,omitempty"`
 	WakeMaxQueueDepth       int `yaml:"wake_max_queue_depth,omitempty"`
 	WakeMaxQueueWaitSeconds int `yaml:"wake_max_queue_wait_seconds,omitempty"`
+	// PerInstanceConcurrency is how many requests one instance serves at
+	// once (ADR-20261022203523). Set it to the server's own concurrency, for
+	// example gunicorn's --workers, and the platform scales out on the next
+	// request instead of queueing it on a full instance. Zero uses the plan's
+	// concurrency_per_vm; the API applies that upper bound.
+	//
+	//	scaling:
+	//	  max_instances: 3
+	//	  per_instance_concurrency: 2
+	PerInstanceConcurrency int `yaml:"per_instance_concurrency,omitempty"`
 	// Timezone is the IANA zone the schedules below are evaluated in
 	// (ADR-195). Empty means UTC.
 	Timezone string `yaml:"timezone,omitempty"`
@@ -1225,6 +1235,9 @@ func (s *ScalingConfig) Validate() error {
 	if s.WakeMaxQueueWaitSeconds < 0 || s.WakeMaxQueueWaitSeconds > api.WakeQueueMaxWaitSeconds {
 		return fmt.Errorf("scaling: wake_max_queue_wait_seconds must be between 0 and %d; got %d", api.WakeQueueMaxWaitSeconds, s.WakeMaxQueueWaitSeconds)
 	}
+	if s.PerInstanceConcurrency < 0 {
+		return fmt.Errorf("scaling: per_instance_concurrency must be >= 0; got %d", s.PerInstanceConcurrency)
+	}
 	// The closed metric set and the per-metric value rules come from
 	// pkg/api (ADR-194) rather than being restated here. This file used to
 	// carry its own copy of the switch, and it drifted: it accepted `rps`
@@ -1307,6 +1320,7 @@ func (s *ScalingConfig) ToAPI() *api.ScalingPolicy {
 		MaxQueueDepth:           s.MaxQueueDepth,
 		WakeMaxQueueDepth:       s.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: s.WakeMaxQueueWaitSeconds,
+		PerInstanceConcurrency:  s.PerInstanceConcurrency,
 	}
 	if s.MinInstances != nil {
 		out.MinInstances = *s.MinInstances
@@ -1429,7 +1443,7 @@ func (d BucketDependency) EffectiveLabel() string {
 // Manifest is the parsed `gregale.yaml` or event-enabled `gregale.toml` root.
 // The supported top-level declarations are `schema_version`, `hosting`,
 // `function`, `release`, `lifecycle`, `scaling`, `retry_policy`, `queue_bindings`,
-// `triggers`, `event_triggers`, `async_routes`, `companions`, `main_depends_on`,
+// `triggers`, `event_triggers`, `async_routes`, `routes`, `companions`, `main_depends_on`,
 // `exclusive_operations`, `extensions`, `workflows`, `databases`, `buckets`,
 // and the local-only `dev`
 // profile; other keys are validated strictly (yaml.Decoder.KnownFields(true))
@@ -1468,6 +1482,7 @@ type Manifest struct {
 	OperationWorkflows []OperationWorkflow           `yaml:"operation_workflows,omitempty" toml:"operation_workflows"`
 	ResolvedOperations []api.OperationDefinitionSpec `yaml:"-"`
 	AsyncRoutes        []AsyncRoute                  `yaml:"async_routes,omitempty"`
+	Routes             []PathRoute                   `yaml:"routes,omitempty"` // ADR-20261021223225; nil/empty as AsyncRoutes
 	Companions         []CompanionSpec               `yaml:"companions,omitempty"`
 	// MainDependsOn gates the primary application workload on declared
 	// long-running companions. Init companions remain implicit prerequisites.
@@ -1658,6 +1673,32 @@ func (c *LifecycleConfig) ToAPI() api.UpdateAppRequest {
 		StopSignal:       c.StopSignal,
 		ServiceReplicas:  c.ServiceReplicas,
 	}
+}
+
+// LifecycleRequest is the app update a manifest's lifecycle and worker blocks
+// ask for. The CLI and apid's source deploys apply the same request, so a hook
+// declared in gregale.yaml reaches the app however the source arrives. ok is
+// false when the manifest declares neither block.
+func (m *Manifest) LifecycleRequest() (req api.UpdateAppRequest, ok bool) {
+	if m == nil || ((m.Lifecycle == nil || m.Lifecycle.Empty()) && m.Worker == nil) {
+		return api.UpdateAppRequest{}, false
+	}
+	if m.Lifecycle != nil && !m.Lifecycle.Empty() {
+		req = m.Lifecycle.ToAPI()
+	}
+	if m.Worker != nil {
+		workerMode := api.ExecutionModeWorker
+		req.ExecutionMode = &workerMode
+		req.WorkerReplicas = m.Worker.Scale.ToAPI()
+		if drainTimeout := m.Worker.DrainTimeoutSeconds(); drainTimeout > 0 {
+			req.StopGracePeriodS = &drainTimeout
+		}
+		if m.Worker.StopSignal != "" {
+			sig := m.Worker.StopSignal
+			req.StopSignal = &sig
+		}
+	}
+	return req, true
 }
 
 // Empty reports whether the block contains no desired lifecycle changes.
@@ -2130,7 +2171,7 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		if m.Lifecycle == nil {
 			m.Lifecycle = &LifecycleConfig{}
 		}
-		if m.Lifecycle.Profiling != nil && *m.Lifecycle.Profiling != *m.Profiling {
+		if m.Lifecycle.Profiling != nil && !m.Lifecycle.Profiling.Equal(m.Profiling) {
 			return fmt.Errorf("declare profiling once, at top level or in lifecycle")
 		}
 		m.Lifecycle.Profiling = m.Profiling
@@ -2223,6 +2264,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 			return fmt.Errorf("async_routes[%d]: duplicate route match for app %q", i, route.App)
 		}
 		seenAsyncMatches[route.App+"\x00"+matchKey] = struct{}{}
+	}
+	if err := validatePathRoutes(m.Routes); err != nil {
+		return err
 	}
 	if m.Lifecycle != nil {
 		if err := m.Lifecycle.Validate(); err != nil {

@@ -355,6 +355,7 @@ scaling:
   concurrency_overflow: drop
   max_queue_depth: 11
   max_queue_wait_ms: 1250
+  per_instance_concurrency: 2
 `), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -369,7 +370,8 @@ scaling:
 	if policy.MinInstances != 1 || policy.MaxInstances != 4 || policy.Target == nil ||
 		policy.Target.Metric != "concurrent_requests" || policy.Target.Value != 2 ||
 		policy.ScaleOutCooldownS != defaultScaleOutCooldownS || policy.ScaleInCooldownS != 90 ||
-		policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueDepth != 11 || policy.MaxQueueWaitMS != 1250 {
+		policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueDepth != 11 || policy.MaxQueueWaitMS != 1250 ||
+		policy.PerInstanceConcurrency != 2 {
 		t.Fatalf("policy = %+v, want manifest values plus default scale-out cooldown", policy)
 	}
 }
@@ -390,6 +392,8 @@ func TestScalingConfigValidation(t *testing.T) {
 		{"bad cooldown", &ScalingConfig{ScaleOutCooldownS: &cooldown}, "scale_out_cooldown_s"},
 		{"bad overflow", &ScalingConfig{ConcurrencyOverflow: "reject"}, "concurrency_overflow"},
 		{"bad queue depth", &ScalingConfig{MaxQueueDepth: -1}, "max_queue_depth"},
+		// adr: 20261022203523 — the API applies the plan's upper bound.
+		{"negative per-instance concurrency", &ScalingConfig{PerInstanceConcurrency: -1}, "per_instance_concurrency"},
 		{"bad queue wait", &ScalingConfig{MaxQueueWaitMS: api.MaxConcurrencyQueueWaitMS + 1}, "max_queue_wait_ms"},
 		{"zero queue target", &ScalingConfig{Target: &ScalingTarget{Metric: "queue_depth"}}, "target.value"},
 		// adr: 194 — p99_latency_ms validated for releases with no source
@@ -1436,6 +1440,45 @@ worker:
 	}
 	if err := m.Validate(); err != nil {
 		t.Fatalf("Validate: %v", err)
+	}
+}
+
+// The CLI and apid's source deploys both apply LifecycleRequest, so the
+// lifecycle hooks and worker settings it builds are the app update either
+// path sends.
+func TestManifestLifecycleRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		check         func(t *testing.T, req api.UpdateAppRequest, ok bool)
+	}{
+		{"no lifecycle or worker block", "release:\n  command: ./migrate\n", func(t *testing.T, _ api.UpdateAppRequest, ok bool) {
+			if ok {
+				t.Fatal("a manifest without lifecycle or worker asked for an app update")
+			}
+		}},
+		{"lifecycle hooks", "lifecycle:\n  before_checkpoint:\n    path: /internal/before-checkpoint\n    timeout_ms: 2000\n  after_restore:\n    path: /internal/after-restore\n    timeout_ms: 1500\n",
+			func(t *testing.T, req api.UpdateAppRequest, ok bool) {
+				if !ok || req.BeforeCheckpoint == nil || req.BeforeCheckpoint.Path != "/internal/before-checkpoint" || req.BeforeCheckpoint.TimeoutMS != 2000 ||
+					req.AfterRestore == nil || req.AfterRestore.Path != "/internal/after-restore" || req.AfterRestore.TimeoutMS != 1500 || req.ExecutionMode != nil {
+					t.Fatalf("request = %+v, ok=%v", req, ok)
+				}
+			}},
+		{"worker block", "worker:\n  command: ./consumer\n  drain_timeout: 45s\n  stop_signal: SIGINT\n  scale:\n    min: 0\n    max: 50\n    metric: queue_lag\n    target: 500\n",
+			func(t *testing.T, req api.UpdateAppRequest, ok bool) {
+				if !ok || req.ExecutionMode == nil || *req.ExecutionMode != api.ExecutionModeWorker || req.WorkerReplicas == nil ||
+					req.StopGracePeriodS == nil || *req.StopGracePeriodS != 45 || req.StopSignal == nil || *req.StopSignal != "SIGINT" {
+					t.Fatalf("request = %+v, ok=%v", req, ok)
+				}
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := ParseBytes([]byte(tc.content))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, ok := m.LifecycleRequest()
+			tc.check(t, req, ok)
+		})
 	}
 }
 

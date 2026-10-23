@@ -66,6 +66,7 @@ if TYPE_CHECKING:
     from ..models.rollback_operation import RollbackOperation
     from ..models.rollout_decision import RolloutDecision
     from ..models.scan_result import ScanResult
+    from ..models.scheduled_release import ScheduledRelease
     from ..models.secret_scan_result import SecretScanResult
     from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
     from ..models.workflow_spec import WorkflowSpec
@@ -101,6 +102,8 @@ class DeploymentResponse:
     tasks. Overdue spans passed their deadline without a recorded outcome."""
     promotion_hold: DeploymentPromotionHold | Unset = UNSET
     """Compatibility hold and durable recovery progress for a deployment awaiting promotion."""
+    scheduled_release: ScheduledRelease | Unset = UNSET
+    """A release built ahead of time that starts its rollout at release_at (ADR-20261021152201)."""
     durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset = UNSET
     """Observational validator readiness on deployment detail; not a reservation or code-purity attestation."""
     stage_state: DeploymentStageState | Unset = UNSET
@@ -332,6 +335,10 @@ class DeploymentResponse:
         promotion_hold: dict[str, Any] | Unset = UNSET
         if not isinstance(self.promotion_hold, Unset):
             promotion_hold = self.promotion_hold.to_dict()
+
+        scheduled_release: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.scheduled_release, Unset):
+            scheduled_release = self.scheduled_release.to_dict()
 
         durable_entity_validator: dict[str, Any] | Unset = UNSET
         if not isinstance(self.durable_entity_validator, Unset):
@@ -666,6 +673,8 @@ class DeploymentResponse:
             field_dict["worker_drain"] = worker_drain
         if promotion_hold is not UNSET:
             field_dict["promotion_hold"] = promotion_hold
+        if scheduled_release is not UNSET:
+            field_dict["scheduled_release"] = scheduled_release
         if durable_entity_validator is not UNSET:
             field_dict["durable_entity_validator"] = durable_entity_validator
         if stage_state is not UNSET:
@@ -811,6 +820,7 @@ class DeploymentResponse:
         from ..models.rollback_operation import RollbackOperation
         from ..models.rollout_decision import RolloutDecision
         from ..models.scan_result import ScanResult
+        from ..models.scheduled_release import ScheduledRelease
         from ..models.secret_scan_result import SecretScanResult
         from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
         from ..models.workflow_spec import WorkflowSpec
@@ -856,6 +866,13 @@ class DeploymentResponse:
             promotion_hold = UNSET
         else:
             promotion_hold = DeploymentPromotionHold.from_dict(_promotion_hold)
+
+        _scheduled_release = d.pop("scheduled_release", UNSET)
+        scheduled_release: ScheduledRelease | Unset
+        if isinstance(_scheduled_release, Unset):
+            scheduled_release = UNSET
+        else:
+            scheduled_release = ScheduledRelease.from_dict(_scheduled_release)
 
         _durable_entity_validator = d.pop("durable_entity_validator", UNSET)
         durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset
@@ -1440,6 +1457,7 @@ class DeploymentResponse:
             staged_review=staged_review,
             worker_drain=worker_drain,
             promotion_hold=promotion_hold,
+            scheduled_release=scheduled_release,
             durable_entity_validator=durable_entity_validator,
             stage_state=stage_state,
             dev_patch=dev_patch,

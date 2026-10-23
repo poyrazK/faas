@@ -20,6 +20,10 @@
 //	-no-healthz    omit /healthz so TCP readiness is the only boot contract
 //	-durable-counter serve the pure durable entity counter protocol
 //	-echo-session  interactive app-task fixture: report tty and size, echo lines
+//	-queue-consumer pull-queue worker: fetch a gregale:queues token, never listen
+//	-pprof-addr A  serve net/http/pprof on A and skip the Gregale collector
+//
+// GET /work burns CPU and retains heap for profile captures (ADR-1155).
 package main
 
 import (
@@ -74,12 +78,16 @@ func main() {
 	workerIsolation := flag.Bool("assert-worker-task-isolation", false, "require a fresh task guest without a worker entrypoint or queue listener")
 	gitOpsResilience := flag.Bool("gitops-resilience", false, "allow bounded native acceptance request and queue delays")
 	durableCounter := flag.Bool("durable-counter", false, "serve pure durable entity transitions")
+	printFile := flag.String("print-file", "", "print this file to stdout and exit (a shell-free cat for fork exec tests)")
+	crashCapture := flag.Bool("crash-capture", false, "serve /boom, which asks for an ADR-733 crash capture of itself")
 	echoSession := flag.Bool("echo-session", false, "run the interactive app-task fixture instead of serving")
 	identityProbe := flag.Bool("identity-probe", false, "serve /identity, which fetches a workload identity token from guest-init")
+	queueConsumer := flag.Bool("queue-consumer", false, "run as a pull-queue worker: fetch a gregale:queues token, never listen")
 	failAPI := flag.Bool("fail-api", false, "answer /api with 500 while / and /healthz stay healthy (bad release)")
 	failLivez := flag.Bool("fail-livez", false, "answer /livez with 500 while /healthz stays healthy (crash loop)")
 	failRootAfter := flag.Int64("fail-root-after-requests", 0, "answer / with 500 after this many / requests, so a release passes its post-readiness smoke and fails later (0 disables)")
 	delayRoot := flag.Duration("delay-root", 0, "wait this long before answering / (a release that is slow at full traffic, ADR-1445)")
+	pprofAddr := flag.String("pprof-addr", "", "serve net/http/pprof on this address instead of starting the Gregale collector")
 	flag.Parse()
 	if *workerIsolation {
 		if err := assertWorkerTaskIsolation(workerStartupMarker, "127.0.0.1:8080"); err != nil {
@@ -95,6 +103,19 @@ func main() {
 	}
 	if *echoSession {
 		runEchoSession()
+		return
+	}
+	if *printFile != "" {
+		data, err := os.ReadFile(*printFile)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+		_, _ = os.Stdout.Write(data)
+		os.Exit(0)
+	}
+	if *queueConsumer {
+		runQueueConsumer()
 		return
 	}
 	if *addr == "" {
@@ -130,6 +151,11 @@ func main() {
 		return
 	}
 
+	if *pprofAddr != "" {
+		servePprof(*pprofAddr)
+	} else {
+		startProfiling()
+	}
 	if *ignoreTerm {
 		signal.Ignore(syscall.SIGTERM)
 	}
@@ -156,6 +182,9 @@ func main() {
 	}
 	if *durableCounter {
 		mux.HandleFunc("/__gregale/entities", serveDurableCounter)
+	}
+	if *crashCapture {
+		serveCrashCapture(mux)
 	}
 	if *contract {
 		var mu sync.Mutex
@@ -193,6 +222,12 @@ func main() {
 	if !*noHealthz {
 		mux.HandleFunc("/healthz", func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	}
+	mux.HandleFunc("/work", serveWork)
+	mux.HandleFunc("/grow", serveGrow)
+	mux.HandleFunc("/release", serveRelease)
+	mux.HandleFunc("/hang", serveHang)
+	mux.HandleFunc("/spin", serveSpin)
+	mux.HandleFunc("/contend", serveContend)
 	if *queueAck {
 		mux.HandleFunc("/_triggers/esm/", func(w http.ResponseWriter, r *http.Request) {
 			if r.Method != http.MethodPost {

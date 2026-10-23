@@ -277,22 +277,68 @@ func (s *PgStore) ClaimDuePublishedEventForRecipientAdoption(ctx context.Context
 	return s.claimDuePublishedEvent(ctx, now, true)
 }
 func (s *PgStore) claimDuePublishedEvent(ctx context.Context, now time.Time, adopt bool) (*PublishedEventWork, error) {
-	var work PublishedEventWork
-	var payload []byte
-	var snapshot []byte
-	var progress []byte
 	row, err := sqlc.New().EventRoutingClaimReceipt(ctx, s.pool, sqlc.EventRoutingClaimReceiptParams{NowAt: pgtypeFromTime(now), ForRecipientAdoption: adopt})
-	if err == nil {
-		work.ID, work.ClaimToken, work.Attempts = row.ID, uuidString(row.ClaimToken), int(row.Attempts)
-		work.LeaseUntil, work.CreatedAt = timeFromPgtype(row.LeaseUntil), timeFromPgtype(row.CreatedAt)
-		payload, snapshot, progress = row.Payload, row.RecipientSnapshot, row.RecipientProgress
-	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("claim published event: %w", err)
 	}
+	return publishedEventWorkFromClaim(sqlc.EventRoutingClaimReceiptsForAdoptionRow{ID: row.ID, ClaimToken: row.ClaimToken,
+		Attempts: row.Attempts, LeaseUntil: row.LeaseUntil, CreatedAt: row.CreatedAt, Payload: row.Payload,
+		RecipientSnapshot: row.RecipientSnapshot, RecipientProgress: row.RecipientProgress})
+}
+
+// PublishedEventAdoptionBatchClaimStore claims up to limit receipts for
+// recipient adoption in one scan, in the order that many single adoption
+// claims would take them. Release returns a claim the caller did not adopt.
+type PublishedEventAdoptionBatchClaimStore interface {
+	ClaimDuePublishedEventsForRecipientAdoption(ctx context.Context, now time.Time, limit int) ([]*PublishedEventWork, error)
+	ReleasePublishedEventAdoptionClaim(context.Context, *PublishedEventWork) error
+}
+
+func (s *PgStore) ClaimDuePublishedEventsForRecipientAdoption(ctx context.Context, now time.Time, limit int) ([]*PublishedEventWork, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := sqlc.New().EventRoutingClaimReceiptsForAdoption(ctx, s.pool, sqlc.EventRoutingClaimReceiptsForAdoptionParams{
+		NowAt: pgtypeFromTime(now), BatchLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("claim published events for adoption: %w", err)
+	}
+	works := make([]*PublishedEventWork, 0, len(rows))
+	for _, row := range rows {
+		work, err := publishedEventWorkFromClaim(row)
+		if err != nil {
+			return nil, err
+		}
+		works = append(works, work)
+	}
+	return works, nil
+}
+
+func (s *PgStore) ReleasePublishedEventAdoptionClaim(ctx context.Context, work *PublishedEventWork) error {
+	if work == nil {
+		return ErrConflict
+	}
+	n, err := sqlc.New().EventRoutingReleaseAdoptionClaim(ctx, s.pool, sqlc.EventRoutingReleaseAdoptionClaimParams{
+		ID: work.ID, ClaimToken: mustPgUUID(work.ClaimToken),
+	})
+	if err != nil {
+		return fmt.Errorf("release published event adoption claim: %w", err)
+	}
+	if n == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func publishedEventWorkFromClaim(row sqlc.EventRoutingClaimReceiptsForAdoptionRow) (*PublishedEventWork, error) {
+	var work PublishedEventWork
+	work.ID, work.ClaimToken, work.Attempts = row.ID, uuidString(row.ClaimToken), int(row.Attempts)
+	work.LeaseUntil, work.CreatedAt = timeFromPgtype(row.LeaseUntil), timeFromPgtype(row.CreatedAt)
+	payload, snapshot, progress := row.Payload, row.RecipientSnapshot, row.RecipientProgress
 	work.Payload = payload
 	if snapshot != nil {
 		work.SnapshotCaptured = true
@@ -676,6 +722,15 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	} else {
 		recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
 	}
+	// ADR-20261021210000: an app enrolled in a rehearsal never receives the
+	// account's events, mirroring enqueue_event_fanout.
+	kept := recipients[:0]
+	for _, recipient := range recipients {
+		if _, enrolled := m.scenarioActionPolicyLocked(recipient.AppID); !enrolled {
+			kept = append(kept, recipient)
+		}
+	}
+	recipients = kept
 	nextID := m.eventFanoutNextID + 1
 	for index := range recipients {
 		work := recipients[index].Work
@@ -734,6 +789,37 @@ func (m *MemStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*
 }
 func (m *MemStore) ClaimDuePublishedEventForRecipientAdoption(ctx context.Context, now time.Time) (*PublishedEventWork, error) {
 	return m.claimDuePublishedEvent(ctx, now, true)
+}
+
+func (m *MemStore) ClaimDuePublishedEventsForRecipientAdoption(ctx context.Context, now time.Time, limit int) ([]*PublishedEventWork, error) {
+	var works []*PublishedEventWork
+	for len(works) < limit {
+		work, err := m.claimDuePublishedEvent(ctx, now, true)
+		if errors.Is(err, ErrNotFound) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		works = append(works, work)
+	}
+	return works, nil
+}
+
+func (m *MemStore) ReleasePublishedEventAdoptionClaim(_ context.Context, claimed *PublishedEventWork) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if claimed == nil {
+		return ErrConflict
+	}
+	work := m.routingReceiptLocked(claimed.ID)
+	if work == nil || work.RecipientClaims || work.ClaimToken == "" || work.ClaimToken != claimed.ClaimToken {
+		return ErrConflict
+	}
+	work.ClaimToken = ""
+	work.LeaseUntil = time.Time{}
+	work.Attempts--
+	return nil
 }
 func (m *MemStore) claimDuePublishedEvent(_ context.Context, now time.Time, adopt bool) (*PublishedEventWork, error) {
 	m.mu.Lock()

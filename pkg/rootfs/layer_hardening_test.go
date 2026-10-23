@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -165,5 +166,109 @@ func TestApplyLayerGzToleratesBytesAfterTheGzipStream(t *testing.T) {
 	layer := io.MultiReader(gzLayer(t, []entry{{name: "a", body: "content"}}), strings.NewReader("trailing bytes that are not gzip"))
 	if err := ApplyLayerGz(t.TempDir(), layer); err != nil {
 		t.Fatalf("ApplyLayerGz: %v", err)
+	}
+}
+
+// The byte budget counts only file content, so empty files, directories and
+// links are free. A small compressed layer of empty entries must still stop
+// at the entry cap instead of creating millions of inodes on the node's image
+// staging filesystem.
+func TestLayerExtractionEntryCapIsSharedAcrossLayers(t *testing.T) {
+	staging := t.TempDir()
+	budget := newExtractionBudget(1 << 20)
+	budget.maxEntries = 3
+	if err := applyLayerGzForApp(staging, gzLayer(t, []entry{{name: "a"}, {name: "b"}}), budget); err != nil {
+		t.Fatalf("first layer: %v", err)
+	}
+	err := applyLayerGzForApp(staging, gzLayer(t, []entry{{name: "c"}, {name: "d"}}), budget)
+	var entriesErr *ErrLayerExtractionTooManyEntries
+	if !errors.As(err, &entriesErr) || entriesErr.LimitEntries != 3 {
+		t.Fatalf("second layer error = %v, want an entry cap error", err)
+	}
+	if _, err := os.Stat(filepath.Join(staging, "d")); !os.IsNotExist(err) {
+		t.Fatalf("over-cap entry was written: %v", err)
+	}
+}
+
+func TestLayerExtractionEntryCapDefaultsToTheScanBound(t *testing.T) {
+	if got, want := newExtractionBudget(1).maxEntries, api.ApplicationStandardRuntimeScanMaxEntries*api.LayerExtractionBudgetMultiple; got != want || got != api.LayerExtractionMaxEntries {
+		t.Fatalf("maxEntries = %d, want %d (api.LayerExtractionMaxEntries %d)", got, want, api.LayerExtractionMaxEntries)
+	}
+}
+
+func TestLayerApplyErrorReportsEntryCapAsAppLayerProblem(t *testing.T) {
+	limits, ok := api.LimitsFor(api.PlanFree)
+	if !ok {
+		t.Fatal("no Free limits")
+	}
+	err := layerApplyError(limits, 1, &ErrLayerExtractionTooManyEntries{LimitEntries: 2_000_000})
+	var problem *api.Problem
+	if !errors.As(err, &problem) || problem.Code != api.CodeAppLayerTooBig || !strings.Contains(problem.Detail, "2000000") {
+		t.Fatalf("error = %v, want the app-layer-too-big Problem naming the entry limit", err)
+	}
+}
+
+// An entry naming the staging root (".", "./.", "a/..") may only be a
+// directory. A symlink there replaced the empty root with a link, and every
+// later entry was written wherever it pointed: with imaged's staging under
+// /srv/fc/base, "./ -> .." reached the shared base images.
+func TestLayerEntryCannotReplaceStagingRoot(t *testing.T) {
+	for _, rootName := range []string{".", "./.", "a/.."} {
+		for _, kind := range []byte{tar.TypeSymlink, tar.TypeLink, tar.TypeReg} {
+			t.Run(fmt.Sprintf("%q/%c", rootName, kind), func(t *testing.T) {
+				root := t.TempDir()
+				outside := filepath.Join(root, "outside")
+				staging := filepath.Join(root, "staging")
+				for _, dir := range []string{outside, staging} {
+					if err := os.MkdirAll(dir, 0o755); err != nil {
+						t.Fatal(err)
+					}
+				}
+				layer := gzLayer(t, []entry{
+					{name: rootName, typeflag: kind, linkname: "../outside"},
+					{name: "./planted", body: "x"},
+				})
+				err := applyLayerGzForApp(staging, layer, newExtractionBudget(1<<20))
+				if err == nil {
+					t.Fatal("a non-directory entry at the image root was accepted")
+				}
+				if info, statErr := os.Lstat(staging); statErr != nil || !info.IsDir() {
+					t.Fatalf("staging root replaced: %v %v", info, statErr)
+				}
+				if _, statErr := os.Stat(filepath.Join(outside, "planted")); !os.IsNotExist(statErr) {
+					t.Fatalf("entry written outside staging: %v", statErr)
+				}
+			})
+		}
+	}
+	// A directory entry for the root stays valid: real layers carry "./".
+	if err := applyLayerGzForApp(t.TempDir(), gzLayer(t, []entry{{name: "./", typeflag: tar.TypeDir}, {name: "./f", body: "x"}}), newExtractionBudget(1<<20)); err != nil {
+		t.Fatalf("root directory entry rejected: %v", err)
+	}
+}
+
+// Function source tarballs share applyEntry. A symlink named "." must not
+// replace the /app directory and redirect the rest of the archive.
+func TestFunctionTarballEntryCannotReplaceAppRoot(t *testing.T) {
+	root := t.TempDir()
+	staging := filepath.Join(root, "staging")
+	if err := os.MkdirAll(filepath.Join(staging, "app"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, gzLayer(t, []entry{
+		{name: ".", typeflag: tar.TypeSymlink, linkname: "../.."},
+		{name: "planted", body: "x"},
+	})); err != nil {
+		t.Fatal(err)
+	}
+	if err := applyTarballWithCap(filepath.Join(staging, "app"), &buf, 1<<20, ""); err == nil {
+		t.Fatal("a symlink at the function source root was accepted")
+	}
+	if info, err := os.Lstat(filepath.Join(staging, "app")); err != nil || !info.IsDir() {
+		t.Fatalf("app root replaced: %v %v", info, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, "planted")); !os.IsNotExist(err) {
+		t.Fatalf("entry written outside staging: %v", err)
 	}
 }
