@@ -19,6 +19,15 @@ type CustomDomainChallengeVerifier interface {
 	MarkDomainVerifiedIfChallenge(ctx context.Context, domain, token string) (bool, error)
 }
 
+// CustomDomainClaimTakeover replaces another account's unverified claim once
+// the claimant proved control of the domain's DNS (ADR-20261020090500).
+type CustomDomainClaimTakeover interface {
+	TakeOverCustomDomainClaim(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error)
+}
+
+var _ CustomDomainClaimTakeover = (*PgStore)(nil)
+var _ CustomDomainClaimTakeover = (*MemStore)(nil)
+
 type CustomDomainQuotaError struct {
 	Scope string
 	Limit int
@@ -30,7 +39,7 @@ func (e *CustomDomainQuotaError) Error() string {
 func (e *CustomDomainQuotaError) Unwrap() error { return ErrCustomDomainQuotaExceeded }
 
 func (s *PgStore) CreateCustomDomainIfUnderQuota(ctx context.Context, domain, appID, token string, appLimit, accountLimit int) (CustomDomain, error) {
-	d, _, err := s.createCustomDomainIfUnderQuota(ctx, domain, appID, "", token, appLimit, accountLimit, nil)
+	d, _, err := s.createCustomDomainIfUnderQuota(ctx, domain, appID, "", token, appLimit, accountLimit, nil, false)
 	return d, err
 }
 
@@ -41,7 +50,7 @@ func (s *PgStore) CreateCustomDomainInEnvironmentIfUnderQuota(ctx context.Contex
 	if environmentID == "" {
 		return CustomDomain{}, ErrInvalidArgument
 	}
-	d, _, err := s.createCustomDomainIfUnderQuota(ctx, domain, appID, environmentID, token, appLimit, accountLimit, nil)
+	d, _, err := s.createCustomDomainIfUnderQuota(ctx, domain, appID, environmentID, token, appLimit, accountLimit, nil, false)
 	return d, err
 }
 
@@ -50,7 +59,7 @@ func (s *PgStore) CreateCustomDomainIfUnderQuotaWithActivity(ctx context.Context
 	if err != nil {
 		return CustomDomain{}, 0, err
 	}
-	return s.createCustomDomainIfUnderQuota(ctx, domain, appID, "", token, appLimit, accountLimit, &entry)
+	return s.createCustomDomainIfUnderQuota(ctx, domain, appID, "", token, appLimit, accountLimit, &entry, false)
 }
 
 func (s *PgStore) CreateCustomDomainInEnvironmentIfUnderQuotaWithActivity(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int, entry OrgActivity) (CustomDomain, int64, error) {
@@ -61,10 +70,21 @@ func (s *PgStore) CreateCustomDomainInEnvironmentIfUnderQuotaWithActivity(ctx co
 	if err != nil {
 		return CustomDomain{}, 0, err
 	}
-	return s.createCustomDomainIfUnderQuota(ctx, domain, appID, environmentID, token, appLimit, accountLimit, &entry)
+	return s.createCustomDomainIfUnderQuota(ctx, domain, appID, environmentID, token, appLimit, accountLimit, &entry, false)
 }
 
-func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int, entry *OrgActivity) (CustomDomain, int64, error) {
+// TakeOverCustomDomainClaim claims domain for appID over another account's
+// unverified claim, expired or not. The caller must first have observed
+// ClaimTakeoverToken at the domain's challenge name; token is that value and
+// becomes the new row's challenge, so the poller verifies it as usual. A
+// verified row, or an unverified one of appID's own account, still returns
+// ErrConflict (ADR-20261020090500).
+func (s *PgStore) TakeOverCustomDomainClaim(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error) {
+	d, _, err := s.createCustomDomainIfUnderQuota(ctx, domain, appID, environmentID, token, appLimit, accountLimit, nil, true)
+	return d, err
+}
+
+func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int, entry *OrgActivity, takeover bool) (CustomDomain, int64, error) {
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return CustomDomain{}, 0, err
@@ -96,9 +116,11 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 		return CustomDomain{}, 0, &CustomDomainQuotaError{"account", accountLimit}
 	}
 	// A pending claim is deliberately exclusive only until its verification
-	// deadline. ON CONFLICT performs the handoff under the domain primary-key
-	// lock, so two accounts racing to reclaim an expired claim cannot both win.
-	// Verified and still-active pending rows fail closed and remain untouched.
+	// deadline, or until another account proves control of the domain's DNS
+	// (takeover). ON CONFLICT performs the handoff under the domain
+	// primary-key lock, so two accounts racing to reclaim a claim cannot both
+	// win. Verified rows, and an active pending row of the claimant's own
+	// account, fail closed and remain untouched.
 	row := tx.QueryRow(ctx, `
 		insert into custom_domains(domain,app_id,challenge_token,environment_id)
 		values($1,$2,$3,nullif($4,'')::uuid)
@@ -118,12 +140,15 @@ func (s *PgStore) createCustomDomainIfUnderQuota(ctx context.Context, domain, ap
 		    verification_attempts = 0,
 		    verification_expires_at = now() + interval '7 days'
 		where custom_domains.verified_at is null
-		  and custom_domains.verification_expires_at <= now()
+		  and (custom_domains.verification_expires_at <= now()
+		       or ($5::boolean and not exists (
+		             select 1 from apps holder
+		              where holder.id = custom_domains.app_id and holder.account_id = $6::uuid)))
 		returning domain,app_id,challenge_token,coalesce(verified_at,'epoch'),
 		          cert_status,coalesce(cert_expires_at,'epoch'),
 		          coalesce(cert_last_error,''),coalesce(dns_last_checked_at,'epoch'),
 		          coalesce(cert_failed_at,'epoch'),verification_next_check_at,
-		          verification_expires_at,verification_attempts,coalesce(environment_id::text,'')`, domain, appID, token, environmentID)
+		          verification_expires_at,verification_attempts,coalesce(environment_id::text,'')`, domain, appID, token, environmentID, takeover, accountID)
 	var d CustomDomain
 	if err = scanCustomDomain(row, &d); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -197,7 +222,7 @@ func (m *MemStore) CreateCustomDomainInEnvironmentIfUnderQuota(ctx context.Conte
 func (m *MemStore) createCustomDomainIfUnderQuota(_ context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token, appLimit, accountLimit)
+	return m.createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token, appLimit, accountLimit, false)
 }
 
 func (m *MemStore) CreateCustomDomainIfUnderQuotaWithActivity(ctx context.Context, domain, appID, token string, appLimit, accountLimit int, entry OrgActivity) (CustomDomain, int64, error) {
@@ -218,14 +243,21 @@ func (m *MemStore) createCustomDomainWithActivity(_ context.Context, domain, app
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	d, err := m.createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token, appLimit, accountLimit)
+	d, err := m.createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token, appLimit, accountLimit, false)
 	if err != nil {
 		return CustomDomain{}, 0, err
 	}
 	return d, m.enqueueOrgActivityOutboxLocked(entry), nil
 }
 
-func (m *MemStore) createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error) {
+// TakeOverCustomDomainClaim mirrors PgStore.TakeOverCustomDomainClaim.
+func (m *MemStore) TakeOverCustomDomainClaim(_ context.Context, domain, appID, environmentID, token string, appLimit, accountLimit int) (CustomDomain, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token, appLimit, accountLimit, true)
+}
+
+func (m *MemStore) createCustomDomainIfUnderQuotaLocked(domain, appID, environmentID, token string, appLimit, accountLimit int, takeover bool) (CustomDomain, error) {
 	a, ok := m.apps[appID]
 	if !ok {
 		return CustomDomain{}, ErrNotFound
@@ -241,7 +273,9 @@ func (m *MemStore) createCustomDomainIfUnderQuotaLocked(domain, appID, environme
 	}
 	now := time.Now()
 	if current, exists := m.domains[domain]; exists {
-		if current.Verified() || current.VerificationExpiresAt.IsZero() || current.VerificationExpiresAt.After(now) {
+		live := current.VerificationExpiresAt.IsZero() || current.VerificationExpiresAt.After(now)
+		ownAccount := m.apps[current.AppID].AccountID == a.AccountID
+		if current.Verified() || (live && (!takeover || ownAccount)) {
 			return CustomDomain{}, ErrConflict
 		}
 	}

@@ -3316,6 +3316,15 @@ type CustomDomain struct {
 // Verified reports whether the TXT challenge has been satisfied.
 func (d CustomDomain) Verified() bool { return !d.VerifiedAt.IsZero() }
 
+// ClaimLive reports whether the row still reserves its hostname: it is
+// verified, or its verification deadline has not passed. An expired challenge
+// is not an ownership record; it must not shadow a broader route, deny a
+// certificate or block another reservation. A zero deadline predates the
+// column and never expires.
+func (d CustomDomain) ClaimLive(now time.Time) bool {
+	return d.Verified() || d.VerificationExpiresAt.IsZero() || d.VerificationExpiresAt.After(now)
+}
+
 // DomainDoctorObservation (ADR-120) is the dns_poller's
 // view of a per-domain probe pass. The struct mirrors the
 // domain_doctor_observations table (migrations/00309) so
@@ -5299,7 +5308,19 @@ const (
 	// (ADR-137) the run-to-completion RestartPolicy default 'no'
 	// applies; billed at standard rate while RUNNING.
 	InstanceModeJob InstanceMode = "job"
+	// InstanceModeFork tags a production fork (ADR-732): a quarantined
+	// restore of an app capture that never serves traffic. It bills like
+	// a live instance, counts toward the RAM ceiling but not
+	// max_concurrency, is never routed, never idle-reaped, parked,
+	// snapshotted or drained, and is destroyed only by the fork
+	// coordinator at its TTL.
+	InstanceModeFork InstanceMode = "fork"
 )
+
+// IsFork reports whether mode is the ADR-732 production-fork mode. Every
+// path that routes to, counts, parks or snapshots instances must skip
+// these rows.
+func IsFork(mode string) bool { return mode == string(InstanceModeFork) }
 
 // MirrorRule (issue #72 / ADR-125) is the customer-intent row
 // that links a live source_deployment to a live mirror_deployment.

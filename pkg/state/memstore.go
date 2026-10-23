@@ -147,6 +147,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// totpLastSteps is each account's last accepted TOTP step
+	// (AcceptTOTPStep), created on first use.
+	totpLastSteps                              map[string]int64
 	migrationContracts                         map[string]projectMigrationContract
 	projectCanaries                            map[string]projectCanaryRecord
 	workerReleasePins                          map[string]projectWorkerReleasePin
@@ -972,6 +975,13 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appForks are production fork intents (ADR-732), keyed by fork id.
+	appForks map[string]AppFork
+	// appForkExecs mirrors app_fork_execs (ADR-732 fork exec).
+	appForkExecs map[string]AppForkExec
+	// crashCaptures / crashSettings are ADR-733 crash snapshots.
+	crashCaptures map[string]CrashCapture
+	crashSettings map[string]CrashSnapshotSettings
 	// appTaskAttach holds ADR-1037 interactive-session records by task id.
 	appTaskAttach map[string]AppTaskAttach
 	// jobRunAttach holds ADR-1330 interactive image-run sessions by run id.
@@ -7214,6 +7224,11 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.appTasks, key)
 		}
 	}
+	for key, fork := range m.appForks {
+		if fork.AppID == id {
+			delete(m.appForks, key)
+		}
+	}
 	for key, v := range m.crons {
 		if v.AppID == id {
 			delete(m.crons, key)
@@ -12547,16 +12562,17 @@ func (m *MemStore) DefaultCustomDomain(_ context.Context, appID string) (string,
 	return domain, nil
 }
 
-// WildcardDomainForHost returns the most-specific wildcard custom domain that
-// covers host. The strict suffix check keeps example.com from matching
+// WildcardDomainForHost returns the most-specific live wildcard custom domain
+// that covers host. The strict suffix check keeps example.com from matching
 // *.example.com and prevents look-alike domains such as badexample.com from
-// matching.
+// matching. An expired, unverified claim is skipped (CustomDomain.ClaimLive).
 func (m *MemStore) WildcardDomainForHost(_ context.Context, host string) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := time.Now()
 	var best CustomDomain
 	for _, d := range m.domains {
-		if !WildcardMatchesHost(d.Domain, host) {
+		if !WildcardMatchesHost(d.Domain, host) || !d.ClaimLive(now) {
 			continue
 		}
 		if best.Domain == "" || len(d.Domain) > len(best.Domain) {
@@ -16480,7 +16496,7 @@ func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Insta
 	var newest Instance
 	found := false
 	for _, ins := range m.instances {
-		if ins.AppID != appID || ins.State != "running" {
+		if ins.AppID != appID || ins.State != "running" || IsFork(ins.Mode) {
 			continue
 		}
 		dep, ok := m.deployments[ins.DeploymentID]
