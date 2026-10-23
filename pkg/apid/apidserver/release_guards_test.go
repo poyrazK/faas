@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -149,6 +150,8 @@ func TestReleaseGatesRoundTripAndValidate(t *testing.T) {
 	e := f.e
 	if rec := guardDo(t, e, http.MethodPost, "/v1/apps/gate-crud/release-gates", api.CreateReleaseGateRequest{Name: "checkout", Kind: "slo", SLO: "missing"}, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("gate on a missing SLO = %d %s, want 400", rec.Code, rec.Body)
+	} else if !strings.Contains(rec.Body.String(), "gregale slos list --app gate-crud") {
+		t.Fatalf("missing-SLO hint names the wrong command: %s", rec.Body)
 	}
 	var gate api.ReleaseGate
 	if rec := guardDo(t, e, http.MethodPost, "/v1/apps/gate-crud/release-gates", api.CreateReleaseGateRequest{Name: "no-new-errors", Kind: "new_errors"}, &gate); rec.Code != http.StatusCreated {

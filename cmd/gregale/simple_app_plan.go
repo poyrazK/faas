@@ -7,6 +7,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/simpleapp"
 )
 
@@ -116,4 +117,22 @@ func renderSimpleAppPlan(w io.Writer, plan simpleapp.Plan, jsonMode bool, previe
 	}
 	_, _ = fmt.Fprintln(w, "No remote state changed. This is local inference, not a saved apply plan; deploy rechecks the source and remote state.")
 	return 0
+}
+
+// manifestDeployExecutionMode is the execution mode gregale.yaml declares for
+// the app: worker when it has a worker: section, else lifecycle.execution_mode.
+// An unreadable manifest yields "" here; the deploy reports it when it saves
+// the manifest's settings.
+func manifestDeployExecutionMode(dir string) string {
+	m, found, err := gregalemanifest.Load(dir)
+	if err != nil || !found || m == nil {
+		return ""
+	}
+	if m.Worker != nil {
+		return api.ExecutionModeWorker
+	}
+	if m.Lifecycle != nil && m.Lifecycle.ExecutionMode != nil {
+		return strings.TrimSpace(*m.Lifecycle.ExecutionMode)
+	}
+	return ""
 }

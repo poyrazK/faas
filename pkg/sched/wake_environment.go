@@ -106,6 +106,9 @@ func (e *Engine) resolveWakeEnvironmentForDeployment(ctx context.Context, appID 
 		selected.deployment, err = e.store.LiveDeploymentForScope(ctx, appID, ScopeFrom(ctx))
 	}
 	if err != nil {
+		if errors.Is(err, state.ErrNotFound) && deploymentID == "" && ScopeFrom(ctx) == "" {
+			return selected, noProductionDeploymentErr(ctx, e.store, appID)
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			return selected, errors.Join(ErrPermanentWake, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "No live deployment", "the app has no live deployment to wake"))
 		}

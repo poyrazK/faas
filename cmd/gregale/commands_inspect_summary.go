@@ -506,10 +506,13 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	// hunt #8 (H8-23): a parked worker showed only "evicted_cold" and advice
 	// to redeploy, which never restarts a parked app.
 	if summary.App.Status == "evicted_cold" && summary.App.ParkedReason != "security_scan_regressed" {
-		message := "This app is parked; it does not run or wake on its own."
-		next := "Run `gregale wake " + summary.App.Slug + "` to start it again."
+		// The next request wakes a parked app (gregale park: "until its next
+		// request"); "does not run or wake on its own" read as if requests
+		// were refused (Hunt 12 H12-60).
+		message := "This app is parked: its instances are stopped until the next request wakes it."
+		next := "Send a request, or run `gregale wake " + summary.App.Slug + "` to start it now."
 		if summary.App.ParkedReason == "liveness_exhausted" {
-			message = "This app is parked because its instances repeatedly failed liveness checks or crashed."
+			message = "This app is parked because its instances repeatedly failed liveness checks or crashed; the next request starts it again."
 			next = "Fix the failure (see `gregale logs " + summary.App.Slug + " --since 1h`), deploy, then run `gregale wake " + summary.App.Slug + "`."
 		}
 		add("app_parked", "error", message, next)
@@ -520,6 +523,13 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		add("deploy_required", "warning", "No deployment was found for this app.", "Run `gregale deploy` from the application source directory.")
 	} else if summary.Release.Status == "failed" {
 		add("deployment_failed", "error", "The latest deployment failed.", "Run `gregale inspect "+summary.App.Slug+" --errors` for the persisted explanation.")
+	} else if summary.Release.Status == "live" && summary.Release.TrafficPercent == 0 {
+		// selectInspectDeployments prefers a traffic-bearing release, so a
+		// live release at 0% means none serves: h12-mcp's deploy stopped
+		// before promotion and inspect led with a profile warning while every
+		// request got 404 (Hunt 12 H12-59).
+		add("no_traffic", "error", "No deployment receives traffic, so requests to this app fail.",
+			"Check why deployment "+summary.Release.DeploymentID+" was not promoted, then run `gregale traffic promote --app "+summary.App.Slug+" --deployment "+summary.Release.DeploymentID+"`.")
 	} else if summary.Release.Status == "live" && (summary.Runtime.Health == nil || summary.Runtime.Health.Status != apihostingreceipt.SmokeVerified) {
 		if summary.Runtime.Health != nil && (summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorNotConfigured || summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorVerifierNotConfigured) {
 			add("health_verifier_unconfigured", "error", "The public smoke verifier is not configured, so this deployment is not externally verified.", "External health verification is not available on this Gregale installation right now; contact support.")

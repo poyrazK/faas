@@ -39,6 +39,7 @@ func TestPoolConfigWarmFloor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv(NotifyHubEnv, "")
 			t.Setenv(DirectDSNEnv, "")
+			t.Setenv(RuntimeRoleEnv, "")
 			cfg, err := poolConfig("postgres://faas@127.0.0.1:5432/faas", tc.appName, tc.readOnly)
 			if err != nil {
 				t.Fatal(err)

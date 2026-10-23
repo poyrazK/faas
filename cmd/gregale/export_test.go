@@ -703,6 +703,7 @@ var CmdAppScalePlan = cmdAppScalePlan
 var CmdAppSecurity = cmdAppSecurity
 var CmdAppStaticEgressIP = cmdAppStaticEgressIP
 var CmdAppStaticEgressIPClear = cmdAppStaticEgressIPClear
+var CmdApps = cmdApps
 var CmdAppsRm = cmdAppsRm
 var CmdAppsRoutes = cmdAppsRoutes
 var CmdAppsTCP = cmdAppsTCP
@@ -2364,6 +2365,11 @@ func (r validateParamFlags) Resolve(p0 map[string]bool) (*api.EdgeRuleValidatePa
 func (r *zeroConfigStubServer) GotCalls() *map[string]int { return &r.gotCalls }
 func (r *zeroConfigStubServer) Srv() **httptest.Server    { return &r.srv }
 
+var PrintEdgeRuleEvents = printEdgeRuleEvents
+var ResolveArchiveInstance = resolveArchiveInstance
+var RequestLatencyMS = requestLatencyMS
+var SafeDeployWaitTimeoutSeconds = safeDeployWaitTimeoutSeconds
+var InferLatestWorkflowName = inferLatestWorkflowName
 var CompactUsage = compactUsage
 
 const UsageSynopsisLimit = usageSynopsisLimit

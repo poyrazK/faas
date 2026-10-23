@@ -13,7 +13,10 @@ info:
     durable inbound webhook ingress.
     Successful POSTs generally accept an `Idempotency-Key` header (24h TTL)
     and replay with `Idempotent-Replayed: true`; the one-time token-creation
-    endpoint deliberately does not cache plaintext for retries.
+    endpoint deliberately does not cache plaintext for retries. A key is
+    bound to the request it was first used for: the same key with a
+    different body, query or precondition header returns
+    `422 idempotency_key_reused` and does not run.
 
     Errors use RFC 9457 `application/problem+json` with a stable `code`
     field — see `Problem` schema. Authentication rate limits use the same
@@ -104396,7 +104399,7 @@ components:
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
-          description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."
+          description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project` (ADR-20261022111119); existing workloads retain their persisted policy when the extension is omitted."
         service_reliability:
           $ref: '#/components/schemas/ServiceReliabilityPolicies'
           description: "Dependency-specific policy selected by Compose `x-gregale-service-reliability`."
@@ -109500,6 +109503,11 @@ components:
           description: "FLEET p95 wake latency (the unlabeled histogram). Labelled as such in the UI."
           x-since: "2026-07"
           x-issue: "273"
+        wake_samples:
+          type: integer
+          format: int64
+          description: "Number of fleet wakes wake_p95_ms was computed from. Below 20 the p95 is not meaningful and clients show it as unavailable. Omitted when the count is unknown."
+          x-since: "2026-10"
         queue_depth:
           type: integer
           format: int64

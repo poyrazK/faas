@@ -1331,6 +1331,12 @@ func incompatibleCreateOnlyFlags(explicit map[string]bool) []string {
 // already at its app cap. A missing app still falls through to CreateApp; a
 // 409 then retries the lookup once to cover a concurrent same-account create.
 func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved ...*api.AppResponse) error {
+	return createOrFetchAppWith(ctx, client, req, req, requireAuthnPtr, appProtocolPtr, publicAuthPtr, resolved...)
+}
+
+// createOrFetchAppWith creates the app from req, or configures an existing
+// one from existingReq, which leaves out defaults meant only for a new app.
+func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved ...*api.AppResponse) error {
 	setResolved := func(app api.AppResponse) {
 		if len(resolved) > 0 && resolved[0] != nil {
 			*resolved[0] = app
@@ -1339,7 +1345,7 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 	existing, err := client.GetApp(ctx, req.Slug)
 	if err == nil {
 		setResolved(existing)
-		return configureExistingApp(ctx, client, existing, req, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+		return configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
 	}
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Problem.Status != http.StatusNotFound {
@@ -1361,7 +1367,7 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 		return fmt.Errorf("slug %q is already in use; pick a different --name", req.Slug)
 	}
 	setResolved(existing)
-	return configureExistingApp(ctx, client, existing, req, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+	return configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
 }
 
 // openPublicAuthAfterTokenRemoval is the public_auth change implied by
@@ -2386,6 +2392,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Invalid flags", fmt.Errorf("--safe cannot be combined with --no-wait; safe deploys wait for the health-gated rollout to complete"))
 		}
 		*canaryPreset = api.DefaultReleaseCanaryPreset
+		if !explicit["timeout"] {
+			*waitTimeoutSeconds = safeDeployWaitTimeoutSeconds(*waitTimeoutSeconds)
+		}
 	}
 	if *safeDeploy && projectRequested {
 		return printErr("Invalid flags", errors.New("--safe currently supports single-app deploys only; use --canary-preset with a project deploy"))
@@ -3498,6 +3507,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 
+	// gregale.yaml's worker: section (or lifecycle.execution_mode) decides how
+	// the first boot is judged, so it must reach the app before the build: a
+	// worker created in request mode never passes the HTTP readiness check,
+	// and the saved settings only apply after a live deploy (Hunt 12 H12-28).
+	if !projectRequested && resolvedShape == shapeApp && !explicit["execution-mode"] && sourceDir != "" {
+		if mode := manifestDeployExecutionMode(sourceDir); mode != "" {
+			*executionMode = mode
+		}
+	}
 	if !projectRequested && resolvedShape == shapeApp && *executionMode == "" && *restartPolicy == "" &&
 		*startupDeadlineS == 0 && *maxRetries == 0 {
 		sourceKind := simpleapp.SourceDirectory
@@ -3881,7 +3899,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if execution.resolveApp != nil {
 			resolvedApp, err = execution.resolveApp(ctx, client, createReq)
 		} else {
-			err = createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			// The simple plan's request-mode default describes a new app; on a
+			// redeploy it converted worker, service and job apps back to
+			// request mode before the build (Hunt 12 H12-28).
+			existingReq := createReq
+			if resolvedSimplePlan != nil {
+				existingReq.ExecutionMode = ""
+			}
+			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 		}
 		if err != nil {
 			return printErr("Could not create or fetch app", err)
@@ -4194,6 +4219,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			followRollout:   !parkedDeploy && followRolloutByDefault(),
 			darkDeploy:      parkedDeploy,
 		})
+		// A source deploy that waited in human mode returned here without
+		// applying gregale.yaml's saved settings (worker, lifecycle, scaling,
+		// retry_policy); only JSON waits and image deploys applied them
+		// (Hunt 12 H12-30).
+		if code == 0 {
+			if err := applyManifestScaling(); err != nil {
+				return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
+			}
+		}
 		return code
 	}
 	// Issue #977 / ADR-116: the image-deploy path uses the JSON wire
@@ -5857,10 +5891,16 @@ func cmdUsageList(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No usage recorded for %s.\n", *month)
 		return 0
 	}
+	// Largest consumers first, then a total: the rows came in app-id order,
+	// so 200+ lines (most of them deleted apps) had to be summed by eye
+	// (Hunt 12 H12-2).
+	sortUsageRows(rows)
 	// The included allowance is account-wide, so it is printed once rather
 	// than repeated on every app row (production-us hunt #4).
 	_, _ = fmt.Fprintf(osStdout, "App — requests · GB-hours · egress\n")
+	var totalMBSeconds int64
 	for _, u := range rows {
+		totalMBSeconds += u.MBSeconds
 		// ADR-046: tx_bytes (HTTP response bytes, gateway-side) and
 		// net_tx_bytes (root-side vethHost interface bytes, includes
 		// framing) are informational, NOT billed. Surfaced as a
@@ -5878,8 +5918,23 @@ func cmdUsageList(args []string) int {
 		}
 		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6)
 	}
+	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", float64(totalMBSeconds)/3.6e6, len(rows))
 	_, _ = fmt.Fprintf(osStdout, "Plan allowance: included %d GB-h this month, shared by every app\n", rows[0].IncludedGBHours)
 	return 0
+}
+
+// sortUsageRows orders usage rows by GB-hours, then requests, descending,
+// with the app id as a stable tiebreak.
+func sortUsageRows(rows []api.UsageResponse) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].MBSeconds != rows[j].MBSeconds {
+			return rows[i].MBSeconds > rows[j].MBSeconds
+		}
+		if rows[i].Requests != rows[j].Requests {
+			return rows[i].Requests > rows[j].Requests
+		}
+		return rows[i].AppID < rows[j].AppID
+	})
 }
 
 // cmdUsageSummary: GET /v1/usage/summary?month=YYYY-MM. Account-wide
@@ -6750,6 +6805,11 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	}
 	if logSource == logsSourceHTTP {
 		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), strings.TrimSpace(*traceID), *route, normalizedSince, *status, *limit, *all, now)
+	}
+	if archiveSelector != nil {
+		if code := expandArchiveInstance(slug, archiveSelector); code != 0 {
+			return code
+		}
 	}
 	return runLogs(context.Background(), slug, deploymentRef, api.LogFilter{
 		Grep:  *grep,
@@ -8079,7 +8139,23 @@ func cmdUsageDaily(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No daily usage recorded for %s.\n", *day)
 		return 0
 	}
+	// Unlabelled, unsorted rows hid that the third column is requests;
+	// list the largest consumers first with a total, as `usage` does
+	// (Hunt 12 H12-41).
+	sort.SliceStable(resp.Items, func(i, j int) bool {
+		a, b := resp.Items[i], resp.Items[j]
+		if a.MBSeconds != b.MBSeconds {
+			return a.MBSeconds > b.MBSeconds
+		}
+		if a.Requests != b.Requests {
+			return a.Requests > b.Requests
+		}
+		return a.AppID < b.AppID
+	})
+	_, _ = fmt.Fprintf(osStdout, "%-36s %-10s %8s  %12s\n", "APP", "DAY", "REQUESTS", "MEMORY")
+	var totalMBSeconds int64
 	for _, u := range resp.Items {
+		totalMBSeconds += u.MBSeconds
 		gbh := float64(u.MBSeconds) / 3.6e6
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
 			txGB := float64(u.TXBytes) / (1024 * 1024 * 1024)
@@ -8090,6 +8166,7 @@ func cmdUsageDaily(args []string) int {
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h\n", appLabel(slugs, u.AppID), u.Day, u.Requests, gbh)
 	}
+	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", float64(totalMBSeconds)/3.6e6, len(resp.Items))
 	return 0
 }
 

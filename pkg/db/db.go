@@ -27,6 +27,8 @@ import (
 //  2. $FAAS_DATABASE_URL
 //  3. default `postgres:///faas?host=/run/postgresql&user=faas` (peer auth,
 //     matches the ansible postgres role).
+//
+// FAAS_DB_ROLE, when set, replaces the DSN's user (see RuntimeRoleEnv).
 func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 	return open(ctx, dsnOverride, "")
 }
@@ -243,6 +245,9 @@ func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("db: parse config: %w", err)
+	}
+	if err := applyRuntimeRole(cfg.ConnConfig); err != nil {
+		return nil, err
 	}
 	// Direct pools have per-daemon budgets. Connections above the daemon's
 	// warm floor close after a quiet minute, so burst capacity never becomes

@@ -29,7 +29,9 @@ The API and SDKs expose this evidence in the optional `coverage` object.
 
 This feature defaults off and requires an operator-configured private Pyroscope
 backend. Production availability awaits native Firecracker lifecycle and overhead
-acceptance; the capability catalog keeps it **internal**.
+acceptance; the capability catalog keeps it **internal**. Until an operator sets
+`FAAS_PROFILING_ENABLED=1` in `/etc/faas/profiling.env`, imaged deploys
+`profiling.enabled` as false, so no collector runs in the VM.
 
 ## Open the source of an expensive function
 

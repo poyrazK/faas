@@ -2302,6 +2302,7 @@ type AppMetricsView struct {
 	CacheHitRateAvailable bool
 	ErrorBudgetPct        float64
 	ErrorBudgetAvailable  bool
+	WakeP95Unavailable    bool // too few fleet wakes for a p95 (Hunt 12 H12-40)
 }
 
 // RequestAnalyticsView is the dashboard-facing projection of the customer

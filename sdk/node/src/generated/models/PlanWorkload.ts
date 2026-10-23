@@ -66,7 +66,7 @@ export type PlanWorkload = {
    */
   depends_on_conditions?: Record<string, 'service_started' | 'service_healthy'>;
   /**
-   * Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted.
+   * Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project` (ADR-20261022111119); existing workloads retain their persisted policy when the extension is omitted.
    */
   service_binding_policy?: ServiceBindingPolicy;
   /**
@@ -103,6 +103,18 @@ export type PlanWorkload = {
    * Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements.
    */
   required_env_keys?: Array<string>;
+  /**
+   * Names from env_keys and required_env_keys that will have no value in the selected environment: not configured on the app and not provided by the platform. Names only, never values.
+   */
+  unset_env_keys?: Array<string>;
+  /**
+   * For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never values.
+   */
+  unset_env_key_reasons?: Record<string, 'not_opted_in' | 'secret' | 'service_address' | 'local_address' | 'interpolated' | 'host_value' | 'empty' | 'invalid'>;
+  /**
+   * Compose environment names whose plain values apply will write, because the project sets x-gregale-env-import: true and they are unset (ADR-20261023085230). Names only.
+   */
+  imported_env_keys?: Array<string>;
   /**
    * detector provenance, e.g. compose.yaml: api
    */

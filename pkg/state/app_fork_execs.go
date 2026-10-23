@@ -88,6 +88,11 @@ type AppForkExecStore interface {
 	// FailOrphanedAppForkExecs ends commands whose fork is no longer
 	// running, or that ran past their timeout plus grace.
 	FailOrphanedAppForkExecs(ctx context.Context, grace time.Duration, now time.Time) ([]AppForkExec, error)
+	// ClearExpiredAppForkExecOutput empties the stdout and stderr of up to
+	// limit finished commands whose fork ended more than retention before
+	// now, and reports how many it cleared. The output was produced inside a
+	// copy of production memory; the command record stays.
+	ClearExpiredAppForkExecOutput(ctx context.Context, retention time.Duration, now time.Time, limit int) (int, error)
 }
 
 func validateCreateAppForkExec(p CreateAppForkExecParams) (CreateAppForkExecParams, error) {

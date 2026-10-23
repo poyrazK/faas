@@ -1138,6 +1138,27 @@ $$;
 
 
 --
+-- Name: application_standard_effective_incarnation(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_effective_incarnation(instance uuid, issued text) RETURNS text
+    LANGUAGE plpgsql STABLE
+    AS $_$
+DECLARE held text := issued; nxt uuid; hops integer := 0;
+BEGIN
+ IF held IS NULL OR held !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN RETURN held; END IF;
+ LOOP
+  SELECT to_incarnation INTO nxt FROM instance_application_standard_rebinds
+   WHERE instance_id = instance AND from_incarnation = held::uuid;
+  EXIT WHEN NOT FOUND OR hops >= 4096;
+  held := nxt::text; hops := hops + 1;
+ END LOOP;
+ RETURN held;
+END;
+$_$;
+
+
+--
 -- Name: application_standard_egress_guard(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -1745,7 +1766,7 @@ BEGIN
  SELECT * INTO g FROM instance_application_standard_boots WHERE token=i.application_standard_boot_token FOR SHARE NOWAIT;
  b:=g.binding; r:=g.receipt;
  IF g.instance_id IS DISTINCT FROM i.id OR r IS NULL OR (r->>'paused')::boolean IS DISTINCT FROM true
-  OR b->>'node_id' IS DISTINCT FROM locked->>'node_id' OR b->>'incarnation' IS DISTINCT FROM locked->>'incarnation'
+  OR b->>'node_id' IS DISTINCT FROM locked->>'node_id' OR application_standard_effective_incarnation(i.id,b->>'incarnation') IS DISTINCT FROM locked->>'incarnation'
   OR b->>'captured_input_hash' IS DISTINCT FROM locked->>'captured_input_hash'
   OR r->>'netns' IS DISTINCT FROM i.netns OR r->>'host_ip' IS DISTINCT FROM host(i.host_ip)
   OR (r->>'lease_uid')::integer IS DISTINCT FROM i.guest_uid
@@ -1847,7 +1868,7 @@ BEGIN
  b:=r->'binding';
  IF g.instance_id IS DISTINCT FROM i.id OR r IS NULL
   OR b->>'protocol_version' IS DISTINCT FROM '2' OR (locked->>'protocol_version')::integer<2
-  OR b->>'node_id' IS DISTINCT FROM i.node_id::text OR b->>'incarnation' IS DISTINCT FROM locked->>'incarnation'
+  OR b->>'node_id' IS DISTINCT FROM i.node_id::text OR application_standard_effective_incarnation(i.id,b->>'incarnation') IS DISTINCT FROM locked->>'incarnation'
   OR b->>'captured_input_hash' IS DISTINCT FROM locked->>'captured_input_hash'
   OR b->>'instance_id' IS DISTINCT FROM i.id::text OR b->>'app_id' IS DISTINCT FROM i.app_id::text
   OR b->>'deployment_id' IS DISTINCT FROM i.deployment_id::text
@@ -2836,8 +2857,9 @@ BEGIN
  parent:=locked->'parent'; b:=NEW.binding; now_nano:=(locked->>'clock_unix_nano')::bigint;
  IF parent->'binding'->>'token' IS DISTINCT FROM NEW.parent_token::text OR NEW.token=NEW.parent_token
   OR b->>'token' IS DISTINCT FROM NEW.token::text
-  OR (b-ARRAY['token','payload_hash','issued_at_unix_nano','expires_at_unix_nano']) IS DISTINCT FROM
-     ((parent->'binding')-ARRAY['token','payload_hash','issued_at_unix_nano','expires_at_unix_nano'])
+  OR (b-ARRAY['token','payload_hash','issued_at_unix_nano','expires_at_unix_nano','incarnation']) IS DISTINCT FROM
+     ((parent->'binding')-ARRAY['token','payload_hash','issued_at_unix_nano','expires_at_unix_nano','incarnation'])
+  OR b->>'incarnation' IS DISTINCT FROM locked->>'incarnation'
   OR coalesce(b->>'payload_hash','') !~ '^[0-9a-f]{64}$'
   OR coalesce((b->>'issued_at_unix_nano')::bigint,0)<=0
   OR coalesce((b->>'expires_at_unix_nano')::bigint,0)<=now_nano
@@ -2866,7 +2888,7 @@ BEGIN
    RAISE EXCEPTION 'native promotion receipt is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
   END IF;
   IF b->'protocol_version'='2'::jsonb THEN
-   IF NOT application_standard_snapshot_resume_valid(b,r,parent,now_nano) THEN
+   IF NOT application_standard_snapshot_resume_valid(b,r,parent,now_nano,b->>'incarnation' IS DISTINCT FROM parent->'binding'->>'incarnation') THEN
     RAISE EXCEPTION 'native measured resume proof is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
    END IF;
    PERFORM application_standard_native_artifact_protocol(b,r,locked->'input_snapshot',(locked->>'protocol_version')::smallint);
@@ -2941,7 +2963,7 @@ BEGIN
  END IF;
  SELECT vmmd_incarnation,vmmd_admission_protocol INTO incarnation,protocol FROM compute_nodes WHERE id=NEW.node_id FOR SHARE NOWAIT;
  IF g.instance_id IS DISTINCT FROM NEW.id OR r IS NULL OR b->>'node_id' IS DISTINCT FROM NEW.node_id::text
-  OR b->>'incarnation' IS DISTINCT FROM incarnation::text OR b->>'captured_input_hash' IS DISTINCT FROM c.native_input_hash
+  OR application_standard_effective_incarnation(NEW.id,b->>'incarnation') IS DISTINCT FROM incarnation::text OR b->>'captured_input_hash' IS DISTINCT FROM c.native_input_hash
   OR r->'binding' IS DISTINCT FROM b OR r->>'netns' IS DISTINCT FROM NEW.netns OR r->>'host_ip' IS DISTINCT FROM host(NEW.host_ip)
   OR (r->>'lease_uid')::integer IS DISTINCT FROM NEW.guest_uid OR (r->>'paused')::boolean IS DISTINCT FROM (NEW.state='warm') THEN
   RAISE EXCEPTION 'managed runtime requires its exact native receipt' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
@@ -3284,6 +3306,70 @@ BEGIN
           USING ERRCODE='23514',CONSTRAINT='application_standard_managed_control';
     END IF;
     RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: application_standard_rebind_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_rebind_guard() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE n compute_nodes%ROWTYPE; i instances%ROWTYPE; g instance_application_standard_boots%ROWTYPE;
+        p instance_application_standard_promotions%ROWTYPE; r jsonb; from_at timestamptz; to_at timestamptz;
+BEGIN
+ IF TG_OP = 'DELETE' THEN
+  IF NOT EXISTS(SELECT 1 FROM instances WHERE id = OLD.instance_id)
+   OR NOT EXISTS(SELECT 1 FROM application_standard_native_incarnations h WHERE h.node_id = OLD.node_id AND h.incarnation = OLD.to_incarnation) THEN
+   RETURN OLD;
+  END IF;
+  RAISE EXCEPTION 'runtime re-bind history is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+ END IF;
+ IF TG_OP = 'UPDATE' THEN
+  RAISE EXCEPTION 'runtime re-bind history is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
+ END IF;
+ SELECT * INTO n FROM compute_nodes WHERE id = NEW.node_id FOR SHARE NOWAIT;
+ IF NOT FOUND OR n.vmmd_incarnation IS DISTINCT FROM NEW.to_incarnation
+  OR n.vmmd_epoch_incarnation IS DISTINCT FROM NEW.to_incarnation OR n.vmmd_epoch IS DISTINCT FROM NEW.vmmd_epoch THEN
+  RAISE EXCEPTION 'runtime re-bind must name the node''s current holder' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT * INTO i FROM instances WHERE id = NEW.instance_id FOR SHARE NOWAIT;
+ IF NOT FOUND OR i.node_id IS DISTINCT FROM NEW.node_id OR i.state NOT IN ('running','warm') OR i.application_standard_boot_token IS NULL THEN
+  RAISE EXCEPTION 'runtime re-bind requires a live admitted instance on its node' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT * INTO g FROM instance_application_standard_boots WHERE token = i.application_standard_boot_token FOR SHARE NOWAIT;
+ r := g.receipt;
+ IF i.application_standard_promotion_token IS NOT NULL THEN
+  SELECT * INTO p FROM instance_application_standard_promotions WHERE token = i.application_standard_promotion_token FOR SHARE NOWAIT;
+  IF NOT FOUND OR p.instance_id IS DISTINCT FROM i.id OR p.parent_token IS DISTINCT FROM g.token THEN
+   RAISE EXCEPTION 'runtime re-bind promotion changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+  END IF;
+  r := p.receipt;
+ END IF;
+ IF g.instance_id IS DISTINCT FROM i.id OR r IS NULL
+  OR application_standard_effective_incarnation(i.id, r->'binding'->>'incarnation') IS DISTINCT FROM NEW.from_incarnation::text THEN
+  RAISE EXCEPTION 'runtime re-bind must extend the admission''s current holder' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ SELECT registered_at INTO from_at FROM application_standard_native_incarnations WHERE node_id = NEW.node_id AND incarnation = NEW.from_incarnation;
+ SELECT registered_at INTO to_at FROM application_standard_native_incarnations WHERE node_id = NEW.node_id AND incarnation = NEW.to_incarnation;
+ IF from_at IS NULL OR to_at IS NULL OR from_at >= to_at THEN
+  RAISE EXCEPTION 'runtime re-bind must move to a later incarnation' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
+ END IF;
+ IF (SELECT count(*) FROM jsonb_object_keys(NEW.observed)) <> 6
+  OR NEW.observed->>'token' IS DISTINCT FROM r->'binding'->>'token'
+  OR NEW.observed->>'completed_at_unix_nano' IS DISTINCT FROM r->>'completed_at_unix_nano'
+  OR NEW.observed->>'netns' IS DISTINCT FROM r->>'netns' OR i.netns IS DISTINCT FROM r->>'netns'
+  OR NEW.observed->>'host_ip' IS DISTINCT FROM r->>'host_ip' OR host(i.host_ip) IS DISTINCT FROM r->>'host_ip'
+  OR NEW.observed->>'lease_uid' IS DISTINCT FROM r->>'lease_uid' OR i.guest_uid::text IS DISTINCT FROM r->>'lease_uid'
+  OR NEW.observed->'paused' IS DISTINCT FROM r->'paused' OR (r->>'paused')::boolean IS DISTINCT FROM (i.state = 'warm') THEN
+  RAISE EXCEPTION 'runtime re-bind residency differs from its receipt' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_receipt';
+ END IF;
+ NEW.created_at := clock_timestamp();
+ RETURN NEW;
+EXCEPTION WHEN lock_not_available THEN
+ RAISE EXCEPTION 'runtime re-bind inputs are busy' USING ERRCODE='55P03',CONSTRAINT='application_standard_runtime_busy';
 END;
 $$;
 
@@ -4131,8 +4217,8 @@ BEGIN
  END IF;
  IF TG_OP='UPDATE' THEN
   IF NEW IS NOT DISTINCT FROM OLD THEN RETURN NEW; END IF;
-  IF (to_jsonb(NEW)-ARRAY['acknowledgment','received_at']) IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['acknowledgment','received_at'])
-   OR OLD.acknowledgment IS NOT NULL OR NEW.acknowledgment IS NULL THEN
+  IF (to_jsonb(NEW)-ARRAY['acknowledgment','received_at','producer_incarnation']) IS DISTINCT FROM (to_jsonb(OLD)-ARRAY['acknowledgment','received_at','producer_incarnation'])
+   OR OLD.acknowledgment IS NOT NULL OR NEW.acknowledgment IS NULL OR OLD.producer_incarnation IS NOT NULL THEN
    RAISE EXCEPTION 'snapshot lineage is immutable' USING ERRCODE='23514',CONSTRAINT='application_standard_boot_immutable';
   END IF;
  ELSIF NEW.acknowledgment IS NOT NULL OR NEW.received_at IS NOT NULL THEN
@@ -4154,12 +4240,15 @@ BEGIN
    OR NEW.input_snapshot::text IS DISTINCT FROM (locked->'input_snapshot')::text THEN
    RAISE EXCEPTION 'snapshot grant issue inputs changed' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
   END IF;
-  NEW.created_at:=clock_timestamp();
+  NEW.created_at:=clock_timestamp(); NEW.producer_incarnation:=NULL;
  ELSE
   IF NOT application_standard_snapshot_acknowledgment_valid(NEW.acknowledgment,NEW.grant_data,now_nano) THEN
    RAISE EXCEPTION 'snapshot acknowledgment is invalid' USING ERRCODE='23514',CONSTRAINT='application_standard_runtime_stale';
   END IF;
   NEW.received_at:=clock_timestamp();
+  -- The lock just required the source's effective incarnation to be the
+  -- node's current one: that process produced this capture.
+  NEW.producer_incarnation:=(locked->>'incarnation')::uuid;
  END IF;
  RETURN NEW;
 END;
@@ -4185,6 +4274,7 @@ CREATE TABLE public.application_standard_snapshot_captures (
     acknowledgment jsonb,
     created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
     received_at timestamp with time zone,
+    producer_incarnation uuid,
     CONSTRAINT application_standard_snapshot_captures_acknowledgment_check CHECK ((jsonb_typeof(acknowledgment) = 'object'::text)),
     CONSTRAINT application_standard_snapshot_captures_check CHECK (((acknowledgment IS NULL) = (received_at IS NULL))),
     CONSTRAINT application_standard_snapshot_captures_expected_state_check CHECK ((expected_state = ANY (ARRAY['running'::text, 'snapshotting'::text, 'migrating'::text]))),
@@ -4469,6 +4559,56 @@ BEGIN
   AND e->'parent_completed_at_unix_nano'=parent->'completed_at_unix_nano'
   AND (r-ARRAY['binding','paused','completed_at_unix_nano','snapshot_resume_evidence'])=(parent-ARRAY['binding','paused','completed_at_unix_nano'])
   AND (b-ARRAY['token','payload_hash','issued_at_unix_nano','expires_at_unix_nano'])=(old-ARRAY['token','payload_hash','issued_at_unix_nano','expires_at_unix_nano'])
+  AND b->>'token'<>old->>'token' AND old->>'token' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+  AND old->>'token'<>'00000000-0000-0000-0000-000000000000' AND old->>'payload_hash' ~ '^[0-9a-f]{64}$'
+  AND e->>'parent_receipt_hash'=application_standard_snapshot_resume_parent_hash(parent)
+  AND e->>'resume_command_hash'=encode(sha256(convert_to('gregale.runtime-resume.command.v1','UTF8') || decode('00','hex') || convert_to('{"state":"Resumed"}','UTF8')),'hex')
+  AND e->>'resume_hook_payload_hash' ~ '^[0-9a-f]{64}$'
+  AND e->'completed_at_unix_nano'=r->'completed_at_unix_nano') IS NOT TRUE THEN RETURN false; END IF;
+ -- Enforce integer/bool/string wire types, including nested bindings, before casts.
+ PERFORM application_standard_restore_wire_message('receipt',r);
+ PERFORM application_standard_restore_wire_message('receipt',parent);
+ command_nano:=(e->>'command_completed_at_unix_nano')::bigint; host_nano:=(e->>'host_time_unix_nano')::bigint;
+ hook_nano:=(e->>'hook_completed_at_unix_nano')::bigint; completed_nano:=(e->>'completed_at_unix_nano')::bigint;
+ parent_nano:=(parent->>'completed_at_unix_nano')::bigint;
+ payload:=encode(sha256(convert_to('gregale.runtime-promotion.v1','UTF8') || decode('00','hex') ||
+  application_standard_restore_wire_message('promotion',jsonb_build_object('parent',parent))),'hex');
+ RETURN coalesce(b->>'payload_hash'=payload AND parent_nano>0 AND (old->>'issued_at_unix_nano')::bigint>0
+  AND (old->>'expires_at_unix_nano')::numeric>(old->>'issued_at_unix_nano')::numeric
+  AND (old->>'expires_at_unix_nano')::numeric-(old->>'issued_at_unix_nano')::numeric<=600000000000
+  AND parent_nano::numeric>=(old->>'issued_at_unix_nano')::numeric-5000000000
+  AND parent_nano<(old->>'expires_at_unix_nano')::bigint
+  AND command_nano>0 AND command_nano>=parent_nano AND command_nano::numeric>=(b->>'issued_at_unix_nano')::numeric-5000000000
+  AND host_nano>=command_nano AND hook_nano>=host_nano AND completed_nano>=hook_nano
+  AND completed_nano<(b->>'expires_at_unix_nano')::bigint AND completed_nano::numeric<=now_nano::numeric+5000000000,false);
+EXCEPTION WHEN data_exception OR check_violation THEN RETURN false;
+END;
+$_$;
+
+
+--
+-- Name: application_standard_snapshot_resume_valid(jsonb, jsonb, jsonb, bigint, boolean); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.application_standard_snapshot_resume_valid(b jsonb, r jsonb, parent jsonb, now_nano bigint, held boolean) RETURNS boolean
+    LANGUAGE plpgsql IMMUTABLE
+    AS $_$
+DECLARE e jsonb:=r->'snapshot_resume_evidence'; old jsonb:=parent->'binding'; command_nano bigint; host_nano bigint;
+ hook_nano bigint; completed_nano bigint; parent_nano bigint; payload text;
+BEGIN
+ IF (jsonb_typeof(e)='object' AND e-ARRAY['version','binding','parent_receipt_hash','resume_command_hash','resume_hook_payload_hash',
+    'command_completed_at_unix_nano','host_time_unix_nano','hook_completed_at_unix_nano','completed_at_unix_nano','parent_binding','parent_completed_at_unix_nano']='{}'::jsonb
+  AND (SELECT count(*) FROM jsonb_object_keys(e))=11
+  AND e->'version'='1'::jsonb AND jsonb_typeof(e->'version')='number' AND e->>'version'='1'
+  AND r-ARRAY['binding','native_input_hash','netns','host_ip','lease_uid','method','paused','completed_at_unix_nano','artifact_consumption','snapshot_consumption','snapshot_resume_evidence']='{}'::jsonb
+  AND old-ARRAY['protocol_version','token','instance_id','app_id','deployment_id','account_id','node_id','incarnation','desired_revision','effective_hash','captured_input_hash','payload_hash','egress_revision','issued_at_unix_nano','expires_at_unix_nano','artifact_sources_hash','snapshot_capture_token','snapshot_evidence_hash']='{}'::jsonb
+  AND old->'protocol_version'='2'::jsonb AND parent->'paused'='true'::jsonb AND parent->'method'='1'::jsonb
+  AND NOT(parent ? 'snapshot_resume_evidence') AND r->'paused'='false'::jsonb AND r->'method'='1'::jsonb
+  AND r->'binding'=b AND e->'binding'=b AND e->'parent_binding'=old
+  AND e->'parent_completed_at_unix_nano'=parent->'completed_at_unix_nano'
+  AND (r-ARRAY['binding','paused','completed_at_unix_nano','snapshot_resume_evidence'])=(parent-ARRAY['binding','paused','completed_at_unix_nano'])
+  AND (b-ARRAY['token','payload_hash','issued_at_unix_nano','expires_at_unix_nano']-(CASE WHEN held THEN ARRAY['incarnation'] ELSE ARRAY[]::text[] END))
+     =(old-ARRAY['token','payload_hash','issued_at_unix_nano','expires_at_unix_nano']-(CASE WHEN held THEN ARRAY['incarnation'] ELSE ARRAY[]::text[] END))
   AND b->>'token'<>old->>'token' AND old->>'token' ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
   AND old->>'token'<>'00000000-0000-0000-0000-000000000000' AND old->>'payload_hash' ~ '^[0-9a-f]{64}$'
   AND e->>'parent_receipt_hash'=application_standard_snapshot_resume_parent_hash(parent)
@@ -15870,7 +16010,7 @@ BEGIN
    count(*) FILTER (WHERE s.app_id=slot.app_id AND s.subscription_id=slot.subscription_id)
  INTO account_count, app_count, consumer_count
  FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
- WHERE s.account_id=slot.account_id AND i.state IN ('pending','dispatching') AND i.id<>NEW.id;
+ WHERE s.account_id=slot.account_id AND s.live AND i.state IN ('pending','dispatching') AND i.id<>NEW.id;
  SELECT CASE WHEN c.max_pending_deliveries>0 THEN least(c.max_pending_deliveries,caps.consumer_limit) ELSE caps.consumer_limit END INTO consumer_limit
  FROM event_subscription_delivery_controls c WHERE c.account_id=slot.account_id AND c.app_id=slot.app_id AND c.subscription_id::text=slot.subscription_id;
  consumer_limit := coalesce(consumer_limit,caps.consumer_limit);
@@ -26443,6 +26583,21 @@ END $$;
 
 
 --
+-- Name: stamp_event_delivery_slot_live(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_event_delivery_slot_live() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    NEW.live := EXISTS (SELECT 1 FROM invocations i
+        WHERE i.id = NEW.invocation_id AND i.state IN ('pending', 'dispatching'));
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: stamp_invocation_async_subject(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -26463,6 +26618,22 @@ BEGIN
  END IF;
  RETURN NEW;
 END $$;
+
+
+--
+-- Name: stamp_invocation_instance(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_invocation_instance(target_invocation uuid, target_instance text) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM set_config('synchronous_commit', 'off', true);
+    UPDATE invocations SET instance_id = target_instance
+    WHERE id = target_invocation AND state = 'dispatching';
+    RETURN FOUND;
+END;
+$$;
 
 
 --
@@ -26541,6 +26712,21 @@ BEGIN
    updated_at = clock_timestamp()
  WHERE o.id = NEW.occurrence_id;
  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: sync_event_delivery_slot_live(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sync_event_delivery_slot_live() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE event_delivery_slots SET live = NEW.state IN ('pending', 'dispatching')
+    WHERE invocation_id = NEW.id AND live IS DISTINCT FROM (NEW.state IN ('pending', 'dispatching'));
+    RETURN NULL;
 END;
 $$;
 
@@ -31773,6 +31959,10 @@ CREATE TABLE public.compute_nodes (
     vmmd_admission_protocol smallint DEFAULT 1 NOT NULL,
     service_address_ready_at timestamp with time zone,
     lifecycle_generation bigint DEFAULT 1 NOT NULL,
+    vmmd_epoch bigint DEFAULT 0 NOT NULL,
+    vmmd_epoch_incarnation uuid,
+    vmmd_predecessor_incarnation uuid,
+    vmmd_restart_notice_until timestamp with time zone,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
     CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
@@ -35801,7 +35991,8 @@ CREATE TABLE public.event_delivery_slots (
     invocation_id uuid NOT NULL,
     account_id uuid NOT NULL,
     app_id uuid NOT NULL,
-    subscription_id text NOT NULL
+    subscription_id text NOT NULL,
+    live boolean DEFAULT true NOT NULL
 );
 
 
@@ -38279,6 +38470,26 @@ CREATE TABLE public.instance_application_standard_promotions (
     CONSTRAINT instance_application_standard_promotions_check CHECK (((receipt IS NULL) = (received_at IS NULL))),
     CONSTRAINT instance_application_standard_promotions_check1 CHECK ((token <> parent_token)),
     CONSTRAINT instance_application_standard_promotions_receipt_check CHECK (((receipt IS NULL) OR (jsonb_typeof(receipt) = 'object'::text)))
+);
+
+
+--
+-- Name: instance_application_standard_rebinds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_application_standard_rebinds (
+    instance_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    from_incarnation uuid NOT NULL,
+    to_incarnation uuid NOT NULL,
+    vmmd_epoch bigint NOT NULL,
+    observed jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT instance_application_standard_rebinds_check CHECK ((to_incarnation <> from_incarnation)),
+    CONSTRAINT instance_application_standard_rebinds_from_incarnation_check CHECK ((from_incarnation <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT instance_application_standard_rebinds_observed_check CHECK ((jsonb_typeof(observed) = 'object'::text)),
+    CONSTRAINT instance_application_standard_rebinds_to_incarnation_check CHECK ((to_incarnation <> '00000000-0000-0000-0000-000000000000'::uuid)),
+    CONSTRAINT instance_application_standard_rebinds_vmmd_epoch_check CHECK ((vmmd_epoch > 0))
 );
 
 
@@ -47445,7 +47656,7 @@ CREATE VIEW public.production_dead_letter_events AS
     created_at,
     environment_owned
    FROM public.dead_letter_events e
-  WHERE ((NOT environment_owned) AND ((source <> 'invocation'::text) OR ((NOT public.faas_invocation_headers_own_stage(app_id, headers)) AND (NOT (EXISTS ( SELECT 1
+  WHERE ((NOT environment_owned) AND (NOT ((source = 'trigger_record'::text) AND (origin = 'queue'::text))) AND ((source <> 'invocation'::text) OR ((NOT public.faas_invocation_headers_own_stage(app_id, headers)) AND (NOT (EXISTS ( SELECT 1
            FROM public.invocations i
           WHERE ((i.id = e.source_id) AND (NOT (EXISTS ( SELECT 1
                    FROM public.production_invocation_work p
@@ -55496,6 +55707,14 @@ ALTER TABLE ONLY public.application_standard_snapshot_captures
 
 
 --
+-- Name: application_standard_snapshot_captures application_standard_snapshot_captures_producer_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.application_standard_snapshot_captures
+    ADD CONSTRAINT application_standard_snapshot_captures_producer_check CHECK (((producer_incarnation IS NULL) OR ((acknowledgment IS NOT NULL) AND (producer_incarnation <> '00000000-0000-0000-0000-000000000000'::uuid)))) NOT VALID;
+
+
+--
 -- Name: application_standard_versions application_standard_versions_org_id_standard_id_version_key; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -56413,6 +56632,38 @@ ALTER TABLE ONLY public.compute_nodes
 
 ALTER TABLE ONLY public.compute_nodes
     ADD CONSTRAINT compute_nodes_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: compute_nodes compute_nodes_vmmd_epoch_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.compute_nodes
+    ADD CONSTRAINT compute_nodes_vmmd_epoch_check CHECK ((vmmd_epoch >= 0)) NOT VALID;
+
+
+--
+-- Name: compute_nodes compute_nodes_vmmd_epoch_claimant_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.compute_nodes
+    ADD CONSTRAINT compute_nodes_vmmd_epoch_claimant_check CHECK (((vmmd_epoch = 0) = (vmmd_epoch_incarnation IS NULL))) NOT VALID;
+
+
+--
+-- Name: compute_nodes compute_nodes_vmmd_epoch_incarnation_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.compute_nodes
+    ADD CONSTRAINT compute_nodes_vmmd_epoch_incarnation_check CHECK ((vmmd_epoch_incarnation <> '00000000-0000-0000-0000-000000000000'::uuid)) NOT VALID;
+
+
+--
+-- Name: compute_nodes compute_nodes_vmmd_predecessor_incarnation_check; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.compute_nodes
+    ADD CONSTRAINT compute_nodes_vmmd_predecessor_incarnation_check CHECK ((vmmd_predecessor_incarnation <> '00000000-0000-0000-0000-000000000000'::uuid)) NOT VALID;
 
 
 --
@@ -59269,6 +59520,22 @@ ALTER TABLE ONLY public.instance_application_standard_promotions
 
 ALTER TABLE ONLY public.instance_application_standard_promotions
     ADD CONSTRAINT instance_application_standard_promotions_pkey PRIMARY KEY (token);
+
+
+--
+-- Name: instance_application_standard_rebinds instance_application_standard_re_instance_id_to_incarnation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_rebinds
+    ADD CONSTRAINT instance_application_standard_re_instance_id_to_incarnation_key UNIQUE (instance_id, to_incarnation);
+
+
+--
+-- Name: instance_application_standard_rebinds instance_application_standard_rebinds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_rebinds
+    ADD CONSTRAINT instance_application_standard_rebinds_pkey PRIMARY KEY (instance_id, from_incarnation);
 
 
 --
@@ -69272,6 +69539,13 @@ CREATE INDEX event_delivery_slots_consumer ON public.event_delivery_slots USING 
 
 
 --
+-- Name: event_delivery_slots_live; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX event_delivery_slots_live ON public.event_delivery_slots USING btree (account_id, app_id, subscription_id) WHERE live;
+
+
+--
 -- Name: event_execution_attempt_window_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -70700,6 +70974,13 @@ CREATE INDEX invocations_delayed_idx ON public.invocations USING btree (app_id, 
 
 
 --
+-- Name: invocations_dispatching_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_dispatching_due_idx ON public.invocations USING btree (due_at) WHERE (state = 'dispatching'::text);
+
+
+--
 -- Name: invocations_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -70725,13 +71006,6 @@ CREATE INDEX invocations_event_delivery_idx ON public.invocations USING btree (a
 --
 
 CREATE INDEX invocations_failure_destination_idx ON public.invocations USING btree (on_failure_destination_id) WHERE (on_failure_destination_id IS NOT NULL);
-
-
---
--- Name: invocations_instance_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX invocations_instance_idx ON public.invocations USING btree (instance_id, due_at) WHERE (state = 'dispatching'::text);
 
 
 --
@@ -76118,6 +76392,13 @@ ALTER INDEX public.request_telemetry_trace_idx ATTACH PARTITION public.request_t
 
 
 --
+-- Name: event_delivery_slots_account_live; Type: STATISTICS; Schema: public; Owner: -
+--
+
+CREATE STATISTICS public.event_delivery_slots_account_live (dependencies, mcv) ON account_id, live FROM public.event_delivery_slots;
+
+
+--
 -- Name: instances aa_project_migration_instance_fence; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -76885,6 +77166,13 @@ CREATE TRIGGER application_standard_pending_scalar_guard BEFORE UPDATE OF requir
 --
 
 CREATE TRIGGER application_standard_publisher_immutable BEFORE DELETE OR UPDATE ON public.application_standard_publishers FOR EACH ROW EXECUTE FUNCTION public.application_standard_version_immutable();
+
+
+--
+-- Name: instance_application_standard_rebinds application_standard_rebind_guard; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER application_standard_rebind_guard BEFORE INSERT OR DELETE OR UPDATE ON public.instance_application_standard_rebinds FOR EACH ROW EXECUTE FUNCTION public.application_standard_rebind_guard();
 
 
 --
@@ -78789,6 +79077,20 @@ CREATE TRIGGER event_delivery_age_subscription_ordering BEFORE UPDATE OF routing
 --
 
 CREATE TRIGGER event_delivery_replay_capacity AFTER INSERT OR UPDATE OF state ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.guard_event_delivery_replay();
+
+
+--
+-- Name: event_delivery_slots event_delivery_slot_live; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_delivery_slot_live BEFORE INSERT ON public.event_delivery_slots FOR EACH ROW EXECUTE FUNCTION public.stamp_event_delivery_slot_live();
+
+
+--
+-- Name: invocations event_delivery_slot_live_sync; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_delivery_slot_live_sync AFTER UPDATE OF state ON public.invocations FOR EACH ROW WHEN (((old.state = ANY (ARRAY['pending'::text, 'dispatching'::text])) IS DISTINCT FROM (new.state = ANY (ARRAY['pending'::text, 'dispatching'::text])))) EXECUTE FUNCTION public.sync_event_delivery_slot_live();
 
 
 --
@@ -88980,6 +89282,30 @@ ALTER TABLE ONLY public.instance_application_standard_promotions
 
 ALTER TABLE ONLY public.instance_application_standard_promotions
     ADD CONSTRAINT instance_application_standard_promotions_parent_token_fkey FOREIGN KEY (parent_token) REFERENCES public.instance_application_standard_boots(token) ON DELETE CASCADE;
+
+
+--
+-- Name: instance_application_standard_rebinds instance_application_standard_reb_node_id_from_incarnation_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_rebinds
+    ADD CONSTRAINT instance_application_standard_reb_node_id_from_incarnation_fkey FOREIGN KEY (node_id, from_incarnation) REFERENCES public.application_standard_native_incarnations(node_id, incarnation) ON DELETE CASCADE;
+
+
+--
+-- Name: instance_application_standard_rebinds instance_application_standard_rebin_node_id_to_incarnation_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_rebinds
+    ADD CONSTRAINT instance_application_standard_rebin_node_id_to_incarnation_fkey FOREIGN KEY (node_id, to_incarnation) REFERENCES public.application_standard_native_incarnations(node_id, incarnation) ON DELETE CASCADE;
+
+
+--
+-- Name: instance_application_standard_rebinds instance_application_standard_rebinds_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_application_standard_rebinds
+    ADD CONSTRAINT instance_application_standard_rebinds_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE CASCADE;
 
 
 --

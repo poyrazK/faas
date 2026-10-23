@@ -123,6 +123,7 @@ native_e2e_phase_files() {
       live_fork_metal_test.go \
       crash_snapshot_metal_test.go \
       crash_snapshot_sdk_metal_test.go \
+      vmmd_restart_metal_test.go \
       cpu_fairness_test.go ;;
     # Response streaming and the h2c/gRPC inner leg (G19.3).
     streaming) printf '%s\n' streaming_metal_test.go bridge_h2c_terminator_metal_test.go function_streaming_metal_test.go ;;

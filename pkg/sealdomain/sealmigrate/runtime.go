@@ -2,6 +2,7 @@ package sealmigrate
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -12,21 +13,28 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// RuntimeStore is the slice of *state.PgStore the runtime re-seal uses.
-// ResealAppSecretForFleet is a generic compare-and-swap ciphertext
-// replacement despite its name (ADR-178).
+// RuntimeStore is the slice of *state.PgStore the runtime re-seal uses: the
+// release-secret rekey documents (ADR-1139). They cover every stored runtime
+// secret, one document per row: app and project environment secrets, staged
+// release bundles, deployment snapshots, and release and promotion captures.
+// The compare-and-swap rewrites only kid and ciphertext, so no runtime-change
+// trigger fires and no immutable snapshot changes meaning.
 type RuntimeStore interface {
-	ListAppSecretsForRekey(ctx context.Context, limit int, cursor string) ([]state.AppSecret, error)
-	ResealAppSecretForFleet(ctx context.Context, row state.AppSecret, recipient string, sealed []byte) error
+	ListSecretRekeyDocuments(ctx context.Context, kid, after string, limit int) ([]state.SecretRekeyDocument, error)
+	CompareAndSwapSecretRekeyDocument(ctx context.Context, before state.SecretRekeyDocument, after json.RawMessage) error
 }
 
-// MigrateRuntime re-seals every app secret to the runtime domain recipient
-// alone (ADR 20261022111812, step 3). legacy are the fleet and host
-// identities that open rows sealed before the domain. A row already sealed
-// to the domain is counted current; a row a customer rotated between read
-// and write is left for the next run. Run it only after every vmmd reports
-// faas_seal_domain_loaded{domain="runtime"} 1: a re-sealed row no longer
-// opens with the fleet identity.
+// errUnopenable marks an envelope no supplied identity opens.
+var errUnopenable = errors.New("sealmigrate: no supplied identity opens the envelope")
+
+// MigrateRuntime re-seals every stored runtime secret to the runtime domain
+// recipient alone (ADR 20261022111812, step 3). legacy are the fleet and host
+// identities that open envelopes sealed before the domain. The store lists
+// only documents with an envelope labelled for another key, so a complete
+// migration lists nothing and a rerun scans 0. A document rewritten between
+// read and write is left for the next run. Run it only after every vmmd
+// reports faas_seal_domain_loaded{domain="runtime"} 1: a re-sealed envelope
+// no longer opens with the fleet identity.
 func MigrateRuntime(ctx context.Context, store RuntimeStore, domain *age.X25519Identity, legacy []*age.X25519Identity) (MigrationReport, error) {
 	if store == nil || domain == nil || len(legacy) == 0 {
 		return MigrationReport{}, errors.New("sealmigrate: runtime migration needs the store, the domain identity and the legacy identities")
@@ -34,56 +42,68 @@ func MigrateRuntime(ctx context.Context, store RuntimeStore, domain *age.X25519I
 	recipient := domain.Recipient()
 	kid := recipient.String()
 	report := MigrationReport{Domain: sealdomain.Runtime, Target: kid}
-	cursor := ""
-	seen := make(map[string]struct{})
+	after := ""
 	for {
-		rows, err := store.ListAppSecretsForRekey(ctx, migrateBatch, cursor)
+		docs, err := store.ListSecretRekeyDocuments(ctx, kid, after, migrateBatch)
 		if err != nil {
-			return report, fmt.Errorf("sealmigrate: list app secrets: %w", err)
+			return report, fmt.Errorf("sealmigrate: list runtime secret documents: %w", err)
 		}
-		progressed := false
-		for _, row := range rows {
-			key := row.AccountID + "\x00" + row.AppID + "\x00" + row.Scope + "\x00" + row.Key
-			if _, ok := seen[key]; ok {
-				continue
+		for _, doc := range docs {
+			if doc.Cursor() <= after {
+				return report, errors.New("sealmigrate: runtime secret documents listed out of order")
 			}
-			seen[key] = struct{}{}
-			progressed = true
-			cursor = row.AccountID + "|" + row.AppID + "|" + row.Scope + "|" + row.Key
+			after = doc.Cursor()
 			report.Scanned++
-			if err := resealRuntimeRow(ctx, store, row, domain, legacy, recipient, kid, &report); err != nil {
+			if err := resealRuntimeDocument(ctx, store, doc, domain, legacy, recipient, &report); err != nil {
 				return report, err
 			}
 		}
-		if !progressed || len(rows) < migrateBatch {
+		if len(docs) < migrateBatch {
 			return report, nil
 		}
 	}
 }
 
-func resealRuntimeRow(ctx context.Context, store RuntimeStore, row state.AppSecret, domain *age.X25519Identity, legacy []*age.X25519Identity, recipient *age.X25519Recipient, kid string, report *MigrationReport) error {
-	env, err := secretbox.OpenMulti(legacy, row.Ciphertext)
-	if err != nil {
-		if _, domainErr := secretbox.Open(domain, row.Ciphertext); domainErr == nil {
-			report.Current++
-		} else {
-			report.Failed++
+func resealRuntimeDocument(ctx context.Context, store RuntimeStore, doc state.SecretRekeyDocument, domain *age.X25519Identity, legacy []*age.X25519Identity, recipient *age.X25519Recipient, report *MigrationReport) error {
+	kid := recipient.String()
+	next, err := state.TransformSecretRekeyDocument(doc, func(e state.SecretRekeyEnvelope) (state.SecretRekeyEnvelope, error) {
+		if e.Kid == kid {
+			return e, nil
 		}
+		values, err := secretbox.OpenMulti(legacy, e.Ciphertext)
+		if err != nil {
+			// Sealed to the domain under another label: fix the label only.
+			if _, domainErr := secretbox.Open(domain, e.Ciphertext); domainErr == nil {
+				e.Kid = kid
+				return e, nil
+			}
+			return e, errUnopenable
+		}
+		defer clear(values)
+		if values[e.Key] == "" {
+			return e, errUnopenable
+		}
+		sealed, err := secretbox.Seal(recipient, values)
+		if err != nil {
+			return e, fmt.Errorf("sealmigrate: reseal %s %s: %w", doc.Kind, doc.ID, err)
+		}
+		e.Kid, e.Ciphertext = kid, sealed
+		return e, nil
+	})
+	switch {
+	case errors.Is(err, errUnopenable), errors.Is(err, state.ErrConflict):
+		// ErrConflict here is a payload the transform cannot parse; like an
+		// envelope no identity opens, it is reported, not written.
+		report.Failed++
 		return nil
+	case err != nil:
+		return err
 	}
-	sealed, err := secretbox.Seal(recipient, env)
-	for k := range env {
-		env[k] = ""
-		delete(env, k)
-	}
-	if err != nil {
-		return fmt.Errorf("sealmigrate: reseal app=%s scope=%s key=%s: %w", row.AppID, row.Scope, row.Key, err)
-	}
-	switch err := store.ResealAppSecretForFleet(ctx, row, kid, sealed); {
+	switch err := store.CompareAndSwapSecretRekeyDocument(ctx, doc, next); {
 	case errors.Is(err, state.ErrConflict):
 		report.Changed++
 	case err != nil:
-		return fmt.Errorf("sealmigrate: persist app=%s scope=%s key=%s: %w", row.AppID, row.Scope, row.Key, err)
+		return fmt.Errorf("sealmigrate: persist %s %s: %w", doc.Kind, doc.ID, err)
 	default:
 		report.Resealed++
 	}

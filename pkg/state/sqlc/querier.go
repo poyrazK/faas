@@ -325,6 +325,9 @@ type Querier interface {
 	ClaimCloneCheckpointSourceCompensation(ctx context.Context, db DBTX, arg ClaimCloneCheckpointSourceCompensationParams) (ProjectEnvironmentCloneCheckpointSourceCompensation, error)
 	ClaimCloneCheckpointWorkloadRetirement(ctx context.Context, db DBTX, arg ClaimCloneCheckpointWorkloadRetirementParams) (ProjectEnvironmentCloneCheckpointWorkloadRetirement, error)
 	ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db DBTX, arg ClaimClonePostgresMaintenanceDispatchParams) (ManagedPostgresCheckpointMaintenance, error)
+	// Compare-and-swap: the claim succeeds only from the epoch the claimant read,
+	// so two vmmd processes can never both hold the node's next epoch.
+	ClaimComputeNodeVMMDEpoch(ctx context.Context, db DBTX, arg ClaimComputeNodeVMMDEpochParams) (int64, error)
 	ClaimCustomerOperationBlobCleanup(ctx context.Context, db DBTX, arg ClaimCustomerOperationBlobCleanupParams) (CustomerOperationResultBlob, error)
 	ClaimDueLegacyWorkflowRun(ctx context.Context, db DBTX, arg ClaimDueLegacyWorkflowRunParams) (WorkflowRun, error)
 	// Claim due schedules for one firer. A held lease is skipped until it lapses,
@@ -398,6 +401,11 @@ type Querier interface {
 	ClaimWorkerRecovery(ctx context.Context, db DBTX, arg ClaimWorkerRecoveryParams) (WorkerRecovery, error)
 	ClearAppSecretRuntimeProcessAck(ctx context.Context, db DBTX, arg ClearAppSecretRuntimeProcessAckParams) (int64, error)
 	ClearApplicationStandardControlBindings(ctx context.Context, db DBTX, appID pgtype.UUID) error
+	ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, nodeID pgtype.UUID) (int64, error)
+	// schedd: a fork command's output comes from inside a copy of production
+	// memory, so it is emptied once the fork has been over for the retention
+	// window (api.AppForkExecOutputRetention). The command record stays.
+	ClearExpiredAppForkExecOutput(ctx context.Context, db DBTX, arg ClearExpiredAppForkExecOutputParams) (int64, error)
 	ClearInstanceRuntimeConfigReceipt(ctx context.Context, db DBTX, instanceID pgtype.UUID) error
 	ClearMFA(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	ClearObsoleteDeploymentsRetainingRecovery(ctx context.Context, db DBTX, arg ClearObsoleteDeploymentsRetainingRecoveryParams) (int64, error)
@@ -508,6 +516,8 @@ type Querier interface {
 	CompleteWorkerRecovery(ctx context.Context, db DBTX, arg CompleteWorkerRecoveryParams) (int64, error)
 	CompleteWorkflowForEach(ctx context.Context, db DBTX, arg CompleteWorkflowForEachParams) error
 	CompleteWorkflowJoin(ctx context.Context, db DBTX, arg CompleteWorkflowJoinParams) error
+	// vmmd restart adoption ADR §3: the node's current ownership epoch.
+	ComputeNodeVMMDEpoch(ctx context.Context, db DBTX, nodeID pgtype.UUID) (ComputeNodeVMMDEpochRow, error)
 	// The parent run lock serializes this consumption with guest reporting and
 	// coordinator transitions. A missing HTTP response never releases delivery.
 	ConsumeCustomerOperationWorkflowGuest(ctx context.Context, db DBTX, arg ConsumeCustomerOperationWorkflowGuestParams) (int64, error)
@@ -1066,6 +1076,8 @@ type Querier interface {
 	EventConsumerPressureTarget(ctx context.Context, db DBTX, arg EventConsumerPressureTargetParams) (pgtype.UUID, error)
 	EventConsumerPressureWaits(ctx context.Context, db DBTX, arg EventConsumerPressureWaitsParams) (EventConsumerPressureWaitsRow, error)
 	EventConsumerProcessingHealth(ctx context.Context, db DBTX, arg EventConsumerProcessingHealthParams) (EventConsumerProcessingHealthRow, error)
+	// Reads the account's live slots (event_delivery_slots_live), not its whole
+	// delivery history; the invocation's state still decides.
 	EventDeliveryCounts(ctx context.Context, db DBTX, arg EventDeliveryCountsParams) (EventDeliveryCountsRow, error)
 	EventDeliveryInsertSlot(ctx context.Context, db DBTX, arg EventDeliveryInsertSlotParams) error
 	EventDeliveryLockCapacity(ctx context.Context, db DBTX, arg EventDeliveryLockCapacityParams) error
@@ -2035,6 +2047,7 @@ type Querier interface {
 	HostingSitePurge(ctx context.Context, db DBTX, arg HostingSitePurgeParams) (int64, error)
 	HostingSiteRetireReleases(ctx context.Context, db DBTX, arg HostingSiteRetireReleasesParams) error
 	HostingSiteSuspend(ctx context.Context, db DBTX, arg HostingSiteSuspendParams) (HostingSite, error)
+	IdempotencyReceipt(ctx context.Context, db DBTX, arg IdempotencyReceiptParams) (IdempotencyReceiptRow, error)
 	// ---------------------------------------------------------------------------
 	// ADR-096 customer-facing automatic error grouping.
 	// Tables live in migrations/00222_app_errors.sql. gatewayd-internal
@@ -2090,6 +2103,11 @@ type Querier interface {
 	InsertApplicationStandardOperation(ctx context.Context, db DBTX, arg InsertApplicationStandardOperationParams) error
 	InsertApplicationStandardOperationAudit(ctx context.Context, db DBTX, arg InsertApplicationStandardOperationAuditParams) error
 	InsertApplicationStandardOperationTarget(ctx context.Context, db DBTX, arg InsertApplicationStandardOperationTargetParams) error
+	// ADR-595 extension: an admitted runtime survives a vmmd restart. The
+	// trigger admits only the node's current holder, extending the
+	// admission's current one, for an instance whose residency equals its
+	// receipt.
+	InsertApplicationStandardRebind(ctx context.Context, db DBTX, arg InsertApplicationStandardRebindParams) error
 	InsertApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg InsertApplicationStandardReviewPlanParams) error
 	InsertApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg InsertApplicationStandardSnapshotCaptureParams) error
 	InsertApplicationStandardVersion(ctx context.Context, db DBTX, arg InsertApplicationStandardVersionParams) error
@@ -2871,6 +2889,9 @@ type Querier interface {
 	// Uses debug_regression_observations_app_idx (00436).
 	ListActiveRegressionsByApp(ctx context.Context, db DBTX, arg ListActiveRegressionsByAppParams) ([]ListActiveRegressionsByAppRow, error)
 	ListActiveTCPListeners(ctx context.Context, db DBTX) ([]AppTcpListener, error)
+	// The rows a vmmd adoption report settles: RUNNING and FROZEN on the node.
+	// Read only after the node's epoch moves, so a scan of the live set is fine.
+	ListAdoptionReportInstancesOnNode(ctx context.Context, db DBTX, arg ListAdoptionReportInstancesOnNodeParams) ([]ListAdoptionReportInstancesOnNodeRow, error)
 	ListAlertRollbacks(ctx context.Context, db DBTX, arg ListAlertRollbacksParams) ([][]byte, error)
 	ListAlertRuleChannels(ctx context.Context, db DBTX, ruleID pgtype.UUID) ([]NotificationChannel, error)
 	// ADR-747 slice 2: hourly SLO budget rows (meterd is the only writer).
@@ -2980,6 +3001,7 @@ type Querier interface {
 	ListApplicationStandardObservationArtifacts(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListApplicationStandardObservationArtifactsRow, error)
 	ListApplicationStandardObservationSnapshots(ctx context.Context, db DBTX, arg ListApplicationStandardObservationSnapshotsParams) ([]ListApplicationStandardObservationSnapshotsRow, error)
 	ListApplicationStandardPublishers(ctx context.Context, db DBTX, arg ListApplicationStandardPublishersParams) ([]ApplicationStandardPublisher, error)
+	ListApplicationStandardRebinds(ctx context.Context, db DBTX, instanceID pgtype.UUID) ([]InstanceApplicationStandardRebind, error)
 	ListApplicationStandards(ctx context.Context, db DBTX, arg ListApplicationStandardsParams) ([]ListApplicationStandardsRow, error)
 	ListApps(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ListAppsRow, error)
 	// Backs the regression cron's discovery loop. Walks all apps with
@@ -3023,6 +3045,7 @@ type Querier interface {
 	// composite index is enough for the routine 30s × 60 nodes × 24h
 	// steady-state workload; a 7-day retention sweep is a follow-on.
 	ListComputeNodeHeartbeats(ctx context.Context, db DBTX, arg ListComputeNodeHeartbeatsParams) ([]ListComputeNodeHeartbeatsRow, error)
+	ListComputeNodeVMMDRestartNotices(ctx context.Context, db DBTX) ([]ListComputeNodeVMMDRestartNoticesRow, error)
 	ListCrashCaptures(ctx context.Context, db DBTX, arg ListCrashCapturesParams) ([]CrashCapture, error)
 	ListCrashCapturesToEncrypt(ctx context.Context, db DBTX, arg ListCrashCapturesToEncryptParams) ([]CrashCapture, error)
 	ListCrashCapturesToPurge(ctx context.Context, db DBTX, rowLimit int32) ([]CrashCapture, error)
@@ -5539,6 +5562,13 @@ type Querier interface {
 	ReserveEnvironmentQualificationRestore(ctx context.Context, db DBTX, arg ReserveEnvironmentQualificationRestoreParams) error
 	ReserveEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) (int32, error)
 	ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accountID string) (int32, error)
+	// Claims an Idempotency-Key bound to its request fingerprint
+	// (ADR-20261022204036). A new key, a key past its 24 h replay window, or an
+	// in-flight reservation older than abandon_after_seconds is reserved. An
+	// abandoned reservation bound to another fingerprint under the same key id
+	// (its first 4 bytes) is not taken over: the key stays bound to its first
+	// request for the whole window.
+	ReserveIdempotentRequest(ctx context.Context, db DBTX, arg ReserveIdempotentRequestParams) (bool, error)
 	ReserveProjectReleaseAddition(ctx context.Context, db DBTX, arg ReserveProjectReleaseAdditionParams) error
 	ReserveProjectSubmission(ctx context.Context, db DBTX, arg ReserveProjectSubmissionParams) (int64, error)
 	ReserveRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg ReserveRuntimeUpgradeCandidateParams) (pgtype.UUID, error)
@@ -5876,6 +5906,9 @@ type Querier interface {
 	SetBuildRuntimeBaseRef(ctx context.Context, db DBTX, arg SetBuildRuntimeBaseRefParams) error
 	SetCommitSourceConnection(ctx context.Context, db DBTX, arg SetCommitSourceConnectionParams) (int64, error)
 	SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCommitSourceEnabledParams) error
+	// vmmd restart adoption ADR §3: a vmmd stopping for a planned restart tells
+	// schedd so it retries wakes and counts no heartbeat failures meanwhile.
+	SetComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, arg SetComputeNodeVMMDRestartNoticeParams) (int64, error)
 	// ADR-733 crash snapshots.
 	SetCrashSnapshotSettings(ctx context.Context, db DBTX, arg SetCrashSnapshotSettingsParams) (CrashSnapshotSetting, error)
 	SetCustomerOperationExecutionIdentity(ctx context.Context, db DBTX, arg SetCustomerOperationExecutionIdentityParams) error

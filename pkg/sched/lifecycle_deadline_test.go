@@ -18,7 +18,8 @@ func TestStartupDeadlineForApp(t *testing.T) {
 		plan     api.Plan
 		want     int32
 	}{
-		{name: "plan default", plan: api.PlanPro, want: 60},
+		// Pro's 60 s default is capped at the 30 s cold-boot window (Hunt 12 H12-10).
+		{name: "plan default", plan: api.PlanPro, want: api.ColdBootReadyWindowS},
 		{name: "manifest override", manifest: state.AppManifest{StartupDeadlineS: 17}, plan: api.PlanPro, want: 17},
 		{name: "unknown plan preserves vmmd default", plan: api.Plan("unknown"), want: 0},
 	}

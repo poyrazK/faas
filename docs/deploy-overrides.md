@@ -10,6 +10,8 @@ hosting:
   health: /healthz
 ```
 
+`hosting.start` is the command the app runs: it replaces the command the source build produces, including a Procfile `web:` entry and the builder's detected start. Without it, Gregale keeps the built image's command and uses its own inferred start only when the image has none.
+
 The CLI validates the schema before uploading source. A declared port must match the process listener, and the health endpoint should be cheap, authenticated only when necessary, and free of side effects. Put credentials in [secrets](secrets.md), not in this file or image layers.
 
 Overrides apply to the selected deployment only; they do not mutate organization defaults. Use [Deployments](deploys.md) to inspect the resolved configuration and roll back to a known-good revision.

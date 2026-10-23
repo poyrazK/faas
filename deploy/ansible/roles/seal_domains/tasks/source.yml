@@ -1,0 +1,88 @@
+---
+# The source domain (ADR 20261022111812). githubd reads GitHub install tokens
+# and webhook secret copies, and seals the install tokens itself; apid seals
+# webhook secret copies. githubd gets the identity and proves it opens the
+# domain probe before apid seals anything to the domain.
+- name: seal_domains — require the source domain sources on a control-plane host
+  ansible.builtin.assert:
+    that:
+      - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+      - faas_seal_domain_source_identity_src | length > 0
+      - faas_seal_domain_source_recipient_src | length > 0
+      - faas_seal_domain_source_writes in ['', 'fleet', 'dual', 'domain']
+      - faas_seal_domain_source_writes != 'domain' or (faas_seal_domain_source_readers_verified | bool)
+    fail_msg: >-
+      The source seal domain runs where githubd runs (a control-plane or
+      single-box host). Set faas_seal_domain_source_identity_src and
+      faas_seal_domain_source_recipient_src to the files from
+      `gregalectl seal-domain init --domain source`. writes=domain also
+      needs faas_seal_domain_source_readers_verified once every githubd
+      verified the domain and the previous release left the rollback window.
+
+# 0400 root:root. systemd hands the identity to githubd alone as a
+# credential; no other unit names it.
+- name: seal_domains — install the source domain identity
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_source_identity_src }}"
+    dest: /etc/faas/secrets/domains/source.age
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-githubd for seal domains
+
+- name: seal_domains — install the source domain recipient
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_source_recipient_src }}"
+    dest: /etc/faas/secrets/domains/source.age.pub
+    owner: root
+    group: root
+    mode: "0444"
+  notify: restart faas-apid for seal domains
+
+- name: seal_domains — create unit drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [faas-githubd, faas-apid]
+
+- name: seal_domains — give githubd the source domain identity
+  ansible.builtin.template:
+    src: 60-faas-seal-domain-source-reader.conf.j2
+    dest: /etc/systemd/system/faas-githubd.service.d/60-faas-seal-domain-source.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-githubd for seal domains
+
+- name: seal_domains — restart githubd before proving the domain
+  ansible.builtin.meta: flush_handlers
+
+- name: seal_domains — prove this node opens the source domain probe
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - verify
+      - --domain
+      - source
+      - --publish
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --metrics-file
+      - "{{ faas_seal_domain_textfile_dir }}/faas_seal_domain_source.prom"
+      - --json
+  register: faas_seal_domain_source_verify
+  changed_when: (faas_seal_domain_source_verify.stdout | from_json).probe_written | default(false)
+
+- name: seal_domains — have apid seal webhook secret copies to the domain
+  ansible.builtin.template:
+    src: 60-faas-seal-domain-source-writer.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/60-faas-seal-domain-source.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid for seal domains

@@ -232,9 +232,13 @@ func runSealDomainMigrate(args []string) error {
 	var report sealmigrate.MigrationReport
 	switch d {
 	case sealdomain.Source:
-		// The source domain is not wired yet: the sealed copy goes to the
-		// fleet recipient githubd opens today.
-		report, err = sealmigrate.SealGithubWebhookSecrets(ctx, store, []*age.X25519Recipient{fleet.Recipient()})
+		if !*readersVerified {
+			// Before every githubd holds the source identity, a missing
+			// copy goes to the fleet recipient githubd opens today.
+			report, err = sealmigrate.SealGithubWebhookSecrets(ctx, store, []*age.X25519Recipient{fleet.Recipient()})
+			break
+		}
+		report, err = migrateDomain(ctx, store, d, *dir, *fleetKey, *hostKey)
 	case sealdomain.Outbound:
 		if !*readersVerified {
 			return errors.New("re-sealed outbound credentials no longer open with the fleet identity; pass --readers-verified once every outboundd verified the outbound domain and the previous release left the rollback window")
@@ -278,8 +282,11 @@ func migrateDomain(ctx context.Context, store *state.PgStore, d sealdomain.Domai
 	if err != nil {
 		return sealmigrate.MigrationReport{}, err
 	}
-	if d == sealdomain.Runtime {
+	switch d {
+	case sealdomain.Runtime:
 		return sealmigrate.MigrateRuntime(ctx, store, domain, legacy)
+	case sealdomain.Source:
+		return sealmigrate.MigrateSource(ctx, store, domain, legacy)
 	}
 	return sealmigrate.MigrateOutbound(ctx, store, domain, legacy)
 }
