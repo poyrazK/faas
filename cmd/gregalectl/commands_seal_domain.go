@@ -110,10 +110,11 @@ func runSealDomainInit(args []string) error {
 }
 
 type sealDomainVerifyReport struct {
-	Domain       sealdomain.Domain `json:"domain"`
-	Recipient    string            `json:"recipient"`
-	ProbeWritten bool              `json:"probe_written"`
-	Ready        bool              `json:"ready"`
+	Domain         sealdomain.Domain `json:"domain"`
+	Recipient      string            `json:"recipient"`
+	ProbeWritten   bool              `json:"probe_written"`
+	ProbePublished bool              `json:"probe_published"`
+	Ready          bool              `json:"ready"`
 }
 
 // runSealDomainVerify proves that this node's staged identity opens the
@@ -130,6 +131,7 @@ func runSealDomainVerify(args []string) error {
 	dsn := fs.String("pg-dsn", "", "PostgreSQL DSN")
 	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
 	metricsFile := fs.String("metrics-file", "", "optional node_exporter textfile output")
+	recipientOnly := fs.Bool("recipient-only", false, "check the staged <domain>.age.pub against the published probe; needs no identity")
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -137,6 +139,9 @@ func runSealDomainVerify(args []string) error {
 	d, err := parseSealDomainFlag(*domainName)
 	if err != nil {
 		return err
+	}
+	if *recipientOnly {
+		return verifySealDomainRecipient(d, *dir, *dsn, *dbEnv, *jsonOut || jsonOutput)
 	}
 	report := sealDomainVerifyReport{Domain: d}
 	fail := func(err error) error {
@@ -171,6 +176,7 @@ func runSealDomainVerify(args []string) error {
 	if err != nil {
 		return fail(fmt.Errorf("load %s probe: %w", d, err))
 	}
+	report.ProbePublished = true
 	if probe.Recipient != report.Recipient {
 		return fail(fmt.Errorf("the %s probe is sealed to %s but this node stages %s", d, probe.Recipient, report.Recipient))
 	}
@@ -185,6 +191,45 @@ func runSealDomainVerify(args []string) error {
 		return json.NewEncoder(osStdout).Encode(report)
 	}
 	PrintOK(osStdout, "Seal domain %s ready: recipient %s, probe verified\n", d, report.Recipient)
+	return nil
+}
+
+// verifySealDomainRecipient checks that the public recipient staged for a
+// domain's writers is the one its readers published the probe with. A
+// mismatch means writers would seal to a key no reader holds, for example a
+// recipient pasted from another pair. Before any reader has published the
+// probe there is nothing to compare: the report says so and the check passes.
+func verifySealDomainRecipient(d sealdomain.Domain, dir, dsn, dbEnv string, jsonOut bool) error {
+	r, err := secretbox.LoadRecipient(sealdomain.IdentityPath(dir, d) + ".pub")
+	if err != nil {
+		return fmt.Errorf("load %s recipient: %w", d, err)
+	}
+	report := sealDomainVerifyReport{Domain: d, Recipient: r.String()}
+	pool, err := openFleetSealPool(dsn, dbEnv)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	probe, err := state.NewPgStore(pool).LoadSealDomainProbe(ctx, string(d))
+	switch {
+	case errors.Is(err, state.ErrNotFound):
+	case err != nil:
+		return fmt.Errorf("load %s probe: %w", d, err)
+	case probe.Recipient != report.Recipient:
+		return fmt.Errorf("the %s recipient staged here is %s, but readers published the probe with %s: writers would seal to a key no reader holds", d, report.Recipient, probe.Recipient)
+	default:
+		report.ProbePublished, report.Ready = true, true
+	}
+	if jsonOut {
+		return json.NewEncoder(osStdout).Encode(report)
+	}
+	if !report.ProbePublished {
+		PrintOK(osStdout, "Seal domain %s recipient %s staged; no reader has published the probe yet\n", d, report.Recipient)
+		return nil
+	}
+	PrintOK(osStdout, "Seal domain %s recipient %s matches the published probe\n", d, report.Recipient)
 	return nil
 }
 
