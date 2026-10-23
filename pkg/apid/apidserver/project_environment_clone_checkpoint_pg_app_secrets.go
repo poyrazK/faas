@@ -72,7 +72,7 @@ func sealCheckpointPgAppSecret(member state.ProjectEnvironmentCloneCheckpointPgA
 	if appRecipient == nil {
 		return out, errCloneCheckpointUnavailable
 	}
-	cipher, err := secretbox.SealOne(appRecipient, c.EnvironmentKey, string(value), api.PostgresCheckpointConnectionCiphertextMaxBytes)
+	cipher, err := secretbox.SealOneBound(appRecipient, runtimeSecretBinding(c.Runtime.Verification.Isolation.AccountID), c.EnvironmentKey, string(value), api.PostgresCheckpointConnectionCiphertextMaxBytes)
 	if err != nil || len(cipher) > api.PostgresCheckpointConnectionCiphertextMaxBytes {
 		return out, errCloneCheckpointUnavailable
 	}

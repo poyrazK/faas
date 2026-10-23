@@ -115,6 +115,7 @@ var AllowedAppWebhookEvents = []string{
 	"consumer.plan_changed",
 	"consumer.closed",
 	"outbound.ai_budget.threshold",
+	"outbound.ai_quality.drift",
 	"debug.regression.detected", "debug.regression.resolved",
 	"routes.requirements.changed", "routes.requirements.violated",
 	"routes.requirements.recovered",

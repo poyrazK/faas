@@ -4,8 +4,10 @@
 /* eslint-disable */
 import type { ComposeHealthcheck } from './ComposeHealthcheck.js';
 import type { ComposeProcess } from './ComposeProcess.js';
+import type { ComposeResources } from './ComposeResources.js';
 import type { PlanDetectedBy } from './PlanDetectedBy.js';
 import type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
+import type { SecretFile } from './SecretFile.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
@@ -56,6 +58,11 @@ export type PlanWorkload = {
    * Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned.
    */
   build_args?: Array<string>;
+  /**
+   * Compose secrets written to /run/secrets (ADR-20261023090000).
+   */
+  secret_files?: Array<SecretFile>;
+  resources?: ComposeResources;
   command: Array<string>;
   /**
    * Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies.

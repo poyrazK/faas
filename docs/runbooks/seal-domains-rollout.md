@@ -406,6 +406,36 @@ this step stay domain-only. From now on:
 - Never activate a compute node before it reports
   `faas_seal_domain_loaded{domain="runtime"} 1`.
 
+### 4e. Bind new runtime secrets to their account
+
+[ADR 20261023173624](../adr/20261023173624-runtime-secrets-bound-to-their-account.md)
+binds each runtime secret to its account, so vmmd opens it only for that
+account's workloads. This step is independent of 4a–4d: it works whether
+runtime secrets are sealed to the fleet key or the domain.
+
+A vmmd from before the binding refuses a bound envelope, and so do
+gregalectl and apid from before it. Wait until every compute node, every
+control-plane node and the operator machines run the release that carries
+the binding check, and that release's predecessor has left the rollback
+window. Then add to the local variables file and converge the control plane:
+
+```yaml
+faas_seal_domain_runtime_binding_readers_verified: true
+faas_seal_domain_runtime_binding: account
+```
+
+apid logs `"runtime seal domain"` with `"account_binding":true`. Set a
+secret on a test app and confirm it wakes and reads the value. A wake that
+fails with `envelope is bound to another account` means a secret row was
+copied to an app of another account; do not re-seal it. Find how it got
+there.
+
+Rollback: set `faas_seal_domain_runtime_binding: off` and converge. New
+secrets are written unbound again. Secrets written while binding was on stay
+bound, so never roll a reader back past the release that carries the check.
+Secrets stored before this step stay unbound until a later binding pass of
+`seal-domain migrate`.
+
 ## 5. Source seal domain
 
 githubd is the only reader of GitHub install tokens and webhook secrets, and
