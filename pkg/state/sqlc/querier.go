@@ -1367,6 +1367,10 @@ type Querier interface {
 	// imaged, after deleting every object: the sealed key goes with them.
 	ExpireCrashCapture(ctx context.Context, db DBTX, arg ExpireCrashCaptureParams) (CrashCapture, error)
 	ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt pgtype.Timestamptz) (int64, error)
+	// ADR-20261022105723: a pending queue message past its plan's retention
+	// moves to the dead letter. A message a worker holds (dispatching) is not
+	// touched. The plan resolves as StampDefaultInvocationRetention's does.
+	ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error)
 	ExpireProfileCanaryChecks(ctx context.Context, db DBTX, arg ExpireProfileCanaryChecksParams) error
 	ExpireProfileDeploymentChecks(ctx context.Context, db DBTX, arg ExpireProfileDeploymentChecksParams) error
 	// Admission locks apps before deployments. A fresh READ COMMITTED snapshot
@@ -6051,6 +6055,11 @@ type Querier interface {
 	StopOperatorRestartInstance(ctx context.Context, db DBTX, arg StopOperatorRestartInstanceParams) (int64, error)
 	StopUncertainCustomerOperationWorkflow(ctx context.Context, db DBTX, id pgtype.UUID) error
 	SumAccountCreditRefundReversal(ctx context.Context, db DBTX, arg SumAccountCreditRefundReversalParams) (int64, error)
+	SumAccountQueueBacklogBytes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
+	// ADR-20261022105723: every pending and dispatching row of the app and
+	// source, production or not, so the sum bounds the production backlog from
+	// above.
+	SumInvocationBacklogPending(ctx context.Context, db DBTX, arg SumInvocationBacklogPendingParams) (int64, error)
 	// Per-account open-spool budget check (4 × SourceTarballMaxMB cap
 	// per plan). The handler sums the declared total_size across all
 	// open sessions for the account, adds the new total_size, and

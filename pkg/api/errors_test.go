@@ -663,6 +663,22 @@ func TestErrPlanQueueDepth_DistinctFromDelayedCap(t *testing.T) {
 	}
 }
 
+// ADR-20261022105723: the account byte cap has its own code, a 403 that
+// carries the limit and the observed bytes.
+func TestErrPlanQueueBacklogBytes(t *testing.T) {
+	l := MustLimitsFor(PlanHobby)
+	p := ErrPlanQueueBacklogBytes(l.MaxQueueBacklogBytesPerAccount, l.MaxQueueBacklogBytesPerAccount+5)
+	if p.Code != CodePlanQueueBacklogBytes || p.Code == ErrPlanQueueDepth(1, 1).Code {
+		t.Errorf("code = %q, want %q distinct from the depth cap", p.Code, CodePlanQueueBacklogBytes)
+	}
+	if p.Status != http.StatusForbidden || StatusForCode(p.Code) != http.StatusForbidden {
+		t.Errorf("status = %d, want 403", p.Status)
+	}
+	if p.Limit == nil || *p.Limit != l.MaxQueueBacklogBytesPerAccount || p.Observed == nil || *p.Observed != l.MaxQueueBacklogBytesPerAccount+5 {
+		t.Errorf("limit/observed = %v/%v", p.Limit, p.Observed)
+	}
+}
+
 // TestProblem_CheckoutExtensionsMarshalled asserts the provider-neutral
 // and legacy checkout URL + tx_id extensions serialize correctly on a 402 — and stay
 // omitted on a Problem that doesn't carry them (so the Stripe-default

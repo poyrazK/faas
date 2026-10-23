@@ -410,7 +410,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-044: see PlanFree. Hobby's tight quota is the
 			// load-bearing signal in the cpu-fairness e2e (cmd/e2e/cpu_fairness_test.go).
 			CPUWeight: 4, CPUQuotaUS: 200_000, CPUPeriodUS: 200_000,
-			MaxQueueDepth: 5, MaxDelayedTasksPerApp: 5, MaxSourceBytesPerInvocation: 64 * 1024, AsyncInvokeAllowed: true,
+			MaxQueueDepth: 10_000, MaxDelayedTasksPerApp: 5, MaxSourceBytesPerInvocation: 64 * 1024, AsyncInvokeAllowed: true,
+			// ADR-20261022105723: 100 MiB of pending queue messages per account, kept 1 day.
+			MaxQueueBacklogBytesPerAccount: 100 << 20, QueueMessageRetentionSeconds: 86_400,
 			// Issue #394: Hobby gets 3 retries before dead-letter — a
 			// poisoned row exits within ~15s at the default 5s backoff
 			// without thrashing the worker for long.
@@ -579,7 +581,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MinInstancesAllowed: true, CustomMetricsAllowed: true, MaxInstancesAllowed: true,
 			// ADR-044: see PlanFree.
 			CPUWeight: 8, CPUQuotaUS: 500_000, CPUPeriodUS: 500_000,
-			MaxQueueDepth: 25, MaxDelayedTasksPerApp: 50, MaxSourceBytesPerInvocation: 256 * 1024, AsyncInvokeAllowed: true,
+			MaxQueueDepth: 100_000, MaxDelayedTasksPerApp: 50, MaxSourceBytesPerInvocation: 256 * 1024, AsyncInvokeAllowed: true,
+			// ADR-20261022105723: 1 GiB of pending queue messages per account, kept 4 days.
+			MaxQueueBacklogBytesPerAccount: 1 << 30, QueueMessageRetentionSeconds: 4 * 86_400,
 			// Issue #394: Pro gets 10 retries — 5× Hobby's budget.
 			// Tolerates a transient downstream flap while still bounding
 			// the "permanently bad payload" worker cost.
@@ -743,7 +747,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// upper bound — 10 vCPU worth of compute at the per-instance
 			// level, gated by the §1 56 GB hard fence at the slice level.
 			CPUWeight: 16, CPUQuotaUS: 1_000_000, CPUPeriodUS: 1_000_000,
-			MaxQueueDepth: 100, MaxDelayedTasksPerApp: 1_000_000, MaxSourceBytesPerInvocation: 1024 * 1024, AsyncInvokeAllowed: true,
+			MaxQueueDepth: 1_000_000, MaxDelayedTasksPerApp: 1_000_000, MaxSourceBytesPerInvocation: 1024 * 1024, AsyncInvokeAllowed: true,
+			// ADR-20261022105723: 10 GiB of pending queue messages per account, kept 14 days.
+			MaxQueueBacklogBytesPerAccount: 10 << 30, QueueMessageRetentionSeconds: 14 * 86_400,
 			// Issue #394: Scale gets 25 retries — 2.5× Pro's budget, but
 			// capped so a genuinely-bad payload still terminates within
 			// the worker's hourly budget window.
