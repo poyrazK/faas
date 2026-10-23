@@ -142,6 +142,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DATA_REPAIR_RUNNER_` | schedd, vmmd, shared | `default` |  |  | `` | qualification-only pinned runner metadata: BASE_KEY, LAYER_KEY, KERNEL_SHA256, BASE_SHA256 and LAYER_SHA256; all unset disables the runner, partial configuration fails startup, and both daemons must use matching immutable artifacts |
 | `FAAS_DB_BOOT_WAIT` | shared | `default` |  |  | `` | ADR-1344; under a Type=notify unit db.Open waits for an unreachable database while activating, extending the start timeout, instead of exiting into the restart limit. "0" restores fail-fast |
 | `FAAS_DB_NOTIFY_HUB` | shared | `default` |  |  | `` | ADR-190; "0" restores one LISTEN connection per subscriber instead of one per daemon, and selects db.DaemonMaxConnectionsNotifyHubDisabled so the daemon's pool is sized for that mode |
+| `FAAS_DB_ROLE` | shared | `dropin` |  |  | `` | ADR-20261023104734; faas_<daemon> runtime role that replaces the DSN user on both pools (control_plane_service zz-faas-db-role.conf). Unset = the DSN user; refused with a password DSN for another user |
 | `FAAS_DEAD_NODE_RECONCILER_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_DEPLOYMENT_CREATED_AT` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
