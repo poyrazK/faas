@@ -15638,6 +15638,7 @@
       "account_id",
       "app_id",
       "created_at",
+      "delivery",
       "id",
       "kind",
       "message",
@@ -15645,6 +15646,7 @@
       "queue_name",
       "run_id",
       "schedule",
+      "scheduled_at",
       "target"
     ],
     "kind": "operational"
@@ -15805,6 +15807,7 @@
       "managed_work_failed",
       "managed_work_plan",
       "network_mode",
+      "queue_delivery",
       "recorder_closing",
       "run_id",
       "sealed_at",
