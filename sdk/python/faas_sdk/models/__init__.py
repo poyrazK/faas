@@ -4059,6 +4059,8 @@ from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
 from .plan_workload_depends_on_conditions_additional_property import PlanWorkloadDependsOnConditionsAdditionalProperty
 from .plan_workload_tier import PlanWorkloadTier
+from .plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
+from .plan_workload_unset_env_key_reasons_additional_property import PlanWorkloadUnsetEnvKeyReasonsAdditionalProperty
 from .plan_workload_visibility import PlanWorkloadVisibility
 from .platform_flag_definition import PlatformFlagDefinition
 from .platform_flag_opt_ins import PlatformFlagOptIns
@@ -9917,6 +9919,8 @@ __all__ = (
     "PlanWorkloadDependsOnConditions",
     "PlanWorkloadDependsOnConditionsAdditionalProperty",
     "PlanWorkloadTier",
+    "PlanWorkloadUnsetEnvKeyReasons",
+    "PlanWorkloadUnsetEnvKeyReasonsAdditionalProperty",
     "PlanWorkloadVisibility",
     "PlatformFlagDefinition",
     "PlatformFlagOptIns",
