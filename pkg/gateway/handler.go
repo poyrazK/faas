@@ -135,6 +135,10 @@ type App struct {
 	DeclaredRoutes []DeclaredRoute
 	// MaxConcurrency is the app instance ceiling; zero uses the plan ceiling.
 	MaxConcurrency int
+	// PerInstanceConcurrency is the app's declared requests per instance
+	// (scaling_policy.per_instance_concurrency, ADR-20261022203523). Zero uses
+	// the plan's concurrency_per_vm; effectiveVMConcurrencyLimit resolves it.
+	PerInstanceConcurrency int
 	// ConcurrencyOverflow controls saturation behavior at the wake and
 	// per-instance gates. Empty and "queue" retain the bounded-wait default;
 	// "drop" returns 429 immediately when no slot is available.
@@ -7151,7 +7155,7 @@ haveApp:
 	// URLs deliberately skip this step: burst admission uses the weighted app
 	// picker and could wake or select a sibling deployment instead of the
 	// immutable revision named by the hostname.
-	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
+	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits)
 	waitedForBurst := false
 	if !exactDeployment {
 		//nolint:contextcheck // request ctx at handler boundary.
@@ -7253,7 +7257,7 @@ haveApp:
 	// the request waits under the plan's bounded capacity-admission allowance.
 	var vmRelease func()
 	var vmWaited bool
-	queuePolicy := ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth)
+	queuePolicy := concurrencyAdmissionPolicy(app)
 	capacityWaitCtx, cancelCapacityWait := context.WithTimeout(r.Context(), queuePolicy.MaxWait)
 	defer cancelCapacityWait()
 	capacityWaitStarted := time.Now()
@@ -7272,7 +7276,13 @@ haveApp:
 	}
 	capacitySpan.End()
 	if vmWaited {
-		h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, perVMConcurrency)
+		// The audit row marks the platform's per-VM bound. An app that
+		// declares a lower per_instance_concurrency is full by design
+		// (ADR-20261022203523); its waits are in the queue-wait metric, not
+		// one events row per queued request.
+		if perVMConcurrency >= limits.ConcurrencyPerVMBound {
+			h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, perVMConcurrency)
+		}
 		waitedFor := time.Since(capacityWaitStarted)
 		outcome := "admitted"
 		switch {
