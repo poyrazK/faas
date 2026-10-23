@@ -1023,9 +1023,9 @@ gone is not attributed. Rows have no foreign keys and are pruned after
 | `GET /v1/apps/{slug}/ai-deployments` | The app's rows of the last 14 days through `(app_id, minute)`, summed by deployment, at most 50. |
 
 An `ai` gate is skipped by meterd and apid N-1, and an N-1 apid refuses a
-rollout decision carrying an `ai` result; roll apid back only after removing
-`ai` gates (`DELETE FROM app_release_gates WHERE kind = 'ai'` is what the
-down migration does).
+rollout decision carrying an `ai` result. Roll apid back only after the
+`ai` gates are removed, with `gregale release-gates rm --app <slug> <name>`
+for each one; the down migration removes any that are left.
 
 ## AI gateway dashboard
 
