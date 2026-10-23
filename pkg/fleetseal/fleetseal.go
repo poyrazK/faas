@@ -146,11 +146,12 @@ func Migrate(ctx context.Context, store Store, fleet *age.X25519Identity, legacy
 				report.SecretsInOtherDomains++
 				continue
 			}
-			env, openErr := secretbox.OpenMulti(openers, row.Ciphertext)
+			env, binding, openErr := secretbox.OpenMultiBound(openers, row.Ciphertext)
 			if openErr != nil {
 				return report, fmt.Errorf("fleetseal: unseal app=%s scope=%s key=%s: %w", row.AppID, row.Scope, row.Key, openErr)
 			}
-			sealed, sealErr := secretbox.Seal(recipient, env)
+			// Keep the envelope's account binding (ADR-20261023173624).
+			sealed, sealErr := secretbox.SealBound([]*age.X25519Recipient{recipient}, binding, env)
 			for k := range env {
 				env[k] = ""
 				delete(env, k)

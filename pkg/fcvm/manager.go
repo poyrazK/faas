@@ -3426,7 +3426,7 @@ func jsonMarshalEnvelope(e secretbox.Envelope) ([]byte, error) {
 // loopback write.
 func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
 	if len(req.SealedEnvEntries) > 0 {
-		merged, openErr := m.openSealedEnvEntries(req.SealedEnvEntries)
+		merged, openErr := m.openSealedEnvEntries(req.SealedEnvEntries, req.AccountID)
 		if openErr != nil {
 			return nil, nil, openErr
 		}
@@ -3449,7 +3449,10 @@ func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte
 	return secretsJSON, apiJSON, nil
 }
 
-func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Envelope, error) {
+// openSealedEnvEntries opens a workload's selected ciphertext for accountID,
+// the account the workload runs for. An envelope bound to another account
+// (ADR-20261023173624) is refused before any of its values are used.
+func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
@@ -3458,7 +3461,7 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Enve
 	}
 	merged := secretbox.Envelope{}
 	for _, entry := range entries {
-		inner, err := secretbox.OpenMulti(m.hostIdentities, entry.Ciphertext)
+		inner, err := m.openBoundEntry(entry, accountID)
 		if err != nil {
 			return nil, fmt.Errorf("open sealed env[%s]: %w", logsanitize.Field(entry.Key), err)
 		}
@@ -3481,8 +3484,9 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Enve
 // by an authorization-aware caller. It does not perform authorization and
 // requires each envelope to contain exactly its selected source key. Plaintext
 // remains in caller memory only; callers must not log or persist it outside
-// the guest's runtime projection.
-func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]string, error) {
+// the guest's runtime projection. accountID is the account the workload runs
+// for; an envelope bound to another account is refused.
+func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry, accountID string) (map[string]string, error) {
 	if len(entries) == 0 {
 		return map[string]string{}, nil
 	}
@@ -3491,7 +3495,7 @@ func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]str
 	}
 	secrets := make(map[string]string, len(entries))
 	for _, entry := range entries {
-		inner, err := secretbox.OpenMulti(m.hostIdentities, entry.Ciphertext)
+		inner, err := m.openBoundEntry(entry, accountID)
 		if err != nil {
 			return nil, fmt.Errorf("open runtime secret[%s]: %w", logsanitize.Field(entry.Key), err)
 		}
@@ -3505,6 +3509,18 @@ func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]str
 		secrets[entry.Key] = value
 	}
 	return secrets, nil
+}
+
+// openBoundEntry opens one entry and enforces its account binding.
+func (m *Manager) openBoundEntry(entry SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
+	inner, binding, err := secretbox.OpenMultiBound(m.hostIdentities, entry.Ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	if err := binding.Check(accountID); err != nil {
+		return nil, err
+	}
+	return inner, nil
 }
 
 func selectedSealedValue(entry SealedEnvEntry, inner secretbox.Envelope) (string, bool) {
@@ -3555,7 +3571,7 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 			}
 			merged[entry.Key] = string(plaintext)
 		}
-		secrets, err := m.UnsealRuntimeSecrets(secretEntries)
+		secrets, err := m.UnsealRuntimeSecrets(secretEntries, req.AccountID)
 		if err != nil {
 			return fmt.Errorf("open sidecar app secrets: %w", err)
 		}
@@ -4152,7 +4168,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// per-task secrets.env file before Firecracker starts.
 	var secretsEnvJSON []byte
 	if len(req.SealedEnvEntries) > 0 {
-		secretsEnvJSON, _, err = m.prepareWakeFiles(WakeRequest{SealedEnvEntries: req.SealedEnvEntries})
+		secretsEnvJSON, _, err = m.prepareWakeFiles(WakeRequest{SealedEnvEntries: req.SealedEnvEntries, AccountID: req.AccountID})
 		if err != nil {
 			return nil, fmt.Errorf("manager: BootJob %s: prepare sealed env: %w", req.Instance, err)
 		}

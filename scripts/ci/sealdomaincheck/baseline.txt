@@ -127,6 +127,7 @@ plain outbound_ai_prompt_prefixes.prefix_hash
 plain outbound_ai_replay_results.response_body
 plain outbound_ai_request_content.request_body
 plain outbound_ai_request_content.response_body
+plain outbound_ai_traces.tool_signature
 plain outbound_integrations.token_hash
 plain password_reset_tokens.token_hash
 plain platform_mail_outbox_reconciliations.request_hash

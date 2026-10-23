@@ -365,6 +365,28 @@ identity opens none that is still valid.
   control-plane hosts. Until writes are `domain`, apid also seals to the
   fleet key, so the two converges can run in either order.
 
+## CD and node join stage the domain keys
+
+Each domain's key pair is a pair of GitHub environment secrets:
+`SEAL_DOMAIN_<DOMAIN>_AGE_KEY` and `SEAL_DOMAIN_<DOMAIN>_AGE_RECIPIENT`.
+
+- `scripts/ci/seal_domain_vars.sh` writes the files a host role needs on the
+  runner and points the `seal_domains` role at them:
+  - control plane: the `outbound` and `source` identities and every
+    recipient;
+  - compute: the `runtime` and `build` identities.
+- The control-plane converges (the full one and the host-configuration
+  lane) and the compute join run the role with those variables.
+- A join whose `seal-domain verify` fails leaves the node drained.
+- Each domain's public recipient is written as a comment, so a rotated key
+  changes the converge contract hash.
+- Write modes and `readers_verified` stay in the environment's Ansible
+  variables. CD refuses a variables file that sets the key variables itself.
+- `gregalectl seal-domain verify --recipient-only` checks that a staged
+  recipient is the one readers published the probe with. The role runs it
+  before apid's writer drop-in, so a recipient from another pair stops the
+  converge instead of making apid seal to a key no reader holds.
+
 Later slices:
 - the other domains, in the order above;
 - re-sealing the short-lived copies in `app_config_guard_secrets` and
@@ -372,7 +394,6 @@ Later slices:
   cover;
 - the contract steps;
 - meterd sending test alerts;
-- role-scoped staging in node join;
 - dropping `github_webhook_secrets.secret_value` once no release reads it.
 
 ## Consequences

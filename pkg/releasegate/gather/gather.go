@@ -113,6 +113,24 @@ func Gather(ctx context.Context, store any, req Request) ([]releasegate.Gate, ma
 				break
 			}
 			ev.Metric = releasegate.MetricWindow{Samples: samples, Average: average}
+		case state.ReleaseGateAI:
+			// ADR 20261022153155: an ai gate needs the baseline's calls.
+			if req.BaselineID == "" {
+				continue
+			}
+			release, err := reader.ReleaseGateDeploymentAI(ctx, req.AppID, req.ReleaseID, req.ReleaseWindow.Since, req.ReleaseWindow.Until)
+			if err != nil {
+				note(fmt.Errorf("release gate %s: read release AI calls: %w", row.Name, err))
+				ev.Unavailable = true
+				break
+			}
+			baseline, err := reader.ReleaseGateDeploymentAI(ctx, req.AppID, req.BaselineID, req.BaselineWindow.Since, req.BaselineWindow.Until)
+			if err != nil {
+				note(fmt.Errorf("release gate %s: read baseline AI calls: %w", row.Name, err))
+				ev.Unavailable = true
+				break
+			}
+			ev.AIRelease, ev.AIBaseline = releasegate.AIWindow(release), releasegate.AIWindow(baseline)
 		default:
 			continue
 		}
