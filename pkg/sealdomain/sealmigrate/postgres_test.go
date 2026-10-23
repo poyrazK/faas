@@ -320,3 +320,45 @@ func TestPostgresMigrateBuild(t *testing.T) {
 		t.Fatalf("second run = %+v, %v; want nothing re-sealed", again, err)
 	}
 }
+
+// TestPostgresGithubWebhookSecretWithoutPlaintext pins the step that retires
+// the plaintext column (ADR 20261022111812): a secret stored as its sealed
+// copy alone round-trips and migrates, and a row with neither copy is refused.
+func TestPostgresGithubWebhookSecretWithoutPlaintext(t *testing.T) {
+	pool := pgtest.OpenMigrated(t)
+	ctx := context.Background()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	fleet, domain := mustIdentity(t), mustIdentity(t)
+	id := rand.Int64N(1<<40) + 1<<43
+	secret := []byte("sealed-only-secret-0123456")
+	sealed, err := sealdomain.SealGithubWebhookSecret([]*age.X25519Recipient{fleet.Recipient()}, secret)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.UpsertGithubWebhookSecret(ctx, id, state.GithubWebhookSecret{Sealed: sealed}, "test"); err != nil {
+		t.Fatal(err)
+	}
+	got, err := store.GetGithubWebhookSecret(ctx, id)
+	if err != nil || got.Value != nil || !bytes.Equal(got.Sealed, sealed) {
+		t.Fatalf("GetGithubWebhookSecret = %+v, %v; want the sealed copy and no plaintext", got, err)
+	}
+	if _, err := sealmigrate.MigrateSource(ctx, store, domain, []*age.X25519Identity{fleet}); err != nil {
+		t.Fatal(err)
+	}
+	got, err = store.GetGithubWebhookSecret(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if opened, err := sealdomain.OpenGithubWebhookSecret([]*age.X25519Identity{domain}, got.Sealed); err != nil || !bytes.Equal(opened, secret) {
+		t.Fatalf("migrated copy opens to %q, %v", opened, err)
+	}
+	if _, _, err := store.UpsertGithubWebhookSecret(ctx, id+1, state.GithubWebhookSecret{}, "test"); err == nil {
+		t.Fatal("a secret with neither copy was stored")
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO github_webhook_secrets (installation_id, upgraded_by) VALUES ($1, 'test')`, id+2); err == nil {
+		t.Fatal("the database accepted a row with neither copy of the secret")
+	}
+}
