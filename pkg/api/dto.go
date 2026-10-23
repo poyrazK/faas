@@ -2051,13 +2051,15 @@ type AppResponse struct {
 	Manifest AppManifest `json:"manifest"`
 	// ServiceBindings are declared same-account app
 	// dependencies currently injected into this workload. They are a read-only
-	// discovery projection; authorization applies them only when
-	// ServiceBindingPolicy is "declared".
+	// discovery projection; authorization applies them when
+	// ServiceBindingPolicy is "declared", and to targets outside the caller's
+	// project when it is "project".
 	ServiceBindings    []AppServiceBinding                 `json:"service_bindings,omitempty"`
 	ServiceReliability map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	// ServiceBindingPolicy is the caller-side authorization policy applied to
 	// internal service requests. "account" preserves legacy same-account
-	// reachability; "declared" permits only ServiceBindings targets.
+	// reachability; "declared" permits only ServiceBindings targets; "project"
+	// also permits every service in the caller's project.
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport selects the scheme used by the canonical
 	// GREGALE_SERVICE_<NAME>_URL environment variable. The HTTPS alias remains
@@ -7345,6 +7347,10 @@ type PlanWorkload struct {
 	AllowedServiceCallers     *[]string                           `json:"allowed_service_callers,omitempty"`
 	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
 	PlatformTenantRequired    *bool                               `json:"platform_tenant_required,omitempty"`
+	// Visibility is "internal" when the app is or will be hidden from the
+	// public edge: an existing internal app, or a new Compose service without
+	// `ports:` (ADR-20261022131852). Omitted means public.
+	Visibility AppVisibility `json:"visibility,omitempty"`
 
 	Class           string   `json:"class,omitempty"`
 	Schedule        string   `json:"schedule,omitempty"`
@@ -8664,7 +8670,16 @@ func ApplyEdgeRuleRewritePath(requestPath, from, to string) (rewrittenPath strin
 	if !strings.HasPrefix(requestPath, from) {
 		return requestPath, false
 	}
-	return NormalizeEdgeRuleRewriteTarget(to) + requestPath[len(from):], true
+	rest := requestPath[len(from):]
+	if target := NormalizeEdgeRuleRewriteTarget(to); target != "/" {
+		return target + rest, true
+	}
+	// Stripping a prefix to the root (ADR-20261021223225): /api/items with
+	// From=/api becomes /items, and /api itself becomes /, never //items.
+	if !strings.HasPrefix(rest, "/") {
+		rest = "/" + rest
+	}
+	return rest, true
 }
 
 // NormalizeEdgeRuleRewriteTarget canonicalizes a configured rewrite prefix to
@@ -10570,11 +10585,12 @@ type EdgeRuleEventsResponse struct {
 // EdgeRuleEventsQuery filters GET /v1/apps/{slug}/edge-rules/events. Since
 // is a duration such as 1h, 24h or 7d (default 24h).
 type EdgeRuleEventsQuery struct {
-	RuleID  string
-	Outcome string
-	Since   string
-	Limit   int
-	Cursor  string
+	RuleID    string
+	Outcome   string
+	RequestID string
+	Since     string
+	Limit     int
+	Cursor    string
 }
 
 // EdgeRuleListResponse (ADR-963) is one account-level list. Items is

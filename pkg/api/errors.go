@@ -894,6 +894,10 @@ const (
 	// app (ADR-20261019071733); the problem lists the active freezes.
 	// override_freeze with a reason releases anyway, audited.
 	CodeReleaseFrozen = "release_frozen"
+	// CodePlatformReleasePaused means an operator paused every release on the
+	// platform (ADR 20261022140000), for example while a security incident is
+	// contained. Nothing the caller sends overrides it; rollbacks still work.
+	CodePlatformReleasePaused = "platform_release_paused"
 	// CodeReleaseFreezeNotFound means the account has no such unlifted freeze.
 	CodeReleaseFreezeNotFound = "release_freeze_not_found"
 	// CodeReleaseFreezeLimit means the account already holds
@@ -2618,6 +2622,17 @@ func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
 		fmt.Sprintf("%s plan caps total ephemeral app-filesystem capacity at %d MB (including app content and filesystem overhead); the built layer requires %.1f MB.",
 			l.Plan, l.EphemeralDiskMaxMB(), float64(observedBytes)/(1024*1024))).
 		WithLimit(capBytes, observedBytes).
+		WithDocs(docsBase + "/build/limits#app-layer")
+}
+
+// ErrAppLayerTooManyEntries is returned when an image's layers apply more tar
+// entries than one build may extract (LayerExtractionMaxEntries). It shares
+// ErrAppLayerTooLarge's stable code: the image is too large to assemble.
+func ErrAppLayerTooManyEntries(l Limits, limit int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
+		"App too large",
+		fmt.Sprintf("image layers contain more than %d files, directories and links in total; %s plan builds stop at that limit.", limit, l.Plan)).
+		WithLimit(int64(limit), int64(limit)+1).
 		WithDocs(docsBase + "/build/limits#app-layer")
 }
 
@@ -4624,6 +4639,17 @@ func ErrTenantHostnameQuota(p Plan, surfaceID string, limit, observed int) *Prob
 	return NewProblem(http.StatusForbidden, CodeTenantHostnameQuota,
 		"Tenant hostname limit reached",
 		fmt.Sprintf("%s plan caps tenant hostnames at %d per surface; you have %d on surface %s. Remove one to add another.",
+			p, limit, observed, surfaceID)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#tenant-surfaces")
+}
+
+// ErrTenantHostnamePendingQuota is the tenant_hostname_quota problem for
+// the unverified-hostname cap (ADR-20261020090500).
+func ErrTenantHostnamePendingQuota(p Plan, surfaceID string, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeTenantHostnameQuota,
+		"Tenant hostname limit reached",
+		fmt.Sprintf("%s plan caps unverified tenant hostnames at %d per surface; you have %d pending on surface %s. Verify or remove one to add another.",
 			p, limit, observed, surfaceID)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#tenant-surfaces")

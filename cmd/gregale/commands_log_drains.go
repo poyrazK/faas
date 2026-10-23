@@ -196,7 +196,7 @@ func cmdLogDrainsAdd(args []string) int {
 	}
 	drain, err := client.CreateAppLogDrain(context.Background(), slug, req)
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create log drain", err)
 	}
 	return renderLogDrain(drain, "Created")
 }
@@ -282,7 +282,7 @@ func cmdLogDrainsUpdate(args []string) int {
 	}
 	drain, err := client.UpdateAppLogDrain(context.Background(), slug, id, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update log drain", err)
 	}
 	return renderLogDrain(drain, "Updated")
 }
@@ -297,7 +297,7 @@ func cmdLogDrainsRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteAppLogDrain(context.Background(), slug, id); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete log drain", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"deleted": true, "id": id}))

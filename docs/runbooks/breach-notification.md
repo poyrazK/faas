@@ -43,7 +43,11 @@ recovered or the access path is disproved.
 ## 3. Contain and eradicate
 
 Choose the least destructive action that stops further access, then record the
-operator, timestamp, and verification:
+operator, timestamp, and verification. When sealed customer material may have
+been read, follow
+[customer-secret-store-compromise.md](customer-secret-store-compromise.md):
+`gregalectl break-glass pause` and `revoke-credentials` contain it platform-wide
+in minutes. Other actions:
 
 - revoke or rotate exposed API keys, session keys, OAuth credentials, webhook
   secrets, or host-age identities;

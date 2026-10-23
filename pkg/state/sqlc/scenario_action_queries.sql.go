@@ -113,22 +113,24 @@ func (q *Queries) InsertScenarioCapturedPlatformCall(ctx context.Context, db DBT
 }
 
 const insertScenarioCapturedQueueMessage = `-- name: InsertScenarioCapturedQueueMessage :one
-INSERT INTO scenario_captured_queue_messages(account_id,run_id,app_id,kind,target,queue_name,schedule,message,oversized)
+INSERT INTO scenario_captured_queue_messages(account_id,run_id,app_id,kind,target,queue_name,schedule,message,oversized,scheduled_at)
 VALUES($1::text::uuid,$2::text,$3::text::uuid,$4::text,
- $5::text,$6::text,$7::text,$8::jsonb,$9::boolean)
+ $5::text,$6::text,$7::text,$8::jsonb,$9::boolean,
+ $10::timestamptz)
 RETURNING id::text AS id
 `
 
 type InsertScenarioCapturedQueueMessageParams struct {
-	AccountID string
-	RunID     string
-	AppID     string
-	Kind      string
-	Target    string
-	QueueName string
-	Schedule  string
-	Message   []byte
-	Oversized bool
+	AccountID   string
+	RunID       string
+	AppID       string
+	Kind        string
+	Target      string
+	QueueName   string
+	Schedule    string
+	Message     []byte
+	Oversized   bool
+	ScheduledAt pgtype.Timestamptz
 }
 
 func (q *Queries) InsertScenarioCapturedQueueMessage(ctx context.Context, db DBTX, arg InsertScenarioCapturedQueueMessageParams) (string, error) {
@@ -142,6 +144,7 @@ func (q *Queries) InsertScenarioCapturedQueueMessage(ctx context.Context, db DBT
 		arg.Schedule,
 		arg.Message,
 		arg.Oversized,
+		arg.ScheduledAt,
 	)
 	var id string
 	err := row.Scan(&id)
@@ -479,6 +482,38 @@ func (q *Queries) ScenarioCapturedActions(ctx context.Context, db DBTX, arg Scen
 	return items, nil
 }
 
+const scenarioCapturedEventByIdentity = `-- name: ScenarioCapturedEventByIdentity :one
+SELECT type,schema_version,created_at FROM scenario_captured_events
+WHERE account_id=$1::text::uuid AND run_id=$2::text
+ AND source=$3::text AND event_id=$4::text
+ORDER BY created_at,id LIMIT 1
+`
+
+type ScenarioCapturedEventByIdentityParams struct {
+	AccountID string
+	RunID     string
+	Source    string
+	EventID   string
+}
+
+type ScenarioCapturedEventByIdentityRow struct {
+	Type          string
+	SchemaVersion string
+	CreatedAt     pgtype.Timestamptz
+}
+
+func (q *Queries) ScenarioCapturedEventByIdentity(ctx context.Context, db DBTX, arg ScenarioCapturedEventByIdentityParams) (ScenarioCapturedEventByIdentityRow, error) {
+	row := db.QueryRow(ctx, scenarioCapturedEventByIdentity,
+		arg.AccountID,
+		arg.RunID,
+		arg.Source,
+		arg.EventID,
+	)
+	var i ScenarioCapturedEventByIdentityRow
+	err := row.Scan(&i.Type, &i.SchemaVersion, &i.CreatedAt)
+	return i, err
+}
+
 const scenarioCapturedEventIdentity = `-- name: ScenarioCapturedEventIdentity :one
 SELECT (type=$1::text AND schema_version=$2::text
   AND data IS NOT DISTINCT FROM $3::jsonb AND oversized=$4::boolean)::boolean AS same
@@ -568,6 +603,40 @@ func (q *Queries) ScenarioCapturedEvents(ctx context.Context, db DBTX, arg Scena
 	return items, nil
 }
 
+const scenarioCapturedPlatformCallByID = `-- name: ScenarioCapturedPlatformCallByID :one
+SELECT kind,target,name,message,oversized,created_at FROM scenario_captured_platform_calls
+WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND run_id=$3::text
+`
+
+type ScenarioCapturedPlatformCallByIDParams struct {
+	ID        string
+	AccountID string
+	RunID     string
+}
+
+type ScenarioCapturedPlatformCallByIDRow struct {
+	Kind      string
+	Target    string
+	Name      string
+	Message   []byte
+	Oversized bool
+	CreatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ScenarioCapturedPlatformCallByID(ctx context.Context, db DBTX, arg ScenarioCapturedPlatformCallByIDParams) (ScenarioCapturedPlatformCallByIDRow, error) {
+	row := db.QueryRow(ctx, scenarioCapturedPlatformCallByID, arg.ID, arg.AccountID, arg.RunID)
+	var i ScenarioCapturedPlatformCallByIDRow
+	err := row.Scan(
+		&i.Kind,
+		&i.Target,
+		&i.Name,
+		&i.Message,
+		&i.Oversized,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const scenarioCapturedPlatformCalls = `-- name: ScenarioCapturedPlatformCalls :many
 SELECT c.id::text AS id,p.workload_name AS workload,c.kind,c.target,c.name,c.message,c.oversized
 FROM scenario_captured_platform_calls c JOIN scenario_test_action_policies p ON p.app_id=c.app_id AND p.account_id=c.account_id AND p.run_id=c.run_id
@@ -616,6 +685,46 @@ func (q *Queries) ScenarioCapturedPlatformCalls(ctx context.Context, db DBTX, ar
 		return nil, err
 	}
 	return items, nil
+}
+
+const scenarioCapturedQueueMessageByID = `-- name: ScenarioCapturedQueueMessageByID :one
+SELECT kind,target,queue_name,schedule,message,oversized,scheduled_at,created_at
+FROM scenario_captured_queue_messages
+WHERE id=$1::text::uuid AND account_id=$2::text::uuid AND run_id=$3::text
+`
+
+type ScenarioCapturedQueueMessageByIDParams struct {
+	ID        string
+	AccountID string
+	RunID     string
+}
+
+type ScenarioCapturedQueueMessageByIDRow struct {
+	Kind        string
+	Target      string
+	QueueName   string
+	Schedule    string
+	Message     []byte
+	Oversized   bool
+	ScheduledAt pgtype.Timestamptz
+	CreatedAt   pgtype.Timestamptz
+}
+
+// A capture is read back only inside its own run (ADR-20261022082721).
+func (q *Queries) ScenarioCapturedQueueMessageByID(ctx context.Context, db DBTX, arg ScenarioCapturedQueueMessageByIDParams) (ScenarioCapturedQueueMessageByIDRow, error) {
+	row := db.QueryRow(ctx, scenarioCapturedQueueMessageByID, arg.ID, arg.AccountID, arg.RunID)
+	var i ScenarioCapturedQueueMessageByIDRow
+	err := row.Scan(
+		&i.Kind,
+		&i.Target,
+		&i.QueueName,
+		&i.Schedule,
+		&i.Message,
+		&i.Oversized,
+		&i.ScheduledAt,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const scenarioCapturedQueueMessages = `-- name: ScenarioCapturedQueueMessages :many

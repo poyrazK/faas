@@ -77,6 +77,8 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | `change_timeline` | App change timeline preview (ADR-751) | apid | `FAAS_CHANGE_TIMELINE_ENABLED` |
 | `anomaly_alerts` | Baseline alert comparisons (ADR-744) | apid | `FAAS_ANOMALY_ALERTS_ENABLED` |
 | `trigger_batch_delivery` | `delivery: batch` on triggers (ADR-1321) | apid | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` |
+| `api_monetization` | API monetization for selected accounts (ADR-20261020170649); the `api_monetization_enabled` switch releases it to everyone. See `docs/ops/api-monetization-release.md` | apid, gatewayd-internal | none |
+
 | `operation_schedules` | Operation schedules: routes and firing (ADR-20261018161833) | apid | `FAAS_OPERATION_SCHEDULES_ACCOUNTS` |
 | `operation_children` | Child Operations and cancellation cascade (ADR-20261018183000) | apid | `FAAS_OPERATION_CHILDREN_ACCOUNTS` |
 | `service_map` | Service map preview (ADR-1131) | apid | `FAAS_SERVICE_MAP_ENABLED` |

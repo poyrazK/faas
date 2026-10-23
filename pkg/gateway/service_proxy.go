@@ -292,6 +292,9 @@ type ServiceProxyConfig struct {
 	// (ADR-20261018090210): while it reports true Gregale-Usage is consumed
 	// like on public requests. Nil leaves the header untouched.
 	APIMonetization func() bool
+	// APIMonetizationFor releases monetization to one account's service
+	// calls (ADR-20261020170649). Nil follows APIMonetization alone.
+	APIMonetizationFor func(accountID string) bool
 	// Wake is the optional wake-on-demand seam (ADR-196). nil keeps the
 	// legacy fail-fast behaviour for a parked target.
 	Wake ServiceProxyWaker
@@ -360,6 +363,7 @@ type ServiceProxy struct {
 	authorizeBound            ServiceProxyAuthorizer
 	admitRuntime              func(context.Context, string, string) error
 	apiMonetization           func() bool
+	apiMonetizationFor        func(accountID string) bool
 	admitManagedAsync         ServiceProxyAsyncAdmitter
 	mintAssertion             ServiceCallerMinter
 	localNodeID               string
@@ -470,6 +474,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 	return &ServiceProxy{
 		admitRuntime:              cfg.AdmitRuntime,
 		apiMonetization:           cfg.APIMonetization,
+		apiMonetizationFor:        cfg.APIMonetizationFor,
 		mintAssertion:             cfg.MintCallerAssertion,
 		localNodeID:               strings.TrimSpace(cfg.LocalNodeID),
 		provider:                  cfg.Provider,
@@ -559,7 +564,11 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		// impersonate net.Hijacker.
 		dispatchWriter = w
 	}
-	probe := isServiceBindingProbeRequest(r, targetPath, alias)
+	// ADR-20261019200059: an HTTP caller probes over its canonical
+	// <service>.svc.gregale URL; the binding stage below still requires its
+	// declared binding, as the .internal alias always has.
+	hostService, hostForm := parseServiceProxyHost(r.Host)
+	probe := isServiceBindingProbeRequest(r, targetPath, alias || hostForm && hostService == service)
 	if probe {
 		dependencySpan.SetAttributes(attribute.Bool("gregale.service.probe", true))
 	}
@@ -679,7 +688,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	setProbeStage("binding")
-	if alias {
+	if alias || probe {
 		if environmentBinding != nil {
 			// The exact deployment-scoped resolver already proved this alias
 			// against the active reviewed graph.
@@ -799,6 +808,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// route this platform-owned span to apid without a customer API key.
 	if callerInfo.AccountID != "" {
 		dependencySpan.SetAttributes(attribute.String(retainedSpanAccountIDAttribute, callerInfo.AccountID))
+		if p.apiMonetizationFor != nil && p.apiMonetizationFor(callerInfo.AccountID) {
+			ownUsageHeader(r)
+		}
 	}
 	if !probe && callerInfo.CallScope != nil && !callerInfo.CallScope.Allows(r.Method, targetPath) {
 		p.metrics.IncServiceCall(ServiceCallScopeDenied)
@@ -1043,8 +1055,10 @@ func writeScenarioHTTPBodyFault(w http.ResponseWriter, kind string) {
 	_, _ = io.WriteString(w, prefix)
 }
 
-func isServiceBindingProbeRequest(r *http.Request, targetPath string, alias bool) bool {
-	if r == nil || !alias || r.Method != http.MethodHead || targetPath != api.ServiceBindingProbePath {
+// boundHost is a .internal alias or the request's own <service>.svc.gregale
+// host; the path form never carries a probe.
+func isServiceBindingProbeRequest(r *http.Request, targetPath string, boundHost bool) bool {
+	if r == nil || !boundHost || r.Method != http.MethodHead || targetPath != api.ServiceBindingProbePath {
 		return false
 	}
 	values := r.Header.Values(api.ServiceBindingProbeRequestHeader)

@@ -97,6 +97,8 @@ func Run(t *testing.T, open Open) {
 		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
 		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
+		{"observed_workload_class_without_a_proof", testObservedWorkloadClass},
+		{"source_runtime_profile_records_a_frozen_compose_healthcheck", testSourceRuntimeProfileHealthcheck},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
 		{"service_recovery_claim_and_retry_are_durable", testServiceRecoveryClaims},
@@ -3500,7 +3502,11 @@ func testAppSecretRuntimeProcessGenerationFence(t *testing.T, fx *Fixture) {
 	// instance) may replace it without knowing its generation; a start from
 	// an attempt that predates the registration is still fenced.
 	live, stray, fresh := strings.Repeat("d", 32), strings.Repeat("e", 32), strings.Repeat("f", 32)
-	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(live, third)); err != nil {
+	// Register a minute ago: a replacement stamped time.Now() right after an
+	// unstamped registration can share its microsecond and not be "later".
+	registered := process(live, third)
+	registered.AttemptedAt = time.Now().Add(-time.Minute)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, registered); err != nil {
 		t.Fatalf("BeginAppSecretRuntimeProcess(after retire): %v", err)
 	}
 	earlier := process(stray, "")

@@ -189,6 +189,11 @@ const (
 	KindFrozen
 	// A private rehearsal consumes node capacity independently of app replicas.
 	KindDataRepairRehearsal
+	// KindFork is a quarantined production fork (ADR-732). It holds real
+	// node RAM/vCPU for its whole TTL but never serves traffic, so it must
+	// not consume the app's request-concurrency budget (invariant 1) while
+	// still counting toward the RAM ceiling (invariant 2).
+	KindFork
 )
 
 // kindCountsConcurrency reports whether a reservation consumes the app's
@@ -196,7 +201,7 @@ const (
 // that must overlap the old live revision; migration destinations and jobs
 // have the same non-serving accounting semantics for different reasons.
 func kindCountsConcurrency(kind Kind) bool {
-	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFrozen && kind != KindDataRepairRehearsal
+	return kind != KindMigration && kind != KindJob && kind != KindSnapshotPrime && kind != KindWarmPool && kind != KindAppTask && kind != KindFrozen && kind != KindDataRepairRehearsal && kind != KindFork
 }
 
 // Request is an admission request for one instance (a wake or a build).

@@ -13187,10 +13187,11 @@ func (s *PgStore) DefaultCustomDomain(ctx context.Context, appID string) (string
 	return domain, nil
 }
 
-// WildcardDomainForHost returns the most-specific wildcard row whose
+// WildcardDomainForHost returns the most-specific live wildcard row whose
 // suffix strictly contains host. The leading dot in substr(domain, 2) makes
 // the match label-boundary safe ("badexample.com" cannot match
-// "*.example.com").
+// "*.example.com"). An expired, unverified claim is skipped
+// (CustomDomain.ClaimLive).
 func (s *pgCore) WildcardDomainForHost(ctx context.Context, host string) (CustomDomain, error) {
 	row := s.pool.QueryRow(ctx,
 		`select domain, app_id, challenge_token, coalesce(verified_at, 'epoch'::timestamptz),
@@ -13202,6 +13203,7 @@ func (s *pgCore) WildcardDomainForHost(ctx context.Context, host string) (Custom
 		  where domain like '*.%'
 		    and lower($1) like '%' || lower(substr(domain, 2))
 		    and lower($1) <> lower(substr(domain, 3))
+		    and (verified_at is not null or verification_expires_at > now())
 		  order by length(domain) desc
 		  limit 1`, host)
 	d := CustomDomain{}
@@ -13670,12 +13672,11 @@ func (s *PgStore) CreateCronWithOptions(ctx context.Context, appID, schedule, pa
 }
 
 // CreateCronIfUnderQuota is the customer-facing variant of
-// CreateCron that enforces the per-app and per-account caps under
-// an apps FOR UPDATE row lock (mirrors CreateAppIfUnderQuota). The
-// per-app cap is checked first because the lock is on the apps row,
-// not the account row; two concurrent POSTs for different apps on the
-// same account serialise through the per-account count read inside
-// the same tx.
+// CreateCron that enforces the per-app and per-account caps. It locks
+// the account's resource_namespaces row (the quota mutex
+// CreateAppIfUnderQuota and ApplyProjectPlan share) and then the apps
+// row, so concurrent creates on different apps of one account are
+// counted one after another.
 //
 // Failure modes:
 //   - *CronQuotaError when either cap trips (Scope names which).
@@ -18195,7 +18196,7 @@ func (s *PgStore) RunningInstanceForApp(ctx context.Context, appID string) (Inst
 		           coalesce(host(i.host_ip),''), i.ram_mb, i.started_at, i.last_request_at, i.parked_at, i.node_id, i.wake_id, i.framework_ready_at, i.tail_count, i.mode, i.request_count
 		 from instances i
 		 join deployments d on d.id = i.deployment_id and d.status = 'live' and d.traffic_percent > 0
-		 where i.app_id = $1 and i.state = 'running'
+		 where i.app_id = $1 and i.state = 'running' and i.mode <> 'fork'
 		 order by i.started_at desc nulls last limit 1`, appID)
 	return scanInstance(row)
 }
@@ -29394,26 +29395,31 @@ func (s *PgStore) PerAccountRateLimitAggregate(ctx context.Context, arg sqlc.Per
 // overwritten; the test at
 // migrations/00208_github_webhook_secrets_test.go pins the
 // round-trip.
-func (s *PgStore) UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret []byte, upgradedBy string) (time.Time, string, error) {
+func (s *PgStore) UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret GithubWebhookSecret, upgradedBy string) (time.Time, string, error) {
 	if installationID == 0 {
 		return time.Time{}, "", fmt.Errorf("state: UpsertGithubWebhookSecret: installation_id must be non-zero")
 	}
-	if len(secret) == 0 {
+	if len(secret.Value) == 0 {
 		return time.Time{}, "", fmt.Errorf("state: UpsertGithubWebhookSecret: secret must be non-empty (use a 32-byte random value per GitHub's recommendation)")
 	}
 	if upgradedBy == "" {
 		upgradedBy = "platform"
 	}
+	var sealed []byte
+	if len(secret.Sealed) > 0 {
+		sealed = secret.Sealed
+	}
 	var upgradedAt time.Time
 	err := s.pool.QueryRow(ctx, `
-		INSERT INTO github_webhook_secrets (installation_id, secret_value, upgraded_by)
-		VALUES ($1, $2, $3)
+		INSERT INTO github_webhook_secrets (installation_id, secret_value, secret_sealed, upgraded_by)
+		VALUES ($1, $2, $3, $4)
 		ON CONFLICT (installation_id) DO UPDATE
-		SET secret_value = EXCLUDED.secret_value,
-		    upgraded_at  = now(),
-		    upgraded_by  = EXCLUDED.upgraded_by
+		SET secret_value  = EXCLUDED.secret_value,
+		    secret_sealed = EXCLUDED.secret_sealed,
+		    upgraded_at   = now(),
+		    upgraded_by   = EXCLUDED.upgraded_by
 		RETURNING upgraded_at, upgraded_by
-	`, installationID, secret, upgradedBy).Scan(&upgradedAt, &upgradedBy)
+	`, installationID, secret.Value, sealed, upgradedBy).Scan(&upgradedAt, &upgradedBy)
 	if err != nil {
 		return time.Time{}, "", fmt.Errorf("state: UpsertGithubWebhookSecret: %w", err)
 	}
@@ -29426,23 +29432,23 @@ func (s *PgStore) UpsertGithubWebhookSecret(ctx context.Context, installationID 
 // webhook is rejected rather than falling back to the platform-
 // wide FAAS_GITHUB_WEBHOOK_SECRET, per PR-D's adoption posture).
 //
-// The bytea is returned as a raw byte slice; the caller
-// (pkg/githubd/webhook_secret.go::PGWebhookSecretResolver)
-// passes the bytes directly to VerifyPushSignature.
-func (s *PgStore) GetGithubWebhookSecret(ctx context.Context, installationID int64) ([]byte, error) {
+// Sealed is the copy sealed for githubd (ADR 20261022111812);
+// githubd opens it in preference to the plaintext Value, which
+// is kept only for the release that reads nothing else.
+func (s *PgStore) GetGithubWebhookSecret(ctx context.Context, installationID int64) (GithubWebhookSecret, error) {
 	if installationID == 0 {
-		return nil, ErrNotFound
+		return GithubWebhookSecret{}, ErrNotFound
 	}
-	var secret []byte
+	var secret GithubWebhookSecret
 	err := s.pool.QueryRow(ctx,
-		`SELECT secret_value FROM github_webhook_secrets WHERE installation_id = $1`,
+		`SELECT secret_value, secret_sealed FROM github_webhook_secrets WHERE installation_id = $1`,
 		installationID,
-	).Scan(&secret)
+	).Scan(&secret.Value, &secret.Sealed)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
-			return nil, ErrNotFound
+			return GithubWebhookSecret{}, ErrNotFound
 		}
-		return nil, fmt.Errorf("state: GetGithubWebhookSecret: %w", err)
+		return GithubWebhookSecret{}, fmt.Errorf("state: GetGithubWebhookSecret: %w", err)
 	}
 	return secret, nil
 }

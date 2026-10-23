@@ -200,6 +200,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	if envErr != nil {
 		return nil, nil, nil, envErr
 	}
+	topSecrets, _ := rawDoc["secrets"].(map[string]any)
 	for _, name := range svcNames {
 		s := c.Services[name]
 		if len(s.Profiles) > 0 {
@@ -310,31 +311,26 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		for _, warning := range composeServiceKeyWarnings(rawService) {
 			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
 		}
-		var healthcheck *api.ComposeHealthcheck
 		var process *api.ComposeProcess
 		var dockerfileBuild *api.DockerfileBuildOptions
-		if image != "" {
-			var err error
-			healthcheck, err = composeHealthcheck(s.Healthcheck)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
-			}
-			process, err = composeProcess(s, len(command) > 0)
-			if err != nil {
-				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
-			}
-		} else {
-			if s.Healthcheck != nil {
-				warnings = append(warnings, "reposcan: "+src+": "+name+": Compose healthcheck overrides currently apply only to prebuilt images")
-			}
-			if keys := composeProcessKeys(s); len(keys) > 0 {
-				warnings = append(warnings, "reposcan: "+src+": "+name+": "+strings.Join(keys, ", ")+
-					" ignored: Compose process overrides apply only to prebuilt images; set ENTRYPOINT, USER, WORKDIR or STOPSIGNAL in the Dockerfile")
-			}
+		// The healthcheck override applies to prebuilt and built images alike
+		// (ADR-20261019195000): imaged merges it onto the image's HEALTHCHECK.
+		healthcheck, err := composeHealthcheck(s.Healthcheck)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+		}
+		process, err = composeProcess(s, len(command) > 0)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+		}
+		if image == "" {
+			// A built service takes the same overrides (ADR-20261022160000):
+			// its entrypoint joins the start command, and imaged applies the
+			// rest to the built image.
+			command, commandShell, process = builtServiceProcess(process, command, commandShell)
 			rawBuild, _ := rawService["build"].(map[string]any)
 			var buildWarnings []string
-			var err error
-			dockerfileBuild, buildWarnings, err = composeDockerfileBuild(fsys, s.Build, rawBuild, composeEnv, ctx, df)
+			dockerfileBuild, buildWarnings, err = composeDockerfileBuild(fsys, s.Build, rawBuild, composeEnv, topSecrets, ctx, df)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
 			}
@@ -413,8 +409,10 @@ func normalizeServiceBindingPolicy(value string) (ServiceBindingPolicy, error) {
 		return ServiceBindingPolicyAccount, nil
 	case string(ServiceBindingPolicyDeclared):
 		return ServiceBindingPolicyDeclared, nil
+	case string(ServiceBindingPolicyProject):
+		return ServiceBindingPolicyProject, nil
 	default:
-		return "", fmt.Errorf("x-gregale-service-policy must be account or declared")
+		return "", fmt.Errorf("x-gregale-service-policy must be project, declared or account")
 	}
 }
 

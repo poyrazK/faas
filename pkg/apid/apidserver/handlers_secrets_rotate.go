@@ -54,12 +54,9 @@ import (
 // auditing (validate key → resolve app → validate body → check
 // existence → seal → persist → log → audit).
 //
-// The kid fingerprint is read via mfaIdentities — the same accessor
-// handlers_mfa.go uses for OpenMulti. That accessor returns the
-// multi-identity slice loaded by secretbox.LoadHostKeys(dir) at
-// startup (current first, previous second); kid stamping reads
-// identities[0] which is the "current" recipient by the hostkey.go
-// ordering convention.
+// The kid is the string form of the recipient the value is sealed to
+// (ADR 20261022111812), the same value IdentityFingerprint derives from
+// the matching private identity.
 func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	slug := r.PathValue("slug")
 	key := r.PathValue("key")
@@ -129,31 +126,17 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 		}
 	}
 
-	// Resolve the current kid before sealing so the seal + kid
-	// stamp land in the same UpsertAppSecretWithKid call. Failure
-	// to fingerprint (no identities loaded) returns 503 — refusing
-	// to seal without a kid is consistent with refusing to seal
-	// without a recipient.
-	if mfaIdentities == nil {
+	// The kid names the recipient the value is sealed to (ADR
+	// 20261022111812): a property of the public key, so rotating needs no
+	// private identity. A missing recipient returns 503, as sealing would.
+	recipient := runtimeSecretRecipient()
+	if recipient == nil {
 		api.WriteProblem(w, customerCapacityProblem(s.log, "rotate app secret", "Secret storage temporarily unavailable",
 			"Gregale could not securely store this value.",
 			"Retry in a few seconds; if it still fails, contact support.", nil))
 		return
 	}
-	idents := mfaIdentities()
-	if len(idents) == 0 {
-		api.WriteProblem(w, customerCapacityProblem(s.log, "rotate app secret", "Secret storage temporarily unavailable",
-			"Gregale could not securely store this value.",
-			"Retry in a few seconds; if it still fails, contact support.", nil))
-		return
-	}
-	kid, err := secretbox.IdentityFingerprint(idents)
-	if err != nil {
-		api.WriteProblem(w, customerCapacityProblem(s.log, "fingerprint app secret identity", "Secret storage temporarily unavailable",
-			"Gregale could not securely store this value.",
-			"Retry in a few seconds; if it still fails, contact support.", err))
-		return
-	}
+	kid := recipient.String()
 
 	change := s.beginConfigChange(r, acct, app, scope, "")
 	if prob := s.sealAndPersistWithKid(r.Context(), acct, app, scope, key, req.Value, limits, kid); prob != nil {
@@ -237,7 +220,7 @@ func (s *server) rotateAppSecret(w http.ResponseWriter, r *http.Request, acct st
 // caller-supplied and identity-shaped; the value_hash is computed
 // locally off the plaintext.
 func (s *server) sealAndPersistWithKid(c stdctx, acct state.Account, app state.App, scope, key, value string, limits api.Limits, kid string) *api.Problem {
-	recipient := hostSecretRecipient()
+	recipient := runtimeSecretRecipient()
 	if recipient == nil {
 		return customerCapacityProblem(s.log, "store rotated app secret", "Secret storage temporarily unavailable",
 			"Gregale could not securely store this value.",

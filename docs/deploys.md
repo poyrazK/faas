@@ -396,6 +396,17 @@ breaker, the post-release watch, the first-wake 5xx guard or an alert rule
 rolls an app back, Gregale freezes that app for the given time. The freeze
 names the release that was rolled back, and you can lift it like any other.
 
+### Platform release pause
+
+While Gregale handles a security incident, it may pause new releases for
+every account
+([ADR-20261022140000](adr/20261022140000-break-glass-controls.md)). Deploys
+and new schedules then fail with 503 `platform_release_paused`, which nothing
+in the request overrides. Queued builds wait, and scheduled releases start
+once the pause is lifted. Your running apps keep serving, rollbacks still
+work, and you can still change env vars and secrets, so you can rotate a
+credential during the incident. Retry the deploy after the pause is lifted.
+
 ## Scheduled releases
 
 Build a release now and start it later: at a quiet hour, at a launch time, or

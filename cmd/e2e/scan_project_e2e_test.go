@@ -328,9 +328,11 @@ func TestScanProject_MultiTierFixture_DuplicateSlugsBlocked(t *testing.T) {
 	if plan.CanApply {
 		t.Errorf("CanApply = true with duplicate api/worker app slugs; reasons=%v", plan.CanApplyReasons)
 	}
-	if reasons := strings.Join(plan.CanApplyReasons, "\n"); !strings.Contains(reasons, `workload "api" uses app slug "api" reserved for a Gregale service`) ||
+	// The reserved name "api" is allocated the project-prefixed slug
+	// (ADR-20261022120205), which both api workloads then share.
+	if reasons := strings.Join(plan.CanApplyReasons, "\n"); !strings.Contains(reasons, `workload "api" produces a duplicate app slug`) ||
 		!strings.Contains(reasons, `workload "worker" produces a duplicate app slug`) {
-		t.Errorf("CanApplyReasons = %v, want reserved api and duplicate worker blockers", plan.CanApplyReasons)
+		t.Errorf("CanApplyReasons = %v, want duplicate api and worker blockers", plan.CanApplyReasons)
 	}
 	if plan.CronsNotAllowed {
 		t.Errorf("CronsNotAllowed = true on Pro plan; cron cap is %d", plan.LimitCrons)

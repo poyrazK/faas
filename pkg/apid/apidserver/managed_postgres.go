@@ -134,31 +134,14 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 			if setSecretRecipient == nil {
 				return nil
 			}
-			return hostSecretRecipient()
+			return runtimeSecretRecipient()
 		},
-		func() []byte {
-			if hostHMACKey == nil {
-				return nil
-			}
-			return hostHMACKeyBytes()
-		},
+		hostCredentialHMACKey,
 	)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
-	secretSink.identities = func() []*age.X25519Identity {
-		if mfaIdentities != nil {
-			if ids := mfaIdentities(); len(ids) > 0 {
-				return ids
-			}
-		}
-		if mfaIdentity != nil {
-			if id := mfaIdentity(); id != nil {
-				return []*age.X25519Identity{id}
-			}
-		}
-		return nil
-	}
+	secretSink.identities = hostCredentialIdentities
 	secretSink.probe = managedpostgres.VerifyCredentialSQL
 	bindingService, err := managedpostgres.NewBindingService(registry, store, store, secretSink, managedpostgres.BindingServiceOptions{
 		ProvisioningEnabled: provisioningGate,
@@ -199,6 +182,29 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 // month, and its monthly compute units (ADR-1430). Restore history, egress and
 // spend remain operator-configured COGS ceilings; the intersection is applied
 // in managedpostgres so adapters never learn about Gregale plan names.
+// hostCredentialHMACKey and hostCredentialIdentities are the host
+// secret providers shared by the credential sink and candidate verification.
+func hostCredentialHMACKey() []byte {
+	if hostHMACKey == nil {
+		return nil
+	}
+	return hostHMACKeyBytes()
+}
+
+func hostCredentialIdentities() []*age.X25519Identity {
+	if mfaIdentities != nil {
+		if ids := mfaIdentities(); len(ids) > 0 {
+			return ids
+		}
+	}
+	if mfaIdentity != nil {
+		if id := mfaIdentity(); id != nil {
+			return []*age.X25519Identity{id}
+		}
+	}
+	return nil
+}
+
 func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits) managedpostgres.UsageCeilings {
 	if limits.DatabasesMax <= 0 {
 		return managedpostgres.UsageCeilings{}

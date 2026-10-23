@@ -50,6 +50,8 @@ Commands:
   doctor       Read-only diagnostic for the cluster-shipped release bundle (doctor [--node NAME] [--release SHA] [--deep]; PR-4 / ADR-110)
   host-age     Operator host.age rotation (host-age init|rotate|status|prune-previous)
   fleet-seal   Fleet-wide unseal identity (fleet-seal init|migrate|verify)
+  break-glass  Incident containment: pause releases, revoke every credential (break-glass pause|resume|status|revoke-credentials)
+  seal-domain  Per-reader seal domains (seal-domain init|verify|migrate; ADR 20261022111812)
   pki          Operator local-dev PKI bootstrap (pki init|status|rotate)
   sign-keys    Provision the cosign sign keypair (sign-keys init|rotate|status; --sign-key / --verify-key)
   node-key     Provision the per-node CapacityReport signing keypair (node-key init|rotate|status)
@@ -160,6 +162,10 @@ func run(args []string) int {
 		return cmdHostAge(args[1:])
 	case dispatchFleetSeal:
 		return cmdFleetSeal(args[1:])
+	case dispatchBreakGlass:
+		return cmdBreakGlass(args[1:])
+	case dispatchSealDomain:
+		return cmdSealDomain(args[1:])
 	case dispatchPKI:
 		// Operator-side local-dev PKI bootstrap (ADR-052). Issues
 		// /etc/faas/tls/{ca,<daemon>/} material for multi-box mTLS.

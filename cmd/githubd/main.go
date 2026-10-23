@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -209,7 +210,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The janitor (1m tick) evicts expired entries so the map
 	// stays bounded across the daemon's lifetime. Mirrors
 	// TokenCache.StartJanitor.
-	secretResolver := githubd.NewPGWebhookSecretResolver(newStateSecretStoreAdapter(pool), log, 60*time.Second)
+	// ADR 20261022111812: the webhook secret's sealed copy opens with the
+	// fleet identity (and the host identities for legacy rows) until the
+	// source seal domain is wired.
+	keyDir := filepath.Dir(hostKeyPath())
+	webhookIdentities, err := sealdomain.LoadReaderIdentities("", hostKeyPath(), filepath.Join(keyDir, "faas_host_age_identity"))
+	if err != nil {
+		return fmt.Errorf("githubd: load webhook secret identities: %w", err)
+	}
+	secretResolver := githubd.NewPGWebhookSecretResolver(newStateSecretStoreAdapter(pool, webhookIdentities), log, 60*time.Second)
 	stopJanitor := secretResolver.StartJanitor(ctx)
 	defer stopJanitor()
 
