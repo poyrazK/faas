@@ -12,9 +12,14 @@ import (
 
 // updateProjectEnvironmentRoutes replaces one workload's scoped route
 // contract. Application-wide routes remain the fallback until the first write
-// or an environment clone snapshots them.
+// or an environment clone snapshots them. Production keeps this direct edit
+// (ADR-233); another protected environment takes its routes from an approved
+// project plan or promotion, like its other workload settings.
 func (s *server) updateProjectEnvironmentRoutes(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	project, environment, _, problem := s.loadProjectEnvironmentConfig(r.Context(), acct, r.PathValue("slug"), r.PathValue("environment"))
+	if problem == nil && environment.Protected && !state.IsProductionDeploymentScope(environment.Slug) {
+		problem = api.NewProblem(http.StatusConflict, api.CodeConflict, "Protected environment", "apply configuration through an approved project plan or environment promotion")
+	}
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return
