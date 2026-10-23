@@ -147,6 +147,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// totpLastSteps is each account's last accepted TOTP step
+	// (AcceptTOTPStep), created on first use.
+	totpLastSteps                              map[string]int64
 	migrationContracts                         map[string]projectMigrationContract
 	projectCanaries                            map[string]projectCanaryRecord
 	workerReleasePins                          map[string]projectWorkerReleasePin
@@ -12566,16 +12569,17 @@ func (m *MemStore) DefaultCustomDomain(_ context.Context, appID string) (string,
 	return domain, nil
 }
 
-// WildcardDomainForHost returns the most-specific wildcard custom domain that
-// covers host. The strict suffix check keeps example.com from matching
+// WildcardDomainForHost returns the most-specific live wildcard custom domain
+// that covers host. The strict suffix check keeps example.com from matching
 // *.example.com and prevents look-alike domains such as badexample.com from
-// matching.
+// matching. An expired, unverified claim is skipped (CustomDomain.ClaimLive).
 func (m *MemStore) WildcardDomainForHost(_ context.Context, host string) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := time.Now()
 	var best CustomDomain
 	for _, d := range m.domains {
-		if !WildcardMatchesHost(d.Domain, host) {
+		if !WildcardMatchesHost(d.Domain, host) || !d.ClaimLive(now) {
 			continue
 		}
 		if best.Domain == "" || len(d.Domain) > len(best.Domain) {

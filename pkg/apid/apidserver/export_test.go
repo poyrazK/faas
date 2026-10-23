@@ -1290,6 +1290,7 @@ func (r *server) RotateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.R
 func (r *server) RuleDestinations(p0 context.Context, p1 state.AlertRule) string {
 	return r.ruleDestinations(p0, p1)
 }
+func (r *server) RunVerifyOnce(p0 context.Context, p1 *slog.Logger) { r.runVerifyOnce(p0, p1) }
 func (r *server) CreateManagedPostgresBinding(p0 http.ResponseWriter, p1 *http.Request, p2 state.Account) {
 	r.createManagedPostgresBinding(p0, p1, p2)
 }
