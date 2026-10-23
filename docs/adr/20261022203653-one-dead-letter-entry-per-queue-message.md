@@ -78,6 +78,17 @@ recovered through the invocation.
   a later cleanup, and still cover external broker receipts.
 - **ADR-607 receipts and recovery.** Event-receipt and execution-recovery
   queries join the view on `source = 'invocation'` only and are unchanged.
+- **Scheduler order.** A receipt is hidden only because its invocation is
+  listed, so a receipt must never dead-letter while its invocation does not.
+  For queue pollers, schedd now settles a per-record dead-letter result the
+  way its batch failure paths (post error, malformed response, rate limit)
+  already did: it Nacks the invocations first, and `QueueFinishDeliveryClaims`
+  moves each invocation and its receipt to `dead_letter` in one statement.
+  Only then does it write the receipt's `trigger_dead_letter` audit row, and
+  only for the reason groups whose Nack succeeded. A failed Nack leaves the
+  invocation and the receipt claimed; the lease reaper returns them for
+  redelivery. Broker triggers keep writing the receipt first, because for them
+  the receipt is the durable record.
 - **MemStore.** `deadLetterEventsLocked` applies the same rule to live trigger
   dead letters and to retained snapshots.
 
@@ -103,13 +114,13 @@ recovered through the invocation.
   failed messages.
 - Receipt reasons (for example `function state=failed`, `poison_record`) no
   longer appear in the unified list. They remain in `gregale triggers dlq`.
-- A receipt that dead-letters while its invocation does not (the scheduler
-  writes the receipt and then finishes the invocation in a separate
-  transaction; a crash or expired lease can separate them) is no longer listed.
-  The message is not terminal then. The lease reaper returns the invocation to
-  pending, and if it fails for good it is listed through its invocation.
+- A receipt can no longer dead-letter while its invocation does not (see
+  Scheduler order). If schedd stops between the Nack and the audit write, the
+  message is listed through its invocation and only the receipt's
+  `trigger_dead_letter` audit row is missing.
 - Queue receipt rows of purged invocation entries stay in `dead_letter_events`
-  until retention removes them. They are invisible in the unified list.
+  until the existing retention purge removes them. They are audit evidence,
+  invisible in the unified list, and a purge does not delete them early.
 
 ## Rejected alternatives
 
@@ -131,14 +142,10 @@ recovered through the invocation.
 
 ## Open questions for the owner
 
-1. Is it acceptable that a receipt-only failure (receipt dead-lettered, its
-   invocation not) is not listed until the invocation fails for good?
-2. Should purging the invocation entry also delete the hidden receipt row now,
-   instead of leaving it to retention?
-3. Should the receipt-to-invocation branches in the keyed replay lock queries
+1. Should the receipt-to-invocation branches in the keyed replay lock queries
    be removed for queue receipts after one release (a contract cleanup), or
    kept for defence in depth?
-4. Should `gregale dlq inspect` show the receipt's reason next to the
+2. Should `gregale dlq inspect` show the receipt's reason next to the
    invocation entry (one read-only join), so the `function state=failed` detail
    is not only in `gregale triggers dlq`?
 
@@ -155,3 +162,8 @@ entries (an `invocation` and a `trigger_record`). The `receipt_event` surface of
 `queue_dead_letter_replay_rearms_original_receipt` was removed because the
 receipt entry no longer exists; its queue, invocation-entry and receipt replay
 surfaces are unchanged.
+
+`TestSettleTriggerDeadLettersOrdersQueueNackFirst` (pkg/sched) pins the
+scheduler order: a queue poller Nacks before writing receipts and writes none
+for a reason group whose Nack fails, while a broker still writes its receipts
+before the Nack.
