@@ -118,7 +118,8 @@ func (s *PgStore) ScenarioCapturedEvent(ctx context.Context, accountID, runID, s
 }
 
 func (s *PgStore) ScenarioCapturedExecutions(ctx context.Context, accountID, runID string) ([]ScenarioCapturedExecution, error) {
-	if uuid.Validate(accountID) != nil {
+	// An account ID that is not a UUID has no captured starts.
+	if !validUUID(accountID) {
 		return nil, nil
 	}
 	rows, err := sqlc.New().ScenarioCapturedExecutions(ctx, s.pool, sqlc.ScenarioCapturedExecutionsParams{AccountID: accountID, RunID: runID})
