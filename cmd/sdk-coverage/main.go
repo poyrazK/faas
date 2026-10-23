@@ -1322,6 +1322,19 @@ var methodRouteMap = map[string]string{
 	"POST /v1/account/overage-cap":                               "RaiseOverageCap", // issue #561 spend cap
 	"POST /v1/account/mfa/disable-email":                         "PostAccountMfaDisableEmail",
 	"POST /v1/account/mfa/disable-email/confirm":                 "PostAccountMfaDisableEmailConfirm",
+	"GET /v1/apps/{slug}/forks":                                  "ListAppForks",
+	"POST /v1/apps/{slug}/forks":                                 "CreateAppFork",
+	"GET /v1/apps/{slug}/forks/{id}":                             "GetAppFork",
+	"DELETE /v1/apps/{slug}/forks/{id}":                          "CancelAppFork",
+	"POST /v1/apps/{slug}/forks/{id}/execs":                      "CreateAppForkExec",
+	"GET /v1/apps/{slug}/forks/{id}/execs":                       "ListAppForkExecs",
+	"GET /v1/apps/{slug}/forks/{id}/execs/{exec_id}":             "GetAppForkExec",
+	"GET /v1/apps/{slug}/crash-snapshots/settings":               "GetCrashSnapshotSettings",
+	"PUT /v1/apps/{slug}/crash-snapshots/settings":               "PutCrashSnapshotSettings",
+	"GET /v1/apps/{slug}/crash-snapshots":                        "ListCrashSnapshots",
+	"POST /v1/apps/{slug}/crash-snapshots":                       "CreateCrashSnapshot",
+	"GET /v1/apps/{slug}/crash-snapshots/{id}":                   "GetCrashSnapshot",
+	"POST /v1/apps/{slug}/crash-snapshots/{id}/fork":             "ForkCrashSnapshot",
 	// Issue #679 / PR-B / ADR-082 — per-account additive budget on
 	// top of the plan's apps.egress_allowlist cap. The auto-derivation
 	// would concat "Account" + "Egress_allowlist_extra" (the literal

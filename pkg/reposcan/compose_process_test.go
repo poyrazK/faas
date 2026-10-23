@@ -262,7 +262,7 @@ func TestComposeUnsupportedKeysWarn(t *testing.T) {
 		"web: secrets ignored: Compose secrets are not mounted; set them with `gregale secrets set`",
 		"web: networks ignored: services reach each other through depends_on service bindings",
 		"web: mystery ignored: not supported by Gregale",
-		"api: build.cache_from ignored: the builder uses only build.context, build.dockerfile, build.args and build.target",
+		"api: build.cache_from ignored: the builder uses only build.context, build.dockerfile, build.args, build.target and build.secrets",
 		"api: platform ignored: services run on linux/amd64",
 	} {
 		if !containsWarning(result.Warnings, want) {

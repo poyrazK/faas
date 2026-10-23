@@ -198,8 +198,9 @@ var loaderCalls = map[string]map[string]bool{
 }
 
 // Sanctioned loaders: the operator CLIs and the packages that define the
-// loaders.
-var loaderExempt = []string{"cmd/gregalectl/", "cmd/gregale/", "cmd/hostage-gen/", "pkg/secretbox/", "pkg/sealdomain/"}
+// loaders. pkg/crashcrypt defines the ADR-733 per-capture key: it parses a
+// data key it unsealed itself, never a fleet, host or domain identity.
+var loaderExempt = []string{"cmd/gregalectl/", "cmd/gregale/", "cmd/hostage-gen/", "pkg/secretbox/", "pkg/sealdomain/", "pkg/crashcrypt/"}
 
 func scanLoaders(root string) (map[string]int, error) {
 	out := map[string]int{}

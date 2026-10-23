@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
 - [ADR-20261022140000: Break-glass controls for a compromised secret store](20261022140000-break-glass-controls.md)
