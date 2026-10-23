@@ -6045,6 +6045,16 @@ const (
 	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
 	// quiet-paused instances may be before admission counts every booking.
 	QuietPauseSampleMaxAgeMillis = 2000
+	// QuietPauseLedgerFlushSeconds is how often schedd writes a node's quiet
+	// pauses and watermark to the pause ledger (ADR-20261023171905): one
+	// statement per node per flush, however many requests the node serves.
+	// meterd rolls a minute 60-120 s after it ends, so the ledger is current
+	// long before billing reads it.
+	QuietPauseLedgerFlushSeconds = 2
+	// QuietPauseLedgerRetentionDays is how long meterd keeps pauses: past an
+	// invoiced month plus its dispute window, the subtraction they made is
+	// final.
+	QuietPauseLedgerRetentionDays = 45
 	// FrozenTTLSeconds is how long a frozen instance (ADR-1151) stays paused
 	// in memory after its idle timeout before schedd parks it. 10 min gave
 	// the same capacity as 1 h in the ADR's simulation while holding fewer
