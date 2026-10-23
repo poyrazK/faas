@@ -621,26 +621,62 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 //
 //nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
 func printUnsetEnvKeys(w io.Writer, workloads []api.PlanWorkload) {
-	ws := make([]api.PlanWorkload, 0, len(workloads))
-	for _, wl := range workloads {
-		if len(wl.UnsetEnvKeys) > 0 {
-			ws = append(ws, wl)
+	ws := append([]api.PlanWorkload(nil), workloads...)
+	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
+	imported, unset, notOptedIn := false, false, false
+	for _, wl := range ws {
+		imported = imported || len(wl.ImportedEnvKeys) > 0
+		unset = unset || len(wl.UnsetEnvKeys) > 0
+	}
+	if imported {
+		fmt.Fprintln(w, "\nImported from Compose (values already set on an app are kept):")
+		for _, wl := range ws {
+			if len(wl.ImportedEnvKeys) > 0 {
+				fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, strings.Join(wl.ImportedEnvKeys, ", "))
+			}
 		}
 	}
-	if len(ws) == 0 {
+	if !unset {
 		return
 	}
-	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
 	fmt.Fprintln(w, "\nNeeds a value (set before the first request):")
 	for _, wl := range ws {
-		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, strings.Join(wl.UnsetEnvKeys, ", "))
+		if len(wl.UnsetEnvKeys) == 0 {
+			continue
+		}
+		keys := make([]string, 0, len(wl.UnsetEnvKeys))
+		for _, key := range wl.UnsetEnvKeys {
+			reason := wl.UnsetEnvKeyReasons[key]
+			notOptedIn = notOptedIn || reason == "not_opted_in"
+			if text := envImportReasonText[reason]; text != "" {
+				key += " (" + text + ")"
+			}
+			keys = append(keys, key)
+		}
+		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, strings.Join(keys, ", "))
 	}
 	fmt.Fprintln(w, "  Set them with `gregale env set --app <app> KEY=VALUE` or `gregale secrets set --app <app> KEY=VALUE`,")
 	fmt.Fprintln(w, "  or pass them in a --secrets-file to gregale deploy.")
+	if notOptedIn {
+		fmt.Fprintln(w, "  To import plain Compose values, add `x-gregale-env-import: true` at the top of the Compose file.")
+	}
+}
+
+// envImportReasonText renders the plan's unset_env_key_reasons codes.
+var envImportReasonText = map[string]string{
+	"not_opted_in":    "plain value in Compose",
+	"secret":          "looks like a secret",
+	"service_address": "Docker service address",
+	"local_address":   "local address",
+	"interpolated":    "uses $ interpolation",
+	"host_value":      "read from the host",
+	"empty":           "empty in Compose",
+	"invalid":         "not importable",
 }
 
 // withProvidedEnvKeys drops keys a --secrets-file supplies from every
-// workload's unset list; the file's values go to every selected workload.
+// workload's unset and imported lists: the file's values go to every
+// selected workload, before any Compose value is imported.
 func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanResponse {
 	if len(pairs) == 0 {
 		return plan
@@ -649,15 +685,19 @@ func withProvidedEnvKeys(plan api.PlanResponse, pairs []secretsPair) api.PlanRes
 	for _, pair := range pairs {
 		provided[pair.Key] = true
 	}
-	workloads := append([]api.PlanWorkload(nil), plan.Workloads...)
-	for i := range workloads {
-		var unset []string
-		for _, key := range workloads[i].UnsetEnvKeys {
+	notProvided := func(keys []string) []string {
+		var out []string
+		for _, key := range keys {
 			if !provided[key] {
-				unset = append(unset, key)
+				out = append(out, key)
 			}
 		}
-		workloads[i].UnsetEnvKeys = unset
+		return out
+	}
+	workloads := append([]api.PlanWorkload(nil), plan.Workloads...)
+	for i := range workloads {
+		workloads[i].UnsetEnvKeys = notProvided(workloads[i].UnsetEnvKeys)
+		workloads[i].ImportedEnvKeys = notProvided(workloads[i].ImportedEnvKeys)
 	}
 	plan.Workloads = workloads
 	return plan
