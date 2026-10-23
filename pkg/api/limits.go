@@ -6187,6 +6187,15 @@ const (
 	WakeQueueCap        = 512 // per-app wake queue
 	WakeQueueTTLSeconds = 30
 
+	// WakeFailoverMaxAlternates bounds how many other nodes schedd tries
+	// after a node refuses a wake before starting the VM
+	// (ADR-20261022184531): at most three attempts per wake.
+	WakeFailoverMaxAlternates = 2
+	// WakeFailoverMinRemainingMs is the least of the wake's deadline that
+	// must remain for an alternate attempt to start. The coordinated wake
+	// runs under the WakeQueueTTLSeconds hold, so failover never extends it.
+	WakeFailoverMinRemainingMs = 2000
+
 	// GatewayWakeAdmissionParallelism bounds concurrent cold-wake
 	// admissions in one gateway process. The gateway still coalesces
 	// requests per app; this cap protects the control plane when many
