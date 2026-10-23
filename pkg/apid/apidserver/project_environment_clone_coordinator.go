@@ -30,7 +30,21 @@ type projectEnvironmentCloneCoordinatorStore interface {
 // The durable queue survives missed notifications and apid restarts. Public
 // complete admission remains closed. Data-bearing pending/capturing operations
 // wait for a coordinated checkpoint instead of inventing a timestamp.
+// Only full environment clones create operations. Until
+// full_environment_clones_enabled is on, the in-process coordinator waits
+// instead of polling an empty queue; once on it keeps running, so turning the
+// switch off never strands an unfinished operation. The dedicated
+// --clone-worker is opted in separately.
 func (s *server) runProjectEnvironmentCloneCoordinator(ctx context.Context) {
+	idle := time.NewTicker(projectEnvironmentCloneWorkerInterval)
+	defer idle.Stop()
+	for !s.runtimeBool(runtimeConfigFullEnvironmentClones, false) {
+		select {
+		case <-ctx.Done():
+			return
+		case <-idle.C:
+		}
+	}
 	_ = s.runProjectEnvironmentCloneCoordinatorWithAdmission(ctx, nil, nil)
 }
 

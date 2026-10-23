@@ -20,11 +20,19 @@ func envCreate(args []string) int {
 	project := fs.String("project", "", "project slug (defaults to linked project)")
 	protected := fs.Bool("protected", false, "protect the new environment")
 	shareResources := fs.Bool("share-resources", false, "explicitly share managed database and object-storage data with the source environment")
-	full := fs.Bool("full", false, "require a complete isolated copy of configuration, workloads, and data")
-	wait := fs.Bool("wait", false, "wait for the full clone to finish")
-	timeoutSeconds := secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m)")
+	// Full clones are hidden until apid admits them (fullclone.go); their
+	// flags are then undefined, so passing one is a usage error.
+	full, wait, timeoutSeconds := new(bool), new(bool), new(int)
+	*timeoutSeconds = defaultDeployWaitTimeoutSeconds
+	usage := "usage: gregale env create <environment> --from <environment> [--project <slug>] [--protected] [--share-resources]"
+	if fullEnvironmentCloneCLI() {
+		full = fs.Bool("full", false, "require a complete isolated copy of configuration, workloads, and data")
+		wait = fs.Bool("wait", false, "wait for the full clone to finish")
+		timeoutSeconds = secondsOrDurationFlag(fs, "timeout", defaultDeployWaitTimeoutSeconds, "maximum wait (seconds or a duration such as 10m)")
+		usage = "usage: gregale env create <environment> --from <environment> [--project <slug>] [--protected] [--share-resources | --full [--wait] [--timeout SECONDS]]"
+	}
 	if err := fs.Parse(flags); err != nil || len(positional) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale env create <environment> --from <environment> [--project <slug>] [--protected] [--share-resources | --full [--wait] [--timeout SECONDS]]", "env")
+		PrintUsage(os.Stderr, usage, "env")
 		return 1
 	}
 	if !api.ValidProjectEnvironmentSlug(positional[0]) || !api.ValidProjectEnvironmentSlug(*from) || positional[0] == *from {

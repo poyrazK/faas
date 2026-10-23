@@ -109,7 +109,8 @@
       "channel_id",
       "policy_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "financial_budget_evaluations",
@@ -459,7 +460,8 @@
       "channel_id",
       "rule_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "alert_rules",
@@ -494,7 +496,8 @@
       "webhook_url",
       "window_spec"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "api_consumer_billing_policies",
@@ -505,7 +508,8 @@
       "created_at",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "api_consumer_credit_applications",
@@ -583,7 +587,8 @@
       "id",
       "plan_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "api_consumer_plans",
@@ -598,7 +603,8 @@
       "name",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "api_consumer_rate_cards",
@@ -620,7 +626,8 @@
       "tiers",
       "unit"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "api_consumer_route_usage_minutes",
@@ -685,7 +692,8 @@
       "trial_days",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "api_consumer_signups",
@@ -816,7 +824,8 @@
       "status",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "api_keys",
@@ -879,7 +888,8 @@
       "state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_binding_promotion_revisions",
@@ -905,7 +915,8 @@
       "scope",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_binding_release_policy_history",
@@ -916,7 +927,8 @@
       "revision",
       "scope"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_config_guard_secrets",
@@ -999,7 +1011,8 @@
       "domain",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_egress_policy_node_status",
@@ -1027,7 +1040,8 @@
       "scope",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_environment_secret_ref_suppressions",
@@ -1040,7 +1054,8 @@
       "scope",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_environment_secret_refs",
@@ -1054,7 +1069,8 @@
       "secret_name",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_environment_workload_intents",
@@ -1072,7 +1088,8 @@
       "updated_at",
       "variables"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_envs",
@@ -1086,7 +1103,8 @@
       "updated_at",
       "value"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_error_requests",
@@ -1231,7 +1249,8 @@
       "revision",
       "rules"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_issue_frequency_alert_policies",
@@ -1240,7 +1259,8 @@
       "revision",
       "rules"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_issue_impact_alert_policies",
@@ -1249,7 +1269,8 @@
       "minimum_customers",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_issue_lifecycle_alert_policies",
@@ -1259,7 +1280,8 @@
       "environments",
       "revision"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_issue_ownership_rules",
@@ -1274,7 +1296,8 @@
       "source_path_prefix",
       "tag_filter"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_issue_saved_views",
@@ -1394,7 +1417,8 @@
       "target_url",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_mcp_readiness_policies",
@@ -1403,7 +1427,8 @@
       "policy",
       "scope"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_mcp_readiness_policy_history",
@@ -1414,7 +1439,8 @@
       "revision",
       "scope"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_mcp_task_compatibility",
@@ -1440,7 +1466,8 @@
       "source",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_park_transitions",
@@ -1483,7 +1510,8 @@
       "status_detail",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_registry_credentials",
@@ -1498,7 +1526,8 @@
       "updated_at",
       "username"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_release_gates",
@@ -1519,7 +1548,8 @@
       "slo_id",
       "threshold"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_route_priorities",
@@ -1529,7 +1559,8 @@
       "routes",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_route_removal_policies",
@@ -1544,7 +1575,8 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_runtime_config_changes",
@@ -1677,7 +1709,8 @@
       "updated_at",
       "value_hash"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_service_address_cursors",
@@ -1695,7 +1728,8 @@
       "enabled",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_slo_hourly",
@@ -1721,7 +1755,8 @@
       "updated_at",
       "window_days"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_task_attach_sessions",
@@ -1811,7 +1846,8 @@
       "tls_mode",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_trusted_signers",
@@ -1823,7 +1859,8 @@
       "cosign_public_key",
       "signer_name"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_udp_listeners",
@@ -1839,7 +1876,8 @@
       "public_port",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_wake_transitions",
@@ -1925,7 +1963,8 @@
       "target_url",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "app_work_policies",
@@ -1942,7 +1981,8 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "application_standard_assignments",
@@ -1959,7 +1999,8 @@
       "standard_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "application_standard_control_backups",
@@ -1970,7 +2011,8 @@
       "field",
       "logical_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "application_standard_control_bindings",
@@ -1980,7 +2022,8 @@
       "physical_id",
       "resource_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "application_standard_egress_observations",
@@ -2011,7 +2054,8 @@
       "value",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "application_standard_ledger_recoveries",
@@ -2079,7 +2123,8 @@
       "org_id",
       "target_url"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "application_standard_log_health",
@@ -2169,7 +2214,8 @@
       "org_id",
       "public_key_der"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "application_standard_review_plans",
@@ -2219,7 +2265,8 @@
       "standard_id",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "application_standards",
@@ -2230,7 +2277,8 @@
       "org_id",
       "slug"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "apps",
@@ -2328,7 +2376,8 @@
       "workload_class",
       "workload_name"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "audit_event_outbox",
@@ -2763,7 +2812,8 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "ci_automation_branches",
@@ -2851,7 +2901,8 @@
       "profile_id",
       "push_branches"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "ci_automation_pull_requests",
@@ -2927,7 +2978,8 @@
       "state",
       "templates"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "ci_executions",
@@ -2969,7 +3021,8 @@
       "repository_id",
       "revision_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "ci_github_checks",
@@ -3084,7 +3137,8 @@
       "id",
       "name"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "ci_run_events",
@@ -3245,7 +3299,8 @@
       "relay_status",
       "sealed_connection"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "compute_node_heartbeat_hourly",
@@ -3344,7 +3399,8 @@
       "scopes",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "container_host_port_leases",
@@ -3399,7 +3455,8 @@
       "name",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "crash_captures",
@@ -3439,7 +3496,8 @@
       "enabled",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "credit_ledger",
@@ -3497,7 +3555,8 @@
       "suspended_reason",
       "timezone"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "custom_domain_tls_hosts",
@@ -3528,7 +3587,8 @@
       "verification_next_check_at",
       "verified_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "customer_operation_approval_forms",
@@ -3607,7 +3667,8 @@
       "spec",
       "workflow_snapshot"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "customer_operation_delivery_retries",
@@ -3801,7 +3862,8 @@
       "updated_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "customer_operation_webhook_receipts",
@@ -4085,7 +4147,8 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "data_pipeline_connections",
@@ -4170,7 +4233,8 @@
       "verified_at",
       "verify_requested"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "data_repair_rehearsals",
@@ -4225,7 +4289,8 @@
       "scope",
       "source"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "dead_letter_events",
@@ -4302,7 +4367,8 @@
       "name",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "deployment_artifact_scan_current",
@@ -4500,7 +4566,8 @@
       "truncated",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "deployment_openapi_snapshots",
@@ -4513,7 +4580,8 @@
       "sha256",
       "snapshot"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "deployment_project_release_workers",
@@ -4531,7 +4599,8 @@
       "deployment_id",
       "urls"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "deployment_recovery_lineage",
@@ -4587,7 +4656,8 @@
     "columns": [
       "deployment_id",
       "values_json"
-    ]
+    ],
+    "capabilities": []
   },
   {
     "table": "deployment_release_secret_snapshots",
@@ -4596,7 +4666,8 @@
       "created_at",
       "deployment_id",
       "values_json"
-    ]
+    ],
+    "capabilities": []
   },
   {
     "table": "deployment_revision_pins",
@@ -4653,7 +4724,8 @@
       "sha256",
       "snapshot"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "deployment_runtime_environment_owners",
@@ -4755,7 +4827,8 @@
       "slug",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "deployment_sidecar_layers",
@@ -4768,7 +4841,8 @@
       "storage_key",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "deployment_sidecar_secret_reload_signals",
@@ -4902,7 +4976,8 @@
       "traffic_percent_explicit",
       "workflows"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "dev_bridge_sessions",
@@ -5068,7 +5143,8 @@
       "name",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "edge_rule_set_versions",
@@ -5081,7 +5157,8 @@
       "rules_sha256",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "edge_rules",
@@ -5108,7 +5185,8 @@
       "updated_at",
       "validate_mode"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "egress_flow_log",
@@ -5207,7 +5285,8 @@
       "id",
       "source_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "environment_external_field_owners",
@@ -5217,7 +5296,8 @@
       "manager_id",
       "resource"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "environment_git_revision_approvals",
@@ -5274,7 +5354,8 @@
       "suspended",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "environment_gitops_effects",
@@ -5329,7 +5410,8 @@
       "resource",
       "source_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "environment_gitops_resources",
@@ -5340,7 +5422,8 @@
       "logical_name",
       "source_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "environment_gitops_runs",
@@ -5391,7 +5474,8 @@
       "source_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "environment_management_overrides",
@@ -5405,7 +5489,8 @@
       "reason",
       "resource"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "environment_qualification_config_receipts",
@@ -5609,7 +5694,8 @@
       "revision_id",
       "source_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "environment_workload_qualification_requests",
@@ -5631,7 +5717,8 @@
       "resource",
       "worker_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "environment_workload_retirements",
@@ -6216,7 +6303,8 @@
       "source",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "event_storage_admission",
@@ -6300,7 +6388,8 @@
       "policy_name",
       "subscription_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "event_subscriptions",
@@ -6318,7 +6407,8 @@
       "type",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "events",
@@ -6409,7 +6499,8 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "exclusive_work_submissions",
@@ -6436,7 +6527,8 @@
       "trigger_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "execution_artifact_grants",
@@ -6560,7 +6652,8 @@
       "restored_from",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "financial_budget_policies",
@@ -6573,7 +6666,8 @@
       "spec",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "financial_budget_revisions",
@@ -6586,7 +6680,8 @@
       "revision",
       "spec"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "financial_evidence_coverage",
@@ -6780,7 +6875,8 @@
       "scope",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "github_deploy_policies",
@@ -6795,7 +6891,8 @@
       "root_dir",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "github_deployments",
@@ -6941,7 +7038,8 @@
       "site_id",
       "state"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "hosting_oidc_trusts",
@@ -7011,7 +7109,8 @@
       "site_id",
       "state"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "hosting_retention_policies",
@@ -7023,7 +7122,8 @@
       "staged_age_seconds",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "hosting_route_publications",
@@ -7057,7 +7157,8 @@
       "status",
       "suspended"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "idempotency_keys",
@@ -7086,7 +7187,8 @@
       "token_hash",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "instance_application_standard_admissions",
@@ -7871,7 +7973,8 @@
       "team_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_application_reminder_policies",
@@ -7883,7 +7986,8 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_application_reminders",
@@ -7913,7 +8017,8 @@
       "skipped_deliveries",
       "unrouted_alerts"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_application_triage",
@@ -8017,7 +8122,8 @@
       "revoked_at",
       "token_hash"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_lifecycle_alert_receipts",
@@ -8091,7 +8197,8 @@
       "workspace_id",
       "workspace_name"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_slack_interaction_policies",
@@ -8103,7 +8210,8 @@
       "slack_app_id",
       "workspace_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_slack_link_challenges",
@@ -8141,7 +8249,8 @@
       "revision",
       "rules"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_source_map_artifacts",
@@ -8228,7 +8337,8 @@
       "token_sealed",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_team_slack_threads",
@@ -8269,7 +8379,8 @@
       "source_state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_tracker_callback_diagnostics",
@@ -8337,7 +8448,8 @@
       "webhook_enabled",
       "workspace_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_tracker_linear_oauth_flows",
@@ -8388,7 +8500,8 @@
       "team_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_tracker_sync_history",
@@ -8441,7 +8554,8 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_tracker_sync_notifications",
@@ -8473,7 +8587,8 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "issue_tracker_sync_triage",
@@ -8516,7 +8631,8 @@
       "updated_at",
       "username"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "job_run_attach_sessions",
@@ -8661,7 +8777,8 @@
       "task_timeout_s",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "layer_artifact_retention",
@@ -8794,7 +8911,8 @@
       "state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_postgres_checkpoint_maintenance",
@@ -9057,7 +9175,8 @@
       "storage_limit_bytes",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_postgres_health",
@@ -9223,7 +9342,8 @@
       "message_count",
       "payload_hash"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_channel_heads",
@@ -9233,7 +9353,8 @@
       "next_sequence",
       "oldest_sequence"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_channel_messages",
@@ -9251,7 +9372,8 @@
       "target_message_id",
       "version"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_channel_reducers",
@@ -9265,7 +9387,8 @@
       "sequence",
       "updated_at"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_channel_route_generation",
@@ -9315,7 +9438,8 @@
       "endpoint_id",
       "node_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_channel_snapshots",
@@ -9328,7 +9452,8 @@
       "sequence",
       "updated_at"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_channel_webhook_filters",
@@ -9338,7 +9463,8 @@
       "metadata",
       "webhook_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_commit_receipts",
@@ -9382,7 +9508,8 @@
       "oldest_pending_seconds",
       "unassigned_threshold"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_consumer_group_messages",
@@ -9410,7 +9537,8 @@
       "token_hash",
       "worker"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_consumer_groups",
@@ -9459,7 +9587,8 @@
       "throttled_claim_requests",
       "trigger_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_direct_message_deliveries",
@@ -9534,7 +9663,8 @@
       "subscription",
       "updated_at"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_endpoints",
@@ -9564,7 +9694,8 @@
       "message_path",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_event_schemas",
@@ -9576,7 +9707,8 @@
       "schema",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_group_delivery_history",
@@ -9639,7 +9771,8 @@
       "subscription",
       "updated_at"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_inbox_fallbacks",
@@ -9657,7 +9790,8 @@
       "priority",
       "sequence"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_inbox_heads",
@@ -9667,7 +9801,8 @@
       "next_sequence",
       "oldest_sequence"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_inbox_message_expirations",
@@ -9678,7 +9813,8 @@
       "sequence",
       "ttl_seconds"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_inbox_messages",
@@ -9704,7 +9840,8 @@
       "target_message_id",
       "version"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_message_expirations",
@@ -9715,7 +9852,8 @@
       "sequence",
       "ttl_seconds"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_notification_timeline",
@@ -9776,7 +9914,8 @@
       "sessions_revoked_before",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_publisher_credentials",
@@ -9802,7 +9941,8 @@
       "revoked_at",
       "token_hash"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_publisher_receipts",
@@ -9849,7 +9989,8 @@
       "updated_at",
       "version"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_push_devices",
@@ -9864,7 +10005,8 @@
       "updated_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_push_preferences",
@@ -9874,7 +10016,8 @@
       "principal",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_push_providers",
@@ -9885,7 +10028,8 @@
       "sealed",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_push_rate_reservations",
@@ -9907,7 +10051,8 @@
       "stream",
       "updated_at"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_replay_jobs",
@@ -9988,7 +10133,8 @@
       "updated_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_subscription_tickets",
@@ -10019,7 +10165,8 @@
       "token_hash",
       "use_count"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "managed_realtime_worker_heartbeats",
@@ -10087,7 +10234,8 @@
       "webhook_secret_sealed",
       "webhook_url"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "mcp_readiness_incident_attention",
@@ -10168,7 +10316,8 @@
       "scope",
       "starts_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "mcp_readiness_notification_actions",
@@ -10215,7 +10364,8 @@
       "sync_unacknowledgements",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "mcp_readiness_pagerduty_policies",
@@ -10227,7 +10377,8 @@
       "rule_id",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "mcp_readiness_reminder_defaults",
@@ -10237,7 +10388,8 @@
       "rule_id",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "meter_gateway_usage_events",
@@ -10452,7 +10604,8 @@
       "source_deployment_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "mirror_slot_leases",
@@ -10549,7 +10702,8 @@
       "target_sealed",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "notification_outbox",
@@ -10597,7 +10751,8 @@
       "state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_bucket_lifecycle",
@@ -10608,7 +10763,8 @@
       "rules",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_bucket_mutations",
@@ -10634,7 +10790,8 @@
       "revision",
       "rules"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_bucket_object_lock",
@@ -10656,7 +10813,8 @@
       "state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_bucket_versioning",
@@ -10676,7 +10834,8 @@
       "updated_at",
       "versions_required"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_bucket_write_fences",
@@ -10717,7 +10876,8 @@
       "state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_deletions",
@@ -10830,7 +10990,8 @@
       "created_at",
       "id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_s3_copy_source_grants",
@@ -10844,7 +11005,8 @@
       "source_bucket_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_storage_access_grants",
@@ -10856,7 +11018,8 @@
       "permission",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_storage_authorizations",
@@ -10993,7 +11156,8 @@
       "max_bytes",
       "reclaimable"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_storage_multipart_part_grants",
@@ -11099,7 +11263,8 @@
       "url_receipt_id",
       "url_request"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_storage_upload_grants",
@@ -11241,7 +11406,8 @@
       "name",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_version_protection",
@@ -11264,7 +11430,8 @@
       "state",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "object_version_references",
@@ -11276,7 +11443,8 @@
       "object_key",
       "versions_observed"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "oidc_exchanged_tokens",
@@ -11743,7 +11911,8 @@
       "output_millicents_per_mtok",
       "price_list_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "outbound_ai_price_lists",
@@ -11753,7 +11922,8 @@
       "id",
       "integration_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "outbound_ai_prompt_prefixes",
@@ -11884,7 +12054,8 @@
       "route_id",
       "weight"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "outbound_ai_routes",
@@ -11898,7 +12069,8 @@
       "strategy",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "outbound_ai_settlements",
@@ -11917,7 +12089,8 @@
       "integration_id",
       "tag"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "outbound_ai_tag_usage_daily",
@@ -12010,7 +12183,8 @@
       "daily_request_limit",
       "integration_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "outbound_integration_apps",
@@ -12019,7 +12193,8 @@
       "created_at",
       "integration_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "outbound_integration_credential_keys",
@@ -12031,7 +12206,8 @@
       "integration_id",
       "label"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "outbound_integration_credentials",
@@ -12041,7 +12217,8 @@
       "integration_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "outbound_integration_probe_policies",
@@ -12052,7 +12229,8 @@
       "method",
       "path"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "outbound_integrations",
@@ -12110,7 +12288,8 @@
       "token_hash",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "paddle_overage_dedupe",
@@ -12282,7 +12461,8 @@
       "scopes",
       "token_hash"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "platform_tenant_billing_policies",
@@ -12292,7 +12472,8 @@
       "created_at",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "platform_tenant_consumer_provisioning_policies",
@@ -12303,7 +12484,8 @@
       "tenant_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "platform_tenant_credential_policies",
@@ -12314,7 +12496,8 @@
       "tenant_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "platform_tenant_credit_applications",
@@ -12352,7 +12535,8 @@
       "tenant_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "platform_tenant_meter_usage_minutes",
@@ -12403,7 +12587,8 @@
       "rate_card_id",
       "tenant_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "platform_tenant_plans",
@@ -12426,7 +12611,8 @@
       "unit",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "platform_tenant_rate_cards",
@@ -12447,7 +12633,8 @@
       "tiers",
       "unit"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "platform_tenant_reconciliation_receipts",
@@ -12474,7 +12661,8 @@
       "tenant_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "platform_tenant_source_route_usage_minutes",
@@ -12538,7 +12726,8 @@
       "authorization_rule_id",
       "statement_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "platform_tenant_statement_surfaces",
@@ -12631,7 +12820,8 @@
       "status",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "postgres_capacity_reservations",
@@ -12736,7 +12926,8 @@
       "owner_id",
       "owner_type"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "private_network_peerings",
@@ -12751,7 +12942,8 @@
       "status_detail",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "private_networks",
@@ -12768,7 +12960,8 @@
       "status_detail",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "product_control_billing_documents",
@@ -12815,7 +13008,8 @@
       "trial_ends_at",
       "trial_starts_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "product_control_email_deliveries",
@@ -12926,7 +13120,8 @@
       "app_id",
       "revision"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "product_control_help_requests",
@@ -12947,7 +13142,8 @@
       "updated_at",
       "version"
     ],
-    "kind": "customer_data"
+    "kind": "customer_data",
+    "capabilities": []
   },
   {
     "table": "product_control_invoice_handoffs",
@@ -13015,7 +13211,8 @@
       "created_at",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "product_control_plan_changes",
@@ -13073,7 +13270,8 @@
       "revision",
       "spec"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "product_control_waivers",
@@ -13149,7 +13347,8 @@
       "revision",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "profile_investigations",
@@ -14299,7 +14498,8 @@
       "project_id",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "project_environment_secrets",
@@ -14315,7 +14515,8 @@
       "updated_at",
       "value_hash"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "project_environment_edge_policies",
@@ -14328,7 +14529,8 @@
       "rules",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "project_environment_promotion_controls",
@@ -14542,7 +14744,8 @@
       "project_id",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "project_environment_workload_deployment_specs",
@@ -14550,7 +14753,8 @@
       "deployment_id",
       "spec_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "project_environment_workload_heads",
@@ -14559,7 +14763,8 @@
       "environment_id",
       "spec_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "project_environment_workload_specs",
@@ -14572,7 +14777,8 @@
       "revision",
       "settings"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "project_environments",
@@ -14585,7 +14791,8 @@
       "slug",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "project_migration_contracts",
@@ -14685,7 +14892,8 @@
       "deployment_id",
       "release_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "project_release_secret_bundles",
@@ -14715,7 +14923,8 @@
       "rollback_source_release_id",
       "ttl_seconds"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "project_release_stages",
@@ -14794,7 +15003,8 @@
       "slug",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "provisioned_static_egress_ips",
@@ -14803,7 +15013,8 @@
       "created_at",
       "customer_ip"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "queue_binding_canaries",
@@ -14844,7 +15055,8 @@
       "updated_at",
       "workload_class"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "realtime_node_connection_syncs",
@@ -15065,7 +15277,8 @@
       "status_detail",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "reserved_ip_leases",
@@ -15082,7 +15295,8 @@
       "status_detail",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "resource_namespaces",
@@ -15126,7 +15340,8 @@
       "routes",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "route_health_history",
@@ -15225,7 +15440,8 @@
       "routes",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "route_policy_receipts",
@@ -15339,7 +15555,8 @@
       "updated_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "runtime_config_operations",
@@ -15735,7 +15952,8 @@
       "sha256",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "scenario_captured_events",
@@ -16310,7 +16528,8 @@
       "timeout_ms",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "tenant_hostnames",
@@ -16325,7 +16544,8 @@
       "surface_id",
       "verified_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "tenant_surfaces",
@@ -16344,7 +16564,8 @@
       "status",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "trigger_consumer_health",
@@ -16412,7 +16633,8 @@
       "policy_name",
       "trigger_id"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "triggers",
@@ -16439,7 +16661,8 @@
       "source",
       "updated_at"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "upload_commit_outcomes",
@@ -16626,7 +16849,8 @@
       "updated_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "workflow_automation_failure_guards",
@@ -16667,7 +16891,8 @@
       "version",
       "window_seconds"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "workflow_automation_live_baseline_promotions",
@@ -16736,7 +16961,8 @@
       "mode",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "workflow_automation_publish_receipts",
@@ -16765,7 +16991,8 @@
       "recorded_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "workflow_callback_webhook_bindings",
@@ -16778,7 +17005,8 @@
       "run_id",
       "step_name"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "workflow_code_pins",
@@ -16948,7 +17176,8 @@
       "updated_at",
       "version"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "workflow_recovery_policy_controls",
@@ -17155,7 +17384,8 @@
       "version",
       "workflow_name"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "workflow_webhook_receipts",
@@ -17188,7 +17418,8 @@
       "updated_at",
       "updated_by"
     ],
-    "kind": "configuration"
+    "kind": "configuration",
+    "capabilities": []
   },
   {
     "table": "deployment_release_approvals",

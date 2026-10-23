@@ -35,6 +35,10 @@ type pgRouter struct {
 	// callers may leave it nil, in which case the historical environment
 	// accessor remains the fallback.
 	tenantSurfacesEnabled func() bool
+	// fullEnvironmentClones gates the full-clone readiness read for stage
+	// URLs (ADR-590). Nil keeps the read; while no full clone can be admitted
+	// the live router skips a lookup that always misses.
+	fullEnvironmentClones func() bool
 }
 
 var errProjectEnvironmentCloneNotReady = errors.New("project environment clone is not ready")
@@ -219,7 +223,7 @@ func (r pgRouter) environmentHost(ctx context.Context, environmentID, appID stri
 func (r pgRouter) environmentDeployment(ctx context.Context, app state.App, environment state.ProjectEnvironment) (state.Deployment, bool, error) {
 	if clones, ok := r.store.(interface {
 		ProjectEnvironmentCloneTargetOperation(context.Context, string, string, string) (state.ProjectEnvironmentCloneOperation, error)
-	}); ok {
+	}); ok && (r.fullEnvironmentClones == nil || r.fullEnvironmentClones()) {
 		op, err := clones.ProjectEnvironmentCloneTargetOperation(ctx, environment.AccountID, environment.ProjectID, environment.Slug)
 		if err != nil && !errors.Is(err, state.ErrNotFound) {
 			return state.Deployment{}, false, err

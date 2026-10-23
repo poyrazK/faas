@@ -1542,11 +1542,15 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	deps.apiMonetizationFlags = platformflags.NewSet(nil)
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
+	// On until the first reconcile applies the durable value, so a failed
+	// reconcile keeps the clone readiness read rather than skipping it.
+	fullEnvironmentClonesFlag := runtimeconfig.NewBoolFlag(true)
 	router := pgRouter{
 		store:                 pgStore,
 		appsSuffix:            appsSuffix(appsDomain),
 		deploySuffix:          wire.DeployWildcardSuffix,
 		tenantSurfacesEnabled: tenantSurfacesFlag.Load,
+		fullEnvironmentClones: fullEnvironmentClonesFlag.Load,
 	}
 	// ADR-025 axis 4: sticky-warm affinity cache. Built first so the
 	// picker's WarmHintFunc reads from it on every Pick. The cache
@@ -2182,7 +2186,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
 		keys, apply := runtimeconfig.WithPlatformFlags(
-			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization},
+			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization, runtimeconfig.KeyFullEnvironmentClones},
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 				enabled, err := runtimeconfig.Bool(value)
 				if err != nil {
@@ -2191,6 +2195,8 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 				switch key {
 				case runtimeconfig.KeyTenantSurfaces:
 					tenantSurfacesFlag.Store(enabled)
+				case runtimeconfig.KeyFullEnvironmentClones:
+					fullEnvironmentClonesFlag.Store(enabled)
 				case runtimeconfig.KeyAPIMonetization:
 					apiMonetizationFlag.Store(enabled)
 				case runtimeconfig.KeyHSTS:

@@ -59,6 +59,7 @@ func TestEnvCreateFullWaitReturnsOneReceipt(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	// macOS ignores XDG_CONFIG_HOME; HOME isolates os.UserConfigDir there.
 	t.Setenv("HOME", os.Getenv("XDG_CONFIG_HOME"))
+	t.Setenv("FAAS_FULL_ENVIRONMENT_CLONES_ENABLED", "1")
 	if code := main.EnvCreate([]string{"--full", "--wait", "stage", "--from", "production", "--project", "shop", "--timeout", "1"}); code != 0 {
 		t.Fatalf("exit = %d, stderr = %s", code, errOut.String())
 	}
@@ -70,6 +71,46 @@ func TestEnvCreateFullWaitReturnsOneReceipt(t *testing.T) {
 	var extra any
 	if err := d.Decode(&extra); err != io.EOF || errOut.Len() != 0 {
 		t.Fatalf("extra output = %v, stderr = %s", err, errOut.String())
+	}
+}
+
+// Full clones are not admitted yet, so the CLI hides their commands and flags
+// from discovery and refuses them in dispatch unless they are turned on.
+func TestFullEnvironmentCloneCLIHiddenUntilEnabled(t *testing.T) {
+	visible := func() (cloneStatus bool, fullFlags []string, examples []string) {
+		for _, command := range main.VisibleCliCommands() {
+			if command.Name != "env" {
+				continue
+			}
+			for _, sub := range command.Subcommands {
+				switch sub.Name {
+				case "clone-status":
+					cloneStatus = true
+				case "create":
+					examples = sub.Examples
+					for _, flag := range sub.Flags {
+						if flag.Name == "full" || flag.Name == "wait" || flag.Name == "timeout" {
+							fullFlags = append(fullFlags, flag.Name)
+						}
+					}
+				}
+			}
+		}
+		return cloneStatus, fullFlags, examples
+	}
+	t.Setenv("FAAS_FULL_ENVIRONMENT_CLONES_ENABLED", "")
+	if cloneStatus, fullFlags, examples := visible(); cloneStatus || len(fullFlags) != 0 || strings.Contains(strings.Join(examples, " "), "--full") {
+		t.Fatalf("hidden full clone surfaced: clone-status=%v flags=%v examples=%v", cloneStatus, fullFlags, examples)
+	}
+	if code := main.EnvCreate([]string{"--full", "stage", "--from", "production", "--project", "shop"}); code != 1 {
+		t.Fatalf("hidden --full accepted: exit %d", code)
+	}
+	if code := main.CmdEnv([]string{"clone-status", "op-1", "--project", "shop"}); code != 1 {
+		t.Fatalf("hidden clone-status dispatched: exit %d", code)
+	}
+	t.Setenv("FAAS_FULL_ENVIRONMENT_CLONES_ENABLED", "1")
+	if cloneStatus, fullFlags, _ := visible(); !cloneStatus || len(fullFlags) != 3 {
+		t.Fatalf("enabled full clone hidden: clone-status=%v flags=%v", cloneStatus, fullFlags)
 	}
 }
 

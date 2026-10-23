@@ -7,16 +7,20 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"sort"
 )
 
 // A schema policy is an explicit inventory boundary, not evidence that rows
-// have been captured or copied. Configuration tables still need isolated,
-// environment-scoped capture/diff/qualification/promotion/rollback strategies.
+// have been captured or copied. Configuration and customer-data tables declare
+// the isolated clone capabilities the code implements for them; a table stays
+// a blocker until it has every capability its kind requires. Capabilities are
+// registry facts only: they never enter the schema hash or an observed table.
 type ProjectEnvironmentCloneSchemaPolicy struct {
-	TableName string   `json:"table"`
-	Kind      string   `json:"kind"`
-	Columns   []string `json:"columns"`
+	TableName    string    `json:"table"`
+	Kind         string    `json:"kind"`
+	Columns      []string  `json:"columns"`
+	Capabilities *[]string `json:"capabilities,omitempty"`
 }
 
 const (
@@ -26,6 +30,96 @@ const (
 	CloneSchemaIdentity      = "account_identity"
 	CloneSchemaPlatform      = "platform_configuration"
 )
+
+// Clone capabilities (ADR-590). A configuration table needs all six; retained
+// customer data needs a checkpointed capture and an isolated target copy, and
+// is never promoted back.
+const (
+	CloneCapabilityCapture     = "capture"
+	CloneCapabilityMaterialize = "materialize"
+	CloneCapabilityDiff        = "diff"
+	CloneCapabilityQualify     = "qualify"
+	CloneCapabilityPromote     = "promote"
+	CloneCapabilityRollback    = "rollback"
+)
+
+var cloneSchemaRequiredCapabilities = map[string][]string{
+	CloneSchemaConfiguration: {CloneCapabilityCapture, CloneCapabilityMaterialize, CloneCapabilityDiff, CloneCapabilityQualify, CloneCapabilityPromote, CloneCapabilityRollback},
+	CloneSchemaData:          {CloneCapabilityCapture, CloneCapabilityMaterialize},
+}
+
+// MissingCloneCapabilities lists, in canonical order, the capabilities a
+// registered table still lacks; it is empty for kinds that need none.
+func MissingCloneCapabilities(policy ProjectEnvironmentCloneSchemaPolicy) []string {
+	have := map[string]bool{}
+	if policy.Capabilities != nil {
+		for _, capability := range *policy.Capabilities {
+			have[capability] = true
+		}
+	}
+	var missing []string
+	for _, capability := range cloneSchemaRequiredCapabilities[policy.Kind] {
+		if !have[capability] {
+			missing = append(missing, capability)
+		}
+	}
+	return missing
+}
+
+// validCloneCapabilities requires every configuration and customer-data table
+// to declare its capabilities explicitly, even as an empty list, so a new
+// table is a deliberate entry in the clone gap rather than a silent default.
+func validCloneCapabilities(policy ProjectEnvironmentCloneSchemaPolicy) bool {
+	required, declares := cloneSchemaRequiredCapabilities[policy.Kind]
+	if !declares {
+		return policy.Capabilities == nil
+	}
+	if policy.Capabilities == nil {
+		return false
+	}
+	seen := map[string]bool{}
+	for _, capability := range *policy.Capabilities {
+		if seen[capability] || !slices.Contains(required, capability) {
+			return false
+		}
+		seen[capability] = true
+	}
+	return true
+}
+
+// CloneSchemaCapabilityProgress counts, per kind that needs capabilities, the
+// registered tables and how many already have each capability and all of them.
+type CloneSchemaCapabilityProgress struct {
+	Kind         string
+	Tables       int
+	Complete     int
+	Capabilities map[string]int
+}
+
+func ProjectEnvironmentCloneCapabilityProgress() ([]CloneSchemaCapabilityProgress, error) {
+	policies, err := ProjectEnvironmentCloneSchemaPolicies()
+	if err != nil {
+		return nil, err
+	}
+	var progress []CloneSchemaCapabilityProgress
+	for _, kind := range []string{CloneSchemaConfiguration, CloneSchemaData} {
+		p := CloneSchemaCapabilityProgress{Kind: kind, Capabilities: map[string]int{}}
+		for _, policy := range policies {
+			if policy.Kind != kind {
+				continue
+			}
+			p.Tables++
+			for _, capability := range *policy.Capabilities {
+				p.Capabilities[capability]++
+			}
+			if len(MissingCloneCapabilities(policy)) == 0 {
+				p.Complete++
+			}
+		}
+		progress = append(progress, p)
+	}
+	return progress, nil
+}
 
 type ProjectEnvironmentCloneCoverageBlocker struct {
 	Table, Column, Code string
@@ -54,7 +148,8 @@ func ProjectEnvironmentCloneSchemaPolicies() ([]ProjectEnvironmentCloneSchemaPol
 	seen := map[string]bool{}
 	for _, policy := range policies {
 		if policy.TableName == "" || seen[policy.TableName] || len(policy.Columns) == 0 ||
-			(policy.Kind != CloneSchemaConfiguration && policy.Kind != CloneSchemaData && policy.Kind != CloneSchemaOperational && policy.Kind != CloneSchemaIdentity && policy.Kind != CloneSchemaPlatform) {
+			(policy.Kind != CloneSchemaConfiguration && policy.Kind != CloneSchemaData && policy.Kind != CloneSchemaOperational && policy.Kind != CloneSchemaIdentity && policy.Kind != CloneSchemaPlatform) ||
+			!validCloneCapabilities(policy) {
 			return nil, ErrConflict
 		}
 		seen[policy.TableName] = true
@@ -115,6 +210,7 @@ func cloneSchemaCoverage(tables []ProjectEnvironmentCloneSchemaPolicy) (ProjectE
 		}
 		policy, registered := expected[table.TableName]
 		table.Kind = policy.Kind // only the registry can classify an observed table
+		table.Capabilities = nil // registry facts, outside the schema hash
 		report.Tables = append(report.Tables, table)
 		if !registered {
 			report.Known = false
@@ -138,11 +234,12 @@ func cloneSchemaCoverage(tables []ProjectEnvironmentCloneSchemaPolicy) (ProjectE
 				report.Blockers = append(report.Blockers, ProjectEnvironmentCloneCoverageBlocker{Table: table.TableName, Column: column, Code: "missing_column"})
 			}
 		}
-		if policy.Kind == CloneSchemaConfiguration {
-			report.Blockers = append(report.Blockers, ProjectEnvironmentCloneCoverageBlocker{Table: table.TableName, Code: "isolated_strategy_unavailable"})
-		}
-		if policy.Kind == CloneSchemaData {
-			report.Blockers = append(report.Blockers, ProjectEnvironmentCloneCoverageBlocker{Table: table.TableName, Code: "isolated_data_strategy_unavailable"})
+		if len(MissingCloneCapabilities(policy)) > 0 {
+			code := "isolated_strategy_unavailable"
+			if policy.Kind == CloneSchemaData {
+				code = "isolated_data_strategy_unavailable"
+			}
+			report.Blockers = append(report.Blockers, ProjectEnvironmentCloneCoverageBlocker{Table: table.TableName, Code: code})
 		}
 	}
 	for _, policy := range policies {

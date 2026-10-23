@@ -11986,7 +11986,7 @@ See also: [`secrets`](#secrets).
 
 Clone a project environment; managed data is isolated by default
 
-`gregale env create --from <ENV> [--project <SLUG>] [--protected] [--share-resources] [--full] [--wait] [--timeout <SECONDS>] <stage>`
+`gregale env create --from <ENV> [--project <SLUG>] [--protected] [--share-resources] <stage>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -11994,35 +11994,12 @@ Clone a project environment; managed data is isolated by default
 | `--project <SLUG>` | project slug (defaults to linked project) |  |
 | `--protected` | protect the new environment |  |
 | `--share-resources` | use source managed data with fresh target credentials instead of isolating it |  |
-| `--full` | require complete configuration, workloads, policies and isolated data coverage; never fall back to a partial clone |  |
-| `--wait` | wait for a full clone operation to finish (requires --full) |  |
-| `--timeout <SECONDS>` | maximum local wait time; the durable server operation continues after timeout |  |
 
 Examples:
 
 ```sh
-gregale env create staging --from production --full --wait
+gregale env create staging --from production
 ```
-
-### env clone-status
-
-Read clone progress before or after the target exists
-
-`gregale env clone-status [--project <SLUG>] [--wait] [--timeout <SECONDS>] <operation-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--project <SLUG>` | project slug (defaults to linked project) |  |
-| `--wait` | wait for the same durable clone operation to finish |  |
-| `--timeout <SECONDS>` | maximum local wait time |  |
-
-Examples:
-
-```sh
-gregale env clone-status <operation-id> --project shop --wait
-```
-
-A timeout exits 3 with a resume command; failed or compensated operations exit 1.
 
 ### env pull
 

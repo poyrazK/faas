@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261023091049: Full environment clones, slice 0 — a measurable gap and a dormant switch](20261023091049-full-clone-slice-0.md)
 - [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
