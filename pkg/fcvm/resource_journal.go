@@ -16,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 )
 
@@ -31,12 +30,13 @@ var errResourceJournalClosed = errors.New("resource journal closed")
 // or physical deletion by a replacement Manager.
 // No environment, command, credential or artifact contents are stored.
 type ResourceJournal struct {
-	mu            sync.Mutex
+	mu            journalMutex
 	dir           *os.Root
 	lock          *os.File
 	records       map[string]resourceJournalRecord
 	closed        bool
 	directorySync func() error
+	timing        map[string]resourceJournalTiming // see resource_journal_timing.go
 }
 
 type resourceProcessIdentity struct {
@@ -301,6 +301,8 @@ func (j *ResourceJournal) persist(r resourceJournalRecord) error {
 	if len(b) > resourceRecordLimit {
 		return errors.New("oversized resource journal record")
 	}
+	key := r.timingKey()
+	j.noteCommit(key)
 	name := ".pending-" + rand.Text()
 	f, err := j.dir.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -312,7 +314,7 @@ func (j *ResourceJournal) persist(r resourceJournalRecord) error {
 		err = io.ErrShortWrite
 	}
 	if err == nil {
-		err = f.Sync()
+		err = j.timedSync(key, f.Sync)
 	}
 	err = errors.Join(err, f.Close())
 	if err != nil {
@@ -323,9 +325,12 @@ func (j *ResourceJournal) persist(r resourceJournalRecord) error {
 	}
 	if r.Prepared != nil {
 		delete(j.records, r.Prepared.Source)
+		if r.Prepared.Source != key {
+			delete(j.timing, r.Prepared.Source) // the spare's own, off any wake's path
+		}
 	}
 	j.records[r.Lease.Instance] = r
-	return j.directorySync()
+	return j.timedSync(key, j.directorySync)
 }
 
 // forget is called after physical cleanup, before allocator release. An
@@ -338,6 +343,7 @@ func (j *ResourceJournal) forget(l Lease) error {
 	}
 	r, ok := j.recordForInstance(l.Instance)
 	if !ok {
+		delete(j.timing, l.Instance) // a commit that failed before its record existed
 		return nil
 	} // Validation failures can precede journal intent.
 	if !resourceLeaseMatches(r.Lease, l) && !pendingPreparedLeaseMatches(r, l) {
@@ -347,13 +353,17 @@ func (j *ResourceJournal) forget(l Lease) error {
 }
 
 func (j *ResourceJournal) forgetRecord(r resourceJournalRecord) error {
+	key := r.timingKey()
+	j.noteCommit(key)
 	if err := j.dir.Remove(resourceRecordName(r.storageIdentity())); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := j.directorySync(); err != nil {
+	if err := j.timedSync(key, j.directorySync); err != nil {
 		return err
 	}
 	delete(j.records, r.Lease.Instance)
+	delete(j.timing, key)
+	delete(j.timing, r.Lease.Instance)
 	return nil
 }
 

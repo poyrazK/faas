@@ -200,6 +200,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	if envErr != nil {
 		return nil, nil, nil, envErr
 	}
+	topSecrets, _ := rawDoc["secrets"].(map[string]any)
 	for _, name := range svcNames {
 		s := c.Services[name]
 		if len(s.Profiles) > 0 {
@@ -329,7 +330,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			command, commandShell, process = builtServiceProcess(process, command, commandShell)
 			rawBuild, _ := rawService["build"].(map[string]any)
 			var buildWarnings []string
-			dockerfileBuild, buildWarnings, err = composeDockerfileBuild(fsys, s.Build, rawBuild, composeEnv, ctx, df)
+			dockerfileBuild, buildWarnings, err = composeDockerfileBuild(fsys, s.Build, rawBuild, composeEnv, topSecrets, ctx, df)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
 			}

@@ -106,6 +106,11 @@ export type { AppErrorsSummaryResponse } from './models/AppErrorsSummaryResponse
 export type { AppErrorSummaryItem } from './models/AppErrorSummaryItem.js';
 export type { AppEventPublicationVerification } from './models/AppEventPublicationVerification.js';
 export type { AppEventPublishStatusResponse } from './models/AppEventPublishStatusResponse.js';
+export type { AppForkExecListResponse } from './models/AppForkExecListResponse.js';
+export type { AppForkExecResponse } from './models/AppForkExecResponse.js';
+export type { AppForkID } from './models/AppForkID.js';
+export type { AppForkListResponse } from './models/AppForkListResponse.js';
+export type { AppForkResponse } from './models/AppForkResponse.js';
 export type { AppHealthCapacity } from './models/AppHealthCapacity.js';
 export type { AppHealthChangedWebhookPayload } from './models/AppHealthChangedWebhookPayload.js';
 export type { AppHealthCheck } from './models/AppHealthCheck.js';
@@ -429,6 +434,11 @@ export type { ControlWorkflowRecoveryPolicyRequest } from './models/ControlWorkf
 export type { CookieSession } from './models/CookieSession.js';
 export type { CorsPresetListResponse } from './models/CorsPresetListResponse.js';
 export type { CorsPresetResponse } from './models/CorsPresetResponse.js';
+export type { CrashCaptureID } from './models/CrashCaptureID.js';
+export type { CrashCaptureListResponse } from './models/CrashCaptureListResponse.js';
+export type { CrashCaptureResponse } from './models/CrashCaptureResponse.js';
+export type { CrashSnapshotSettingsRequest } from './models/CrashSnapshotSettingsRequest.js';
+export type { CrashSnapshotSettingsResponse } from './models/CrashSnapshotSettingsResponse.js';
 export type { CreateAccountReleaseWebhookRequest } from './models/CreateAccountReleaseWebhookRequest.js';
 export type { CreateAlertRuleRequest } from './models/CreateAlertRuleRequest.js';
 export type { CreateAPIConsumerCreditRequest } from './models/CreateAPIConsumerCreditRequest.js';
@@ -436,6 +446,8 @@ export type { CreateAPIConsumerPlanRequest } from './models/CreateAPIConsumerPla
 export type { CreateAPIConsumerRateCardRequest } from './models/CreateAPIConsumerRateCardRequest.js';
 export type { CreateAPIConsumerRequest } from './models/CreateAPIConsumerRequest.js';
 export type { CreateAPIConsumerUsageStatementRequest } from './models/CreateAPIConsumerUsageStatementRequest.js';
+export type { CreateAppForkExecRequest } from './models/CreateAppForkExecRequest.js';
+export type { CreateAppForkRequest } from './models/CreateAppForkRequest.js';
 export type { CreateApplicationStandardLogDestinationRequest } from './models/CreateApplicationStandardLogDestinationRequest.js';
 export type { CreateApplicationStandardPublisherRequest } from './models/CreateApplicationStandardPublisherRequest.js';
 export type { CreateApplicationStandardVersionRequest } from './models/CreateApplicationStandardVersionRequest.js';
