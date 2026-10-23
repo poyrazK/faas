@@ -219,6 +219,10 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
 	"POST /dashboard/mcp/retirements/{id}":                             true,
 
+	"POST /dashboard/apps/{slug}/profiles/captures":                          true, // ADR-1155 session + CSRF adapter for the profile capture API
+	"GET /dashboard/apps/{slug}/profiles/captures/{id}":                      true, // ADR-1155 HTML capture page over the profile capture API
+	"GET /dashboard/apps/{slug}/profiles/captures/{id}/pprof":                true, // ADR-1155 session-authenticated download adapter
+	"GET /dashboard/apps/{slug}/profiles/captures/{id}/diff":                 true, // ADR-1155 HTML comparison page over the capture diff API
 	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                    true, // scoped HTML/CSRF frequency alert policy adapter
 	"POST /dashboard/apps/{slug}/issues/bulk-actions":                        true, // session/CSRF HTML adapter for the corresponding public Issues API
 	"POST /dashboard/apps/{slug}/issues/saved-views":                         true, // session/CSRF HTML adapter for the corresponding public Issues API
@@ -1677,6 +1681,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", manifestFile),
 		filepath.Join(root, "pkg", "api", "profiles.go"), // ADR-819
 		filepath.Join(root, "pkg", "api", "profile_investigations.go"),
+		filepath.Join(root, "pkg", "api", "profile_captures.go"), // ADR-1155
 		filepath.Join(root, "pkg", "api", "profile_regressions.go"),
 		filepath.Join(root, "pkg", "api", "profile_deployment_checks.go"),
 		filepath.Join(root, "pkg", "api", "profile_attribution.go"),

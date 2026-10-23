@@ -766,18 +766,21 @@ $$;
 --
 
 CREATE FUNCTION public.app_workflow_definitions(target_app uuid, manifest jsonb) RETURNS jsonb
-    LANGUAGE sql STABLE
+    LANGUAGE plpgsql STABLE
     AS $$
- SELECT coalesce(jsonb_agg(CASE WHEN definition->'trigger'->>'type' IN ('schedule','event') AND EXISTS(SELECT 1 FROM workflow_automation_failure_guards g WHERE g.app_id=target_app AND g.name=definition->>'name' AND g.paused_at IS NOT NULL) THEN jsonb_set(definition,'{trigger,enabled}','false'::jsonb,true) ELSE definition END ORDER BY definition->>'name'),'[]'::jsonb)
- FROM (
-  SELECT definition FROM jsonb_array_elements(CASE WHEN jsonb_typeof(manifest)='array' THEN manifest ELSE '[]'::jsonb END) definition
-  WHERE NOT EXISTS(SELECT 1 FROM workflow_automation_definitions w WHERE w.app_id=target_app
-    AND w.name=definition->>'name' AND w.published IS NOT NULL)
-  UNION ALL
-  SELECT CASE WHEN published->'trigger'->>'type' IN ('schedule','event')
-   THEN jsonb_set(published, '{trigger,enabled}', to_jsonb(enabled), true) ELSE published END
-  FROM workflow_automation_definitions WHERE app_id=target_app AND published IS NOT NULL
- ) effective;
+BEGIN
+    RETURN (
+        SELECT coalesce(jsonb_agg(CASE WHEN definition->'trigger'->>'type' IN ('schedule','event') AND EXISTS(SELECT 1 FROM workflow_automation_failure_guards g WHERE g.app_id=target_app AND g.name=definition->>'name' AND g.paused_at IS NOT NULL) THEN jsonb_set(definition,'{trigger,enabled}','false'::jsonb,true) ELSE definition END ORDER BY definition->>'name'),'[]'::jsonb)
+        FROM (
+            SELECT definition FROM jsonb_array_elements(CASE WHEN jsonb_typeof(manifest)='array' THEN manifest ELSE '[]'::jsonb END) definition
+            WHERE NOT EXISTS(SELECT 1 FROM workflow_automation_definitions w WHERE w.app_id=target_app
+              AND w.name=definition->>'name' AND w.published IS NOT NULL)
+            UNION ALL
+            SELECT CASE WHEN published->'trigger'->>'type' IN ('schedule','event')
+             THEN jsonb_set(published, '{trigger,enabled}', to_jsonb(enabled), true) ELSE published END
+            FROM workflow_automation_definitions WHERE app_id=target_app AND published IS NOT NULL
+        ) effective);
+END;
 $$;
 
 
@@ -5861,7 +5864,9 @@ BEGIN
     INTO snapshot
     FROM jsonb_array_elements(NEW.recipient_snapshot) WITH ORDINALITY AS item(recipient, position);
 
-    UPDATE event_fanout_outbox SET recipient_snapshot = snapshot WHERE id = NEW.id;
+    IF snapshot IS DISTINCT FROM NEW.recipient_snapshot THEN
+        UPDATE event_fanout_outbox SET recipient_snapshot = snapshot WHERE id = NEW.id;
+    END IF;
     RETURN NEW;
 END;
 $$;
@@ -12618,14 +12623,19 @@ $$;
 --
 
 CREATE FUNCTION public.financial_compute_deployment_environment(target_deployment uuid) RETURNS uuid
-    LANGUAGE sql STABLE
+    LANGUAGE plpgsql STABLE STRICT
     AS $$
- SELECT COALESCE(owner.environment_id, named.id)
- FROM deployments d JOIN apps a ON a.id=d.app_id
- LEFT JOIN deployment_runtime_environment_owners owner ON owner.deployment_id=d.id
- LEFT JOIN project_environments named ON owner.deployment_id IS NULL AND named.project_id=a.project_id
-  AND named.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
- WHERE d.id=target_deployment
+DECLARE
+    environment uuid;
+BEGIN
+    SELECT COALESCE(owner.environment_id, named.id) INTO environment
+    FROM deployments d JOIN apps a ON a.id=d.app_id
+    LEFT JOIN deployment_runtime_environment_owners owner ON owner.deployment_id=d.id
+    LEFT JOIN project_environments named ON owner.deployment_id IS NULL AND named.project_id=a.project_id
+     AND named.slug=CASE WHEN COALESCE(NULLIF(d.scope,''),'default')='default' THEN 'production' ELSE d.scope END
+    WHERE d.id=target_deployment;
+    RETURN environment;
+END;
 $$;
 
 
@@ -18604,11 +18614,16 @@ END $$;
 --
 
 CREATE FUNCTION public.invocation_async_subject(app uuid, namespace uuid) RETURNS uuid
-    LANGUAGE sql STABLE
+    LANGUAGE plpgsql STABLE STRICT
     AS $$
- SELECT CASE WHEN o.id IS NOT NULL AND NOT o.personal_org AND o.resource_ownership_enabled
-             AND o.async_quota_pooled_at IS NOT NULL THEN o.id ELSE a.account_id END
- FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
+DECLARE
+    subject uuid;
+BEGIN
+    SELECT CASE WHEN o.id IS NOT NULL AND NOT o.personal_org AND o.resource_ownership_enabled
+                AND o.async_quota_pooled_at IS NOT NULL THEN o.id ELSE a.account_id END INTO subject
+    FROM apps a LEFT JOIN orgs o ON o.id=a.org_id WHERE a.id=app AND a.account_id=namespace;
+    RETURN subject;
+END;
 $$;
 
 
@@ -27222,7 +27237,10 @@ CREATE FUNCTION public.workflow_event_recipients(target_account uuid, event_sour
    WHERE dep.app_id = a.id AND dep.status = 'live' AND dep.scope = 'default'
    ORDER BY (dep.traffic_percent > 0) DESC, dep.created_at DESC, dep.id DESC LIMIT 1
  ) d ON true
- CROSS JOIN LATERAL jsonb_array_elements(app_workflow_definitions(a.id,d.workflows)) definition
+ CROSS JOIN LATERAL jsonb_array_elements(CASE
+   WHEN jsonb_typeof(d.workflows)='array' AND d.workflows <> '[]'::jsonb
+     OR EXISTS(SELECT 1 FROM workflow_automation_definitions w WHERE w.app_id=a.id AND w.published IS NOT NULL)
+   THEN app_workflow_definitions(a.id,d.workflows) ELSE '[]'::jsonb END) definition
  WHERE a.account_id = target_account AND a.status <> 'deleted'
    AND NOT a.maintenance_mode AND NOT a.platform_tenant_required
    AND ac.status IN ('active', 'past_due') AND ac.abuse_hold_at IS NULL AND ac.plan <> 'free'
@@ -29782,7 +29800,7 @@ CREATE TABLE public.app_webhook_event_outbox (
     payload jsonb NOT NULL,
     recipient_webhook_ids uuid[] NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
-    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['issue.compound_threshold_reached'::text, 'usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = 'realtime.channel.published'::text) OR (event = 'realtime.channel.acknowledged'::text) OR (event = 'realtime.consumer_group.dead_lettered'::text) OR (event = ANY (ARRAY['realtime.consumer_group.lag_exceeded'::text, 'realtime.consumer_group.lag_recovered'::text])) OR (event = 'realtime.consumer_group.dead_letter_expiring'::text) OR (event = 'realtime.consumer_group.delivery_expired'::text) OR (event = ANY (ARRAY['realtime.consumer_group.worker_lost'::text, 'realtime.consumer_group.worker_recovered'::text])) OR (event = ANY (ARRAY['realtime.consumer_group.circuit_opened'::text, 'realtime.consumer_group.circuit_half_open'::text, 'realtime.consumer_group.circuit_closed'::text])) OR (event = ANY (ARRAY['realtime.replay_job.completed'::text, 'realtime.replay_job.cancelled'::text, 'realtime.replay_job.processing_failed'::text])) OR (event = 'automation.recovery_polling_status'::text) OR (event = ANY (ARRAY['issue.tracker_sync.attention'::text, 'issue.tracker_sync.recovered'::text])) OR (event = 'issue.frequency_threshold_reached'::text) OR (event = ANY (ARRAY['consumer.usage_threshold'::text, 'consumer.signed_up'::text, 'consumer.plan_changed'::text, 'consumer.closed'::text])))),
+    CONSTRAINT app_webhook_event_outbox_event_chk CHECK (((event = ANY (ARRAY['issue.compound_threshold_reached'::text, 'usage_statement.finalized'::text, 'app.parked'::text, 'app.woken'::text, 'issue.created'::text, 'issue.assigned'::text, 'issue.resolved'::text, 'issue.reopened'::text, 'issue.ignored'::text, 'issue.regressed'::text, 'issue.impact_threshold_reached'::text, 'routes.requirements.violated'::text, 'routes.requirements.recovered'::text, 'routes.requirements.changed'::text, 'routes.health.blocked'::text, 'routes.health.resumed'::text, 'routes.health.aborted'::text, 'routes.monitor.violated'::text, 'routes.monitor.escalated'::text, 'routes.monitor.recovered'::text, 'workflow.finished'::text, 'app.health.changed'::text, 'event_recovery.completed'::text, 'event_recovery.cancelled'::text, 'event_recovery.expired'::text, 'event_recovery.execution_finished'::text, 'profile.route_regressed'::text, 'profile.route_recovered'::text])) OR (event = 'automation.paused'::text) OR (event = 'event_recovery.execution_attention'::text) OR (event = 'automation.recovery_review_ready'::text) OR (event = 'automation.recovery_review_finished'::text) OR (event = 'automation.recovery_policy_paused'::text) OR (event = 'automation.recovery_queue_blocked'::text) OR (event = ANY (ARRAY['automation.recovery_health_alert'::text, 'automation.recovery_health_recovered'::text])) OR (event = 'outbound.ai_budget.threshold'::text) OR (event = 'realtime.channel.published'::text) OR (event = 'realtime.channel.acknowledged'::text) OR (event = 'realtime.consumer_group.dead_lettered'::text) OR (event = ANY (ARRAY['realtime.consumer_group.lag_exceeded'::text, 'realtime.consumer_group.lag_recovered'::text])) OR (event = 'realtime.consumer_group.dead_letter_expiring'::text) OR (event = 'realtime.consumer_group.delivery_expired'::text) OR (event = ANY (ARRAY['realtime.consumer_group.worker_lost'::text, 'realtime.consumer_group.worker_recovered'::text])) OR (event = ANY (ARRAY['realtime.consumer_group.circuit_opened'::text, 'realtime.consumer_group.circuit_half_open'::text, 'realtime.consumer_group.circuit_closed'::text])) OR (event = ANY (ARRAY['realtime.replay_job.completed'::text, 'realtime.replay_job.cancelled'::text, 'realtime.replay_job.processing_failed'::text])) OR (event = 'automation.recovery_polling_status'::text) OR (event = ANY (ARRAY['issue.tracker_sync.attention'::text, 'issue.tracker_sync.recovered'::text])) OR (event = 'issue.frequency_threshold_reached'::text) OR (event = ANY (ARRAY['consumer.usage_threshold'::text, 'consumer.signed_up'::text, 'consumer.plan_changed'::text, 'consumer.closed'::text])) OR (event = 'profile.capture_ready'::text) OR (event = 'profile.capture_oom_linked'::text))),
     CONSTRAINT app_webhook_event_outbox_payload_chk CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT app_webhook_event_outbox_recipients_chk CHECK ((cardinality(recipient_webhook_ids) > 0))
 );
@@ -47496,6 +47514,42 @@ CREATE TABLE public.profile_canary_checks (
 
 
 --
+-- Name: profile_capture_data; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_capture_data (
+    capture_id uuid NOT NULL,
+    seq smallint NOT NULL,
+    kind text NOT NULL,
+    process_id text NOT NULL,
+    profile bytea NOT NULL,
+    CONSTRAINT profile_capture_data_kind_check CHECK ((kind = ANY (ARRAY['cpu'::text, 'heap'::text, 'stacks'::text, 'block'::text, 'mutex'::text]))),
+    CONSTRAINT profile_capture_data_process_id_check CHECK ((octet_length(process_id) <= 16)),
+    CONSTRAINT profile_capture_data_profile_check CHECK (((octet_length(profile) >= 1) AND (octet_length(profile) <= 1048576))),
+    CONSTRAINT profile_capture_data_seq_check CHECK (((seq >= 0) AND (seq <= 7)))
+);
+
+
+--
+-- Name: profile_captures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.profile_captures (
+    id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    status text NOT NULL,
+    capture jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    claimed_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT profile_captures_capture_check CHECK (((jsonb_typeof(capture) = 'object'::text) AND (octet_length((capture)::text) <= 16384))),
+    CONSTRAINT profile_captures_status_check CHECK ((status = ANY (ARRAY['queued'::text, 'capturing'::text, 'ready'::text, 'failed'::text])))
+);
+
+
+--
 -- Name: profile_deployment_checks; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -53171,6 +53225,7 @@ CREATE TABLE public.usage_statement_invoice_exports (
     rejected_at timestamp with time zone,
     claim_token uuid,
     claimed_until timestamp with time zone,
+    handoff_reserved boolean DEFAULT false NOT NULL,
     CONSTRAINT usage_statement_invoice_exports_attempt_chk CHECK ((attempt >= 0)),
     CONSTRAINT usage_statement_invoice_exports_automatic_tax_chk CHECK (((NOT automatic_tax) OR (provider = 'stripe'::text))),
     CONSTRAINT usage_statement_invoice_exports_claim_chk CHECK (((claim_token IS NULL) = (claimed_until IS NULL))),
@@ -63014,6 +63069,22 @@ ALTER TABLE ONLY public.production_lifecycle_reviews
 
 ALTER TABLE ONLY public.profile_canary_checks
     ADD CONSTRAINT profile_canary_checks_pkey PRIMARY KEY (deployment_id, canary_step, canary_step_started_at, policy_revision);
+
+
+--
+-- Name: profile_capture_data profile_capture_data_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_capture_data
+    ADD CONSTRAINT profile_capture_data_pkey PRIMARY KEY (capture_id, seq);
+
+
+--
+-- Name: profile_captures profile_captures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_captures
+    ADD CONSTRAINT profile_captures_pkey PRIMARY KEY (id);
 
 
 --
@@ -73524,6 +73595,34 @@ CREATE INDEX profile_canary_checks_due_idx ON public.profile_canary_checks USING
 --
 
 CREATE INDEX profile_canary_checks_retention_idx ON public.profile_canary_checks USING btree (completed_at, deployment_id) WHERE (completed_at IS NOT NULL);
+
+
+--
+-- Name: profile_captures_account_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_captures_account_created_idx ON public.profile_captures USING btree (account_id, created_at DESC);
+
+
+--
+-- Name: profile_captures_app_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_captures_app_created_idx ON public.profile_captures USING btree (app_id, created_at DESC, id);
+
+
+--
+-- Name: profile_captures_expires_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_captures_expires_idx ON public.profile_captures USING btree (expires_at);
+
+
+--
+-- Name: profile_captures_status_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX profile_captures_status_created_idx ON public.profile_captures USING btree (status, created_at);
 
 
 --
@@ -93393,6 +93492,30 @@ ALTER TABLE ONLY public.profile_canary_checks
 
 ALTER TABLE ONLY public.profile_canary_checks
     ADD CONSTRAINT profile_canary_checks_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_capture_data profile_capture_data_capture_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_capture_data
+    ADD CONSTRAINT profile_capture_data_capture_id_fkey FOREIGN KEY (capture_id) REFERENCES public.profile_captures(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_captures profile_captures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_captures
+    ADD CONSTRAINT profile_captures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: profile_captures profile_captures_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.profile_captures
+    ADD CONSTRAINT profile_captures_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

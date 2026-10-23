@@ -101,7 +101,7 @@ var computeOnly = []string{RoleCompute}
 var bothRoles = []string{RoleControlPlane, RoleCompute}
 
 var registry = []Spec{
-	{Domain: Runtime, Readers: []string{"vmmd"}, Roles: computeOnly, Columns: join(
+	{Domain: Runtime, Readers: []string{"vmmd"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("app_secrets", "ciphertext"),
 		cols("project_environment_secrets", "ciphertext"),
 		cols("app_config_guard_secrets", "ciphertext"),

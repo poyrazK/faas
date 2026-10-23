@@ -7357,10 +7357,14 @@ type PlanWorkload struct {
 	Ports           []int    `json:"ports"`
 	EnvKeys         []string `json:"env_keys,omitempty"`
 	RequiredEnvKeys []string `json:"required_env_keys,omitempty"`
-	Source          string   `json:"source,omitempty"`
-	Tier            string   `json:"tier,omitempty"`
-	Action          string   `json:"action,omitempty"`          // ADR-124: "create" | "update"
-	ExistingAppID   string   `json:"existing_app_id,omitempty"` // ADR-124: empty iff Action == "create"
+	// UnsetEnvKeys are the keys from EnvKeys and RequiredEnvKeys that will
+	// have no value in the selected environment: not configured on the app
+	// and not provided by the platform. Names only, never values.
+	UnsetEnvKeys  []string `json:"unset_env_keys,omitempty"`
+	Source        string   `json:"source,omitempty"`
+	Tier          string   `json:"tier,omitempty"`
+	Action        string   `json:"action,omitempty"`          // ADR-124: "create" | "update"
+	ExistingAppID string   `json:"existing_app_id,omitempty"` // ADR-124: empty iff Action == "create"
 	// DetectedBy is the structured detection trace (issue #742).
 	// Pointer + omitempty so the field is purely additive: an
 	// existing `gregale scan --json` consumer that does not know
@@ -10585,11 +10589,12 @@ type EdgeRuleEventsResponse struct {
 // EdgeRuleEventsQuery filters GET /v1/apps/{slug}/edge-rules/events. Since
 // is a duration such as 1h, 24h or 7d (default 24h).
 type EdgeRuleEventsQuery struct {
-	RuleID  string
-	Outcome string
-	Since   string
-	Limit   int
-	Cursor  string
+	RuleID    string
+	Outcome   string
+	RequestID string
+	Since     string
+	Limit     int
+	Cursor    string
 }
 
 // EdgeRuleListResponse (ADR-963) is one account-level list. Items is
@@ -11311,6 +11316,9 @@ type DebugTelemetryRequestItem struct {
 	DeploymentCreatedAt string                       `json:"deployment_created_at,omitempty"`
 	ImageDigest         string                       `json:"image_digest,omitempty"`
 	Guest               *DebugGuestExecutionEvidence `json:"guest,omitempty"`
+	// ProfileCaptureID names the stack snapshot taken while this request was
+	// in flight (ADR-1155 slow_request capture), when one exists.
+	ProfileCaptureID string `json:"profile_capture_id,omitempty"`
 	// TraceInferred is true when Gregale linked this service call to its
 	// caller's trace because the caller sent no traceparent and was serving
 	// exactly one request (ADR-1138): the trace id is inferred, not propagated.

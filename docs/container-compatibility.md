@@ -249,7 +249,10 @@ to the built image as a Dockerfile's USER, WORKDIR and STOPSIGNAL would be.
 
 `env_file` contributes variable names only. The scan lists them as required
 environment keys, exactly like `environment:`; values never leave the source,
-so set them with `gregale env set` or secrets. An env file missing from the
+so set them with `gregale env set` or secrets. The project plan shows, per
+service, each name that will have no value in the target environment under
+**Needs a value**: names already configured on the app, supplied by
+`--secrets-file`, or set by Gregale itself (`PORT`, `GREGALE_*`) are left out. An env file missing from the
 source (for example a git-ignored `.env`) is a warning, or silent with
 `required: false`. Quoted values, including multi-line double- or
 single-quoted ones, are read to their closing quote; a malformed line is

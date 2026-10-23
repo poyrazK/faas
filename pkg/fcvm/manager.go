@@ -1005,6 +1005,9 @@ type Manager struct {
 	// because the workload is already dead and the VM is about
 	// to be torn down by the manager's destroy path.
 	workloadOOMRelay WorkloadOOMSink
+	// memoryPressureRelay forwards guest memory-pressure reports to schedd,
+	// which queues an automatic heap capture (ADR-1155). nil drops them.
+	memoryPressureRelay MemoryPressureSink
 	// livenessRegistry (issue #554 / ADR-078 / PR review fix)
 	// is the per-instance poll goroutine registry the cmd/vmmd
 	// main loop wires via WithLivenessProbes. The Manager owns
@@ -1976,6 +1979,31 @@ func (m *Manager) WithLivenessSink(relay LivenessFailedSink) *Manager {
 // Mirrors WithLivenessSink's signature shape (ctx + instance id +
 // observed payload); the only difference is the payload shape
 // (peakMB + planMB ints instead of a closed-set reason string).
+// MemoryPressureSink receives a guest memory-pressure report in MiB.
+type MemoryPressureSink func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int)
+
+// WithMemoryPressureSink attaches the best-effort memory-pressure relay.
+func (m *Manager) WithMemoryPressureSink(relay MemoryPressureSink) *Manager {
+	m.memoryPressureRelay = relay
+	return m
+}
+
+// ReportMemoryPressure relays one guest report for a live app instance.
+// Reports for unknown, execution-only or job VMs are dropped.
+func (m *Manager) ReportMemoryPressure(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) {
+	if m.memoryPressureRelay == nil {
+		return
+	}
+	m.mu.Lock()
+	live := m.live[instanceID]
+	ok := live != nil && !live.ExecutionOnly && !live.IsJob
+	m.mu.Unlock()
+	if !ok {
+		return
+	}
+	m.memoryPressureRelay(ctx, instanceID, availableMB, totalMB, anonMB)
+}
+
 func (m *Manager) WithWorkloadOOMSink(relay WorkloadOOMSink) *Manager {
 	m.workloadOOMRelay = relay
 	return m

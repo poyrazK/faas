@@ -5,14 +5,17 @@ import (
 	"context"
 	"errors"
 	"math/rand/v2"
+	"strconv"
 	"testing"
 
 	"filippo.io/age"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/sealdomain/sealmigrate"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -105,6 +108,50 @@ func TestPostgresGithubWebhookSecretSealing(t *testing.T) {
 	opened, err := sealdomain.OpenGithubWebhookSecret([]*age.X25519Identity{fleet}, legacy.Sealed)
 	if err != nil || string(opened) != "legacy-secret-0123456789" {
 		t.Fatalf("backfilled copy opens to %q, %v", opened, err)
+	}
+}
+
+// TestPostgresMigrateRuntime re-seals an app secret to the runtime domain
+// through the compare-and-swap write and leaves vmmd's view intact.
+func TestPostgresMigrateRuntime(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	fleet, domain := mustIdentity(t), mustIdentity(t)
+	suffix := strconv.FormatInt(rand.Int64N(1<<40), 36)
+	account, err := store.CreateAccount(ctx, "runtime-domain-"+suffix+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "runtime-domain-" + suffix, Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sealed, err := secretbox.SealOne(fleet.Recipient(), "OPENAI_API_KEY", "sk-live", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertAppSecretWithKidAndValueHashInScope(ctx, account.ID, app.ID, state.DefaultEnvScope, "OPENAI_API_KEY", fleet.Recipient().String(), "", sealed); err != nil {
+		t.Fatal(err)
+	}
+	report, err := sealmigrate.MigrateRuntime(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Resealed < 1 || report.Failed != 0 {
+		t.Fatalf("report = %+v", report)
+	}
+	rows, err := store.ListAppSecrets(ctx, account.ID, app.ID)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("rows = %d, %v", len(rows), err)
+	}
+	if rows[0].Kid != domain.Recipient().String() {
+		t.Fatalf("kid = %s, want the runtime domain", rows[0].Kid)
+	}
+	if env, err := secretbox.Open(domain, rows[0].Ciphertext); err != nil || env["OPENAI_API_KEY"] != "sk-live" {
+		t.Fatalf("domain open = %v, %v", env, err)
+	}
+	if _, err := secretbox.Open(fleet, rows[0].Ciphertext); err == nil {
+		t.Fatal("the fleet identity still opens the re-sealed runtime secret")
 	}
 }
 

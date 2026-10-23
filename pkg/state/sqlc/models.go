@@ -11200,6 +11200,26 @@ type ProfileCanaryCheck struct {
 	CompletedAt         pgtype.Timestamptz
 }
 
+type ProfileCapture struct {
+	ID          pgtype.UUID
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	Status      string
+	Capture     []byte
+	CreatedAt   pgtype.Timestamptz
+	ClaimedAt   pgtype.Timestamptz
+	CompletedAt pgtype.Timestamptz
+	ExpiresAt   pgtype.Timestamptz
+}
+
+type ProfileCaptureDatum struct {
+	CaptureID pgtype.UUID
+	Seq       int16
+	Kind      string
+	ProcessID string
+	Profile   []byte
+}
+
 type ProfileDeploymentCheck struct {
 	DeploymentID    pgtype.UUID
 	AppID           pgtype.UUID
@@ -14282,6 +14302,7 @@ type UsageStatementInvoiceExport struct {
 	RejectedAt           pgtype.Timestamptz
 	ClaimToken           pgtype.UUID
 	ClaimedUntil         pgtype.Timestamptz
+	HandoffReserved      bool
 }
 
 type WarmHint struct {

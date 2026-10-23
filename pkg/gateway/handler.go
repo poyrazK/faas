@@ -1117,7 +1117,10 @@ type Handler struct {
 	// call paths. observe nil-checks before enqueueing. The recorder
 	// never opens a Postgres connection itself — the publisher
 	// (request_telemetry_publisher.go) ships drained rows to apid.
-	requestTelemetry    *requestTelemetryRecorder
+	requestTelemetry *requestTelemetryRecorder
+	// slowRequests reports requests in flight too long for an automatic
+	// stack capture (ADR-1155); nil disables tracking.
+	slowRequests        *SlowRequestWatcher
 	requestIDJournal    RequestIDJournalWriter
 	usageOutbox         *usageoutbox.Outbox
 	requestAuditEnabled bool
@@ -1296,7 +1299,10 @@ type Handler struct {
 	challengeKey []byte
 	// challengeNow is the challenge clock; nil means time.Now.
 	challengeNow func() time.Time
-	operations   OperationRouteEnqueuer
+	// challengeLoad tracks challenge pages per rule for raising the
+	// difficulty under attack (ADR-831 amendment 8).
+	challengeLoad challengeLoads
+	operations    OperationRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -7698,6 +7704,7 @@ haveApp:
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				req, _ = stampTargetIdentity(req, app, tgt)
+				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
 				h.proxyByNode(tgt).ServeHTTP(w, req)
 			}, app)
 	} else {
@@ -7714,6 +7721,7 @@ haveApp:
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				req, _ = stampTargetIdentity(req, app, tgt)
+				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}

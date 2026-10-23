@@ -1653,6 +1653,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithEgressAbuseHandler(func(ctx context.Context, row instancestats.InstanceStat, reason sched.EgressAbuseReason, observed, limit int64) error {
 			return engine.RecycleForEgressAbuse(ctx, row.InstanceID, reason, observed, limit)
 		})
+	if os.Getenv("FAAS_PROFILING_ON_DEMAND") == "1" {
+		statsPoller.WithCPUSaturationHandler(cpuSaturationCaptures{engine: engine, log: log})
+		log.Info("automatic CPU captures on CPU saturation enabled (ADR-1155)")
+	}
 	if cfg.MeasuredAdmission {
 		engine.Ledger().EnableMeasuredAdmission(func(nodeID string) (int, time.Time, bool) {
 			return reader.MeasuredMB(nodeID, time.Now())

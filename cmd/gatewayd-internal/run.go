@@ -2766,6 +2766,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := configureOperationRoutes(handler, deps); err != nil {
 		return fmt.Errorf("gatewayd-internal: %w", err)
 	}
+	if osGetenv("FAAS_PROFILING_ON_DEMAND") == "1" && deps.scheddRouter != nil {
+		// ADR-1155: report requests in flight too long so the owning schedd
+		// can snapshot the serving instance's stacks while they are stuck.
+		watcher := gateway.NewSlowRequestWatcher(slowRequestReporter(deps.scheddRouter), log)
+		go watcher.Run(ctx)
+		handler.WithSlowRequestWatcher(watcher)
+	}
 	if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" && deps.pgStore != nil {
 		bridgeTarget := deps.apidLoopback
 		if bridgeTarget == "" {
