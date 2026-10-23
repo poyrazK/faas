@@ -13480,12 +13480,13 @@ Queue a request replay against a mirror target
 
 ### debug profiles
 
-Sampled CPU functions and deployment comparison
+Sampled CPU or heap functions and deployment comparison
 
-`gregale debug profiles [--deployment-id <UUID>] [--runtime <NAME>] [--start <RFC3339>] [--end <RFC3339>] [--baseline-id <UUID>] [--baseline-start <RFC3339>] [--baseline-end <RFC3339>] <slug>`
+`gregale debug profiles [--type <KIND>] [--deployment-id <UUID>] [--runtime <NAME>] [--start <RFC3339>] [--end <RFC3339>] [--baseline-id <UUID>] [--baseline-start <RFC3339>] [--baseline-end <RFC3339>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--type <KIND>` | cpu (default) or heap |  |
 | `--deployment-id <UUID>` | candidate deployment |  |
 | `--runtime <NAME>` | runtime name |  |
 | `--start <RFC3339>` | capture start |  |
@@ -13493,6 +13494,44 @@ Sampled CPU functions and deployment comparison
 | `--baseline-id <UUID>` | baseline deployment |  |
 | `--baseline-start <RFC3339>` | baseline capture start |  |
 | `--baseline-end <RFC3339>` | baseline capture end |  |
+
+### debug capture
+
+Capture CPU, heap, stack or lock-contention profiles from a running instance now
+
+`gregale debug capture [--type <KINDS>] [--duration <DURATION>] [--instance <UUID>] [--output <DIR>] [--top <N>] [--no-wait] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--type <KINDS>` | cpu, heap, stacks, block, mutex, comma-separated (default cpu) |  |
+| `--duration <DURATION>` | capture window, 1s..60s (default 10s) |  |
+| `--instance <UUID>` | running instance; default the earliest |  |
+| `--output <DIR>` | write merged .pb.gz pprof files |  |
+| `--top <N>` | functions to print per kind |  |
+| `--no-wait` | queue the capture and print its id |  |
+
+### debug captures
+
+List or show on-demand profile captures
+
+`gregale debug captures [--output <DIR>] [--top <N>] <slug> [<capture-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--output <DIR>` | write merged .pb.gz pprof files |  |
+| `--top <N>` | functions to print per kind |  |
+
+### debug capture-diff
+
+Compare a profile capture with an earlier one to see what grew
+
+`gregale debug capture-diff [--base <ID>] [--type <KIND>] [--top <N>] <slug> <capture-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--base <ID>` | baseline capture id of the same app |  |
+| `--type <KIND>` | cpu, heap, stacks, block or mutex (default: shared kind, heap first) |  |
+| `--top <N>` | functions to print |  |
 
 ### debug dependencies
 

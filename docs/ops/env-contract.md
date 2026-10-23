@@ -594,6 +594,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PROFILE_SOCKET` | vmmd, profiled | `unit` |  |  | `` |  |
 | `FAAS_PROFILING_ENABLED` | apid, vmmd, profiled, guest, shared | `default` |  | 0 | `` | operator-only CPU profiling; opt in through /etc/faas/profiling.env (ADR-819) |
 | `FAAS_PROFILING_ENDPOINT` | guest, shared | `guest` |  |  | `` | loopback bridge stamped by guest-init for SDKs |
+| `FAAS_PROFILING_ON_DEMAND` | apid, gatewayd-internal, imaged, schedd | `default` |  | 0 | `` | operator-only on-demand CPU/heap/stack captures; imaged stamps dormant collectors into new deployments, apid serves the captures API, gatewayd-internal reports slow requests for automatic stack captures and schedd captures CPU-saturated instances (ADR-1155) |
 | `FAAS_PROJECT_CANARIES_ENABLED` | apid | `default` |  |  | `` | disabled by default pending dedicated native release qualification; operator opt-in only |
 | `FAAS_PROJECT_MIGRATION_CONTRACTS_ENABLED` | apid | `default` |  |  | `` | disabled by default pending dedicated native release qualification; operator opt-in only |
 | `FAAS_PROJECT_RELEASE_SECRETS_ENABLED` | apid, shared | `default` |  |  | `` | disabled by default pending dedicated native release qualification; operator opt-in only |

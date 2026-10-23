@@ -309,6 +309,22 @@ service Schedd {
   // Additive per ADR-016: new RPC + new messages append at the
   // end; existing field tags are untouched.
   rpc ReportWorkloadOOM(ReportWorkloadOOMRequest) returns (ReportWorkloadOOMAck);
+
+  // ReportMemoryPressure (ADR-1155) is vmmd's best-effort relay of a guest
+  // memory-pressure report: MemAvailable fell to the pressure share of
+  // MemTotal while a profile collector was registered. schedd queues one
+  // automatic heap capture on that instance, rate limited per app, so the
+  // heap is captured before an OOM kill. Reports for instances this schedd
+  // does not own are ignored (queued=false). Additive per ADR-016.
+  rpc ReportMemoryPressure(ReportMemoryPressureRequest) returns (ReportMemoryPressureAck);
+
+  // ReportSlowRequest (ADR-1155) is gatewayd-internal's best-effort report
+  // of a request still in flight after ProfileCaptureSlowRequestAfter.
+  // schedd queues one automatic stacks+CPU capture of the serving instance,
+  // rate limited per app, so the stacks show where the request is stuck.
+  // Reports for instances this schedd does not own are ignored
+  // (queued=false). Additive per ADR-016.
+  rpc ReportSlowRequest(ReportSlowRequestRequest) returns (ReportSlowRequestAck);
 }
 
 message LivenessFailedReport {
@@ -1131,4 +1147,39 @@ message FlowSummary {
   string state = 4;
   string direction = 5;
   int64 count = 6;
+}
+
+message ReportMemoryPressureRequest {
+  string instance_id = 1;
+  string source_node_id = 2;
+  uint32 available_mb = 3;
+  uint32 total_mb = 4;
+  uint32 anon_mb = 5;
+}
+
+message ReportMemoryPressureAck {
+  // queued is true when an automatic heap capture was queued.
+  bool queued = 1;
+  // reason explains a skipped capture (rate limited, capture already
+  // running, plan without profiling, instance not running).
+  string reason = 2;
+}
+
+message ReportSlowRequestRequest {
+  string instance_id = 1;
+  // request_id is the public x-faas-request-id; trace_id is the id the
+  // request's telemetry row is stored under.
+  string request_id = 2;
+  string trace_id = 3;
+  // route is the route template or method + path label, never a full URL.
+  string route = 4;
+  int64 inflight_ms = 5;
+}
+
+message ReportSlowRequestAck {
+  // queued is true when an automatic stack capture was queued.
+  bool queued = 1;
+  // reason explains a skipped capture (rate limited, capture already
+  // running, plan without profiling, instance not running).
+  string reason = 2;
 }

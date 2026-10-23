@@ -673,6 +673,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_PROFILE_SOCKET", Owners: []string{"vmmd", "profiled"}, Source: EnvSourceUnit},
 	{Name: "FAAS_PROFILING_ENABLED", Owners: []string{"apid", "vmmd", "profiled", "guest", "shared"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only CPU profiling; opt in through /etc/faas/profiling.env (ADR-819)"},
 	{Name: "FAAS_PROFILING_ENDPOINT", Owners: []string{"guest", "shared"}, Source: EnvSourceGuest, Note: "loopback bridge stamped by guest-init for SDKs"},
+	{Name: "FAAS_PROFILING_ON_DEMAND", Owners: []string{"apid", "gatewayd-internal", "imaged", "schedd"}, Source: EnvSourceDefault, Default: "0", Note: "operator-only on-demand CPU/heap/stack captures; imaged stamps dormant collectors into new deployments, apid serves the captures API, gatewayd-internal reports slow requests for automatic stack captures and schedd captures CPU-saturated instances (ADR-1155)"},
 	{Name: "FAAS_PROJECT_CANARIES_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "disabled by default pending dedicated native release qualification; operator opt-in only"},
 	{Name: "FAAS_PROJECT_MIGRATION_CONTRACTS_ENABLED", Owners: []string{"apid"}, Source: EnvSourceDefault, Note: "disabled by default pending dedicated native release qualification; operator opt-in only"},
 	{Name: "FAAS_PROJECT_RELEASE_SECRETS_ENABLED", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "disabled by default pending dedicated native release qualification; operator opt-in only"},
