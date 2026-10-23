@@ -26621,6 +26621,22 @@ END $$;
 
 
 --
+-- Name: stamp_invocation_instance(uuid, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.stamp_invocation_instance(target_invocation uuid, target_instance text) RETURNS boolean
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    PERFORM set_config('synchronous_commit', 'off', true);
+    UPDATE invocations SET instance_id = target_instance
+    WHERE id = target_invocation AND state = 'dispatching';
+    RETURN FOUND;
+END;
+$$;
+
+
+--
 -- Name: stamp_object_storage_issuer(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -70958,6 +70974,13 @@ CREATE INDEX invocations_delayed_idx ON public.invocations USING btree (app_id, 
 
 
 --
+-- Name: invocations_dispatching_due_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_dispatching_due_idx ON public.invocations USING btree (due_at) WHERE (state = 'dispatching'::text);
+
+
+--
 -- Name: invocations_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -70983,13 +71006,6 @@ CREATE INDEX invocations_event_delivery_idx ON public.invocations USING btree (a
 --
 
 CREATE INDEX invocations_failure_destination_idx ON public.invocations USING btree (on_failure_destination_id) WHERE (on_failure_destination_id IS NOT NULL);
-
-
---
--- Name: invocations_instance_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE INDEX invocations_instance_idx ON public.invocations USING btree (instance_id, due_at) WHERE (state = 'dispatching'::text);
 
 
 --
