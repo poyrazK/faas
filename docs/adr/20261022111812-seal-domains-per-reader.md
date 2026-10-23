@@ -296,6 +296,9 @@ Rollout checklist: [Seal domains rollout](../runbooks/seal-domains-rollout.md).
   and value fingerprints and versions stay as they were. The store lists only
   documents with an envelope labelled for another key, so a complete
   migration lists nothing.
+- **Alerts:** `FaasSealDomainUnverified` (`faas_seal_domain_ready == 0`)
+  and `FaasSealDomainIdentityMissing` (a reader without the identity while
+  another reader of the domain holds it); runbook `FaasSealDomain`.
 - **Staging:** the `seal_domains` role stages the identity on compute and
   single-box hosts and verifies the runtime probe there. It stages the
   recipient and the apid drop-in on control-plane hosts. bootstrap runs the
@@ -309,7 +312,6 @@ Later slices:
 - the contract steps;
 - meterd sending test alerts;
 - role-scoped staging in node join;
-- alerts on `faas_seal_domain_ready` and `faas_seal_domain_loaded`;
 - dropping `github_webhook_secrets.secret_value` once no release reads it.
 
 ## Consequences
