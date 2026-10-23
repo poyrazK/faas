@@ -236,7 +236,7 @@ func TestComposeUnsupportedKeysWarn(t *testing.T) {
     deploy: {replicas: 3}
     restart: always
     labels: {tier: web}
-    secrets: [api_key]
+    configs: [app_config]
     networks: [front]
     mystery: 1
   api:
@@ -259,7 +259,7 @@ func TestComposeUnsupportedKeysWarn(t *testing.T) {
 		"web: deploy ignored: CPU, memory and replicas come from the plan",
 		"web: restart ignored: the platform starts, parks and restarts services itself",
 		"web: labels ignored: container labels are not used",
-		"web: secrets ignored: Compose secrets are not mounted; set them with `gregale secrets set`",
+		"web: configs ignored: Compose configs are not mounted",
 		"web: networks ignored: services reach each other through depends_on service bindings",
 		"web: mystery ignored: not supported by Gregale",
 		"api: build.cache_from ignored: the builder uses only build.context, build.dockerfile, build.args, build.target and build.secrets",

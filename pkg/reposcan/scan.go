@@ -114,7 +114,10 @@ type Workload struct {
 	// contract (ADR-1337). A built service's entrypoint is folded into its
 	// Command instead (ADR-20261022160000). Nil inherits the image.
 	ImageProcess *api.ComposeProcess
-	Command      []string // start-command override (compose `command:`, Procfile rhs)
+	// SecretFiles are the service's Compose secrets, written to /run/secrets
+	// (ADR-20261023090000). They name app secrets, never values.
+	SecretFiles []api.SecretFile
+	Command     []string // start-command override (compose `command:`, Procfile rhs)
 	// CommandShell distinguishes shell-form strings from exec-form argv. The
 	// plan wire keeps Command as an array, while reconciliation uses this bit
 	// to preserve argument boundaries when persisting start_command.

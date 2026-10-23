@@ -22,6 +22,7 @@ func PlanWorkload(w Workload) api.PlanWorkload {
 		ImageProcess:        w.ImageProcess.Clone(),
 		BuildTarget:         w.DockerfileBuild.TargetStage(),
 		BuildArgs:           w.DockerfileBuild.ArgNames(),
+		SecretFiles:         api.CloneSecretFiles(w.SecretFiles),
 		Command:             w.Command,
 		DependsOn:           w.DependsOn,
 		DependsOnConditions: maps.Clone(w.DependsOnConditions),

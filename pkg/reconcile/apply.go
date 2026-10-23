@@ -461,6 +461,9 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	// folds into a built service's command (ADR-20261022160000).
 	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
 	manifest.ProjectImageProcess = w.ImageProcess.Clone()
+	// Compose secrets become files for built and prebuilt images alike
+	// (ADR-20261023090000).
+	manifest.ProjectSecretFiles = api.CloneSecretFiles(w.SecretFiles)
 	if w.Image == "" {
 		return
 	}

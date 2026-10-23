@@ -40,6 +40,7 @@ type composeCandidate struct {
 	Healthcheck any      `yaml:"healthcheck"`
 	Image       string   `yaml:"image"`
 	Profiles    []string `yaml:"profiles"`
+	Secrets     any      `yaml:"secrets"` // names or {source, target, mode}; written to /run/secrets
 
 	// Process overrides for prebuilt images (ADR-1337).
 	Entrypoint      any    `yaml:"entrypoint"` // string OR []string; empty clears
@@ -352,6 +353,13 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 				warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
 			}
 		}
+		secretFiles, secretWarnings, err := composeSecretFiles(s.Secrets, topSecrets)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+		}
+		for _, warning := range secretWarnings {
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
+		}
 		fileEnvKeys, envFileWarnings, envFileErr := composeEnvFileKeys(fsys, s.EnvFile)
 		if envFileErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, envFileErr)
@@ -380,6 +388,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			imageSet:            true,
 			healthcheck:         healthcheck,
 			imageProcess:        process,
+			secretFiles:         secretFiles,
 			command:             command,
 			commandShell:        commandShell,
 			dependsOn:           dependencyNames(s.DependsOn),

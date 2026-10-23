@@ -1785,6 +1785,12 @@ remain open; production admission is disabled.
   `runtime` domain's reader, opens it into the builder VM; guest-init hands it
   to buildctl and deletes it. Builds with secrets skip warm builders. Unit tests
   pass; a native private-dependency build has not run.
+- **Compose service secrets as files.**
+  [ADR-20261023090000](adr/20261023090000-compose-runtime-secret-files.md)
+  (2026-10-23): a service's `secrets` naming `environment:` secrets become
+  files in a tmpfs `/run/secrets` of its main workload, written by guest-init
+  from the secrets vmmd delivers and rewritten on live reload. Unit tests pass;
+  no native run.
 - **Compose process overrides on built services.**
   [ADR-20261022160000](adr/20261022160000-compose-process-on-built-services.md)
   (2026-10-22): a built service's `entrypoint` joins its start command, and

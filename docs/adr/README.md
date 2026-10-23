@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Compose service secrets as files in /run/secrets](20261023090000-compose-runtime-secret-files.md)
 - [ADR-20261023113721: Platform flags for edge rule features](20261023113721-edge-feature-platform-flags.md)
 - [ADR-20261022203523: Per-instance request concurrency](20261022203523-per-instance-request-concurrency.md) — proposed; `scaling.per_instance_concurrency` caps the gateway's per-VM gate and drives scale-out (H12-4)
 - [ADR-20261022204036: An Idempotency-Key is bound to its request](20261022204036-idempotency-key-bound-to-request.md) — another request with a used key gets `422 idempotency_key_reused`, not a replay (Proposed)

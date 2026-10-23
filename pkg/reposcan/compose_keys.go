@@ -17,7 +17,7 @@ import (
 var composeAppliedServiceKeys = map[string]bool{
 	"build": true, "command": true, "depends_on": true, "entrypoint": true, "env_file": true,
 	"environment": true, "expose": true, "healthcheck": true, "image": true, "ports": true,
-	"profiles": true, "stop_grace_period": true, "stop_signal": true, "user": true, "working_dir": true,
+	"profiles": true, "secrets": true, "stop_grace_period": true, "stop_signal": true, "user": true, "working_dir": true,
 }
 
 var composeHarmlessServiceKeys = map[string]bool{
@@ -45,7 +45,6 @@ var composeServiceKeyReasons = map[string]string{
 	"mem_reservation": composeResourcesReason,
 	"memswap_limit":   composeResourcesReason,
 	"restart":         "the platform starts, parks and restarts services itself",
-	"secrets":         "Compose secrets are not mounted; set them with `gregale secrets set`",
 	"configs":         "Compose configs are not mounted; build the file into the image or use environment variables",
 	"networks":        composeNetworkReason,
 	"network_mode":    composeNetworkReason,

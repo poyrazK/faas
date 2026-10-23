@@ -100,6 +100,9 @@ func WorkloadAdmissionReasonsWithManaged(workloads []reposcan.Workload, managed 
 		if err := workload.DockerfileBuild.Validate(); err != nil {
 			reasons = append(reasons, fmt.Sprintf("workload %q has invalid build options: %s", workload.Name, err))
 		}
+		if err := api.ValidateSecretFiles(workload.SecretFiles); err != nil {
+			reasons = append(reasons, fmt.Sprintf("workload %q has invalid secret files: %s", workload.Name, err))
+		}
 		if workload.Image != "" && !workload.DockerfileBuild.IsZero() {
 			reasons = append(reasons, fmt.Sprintf("workload %q is a prebuilt image; build options apply only to Dockerfile builds", workload.Name))
 		}
