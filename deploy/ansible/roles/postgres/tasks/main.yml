@@ -790,4 +790,3 @@
     mode: "0644"
   failed_when: false  # chroot/CI may not have systemd
   notify: daemon-reload postgres
-

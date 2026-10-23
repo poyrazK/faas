@@ -100,6 +100,12 @@ service Vmmd {
   // vmmd tears the disposable VM down before returning the terminal result.
   rpc ExecuteAppTask(ExecuteAppTaskRequest) returns (ExecuteAppTaskResponse);
 
+  // ExecForkCommand (ADR-732) runs one command inside a running quarantined
+  // fork instance over the guest's host-only fork exec port. task_id carries
+  // the fork exec id. Any instance that is not a live quarantined fork is
+  // refused with FailedPrecondition; the VM is never torn down.
+  rpc ExecForkCommand(ExecuteAppTaskRequest) returns (ExecuteAppTaskResponse);
+
   // ExecuteAppTaskStream is the live-output variant. The terminal frame is
   // metadata-only because stdout/stderr have already arrived as chunks.
   rpc ExecuteAppTaskStream(ExecuteAppTaskRequest) returns (stream ExecuteAppTaskEvent);
@@ -318,6 +324,13 @@ service Vmmd {
   // without rebooting the guest or creating a deployment. RAM/vCPU topology
   // remain boot-time settings.
   rpc UpdateAppCPULimit(UpdateAppCPULimitRequest) returns (UpdateAppCPULimitAck);
+
+  // CaptureProfile (ADR-1155) arms one live instance's dormant guest profile
+  // collectors for a bounded window and returns the pprof profiles they
+  // report. vmmd bounds the reply and never parses the profiles. The call
+  // counts as in-flight activity so the idle reaper does not park the
+  // instance mid-capture. Additive per ADR-016.
+  rpc CaptureProfile(CaptureProfileRequest) returns (CaptureProfileResponse);
 
   // UpdateStaticEgressIP (ADR-119) lets schedd push a fresh
   // per-app static egress IP into every live netns the vmmd
@@ -814,6 +827,11 @@ message AppSpec {
   // app-task and qualification instances, and when quiet pause is
   // disabled in vmmd.toml.
   int64 quiet_pause_after_ms = 32;
+  // quarantine (ADR-732) wakes a production fork: vmmd renders the netns
+  // quarantine chains (no guest-originated flow, inbound only from the
+  // platform veth) and ignores the allowlist, private network, static
+  // egress IP and operator bundle. Only schedd's fork coordinator sets it.
+  bool quarantine = 35;
 }
 
 // SidecarSpec (issue #463 / ADR-069 / PR-B) is one sidecar's
@@ -980,6 +998,12 @@ message SnapshotRef {
   // from the requested guest memory; without it every companion wake fell
   // back to cold boot. 0 means unknown (older schedd).
   int64 mem_bytes = 8;
+  // ADR-733 sealed crash capture: the capture's objects are stored only as
+  // encrypted twins. vmmd opens sealed_key with its fleet identity (bound to
+  // capture_id), decrypts the objects into this instance's staging and
+  // restores from there. Empty for every ordinary snapshot.
+  string capture_id = 9;
+  bytes sealed_key = 10;
 }
 
 // WakeResponse is the common return shape of CreateFromSnapshot and
@@ -1387,6 +1411,10 @@ message SnapshotResponse {
   // Versioned native byte evidence. This is neither current publisher/scan
   // approval nor a restore grant. Legacy captures leave it absent.
   RuntimeSnapshotCapture capture = 5;
+  // ADR-733: set by WarmSnapshot when seal_capture_id was requested — the
+  // capture's per-capture key sealed to the fleet recipient. Only encrypted
+  // twins were published.
+  bytes sealed_key = 6;
 }
 
 message RuntimeCapturedArtifact {
@@ -1451,6 +1479,12 @@ message WarmSnapshotRequest {
   // under. Required, mirroring PauseAndSnapshot's vmstate path
   // contract (PRD-025 axis 2 slice 4).
   string vmstate_storage_key = 3;
+  // ADR-733: encrypt this capture at the source. vmmd generates a fresh key,
+  // publishes only encrypted twins (key + ".age") of memory, vmstate,
+  // private drive and backing identity, and returns the key sealed to the
+  // fleet recipient bound to this capture id. A vmmd without a fleet
+  // identity refuses (FailedPrecondition) rather than publish plaintext.
+  string seal_capture_id = 4;
 }
 
 // FrameworkReady is the vmmd-side receipt of the guest-init "framework
@@ -1769,6 +1803,46 @@ message UpdateAppCPULimitRequest {
 }
 
 message UpdateAppCPULimitAck {}
+
+// CaptureProfileRequest names one live instance and the capture window.
+// capture_id is 32 lowercase hex characters; kinds are "cpu" and/or "heap";
+// duration_ms is bounded by pkg/api ProfileCaptureMin/MaxDuration.
+message CaptureProfileRequest {
+  string instance = 1;
+  string capture_id = 2;
+  repeated string kinds = 3;
+  int64 duration_ms = 4;
+  // checkpoint_ms asks heap collectors for interim profiles so an OOM kill
+  // mid-window still returns the last heap before it; zero disables them.
+  int64 checkpoint_ms = 5;
+}
+
+// CapturedProfile is one guest collector's contribution: an unparsed gzip
+// or raw pprof protobuf for one process and kind.
+message CapturedProfile {
+  string kind = 1;
+  string process_id = 2;
+  bytes profile = 3;
+  int64 from_unix_nano = 4;
+  int64 until_unix_nano = 5;
+}
+
+// CaptureProfileResponse reports what the guest observed. processes counts
+// collectors that polled during the window; zero means nothing in the VM is
+// instrumented. dropped counts profiles discarded by the reply bounds.
+message CaptureProfileResponse {
+  repeated CapturedProfile profiles = 1;
+  int32 processes = 2;
+  int32 dropped = 3;
+  string reason = 4;
+  // partial marks a window that ended early (the workload was OOM-killed);
+  // heap profiles from processes that could not flush are checkpoints.
+  bool partial = 5;
+  // oom_killed reports that the workload was OOM-killed during the window;
+  // oom_peak_mb is the memory in use at the kill.
+  bool oom_killed = 6;
+  int32 oom_peak_mb = 7;
+}
 
 // UpdateEgressCircuitRequest (ADR-201 §3) is the input to
 // UpdateEgressCircuit. app_id is the apps.id UUID whose live instances need

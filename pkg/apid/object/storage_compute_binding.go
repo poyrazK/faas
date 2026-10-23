@@ -238,7 +238,7 @@ func (s *Service) publishObjectStorageComputeBinding(ctx context.Context, acct s
 }
 
 func (s *Service) SealObjectStorageBindingValues(acct state.Account, app state.App, credentialID, scope string, values []struct{ key, value string }, limits api.Limits) ([]state.AppSecret, *api.Problem) {
-	recipient := s.Host.SecretRecipient()
+	recipient := s.Host.RuntimeSecretRecipient()
 	if recipient == nil {
 		return nil, httpkit.CustomerCapacityProblem(s.Host.Logger(), "store object-storage credentials", "Credential storage temporarily unavailable",
 			"Gregale could not securely store these credentials.",
@@ -250,18 +250,8 @@ func (s *Service) SealObjectStorageBindingValues(acct state.Account, app state.A
 			"Gregale could not securely store these credentials.",
 			"Retry in a few seconds; if it still fails, contact support.", nil)
 	}
-	idents := s.Host.MFAIdentities()
-	if len(idents) == 0 {
-		return nil, httpkit.CustomerCapacityProblem(s.Host.Logger(), "store object-storage credentials", "Credential storage temporarily unavailable",
-			"Gregale could not securely store these credentials.",
-			"Retry in a few seconds; if it still fails, contact support.", nil)
-	}
-	kid, err := secretbox.IdentityFingerprint(idents)
-	if err != nil {
-		return nil, httpkit.CustomerCapacityProblem(s.Host.Logger(), "fingerprint object-storage credential identity", "Credential storage temporarily unavailable",
-			"Gregale could not securely store these credentials.",
-			"Retry in a few seconds; if it still fails, contact support.", err)
-	}
+	// The kid names the recipient the values are sealed to.
+	kid := recipient.String()
 	secrets := make([]state.AppSecret, 0, len(values))
 	for _, item := range values {
 		valueHash, err := secretbox.ValueFingerprint([]byte(item.value), hmacKey)

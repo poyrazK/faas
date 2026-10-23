@@ -109,8 +109,56 @@ loads OpenTelemetry auto-instrumentation for you:
 
 Filesystem, DNS and raw socket activity is not traced.
 
-Other apps (Go, Dockerfile builds and container images) can export spans with
-any OpenTelemetry SDK they already include. Inside the app, the standard
+### Go
+
+Go apps are compiled, so nothing can be loaded into them at start. The Go
+SDK's `tracing` package gives the same request, HTTP client and database
+spans without an OpenTelemetry dependency:
+
+```go
+import "github.com/poyrazK/faas/sdk/go/tracing"
+
+func main() {
+	shutdown := tracing.Start()
+	defer shutdown(context.Background())
+
+	http.DefaultTransport = tracing.Transport(http.DefaultTransport)
+	db, err := tracing.Open("pgx", os.Getenv("DATABASE_URL"), "postgresql")
+	if err != nil {
+		log.Fatal(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /orders/{id}", func(w http.ResponseWriter, r *http.Request) {
+		rows, err := db.QueryContext(r.Context(), "SELECT id FROM orders WHERE id = $1", r.PathValue("id"))
+		...
+	})
+	log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), tracing.Handler(mux)))
+}
+```
+
+- `tracing.Handler` records each request and continues the trace the gateway
+  started, so the spans attach to the request in the debugger. Wrap the
+  router, and the span is named after the matched route (`GET /orders/{id}`).
+- `tracing.Transport` records outgoing HTTP calls and passes the trace on in a
+  `traceparent` header. URLs are recorded without query strings or
+  credentials.
+- `tracing.Open` (or `tracing.WrapConnector` with `sql.OpenDB`) records every
+  query run with a context, for any `database/sql` driver. The last argument
+  names the database: `postgresql`, `mysql`, `sqlite` and so on.
+- `tracing.StartSpan(ctx, "name")` records your own operations.
+
+Pass the request's context to outgoing calls (`http.NewRequestWithContext`,
+`QueryContext`, `ExecContext`); a call made with `context.Background()`
+starts a new trace and does not appear under the request. For functions, wrap
+the handler you pass to `function.Serve`: `function.Serve(tracing.Handler(mux))`.
+
+The package does nothing unless `tracing.enabled` is on for the app, so the
+same binary runs unchanged locally and in tests.
+
+### Other apps
+
+Dockerfile builds, container images and Go apps that already use OpenTelemetry
+can export spans with the SDK they include. Inside the app, the standard
 OTLP/HTTP endpoint `http://127.0.0.1:4318/v1/traces` accepts them; Gregale
 sets the standard `OTEL_EXPORTER_OTLP_TRACES_*` variables so most SDKs need no
 configuration.

@@ -143,6 +143,7 @@ func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app A
 			if rule.Mode == api.EdgeWAFModeBlock {
 				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Request blocked",
 					"blocked by edge rule "+rule.ID+" (kind=waf)"))
+				h.penalizeEdgeRuleRejection(r, app, rule.ID)
 				return true, nil
 			}
 			// The header names the edge rule, not the CRS rule, so the

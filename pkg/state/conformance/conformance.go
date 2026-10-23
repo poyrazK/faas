@@ -3502,7 +3502,11 @@ func testAppSecretRuntimeProcessGenerationFence(t *testing.T, fx *Fixture) {
 	// instance) may replace it without knowing its generation; a start from
 	// an attempt that predates the registration is still fenced.
 	live, stray, fresh := strings.Repeat("d", 32), strings.Repeat("e", 32), strings.Repeat("f", 32)
-	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(live, third)); err != nil {
+	// Register a minute ago: a replacement stamped time.Now() right after an
+	// unstamped registration can share its microsecond and not be "later".
+	registered := process(live, third)
+	registered.AttemptedAt = time.Now().Add(-time.Minute)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, registered); err != nil {
 		t.Fatalf("BeginAppSecretRuntimeProcess(after retire): %v", err)
 	}
 	earlier := process(stray, "")

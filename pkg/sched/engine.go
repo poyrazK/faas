@@ -426,7 +426,10 @@ type Engine struct {
 	// publication (WithNotifyInPublication).
 	notifyInPublication bool
 	fcVer               string // running Firecracker version — snapshots load only on a match (ADR-005)
-	log                 *slog.Logger
+	// sealCrashCaptures seals crash captures at the source (ADR-733,
+	// remote storage backends).
+	sealCrashCaptures bool
+	log               *slog.Logger
 	// Protected by mu: RPCs may already be serving when NewLoop attaches it.
 	serviceReconcileSubmit                         func(context.Context, string)
 	environmentQualificationServiceURL             func(context.Context, string) (string, error)
@@ -1909,6 +1912,7 @@ func (e *Engine) wake(ctx context.Context, appID, deploymentID, scope, trigger s
 	if !appFromCache {
 		ctx = withWakeApp(ctx, app)
 	}
+	ctx = withWakeStarted(ctx, wakeStarted)
 	// Wake preserves the legacy contract: a ledger refusal surfaces
 	// as *api.Problem{Code: CodePlanLimitConcur}. The ledger's
 	// capacity refusal happens INSIDE admitAndDispatch; we forward
@@ -1966,7 +1970,9 @@ func (e *Engine) runningInstanceForWake(ctx context.Context, appID, deploymentID
 		return state.Instance{}, err
 	}
 	for _, instance := range instances {
-		if instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) {
+		// ADR-732: a running fork shares the live deployment but never
+		// serves a wake; skipping it lets the wake find a real replica.
+		if instance.DeploymentID == deploymentID && instance.State == string(state.StateRunning) && !state.IsFork(instance.Mode) {
 			return instance, nil
 		}
 	}
@@ -2953,6 +2959,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 
 	// ── Phase 2: admit window, under appMu ──────────────────
 	release := e.lockApp(appID)
+	locked := time.Now()
 	var (
 		app    state.App
 		acct   state.Account
@@ -3469,6 +3476,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// ADR-1741: the admission insert binds the snapshot-recovery lineage in
 	// its own transaction; a store that cannot is bound separately below.
 	recovery := &state.SnapshotRecoveryAdmission{SnapshotID: snap.ID}
+	admitStarted := time.Now()
 	ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(withPlacementPrefetch(ctx, placementAhead), placementRequest, haveSnap && snap.StorageKey != "", func(admitCtx context.Context, p Placement) (state.Instance, error) {
 		return e.store.CreateInstanceWithMode(state.WithSnapshotRecoveryAdmission(admitCtx, recovery), appID, dep.ID, string(initState), app.RAMMB, p.NodeID, wakeID, mode)
 	})
@@ -3489,6 +3497,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		}
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", applicationStandardRuntimeProblem(err))
 	}
+	admitted := time.Now()
 	if !recovery.Bound() {
 		if err := e.bindSnapshotRecovery(ctx, ins, snap.ID); err != nil {
 			_ = e.store.DeleteInstance(context.WithoutCancel(ctx), ins.ID)
@@ -3842,6 +3851,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// stays consistent.
 	startedAt := time.Now().UTC()
 	bootInput := bootInput{
+		preRPC:    events.NewPreRPCTimings(wakeStartedFrom(ctx), wakeStarted, locked, admitStarted, admitted, startedAt),
 		insID:     ins.ID,
 		appID:     appID,
 		appType:   app.Type,
@@ -4040,6 +4050,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			QueuedCount:        bootInput.queuedCount,
 			ConcurrencyAtAdmit: bootInput.concurrencyAtAdmit,
 			AtCapacity:         bootInput.atCapacity, // PR-A — see bootInput.atCapacity doc
+			PreRPC:             bootInput.preRPC,
 		})
 	}
 	// ADR-097 (P1B): capture the schedd-side wake-phase boundaries.
@@ -4429,6 +4440,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 				exemplar,
 			)
 		}
+		e.observePreRPCPhases(bootInput.appID, exemplar, bootInput.preRPC)
 	}
 
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_completed. The
@@ -4574,6 +4586,10 @@ type bootInput struct {
 	// §6.1 anchor uses instances.started_at separately, so this
 	// drift is bounded by 1 row read.
 	startedAt time.Time
+	// preRPC splits schedd's work from the wake's start to startedAt; it
+	// rides wake.boot_started and the pre-RPC phases of
+	// schedd_wake_rpc_duration_seconds.
+	preRPC events.PreRPCTimings
 
 	// ADR-123: trigger / queued_count / concurrency_at_admit
 	// snapshot at admit time. Captured at bootInput construction
@@ -7035,9 +7051,11 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 				acted++
 				continue
 			}
-			if account.AbuseHeld() {
+			if account.AbuseHeld() || state.IsFork(fresh.Mode) {
 				// ADR-361: never snapshot a guest from an abuse-held
 				// account; a release would restore the offending process.
+				// ADR-732: a fork holds a copy of production memory and is
+				// never snapshotted either; parking its app ends it.
 				if destroyErr := e.timedDestroy(context.WithoutCancel(ctx), fresh.NodeID, fresh.ID, DestroyTimeout); destroyErr != nil {
 					errs = append(errs, fmt.Errorf("instance %s: destroy abuse-held VM: %w", fresh.ID, destroyErr))
 					continue
@@ -7415,6 +7433,10 @@ func (e *Engine) StopInstance(ctx context.Context, instanceID string, opts StopO
 
 	mode := state.InstanceMode(ins.Mode)
 	switch mode {
+	case state.InstanceModeFork:
+		// ADR-732: a fork holds a copy of production memory. It is
+		// destroyed, never snapshotted or parked, and never replaced.
+		return StopOutcome{}, e.destroyFork(ctx, *ins)
 	case state.InstanceModeWorker, state.InstanceModeJob:
 		// Signal-grace-SIGKILL sequence (ADR-138 §Decision 1).
 		// signal=0 → manifest.StopSignal (defaulting to SIGTERM);
@@ -7768,6 +7790,11 @@ func (e *Engine) SeedLedger(ctx context.Context) error {
 				// A frozen VM books its measured memory; until the next
 				// sample the floor stands in for it (ADR-1151).
 				kind = KindFrozen
+			} else if state.IsFork(ins.Mode) {
+				// ADR-732: a fork keeps its RAM reservation across a
+				// restart but must never be rebuilt as serving
+				// concurrency (invariant 1).
+				kind = KindFork
 			}
 			request := Request{
 				Instance: ins.ID, AppID: app.ID, DeploymentID: ins.DeploymentID, EnvironmentKey: policy.environmentKey, Plan: acct.Plan,
@@ -7878,6 +7905,12 @@ func (e *Engine) snapshotAndParkPrime(ctx context.Context, ins state.Instance) e
 }
 
 func (e *Engine) snapshotAndParkMode(ctx context.Context, ins state.Instance, allowReuse bool) (retErr error) {
+	if state.IsFork(ins.Mode) {
+		// ADR-732: the single choke point for every park caller. A fork
+		// holds a copy of production memory and must never become a
+		// capture another wake could restore; it is destroyed instead.
+		return e.destroyFork(ctx, ins)
+	}
 	if barrier, ok := e.store.(state.ExclusiveSnapshotStore); ok {
 		if err := barrier.BeginExclusiveSnapshot(ctx, ins.ID); err != nil {
 			return fmt.Errorf("sched: park: exclusive operation owns or is capturing this instance: %w", err)
@@ -9732,6 +9765,7 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 			PlanMB:       planMB,
 		})
 	}
+	e.linkOOMProfileCapture(ctx, appID, instanceID, now, peakMB, planMB)
 
 	// RUNNING → STOPPED — state transition without a
 	// second audit row. UpdateInstanceStateToTerminal

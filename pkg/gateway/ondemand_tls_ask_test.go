@@ -95,6 +95,27 @@ func TestOnDemandTLSPolicyWildcardBudgetSparesKnownHosts(t *testing.T) {
 	}
 }
 
+// An exact claim past its verification deadline reserves nothing: it must not
+// keep denying the certificate of the verified wildcard above it, which
+// routing already serves (ADR-167).
+func TestOnDemandTLSPolicyExpiredExactClaimFallsThroughToWildcard(t *testing.T) {
+	_, p, _ := onDemandTLSFixture(t)
+	p.SetNow(func() time.Time { return time.Now().Add(8 * 24 * time.Hour) })
+	for _, tc := range []struct {
+		host     string
+		allowed  bool
+		decision string
+	}{
+		{"exact.tenants.example.net", true, OnDemandTLSAllowWildcard},
+		{"pending.example.com", false, OnDemandTLSDenyUnknown},
+		{"shop.example.com", true, OnDemandTLSAllowExact},
+	} {
+		if allowed, decision := p.Decide(context.Background(), tc.host); allowed != tc.allowed || decision != tc.decision {
+			t.Errorf("Decide(%q) after the claim expired = %v, %q; want %v, %q", tc.host, allowed, decision, tc.allowed, tc.decision)
+		}
+	}
+}
+
 type failingTLSStore struct{ *state.MemStore }
 
 func (failingTLSStore) DomainByName(context.Context, string) (state.CustomDomain, error) {

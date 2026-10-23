@@ -42,6 +42,9 @@ type startRunner struct {
 	reviewedSource      *startSourceSnapshot
 	projectUpdates      bool
 	cancelPendingUpload bool
+	// projectSource is a multi-service directory the user chose to deploy as
+	// one project instead of launching a single app.
+	projectSource string
 	// Use the same deploy implementation as deploy/dev. The local seam lets
 	// recovery tests observe acceptance without running a remote build.
 	deploy func(context.Context, []string, bool, ...deployExecution) int
@@ -120,6 +123,9 @@ func cmdStart(args []string) (code int) {
 		runner.session.AccountID = runner.account.ID
 		if code := runner.selectSource(); code != 0 {
 			return code
+		}
+		if runner.projectSource != "" {
+			return runner.deployProject()
 		}
 		// An input EOF may close source selection successfully without a path.
 		if runner.session.SourcePath == "" {
@@ -203,6 +209,17 @@ func startTemplateAllowed(name string) bool {
 func (r *startRunner) selectSource() int {
 	PrintProgress(osStdout, "2/4 · Find your app")
 	root := r.session.ScopePath
+	if n := projectWorkloadCount(root); n >= 2 {
+		choice, err := r.prompt.choose(r.ctx, fmt.Sprintf("This directory has %d services. What would you like to deploy?", n),
+			[]string{"All of them, as one project", "One service"}, 0)
+		if err != nil {
+			return startInputExit(err)
+		}
+		if choice == 0 {
+			r.projectSource = root
+			return 0
+		}
+	}
 	selected, err := r.selectProjectSource(root)
 	if err != nil {
 		return startInputExit(err)
@@ -267,6 +284,23 @@ func (r *startRunner) selectSource() int {
 	r.session.SourcePath, r.session.Template = abs, template
 	r.session.AppSlug = ""
 	return 0
+}
+
+// projectWorkloadCount is how many services the project scanner finds in
+// root; with two or more, start offers to deploy them as one project.
+func projectWorkloadCount(root string) int {
+	scan, err := reposcan.Scan(os.DirFS(root))
+	if err != nil {
+		return 0
+	}
+	return len(scan.Workloads)
+}
+
+// deployProject hands a multi-service directory to the project deploy, which
+// shows the plan and asks for confirmation before creating anything.
+func (r *startRunner) deployProject() int {
+	PrintProgress(osStdout, "3/4 · Review the project plan")
+	return r.deploy(r.ctx, []string{"--project", "--path", r.projectSource}, false)
 }
 
 // projectSource is one deployable member of a workspace or convention-shaped
@@ -455,6 +489,12 @@ func (r *startRunner) reviewLaunch(edit *startFileEdit) (int, bool) {
 			}
 		},
 		onQueued: func(dep api.DeploymentResponse) {
+			// An upload accepted behind a lost reply is known by ID alone. Keep
+			// the submission pending; recovery reads the deployment back and
+			// verifies its app and environment before the session adopts it.
+			if dep.AppID == "" {
+				return
+			}
 			expectedAppID := r.session.AppID
 			r.session.DeploymentID, r.session.AppID, r.session.Status = dep.ID, dep.AppID, dep.Status
 			r.session.Revision, r.lastRequest = dep.Revision, nil

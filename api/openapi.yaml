@@ -11487,6 +11487,360 @@ paths:
         '403': { $ref: '#/components/responses/Forbidden' }
         '404': { $ref: '#/components/responses/NotFound' }
 
+  /v1/apps/{slug}/crash-snapshots/settings:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getCrashSnapshotSettings
+      summary: Read whether 5xx crash snapshots are on for an app.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The app's crash snapshot setting.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashSnapshotSettingsResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    put:
+      tags: [apps]
+      operationId: putCrashSnapshotSettings
+      summary: Turn 5xx crash snapshots on or off for an app.
+      description: |
+        When on, the first 5xx answered by one of the app's instances
+        captures that instance's memory (ADR-733), at most one in flight and
+        none within 10 minutes of the last. Pro and Scale only. Answers 501
+        `crash_snapshots_not_enabled` until the operator enables the feature.
+      security: [{ bearerAuth: [] }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CrashSnapshotSettingsRequest' }
+      responses:
+        '200':
+          description: The saved setting.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashSnapshotSettingsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/crash-snapshots:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listCrashSnapshots
+      summary: List an app's crash snapshots, newest first.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The app's crash snapshots.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashCaptureListResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [apps]
+      operationId: createCrashSnapshot
+      summary: Capture the app's newest running instance now.
+      description: |
+        Requests a crash snapshot of the app's newest running instance,
+        whether or not 5xx captures are on. Refused with 409
+        `crash_capture_refused` while another capture is in flight, within
+        10 minutes of the last, or when no instance is running.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Capture requested.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashCaptureResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/crash-snapshots/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/CrashCaptureID'
+    get:
+      tags: [apps]
+      operationId: getCrashSnapshot
+      summary: Read one crash snapshot.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The crash snapshot.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrashCaptureResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/crash-snapshots/{id}/fork:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/CrashCaptureID'
+    post:
+      tags: [apps]
+      operationId: forkCrashSnapshot
+      summary: Open a ready crash snapshot as a production fork.
+      description: |
+        Creates an ADR-732 fork restored from this capture instead of the
+        deployment's newest snapshot. Same rules as `POST /v1/apps/{slug}/forks`:
+        the key needs `deploy:write` and `secrets:read`, the response carries
+        the one-time `access_token`, and the fork counts against the fork
+        limits. 409 `crash_capture_not_ready` unless the capture is ready and
+        unexpired.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppForkRequest' }
+      responses:
+        '202':
+          description: Fork of the crash snapshot admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listAppForks
+      summary: List production forks for an app.
+      description: |
+        Returns the app's production forks, newest first (ADR-732). Answers
+        501 `app_forks_not_enabled` until the operator enables forks.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 100, default: 100 }
+          description: Maximum number of forks to return.
+      responses:
+        '200':
+          description: The app's forks, newest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [apps]
+      operationId: createAppFork
+      summary: Fork the app's live deployment into a quarantined debug copy.
+      description: |
+        Queues a production fork (ADR-732): a restore of the app's newest
+        capture of its live deployment into an instance that never serves
+        traffic, cannot reach the network, and is destroyed at its TTL.
+        The fork holds a copy of production memory, secrets included, so
+        the key needs `secrets:read` as well as `deploy:write`, and every
+        create is audited. Pro and Scale only; one active fork per app and
+        two per account. Answers 501 `app_forks_not_enabled` until the
+        operator enables forks.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppForkRequest' }
+      responses:
+        '202':
+          description: Fork admitted and queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: An active-fork limit is full (`app_fork_limit`, with `limit` and `observed`), or the app has no live deployment (`app_fork_unavailable`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppForkID'
+    get:
+      tags: [apps]
+      operationId: getAppFork
+      summary: Read one production fork.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The fork.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    delete:
+      tags: [apps]
+      operationId: cancelAppFork
+      summary: Cancel a production fork.
+      description: |
+        Cancels a queued fork immediately. For a restoring or running fork
+        it records the request; the scheduler destroys the instance. A fork
+        that has already ended is returned unchanged.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      responses:
+        '202':
+          description: Cancellation recorded.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks/{id}/execs:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppForkID'
+    get:
+      tags: [apps]
+      operationId: listAppForkExecs
+      summary: List the commands run in a production fork.
+      description: Newest first. Output can contain production data, so this needs `secrets:read` as well as `deploy:write`.
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Maximum number of commands to return (default 100).
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: The fork's commands.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkExecListResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+    post:
+      tags: [apps]
+      operationId: createAppForkExec
+      summary: Run a command inside a running production fork.
+      description: |
+        Queues one command to run inside the running fork (ADR-732), in the
+        app's working directory and user, with its manifest environment and
+        no secrets. The fork cannot reach the network. Poll the returned
+        command for its exit code and the tail of its output. A command never
+        runs in a serving instance. Needs `secrets:read` as well as
+        `deploy:write`; every request is audited (without its arguments).
+      security: [{ bearerAuth: [] }]
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateAppForkExecRequest' }
+      responses:
+        '202':
+          description: Command queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkExecResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409':
+          description: The fork is not running, or already has 4 commands pending (`app_fork_exec_refused`).
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
+  /v1/apps/{slug}/forks/{id}/execs/{exec_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/AppForkID'
+      - name: exec_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Canonical UUID for a fork command.
+    get:
+      tags: [apps]
+      operationId: getAppForkExec
+      summary: Read one command run in a production fork, with its result.
+      security: [{ bearerAuth: [] }]
+      responses:
+        '200':
+          description: The command.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AppForkExecResponse' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '501': { $ref: '#/components/responses/NotImplemented' }
+
   /v1/apps/{slug}/tasks:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -23580,6 +23934,177 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProfileCompareResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/heap:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppHeapProfile
+      summary: Query the continuous live heap near a window end (ADR-1155).
+      description: Requires profiling.kinds to include heap. The query is narrowed to the last collection window before end so merged snapshots are not summed. Values are live heap bytes.
+      parameters:
+        - { name: deployment_id, in: query, required: true, description: Deployment whose live heap to read., schema: { type: string, format: uuid } }
+        - { name: runtime, in: query, required: true, description: Runtime the heap snapshots were collected under., schema: { type: string } }
+        - { name: start, in: query, required: true, description: Earliest acceptable snapshot time., schema: { type: string, format: date-time } }
+        - { name: end, in: query, required: true, description: Point in time to inspect., schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Live heap functions and call paths.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileHeapResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listProfileCaptures
+      summary: List the app's on-demand profile captures, newest first.
+      responses:
+        '200':
+          description: Up to 50 captures retained for 7 days.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [apps]
+      operationId: createProfileCapture
+      summary: Capture CPU and/or heap profiles from a running instance now (ADR-1155).
+      description: Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an account can start 60 per hour. Gregale also queues a heap capture automatically (trigger memory_pressure) when an instance runs low on memory, at most once per hour per app.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProfileCaptureRequest' }
+      responses:
+        '202':
+          description: Capture queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCapture' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Profile capture id., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getProfileCapture
+      summary: Read one on-demand profile capture.
+      responses:
+        '200':
+          description: Capture status and collected profile summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCapture' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/view:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Capture whose merged view to read., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getProfileCaptureView
+      summary: Merged functions and call paths of one capture kind.
+      parameters:
+        - { name: kind, in: query, required: false, description: 'cpu, heap, stacks, block or mutex; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+      responses:
+        '200':
+          description: CPU nanoseconds or live heap bytes merged across the instance's processes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureView' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/pprof:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Capture to download., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: downloadProfileCapture
+      summary: Download one capture kind as a merged gzip pprof profile.
+      parameters:
+        - { name: kind, in: query, required: false, description: 'Kind to download as pprof: cpu, heap, stacks, block or mutex; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+      responses:
+        '200':
+          description: gzip-compressed pprof protobuf for go tool pprof, speedscope or Pyroscope.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/diff:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Candidate capture id., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: diffProfileCaptures
+      summary: Compare one capture kind with an earlier capture of the same app.
+      description: Merges both captures and returns every call path and function with its baseline value, candidate value and difference, largest growth first. Values are not rescaled; captures of different durations or deployments carry warnings.
+      parameters:
+        - { name: base, in: query, required: true, description: Baseline capture id of the same app., schema: { type: string, format: uuid } }
+        - { name: kind, in: query, required: false, description: 'cpu, heap, stacks, block or mutex; defaults to a kind both captures collected, preferring heap.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+      responses:
+        '200':
+          description: Differential view in the kind's unit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureDiff' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
@@ -39028,6 +39553,11 @@ paths:
           required: false
           description: Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
           schema: { type: string, enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed] }
+        - name: request_id
+          in: query
+          required: false
+          description: Only events for this request ID, such as the reference a visitor without JavaScript sees on the challenge page (ADR-831 amendment 8).
+          schema: { type: string, maxLength: 128 }
         - name: since
           in: query
           required: false
@@ -54966,8 +55496,12 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
           description: |
-            `403 Forbidden` — the org is at the member cap. Stable
-            code `org_member_cap_exceeded`.
+            `403 Forbidden` — the org is at the member cap (stable code
+            `org_member_cap_exceeded`), the caller has no fresh step-up
+            (`step_up_required`), or the accepting account has not
+            verified its email address (`email_verification_required`).
+            The invitation's email match binds acceptance to the invitee
+            only for a verified address.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '409':
           description: |
@@ -65239,6 +65773,18 @@ components:
       required: true
       schema: { type: string, format: uuid }
       description: Canonical UUID for a deployment-attached app task.
+    CrashCaptureID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for a crash snapshot.
+    AppForkID:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, format: uuid }
+      description: Canonical UUID for a production fork.
     ManagedPostgresID:
       name: id
       in: path
@@ -86820,7 +87366,7 @@ components:
     EdgeProtectionResponse:
       description: Edge rejection counts for one app over a range.
       type: object
-      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge]
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge, penalty]
       properties:
         app_id: { type: string }
         range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
@@ -86848,7 +87394,7 @@ components:
             type: object
             required: [gate, status, count]
             properties:
-              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge] }
+              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge, penalty] }
               status: { type: string, enum: ['401', '403', '413', '429', '503', other] }
               count: { type: integer, format: int64, minimum: 0 }
         waf:
@@ -86892,6 +87438,31 @@ components:
             passed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a pass from an earlier solve." }
             bypassed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a verified API key, consumer key or JWT." }
             invalid: { type: integer, format: int64, minimum: 0, description: "Solutions refused: wrong work or an expired token." }
+            raised: { type: integer, format: int64, minimum: 0, description: "The part of issued served at a difficulty raised under attack (ADR-831 amendment 8)." }
+        penalty:
+          type: object
+          description: Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty.
+          required: [boxed, rejected]
+          properties:
+            boxed: { type: integer, format: int64, minimum: 0, description: "Clients a rule's penalty boxed." }
+            rejected: { type: integer, format: int64, minimum: 0, description: "Requests refused from boxed clients." }
+
+    EdgeRulePenalty:
+      type: object
+      description: |
+        A rule's penalty box (ADR-20261022105846). Once the rule has refused
+        the same client `after` times within `within_seconds`, every request
+        from that client to the app is refused with 403 `penalty_box` and
+        Retry-After for `seconds`, whichever rule or path it targets. The
+        client is its IP address (an IPv6 client is its /64). Boxes are held
+        in each gateway node's memory. Allowed on ip, geo, throttle and waf
+        (block mode) rules; editing the rule's penalty away, disabling it or
+        putting it in log mode releases its clients.
+      required: [seconds]
+      properties:
+        seconds: { type: integer, minimum: 60, maximum: 86400, description: How long a boxed client is refused. }
+        after: { type: integer, minimum: 1, maximum: 1000, default: 1, description: Refusals by this rule that box the client. }
+        within_seconds: { type: integer, minimum: 1, maximum: 3600, default: 60, description: Window the refusals count in. }
 
     PreAuthEnforcementSuggestion:
       description: |
@@ -89406,6 +89977,7 @@ components:
           $ref: '#/components/schemas/ProfilingConfig'
         tracing:
           $ref: '#/components/schemas/TracingConfig'
+        profiling_on_demand: { type: boolean, description: 'Dormant on-demand profile collectors stamped by imaged (ADR-1155).' }
         entrypoint:
           type: array
           items: { type: string }
@@ -103863,6 +104435,20 @@ components:
           type: array
           items: { type: string }
           description: "Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."
+        unset_env_keys:
+          type: array
+          items: { type: string }
+          description: "Names from env_keys and required_env_keys that will have no value in the selected environment: not configured on the app and not provided by the platform. Names only, never values."
+        unset_env_key_reasons:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [not_opted_in, secret, service_address, local_address, interpolated, host_value, empty, invalid]
+          description: "For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never values."
+        imported_env_keys:
+          type: array
+          items: { type: string }
+          description: "Compose environment names whose plain values apply will write, because the project sets x-gregale-env-import: true and they are unset (ADR-20261023085230). Names only."
         source:
           type: string
           description: "detector provenance, e.g. compose.yaml: api"
@@ -105174,6 +105760,7 @@ components:
         expired: { type: boolean, description: True once expires_at has passed and the rule no longer applies. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
 
     DeploymentRoutePolicySnapshotResponse:
       description: Immutable gateway edge-rule state recorded on the deployment's first live transition.
@@ -105245,6 +105832,7 @@ components:
         expires_at: { type: string, format: date-time, description: Optional time after which the gateway stops applying the new rule. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: 'Start the rule enforced (default) or in log mode, where it is only matched and counted.' }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -105298,6 +105886,8 @@ components:
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         clear_match: { type: boolean, description: Remove the match condition. }
         mode: { type: string, enum: [enforce, log], description: 'Switch the rule to enforce, or to log so it is matched and counted but never acts.' }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
+        clear_penalty: { type: boolean, description: "Remove the rule's penalty box, releasing the clients it holds." }
 
     EdgeRuleMatchExpr:
       description: |
@@ -106494,6 +107084,11 @@ components:
           maximum: 86400
           default: 3600
           description: How long a solved challenge lets the browser through.
+        max_difficulty:
+          type: integer
+          minimum: 10
+          maximum: 22
+          description: When above difficulty, the gateway raises the difficulty up to this while the rule serves far more challenge pages than usual, two bits (4x the work) per minute, and lowers it again as the load eases (ADR-831 amendment 8). Must be at least difficulty. Omitted or equal to difficulty keeps the difficulty fixed.
     EdgeRuleAsyncAction:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).
@@ -112077,6 +112672,183 @@ components:
         code: { type: string, maxLength: 64 }
         message: { type: string, maxLength: 4096 }
 
+    CrashSnapshotSettingsRequest:
+      description: Body of `PUT /v1/apps/{slug}/crash-snapshots/settings`.
+      type: object
+      additionalProperties: false
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+    CrashSnapshotSettingsResponse:
+      description: Whether 5xx crash snapshots are on for the app.
+      type: object
+      required: [enabled]
+      properties:
+        enabled: { type: boolean }
+        updated_at: { type: string, format: date-time }
+    CrashCaptureResponse:
+      description: |
+        One crash snapshot (ADR-733). `status` moves from `requested` through
+        `capturing` to `ready`, then `expired`, or ends as `failed`. Storage
+        locations are never returned; open a ready capture as a fork.
+      type: object
+      required: [id, app_id, deployment_id, trigger, status, requested_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        trigger:
+          type: string
+          enum: [http_5xx, manual, sdk, live_fork]
+          description: |
+            `http_5xx` after a 5xx response, `manual` from this API, `sdk` from the
+            app itself through the guest metadata endpoint
+            (`POST http://169.254.169.254/v1/crash-snapshots:capture`), `live_fork`
+            for the capture a live fork took (kept only as long as a fork can live).
+        status_code: { type: integer, minimum: 500, maximum: 599 }
+        route: { type: string, description: Request path of the failing request (http_5xx, or sdk when the app passes one). }
+        reason: { type: string, maxLength: 256, description: The app's label for an sdk capture. }
+        status: { type: string, enum: [requested, capturing, ready, failed, expired] }
+        mem_bytes: { type: integer, format: int64 }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        requested_at: { type: string, format: date-time }
+        captured_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time, description: When the capture is deleted. }
+    CrashCaptureListResponse:
+      description: An app's crash snapshots, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/CrashCaptureResponse' }
+    CreateAppForkExecRequest:
+      description: Body of `POST /v1/apps/{slug}/forks/{id}/execs`.
+      type: object
+      additionalProperties: false
+      required: [command]
+      properties:
+        command:
+          type: array
+          minItems: 1
+          maxItems: 64
+          items: { type: string, maxLength: 4096 }
+          description: The argv to run. With `shell`, exactly one string run by the app's shell.
+        shell: { type: boolean, description: Run the single command string through the app's shell. }
+        timeout_seconds: { type: integer, minimum: 1, maximum: 600, description: "Default 60." }
+        max_output_bytes: { type: integer, minimum: 1024, maximum: 1048576, description: "Combined stdout/stderr kept (the tail). Default 65536." }
+    AppForkExecResponse:
+      description: One command run inside a production fork (ADR-732) and, once finished, its result.
+      type: object
+      required: [id, fork_id, command, timeout_seconds, max_output_bytes, status, output_truncated, stdout, stderr, requested_by, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        fork_id: { type: string, format: uuid }
+        command: { type: array, items: { type: string } }
+        shell: { type: boolean }
+        timeout_seconds: { type: integer }
+        max_output_bytes: { type: integer }
+        status: { type: string, enum: [queued, running, succeeded, failed, timed_out] }
+        exit_code: { type: integer }
+        output_truncated: { type: boolean }
+        stdout: { type: string, description: Tail of standard output. }
+        stderr: { type: string, description: Tail of standard error. }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        requested_by: { type: string }
+        created_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+    AppForkExecListResponse:
+      description: A fork's commands, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AppForkExecResponse' }
+    CreateAppForkRequest:
+      description: Body of `POST /v1/apps/{slug}/forks`. Every field is optional.
+      type: object
+      additionalProperties: false
+      properties:
+        ttl_seconds:
+          type: integer
+          minimum: 60
+          maximum: 14400
+          description: "How long the fork lives. Default 3600 (1 h), maximum 14400 (4 h)."
+        live:
+          type: boolean
+          description: |
+            Capture the app's newest running instance now and fork that
+            capture, instead of the deployment's last snapshot. The capture
+            pauses the instance briefly. Refused (409 `live_fork_refused`)
+            when no instance is running, a capture is in flight, or one was
+            taken in the last minute.
+    AppForkResponse:
+      description: |
+        One production fork (ADR-732). `status` moves from `queued` through
+        `restoring` to `running`, and ends as `expired`, `cancelled` or
+        `failed`. Scheduler leases and instance identifiers are never
+        returned.
+      type: object
+      required: [id, app_id, deployment_id, status, ttl_seconds, expires_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        access_token:
+          type: string
+          description: |
+            Returned only by `POST /v1/apps/{slug}/forks`, never again. To
+            reach the running fork, send a request to the app's hostname with
+            `X-Gregale-Fork: <id>` and `X-Gregale-Fork-Token: <access_token>`.
+            The gateway routes it to the fork, strips both headers, and never
+            wakes the app for it.
+        deployment_id:
+          type: string
+          format: uuid
+          description: The live deployment pinned when the fork was requested.
+        crash_capture_id:
+          type: string
+          format: uuid
+          description: The capture the fork restores, for a crash snapshot fork or a live fork.
+        status:
+          type: string
+          enum: [queued, restoring, running, expired, cancelled, failed]
+        ttl_seconds: { type: integer }
+        expires_at:
+          type: string
+          format: date-time
+          description: When the fork is destroyed (created_at + ttl_seconds).
+        cancel_requested_at: { type: string, format: date-time }
+        started_at: { type: string, format: date-time }
+        finished_at: { type: string, format: date-time }
+        failure:
+          type: object
+          required: [code, message]
+          properties:
+            code: { type: string }
+            message: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    AppForkListResponse:
+      description: An app's production forks, newest first.
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/AppForkResponse' }
+
     AppTaskResponse:
       description: |
         App-scoped receipt for a deployment-attached command. Scheduler lease
@@ -115304,7 +116076,7 @@ components:
     ConsumerBillingStatement:
       description: "One finalized statement as its consumer sees it."
       type: object
-      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents]
+      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents, credit_applied_millicents, amount_due_millicents]
       properties:
         id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
@@ -115313,6 +116085,8 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         billable_units: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64 }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when the statement was finalized (ADR-20261020211500)." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "amount_millicents less credit_applied_millicents: what is left to pay." }
         finalized_at: { type: string, format: date-time }
         invoice: { $ref: '#/components/schemas/ConsumerBillingInvoice' }
 
@@ -116095,6 +116869,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -117153,6 +117929,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -117337,6 +118115,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -117890,6 +118670,163 @@ components:
       properties:
         enabled: { type: boolean }
         window_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+        kinds:
+          description: Continuous profile kinds (ADR-1155); defaults to cpu.
+          type: array
+          maxItems: 2
+          items: { type: string, enum: [cpu, heap] }
+        pprof_port:
+          description: Guest-local port where a Go application serves net/http/pprof (ADR-1155). The platform then collects CPU, heap and goroutine profiles from it, so the application needs no Gregale SDK. 9191 and 4318 are reserved.
+          type: integer
+          minimum: 1
+          maximum: 65535
+    CreateProfileCaptureRequest:
+      description: On-demand capture request (ADR-1155). Kinds defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go contention profiles (time goroutines spent blocked on channels or locks, or waiting for a mutex, during the window).
+      type: object
+      properties:
+        kinds: { type: array, maxItems: 5, items: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+        duration_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+        instance_id: { type: string, format: uuid, description: Running instance to profile; empty selects the earliest-started RUNNING instance. }
+    ProfileCaptureProfile:
+      description: One collector's stored profile.
+      type: object
+      required: [kind, bytes]
+      properties:
+        kind: { type: string, enum: [cpu, heap, stacks, block, mutex] }
+        process_id: { type: string }
+        bytes: { type: integer }
+    ProfileCapture:
+      description: An on-demand capture. processes counts instrumented processes that saw the capture; zero means the instance has no collector.
+      type: object
+      required: [id, app_id, status, kinds, duration_seconds, processes, profiles, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, capturing, ready, failed] }
+        kinds: { type: array, items: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+        duration_seconds: { type: integer }
+        requested_instance_id: { type: string, format: uuid }
+        trigger: { type: string, enum: [manual, memory_pressure, slow_request, cpu_saturation], description: 'Who started the capture; memory_pressure captures are queued automatically when an instance runs low on memory, slow_request captures (stacks and CPU) when a request stays in flight for 10 seconds, cpu_saturation captures (CPU) when an instance uses 90% of its CPU limit for 30 seconds.' }
+        request_id: { type: string, maxLength: 128, description: The x-faas-request-id of the in-flight request that started a slow_request capture. }
+        request_trace_id: { type: string, maxLength: 128, description: The trace id that request's telemetry is stored under. }
+        trigger_detail: { type: string }
+        instance_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        processes: { type: integer }
+        dropped: { type: integer, description: Profiles discarded by the reply bounds. }
+        reason: { type: string }
+        profiles: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/ProfileCaptureProfile' } }
+        partial: { type: boolean, description: 'The capture ended early, normally because the workload was OOM-killed; heap profiles are the last checkpoints before the kill.' }
+        oom_killed_at: { type: string, format: date-time, description: Set when the captured instance was OOM-killed within 15 minutes of the capture. }
+        oom_peak_mb: { type: integer, description: Memory in use when the instance was OOM-killed. }
+        oom_plan_mb: { type: integer, description: The instance's plan memory limit. }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    ProfileCaptureList:
+      description: An app's profile captures, newest first.
+      type: object
+      required: [captures]
+      properties:
+        captures: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/ProfileCapture' } }
+    ProfileCaptureWebhookPayload:
+      description: Payload of the profile.capture_ready and profile.capture_oom_linked app webhook events (ADR-1155). Carries the capture record and its paths, never profile samples.
+      type: object
+      required: [version, capture, capture_path, api_path]
+      properties:
+        version: { type: integer, minimum: 1, maximum: 1 }
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        capture_path: { type: string, description: Dashboard page of the capture. }
+        api_path: { type: string, description: API resource of the capture. }
+    ProfileCaptureFunction:
+      description: Self and inclusive cost of one function in the view's unit.
+      type: object
+      required: [name, self, total]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        self: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+    ProfileCaptureStack:
+      description: One frame in a bounded call-path tree.
+      type: object
+      required: [name, value]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        value: { type: integer, format: int64 }
+        children: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureStack' } }
+    ProfileCaptureView:
+      description: One profile kind merged across processes. unit is nanoseconds for cpu, bytes for heap and count (goroutines or threads) for stacks. Node and Python heap captures report memory allocated during the window and still live at its end; Go reports the sampled live heap.
+      type: object
+      required: [capture, kind, unit, total, functions, flamegraph, empty]
+      properties:
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [cpu, heap, stacks, block, mutex] }
+        unit: { type: string, enum: [nanoseconds, bytes, count] }
+        total: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
+        empty: { type: boolean }
+        source: { $ref: '#/components/schemas/ProfileSource' }
+    ProfileCaptureDiff:
+      description: One kind compared between two ready captures of an app (ADR-1155). Values keep the kind's unit and are not rescaled.
+      type: object
+      required: [baseline, candidate, kind, unit, baseline_total, candidate_total, delta, functions, flamegraph, warnings]
+      properties:
+        baseline: { $ref: '#/components/schemas/ProfileCapture' }
+        candidate: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [cpu, heap, stacks, block, mutex] }
+        unit: { type: string, enum: [nanoseconds, bytes, count] }
+        baseline_total: { type: integer, format: int64 }
+        candidate_total: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunctionDelta' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStackDelta' }
+        warnings: { type: array, items: { type: string } }
+    ProfileCaptureFunctionDelta:
+      description: One function's self cost in both captures; named functions aggregate across lines.
+      type: object
+      required: [name, baseline, candidate, delta]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        baseline: { type: integer, format: int64 }
+        candidate: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+    ProfileCaptureStackDelta:
+      description: One call path in both captures.
+      type: object
+      required: [name, baseline, candidate, delta]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        baseline: { type: integer, format: int64 }
+        candidate: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+        children: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureStackDelta' } }
+    ProfileHeapResponse:
+      description: Continuous live heap near query.end (ADR-1155).
+      type: object
+      required: [query, kind, unit, total, functions, flamegraph, empty]
+      properties:
+        query: { $ref: '#/components/schemas/ProfileQuery' }
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [heap] }
+        unit: { type: string, enum: [bytes] }
+        total: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
+        empty: { type: boolean }
+        source: { $ref: '#/components/schemas/ProfileSource' }
     TracingConfig:
       description: "Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched."
       type: object
@@ -118268,6 +119205,7 @@ components:
         image_digest: { type: string, description: "Immutable image/artifact digest associated with the deployment." }
         guest:
           $ref: '#/components/schemas/DebugGuestExecutionEvidence'
+        profile_capture_id: { type: string, format: uuid, description: "Stack snapshot taken while this request was in flight (ADR-1155 slow_request capture), when one exists." }
 
     DebugGuestExecutionEvidence:
       type: object

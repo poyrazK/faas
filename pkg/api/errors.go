@@ -649,6 +649,10 @@ const (
 	// navigation (ADR-831 amendment 7). A browser earns the pass by loading
 	// a page on the route; other clients need a verified credential.
 	CodeChallengeRequired = "challenge_required"
+	// CodePenaltyBox is returned by gatewayd for a request from a client
+	// an edge rule's penalty box holds (ADR-20261022105846). Retry-After
+	// says when the box ends.
+	CodePenaltyBox = "penalty_box"
 	// CodePreviewProductionDependencyDenied is returned by the internal
 	// service proxy when a project preview tries to call a production
 	// dependency while its preview_service_policy is deny. The rejection
@@ -2085,7 +2089,7 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeUnauthorized, CodeConsumerKeyRequired, CodeConsumerKeyInvalid, CodeConsumerKeyInactive:
 		return http.StatusUnauthorized
-	case CodeConsumerScopeMissing, CodePlatformTenantRequired, CodeChallengeRequired:
+	case CodeConsumerScopeMissing, CodePlatformTenantRequired, CodeChallengeRequired, CodePenaltyBox:
 		return http.StatusForbidden
 	case CodeSessionExpired, CodeSessionInvalid:
 		return http.StatusUnauthorized
@@ -2622,6 +2626,17 @@ func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
 		fmt.Sprintf("%s plan caps total ephemeral app-filesystem capacity at %d MB (including app content and filesystem overhead); the built layer requires %.1f MB.",
 			l.Plan, l.EphemeralDiskMaxMB(), float64(observedBytes)/(1024*1024))).
 		WithLimit(capBytes, observedBytes).
+		WithDocs(docsBase + "/build/limits#app-layer")
+}
+
+// ErrAppLayerTooManyEntries is returned when an image's layers apply more tar
+// entries than one build may extract (LayerExtractionMaxEntries). It shares
+// ErrAppLayerTooLarge's stable code: the image is too large to assemble.
+func ErrAppLayerTooManyEntries(l Limits, limit int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
+		"App too large",
+		fmt.Sprintf("image layers contain more than %d files, directories and links in total; %s plan builds stop at that limit.", limit, l.Plan)).
+		WithLimit(int64(limit), int64(limit)+1).
 		WithDocs(docsBase + "/build/limits#app-layer")
 }
 
@@ -4628,6 +4643,17 @@ func ErrTenantHostnameQuota(p Plan, surfaceID string, limit, observed int) *Prob
 	return NewProblem(http.StatusForbidden, CodeTenantHostnameQuota,
 		"Tenant hostname limit reached",
 		fmt.Sprintf("%s plan caps tenant hostnames at %d per surface; you have %d on surface %s. Remove one to add another.",
+			p, limit, observed, surfaceID)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#tenant-surfaces")
+}
+
+// ErrTenantHostnamePendingQuota is the tenant_hostname_quota problem for
+// the unverified-hostname cap (ADR-20261020090500).
+func ErrTenantHostnamePendingQuota(p Plan, surfaceID string, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeTenantHostnameQuota,
+		"Tenant hostname limit reached",
+		fmt.Sprintf("%s plan caps unverified tenant hostnames at %d per surface; you have %d pending on surface %s. Verify or remove one to add another.",
 			p, limit, observed, surfaceID)).
 		WithLimit(int64(limit), int64(observed)).
 		WithDocs(docsBase + "/plans#tenant-surfaces")

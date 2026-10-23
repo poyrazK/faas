@@ -534,6 +534,98 @@ const (
 	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
 	ProfileHealthListen             = "127.0.0.1:9160"
 	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+
+	// On-demand captures (ADR-1155).
+	ProfileCaptureMinDuration     = time.Second
+	ProfileCaptureMaxDuration     = 60 * time.Second
+	ProfileCaptureDefaultDuration = 10 * time.Second
+	// ProfileCaptureGrace covers the collectors' final flush after the window.
+	ProfileCaptureGrace = 3 * time.Second
+	// ProfileCaptureMaxProfiles bounds one reply; profiles are per process and kind.
+	ProfileCaptureMaxProfiles = 8
+	// ProfileCaptureMaxProfileBytes bounds the summed compressed profiles so each
+	// host hop stays under gRPC's default 4 MiB message limit.
+	ProfileCaptureMaxProfileBytes = 3 << 20
+	// ProfileCaptureMaxPerAccountHour bounds captures started per account.
+	ProfileCaptureMaxPerAccountHour = 60
+	// net/http/pprof collection by guest-init (profiling.pprof_port). A heap
+	// or goroutine fetch, and a CPU fetch beyond its window, must answer
+	// within ProfilePprofFetchTimeout. An endpoint that has not answered yet
+	// is probed every ProfilePprofProbeInterval; until it answers guest-init
+	// does not register a collector, so captures and memory-pressure reports
+	// behave as for an uninstrumented process.
+	ProfilePprofFetchTimeout  = 5 * time.Second
+	ProfilePprofProbeInterval = 2 * time.Second
+	// Node stack snapshots through the inspector (ADR-1155). guest-init
+	// remembers a Node process's reported inspector for
+	// ProfileNodeInspectorRememberFor, so a main thread stuck longer than the
+	// collector's poll interval is still reachable. An event loop that does
+	// not run a setImmediate within ProfileNodeLivenessTimeout counts as
+	// stuck; its main thread is then paused, waiting at most
+	// ProfileNodePauseTimeout, and resumed at once.
+	ProfileNodeInspectorRememberFor = 10 * time.Minute
+	ProfileNodeInspectorConnect     = 2 * time.Second
+	ProfileNodeLivenessTimeout      = 200 * time.Millisecond
+	ProfileNodePauseTimeout         = time.Second
+	// Automatic heap captures on memory pressure (ADR-1155). guest-init reports
+	// pressure when MemAvailable falls to the threshold share of MemTotal and
+	// re-arms once it recovers above the re-arm share.
+	ProfileMemoryPressureAvailablePercent      = 15
+	ProfileMemoryPressureRearmAvailablePercent = 30
+	ProfileMemoryPressurePollInterval          = 2 * time.Second
+	ProfileCaptureAutomaticDuration            = 10 * time.Second
+	// ProfileCaptureAutomaticMinInterval bounds automatic captures per app.
+	ProfileCaptureAutomaticMinInterval = time.Hour
+	// ProfileCaptureCheckpointInterval paces interim heap profiles during an
+	// automatic capture, so an OOM kill mid-window still leaves the last
+	// heap before the kill.
+	ProfileCaptureCheckpointInterval = 2 * time.Second
+	// ProfileCaptureInterruptGrace replaces the final-flush grace when a
+	// capture ends early because the workload was OOM-killed.
+	ProfileCaptureInterruptGrace = 500 * time.Millisecond
+	// ProfileCaptureOOMFlushTimeout bounds how long guest-init holds an OOM
+	// report while an interrupted capture returns its profiles.
+	ProfileCaptureOOMFlushTimeout = 3 * time.Second
+	// ProfileCaptureOOMLinkWindow is how recent a heap capture on the killed
+	// instance must be for the OOM kill to be linked to it.
+	ProfileCaptureOOMLinkWindow = 15 * time.Minute
+	// Automatic stack snapshots of slow requests (ADR-1155). The gateway
+	// reports a request in flight for ProfileCaptureSlowRequestAfter at most
+	// once per app per ProfileCaptureSlowRequestReportEvery; schedd queues a
+	// stacks+CPU capture of that instance at most once per app per
+	// ProfileCaptureSlowRequestMinInterval.
+	ProfileCaptureSlowRequestAfter       = 10 * time.Second
+	ProfileCaptureSlowRequestReportEvery = time.Minute
+	ProfileCaptureSlowRequestMinInterval = 15 * time.Minute
+	ProfileCaptureSlowRequestDuration    = 5 * time.Second
+	// Automatic CPU captures on CPU saturation (ADR-1155). schedd's stats
+	// poller counts an instance saturated while its host CPU use is at least
+	// ProfileCPUSaturationPercent of its sustained cgroup quota; a dip shorter
+	// than ProfileCPUSaturationGrace does not end the episode. An episode
+	// lasting ProfileCPUSaturationAfter queues one CPU capture of
+	// ProfileCaptureCPUSaturationDuration, at most once per app per
+	// ProfileCaptureCPUSaturationMinInterval.
+	ProfileCPUSaturationPercent            = 90
+	ProfileCPUSaturationAfter              = 30 * time.Second
+	ProfileCPUSaturationGrace              = 5 * time.Second
+	ProfileCaptureCPUSaturationMinInterval = 15 * time.Minute
+	ProfileCaptureCPUSaturationDuration    = 10 * time.Second
+	// ProfileCaptureMaxKinds bounds the kinds one capture collects: every kind.
+	ProfileCaptureMaxKinds = 5
+	// Go contention sampling while a capture asks for block or mutex
+	// profiles: the Go SDK samples one blocking event per
+	// ProfileBlockRateNanos spent blocked and one in ProfileMutexFraction
+	// mutex contention events, for the window only.
+	ProfileBlockRateNanos = 10_000
+	ProfileMutexFraction  = 10
+	// ProfileCaptureDiffMaxNodes bounds a differential flamegraph.
+	ProfileCaptureDiffMaxNodes = 2 * ProfileMaxViewNodes
+	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
+	ProfileCaptureMaxConcurrentPerScheduler = 4
+	// ProfileCaptureMaxListed bounds GET /profiles/captures.
+	ProfileCaptureMaxListed = 50
+	// ProfileCaptureRetention is how long stored capture results remain.
+	ProfileCaptureRetention = 7 * 24 * time.Hour
 )
 
 // Billing runs (ADR-1503).
@@ -616,6 +708,14 @@ const (
 	ConsumerSpendCapCheckInterval = time.Minute
 	ConsumerSpendCapCheckLease    = 2 * time.Minute
 	ConsumerSpendCapBatchSize     = 500
+	// A check reuses the last price of the month when no usage was
+	// recorded since, but reprices at least this often, so changes that
+	// are not usage (a card, a trial, credit expiring or applied) apply
+	// within it (ADR-20261020211500).
+	ConsumerSpendCapRepriceInterval = 15 * time.Minute
+	// Usage minutes this far before the last check are not looked at for
+	// changes; a later write to an older minute waits for the reprice.
+	ConsumerSpendCapUsageLookback = time.Hour
 )
 
 // Consumer self-service sign-up (ADR-20261021143000).
@@ -2111,6 +2211,11 @@ const (
 	// developer delta reconstruction so the optimization cannot accept an
 	// archive the canonical deployment path would reject.
 	SourceArchiveMaxEntries = 10_000
+	// SourceArchiveMaxExpandedBytes caps the summed declared size of a source
+	// archive's entries. The compressed upload cap alone admits a highly
+	// compressed archive that apid would inflate, at full CPU, on every pass
+	// over it (ADR-20261020160500).
+	SourceArchiveMaxExpandedBytes int64 = 2 << 30
 	// DevSourceMetadataMaxBytes bounds base/target revision and deletion-list
 	// fields around the plan-capped source payload.
 	DevSourceMetadataMaxBytes int64 = 4 << 20
@@ -3476,6 +3581,13 @@ type Limits struct {
 	// 0 with TenantSurfacesAllowed=false (Free); non-zero with
 	// TenantSurfacesAllowed=true (Hobby/Pro/Scale).
 	TenantHostnamesPerSurface int
+	// TenantHostnamesPendingPerSurface caps how many unverified hostnames
+	// one surface may hold. A pending hostname reserves its name globally
+	// and has no verification deadline, so without this cap one surface
+	// could reserve any number of names (ADR-20261020090500). Per-plan:
+	// Free 0, Hobby 10, Pro 50, Scale 250, matching the verified cap. Read
+	// it through PendingTenantHostnamesPerSurface.
+	TenantHostnamesPendingPerSurface int
 	// TenantSurfacesAllowed toggles the `tenant_surfaces` feature
 	// (ADR-099 / issue #879) on the plan. Free stays off — the
 	// legacy `custom_domains` path (one FQDN, one cert) carries the
@@ -4053,6 +4165,15 @@ type Limits struct {
 	// api.ErrPlanAppUsageSummaryNotAllowed.
 	AppUsageSummaryAllowed bool
 
+	// AppForkMaxActivePerApp / AppForkMaxActivePerAccount (ADR-732) cap
+	// production forks that are queued, restoring or running. Zero means
+	// the plan has no forks: Free and Hobby. A fork holds tenant RAM
+	// outside max_concurrency, so the caps also bound how much of the
+	// 47,600 MB admission ceiling forks can take. Enforced atomically by
+	// state.CreateAppFork.
+	AppForkMaxActivePerApp     int
+	AppForkMaxActivePerAccount int
+
 	// AppErrorsAllowed (issue #TBD / ADR-TBD) gates whether the
 	// per-app error-fingerprint read is on for an account. The
 	// surface covers GET /v1/apps/{slug}/errors/summary (top
@@ -4125,6 +4246,15 @@ func (l Limits) EphemeralDiskMaxBytes() int64 {
 // EphemeralDiskMaxMB; the multiple leaves room for files a later layer
 // replaces or deletes.
 const LayerExtractionBudgetMultiple = 2
+
+// LayerExtractionMaxEntries bounds the tar entries one image build may apply
+// across all of its layers. The byte budget counts only file content, so a
+// small compressed layer of empty files, directories or links could otherwise
+// create millions of inodes on the node's image staging filesystem. A
+// finished filesystem with more than ApplicationStandardRuntimeScanMaxEntries
+// entries cannot be scanned and admitted anyway; the multiple leaves the same
+// room for replaced and deleted entries as the byte budget.
+const LayerExtractionMaxEntries = ApplicationStandardRuntimeScanMaxEntries * LayerExtractionBudgetMultiple
 
 // LayerExtractionBudgetBytes is the extraction budget for one image build.
 // Zero means the limits value is unset; callers fail closed.
@@ -4388,10 +4518,11 @@ var planLimits = map[Plan]Limits{
 		// the legacy `custom_domains` path. apid's createTenantSurface
 		// handler rejects 402 CodeTenantSurfaceQuotaReached before
 		// the store is touched.
-		TenantSurfacesPerAccount:  0,
-		TenantHostnamesPerSurface: 0,
-		TenantSurfacesAllowed:     false,
-		WildcardDomainsAllowed:    false,
+		TenantSurfacesPerAccount:         0,
+		TenantHostnamesPerSurface:        0,
+		TenantHostnamesPendingPerSurface: 0,
+		TenantSurfacesAllowed:            false,
+		WildcardDomainsAllowed:           false,
 		// Data-placement hints (ADR-098 §D5): Free is gated off —
 		// the handler returns 402 CodePlanLimitDataUpstreams before
 		// any regex match. The 0 here is a defence-in-depth value
@@ -4570,11 +4701,14 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: false,
 		AppErrorsAllowed:       false,
 		JobsAllowed:            false,
-		WorkflowsAllowed:       false,
-		WorkflowMaxPerApp:      0,
-		WorkflowMaxConcurrent:  0,
-		WorkflowStepMaxTimeout: 0,
-		WorkflowMaxWaitDays:    0,
+		// ADR-732: no production forks below Pro.
+		AppForkMaxActivePerApp:     0,
+		AppForkMaxActivePerAccount: 0,
+		WorkflowsAllowed:           false,
+		WorkflowMaxPerApp:          0,
+		WorkflowMaxConcurrent:      0,
+		WorkflowStepMaxTimeout:     0,
+		WorkflowMaxWaitDays:        0,
 	},
 	PlanHobby: {
 		Plan:                      PlanHobby,
@@ -4805,10 +4939,11 @@ var planLimits = map[Plan]Limits{
 		// entry paid tier — 1 surface with up to 10 verified
 		// hostnames. The "single SaaS customer, a handful of
 		// end-customer subdomains" use case is the hobby use case.
-		TenantSurfacesPerAccount:  1,
-		TenantHostnamesPerSurface: 10,
-		TenantSurfacesAllowed:     true,
-		WildcardDomainsAllowed:    false,
+		TenantSurfacesPerAccount:         1,
+		TenantHostnamesPerSurface:        10,
+		TenantHostnamesPendingPerSurface: 10,
+		TenantSurfacesAllowed:            true,
+		WildcardDomainsAllowed:           false,
 		// Data-placement hints (ADR-098 §D5): Hobby unlocks the
 		// capture path with a 3-hint cap per app.
 		DataPlacementHintsPerApp: 3,
@@ -4995,11 +5130,14 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: true,
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
-		WorkflowsAllowed:       true,
-		WorkflowMaxPerApp:      3,
-		WorkflowMaxConcurrent:  10,
-		WorkflowStepMaxTimeout: 10 * time.Minute,
-		WorkflowMaxWaitDays:    30,
+		// ADR-732: no production forks below Pro.
+		AppForkMaxActivePerApp:     0,
+		AppForkMaxActivePerAccount: 0,
+		WorkflowsAllowed:           true,
+		WorkflowMaxPerApp:          3,
+		WorkflowMaxConcurrent:      10,
+		WorkflowStepMaxTimeout:     10 * time.Minute,
+		WorkflowMaxWaitDays:        30,
 	},
 	PlanPro: {
 		Plan:                      PlanPro,
@@ -5216,10 +5354,11 @@ var planLimits = map[Plan]Limits{
 		// tier. Each surface still binds to one app, so 5 surfaces
 		// means 5 distinct customer-facing apps behind the same
 		// account (the multi-app variant is the deferred footgun).
-		TenantSurfacesPerAccount:  5,
-		TenantHostnamesPerSurface: 50,
-		TenantSurfacesAllowed:     true,
-		WildcardDomainsAllowed:    true,
+		TenantSurfacesPerAccount:         5,
+		TenantHostnamesPerSurface:        50,
+		TenantHostnamesPendingPerSurface: 50,
+		TenantSurfacesAllowed:            true,
+		WildcardDomainsAllowed:           true,
 		// Data-placement hints (ADR-098 §D5): Pro unlocks the
 		// capture path with a 10-hint cap per app.
 		DataPlacementHintsPerApp: 10,
@@ -5382,11 +5521,14 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: true,
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
-		WorkflowsAllowed:       true,
-		WorkflowMaxPerApp:      10,
-		WorkflowMaxConcurrent:  50,
-		WorkflowStepMaxTimeout: 30 * time.Minute,
-		WorkflowMaxWaitDays:    90,
+		// ADR-732: one active fork per app, two per account.
+		AppForkMaxActivePerApp:     1,
+		AppForkMaxActivePerAccount: 2,
+		WorkflowsAllowed:           true,
+		WorkflowMaxPerApp:          10,
+		WorkflowMaxConcurrent:      50,
+		WorkflowStepMaxTimeout:     30 * time.Minute,
+		WorkflowMaxWaitDays:        90,
 	},
 	PlanScale: {
 		Plan:                      PlanScale,
@@ -5622,10 +5764,11 @@ var planLimits = map[Plan]Limits{
 		// 100-SAN-per-cert limit (`per_host_san` falls back to
 		// `per_host` above ~100 — surfaced via the cert engine, not
 		// quota).
-		TenantSurfacesPerAccount:  25,
-		TenantHostnamesPerSurface: 250,
-		TenantSurfacesAllowed:     true,
-		WildcardDomainsAllowed:    true,
+		TenantSurfacesPerAccount:         25,
+		TenantHostnamesPerSurface:        250,
+		TenantHostnamesPendingPerSurface: 250,
+		TenantSurfacesAllowed:            true,
+		WildcardDomainsAllowed:           true,
 		// Data-placement hints (ADR-098 §D5): Scale unlocks the
 		// capture path with a 50-hint cap per app — large enough
 		// for a multi-DB SaaS (primary + replicas + read-only +
@@ -5802,11 +5945,14 @@ var planLimits = map[Plan]Limits{
 		AppUsageSummaryAllowed: true,
 		AppErrorsAllowed:       true,
 		JobsAllowed:            true,
-		WorkflowsAllowed:       true,
-		WorkflowMaxPerApp:      50,
-		WorkflowMaxConcurrent:  200,
-		WorkflowStepMaxTimeout: 2 * time.Hour,
-		WorkflowMaxWaitDays:    365,
+		// ADR-732: one active fork per app, two per account.
+		AppForkMaxActivePerApp:     1,
+		AppForkMaxActivePerAccount: 2,
+		WorkflowsAllowed:           true,
+		WorkflowMaxPerApp:          50,
+		WorkflowMaxConcurrent:      200,
+		WorkflowStepMaxTimeout:     2 * time.Hour,
+		WorkflowMaxWaitDays:        365,
 	},
 }
 
@@ -5958,6 +6104,40 @@ const (
 	// funded deadline, not this check, bounds strict spending.
 	FinancialBudgetAdmissionCacheTTL  = time.Second
 	FinancialBudgetAdmissionCacheSize = 10_000
+
+	// Production forks (ADR-732). A fork is destroyed at its TTL; the
+	// caller may ask for less than the default, never more than the max.
+	// Both stay inside the app_forks_ttl_chk backstop (60 s .. 24 h).
+	AppForkDefaultTTL = time.Hour
+	AppForkMinTTL     = time.Minute
+	AppForkMaxTTL     = 4 * time.Hour
+
+	// Live forks (ADR-732) capture the newest running instance when the
+	// fork is created. The capture pauses a serving instance, so a new one
+	// is refused within LiveForkCaptureCooldown of the app's last capture.
+	// It is kept for LiveForkCaptureRetention: past any fork's TTL, far
+	// shorter than a crash snapshot.
+	LiveForkCaptureCooldown  = time.Minute
+	LiveForkCaptureRetention = AppForkMaxTTL + 10*time.Minute
+
+	// Fork exec (ADR-732): commands run inside a running fork. At most
+	// AppForkExecMaxPending are queued or running per fork; each runs for at
+	// most AppForkExecMaxTimeout and keeps at most AppForkExecMaxOutputBytes
+	// of combined stdout/stderr (the tail beyond that is dropped).
+	AppForkExecMaxPending         = 4
+	AppForkExecDefaultTimeout     = time.Minute
+	AppForkExecMaxTimeout         = 10 * time.Minute
+	AppForkExecDefaultOutputBytes = 64 << 10
+	AppForkExecMaxOutputBytes     = 1 << 20
+
+	// Crash snapshots (ADR-733). A capture is kept for CrashCaptureRetention
+	// and then deleted. An app gets at most one capture in flight and no
+	// new request within CrashCaptureCooldown of the last; a capture that
+	// is not finished within CrashCaptureTimeout is failed. Captures are
+	// only opened as forks, so the plan gate is the fork entitlement.
+	CrashCaptureRetention = 7 * 24 * time.Hour
+	CrashCaptureCooldown  = 10 * time.Minute
+	CrashCaptureTimeout   = 5 * time.Minute
 
 	// PreflightRateLimitPerHour bounds anonymous "would this run here" checks per
 	// client IP. The check is unauthenticated, so the ceiling exists to protect
@@ -6466,6 +6646,43 @@ const (
 	// EdgeChallengeTokenTTLSeconds is how long a served challenge may be
 	// solved and submitted.
 	EdgeChallengeTokenTTLSeconds = 300
+	// Raising the difficulty under attack (ADR-831 amendment 8). A rule
+	// with max_difficulty above its difficulty steps up by
+	// EdgeChallengeRaiseStepBits (4x the work) after a minute in which one
+	// gateway served more than EdgeChallengeRaiseFactor times the rule's
+	// usual challenge pages per minute, and never fewer than
+	// EdgeChallengeRaiseFloorPerMinute. It steps back down after each
+	// minute below half that. The usual rate is an average over about
+	// EdgeChallengeBaselineMinutes, and it does not move while the
+	// difficulty is raised, so a long attack does not become the norm.
+	// While a rule is newer than EdgeChallengeBaselineMinutes the
+	// threshold is EdgeChallengeRaiseFactor x
+	// EdgeChallengeRaiseFloorPerMinute pages per minute.
+	EdgeChallengeRaiseStepBits       = 2
+	EdgeChallengeRaiseFactor         = 4
+	EdgeChallengeRaiseFloorPerMinute = 60
+	EdgeChallengeBaselineMinutes     = 15
+
+	// --- ADR-20261022105846: penalty box -----------------------------
+
+	// MinEdgePenaltySeconds and MaxEdgePenaltySeconds bound how long a
+	// boxed client is refused.
+	MinEdgePenaltySeconds = 60
+	MaxEdgePenaltySeconds = 86400
+	// EdgePenaltyDefaultAfter boxes on the first rejection;
+	// MaxEdgePenaltyAfter bounds the threshold.
+	EdgePenaltyDefaultAfter = 1
+	MaxEdgePenaltyAfter     = 1000
+	// EdgePenaltyDefaultWithinSeconds is the window rejections count in.
+	EdgePenaltyDefaultWithinSeconds = 60
+	MaxEdgePenaltyWithinSeconds     = 3600
+	// EdgePenaltyBoxMaxPerApp and EdgePenaltyBoxMaxEntries bound one
+	// gateway's boxes (and its pending rejection counts) per app and in
+	// total, so a flood from rotating addresses costs bounded memory and
+	// one app cannot push out another's boxes. A full app box drops its
+	// soonest-ending entry.
+	EdgePenaltyBoxMaxPerApp  = 10000
+	EdgePenaltyBoxMaxEntries = 200000
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
@@ -8724,6 +8941,17 @@ func (p Plan) AppUsageSummaryAllowed() bool {
 		return false
 	}
 	return l.AppUsageSummaryAllowed
+}
+
+// AppForkLimits returns the active production-fork caps per app and per
+// account (ADR-732). Zero means the plan has no forks; unknown plans get
+// none.
+func (p Plan) AppForkLimits() (perApp, perAccount int) {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0, 0
+	}
+	return l.AppForkMaxActivePerApp, l.AppForkMaxActivePerAccount
 }
 
 // AppErrorsAllowed returns whether the per-app error-fingerprint
@@ -12539,7 +12767,7 @@ const (
 	EventPublishBatchTimeout            = 30 * time.Second
 )
 
-// Retention observations are bounded read-only snapshots (ADR-912).
+// Retention observations are bounded read-only snapshots (ADR-1155).
 const (
 	EventRetentionDefaultWindow  = 24 * time.Hour
 	EventRetentionMaxWindow      = 30 * 24 * time.Hour
@@ -14113,6 +14341,9 @@ const (
 	DockerfileBuildArgValueMaxBytes    = 4096
 	DockerfileBuildArgsEncodedMaxBytes = 32 << 10
 	DockerfileBuildTargetMaxBytes      = 128
+	// DockerfileBuildSecretsMax caps the build secrets one Dockerfile build
+	// mounts (ADR-20261022185329); each one is an app secret vmmd opens.
+	DockerfileBuildSecretsMax = 16
 )
 
 // Public build configuration is intentionally limited to reviewed URL values.
@@ -14327,3 +14558,13 @@ const (
 	DataRepairPurgeTimeoutSeconds      = 10
 	DataRepairPurgeLockTimeoutMS       = 2000
 )
+
+// PendingTenantHostnamesPerSurface is the unverified-hostname cap for one
+// surface. A Limits value built without the field (zero) falls back to the
+// verified cap rather than refusing every pending hostname.
+func (l Limits) PendingTenantHostnamesPerSurface() int {
+	if l.TenantHostnamesPendingPerSurface > 0 {
+		return l.TenantHostnamesPendingPerSurface
+	}
+	return l.TenantHostnamesPerSurface
+}

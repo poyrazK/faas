@@ -251,6 +251,12 @@ func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_APP_TASK_API_ENABLED")) == "1"
 }
 
+// appForksEnabledFromEnv is the fail-closed operator gate for production
+// forks (ADR-732). It stays off until schedd can restore quarantined forks.
+func appForksEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_APP_FORKS")) == "1"
+}
+
 func githubDeploysAvailabilityProbe(getenv func(string) string, bridgeSock string) func(context.Context) bool {
 	// production-us hunt #8: push-to-deploy needs githubd to reach this
 	// apid's build-enqueue bridge. With no bridge socket configured githubd
@@ -1533,6 +1539,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithAppForksEnabled(appForksEnabledFromEnv(deps.getenv)).
+		WithCrashSnapshotsEnabled(strings.TrimSpace(deps.getenv("FAAS_CRASH_SNAPSHOTS")) == "1").
 		WithAtomicWorkerReleaseEnabled(deps.getenv("FAAS_ATOMIC_WORKER_RELEASES_ENABLED") == "1").
 		WithProjectCanariesEnabled(deps.getenv("FAAS_PROJECT_CANARIES_ENABLED") == "1").
 		WithPromotionHealthEnabled(deps.getenv("FAAS_PROMOTION_HEALTH_ENABLED") == "1").
@@ -2177,7 +2185,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// missing identity path.
 		srv.MarkRekeyRunnerOptedIn()
 		identities := mfaIdentities()
-		if len(identities) == 0 {
+		if blocked := runtimeSealDomainBlocksRekey(); blocked != nil {
+			log.Warn("FAAS_REKEY_ENABLED=true ignored: background re-seal disabled", "reason", blocked.Error())
+		} else if len(identities) == 0 {
 			log.Warn("FAAS_REKEY_ENABLED=true but no host age identities loaded — background re-seal disabled")
 		} else {
 			rekeyAudit := audit.New(store, log, nil, "rekey")

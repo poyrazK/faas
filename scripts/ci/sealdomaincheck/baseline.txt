@@ -46,6 +46,9 @@ loader pkg/internalmail/keyring_config.go 2
 plain accounts.mfa_recovery_codes_hash
 plain api_consumer_signups.claim_hash
 plain api_keys.key_sha256
+plain app_fork_execs.stderr
+plain app_fork_execs.stdout
+plain app_forks.access_token_hash
 plain app_openapi_docs.doc_sha256
 plain app_task_attach_sessions.attach_token_sha256
 plain app_trusted_signers.cosign_public_key
@@ -130,6 +133,7 @@ plain platform_mail_outbox_reconciliations.request_hash
 plain platform_mail_producer_outbox.verification_token_hash
 plain platform_tenant_access_tokens.token_hash
 plain product_control_email_deliveries.unsubscribe_hash
+plain profile_capture_data.profile
 plain route_removal_approvals.baseline_sha256
 plain route_removal_approvals.candidate_sha256
 plain runtime_upgrade_external_fence_authorities.public_key

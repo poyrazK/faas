@@ -219,6 +219,10 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
 	"POST /dashboard/mcp/retirements/{id}":                             true,
 
+	"POST /dashboard/apps/{slug}/profiles/captures":                          true, // ADR-1155 session + CSRF adapter for the profile capture API
+	"GET /dashboard/apps/{slug}/profiles/captures/{id}":                      true, // ADR-1155 HTML capture page over the profile capture API
+	"GET /dashboard/apps/{slug}/profiles/captures/{id}/pprof":                true, // ADR-1155 session-authenticated download adapter
+	"GET /dashboard/apps/{slug}/profiles/captures/{id}/diff":                 true, // ADR-1155 HTML comparison page over the capture diff API
 	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                    true, // scoped HTML/CSRF frequency alert policy adapter
 	"POST /dashboard/apps/{slug}/issues/bulk-actions":                        true, // session/CSRF HTML adapter for the corresponding public Issues API
 	"POST /dashboard/apps/{slug}/issues/saved-views":                         true, // session/CSRF HTML adapter for the corresponding public Issues API
@@ -655,10 +659,14 @@ var dtoExclude = map[string]bool{
 	"BindingVerificationRunListOptions":      true, // Client query builder; filters are declared on the list routes.
 	// ADR-964: client-only filter/paging options; the wire parameters are declared on the route.
 	"EdgeRuleEventsQuery": true,
+	// ADR-732: a fork's and a fork command's failure is an inline object
+	// of their responses in the spec, not a named schema.
+	"AppForkFailure": true,
 	// Edge-protection summary parts are inline objects of
 	// EdgeProtectionResponse in the spec, not named schemas.
 	"EdgeProtectionChallenge": true,
 	"EdgeProtectionCount":     true,
+	"EdgeProtectionPenalty":   true,
 	"EdgeProtectionPreAuth":   true,
 	"EdgeProtectionRejection": true,
 	"EdgeProtectionWAF":       true,
@@ -1570,6 +1578,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "event_subscription_deadlines.go"),
 		filepath.Join(root, "pkg", "api", "workflow_event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", "app_operational_summary.go"),
+		filepath.Join(root, "pkg", "api", "app_forks.go"),       // ADR-732 production forks
+		filepath.Join(root, "pkg", "api", "app_fork_execs.go"),  // ADR-732 fork exec
+		filepath.Join(root, "pkg", "api", "crash_snapshots.go"), // ADR-733 crash snapshots
 		filepath.Join(root, "pkg", "api", "worker_recovery.go"),
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
@@ -1671,6 +1682,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", manifestFile),
 		filepath.Join(root, "pkg", "api", "profiles.go"), // ADR-819
 		filepath.Join(root, "pkg", "api", "profile_investigations.go"),
+		filepath.Join(root, "pkg", "api", "profile_captures.go"), // ADR-1155
 		filepath.Join(root, "pkg", "api", "profile_regressions.go"),
 		filepath.Join(root, "pkg", "api", "profile_deployment_checks.go"),
 		filepath.Join(root, "pkg", "api", "profile_attribution.go"),
@@ -1686,6 +1698,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_rule_waf.go"),                   // kind=waf action (ADR-831)
 		filepath.Join(root, "pkg", "api", "edge_rule_recipe_suggestion_dto.go"), // suggested protections (ADR-20261020105000)
 		filepath.Join(root, "pkg", "api", "edge_rule_challenge.go"),             // kind=challenge action (ADR-831)
+		filepath.Join(root, "pkg", "api", "edge_rule_penalty.go"),               // rule penalty box (ADR-20261022105846)
 		filepath.Join(root, "pkg", "api", cliauthFile),
 		filepath.Join(root, "pkg", "api", "browser_approvals.go"),
 		filepath.Join(root, "pkg", "api", "source_review.go"),

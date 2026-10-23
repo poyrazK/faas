@@ -232,6 +232,10 @@
     - role: internal_pki_renewal
     - role: canary_artifact_retention
     # Compute-only:
+    # ADR 20261022111812: stage the runtime seal-domain identity before
+    # vmmd_service so a vmmd (re)start in this run loads it.
+    - role: seal_domains
+      when: faas_seal_domains_managed | default(false) | bool
     - role: vmmd_service
     # M9: every compute node owns a node-local schedd for heartbeat and
     # recovery decisions. The shared database is remote on this host.

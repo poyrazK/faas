@@ -258,3 +258,20 @@ Pyroscope qualify encoding, profile type IDs and deployment isolation. Promotion
 requires native x86_64 KVM cold boot, snapshot/restore, repeated park cycles,
 leakcheck and measured latency/CPU/RAM overhead at supported workloads. Container
 or nested VM tests do not qualify that lifecycle acceptance.
+
+## Amendment: the installation flag also gates the guest
+
+`FAAS_PROFILING_ENABLED` gated the host side only. apid refuses
+`profiling.enabled` while it is off, but deploys from a source ref copy the
+setting from `gregale.yaml` without that check, and guest-init starts the
+profile bridge, the SDK bootstraps and (ADR-1155) the `pprof_port` collector
+from the guest manifest alone. Such a guest profiled itself and vmmd dropped
+every upload.
+
+imaged now reads `FAAS_PROFILING_ENABLED` too, from the same
+`/etc/faas/profiling.env`. While it is off, imaged writes the guest manifest
+with `profiling.enabled` false and keeps the app's other profiling settings,
+since `pprof_port` also serves on-demand captures (ADR-1155, behind
+`FAAS_PROFILING_ON_DEMAND`). The stored app setting is unchanged, so turning
+the flag on applies it from the next deploy. Deployments made before this
+change keep their manifests until they are redeployed.
