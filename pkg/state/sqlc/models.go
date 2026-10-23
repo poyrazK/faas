@@ -6539,6 +6539,15 @@ type InvocationAttemptHistory struct {
 	RetainUntil      pgtype.Timestamptz
 }
 
+type InvocationBacklogCounter struct {
+	AccountID pgtype.UUID
+	AppID     pgtype.UUID
+	Source    string
+	Slot      int16
+	Pending   int64
+	Bytes     int64
+}
+
 type InvocationEnvironmentQueueAdmission struct {
 	InvocationID   pgtype.UUID
 	EnvironmentID  pgtype.UUID
@@ -10885,6 +10894,8 @@ type ProductControlCustomer struct {
 	AuthOrganizationID pgtype.UUID
 	TrialStartsAt      pgtype.Timestamptz
 	TrialEndsAt        pgtype.Timestamptz
+	PaymentMethodAt    pgtype.Timestamptz
+	TrialResolvedAt    pgtype.Timestamptz
 }
 
 type ProductControlCustomerChange struct {

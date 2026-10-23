@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 )
 
 // PenaltyEdgeRuleMatcher is optional so matchers without penalty support
@@ -229,10 +230,11 @@ func (h *Handler) edgeRulePenalty(r *http.Request, ruleID string) (api.EdgeRuleP
 // applyEdgePenaltyBox refuses a client a penalty box holds, before any
 // other edge gate. The box applies only where its rule still applies with
 // a penalty, so removing the rule or its penalty, disabling it, or putting
-// it in log mode releases its clients. Deployment smoke checks are never
-// refused.
+// it in log mode releases its clients, and so does the edge_penalty_box
+// platform flag leaving the account out (ADR-20261023113721). Deployment
+// smoke checks are never refused.
 func (h *Handler) applyEdgePenaltyBox(w http.ResponseWriter, r *http.Request, app App, deploymentSmoke bool) bool {
-	if h.penaltyBox == nil || deploymentSmoke {
+	if h.penaltyBox == nil || deploymentSmoke || !h.edgeFeatureReleased(platformflags.EdgePenaltyBox, app) {
 		return false
 	}
 	ruleID, left, ok := h.penaltyBox.Boxed(app.ID, challengeClientIP(r))
@@ -253,7 +255,7 @@ func (h *Handler) applyEdgePenaltyBox(w http.ResponseWriter, r *http.Request, ap
 // such as a forged forwarding header or a missing GeoIP database.
 func (h *Handler) penalizeEdgeRuleRejection(r *http.Request, app App, ruleID string) {
 	p, ok := h.edgeRulePenalty(r, ruleID)
-	if !ok {
+	if !ok || !h.edgeFeatureReleased(platformflags.EdgePenaltyBox, app) {
 		return
 	}
 	if h.penaltyBox.Hit(app.ID, ruleID, challengeClientIP(r), p) {

@@ -1641,3 +1641,57 @@ test('members without billing management never load the payment method', async (
   const unavailable = browser(async path => path.endsWith('/product') ? teamResponse(billingManager()) : path.endsWith('/payment-method') ? teamResponse({ available: false }) : undefined);
   await unavailable.signIn(); assert.equal(unavailable.get('payment-section').hidden, true);
 });
+
+// ADR-20261022180921: a plan that needs a card after its trial says when the trial ends, which plan follows, and who can add one.
+const cardTrial = (view, ends) => {
+  view.catalog.spec.plans.starter.requires_payment_method = true; view.catalog.spec.plans.starter.fallback_plan = 'free';
+  view.catalog.spec.plans.free = { label: 'Free', features: { export: { monthly_starts: 5, unit_price_millicents: 25000 } } };
+  view.customer.trial_starts_at = new Date(Date.parse(ends) - 14 * 86400000).toISOString(); view.customer.trial_ends_at = ends;
+  return view;
+};
+test('a trial that needs a card says when it ends, which plan follows and who can add one', async () => {
+  const ends = new Date(Date.now() + 5 * 86400000).toISOString();
+  const notice = `Your trial ends ${ends.slice(0, 10)}. Add a card to keep the Starter plan; without one, your workspace moves to the Free plan. `;
+  const manager = browser(async path => {
+    if (path.endsWith('/product')) return teamResponse(cardTrial(billingManager(), ends));
+    if (path.endsWith('/payment-method')) return teamResponse({ available: true });
+  });
+  await manager.signIn(); await settle();
+  const status = manager.get('trial-status');
+  assert.equal(status.hidden, false); assert.equal(status.children[0].textContent, notice);
+  assert.equal(status.children[1].tag, 'a'); assert.equal(status.children[1].textContent, 'Add a card'); assert.equal(status.children[1].href, '#payment-title');
+
+  const member = browser(async path => path.endsWith('/product') ? teamResponse(cardTrial(fixture(), ends)) : undefined);
+  await member.signIn();
+  assert.equal(member.get('trial-status').children[1].textContent, 'Ask a workspace member who manages billing to add one.');
+  const elsewhere = browser(async path => path.endsWith('/product') ? teamResponse(cardTrial(billingManager(), ends)) : path.endsWith('/payment-method') ? teamResponse({ available: false }) : undefined);
+  await elsewhere.signIn(); await settle();
+  assert.equal(elsewhere.get('trial-status').children[1].textContent, 'Contact your product team to set up payment.');
+
+  const carded = browser(async path => {
+    if (path.endsWith('/product')) { const view = cardTrial(billingManager(), ends); view.customer.payment_method_at = new Date().toISOString(); return teamResponse(view); }
+    if (path.endsWith('/payment-method')) return teamResponse({ available: true, payment_method: card });
+  });
+  await carded.signIn(); await settle();
+  assert.equal(carded.get('trial-status').hidden, true);
+  const plain = browser(); await plain.signIn();
+  assert.equal(plain.get('trial-status').hidden, true);
+});
+test('an ended trial awaiting a card pauses new runs until a saved card refreshes the plan', async () => {
+  const ended = new Date(Date.now() - 3600000).toISOString();
+  let saved = false;
+  const url = `https://portal.example/v1/product-control/portal?app=exports&workspace=${ids.org}&checkout=cs_test_a1B2`;
+  const b = browser(async path => {
+    if (path.endsWith('/product')) { const view = cardTrial(billingManager(), ended); if (saved) view.customer.payment_method_at = new Date().toISOString(); return teamResponse(view); }
+    if (path.endsWith('/payment-method/complete')) { saved = true; return teamResponse({ available: true, payment_method: card }); }
+    if (path.endsWith('/payment-method')) return teamResponse({ available: true });
+  }, new Map(), url);
+  await waitFor(() => saved && b.get('trial-status').hidden === true);
+  assert.equal(b.calls.filter(call => call.path.endsWith('/product')).length, 2, 'the saved card refreshes the plan once');
+  assert.equal(b.get('features').children[0].children.find(el => el.tag === 'form').children.at(-1).disabled, false);
+
+  const held = browser(async path => path.endsWith('/product') ? teamResponse(cardTrial(billingManager(), ended)) : path.endsWith('/payment-method') ? teamResponse({ available: true }) : undefined);
+  await held.signIn(); await settle();
+  assert.equal(held.get('trial-status').children[0].textContent, `Your trial ended ${ended.slice(0, 10)}. New runs wait for a card on file; without one, your workspace moves to the Free plan shortly. `);
+  assert.equal(held.get('features').children[0].children.find(el => el.tag === 'form').children.at(-1).disabled, true);
+});

@@ -341,6 +341,52 @@ The install tokens are the gain now: they grant read access to customer
 repositories, and once writes are domain-only, within the hour the fleet
 identity opens none that is still valid.
 
+## Implemented in the fourth slice: the build domain
+
+- **imaged** loads `domains/build.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_BUILD_IDENTITY_PATH`, a `LoadCredential` drop-in from
+  the `seal_domains` role on compute and single-box hosts. It exports
+  `faas_seal_domain_loaded{domain="build"}`.
+- **imaged keeps two identity lists.** App and job private-registry
+  passwords open with a registry-only list: the build domain first, then
+  the fleet and host identities. Crash captures, a `runtime` column imaged
+  still reads (section 3), keep the fleet and host identities and never see
+  the build identity.
+- **apid seals both registry password writers** (app and job credentials)
+  to `FAAS_SEAL_DOMAIN_BUILD_RECIPIENT_PATH` under
+  `FAAS_SEAL_DOMAIN_BUILD_WRITES` (empty, `fleet`, `dual` or `domain`, as for
+  outbound). It holds only the public recipient.
+- **Re-seal:** `gregalectl seal-domain migrate --domain build
+  --readers-verified` re-seals both tables with compare-and-swap writes. It
+  shares one byte-envelope re-seal with the outbound migration. Like the
+  runtime one, it runs on a compute host, the only place `build.age` lives.
+- **Staging:** the role stages the identity, restarts imaged and proves the
+  probe on compute hosts. It stages the recipient and apid's drop-in on
+  control-plane hosts. Until writes are `domain`, apid also seals to the
+  fleet key, so the two converges can run in either order.
+
+## CD and node join stage the domain keys
+
+Each domain's key pair is a pair of GitHub environment secrets:
+`SEAL_DOMAIN_<DOMAIN>_AGE_KEY` and `SEAL_DOMAIN_<DOMAIN>_AGE_RECIPIENT`.
+
+- `scripts/ci/seal_domain_vars.sh` writes the files a host role needs on the
+  runner and points the `seal_domains` role at them:
+  - control plane: the `outbound` and `source` identities and every
+    recipient;
+  - compute: the `runtime` and `build` identities.
+- The control-plane converges (the full one and the host-configuration
+  lane) and the compute join run the role with those variables.
+- A join whose `seal-domain verify` fails leaves the node drained.
+- Each domain's public recipient is written as a comment, so a rotated key
+  changes the converge contract hash.
+- Write modes and `readers_verified` stay in the environment's Ansible
+  variables. CD refuses a variables file that sets the key variables itself.
+- `gregalectl seal-domain verify --recipient-only` checks that a staged
+  recipient is the one readers published the probe with. The role runs it
+  before apid's writer drop-in, so a recipient from another pair stops the
+  converge instead of making apid seal to a key no reader holds.
+
 Later slices:
 - the other domains, in the order above;
 - re-sealing the short-lived copies in `app_config_guard_secrets` and
@@ -348,7 +394,6 @@ Later slices:
   cover;
 - the contract steps;
 - meterd sending test alerts;
-- role-scoped staging in node join;
 - dropping `github_webhook_secrets.secret_value` once no release reads it.
 
 ## Consequences

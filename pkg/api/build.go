@@ -57,6 +57,15 @@ const (
 	FrameworkAuto BuildFramework = "auto"
 )
 
+// GoBuildToolchain is the patched Go release Railpack installs for go124 and
+// go124-alpine function builds and the Go starters' go.mod names (issue
+// #2641). The runtime names are historical. Railpack applies this pin over
+// the source's go.mod, so it is an exact release: Railpack 0.38 resolved the
+// line "1.26" to 1.26.9, one patch behind. The go.mod go line still sets the
+// module's language version and GODEBUG defaults. Keep it equal to go.mod's
+// toolchain directive (TestGoToolchainVersionMatchesRepositoryToolchain).
+const GoBuildToolchain = "1.26.10"
+
 // BuildManifest is the /etc/faas/build.json contract — the single handoff
 // from builderd (host) to guest-init (inside the builder VM). Its fields
 // cover everything guest-init needs to run one build to completion without

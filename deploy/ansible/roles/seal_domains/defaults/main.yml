@@ -56,5 +56,24 @@ faas_seal_domain_source_writes: ""
 # rollback window. Required for writes=domain.
 faas_seal_domain_source_readers_verified: false
 
+# Operator-local files from `gregalectl seal-domain init --domain build`.
+# Compute hosts stage the identity (imaged opens registry passwords),
+# control-plane hosts the recipient (apid seals to it).
+faas_seal_domain_build_identity_src: ""
+faas_seal_domain_build_recipient_src: ""
+
+# Who apid seals app and job private-registry passwords to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose imaged holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_build_readers_verified
+faas_seal_domain_build_writes: ""
+
+# Set true only after every imaged reports
+# faas_seal_domain_loaded{domain="build"} 1 and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_build_readers_verified: false
+
 faas_seal_domain_db_env: /etc/faas/compute-db.env
 faas_seal_domain_textfile_dir: /var/lib/node_exporter/textfile_collector

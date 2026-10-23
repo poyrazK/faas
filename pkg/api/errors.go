@@ -686,6 +686,10 @@ const (
 	// ADR-961: an edge-rule mutation's If-Match named a rule-set version
 	// that is no longer the app's latest.
 	CodeEdgeRulesVersionMismatch = "edge_rules_version_mismatch"
+	// CodeEdgeFeatureUnavailable refuses configuring an edge rule feature
+	// (challenge rules, WAF warn and block, penalties) that its platform
+	// flag has not released to the account (ADR-20261023113721).
+	CodeEdgeFeatureUnavailable = "edge_feature_unavailable"
 	// ADR-963 reusable edge-rule lists.
 	CodeEdgeRuleListNotFound            = "edge_rule_list_not_found"
 	CodeEdgeRuleListExists              = "edge_rule_list_exists"
@@ -1296,6 +1300,9 @@ const (
 	// lets the dashboard render a "move to Scale to lift the cap"
 	// hint without parsing prose.
 	CodePlanQueueDepth = "plan_queue_depth"
+	// CodePlanQueueBacklogBytes: the account's pending queue messages hold
+	// the plan's MaxQueueBacklogBytesPerAccount (ADR-20261022105723).
+	CodePlanQueueBacklogBytes = "plan_queue_backlog_bytes"
 	// CodeCustomMetricLimit: a push of a NEW ADR-202 metric name by an app
 	// already at MaxCustomMetricsPerApp. A push to an EXISTING name never
 	// produces this — it is an upsert and cannot grow the count.
@@ -2032,7 +2039,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
-	case CodeAutomationInvalid:
+	case CodeAutomationInvalid, CodeEdgeFeatureUnavailable:
 		return http.StatusUnprocessableEntity
 	case CodeEdgeRulesVersionMismatch:
 		return http.StatusPreconditionFailed
@@ -2334,7 +2341,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeCliAuthUnavailable, CodeBrowserApprovalUnavailable:
 		return http.StatusGone
-	case CodePlanQueueDepth, CodePlanDelayedCap:
+	case CodePlanQueueDepth, CodePlanDelayedCap, CodePlanQueueBacklogBytes:
 		return http.StatusForbidden
 	case CodePlanSourceBytes:
 		return http.StatusRequestEntityTooLarge
@@ -6071,6 +6078,18 @@ func ErrPlanQueueDepth(limit, observed int) *Problem {
 		WithDocs(docsBase + "/event-driven#queue-depth")
 }
 
+// ErrPlanQueueBacklogBytes is returned on a queue send when the account's
+// pending queue messages already hold the plan's
+// MaxQueueBacklogBytesPerAccount (ADR-20261022105723). Observed is the
+// payload bytes they hold.
+func ErrPlanQueueBacklogBytes(limit, observed int64) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanQueueBacklogBytes,
+		"Account queue backlog full",
+		fmt.Sprintf("the plan caps this account's pending queue messages at %d bytes; observed %d.", limit, observed)).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/event-driven#queue-backlog")
+}
+
 // ErrPlanSourceBytes is returned when a request body for an event-shaped
 // surface (sync / async / queue :send / delayed-task create) exceeds
 // the per-plan MaxSourceBytesPerInvocation.
@@ -6541,6 +6560,14 @@ func ErrEdgeRuleNotFound(id string) *Problem {
 func ErrEdgeRuleConflict(reason string) *Problem {
 	return NewProblem(http.StatusConflict, CodeEdgeRuleConflict,
 		"Edge rule conflict", reason)
+}
+
+// ErrEdgeFeatureUnavailable is the 422 returned when a rule would switch on
+// an edge feature its platform flag has not released to the account
+// (ADR-20261023113721). feature names it, capitalized, in the plural.
+func ErrEdgeFeatureUnavailable(feature string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeEdgeFeatureUnavailable, "Edge feature not released",
+		feature+" are not yet available to this account. Rules that already use them can be edited, disabled and deleted.")
 }
 
 // ErrPlanLimitEdgeRules is the 403 returned when

@@ -7355,8 +7355,14 @@ type PlanWorkload struct {
 	ImageProcess     *ComposeProcess     `json:"image_process,omitempty"`
 	// BuildTarget and BuildArgs show a source-built service's Compose build
 	// options (ADR-20261019142544); argument values stay out of plans.
-	BuildTarget         string            `json:"build_target,omitempty"`
-	BuildArgs           []string          `json:"build_args,omitempty"`
+	BuildTarget string   `json:"build_target,omitempty"`
+	BuildArgs   []string `json:"build_args,omitempty"`
+	// SecretFiles are the Compose secrets written to /run/secrets
+	// (ADR-20261023090000); they name app secrets, never values.
+	SecretFiles []SecretFile `json:"secret_files,omitempty"`
+	// Resources are the Compose deploy.replicas and resource limits the
+	// service declares (ADR-20261023120000).
+	Resources           *ComposeResources `json:"resources,omitempty"`
 	Command             []string          `json:"command"`
 	DependsOn           []string          `json:"depends_on,omitempty"`
 	DependsOnConditions map[string]string `json:"depends_on_conditions,omitempty"`
