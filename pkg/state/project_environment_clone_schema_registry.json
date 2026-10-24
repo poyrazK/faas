@@ -7169,6 +7169,26 @@
     "kind": "operational"
   },
   {
+    "table": "instance_quiet_pauses",
+    "columns": [
+      "ended_at",
+      "instance_id",
+      "node_id",
+      "recorded_at",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "quiet_pause_watermarks",
+    "columns": [
+      "covered_until",
+      "node_id",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "instance_runtime_config_receipts",
     "columns": [
       "acknowledged_at",
