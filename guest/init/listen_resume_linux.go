@@ -319,6 +319,12 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 		HostTimeUnixNano int64  `json:"hostTimeUnixNano"`
 		Entropy          string `json:"entropy"`     // base64; decode + ioctl(RNDADDENTROPY)
 		Traceparent      string `json:"traceparent"` // W3C; empty is tolerated (issues PR-4)
+		// QualificationReceipt is sent only by a native qualification
+		// restore: re-attest the boot configuration under a fresh token.
+		QualificationReceipt *struct {
+			Token  string `json:"token"`
+			MACKey string `json:"macKey"` // hex; never logged
+		} `json:"qualificationReceipt"`
 	}
 	if err := json.Unmarshal(body, &req); err != nil {
 		log.Warn("vsock resume body parse", "err", err)
@@ -410,6 +416,10 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	}
 	timings.TotalUs = time.Since(received).Microseconds()
 	_, _ = f.Write(resumeAckFrame(restoreReseedContractHolds(), timings))
+	if receipt := req.QualificationReceipt; receipt != nil {
+		// vmmd opens the restore's guest-event channel only after this ack.
+		go emitQualificationRestoreReceiptFn(log, receipt.Token, receipt.MACKey)
+	}
 	if warmBuilderEnabled.Load() {
 		signalWarmBuilderResume()
 	}

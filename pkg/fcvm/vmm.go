@@ -2946,14 +2946,22 @@ func (v *JailerVMM) TriggerResumeHook(ctx context.Context, l Lease, hostTimeUnix
 }
 
 func (v *JailerVMM) triggerResumeHookOnce(ctx context.Context, l Lease, hostTimeUnixNano int64, observed *runtimeResumeHookAcknowledgment) error {
-	return v.triggerResumeHookObservedWithPeer(ctx, l, hostTimeUnixNano, nil, observed)
+	return v.triggerResumeHookObservedWithPeer(ctx, l, hostTimeUnixNano, qualificationRestoreReceiptControl{}, nil, observed)
 }
 
-func (v *JailerVMM) triggerResumeHookOnceWithPeer(ctx context.Context, l Lease, hostTimeUnixNano int64, validatePeer func(net.Conn) error) error {
-	return v.triggerResumeHookObservedWithPeer(ctx, l, hostTimeUnixNano, validatePeer, nil)
+func (v *JailerVMM) triggerResumeHookOnceWithPeer(ctx context.Context, l Lease, hostTimeUnixNano int64, receipt qualificationRestoreReceiptControl, validatePeer func(net.Conn) error) error {
+	return v.triggerResumeHookObservedWithPeer(ctx, l, hostTimeUnixNano, receipt, validatePeer, nil)
 }
 
-func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lease, hostTimeUnixNano int64, validatePeer func(net.Conn) error, observed *runtimeResumeHookAcknowledgment) error {
+// resumeHookQualificationReceipt asks a restored qualification guest to
+// re-attest the configuration it loaded at boot under a fresh token. Only the
+// native qualification restore sends it, over its peer-checked connection.
+type resumeHookQualificationReceipt struct {
+	Token  string `json:"token"`
+	MACKey string `json:"macKey"` // hex; never logged
+}
+
+func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lease, hostTimeUnixNano int64, receipt qualificationRestoreReceiptControl, validatePeer func(net.Conn) error, observed *runtimeResumeHookAcknowledgment) error {
 	// Defense-in-depth: refuse to dial with a half-built VMM or empty instance.
 	// Without this guard, a refactor that passes an uninitialised JailerVMM
 	// (test seam, future caller) would dial a malformed UDS path and return a
@@ -3051,11 +3059,17 @@ func (v *JailerVMM) triggerResumeHookObservedWithPeer(ctx context.Context, l Lea
 	if _, err := rand.Read(entropy); err != nil {
 		return fmt.Errorf("vmm: read host entropy: %w", err)
 	}
+	var qualificationReceipt *resumeHookQualificationReceipt
+	if receipt != (qualificationRestoreReceiptControl{}) {
+		qualificationReceipt = &resumeHookQualificationReceipt{Token: receipt.token, MACKey: receipt.macKey}
+	}
 	body, err := json.Marshal(struct {
-		HostTimeUnixNano int64  `json:"hostTimeUnixNano"`
-		Entropy          string `json:"entropy"`     // base64; guest decodes + ioctl(RNDADDENTROPY)
-		Traceparent      string `json:"traceparent"` // W3C; empty is tolerated (guest no-ops)
-	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent})
+		HostTimeUnixNano     int64                           `json:"hostTimeUnixNano"`
+		Entropy              string                          `json:"entropy"`     // base64; guest decodes + ioctl(RNDADDENTROPY)
+		Traceparent          string                          `json:"traceparent"` // W3C; empty is tolerated (guest no-ops)
+		QualificationReceipt *resumeHookQualificationReceipt `json:"qualificationReceipt,omitempty"`
+	}{HostTimeUnixNano: hostTimeUnixNano, Entropy: base64.StdEncoding.EncodeToString(entropy), Traceparent: traceparent,
+		QualificationReceipt: qualificationReceipt})
 	if err != nil {
 		return fmt.Errorf("vmm: marshal resume body: %w", err)
 	}

@@ -3764,6 +3764,9 @@ type WakeRequest struct {
 	// FIFO. They are deliberately unexported and never cross the gRPC wire.
 	preparedSecretsEnvJSON []byte
 	preparedAPIEnvJSON     []byte
+	// qualificationRestoreReceipt is a native qualification restore's fresh
+	// guest receipt control. It is sent with the resume hook, never staged.
+	qualificationRestoreReceipt qualificationRestoreReceiptControl
 	// EgressAllowlist (ADR-031, tier-2 of the network roadmap): per-app
 	// outbound IPv4/v6 allowlist. Each entry is a CIDR string (e.g.
 	// "1.2.3.0/24"); empty slice = current behaviour (no allowlist rule

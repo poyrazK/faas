@@ -55,9 +55,54 @@ passed on n2 under the runtime-capture work.
   booting candidates that every capture would then reject.
 - Production behaviour is unchanged until an operator sets the option.
 
+## Amendment 1 (2026-10-24): restore delivers its receipt control over the resume hook
+
+The first n2 run (`bindq-e1837337bf`) booted both candidates, passed the
+source smoke and native capture, and retired both VMs. The restore then
+failed with:
+
+```
+native restore load: verify original layer.ext4: storage: artifact differs from original receipt
+```
+
+Restore was staging pre-boot files (secrets, API env with a fresh receipt
+token, resolver, CA) into the captured `layer.ext4` before load. Load
+verifies that layer byte-for-byte against the capture receipt, so every
+restore failed. Writing into a filesystem the restored guest already has
+mounted is unsafe anyway. Also, guest-init emitted its configuration receipt
+only at startup. A restored guest never re-reads the env file, so even an
+unchecked layer could not have produced the restored-target receipt that
+ADR-568 requires.
+
+- **No staging on restore.** Restore stages no pre-boot file and unseals no
+  secret. The layer stays identical to the capture, and the strict load
+  check is kept.
+- **A fresh control on the resume hook.** vmmd generates a fresh one-time
+  token and MAC key per restore attempt. It sends them in the resume-hook
+  body as `qualificationReceipt`, an `omitempty` key, over the connection
+  that is already checked against the pinned original process. The waiter
+  expects the restore request's frozen projection: the API env digest and
+  the MAC of the secret key names.
+- **The guest re-attests.** A qualification boot that emitted its receipt
+  keeps only the receipt basis: the API env digest and the sorted secret key
+  names, never secret values. After it acknowledges the resume, guest-init
+  re-emits a receipt with the same encoding under the fresh control.
+  - It retries for up to 30 s, because vmmd opens the restore's guest-event
+    channel only after the acknowledgement.
+  - A guest without a boot basis withholds the receipt.
+  - A malformed control is ignored.
+  - Both cases fail closed on the host.
+- **What the receipt proves.** A capture made from different inputs cannot
+  satisfy the restore request's expectation. Restore still refuses sidecars,
+  so only the main workload re-attests.
+- **Version skew.** An older guest ignores the new key and sends no receipt,
+  so the restore fails closed instead of qualifying without proof.
+
 ## Acceptance record
 
-- Pending: the n2 native GitOps journey run with this option.
+- 2026-10-23, n2 `bindq-e1837337bf`: capture passed; restore failed at the
+  layer verification described in amendment 1.
+- Pending: the n2 native GitOps journey with amendment 1.
 
 ## Rejected alternatives
 

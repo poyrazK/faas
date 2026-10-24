@@ -351,7 +351,7 @@ func TestNativeQualificationManagerRestoresPrivatelyAndRetiresFromRestoreJournal
 		}
 	}
 	restoreVMM := m.vmm.(*recoveryVMMFixture)
-	restoreVMM.restoreQualification = func(_ context.Context, got state.EnvironmentQualificationExecution, lease Lease, req WakeRequest, candidates [2]string, fcVersion, _ string) error {
+	restoreVMM.restoreQualification = func(_ context.Context, got state.EnvironmentQualificationExecution, lease Lease, req WakeRequest, candidates [2]string, fcVersion string) error {
 		if got != target || lease.Instance != target.InstanceID || req.Instance != target.InstanceID ||
 			candidates != [2]string{kernelPath, basePath} || fcVersion != "1.7.0" {
 			return errors.New("fixture: restore did not receive the pinned private execution")
@@ -365,6 +365,12 @@ func TestNativeQualificationManagerRestoresPrivatelyAndRetiresFromRestoreJournal
 		expected := waiter.expected[WorkloadNameMain]
 		token := waiter.token
 		m.mu.Unlock()
+		// The captured layer is verified byte-for-byte, so restore stages no
+		// file and the fresh control travels only with the resume hook.
+		if req.qualificationRestoreReceipt.token != token || !req.qualificationRestoreReceipt.valid() ||
+			len(req.preparedAPIEnvJSON) != 0 || len(req.preparedSecretsEnvJSON) != 0 || len(req.APIEnvEntries) != len(sourceReq.APIEnvEntries) {
+			return errors.New("fixture: restore staged files or lost its fresh receipt control")
+		}
 		return m.MarkEnvironmentQualificationConfigApplied(target.InstanceID, EnvironmentQualificationConfigReceipt{
 			Token: token, Workload: WorkloadNameMain, APIEnvSHA256: expected.apiEnvSHA256,
 			SecretsFileRead: expected.secretsRead, SecretKeysMAC: expected.secretKeysMAC, ConfigMAC: expected.configMAC,

@@ -14,12 +14,15 @@ import (
 // RestoreNativeQualification is the private native restore lifecycle. It uses
 // only the original capture journal and receipt cohort, never generic Restore
 // or its cold-boot fallback, and it does not register ordinary guest receivers.
-func (v *JailerVMM) RestoreNativeQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, lease Lease, req WakeRequest, backingCandidates [2]string, runningFCVersion, serviceDiscoveryIP string) (result error) {
+// It never writes into the captured layer: load verifies that layer against
+// the capture receipt, and the guest already holds the configuration it read
+// at boot. The fresh receipt control rides the resume hook instead.
+func (v *JailerVMM) RestoreNativeQualification(ctx context.Context, frame state.EnvironmentQualificationExecution, lease Lease, req WakeRequest, backingCandidates [2]string, runningFCVersion string) (result error) {
 	r := v.nativeRecovery
 	target, ok := ctx.Value(nativeQualificationRestoreContextKey{}).(nativeQualificationRestoreRecord)
 	if r == nil || r.journal == nil || !ok || target.Execution != frame || frame.InstanceID != lease.Instance ||
 		lease.MemoryMaxMiB != frame.RAMMB || lease.Networkless || lease.IsBuilder || !lease.Plan.Valid() ||
-		len(req.Sidecars) != 0 || len(req.MainDependsOn) != 0 {
+		len(req.Sidecars) != 0 || len(req.MainDependsOn) != 0 || !req.qualificationRestoreReceipt.valid() {
 		return fmt.Errorf("native qualification restore: original target capability and single-workload lease are required: %w", state.ErrConflict)
 	}
 	if err := validateNativeQualificationRunningFCVersion(runningFCVersion); err != nil {
@@ -92,10 +95,6 @@ func (v *JailerVMM) RestoreNativeQualification(ctx context.Context, frame state.
 		return fmt.Errorf("stage receipt-bound snapshot inputs: %w", err)
 	}
 	workloads := buildWorkloadsForRestore(req)
-	if err := v.stagePreBootFilesForOwner(ctx, owner, lease.Instance, workloads, req.preparedSecretsEnvJSON,
-		req.preparedAPIEnvJSON, serviceDiscoveryIP, false); err != nil {
-		return fmt.Errorf("stage frozen qualification runtime: %w", err)
-	}
 	if err := v.ownChrootRoot(root, lease); err != nil {
 		return err
 	}
@@ -125,7 +124,7 @@ func (v *JailerVMM) RestoreNativeQualification(ctx context.Context, frame state.
 	if err := v.applyPreBootCgroupFence(fenceLease, workloads); err != nil {
 		return fmt.Errorf("apply qualification restore cgroup fence: %w", err)
 	}
-	if _, err := v.loadNativeQualificationRestore(ctx, lease, runningFCVersion); err != nil {
+	if _, err := v.loadNativeQualificationRestore(ctx, lease, runningFCVersion, req.qualificationRestoreReceipt); err != nil {
 		return fmt.Errorf("load and resume original capture: %w", err)
 	}
 	channels, err := v.prepareRegisteredNativeQualificationRestoreChannels(ctx, lease)

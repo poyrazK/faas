@@ -79,7 +79,7 @@ func (b nativeLoadSequenceControl) Request(ctx context.Context, socket string, o
 
 type nativeLoadSequenceResume struct{ f *nativeLoadSequenceFixture }
 
-func (b nativeLoadSequenceResume) Resume(ctx context.Context, _ *JailerVMM, owner nativeLaunchRecord) error {
+func (b nativeLoadSequenceResume) Resume(ctx context.Context, _ *JailerVMM, owner nativeLaunchRecord, _ qualificationRestoreReceiptControl) error {
 	f := b.f
 	r, err := f.loads.read(owner.Lease.Instance)
 	if err != nil {
@@ -299,7 +299,7 @@ func TestNativeQualificationRestoreLoadSequenceRetainsOriginalIntentAndCannotRep
 			if outcome == "hook_lost" {
 				f.hookErr = lost
 			}
-			r, err := f.v.loadNativeQualificationRestore(ctx, f.owner.Lease, "1.7.0")
+			r, err := f.v.loadNativeQualificationRestore(ctx, f.owner.Lease, "1.7.0", qualificationRestoreReceiptControl{})
 			if (err == nil) != (outcome == "success") {
 				t.Fatal(outcome, err)
 			}
@@ -322,7 +322,7 @@ func TestNativeQualificationRestoreLoadSequenceRetainsOriginalIntentAndCannotRep
 				}
 				f.ctx = nativeQualificationRestoreContext(f.ctx, f.target)
 			}
-			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0"); err == nil || f.calls != calls || f.hooks != hooks {
+			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0", qualificationRestoreReceiptControl{}); err == nil || f.calls != calls || f.hooks != hooks {
 				t.Fatal("uncertain or completed effect was replayed", err)
 			}
 			for _, file := range f.b.opened {
@@ -346,14 +346,14 @@ func TestNativeQualificationRestoreLoadSequenceRetainsOriginalIntentAndCannotRep
 
 func TestNativeQualificationRestoreLoadRejectsVersionMismatchBeforeEffect(t *testing.T) {
 	f := nativeRestoreLoadSequenceFixture(t)
-	if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.8.0"); err == nil {
+	if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.8.0", qualificationRestoreReceiptControl{}); err == nil {
 		t.Fatal("load accepted a capture from a different Firecracker version")
 	}
 	permit := f.ctx.Value(nativeQualificationRestoreLoadContextKey{}).(*nativeQualificationRestoreLoadPermit)
 	if f.calls != 0 || f.hooks != 0 || permit.used.Load() || permit.completed.Load() {
 		t.Fatal("version mismatch consumed producer authority or reached guest effects")
 	}
-	if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0"); err != nil {
+	if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0", qualificationRestoreReceiptControl{}); err != nil {
 		t.Fatal("version refusal consumed valid producer authority:", err)
 	}
 }
@@ -376,7 +376,7 @@ func TestNativeQualificationRestoreLoadLostJournalAcknowledgementsStopBeforeNext
 				}
 				return err
 			}
-			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0"); !errors.Is(err, lost) {
+			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0", qualificationRestoreReceiptControl{}); !errors.Is(err, lost) {
 				t.Fatal(err)
 			}
 			permit := f.ctx.Value(nativeQualificationRestoreLoadContextKey{}).(*nativeQualificationRestoreLoadPermit)
@@ -385,7 +385,7 @@ func TestNativeQualificationRestoreLoadLostJournalAcknowledgementsStopBeforeNext
 			}
 			calls, hooks := f.calls, f.hooks
 			f.v.nativeRecovery.restoreLoadWrite = nil
-			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0"); err == nil || f.calls != calls || f.hooks != hooks {
+			if _, err := f.v.loadNativeQualificationRestore(f.ctx, f.owner.Lease, "1.7.0", qualificationRestoreReceiptControl{}); err == nil || f.calls != calls || f.hooks != hooks {
 				t.Fatal("lost journal acknowledgement replayed an effect", err)
 			}
 			wantCalls := []int{0, 1, 1, 2, 2, 2}[faultStep]
@@ -471,7 +471,7 @@ func TestNativeQualificationRestoreLoadRefusesUnavailableAuthorityBeforeEffects(
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
 			}
-			if _, err := f.v.loadNativeQualificationRestore(ctx, f.owner.Lease, "1.7.0"); err == nil || f.calls != 0 || f.hooks != 0 {
+			if _, err := f.v.loadNativeQualificationRestore(ctx, f.owner.Lease, "1.7.0", qualificationRestoreReceiptControl{}); err == nil || f.calls != 0 || f.hooks != 0 {
 				t.Fatal("unavailable authority reached native effect", err)
 			}
 			path, _ := f.loads.path(f.owner.Lease.Instance)

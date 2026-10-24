@@ -84,6 +84,44 @@ func TestQualificationConfigReceiptBindsGuestAndDeliveredInputs(t *testing.T) {
 	}
 }
 
+// A restore stages nothing: the fresh control rides the resume hook, and the
+// guest re-attests its boot configuration against this request's projection.
+func TestQualificationRestoreConfigReceiptStagesNoControls(t *testing.T) {
+	m := NewManager(&fakeRunner{}, nil, Paths{}, "test", nil, nil)
+	request := WakeRequest{Instance: uuid.NewString(), APIEnvEntries: []APIEnvEntry{{Key: "MODE", Value: "reviewed"}},
+		SealedEnvEntries: []SealedEnvEntry{{Key: "DATABASE_URL", Ciphertext: []byte("ciphertext")}}}
+	prepared, waiter, err := m.prepareQualificationRestoreConfigReceipt(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer m.clearQualificationConfigReceipt(request.Instance, waiter)
+	control := prepared.qualificationRestoreReceipt
+	if !slices.Equal(prepared.APIEnvEntries, request.APIEnvEntries) || control.token != waiter.token || !control.valid() {
+		t.Fatalf("restore receipt staged env controls or lost its control: %+v %+v", prepared.APIEnvEntries, control)
+	}
+	macKey, err := hex.DecodeString(control.macKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantMAC, err := qualificationSecretKeysMAC(macKey, []string{"DATABASE_URL"})
+	digest, digestErr := QualificationAPIEnvSHA256(request.APIEnvEntries)
+	expected := waiter.expected[WorkloadNameMain]
+	if err != nil || digestErr != nil || len(waiter.expected) != 1 || expected.secretKeysMAC != wantMAC || expected.apiEnvSHA256 != digest || !expected.secretsRead {
+		t.Fatalf("restore receipt expectation = %+v", waiter.expected)
+	}
+	sidecars := request
+	sidecars.Instance = uuid.NewString()
+	sidecars.Sidecars = []WorkloadSpec{{Name: "worker"}}
+	if _, _, err := m.prepareQualificationRestoreConfigReceipt(sidecars); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("restore receipt accepted sidecars: %v", err)
+	}
+	for _, bad := range []qualificationRestoreReceiptControl{{}, {token: waiter.token}, {token: uuid.Nil.String(), macKey: control.macKey}, {token: waiter.token, macKey: control.macKey[:32]}} {
+		if bad.valid() {
+			t.Fatalf("malformed restore receipt control accepted: %+v", bad)
+		}
+	}
+}
+
 func TestQualificationJobConfigReceiptExcludesHostControlsFromCommandConfig(t *testing.T) {
 	m := NewManager(&fakeRunner{}, nil, Paths{}, "test", nil, nil)
 	plain := map[string]string{"API_URL": "http://10.0.0.1:1027/private"}

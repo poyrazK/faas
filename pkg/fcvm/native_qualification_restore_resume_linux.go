@@ -15,7 +15,7 @@ func newNativeQualificationRestoreResumeBackend() nativeQualificationRestoreResu
 	return linuxNativeQualificationRestoreResume{}
 }
 
-func (linuxNativeQualificationRestoreResume) Resume(ctx context.Context, v *JailerVMM, owner nativeLaunchRecord) (result error) {
+func (linuxNativeQualificationRestoreResume) Resume(ctx context.Context, v *JailerVMM, owner nativeLaunchRecord, receipt qualificationRestoreReceiptControl) (result error) {
 	if !liveNativeSnapshotOwner(owner) {
 		return errors.New("native restore hook: original live target is required")
 	}
@@ -28,7 +28,9 @@ func (linuxNativeQualificationRestoreResume) Resume(ctx context.Context, v *Jail
 	if err := checkNativeSnapshotProcess(pinned, owner); err != nil {
 		return err
 	}
-	return v.triggerResumeHookOnceWithPeer(ctx, owner.Lease, time.Now().UnixNano(), func(connection net.Conn) error {
+	// The receipt control crosses only this peer-checked connection to the
+	// pinned original process (ADR 20261023093000).
+	return v.triggerResumeHookOnceWithPeer(ctx, owner.Lease, time.Now().UnixNano(), receipt, func(connection net.Conn) error {
 		return errors.Join(checkNativeSnapshotPeer(connection, owner), checkNativeSnapshotProcess(pinned, owner), ctx.Err())
 	})
 }
