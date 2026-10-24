@@ -88,7 +88,7 @@ func TestE2E_GitHubWebhookEnqueuesDeployments(t *testing.T) {
 		t.Fatalf("create project: %v", err)
 	}
 	if err := store.UpsertGitHubInstall(ctx, state.GitHubInstall{AccountID: accountID,
-		InstallationID: githubE2EInstallation, DefaultBranch: "main"}); err != nil {
+		InstallationID: githubE2EInstallation, DefaultBranch: "main", AuditGithubLogin: "e2e-installer"}); err != nil {
 		t.Fatalf("seed installation: %v", err)
 	}
 
