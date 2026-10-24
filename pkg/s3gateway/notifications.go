@@ -29,7 +29,7 @@ func (h *Handler) routeBucketNotifications(w http.ResponseWriter, r *http.Reques
 		h.unsupported(w, r, req.requestID)
 		return true
 	}
-	permission := state.ObjectBucketPermissionWrite
+	permission := bucketSettingsPermission
 	if r.Method == http.MethodGet {
 		permission = state.ObjectBucketPermissionRead
 	}
