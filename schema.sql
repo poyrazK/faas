@@ -34641,6 +34641,52 @@ UNION
 
 
 --
+-- Name: edge_crawler_ip_ranges; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_crawler_ip_ranges (
+    crawler text NOT NULL,
+    source_url text NOT NULL,
+    prefixes text[] NOT NULL,
+    source_created_at text,
+    fetched_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT edge_crawler_ip_ranges_crawler_check CHECK ((crawler ~ '^[a-z0-9][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT edge_crawler_ip_ranges_prefixes_check CHECK (((cardinality(prefixes) >= 1) AND (cardinality(prefixes) <= 5000))),
+    CONSTRAINT edge_crawler_ip_ranges_source_created_at_check CHECK ((length(source_created_at) <= 64)),
+    CONSTRAINT edge_crawler_ip_ranges_source_url_check CHECK (((source_url ~~ 'https://%'::text) AND (length(source_url) <= 512)))
+);
+
+
+--
+-- Name: edge_penalty_boxes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_penalty_boxes (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    rule_id uuid NOT NULL,
+    client cidr NOT NULL,
+    boxed_until timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT edge_penalty_boxes_client_check CHECK ((((family((client)::inet) = 4) AND (masklen((client)::inet) = 32)) OR ((family((client)::inet) = 6) AND (masklen((client)::inet) = 64))))
+);
+
+
+--
+-- Name: edge_penalty_boxes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.edge_penalty_boxes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.edge_penalty_boxes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: edge_rule_change_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -58077,6 +58123,22 @@ ALTER TABLE ONLY public.domain_doctor_observations
 
 
 --
+-- Name: edge_crawler_ip_ranges edge_crawler_ip_ranges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_crawler_ip_ranges
+    ADD CONSTRAINT edge_crawler_ip_ranges_pkey PRIMARY KEY (crawler);
+
+
+--
+-- Name: edge_penalty_boxes edge_penalty_boxes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_penalty_boxes
+    ADD CONSTRAINT edge_penalty_boxes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: edge_rule_change_log edge_rule_change_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69658,6 +69720,20 @@ CREATE INDEX developer_sync_history_app_created_idx ON public.developer_sync_his
 --
 
 CREATE INDEX domain_doctor_observations_stale_idx ON public.domain_doctor_observations USING btree (observed_at);
+
+
+--
+-- Name: edge_penalty_boxes_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_penalty_boxes_created_idx ON public.edge_penalty_boxes USING btree (created_at);
+
+
+--
+-- Name: edge_penalty_boxes_until_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_penalty_boxes_until_idx ON public.edge_penalty_boxes USING btree (boxed_until);
 
 
 --

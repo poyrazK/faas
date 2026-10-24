@@ -526,6 +526,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/edge-rules/{id}/delete":            true, // HTML form, edge-rule delete (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/security-headers":       true, // HTML form, security-headers preset (issue #1397 G4)
 	"POST /dashboard/apps/{slug}/edge-rules/recipes":                true, // HTML form, protection recipe (ADR-986)
+	"POST /dashboard/apps/{slug}/edge-protection/attack-mode":       true, // HTML form, attack mode switch (ADR-20261021220456)
 	"POST /dashboard/apps/{slug}/queues/dead_letter/{id}/replay":    true, // HTML form, queue DLQ replay (issue #1397 G7)
 	"POST /dashboard/jobs/{name}/policy":                            true, // HTML form, scheduled-work policy editor (ADR-385)
 	"POST /dashboard/jobs/{name}/runs/{id}/replay-failed":           true, // HTML form, failed job partition replay (ADR-385)
@@ -1703,6 +1704,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_rule_waf.go"),                   // kind=waf action (ADR-831)
 		filepath.Join(root, "pkg", "api", "edge_rule_recipe_suggestion_dto.go"), // suggested protections (ADR-20261020105000)
 		filepath.Join(root, "pkg", "api", "edge_rule_challenge.go"),             // kind=challenge action (ADR-831)
+		filepath.Join(root, "pkg", "api", "edge_attack_mode.go"),                // attack mode (ADR-20261021220456)
 		filepath.Join(root, "pkg", "api", "edge_rule_penalty.go"),               // rule penalty box (ADR-20261022105846)
 		filepath.Join(root, "pkg", "api", cliauthFile),
 		filepath.Join(root, "pkg", "api", "browser_approvals.go"),

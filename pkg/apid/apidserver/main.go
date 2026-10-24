@@ -809,6 +809,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedPostgresHealthCollector(ctx)
 		go srv.runAppHealthCollector(ctx)
+		go srv.runEdgeCrawlerRangesRefresher(ctx)
 		go mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log, srv.mcpReadinessPreview)
 		readinessMonitor := &mcpreadiness.MonitorRunner{Handler: mcpreadiness.New(srv.store, srv.mcpReadinessPreview, nil), Identities: hostIdentitiesForUnseal, Log: log}
 		go readinessMonitor.Run(ctx)

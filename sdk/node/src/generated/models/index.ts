@@ -738,6 +738,8 @@ export type { DurableEntityRetryResponse } from './DurableEntityRetryResponse.js
 export type { DurableEntityScope } from './DurableEntityScope.js';
 export type { DurableEntityStateExport } from './DurableEntityStateExport.js';
 export type { DurableEntityValidatorDeploymentInfo } from './DurableEntityValidatorDeploymentInfo.js';
+export type { EdgeAttackModeStatus } from './EdgeAttackModeStatus.js';
+export type { EdgeProtectionAICrawler } from './EdgeProtectionAICrawler.js';
 export type { EdgeProtectionResponse } from './EdgeProtectionResponse.js';
 export type { EdgeRuleAsyncAction } from './EdgeRuleAsyncAction.js';
 export type { EdgeRuleBudgetAction } from './EdgeRuleBudgetAction.js';
@@ -779,6 +781,7 @@ export type { EgressCircuitBreakerPolicy } from './EgressCircuitBreakerPolicy.js
 export type { EgressFlowLogEntry } from './EgressFlowLogEntry.js';
 export type { EgressFlowLogResponse } from './EgressFlowLogResponse.js';
 export type { EnableAlertPresetRequest } from './EnableAlertPresetRequest.js';
+export type { EnableEdgeAttackModeRequest } from './EnableEdgeAttackModeRequest.js';
 export type { EnvDiffCell } from './EnvDiffCell.js';
 export type { EnvDiffKind } from './EnvDiffKind.js';
 export type { EnvDiffResponse } from './EnvDiffResponse.js';

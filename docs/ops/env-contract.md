@@ -233,6 +233,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_E2E_TRACING_SERVER_BINARY` | shared | `dev-only` |  |  | `` | test-harness only; prebuilt ADR-958 tracing fixture for hosts without a matching Go toolchain |
 | `FAAS_E2E_VMMD_EXTRA_TOML` | shared | `dev-only` |  |  | `` | test-harness only; extra vmmd.toml lines from e2etest.OverrideVMMDConfig (e.g. the vmmd restart adoption switches); must never be set on a production host |
 | `FAAS_E2E_VMMD_SOCKET` | shared | `dev-only` |  |  | `` | test-harness only; pre-bound VMMD socket used by KVM-free general-path acceptance; must never be set on a production host |
+| `FAAS_EDGE_CRAWLER_RANGES_REFRESH` | apid | `default` |  |  | `` | ADR-20261022083601: "0" turns off the refresh of crawler operators' published IP ranges on installs without outbound internet; gateways then verify search crawlers by DNS only and never verify AI crawlers |
 | `FAAS_EDGE_WAF_INLINE_DISABLED` | gatewayd-internal | `default` |  |  | `` | ADR-831 amendment 4 operator kill switch; "1" turns off in-path kind=waf checks so warn and block rules only observe |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_EGRESS_CIRCUIT_BREAKER` | schedd | `default` |  |  | `` | ADR-201 §3; off by default — an open circuit rejects a tenant's connections to their own upstream |
@@ -509,6 +510,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_MIGRATE_LIVE_MAX_PER_TICK` | schedd | `default` |  |  | `` |  |
 | `FAAS_MIGRATING_WATCHDOG_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_MIGRATING_WATCHDOG_TICK_LIMIT` | schedd | `default` |  |  | `` |  |
+| `FAAS_NATIVE_RUNTIME_SNAPSHOT_ROOT` | imaged, schedd | `default` |  |  | `` | vmmd's private tree for native runtime snapshots (ADR 20261022184951 amendment 1); default /srv/fc/native-snap, read-only to these daemons; an absent tree changes nothing |
 | `FAAS_NODE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, realtimed, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |

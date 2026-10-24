@@ -59,11 +59,13 @@ const (
 	EdgeWAFBlocking = "edge_waf_blocking"
 	EdgeChallenge   = "edge_challenge"
 	EdgePenaltyBox  = "edge_penalty_box"
+	EdgeAttackMode  = "edge_attack_mode"
+	EdgeAICrawlers  = "edge_ai_crawlers"
 )
 
 // EdgeFeatures are the edge rule features apid refuses to configure and
 // gatewayd-internal stops enforcing while their flag is off for an account.
-var EdgeFeatures = []string{EdgeWAFBlocking, EdgeChallenge, EdgePenaltyBox}
+var EdgeFeatures = []string{EdgeWAFBlocking, EdgeChallenge, EdgePenaltyBox, EdgeAttackMode, EdgeAICrawlers}
 
 // RealtimePreviews are the flags apid decides per endpoint and sends to
 // realtimed with the endpoint's registration (ADR 20261021080640).
@@ -302,8 +304,9 @@ var catalog = []Spec{
 		RetireBy:    "2027-01-31",
 	},
 	{
-		Key:   EdgeWAFBlocking,
-		Label: "Edge WAF warn and block",
+		Key:        EdgeWAFBlocking,
+		Capability: "edge-waf-blocking",
+		Label:      "Edge WAF warn and block",
 		Description: "Release warn and block modes of WAF edge rules (kind=waf) to accounts. Off by default until launch; observe mode is not gated. " +
 			"While it is off apid refuses creating a warn or block rule or switching a rule to one, and gateways inspect existing warn and block rules in observe mode only.",
 		ADR:        "ADR-20261023113721",
@@ -312,8 +315,9 @@ var catalog = []Spec{
 		RetireBy:   "2027-03-31",
 	},
 	{
-		Key:   EdgeChallenge,
-		Label: "Edge challenge rules",
+		Key:        EdgeChallenge,
+		Capability: "edge-browser-challenge",
+		Label:      "Edge challenge rules",
 		Description: "Release challenge edge rules (kind=challenge, with difficulty escalation) to accounts. Off by default until launch. " +
 			"While it is off apid refuses creating a challenge rule or switching one on, and gateways serve no challenge pages, so existing rules are inert.",
 		ADR:        "ADR-20261023113721",
@@ -322,11 +326,36 @@ var catalog = []Spec{
 		RetireBy:   "2027-03-31",
 	},
 	{
-		Key:   EdgePenaltyBox,
-		Label: "Edge penalty box",
+		Key:        EdgePenaltyBox,
+		Capability: "edge-penalty-box",
+		Label:      "Edge penalty box",
 		Description: "Release edge rule penalties (penalty box) to accounts. Off by default until launch. " +
 			"While it is off apid refuses adding a penalty to a rule or switching on a rule that has one, and gateways neither box clients nor refuse boxed ones; the rules themselves keep enforcing.",
 		ADR:        "ADR-20261023113721",
+		Consumers:  []string{"apid", "gatewayd-internal"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-03-31",
+	},
+	{
+		Key:        EdgeAttackMode,
+		Capability: "edge-attack-mode",
+		Label:      "Edge attack mode",
+		Description: "Release attack mode (an app-wide managed challenge rule) to accounts. Off by default until launch. Attack mode is a challenge rule, " +
+			"so switching it on also needs edge_challenge. While it is off apid refuses switching attack mode on (switching it off always works), " +
+			"and gateways leave an active attack-mode rule inert; other challenge rules are unaffected.",
+		ADR:        "ADR-20261021220456",
+		Consumers:  []string{"apid", "gatewayd-internal"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-03-31",
+	},
+	{
+		Key:        EdgeAICrawlers,
+		Capability: "edge-ai-crawler-controls",
+		Label:      "Edge AI crawler conditions",
+		Description: "Release the ai_crawler, ai_crawler_purpose and verified_ai_crawler edge-rule conditions (and the control-ai-crawlers recipe) to accounts. " +
+			"Off by default until launch. While it is off apid refuses creating a rule that tests them or switching one on, and gateways evaluate them as absent; " +
+			"AI crawler counts in the edge-protection summary and the crawler range refresh are not gated.",
+		ADR:        "ADR-20261022083601",
 		Consumers:  []string{"apid", "gatewayd-internal"},
 		Attributes: []Attribute{AttributePlan},
 		RetireBy:   "2027-03-31",

@@ -982,6 +982,10 @@ type AppEdgeRulesData struct {
 	ErrorMessage           string
 	// Protection summarizes what the edge rejected over the last hour.
 	Protection api.EdgeProtectionResponse
+	// AttackModeAvailable is false while attack mode is not released to the
+	// account (ADR-20261021220456 amendment 1); the card then offers no
+	// switch to turn it on.
+	AttackModeAvailable bool
 	// Events is the ADR-964 security-events section.
 	Events EdgeRuleEventsPageData
 	// Recipes is the protection-recipes section (ADR-986).
@@ -1111,6 +1115,9 @@ type EdgeRulePageItem struct {
 	SecurityPreset bool
 	// AppWide is set for a match_host "@app" rule (ADR-1191).
 	AppWide bool
+	// AttackMode is set for the app's attack-mode rule
+	// (ADR-20261021220456), which changes only through its switch.
+	AttackMode bool
 	// ADR-960/964: name, mode and 24 h hit counts.
 	Name       string
 	Mode       string
@@ -1120,6 +1127,10 @@ type EdgeRulePageItem struct {
 	// 6-hour totals and their sum.
 	SparkPoints string
 	Matches7d   int64
+	// Unreleased labels the gated features the rule uses that are not yet
+	// available to the account (ADR-20261023113721); the edge does not
+	// enforce them.
+	Unreleased []string
 }
 
 // CorsPresetPageItem is the read-only preset summary shown beside an app's

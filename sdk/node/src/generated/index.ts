@@ -744,6 +744,8 @@ export type { DurableEntityRetryResponse } from './models/DurableEntityRetryResp
 export type { DurableEntityScope } from './models/DurableEntityScope.js';
 export type { DurableEntityStateExport } from './models/DurableEntityStateExport.js';
 export type { DurableEntityValidatorDeploymentInfo } from './models/DurableEntityValidatorDeploymentInfo.js';
+export type { EdgeAttackModeStatus } from './models/EdgeAttackModeStatus.js';
+export type { EdgeProtectionAICrawler } from './models/EdgeProtectionAICrawler.js';
 export type { EdgeProtectionResponse } from './models/EdgeProtectionResponse.js';
 export type { EdgeRuleAsyncAction } from './models/EdgeRuleAsyncAction.js';
 export type { EdgeRuleBudgetAction } from './models/EdgeRuleBudgetAction.js';
@@ -785,6 +787,7 @@ export type { EgressCircuitBreakerPolicy } from './models/EgressCircuitBreakerPo
 export type { EgressFlowLogEntry } from './models/EgressFlowLogEntry.js';
 export type { EgressFlowLogResponse } from './models/EgressFlowLogResponse.js';
 export type { EnableAlertPresetRequest } from './models/EnableAlertPresetRequest.js';
+export type { EnableEdgeAttackModeRequest } from './models/EnableEdgeAttackModeRequest.js';
 export type { EnvDiffCell } from './models/EnvDiffCell.js';
 export type { EnvDiffKind } from './models/EnvDiffKind.js';
 export type { EnvDiffResponse } from './models/EnvDiffResponse.js';

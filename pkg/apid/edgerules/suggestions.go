@@ -36,7 +36,7 @@ func (s *Service) GetEdgeRuleSuggestions(w http.ResponseWriter, r *http.Request,
 	if !ok {
 		return
 	}
-	out, err := s.RecipeSuggestions(r.Context(), app, days)
+	out, err := s.RecipeSuggestions(r.Context(), acct, app, days)
 	if err != nil {
 		s.Host.Logger().Warn("edge-rule suggestions", "app_id", app.ID, "err", err)
 		api.WriteProblem(w, api.ErrCapacity("could not read request telemetry for suggestions"))
@@ -46,8 +46,10 @@ func (s *Service) GetEdgeRuleSuggestions(w http.ResponseWriter, r *http.Request,
 }
 
 // RecipeSuggestions ranks protection recipes for app from the last days of
-// request telemetry and its current rules.
-func (s *Service) RecipeSuggestions(ctx context.Context, app state.App, days int) (api.EdgeRuleRecipeSuggestionsResponse, error) {
+// request telemetry and its current rules. A challenge alternative is
+// offered only once challenge rules are released to acct
+// (ADR-20261023113721).
+func (s *Service) RecipeSuggestions(ctx context.Context, acct state.Account, app state.App, days int) (api.EdgeRuleRecipeSuggestionsResponse, error) {
 	until := time.Now().UTC()
 	since := until.AddDate(0, 0, -days)
 	store := s.Host.Store()
@@ -90,6 +92,13 @@ func (s *Service) RecipeSuggestions(ctx context.Context, app state.App, days int
 	suggestions := api.SuggestEdgeRuleRecipes(signals)
 	if suggestions == nil {
 		suggestions = []api.EdgeRuleRecipeSuggestion{}
+	}
+	if !s.FeatureReleased(acct, api.EdgeFeatureChallenge) {
+		for i := range suggestions {
+			if alt := suggestions[i].Alternative; alt != nil && alt.Recipe == api.EdgeRuleRecipeChallengePath {
+				suggestions[i].Alternative = nil
+			}
+		}
 	}
 	return api.EdgeRuleRecipeSuggestionsResponse{Window: fmt.Sprintf("%dd", days), Since: since, Suggestions: suggestions}, nil
 }
