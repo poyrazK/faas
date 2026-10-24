@@ -50,7 +50,7 @@ func (p *Provider) WithPipelineSQL(ctx context.Context, d managedpostgres.Databa
 		return managedpostgres.ErrUnavailable
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err = tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtextextended($1,0))`, role.schemaOwner); err != nil {
+	if _, err = tx.Exec(ctx, `SELECT pg_catalog.pg_advisory_xact_lock(pg_catalog.hashtextextended($1,0))`, role.schemaOwner); err != nil {
 		return managedpostgres.ErrUnavailable
 	}
 	if err = initializeCredentialSchema(ctx, tx, role); err != nil {
