@@ -123,8 +123,8 @@ func (h *Handler) nativeRuntimeSnapshotKeys(depID string) ([]string, error) {
 	if h.nativeSnapshotRoot == "" {
 		return nil, nil
 	}
-	if _, err := uuid.Parse(depID); err != nil {
-		return nil, nil
+	if uuid.Validate(depID) != nil {
+		return nil, nil //nolint:nilerr // vmmd keys its tree by deployment uuid; any other ID owns nothing there.
 	}
 	return nativeRuntimeSnapshotFiles(h.nativeSnapshotRoot, depID, time.Time{})
 }
