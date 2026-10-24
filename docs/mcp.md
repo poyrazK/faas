@@ -1690,7 +1690,7 @@ separately requested replanning, preserve ambiguous original retries, and use
 consented exact native observations to distinguish receipts from completion.
 Future mutations require separate explicit instruction and existing guarded
 tools. Plan-ID completion never enumerates IDs; use consented action history.
-Catalog: 57 read/planning tools, 66 with writes enabled, eight prompts and eight
+Catalog: 58 read/planning tools, 67 with writes enabled, eight prompts and eleven
 resource templates. The pinned Codex app-server API has no prompt-get RPC;
 prompt retrieval is covered by native MCP SDK clients on both supported protocols,
 while Codex acceptance verifies tool/resource compatibility. See

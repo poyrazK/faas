@@ -27,7 +27,10 @@ restart/refresh in all three read-only profiles with zero model requests and
 native writes; positive receipt recovery uses native store and MCP fixtures.
 MemStore/PostgreSQL, native HTTP read-only/ownership, CLI and Go SDK tests pass;
 Node build/unit/smoke/generator tests and 70 Python tests pass. SQLC
-regeneration and SDK replay are clean.
+regeneration and SDK replay are clean. Affected core packages pass lint. Full
+Go SDK lint reports the same 56 findings as the exact baseline snapshot, all
+in unchanged files; this feature introduces none. Spec/docs, typed-client
+coverage and test-store/seal-domain gates pass.
 Native/provider deployment qualification remains separate. See
 [ADR-20261024210000](adr/20261024210000-management-mcp-budget-outcomes.md).
 

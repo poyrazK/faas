@@ -625,6 +625,7 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/release-review":                                             "GetAppReleaseReview",
 	"GET /v1/apps/{slug}/rollouts/{id}/observation":                                  "GetWorkerRolloutObservation",
 	"GET /v1/apps/{slug}/route-budgets":                                              "GetEnvironmentRouteBudgets",
+	"GET /v1/apps/{slug}/route-budgets/receipts/{request_id}":                        "GetEnvironmentRouteBudgetReceipt",
 	"PUT /v1/apps/{slug}/route-budgets":                                              "SetEnvironmentRouteBudgets",
 	"POST /v1/apps/{slug}/source-review":                                             "ReviewSourceRef",
 	"POST /v1/projects/{slug}/environments/{environment}/approval-requests":          "RequestBrowserPromotionApproval",
