@@ -69,10 +69,13 @@ Open:
   sizing, which models 0.003-0.013%; needs a `FAAS_E2E_WAF_LOAD_GATE=1` run
   of `TestEdgeWAFInlineLoad_E2E` on the reference node.
 - Challenge solve time on a low-end phone (no measurement yet).
-- Runbooks for the five features' failure modes.
 - The 14-day reviews at the internal and design-partner stages (penalties,
   attack mode, AI crawler controls), and the WAF production false-positive
-  review.
+  review (the review tool and procedure exist: ADR-831 amendment 13,
+  `docs/runbooks/edge-waf-false-positive-review.md`).
+
+Alerts and runbooks for the five features' failure modes (criterion C3) are
+in the `faas_edge_security` group (ADR-20261024082000 amendment 1).
 
 ## Event substrate benchmark (V12) — 2026-10-23
 

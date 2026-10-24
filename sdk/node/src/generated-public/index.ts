@@ -299,6 +299,9 @@ export type { EdgeRuleThrottleAction } from './models/EdgeRuleThrottleAction.js'
 export type { EdgeRuleValidateAction } from './models/EdgeRuleValidateAction.js';
 export type { EdgeRuleValidateParameters } from './models/EdgeRuleValidateParameters.js';
 export type { EdgeRuleWAFAction } from './models/EdgeRuleWAFAction.js';
+export type { EdgeWAFExclusionsRequest } from './models/EdgeWAFExclusionsRequest.js';
+export type { EdgeWAFReviewGroup } from './models/EdgeWAFReviewGroup.js';
+export type { EdgeWAFReviewResponse } from './models/EdgeWAFReviewResponse.js';
 export type { EnableAlertPresetRequest } from './models/EnableAlertPresetRequest.js';
 export type { EnableEdgeAttackModeRequest } from './models/EnableEdgeAttackModeRequest.js';
 export type { EnvDiffCell } from './models/EnvDiffCell.js';

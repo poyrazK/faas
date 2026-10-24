@@ -64,17 +64,17 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 	}
 	h.metrics.ObserveEdgeRuleMatch("challenge", "match")
 	if id := authenticatedFrom(r.Context()); id.APIKeyID != "" || id.ConsumerID != "" || id.JWTSubject != "" {
-		h.metrics.ObserveEdgeChallenge(app.ID, "bypassed")
+		h.observeChallenge(rule, app.ID, "bypassed")
 		return false
 	}
 	now := h.challengeClock()
 	if validPass(h.challengeKey, r, app.ID, now) {
-		h.metrics.ObserveEdgeChallenge(app.ID, "passed")
+		h.observeChallenge(rule, app.ID, "passed")
 		return false
 	}
 	if !isBrowserNavigation(r) {
 		api.WriteProblem(w, api.ErrChallengeRequired(rule.ID))
-		h.metrics.ObserveEdgeChallenge(app.ID, "rejected")
+		h.observeChallenge(rule, app.ID, "rejected")
 		h.recordChallengeEvent(r, rule.ID, app.ID, EdgeRuleEventRejected)
 		return true
 	}
@@ -86,12 +86,21 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 		Expires: now.Add(api.EdgeChallengeTokenTTLSeconds * time.Second).Unix(),
 	}, bindingFor(r))
 	writeChallengePage(w, r, token, difficulty)
-	h.metrics.ObserveEdgeChallenge(app.ID, "issued")
+	h.observeChallenge(rule, app.ID, "issued")
 	if difficulty > rule.Difficulty {
 		h.metrics.ObserveEdgeChallengeRaised(app.ID)
 	}
 	h.recordChallengeEvent(r, rule.ID, app.ID, EdgeRuleEventChallenged)
 	return true
+}
+
+// observeChallenge counts a challenge decision, and an attack-mode rule's
+// decision again as attack mode's (ADR-20261024082000 amendment 1).
+func (h *Handler) observeChallenge(rule *EdgeRuleChallengeResolved, appID, outcome string) {
+	h.metrics.ObserveEdgeChallenge(appID, outcome)
+	if rule.AttackMode {
+		h.metrics.ObserveEdgeAttackMode(appID, outcome)
+	}
 }
 
 // challengeDifficulty is the difficulty for the challenge page served now:

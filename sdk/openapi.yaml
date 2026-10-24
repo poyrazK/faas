@@ -10856,6 +10856,38 @@ paths:
         '404': {$ref: '#/components/responses/NotFound'}
         '412': {$ref: '#/components/responses/EdgeRulesVersionMismatch'}
         '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/edge-rules/{id}/waf-exclusions:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [edge_rules]
+      operationId: updateEdgeWAFExclusions
+      summary: Add or remove CRS rule IDs on a kind=waf rule's exclusions.
+      description: |
+        ADR-831 amendment 13. Changes exclude_rule_ids and keeps the rest of
+        the rule's action and its penalty, so silencing a false positive does
+        not mean restating the whole action. Recorded as a new rule-set
+        version like any PATCH.
+      parameters:
+        - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/EdgeWAFExclusionsRequest'}
+      responses:
+        '200':
+          description: The updated rule.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EdgeRuleResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '409': {$ref: '#/components/responses/EdgeRuleConflict'}
+        '412': {$ref: '#/components/responses/EdgeRulesVersionMismatch'}
+        '422': {$ref: '#/components/responses/ValidationFailed'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
   /v1/apps/{slug}/edge-rules/versions:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -10953,6 +10985,46 @@ paths:
           content:
             application/json:
               schema: {$ref: '#/components/schemas/EdgeRuleEventsResponse'}
+        '400': {$ref: '#/components/responses/ValidationFailed'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '429': {$ref: '#/components/responses/TooManyRequests'}
+  /v1/apps/{slug}/edge-rules/waf-review:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeWAFReview
+      summary: The app's WAF detections grouped for a false-positive review.
+      description: |
+        ADR-831 amendment 13. Reads the app's sampled kind=waf detections
+        (detected, warned and blocked events, ADR-831 amendment 5) and groups
+        them by edge rule, CRS rule and path, with id-like path segments read
+        as {id}. Each group is assessed: likely_false_positive (a documented
+        false positive, or at least 3 clients flagged on the path with none
+        sending most of the detections), likely_attack (most detections from
+        clients flagged on 5 or more paths), excluded (the rule already
+        excludes the CRS rule) or review. The newest 5,000 detections of each
+        outcome are read and at most 50 groups returned, largest first.
+        Detections are sampled, so counts are lower bounds. The window
+        defaults to 7 days and is clamped to the plan's event window.
+      parameters:
+        - name: rule
+          in: query
+          required: false
+          description: Only detections of this kind=waf edge rule id.
+          schema: {type: string, format: uuid}
+        - name: since
+          in: query
+          required: false
+          description: Duration such as 24h or 7d.
+          schema: {type: string, default: '7d'}
+      responses:
+        '200':
+          description: The review.
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/EdgeWAFReviewResponse'}
         '400': {$ref: '#/components/responses/ValidationFailed'}
         '401': {$ref: '#/components/responses/Unauthorized'}
         '404': {$ref: '#/components/responses/NotFound'}
@@ -31696,6 +31768,59 @@ components:
           description: CRS attack categories of a kind=waf detection (sqli, xss, lfi, ...).
           items: {type: string}
         waf_score: {type: integer, minimum: 0, maximum: 10000, description: CRS inbound anomaly score of a kind=waf detection.}
+    EdgeWAFReviewResponse:
+      description: An app's sampled kind=waf detections grouped for a false-positive review (ADR-831 amendment 13).
+      type: object
+      required: [since, scanned, truncated, groups]
+      properties:
+        since: {type: string, format: date-time, description: Start of the reviewed window, after the plan clamp.: null}
+        scanned: {type: integer, minimum: 0, description: Detection events read.}
+        truncated: {type: boolean, description: 'The window held more detections than a review reads (5,000 per outcome, newest first), so the oldest were left out.'}
+        groups:
+          type: array
+          maxItems: 50
+          items: {$ref: '#/components/schemas/EdgeWAFReviewGroup'}
+    EdgeWAFReviewGroup:
+      description: One edge rule's detections by one CRS rule on one path (ADR-831 amendment 13).
+      type: object
+      required: [rule_id, crs_rule_id, category, path, events, detected, warned, blocked, clients, top_client_percent, scanner_percent, first_seen, last_seen, request_ids, excluded, assessment, reason]
+      properties:
+        rule_id: {type: string}
+        rule_name: {type: string}
+        rule_mode: {type: string, enum: [observe, warn, block]}
+        crs_rule_id: {type: integer}
+        category: {type: string, description: 'CRS attack category of the rule (sqli, xss, rce, lfi, rfi, php, java, generic, protocol, multipart, scanner, session_fixation, other).'}
+        path: {type: string, description: 'Request path with id-like segments (numbers, UUIDs, long hex or tokens) read as {id}.'}
+        events: {type: integer, minimum: 0}
+        detected: {type: integer, minimum: 0, description: Detections in sampled requests.}
+        warned: {type: integer, minimum: 0}
+        blocked: {type: integer, minimum: 0}
+        clients: {type: integer, minimum: 0, description: Distinct client IPs.}
+        top_client_percent: {type: integer, minimum: 0, maximum: 100, description: Share of the group's detections from its busiest client.}
+        scanner_percent: {type: integer, minimum: 0, maximum: 100, description: Share of the group's detections from clients flagged on 5 or more paths in the window.}
+        first_seen: {type: string, format: date-time}
+        last_seen: {type: string, format: date-time}
+        request_ids:
+          type: array
+          maxItems: 3
+          description: The newest example request IDs; look them up with the events listing.
+          items: {type: string}
+        known_false_positive: {type: string, description: The documented legitimate traffic this CRS rule flags.}
+        excluded: {type: boolean, description: The rule excludes this CRS rule now.}
+        assessment: {type: string, enum: [likely_false_positive, likely_attack, review, excluded]}
+        reason: {type: string, description: Why the group got its assessment.}
+    EdgeWAFExclusionsRequest:
+      description: CRS rule IDs to add to and remove from a kind=waf rule's exclude_rule_ids (ADR-831 amendment 13).
+      type: object
+      properties:
+        add:
+          type: array
+          maxItems: 50
+          items: {type: integer, minimum: 900000, maximum: 999999}
+        remove:
+          type: array
+          maxItems: 50
+          items: {type: integer, minimum: 900000, maximum: 999999}
     EdgeRuleStatsResponse:
       description: Per-rule match counts over a window (ADR-960).
       type: object

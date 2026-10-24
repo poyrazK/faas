@@ -3032,7 +3032,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	penaltyBox := gateway.NewPenaltyBox()
 	handler.WithPenaltyBox(penaltyBox)
 	if boxStore, ok := any(deps.pgStore).(state.EdgePenaltyBoxStore); ok && deps.pgStore != nil {
-		sharer := newPenaltyBoxSharer(penaltyBox, boxStore, log)
+		sharer := newPenaltyBoxSharer(penaltyBox, boxStore, deps.metrics, log)
 		penaltyBox.OnBox(sharer.queue)
 		go sharer.run(ctx, penaltyBoxNotifications(ctx, deps.pool, log))
 	}
