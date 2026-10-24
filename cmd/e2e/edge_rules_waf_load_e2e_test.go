@@ -169,7 +169,7 @@ func seedWAFLoadApps(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key s
 			t.Fatalf("insert preview %s: %v", slug, err)
 		}
 		app := getAppBySlug(t, pool, slug)
-		hosts[i] = fmt.Sprintf("wafload-%d.apps.test.example", i)
+		hosts[i] = fmt.Sprintf("wafload-%d.edge-e2e.example", i)
 		seedRouteSubstitute(t, ctx, pool, accountID, app.ID, hosts[i], slug)
 		if mode != "none" {
 			seedEdgeRuleDirect(t, ctx, pool, accountID, app.ID, hosts[i], state.EdgeRuleKindWAF,

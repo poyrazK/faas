@@ -292,6 +292,9 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid
 ORDER BY created_at DESC, id DESC LIMIT 1 FOR SHARE;
 
 -- name: SetDeploymentRuntimeProfile :execrows
+-- imaged records a prebuilt image's runtime profile, and the HEALTHCHECK
+-- verdict of any source build (ADR-20261024100000), while the deployment is
+-- still being assembled. The accepted command and healthcheck are kept.
 UPDATE deployments
 SET inferred_profile = (sqlc.arg(profile)::jsonb - 'image_command' - 'image_healthcheck') ||
     CASE WHEN inferred_profile ? 'image_command'
@@ -301,7 +304,6 @@ SET inferred_profile = (sqlc.arg(profile)::jsonb - 'image_command' - 'image_heal
          THEN jsonb_build_object('image_healthcheck', inferred_profile -> 'image_healthcheck')
          ELSE '{}'::jsonb END
 WHERE id = sqlc.arg(deployment_id)::uuid
-  AND (kind = 'image' OR inferred_profile ? 'image_healthcheck')
   AND status IN ('pending', 'building', 'imaging');
 
 -- name: ReadSnapshotPublicationDeployment :one
@@ -7791,6 +7793,9 @@ FROM invocation_environment_queue_admissions p WHERE p.invocation_id=i.id AND i.
 -- name: ReadRuntimeAppEnvForDeployment :one
 WITH owner AS (
     SELECT d.id, a.id AS app_id, a.account_id, a.project_id,
+        -- A PR preview runs unreviewed code: it never inherits the project
+        -- environment its scope maps to (the default scope maps to production).
+        (a.project_id IS NOT NULL AND COALESCE(a.preview_of_slug,'')='')::boolean AS inherits_project_environment,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id
     FROM deployments d
@@ -7820,7 +7825,7 @@ SELECT owner.scope, owner.environment_id,
     -- ADR-1136: the project environment configuration the deployment inherits.
     COALESCE((SELECT jsonb_build_object('values',c.config_json,'created_at',c.created_at)
         FROM project_environment_config_versions c
-        WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
+        WHERE owner.inherits_project_environment AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
         ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
 FROM owner;
@@ -7931,6 +7936,9 @@ WHERE o.app_id=sqlc.arg(app_id)::uuid AND o.scope=sqlc.arg(scope)::text AND o.ke
 -- name: ReadRuntimeAppValuesForDeployment :one
 WITH owner AS (
     SELECT d.id, a.id AS app_id, a.account_id, a.project_id,
+        -- A PR preview runs unreviewed code: it never inherits the project
+        -- environment its scope maps to (the default scope maps to production).
+        (a.project_id IS NOT NULL AND COALESCE(a.preview_of_slug,'')='')::boolean AS inherits_project_environment,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id,
         d.environment_workload_runtime,d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal,
@@ -7978,7 +7986,7 @@ SELECT (SELECT values_json FROM deployment_release_secret_snapshots WHERE deploy
     -- ADR-1136: the project environment configuration the deployment inherits.
     COALESCE((SELECT jsonb_build_object('values',c.config_json,'created_at',c.created_at)
         FROM project_environment_config_versions c
-        WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
+        WHERE owner.inherits_project_environment AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
         ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config,
     owner.project_id,
@@ -7986,7 +7994,7 @@ SELECT (SELECT values_json FROM deployment_release_secret_snapshots WHERE deploy
     COALESCE((SELECT jsonb_agg(jsonb_build_object('key',p.key,'ciphertext',encode(p.ciphertext,'base64'),'kid',p.kid,
         'value_hash',p.value_hash,'secret_version',p.secret_version,'created_at',p.created_at,'updated_at',p.updated_at) ORDER BY p.key)
         FROM project_environment_secrets p
-        WHERE owner.project_id IS NOT NULL AND p.account_id=owner.account_id AND p.project_id=owner.project_id
+        WHERE owner.inherits_project_environment AND p.account_id=owner.account_id AND p.project_id=owner.project_id
             AND p.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END),'[]'::jsonb)::jsonb AS project_secrets
 FROM owner;
 
@@ -19827,7 +19835,7 @@ WHERE (id=sqlc.arg(deployment_id)::uuid AND status='live' AND traffic_percent=0 
 
 -- name: ReadRuntimeUpgradeEligibleFailureFallback :one
 SELECT d.id FROM deployments d WHERE d.app_id=sqlc.arg(app_id)::uuid AND d.id<>sqlc.arg(failed_id)::uuid
- AND d.status='live' AND d.deleted_at IS NULL
+ AND d.scope=sqlc.arg(scope)::text AND d.status='live' AND d.deleted_at IS NULL
  AND (NOT EXISTS(SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.deployment_id=d.id)
   OR EXISTS(SELECT 1 FROM deployment_runtime_upgrade_cutovers c JOIN deployment_runtime_upgrade_acceptances a ON a.deployment_id=c.deployment_id
    JOIN deployment_runtime_upgrade_targets t ON t.deployment_id=c.deployment_id

@@ -465,6 +465,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_ISSUE_SLACK_SIGNING_SECRET` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack request signing secret; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
 | `FAAS_JOB` | guest | `guest` |  |  | `` |  |
 | `FAAS_JOBS_DISPATCH` | schedd | `unit` |  |  | `` | public-beta unit enables queued job dispatch through the vmmd JobColdBoot RPC |
+| `FAAS_LAYER_ATTESTATION_RECORDS` | schedd | `default` |  |  | `` | optional path of the file where schedd remembers verified layers across restarts (ADR-038 amendment); default /var/lib/faas/schedd/layer-attestations.json |
 | `FAAS_LEADER_REDIRECT_TLS_CA` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_LEADER_REDIRECT_TLS_CERT` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_LEADER_REDIRECT_TLS_KEY` | gatewayd-internal | `default` |  |  | `` |  |
@@ -700,6 +701,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RUNTIME_KIND` | guest | `guest` |  |  | `` |  |
 | `FAAS_RUNTIME_LOG_EVENTS_ENABLED` | vmmd | `default` |  | 0 | `` | ADR-20261018083536 slice B: explicit 1 forwards guest warn/error lines, within a per-app minute budget, to apid's log ledger over the guest-trace apid target; apid accepts them only while FAAS_LOG_SEARCH_ENABLED=1 |
 | `FAAS_RUNTIME_SECRET_BINDING` | apid | `dropin` |  | off | `` | ADR-20261023173624; off or account. account binds each new runtime secret envelope to its account so vmmd opens it only for that account; enable only after every vmmd checks bindings (seal_domains role) |
+| `FAAS_RUNTIME_SECRET_BINDING_REQUIRED` | vmmd | `dropin` |  | false | `` | ADR-20261023173624 contract step; true makes vmmd refuse runtime secret envelopes with no account binding. Set by the seal_domains role (faas_seal_domain_runtime_binding_required) only after the binding pass bound every stored envelope; read at start |
 | `FAAS_RUNTIME_UPGRADE_DRAIN_CONFIRMATION` | gatewayd-internal | `default` |  |  | `` | default-off private forwarding drain receipt; requires reviewed runtime routing confirmation (ADR-697) |
 | `FAAS_RUNTIME_UPGRADE_GATEWAY_SLOT_ID` | gatewayd-internal | `default` |  |  | `` | reviewed private gateway slot identity; required only when runtime routing confirmation is enabled (ADR-695) |
 | `FAAS_RUNTIME_UPGRADE_INGRESS_CONFIRMATION` | gatewayd-internal, gatewayd-public | `default` |  |  | `` | default-off private ingress identity proof; requires reviewed routing and drain confirmations (ADR-698) |

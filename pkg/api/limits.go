@@ -7809,11 +7809,16 @@ const (
 	// endpoint makes (a refused lookup denies; the edge asks again on the
 	// next handshake). OnDemandTLSAskNegativeCacheSeconds/Entries remember
 	// hostnames with no custom-domain row at all so repeated scans of one
-	// name cost nothing.
+	// name cost nothing. OnDemandTLSAskKnownHostSeconds/Entries remember
+	// hostnames the endpoint recently allowed: their lookups skip the shared
+	// bucket (they are still authoritative), so a flood of random server
+	// names cannot starve renewals and post-reload loads of real domains.
 	OnDemandTLSAskLookupsPerSecond     = 50
 	OnDemandTLSAskLookupBurst          = 200
 	OnDemandTLSAskNegativeCacheSeconds = 30
 	OnDemandTLSAskNegativeCacheEntries = 10000
+	OnDemandTLSAskKnownHostSeconds     = 7 * 24 * 60 * 60
+	OnDemandTLSAskKnownHostEntries     = 100000
 
 	// Tier A8 (active-passive HA topology, ADR-083 — closes the
 	// §14 M8 "Gate-A runbook (2nd box active-passive)" gap left
@@ -11239,6 +11244,12 @@ const AttestationWarmRetryBackoff = 5 * time.Minute
 // verifications of one layer share a single read and hash that outlives a
 // caller that gives up, so the next wake finds the layer verified.
 const LayerVerifyTimeout = 2 * time.Minute
+
+// LayerAttestationRecordMaxAgeHours is how long schedd trusts a remembered
+// layer verification across restarts (ADR-038 amendment, 2026-10-24). A
+// record only stands for the exact node-cache file that was hashed; past
+// this age the layer is read and hashed again.
+const LayerAttestationRecordMaxAgeHours = 168
 
 // NodeSizing is the per-host RAM/vCPU shape derived from the machine a
 // compute node actually runs on, rather than the single-box constants.

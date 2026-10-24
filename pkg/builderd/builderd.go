@@ -968,6 +968,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DevWatchCommand: watch.Command,
 		DevWatchHost:    watch.Host,
 	}
+	recipe.BuildSecretScope = buildSecretScope(app.AccountID, app.ID, dep.Scope, buildSecrets)
 	reuseScope, reuseOptedIn := gitOpsReuseScope(app, dep)
 	recipe.GitOpsReuseScope = reuseScope
 	if sourceMaps != nil {
