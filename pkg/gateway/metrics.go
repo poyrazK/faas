@@ -241,6 +241,7 @@ type Metrics struct {
 	wafDetections         *prometheus.CounterVec
 	wafRuleMatches        *prometheus.CounterVec
 	wafInline             *prometheus.CounterVec
+	wafInlineSkips        *prometheus.CounterVec
 	wafInlineSeconds      prometheus.Histogram
 	edgeChallenge         *prometheus.CounterVec
 	edgePenalty           *prometheus.CounterVec
@@ -1392,6 +1393,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_waf_inline_checks_total",
 			Help: "In-path header/URI checks for kind=waf warn and block rules (ADR-831 amendment 4), by app and outcome (clean|warned|blocked|skipped|error). skipped means the app's inline budget or the node's check slots were exhausted and the request passed unchecked.",
 		}, []string{"app", "outcome"}),
+		wafInlineSkips: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_waf_inline_skips_total",
+			Help: "Skipped in-path kind=waf checks (outcome=\"skipped\" in gateway_waf_inline_checks_total) by app and reason (ADR-831 amendment 12): budget (the app used its inline budget, as under a flood) or busy (every check slot on the node stayed busy through the slot wait, a capacity shortfall).",
+		}, []string{"app", "reason"}),
 		edgePenalty: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_penalty_total",
 			Help: "Penalty box decisions (ADR-20261022105846), by app and outcome: boxed (a rule's threshold boxed a client), rejected (a boxed client's request refused).",
@@ -1406,7 +1411,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app"}),
 		wafInlineSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_waf_inline_seconds",
-			Help:    "Time to check one request's headers and URI in-path for a kind=waf warn or block rule; added to that request's latency.",
+			Help:    "Time to check one request's headers and URI in-path for a kind=waf warn or block rule, including any wait for a check slot (ADR-831 amendment 12); added to that request's latency.",
 			Buckets: []float64{0.00025, 0.0005, 0.001, 0.0015, 0.002, 0.003, 0.005, 0.01, 0.025},
 		}),
 		wafInspectionSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -2098,7 +2103,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
-	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgePenalty)
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSkips, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgePenalty)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
 	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
@@ -2694,6 +2699,18 @@ func (m *Metrics) ObserveWAFDetection(appID, category string) {
 		return
 	}
 	m.wafDetections.WithLabelValues(appID, category).Inc()
+}
+
+// ObserveWAFInlineSkip counts why an in-path kind=waf check was skipped. A
+// reason other than budget or busy counts as busy.
+func (m *Metrics) ObserveWAFInlineSkip(appID, reason string) {
+	if m == nil || m.wafInlineSkips == nil {
+		return
+	}
+	if reason != WAFInlineSkipBudget {
+		reason = WAFInlineSkipBusy
+	}
+	m.wafInlineSkips.WithLabelValues(appID, reason).Inc()
 }
 
 // ObserveWAFInline counts one in-path kind=waf check. seconds is recorded

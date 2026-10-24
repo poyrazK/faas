@@ -308,8 +308,10 @@ of them under load. In `warn` and `block`, a request without a body is
 checked in-path only; it is not also sampled. To reject bad bodies, declare their shape with a
 `kind=validate` rule. Checks on headers and the URL take about 1 ms of CPU
 per matched request, and can add several milliseconds when the node is busy.
-When your app's check budget (roughly 500 requests per second) or the node's
-check capacity runs out, the rest pass unchecked and are counted as
+A node runs several checks at once, one per processor but one, and a check
+that finds them all busy waits up to 1 ms for a free one. When your app's
+check budget (roughly 500 requests per second) runs out, or no check frees
+within that wait, the rest pass unchecked and are counted as
 `inline_skipped`; the WAF never slows your app down to keep up.
 
 Start in `observe`, look for false positives, then switch to `block`:

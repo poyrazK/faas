@@ -1015,3 +1015,83 @@ preview, in `observe` only, as amendment 6 left it.
   2027-03-31.
 - **Not part of this:** rule penalties (`edge_penalty_box`) keep their own
   launch decision, and attack mode and AI crawler controls are not merged.
+
+## Amendment 12 (2026-10-24): check slots sized to the node, with a short wait
+
+Amendment 10's third finding, which amendment 11 accepted for GA as a
+known limit with slot sizing as the follow-up, is a queueing effect, not a
+CPU limit. The
+in-path pool had two slots and never waited: a check that arrived while two
+were running was skipped at once, and its request passed unchecked. A
+discrete-event model of that pool (Poisson arrivals, check times lognormal
+with `@grx`'s production median of 1.0 ms and p95 of 1.7 ms) reproduces
+every skip rate amendment 10 measured on `gregale-compute-2`:
+
+| Rate (req/s) | Measured, 2 slots, no wait | Model, 2 slots, no wait | Model, 3 slots, 1 ms wait |
+|---|---|---|---|
+| 100 | 0.1-1.0% | 0.46% | 0.000% |
+| 250 | 2.5-3.2% | 2.57% | 0.003% |
+| 500 | 6.7-7.7% | 8.26% | 0.013% |
+| 1000 | 21.3-22.0% | 21.15% | 0.221% |
+
+The model lives in `pkg/edgewaf/slot_model_test.go` (`TestInlineSlotModel`);
+it fails if it stops reproducing the measured column, or if the shipped
+sizing for that node predicts more than 0.1% skipped up to 500 req/s. It
+cannot model CPU contention, which lengthens checks as more overlap, so its
+1000 req/s figure is optimistic: the node saturates there.
+
+Decision:
+
+1. **Slots follow the gateway's processors.** `api.EdgeWAFInlineSlots`
+   gives one slot per `GOMAXPROCS` but one, at least 2 and at most 16.
+   gatewayd-internal runs without a CPU quota, so an n2-standard-4 node
+   gets 3 slots; the 2-vCPU test node keeps 2. A check is pure CPU, so
+   leaving one processor keeps checks from ever taking the last one from
+   proxying, garbage collection and the rest of the gateway. At 16, the
+   per-app budgets bind first.
+2. **A short wait before failing open.** A check that finds every slot busy
+   waits up to `api.EdgeWAFInlineSlotWait` (1 ms, about one check) for one,
+   then is skipped. A momentary pile-up clears within the wait; sustained
+   overload still fails open, after at most 1 ms more latency for the
+   skipped request.
+3. **`gateway_waf_inline_seconds` includes the wait**: it is the latency
+   the check added to the request. The app's inline budget is charged the
+   check alone.
+4. **Skips by reason.** `gateway_waf_inline_skips_total{app,reason}` counts
+   `budget` (the app used its inline budget, as under a flood) apart from
+   `busy` (no slot freed within the wait, a capacity shortfall). The
+   summary's `inline_skipped` is still the total. gatewayd-internal logs
+   the slot count and wait when in-path checks are armed.
+5. **Unchanged:** the per-app inline budget (500 worker-ms per second, burst
+   1000), and failing open. Throttle rules and the pre-auth limit remain the
+   defence against floods, not the WAF.
+
+At its peak the pool can now use 3 of an n2-standard-4's 4 vCPUs instead of
+2, but it reaches that only when checks queue, which before this change
+meant they were skipped.
+
+### Measured on a workstation
+
+`TestInlineLoad` (`FAAS_WAF_INLINE_SLOTS` and `FAAS_WAF_INLINE_WAIT_US` now
+override the sizing) on an Apple M3 Pro with GOMAXPROCS 4, 8 s per rate,
+two interleaved passes per sizing, while other work kept the load average
+at 9-14. Checks cost about 0.3 ms of CPU there, a quarter of the production
+Xeon's, so the times do not carry over; the skip comparison does, because
+the skips come from bursts, and a busy machine makes bursts worse.
+
+| Rate (req/s) | Sizing | Check p50 | Check p95 | Check p99 | Skipped | Attacks detected |
+|---|---|---|---|---|---|---|
+| 250 | 2 slots, no wait | 0.25-0.28 ms | 0.49-0.71 ms | 0.92-1.20 ms | 2.43-3.48% | 192/198 |
+| 250 | 3 slots, 1 ms wait | 0.25-0.42 ms | 0.49-1.02 ms | 0.84-1.32 ms | 0.00% | 195/195 |
+| 500 | 2 slots, no wait | 0.22-0.23 ms | 0.42-0.46 ms | 0.65-0.77 ms | 5.01-5.10% | 385/403 |
+| 500 | 3 slots, 1 ms wait | 0.25-0.26 ms | 0.51-0.62 ms | 0.91-0.99 ms | 0.00% | 402/402 |
+| 1000 | 2 slots, no wait | 0.21-0.29 ms | 0.42-0.80 ms | 0.65-1.07 ms | 7.18-9.20% | 735/799 |
+| 1000 | 3 slots, 1 ms wait | 0.21-0.29 ms | 0.37-0.83 ms | 0.49-1.26 ms | 0.00-0.01% | 802/802 |
+
+No benign request was flagged. The new sizing's p95 includes the wait and
+stays within the old sizing's range.
+
+Not yet measured on a production node. Rerun `TestEdgeWAFInlineLoad_E2E`
+on `gregale-compute-2` as in amendment 10, with `FAAS_E2E_WAF_LOAD_GATE=1`
+(ADR-20261024082000), and expect `busy` skips under 0.1% with p95 at most
+2 ms at 100-500 req/s, which retires amendment 11's known limit.

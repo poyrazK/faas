@@ -2998,6 +2998,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler.WithWAFInspector(wafInspector)
 	if os.Getenv("FAAS_EDGE_WAF_INLINE_DISABLED") != "1" {
 		handler.WithWAFInlineChecker(wafInspector)
+		log.Info("edge waf in-path checks armed", "slots", wafInspector.InlineSlots(), "slot_wait", api.EdgeWAFInlineSlotWait)
 	} else {
 		log.Warn("edge waf in-path checks disabled by FAAS_EDGE_WAF_INLINE_DISABLED; warn and block rules only observe")
 	}
