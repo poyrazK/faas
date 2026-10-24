@@ -105,8 +105,8 @@ def sync_detailed(
      Creates a durable job for one currently eligible event-triggered workflow
     in the app's preferred live default deployment. The selected workflow
     definition and trigger are snapshotted at creation. The half-open range
-    uses platform acceptance time with a fixed exclusive cutoff and a
-    maximum 30-day range. Only retained events with a known immutable
+    uses platform acceptance time with a fixed exclusive cutoff and spans
+    at most the plan's settled-receipt window. Only retained events with a known immutable
     recipient snapshot, a settled delivered receipt, and no captured
     membership for this app workflow are considered. Legacy events with an
     unknown snapshot, events that already captured this workflow, unsettled
@@ -158,8 +158,8 @@ def sync(
      Creates a durable job for one currently eligible event-triggered workflow
     in the app's preferred live default deployment. The selected workflow
     definition and trigger are snapshotted at creation. The half-open range
-    uses platform acceptance time with a fixed exclusive cutoff and a
-    maximum 30-day range. Only retained events with a known immutable
+    uses platform acceptance time with a fixed exclusive cutoff and spans
+    at most the plan's settled-receipt window. Only retained events with a known immutable
     recipient snapshot, a settled delivered receipt, and no captured
     membership for this app workflow are considered. Legacy events with an
     unknown snapshot, events that already captured this workflow, unsettled
@@ -206,8 +206,8 @@ async def asyncio_detailed(
      Creates a durable job for one currently eligible event-triggered workflow
     in the app's preferred live default deployment. The selected workflow
     definition and trigger are snapshotted at creation. The half-open range
-    uses platform acceptance time with a fixed exclusive cutoff and a
-    maximum 30-day range. Only retained events with a known immutable
+    uses platform acceptance time with a fixed exclusive cutoff and spans
+    at most the plan's settled-receipt window. Only retained events with a known immutable
     recipient snapshot, a settled delivered receipt, and no captured
     membership for this app workflow are considered. Legacy events with an
     unknown snapshot, events that already captured this workflow, unsettled
@@ -257,8 +257,8 @@ async def asyncio(
      Creates a durable job for one currently eligible event-triggered workflow
     in the app's preferred live default deployment. The selected workflow
     definition and trigger are snapshotted at creation. The half-open range
-    uses platform acceptance time with a fixed exclusive cutoff and a
-    maximum 30-day range. Only retained events with a known immutable
+    uses platform acceptance time with a fixed exclusive cutoff and spans
+    at most the plan's settled-receipt window. Only retained events with a known immutable
     recipient snapshot, a settled delivered receipt, and no captured
     membership for this app workflow are considered. Legacy events with an
     unknown snapshot, events that already captured this workflow, unsettled

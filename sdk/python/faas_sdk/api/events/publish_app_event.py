@@ -123,7 +123,8 @@ def sync_detailed(
     not change duplicate identity. Fanout uses normal account subscriptions
     matching the generated source; the publishing app is not the only consumer.
     Deduplication lasts while the normal receipt is retained: settled receipts
-    become eligible for pruning after 30 days; holds can extend this window.
+    become eligible for pruning after the plan's settled-receipt window (Free
+    1 day, Hobby 3, Pro 7, Scale 14); holds can extend this window.
     After pruning the same key may be accepted again. App renames preserve
     identity; replacement apps have a new UUID and a new key namespace.
     Optional expected_app_id must match the resolved canonical app UUID;
@@ -175,7 +176,8 @@ def sync(
     not change duplicate identity. Fanout uses normal account subscriptions
     matching the generated source; the publishing app is not the only consumer.
     Deduplication lasts while the normal receipt is retained: settled receipts
-    become eligible for pruning after 30 days; holds can extend this window.
+    become eligible for pruning after the plan's settled-receipt window (Free
+    1 day, Hobby 3, Pro 7, Scale 14); holds can extend this window.
     After pruning the same key may be accepted again. App renames preserve
     identity; replacement apps have a new UUID and a new key namespace.
     Optional expected_app_id must match the resolved canonical app UUID;
@@ -222,7 +224,8 @@ async def asyncio_detailed(
     not change duplicate identity. Fanout uses normal account subscriptions
     matching the generated source; the publishing app is not the only consumer.
     Deduplication lasts while the normal receipt is retained: settled receipts
-    become eligible for pruning after 30 days; holds can extend this window.
+    become eligible for pruning after the plan's settled-receipt window (Free
+    1 day, Hobby 3, Pro 7, Scale 14); holds can extend this window.
     After pruning the same key may be accepted again. App renames preserve
     identity; replacement apps have a new UUID and a new key namespace.
     Optional expected_app_id must match the resolved canonical app UUID;
@@ -272,7 +275,8 @@ async def asyncio(
     not change duplicate identity. Fanout uses normal account subscriptions
     matching the generated source; the publishing app is not the only consumer.
     Deduplication lasts while the normal receipt is retained: settled receipts
-    become eligible for pruning after 30 days; holds can extend this window.
+    become eligible for pruning after the plan's settled-receipt window (Free
+    1 day, Hobby 3, Pro 7, Scale 14); holds can extend this window.
     After pruning the same key may be accepted again. App renames preserve
     identity; replacement apps have a new UUID and a new key namespace.
     Optional expected_app_id must match the resolved canonical app UUID;

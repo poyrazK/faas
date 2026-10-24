@@ -6026,6 +6026,15 @@
     "kind": "operational"
   },
   {
+    "table": "event_receipt_usage",
+    "columns": [
+      "account_id",
+      "retained_bytes",
+      "retained_events"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_recovery_execution_results",
     "columns": [
       "attempts",
