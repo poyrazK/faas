@@ -6832,6 +6832,20 @@ const (
 	// MaxEdgeWAFExcludedRules bounds the CRS rule IDs one rule may
 	// exclude from scoring.
 	MaxEdgeWAFExcludedRules = 50
+	// EdgeWAFReviewMaxEvents bounds the detection events one WAF review
+	// reads per outcome, newest first, and EdgeWAFReviewMaxGroups the
+	// groups it returns (ADR-831 amendment 13).
+	EdgeWAFReviewMaxEvents = 5000
+	EdgeWAFReviewMaxGroups = 50
+	// EdgeWAFReviewMinClients is how many distinct clients one CRS rule
+	// must flag on one path, none of them sending most of the detections,
+	// before the review calls it a likely false positive.
+	EdgeWAFReviewMinClients = 3
+	// EdgeWAFReviewScannerPaths is how many distinct paths a client must be
+	// flagged on in the window before the review treats it as a scanner.
+	EdgeWAFReviewScannerPaths = 5
+	// EdgeWAFReviewExamples is how many example request IDs a group keeps.
+	EdgeWAFReviewExamples = 3
 
 	// --- ADR-831 amendment 7: kind=challenge bounds -------------------
 
