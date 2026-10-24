@@ -1,6 +1,7 @@
 package appaccess
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -30,6 +31,14 @@ func indirectlyAddressedApp(r *http.Request, store Store) (state.App, bool, erro
 		var invocation state.Invocation
 		invocation, err = store.InvocationByID(r.Context(), r.PathValue("id"))
 		appID = invocation.AppID
+	case strings.HasPrefix(r.URL.Path, "/v1/workflows/runs/") && r.PathValue("id") != "":
+		var run *state.WorkflowRun
+		run, err = store.GetWorkflowRun(r.Context(), r.PathValue("id"))
+		if errors.Is(err, state.ErrWorkflowRunNotFound) {
+			err = state.ErrNotFound
+		} else if err == nil {
+			appID = run.AppID
+		}
 	default:
 		return state.App{}, false, nil
 	}

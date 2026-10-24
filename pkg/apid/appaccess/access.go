@@ -27,6 +27,7 @@ type Store interface {
 	CronByID(context.Context, string) (state.Cron, error)
 	GetEdgeRuleByID(context.Context, string) (state.EdgeRule, error)
 	InvocationByID(context.Context, string) (state.Invocation, error)
+	GetWorkflowRun(context.Context, string) (*state.WorkflowRun, error)
 	OrgByID(context.Context, string) (state.Org, error)
 	OrgMemberByAccount(context.Context, string, string) (state.OrgMembership, error)
 	AccountByID(context.Context, string) (state.Account, error)
@@ -297,6 +298,8 @@ func notFound(r *http.Request) *api.Problem {
 		what = "no such deployment"
 	case strings.HasPrefix(path, "/v1/domains/"):
 		what = "no such domain"
+	case strings.HasPrefix(path, "/v1/workflows/runs/"):
+		return api.ErrWorkflowRunNotFound()
 	}
 	return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", what)
 }
