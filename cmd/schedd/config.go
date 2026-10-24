@@ -191,6 +191,12 @@ type Config struct {
 	// the same nodes. A node without a fresh sample counts every booking.
 	QuietPauseAdmission bool `toml:"quiet_pause_admission"`
 
+	// QuietPauseLedger (ADR-20261023171905) records the quiet pauses this
+	// schedd's node reports in the pause ledger, for meterd to subtract from
+	// billed seconds once its quiet_pause_unbilled switch is on. Off by
+	// default; FAAS_QUIET_PAUSE_LEDGER overrides it.
+	QuietPauseLedger bool `toml:"quiet_pause_ledger"`
+
 	// FrozenTier (ADR-1151) freezes an idle eligible function instance in
 	// place at its idle timeout instead of parking it: vmmd keeps the VM
 	// paused in memory, unbilled, and the next request thaws it. Off by
@@ -546,6 +552,14 @@ func LoadConfig(path string) (*Config, error) {
 	c.overlayEventAcknowledgmentWriterEnv()
 	if v := os.Getenv("FAAS_NODE_NAME"); v != "" {
 		c.NodeName = v
+	}
+	// ADR-20261023171905: FAAS_QUIET_PAUSE_LEDGER overrides quiet_pause_ledger.
+	if v := os.Getenv("FAAS_QUIET_PAUSE_LEDGER"); v != "" {
+		enabled, err := strconv.ParseBool(v)
+		if err != nil {
+			return nil, fmt.Errorf("schedd: FAAS_QUIET_PAUSE_LEDGER must be a boolean (got %q)", v)
+		}
+		c.QuietPauseLedger = enabled
 	}
 	// ADR-1151: FAAS_FROZEN_TIER overrides frozen_tier.
 	if v := os.Getenv("FAAS_FROZEN_TIER"); v != "" {

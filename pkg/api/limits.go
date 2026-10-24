@@ -6100,6 +6100,16 @@ const (
 	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
 	// quiet-paused instances may be before admission counts every booking.
 	QuietPauseSampleMaxAgeMillis = 2000
+	// QuietPauseLedgerFlushSeconds is how often schedd writes a node's quiet
+	// pauses and watermark to the pause ledger (ADR-20261023171905): one
+	// statement per node per flush, however many requests the node serves.
+	// meterd rolls a minute 60-120 s after it ends, so the ledger is current
+	// long before billing reads it.
+	QuietPauseLedgerFlushSeconds = 2
+	// QuietPauseLedgerRetentionDays is how long meterd keeps pauses: past an
+	// invoiced month plus its dispute window, the subtraction they made is
+	// final.
+	QuietPauseLedgerRetentionDays = 45
 	// FrozenTTLSeconds is how long a frozen instance (ADR-1151) stays paused
 	// in memory after its idle timeout before schedd parks it. 10 min gave
 	// the same capacity as 1 h in the ADR's simulation while holding fewer
@@ -10563,6 +10573,18 @@ func (l Limits) EffectiveIdleTimeoutS(appType string, configured int) int {
 	return min(max(configured, floor), ceiling)
 }
 
+// WaitUntilTimeoutS is how long a waitUntil task can hold an instance after
+// its response: TailTimeoutS when the plan enables waitUntil, else zero
+// (ADR-078). The reaper does not park an instance with tasks in flight, so
+// surfaces that explain awake time take the later of this and the idle
+// timeout (ADR-20261022184757).
+func (l Limits) WaitUntilTimeoutS() int {
+	if !l.TailEnabled {
+		return 0
+	}
+	return l.TailTimeoutS
+}
+
 // Obs admin pagination (issue #777 / ADR-091). The operator surface
 // differs from the customer surface (pkg/api/paging.go defaults to
 // 25/100) because the operator UI is fleet-wide and a single page
@@ -11905,6 +11927,10 @@ const (
 	// An edge-cache suggestion needs this share of anonymous 2xx GET/HEAD
 	// requests on the route.
 	RouteAwakeCacheMinAnonymousShare = 0.9
+	// RouteAwakeWorkMaxMinutes caps how long one cron, queue or other
+	// delivery counts as running (ADR-20261022184757), so a delivery that
+	// never completed cannot claim the rest of the window.
+	RouteAwakeWorkMaxMinutes = 60
 )
 
 // RouteContent bounds learned cacheability (ADR-1188). Each gateway

@@ -976,7 +976,7 @@ var cliCommands = []cliCommand{
 				{Name: "to", Short: "export: last UTC day (default today)", Value: "YYYY-MM-DD"},
 				{Name: "format", Short: "export: csv (default) or ndjson", Value: "FORMAT", ClosedSet: []string{"csv", "ndjson"}},
 			}},
-			{Name: "traces", Short: "List an integration's AI traces, newest first, or show one trace's calls: traces <integration-id> <trace-id>", Positionals: []string{"<integration-id>", "[trace-id]"}, Flags: []cliFlag{
+			{Name: "traces", Short: "List an integration's AI traces, newest first, or show one trace", Notes: []string{"Pass a trace ID after the integration ID to show that trace's calls."}, Positionals: []string{"<integration-id>", "[trace-id]"}, Flags: []cliFlag{
 				{Name: "app", Short: "only traces whose first call came from this app (UUID)", Value: "ID"},
 				{Name: "user", Short: "only traces whose first call named this end user", Value: "ID"},
 				{Name: "limit", Short: "traces to show, 1 to 200", Value: "N"},
@@ -989,7 +989,7 @@ var cliCommands = []cliCommand{
 			{Name: "quality-alerts", Short: "List an integration's AI quality drift alerts, newest first", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{
 				{Name: "limit", Short: "alerts to show, 1 to 100", Value: "N"},
 			}},
-			{Name: "deployments", Short: "List an app's AI gateway calls, errors, flagged answers and cost per call by deployment (last 14 days)", Flags: []cliFlag{
+			{Name: "deployments", Short: "List an app's AI gateway calls, errors and cost per deployment", Notes: []string{"Covers the last 14 days, including flagged answers and cost per call."}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (defaults to linked project app)", Value: "slug"},
 			}},
 			{Name: "tag-limits", Short: "Show or change per-tag daily cost limits (unchanged limits are kept)", Positionals: []string{"<integration-id>"}, Flags: []cliFlag{

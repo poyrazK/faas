@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"os"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -18,7 +17,7 @@ func cmdObsCollectionHistory(args []string) int {
 	fs.SetOutput(osStderr)
 	since := fs.String("since", "", "collection-history lower bound (RFC3339)")
 	details := fs.Bool("details", false, "include retained diagnostics for recent failed attempts")
-	token := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	token := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
 	if err := fs.Parse(args); err != nil {
@@ -34,11 +33,8 @@ func cmdObsCollectionHistory(args []string) int {
 			return 2
 		}
 	}
-	if *token == "" {
-		*token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if *token == "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs collection-history: admin token required")
+	cred, ok := resolveObsCredential("obs collection-history", *token)
+	if !ok {
 		return 2
 	}
 	path := operatorobs.AlertCollectionHistoryPath
@@ -53,7 +49,7 @@ func cmdObsCollectionHistory(args []string) int {
 		path += "?" + query.Encode()
 	}
 	var out api.ObsAlertCollectionHistory
-	if err := fetchObsBundleSection(context.Background(), &http.Client{Timeout: *timeout}, apidBase()+path, *token, "collection-history", &out); err != nil {
+	if err := fetchObsBundleSection(context.Background(), &http.Client{Timeout: *timeout}, apidBase()+path, cred, "collection-history", &out); err != nil {
 		_, _ = fmt.Fprintf(osStderr, "gregalectl obs %v\n", err)
 		return 1
 	}

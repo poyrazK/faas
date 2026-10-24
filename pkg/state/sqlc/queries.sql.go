@@ -73990,6 +73990,7 @@ SELECT jsonb_build_object(
  'mirror_invocation_results.mirror_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE mirror_deployment_id=$1::uuid),
  'mirror_invocation_results.source_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE source_deployment_id=$1::uuid),
  'org_activity.deployment_id', (SELECT count(*) FROM org_activity WHERE deployment_id=$1::uuid),
+ 'outbound_ai_deployment_minutes.deployment_id', (SELECT count(*) FROM outbound_ai_deployment_minutes WHERE deployment_id=$1::uuid),
  'project_environment_clone_workloads.source_deployment_id', (SELECT count(*) FROM project_environment_clone_workloads WHERE source_deployment_id=$1::uuid),
  'project_environment_clone_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_clone_workloads WHERE target_deployment_id=$1::uuid AND (operation_id<>$2::uuid)),
  'project_environment_promotion_workloads.previous_target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE previous_target_deployment_id=$1::uuid::text),
