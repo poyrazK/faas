@@ -132,6 +132,23 @@ func TestEnvironmentGitOpsSourceCandidatesAreAtomicPinnedAndHeld(t *testing.T) {
 				if _, err := completed.ScopedWorkloadRuntime(); err != nil {
 					t.Fatalf("completion changed frozen inputs: %v", err)
 				}
+				// imaged pins the build's manifest digest before it replaces the
+				// export; that output must not read as a changed frozen input.
+				pins := basic.(state.DeploymentBuildDigestStore)
+				digest := "sha256:" + strings.Repeat("a", 64)
+				if err := pins.PinDeploymentBuildDigest(t.Context(), dep.ID, "/reviewed-image.tar", digest); err != nil {
+					t.Fatalf("frozen source refused its build digest: %v", err)
+				}
+				if err := pins.PinDeploymentBuildDigest(t.Context(), dep.ID, "/reviewed-image.tar", "sha256:"+strings.Repeat("b", 64)); !errors.Is(err, state.ErrInvalidStateTransition) {
+					t.Fatalf("pinned build digest changed: %v", err)
+				}
+				pinned, err := store.DeploymentByID(t.Context(), dep.ID)
+				if err != nil || pinned.ImageDigest != digest || !pinned.EnvironmentWorkloadHeld() {
+					t.Fatalf("pinned candidate: %+v %v", pinned, err)
+				}
+				if _, err := pinned.ScopedWorkloadRuntime(); err != nil {
+					t.Fatalf("build digest made the candidate unreadable: %v", err)
+				}
 				if err := basic.(state.Store).MarkDeploymentLive(t.Context(), dep.ID); err == nil {
 					t.Fatal("unqualified source candidate became live")
 				}
@@ -198,9 +215,23 @@ func TestPgEnvironmentGitOpsSourceCandidateQueueAndDatabaseFences(t *testing.T) 
 		`update deployments set inferred_profile='{"framework":"docker"}'::jsonb where id=$1`,
 		`update deployments set github_source_ref='refs/heads/main' where id=$1`,
 		`update deployments set status='live' where id=$1`,
+		`update deployments set image_digest='ghcr.io/other/app@sha256:'||repeat('a',64) where id=$1`,
+		`update deployments set image_digest='sha256:'||repeat('A',64) where id=$1`,
 	} {
 		if _, err := pool.Exec(t.Context(), query, candidates[0].DeploymentID); err == nil {
 			t.Fatalf("SQL changed frozen source: %s", query)
+		}
+	}
+	// The one permitted output is a single canonical build digest pin.
+	if _, err := pool.Exec(t.Context(), `update deployments set image_digest='sha256:'||repeat('a',64) where id=$1`, candidates[0].DeploymentID); err != nil {
+		t.Fatalf("build digest pin refused: %v", err)
+	}
+	for _, query := range []string{
+		`update deployments set image_digest='sha256:'||repeat('b',64) where id=$1`,
+		`update deployments set image_digest='' where id=$1`,
+	} {
+		if _, err := pool.Exec(t.Context(), query, candidates[0].DeploymentID); err == nil {
+			t.Fatalf("SQL changed a pinned build digest: %s", query)
 		}
 	}
 	dep, err := store.DeploymentByID(t.Context(), candidates[0].DeploymentID)

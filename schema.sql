@@ -14455,7 +14455,9 @@ BEGIN
     NEW.build_id IS DISTINCT FROM (frozen->'source_archive'->>'build_id')::uuid OR NOT EXISTS(
      SELECT 1 FROM builds b WHERE b.id=NEW.build_id AND b.deployment_id=NEW.id AND b.kind=NEW.kind AND b.source_bytes=NEW.source_bytes))) OR
    environment_workload_deployment_inputs(NEW) IS DISTINCT FROM environment_workload_deployment_inputs(OLD) OR
-   ROW(NEW.app_id,NEW.scope,NEW.kind,NEW.image_digest,NEW.commit_sha,NEW.source_path,NEW.source_root,NEW.source_sha256,NEW.handler,
+   ROW(NEW.app_id,NEW.scope,NEW.kind,
+       CASE WHEN coalesce(OLD.image_digest,'')='' AND OLD.environment_workload_runtime ? 'source_archive' AND OLD.status IN ('pending','building','imaging','snapshotting')
+        AND NEW.build_id IS NOT NULL AND NEW.image_digest ~ '^sha256:[a-f0-9]{64}$' THEN OLD.image_digest ELSE NEW.image_digest END,NEW.commit_sha,NEW.source_path,NEW.source_root,NEW.source_sha256,NEW.handler,
        NEW.override_entrypoint,NEW.override_cmd,NEW.override_env,NEW.override_env_secrets,NEW.override_port,NEW.override_healthcheck,
        NEW.override_liveness_probe,NEW.override_readiness_probe,NEW.override_main_depends_on,NEW.release_command,NEW.release_command_shell)
    IS DISTINCT FROM

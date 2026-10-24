@@ -13,7 +13,12 @@ type DeploymentBuildDigestStore interface {
 }
 
 func validBuildDigest(export, digest string) bool {
-	if export == "" || !strings.HasPrefix(digest, "sha256:") || len(digest) != 71 || strings.ToLower(digest) != digest {
+	return export != "" && canonicalBuildDigest(digest)
+}
+
+// canonicalBuildDigest reports a pinned source-build OCI manifest digest.
+func canonicalBuildDigest(digest string) bool {
+	if !strings.HasPrefix(digest, "sha256:") || len(digest) != 71 || strings.ToLower(digest) != digest {
 		return false
 	}
 	_, err := hex.DecodeString(digest[7:])
