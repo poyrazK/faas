@@ -27807,6 +27807,20 @@ CREATE TABLE public.alert_deliveries (
 
 
 --
+-- Name: alert_episodes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_episodes (
+    id uuid NOT NULL,
+    rule_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    opened_at timestamp with time zone NOT NULL,
+    resolved_at timestamp with time zone,
+    CONSTRAINT alert_episodes_resolved_after_open CHECK (((resolved_at IS NULL) OR (resolved_at >= opened_at)))
+);
+
+
+--
 -- Name: alert_historical_rollback_claims; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -27907,6 +27921,7 @@ CREATE TABLE public.alert_rules (
     mcp_min_calls integer DEFAULT 0 NOT NULL,
     mcp_for_minutes integer DEFAULT 0 NOT NULL,
     mcp_readiness_scope text DEFAULT ''::text NOT NULL,
+    log_query text,
     CONSTRAINT alert_rules_action_chk CHECK ((action = ANY (ARRAY['webhook'::text, 'rollback'::text, 'demote'::text, 'promote'::text]))),
     CONSTRAINT alert_rules_comparison_chk CHECK ((comparison = ANY (ARRAY['gt'::text, 'gte'::text, 'lt'::text, 'lte'::text, 'above_baseline'::text, 'below_baseline'::text]))),
     CONSTRAINT alert_rules_cooldown_chk CHECK (((cooldown_minutes >= 5) AND (cooldown_minutes <= 1440))),
@@ -27918,6 +27933,7 @@ CREATE TABLE public.alert_rules (
     CONSTRAINT alert_rules_failure_source_chk CHECK (((failure_source IS NULL) OR (failure_source = ANY (ARRAY['any'::text, 'cron'::text, 'queue'::text, 'delayed_task'::text, 'async_invoke'::text, 'inbound_webhook'::text])))),
     CONSTRAINT alert_rules_failure_source_xor_chk CHECK ((((metric = 'failed_invocations'::text) AND (failure_source IS NOT NULL)) OR ((metric <> 'failed_invocations'::text) AND (failure_source IS NULL)))),
     CONSTRAINT alert_rules_historical_rollback_chk CHECK (((post_deploy_rollback_window_seconds = 0) OR ((action = 'rollback'::text) AND (app_id IS NOT NULL)))),
+    CONSTRAINT alert_rules_log_search_chk CHECK ((((metric = 'log_search_matches'::text) = (log_query IS NOT NULL)) AND ((metric <> 'log_search_matches'::text) OR ((app_id IS NOT NULL) AND (event_subscription_id IS NULL) AND (action = 'webhook'::text) AND (window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text])) AND (octet_length(log_query) <= 2048))))),
     CONSTRAINT alert_rules_mcp_catalog_chk CHECK (((metric <> ALL (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR ((app_id IS NOT NULL) AND (action = 'webhook'::text)))),
     CONSTRAINT alert_rules_mcp_connection_health_action_chk CHECK (((metric <> ALL (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (action = 'webhook'::text))),
     CONSTRAINT alert_rules_mcp_convergence_chk CHECK (((metric <> ALL (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR ((app_id IS NOT NULL) AND (action = 'webhook'::text)))),
@@ -27929,7 +27945,7 @@ END)::double precision)) OR ((metric <> ALL (ARRAY['mcp_protocol_error_rate_pct'
     CONSTRAINT alert_rules_mcp_readiness_action_chk CHECK (((metric <> 'mcp_readiness_unhealthy'::text) OR ((action = 'webhook'::text) AND (app_id IS NOT NULL)))),
     CONSTRAINT alert_rules_mcp_readiness_scope_chk CHECK (((mcp_readiness_scope = ''::text) OR ((metric = 'mcp_readiness_unhealthy'::text) AND (app_id IS NOT NULL) AND (mcp_readiness_scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)))),
     CONSTRAINT alert_rules_mcp_tasks_notification_chk CHECK (((metric <> ALL (ARRAY['mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text])) OR (action = 'webhook'::text))),
-    CONSTRAINT alert_rules_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'edge_rule_hits'::text, 'edge_rule_log_hits'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'custom_metric'::text) OR (metric = ANY (ARRAY['log_error_lines'::text, 'log_warn_lines'::text])) OR (metric = ANY (ARRAY['slo_budget_burn'::text, 'slo_budget_remaining_pct'::text])) OR (metric = ANY (ARRAY['synthetic_check_consecutive_failures'::text, 'synthetic_check_latency_p95_ms'::text])) OR (metric = ANY (ARRAY['mcp_protocol_error_rate_pct'::text, 'mcp_protocol_execution_p95_ms'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'edge_rule_activity'::text) OR (metric = 'route_insights_detected'::text))),
+    CONSTRAINT alert_rules_metric_chk CHECK (((metric = ANY (ARRAY['error_rate_pct'::text, 'latency_p50_ms'::text, 'latency_p95_ms'::text, 'latency_p99_ms'::text, 'cold_start_pct'::text, 'request_count'::text, 'failed_invocations'::text, 'api_up'::text, 'account_spend_eur'::text, 'deployment_failed'::text, 'cert_expiry_seconds'::text, 'cert_issuance_failed'::text, 'queue_depth'::text, 'new_error_fingerprint'::text, 'cold_wake_rate_pct'::text, 'daily_cost_cents'::text, 'slo_burn_rate'::text, 'canary_stuck_step'::text, 'safedeploy_audit_emit_failing'::text, 'deployment_audit_gc_failing'::text, 'canary_fleet_in_flight_high'::text, 'pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text, 'event_pending_recipients'::text, 'event_oldest_pending_seconds'::text, 'event_retry_rate_per_second'::text, 'event_terminal_failure_pct'::text, 'event_routing_latency_p95_seconds'::text, 'event_paused_seconds'::text, 'event_drain_rate_per_second'::text, 'event_execution_dead_letters'::text, 'event_execution_dead_letter_rate_per_second'::text, 'event_handler_failure_pct'::text, 'event_completion_latency_p95_seconds'::text, 'event_recovery_stalled_jobs'::text, 'event_recovery_expiring_jobs'::text, 'event_recovery_capacity_wait_jobs'::text, 'event_recovery_execution_waiting_jobs'::text, 'event_recovery_execution_prolonged_wait_jobs'::text, 'event_recovery_execution_unknown_jobs'::text, 'event_recovery_execution_retention_risk_jobs'::text, 'event_recovery_notification_admission_overdue_jobs'::text, 'event_recovery_notification_admission_dead_jobs'::text, 'event_recovery_notification_admission_unknown_jobs'::text, 'event_recovery_notification_admission_no_receivers_jobs'::text, 'event_recovery_notification_execution_overdue_jobs'::text, 'event_recovery_notification_execution_dead_jobs'::text, 'event_recovery_notification_execution_unknown_jobs'::text, 'event_recovery_notification_execution_no_receivers_jobs'::text, 'event_retention_expiring_receipts'::text, 'event_storage_utilization_pct'::text, 'workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text, 'pre_auth_pressure'::text, 'edge_validation_failures'::text, 'edge_rejections'::text, 'edge_waf_detections'::text, 'mcp_tasks_oldest_age_seconds'::text, 'mcp_tasks_metrics_stale'::text, 'mcp_task_promotion_hold_age_seconds'::text, 'edge_rule_hits'::text, 'edge_rule_log_hits'::text])) OR (metric = ANY (ARRAY['mcp_policy_unconverged_gateways'::text, 'mcp_policy_unverified'::text])) OR (metric = ANY (ARRAY['mcp_catalog_drift'::text, 'mcp_catalog_monitor_unavailable'::text])) OR (metric = ANY (ARRAY['mcp_oauth_reauthorization_required'::text, 'mcp_oauth_renewal_failed'::text, 'mcp_oauth_retirement_expiring'::text, 'mcp_oauth_issuance_unknown'::text])) OR (metric = 'custom_metric'::text) OR (metric = ANY (ARRAY['log_error_lines'::text, 'log_warn_lines'::text])) OR (metric = ANY (ARRAY['slo_budget_burn'::text, 'slo_budget_remaining_pct'::text])) OR (metric = ANY (ARRAY['synthetic_check_consecutive_failures'::text, 'synthetic_check_latency_p95_ms'::text])) OR (metric = ANY (ARRAY['mcp_protocol_error_rate_pct'::text, 'mcp_protocol_execution_p95_ms'::text])) OR (metric = 'mcp_readiness_unhealthy'::text) OR (metric = 'edge_rule_activity'::text) OR (metric = 'route_insights_detected'::text) OR (metric = 'log_search_matches'::text))),
     CONSTRAINT alert_rules_name_len_chk CHECK (((char_length(name) >= 1) AND (char_length(name) <= 64))),
     CONSTRAINT alert_rules_post_deploy_rollback_window_seconds_check CHECK (((post_deploy_rollback_window_seconds >= 0) AND (post_deploy_rollback_window_seconds <= 3600))),
     CONSTRAINT alert_rules_preauth_notification_chk CHECK (((metric <> ALL (ARRAY['pre_auth_target_threshold'::text, 'pre_auth_target_signal_gap_pct'::text])) OR (action = 'webhook'::text))),
@@ -33094,6 +33110,22 @@ CREATE TABLE public.customer_workflow_readiness_subscriptions (
     CONSTRAINT customer_workflow_readiness_subscriptions_check1 CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
     CONSTRAINT customer_workflow_readiness_subscriptions_payload_check CHECK ((jsonb_typeof(payload) = 'object'::text)),
     CONSTRAINT customer_workflow_readiness_subscriptions_scope_check CHECK ((((length(scope) >= 1) AND (length(scope) <= 40)) AND (scope ~ '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$'::text)))
+);
+
+
+--
+-- Name: dashboards; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.dashboards (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    name text NOT NULL,
+    widgets jsonb DEFAULT '[]'::jsonb NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT dashboards_name_shape CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT dashboards_widgets_shape CHECK (((jsonb_typeof(widgets) = 'array'::text) AND (jsonb_array_length(widgets) <= 24) AND (octet_length((widgets)::text) <= 32768)))
 );
 
 
@@ -38537,6 +38569,29 @@ CREATE TABLE public.inbound_webhook_endpoints (
 
 
 --
+-- Name: incident_notes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.incident_notes (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    incident_id text NOT NULL,
+    alert_episode_id uuid,
+    route_incident_id uuid,
+    status_incident_id uuid,
+    kind text NOT NULL,
+    body text NOT NULL,
+    author text NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    CONSTRAINT incident_notes_author_check CHECK (((char_length(author) >= 1) AND (char_length(author) <= 320))),
+    CONSTRAINT incident_notes_body_check CHECK (((char_length(body) <= 2000) AND ((kind = 'note'::text) = (body <> ''::text)))),
+    CONSTRAINT incident_notes_id_matches_source CHECK ((incident_id = COALESCE(('alert-'::text || (alert_episode_id)::text), ('route-'::text || (route_incident_id)::text), ('platform-'::text || (status_incident_id)::text)))),
+    CONSTRAINT incident_notes_kind_check CHECK ((kind = ANY (ARRAY['acknowledged'::text, 'note'::text]))),
+    CONSTRAINT incident_notes_one_source CHECK ((num_nonnulls(alert_episode_id, route_incident_id, status_incident_id) = 1))
+);
+
+
+--
 -- Name: instance_application_standard_admissions; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -41295,6 +41350,23 @@ CREATE TABLE public.log_events_default (
     CONSTRAINT log_events_status_check CHECK (((status IS NULL) OR ((status >= 100) AND (status <= 599)))),
     CONSTRAINT log_events_stream_check CHECK (((stream IS NULL) OR (stream = ANY (ARRAY['stdout'::text, 'stderr'::text, 'system'::text, 'access'::text])))),
     CONSTRAINT log_events_trace_id_check CHECK (((trace_id IS NULL) OR ((length(trace_id) >= 1) AND (length(trace_id) <= 128))))
+);
+
+
+--
+-- Name: log_saved_searches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.log_saved_searches (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    name text NOT NULL,
+    query text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT log_saved_searches_name_shape CHECK ((name ~ '^[a-z0-9][a-z0-9-]{0,62}$'::text)),
+    CONSTRAINT log_saved_searches_query_size CHECK ((octet_length(query) <= 2048))
 );
 
 
@@ -54822,6 +54894,14 @@ ALTER TABLE ONLY public.alert_deliveries
 
 
 --
+-- Name: alert_episodes alert_episodes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_episodes
+    ADD CONSTRAINT alert_episodes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: alert_historical_rollback_claims alert_historical_rollback_claims_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -57382,6 +57462,22 @@ ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
 
 
 --
+-- Name: dashboards dashboards_account_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dashboards
+    ADD CONSTRAINT dashboards_account_name_uniq UNIQUE (account_id, name);
+
+
+--
+-- Name: dashboards dashboards_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dashboards
+    ADD CONSTRAINT dashboards_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: data_api_access_configs data_api_access_configs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -59822,6 +59918,14 @@ ALTER TABLE ONLY public.inbound_webhook_endpoints
 
 
 --
+-- Name: incident_notes incident_notes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident_notes
+    ADD CONSTRAINT incident_notes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: instance_application_standard_admissions instance_application_standard_admissions_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -60987,6 +61091,22 @@ ALTER TABLE ONLY public.log_events_202611
 
 ALTER TABLE ONLY public.log_events_default
     ADD CONSTRAINT log_events_default_pkey PRIMARY KEY (id, occurred_at);
+
+
+--
+-- Name: log_saved_searches log_saved_searches_app_name_uniq; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_saved_searches
+    ADD CONSTRAINT log_saved_searches_app_name_uniq UNIQUE (app_id, name);
+
+
+--
+-- Name: log_saved_searches log_saved_searches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_saved_searches
+    ADD CONSTRAINT log_saved_searches_pkey PRIMARY KEY (id);
 
 
 --
@@ -66871,6 +66991,34 @@ CREATE INDEX alert_deliveries_rule_fired_production_idx ON public.alert_deliveri
 
 
 --
+-- Name: alert_episodes_account_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_episodes_account_open_idx ON public.alert_episodes USING btree (account_id) WHERE (resolved_at IS NULL);
+
+
+--
+-- Name: alert_episodes_account_resolved_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_episodes_account_resolved_idx ON public.alert_episodes USING btree (account_id, resolved_at DESC) WHERE (resolved_at IS NOT NULL);
+
+
+--
+-- Name: alert_episodes_one_open_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX alert_episodes_one_open_idx ON public.alert_episodes USING btree (rule_id) WHERE (resolved_at IS NULL);
+
+
+--
+-- Name: alert_episodes_rule_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_episodes_rule_idx ON public.alert_episodes USING btree (rule_id, opened_at DESC);
+
+
+--
 -- Name: alert_presets_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -68265,6 +68413,13 @@ CREATE INDEX builds_deployment_started_idx ON public.builds USING btree (deploym
 --
 
 CREATE INDEX builds_deployment_status_cancelled_idx ON public.builds USING btree (deployment_id, status, cancelled_at DESC);
+
+
+--
+-- Name: builds_finished_at_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX builds_finished_at_idx ON public.builds USING btree (finished_at, id) WHERE (finished_at IS NOT NULL);
 
 
 --
@@ -71023,6 +71178,41 @@ CREATE INDEX inbound_webhook_endpoints_account_idx ON public.inbound_webhook_end
 --
 
 CREATE INDEX inbound_webhook_endpoints_app_created_idx ON public.inbound_webhook_endpoints USING btree (app_id, created_at, id);
+
+
+--
+-- Name: incident_notes_alert_episode_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX incident_notes_alert_episode_idx ON public.incident_notes USING btree (alert_episode_id) WHERE (alert_episode_id IS NOT NULL);
+
+
+--
+-- Name: incident_notes_incident_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX incident_notes_incident_idx ON public.incident_notes USING btree (account_id, incident_id, created_at);
+
+
+--
+-- Name: incident_notes_one_ack_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX incident_notes_one_ack_idx ON public.incident_notes USING btree (account_id, incident_id) WHERE (kind = 'acknowledged'::text);
+
+
+--
+-- Name: incident_notes_route_incident_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX incident_notes_route_incident_idx ON public.incident_notes USING btree (route_incident_id) WHERE (route_incident_id IS NOT NULL);
+
+
+--
+-- Name: incident_notes_status_incident_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX incident_notes_status_incident_idx ON public.incident_notes USING btree (status_incident_id) WHERE (status_incident_id IS NOT NULL);
 
 
 --
@@ -83467,6 +83657,22 @@ ALTER TABLE ONLY public.alert_deliveries
 
 
 --
+-- Name: alert_episodes alert_episodes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_episodes
+    ADD CONSTRAINT alert_episodes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_episodes alert_episodes_rule_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_episodes
+    ADD CONSTRAINT alert_episodes_rule_id_fkey FOREIGN KEY (rule_id) REFERENCES public.alert_rules(id) ON DELETE CASCADE;
+
+
+--
 -- Name: alert_historical_rollback_claims alert_historical_rollback_claims_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -86971,6 +87177,14 @@ ALTER TABLE ONLY public.customer_workflow_readiness_subscriptions
 
 
 --
+-- Name: dashboards dashboards_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.dashboards
+    ADD CONSTRAINT dashboards_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: data_api_access_configs data_api_access_configs_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -89795,6 +90009,38 @@ ALTER TABLE ONLY public.inbound_webhook_endpoints
 
 
 --
+-- Name: incident_notes incident_notes_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident_notes
+    ADD CONSTRAINT incident_notes_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: incident_notes incident_notes_alert_episode_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident_notes
+    ADD CONSTRAINT incident_notes_alert_episode_id_fkey FOREIGN KEY (alert_episode_id) REFERENCES public.alert_episodes(id) ON DELETE CASCADE;
+
+
+--
+-- Name: incident_notes incident_notes_route_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident_notes
+    ADD CONSTRAINT incident_notes_route_incident_id_fkey FOREIGN KEY (route_incident_id) REFERENCES public.route_monitor_incidents(id) ON DELETE CASCADE;
+
+
+--
+-- Name: incident_notes incident_notes_status_incident_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.incident_notes
+    ADD CONSTRAINT incident_notes_status_incident_id_fkey FOREIGN KEY (status_incident_id) REFERENCES public.status_incidents(public_id) ON DELETE CASCADE;
+
+
+--
 -- Name: instance_application_standard_admissions instance_application_standard_admissions_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -91152,6 +91398,14 @@ ALTER TABLE ONLY public.job_tasks
 
 ALTER TABLE ONLY public.jobs
     ADD CONSTRAINT jobs_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: log_saved_searches log_saved_searches_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_saved_searches
+    ADD CONSTRAINT log_saved_searches_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

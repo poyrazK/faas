@@ -21385,6 +21385,392 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/log-events:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [observability]
+      operationId: searchAppLogEvents
+      summary: Search an app's log events.
+      description: |
+        ADR-20261018083536 internal preview, enabled by
+        `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+        Requires apps:read or admin.
+
+        Returns one newest-first page of the app's ADR-213 log ledger. Filters
+        combine with AND. A text search (`q`) covers at most 24 hours and
+        answers 400 `log_search_window_too_large` beyond that; every search
+        runs under a 5 second statement timeout and answers 503
+        `log_search_timeout` when it trips. Pass `next_cursor` back as
+        `cursor` for the following page.
+      parameters:
+        - $ref: '#/components/parameters/LogSearchSince'
+        - $ref: '#/components/parameters/LogSearchUntil'
+        - $ref: '#/components/parameters/LogSearchSource'
+        - $ref: '#/components/parameters/LogSearchLevel'
+        - $ref: '#/components/parameters/LogSearchRoute'
+        - $ref: '#/components/parameters/LogSearchStatus'
+        - $ref: '#/components/parameters/LogSearchDeployment'
+        - $ref: '#/components/parameters/LogSearchRequest'
+        - $ref: '#/components/parameters/LogSearchTrace'
+        - $ref: '#/components/parameters/LogSearchText'
+        - $ref: '#/components/parameters/LogSearchSaved'
+        - name: limit
+          in: query
+          description: Page size.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: cursor
+          in: query
+          description: The next_cursor of the previous page.
+          schema: { type: string }
+      responses:
+        '200':
+          description: One page of matching events.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogEventsResponse' }
+        default:
+          description: Invalid filters, a window over its bound, a timeout, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/log-events/facets:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [observability]
+      operationId: getAppLogEventFacets
+      summary: Count an app's log events by facet.
+      description: |
+        ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+        Takes the same filters as the search and counts the matches by
+        source, level, status class, and the ten busiest routes. Counts sum
+        each event's occurrences. The window is at most 7 days.
+      parameters:
+        - $ref: '#/components/parameters/LogSearchSince'
+        - $ref: '#/components/parameters/LogSearchUntil'
+        - $ref: '#/components/parameters/LogSearchSource'
+        - $ref: '#/components/parameters/LogSearchLevel'
+        - $ref: '#/components/parameters/LogSearchRoute'
+        - $ref: '#/components/parameters/LogSearchStatus'
+        - $ref: '#/components/parameters/LogSearchDeployment'
+        - $ref: '#/components/parameters/LogSearchRequest'
+        - $ref: '#/components/parameters/LogSearchTrace'
+        - $ref: '#/components/parameters/LogSearchText'
+        - $ref: '#/components/parameters/LogSearchSaved'
+      responses:
+        '200':
+          description: Facet counts for the window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogEventFacetsResponse' }
+        default:
+          description: Invalid filters, a window over 7 days, a timeout, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/dashboards:
+    get:
+      tags: [observability]
+      operationId: listDashboards
+      summary: List the account's custom dashboards.
+      description: |
+        ADR-20261022173833 internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
+        Returns the account's saved dashboards by name.
+      responses:
+        '200':
+          description: The account's dashboards.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardsResponse' }
+        default:
+          description: The preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      tags: [observability]
+      operationId: createDashboard
+      summary: Create a custom dashboard.
+      description: |
+        Saves a named dashboard of up to 24 widgets. Each widget references a
+        signal by kind (app_metric, log_count, custom_metric, slo) and an app
+        the account owns. An account keeps at most 20 dashboards.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DashboardRequest' }
+      responses:
+        '201':
+          description: The created dashboard, with widget defaults applied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dashboard' }
+        default:
+          description: Invalid widgets, a taken name (dashboard_name_taken), the per-account limit (dashboard_quota_exceeded), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/dashboards/{id}:
+    parameters:
+      - $ref: '#/components/parameters/DashboardID'
+    get:
+      tags: [observability]
+      operationId: getDashboard
+      summary: Get a custom dashboard.
+      description: Returns one of the account's dashboards with its widgets.
+      responses:
+        '200':
+          description: The dashboard.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dashboard' }
+        default:
+          description: No such dashboard (dashboard_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      tags: [observability]
+      operationId: replaceDashboard
+      summary: Replace a custom dashboard.
+      description: Replaces the dashboard's name and widgets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DashboardRequest' }
+      responses:
+        '200':
+          description: The replaced dashboard.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dashboard' }
+        default:
+          description: Invalid widgets, a taken name, no such dashboard, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [observability]
+      operationId: deleteDashboard
+      summary: Delete a custom dashboard.
+      description: Deletes one of the account's dashboards.
+      responses:
+        '204':
+          description: The dashboard is deleted.
+        default:
+          description: No dashboard to delete (dashboard_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/dashboards/{id}/data:
+    parameters:
+      - $ref: '#/components/parameters/DashboardID'
+    get:
+      tags: [observability]
+      operationId: getDashboardData
+      summary: Read a custom dashboard's widgets.
+      description: |
+        Resolves every widget for its window through the code behind the
+        per-app endpoints: request metrics, log search counts, pushed custom
+        metrics and SLO status. A widget that cannot be read carries `error`
+        and no value; the rest still resolve.
+      responses:
+        '200':
+          description: The resolved widgets.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardData' }
+        default:
+          description: No dashboard to read widgets for (dashboard_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/incidents:
+    get:
+      tags: [observability]
+      operationId: listIncidents
+      summary: List the account's incidents.
+      description: |
+        ADR-20261022193512 internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
+        One list of alert rule firing periods, route monitor incidents and
+        platform incidents from the status page: everything open plus what
+        resolved since `since`, open first, then newest first, at most 100.
+        Each entry says who in the account acknowledged it. A source that
+        cannot be read (including `acknowledgements`) is named in
+        `unavailable_sources`.
+      parameters:
+        - name: app
+          in: query
+          required: false
+          description: Keep one app's incidents (platform incidents always show).
+          schema: { type: string }
+        - name: status
+          in: query
+          required: false
+          description: "`open` lists open incidents only; `all` (the default) adds resolved ones."
+          schema: { type: string, enum: [open, all] }
+        - name: since
+          in: query
+          required: false
+          description: RFC 3339; resolved incidents from here on. Default 7 days ago, at most 30.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: The incidents.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentsResponse' }
+        default:
+          description: An invalid query, an unknown app, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/incidents/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IncidentID'
+    get:
+      tags: [observability]
+      operationId: getIncident
+      summary: Read an incident and its evidence.
+      description: |
+        The incident with what the platform has for it: an alert's
+        notifications and the log context its newest one carried, a platform
+        incident's status updates, for an app incident the app's change
+        timeline from an hour before it opened until it resolved, and the
+        account's acknowledgement and notes.
+      responses:
+        '200':
+          description: The incident.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentDetail' }
+        default:
+          description: No such incident (incident_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/incidents/{id}/acknowledge:
+    parameters:
+      - $ref: '#/components/parameters/IncidentID'
+    post:
+      tags: [observability]
+      operationId: acknowledgeIncident
+      summary: Acknowledge an open incident.
+      description: |
+        Records that someone in the account took the incident on. An
+        account acknowledges an incident once; acknowledging again returns
+        the first acknowledgement with 200. Acknowledging does not change
+        what an alert rule sends.
+      responses:
+        '201':
+          description: The new acknowledgement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentNote' }
+        '200':
+          description: The account's existing acknowledgement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentNote' }
+        default:
+          description: No such incident (incident_not_found), a resolved incident (incident_resolved), the per-incident note limit (incident_notes_limit), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/incidents/{id}/notes:
+    parameters:
+      - $ref: '#/components/parameters/IncidentID'
+    post:
+      tags: [observability]
+      operationId: addIncidentNote
+      summary: Add a note to an incident.
+      description: |
+        Appends a note to an open or resolved incident. Notes cannot be
+        edited or deleted. A note is at most 2000 characters, and an
+        incident holds at most 100 notes from an account, its
+        acknowledgement included.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IncidentNoteRequest' }
+      responses:
+        '201':
+          description: The note.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentNote' }
+        default:
+          description: An empty or too long note, no such incident (incident_not_found), the per-incident note limit (incident_notes_limit), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/log-searches:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [observability]
+      operationId: listAppLogSavedSearches
+      summary: List an app's saved log searches.
+      description: |
+        ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+        Returns the app's saved searches by name. Each holds filters only;
+        a search, the dashboard or an alert brings its own window.
+      responses:
+        '200':
+          description: The app's saved searches.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogSavedSearchesResponse' }
+        default:
+          description: Unknown app, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/log-searches/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/LogSavedSearchName'
+    put:
+      tags: [observability]
+      operationId: putAppLogSavedSearch
+      summary: Create a saved log search or replace its filters.
+      description: |
+        Stores the query canonically: only source, level, status, route,
+        deployment_id, request_id, trace_id and q, one value each. An app
+        keeps at most 25 saved searches; replacing one never counts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LogSavedSearchRequest' }
+      responses:
+        '200':
+          description: The stored saved search.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogSavedSearch' }
+        default:
+          description: Invalid name or filters, the per-app limit (log_saved_search_quota_exceeded), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [observability]
+      operationId: deleteAppLogSavedSearch
+      summary: Delete a saved log search.
+      description: Deletes the app's saved search by name.
+      responses:
+        '204':
+          description: The saved search is deleted.
+        default:
+          description: No such saved search (log_saved_search_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/metrics:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -65980,6 +66366,79 @@ components:
       required: true
       schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
       description: App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+    LogSearchSince:
+      name: since
+      in: query
+      description: Window start, as a lookback duration (15m, 6h, 3d) or RFC 3339. Defaults to one hour before until and is clamped to the plan's log retention.
+      schema: { type: string }
+    LogSearchUntil:
+      name: until
+      in: query
+      description: Exclusive window end (RFC 3339). Defaults to and is clamped to now.
+      schema: { type: string, format: date-time }
+    LogSearchSource:
+      name: source
+      in: query
+      description: Keep one ledger source.
+      schema: { type: string, enum: [runtime, build, deploy, http, network, dns] }
+    LogSearchLevel:
+      name: level
+      in: query
+      description: Comma list of severities to keep (trace, debug, info, warn, error, fatal).
+      schema: { type: string, example: 'error,warn' }
+    LogSearchRoute:
+      name: route
+      in: query
+      description: Exact route template without the method, such as /checkout/{id}.
+      schema: { type: string, maxLength: 256 }
+    LogSearchStatus:
+      name: status
+      in: query
+      description: Exact HTTP status (502) or a status class (5xx).
+      schema: { type: string, example: 5xx }
+    LogSearchDeployment:
+      name: deployment_id
+      in: query
+      description: Keep events from one deployment.
+      schema: { type: string, format: uuid }
+    LogSearchRequest:
+      name: request_id
+      in: query
+      description: Keep events whose request id or trace id equals this value.
+      schema: { type: string, maxLength: 256 }
+    LogSearchTrace:
+      name: trace_id
+      in: query
+      description: Keep events carrying this W3C trace id.
+      schema: { type: string, maxLength: 128 }
+    LogSearchText:
+      name: q
+      in: query
+      description: Case-insensitive literal substring of the message, 2 to 256 characters. Text searches cover at most 24 hours.
+      schema: { type: string, minLength: 2, maxLength: 256 }
+    LogSearchSaved:
+      name: saved
+      in: query
+      description: Name of one of the app's saved log searches. Its filters apply unless the request sets the same parameter.
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+    IncidentID:
+      name: id
+      in: path
+      required: true
+      description: Incident id, prefixed with its source (`alert-`, `route-`, `platform-`).
+      schema: { type: string }
+    DashboardID:
+      name: id
+      in: path
+      required: true
+      description: Dashboard id.
+      schema: { type: string, format: uuid }
+    LogSavedSearchName:
+      name: name
+      in: path
+      required: true
+      description: Saved log search name, 1 to 63 lowercase letters, digits and dashes.
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
     QueueLeaseQueue:
       name: queue
       in: path
@@ -105849,6 +106308,7 @@ components:
             - workflow_waiting_age_seconds
             - workflow_due_age_seconds
             - custom_metric
+            - log_search_matches
             - log_error_lines
             - log_warn_lines
             - slo_budget_burn
@@ -105875,6 +106335,10 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'The pushed custom metric a custom_metric rule watches (ADR-745). Present only when metric is custom_metric.'
           example: orders_pending
+        log_query:
+          type: string
+          description: 'The canonical log search filters a log_search_matches rule counts (ADR-20261018083536). Present only when metric is log_search_matches.'
+          example: level=error&q=timeout&source=runtime
         slo_id:
           type: string
           format: uuid
@@ -105953,7 +106417,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -105969,6 +106433,11 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h.'
           example: orders_pending
+        log_query:
+          type: string
+          maxLength: 2048
+          description: 'Required when metric is log_search_matches; omit otherwise. URL query string of log search filters (source, level, status, route, deployment_id, request_id, trace_id, q); the rule counts matching log events in its window. Webhook action only, windows up to 24h.'
+          example: level=error&q=timeout&source=runtime
         slo_id:
           type: string
           format: uuid
@@ -106033,7 +106502,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -112481,6 +112950,234 @@ components:
           type: array
           items: { $ref: '#/components/schemas/AccountTraceLookupError' }
 
+    LogEventsResponse:
+      description: One newest-first page of an app's log ledger (ADR-20261018083536).
+      type: object
+      required: [since, until, events]
+      properties:
+        since: { type: string, format: date-time, description: Effective window start after clamping to retention. }
+        until: { type: string, format: date-time }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/LogQueryEvent' }
+        next_cursor: { type: string, description: Present when more events match; pass it back as cursor. }
+    LogFacetCount:
+      description: One facet value and how many events carry it.
+      type: object
+      required: [value, count]
+      properties:
+        value: { type: string }
+        count: { type: integer, format: int64 }
+    LogEventFacetsResponse:
+      description: Log event counts by facet over one window (ADR-20261018083536).
+      type: object
+      required: [since, until, total, sources, levels, status_classes, routes, routes_truncated]
+      properties:
+        since: { type: string, format: date-time, description: Facet window start after clamping to retention. }
+        until: { type: string, format: date-time }
+        total: { type: integer, format: int64 }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/LogFacetCount' }
+        levels:
+          type: array
+          items: { $ref: '#/components/schemas/LogFacetCount' }
+        status_classes:
+          type: array
+          items: { $ref: '#/components/schemas/LogFacetCount' }
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/LogFacetCount' }
+        routes_truncated: { type: boolean, description: More routes matched than the ten returned. }
+    DashboardWidget:
+      type: object
+      description: 'One typed reference to a signal (ADR-20261022173833). app_metric and custom_metric use metric, log_count uses query, slo uses slo_id.'
+      required: [title, kind, app]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 80 }
+        kind: { type: string, enum: [app_metric, log_count, custom_metric, slo] }
+        app: { type: string, description: 'Slug of an app the account owns.' }
+        metric:
+          type: string
+          description: 'app_metric: request_count, error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms or cold_start_pct. custom_metric: the pushed metric name.'
+        query: { type: string, description: 'log_count: log search filters as a URL query string (source, level, status, route, deployment_id, request_id, trace_id, q).' }
+        slo_id: { type: string, format: uuid, description: 'slo: the SLO id.' }
+        window: { type: string, enum: ['5m', '1h', '6h', '24h', '7d'], description: 'Defaults to 1h; ignored by slo widgets.' }
+    Dashboard:
+      type: object
+      description: An account's saved dashboard.
+      required: [id, name, widgets, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        widgets:
+          type: array
+          items: { $ref: '#/components/schemas/DashboardWidget' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    DashboardRequest:
+      type: object
+      description: Body of a dashboard create or replace.
+      required: [name, widgets]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+        widgets:
+          type: array
+          maxItems: 24
+          items: { $ref: '#/components/schemas/DashboardWidget' }
+    Incident:
+      type: object
+      description: An alert rule's firing period, a route monitor incident, or a platform incident.
+      required: [id, source, status, title, opened_at]
+      properties:
+        id: { type: string }
+        source: { type: string, enum: [alert, route_monitor, platform] }
+        status: { type: string, enum: [open, resolved] }
+        title: { type: string }
+        app: { type: string, description: The app's slug; absent for account-wide alerts and platform incidents. }
+        opened_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        rule_id: { type: string, format: uuid, description: An alert incident's rule. }
+        metric: { type: string, description: An alert incident's rule metric. }
+        deployment_id: { type: string, format: uuid, description: The deployment a route monitor incident watched. }
+        impact: { type: string, description: A platform incident's status page impact. }
+        acknowledged_at: { type: string, format: date-time, description: When someone in the account acknowledged the incident. }
+        acknowledged_by: { type: string, description: 'Who acknowledged it, an email or api_key:<id>.' }
+    IncidentNote:
+      type: object
+      description: An account's acknowledgement (no body) or note on an incident.
+      required: [id, kind, author, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [acknowledged, note] }
+        body: { type: string, maxLength: 2000 }
+        author: { type: string, description: 'An email or api_key:<id>.' }
+        created_at: { type: string, format: date-time }
+    IncidentNoteRequest:
+      type: object
+      description: A note to append to an incident.
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1, maxLength: 2000 }
+    IncidentsResponse:
+      type: object
+      description: The account's open incidents and those resolved since `since`, open first.
+      required: [since, incidents, truncated, unavailable_sources]
+      properties:
+        since: { type: string, format: date-time }
+        incidents:
+          type: array
+          items: { $ref: '#/components/schemas/Incident' }
+        truncated: { type: boolean }
+        unavailable_sources:
+          type: array
+          items: { type: string }
+    IncidentFire:
+      type: object
+      description: One notification an alert incident sent.
+      required: [at, observed, status]
+      properties:
+        at: { type: string, format: date-time }
+        observed: { type: number, format: double }
+        status: { type: string }
+    IncidentUpdate:
+      type: object
+      description: One status page update of a platform incident.
+      required: [at, state, message]
+      properties:
+        at: { type: string, format: date-time }
+        state: { type: string }
+        message: { type: string }
+    IncidentDetail:
+      type: object
+      description: An incident with the evidence the platform has for it and the account's notes.
+      required: [incident, notes, unavailable_sources]
+      properties:
+        incident: { $ref: '#/components/schemas/Incident' }
+        fires:
+          type: array
+          items: { $ref: '#/components/schemas/IncidentFire' }
+        log_context:
+          type: object
+          additionalProperties: true
+          description: What the logs showed at the newest fire, when log search was on.
+        updates:
+          type: array
+          items: { $ref: '#/components/schemas/IncidentUpdate' }
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/AppChangeEvent' }
+        changes_truncated: { type: boolean }
+        notes:
+          type: array
+          description: The account's acknowledgement and notes, oldest first.
+          items: { $ref: '#/components/schemas/IncidentNote' }
+        unavailable_sources:
+          type: array
+          items: { type: string }
+    DashboardPoint:
+      type: object
+      description: One time-series sample.
+      required: [at, value]
+      properties:
+        at: { type: string, format: date-time }
+        value: { type: number, format: double }
+    DashboardWidgetValue:
+      description: A widget with its resolved value, or the reason it has none.
+      allOf:
+        - $ref: '#/components/schemas/DashboardWidget'
+        - type: object
+          properties:
+            value: { type: number, format: double, description: 'The headline number, in unit.' }
+            unit: { type: string, description: 'ms, %, requests, events, gauge, per second, or % budget left.' }
+            detail: { type: string, description: 'Context: log counts by level, SLO attainment.' }
+            series:
+              type: array
+              description: The custom metric's points over the window.
+              items: { $ref: '#/components/schemas/DashboardPoint' }
+            error: { type: string, description: 'Why the widget has no value: an unavailable app or source, no data, or a plan gate.' }
+    DashboardData:
+      type: object
+      description: A dashboard with every widget resolved.
+      required: [id, name, as_of, widgets]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        as_of: { type: string, format: date-time }
+        widgets:
+          type: array
+          items: { $ref: '#/components/schemas/DashboardWidgetValue' }
+    DashboardsResponse:
+      type: object
+      description: The account's dashboards by name.
+      required: [dashboards]
+      properties:
+        dashboards:
+          type: array
+          items: { $ref: '#/components/schemas/Dashboard' }
+    LogSavedSearch:
+      type: object
+      description: One app's named log search filters (ADR-20261018083536).
+      required: [name, query, created_at, updated_at]
+      properties:
+        name: { type: string, description: 'Unique within the app.' }
+        query: { type: string, description: 'Canonical URL query string of filters, e.g. level=error&q=timeout.' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    LogSavedSearchRequest:
+      type: object
+      description: Body of a saved log search create or replace.
+      required: [query]
+      properties:
+        query: { type: string, maxLength: 2048, description: 'URL query string of filters: source, level, status, route, deployment_id, request_id, trace_id, q.' }
+    LogSavedSearchesResponse:
+      type: object
+      description: An app's saved log searches by name.
+      required: [searches]
+      properties:
+        searches:
+          type: array
+          items: { $ref: '#/components/schemas/LogSavedSearch' }
     LogQueryEvent:
       type: object
       description: "Safe source-neutral log query event; trace lookup returns the HTTP access-log projection."

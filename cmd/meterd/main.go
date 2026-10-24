@@ -1178,6 +1178,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient)
 	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
 	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
+	// ADR-20261022172052: firing app alerts carry what the log ledger shows.
+	evaluator.SetLogContext(deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1")
 	// ADR-747: record customer SLO budget hours from Prometheus.
 	go runSLORollup(ctx, store, promClient, log)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
