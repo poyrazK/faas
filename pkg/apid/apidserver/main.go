@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/issueslack"
 
 	"github.com/onebox-faas/faas/pkg/apid/apptaskattach"
+	"github.com/onebox-faas/faas/pkg/apid/deploywatchdog"
 	"github.com/onebox-faas/faas/pkg/apid/imagerun"
 	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
@@ -864,6 +865,19 @@ func run(ctx context.Context, log *slog.Logger) error {
 				log.Error("upload session reaper exited", "err", err)
 			}
 		}()
+		// ADR-20261024140100: fail in-flight deployments that can no longer
+		// finish on their own (a build queued past its bound, a pipeline
+		// that lost its notification), so every deployment reaches a
+		// terminal state. Each failure re-checks its row under lock, so
+		// replicas may sweep concurrently.
+		if watchdogStore, ok := srv.store.(state.DeploymentWatchdogStore); ok {
+			watchdog := &deploywatchdog.Watchdog{Store: watchdogStore, Log: log}
+			go func() {
+				if err := watchdog.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+					log.Error("deployment watchdog exited", "err", err)
+				}
+			}()
+		}
 		// Move 3 (M7.5 prep): bridge pg_notify → in-process broadcaster.
 		// Runs as a background goroutine for the daemon's lifetime; the
 		// SubscribeWithReconnect wrapper reconnects across Postgres

@@ -65384,6 +65384,63 @@ func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg Object
 	return items, nil
 }
 
+const objectStorageGatewayStorageAdvance = `-- name: ObjectStorageGatewayStorageAdvance :execrows
+UPDATE object_storage_gateway_storage g
+SET stored_byte_hours = LEAST(1152921504606846976::numeric, g.stored_byte_hours
+        + COALESCE(u.observed_bytes, 0)::numeric
+        * EXTRACT(EPOCH FROM (LEAST(now(), ((g.period_start AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC',
+              CASE WHEN b.state = 'deleted' THEN GREATEST(b.updated_at, g.accrued_through) ELSE 'infinity'::timestamptz END)
+            - g.accrued_through)) / 3600),
+    accrued_through = LEAST(now(), ((g.period_start AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC',
+        CASE WHEN b.state = 'deleted' THEN GREATEST(b.updated_at, g.accrued_through) ELSE 'infinity'::timestamptz END)
+FROM object_buckets b
+LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
+WHERE b.id = g.bucket_id
+  AND g.period_start >= (date_trunc('month', now() AT TIME ZONE 'UTC') - interval '1 month') AT TIME ZONE 'UTC'
+  AND g.accrued_through < LEAST(now(), ((g.period_start AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC',
+        CASE WHEN b.state = 'deleted' THEN GREATEST(b.updated_at, g.accrued_through) ELSE 'infinity'::timestamptz END)
+`
+
+// Accrues each open row of this or last month from accrued_through to now,
+// the end of its month or the bucket's deletion, whichever is first, at the
+// bucket's last inventoried bytes. Concurrent callers serialize on the row,
+// and each starts from the committed accrued_through, so time is never
+// counted twice.
+func (q *Queries) ObjectStorageGatewayStorageAdvance(ctx context.Context, db DBTX) (int64, error) {
+	result, err := db.Exec(ctx, objectStorageGatewayStorageAdvance)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectStorageGatewayStorageOpen = `-- name: ObjectStorageGatewayStorageOpen :execrows
+INSERT INTO object_storage_gateway_storage (bucket_id, period_start, accrued_from, accrued_through)
+SELECT b.id, p.period_start,
+       CASE WHEN EXISTS (SELECT 1 FROM object_storage_gateway_storage prev
+                         WHERE prev.bucket_id = b.id AND prev.period_start = p.previous_start)
+            THEN p.period_start ELSE now() END,
+       CASE WHEN EXISTS (SELECT 1 FROM object_storage_gateway_storage prev
+                         WHERE prev.bucket_id = b.id AND prev.period_start = p.previous_start)
+            THEN p.period_start ELSE now() END
+FROM object_buckets b,
+     (SELECT date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS period_start,
+             (date_trunc('month', now() AT TIME ZONE 'UTC') - interval '1 month') AT TIME ZONE 'UTC' AS previous_start) p
+WHERE b.state <> 'deleted'
+ON CONFLICT (bucket_id, period_start) DO NOTHING
+`
+
+// ADR-20261024132844: one row per live bucket for the current UTC month. A
+// bucket metered last month continues from the start of this month; any other
+// bucket starts now, so storage is never billed for time Gregale did not meter.
+func (q *Queries) ObjectStorageGatewayStorageOpen(ctx context.Context, db DBTX) (int64, error) {
+	result, err := db.Exec(ctx, objectStorageGatewayStorageOpen)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectStorageManagedSecretRotate = `-- name: ObjectStorageManagedSecretRotate :execrows
 UPDATE app_secrets SET ciphertext=$6, kid=$7, value_hash=$8,
   delivery_version=delivery_version+1, delivery_status='pending',
@@ -66760,9 +66817,12 @@ COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_gra
 JOIN object_storage_multipart_uploads m ON m.id=g.upload_id
 WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes,
 COALESCE(r.request_count, 0)::bigint AS gateway_request_count,
-COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes
+COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes,
+COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
+s.accrued_through AS gateway_storage_through
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = $1
+LEFT JOIN object_storage_gateway_storage s ON s.bucket_id = b.id AND s.period_start = $1
 WHERE object_storage_usage_subject(b.org_id,b.account_id,$1) = $2
 `
 
@@ -66808,6 +66868,8 @@ type ObjectUsageBucketsRow struct {
 	MultipartBytes                 int64
 	GatewayRequestCount            int64
 	GatewayEgressBytes             int64
+	GatewayStoredByteHours         int64
+	GatewayStorageThrough          pgtype.Timestamptz
 }
 
 func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error) {
@@ -66856,6 +66918,8 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsa
 			&i.MultipartBytes,
 			&i.GatewayRequestCount,
 			&i.GatewayEgressBytes,
+			&i.GatewayStoredByteHours,
+			&i.GatewayStorageThrough,
 		); err != nil {
 			return nil, err
 		}

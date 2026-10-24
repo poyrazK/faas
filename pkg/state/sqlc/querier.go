@@ -260,6 +260,7 @@ type Querier interface {
 	CancelProfileDeploymentChecks(ctx context.Context, db DBTX, appID string) error
 	CancelProjectReleaseStage(ctx context.Context, db DBTX, arg CancelProjectReleaseStageParams) (int64, error)
 	CancelQueueCanary(ctx context.Context, db DBTX, arg CancelQueueCanaryParams) error
+	CancelQueuedBuildsForDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int64, error)
 	CancelQueuedCustomerOperationJobTask(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	CancelRuntimeUpgradeBuilds(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]pgtype.UUID, error)
 	CancelRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg CancelRuntimeUpgradeCandidateParams) error
@@ -3470,6 +3471,15 @@ type Querier interface {
 	// settled; a parent that started none qualifies at once.
 	ListSettledChildParents(ctx context.Context, db DBTX, arg ListSettledChildParentsParams) ([]ListSettledChildParentsRow, error)
 	ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]string, error)
+	// Deployment watchdog (ADR-20261024140100). An in-flight deployment that can
+	// no longer finish on its own: a build queued since before queued_before, or
+	// no queued or running build and no stage progress since stalled_before.
+	// Deployments that are in flight by design are never candidates: a prepared
+	// rollback target, a deployment under an MCP task promotion hold, a parked
+	// deployment, an environment workload runtime, or one waiting on a
+	// dependency, build-dependency or hosting-verification gate. A running build
+	// belongs to builderd's reaper.
+	ListStuckDeployments(ctx context.Context, db DBTX, arg ListStuckDeploymentsParams) ([]ListStuckDeploymentsRow, error)
 	ListSyntheticCheckRuns(ctx context.Context, db DBTX, arg ListSyntheticCheckRunsParams) ([]SyntheticCheckRun, error)
 	ListSyntheticChecks(ctx context.Context, db DBTX, appID pgtype.UUID) ([]SyntheticCheck, error)
 	ListTCPListenerTLSObservations(ctx context.Context, db DBTX, listenerID pgtype.UUID) ([]AppTcpListenerTlsObservation, error)
@@ -3635,6 +3645,7 @@ type Querier interface {
 	// rows before locking the projection, matching failure writers' lock order.
 	LockDeadLetterReplayLanes(ctx context.Context, db DBTX, eventIds []pgtype.UUID) error
 	LockDeploymentArtifactScan(ctx context.Context, db DBTX, arg LockDeploymentArtifactScanParams) ([]byte, error)
+	LockDeploymentForWatchdog(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	LockDeploymentHostingFailure(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockDeploymentHostingFailureRow, error)
 	LockDeploymentHostingVerification(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockDeploymentHostingVerificationRow, error)
 	LockDeploymentRegistryRootfs(ctx context.Context, db DBTX, verificationID pgtype.UUID) ([]byte, error)
@@ -4277,6 +4288,16 @@ type Querier interface {
 	ObjectS3CredentialRotationStampStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampStageParams) (pgtype.Timestamptz, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
 	ObjectS3MultipartList(ctx context.Context, db DBTX, arg ObjectS3MultipartListParams) ([]ObjectStorageMultipartUpload, error)
+	// Accrues each open row of this or last month from accrued_through to now,
+	// the end of its month or the bucket's deletion, whichever is first, at the
+	// bucket's last inventoried bytes. Concurrent callers serialize on the row,
+	// and each starts from the committed accrued_through, so time is never
+	// counted twice.
+	ObjectStorageGatewayStorageAdvance(ctx context.Context, db DBTX) (int64, error)
+	// ADR-20261024132844: one row per live bucket for the current UTC month. A
+	// bucket metered last month continues from the start of this month; any other
+	// bucket starts now, so storage is never billed for time Gregale did not meter.
+	ObjectStorageGatewayStorageOpen(ctx context.Context, db DBTX) (int64, error)
 	ObjectStorageLockLegacyIdentity(ctx context.Context, db DBTX, id pgtype.UUID) error
 	ObjectStorageLockOwner(ctx context.Context, db DBTX, arg ObjectStorageLockOwnerParams) (ObjectStorageLockOwnerRow, error)
 	ObjectStorageLockReportingOwners(ctx context.Context, db DBTX, subject pgtype.UUID) ([]pgtype.UUID, error)

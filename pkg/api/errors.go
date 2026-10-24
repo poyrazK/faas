@@ -505,6 +505,13 @@ const (
 	CodeBuildUndetected      = "build_undetected"
 	CodeBuildOOM             = "build_oom"
 	CodeBuildTimeout         = "build_timeout"
+	// CodeDeploymentQueueTimeout and CodeDeploymentStalled are the
+	// deployment watchdog's failures (ADR-20261024140100): a build waited
+	// past DeploymentQueuedBuildTimeoutSeconds, or an in-flight deployment
+	// with no build in progress made no stage progress for
+	// DeploymentStallTimeoutSeconds. Both are retryable by redeploying.
+	CodeDeploymentQueueTimeout = "deployment_queue_timeout"
+	CodeDeploymentStalled      = "deployment_stalled"
 	// CodeStage* (ADR-117 §Production-ready follow-on): per-stage
 	// RFC 7807 stable codes for the closed-6 deploy stage vocabulary.
 	// Distinct from CodeBuildXXX (which mark the whole build VM's

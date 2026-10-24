@@ -447,6 +447,7 @@ type MemStore struct {
 	objectOrgOwnedFrom          map[string]time.Time
 	orgAsyncQuotaPooled         map[string]time.Time
 	objectProviderRequests      map[string]int64
+	objectGatewayStorage        map[string]*memGatewayStorage
 	objectAccessGrants          map[string]ObjectBucketAccessGrant
 	objectS3Credentials         map[string]ObjectS3Credential
 	objectS3CopySources         map[string]ObjectS3CopySource
@@ -11678,6 +11679,10 @@ func (m *MemStore) SetDeploymentSourceURL(_ context.Context, id, sourceURL, comm
 func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.setDeploymentFailedLocked(id, code, message)
+}
+
+func (m *MemStore) setDeploymentFailedLocked(id, code, message string) (Deployment, error) {
 	d, ok := m.deployments[id]
 	if !ok {
 		return Deployment{}, ErrNotFound
