@@ -282,6 +282,79 @@ func (s *server) requireOperator(next accountHandler) accountHandler {
 	}
 }
 
+// requireOperatorRead is the policy for provider reads that name no tenant:
+// fleet, node and alert-pipeline telemetry (ADR 20261023214253). An
+// operator's bearer key may read them, so probes and scripts keep working;
+// a session must have completed MFA and belong to an enrolled operator.
+func (s *server) requireOperatorRead(next accountHandler) accountHandler {
+	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireEnrolledOperatorSession(next))))
+}
+
+// requireOperatorSessionRead is the policy for provider reads that return
+// customer data: tenant records, events, audit rows, traces, client IPs.
+// Only an MFA-completed session of an enrolled operator reads them, so a
+// leaked operator key does not (ADR 20261023214253).
+func (s *server) requireOperatorSessionRead(next accountHandler) accountHandler {
+	return s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireOperatorSession(s.requireEnrolledOperatorSession(next)))))
+}
+
+// requireOperatorSession is requireSessionPrincipal with the one-release
+// grace of FAAS_OPERATOR_BEARER_READS=deprecated: an operator key still
+// passes, marked deprecated, so automation can move to a session first.
+func (s *server) requireOperatorSession(next accountHandler) accountHandler {
+	strict := s.requireSessionPrincipal(next)
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		if _, key, ok := middleware.AccountFromContext(r); ok && key != nil && s.operatorBearerReadsDeprecated {
+			w.Header().Set("Deprecation", "true")
+			w.Header().Set("Warning", `299 - "operator keys cannot read customer data after this release; sign in with gregalectl auth login (ADR 20261023214253)"`)
+			s.audit.Emit(r.Context(), "auth.operator_bearer_read_deprecated", &acct.ID, map[string]any{
+				"route":      r.Pattern,
+				"api_key_id": key.ID,
+			})
+			next(w, r, acct)
+			return
+		}
+		strict(w, r, acct)
+	}
+}
+
+// requireEnrolledOperatorSession refuses an operator session whose account
+// has no confirmed authenticator. Login stamps such a session mfa_pending,
+// but one issued before that rule, or by an older apid during a rolling
+// deploy, was not, and lives for days. Bearer keys are left to the route's
+// policy.
+func (s *server) requireEnrolledOperatorSession(next accountHandler) accountHandler {
+	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
+		actor, key, ok := middleware.AccountFromContext(r)
+		if !ok {
+			api.WriteProblem(w, api.ErrCapacity("authenticated principal missing"))
+			return
+		}
+		if key == nil && !actor.MFAEnrolled() {
+			api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeMFARequired, "MFA required",
+				"platform operators must enroll an authenticator: complete /v1/account/mfa/enroll and /v1/account/mfa/confirm"))
+			return
+		}
+		next(w, r, acct)
+	}
+}
+
+// WithOperatorBearerReads sets the FAAS_OPERATOR_BEARER_READS mode of ADR
+// 20261023214253. "deprecated" keeps operator keys on session-only reads for
+// one release; "" and "deny" enforce, and any other value enforces too.
+func (s *server) WithOperatorBearerReads(mode string) *server {
+	switch strings.TrimSpace(mode) {
+	case "deprecated":
+		s.operatorBearerReadsDeprecated = true
+	case "", "deny":
+		s.operatorBearerReadsDeprecated = false
+	default:
+		s.operatorBearerReadsDeprecated = false
+		s.log.Warn("apid: unknown FAAS_OPERATOR_BEARER_READS; operator keys stay refused on customer-data reads", "value", mode)
+	}
+	return s
+}
+
 // requireSessionPrincipal rejects bearer/API-key principals without imposing
 // the mutation-only five-minute step-up freshness window. It is used for
 // sensitive operator reads that require an MFA-completed browser/CLI session.

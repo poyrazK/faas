@@ -17,6 +17,23 @@
 # Default: "" (disabled)
 # native_snapshot_publication_root = "/var/lib/faas/vmmd-publications"
 
+# native_runtime_capture: EXPERIMENTAL. Run ordinary park and warm captures
+# through the native producer instead of refusing them (ADR 20261022184951).
+# Requires native_process_recovery = true, native_snapshot_publication_root,
+# native_image_staging_root and native_runtime_snapshot_root. Leave off until
+# native capture acceptance passes.
+# Default: false
+# native_runtime_capture = true
+
+# native_runtime_snapshot_root: the tree native runtime captures publish to.
+# vmmd must be its only writer: a directory owned by vmmd's uid with no group
+# write and no access for others, on ext4/XFS/Btrfs. The compute role creates
+# /srv/fc/native-snap as 2750 root:faas so imaged and schedd can read it.
+# Keep it set after turning native_runtime_capture off; restores and imaged's
+# collection still need the snapshots it holds.
+# Default: "" (disabled)
+# native_runtime_snapshot_root = "/srv/fc/native-snap"
+
 # adoption_record: write version-7 adoption blocks into the resource journal
 # (vmmd restart adoption ADR, slice 1). Shadow only: nothing adopts yet, and
 # startup classifies records in a dry run either way. vmmd binaries without a

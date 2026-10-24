@@ -40,13 +40,20 @@ func TestFinancialBudgetPreviewStopMetal(t *testing.T) {
 	s := state.NewPgStore(pool)
 	image, _ := e2etest.HelloImageAboveBase("library/budget-hello", helloBody)
 	ref := registry.AddImage("library/budget-hello", image)
+	// apid inserts an app unplaced and announces it so schedd claims a node;
+	// these rows bypass apid, so place them on the harness node directly or
+	// the gateway refuses them ("empty NodeID").
+	var nodeID string
+	if err := pool.QueryRow(ctx, `SELECT id FROM compute_nodes WHERE name = 'default-local'`).Scan(&nodeID); err != nil {
+		t.Fatal(err)
+	}
 	var preview state.App
 	for _, slug := range []string{"budget-production", "budget-preview"} {
 		parent := ""
 		if slug == "budget-preview" {
 			parent = "budget-production"
 		}
-		app, err := s.CreateApp(ctx, state.App{AccountID: account, Slug: slug, PreviewOfSlug: parent, Type: state.AppTypeApp, Runtime: "node22", RAMMB: 128, MaxConcurrency: 2, IdleTimeoutS: 300})
+		app, err := s.CreateApp(ctx, state.App{AccountID: account, Slug: slug, PreviewOfSlug: parent, NodeID: nodeID, Type: state.AppTypeApp, Runtime: "node22", RAMMB: 128, MaxConcurrency: 2, IdleTimeoutS: 300})
 		if err != nil {
 			t.Fatal(err)
 		}

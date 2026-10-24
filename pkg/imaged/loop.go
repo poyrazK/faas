@@ -677,7 +677,7 @@ const localSnapshotOrphanGrace = time.Hour
 // stale row, protects its deployment directory. The age guard avoids racing a
 // newly-created directory before snapshot publication commits its row.
 func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
-	if strings.TrimSpace(l.storageRoot) == "" {
+	if strings.TrimSpace(l.storageRoot) == "" && (l.handler == nil || l.handler.nativeSnapshotRoot == "") {
 		return
 	}
 	knownIDs, err := l.store.ListSnapshotDeploymentIDs(ctx)
@@ -696,6 +696,11 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 	for _, deploymentID := range append(knownIDs, captureIDs...) {
 		known[deploymentID] = struct{}{}
 	}
+	cutoff := now.Add(-localSnapshotOrphanGrace)
+	l.retireNativeRuntimeSnapshotOrphans(ctx, known, cutoff)
+	if strings.TrimSpace(l.storageRoot) == "" {
+		return
+	}
 	snapRoot := filepath.Join(filepath.Clean(l.storageRoot), "snap")
 	entries, err := os.ReadDir(snapRoot)
 	if errors.Is(err, os.ErrNotExist) {
@@ -705,7 +710,6 @@ func (l *Loop) removeLocalSnapshotOrphans(ctx context.Context, now time.Time) {
 		l.log.Warn("imaged: local snapshot orphan scan", "root", snapRoot, "err", err)
 		return
 	}
-	cutoff := now.Add(-localSnapshotOrphanGrace)
 	removed := 0
 	for _, entry := range entries {
 		if err := ctx.Err(); err != nil {
@@ -932,14 +936,16 @@ func (l *Loop) deleteSnapshotsAndFiles(ctx context.Context, ts []deleteTarget) e
 		// The ADR-510 backing identity sits beside every capture; leaving it
 		// behind orphaned one object per collected snapshot (H5-13).
 		backingKey := state.SnapshotBackingKey(snap)
-		memErr := be.Delete(ctx, memKey)
-		vmstateErr := be.Delete(ctx, vmstateKey)
+		// A native runtime capture's objects are removed by vmmd (ADR
+		// 20261022184951 amendment 1); every other object by the backend.
+		memErr := l.handler.deleteSnapshotObject(ctx, be, memKey)
+		vmstateErr := l.handler.deleteSnapshotObject(ctx, be, vmstateKey)
 		var driveErr, backingErr error
 		if driveKey != "" {
-			driveErr = be.Delete(ctx, driveKey)
+			driveErr = l.handler.deleteSnapshotObject(ctx, be, driveKey)
 		}
 		if backingKey != "" {
-			backingErr = be.Delete(ctx, backingKey)
+			backingErr = l.handler.deleteSnapshotObject(ctx, be, backingKey)
 		}
 		memQuarantined := errors.Is(memErr, storage.ErrDeleteQuarantined)
 		vmstateQuarantined := errors.Is(vmstateErr, storage.ErrDeleteQuarantined)

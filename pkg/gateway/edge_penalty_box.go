@@ -3,8 +3,10 @@ package gateway
 // Penalty box (ADR-20261022105846). A rule with a penalty counts the
 // clients it refuses by policy; once one reaches the rule's threshold
 // within its window, every request from that client to the app is refused
-// until the penalty ends. Boxes live in this gateway's memory: a node
-// restart releases them, and another node keeps its own.
+// until the penalty ends. Counts live in this gateway's memory. Boxes do
+// too, and with a sharer (amendment 1) each box this gateway makes is
+// reported through OnBox and boxes other gateways made arrive through Hold,
+// so a box holds on every node and survives a restart.
 
 import (
 	"context"
@@ -43,12 +45,21 @@ type penaltyEntry struct {
 	until  time.Time
 }
 
+// PenaltyBoxRecord is one box as gateways share it (amendment 1).
+type PenaltyBoxRecord struct {
+	AppID, RuleID string
+	Client        netip.Prefix
+	Until         time.Time
+}
+
 // PenaltyBox is one gateway's boxes and pending rejection counts. It is safe
 // for concurrent use; the request path takes its lock only while it holds
 // at least one box.
 type PenaltyBox struct {
 	now   func() time.Time
 	count atomic.Int64 // boxes held, for the lock-free fast path
+	// onBox, when set, is told of every box a Hit makes; it must not block.
+	onBox func(PenaltyBoxRecord)
 
 	mu    sync.Mutex
 	boxes map[string]map[netip.Prefix]penaltyEntry // app -> client -> box
@@ -86,6 +97,16 @@ func (b *PenaltyBox) Hit(app, rule string, ip net.IP, p api.EdgeRulePenalty) boo
 	if b == nil || !ok || p.Seconds <= 0 {
 		return false
 	}
+	boxed, until := b.hit(app, rule, client, p)
+	if boxed && b.onBox != nil {
+		b.onBox(PenaltyBoxRecord{AppID: app, RuleID: rule, Client: client, Until: until})
+	}
+	return boxed
+}
+
+// hit counts one rejection under the lock and reports whether it boxed the
+// client, and until when.
+func (b *PenaltyBox) hit(app, rule string, client netip.Prefix, p api.EdgeRulePenalty) (bool, time.Time) {
 	now := b.now()
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -97,13 +118,49 @@ func (b *PenaltyBox) Hit(app, rule string, ip net.IP, p api.EdgeRulePenalty) boo
 	h.count++
 	if h.count < max(p.After, 1) {
 		if !seen && len(b.hits) >= api.EdgePenaltyBoxMaxEntries && !b.sweepHitsLocked(now) {
-			return false
+			return false, time.Time{}
 		}
 		b.hits[key] = h
-		return false
+		return false, time.Time{}
 	}
 	delete(b.hits, key)
-	return b.boxLocked(app, client, penaltyEntry{ruleID: rule, until: now.Add(time.Duration(p.Seconds) * time.Second)}, now)
+	until := now.Add(time.Duration(p.Seconds) * time.Second)
+	return b.boxLocked(app, client, penaltyEntry{ruleID: rule, until: until}, now), until
+}
+
+// OnBox reports every box a Hit makes to fn, which must not block. Set it
+// before the box is used.
+func (b *PenaltyBox) OnBox(fn func(PenaltyBoxRecord)) {
+	if b != nil {
+		b.onBox = fn
+	}
+}
+
+// Hold applies a box another gateway made, or one this gateway made before
+// a restart. Like a box made here, it keeps the later end of one already
+// held, and it is bounded by the same per-app and per-gateway caps. An
+// ended box or a client that is not a box identity is ignored.
+func (b *PenaltyBox) Hold(rec PenaltyBoxRecord) bool {
+	if b == nil || !rec.Client.IsValid() || rec.Client != penaltyIdentity(rec.Client) {
+		return false
+	}
+	now := b.now()
+	if !now.Before(rec.Until) {
+		return false
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.boxLocked(rec.AppID, rec.Client, penaltyEntry{ruleID: rec.RuleID, until: rec.Until}, now)
+}
+
+// penaltyIdentity is the box identity of a prefix's address: what
+// penaltyClient returns for it.
+func penaltyIdentity(p netip.Prefix) netip.Prefix {
+	addr := p.Addr().Unmap()
+	if addr.Is4() {
+		return netip.PrefixFrom(addr, 32)
+	}
+	return netip.PrefixFrom(addr, 64).Masked()
 }
 
 // boxLocked holds client for app. A client already held keeps the later

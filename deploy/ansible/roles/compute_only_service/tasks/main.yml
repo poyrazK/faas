@@ -648,6 +648,18 @@
     cmd: "find /srv/fc/snap -mindepth 1 -type d -exec chown root:faas {} + -exec chmod 2770 {} +"
   changed_when: false
 
+# ADR 20261022184951 amendment 1: native runtime snapshots live in a tree only
+# vmmd (root) writes. The faas group reads it for imaged's collection and
+# schedd's drift sweep; vmmd removes objects on imaged's request. vmmd refuses
+# a root with group write or any access for others, so never widen this mode.
+- name: compute_only_service — create the native runtime snapshot tree
+  ansible.builtin.file:
+    path: /srv/fc/native-snap
+    state: directory
+    owner: root
+    group: faas
+    mode: "2750"
+
 # The compute daemons share selected subdirectories below /var/lib/faas.
 # postgres creates this parent as root-only on control-plane images; compute
 # hosts need group traversal so non-root imaged can reach its Grype cache and

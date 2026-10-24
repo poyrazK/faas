@@ -827,8 +827,12 @@ type MemStore struct {
 	edgeRules                 map[string]EdgeRule
 	edgeRuleSetVersions       map[string][]EdgeRuleSetVersion // app id -> versions, oldest first (ADR-961)
 	edgeRuleLists             map[string]EdgeRuleList         // list id -> list (ADR-963)
+	edgeCrawlerRanges         map[string]EdgeCrawlerRanges    // crawler -> published ranges (ADR-20261022083601)
 	edgeRuleEvents            []EdgeRuleEvent                 // sampled events (ADR-964)
 	edgeRuleEventSeq          int64
+	edgePenaltyBoxes          []EdgePenaltyBox // shared penalty boxes (ADR-20261022105846 amendment 1)
+	edgePenaltyBoxSeq         int64
+	edgePenaltyBoxClock       func() time.Time
 	edgeRuleHitCounts         map[edgeRuleHitKey]int64 // ADR-960 hourly hit buckets
 	routePolicyReceipts       map[string]routePolicyStoredReceipt
 	savedRouteRequirements    map[string]api.SavedRouteRequirements
@@ -24191,9 +24195,10 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	if !ok || app.Status == AppDeleted {
 		return EdgeRule{}, ErrNotFound
 	}
+	// The attack-mode rule is outside every quota, as in pgstore.
 	appCount := 0
 	for _, r := range m.edgeRules {
-		if r.AppID == in.AppID {
+		if r.AppID == in.AppID && !r.AttackMode() {
 			appCount++
 		}
 	}
@@ -24209,7 +24214,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	if in.Kind == EdgeRuleKindGeo && limits.EdgeRulesGeoPerApp > 0 {
 		kindCount := 0
 		for _, r := range m.edgeRules {
-			if r.AppID == in.AppID && r.Kind == EdgeRuleKindGeo {
+			if r.AppID == in.AppID && r.Kind == EdgeRuleKindGeo && !r.AttackMode() {
 				kindCount++
 			}
 		}
@@ -24230,7 +24235,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	if in.Kind == EdgeRuleKindThrottle && limits.EdgeRulesThrottlePerApp > 0 {
 		kindCount := 0
 		for _, r := range m.edgeRules {
-			if r.AppID == in.AppID && r.Kind == EdgeRuleKindThrottle {
+			if r.AppID == in.AppID && r.Kind == EdgeRuleKindThrottle && !r.AttackMode() {
 				kindCount++
 			}
 		}
@@ -24257,7 +24262,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	if _, governed := edgeRuleKindQuota(in.Kind, limits); governed {
 		perApp := 0
 		for _, r := range m.edgeRules {
-			if r.AppID == in.AppID && r.Kind == in.Kind {
+			if r.AppID == in.AppID && r.Kind == in.Kind && !r.AttackMode() {
 				perApp++
 			}
 		}
