@@ -245,6 +245,11 @@ func TestMutatingFlagHandlersGuardPositionalsBeforeClientCalls(t *testing.T) {
 			if fn.Name.Name == "cmdCorsAllow" {
 				continue
 			}
+			// An incident note is every positional after the incident id,
+			// joined, so an unquoted note works (TestCmdIncidentsAckAndNote).
+			if fn.Name.Name == "cmdIncidentsNote" {
+				continue
+			}
 			flagSet, mutation, guard := token.NoPos, token.NoPos, token.NoPos
 			ast.Inspect(fn.Body, func(node ast.Node) bool {
 				switch n := node.(type) {
