@@ -384,6 +384,10 @@ type Querier interface {
 	ClaimQueuedProfileCapture(ctx context.Context, db DBTX, now pgtype.Timestamptz) (ClaimQueuedProfileCaptureRow, error)
 	ClaimReadinessSubscriptions(ctx context.Context, db DBTX, arg ClaimReadinessSubscriptionsParams) ([]CustomerWorkflowReadinessSubscription, error)
 	ClaimRegressionActionReceipt(ctx context.Context, db DBTX, arg ClaimRegressionActionReceiptParams) error
+	// Take an app for this evaluation unless another evaluation took it since
+	// due_before; one affected row means this caller evaluates it
+	// (ADR-20261024154324).
+	ClaimRouteInsightEvaluation(ctx context.Context, db DBTX, arg ClaimRouteInsightEvaluationParams) (int64, error)
 	ClaimRouteProbeRound(ctx context.Context, db DBTX, arg ClaimRouteProbeRoundParams) (string, error)
 	ClaimRuntimeUpgradeOperation(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeOperation, error)
 	ClaimRuntimeUpgradeVerification(ctx context.Context, db DBTX, leaseSeconds int32) (RuntimeUpgradeVerification, error)
@@ -5640,6 +5644,10 @@ type Querier interface {
 	// Resolve an app's active insights that no evaluation has observed since
 	// stale_before.
 	ResolveStaleRouteInsights(ctx context.Context, db DBTX, arg ResolveStaleRouteInsightsParams) (int64, error)
+	// Resolve up to row_limit active insights of any app that no evaluation has
+	// observed since stale_before: an app that stopped running or left a plan
+	// with request telemetry is no longer evaluated (ADR-20261024154324).
+	ResolveStaleRouteInsightsBatch(ctx context.Context, db DBTX, arg ResolveStaleRouteInsightsBatchParams) (int64, error)
 	// ADR-051 amendment (2026-10-22): moves a booted instance's proof from the
 	// fingerprint it was published with to the one its own observed workload
 	// class gives. Only the current wake's proof, and only from that fingerprint.
@@ -5770,8 +5778,10 @@ type Querier interface {
 	// Route insights (ADR-1198): findings apid's evaluator derives from the
 	// awake report and learned cacheability. A trigger on route_insights enqueues
 	// the customer webhooks for each detected/resolved transition.
-	// Apps that ran in the window, with their account; an app that stayed parked
-	// has nothing to report.
+	// Apps on the given plans that ran in the window and that no evaluation has
+	// taken since due_before, least recently evaluated first, with their
+	// account (ADR-20261024154324). An app that stayed parked has nothing to
+	// report.
 	RouteInsightCandidateApps(ctx context.Context, db DBTX, arg RouteInsightCandidateAppsParams) ([]RouteInsightCandidateAppsRow, error)
 	// An app's active insights that became active at or after since, newest
 	// first, for the route_insights_detected alert metric. total counts every

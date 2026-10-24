@@ -53,6 +53,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/profilecapture"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
+	"github.com/onebox-faas/faas/pkg/apid/routejobs"
 	"github.com/onebox-faas/faas/pkg/apid/servicemap"
 	"github.com/onebox-faas/faas/pkg/apid/statementinvoices"
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
@@ -478,6 +479,9 @@ type server struct {
 	// prewarmMetrics shares the daemon registry with ops and records durable
 	// scheduled-prewarm lifecycle events emitted by the API handlers.
 	prewarmMetrics *wire.PrewarmMetrics
+	// routeJobMetrics counts the route monitor and automatic route check
+	// workers' outcomes (ADR-20261024154324); nil records nothing.
+	routeJobMetrics *routejobs.Metrics
 	// honeytokenMetrics counts presented honeytokens (ADR 20261024014500).
 	honeytokenMetrics *honeytokenMetrics
 	// metricsDiscoveryMetrics is bound to the same per-daemon registry as ops.
@@ -701,6 +705,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	}
 	if ops != nil && (s.hostingMetrics == nil || s.hostingMetrics.Registry() != ops.Registry()) {
 		s.hostingMetrics = hostingapi.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
+		s.routeJobMetrics = nil
+	} else if s.routeJobMetrics.Registry() != ops.Registry() {
+		s.routeJobMetrics = routejobs.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops == nil {
 		s.honeytokenMetrics = nil

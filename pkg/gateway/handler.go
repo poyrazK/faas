@@ -1203,13 +1203,6 @@ type Handler struct {
 	// billingRouteSets bounds each app's billing route labels independently
 	// of route metrics, so opting out of metrics never changes billing.
 	billingRouteSets sync.Map // appID(string) → *routeLabelSet
-	// routeSetsPi (ADR-093) deduplicates Metrics.PreInstantiateAppRoute
-	// calls keyed by (appID, routeLabel). The closed `class` set is
-	// written once per app per route; the dedupe map is never
-	// deleted (the underlying routeLabelSet is non-evicting). Same
-	// shape as preInstantiateApps, separate sync.Map so the per-app
-	// and per-route keys don't collide.
-	routeSetsPi sync.Map // appID+"\x00"+routeLabel(string) → struct{}
 	// routeMetricsEnabled (ADR-093) is the operator kill-switch
 	// mirroring the per-app opt-in. When false, every per-app
 	// routeSetFor lookup returns nil regardless of
@@ -6168,17 +6161,11 @@ haveApp:
 			r = withRequestTelemetryRoute(r, telemetryRoute)
 		}
 		if set != nil {
+			// The histogram classes are pre-instantiated when
+			// Handler.observe first emits the route under the
+			// gateway's series budget (ADR-20261024154324).
 			routeLabel = set.admit(preLabel)
 			r = withRouteLabel(r, routeLabel)
-			// Pre-instantiate the closed `class` set under
-			// (app.ID, routeLabel) on the per-route histogram the
-			// first time the route is admitted. The admit() map is
-			// non-evicting, so we guard with a second sync.Map key
-			// (routeSetsPi) keyed by (app.ID, routeLabel) so the
-			// pre-instantiation runs exactly once per app per route.
-			// The dedupe keeps the hot path allocation-free after
-			// first sight.
-			h.preInstantiateAppRoute(app.ID, routeLabel)
 		}
 	}
 
@@ -7950,10 +7937,13 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 		// reserved "no appID" sentinel and would create a
 		// route="__empty__" series that nobody reads). The plan
 		// for non-opt-in apps is the per-app counters above
-		// (preserved per ADR-042 §1 deviation).
-		if routeLabel != "" {
+		// (preserved per ADR-042 §1 deviation). The gateway's series
+		// budget may decline a route it has no room for
+		// (ADR-20261024154324).
+		class := statusClassBucket(status)
+		if routeLabel != "" && h.metrics.AdmitRouteSeries(appID, plan, routeLabel, code, class, time.Now()) {
 			h.metrics.ObserveRequestRoute(appID, plan, routeLabel, code)
-			h.metrics.ObserveRequestDurationRoute(appID, routeLabel, statusClassBucket(status), elapsed)
+			h.metrics.ObserveRequestDurationRoute(appID, routeLabel, class, elapsed)
 			if status >= 400 {
 				h.metrics.RequestFailureRoute(appID, plan, routeLabel, code)
 			}
@@ -8509,25 +8499,6 @@ func (h *Handler) RoutesFor(appID string) (routes []string, overflowed bool) {
 	// subtraction).
 	const reservedCount = 2
 	return out, len(s.admitted)-reservedCount >= s.cap
-}
-
-// preInstantiateAppRoute (ADR-093) records (appID, route) once
-// and delegates to Metrics.PreInstantiateAppRoute. The dedupe is
-// keyed by (appID, routeLabel) so the closed `class` set under
-// the per-route histogram is written exactly once per app per
-// route. Mirrors the preInstantiateApp shape above; the per-
-// route dedupe uses a separate sync.Map so an app's per-app
-// pre-instantiation and its per-route pre-instantiations do not
-// race on the same key.
-func (h *Handler) preInstantiateAppRoute(appID, routeLabel string) {
-	if h == nil || h.metrics == nil || appID == "" || routeLabel == "" {
-		return
-	}
-	key := appID + "\x00" + routeLabel
-	if _, loaded := h.routeSetsPi.LoadOrStore(key, struct{}{}); loaded {
-		return
-	}
-	h.metrics.PreInstantiateAppRoute(appID, routeLabel)
 }
 
 // statusRecorder is a thin ResponseWriter wrapper that records the HTTP status
