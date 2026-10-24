@@ -46,9 +46,15 @@ runs `vmmd base-generation-check` and, when a release changes a generation,
 pre-stages it only behind the drain barrier and never re-activates a node
 whose cache has moved
 ([ADR 20261024085817](adr/20261024085817-rollout-base-generation-and-drain-completion.md)).
-An N-1 node still fetches a base it has not cached from the shared key, and
-a compute rollback across a generation change is not covered yet: both wait
-for generation-addressed base keys.
+That pre-stage publishes every base the release configures that the node
+could not adopt, whoever owns the apps on it, and the play keeps the node
+drained until `vmmd base-adoption-check` confirms that its installed vmmd
+can adopt every configured base
+([ADR 20261024191249](adr/20261024191249-rollout-publishes-release-bases-and-gates-activation.md)).
+So the first node to roll publishes each changed base: from then on an N-1
+node refuses a changed base it has not cached, until it rolls, and a compute
+rollback across a generation change is not covered yet. Both wait for
+generation-addressed base keys.
 
 ## No downtime, no exceptions
 
