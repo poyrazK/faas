@@ -286,6 +286,9 @@
             {{if .Categories}}<p>Detections by category: {{range $i, $c := .Categories}}{{if $i}}, {{end}}{{$c.Name}} <strong>{{$c.Count}}</strong>{{end}}.</p>{{end}}
             {{if .TopRules}}<p>Top CRS rules: {{range $i, $c := .TopRules}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong>{{end}}. Exclude a false positive with <code>exclude_rule_ids</code>.</p>{{end}}
           {{end}}{{end}}
+          {{if .AICrawlers}}
+            <p>AI crawlers: {{range $i, $c := .AICrawlers}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong> <span class="muted">({{$c.Operator}}, {{$c.Purpose}})</span>{{end}}. Block or challenge them by purpose with the <em>Control AI crawlers</em> recipe.</p>
+          {{end}}
           {{with .Penalty}}{{if or .Boxed .Rejected}}
             <p>Penalty box: <strong>{{.Boxed}}</strong> clients boxed, <strong>{{.Rejected}}</strong> requests refused while boxed.</p>
           {{end}}{{end}}

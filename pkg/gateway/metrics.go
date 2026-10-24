@@ -244,6 +244,7 @@ type Metrics struct {
 	wafInlineSkips        *prometheus.CounterVec
 	wafInlineSeconds      prometheus.Histogram
 	edgeChallenge         *prometheus.CounterVec
+	aiCrawlerRequests     *prometheus.CounterVec
 	edgePenalty           *prometheus.CounterVec
 	edgeChallengeRaised   *prometheus.CounterVec
 	wafInspectionSeconds  prometheus.Histogram
@@ -1405,6 +1406,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_edge_challenge_total",
 			Help: "kind=challenge decisions (ADR-831 amendment 7), by app and outcome: passed (valid pass), bypassed (verified credential), issued (challenge page served), rejected (403 challenge_required), solved (pass set), invalid (bad solution), expired (solution after the token expired).",
 		}, []string{"app", "outcome"}),
+		aiCrawlerRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_ai_crawler_requests_total",
+			Help: "Requests whose User-Agent names an AI crawler (ADR-20261022083601), by app and crawler. Counts the claim, verified or not, before any edge rule acts.",
+		}, []string{"app", "crawler"}),
 		edgeChallengeRaised: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_challenge_raised_total",
 			Help: "kind=challenge pages served at a difficulty raised under attack (ADR-831 amendment 8), by app; a subset of gateway_edge_challenge_total{outcome=\"issued\"}.",
@@ -2103,7 +2108,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
-	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSkips, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgePenalty)
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSkips, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgePenalty, m.aiCrawlerRequests)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
 	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
@@ -2723,6 +2728,15 @@ func (m *Metrics) ObserveWAFInline(appID, outcome string, seconds float64) {
 	if seconds > 0 {
 		m.wafInlineSeconds.Observe(seconds)
 	}
+}
+
+// ObserveAICrawlerRequest counts one request whose User-Agent names an AI
+// crawler. crawler is a catalog name, so the label set is closed.
+func (m *Metrics) ObserveAICrawlerRequest(appID, crawler string) {
+	if m == nil || m.aiCrawlerRequests == nil {
+		return
+	}
+	m.aiCrawlerRequests.WithLabelValues(appID, crawler).Inc()
 }
 
 // ObserveEdgePenalty counts one penalty box decision.

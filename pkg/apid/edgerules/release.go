@@ -17,6 +17,7 @@ var (
 	featureChallenge   = edgeFeature{platformflags.EdgeChallenge, "Challenge rules", api.EdgeFeatureChallenge}
 	featureWAFBlocking = edgeFeature{platformflags.EdgeWAFBlocking, "WAF warn and block modes", api.EdgeFeatureWAFBlocking}
 	featurePenaltyBox  = edgeFeature{platformflags.EdgePenaltyBox, "Edge rule penalties", api.EdgeFeaturePenaltyBox}
+	featureAICrawlers  = edgeFeature{platformflags.EdgeAICrawlers, "AI crawler conditions", api.EdgeFeatureAICrawlers}
 )
 
 // RuleResponse is the rule as acct sees it: EdgeRuleResponse plus the gated
@@ -47,6 +48,9 @@ type ruleShape struct {
 	kind    string
 	wafMode string // effective; observe when unset
 	penalty bool
+	// aiCrawlers is a match condition on the AI crawler fields
+	// (ADR-20261022083601 amendment 1).
+	aiCrawlers bool
 	// active is enabled and not in log mode (ADR-960).
 	active bool
 }
@@ -63,6 +67,9 @@ func (r ruleShape) features() []edgeFeature {
 	if r.penalty {
 		out = append(out, featurePenaltyBox)
 	}
+	if r.aiCrawlers {
+		out = append(out, featureAICrawlers)
+	}
 	return out
 }
 
@@ -70,7 +77,8 @@ func (r ruleShape) features() []edgeFeature {
 func storedRuleShape(row state.EdgeRule) ruleShape {
 	shape := ruleShape{
 		kind: string(row.Kind), penalty: row.Action.Penalty != nil,
-		active: row.Enabled && row.Mode != api.EdgeRuleModeLog,
+		aiCrawlers: api.EdgeRuleMatchUsesAICrawlerFields(row.Match),
+		active:     row.Enabled && row.Mode != api.EdgeRuleModeLog,
 	}
 	if row.Kind == state.EdgeRuleKindWAF {
 		shape.wafMode = api.EdgeWAFModeObserve
@@ -86,6 +94,12 @@ func updatedRuleShape(row state.EdgeRule, req api.UpdateEdgeRuleRequest) ruleSha
 	shape := storedRuleShape(row)
 	if req.Action != nil {
 		shape.wafMode = wafModeFromAction(shape.kind, *req.Action)
+	}
+	switch {
+	case req.ClearMatch:
+		shape.aiCrawlers = false
+	case req.Match != nil:
+		shape.aiCrawlers = api.EdgeRuleMatchUsesAICrawlerFields(req.Match)
 	}
 	switch {
 	case req.ClearPenalty:
@@ -108,7 +122,8 @@ func updatedRuleShape(row state.EdgeRule, req api.UpdateEdgeRuleRequest) ruleSha
 // platform flags have not released to the account, whether or not the rule
 // starts enabled.
 func (s *Service) createReleaseProblem(acct state.Account, req api.CreateEdgeRuleRequest) *api.Problem {
-	shape := ruleShape{kind: req.Kind, wafMode: wafModeFromAction(req.Kind, req.Action), penalty: req.Penalty != nil}
+	shape := ruleShape{kind: req.Kind, wafMode: wafModeFromAction(req.Kind, req.Action), penalty: req.Penalty != nil,
+		aiCrawlers: api.EdgeRuleMatchUsesAICrawlerFields(req.Match)}
 	return s.releaseProblem(acct, shape.features(), nil)
 }
 
