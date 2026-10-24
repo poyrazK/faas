@@ -1943,7 +1943,7 @@ format. The eventual resume request still rechecks eligibility and generation.
 | `tenant_unavailable` | The tenant is inactive or its app link was removed |
 | `pinned_deployment_unavailable` | The original handler code cannot be served |
 | `integration_unavailable` | A current credential or permitted integration binding is unavailable |
-| `active_run_quota` | Other active runs fill the app's admission quota |
+| `active_run_quota` | Other active runs fill the app's admission quota (runs waiting on an event count only beyond the plan's parked allowance) |
 | `runtime_disabled` | Execution is disabled on the responding API server |
 
 The planner reports its first deterministic blocker plus independent admission

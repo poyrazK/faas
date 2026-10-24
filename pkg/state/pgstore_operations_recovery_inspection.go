@@ -123,7 +123,7 @@ func operationRecoveryWorkflowSnapshotTx(ctx context.Context, db sqlc.DBTX, s op
 	if err != nil {
 		return s, err
 	}
-	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, db, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(s.op.AppID)})
+	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, db, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(s.op.AppID), ParkedMax: int64(s.plan.WorkflowMaxParkedRuns())})
 	s.activeRuns = int(active)
 	return s, err
 }
