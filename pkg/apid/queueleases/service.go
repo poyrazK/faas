@@ -54,9 +54,10 @@ func WorkloadBearer(r *http.Request) bool {
 	return ok && strings.HasPrefix(token, "eyJ") && strings.Count(token, ".") == 2
 }
 
-// WorkloadScope binds a gregale:queues token to a live instance of the app
-// named in the path, so a token minted for one app cannot lease another's
-// queue.
+// WorkloadScope binds a gregale:queues token to a live production instance of
+// the app named in the path, so a token minted for one app cannot lease
+// another's queue. Leases serve the production binding only, so a stage
+// instance of the same app is refused rather than handed production messages.
 func (s Service) WorkloadScope(r *http.Request) (state.Account, state.App, string, error) {
 	verifier := s.Host.WorkloadVerifier()
 	if verifier == nil {
@@ -85,6 +86,12 @@ func (s Service) WorkloadScope(r *http.Request) (state.Account, state.App, strin
 	instance, err := store.InstanceByID(r.Context(), c.InstanceID)
 	if err != nil || instance.AppID != app.ID || !state.State(instance.State).CountsForConcurrency() {
 		return state.Account{}, state.App{}, "", errors.New("instance is not live")
+	}
+	if instance.DeploymentID != "" {
+		dep, err := store.DeploymentByID(r.Context(), instance.DeploymentID)
+		if err != nil || dep.AppID != app.ID || !state.IsProductionDeploymentScope(dep.Scope) {
+			return state.Account{}, state.App{}, "", errors.New("instance is not a production consumer")
+		}
 	}
 	return acct, app, instance.ID, nil
 }

@@ -3344,6 +3344,9 @@ type Querier interface {
 	ListProjectReleaseAdditions(ctx context.Context, db DBTX, projectID string) ([]ListProjectReleaseAdditionsRow, error)
 	// Retired and expired graphs remain visible for diagnosis. UUID breaks ties.
 	ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg ListProjectReleaseSetsBeforeParams) ([][]byte, error)
+	// Receipts whose activation or rollback wrote this flag version; Go decides
+	// which promotion states still hold it.
+	ListPromotionFeatureFlagHolds(ctx context.Context, db DBTX, arg ListPromotionFeatureFlagHoldsParams) ([]ListPromotionFeatureFlagHoldsRow, error)
 	ListQueueBindingHistoryForApp(ctx context.Context, db DBTX, arg ListQueueBindingHistoryForAppParams) ([]QueueBinding, error)
 	ListQueuedOperationsForGroup(ctx context.Context, db DBTX, arg ListQueuedOperationsForGroupParams) ([]ListQueuedOperationsForGroupRow, error)
 	ListReadinessFollowUps(ctx context.Context, db DBTX, arg ListReadinessFollowUpsParams) ([][]byte, error)

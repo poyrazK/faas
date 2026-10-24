@@ -43,6 +43,21 @@ func (m *MemStore) ProjectEnvironmentPromotionFeatureFlags(_ context.Context, ac
 	return captured.ProjectEnvironmentPromotionFeatureFlags, nil
 }
 
+func (m *MemStore) FeatureFlagVersionHeldByPromotion(_ context.Context, scope FeatureFlagScope, version int64) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, captured := range m.projectEnvironmentPromotionFlags {
+		promotion, ok := m.projectEnvironmentPromotions[id]
+		if !ok || promotion.AccountID != scope.AccountID || promotion.ProjectID != scope.ProjectID || captured.PreviousTarget.SourceEnvironmentID != scope.EnvironmentID {
+			continue
+		}
+		if promotionHoldsFeatureFlagVersion(promotion, captured.ProjectEnvironmentPromotionFeatureFlags, version) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func (m *MemStore) preparePromotionFeatureFlagsLocked(promotion ProjectEnvironmentPromotion, rollback, completed bool) (FeatureFlagVersion, error) {
 	if !promotion.SyncConfig {
 		return FeatureFlagVersion{}, nil

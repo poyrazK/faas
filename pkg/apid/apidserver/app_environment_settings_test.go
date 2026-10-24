@@ -60,4 +60,17 @@ func TestAppUpdateInEnvironmentChangesOnlyDesiredStageSettings(t *testing.T) {
 	if protectedRec.Code != http.StatusConflict {
 		t.Fatalf("protected environment update = %d, %s", protectedRec.Code, protectedRec.Body.String())
 	}
+	// Unprotected production still edits through the application fields, which
+	// keep GET /v1/apps/{slug} and the production desired head in step.
+	if _, err := store.UpdateProjectEnvironmentProtection(ctx, account.ID, project.ID, "production", false); err != nil {
+		t.Fatal(err)
+	}
+	scoped, scopedRec := apidserver.ProjectRequest(http.MethodPatch, "/v1/apps/"+app.Slug+"?environment=production", app.Slug, []byte(`{"ram_mb":1024}`))
+	srv.UpdateApp(scopedRec, scoped, account)
+	if scopedRec.Code != http.StatusConflict {
+		t.Fatalf("scoped production update = %d, %s", scopedRec.Code, scopedRec.Body.String())
+	}
+	if production, err := store.AppByID(ctx, app.ID); err != nil || production.RAMMB != 256 {
+		t.Fatalf("refused scoped production update changed the app: %+v, %v", production, err)
+	}
 }

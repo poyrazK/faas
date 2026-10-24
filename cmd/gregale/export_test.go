@@ -1456,6 +1456,11 @@ func NewTenantCustomerOperationSignalClient(client *api.Client, definition strin
 	return tenantCustomerOperationSignalClient{client: client, definition: definition}
 }
 
+// NewEnvironmentAppClient builds a stage app client whose revision pin starts unset.
+func NewEnvironmentAppClient(client *api.Client, environment string, revision *int64) EnvironmentAppClient {
+	return environmentAppClient{Client: client, environment: environment, revision: revision}
+}
+
 var ParseDataAPIContract = parseDataAPIContract
 var ParseDataAPIHealthPool = parseDataAPIHealthPool
 var ParseDataAPIRequestRecord = parseDataAPIRequestRecord

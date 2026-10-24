@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
@@ -296,5 +297,62 @@ func TestQueueEnvironmentHTTPSelectsEnvironmentRelease(t *testing.T) {
 				t.Fatalf("captured release resolved wrong graph: %+v %v", version, resolveErr)
 			}
 		}
+	}
+}
+
+func TestQueueEnvironmentHTTPIdempotencyKeysStayInTheirEnvironment(t *testing.T) {
+	e, _, _ := scopedQueueHTTPFixture(t)
+	createScopedHTTPQueue(t, e, "", "orders")
+	createScopedHTTPQueue(t, e, "staging", "orders")
+	send := func(key, scope, queue string) (int, string) {
+		t.Helper()
+		rec := e.Do(t, http.MethodPost, "/v1/apps/queue-worker/queues/send", api.QueueSendRequest{Environment: scope, QueueName: queue, Payload: json.RawMessage(`{}`)}, map[string]string{"Idempotency-Key": key})
+		var result struct{ ID, Environment string }
+		_ = json.Unmarshal(rec.Body.Bytes(), &result)
+		return rec.Code, result.ID + "@" + result.Environment
+	}
+
+	// A production receipt is not replayed for the same key in a stage, or the reverse.
+	code, production := send("send-1", "", "orders")
+	if code != http.StatusCreated {
+		t.Fatalf("production send: %d %s", code, production)
+	}
+	code, staging := send("send-1", "staging", "orders")
+	if code != http.StatusCreated || staging == production || !strings.HasSuffix(staging, "@staging") {
+		t.Fatalf("stage send replayed production: %d %s vs %s", code, staging, production)
+	}
+	if code, replay := send("send-1", "staging", "orders"); code != http.StatusCreated || replay != staging {
+		t.Fatalf("stage replay: %d %s want %s", code, replay, staging)
+	}
+	if code, replay := send("send-1", "", "orders"); code != http.StatusCreated || replay != production {
+		t.Fatalf("production replay: %d %s want %s", code, replay, production)
+	}
+
+	// A refused stage request does not poison the production send that reuses its key.
+	if code, _ := send("send-2", "staging", "missing"); code != http.StatusBadRequest {
+		t.Fatalf("missing stage queue: %d", code)
+	}
+	if code, _ := send("send-2", "", "orders"); code != http.StatusCreated {
+		t.Fatalf("production send after stage refusal: %d", code)
+	}
+
+	// Binding creation is scoped the same way: the shared request runs instead
+	// of replaying the stage binding, while a stage retry still replays.
+	bind := func(scope string) (int, bool, api.QueueBindingResponse) {
+		t.Helper()
+		rec := e.Do(t, http.MethodPost, "/v1/apps/queue-worker/queue-bindings", api.CreateQueueBindingRequest{Environment: scope, Name: "payments", QueueName: "payments", Mode: "push", WorkloadClass: "worker"}, map[string]string{"Idempotency-Key": "bind-1"})
+		var binding api.QueueBindingResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &binding)
+		return rec.Code, rec.Header().Get("Idempotent-Replayed") == "true", binding
+	}
+	code, replayed, stageBinding := bind("staging")
+	if code != http.StatusCreated || replayed || stageBinding.Environment != "staging" {
+		t.Fatalf("stage bind: %d replayed=%v %+v", code, replayed, stageBinding)
+	}
+	if code, replayed, binding := bind(""); replayed || code == http.StatusCreated && binding.Environment == "staging" {
+		t.Fatalf("shared bind replayed the stage receipt: %d %+v", code, binding)
+	}
+	if code, replayed, binding := bind("staging"); code != http.StatusCreated || !replayed || binding.ID != stageBinding.ID {
+		t.Fatalf("stage bind retry: %d replayed=%v %+v", code, replayed, binding)
 	}
 }

@@ -49323,6 +49323,61 @@ func (q *Queries) ListProjectReleaseSetsBefore(ctx context.Context, db DBTX, arg
 	return items, nil
 }
 
+const listPromotionFeatureFlagHolds = `-- name: ListPromotionFeatureFlagHolds :many
+SELECT p.status, p.rollback_status, f.target_version, f.rollback_version
+FROM project_environment_promotion_feature_flags f
+JOIN project_environment_promotions p ON p.id = f.promotion_id
+WHERE p.account_id = $1::uuid AND p.project_id = $2::uuid
+ AND f.previous_target_snapshot->>'source_environment_id' = $3::text
+ AND (f.target_version = $4::bigint OR f.rollback_version = $4::bigint)
+`
+
+type ListPromotionFeatureFlagHoldsParams struct {
+	AccountID     pgtype.UUID
+	ProjectID     pgtype.UUID
+	EnvironmentID string
+	Version       int64
+}
+
+type ListPromotionFeatureFlagHoldsRow struct {
+	Status          string
+	RollbackStatus  string
+	TargetVersion   int64
+	RollbackVersion int64
+}
+
+// Receipts whose activation or rollback wrote this flag version; Go decides
+// which promotion states still hold it.
+func (q *Queries) ListPromotionFeatureFlagHolds(ctx context.Context, db DBTX, arg ListPromotionFeatureFlagHoldsParams) ([]ListPromotionFeatureFlagHoldsRow, error) {
+	rows, err := db.Query(ctx, listPromotionFeatureFlagHolds,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.Version,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPromotionFeatureFlagHoldsRow{}
+	for rows.Next() {
+		var i ListPromotionFeatureFlagHoldsRow
+		if err := rows.Scan(
+			&i.Status,
+			&i.RollbackStatus,
+			&i.TargetVersion,
+			&i.RollbackVersion,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listQueueBindingHistoryForApp = `-- name: ListQueueBindingHistoryForApp :many
 select id, account_id, app_id, name, queue_name, mode, workload_class, enabled, max_concurrency, retry_policy, created_at, updated_at, retired_at, deployment_scope, environment_id, org_id from queue_bindings where app_id=$1 and account_id=$2
 order by created_at, id

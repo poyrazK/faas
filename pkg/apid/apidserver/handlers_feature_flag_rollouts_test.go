@@ -19,6 +19,12 @@ type rolloutEvidenceStore struct {
 	*state.MemStore
 	rows  []sqlc.FeatureFlagRequestOutcomesRow
 	query sqlc.FeatureFlagRequestOutcomesParams
+	// promotionHeld is the flag version an unfinished promotion still owns.
+	promotionHeld int64
+}
+
+func (s *rolloutEvidenceStore) FeatureFlagVersionHeldByPromotion(_ context.Context, _ state.FeatureFlagScope, version int64) (bool, error) {
+	return s.promotionHeld != 0 && version == s.promotionHeld, nil
 }
 
 type rolloutStageClockStore struct {
@@ -214,6 +220,15 @@ func TestFeatureFlagAutoAdvanceWaitsForFullWindowAndAdvancesOneStage(t *testing.
 	}
 
 	evidenceStore.stageStartedAt = now.Add(-5 * time.Minute)
+	// A promotion that wrote the head must find it unchanged to complete or roll back.
+	evidenceStore.promotionHeld = current.Version
+	if err := (*e.S()).AutoAdvanceFeatureFlagRollout(context.Background(), candidate, now); err != nil {
+		t.Fatal(err)
+	}
+	if held, err := (*e.Store()).GetFeatureFlags(context.Background(), scope, 0); err != nil || held.Version != current.Version || evidenceStore.query.FlagKey != "" {
+		t.Fatalf("advanced a promotion-held version: %+v %v query=%+v", held, err, evidenceStore.query)
+	}
+	evidenceStore.promotionHeld = 0
 	if err := (*e.S()).AutoAdvanceFeatureFlagRollout(context.Background(), candidate, now); err != nil {
 		t.Fatal(err)
 	}

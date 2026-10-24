@@ -91,4 +91,14 @@ func TestProjectEnvironmentCleanupResourcesValidateScopeAndCloneIdentity(t *test
 	if err := valid.ValidateForEnvironment("staging"); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("unowned database deletion = %v, want invalid argument", err)
 	}
+	// A stage copy unbound before deletion is cleaned up by database alone.
+	valid.Postgres[0].RestoreSourceDatabaseID = "source"
+	valid.Postgres[0].AppID, valid.Postgres[0].BindingID = "", ""
+	if err := valid.ValidateForEnvironment("staging"); err != nil {
+		t.Fatalf("unbound clone database cleanup rejected: %v", err)
+	}
+	valid.Postgres[0].DeleteDatabase = false
+	if err := valid.ValidateForEnvironment("staging"); !errors.Is(err, state.ErrInvalidArgument) {
+		t.Fatalf("unbound cleanup without a database to delete = %v, want invalid argument", err)
+	}
 }
