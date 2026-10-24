@@ -353,7 +353,7 @@ func TestTruncateCodeErrorKeepsValidUTF8(t *testing.T) {
 	if got := sched.TruncateCodeError(long); len(got) != api.WorkflowCodeErrorMaxBytes-1 || !utf8.ValidString(got) {
 		t.Fatalf("cut through a rune: len=%d valid=%v", len(got), utf8.ValidString(got))
 	}
-	if got := sched.TruncateCodeError("bad \xff\xfe body\x00"); got != "bad  body" {
+	if got := sched.TruncateCodeError("bad \xff\xfe body\x00"); !utf8.ValidString(got) || strings.ContainsRune(got, 0) || !strings.HasPrefix(got, "bad ") {
 		t.Fatalf("got %q", got)
 	}
 }

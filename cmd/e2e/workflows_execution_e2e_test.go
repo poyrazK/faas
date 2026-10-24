@@ -86,10 +86,23 @@ func newWorkflowFixture(t *testing.T, slug string, specs []api.WorkflowSpec, gue
 		t.Fatalf("mark workflow deployment live: %v", err)
 	}
 	publishNormalPathLayer(t, f, dep.ID)
-	if _, err := f.store.CreateInstance(f.ctx, f.app.ID, dep.ID, string(state.StateRunning), f.app.RAMMB, f.nodeID, ""); err != nil {
+	instance, err := f.store.CreateInstance(f.ctx, f.app.ID, dep.ID, string(state.StateRunning), f.app.RAMMB, f.nodeID, "")
+	if err != nil {
 		t.Fatalf("create workflow instance: %v", err)
 	}
+	// The fake vmmd forwards only to instances it knows; a woken replacement
+	// takes the default.
+	f.vmmd.SetVersion(instance.ID, "workflows")
+	f.vmmd.SetDefaultVersion("workflows")
+	waitForNormalPathResponse(t, f.h, f.host, `{"status":"ok"}`, 10*time.Second)
 	return f
+}
+
+func runError(run api.WorkflowRunResponse) string {
+	if run.LastError == nil {
+		return ""
+	}
+	return *run.LastError
 }
 
 func startWorkflowRun(t *testing.T, f *normalPathFixture, workflow string, input any) api.WorkflowRunResponse {
@@ -134,7 +147,7 @@ func waitWorkflow(t *testing.T, f *normalPathFixture, runID string, timeout time
 			return run, steps
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("run %s: status=%s steps=%v error=%v", runID, run.Status, steps, run.LastError)
+			t.Fatalf("run %s: status=%s steps=%v error=%q", runID, run.Status, steps, runError(run))
 		}
 		time.Sleep(200 * time.Millisecond)
 	}
@@ -165,7 +178,7 @@ func TestE2E_Workflows_DeclarativeStepsRunThroughTheGateway(t *testing.T) {
 		return r.Status == state.WorkflowRunStatusSucceeded || r.Status == state.WorkflowRunStatusFailed || r.Status == state.WorkflowRunStatusDead
 	})
 	if final.Status != state.WorkflowRunStatusSucceeded || steps["charge"] != state.WorkflowStepStatusSucceeded || steps["ship"] != state.WorkflowStepStatusSucceeded {
-		t.Fatalf("run=%s steps=%v error=%v", final.Status, steps, final.LastError)
+		t.Fatalf("run=%s steps=%v error=%q", final.Status, steps, runError(final))
 	}
 	for _, step := range []string{"charge", "ship"} {
 		requests := guest.requestsFor("/" + step)
@@ -284,7 +297,7 @@ func TestE2E_Workflows_CodeFirstRunResumesAcrossSleepAndEvent(t *testing.T) {
 		return steps["approval"] == state.WorkflowStepStatusAwaitingEvent || r.Status == state.WorkflowRunStatusDead || r.Status == state.WorkflowRunStatusFailed
 	})
 	if parked.Status != state.WorkflowRunStatusAwaitingEvent || steps["charge"] != state.WorkflowStepStatusSucceeded || steps["cool_off"] != state.WorkflowStepStatusSucceeded {
-		t.Fatalf("before the event: run=%s steps=%v error=%v", parked.Status, steps, parked.LastError)
+		t.Fatalf("before the event: run=%s steps=%v error=%q", parked.Status, steps, runError(parked))
 	}
 
 	// A public caller cannot pose as the workflow engine: the edge strips
@@ -304,7 +317,7 @@ func TestE2E_Workflows_CodeFirstRunResumesAcrossSleepAndEvent(t *testing.T) {
 		return r.Status == state.WorkflowRunStatusSucceeded || r.Status == state.WorkflowRunStatusFailed || r.Status == state.WorkflowRunStatusDead
 	})
 	if final.Status != state.WorkflowRunStatusSucceeded || !normalPathJSONEqual(final.Output, []byte(`{"approval":{"ok":true},"charge":{"id":"ch_1"}}`)) {
-		t.Fatalf("final run=%s output=%s steps=%v error=%v", final.Status, final.Output, steps, final.LastError)
+		t.Fatalf("final run=%s output=%s steps=%v error=%q", final.Status, final.Output, steps, runError(final))
 	}
 
 	keys := map[string]bool{}
