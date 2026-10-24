@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"sync/atomic"
 	"testing"
 
@@ -123,6 +124,42 @@ func TestParkedHeadDoesNotReplayOperationalHeaders(t *testing.T) {
 	}
 	if got := rec.Header().Get("ETag"); got != "\"live\"" {
 		t.Fatalf("ETag = %q, want retained content metadata", got)
+	}
+}
+
+// The parked HEAD answer runs before the public access gate. An
+// IP-allowlisted app replayed the headers of an admitted client's response,
+// with a 200, to a client the allowlist refuses; it must take the gate.
+func TestParkedHeadOnGatedAppTakesTheAccessGate(t *testing.T) {
+	h, b, _ := newTestHandler(t)
+	b.app.PublicAuth = PublicAuthConfig{Mode: publicAuthModeIPAllowlist, IPAllowlist: []netip.Prefix{netip.MustParsePrefix("192.0.2.0/24")}}
+	h.proxyFor = func(addr string, _ int64) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("ETag", "\"live\"")
+			w.WriteHeader(http.StatusOK)
+		})
+	}
+	seed := httptest.NewRequest(http.MethodGet, "http://jane-api.apps.dom/", nil)
+	seed.Header.Set("X-Forwarded-For", "192.0.2.1")
+	h.ServeHTTP(httptest.NewRecorder(), seed)
+
+	b.mu.Lock()
+	b.targets = nil
+	b.running = false
+	b.mu.Unlock()
+	admits := atomic.LoadInt32(b.Admits())
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodHead, "http://jane-api.apps.dom/", nil)
+	req.Header.Set("X-Forwarded-For", "198.51.100.7")
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("refused client's parked HEAD status = %d, want 403", rec.Code)
+	}
+	if got := rec.Header().Get("ETag"); got != "" {
+		t.Fatalf("refused client saw cached ETag %q", got)
+	}
+	if got := atomic.LoadInt32(b.Admits()); got != admits {
+		t.Fatalf("refused HEAD admits = %d, want %d", got, admits)
 	}
 }
 

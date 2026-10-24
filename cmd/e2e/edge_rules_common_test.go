@@ -234,10 +234,21 @@ func problemCode(body []byte) string {
 
 // seedRouteSubstitute seeds the `kind=route` precondition rule that
 // every per-kind e2e test needs to get past Backend.Lookup on a
-// synthetic host. Without this, ServeHTTP returns 404 at handler.go
-// :2261 before any non-route edge rule fires.
+// synthetic host. Without this, ServeHTTP returns 404 before any
+// non-route edge rule fires. The gateway only applies a route rule on a
+// host that resolves to an app of the rule's account, so the host is
+// first registered as a verified custom domain of that app; it must sit
+// outside the apps domain, whose hosts resolve by slug only.
 func seedRouteSubstitute(t *testing.T, ctx context.Context, pool *pgxpool.Pool,
 	accountID, appID, host, appSlug string) string {
+	t.Helper()
+	if _, err := pool.Exec(ctx, `
+		insert into custom_domains (domain, app_id, verified_at)
+		values ($1, $2, now())
+		on conflict (domain) do update set app_id = excluded.app_id, verified_at = excluded.verified_at`,
+		host, appID); err != nil {
+		t.Fatalf("seed verified custom domain %s: %v", host, err)
+	}
 	return seedEdgeRuleDirect(t, ctx, pool, accountID, appID, host,
 		state.EdgeRuleKindRoute,
 		map[string]any{
