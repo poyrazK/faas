@@ -72,6 +72,34 @@ var routeActions = map[string]authz.OrgAction{
 	"PUT /v1/deployments/{id}/schedule":    authz.OrgActionDeployApp,
 	"DELETE /v1/deployments/{id}/schedule": authz.OrgActionDeployApp,
 
+	// Durable workflows (Hunt 13 H13-2). Viewers read runs; developers start,
+	// steer and replay them, as they deploy the code the runs execute.
+	// Binding a callback's webhook verification secret manages a secret. Run
+	// URLs name no app, so indirectlyAddressedApp resolves the run's app.
+	"POST /v1/apps/{slug}/workflows/{name}/runs":                             authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/workflows/runs":                                     authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/workflows/runs:cancel-preview":                     authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/workflows/runs:cancel-queued":                      authz.OrgActionDeployApp,
+	"GET /v1/apps/{slug}/workflows/schedules":                                authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/workflows/schedules/{name}/preview":                 authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/workflows/schedules/occurrences":                    authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/workflows/schedules/occurrences:replay-preview":    authz.OrgActionReadApp,
+	"POST /v1/apps/{slug}/workflows/schedules/occurrences:replay":            authz.OrgActionDeployApp,
+	"GET /v1/workflows/runs/{id}":                                            authz.OrgActionReadApp,
+	"GET /v1/workflows/runs/{id}/steps":                                      authz.OrgActionReadApp,
+	"GET /v1/workflows/runs/{id}/steps/{step}/attempts":                      authz.OrgActionReadApp,
+	"GET /v1/workflows/runs/{id}/diagnostics":                                authz.OrgActionReadApp,
+	"GET /v1/workflows/runs/{id}/resumes":                                    authz.OrgActionReadApp,
+	"GET /v1/workflows/runs/{id}/callbacks":                                  authz.OrgActionReadApp,
+	"GET /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding":    authz.OrgActionReadApp,
+	"POST /v1/workflows/runs/{id}/cancel":                                    authz.OrgActionDeployApp,
+	"POST /v1/workflows/runs/{id}/resume":                                    authz.OrgActionDeployApp,
+	"POST /v1/workflows/runs/{id}/events":                                    authz.OrgActionDeployApp,
+	"POST /v1/workflows/runs/{id}/steps/{step}/retry":                        authz.OrgActionDeployApp,
+	"POST /v1/workflows/runs/{id}/callbacks/{callback_id}":                   authz.OrgActionDeployApp,
+	"PUT /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding":    authz.OrgActionManageAppSecrets,
+	"DELETE /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding": authz.OrgActionManageAppSecrets,
+
 	// Session-only dashboard and GitHub install routes (Authorize, called
 	// from the dashboard session gate). Their reads take OrgActionReadApp
 	// (see dashboardRead); writes with a /v1 twin take the twin's action, and

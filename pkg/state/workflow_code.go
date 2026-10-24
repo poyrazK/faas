@@ -22,12 +22,54 @@ type WorkflowCodeStore interface {
 	// and the $driver row's next state. The $driver row stays pending; a
 	// finished function's result is kept in its output until the run closes.
 	FinishWorkflowCodeInvocation(ctx context.Context, runID string, finish WorkflowCodeInvocation) error
-	// ParkWorkflowCodeEvent resolves or parks an event wait. The wait is
-	// satisfied by the run's occurrence-th event (0-based, by arrival) of
-	// that name received before its deadline, and the step is completed with
-	// the payload. Past the deadline the step succeeds with no output. Else
+	// ParkWorkflowCodeEvent resolves or parks an event wait. The wait takes
+	// the run's earliest event of that name, received before its deadline,
+	// that no other wait of the run consumed; the step is completed with the
+	// payload and records the event's ID in its descriptor. Past the
+	// deadline the step succeeds with no output and consumes nothing. Else
 	// the step and run park until the deadline.
-	ParkWorkflowCodeEvent(ctx context.Context, runID, stepName, eventName string, occurrence int, timeout time.Duration) (*WorkflowEvent, bool, time.Time, error)
+	ParkWorkflowCodeEvent(ctx context.Context, runID, stepName, eventName string, timeout time.Duration) (*WorkflowEvent, bool, time.Time, error)
+}
+
+// workflowCodeEventWait is the part of a code operation descriptor that
+// event matching reads (pkg/workflowcode owns the full shape).
+type workflowCodeEventWait struct {
+	Kind    string `json:"kind"`
+	Event   string `json:"event"`
+	EventID string `json:"event_id"`
+}
+
+func decodeWorkflowCodeEventWait(input json.RawMessage) (workflowCodeEventWait, bool) {
+	var wrapper map[string]json.RawMessage
+	if json.Unmarshal(input, &wrapper) != nil || wrapper[api.WorkflowCodeOpKey] == nil {
+		return workflowCodeEventWait{}, false
+	}
+	var wait workflowCodeEventWait
+	if json.Unmarshal(wrapper[api.WorkflowCodeOpKey], &wait) != nil || wait.Kind != "event" {
+		return workflowCodeEventWait{}, false
+	}
+	return wait, true
+}
+
+// withWorkflowCodeEventID records the consumed event in a wait's descriptor.
+func withWorkflowCodeEventID(input json.RawMessage, eventID string) (json.RawMessage, error) {
+	var wrapper map[string]json.RawMessage
+	if err := json.Unmarshal(input, &wrapper); err != nil {
+		return nil, err
+	}
+	var descriptor map[string]json.RawMessage
+	if err := json.Unmarshal(wrapper[api.WorkflowCodeOpKey], &descriptor); err != nil {
+		return nil, err
+	}
+	id, err := json.Marshal(eventID)
+	if err != nil {
+		return nil, err
+	}
+	descriptor["event_id"] = id
+	if wrapper[api.WorkflowCodeOpKey], err = json.Marshal(descriptor); err != nil {
+		return nil, err
+	}
+	return json.Marshal(wrapper)
 }
 
 // WorkflowCodeOpWrite is one operation row change.

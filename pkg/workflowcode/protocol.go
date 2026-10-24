@@ -33,9 +33,31 @@ const (
 	// EntryRetrying is a step whose last attempt failed and which the SDK
 	// must run again.
 	EntryRetrying = "retrying"
+	// EntryScheduled is a retrying step whose back-off has not elapsed. The
+	// SDK leaves it suspended; the engine calls again when it is due. Only
+	// the request carries it (Journal.Sent); the journal itself keeps
+	// EntryRetrying, so an SDK that runs the step early is still accepted.
+	EntryScheduled = "scheduled"
 	// EntryWaiting is a sleep or event wait that has not resolved.
 	EntryWaiting = "waiting"
 )
+
+// Sent returns the entries for an entry-handler request at now: retrying
+// steps whose back-off has not elapsed are marked EntryScheduled, so another
+// operation settling does not run them before their retry time.
+func (j Journal) Sent(now time.Time) []Entry {
+	entries := make([]Entry, len(j.Entries))
+	copy(entries, j.Entries)
+	for i, entry := range entries {
+		if entry.Status != EntryRetrying {
+			continue
+		}
+		if retryAt := j.Rows[entry.Name].Row.NextRetry; retryAt != nil && now.Before(*retryAt) {
+			entries[i].Status = EntryScheduled
+		}
+	}
+	return entries
+}
 
 // Result statuses reported by the SDK.
 const (
@@ -68,13 +90,15 @@ var (
 
 // Descriptor is stored in a step row's input under api.WorkflowCodeOpKey.
 type Descriptor struct {
-	Seq        int                    `json:"seq"`
-	Kind       Kind                   `json:"kind"`
-	DurationMS int64                  `json:"duration_ms,omitempty"`
-	Event      string                 `json:"event,omitempty"`
-	TimeoutMS  int64                  `json:"timeout_ms,omitempty"`
-	Occurrence int                    `json:"occurrence,omitempty"`
-	Retry      *api.WorkflowRetrySpec `json:"retry,omitempty"`
+	Seq        int    `json:"seq"`
+	Kind       Kind   `json:"kind"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
+	Event      string `json:"event,omitempty"`
+	TimeoutMS  int64  `json:"timeout_ms,omitempty"`
+	// EventID is the event a resolved wait consumed; a timed-out wait has
+	// none, so it never takes an event a later wait is owed.
+	EventID string                 `json:"event_id,omitempty"`
+	Retry   *api.WorkflowRetrySpec `json:"retry,omitempty"`
 	// Failures counts consecutive failed entry calls on the $driver row.
 	Failures int `json:"failures,omitempty"`
 	// Seen is how many operations were resolved when the $driver row's
@@ -304,12 +328,6 @@ func Validate(journal Journal, response Response, limits Limits) (Plan, error) {
 	next := len(journal.Entries)
 	seen := map[int]bool{}
 	names := map[string]bool{}
-	events := map[string]int{}
-	for _, entry := range journal.Entries {
-		if entry.Kind == KindEvent {
-			events[entry.Event]++
-		}
-	}
 	bytes := journal.Bytes
 	for _, op := range response.Ops {
 		planned, err := validateOp(journal, op, limits, next, seen, names)
@@ -318,10 +336,6 @@ func Validate(journal Journal, response Response, limits Limits) (Plan, error) {
 		}
 		if planned.New {
 			next++
-			if op.Kind == KindEvent {
-				planned.Descriptor.Occurrence = events[op.Event]
-				events[op.Event]++
-			}
 		}
 		bytes += int64(len(op.Output) + len(planned.Error))
 		plan.Ops = append(plan.Ops, planned)
@@ -456,7 +470,9 @@ func progresses(journal Journal, plan Plan) bool {
 		return true
 	}
 	for _, entry := range journal.Entries {
-		if entry.Status == EntryWaiting {
+		// A retrying step the SDK left suspended (EntryScheduled in the
+		// request) runs when its back-off elapses.
+		if entry.Status == EntryWaiting || entry.Status == EntryRetrying {
 			return true
 		}
 	}
