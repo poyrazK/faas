@@ -159,3 +159,30 @@ func TestNotesCapAndPlatformIncidentsPerAccount(t *testing.T) {
 		t.Fatalf("another account's view = %d notes %+v ack %v; want its own (none)", code, detail.Notes, detail.Incident.AcknowledgedAt)
 	}
 }
+
+// An app the caller may no longer read (a company app after its creator
+// left the company) hides its incidents: they leave the list, and the
+// detail, acknowledgement and notes routes read as not found, so the log
+// lines an alert captured stay with the company.
+func TestHiddenAppIncidentsAreNotServed(t *testing.T) {
+	f := newFixture(t)
+	id := f.openEpisode(t)
+	var list api.IncidentsResponse
+	if code := get(t, f.svc.List, f.acct, "/v1/incidents", "", &list); code != http.StatusOK || len(list.Incidents) != 1 {
+		t.Fatalf("visible list = %d %+v", code, list.Incidents)
+	}
+	f.svc.Host = fakeHost{store: f.store, changes: true, window: f.win, hidden: map[string]bool{f.rule.AppID: true}}
+	list = api.IncidentsResponse{}
+	if code := get(t, f.svc.List, f.acct, "/v1/incidents", "", &list); code != http.StatusOK || len(list.Incidents) != 0 {
+		t.Fatalf("hidden app's incidents listed: %d %+v", code, list.Incidents)
+	}
+	if code := get(t, f.svc.Get, f.acct, "/v1/incidents/x", id, nil); code != http.StatusNotFound {
+		t.Fatalf("hidden app's incident detail = %d, want 404", code)
+	}
+	if code, body := post(t, f.svc.Acknowledge, f.acct, id, "dev@example.com", "", nil); code != http.StatusNotFound {
+		t.Fatalf("hidden app's incident acknowledged: %d %s", code, body)
+	}
+	if code, body := post(t, f.svc.AddNote, f.acct, id, "dev@example.com", `{"body":"still here"}`, nil); code != http.StatusNotFound {
+		t.Fatalf("hidden app's incident noted: %d %s", code, body)
+	}
+}
