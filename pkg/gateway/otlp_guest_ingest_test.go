@@ -64,7 +64,7 @@ func TestAddOTLPTraceExportJSON(t *testing.T) {
 	}
 }
 
-// adr: 958 — the Go SDK's tracing helper (sdk/go/tracing) writes OTLP JSON
+// adr: 958 — the Go SDK's tracing helper (sdk/go/preview/tracing) writes OTLP JSON
 // without an OpenTelemetry dependency; its golden export must decode through
 // the guest ingest path with the IDs, kinds, status and attributes intact.
 func TestAddOTLPTraceExportGoSDKTracingHelper(t *testing.T) {

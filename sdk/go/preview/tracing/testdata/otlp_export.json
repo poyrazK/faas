@@ -14,7 +14,7 @@
       "scopeSpans": [
         {
           "scope": {
-            "name": "github.com/poyrazK/faas/sdk/go/tracing"
+            "name": "github.com/poyrazK/faas/sdk/go/preview/tracing"
           },
           "spans": [
             {

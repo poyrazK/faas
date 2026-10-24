@@ -16,7 +16,7 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/poyrazK/faas/sdk/go/tracing"
+	"github.com/poyrazK/faas/sdk/go/preview/tracing"
 )
 
 func main() {

@@ -104,12 +104,12 @@ func main() {
 
 ## Request tracing
 
-The `tracing` package sends request, HTTP client and `database/sql` spans to
-the Gregale debugger when the app sets `tracing.enabled`, using only the
-standard library:
+The `preview/tracing` package (tracing is a preview capability) sends
+request, HTTP client and `database/sql` spans to the Gregale debugger when
+the app sets `tracing.enabled`, using only the standard library:
 
 ```go
-import "github.com/poyrazK/faas/sdk/go/tracing"
+import "github.com/poyrazK/faas/sdk/go/preview/tracing"
 
 shutdown := tracing.Start() // does nothing unless tracing is enabled
 defer shutdown(context.Background())

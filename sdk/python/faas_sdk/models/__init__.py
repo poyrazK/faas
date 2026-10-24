@@ -308,6 +308,8 @@ from .complete_workflow_callback_response_status import CompleteWorkflowCallback
 from .compose_healthcheck import ComposeHealthcheck
 from .compose_process import ComposeProcess
 from .compose_process_stop_signal import ComposeProcessStopSignal
+from .compose_resources import ComposeResources
+from .compose_resources_cpu_millicores import ComposeResourcesCpuMillicores
 from .config_change_receipt import ConfigChangeReceipt
 from .config_guard import ConfigGuard
 from .config_guard_decision import ConfigGuardDecision
@@ -566,6 +568,7 @@ from .durable_entity_validator_deployment_info_source import DurableEntityValida
 from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
 from .edge_protection_response import EdgeProtectionResponse
 from .edge_protection_response_challenge import EdgeProtectionResponseChallenge
+from .edge_protection_response_penalty import EdgeProtectionResponsePenalty
 from .edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
 from .edge_protection_response_range import EdgeProtectionResponseRange
 from .edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
@@ -602,6 +605,7 @@ from .edge_rule_list_response_kind import EdgeRuleListResponseKind
 from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
 from .edge_rule_match_expr import EdgeRuleMatchExpr
 from .edge_rule_match_expr_op import EdgeRuleMatchExprOp
+from .edge_rule_penalty import EdgeRulePenalty
 from .edge_rule_recipe_suggestion import EdgeRuleRecipeSuggestion
 from .edge_rule_recipe_suggestion_alternative import EdgeRuleRecipeSuggestionAlternative
 from .edge_rule_recipe_suggestion_alternative_params import EdgeRuleRecipeSuggestionAlternativeParams
@@ -1591,6 +1595,8 @@ from .outbound_ai_budget_threshold_webhook_payload_budget import OutboundAIBudge
 from .outbound_ai_budget_threshold_webhook_payload_threshold_percent import (
     OutboundAIBudgetThresholdWebhookPayloadThresholdPercent,
 )
+from .outbound_ai_quality_drift_webhook_payload import OutboundAIQualityDriftWebhookPayload
+from .outbound_ai_quality_drift_webhook_payload_metric import OutboundAIQualityDriftWebhookPayloadMetric
 from .outbound_ai_user_usage_export_row import OutboundAIUserUsageExportRow
 from .outbound_ai_user_usage_item import OutboundAIUserUsageItem
 from .outbound_binding_probe_policy import OutboundBindingProbePolicy
@@ -1630,6 +1636,8 @@ from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
 from .plan_workload_depends_on_conditions_additional_property import PlanWorkloadDependsOnConditionsAdditionalProperty
 from .plan_workload_tier import PlanWorkloadTier
+from .plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
+from .plan_workload_unset_env_key_reasons_additional_property import PlanWorkloadUnsetEnvKeyReasonsAdditionalProperty
 from .plan_workload_visibility import PlanWorkloadVisibility
 from .platform_flag_opt_ins import PlatformFlagOptIns
 from .platform_tenant_customer_lifecycle_webhook_payload import PlatformTenantCustomerLifecycleWebhookPayload
@@ -1698,6 +1706,13 @@ from .profile_canary_gate_policy import ProfileCanaryGatePolicy
 from .profile_canary_gate_policy_on_timeout import ProfileCanaryGatePolicyOnTimeout
 from .profile_canary_gate_state import ProfileCanaryGateState
 from .profile_canary_gate_state_status import ProfileCanaryGateStateStatus
+from .profile_capture import ProfileCapture
+from .profile_capture_kinds_item import ProfileCaptureKindsItem
+from .profile_capture_profile import ProfileCaptureProfile
+from .profile_capture_profile_kind import ProfileCaptureProfileKind
+from .profile_capture_status import ProfileCaptureStatus
+from .profile_capture_trigger import ProfileCaptureTrigger
+from .profile_capture_webhook_payload import ProfileCaptureWebhookPayload
 from .profile_coverage import ProfileCoverage
 from .profile_gate_override import ProfileGateOverride
 from .profile_gate_route_streak import ProfileGateRouteStreak
@@ -1725,6 +1740,7 @@ from .profile_route_regression_status import ProfileRouteRegressionStatus
 from .profile_source import ProfileSource
 from .profile_source_location import ProfileSourceLocation
 from .profiling_config import ProfilingConfig
+from .profiling_config_kinds_item import ProfilingConfigKindsItem
 from .programmatic_api_key import ProgrammaticAPIKey
 from .programmatic_auth_response import ProgrammaticAuthResponse
 from .programmatic_auth_response_plan import ProgrammaticAuthResponsePlan
@@ -1982,6 +1998,7 @@ from .scoped_app_secret_response_last_runtime_reload_signal import ScopedAppSecr
 from .scoped_app_secret_response_secret_class import ScopedAppSecretResponseSecretClass
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
+from .secret_file import SecretFile
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
 from .secret_revocation_target import SecretRevocationTarget
@@ -2723,6 +2740,8 @@ __all__ = (
     "ComposeHealthcheck",
     "ComposeProcess",
     "ComposeProcessStopSignal",
+    "ComposeResources",
+    "ComposeResourcesCpuMillicores",
     "ConfigChangeReceipt",
     "ConfigGuard",
     "ConfigGuardDecision",
@@ -2979,6 +2998,7 @@ __all__ = (
     "DurableEntityValidatorDeploymentInfoStatus",
     "EdgeProtectionResponse",
     "EdgeProtectionResponseChallenge",
+    "EdgeProtectionResponsePenalty",
     "EdgeProtectionResponsePreAuth",
     "EdgeProtectionResponseRange",
     "EdgeProtectionResponseRejectionsItem",
@@ -3015,6 +3035,7 @@ __all__ = (
     "EdgeRuleMaintenanceAction",
     "EdgeRuleMatchExpr",
     "EdgeRuleMatchExprOp",
+    "EdgeRulePenalty",
     "EdgeRuleRecipeSuggestion",
     "EdgeRuleRecipeSuggestionAlternative",
     "EdgeRuleRecipeSuggestionAlternativeParams",
@@ -3876,6 +3897,8 @@ __all__ = (
     "OutboundAIBudgetThresholdWebhookPayload",
     "OutboundAIBudgetThresholdWebhookPayloadBudget",
     "OutboundAIBudgetThresholdWebhookPayloadThresholdPercent",
+    "OutboundAIQualityDriftWebhookPayload",
+    "OutboundAIQualityDriftWebhookPayloadMetric",
     "OutboundAIUserUsageExportRow",
     "OutboundAIUserUsageItem",
     "OutboundBindingProbePolicy",
@@ -3915,6 +3938,8 @@ __all__ = (
     "PlanWorkloadDependsOnConditions",
     "PlanWorkloadDependsOnConditionsAdditionalProperty",
     "PlanWorkloadTier",
+    "PlanWorkloadUnsetEnvKeyReasons",
+    "PlanWorkloadUnsetEnvKeyReasonsAdditionalProperty",
     "PlanWorkloadVisibility",
     "PlatformFlagOptIns",
     "PlatformTenantCustomerLifecycleWebhookPayload",
@@ -3971,6 +3996,13 @@ __all__ = (
     "ProfileCanaryGatePolicyOnTimeout",
     "ProfileCanaryGateState",
     "ProfileCanaryGateStateStatus",
+    "ProfileCapture",
+    "ProfileCaptureKindsItem",
+    "ProfileCaptureProfile",
+    "ProfileCaptureProfileKind",
+    "ProfileCaptureStatus",
+    "ProfileCaptureTrigger",
+    "ProfileCaptureWebhookPayload",
     "ProfileCoverage",
     "ProfileGateOverride",
     "ProfileGateRouteStreak",
@@ -3998,6 +4030,7 @@ __all__ = (
     "ProfileSource",
     "ProfileSourceLocation",
     "ProfilingConfig",
+    "ProfilingConfigKindsItem",
     "ProgrammaticAPIKey",
     "ProgrammaticAuthResponse",
     "ProgrammaticAuthResponsePlan",
@@ -4251,6 +4284,7 @@ __all__ = (
     "ScopedAppSecretResponseSecretClass",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
+    "SecretFile",
     "SecretFinding",
     "SecretFindingSeverity",
     "SecretRevocationTarget",

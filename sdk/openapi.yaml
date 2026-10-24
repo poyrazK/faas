@@ -12,7 +12,10 @@ info:
     durable inbound webhook ingress.
     Successful POSTs generally accept an `Idempotency-Key` header (24h TTL)
     and replay with `Idempotent-Replayed: true`; the one-time token-creation
-    endpoint deliberately does not cache plaintext for retries.
+    endpoint deliberately does not cache plaintext for retries. A key is
+    bound to the request it was first used for: the same key with a
+    different body, query or precondition header returns
+    `422 idempotency_key_reused` and does not run.
 
     Errors use RFC 9457 `application/problem+json` with a stable `code`
     field — see `Problem` schema. Authentication rate limits use the same
@@ -21769,7 +21772,7 @@ components:
         plan_cpu_max_millicores: {type: integer, description: "Largest sustained CPU allowance the current plan permits, in millicores."}
         cpu_weight: {type: integer, description: "Relative cgroup CPU scheduling weight applied when the host is contended."}
         max_instances: {type: integer, description: "Effective per-app live-instance ceiling after applying the scaling policy."}
-        concurrency_per_instance: {type: integer, description: "Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility."}
+        concurrency_per_instance: {type: integer, description: "Maximum in-flight requests accepted by one instance: the app's scaling_policy.per_instance_concurrency when set, otherwise the plan's concurrency_per_vm."}
         concurrency_queue_depth: {type: integer, description: "Effective maximum number of requests allowed to wait for warm instance capacity."}
         concurrency_queue_wait_ms: {type: integer, format: int64, description: "Effective maximum warm saturation wait in milliseconds."}
         app_request_rate_rps: {type: integer, description: "Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime override."}
@@ -22539,7 +22542,7 @@ components:
     EdgeProtectionResponse:
       description: Edge rejection counts for one app over a range.
       type: object
-      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge]
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge, penalty]
       properties:
         app_id: {type: string}
         range: {type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d]}
@@ -22567,7 +22570,7 @@ components:
             type: object
             required: [gate, status, count]
             properties:
-              gate: {type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge]}
+              gate: {type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge, penalty]}
               status: {type: string, enum: ['401', '403', '413', '429', '503', other]}
               count: {type: integer, format: int64, minimum: 0}
         waf:
@@ -22612,6 +22615,29 @@ components:
             bypassed: {type: integer, format: int64, minimum: 0, description: "Requests let through on a verified API key, consumer key or JWT."}
             invalid: {type: integer, format: int64, minimum: 0, description: "Solutions refused: wrong work or an expired token."}
             raised: {type: integer, format: int64, minimum: 0, description: "The part of issued served at a difficulty raised under attack (ADR-831 amendment 8)."}
+        penalty:
+          type: object
+          description: Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty.
+          required: [boxed, rejected]
+          properties:
+            boxed: {type: integer, format: int64, minimum: 0, description: "Clients a rule's penalty boxed."}
+            rejected: {type: integer, format: int64, minimum: 0, description: "Requests refused from boxed clients."}
+    EdgeRulePenalty:
+      type: object
+      description: |
+        A rule's penalty box (ADR-20261022105846). Once the rule has refused
+        the same client `after` times within `within_seconds`, every request
+        from that client to the app is refused with 403 `penalty_box` and
+        Retry-After for `seconds`, whichever rule or path it targets. The
+        client is its IP address (an IPv6 client is its /64). Boxes are held
+        in each gateway node's memory. Allowed on ip, geo, throttle and waf
+        (block mode) rules; editing the rule's penalty away, disabling it or
+        putting it in log mode releases its clients.
+      required: [seconds]
+      properties:
+        seconds: {type: integer, minimum: 60, maximum: 86400, description: How long a boxed client is refused.}
+        after: {type: integer, minimum: 1, maximum: 1000, default: 1, description: Refusals by this rule that box the client.}
+        within_seconds: {type: integer, minimum: 1, maximum: 3600, default: 60, description: Window the refusals count in.}
     PreAuthEnforcementSuggestion:
       description: |
         Advice on switching an observe-mode guard to enforce, judged on the
@@ -23618,6 +23644,11 @@ components:
           minimum: 0
           maximum: 60
           example: 30
+        per_instance_concurrency:
+          description: "Requests one instance serves at once (ADR-20261022203523). The gateway admits at most this many to an instance and scales out on the next request; requests over every instance's limit wait in the warm queue (30 s unless max_queue_wait_ms is set). 0 uses the plan's concurrency_per_vm, which is also the upper bound."
+          type: integer
+          minimum: 0
+          example: 2
         timezone:
           description: "IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app rather than one per schedule: a business has a working day, not a working day per rule."
           type: string
@@ -23876,6 +23907,7 @@ components:
           $ref: '#/components/schemas/ProfilingConfig'
         tracing:
           $ref: '#/components/schemas/TracingConfig'
+        profiling_on_demand: {type: boolean, description: 'Dormant on-demand profile collectors stamped by imaged (ADR-1155).'}
         entrypoint:
           type: array
           items: {type: string}
@@ -23913,6 +23945,11 @@ components:
           type: boolean
           default: false
           description: "Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal. Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506)."
+        secret_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecretFile'
+          description: "App secrets guest-init writes to /run/secrets for the main workload (ADR-20261023090000). Set from the app's Compose service secrets."
         stop_grace_period:
           type: [string, "null"]
           description: "OCI StopGracePeriod as a Go duration string (e.g. \"30s\"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4."
@@ -30045,6 +30082,39 @@ components:
           type: integer
           minimum: 1
           description: "Seconds between the stop signal and SIGKILL, capped by the plan."
+    SecretFile:
+      type: object
+      description: "An app secret guest-init writes to /run/secrets/<name> in the main workload (ADR-20261023090000), from a Compose service's secrets. Names the secret; its value is never returned."
+      required: [secret, name]
+      properties:
+        secret:
+          type: string
+          description: "App secret whose value the file holds."
+        name:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+          description: "File name in /run/secrets."
+        mode:
+          type: integer
+          minimum: 0
+          maximum: 511
+          description: "Permission bits; omitted means 0444."
+    ComposeResources:
+      type: object
+      description: "A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings (ADR-20261023120000). Omitted fields are undeclared and keep the app's own settings."
+      properties:
+        replicas:
+          type: integer
+          minimum: 1
+          description: "Caps a request-mode app's instances (max_concurrency) and fixes a worker's or service's replica count."
+        memory_mb:
+          type: integer
+          minimum: 1
+          description: "App RAM in MB, rounded up from the declared size."
+        cpu_millicores:
+          type: integer
+          enum: [250, 500, 1000]
+          description: "App CPU share."
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
       type: object
@@ -30086,6 +30156,13 @@ components:
           type: array
           items: {type: string}
           description: "Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."
+        secret_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecretFile'
+          description: "Compose secrets written to /run/secrets (ADR-20261023090000)."
+        resources:
+          $ref: '#/components/schemas/ComposeResources'
         command:
           type: array
           items: {type: string}
@@ -30101,7 +30178,7 @@ components:
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
-          description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."
+          description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project` (ADR-20261022111119); existing workloads retain their persisted policy when the extension is omitted."
         service_reliability:
           $ref: '#/components/schemas/ServiceReliabilityPolicies'
           description: "Dependency-specific policy selected by Compose `x-gregale-service-reliability`."
@@ -30135,6 +30212,20 @@ components:
           type: array
           items: {type: string}
           description: "Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."
+        unset_env_keys:
+          type: array
+          items: {type: string}
+          description: "Names from env_keys and required_env_keys that will have no value in the selected environment: not configured on the app and not provided by the platform. Names only, never values."
+        unset_env_key_reasons:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [not_opted_in, secret, service_address, local_address, interpolated, host_value, empty, invalid]
+          description: "For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never values."
+        imported_env_keys:
+          type: array
+          items: {type: string}
+          description: "Compose environment names whose plain values apply will write, because the project sets x-gregale-env-import: true and they are unset (ADR-20261023085230). Names only."
         source:
           type: string
           description: "detector provenance, e.g. compose.yaml: api"
@@ -31225,6 +31316,7 @@ components:
         expired: {type: boolean, description: True once expires_at has passed and the rule no longer applies.}
         match: {$ref: '#/components/schemas/EdgeRuleMatchExpr'}
         mode: {type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts.}
+        penalty: {$ref: '#/components/schemas/EdgeRulePenalty'}
     CreateEdgeRuleRequest:
       description: 'Body shape for POST /v1/apps/{slug}/edge-rules.'
       type: object
@@ -31280,6 +31372,7 @@ components:
         expires_at: {type: string, format: date-time, description: Optional time after which the gateway stops applying the new rule.}
         match: {$ref: '#/components/schemas/EdgeRuleMatchExpr'}
         mode: {type: string, enum: [enforce, log], description: 'Start the rule enforced (default) or in log mode, where it is only matched and counted.'}
+        penalty: {$ref: '#/components/schemas/EdgeRulePenalty'}
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
       type: object
@@ -31332,6 +31425,8 @@ components:
         match: {$ref: '#/components/schemas/EdgeRuleMatchExpr'}
         clear_match: {type: boolean, description: Remove the match condition.}
         mode: {type: string, enum: [enforce, log], description: 'Switch the rule to enforce, or to log so it is matched and counted but never acts.'}
+        penalty: {$ref: '#/components/schemas/EdgeRulePenalty'}
+        clear_penalty: {type: boolean, description: "Remove the rule's penalty box, releasing the clients it holds."}
     EdgeRuleMatchExpr:
       description: |
         ADR-962 match condition, ANDed with the rule's fixed selectors. A node
@@ -33689,11 +33784,11 @@ components:
       required: [name, kind, passed, summary, observed, bound, samples]
       properties:
         name: {type: string}
-        kind: {type: string, enum: [slo, new_errors, custom_metric]}
+        kind: {type: string, enum: [slo, new_errors, custom_metric, ai]}
         passed: {type: boolean}
-        observed: {type: number, description: "The burn rate, new error groups, or metric average."}
+        observed: {type: number, description: "The burn rate, new error groups, metric average, or the release's AI metric."}
         bound: {type: number, description: "The value that fails the gate."}
-        samples: {type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, or metric values."}
+        samples: {type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, metric values or AI calls."}
         baseline_bad_fraction: {type: number, description: "slo gates: the predecessor's bad fraction."}
         error_classes: {type: array, maxItems: 5, items: {type: string}, description: "new_errors gates: the new groups' error classes."}
         summary: {type: string, description: "What the gate measured, in one line."}
@@ -34166,6 +34261,11 @@ components:
           description: "FLEET p95 wake latency (the unlabeled histogram). Labelled as such in the UI."
           x-since: "2026-07"
           x-issue: "273"
+        wake_samples:
+          type: integer
+          format: int64
+          description: "Number of fleet wakes wake_p95_ms was computed from. Below 20 the p95 is not meaningful and clients show it as unavailable. Omitted when the count is unknown."
+          x-since: "2026-10"
         queue_depth:
           type: integer
           format: int64
@@ -36943,6 +37043,23 @@ components:
         used: {type: integer, format: int64, minimum: 0}
         crossed_at: {type: string, format: date-time}
         tag: {type: [string, 'null'], maxLength: 97, description: The tag whose daily cost limit crossed the threshold (ADR-1438).}
+    OutboundAIQualityDriftWebhookPayload:
+      type: object
+      description: >-
+        Data delivered with outbound.ai_quality.drift to every app bound to the integration when a model's quality signal moves away from its previous 7 days (ADR 20261021171712). alert_id is stable across retries.
+      required: [alert_id, integration_id, integration_name, usage_date, model, metric, current_value, baseline_value, current_count, baseline_count, detected_at]
+      properties:
+        alert_id: {type: string, format: uuid}
+        integration_id: {type: string, format: uuid}
+        integration_name: {type: string}
+        usage_date: {type: string, format: date}
+        model: {type: string, maxLength: 200}
+        metric: {type: string, enum: [truncated, refused, empty, invalid_json, tool_error, bad_feedback, evaluation_score]}
+        current_value: {type: integer, format: int64, minimum: 0, description: 'Basis points of answered (or rated) calls; hundredths of a point for evaluation_score.'}
+        baseline_value: {type: integer, format: int64, minimum: 0}
+        current_count: {type: integer, format: int64, minimum: 0, description: Calls the current value was taken over.}
+        baseline_count: {type: integer, format: int64, minimum: 0}
+        detected_at: {type: string, format: date-time}
     PlatformTenantHostnameVerifiedWebhookPayload:
       type: object
       description: DNS ownership verification for a hostname on a surface explicitly linked to this tenant. It does not imply certificate issuance or routing, and never contains the DNS challenge token.
@@ -37147,6 +37264,7 @@ components:
               - job.finished
               - operation.finished
               - outbound.ai_budget.threshold
+              - outbound.ai_quality.drift
               - issue.created
               - issue.assigned
               - issue.resolved
@@ -37191,6 +37309,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -37425,6 +37545,7 @@ components:
               - job.finished
               - operation.finished
               - outbound.ai_budget.threshold
+              - outbound.ai_quality.drift
               - issue.created
               - issue.assigned
               - issue.resolved
@@ -37469,6 +37590,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -37575,6 +37698,7 @@ components:
               - job.finished
               - operation.finished
               - outbound.ai_budget.threshold
+              - outbound.ai_quality.drift
               - issue.created
               - issue.assigned
               - issue.resolved
@@ -37619,6 +37743,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -37943,6 +38069,61 @@ components:
       properties:
         enabled: {type: boolean}
         window_seconds: {type: integer, minimum: 1, maximum: 60, default: 10}
+        kinds:
+          description: Continuous profile kinds (ADR-1155); defaults to cpu.
+          type: array
+          maxItems: 2
+          items: {type: string, enum: [cpu, heap]}
+        pprof_port:
+          description: Guest-local port where a Go application serves net/http/pprof (ADR-1155). The platform then collects CPU, heap and goroutine profiles from it, so the application needs no Gregale SDK. 9191 and 4318 are reserved.
+          type: integer
+          minimum: 1
+          maximum: 65535
+    ProfileCaptureProfile:
+      description: One collector's stored profile.
+      type: object
+      required: [kind, bytes]
+      properties:
+        kind: {type: string, enum: [cpu, heap, stacks, block, mutex]}
+        process_id: {type: string}
+        bytes: {type: integer}
+    ProfileCapture:
+      description: An on-demand capture. processes counts instrumented processes that saw the capture; zero means the instance has no collector.
+      type: object
+      required: [id, app_id, status, kinds, duration_seconds, processes, profiles, created_at, expires_at]
+      properties:
+        id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        status: {type: string, enum: [queued, capturing, ready, failed]}
+        kinds: {type: array, items: {type: string, enum: [cpu, heap, stacks, block, mutex]}}
+        duration_seconds: {type: integer}
+        requested_instance_id: {type: string, format: uuid}
+        trigger: {type: string, enum: [manual, memory_pressure, slow_request, cpu_saturation], description: 'Who started the capture; memory_pressure captures are queued automatically when an instance runs low on memory, slow_request captures (stacks and CPU) when a request stays in flight for 10 seconds, cpu_saturation captures (CPU) when an instance uses 90% of its CPU limit for 30 seconds.'}
+        request_id: {type: string, maxLength: 128, description: The x-faas-request-id of the in-flight request that started a slow_request capture.}
+        request_trace_id: {type: string, maxLength: 128, description: The trace id that request's telemetry is stored under.}
+        trigger_detail: {type: string}
+        instance_id: {type: string, format: uuid}
+        deployment_id: {type: string, format: uuid}
+        processes: {type: integer}
+        dropped: {type: integer, description: Profiles discarded by the reply bounds.}
+        reason: {type: string}
+        profiles: {type: array, maxItems: 8, items: {$ref: '#/components/schemas/ProfileCaptureProfile'}}
+        partial: {type: boolean, description: 'The capture ended early, normally because the workload was OOM-killed; heap profiles are the last checkpoints before the kill.'}
+        oom_killed_at: {type: string, format: date-time, description: Set when the captured instance was OOM-killed within 15 minutes of the capture.}
+        oom_peak_mb: {type: integer, description: Memory in use when the instance was OOM-killed.}
+        oom_plan_mb: {type: integer, description: The instance's plan memory limit.}
+        created_at: {type: string, format: date-time}
+        completed_at: {type: string, format: date-time}
+        expires_at: {type: string, format: date-time}
+    ProfileCaptureWebhookPayload:
+      description: Payload of the profile.capture_ready and profile.capture_oom_linked app webhook events (ADR-1155). Carries the capture record and its paths, never profile samples.
+      type: object
+      required: [version, capture, capture_path, api_path]
+      properties:
+        version: {type: integer, minimum: 1, maximum: 1}
+        capture: {$ref: '#/components/schemas/ProfileCapture'}
+        capture_path: {type: string, description: Dashboard page of the capture.}
+        api_path: {type: string, description: API resource of the capture.}
     TracingConfig:
       description: "Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched."
       type: object

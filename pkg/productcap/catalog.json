@@ -124,8 +124,12 @@
       "operator_flag": "FAAS_AI_GATEWAY_ENABLED",
       "acceptance_test": "pkg/outbound/ai_gateway_acceptance_test.go::TestAIGatewayPreviewAcceptance",
       "routes": [
+        "/dashboard/ai",
         "/dashboard/apps/{}/ai-access-tokens",
-        "/v1/outbound/integrations/{}/ai"
+        "/v1/apps/{}/ai-deployments",
+        "/v1/outbound/integrations/{}/ai",
+        "/v1/outbound/integrations/{}/ai-quality-alerts",
+        "/v1/outbound/integrations/{}/ai-traces"
       ],
       "cli": [
         "ai"
@@ -1140,6 +1144,7 @@
         "/checks.js",
         "=/dashboard",
         "/dashboard/apps/new",
+        "/dashboard/assets",
         "/history.js",
         "/replacement.js",
         "/resolution.js",

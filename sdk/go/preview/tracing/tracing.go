@@ -43,7 +43,7 @@ const (
 	envSamplerArg   = "OTEL_TRACES_SAMPLER_ARG"
 	envServiceName  = "OTEL_SERVICE_NAME"
 	defaultEndpoint = "http://127.0.0.1:4318/v1/traces"
-	scopeName       = "github.com/poyrazK/faas/sdk/go/tracing"
+	scopeName       = "github.com/poyrazK/faas/sdk/go/preview/tracing"
 )
 
 // tracer is the process-wide state created by Start.
