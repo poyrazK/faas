@@ -87,8 +87,10 @@ func TestE2E_GitHubWebhookEnqueuesDeployments(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create project: %v", err)
 	}
+	// The sealed token is never opened: githubE2ESource replaces the download.
 	if err := store.UpsertGitHubInstall(ctx, state.GitHubInstall{AccountID: accountID,
-		InstallationID: githubE2EInstallation, DefaultBranch: "main", AuditGithubLogin: "e2e-installer"}); err != nil {
+		InstallationID: githubE2EInstallation, DefaultBranch: "main", AuditGithubLogin: "e2e-installer",
+		SealedToken: []byte("e2e-sealed-install-token"), TokenExpiresAt: time.Now().Add(time.Hour)}); err != nil {
 		t.Fatalf("seed installation: %v", err)
 	}
 
