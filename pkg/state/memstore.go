@@ -10790,10 +10790,9 @@ func (m *MemStore) SetDeploymentRuntimeProfile(_ context.Context, id string, pro
 	if !ok {
 		return ErrNotFound
 	}
-	// A built service that froze a Compose healthcheck records imaged's verdict
-	// here too (ADR-20261019195000); other source deployments cannot.
-	if (d.Kind != DeploymentKindImage && !profileFreezesImageHealthcheck(d.InferredProfile)) ||
-		(d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging) {
+	// Source builds record imaged's HEALTHCHECK verdict here too
+	// (ADR-20261024100000), while the deployment is still being assembled.
+	if d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging {
 		return ErrInvalidStateTransition
 	}
 	updated, err := frameworkprofile.PreserveImageRuntime(d.InferredProfile, profile)
@@ -28889,15 +28888,4 @@ func requireAPIKeyScopes(scopes []string) error {
 		return fmt.Errorf("%w: api key scopes must not be empty", ErrInvalidArgument)
 	}
 	return nil
-}
-
-// profileFreezesImageHealthcheck mirrors the SQL `inferred_profile ?
-// 'image_healthcheck'` guard on SetDeploymentRuntimeProfile.
-func profileFreezesImageHealthcheck(profile json.RawMessage) bool {
-	var fields map[string]json.RawMessage
-	if len(profile) == 0 || json.Unmarshal(profile, &fields) != nil {
-		return false
-	}
-	_, frozen := fields["image_healthcheck"]
-	return frozen
 }

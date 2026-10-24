@@ -5974,6 +5974,9 @@ type Querier interface {
 	// "no code mapped"; null in the column means "not yet stamped" —
 	// both render as "" on the Go side via the coalesce in the SELECT).
 	SetDeploymentFailed(ctx context.Context, db DBTX, arg SetDeploymentFailedParams) (SetDeploymentFailedRow, error)
+	// imaged records a prebuilt image's runtime profile, and the HEALTHCHECK
+	// verdict of any source build (ADR-20261024100000), while the deployment is
+	// still being assembled. The accepted command and healthcheck are kept.
 	SetDeploymentRuntimeProfile(ctx context.Context, db DBTX, arg SetDeploymentRuntimeProfileParams) (int64, error)
 	// imaged persists the validated image opt-in on each newly built deployment;
 	// the state query keeps legacy NULL rows distinct from explicit opt-outs.

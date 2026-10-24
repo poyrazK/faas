@@ -292,6 +292,9 @@ WHERE app_id = sqlc.arg(app_id)::text::uuid
 ORDER BY created_at DESC, id DESC LIMIT 1 FOR SHARE;
 
 -- name: SetDeploymentRuntimeProfile :execrows
+-- imaged records a prebuilt image's runtime profile, and the HEALTHCHECK
+-- verdict of any source build (ADR-20261024100000), while the deployment is
+-- still being assembled. The accepted command and healthcheck are kept.
 UPDATE deployments
 SET inferred_profile = (sqlc.arg(profile)::jsonb - 'image_command' - 'image_healthcheck') ||
     CASE WHEN inferred_profile ? 'image_command'
@@ -301,7 +304,6 @@ SET inferred_profile = (sqlc.arg(profile)::jsonb - 'image_command' - 'image_heal
          THEN jsonb_build_object('image_healthcheck', inferred_profile -> 'image_healthcheck')
          ELSE '{}'::jsonb END
 WHERE id = sqlc.arg(deployment_id)::uuid
-  AND (kind = 'image' OR inferred_profile ? 'image_healthcheck')
   AND status IN ('pending', 'building', 'imaging');
 
 -- name: ReadSnapshotPublicationDeployment :one
