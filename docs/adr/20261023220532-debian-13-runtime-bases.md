@@ -124,9 +124,14 @@ move together.
 
 1. PR: `base-minimal` dpkg status (step 1).
 2. PR: parent, `runner-node24` and `runner-python312` to Debian 13. images.yml
-   builds, smoke-tests and scans each image; a `node24` and a `python312`
-   function boot on n2 metal before merge.
-3. Release. New function deploys and shared-runtime Node apps use Debian 13.
+   builds, smoke-tests and scans each image before merge. Merging publishes
+   the images under `sha-<commit>` tags; a `node24` and a `python312`
+   function boot on n2 metal against those digests before any release
+   carries them. Building the images for a pre-merge boot needs an e2e
+   bundle from the branch, which the n2 host and the developer machine
+   could not hold on 2026-10-24.
+3. Release, once the n2 boot passes. New function deploys and
+   shared-runtime Node apps use Debian 13.
 4. Audit `base-minimal` apps (step 3); PR moving `base-minimal`; release.
 5. The next nightly cve-check shows zero criticals on all four images; close
    the Debian 12 part of #5206.
