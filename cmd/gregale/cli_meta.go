@@ -3668,7 +3668,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
 				{Name: "range", Short: "time window (default 1h)", Value: "WINDOW", ClosedSet: appmetrics.Ranges()},
 			}},
-			{Name: "attack-mode", Short: "Switch attack mode on, off, or show it: challenge every visitor to the app for a while (15m to 24h); clients that are not browsers need a verified API key or JWT", Positionals: []string{"[on|off|status]"}, Examples: []string{
+			{Name: "attack-mode", Short: "Switch attack mode on, off, or show it", Notes: []string{"Attack mode challenges every visitor to the app for a while (15m to 24h); clients that are not browsers need a verified API key or JWT."}, Positionals: []string{"[on|off|status]"}, Examples: []string{
 				"gregale edge-rules attack-mode on --app my-api --for 1h",
 				"gregale edge-rules attack-mode --app my-api",
 				"gregale edge-rules attack-mode off --app my-api",

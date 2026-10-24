@@ -10695,7 +10695,7 @@ Includes pre-auth blocks, validation failures and gate rejections by status.
 
 ### edge-rules attack-mode
 
-Switch attack mode on, off, or show it: challenge every visitor to the app for a while (15m to 24h); clients that are not browsers need a verified API key or JWT
+Switch attack mode on, off, or show it
 
 `gregale edge-rules attack-mode [--app <slug>] [--for <DURATION>] [on|off|status]`
 
@@ -10711,6 +10711,8 @@ gregale edge-rules attack-mode on --app my-api --for 1h
 gregale edge-rules attack-mode --app my-api
 gregale edge-rules attack-mode off --app my-api
 ```
+
+Attack mode challenges every visitor to the app for a while (15m to 24h); clients that are not browsers need a verified API key or JWT.
 
 ### edge-rules trace
 
