@@ -72,6 +72,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/fcvm"
+	"github.com/onebox-faas/faas/pkg/instancebridge"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/safetext"
 )
@@ -800,7 +801,7 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	ctx, release := s.forwardSessions.track(stream.Context(), reqInit.GetInstance())
 	defer release()
 
-	_, ok := s.vmm.NetnsFor(reqInit.GetInstance())
+	netnsName, ok := s.vmm.NetnsFor(reqInit.GetInstance())
 	if !ok {
 		return status.Errorf(codes.NotFound, "instance %q not live", reqInit.GetInstance())
 	}
@@ -826,18 +827,16 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 	if err != nil {
 		return err
 	}
-	cmd, stdinR, stdinW, stdoutR, stderr, err := rawBridgeSpawn(ctx, bridgeID, instancePID, dialPort)
+	conn, err := s.openBridgeConn(ctx, instancebridge.KindRaw, reqInit.GetInstance(), netnsName, bridgeID, instancePID, dialPort)
 	if err != nil {
 		return err
 	}
-	defer func() { _ = stdinR.Close() }()
-	defer func() { _ = stdinW.Close() }()
-	defer func() { _ = stdoutR.Close() }()
+	defer conn.close()
 
-	bodyErrCh, bodyWG := rawBridgeBodyLoop(stream, stdinW, reqInit.GetMaxRequestBytes())
+	bodyErrCh, bodyWG := rawBridgeBodyLoop(stream, conn.input, reqInit.GetMaxRequestBytes())
 
-	headReader := bufio.NewReader(stdoutR)
-	parsed, headErr := rawBridgeReadHead(headReader, stderr.String())
+	headReader := bufio.NewReader(conn.output)
+	parsed, headErr := rawBridgeReadHead(headReader, conn.stderr())
 	if headErr != nil {
 		// Send the init frame with Error populated so callers
 		// reading init.error (per vmmd.proto:1325-1337) detect
@@ -859,7 +858,7 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 		// would have us read the zero value and silently drop
 		// the error). rawBridgeFinish handles the cmd.Wait +
 		// WaitGroup coordination.
-		_ = rawBridgeFinish(cmd, bodyErrCh, bodyWG, ctx, stderr.String())
+		_ = rawBridgeFinish(conn.run, bodyErrCh, bodyWG, ctx, conn.stderr)
 		if sendErr != nil {
 			return status.Errorf(codes.Internal,
 				"raw bridge head failed (%v) AND init send failed: %v", headErr, sendErr)
@@ -874,15 +873,15 @@ func (s *Server) ForwardRawStream(stream grpc.BidiStreamingServer[vmmdpb.Forward
 			},
 		},
 	}); err != nil {
-		_ = rawBridgeFinish(cmd, bodyErrCh, bodyWG, ctx, stderr.String())
+		_ = rawBridgeFinish(conn.run, bodyErrCh, bodyWG, ctx, conn.stderr)
 		return status.Errorf(codes.Internal, "raw bridge init send: %v", err)
 	}
 
 	if err := rawBridgePumpBody(stream, headReader, parsed.Body, reqInit.GetMaxRequestBytes()); err != nil {
-		_ = rawBridgeFinish(cmd, bodyErrCh, bodyWG, ctx, stderr.String())
+		_ = rawBridgeFinish(conn.run, bodyErrCh, bodyWG, ctx, conn.stderr)
 		return err
 	}
-	return rawBridgeFinish(cmd, bodyErrCh, bodyWG, ctx, stderr.String())
+	return rawBridgeFinish(conn.run, bodyErrCh, bodyWG, ctx, conn.stderr)
 }
 
 // rawBridgeSpawn resolves the vmmd-raw-bridge binary path, opens
@@ -968,7 +967,7 @@ func rawBridgeCommand(ctx context.Context, id bridgeIdentity, instancePID int, b
 // (nil) and surfaces OK for a truncated response. The
 // combination WaitGroup + stream.Context() makes the disconnect
 // detection deterministic.
-func rawBridgeBodyLoop(stream grpc.BidiStreamingServer[vmmdpb.ForwardRawRequest, vmmdpb.ForwardRawResponse], stdinW *os.File, maxRequestBytes int64) (chan error, *sync.WaitGroup) {
+func rawBridgeBodyLoop(stream grpc.BidiStreamingServer[vmmdpb.ForwardRawRequest, vmmdpb.ForwardRawResponse], stdinW io.WriteCloser, maxRequestBytes int64) (chan error, *sync.WaitGroup) {
 	maxBody := api.RawStreamMaxRequestBytes
 	if maxRequestBytes > 0 && maxRequestBytes < maxBody {
 		maxBody = maxRequestBytes
@@ -1135,8 +1134,8 @@ func rawBridgePumpBody(stream grpc.BidiStreamingServer[vmmdpb.ForwardRawRequest,
 // cap-enforcement branch is the customer-facing signal; any
 // other body error is Internal. A clean EOF on both sides
 // returns nil.
-func rawBridgeFinish(cmd *exec.Cmd, bodyErrCh <-chan error, bodyWG *sync.WaitGroup, streamCtx context.Context, stderr string) error {
-	waitErr := cmd.Wait()
+func rawBridgeFinish(run bridgeWaiter, bodyErrCh <-chan error, bodyWG *sync.WaitGroup, streamCtx context.Context, stderr func() string) error {
+	waitErr := run.Wait()
 	if instanceStopped(streamCtx) {
 		// vmmd tore the instance down and the session context killed the
 		// bridge; the gateway closes the client connection on Unavailable.
@@ -1180,18 +1179,14 @@ func rawBridgeFinish(cmd *exec.Cmd, bodyErrCh <-chan error, bodyWG *sync.WaitGro
 		if st, ok := status.FromError(bodyErr); ok && st.Code() == codes.Canceled {
 			return bodyErr
 		}
-		// Bridge crash (non-zero exit) — surface stderr so the
-		// gateway can log the bridge's last words.
-		var exitErr *exec.ExitError
-		if errors.As(waitErr, &exitErr) || errors.As(bodyErr, &exitErr) {
-			return status.Errorf(codes.Internal, "raw bridge body: %v wait=%v (stderr=%q)", bodyErr, waitErr, stderr)
+		// Bridge crash (non-zero exit, or a failed session end) —
+		// surface stderr so the gateway can log the bridge's last words.
+		if bridgeFailed(waitErr) || bridgeFailed(bodyErr) {
+			return status.Errorf(codes.Internal, "raw bridge body: %v wait=%v (stderr=%q)", bodyErr, waitErr, stderr())
 		}
 	}
-	if waitErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(waitErr, &exitErr) {
-			return status.Errorf(codes.Internal, "raw bridge exited: %v (stderr=%q)", exitErr, stderr)
-		}
+	if bridgeFailed(waitErr) {
+		return status.Errorf(codes.Internal, "raw bridge exited: %v (stderr=%q)", waitErr, stderr())
 	}
 	return nil
 }
