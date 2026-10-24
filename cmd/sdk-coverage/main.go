@@ -1708,6 +1708,8 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/edge-rules/stats":              "GetEdgeRuleStats",
 	"GET /v1/apps/{slug}/edge-rules/suggestions":        "GetEdgeRuleRecipeSuggestions",
 	"GET /v1/apps/{slug}/edge-rules/events":             "ListEdgeRuleEvents",
+	"GET /v1/apps/{slug}/edge-rules/waf-review":         "GetEdgeWAFReview",
+	"POST /v1/edge-rules/{id}/waf-exclusions":           "UpdateEdgeWAFExclusions",
 	"GET /v1/edge-rule-lists":                           "ListEdgeRuleLists",
 	"POST /v1/edge-rule-lists":                          "CreateEdgeRuleList",
 	"GET /v1/edge-rule-lists/{name}":                    "GetEdgeRuleList",

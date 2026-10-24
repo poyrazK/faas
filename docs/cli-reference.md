@@ -11129,6 +11129,49 @@ gregale edge-rules events --app my-site --request-id REQUEST_ID
 
 Includes kind=waf detections; up to 10 of each per rule per minute, kept 7 days.
 
+### edge-rules waf-review
+
+Group WAF detections by rule and path to find false positives
+
+`gregale edge-rules waf-review [--app <slug>] [--rule <ID>] [--since <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project context) |  |
+| `--rule <ID>` | only this kind=waf rule id |  |
+| `--since <DURATION>` | how far back, e.g. 24h or 7d (default 7d, clamped to the plan window) |  |
+
+Examples:
+
+```sh
+gregale edge-rules waf-review --app my-api
+gregale edge-rules waf-review --app my-api --rule RULE_ID --since 24h
+```
+
+Each group is assessed: likely_false_positive (a documented false positive, or many clients flagged on one path), likely_attack (clients flagged on many paths), excluded or review.
+
+Detections are sampled, so counts are lower bounds.
+
+### edge-rules waf-exclude
+
+Add or remove CRS rule IDs on a kind=waf rule&#39;s exclusions
+
+`gregale edge-rules waf-exclude [--add <IDS>] [--remove <IDS>] <rule-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--add <IDS>` | CRS rule IDs to exclude, comma-separated |  |
+| `--remove <IDS>` | CRS rule IDs to stop excluding, comma-separated |  |
+
+Examples:
+
+```sh
+gregale edge-rules waf-exclude RULE_ID --add 942190
+gregale edge-rules waf-exclude RULE_ID --remove 942100
+```
+
+Keeps the rest of the rule&#39;s WAF action and its penalty.
+
 ### edge-rules rollback
 
 Restore an app&#39;s edge rules to a recorded version
