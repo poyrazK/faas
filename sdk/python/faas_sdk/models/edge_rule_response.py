@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
 from ..models.edge_rule_response_kind import EdgeRuleResponseKind, check_edge_rule_response_kind
+from ..models.edge_rule_response_managed_by import EdgeRuleResponseManagedBy, check_edge_rule_response_managed_by
 from ..models.edge_rule_response_mode import EdgeRuleResponseMode, check_edge_rule_response_mode
 from ..models.edge_rule_response_validate_mode import (
     EdgeRuleResponseValidateMode,
@@ -124,6 +125,9 @@ class EdgeRuleResponse:
     """
     mode: EdgeRuleResponseMode | Unset = UNSET
     """enforce (default) or log; a log-mode rule is matched and counted but never acts."""
+    managed_by: EdgeRuleResponseManagedBy | Unset = UNSET
+    """Set on the app's attack-mode rule (ADR-20261021220456), which changes only through /v1/apps/{slug}/edge-
+    protection/attack-mode; PATCH refuses it. Absent on every other rule."""
     penalty: EdgeRulePenalty | Unset = UNSET
     """A rule's penalty box (ADR-20261022105846). Once the rule has refused
     the same client `after` times within `within_seconds`, every request
@@ -245,6 +249,10 @@ class EdgeRuleResponse:
         if not isinstance(self.mode, Unset):
             mode = self.mode
 
+        managed_by: str | Unset = UNSET
+        if not isinstance(self.managed_by, Unset):
+            managed_by = self.managed_by
+
         penalty: dict[str, Any] | Unset = UNSET
         if not isinstance(self.penalty, Unset):
             penalty = self.penalty.to_dict()
@@ -282,6 +290,8 @@ class EdgeRuleResponse:
             field_dict["match"] = match
         if mode is not UNSET:
             field_dict["mode"] = mode
+        if managed_by is not UNSET:
+            field_dict["managed_by"] = managed_by
         if penalty is not UNSET:
             field_dict["penalty"] = penalty
 
@@ -556,6 +566,13 @@ class EdgeRuleResponse:
         else:
             mode = check_edge_rule_response_mode(_mode)
 
+        _managed_by = d.pop("managed_by", UNSET)
+        managed_by: EdgeRuleResponseManagedBy | Unset
+        if isinstance(_managed_by, Unset):
+            managed_by = UNSET
+        else:
+            managed_by = check_edge_rule_response_managed_by(_managed_by)
+
         _penalty = d.pop("penalty", UNSET)
         penalty: EdgeRulePenalty | Unset
         if isinstance(_penalty, Unset):
@@ -584,6 +601,7 @@ class EdgeRuleResponse:
             expired=expired,
             match=match,
             mode=mode,
+            managed_by=managed_by,
             penalty=penalty,
         )
 
