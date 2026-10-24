@@ -222,7 +222,7 @@ This customer capability matrix is generated from [`pkg/productcap/catalog.json`
 | [Workflow recovery policy](../docs/faas_openapi_spec) | async | `beta` | `hobby`, `pro`, `scale` | Review and recover failed workflow runs under a policy. | `pkg/apid/apidserver/handlers_workflow_recovery_policy_test.go::TestWorkflowRecoveryPolicyHTTP` |
 | [Workflow schedules](../docs/faas_openapi_spec) | async | `beta` | `hobby`, `pro`, `scale` | Start workflows on a schedule. | `pkg/apid/apidserver/handlers_platform_tenant_workflow_schedules_test.go::TestPlatformTenantSelfWorkflowScheduleOverrides` |
 | [Workflows](../docs/faas_openapi_spec) | async | `beta` | `hobby`, `pro`, `scale` | Run durable multi-step workflows. | `pkg/apid/apidserver/handlers_event_workflow_recovery_test.go::TestWorkflowRecoveryJobHTTP` |
-| [Jobs and workflows](../docs/faas_openapi_spec) | async | `beta` | `hobby`, `pro`, `scale` | Run asynchronous jobs and durable workflows alongside an API. | `cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle` |
+| [Jobs and workflows](../docs/jobs) | async | `beta` | `hobby`, `pro`, `scale` | Run asynchronous jobs and durable workflows alongside an API. | `cmd/e2e/workflows_execution_e2e_test.go::TestE2E_Workflows_CodeFirstRunResumesAcrossSleepAndEvent` |
 | [Workload identity](../docs/security) | runtime | `beta` | `free`, `hobby`, `pro`, `scale` | Give apps short-lived OIDC tokens instead of long-lived provider keys. | `cmd/vmmd/workload_identity_config_test.go::TestLoadWorkloadIdentitySigner` |
 
 ## Promotion rule

@@ -1,5 +1,10 @@
 # Jobs
 
+For multi-step work that waits for time or events between steps, use durable
+workflows: [code-first](code-workflows.md) (ordinary async functions) or
+[declarative](event-driven.md#durable-workflow-waits) (steps in
+`gregale.yaml`).
+
 Jobs are bounded run-to-completion workloads. Create a job from an OCI image
 reference, then dispatch one or more tasks; each run retains task status and
 logs. A newly-created or image-updated job is `pending` until imaged resolves

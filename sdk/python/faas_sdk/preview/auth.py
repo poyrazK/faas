@@ -1,8 +1,9 @@
 """Verify application Auth access tokens in Python backends (ADR-1190).
 
-Install the extra that brings ES256 verification::
+Install the SDK with the extra that brings ES256 verification (see
+https://gregale.dev/docs/sdks; ``faas_sdk`` on PyPI is not Gregale's)::
 
-    pip install 'faas_sdk[auth]'
+    pip install 'gregale-sdk[auth] @ git+https://github.com/poyrazK/faas@<commit>#subdirectory=sdk/python'
 
 Then verify tokens and check permissions::
 
@@ -235,7 +236,7 @@ def _ecdsa():
         from cryptography.hazmat.primitives.asymmetric import ec
         from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
-        raise ImportError("faas_sdk.preview.auth needs the 'auth' extra: pip install 'faas_sdk[auth]'") from exc
+        raise ImportError("faas_sdk.preview.auth needs the 'auth' extra: install gregale-sdk[auth] as https://gregale.dev/docs/sdks shows") from exc
     return InvalidSignature, hashes, ec, encode_dss_signature
 
 
