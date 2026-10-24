@@ -11774,6 +11774,12 @@ const (
 	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
 	ScenarioTCPChaosMaxRoutesPerNode    = 256
 	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
+	// gatewayd-internal persists scenario chaos match counters in atomic
+	// batches of at most ScenarioChaosMatchWriteBatch and holds at most
+	// ScenarioChaosMatchMaxPendingKeys unpersisted counters per node. Guests
+	// choose request correlation IDs, so the cap bounds one run's fan-out.
+	ScenarioChaosMatchWriteBatch     = 1024
+	ScenarioChaosMatchMaxPendingKeys = 65536
 )
 
 // ServiceTCPReservedPorts belong to the HTTP service mesh on every service
