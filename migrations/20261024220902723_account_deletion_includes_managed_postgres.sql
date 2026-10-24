@@ -1,4 +1,4 @@
--- filename: 20261024150841226_account_deletion_includes_managed_postgres.sql
+-- filename: 20261024220902723_account_deletion_includes_managed_postgres.sql
 -- migration-compat: expand
 --
 -- ADR-20261024150500: an account deletion can include the account's personal
