@@ -152,6 +152,9 @@ Edge features launch behind platform flags that are off for every account
   summary (it shows traffic whatever rules do), the crawler range refresh
   (platform data), and verified_bot verifying search crawlers from
   published ranges.
-- The dashboard still shows the recipe card; applying it is refused with
-  the same 422 until the flag-aware surfaces (ADR-20261023113721
-  amendment 1) cover AI crawler conditions too.
+- Rule responses name `ai_crawlers` in `unreleased_features`, the trace
+  simulator reads the fields as absent for such a rule, and the dashboard
+  says the recipe is not yet available (ADR-20261023113721 amendment 1).
+- AI crawler controls are the `edge-ai-crawler-controls` capability, at
+  `preview`, with its own gate in the edge security release gate
+  (ADR-20261024082000).

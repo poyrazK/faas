@@ -611,7 +611,7 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 		case !rule.Enabled:
 			row.Status, row.Reason = "skipped", "rule is disabled"
 		case unreleasedChallenge(rule):
-			row.Status, row.Reason = "skipped", "challenge rules are not yet available to this account; the gateway does not enforce this rule"
+			row.Status, row.Reason = "skipped", "challenge rules or attack mode are not yet available to this account; the gateway does not enforce this rule"
 		case !HostMatches(rule.MatchHost, input.Host):
 			row.Status, row.Reason = "skipped", fmt.Sprintf("host %q does not match %q", input.Host, rule.MatchHost)
 		case !ruleMethodMatches(rule.Kind, rule.MatchMethods, matchMethod):
@@ -1245,10 +1245,13 @@ func previewAppCORSDefault(input Input, headers http.Header) (SimulationStep, []
 	return step, responseOps
 }
 
-// unreleasedChallenge reports a challenge rule whose account has not been
-// released challenge rules (ADR-20261023113721): the gateway leaves it inert.
+// unreleasedChallenge reports a challenge rule the gateway leaves inert
+// because its account has not been released challenge rules
+// (ADR-20261023113721) or, for the attack-mode rule, attack mode
+// (ADR-20261021220456 amendment 1).
 func unreleasedChallenge(rule api.EdgeRuleResponse) bool {
-	return rule.Kind == "challenge" && slices.Contains(rule.UnreleasedFeatures, api.EdgeFeatureChallenge)
+	return rule.Kind == "challenge" && (slices.Contains(rule.UnreleasedFeatures, api.EdgeFeatureChallenge) ||
+		slices.Contains(rule.UnreleasedFeatures, api.EdgeFeatureAttackMode))
 }
 
 func firstPhaseRule(rules []api.EdgeRuleResponse, kind string, input Input, requestPath, method string, headers http.Header) (*api.EdgeRuleResponse, bool) {
@@ -2651,6 +2654,8 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country, ASN: input.ASN,
 		VerifiedBot:       traceVerifiedBot(input.VerifiedBot, headers),
 		VerifiedAICrawler: traceVerifiedAICrawler(input.VerifiedAICrawler, headers),
+		// ADR-20261022083601 amendment 1: as the gateway reads them.
+		AICrawlersUnreleased: slices.Contains(rule.UnreleasedFeatures, api.EdgeFeatureAICrawlers),
 	})
 }
 

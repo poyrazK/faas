@@ -18,6 +18,7 @@ var (
 	featureWAFBlocking = edgeFeature{platformflags.EdgeWAFBlocking, "WAF warn and block modes", api.EdgeFeatureWAFBlocking}
 	featurePenaltyBox  = edgeFeature{platformflags.EdgePenaltyBox, "Edge rule penalties", api.EdgeFeaturePenaltyBox}
 	featureAICrawlers  = edgeFeature{platformflags.EdgeAICrawlers, "AI crawler conditions", api.EdgeFeatureAICrawlers}
+	featureAttackMode  = edgeFeature{platformflags.EdgeAttackMode, "Attack mode", api.EdgeFeatureAttackMode}
 )
 
 // RuleResponse is the rule as acct sees it: EdgeRuleResponse plus the gated
@@ -35,7 +36,7 @@ func (s *Service) RuleResponse(acct state.Account, row state.EdgeRule) api.EdgeR
 // FeatureReleased reports whether acct may use an edge feature
 // (api.EdgeFeature*); an unknown feature is not released.
 func (s *Service) FeatureReleased(acct state.Account, feature string) bool {
-	for _, f := range []edgeFeature{featureChallenge, featureWAFBlocking, featurePenaltyBox} {
+	for _, f := range []edgeFeature{featureChallenge, featureWAFBlocking, featurePenaltyBox, featureAICrawlers, featureAttackMode} {
 		if f.wire == feature {
 			return s.Host.PlatformFlagEnabled(f.flag, acct)
 		}
@@ -51,6 +52,9 @@ type ruleShape struct {
 	// aiCrawlers is a match condition on the AI crawler fields
 	// (ADR-20261022083601 amendment 1).
 	aiCrawlers bool
+	// attackMode is the app's attack-mode rule (ADR-20261021220456
+	// amendment 1); only a stored rule can be one.
+	attackMode bool
 	// active is enabled and not in log mode (ADR-960).
 	active bool
 }
@@ -70,6 +74,9 @@ func (r ruleShape) features() []edgeFeature {
 	if r.aiCrawlers {
 		out = append(out, featureAICrawlers)
 	}
+	if r.attackMode {
+		out = append(out, featureAttackMode)
+	}
 	return out
 }
 
@@ -78,6 +85,7 @@ func storedRuleShape(row state.EdgeRule) ruleShape {
 	shape := ruleShape{
 		kind: string(row.Kind), penalty: row.Action.Penalty != nil,
 		aiCrawlers: api.EdgeRuleMatchUsesAICrawlerFields(row.Match),
+		attackMode: row.AttackMode(),
 		active:     row.Enabled && row.Mode != api.EdgeRuleModeLog,
 	}
 	if row.Kind == state.EdgeRuleKindWAF {

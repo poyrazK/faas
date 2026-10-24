@@ -9,21 +9,30 @@ historical.
 
 ## Edge security release gate — 2026-10-24
 
-WAF warn and block, challenge rules and rule penalties are catalog
-capabilities at `preview`, behind platform flags that are off for every
-account, each with a scorecard gate
-([ADR-20261024082000](adr/20261024082000-edge-security-ga-gate.md)). None
-can reach GA yet. Met: the kill switches, WAF latency at 100-500 req/s on
-the reference node (p95 1.49-2.00 ms before the slot change), corpus
-detection, fail-open, the challenge journey, solver and escalation, and
-penalty correctness and caps. Open:
-- WAF skips under load (2.5-8% measured): the slot sizing on
-  `feat/edge-waf-inline-capacity` models 0.003-0.013% and needs a merge and
-  a gate-mode run of `TestEdgeWAFInlineLoad_E2E` on the reference node.
+All five edge features sit behind platform flags that are off for every
+account, each a catalog capability with a scorecard gate
+([ADR-20261024082000](adr/20261024082000-edge-security-ga-gate.md)). WAF
+warn and block and the browser challenge are `ga` (the product owner's
+decision, ADR-831 amendment 11) and go live by turning `edge_waf_blocking`
+and `edge_challenge` on once the release carrying the `@grx` engine is
+deployed. Penalties, attack mode and AI crawler controls are `preview`.
+
+Met: the kill switches; rules the edge does not enforce say so
+(`unreleased_features`); WAF latency at 100-500 req/s on the reference node
+(p95 1.49-2.00 ms); corpus detection; fail-open; the challenge journey,
+solver and escalation; penalty correctness, caps and sharing across
+gateways (in tests); attack mode and its two-flag gate; AI crawler matching,
+range refresh and gating.
+
+Open:
+- WAF skips under load: 2.5-8% measured before ADR-831 amendment 12's slot
+  sizing, which models 0.003-0.013%; needs a `FAAS_E2E_WAF_LOAD_GATE=1` run
+  of `TestEdgeWAFInlineLoad_E2E` on the reference node.
 - Challenge solve time on a low-end phone (no measurement yet).
-- Shared penalty boxes (`feat/edge-penalty-shared`) and unreleased-feature
-  visibility (`feat/edge-flag-aware-surfaces`): built, not merged.
-- Runbooks, and 14-day reviews at the internal and design-partner stages.
+- Runbooks for the five features' failure modes.
+- The 14-day reviews at the internal and design-partner stages (penalties,
+  attack mode, AI crawler controls), and the WAF production false-positive
+  review.
 
 ## Event substrate benchmark (V12) — 2026-10-23
 

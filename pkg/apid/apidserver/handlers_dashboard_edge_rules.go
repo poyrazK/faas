@@ -301,6 +301,10 @@ func dashboardEdgeFeatureLabel(feature string) string {
 		return "WAF warn and block"
 	case api.EdgeFeaturePenaltyBox:
 		return "penalties"
+	case api.EdgeFeatureAICrawlers:
+		return "AI crawler conditions"
+	case api.EdgeFeatureAttackMode:
+		return "attack mode"
 	}
 	return feature
 }
@@ -674,6 +678,9 @@ func dashboardEdgeRuleRecipes(rules []state.EdgeRule, plan api.Plan, released fu
 		}
 		if recipe.Kind == string(state.EdgeRuleKindChallenge) && view.Blocked == "" && !released(api.EdgeFeatureChallenge) {
 			view.Blocked = "Challenge rules are not yet available to this account."
+		}
+		if recipe.ID == api.EdgeRuleRecipeControlAICrawlers && view.Blocked == "" && !released(api.EdgeFeatureAICrawlers) {
+			view.Blocked = "AI crawler conditions are not yet available to this account."
 		}
 		out = append(out, view)
 	}

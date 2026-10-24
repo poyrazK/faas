@@ -153,8 +153,9 @@ class EdgeRuleResponse:
     """Gated features this rule uses that are not yet released to the
     account (ADR-20261023113721). The gateway does not enforce them:
     a challenge rule is inert, a warn or block WAF rule only
-    observes, and a penalty boxes nobody. Absent when every feature
-    the rule uses is released.
+    observes, a penalty boxes nobody, an AI crawler condition never
+    matches, and attack mode challenges nobody. Absent when every
+    feature the rule uses is released.
     """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 

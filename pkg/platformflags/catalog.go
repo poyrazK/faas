@@ -337,8 +337,9 @@ var catalog = []Spec{
 		RetireBy:   "2027-03-31",
 	},
 	{
-		Key:   EdgeAttackMode,
-		Label: "Edge attack mode",
+		Key:        EdgeAttackMode,
+		Capability: "edge-attack-mode",
+		Label:      "Edge attack mode",
 		Description: "Release attack mode (an app-wide managed challenge rule) to accounts. Off by default until launch. Attack mode is a challenge rule, " +
 			"so switching it on also needs edge_challenge. While it is off apid refuses switching attack mode on (switching it off always works), " +
 			"and gateways leave an active attack-mode rule inert; other challenge rules are unaffected.",
@@ -348,8 +349,9 @@ var catalog = []Spec{
 		RetireBy:   "2027-03-31",
 	},
 	{
-		Key:   EdgeAICrawlers,
-		Label: "Edge AI crawler conditions",
+		Key:        EdgeAICrawlers,
+		Capability: "edge-ai-crawler-controls",
+		Label:      "Edge AI crawler conditions",
 		Description: "Release the ai_crawler, ai_crawler_purpose and verified_ai_crawler edge-rule conditions (and the control-ai-crawlers recipe) to accounts. " +
 			"Off by default until launch. While it is off apid refuses creating a rule that tests them or switching one on, and gateways evaluate them as absent; " +
 			"AI crawler counts in the edge-protection summary and the crawler range refresh are not gated.",

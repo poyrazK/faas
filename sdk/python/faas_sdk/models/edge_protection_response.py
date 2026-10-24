@@ -11,6 +11,7 @@ from ..models.edge_protection_response_range import EdgeProtectionResponseRange,
 
 if TYPE_CHECKING:
     from ..models.edge_attack_mode_status import EdgeAttackModeStatus
+    from ..models.edge_protection_ai_crawler import EdgeProtectionAICrawler
     from ..models.edge_protection_response_challenge import EdgeProtectionResponseChallenge
     from ..models.edge_protection_response_penalty import EdgeProtectionResponsePenalty
     from ..models.edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
@@ -53,6 +54,9 @@ class EdgeProtectionResponse:
     ends on its own at `expires_at`. Read from the rules, so it is
     current even when the edge-protection counts are degraded.
     """
+    ai_crawlers: list[EdgeProtectionAICrawler]
+    """Requests whose User-Agent names an AI crawler (ADR-20261022083601), largest first, counted before any edge
+    rule acted on them."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -84,6 +88,11 @@ class EdgeProtectionResponse:
 
         attack_mode = self.attack_mode.to_dict()
 
+        ai_crawlers = []
+        for ai_crawlers_item_data in self.ai_crawlers:
+            ai_crawlers_item = ai_crawlers_item_data.to_dict()
+            ai_crawlers.append(ai_crawlers_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -99,6 +108,7 @@ class EdgeProtectionResponse:
                 "challenge": challenge,
                 "penalty": penalty,
                 "attack_mode": attack_mode,
+                "ai_crawlers": ai_crawlers,
             }
         )
 
@@ -107,6 +117,7 @@ class EdgeProtectionResponse:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.edge_attack_mode_status import EdgeAttackModeStatus
+        from ..models.edge_protection_ai_crawler import EdgeProtectionAICrawler
         from ..models.edge_protection_response_challenge import EdgeProtectionResponseChallenge
         from ..models.edge_protection_response_penalty import EdgeProtectionResponsePenalty
         from ..models.edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
@@ -151,6 +162,13 @@ class EdgeProtectionResponse:
 
         attack_mode = EdgeAttackModeStatus.from_dict(d.pop("attack_mode"))
 
+        ai_crawlers = []
+        _ai_crawlers = d.pop("ai_crawlers")
+        for ai_crawlers_item_data in _ai_crawlers:
+            ai_crawlers_item = EdgeProtectionAICrawler.from_dict(ai_crawlers_item_data)
+
+            ai_crawlers.append(ai_crawlers_item)
+
         edge_protection_response = cls(
             app_id=app_id,
             range_=range_,
@@ -163,6 +181,7 @@ class EdgeProtectionResponse:
             challenge=challenge,
             penalty=penalty,
             attack_mode=attack_mode,
+            ai_crawlers=ai_crawlers,
         )
 
         edge_protection_response.additional_properties = d

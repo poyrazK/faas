@@ -1409,6 +1409,8 @@ from .durable_entity_validator_deployment_info import DurableEntityValidatorDepl
 from .durable_entity_validator_deployment_info_source import DurableEntityValidatorDeploymentInfoSource
 from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
 from .edge_attack_mode_status import EdgeAttackModeStatus
+from .edge_protection_ai_crawler import EdgeProtectionAICrawler
+from .edge_protection_ai_crawler_purpose import EdgeProtectionAICrawlerPurpose
 from .edge_protection_response import EdgeProtectionResponse
 from .edge_protection_response_challenge import EdgeProtectionResponseChallenge
 from .edge_protection_response_penalty import EdgeProtectionResponsePenalty
@@ -7510,6 +7512,8 @@ __all__ = (
     "DurableEntityValidatorDeploymentInfoSource",
     "DurableEntityValidatorDeploymentInfoStatus",
     "EdgeAttackModeStatus",
+    "EdgeProtectionAICrawler",
+    "EdgeProtectionAICrawlerPurpose",
     "EdgeProtectionResponse",
     "EdgeProtectionResponseChallenge",
     "EdgeProtectionResponsePenalty",

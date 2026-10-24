@@ -1,8 +1,12 @@
 from typing import Literal
 
-EdgeRuleResponseUnreleasedFeaturesItem = Literal["challenge", "penalty_box", "waf_blocking"]
+EdgeRuleResponseUnreleasedFeaturesItem = Literal[
+    "ai_crawlers", "attack_mode", "challenge", "penalty_box", "waf_blocking"
+]
 
 EDGE_RULE_RESPONSE_UNRELEASED_FEATURES_ITEM_VALUES: set[EdgeRuleResponseUnreleasedFeaturesItem] = {
+    "ai_crawlers",
+    "attack_mode",
     "challenge",
     "penalty_box",
     "waf_blocking",

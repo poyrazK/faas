@@ -85,11 +85,14 @@ account could not use.
 - **Rule responses** (list, get, create, update) carry
   `unreleased_features`: the gated features the rule uses that the
   account's flags do not release (`challenge`, `waf_blocking`,
-  `penalty_box`), whether or not the rule is enabled. It is omitted when
+  `penalty_box`, and `ai_crawlers` and `attack_mode` for the flags of
+  ADR-20261022083601 and ADR-20261021220456), whether or not the rule is
+  enabled. It is omitted when
   empty, so clients and N-1 readers see no change for released accounts.
-- **The trace simulator** reads it: an unreleased challenge rule is skipped
-  with the reason, as the gateway leaves it inert. WAF and penalties are
-  not simulated, so nothing else changes there.
+- **The trace simulator** reads it: an unreleased challenge rule (or
+  attack-mode rule) is skipped with the reason, as the gateway leaves it
+  inert, and unreleased AI crawler fields read as absent. WAF and penalties
+  are not simulated, so nothing else changes there.
 - **The dashboard** marks such rules "not enforced: … not yet available",
   shows the challenge recipe as not yet available instead of offering its
   form, and leaves the penalty field out of recipe forms while penalties

@@ -742,6 +742,7 @@ export type { DurableEntityScope } from './models/DurableEntityScope.js';
 export type { DurableEntityStateExport } from './models/DurableEntityStateExport.js';
 export type { DurableEntityValidatorDeploymentInfo } from './models/DurableEntityValidatorDeploymentInfo.js';
 export type { EdgeAttackModeStatus } from './models/EdgeAttackModeStatus.js';
+export type { EdgeProtectionAICrawler } from './models/EdgeProtectionAICrawler.js';
 export type { EdgeProtectionResponse } from './models/EdgeProtectionResponse.js';
 export type { EdgeRuleAsyncAction } from './models/EdgeRuleAsyncAction.js';
 export type { EdgeRuleBudgetAction } from './models/EdgeRuleBudgetAction.js';

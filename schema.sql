@@ -34638,6 +34638,23 @@ UNION
 
 
 --
+-- Name: edge_crawler_ip_ranges; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_crawler_ip_ranges (
+    crawler text NOT NULL,
+    source_url text NOT NULL,
+    prefixes text[] NOT NULL,
+    source_created_at text,
+    fetched_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT edge_crawler_ip_ranges_crawler_check CHECK ((crawler ~ '^[a-z0-9][a-z0-9-]{0,63}$'::text)),
+    CONSTRAINT edge_crawler_ip_ranges_prefixes_check CHECK (((cardinality(prefixes) >= 1) AND (cardinality(prefixes) <= 5000))),
+    CONSTRAINT edge_crawler_ip_ranges_source_created_at_check CHECK ((length(source_created_at) <= 64)),
+    CONSTRAINT edge_crawler_ip_ranges_source_url_check CHECK (((source_url ~~ 'https://%'::text) AND (length(source_url) <= 512)))
+);
+
+
+--
 -- Name: edge_penalty_boxes; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -58040,6 +58057,14 @@ ALTER TABLE ONLY public.developer_sync_history
 
 ALTER TABLE ONLY public.domain_doctor_observations
     ADD CONSTRAINT domain_doctor_observations_pkey PRIMARY KEY (domain);
+
+
+--
+-- Name: edge_crawler_ip_ranges edge_crawler_ip_ranges_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_crawler_ip_ranges
+    ADD CONSTRAINT edge_crawler_ip_ranges_pkey PRIMARY KEY (crawler);
 
 
 --
