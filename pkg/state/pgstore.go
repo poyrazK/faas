@@ -26133,6 +26133,8 @@ func mapErr(err error) error {
 			return ErrLayerArtifactRetired
 		case "account_shared_app_ownership_pending":
 			return ErrOrgAppOwnershipPending
+		case accountManagedPostgresDatabasesConstraint:
+			return accountManagedPostgresDatabasesError(admission.Detail)
 		case "migration_admission_current", "migration_source_current", "function_migration_node_pending":
 			return ErrConflict
 		case "migration_admission_capacity":
@@ -27857,7 +27859,7 @@ func (s *PgStore) MarkDunningStep(ctx context.Context, id string, from, to Accou
 		  where id = $1 and status = $4`,
 		id, string(to), stamp, string(from))
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
