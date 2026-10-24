@@ -89,6 +89,13 @@ func (s *server) adminAllows(acct state.Account) (bool, *api.Problem) {
 	return true, nil
 }
 
+// isOperator reports whether acct is a platform operator: its email is in
+// FAAS_ADMIN_EMAILS.
+func (s *server) isOperator(acct state.Account) bool {
+	ok, _ := s.adminAllows(acct)
+	return ok
+}
+
 // computeNodePayload is the JSON shape POST /v1/compute-nodes
 // accepts. overlay_ip and last_heartbeat_at are not part of the
 // input — overlay_ip is set by vmmd's tailscale detect at

@@ -41,6 +41,18 @@ type Config struct {
 	// directory for native image and snapshot output claims. Configure it
 	// before native recovery; it does not enable qualification capture.
 	NativeImageStagingRoot string `toml:"native_image_staging_root"`
+	// NativeRuntimeCapture runs ordinary park and warm captures through the
+	// native producer instead of refusing them (ADR 20261022184951). It
+	// requires native process recovery and both private roots above, and
+	// stays off until native capture acceptance passes.
+	NativeRuntimeCapture bool `toml:"native_runtime_capture"`
+	// NativeRuntimeSnapshotRoot is the pre-created tree native runtime
+	// captures publish to (ADR 20261022184951 amendment 1): owned by vmmd's
+	// uid, no group write and no access for others (production
+	// /srv/fc/native-snap, 2750 root:faas). NativeRuntimeCapture requires it.
+	// Keep it configured after turning capture off: restores and collection
+	// still read the snapshots it holds.
+	NativeRuntimeSnapshotRoot string `toml:"native_runtime_snapshot_root"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
@@ -84,6 +96,11 @@ type Config struct {
 	// returns guest-freed pages to the host. It is on by default on
 	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
 	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
+	// RestoreReseedThread boots app VMs whose Node processes answer the
+	// restore reseed barrier from a native thread instead of their event
+	// loop (ADR-20261024105607). Off by default; FAAS_RESTORE_RESEED_THREAD
+	// overrides TOML.
+	RestoreReseedThread bool `toml:"restore_reseed_thread"`
 	// QuietPause enables ADR-1151 quiet pause: vmmd pauses an eligible
 	// instance's vCPUs between requests and resumes it on the next one.
 	// Off by default; schedd decides which instances are eligible.
@@ -615,6 +632,9 @@ func LoadConfig(path string) (*Config, error) {
 	if err := validateNativeImageStagingConfig(c.NativeProcessRecovery, c.NativeImageStagingRoot); err != nil {
 		return nil, err
 	}
+	if err := validateNativeRuntimeCaptureConfig(c); err != nil {
+		return nil, err
+	}
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
 	// c.Role is consulted against FAAS_VMMD_ROLE. Setting Role in
 	// the defaults-struct literal lets toml.Unmarshal overwrite it,
@@ -786,6 +806,13 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.RequireSecretBinding = required
 	}
+	if v := os.Getenv("FAAS_RESTORE_RESEED_THREAD"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_RESEED_THREAD must be a boolean (got %q)", v)
+		}
+		c.RestoreReseedThread = enabled
+	}
 	if v, ok := os.LookupEnv("FAAS_PMEM_BASE_DIR"); ok {
 		c.PmemBaseDir = v
 	}
@@ -942,6 +969,21 @@ func validateAdoptionConfig(record, adopt, nativeRecovery bool) error {
 
 func validateNativeSnapshotPublicationConfig(nativeRecovery bool, root string) error {
 	return validateNativePrivateRootConfig(nativeRecovery, root, "native_snapshot_publication_root")
+}
+
+// The native producer needs its publication journal and persistent output
+// staging; without them every capture would refuse at preflight.
+func validateNativeRuntimeCaptureConfig(c *Config) error {
+	if root := c.NativeRuntimeSnapshotRoot; root != "" && (!filepath.IsAbs(root) || filepath.Clean(root) != root || root == string(filepath.Separator)) {
+		return errors.New("vmmd: native_runtime_snapshot_root must be a clean absolute non-root path")
+	}
+	if !c.NativeRuntimeCapture {
+		return nil
+	}
+	if !c.NativeProcessRecovery || c.NativeSnapshotPublicationRoot == "" || c.NativeImageStagingRoot == "" || c.NativeRuntimeSnapshotRoot == "" {
+		return errors.New("vmmd: native_runtime_capture requires native_process_recovery = true, native_snapshot_publication_root, native_image_staging_root and native_runtime_snapshot_root")
+	}
+	return nil
 }
 
 func validateNativeImageStagingConfig(nativeRecovery bool, root string) error {

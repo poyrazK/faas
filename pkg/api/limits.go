@@ -1245,6 +1245,11 @@ const NativeHostHelperCgroupEventsMaxBytes = 4096
 const ExclusiveArtifactDecoderMaxMemoryBytes = 64 << 20
 const NativeSnapshotPublicationRecordMaxBytes = 2 << 20
 
+// NativeRuntimeCaptureMaxDuration caps the durable deadline of one native park
+// or warm capture (ADR 20261022184951). vmmd clamps the caller's deadline to it;
+// the scheduler's per-RAM snapshot budget is far shorter.
+const NativeRuntimeCaptureMaxDuration = 10 * time.Minute
+
 // NativeSnapshotPublicationRecoveryBatchMax bounds each periodic scan of
 // already-authorized artifact retirement records.
 const NativeSnapshotPublicationRecoveryBatchMax = 64
@@ -6750,12 +6755,20 @@ const (
 	// the budget are not inspected (outcome "sampled_out").
 	EdgeWAFWorkerMsPerAppPerSecond = 400
 	EdgeWAFWorkerMsPerAppBurst     = 2000
-	// EdgeWAFInlineConcurrency bounds in-path header/URI checks for warn
-	// and block rules running at once on a node (ADR-831 amendment 4).
-	// A check that finds no free slot, or whose app has used its inline
-	// budget, is skipped and the request passes (fail open), so the WAF
-	// can never take the gateway down; skips are counted.
-	EdgeWAFInlineConcurrency = 2
+	// EdgeWAFInlineMinSlots and EdgeWAFInlineMaxSlots bound how many
+	// in-path header/URI checks for warn and block rules run at once on a
+	// node (ADR-831 amendments 4 and 12); EdgeWAFInlineSlots picks the
+	// count from the gateway's processors. A check that finds every slot
+	// busy waits up to EdgeWAFInlineSlotWait for one. One still without a
+	// slot, or whose app has used its inline budget, is skipped and the
+	// request passes (fail open), so the WAF can never take the gateway
+	// down; skips are counted by reason.
+	EdgeWAFInlineMinSlots = 2
+	EdgeWAFInlineMaxSlots = 16
+	// EdgeWAFInlineSlotWait is about one check: long enough for a
+	// momentary pile-up to clear, short enough that sustained overload
+	// still fails open quickly.
+	EdgeWAFInlineSlotWait = time.Millisecond
 	// EdgeWAFInlineMsPerAppPerSecond and EdgeWAFInlineMsPerAppBurst bound
 	// one app's in-path checks in worker milliseconds. A check costs about
 	// 1 ms, so 500 ms/s is roughly 500 checked requests per second.
@@ -6830,6 +6843,16 @@ const (
 	// soonest-ending entry.
 	EdgePenaltyBoxMaxPerApp  = 10000
 	EdgePenaltyBoxMaxEntries = 200000
+
+	// --- ADR-20261021220456: attack mode ------------------------------
+
+	// EdgeAttackModeDefaultSeconds is how long attack mode stays on when
+	// the request names no duration; Min/Max bound the choice. Attack mode
+	// always ends on its own, so a forgotten switch cannot keep
+	// challenging every visitor for days. Every plan may use it.
+	EdgeAttackModeDefaultSeconds = 3600
+	MinEdgeAttackModeSeconds     = 900
+	MaxEdgeAttackModeSeconds     = 86400
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
@@ -7109,6 +7132,13 @@ const (
 	// timeout — otherwise the watchdog would fire mid-task and the
 	// graceful-drain contract would be a lie.
 	ParkTailDrainTimeoutSeconds = 5
+
+	// ParkForwardDrainTimeoutSeconds bounds how long vmmd's terminal park
+	// waits for forwards that reached the guest before the park began
+	// (ADR-20261024090000). New forwards wait for the park and are
+	// re-routed to a fresh wake; a forward still running at the deadline
+	// is cut by the pause, as before.
+	ParkForwardDrainTimeoutSeconds = 5
 
 	// OCI puller (spec §17 G1, ADR-021). Per-pull HTTP timeout for the
 	// registry client. cmd/imaged passes this to oci.WithTimeout; the
@@ -8066,6 +8096,14 @@ const (
 	// (docs/adr/1736-zero-downtime-daemon-restarts.md).
 	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
 )
+
+// EdgeWAFInlineSlots is the number of in-path WAF check slots for a
+// gatewayd-internal with procs processors (GOMAXPROCS): one per processor
+// but one, so checks never take the last processor from proxying, within
+// EdgeWAFInlineMinSlots..EdgeWAFInlineMaxSlots (ADR-831 amendment 12).
+func EdgeWAFInlineSlots(procs int) int {
+	return min(max(procs-1, EdgeWAFInlineMinSlots), EdgeWAFInlineMaxSlots)
+}
 
 // EffectiveRetryMaxAttempts resolves a requested durable-invocation attempt
 // count against the account plan. Zero means "inherit" on input, never

@@ -53,7 +53,7 @@ func TestObsRegressionPrometheusOutage(t *testing.T) {
 	p := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.Error(w, "offline", 503) }))
 	defer p.Close()
 	*(*e.S()).PromqlClient() = promql.NewClient(p.URL, p.Client())
-	rec := e.Do(t, "GET", "/v1/admin/obs/incidents?type=platform_alert", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=platform_alert", nil, nil)
 	var got api.ObsIncidentListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -107,14 +107,14 @@ func TestObsRegressionIncidentCap(t *testing.T) {
 		}
 	}
 	var all, filtered api.ObsIncidentListResponse
-	rec := e.Do(t, "GET", "/v1/admin/obs/incidents?type=deployment&limit=200", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=deployment&limit=200", nil, nil)
 	if err := json.Unmarshal(rec.Body.Bytes(), &all); err != nil {
 		t.Fatal(err)
 	}
 	if len(all.Items) != 200 || all.NextCursor == "" {
 		t.Fatalf("cap response: %s", rec.Body.String())
 	}
-	rec = e.Do(t, "GET", "/v1/admin/obs/incidents?type=deployment&limit=200&cursor="+all.NextCursor, nil, nil)
+	rec = e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=deployment&limit=200&cursor="+all.NextCursor, nil, nil)
 	var tail api.ObsIncidentListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &tail); err != nil {
 		t.Fatal(err)
@@ -122,7 +122,7 @@ func TestObsRegressionIncidentCap(t *testing.T) {
 	if len(tail.Items) != 1 || tail.NextCursor != "" {
 		t.Fatalf("tail response: %s", rec.Body.String())
 	}
-	rec = e.Do(t, "GET", "/v1/admin/obs/incidents?type=deployment&severity=error", nil, nil)
+	rec = e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=deployment&severity=error", nil, nil)
 	if err := json.Unmarshal(rec.Body.Bytes(), &filtered); err != nil {
 		t.Fatal(err)
 	}
@@ -140,7 +140,7 @@ func (f *obsFailedApps) OperatorTenantApps(context.Context, string) ([]api.ObsTe
 func TestObsRegressionTenantFailureIsUnavailable(t *testing.T) {
 	e := gapEnv(t)
 	*(*e.S()).Store() = statetest.NewStore(&obsFailedApps{Store: *(*e.S()).Store()})
-	rec := e.Do(t, "GET", "/v1/admin/obs/tenants/"+(*e.Acct()).ID, nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/tenants/"+(*e.Acct()).ID, nil, nil)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -187,7 +187,7 @@ func TestObsRegressionAlertsPreserveIdentityAndSeverity(t *testing.T) {
 	defer p.Close()
 	*(*e.S()).PromqlClient() = promql.NewClient(p.URL, p.Client())
 	var response api.ObsIncidentListResponse
-	rec := e.Do(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&limit=1", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&limit=1", nil, nil)
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -195,7 +195,7 @@ func TestObsRegressionAlertsPreserveIdentityAndSeverity(t *testing.T) {
 		t.Fatalf("first page: %s", rec.Body.String())
 	}
 	first := response.Items[0]
-	rec = e.Do(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&limit=1&cursor="+response.NextCursor, nil, nil)
+	rec = e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&limit=1&cursor="+response.NextCursor, nil, nil)
 	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
@@ -221,7 +221,7 @@ func TestObsRegressionOverviewAndTenant(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	rec := e.Do(t, "GET", "/v1/admin/obs/overview", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/overview", nil, nil)
 	var overview api.ObsOverviewResponse
 	if err = json.Unmarshal(rec.Body.Bytes(), &overview); err != nil {
 		t.Fatal(err)
@@ -229,7 +229,7 @@ func TestObsRegressionOverviewAndTenant(t *testing.T) {
 	if rec.Code != 200 || len(overview.RecentFailures1h) != 1 || overview.RecentFailures1h[0].Count != 1 || len(overview.TopRateLimitedAccounts24h) != 1 || overview.TopRateLimitedAccounts24h[0].Hits != 1 {
 		t.Fatalf("unexpected overview: %s", rec.Body.String())
 	}
-	rec = e.Do(t, "GET", "/v1/admin/obs/tenants", nil, nil)
+	rec = e.DoOperator(t, "GET", "/v1/admin/obs/tenants", nil, nil)
 	var tenants api.ObsTenantListResponse
 	if err = json.Unmarshal(rec.Body.Bytes(), &tenants); err != nil {
 		t.Fatal(err)
@@ -266,7 +266,7 @@ func TestObsRegressionFailedJob(t *testing.T) {
 	if run.AggregateStatus != "failed" {
 		t.Fatalf("run status=%q", run.AggregateStatus)
 	}
-	rec := e.Do(t, "GET", "/v1/admin/obs/incidents?type=job_run", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=job_run", nil, nil)
 	var got api.ObsIncidentListResponse
 	if err = json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)

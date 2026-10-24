@@ -2739,8 +2739,10 @@ func (l *Loop) runReaper(ctx context.Context) {
 		// ADR-1151: an eligible instance freezes in place instead of
 		// parking; anything else parks as before.
 		if !l.freezeFromReaper(ctx, id, activityByInstance[id].ResidentMB) {
-			if err := l.reaperShutdown(ctx, snapshot, id); err != nil {
-				l.log.Warn("reaper: idle park", "instance", id, "err", err)
+			if err := l.reaperShutdown(ctx, snapshot, id, false); err != nil {
+				if !errors.Is(err, ErrParkActivity) {
+					l.log.Warn("reaper: idle park", "instance", id, "err", err)
+				}
 				continue
 			}
 		}
@@ -2863,10 +2865,45 @@ func (l *Loop) dispatchReaper(ctx context.Context) {
 // Engine.Park remains the single lifecycle owner; this wrapper only supplies
 // the reaper-specific deadline so the existing STOPPED/error transition runs
 // through the normal Engine path when the deadline expires.
-func (l *Loop) parkFromReaper(ctx context.Context, instanceID string) error {
+//
+// The tick snapshot can be minutes old by the time a later park of the same
+// tick runs (each park takes up to reaperParkTimeout), so the engine re-checks
+// the choice against fresh activity under the app lock (ADR-20261024090000).
+// allowNewRequests is true for scale-in, whose instances may still take
+// traffic; then only work in flight keeps an instance.
+func (l *Loop) parkFromReaper(ctx context.Context, info InstanceInfo, allowNewRequests bool) error {
 	parkCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
 	defer cancel()
-	return l.engine.Park(parkCtx, instanceID)
+	return l.engine.ParkIdle(parkCtx, info.Instance, IdleParkCheck{
+		LastRequest:      info.LastRequest,
+		RequestCount:     info.RequestCount,
+		AllowNewRequests: allowNewRequests,
+		Guest:            l.freshGuestActivity(info.Instance),
+	})
+}
+
+// freshGuestActivity reads the newest vmmd activity and conntrack flow count
+// for instance. A source that is not wired or fails reports nothing, as in
+// the tick: the durable row still applies.
+func (l *Loop) freshGuestActivity(instance string) func(context.Context) (GuestActivity, bool) {
+	if l.instanceActivity == nil && l.flowCounts == nil {
+		return nil
+	}
+	return func(ctx context.Context) (GuestActivity, bool) {
+		var guest GuestActivity
+		ok := false
+		if l.instanceActivity != nil {
+			if activity, found := l.instanceActivity.SnapshotActivity(l.now())[instance]; found {
+				guest.Inflight, guest.LastRequest, ok = activity.Inflight, activity.LastRequest, true
+			}
+		}
+		if l.flowCounts != nil {
+			if open, err := l.flowCounts.Open(ctx, instance); err == nil {
+				guest.OpenConns, ok = open, true
+			}
+		}
+		return guest, ok
+	}
 }
 
 // reaperShutdown (M-2 / //code-review PR #1202 finding #8) is the
@@ -2897,28 +2934,29 @@ func (l *Loop) parkFromReaper(ctx context.Context, instanceID string) error {
 // dispatcher parks instead of stops (or vice versa), and both
 // paths converge on STOPPED. ReaperParkTimeout bounds the
 // synchronous call regardless of which engine path runs.
-func (l *Loop) reaperShutdown(ctx context.Context, snapshot []InstanceInfo, instanceID string) error {
-	mode := l.modeForShutdown(snapshot, instanceID)
-	switch state.InstanceMode(mode) {
+func (l *Loop) reaperShutdown(ctx context.Context, snapshot []InstanceInfo, instanceID string, allowNewRequests bool) error {
+	info := l.infoForShutdown(snapshot, instanceID)
+	switch state.InstanceMode(info.Mode) {
 	case state.InstanceModeWorker, state.InstanceModeJob:
 		return l.stopInstanceFromReaper(ctx, instanceID)
 	default:
-		return l.parkFromReaper(ctx, instanceID)
+		return l.parkFromReaper(ctx, info, allowNewRequests)
 	}
 }
 
-// modeForShutdown looks up the InstanceInfo for id in the reaper
-// snapshot and returns its Mode. Falls back to the empty string
-// (which InstanceMode treats as ModeNormal, so the dispatcher
-// parks) when the snapshot has no entry for id — a benign race
-// covered in reaperShutdown's doc comment.
-func (l *Loop) modeForShutdown(snapshot []InstanceInfo, instanceID string) string {
+// infoForShutdown looks up the InstanceInfo for id in the reaper
+// snapshot. Falls back to a bare entry (empty Mode, which InstanceMode
+// treats as ModeNormal, so the dispatcher parks) when the snapshot has no
+// entry for id — a benign race covered in reaperShutdown's doc comment.
+// A bare entry has no activity to compare, so any newer request keeps the
+// instance unless allowNewRequests.
+func (l *Loop) infoForShutdown(snapshot []InstanceInfo, instanceID string) InstanceInfo {
 	for _, info := range snapshot {
 		if info.Instance == instanceID {
-			return info.Mode
+			return info
 		}
 	}
-	return ""
+	return InstanceInfo{Instance: instanceID}
 }
 
 // stopInstanceFromReaper is the reaper-side wrapper around
@@ -3207,8 +3245,10 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 		// post-enrichment app-wide max floor.
 		aggressiveParkByEnvironment := map[string]InstanceInfo{}
 		for _, id := range ids {
-			if err := l.reaperShutdown(ctx, snapshot, id); err != nil {
-				l.log.Warn("reaper: aggressive park", "instance", id, "err", err)
+			if err := l.reaperShutdown(ctx, snapshot, id, true); err != nil {
+				if !errors.Is(err, ErrParkActivity) {
+					l.log.Warn("reaper: aggressive park", "instance", id, "err", err)
+				}
 				continue
 			}
 			// Issue #475: per-tier eviction counter. The

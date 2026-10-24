@@ -808,6 +808,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runManagedPostgresUsageCollector(ctx)
 		go srv.runManagedPostgresHealthCollector(ctx)
 		go srv.runAppHealthCollector(ctx)
+		go srv.runEdgeCrawlerRangesRefresher(ctx)
 		go mcpcatalog.RunManagedObservers(ctx, srv.store, srv.domain, hostIdentitiesForUnseal, log, srv.mcpReadinessPreview)
 		readinessMonitor := &mcpreadiness.MonitorRunner{Handler: mcpreadiness.New(srv.store, srv.mcpReadinessPreview, nil), Identities: hostIdentitiesForUnseal, Log: log}
 		go readinessMonitor.Run(ctx)
@@ -1781,6 +1782,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// so a config change requires a restart — acceptable for the
 	// tiny operator surface that exists today.
 	srv.WithAdminAllowlist(deps.getenv("FAAS_ADMIN_EMAILS"))
+	// ADR 20261023214253: operator keys cannot read customer data. The
+	// "deprecated" mode keeps them working, marked, for one release.
+	srv.WithOperatorBearerReads(deps.getenv("FAAS_OPERATOR_BEARER_READS"))
 
 	// Prometheus registry + ops observer middleware (this PR).
 	// Built unconditionally so /metrics works even with FAAS_APID_METRICS_ADDR

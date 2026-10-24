@@ -30,13 +30,16 @@ var errResourceJournalClosed = errors.New("resource journal closed")
 // or physical deletion by a replacement Manager.
 // No environment, command, credential or artifact contents are stored.
 type ResourceJournal struct {
-	mu            journalMutex
-	dir           *os.Root
-	lock          *os.File
-	records       map[string]resourceJournalRecord
-	closed        bool
-	directorySync func() error
-	timing        map[string]resourceJournalTiming // see resource_journal_timing.go
+	mu      journalMutex
+	dir     *os.Root
+	lock    *os.File
+	records map[string]resourceJournalRecord
+	closed  bool
+	// commitSync makes a record write durable. Persists whose assets cannot
+	// outlive a host reboot pass durable=false and skip the directory fsync
+	// (see persist); tests replace it to fail either kind of commit.
+	commitSync func(durable bool) error
+	timing     map[string]resourceJournalTiming // see resource_journal_timing.go
 }
 
 type resourceProcessIdentity struct {
@@ -117,9 +120,14 @@ func OpenResourceJournal(path string) (*ResourceJournal, error) {
 		return nil, fmt.Errorf("resource journal: exclusive lock: %w", err)
 	}
 	j.lock = f
-	j.directorySync = func() error { return journalSyncDirectory(dir) }
+	j.commitSync = func(durable bool) error {
+		if !durable {
+			return nil
+		}
+		return journalSyncDirectory(dir)
+	}
 	if err = j.load(); err == nil {
-		err = j.directorySync()
+		err = j.commitSync(true)
 	}
 	if err == nil {
 		var parent *os.Root
@@ -276,7 +284,7 @@ func (j *ResourceJournal) beginRecord(r resourceJournalRecord) error {
 			return errors.New("resource journal: slot already recorded")
 		}
 	}
-	return j.persist(r)
+	return j.persist(r, false)
 }
 
 func (j *ResourceJournal) recordProcess(l Lease, process resourceProcessIdentity) error {
@@ -293,12 +301,23 @@ func (j *ResourceJournal) recordProcess(l Lease, process resourceProcessIdentity
 	if err := r.validate(); err != nil {
 		return err
 	}
-	return j.persist(r)
+	return j.persist(r, false)
 }
 
 // persist publishes the cache after rename, even if directory fsync fails.
 // The caller still fails closed; cleanup can then retire that uncertain write.
-func (j *ResourceJournal) persist(r resourceJournalRecord) error {
+//
+// The record file is always fsynced before the rename, so the name never
+// points at partial content. Only a durable persist also fsyncs the directory
+// (ADR-20261024135625). A volatile one is visible to a restarted vmmd at once,
+// because a daemon crash keeps the page cache; after a power loss it may come
+// back as the record's previous complete version, or not at all for a new
+// record, which is safe because every asset such a write adds is gone after a
+// reboot too (mounts, tmpfs placeholders, namespaces, links, processes). Any
+// write that names a reboot-surviving asset is durable, and so is the whole
+// record it writes. On production-us these commits were ~60 fsyncs, ~85 ms,
+// of every restore's staging.
+func (j *ResourceJournal) persist(r resourceJournalRecord, durable bool) error {
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err
@@ -308,7 +327,7 @@ func (j *ResourceJournal) persist(r resourceJournalRecord) error {
 	}
 	key := r.timingKey()
 	j.noteCommit(key)
-	return j.persistFile(resourceRecordName(r.storageIdentity()), b, key, func() {
+	return j.persistFile(resourceRecordName(r.storageIdentity()), b, key, durable, func() {
 		if r.Prepared != nil {
 			delete(j.records, r.Prepared.Source)
 			if r.Prepared.Source != key {
@@ -319,12 +338,12 @@ func (j *ResourceJournal) persist(r resourceJournalRecord) error {
 	})
 }
 
-// persistFile durably replaces one journal file: private temporary file,
-// fsync, atomic rename, then directory fsync. published runs once the rename
-// has replaced the target and before the directory fsync, even when that
-// fsync then fails. A non-empty key accounts the fsyncs to that record's
+// persistFile replaces one journal file: private temporary file, fsync,
+// atomic rename, then, when durable, directory fsync. published runs once the
+// rename has replaced the target and before the directory fsync, even when
+// that fsync then fails. A non-empty key accounts the fsyncs to that record's
 // commit (noteCommit first). The caller holds j.mu.
-func (j *ResourceJournal) persistFile(target string, b []byte, key string, published func()) error {
+func (j *ResourceJournal) persistFile(target string, b []byte, key string, durable bool, published func()) error {
 	synced := func(fn func() error) error {
 		if key == "" {
 			return fn()
@@ -354,7 +373,7 @@ func (j *ResourceJournal) persistFile(target string, b []byte, key string, publi
 	if published != nil {
 		published()
 	}
-	return synced(j.directorySync)
+	return synced(func() error { return j.commitSync(durable) })
 }
 
 // forget is called after physical cleanup, before allocator release. An
@@ -382,7 +401,7 @@ func (j *ResourceJournal) forgetRecord(r resourceJournalRecord) error {
 	if err := j.dir.Remove(resourceRecordName(r.storageIdentity())); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := j.timedSync(key, j.directorySync); err != nil {
+	if err := j.timedSync(key, func() error { return j.commitSync(true) }); err != nil {
 		return err
 	}
 	delete(j.records, r.Lease.Instance)

@@ -652,6 +652,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return err
 		}
 	}
+	// Outside both the control-plane proxy and the compute edge: neither may
+	// forward gatewayd-internal's private paths for a public request.
+	rootHandler = refuseComputePrivatePaths(rootHandler)
 	tenantRoot = rootHandler
 	traceMux.Handle("/", rootHandler)
 

@@ -43,7 +43,7 @@ func (v *JailerVMM) captureNativeSnapshotBackings(ctx context.Context, lease Lea
 		return err
 	}
 	r := v.nativeRecovery
-	if r == nil || r.journal == nil || r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
+	if r == nil || r.journal == nil || r.generation(lease.Instance) != permit.nativeGeneration() {
 		return errors.New("native snapshot backing: original native producer is unavailable")
 	}
 	if err := r.checkDaemonOwnership(); err != nil {
@@ -84,5 +84,5 @@ func (v *JailerVMM) captureNativeSnapshotBackings(ctx context.Context, lease Lea
 	if err := errors.Join(images.captureOutputAuthority(ctx, permit.Physical, owner, permit), r.checkDaemonOwnership()); err != nil {
 		return err
 	}
-	return r.journal.qualifications(permit.Incoming.Execution.NodeID).writeBackings(record)
+	return permit.writeBackings(r.journal, record)
 }
