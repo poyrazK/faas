@@ -68,7 +68,7 @@ func TestAddOTLPTraceExportJSON(t *testing.T) {
 // without an OpenTelemetry dependency; its golden export must decode through
 // the guest ingest path with the IDs, kinds, status and attributes intact.
 func TestAddOTLPTraceExportGoSDKTracingHelper(t *testing.T) {
-	body, err := os.ReadFile(filepath.Join("..", "..", "sdk", "go", "tracing", "testdata", "otlp_export.json"))
+	body, err := os.ReadFile(filepath.Join("..", "..", "sdk", "go", "preview", "tracing", "testdata", "otlp_export.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
