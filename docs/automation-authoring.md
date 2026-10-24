@@ -1760,7 +1760,7 @@ Provider retries return the original receipt and do not start another run.
 Different content for the same endpoint/event ID conflicts. Retries still use
 the original receipt after binding removal; retained events accepted through
 ordinary app delivery before binding keep that app delivery. Deduplication
-lasts for the existing 30-day delivered-event identity retention. Side effects
+lasts for the plan's [settled-receipt window](event-driven.md#settled-receipt-retention). Side effects
 inside steps still require the normal action idempotency contract.
 
 Paused/unpublished targets and nonmatching event types receive an `ignored`
@@ -1812,8 +1812,8 @@ clock. Event IDs must contain 1–256 visible ASCII bytes with no spaces. Event
 types must match `^[a-z][a-z0-9_.]{0,255}$`. The ID, type, timestamp and raw
 body are covered by the signature. Re-sign each retry with a fresh timestamp
 while reusing the same event ID and content; changing content or type for a
-retained ID returns 409. Deduplication follows the existing 30-day event
-identity retention.
+retained ID returns 409. Deduplication follows the plan's
+[settled-receipt window](event-driven.md#settled-receipt-retention).
 
 An accepted automation run receives a CloudEvents envelope with source
 `gregale.inbound.generic.ENDPOINT_ID`, the signed event ID and type, and the

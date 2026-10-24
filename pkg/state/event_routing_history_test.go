@@ -117,7 +117,7 @@ func TestEventRoutingHistoryBoundsReplayCyclesAndRetainsEvidence(t *testing.T) {
 		if summary.RetainedRecords != 2 || summary.CapacityDeferrals != 7 || summary.ObservedOutcomes != cycles*2 {
 			t.Fatalf("protected evidence=%+v", summary)
 		}
-		if n, err := store.PruneDeliveredPublishedEvents(ctx, time.Now().Add(60*24*time.Hour), 100); err != nil || n != 0 {
+		if n, err := store.PruneSettledPublishedEvents(ctx, time.Now().Add(60*24*time.Hour), 100); err != nil || n != 0 {
 			t.Fatalf("pending receipt pruned=%d,%v", n, err)
 		}
 		// Recovery still uses the durable checkpoint after detail compaction.
@@ -127,7 +127,7 @@ func TestEventRoutingHistoryBoundsReplayCyclesAndRetainsEvidence(t *testing.T) {
 		if err := store.FinishPublishedEvent(ctx, receipt.ID, receipt.ClaimToken, nil); err != nil {
 			t.Fatal(err)
 		}
-		if n, err := store.PruneDeliveredPublishedEvents(ctx, time.Now().Add(60*24*time.Hour), 100); err != nil || n != 1 {
+		if n, err := store.PruneSettledPublishedEvents(ctx, time.Now().Add(60*24*time.Hour), 100); err != nil || n != 1 {
 			t.Fatalf("settled prune=%d,%v", n, err)
 		}
 		summaries, err := store.(state.EventFanoutHistorySummaryStore).ListEventFanoutHistorySummariesForApp(ctx, app, "orders", "evt-three-consumers", sub)
