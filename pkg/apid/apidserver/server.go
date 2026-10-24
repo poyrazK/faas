@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
 	pipelineapi "github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
+	"github.com/onebox-faas/faas/pkg/apid/docsassets"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	hostingapi "github.com/onebox-faas/faas/pkg/apid/hosting"
@@ -61,6 +62,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/bindinghash"
 	"github.com/onebox-faas/faas/pkg/ci"
+	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -5221,6 +5223,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/openapi.json", openAPI.ServeJSON)
 	mux.HandleFunc("GET /docs", openAPI.ServeDocs)
 	mux.HandleFunc("GET /docs/", openAPI.ServeDocs)
+	// Vendored Swagger UI and htmx, served here so the CSP names no
+	// third-party host. Anonymous: login and the API reference load them.
+	mux.HandleFunc("GET /docs/assets/{file}", docsassets.Serve)
+	mux.HandleFunc("GET /dashboard/assets/{file}", dashboard.ServeAsset)
 
 	// observeWrap (the outermost layer) feeds apid_ops_total +
 	// apid_op_duration_seconds. It's last so it sees the final

@@ -938,9 +938,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	recoveryArbiter := sched.NewArbiter(
 		sched.MigrationDispatcherFunc(engine.MigrateRecoveryInstance),
 		engine,
-	)
+	).WithParkDispatcher(engine)
 	engine.WithRecoveryArbiter(recoveryArbiter)
-	recoveryRunner := sched.NewRecoveryRunner(store, recoveryArbiter, eventsPlatform, log)
+	recoveryRunner := sched.NewRecoveryRunner(store, recoveryArbiter, eventsPlatform, log).
+		WithNodeObserver(engine.ObserveNodeLifecycles)
 	go func() {
 		if err := recoveryRunner.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Warn("schedd: recovery runner: run returned", "err", err)
