@@ -10,18 +10,19 @@ import (
 
 // Advisory observations never reserve authority or persist a new baseline.
 type planCheck struct {
-	PlanID           string    `json:"plan_id"`
-	ObservedAt       time.Time `json:"observed_at"`
-	ExpiresAt        time.Time `json:"expires_at"`
-	ApplyEligibility string    `json:"apply_eligibility"`
-	BaselineCheck    string    `json:"baseline_check"`
-	Blockers         []string  `json:"blockers"`
-	NativeCompletion string    `json:"native_completion"`
-	Instruction      string    `json:"instruction"`
+	PlanID           string      `json:"plan_id"`
+	ObservedAt       time.Time   `json:"observed_at"`
+	ExpiresAt        time.Time   `json:"expires_at"`
+	ApplyEligibility string      `json:"apply_eligibility"`
+	BaselineCheck    string      `json:"baseline_check"`
+	Blockers         []string    `json:"blockers"`
+	Drift            []planDrift `json:"drift"`
+	NativeCompletion string      `json:"native_completion"`
+	Instruction      string      `json:"instruction"`
 }
 
 func newPlanCheck(id string, expires time.Time) *planCheck {
-	return &planCheck{PlanID: id, ObservedAt: time.Now().UTC(), ExpiresAt: expires, ApplyEligibility: "no_observed_blockers", BaselineCheck: "not_checked", Blockers: []string{}, NativeCompletion: "not_observed", Instruction: "Advisory snapshot only. Apply rechecks authority and native guards; success is not guaranteed."}
+	return &planCheck{PlanID: id, ObservedAt: time.Now().UTC(), ExpiresAt: expires, ApplyEligibility: "no_observed_blockers", BaselineCheck: "not_checked", Blockers: []string{}, Drift: []planDrift{}, NativeCompletion: "not_observed", Instruction: "Advisory snapshot only. Apply rechecks authority and native guards; success is not guaranteed."}
 }
 
 func (v *planCheck) observe(err error) {
@@ -111,24 +112,27 @@ func (m *management) checkAppPlanBaseline(ctx context.Context, p *releasePlan, o
 	var err error
 	switch p.Action {
 	case "route_budgets":
-		err = m.checkBudgetBaseline(ctx, p)
+		err = m.checkBudgetBaseline(ctx, p, out)
 	case "regression_action":
-		err = m.checkRegressionBaseline(ctx, p)
+		err = m.checkRegressionBaseline(ctx, p, out)
 	default:
 		if p.review == nil {
 			return invalid("invalid_plan", "release review is missing")
 		}
-		err = m.verifyBaseline(ctx, p)
+		err = m.checkReleaseBaseline(ctx, p, out)
 	}
 	if err != nil {
 		out.BaselineCheck = "not_verified"
+		if len(out.Drift) > 0 {
+			out.BaselineCheck = "changed"
+		}
 		return err
 	}
 	out.BaselineCheck = "unchanged"
 	return nil
 }
 
-func (m *management) checkBudgetBaseline(ctx context.Context, p *releasePlan) error {
+func (m *management) checkBudgetBaseline(ctx context.Context, p *releasePlan, out *planCheck) error {
 	if p.Budgets == nil || p.Budgets.Proposed.ExpectedRevision == nil || p.Budgets.Proposed.ExpectedAppRevision == nil {
 		return invalid("invalid_plan", "budget revisions are missing")
 	}
@@ -137,13 +141,15 @@ func (m *management) checkBudgetBaseline(ctx context.Context, p *releasePlan) er
 		return err
 	}
 	current := value.(api.EnvironmentRouteBudgets)
-	if current.Revision != *p.Budgets.Proposed.ExpectedRevision || current.AppRevision != *p.Budgets.Proposed.ExpectedAppRevision {
+	addPlanDrift(out, "environment_budget_revision", *p.Budgets.Proposed.ExpectedRevision, current.Revision)
+	addPlanDrift(out, "app_budget_revision", *p.Budgets.Proposed.ExpectedAppRevision, current.AppRevision)
+	if len(out.Drift) > 0 {
 		return invalid("plan_stale", "budget revisions changed")
 	}
 	return nil
 }
 
-func (m *management) checkRegressionBaseline(ctx context.Context, p *releasePlan) error {
+func (m *management) checkRegressionBaseline(ctx context.Context, p *releasePlan, out *planCheck) error {
 	if err := validateRegressionPlan(p); err != nil {
 		return err
 	}
@@ -153,6 +159,7 @@ func (m *management) checkRegressionBaseline(ctx context.Context, p *releasePlan
 		return err
 	}
 	if dep.ID != r.DeploymentID || dep.AppID != p.AppID || normalizedScope(dep.Scope) != p.Scope {
+		out.hiddenDrift("regression_deployment_identity", true)
 		return invalid("plan_stale", "regression deployment changed")
 	}
 	current, err := m.client.GetAppDebugRegressionReview(ctx, p.App, r.DeploymentID, r.Route)
@@ -162,7 +169,8 @@ func (m *management) checkRegressionBaseline(ctx context.Context, p *releasePlan
 	if err := validateRegressionReview(current, p.AppID, r.DeploymentID, r.Route); err != nil {
 		return err
 	}
-	if current.Version != r.ExpectedVersion {
+	addPlanDrift(out, "regression_observation_version", r.ExpectedVersion, current.Version)
+	if len(out.Drift) > 0 {
 		return invalid("plan_stale", "regression observation changed")
 	}
 	if r.DismissedUntil != "" {
@@ -191,7 +199,13 @@ func (m *management) checkEnvironmentPlan(ctx context.Context, args getEnvironme
 	_, err = m.checkedEnvironmentPlan(ctx, p.ID, p.Action)
 	out.observe(err)
 	if !replay {
-		out.observe(m.checkEnvironmentBaseline(ctx, p, out))
+		err := m.checkEnvironmentBaseline(ctx, p, out)
+		if len(out.Drift) > 0 {
+			out.BaselineCheck = "changed"
+		} else if err != nil && out.BaselineCheck == "not_checked" {
+			out.BaselineCheck = "not_verified"
+		}
+		out.observe(err)
 	}
 	guard.value = out
 	return guard, nil
@@ -199,22 +213,20 @@ func (m *management) checkEnvironmentPlan(ctx context.Context, args getEnvironme
 
 func (m *management) checkEnvironmentBaseline(ctx context.Context, p *environmentPlan, out *planCheck) error {
 	if p.Action == "environment_rollback" {
-		value, err := m.getEnvironmentPromotion(ctx, environmentPromotionArgs{Project: p.Project, Environment: p.Environment, PromotionID: p.PromotionID})
-		if err != nil {
-			return err
-		}
-		status := value.(api.ProjectEnvironmentPromotionStatusResponse)
-		if status.PromotionHash != p.PromotionHash || status.FromEnvironment != p.FromEnvironment || status.Status == "running" || status.RollbackStatus != "" {
-			return invalid("plan_stale", "promotion is no longer a rollback candidate")
-		}
-		out.BaselineCheck = "partial_native_rollback_guard_required"
-		return nil
+		return m.checkEnvironmentRollbackBaseline(ctx, p, out)
 	}
 	preview, err := m.client.GetProjectEnvironmentPromotionPreview(ctx, p.Project, p.Environment, p.FromEnvironment)
 	if err != nil {
 		return err
 	}
-	if !preview.CanPromote || preview.SyncConfig || preview.PromotionHash != p.PromotionHash || preview.ProjectSlug != p.Project || preview.FromEnvironment != p.FromEnvironment || preview.ToEnvironment != p.Environment {
+	if preview.ProjectSlug != p.Project || preview.FromEnvironment != p.FromEnvironment || preview.ToEnvironment != p.Environment {
+		out.hiddenDrift("promotion_identity", true)
+		return invalid("plan_stale", "environment preview identity changed")
+	}
+	out.hiddenDrift("promotion_baseline", preview.PromotionHash != p.PromotionHash)
+	addPlanDrift(out, "promotion_allowed", true, preview.CanPromote)
+	addPlanDrift(out, "promotion_sync_config", false, preview.SyncConfig)
+	if len(out.Drift) > 0 {
 		return invalid("plan_stale", "environment preview changed or promotion is blocked")
 	}
 	out.BaselineCheck = "unchanged"

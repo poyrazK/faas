@@ -1598,6 +1598,30 @@ return `unknown`; required environment approval returns `approval_not_checked`
 and is never started, polled or granted. Rollback coverage is explicitly
 `partial_native_rollback_guard_required`.
 
+Checks also return a `drift` array explaining observed first-attempt baseline
+changes. For example:
+
+```json
+{"field":"serving_deployment_id","expected":"release-old","observed":"release-new"}
+```
+
+Fields distinguish `serving_deployment_id`, `latest_deployment_id`,
+`environment_budget_revision`, `app_budget_revision` and
+`regression_observation_version`. Original/current metadata values are returned
+only after scoped validation; zero revisions and empty deployment IDs are explicit.
+Opaque `app_settings`, `configuration_baseline` and `promotion_baseline` changes
+return only `{"field":"configuration_baseline","values_omitted":true}`.
+Identity mismatches also omit values. Promotion eligibility/config-sync and
+rollback/running-state changes use fixed boolean fields. Credentials, private
+preview hashes/tokens, configuration values and raw native responses are excluded.
+
+Observed changes use `baseline_check: changed`. Missing or inconsistent evidence
+remains `not_verified` with no invented comparison. An empty array alone does not
+prove a plan is current: inspect eligibility, blockers and coverage together.
+Review changed native state before explicitly creating a replacement plan;
+attempted plans preserve the original retry and return no drift comparisons.
+See [ADR-20261024123000](adr/20261024123000-management-mcp-plan-drift-details.md).
+
 After an attempted operation, checks preserve `retry_original_plan` and skip
 baseline comparisons: the original request may already have committed. A saved
 receipt returns `receipt_recorded`, with `native_completion: not_observed`.

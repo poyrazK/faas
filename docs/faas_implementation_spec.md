@@ -3118,6 +3118,21 @@ no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
 
 
+## Management MCP plan drift details (ADR-20261024123000)
+
+Existing plan applicability tools add a fixed-field `drift` projection of changed
+first-attempt baselines. Scoped release IDs, policy revisions and validated
+regression observation versions expose expected/current primitive metadata.
+Configuration, identity mismatch and preview-baseline changes use value-free
+markers; credentials, preview hashes/tokens, configuration values and raw native
+objects are excluded. Promotion eligibility/config-sync and rollback/running
+changes use boolean comparisons. Unverified reads produce no invented
+comparisons. Attempted/receipted plans skip drift and preserve original
+requests. Final consent, identity, storage, presence and expiry guards remain in
+force, with no persistence, renewal, mutation or approval polling. Catalog stays
+57 read/planning tools, 66 with writes enabled. See
+[ADR-20261024123000](adr/20261024123000-management-mcp-plan-drift-details.md).
+
 ## Management MCP plan applicability (ADR-20261024120000)
 
 Read-only `gregale_check_plan` and `gregale_check_environment_plan` observe

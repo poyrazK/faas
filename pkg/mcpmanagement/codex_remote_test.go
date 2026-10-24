@@ -5,6 +5,7 @@
 // adr: 20261023130958
 // adr: 20261023184309
 // adr: 20261024120000
+// adr: 20261024123000
 package mcpmanagement
 
 import (
@@ -58,7 +59,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	var profileReads, historyPageReads, wakePageReads, wakeTimelineReads, wakeHistoryReads, errorGroupsReads, errorRequestsReads, timeseriesReads, analyticsReads, requestReads, performanceReads, criticalPathReads, comparisonReads, regressionReads, residencyReads, traceReads, nativeWrites atomic.Int32
 	var replaced atomic.Bool
 	var performanceEmpty, tracePartial atomic.Bool
-	var historyWorker atomic.Bool
+	var historyWorker, planDrifted atomic.Bool
 	var residencyEmpty atomic.Bool
 	if requestMode != "" {
 		f.mu.Lock()
@@ -371,6 +372,10 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 			_ = json.NewEncoder(w).Encode(api.ProjectEnvironmentPromotionPreviewResponse{ProjectSlug: "shop", FromEnvironment: "staging", ToEnvironment: "production", CanPromote: true, ApprovalRequired: true, PromotionHash: strings.Repeat("a", 64), PromotionToken: "PRIVATE_ENV_PREVIEW"})
 			return true
 		}
+		if planDrifted.Load() && req.Method == http.MethodGet && req.URL.Path == "/v1/apps/alpha" {
+			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: account + "-app", Slug: "alpha", Type: "app", RAMMB: 512})
+			return true
+		}
 		if historyWorker.Load() && req.Method == http.MethodGet && req.URL.Path == "/v1/apps/alpha" {
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: account + "-app", Slug: "alpha", Type: "app", Manifest: api.AppManifest{ExecutionMode: api.ExecutionModeWorker}})
 			return true
@@ -432,6 +437,10 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 			return
 		}
 		switch req.URL.Path {
+		case "/plan-drift-on":
+			planDrifted.Store(true)
+		case "/plan-drift-off":
+			planDrifted.Store(false)
 		case "/history-worker":
 			historyWorker.Store(true)
 		case "/history-request":
@@ -581,7 +590,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	if json.Unmarshal(output, &report) != nil || report["revocation"] != "passed" || report["refresh"] != "passed" || report["restart"] != "passed" {
 		t.Fatal("incomplete real-client evidence")
 	}
-	if report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" || report["budget_action_history"] != "passed" || report["saved_plan_review"] != "passed" || report["plan_applicability"] != "passed" {
+	if report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" || report["budget_action_history"] != "passed" || report["saved_plan_review"] != "passed" || report["plan_applicability"] != "passed" || report["plan_drift"] != "passed" {
 		t.Fatal("incomplete real-client action history restart/refresh evidence")
 	}
 	if requestMode != "" && (report["request_diagnostics"] != requestMode || report["request_discovery"] != "passed" || nativeWrites.Load() != 0 || requestReads.Load() != map[string]int32{"denied": 0, "approved": 32}[requestMode]) {

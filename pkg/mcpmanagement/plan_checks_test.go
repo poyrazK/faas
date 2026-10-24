@@ -1,4 +1,5 @@
 // adr: 20261024120000
+// adr: 20261024123000
 package mcpmanagement
 
 import (
@@ -128,7 +129,7 @@ func TestPlanCheckBudgetCASAndRetryRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	out := appCheck(t, restored, budgetHistorySelector(id))
-	if out.ApplyEligibility != "retry_original_plan" || out.BaselineCheck != "retry_preserved" || len(out.Blockers) != 0 {
+	if out.ApplyEligibility != "retry_original_plan" || out.BaselineCheck != "retry_preserved" || len(out.Blockers) != 0 || len(out.Drift) != 0 {
 		t.Fatalf("committed unknown result incorrectly stale: %+v", out)
 	}
 	after, _ := os.ReadFile(path)

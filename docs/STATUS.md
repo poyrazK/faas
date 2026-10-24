@@ -7,6 +7,22 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP plan drift details — 2026-10-24 (branch, not released)
+
+Applicability checks explain individual changed baselines through fixed safe
+metadata comparisons and value-free configuration/preview markers. Attempted
+plans retain original retries without comparing state their operation may have
+advanced. Catalog stays 57 read/planning tools, 66 with writes enabled. Full MCP
+race tests and pinned Codex 0.159.0-alpha.3 acceptance pass in all three read-only
+profiles, including safe drift on the same source plan across restart/refresh
+and unchanged saved proposals. Read fixtures make zero model requests and native
+writes. Targeted race tests cover combined changes, redaction, policy revision
+boundaries, invalid/unavailable evidence, consent loss, encrypted restart and
+original retries. CLI contracts, affected-package lint, fake-store/seal-domain
+guards and spec/docs checks pass with no generated drift. Native/provider
+deployment qualification remains separate.
+See [ADR-20261024123000](adr/20261024123000-management-mcp-plan-drift-details.md).
+
 ## Management MCP plan applicability — 2026-10-24 (branch, not released)
 
 Two read-only tools observe saved app/environment plan applicability under
