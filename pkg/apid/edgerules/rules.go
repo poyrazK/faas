@@ -338,13 +338,12 @@ func (s *Service) RouteTargetProblem(ctx context.Context, accountID, kind string
 		return nil
 	}
 	var action api.EdgeRuleRouteAction
-	// A malformed action is ValidateEdgeRuleAction's to report.
 	if json.Unmarshal(raw, &action) != nil || action.TargetAppSlug == "" {
-		return nil
+		return nil //nolint:nilerr // A malformed action is ValidateEdgeRuleAction's to report.
 	}
 	target, err := s.Host.Store().AppBySlug(ctx, action.TargetAppSlug)
 	if errors.Is(err, state.ErrNotFound) {
-		return nil
+		return nil //nolint:nilerr // An unknown slug is the gateway's to refuse; refusing it here would reveal which slugs exist.
 	}
 	if err != nil {
 		return api.ErrCapacity("could not check the route target")
