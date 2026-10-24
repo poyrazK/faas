@@ -695,6 +695,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_RESIDENCY_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_RESTORE_CONCURRENCY` | vmmd, shared | `default` |  |  | `` | optional snapshot-restore concurrency override (1–64); production default is 3; "shared" covers pkg/e2etest forwarding it |
 | `FAAS_RESTORE_PREFETCH` | vmmd, shared | `default` |  |  | `` | optional boolean kill switch for the ADR-225 restore working-set prefetch; production default is enabled; "shared" covers pkg/e2etest forwarding it |
+| `FAAS_RESTORE_RESEED_THREAD` | vmmd | `default` |  |  | `` | optional boolean switch booting app VMs whose Node processes answer the restore reseed barrier from a native thread (ADR-20261024105607); production default is off |
 | `FAAS_RETENTION_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROLLUP_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ROUTE_PROBE_URL` | apid | `dropin` |  |  | `url` | public origin for ADR-847 synthetic route probes; unset disables probes |

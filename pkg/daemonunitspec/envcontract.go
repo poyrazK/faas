@@ -775,6 +775,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_RESIDENCY_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_RESTORE_CONCURRENCY", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDefault, Note: "optional snapshot-restore concurrency override (1–64); production default is 3; \"shared\" covers pkg/e2etest forwarding it"},
 	{Name: "FAAS_RESTORE_PREFETCH", Owners: []string{"vmmd", "shared"}, Source: EnvSourceDefault, Note: "optional boolean kill switch for the ADR-225 restore working-set prefetch; production default is enabled; \"shared\" covers pkg/e2etest forwarding it"},
+	{Name: "FAAS_RESTORE_RESEED_THREAD", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean switch booting app VMs whose Node processes answer the restore reseed barrier from a native thread (ADR-20261024105607); production default is off"},
 	{Name: "FAAS_RETENTION_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ROLLUP_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ROUTE_PROBE_URL", Owners: []string{"apid"}, Source: EnvSourceDropin, Validate: EnvValidationURL, Note: "public origin for ADR-847 synthetic route probes; unset disables probes"},

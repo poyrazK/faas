@@ -84,6 +84,9 @@ type JailerVMM struct {
 	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
 	// nil keeps drive0 on virtio-blk.
 	pmemBase *pmemBaseStore
+	// restoreReseedThread boots app VMs with the thread-mode reseed barrier
+	// client (ADR-20261024105607).
+	restoreReseedThread bool
 	// preBoot tracks which pre-boot files each instance's drive and each
 	// captured drive already hold, so an unchanged restore skips the loop
 	// mount (see preboot_skip.go).
@@ -1233,6 +1236,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 
 	cfg = v.withBalloon(cfg)
 	cfg = v.withPmemBase(l, cfg)
+	cfg = v.withRestoreReseedMode(l, cfg)
 	cfg = withBlockRateLimit(l, cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
