@@ -753,11 +753,21 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		log.Info("imaged execution profile base ready", "profile", base.Runtime, "digest", base.ConfigDigest, "skipped", base.Skipped)
 	}
 	if prestageOnlyFromEnv(getenv) {
+		// ADR-20261024191249: the rolled vmmd must be able to boot every
+		// runtime base the release configures, not only those of the apps
+		// this node owns (rc.293: fsn-2 owned none and published nothing).
+		releaseBases, err := h.EnsureReleaseBases(ctx, arch, getenv, assignedBases)
+		if err != nil {
+			return err
+		}
 		log.Info("imaged runtime-base pre-stage complete",
 			"arch", arch,
 			"assigned_runtimes", assignedBases.Runtimes,
 			"assigned_minimal", assignedBases.Minimal,
-			"deferred_to_serving_imaged", assignedBases.Deferred,
+			"release_bases_published", releaseBases.Staged,
+			"release_bases_current", releaseBases.Current,
+			"release_bases_unpublished", releaseBases.Unpublished,
+			"deferred_to_serving_imaged", append(assignedBases.Deferred, releaseBases.Deferred...),
 		)
 		return nil
 	}
