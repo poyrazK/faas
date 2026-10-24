@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; --muted: #666; --open: #b3261e; }
+    @media (prefers-color-scheme: dark) { :root { --muted: #aaa; --open: #ff8a80; } }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 1100px; margin: auto; padding: 0 1.5rem; }
+    header { padding: 1rem 0; border-bottom: 1px solid #8886; } nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+    dl { display: grid; grid-template-columns: max-content 1fr; gap: .2rem 1rem; } dt { color: var(--muted); } dd { margin: 0; }
+    ol.timeline { list-style: none; padding: 0; } ol.timeline li { padding: .35rem 0; border-bottom: 1px solid #8884; }
+    .when { font-variant-numeric: tabular-nums; color: var(--muted); margin-right: .5rem; } .label { font-weight: 600; margin-right: .5rem; }
+    .body { white-space: pre-wrap; overflow-wrap: anywhere; }
+    .muted { color: var(--muted); } .warn { padding: .6rem; background: #d4900022; } .open { color: var(--open); font-weight: 600; }
+    textarea { width: 100%; box-sizing: border-box; font: inherit; min-height: 5rem; } form { margin: .75rem 0; }
+  </style>
+</head>
+<body>
+<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a><a href="/dashboard/dashboards">Dashboards</a><a href="/dashboard/incidents">Incidents</a></nav></header>
+<main>
+{{template "email-verification-banner" .}}
+{{with .Data}}
+{{if not .Enabled}}
+  <h1>Incident</h1>
+  <p>Incidents are not enabled for this deployment.</p>
+{{else if .Error}}
+  <h1>Incident</h1>
+  <p class="warn" role="alert">{{.Error}}</p>
+{{else}}
+  <h1>{{.Title}}</h1>
+  <dl>
+    <dt>Status</dt><dd{{if .Open}} class="open"{{end}}>{{.Status}}</dd>
+    <dt>Source</dt><dd>{{.Source}}</dd>
+    {{if .App}}<dt>App</dt><dd>{{.App}}</dd>{{end}}
+    {{if .Metric}}<dt>Metric</dt><dd>{{.Metric}}</dd>{{end}}
+    {{if .Impact}}<dt>Impact</dt><dd>{{.Impact}}</dd>{{end}}
+    <dt>Opened</dt><dd>{{.Opened}}</dd>
+    {{if .Resolved}}<dt>Resolved</dt><dd>{{.Resolved}} (after {{.Duration}})</dd>{{else}}<dt>Open for</dt><dd>{{.Duration}}</dd>{{end}}
+    {{if .AcknowledgedBy}}<dt>Acknowledged</dt><dd>{{.AcknowledgedAt}} by {{.AcknowledgedBy}}</dd>{{end}}
+    <dt>ID</dt><dd><code>{{.ID}}</code></dd>
+  </dl>
+  {{if .Unavailable}}<p class="warn" role="alert">Could not read: {{.Unavailable}}.</p>{{end}}
+
+  {{if .Fires}}<h2>Notifications</h2>
+  <ol class="timeline">{{range .Fires}}<li><span class="when">{{.At}}</span><span class="label">{{.Label}}</span>{{.Text}}</li>{{end}}</ol>{{end}}
+  {{if .LogLine}}<h2>What the logs showed</h2>
+  <p>{{.LogLine}}{{if .LogSearch}} · <a href="{{.LogSearch}}">open the log search</a>{{end}}</p>{{end}}
+  {{if .Updates}}<h2>Status updates</h2>
+  <ol class="timeline">{{range .Updates}}<li><span class="when">{{.At}}</span><span class="label">{{.Label}}</span><span class="body">{{.Text}}</span></li>{{end}}</ol>{{end}}
+  {{if .Changes}}<h2>What changed</h2>
+  <ol class="timeline">{{range .Changes}}<li><span class="when">{{.At}}</span><span class="label">{{.Label}}</span>{{.Text}}</li>{{end}}</ol>
+  {{if .ChangesTruncated}}<p class="muted">Older changes omitted.</p>{{end}}{{end}}
+
+  <h2 id="notes">Notes</h2>
+  {{if .Notes}}<ol class="timeline">{{range .Notes}}<li><span class="when">{{.At}}</span><span class="label">{{.Label}}</span><span class="body">{{.Text}}</span></li>{{end}}</ol>
+  {{else}}<p class="muted">No notes yet. Notes are visible to everyone in this account and cannot be edited.</p>{{end}}
+  {{if .CSRF}}
+  {{if and .Open (not .AcknowledgedBy)}}
+  <form method="post" action="/dashboard/incidents/{{.ID}}/acknowledge">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <button type="submit">Acknowledge</button>
+  </form>
+  {{end}}
+  <form method="post" action="/dashboard/incidents/{{.ID}}/notes">
+    <input type="hidden" name="csrf_token" value="{{.CSRF}}">
+    <label for="note-body">Add a note</label>
+    <textarea id="note-body" name="body" maxlength="{{.NoteMaxChars}}" required></textarea>
+    <button type="submit">Add note</button>
+  </form>
+  {{end}}
+{{end}}
+{{end}}
+</main>
+</body>
+</html>

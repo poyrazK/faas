@@ -535,6 +535,13 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
 	"GET /dashboard/releases/{id}/approval":                         true, // ADR-20261020085706 HTML page over GET/POST /v1/deployments/{id}/approvals
+	"GET /dashboard/apps/{slug}/log-search":                         true, // ADR-20261018083536 HTML view of GET /v1/apps/{slug}/log-events
+	"GET /dashboard/dashboards":                                     true, // ADR-20261022173833 HTML view of GET /v1/dashboards
+	"GET /dashboard/dashboards/{id}":                                true, // ADR-20261022173833 HTML view of GET /v1/dashboards/{id}/data
+	"GET /dashboard/incidents":                                      true, // ADR-20261022193512 HTML view of GET /v1/incidents
+	"GET /dashboard/incidents/{id}":                                 true, // ADR-20261022193512 HTML view of GET /v1/incidents/{id}
+	"POST /dashboard/incidents/{id}/acknowledge":                    true, // ADR-20261022193512 CSRF form over POST /v1/incidents/{id}/acknowledge
+	"POST /dashboard/incidents/{id}/notes":                          true, // ADR-20261022193512 CSRF form over POST /v1/incidents/{id}/notes
 	"GET /dashboard/apps/{slug}/custom-metrics":                     true, // ADR-745 HTML view of custom metric history
 	"GET /dashboard/apps/{slug}/automations":                        true, // ADR-1285 HTML authoring console
 	"POST /dashboard/apps/{slug}/automations/{action}":              true, // ADR-1285 app-bound CSRF forms
@@ -701,6 +708,7 @@ var dtoExclude = map[string]bool{
 	"ObjectVersionListRequest":          true,
 	"EventRecoveryListQuery":            true, // client-only recovery pagination and filters; wire parameters live on the route
 	"WorkflowEventReplayPreviewOptions": true, // client-only preview query options; wire parameters live on the route
+	"IncidentsQuery":                    true, // client-only incident list filters; wire parameters live on the route
 	// ADR-563 native adapter primitives. Customer per-version lock management
 	// is not part of the ADR-564 bucket API capability.
 	"ObjectVersionRetention": true,
@@ -1834,6 +1842,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
 		filepath.Join(root, "pkg", "api", serviceMapFile),
 		filepath.Join(root, "pkg", "api", changeTimelineFile),
+		filepath.Join(root, "pkg", "api", "log_search.go"), // ADR-20261018083536 log search DTOs
+		filepath.Join(root, "pkg", "api", "dashboards.go"), // ADR-20261022173833 custom dashboard DTOs
+		filepath.Join(root, "pkg", "api", "incidents.go"),  // ADR-20261022193512 unified incident DTOs
 		filepath.Join(root, "pkg", "api", customMetricSeriesFile),
 		filepath.Join(root, "pkg", "api", applicationStandardsFile),
 		filepath.Join(root, "pkg", "api", applicationStandardResourcesFile),
