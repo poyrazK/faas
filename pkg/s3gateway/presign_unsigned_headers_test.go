@@ -1,11 +1,16 @@
 package s3gateway
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/aws/aws-sdk-go-v2/aws"
+	awsv4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -49,6 +54,45 @@ func TestPresignedRequestRefusesUnsignedAmzHeaders(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusOK || recorder.Body.String() != "hello" {
 		t.Fatalf("presigned GET with payload hash header = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+// Retention or a legal hold chosen at upload needs the same customer
+// read_write key as PUT ?retention; write-only and compute-binding keys may
+// still upload without them.
+func TestUploadWriteProtectionNeedsBucketSettingsKey(t *testing.T) {
+	upload := func(t *testing.T, handler *Handler, lock bool) *httptest.ResponseRecorder {
+		t.Helper()
+		request := httptest.NewRequest(http.MethodPut, "https://s3.gregale.dev/assets/locked.txt", strings.NewReader("hello"))
+		request.Host = "s3.gregale.dev"
+		request.Header.Set("Content-Type", "application/octet-stream")
+		request.Header.Set("X-Amz-Content-Sha256", "UNSIGNED-PAYLOAD")
+		request.Header.Set("X-Amz-Date", "20260907T120000Z")
+		if lock {
+			request.Header.Set("X-Amz-Object-Lock-Mode", "COMPLIANCE")
+			request.Header.Set("X-Amz-Object-Lock-Retain-Until-Date", "2126-01-01T00:00:00Z")
+		}
+		signer := awsv4.NewSigner(func(o *awsv4.SignerOptions) { o.DisableURIPathEscaping = true })
+		if err := signer.SignHTTP(context.Background(), aws.Credentials{AccessKeyID: testAccess, SecretAccessKey: testSecret}, request, "UNSIGNED-PAYLOAD", "s3", "us-east-1", time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)); err != nil {
+			t.Fatal(err)
+		}
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+		return recorder
+	}
+	ok := func(r *http.Request) (*http.Response, error) {
+		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Etag": {`"etag"`}}, Body: io.NopCloser(strings.NewReader("")), Request: r}, nil
+	}
+	for _, permission := range []string{state.ObjectBucketPermissionWrite, state.ObjectBucketPermissionReadWrite} {
+		handler, _, _ := newGatewayTestHandler(t, permission, ok)
+		locked := upload(t, handler, true)
+		denied := locked.Code == http.StatusForbidden && strings.Contains(locked.Body.String(), "AccessDenied")
+		if denied != (permission == state.ObjectBucketPermissionWrite) {
+			t.Errorf("%s key uploading with retention = %d %s", permission, locked.Code, locked.Body.String())
+		}
+		if plain := upload(t, handler, false); plain.Code != http.StatusOK {
+			t.Errorf("%s key uploading without retention = %d %s", permission, plain.Code, plain.Body.String())
+		}
 	}
 }
 
