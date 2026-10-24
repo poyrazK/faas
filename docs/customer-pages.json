@@ -74,6 +74,7 @@
     {"path": "storage", "source": "docs/storage.md"},
     {"path": "synthetic-checks", "source": "docs/synthetic-checks.md"},
     {"path": "tracing", "source": "docs/tracing.md"},
+    {"path": "workers", "source": "docs/workers.md"},
     {"path": ".well-known/security.txt", "external": true},
     {"path": "security/pgp.asc", "external": true},
     {"path": "security/pgp.txt", "external": true},

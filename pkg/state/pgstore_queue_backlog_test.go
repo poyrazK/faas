@@ -20,6 +20,11 @@ func TestPgQueueMessageExpiry(t *testing.T) {
 	testQueueMessageExpiry(t, store)
 }
 
+func TestPgQueueDepthReadsStopAtLimit(t *testing.T) {
+	store, _, _ := pgWithPool(t)
+	testQueueDepthReadsStopAtLimit(t, store)
+}
+
 // The backlog counters admission reads must equal the app's pending and
 // dispatching rows, and their queue payload bytes, after every kind of
 // change a row goes through.

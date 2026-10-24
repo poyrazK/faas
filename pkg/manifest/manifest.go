@@ -169,6 +169,28 @@ type Manifest struct {
 	// manifest sees the consequence spelled out before they can
 	// flip it.
 	Egress Egress `yaml:"egress,omitempty"`
+
+	// WorkloadIdentity turns on workload-identity tokens (ADR-1141): the
+	// renderer hands its source directory to every control-plane and
+	// compute host, so the roles install the JWKS and the signing key.
+	WorkloadIdentity WorkloadIdentity `yaml:"workload_identity,omitempty"`
+}
+
+// WorkloadIdentity names the directory `gregalectl workload-identity init`
+// wrote on the Ansible controller (ADR-1141 amendment 2026-10-24). Empty
+// leaves issuance off, which is the default.
+type WorkloadIdentity struct {
+	SourceDir string `yaml:"source_dir,omitempty"`
+}
+
+func (w WorkloadIdentity) validate() Errors {
+	if w.SourceDir == "" {
+		return nil
+	}
+	if !filepath.IsAbs(w.SourceDir) || strings.ContainsAny(w.SourceDir, "\"\\\n\r") {
+		return Errors{{"workload_identity.source_dir", "must be an absolute path on the Ansible controller, without quotes, backslashes or line breaks"}}
+	}
+	return nil
 }
 
 // Egress is the top-level egress-policy knob. PR scale-out
@@ -1026,6 +1048,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Cgroups.validate()...)
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
+	errs = append(errs, m.WorkloadIdentity.validate()...)
 	if len(errs) > 0 {
 		return errs
 	}

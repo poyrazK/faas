@@ -4395,6 +4395,14 @@ type Store interface {
 	// Binding readers follow immutable message identity through rename/retirement.
 	QueueStateForBinding(ctx context.Context, appID, bindingID string) (QueueStats, error)
 	QueueStateForBindingInScope(ctx context.Context, appID, bindingID, scope string) (QueueStats, error)
+	// Scaling readers count depth only up to limit: a scheduler decision needs
+	// no more than the depth that saturates its pool, and a full count reads
+	// the whole backlog on every reconcile (ADR-20261022105723 amendment
+	// 2026-10-24). They match the QueueState readers above; a binding reader
+	// with an empty scope reads every scope, like QueueStateForBinding.
+	QueueDepthInScope(ctx context.Context, appID, scope string, limit int) (int, error)
+	QueueDepthForBindingInScope(ctx context.Context, appID, bindingID, scope string, limit int) (int, error)
+	QueueBindingHasInFlight(ctx context.Context, appID, bindingID, scope string) (bool, error)
 	WorkerPoolHistory(ctx context.Context, appID, deploymentID string) (WorkerPoolHistory, error)
 	// QueuePeek lists the oldest pending queue messages for an app
 	// without acquiring a lease or incrementing attempts. Paginated by

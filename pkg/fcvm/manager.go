@@ -2953,38 +2953,11 @@ type wakingInstance struct {
 // before readiness (a worker is characterized for the whole
 // CharacterizationDeadline), and the identity is fixed when the wake starts,
 // so a queue consumer can lease while it boots (ADR-1141 amendment
-// 2026-10-17). Other guest services keep InstanceIdentity's live-only rule.
-//
-// A live instance goes through InstanceExternalActionIdentity. A booting one
-// gets the same rehearsal containment: no token while its app has a contained
-// run or the wake joined one.
+// 2026-10-17). It is the external-action rule, which the relay and event
+// publishing follow too (amendment 2026-10-24); InstanceIdentity stays
+// live-only.
 func (m *Manager) WorkloadTokenIdentity(ctx context.Context, instance string) (string, string, error) {
-	m.mu.Lock()
-	_, live := m.live[instance]
-	booting, waking := m.waking[instance]
-	m.mu.Unlock()
-	if live || !waking {
-		return m.InstanceExternalActionIdentity(ctx, instance)
-	}
-	if booting.appID == "" || booting.accountID == "" {
-		return "", "", fmt.Errorf("fcvm: WorkloadTokenIdentity %s: booting without an app identity", instance)
-	}
-	if booting.contained {
-		return "", "", ErrRehearsalExternalActionDenied
-	}
-	run, err := m.rehearsalNetworkRun(ctx, booting.appID)
-	if err != nil {
-		return "", "", err
-	}
-	if run != "" {
-		return "", "", ErrRehearsalExternalActionDenied
-	}
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if current, ok := m.waking[instance]; !ok || current != booting {
-		return "", "", fmt.Errorf("fcvm: WorkloadTokenIdentity %s: changed during policy read", instance)
-	}
-	return booting.appID, booting.accountID, nil
+	return m.InstanceExternalActionIdentity(ctx, instance)
 }
 
 // workerProven reports whether a declared worker's deployment already

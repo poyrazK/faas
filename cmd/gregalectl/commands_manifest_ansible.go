@@ -213,6 +213,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 			}
 		}
 		body += renderComputeEdgeVars(m.PublicEdge.ComputeNodes, host.Role, postgresListenAddress, computeAllowedCIDRs)
+		body += renderWorkloadIdentityVars(m.WorkloadIdentity)
 		if host.Role == roleComputeOnly && m.Egress.TenantGateway != nil {
 			gatewayVars, gwErr := renderTenantEgressGatewayVars(m.Egress.TenantGateway, canonicalComputeNodeName(host.Name, roleTemplating.Role(host.Role)))
 			if gwErr != nil {
@@ -618,6 +619,17 @@ const computeEdgePrivatePort = "8090"
 // compute node gets that listener as its target, and admits its peers' edges
 // to gatewayd-internal for the compute-pool fallback. Nothing is rendered
 // while the manifest leaves the edge off, so the roles' defaults remove it.
+// renderWorkloadIdentityVars hands every control-plane and compute host the
+// directory `gregalectl workload-identity init` wrote: control_plane_service
+// installs its JWKS, vmmd_service its signing key (ADR-1141 amendment
+// 2026-10-24). An empty source leaves issuance off.
+func renderWorkloadIdentityVars(w manifest.WorkloadIdentity) string {
+	if w.SourceDir == "" {
+		return ""
+	}
+	return fmt.Sprintf("faas_workload_identity_source_dir: %q\n", w.SourceDir)
+}
+
 func renderComputeEdgeVars(enabled bool, role, controlPlaneAddress string, computeCIDRs []string) string {
 	if !enabled || controlPlaneAddress == "" {
 		return ""

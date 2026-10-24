@@ -2,7 +2,10 @@ package fcvm
 
 // adr: 101
 
-import "testing"
+import (
+	"errors"
+	"testing"
+)
 
 func TestManagerInstanceIdentity(t *testing.T) {
 	m := &Manager{live: map[string]*Instance{
@@ -54,9 +57,37 @@ func TestManagerWorkloadTokenIdentity(t *testing.T) {
 			if tt.resolves != (err == nil) || appID != tt.app || accountID != tt.account {
 				t.Fatalf("WorkloadTokenIdentity = %q/%q, %v; want %q/%q resolves=%v", appID, accountID, err, tt.app, tt.account, tt.resolves)
 			}
+			// The relay and event publishing follow the same rule, so a
+			// worker's handler can call out while it boots (amendment 2026-10-24).
+			appID, accountID, err = m.InstanceExternalActionIdentity(t.Context(), tt.instance)
+			if tt.resolves != (err == nil) || appID != tt.app || accountID != tt.account {
+				t.Fatalf("InstanceExternalActionIdentity = %q/%q, %v; want %q/%q resolves=%v", appID, accountID, err, tt.app, tt.account, tt.resolves)
+			}
 			if _, _, err := m.InstanceIdentity(tt.instance); tt.instanceResolve != (err == nil) {
 				t.Fatalf("InstanceIdentity err = %v, want resolves=%v", err, tt.instanceResolve)
 			}
 		})
+	}
+}
+
+// A booting instance never gets simulation, and outside simulation its relay
+// falls through to the external-action rule.
+func TestManagerRehearsalRelayIdentityWhileBooting(t *testing.T) {
+	m := &Manager{waking: map[string]wakingInstance{
+		"boot-1":      {appID: "app-2", accountID: "acct-2"},
+		"contained-1": {appID: "app-3", accountID: "acct-3", contained: true},
+	}}
+	if app, account, run, err := m.InstanceRehearsalRelayIdentity(t.Context(), "boot-1"); err != nil || app != "" || account != "" || run != "" {
+		t.Fatalf("booting relay identity = %q/%q/%q, %v; want no simulation and no error", app, account, run, err)
+	}
+	if _, _, _, err := m.InstanceRehearsalRelayIdentity(t.Context(), "contained-1"); !errors.Is(err, ErrRehearsalExternalActionDenied) {
+		t.Fatalf("contained booting relay err = %v, want denied", err)
+	}
+	if _, _, _, err := m.InstanceRehearsalRelayIdentity(t.Context(), "missing"); err == nil {
+		t.Fatal("unknown instance resolved a relay identity")
+	}
+	m.rehearsalNetworkPolicies = &simulationPolicyStub{simulation: rehearsalNetworkTestRun}
+	if _, _, _, err := m.InstanceRehearsalRelayIdentity(t.Context(), "boot-1"); !errors.Is(err, ErrRehearsalExternalActionDenied) {
+		t.Fatalf("booting instance of a simulated app: err = %v, want denied", err)
 	}
 }
