@@ -6761,6 +6761,15 @@ func ErrRolloutStateInvalid(state string) *Problem {
 		WithDocs(docsBase + "/deploys#recover-rollout")
 }
 
+// ErrRolloutAmbiguous is the 409 for an app-level rollout recovery while
+// rollouts are in flight in more than one environment of the app.
+func ErrRolloutAmbiguous() *Problem {
+	return NewProblem(http.StatusConflict, CodeRolloutStateInvalid,
+		"Rollouts are in progress in more than one environment",
+		"More than one environment of this app has a rollout in progress, so an app-level recovery cannot tell which one to change. Wait for one rollout to finish, or abort a specific rollout with deployment_id and expected_predecessor_deployment_id.").
+		WithDocs(docsBase + "/deploys#recover-rollout")
+}
+
 // ErrNodeDraining (Workstream B / issue #1184 / ADR-137) is the
 // 409 the drain handler + recovery arbiter emit when an operator
 // request targets a node whose lifecycle is already 'draining'.
