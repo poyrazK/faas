@@ -80782,7 +80782,7 @@ func (q *Queries) ReadRuntimeUpgradeDrainDeployments(ctx context.Context, db DBT
 
 const readRuntimeUpgradeEligibleFailureFallback = `-- name: ReadRuntimeUpgradeEligibleFailureFallback :one
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.id<>$2::uuid
- AND d.status='live' AND d.deleted_at IS NULL
+ AND d.scope=$3::text AND d.status='live' AND d.deleted_at IS NULL
  AND (NOT EXISTS(SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.deployment_id=d.id)
   OR EXISTS(SELECT 1 FROM deployment_runtime_upgrade_cutovers c JOIN deployment_runtime_upgrade_acceptances a ON a.deployment_id=c.deployment_id
    JOIN deployment_runtime_upgrade_targets t ON t.deployment_id=c.deployment_id
@@ -80794,10 +80794,11 @@ ORDER BY d.traffic_percent DESC,d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE O
 type ReadRuntimeUpgradeEligibleFailureFallbackParams struct {
 	AppID    pgtype.UUID
 	FailedID pgtype.UUID
+	Scope    string
 }
 
 func (q *Queries) ReadRuntimeUpgradeEligibleFailureFallback(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeEligibleFailureFallbackParams) (pgtype.UUID, error) {
-	row := db.QueryRow(ctx, readRuntimeUpgradeEligibleFailureFallback, arg.AppID, arg.FailedID)
+	row := db.QueryRow(ctx, readRuntimeUpgradeEligibleFailureFallback, arg.AppID, arg.FailedID, arg.Scope)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
