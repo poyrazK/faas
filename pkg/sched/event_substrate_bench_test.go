@@ -519,8 +519,8 @@ func (c *eventBenchLogCounter) annotate(stage eventBenchStage) eventBenchStage {
 }
 
 // runEventBenchFanoutLikeSchedd schedules sweeps as Loop.Run does: every
-// event_published wake submits a sweep into a single slot, a wake that
-// arrives while one runs is dropped, and a safety tick catches the rest.
+// event_published wake and safety tick submits a sweep to the loop's work
+// pool, which runs one at a time and coalesces wakes as schedd's does.
 func runEventBenchFanoutLikeSchedd(ctx context.Context, t *testing.T, loop *sched.Loop, pool *pgxpool.Pool) func() {
 	t.Helper()
 	fanoutCtx, stop := context.WithCancel(ctx)
@@ -529,18 +529,8 @@ func runEventBenchFanoutLikeSchedd(ctx context.Context, t *testing.T, loop *sche
 		stop()
 		t.Fatalf("subscribe event_published: %v", err)
 	}
-	var running atomic.Bool
-	var sweeps sync.WaitGroup
 	sweep := func() {
-		if !running.CompareAndSwap(false, true) {
-			return
-		}
-		sweeps.Add(1)
-		go func() {
-			defer sweeps.Done()
-			defer running.Store(false)
-			loop.XRunEventFanoutSweep(fanoutCtx)
-		}()
+		loop.WorkPool().Submit(sched.WorkEventFanout, "tick", func() { loop.XRunEventFanoutSweep(fanoutCtx) })
 	}
 	done := make(chan struct{})
 	go func() {
@@ -567,7 +557,7 @@ func runEventBenchFanoutLikeSchedd(ctx context.Context, t *testing.T, loop *sche
 	return func() {
 		stop()
 		<-done
-		sweeps.Wait()
+		loop.WorkPool().Drain()
 	}
 }
 
