@@ -209,7 +209,7 @@ func TestEventWorkflowAdmission(t *testing.T) {
 			var manual *WorkflowRun
 			for range max {
 				manual = &WorkflowRun{AppID: app.ID, WorkflowName: "manual", DefinitionSnapshot: json.RawMessage(`{}`)}
-				if _, err := store.CreateWorkflowRunAdmitted(context.Background(), manual, max); err != nil {
+				if _, err := store.CreateWorkflowRunAdmitted(context.Background(), manual, max, 0); err != nil {
 					t.Fatal(err)
 				}
 			}

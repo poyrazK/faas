@@ -61,7 +61,7 @@ func admitOperationWorkflowTx(ctx context.Context, tx pgx.Tx, op *Operation, inv
 	if err != nil {
 		return err
 	}
-	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(op.AppID)})
+	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(op.AppID), ParkedMax: int64(plan.WorkflowMaxParkedRuns())})
 	if err != nil {
 		return err
 	}

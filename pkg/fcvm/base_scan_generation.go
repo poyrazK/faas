@@ -35,3 +35,10 @@ func repositoryOfTag(ref string) string {
 	}
 	return ref
 }
+
+// ScanNamesConfiguredBase exports the boot gate's generation match, so the
+// rollout's pre-stage and activation check judge a shared scan sidecar
+// exactly as ensureBaseGeneration will (ADR-20261024191249).
+func ScanNamesConfiguredBase(scanImage, configured string) bool {
+	return scanNamesConfiguredBase(scanImage, configured)
+}

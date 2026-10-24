@@ -4353,6 +4353,10 @@ type Limits struct {
 	// WorkflowMaxConcurrent is the maximum number of in-flight workflow
 	// runs for one app.
 	WorkflowMaxConcurrent int
+	// WorkflowMaxParked is how many of an app's runs waiting on an event
+	// (awaiting_event) stay off WorkflowMaxConcurrent; parked runs beyond
+	// it count as concurrent (ADR-20261023215834).
+	WorkflowMaxParked int
 	// WorkflowStepMaxTimeout is the maximum active execution timeout for
 	// one workflow step.
 	WorkflowStepMaxTimeout time.Duration
@@ -4850,6 +4854,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowsAllowed:           false,
 		WorkflowMaxPerApp:          0,
 		WorkflowMaxConcurrent:      0,
+		WorkflowMaxParked:          0,
 		WorkflowStepMaxTimeout:     0,
 		WorkflowMaxWaitDays:        0,
 	},
@@ -5282,6 +5287,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowsAllowed:           true,
 		WorkflowMaxPerApp:          3,
 		WorkflowMaxConcurrent:      10,
+		WorkflowMaxParked:          100,
 		WorkflowStepMaxTimeout:     10 * time.Minute,
 		WorkflowMaxWaitDays:        30,
 	},
@@ -5679,6 +5685,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowsAllowed:           true,
 		WorkflowMaxPerApp:          10,
 		WorkflowMaxConcurrent:      50,
+		WorkflowMaxParked:          1000,
 		WorkflowStepMaxTimeout:     30 * time.Minute,
 		WorkflowMaxWaitDays:        90,
 	},
@@ -6107,6 +6114,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowsAllowed:           true,
 		WorkflowMaxPerApp:          50,
 		WorkflowMaxConcurrent:      200,
+		WorkflowMaxParked:          10000,
 		WorkflowStepMaxTimeout:     2 * time.Hour,
 		WorkflowMaxWaitDays:        365,
 	},
@@ -8891,6 +8899,22 @@ func (p Plan) WorkflowMaxConcurrentRuns() int {
 		return 0
 	}
 	return l.WorkflowMaxConcurrent
+}
+
+// WorkflowMaxParkedRuns returns how many runs parked on an event an app holds
+// outside WorkflowMaxConcurrentRuns.
+func (p Plan) WorkflowMaxParkedRuns() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.WorkflowMaxParked
+}
+
+// WorkflowAdmittedRuns is what the concurrency cap compares: an app's pending
+// and running runs plus its parked runs beyond the parked allowance.
+func WorkflowAdmittedRuns(active, parked, maxParked int) int {
+	return active + max(0, parked-maxParked)
 }
 
 // WorkflowStepMaxTimeout returns the maximum allowed timeout for any single step.

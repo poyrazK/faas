@@ -237,17 +237,17 @@ func TestWorkflowAdmissionCoordinatesUUIDFormsAndLegacyLocks(t *testing.T) {
 				blocked, cancel := context.WithTimeout(ctx, 150*time.Millisecond)
 				defer cancel()
 				run := &state.WorkflowRun{AppID: otherKey, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"main","run":"report"}]}`)}
-				if _, err := store.CreateWorkflowRunAdmitted(blocked, run, 10); !errors.Is(err, context.DeadlineExceeded) {
+				if _, err := store.CreateWorkflowRunAdmitted(blocked, run, 10, 0); !errors.Is(err, context.DeadlineExceeded) {
 					t.Fatalf("opposite UUID spelling bypassed legacy lock: %v", err)
 				}
 			})
 		}
 		run := &state.WorkflowRun{AppID: compact, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"main","run":"report"}]}`)}
-		if _, err := store.CreateWorkflowRunAdmitted(context.Background(), run, 1); err != nil {
+		if _, err := store.CreateWorkflowRunAdmitted(context.Background(), run, 1, 0); err != nil {
 			t.Fatal(err)
 		}
 		run = &state.WorkflowRun{AppID: canonical, WorkflowName: "nightly", DefinitionSnapshot: json.RawMessage(`{"name":"nightly","steps":[{"name":"main","run":"report"}]}`)}
-		if _, err := store.CreateWorkflowRunAdmitted(context.Background(), run, 1); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+		if _, err := store.CreateWorkflowRunAdmitted(context.Background(), run, 1, 0); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
 			t.Fatalf("shared quota=%v", err)
 		}
 	})
