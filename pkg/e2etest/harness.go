@@ -348,7 +348,9 @@ failure_report_dir = %q
 					t.Fatalf("e2etest: create native ownership root: %v", err)
 				}
 			}
-			cfg += fmt.Sprintf("native_process_recovery = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
+			// Owner records let a restarted vmmd clean up after the one it
+			// replaced (ADR-2026101710 Amendment 1).
+			cfg += fmt.Sprintf("native_process_recovery = true\nnative_launch_owner_records = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
 			// Strict budgets need the native owner; their apps must still park
 			// and wake from snapshots (ADR 20261022184951).
 			if os.Getenv("FAAS_FINANCIAL_SYSTEM_ACCEPTANCE") == "1" {

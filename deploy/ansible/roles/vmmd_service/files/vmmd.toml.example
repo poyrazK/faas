@@ -34,6 +34,15 @@
 # Default: "" (disabled)
 # native_runtime_snapshot_root = "/srv/fc/native-snap"
 
+# native_launch_owner_records: publish ordinary native launches as version-3
+# records that name this vmmd incarnation, so a restarted vmmd can prove the
+# old one exited and clean up its VMs (ADR-2026101710 Amendment 1). Without it,
+# a crashed vmmd's native VMs stay quarantined. vmmd binaries without a
+# version-3 reader refuse the journal, so enable this only once every compute
+# node and any rollback target can read it. Requires native_process_recovery.
+# Default: false
+# native_launch_owner_records = true
+
 # adoption_record: write version-7 adoption blocks into the resource journal
 # (vmmd restart adoption ADR, slice 1). Shadow only: nothing adopts yet, and
 # startup classifies records in a dry run either way. vmmd binaries without a

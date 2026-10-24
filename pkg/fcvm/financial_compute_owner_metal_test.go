@@ -294,7 +294,10 @@ func TestFinancialComputeNativeOwnerProcess(t *testing.T) {
 	v := newMetalVMM(t, 30*time.Second)
 	v.chrootBase = cfg.JailRoot
 	v.WithNativeImageStagingRoot(filepath.Join(cfg.Root, "images")).
-		WithNativeSnapshotPublicationRoot(filepath.Join(cfg.Root, "publications")).WithNativeProcessRecovery()
+		WithNativeSnapshotPublicationRoot(filepath.Join(cfg.Root, "publications")).WithNativeProcessRecovery().
+		// A replacement owner retires a killed one's VMs only through its
+		// owner record (ADR-2026101710 Amendment 1).
+		WithNativeLaunchOwners()
 	var failKill atomic.Bool
 	v.nativeRecovery.retirer.open = func(pid int) (nativeProcessHandle, error) {
 		if failKill.Load() {
