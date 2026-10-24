@@ -272,22 +272,14 @@ net.createServer((socket) => {
 }
 
 // NodeFixtureHealthcheck returns the bytes of a minimal Node 22 source
-// tarball whose index.js binds `:8080` (the host's stable readiness
-// probe target per ADR-009 + portnorm ladder) and registers a /healthz
-// route returning 200 (issue #460 / ADR-053 / ADR-057, PR-D). The
-// healthcheck body includes "override-healthz:<readyFlag>" so the
-// test can confirm readiness on the /healthz path independently of
-// the main / response. Binds :8080 directly — portnorm re-exposes the
-// customer bind on :8080 inside the guest so the host's
-// `GET <HostIP>:8080/healthz` reaches the fixture.
+// tarball whose index.js binds $PORT and registers a /healthz route
+// returning 200 (issue #460 / ADR-053 / ADR-057, PR-D). The healthcheck
+// body includes "override-healthz:<readyFlag>" so the test can confirm
+// readiness on the /healthz path independently of the main / response.
 //
-// Why explicit bind on :8080 (no PORT env): waitReady's probe target
-// is hard-wired to :8080 in fcvm/manager.go. The override-port PR-C
-// fixture reads PORT because EffectivePort() can stamp 9090, but
-// PR-D's probe port doesn't change with override-port. If a future
-// ADR widens waitReady to probe the override port directly (rejected
-// in ADR-057 §Decision 2), NodeFixturePort would be the right
-// starting point — for now, hardcoded :8080 is the contract.
+// The fixture listens on $PORT like a customer app: the host's :8080 is
+// DNATed to the deployment's effective port (#1892), which source
+// inference sets to 3000 for Node, so a hard-coded :8080 bind is refused.
 func NodeFixtureHealthcheck(t *testing.T) []byte {
 	t.Helper()
 	const pkgJSON = `{
@@ -313,7 +305,7 @@ http.createServer((req, res) => {
   if (!ready) ready = true;
   res.writeHead(200, {'content-type': 'text/plain'});
   res.end('hello from faas (override-healthz)\n');
-}).listen(8080, () => console.log('healthz fixture listening on :8080'));
+}).listen(Number(process.env.PORT || 8080), () => console.log('healthz fixture listening on :' + (process.env.PORT || 8080)));
 `
 	files := map[string]string{
 		"package.json":     pkgJSON,
@@ -345,8 +337,8 @@ http.createServer((req, res) => {
 // The Node `setInterval` timer is bounded by the runtime's
 // setTimeout clamp (≈24.8 days as Int32 ms); the metal tests pass
 // realistic durations (200 ms ≤ interval ≤ 1000 ms) way inside that
-// range. The runner binds :8080 (the host's stable probe port) so
-// waitReady reaches the fixture without a `PORT` env stamp.
+// range. The fixture binds $PORT, the port the host routes to (see
+// NodeFixtureHealthcheck).
 func NodeFixtureStreaming(t *testing.T) []byte {
 	t.Helper()
 	const pkgJSON = `{
@@ -414,7 +406,7 @@ http.createServer((req, res) => {
   }
   res.writeHead(404, {'content-type': 'text/plain'});
   res.end('not found');
-}).listen(8080, () => console.log('streaming fixture listening on :8080'));
+}).listen(Number(process.env.PORT || 8080), () => console.log('streaming fixture listening on :' + (process.env.PORT || 8080)));
 `
 	files := map[string]string{
 		"package.json":     pkgJSON,
