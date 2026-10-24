@@ -6347,6 +6347,21 @@ const (
 	BuildTimeoutSeconds    = 900 // 15 min build; cold rootless Railpack export needs headroom
 	BuildE2ETimeoutSeconds = 900 // 15 min end-to-end
 
+	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
+	// deployment that can no longer finish on its own, so every deployment
+	// reaches a terminal state. DeploymentQueuedBuildTimeoutSeconds bounds a
+	// build's wait in the builder queue; it is generous so a builder pause
+	// or a single-slot backlog does not fail work that would still run.
+	// DeploymentStallTimeoutSeconds bounds how long an in-flight deployment
+	// with no queued or running build may go without a stage transition
+	// (imaging, snapshotting, a lost pipeline notification). Running builds
+	// stay with builderd's reaper. DeploymentWatchdogIntervalSeconds is the
+	// sweep cadence and DeploymentWatchdogBatch the rows failed per pass.
+	DeploymentQueuedBuildTimeoutSeconds = 6 * 60 * 60
+	DeploymentStallTimeoutSeconds       = 3 * 60 * 60
+	DeploymentWatchdogIntervalSeconds   = 5 * 60
+	DeploymentWatchdogBatch             = 100
+
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Run-to-completion
 	// workloads: stored image + command + env, Firecracker boots, guest runs
 	// to completion, exit code reported via vsock. Distinct from build VMs
