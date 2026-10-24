@@ -1337,7 +1337,8 @@ func testRoutesParity(t *testing.T, root string, spec *specDoc) {
 			continue
 		}
 		const promotionControl = "POST /v1/projects/{slug}/environments/{environment}/promotions/{promotion}/{action}"
-		if r == promotionControl {
+		const orgPromotionControl = "POST /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/{action}"
+		if r == promotionControl || r == orgPromotionControl {
 			actions, err := scanPromotionControlActions(filepath.Join(root, "pkg", "apid", "promotion", "control.go"))
 			if err != nil {
 				t.Fatalf("scan promotion control actions: %v", err)
