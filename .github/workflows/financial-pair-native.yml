@@ -19,11 +19,11 @@ jobs:
     # Covers serial build/test caps plus host restoration and evidence upload.
     timeout-minutes: 360
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
@@ -58,7 +58,7 @@ jobs:
           root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-pair"
           sudo cp -a "$root/financial-pair-evidence" "$RUNNER_TEMP/financial-pair-evidence"
           sudo chown -R "$(id -u):$(id -g)" "$RUNNER_TEMP/financial-pair-evidence"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always()
         with:
           name: financial-native-pair-${{ github.sha }}
