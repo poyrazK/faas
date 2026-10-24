@@ -3500,19 +3500,22 @@ groups:
 
       # Hunt 12 H12-1: vmmd's base scan gate (issue #299) refused every boot
       # of the python313 runner base on prod after a node-side Grype scan
-      # found two fixable CRITICAL findings, and nothing alerted. Ten
-      # minutes of refusals rides out the short sidecar-missing window
-      # after a release roll (H11-33) but catches a base that stays refused.
+      # found two fixable CRITICAL findings, and nothing alerted. A refusal
+      # in every 10-minute window for 15 minutes catches a base that stays
+      # refused, even with sparse boots, and rides out the short
+      # sidecar-missing window after a release roll (H11-33): a single
+      # burst keeps increase(...[10m]) above zero for about 11 minutes on
+      # Prometheus 2.x, whose range selectors include the window's start.
       - alert: FaasBaseScanRefusingBoots
         expr: sum by (node, base, reason) (increase(vmmd_base_scan_refusals_total[10m])) > 0
-        for: 10m
+        for: 15m
         labels:
           severity: page
           component: vmmd
           family: base_scan_gate
         annotations:
           summary: "vmmd refuses to boot {{ $labels.base }} ({{ $labels.reason }}) on {{ $labels.node }}"
-          description: "vmmd's base scan gate has refused boots on {{ $labels.base }} for ten minutes with reason {{ $labels.reason }}. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
+          description: "vmmd's base scan gate has kept refusing boots on {{ $labels.base }} for fifteen minutes with reason {{ $labels.reason }}. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
 
       # ─────────────────────────────────────────────────────────────────
