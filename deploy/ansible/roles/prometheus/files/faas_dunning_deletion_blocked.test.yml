@@ -1,0 +1,44 @@
+# meterd_dunning_deletion_blocked_accounts holds the last hourly sweep's count.
+rule_files:
+  - faas.rules.yml
+evaluation_interval: 30s
+tests:
+  - name: a block that outlives two sweeps fires per guard
+    interval: 1m
+    input_series:
+      # Blocked from minute 60 on; the gauge is held between sweeps.
+      - series: meterd_dunning_deletion_blocked_accounts{job="meterd",instance="cp",reason="managed_postgres_databases"}
+        values: 0x59 2x179
+      - series: meterd_dunning_deletion_blocked_accounts{job="meterd",instance="cp",reason="shared_app_ownership"}
+        values: 0x239
+      - series: meterd_dunning_deletion_blocked_accounts{job="meterd",instance="cp",reason="unknown"}
+        values: 0x239
+    alert_rule_test:
+      - eval_time: 170m
+        alertname: FaasDunningDeletionBlocked
+        exp_alerts: []
+      - eval_time: 185m
+        alertname: FaasDunningDeletionBlocked
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: meterd
+              family: account_lifecycle
+              public_status: internal
+              reason: managed_postgres_databases
+            exp_annotations:
+              summary: Non-payment deletion is blocked for suspended accounts (managed_postgres_databases)
+              description: "The dunning sweep cannot move suspended accounts past the non-payment deadline to deleted_pending because a deletion guard holds (managed_postgres_databases: the account still owns live managed PostgreSQL databases; shared_app_ownership: company apps still reference it). The accounts stay suspended, their provider databases keep running and erasure does not start. meterd logs each one as 'meter: non-payment deletion blocked'."
+              runbook_url: https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDunningDeletionBlocked.md
+  - name: a block cleared by the next sweep stays quiet
+    interval: 1m
+    input_series:
+      - series: meterd_dunning_deletion_blocked_accounts{job="meterd",instance="cp",reason="managed_postgres_databases"}
+        values: 0x59 1x59 0x119
+    alert_rule_test:
+      - eval_time: 115m
+        alertname: FaasDunningDeletionBlocked
+        exp_alerts: []
+      - eval_time: 235m
+        alertname: FaasDunningDeletionBlocked
+        exp_alerts: []

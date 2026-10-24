@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // Store is only the resource and membership lookup surface. There is no
@@ -27,6 +28,8 @@ type Store interface {
 	CronByID(context.Context, string) (state.Cron, error)
 	GetEdgeRuleByID(context.Context, string) (state.EdgeRule, error)
 	InvocationByID(context.Context, string) (state.Invocation, error)
+	TriggerByID(context.Context, string) (sqlc.Trigger, error)
+	GetWorkflowRun(context.Context, string) (*state.WorkflowRun, error)
 	OrgByID(context.Context, string) (state.Org, error)
 	OrgMemberByAccount(context.Context, string, string) (state.OrgMembership, error)
 	AccountByID(context.Context, string) (state.Account, error)
@@ -92,7 +95,7 @@ func Wrap(store Store, audit authz.AuditEmitter, next authmw.AccountHandler) aut
 		if principal, _, ok := authmw.AccountFromContext(r); ok {
 			actor = principal
 		}
-		app, addressed, err := addressedApp(r, store)
+		app, addressed, err := addressedApp(r, store, actor.ID)
 		if !addressed {
 			next(w, r, actor)
 			return
@@ -110,7 +113,7 @@ func Wrap(store Store, audit authz.AuditEmitter, next authmw.AccountHandler) aut
 	}
 }
 
-func addressedApp(r *http.Request, store Store) (state.App, bool, error) {
+func addressedApp(r *http.Request, store Store, actorID string) (state.App, bool, error) {
 	// No app lookup is needed on account, authentication or organization
 	// management endpoints, including degraded-server health tests.
 	if r.PathValue("organization") != "" && strings.Contains(r.Pattern, "/apps/{slug}") {
@@ -125,7 +128,7 @@ func addressedApp(r *http.Request, store Store) (state.App, bool, error) {
 		return app, true, nil
 	}
 	if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !strings.HasPrefix(r.URL.Path, "/v1/builds/") && !strings.HasPrefix(r.URL.Path, "/v1/deployments/") {
-		return indirectlyAddressedApp(r, store)
+		return indirectlyAddressedApp(r, store, actorID)
 	}
 	if store == nil {
 		return state.App{}, true, errors.New("application store unavailable")
@@ -226,6 +229,9 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 	*r = *r.WithContext(ctx)
 	*r = *r.WithContext(authz.WithRequestOnContext(r.Context(), r))
 	action, supported := routeActions[r.Pattern]
+	if !supported && dashboardRead(r) {
+		action, supported = authz.OrgActionReadApp, true
+	}
 	if authz.QueuePattern(r.Pattern) {
 		action, supported = authz.QueueAction(r.Pattern)
 		if !supported {
@@ -297,6 +303,14 @@ func notFound(r *http.Request) *api.Problem {
 		what = "no such deployment"
 	case strings.HasPrefix(path, "/v1/domains/"):
 		what = "no such domain"
+	case strings.HasPrefix(path, "/v1/workflows/runs/"):
+		return api.ErrWorkflowRunNotFound()
+	case strings.HasPrefix(path, "/v1/delayed-tasks/"):
+		return api.ErrInvocationNotFound(r.PathValue("id"))
+	case strings.HasPrefix(path, "/v1/triggers/"):
+		what = "no such trigger"
+	case strings.HasPrefix(path, "/v1/deleted-apps/"):
+		what = "no such deleted app"
 	}
 	return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", what)
 }

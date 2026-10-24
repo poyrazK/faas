@@ -146,8 +146,8 @@ func TestResourceJournalBootOrderingAndConfirmedRetirement(t *testing.T) {
 				t.Fatal("journal stored execution credentials or command")
 			}
 			injected := errors.New("directory fsync unavailable")
-			syncDir := j.directorySync
-			j.directorySync = func() error { return injected }
+			syncDir := j.commitSync
+			j.commitSync = func(durable bool) error { return injected }
 			if err := m.Destroy(t.Context(), idLive); !errors.Is(err, injected) {
 				t.Fatalf("uncertain journal retirement: %v", err)
 			}
@@ -157,7 +157,7 @@ func TestResourceJournalBootOrderingAndConfirmedRetirement(t *testing.T) {
 			if _, err := m.Wake(t.Context(), wakeReq(idLive, nil)); err == nil {
 				t.Fatal("boot admitted while journal retirement pending")
 			}
-			j.directorySync = syncDir
+			j.commitSync = syncDir
 			if err := m.Destroy(t.Context(), idLive); err != nil {
 				t.Fatal(err)
 			}
@@ -172,8 +172,8 @@ func TestResourceJournalBootOrderingAndConfirmedRetirement(t *testing.T) {
 func TestResourceJournalWriteFailureRejectsBoot(t *testing.T) {
 	j := openTestResourceJournal(t, t.TempDir())
 	injected := errors.New("intent fsync unavailable")
-	syncDir := j.directorySync
-	j.directorySync = func() error { return injected }
+	syncDir := j.commitSync
+	j.commitSync = func(durable bool) error { return injected }
 	run, vmm := &fakeRunner{}, &fakeVMM{}
 	m := newTestManager(run, vmm)
 	if err := m.WithResourceJournal(j); err != nil {
@@ -194,7 +194,7 @@ func TestResourceJournalWriteFailureRejectsBoot(t *testing.T) {
 	if m.LeasedCount() != 1 {
 		t.Fatal("uncertain intent/retirement released slot")
 	}
-	j.directorySync = syncDir
+	j.commitSync = syncDir
 	if err := m.Destroy(t.Context(), idLive); err != nil {
 		t.Fatal(err)
 	}

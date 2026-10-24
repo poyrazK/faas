@@ -805,9 +805,9 @@ const (
 	EventReplayPreviewReadTimeout          = 5 * time.Second
 )
 
-// Historical backfills pin only the bounded settled-receipt retention window.
+// Historical backfills pin only the bounded settled-receipt retention window;
+// a range is at most the owner's EventStorageLimits.SettledRetentionSeconds.
 const (
-	EventReplayBackfillMaxRange            = 30 * 24 * time.Hour
 	EventReplayBackfillPageSize            = 100
 	EventReplayBackfillInFlightMax         = 100
 	EventReplayBackfillActiveJobsMax       = 3
@@ -2737,11 +2737,29 @@ type EventDeliveryLimits struct{ PerConsumer, PerApp, PerAccount int }
 
 // EventStorageLimits bounds retained customer event envelopes and immutable
 // recipient snapshots per account, including settled receipts. ADR-615.
+// SettledRetentionSeconds is how long a settled receipt is kept: it bounds
+// duplicate acceptance, event recovery and replay ranges, and each budget
+// covers the window at the plan's sustained rate (ADR-20261023215834).
 const EventStorageRetryAfterSeconds = 60
 
 type EventStorageLimits struct {
-	RetainedEvents int64 `json:"retained_events"`
-	RetainedBytes  int64 `json:"retained_bytes"`
+	RetainedEvents          int64 `json:"retained_events"`
+	RetainedBytes           int64 `json:"retained_bytes"`
+	SettledRetentionSeconds int64 `json:"settled_retention_seconds,omitempty"`
+}
+
+// SettledRetention is the plan's settled-receipt window.
+func (l EventStorageLimits) SettledRetention() time.Duration {
+	return time.Duration(l.SettledRetentionSeconds) * time.Second
+}
+
+// EventSettledRetentionMax is the longest settled-receipt window of any plan.
+func EventSettledRetentionMax() time.Duration {
+	var longest time.Duration
+	for _, p := range Plans {
+		longest = max(longest, MustLimitsFor(p).EventStorage.SettledRetention())
+	}
+	return longest
 }
 
 // ObjectStoragePlanLimits are a plan's object-storage entitlements (ADR-1320).
@@ -4335,6 +4353,10 @@ type Limits struct {
 	// WorkflowMaxConcurrent is the maximum number of in-flight workflow
 	// runs for one app.
 	WorkflowMaxConcurrent int
+	// WorkflowMaxParked is how many of an app's runs waiting on an event
+	// (awaiting_event) stay off WorkflowMaxConcurrent; parked runs beyond
+	// it count as concurrent (ADR-20261023215834).
+	WorkflowMaxParked int
 	// WorkflowStepMaxTimeout is the maximum active execution timeout for
 	// one workflow step.
 	WorkflowStepMaxTimeout time.Duration
@@ -4495,7 +4517,7 @@ var planLimits = map[Plan]Limits{
 		// Hobby so a customer mid-upgrade sees the cap before the
 		// plan flips. Deadline defaults to 5m, retention to 1d.
 		EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
-		EventStorage:                      EventStorageLimits{4096, 8 << 20},
+		EventStorage:                      EventStorageLimits{4096, 8 << 20, 86400},
 		MaxAsyncInvocationsPerAccount:     100,
 		MaxAsyncInvocationDeadlineSeconds: 300,
 		MaxAsyncResultRetentionSeconds:    86400,
@@ -4832,6 +4854,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowsAllowed:           false,
 		WorkflowMaxPerApp:          0,
 		WorkflowMaxConcurrent:      0,
+		WorkflowMaxParked:          0,
 		WorkflowStepMaxTimeout:     0,
 		WorkflowMaxWaitDays:        0,
 	},
@@ -4902,7 +4925,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-134 PR-B: Hobby 1k / 1h / 7d. Matches the doubling
 		// from Free's 100/5m/1d.
 		EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
-		EventStorage:                      EventStorageLimits{16384, 64 << 20},
+		EventStorage:                      EventStorageLimits{131072, 256 << 20, 259200},
 		MaxAsyncInvocationsPerAccount:     1000,
 		MaxAsyncInvocationDeadlineSeconds: 3600,
 		MaxAsyncResultRetentionSeconds:    604800,
@@ -5264,6 +5287,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowsAllowed:           true,
 		WorkflowMaxPerApp:          3,
 		WorkflowMaxConcurrent:      10,
+		WorkflowMaxParked:          100,
 		WorkflowStepMaxTimeout:     10 * time.Minute,
 		WorkflowMaxWaitDays:        30,
 	},
@@ -5343,7 +5367,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-134 PR-B: Pro 10k / 6h / 30d. Decadal bumps from
 		// Hobby track the Doubling pattern (1k->10k, 1h->6h, 7d->30d).
 		EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
-		EventStorage:                      EventStorageLimits{131072, 512 << 20},
+		EventStorage:                      EventStorageLimits{1048576, 2 << 30, 604800},
 		MaxAsyncInvocationsPerAccount:     10000,
 		MaxAsyncInvocationDeadlineSeconds: 21600,
 		MaxAsyncResultRetentionSeconds:    2592000,
@@ -5661,6 +5685,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowsAllowed:           true,
 		WorkflowMaxPerApp:          10,
 		WorkflowMaxConcurrent:      50,
+		WorkflowMaxParked:          1000,
 		WorkflowStepMaxTimeout:     30 * time.Minute,
 		WorkflowMaxWaitDays:        90,
 	},
@@ -5749,7 +5774,7 @@ var planLimits = map[Plan]Limits{
 		// pattern); 90d retention matches the audit-grade trace
 		// retention target.
 		EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
-		EventStorage:                      EventStorageLimits{1048576, 4 << 30},
+		EventStorage:                      EventStorageLimits{8388608, 16 << 30, 1209600},
 		MaxAsyncInvocationsPerAccount:     100000,
 		MaxAsyncInvocationDeadlineSeconds: 86400,
 		MaxAsyncResultRetentionSeconds:    7776000,
@@ -6089,6 +6114,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowsAllowed:           true,
 		WorkflowMaxPerApp:          50,
 		WorkflowMaxConcurrent:      200,
+		WorkflowMaxParked:          10000,
 		WorkflowStepMaxTimeout:     2 * time.Hour,
 		WorkflowMaxWaitDays:        365,
 	},
@@ -6227,6 +6253,11 @@ const (
 
 	// Metering (spec §1, §10).
 	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1430)
+	// ObjectStorageMillicentsPerGiBMonth is the published rate for average
+	// stored bytes beyond a plan's ObjectStorage.IncludedBytes: $0.03 per
+	// GiB-month (ADR-1430). Requests and egress are free. The operator's
+	// object-storage rate card applies it.
+	ObjectStorageMillicentsPerGiBMonth int64 = 3_000
 	// ADR-566: strict compute reserves startup, execution, and bounded teardown.
 	// Strict egress credits are conservative interface-byte bounds, not invoice usage.
 	FinancialEgressMinimumCreditBytes = int64(4096)
@@ -6320,6 +6351,21 @@ const (
 	BuildVMVCPU            = 2
 	BuildTimeoutSeconds    = 900 // 15 min build; cold rootless Railpack export needs headroom
 	BuildE2ETimeoutSeconds = 900 // 15 min end-to-end
+
+	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
+	// deployment that can no longer finish on its own, so every deployment
+	// reaches a terminal state. DeploymentQueuedBuildTimeoutSeconds bounds a
+	// build's wait in the builder queue; it is generous so a builder pause
+	// or a single-slot backlog does not fail work that would still run.
+	// DeploymentStallTimeoutSeconds bounds how long an in-flight deployment
+	// with no queued or running build may go without a stage transition
+	// (imaging, snapshotting, a lost pipeline notification). Running builds
+	// stay with builderd's reaper. DeploymentWatchdogIntervalSeconds is the
+	// sweep cadence and DeploymentWatchdogBatch the rows failed per pass.
+	DeploymentQueuedBuildTimeoutSeconds = 6 * 60 * 60
+	DeploymentStallTimeoutSeconds       = 3 * 60 * 60
+	DeploymentWatchdogIntervalSeconds   = 5 * 60
+	DeploymentWatchdogBatch             = 100
 
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Run-to-completion
 	// workloads: stored image + command + env, Firecracker boots, guest runs
@@ -8882,6 +8928,22 @@ func (p Plan) WorkflowMaxConcurrentRuns() int {
 		return 0
 	}
 	return l.WorkflowMaxConcurrent
+}
+
+// WorkflowMaxParkedRuns returns how many runs parked on an event an app holds
+// outside WorkflowMaxConcurrentRuns.
+func (p Plan) WorkflowMaxParkedRuns() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.WorkflowMaxParked
+}
+
+// WorkflowAdmittedRuns is what the concurrency cap compares: an app's pending
+// and running runs plus its parked runs beyond the parked allowance.
+func WorkflowAdmittedRuns(active, parked, maxParked int) int {
+	return active + max(0, parked-maxParked)
 }
 
 // WorkflowStepMaxTimeout returns the maximum allowed timeout for any single step.
@@ -13720,6 +13782,90 @@ const (
 	ChangeTimelineDefaultWindow = 24 * time.Hour
 	ChangeTimelineMaxWindow     = 7 * 24 * time.Hour
 	ChangeTimelineMaxEvents     = 200
+)
+
+// Customer log search bounds (ADR-20261018083536). Searches are clamped to
+// the plan's ledger retention (LogArchiveRetentionDaysMax). Text matching and
+// facets are bounded by window so one query never scans more than a day
+// (text) or a week (facets) of one app's ledger, and every query runs under
+// LogSearchStatementTimeout.
+const (
+	LogSearchDefaultWindow    = time.Hour
+	LogSearchTextMaxWindow    = 24 * time.Hour
+	LogSearchFacetMaxWindow   = 7 * 24 * time.Hour
+	LogSearchPageMax          = 200
+	LogSearchQueryMinChars    = 2
+	LogSearchQueryMaxChars    = 256
+	LogSearchFacetRoutes      = 10
+	LogSearchStatementTimeout = 5 * time.Second
+	// LogSavedSearchesPerApp caps an app's saved searches (slice D).
+	LogSavedSearchesPerApp = 25
+)
+
+// Alert log context (ADR-20261022172052): a firing app alert reads the log
+// ledger over its window (capped at the text search bound) and the deploys
+// of the hour before it.
+const (
+	AlertLogContextMaxWindow      = 24 * time.Hour
+	AlertLogContextDeployLookback = time.Hour
+	AlertLogContextDeploysMax     = 3
+)
+
+// Custom dashboards (ADR-20261022173833).
+const (
+	DashboardsPerAccount   = 20
+	DashboardWidgetsMax    = 24
+	DashboardDefaultWindow = "1h"
+)
+
+// DashboardWindows are the windows a dashboard widget may read.
+var DashboardWindows = []string{"5m", "1h", "6h", "24h", "7d"}
+
+// Unified incidents (ADR-20261022193512). A rule keeps its newest episodes
+// so a flapping rule cannot grow alert_episodes without bound. The list
+// shows everything open plus what resolved inside the window, capped; each
+// source reads one row past the cap. An app incident's detail carries the
+// app's changes from IncidentChangeLookback before it opened. An account's
+// notes on one incident, acknowledgement included, are capped (slice 2); the
+// body bound is also incident_notes_body_check.
+const (
+	AlertEpisodesPerRule     = 200
+	IncidentsDefaultWindow   = 7 * 24 * time.Hour
+	IncidentsMaxWindow       = 30 * 24 * time.Hour
+	IncidentsMaxEntries      = 100
+	IncidentChangeLookback   = time.Hour
+	IncidentFiresMax         = 20
+	IncidentNotesPerIncident = 100
+	IncidentNoteMaxChars     = 2000
+)
+
+// Runtime log projection into the ledger (ADR-20261018083536 slice B). vmmd
+// forwards warn and error lines within a per-app, per-node minute budget and
+// reports the overflow as one system line per app and minute; apid caps each
+// account across nodes. The queue and batch bound vmmd's memory and each RPC
+// (BatchMax × MessageMaxBytes stays far below gRPC's 4 MiB message limit).
+const (
+	RuntimeLogEventsPerAppMinute     = 120
+	RuntimeLogEventsPerAccountMinute = 600
+	RuntimeLogEventsQueueMax         = 2048
+	RuntimeLogEventsBatchMax         = 100
+	RuntimeLogEventMessageMaxBytes   = 4096
+	RuntimeLogEventsFlushInterval    = time.Second
+	RuntimeLogEventsForwardTimeout   = 5 * time.Second
+	RuntimeLogEventsUnavailablePause = time.Minute
+)
+
+// Build and deploy projection into the ledger (ADR-20261018083536 slice C).
+// apid tails deployment_audit and finished builds every interval, trailing
+// commit order by CommitLag so a slower transaction never lands behind the
+// cursor; a restarted apid starts StartupLookback back. Each tick reads at
+// most TickRowsMax rows per source.
+const (
+	LogProjectionInterval        = 10 * time.Second
+	LogProjectionCommitLag       = 10 * time.Second
+	LogProjectionStartupLookback = 15 * time.Minute
+	LogProjectionTickRowsMax     = 2000
+	LogProjectionBuildErrorBytes = 1024
 )
 
 // Anomaly alert bounds (ADR-744). A baseline rule compares a request metric

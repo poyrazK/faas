@@ -117,8 +117,26 @@
           tls {{ faas_public_edge_cert }} {{ faas_public_edge_key }}
       {% if faas_custom_domain_tls | default(false) | bool %}
           @direct not remote_ip {{ faas_public_edge_cloudflare_cidrs | join(' ') }}
+      {% if faas_public_edge_grpc_h2c | default(false) | bool %}
+          @grpc header Content-Type application/grpc*
+      {% endif %}
           route {
               abort @direct
+      {% if faas_public_edge_grpc_h2c | default(false) | bool %}
+              reverse_proxy @grpc h2c://{{ faas_public_edge_upstream }} {
+                  header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+              }
+      {% endif %}
+              reverse_proxy {{ faas_public_edge_upstream }} {
+                  header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+              }
+          }
+      {% elif faas_public_edge_grpc_h2c | default(false) | bool %}
+          @grpc header Content-Type application/grpc*
+          route {
+              reverse_proxy @grpc h2c://{{ faas_public_edge_upstream }} {
+                  header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+              }
               reverse_proxy {{ faas_public_edge_upstream }} {
                   header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
               }
@@ -138,9 +156,21 @@
           tls {
               on_demand
           }
+      {% if faas_public_edge_grpc_h2c | default(false) | bool %}
+          @grpc header Content-Type application/grpc*
+          route {
+              reverse_proxy @grpc h2c://{{ faas_public_edge_upstream }} {
+                  header_up X-Forwarded-For {remote_host}
+              }
+              reverse_proxy {{ faas_public_edge_upstream }} {
+                  header_up X-Forwarded-For {remote_host}
+              }
+          }
+      {% else %}
           reverse_proxy {{ faas_public_edge_upstream }} {
               header_up X-Forwarded-For {remote_host}
           }
+      {% endif %}
       }
 
       http:// {

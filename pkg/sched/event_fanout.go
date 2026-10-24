@@ -473,7 +473,7 @@ func (l *Loop) runEventFanoutSweep(ctx context.Context) {
 			}
 		}
 		if retention, ok := l.engine.store.(state.PublishedEventRetentionStore); ok {
-			if _, err := retention.PruneDeliveredPublishedEvents(ctx, now.Add(-state.PublishedEventIdentityRetention), 5000); err != nil {
+			if _, err := retention.PruneSettledPublishedEvents(ctx, now, 5000); err != nil {
 				if l.log != nil {
 					l.log.Warn("sched: prune delivered event identities failed", "err", err)
 				}

@@ -48,7 +48,8 @@ class EventReceiptResponse:
     routing_settled_at: datetime.datetime | Unset = UNSET
     """All routing candidates settled, including filtered and failed outcomes; absent while routing is active."""
     retain_until: datetime.datetime | Unset = UNSET
-    """Settled receipt retention boundary, 30 days after routing settled. Absent for active routing."""
+    """Settled receipt retention boundary: the settled-receipt window of the plan after routing settled. Absent for
+    active routing."""
     backfill_recipient_count: int | Unset = UNSET
     """Additional backfilled consumers across all pages; excluded from recipient_count."""
     backfill_routing_summary: EventReceiptResponseBackfillRoutingSummary | Unset = UNSET

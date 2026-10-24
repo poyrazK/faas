@@ -142,7 +142,7 @@ func (s *PgStore) markAccountDeletionPending(ctx context.Context, accountID stri
 	}
 	changed, err := quotasql.New().MarkDeletion(ctx, tx, mustPgUUID(accountID))
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if changed == 0 {
 		return ErrNotFound

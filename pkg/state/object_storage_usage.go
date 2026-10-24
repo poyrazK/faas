@@ -39,6 +39,12 @@ type ObjectBucketUsage struct {
 	InventoryScope                                         string
 	RequestCount, EgressBytes                              int64
 	GatewayMetricsKnown                                    bool
+	// StoredByteHours is the bucket's gateway-metered storage for the
+	// snapshot's month, complete to StorageMeteredThrough. A zero
+	// StorageMeteredThrough means Gregale has not metered it this month
+	// (ADR-20261024132844).
+	StoredByteHours       int64
+	StorageMeteredThrough time.Time
 }
 
 type ObjectUsageSnapshot struct {
@@ -172,10 +178,16 @@ func objectInventoryStale(observedAt time.Time, maxAge time.Duration, now time.T
 }
 
 func summarizeGatewaySafety(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now time.Time, u api.ObjectStorageUsage, stale map[string]bool) (api.ObjectStorageUsage, map[string]bool) {
-	u.UnavailableMeters = []string{"stored_byte_hours", "cost_millicents"}
+	// Stored byte-hours are known once Gregale meters every live bucket
+	// (ADR-20261024132844); provider cost never is in this mode.
+	storageMetered := true
 	for _, b := range s.Buckets {
 		if b.Bucket.State == "deleted" && b.Bucket.UpdatedAt.Before(u.PeriodStart) {
 			continue
+		}
+		u.StoredByteHours = boundedObjectAdd(u.StoredByteHours, b.StoredByteHours)
+		if b.Bucket.State != "deleted" && b.StorageMeteredThrough.IsZero() {
+			storageMetered = false
 		}
 		// Earlier buckets may have unmeasured direct traffic or old reusable
 		// URLs. A configuration change must not retroactively bless that gap.
@@ -195,6 +207,10 @@ func summarizeGatewaySafety(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, no
 			stale[b.Bucket.ID] = true
 		}
 	}
+	u.UnavailableMeters = []string{"stored_byte_hours", "cost_millicents"}
+	if storageMetered {
+		u.UnavailableMeters = []string{"cost_millicents"}
+	}
 	return u, stale
 }
 
@@ -205,8 +221,19 @@ func summarizeGatewaySafety(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, no
 // than the current admission window. It still requires one report for every
 // backend that existed during the period and fails closed when the counters
 // cannot be represented safely.
+//
+// A month Gregale metered itself (gateway-safety accounting, ADR-20261024132844)
+// has no provider reports; it bills from the metered rows instead.
 func SummarizeObjectStorageBillingUsage(s ObjectUsageSnapshot, periodStart time.Time) (api.ObjectStorageUsage, error) {
 	periodStart = ObjectStoragePeriod(periodStart)
+	for _, b := range s.Buckets {
+		if !b.StorageMeteredThrough.IsZero() {
+			if len(s.Reports) != 0 {
+				return api.ObjectStorageUsage{}, ErrObjectBillingConflict
+			}
+			return summarizeGatewayStorageBilling(s, periodStart)
+		}
+	}
 	u := api.ObjectStorageUsage{Fresh: true, PeriodStart: periodStart, Authorizations: s.Authorizations}
 	periodEnd := periodStart.AddDate(0, 1, 0)
 	required := map[string]string{}
@@ -366,4 +393,39 @@ func checkObjectReport(s ObjectUsageSnapshot, r api.ObjectStorageUsageReport) er
 		}
 	}
 	return nil
+}
+
+// summarizeGatewayStorageBilling closes a gateway-metered month. Every metered
+// row must be accrued to the end of the month, or to its bucket's deletion,
+// before the month bills; until then it is incomplete and month close retries.
+// A bucket with no row was never metered while it lived and bills nothing.
+func summarizeGatewayStorageBilling(s ObjectUsageSnapshot, periodStart time.Time) (api.ObjectStorageUsage, error) {
+	u := api.ObjectStorageUsage{Fresh: true, PeriodStart: periodStart, Authorizations: s.Authorizations, UnavailableMeters: []string{"cost_millicents"}}
+	// Provider cost stays unknown; the charge prices metered storage only.
+	periodEnd := periodStart.AddDate(0, 1, 0)
+	for _, b := range s.Buckets {
+		if !b.Bucket.CreatedAt.IsZero() && !b.Bucket.CreatedAt.Before(periodEnd) {
+			continue
+		}
+		if b.Bucket.State == "deleted" && !b.Bucket.UpdatedAt.IsZero() && !b.Bucket.UpdatedAt.After(periodStart) {
+			continue
+		}
+		u.RequestCount = boundedObjectAdd(u.RequestCount, b.RequestCount)
+		u.EgressBytes = boundedObjectAdd(u.EgressBytes, b.EgressBytes)
+		if b.StorageMeteredThrough.IsZero() {
+			continue
+		}
+		closes := periodEnd
+		if b.Bucket.State == "deleted" && b.Bucket.UpdatedAt.Before(periodEnd) {
+			closes = b.Bucket.UpdatedAt
+		}
+		if b.StorageMeteredThrough.Before(closes) {
+			return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
+		}
+		u.StoredByteHours = boundedObjectAdd(u.StoredByteHours, b.StoredByteHours)
+	}
+	if u.StoredByteHours > api.MaxObjectStoragePolicyValue || u.RequestCount > api.MaxObjectStoragePolicyValue || u.EgressBytes > api.MaxObjectStoragePolicyValue {
+		return api.ObjectStorageUsage{}, ErrObjectBillingIncomplete
+	}
+	return u, nil
 }

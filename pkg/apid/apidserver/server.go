@@ -36,8 +36,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 
+	"github.com/onebox-faas/faas/pkg/apid/dashboards"
+	"github.com/onebox-faas/faas/pkg/apid/incidents"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
+	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
@@ -151,6 +154,9 @@ type server struct {
 	productControl                         product.Service
 	appEvents                              appevents.Service  // ADR-977; Host wired in newServer
 	serviceMap                             servicemap.Service // ADR-1131; Host wired in newServer
+	logSearch                              logsearch.Service  // ADR-20261018083536; Host wired in newServer
+	dashboards                             dashboards.Service // ADR-20261022173833; Host wired in newServer
+	incidents                              incidents.Service  // ADR-20261022193512; Host wired in newServer
 	// configGuardTelemetry overrides the store's request telemetry for
 	// config guards (ADR-1451); nil reads it from the store.
 	configGuardTelemetry state.ConfigGuardTelemetryStore
@@ -399,6 +405,10 @@ type server struct {
 	// (issue #98 / ADR-028). nil = no admin access (every route
 	// 403s); populated by WithAdminAllowlist from FAAS_ADMIN_EMAILS.
 	adminAllowlist *adminAllowlist
+	// operatorBearerReadsDeprecated is the one-release grace of ADR
+	// 20261023214253: operator keys still read session-only routes, with
+	// deprecation headers and an audit row. Set by WithOperatorBearerReads.
+	operatorBearerReadsDeprecated bool
 	// statusCache backs GET /status/slo.json (spec §12 public status
 	// page). Wired in production via WithStatusCache; nil keeps the
 	// route functional but degraded (returns source=empty payload).
@@ -1514,6 +1524,9 @@ func newServerWithDeps(
 		return s.platformFlagOr(platformflags.ServiceMap, flagSubject(r, acct), s.serviceMap.Enabled)
 	}
 	s.platformFlagAdmin.Host = platformFlagAdminHost{s}
+	s.logSearch.Host = logSearchHost{s}
+	s.dashboards.Host = dashboardsHost{s}
+	s.incidents.Host = incidentsHost{s}
 	s.previews.Host = previewsHost{s}
 	s.realtime.PreviewReleased = func(r *http.Request, acct state.Account, flagKey string, legacy bool) bool {
 		return s.platformFlagOr(flagKey, flagSubject(r, acct), legacy)
@@ -1878,13 +1891,13 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/orgs/{slug}/application-standard-publishers/{resource}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getApplicationStandardPublisher)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgApps)))))
 	mux.HandleFunc("POST /v1/orgs/{slug}/apps", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.requireVerifiedEmail(s.idempotent(s.createOrgApp)))))))
-	mux.HandleFunc("PATCH /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.patchOrg)))))
-	mux.HandleFunc("DELETE /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.softDeleteOrg)))))
+	mux.HandleFunc("PATCH /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.patchOrg)))))
+	mux.HandleFunc("DELETE /v1/orgs/{slug}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.softDeleteOrg)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgMembers)))))
-	mux.HandleFunc("POST /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.inviteOrgMember)))))
-	mux.HandleFunc("PATCH /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.changeOrgMemberRole)))))
-	mux.HandleFunc("DELETE /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.removeOrgMember)))))
-	mux.HandleFunc("POST /v1/orgs/{slug}/transfer_ownership", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.transferOrgOwnership))))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/members", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.inviteOrgMember)))))
+	mux.HandleFunc("PATCH /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.changeOrgMemberRole)))))
+	mux.HandleFunc("DELETE /v1/orgs/{slug}/members/{user_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.removeOrgMember)))))
+	mux.HandleFunc("POST /v1/orgs/{slug}/transfer_ownership", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.requireStepUp(5*time.Minute)(s.transferOrgOwnership))))))
 	mux.HandleFunc("GET /v1/invitations/{token}", s.authLimited(s.peekInvitation))
 	// PR-8 + PR-9 §4: accept-invitation sits behind requireStepUpStrict
 	// (5m). PR-9 flips the bearer-key branch from "bypass" to
@@ -1899,7 +1912,7 @@ func (s *server) handler() http.Handler {
 	// requireVerifiedEmail makes the invitation's email match a binding:
 	// an unverified account could otherwise claim the invitee's address.
 	mux.HandleFunc("POST /v1/invitations/{token}/accept", s.authLimited(s.requireMFA(s.requireStepUpStrict(5*time.Minute)(s.requireVerifiedEmail(s.acceptInvitation)))))
-	mux.HandleFunc("DELETE /v1/orgs/{slug}/invitations/{invitation_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.loadOrg(s.revokeInvitation)))))
+	mux.HandleFunc("DELETE /v1/orgs/{slug}/invitations/{invitation_id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.loadOrg(s.revokeInvitation)))))
 	// PR-8 §2: list invitations surface (cursor-paginated, every role).
 	mux.HandleFunc("GET /v1/orgs/{slug}/invitations", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.listOrgInvitations)))))
 	mux.HandleFunc("GET /v1/orgs/{slug}/seat_usage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.loadOrg(s.getOrgSeatUsage)))))
@@ -2423,6 +2436,22 @@ func (s *server) handler() http.Handler {
 	// because there's no slug path.
 	mux.HandleFunc("GET /v1/apps/metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppsMetrics)))
 	mux.HandleFunc("GET /v1/service-map", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.serviceMap.Get))) // ADR-1131
+	// ADR-20261018083536 — customer log search over the ADR-213 ledger.
+	mux.HandleFunc("GET /v1/apps/{slug}/log-events", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.logSearch.Search)))
+	mux.HandleFunc("GET /v1/apps/{slug}/log-events/facets", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.logSearch.Facets)))
+	mux.HandleFunc("GET /v1/apps/{slug}/log-searches", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.logSearch.ListSaved)))
+	mux.HandleFunc("GET /v1/dashboards", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.dashboards.List)))
+	mux.HandleFunc("POST /v1/dashboards", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboards.Create)))
+	mux.HandleFunc("GET /v1/dashboards/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.dashboards.Get)))
+	mux.HandleFunc("GET /v1/dashboards/{id}/data", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.dashboards.Data)))
+	mux.HandleFunc("PUT /v1/dashboards/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboards.Replace)))
+	mux.HandleFunc("DELETE /v1/dashboards/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboards.Delete)))
+	mux.HandleFunc("GET /v1/incidents", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.incidents.List)))
+	mux.HandleFunc("GET /v1/incidents/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.incidents.Get)))
+	mux.HandleFunc("POST /v1/incidents/{id}/acknowledge", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.incidents.Acknowledge)))
+	mux.HandleFunc("POST /v1/incidents/{id}/notes", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.incidents.AddNote)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/log-searches/{name}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.logSearch.PutSaved)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/log-searches/{name}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.logSearch.DeleteSaved)))
 	// Self-serve previews (ADR 20261021080640).
 	mux.HandleFunc("GET /v1/previews", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.previews.List)))
 	mux.HandleFunc("PUT /v1/previews/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.previews.Join))))
@@ -4091,24 +4120,22 @@ func (s *server) handler() http.Handler {
 	// Operator observability backend (issue #777 / ADR-091). The
 	// /v1/admin/obs/* surface gives the platform owner read-only
 	// visibility into fleet state (users, apps, nodes, heartbeats).
-	// Same two-layer gate as the rest of /v1/admin/* (admin scope
-	// + email allowlist, the second enforced inside each handler
-	// via s.adminAllows), plus MFA — the obs view exposes
-	// secret-adjacent metadata (MFA enrollment, account email) and
-	// the cost is a one-time TOTP per 24h session thanks to
-	// step-up elsewhere (ADR-091 §"Two-layer gate confirmed").
-	// All five routes are GETs; no s.idempotent wrapper needed
-	// (matches /v1/compute-nodes read precedent).
+	// Every provider read picks one of two policies (ADR
+	// 20261023214253): requireOperatorSessionRead for reads that return
+	// customer data (an MFA-completed operator session; keys refused),
+	// requireOperatorRead for fleet telemetry that names no tenant (an
+	// operator key also works). operator_read_policy_test.go pins which
+	// route is in which tier. All are GETs; no s.idempotent wrapper.
 	// ADR-371: which tenant connected to an address at a time. Operator-only
 	// read of the egress flow log.
 	mux.HandleFunc("GET /v1/admin/egress-flows",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.listEgressFlows)))))
+		s.authLimited(s.requireOperatorSessionRead(s.listEgressFlows)))
 	mux.HandleFunc("GET /v1/admin/obs/overview",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsOverview))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsOverview)))
 	mux.HandleFunc("GET /v1/admin/managed-postgres/usage/{account_id}",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getManagedPostgresUsageOperator))))
+		s.authLimited(s.requireOperatorSessionRead(s.getManagedPostgresUsageOperator)))
 	mux.HandleFunc("GET /v1/admin/managed-postgres/accounting/{account_id}",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getManagedPostgresAccountingDiagnostics))))
+		s.authLimited(s.requireOperatorSessionRead(s.getManagedPostgresAccountingDiagnostics)))
 	mux.HandleFunc("POST /v1/admin/managed-postgres/accounting/{account_id}/usage-imports/preview",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.previewManagedPostgresUsageImport)))))
 	mux.HandleFunc("POST /v1/admin/managed-postgres/accounting/{account_id}/usage-imports",
@@ -4118,33 +4145,33 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/admin/managed-postgres/accounting/{account_id}/reconciliations",
 		s.authLimited(s.requireAdminMutation(s.applyManagedPostgresAccountingReconciliation)))
 	mux.HandleFunc("GET /v1/admin/obs/tenants",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsListTenants))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsListTenants)))
 	mux.HandleFunc("GET /v1/admin/obs/capacity",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsCapacity))))
+		s.authLimited(s.requireOperatorRead(s.obsCapacity)))
 	mux.HandleFunc("GET /v1/admin/obs/tenants/{id}/360",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsTenant360))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsTenant360)))
 	mux.HandleFunc("GET /v1/admin/obs/tenants/{id}",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsGetTenant))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsGetTenant)))
 	mux.HandleFunc("GET /v1/admin/obs/tenants/{id}/activity",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsTenantActivity))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsTenantActivity)))
 	mux.HandleFunc("GET /v1/admin/obs/apps/{id}",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAppDetail))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsAppDetail)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsListNodes))))
+		s.authLimited(s.requireOperatorRead(s.obsListNodes)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/detail",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsNodeDetail))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsNodeDetail)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/{name}/heartbeats",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsNodeHeartbeats))))
+		s.authLimited(s.requireOperatorRead(s.obsNodeHeartbeats)))
 	// PR #4 (ADR-092 §3.6) — per-node wake-latency quantiles.
 	// Literal path /wake-latency sits before the SSE /events
 	// route; Go 1.22+ mux disambiguates by exact match.
 	mux.HandleFunc("GET /v1/admin/obs/nodes/wake-latency",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsNodeWakeLatency))))
+		s.authLimited(s.requireOperatorRead(s.obsNodeWakeLatency)))
 	// PR #2 endpoints (ADR-091 §3.5 + §3.6). Same two-layer gate +
 	// MFA as PR #1. Anomalies reads usage_minutes only; rate-limits
 	// reads events + the in-process s.apiAuthLimiter snapshot.
 	mux.HandleFunc("GET /v1/admin/obs/anomalies",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAnomalies))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsAnomalies)))
 	// PR #3 endpoints (ADR-091 §3.7). audit-log/search reads the
 	// FK-free audit_log table (the regulator-grade evidence path);
 	// events reads the live events table (the live diagnostic path);
@@ -4152,22 +4179,22 @@ func (s *server) handler() http.Handler {
 	// /v1/compute-nodes/events path. All three routes inherit the
 	// same two-layer gate + MFA chain as PR #1 + PR #2.
 	mux.HandleFunc("GET /v1/admin/obs/audit-log/search",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAuditLogSearch))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsAuditLogSearch)))
 	mux.HandleFunc("GET /v1/admin/obs/events",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsEvents))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsEvents)))
 	mux.HandleFunc("GET /v1/admin/obs/traces/{trace_id}",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsTraceLookup))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsTraceLookup)))
 	mux.HandleFunc("GET /v1/admin/obs/nodes/events",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsNodesEventsSSE))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsNodesEventsSSE)))
 	mux.HandleFunc("GET /v1/admin/obs/rate-limits",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRateLimits))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsRateLimits)))
 	// P5 (operator-side observability mega-PR / Commit 7) —
 	// builderd fleet heartbeat + build-queue depth. Today's row
 	// count is zero: the underlying writer (pkg/builderd/heartbeat.go)
 	// is deferred per the Commit 7 PR risk list — builderd does
 	// not currently self-register a compute_nodes row at startup.
 	mux.HandleFunc("GET /v1/admin/obs/builder-heartbeats",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsBuilderHeartbeats))))
+		s.authLimited(s.requireOperatorRead(s.obsBuilderHeartbeats)))
 	// Obs-Meta + Trace-IDs Mega-PR / C7 — meta-obs health
 	// endpoint. Answers the operator's "is the obs stack itself
 	// healthy?" question: a JSON snapshot of the audit_log write
@@ -4177,29 +4204,29 @@ func (s *server) handler() http.Handler {
 	// the rest of /v1/admin/obs/*; no MFA bypass for this one
 	// because the snapshot exposes alert-state metadata.
 	mux.HandleFunc("GET /v1/admin/obs/health",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsHealthHandler))))
-	mux.HandleFunc("GET /v1/admin/obs/notification-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsNotificationHealth))))
-	mux.HandleFunc("GET /v1/admin/obs/rule-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRuleHealth))))
-	mux.HandleFunc("GET /v1/admin/obs/rule-coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRuleCoverage))))
-	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsRecordingCoverage))))
-	mux.HandleFunc("GET /v1/admin/obs/input-health", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsInputHealth))))
+		s.authLimited(s.requireOperatorRead(s.obsHealthHandler)))
+	mux.HandleFunc("GET /v1/admin/obs/notification-health", s.authLimited(s.requireOperatorRead(s.obsNotificationHealth)))
+	mux.HandleFunc("GET /v1/admin/obs/rule-health", s.authLimited(s.requireOperatorRead(s.obsRuleHealth)))
+	mux.HandleFunc("GET /v1/admin/obs/rule-coverage", s.authLimited(s.requireOperatorRead(s.obsRuleCoverage)))
+	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireOperatorRead(s.obsRecordingCoverage)))
+	mux.HandleFunc("GET /v1/admin/obs/input-health", s.authLimited(s.requireOperatorRead(s.obsInputHealth)))
 	mux.HandleFunc("GET /v1/admin/ops/data-repairs",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorDataRepairHealth))))
 	// Unified incident inbox. This is a read-only correlation projection over
 	// the existing deployment, job-run, compute-node, and alert surfaces;
 	// it keeps operator triage out of the deployment request path.
 	mux.HandleFunc("GET /v1/admin/obs/incidents",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidents))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsIncidents)))
 	mux.HandleFunc("GET /v1/admin/obs/incidents/{kind}/{id}/evidence",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidentEvidence))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsIncidentEvidence)))
 	mux.HandleFunc("GET /v1/admin/obs/incidents/{kind}/{id}/context",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsIncidentContext))))
+		s.authLimited(s.requireOperatorSessionRead(s.obsIncidentContext)))
 
-	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/response-times", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertResponseTimes))))
-	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/recurrence", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertRecurrence))))
-	mux.HandleFunc("GET /v1/admin/obs/collection-history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertCollectionHistory))))
-	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/summary", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertWorkload))))
-	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/{id}/triage-history", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.obsAlertTriageHistory))))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/response-times", s.authLimited(s.requireOperatorRead(s.obsAlertResponseTimes)))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/recurrence", s.authLimited(s.requireOperatorSessionRead(s.obsAlertRecurrence)))
+	mux.HandleFunc("GET /v1/admin/obs/collection-history", s.authLimited(s.requireOperatorRead(s.obsAlertCollectionHistory)))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/summary", s.authLimited(s.requireOperatorRead(s.obsAlertWorkload)))
+	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/{id}/triage-history", s.authLimited(s.requireOperatorRead(s.obsAlertTriageHistory)))
 
 	mux.Handle("POST /v1/admin/obs/incidents/platform_alert/{id}/triage", middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postObsAlertTriage))))
 
@@ -4246,18 +4273,18 @@ func (s *server) handler() http.Handler {
 	// metadata without task leases or job inputs; cancellation reuses the
 	// atomic customer cancellation primitive behind the strict operator policy.
 	mux.HandleFunc("GET /v1/admin/ops/jobs/runs",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorActiveJobRuns))))
+		s.authLimited(s.requireOperatorSessionRead(s.getOperatorActiveJobRuns)))
 	mux.HandleFunc("GET /v1/admin/ops/jobs/runs/{id}",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorJobRun))))
+		s.authLimited(s.requireOperatorSessionRead(s.getOperatorJobRun)))
 	mux.Handle("POST /v1/admin/ops/jobs/runs/{id}/cancel",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postOperatorJobRunCancel))))
 	// Deployment incident controls. Reads expose a bounded safe projection;
 	// retry/cancel reuse the normal queue primitives behind the strict
 	// operator-session policy and are always audited.
 	mux.HandleFunc("GET /v1/admin/ops/deployments",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorDeployments))))
+		s.authLimited(s.requireOperatorSessionRead(s.getOperatorDeployments)))
 	mux.HandleFunc("GET /v1/admin/ops/deployments/{id}",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorDeployment))))
+		s.authLimited(s.requireOperatorSessionRead(s.getOperatorDeployment)))
 	mux.Handle("POST /v1/admin/ops/deployments/{id}/cancel",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postOperatorDeploymentCancel))))
 	mux.Handle("POST /v1/admin/ops/deployments/{id}/retry",
@@ -4315,7 +4342,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/flags/{key}/decision",
 		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.Decision))))
 	mux.HandleFunc("GET /v1/admin/accounts/{id}/flags",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.AccountFlags))))
+		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.AccountFlags)))
 
 	// IAM-4 (ADR-035) — auth audit log surface. Read-only; the
 	// events table is append-only (spec §5). Scope gating: session
@@ -4333,13 +4360,12 @@ func (s *server) handler() http.Handler {
 	//   - /v1/audit-log: customer-scoped, MFA + apps:read; pinned
 	//     to the calling account's ID inside the handler. Same
 	//     scope posture as /v1/audit-events.
-	//   - /v1/audit-log/all: operator-only, admin scope; can read
-	//     across accounts and opt into account_id IS NULL rows
-	//     with ?include_anonymous=true. No MFA gate — admin
-	//     sessions and admin API keys are already MFA-gated upstream
-	//     at session issue time.
+	//   - /v1/audit-log/all: operator-only; can read across accounts
+	//     and opt into account_id IS NULL rows with
+	//     ?include_anonymous=true. Cross-tenant data, so an
+	//     MFA-completed operator session only (ADR 20261023214253).
 	mux.HandleFunc("GET /v1/audit-log", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.listAuditLog))))
-	mux.HandleFunc("GET /v1/audit-log/all", s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.listAuditLogAll))))
+	mux.HandleFunc("GET /v1/audit-log/all", s.authLimited(s.requireOperatorSessionRead(s.listAuditLogAll)))
 
 	// ADR-089 PR-C — background re-seal progress (operator-only,
 	// FAAS_REKEY_ENABLED opt-in). Same gate as /v1/audit-log/all
@@ -4804,6 +4830,13 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/apps/{slug}/changes", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderAppChangesDashboard))))
 	// ADR-20261020085706: the page approval notifications link to.
 	mux.Handle("GET /dashboard/releases/{id}/approval", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderReleaseApprovalPage))))
+	mux.Handle("GET /dashboard/apps/{slug}/log-search", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderAppLogSearchDashboard))))
+	mux.Handle("GET /dashboard/dashboards", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomDashboards))))
+	mux.Handle("GET /dashboard/dashboards/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomDashboard))))
+	mux.Handle("GET /dashboard/incidents", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderIncidents))))
+	mux.Handle("GET /dashboard/incidents/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderIncident))))
+	mux.Handle("POST /dashboard/incidents/{id}/acknowledge", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIncidentAcknowledge))))
+	mux.Handle("POST /dashboard/incidents/{id}/notes", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIncidentNote))))
 	mux.Handle("GET /dashboard/apps/{slug}/custom-metrics", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomMetricsDashboard))))
 	mux.Handle("POST /dashboard/dev-bridges/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.revokeDevBridgeDashboard))))
 
