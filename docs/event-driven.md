@@ -782,6 +782,12 @@ against the CloudEvents envelope. A matching run receives that full envelope
 as input, so `{{input.data.invoice_id}}` selects the producer's invoice ID.
 Event triggers reject schedule, timezone, fixed input, and overlap fields.
 Several events can start concurrent runs, subject to the existing app run quota.
+A run waiting on an event (`awaiting_event`) does not count toward that quota
+until the app has more parked runs than its plan's parked allowance: 100, 1,000
+and 10,000 per app on Hobby, Pro and Scale (ADR-20261023215834). Parked runs
+beyond the allowance count as concurrent. A run woken by its event returns to
+`pending` and counts again, even when that takes the app over its quota; new
+runs are refused until the app is back under it.
 
 Use `gregale events preview` before publishing; its samples include the workflow
 name, deployment ID, and stable recipient ID. Preview checks matching intent and
