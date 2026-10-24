@@ -20,7 +20,7 @@ for (const [index, handler] of project.handlers.entries()) {
   names.add(handler.export); namespaces.add(handler.namespace);
   const alias = `contract${index}`;
   lines.push(`import {${client.export} as ${alias}} from ${JSON.stringify('./'+module)};`);
-  lines.push(`/** @param {Omit<import('@gregale/sdk-node').DurableEntityHandleScope, 'namespace'>} scope */`);
+  lines.push(`/** @param {Omit<import('@gregale/sdk-node/preview').DurableEntityHandleScope, 'namespace'>} scope */`);
   lines.push(`function factory${index}(scope) { if (${alias}.namespace !== ${JSON.stringify(handler.namespace)}) throw new TypeError('client namespace differs from declaration'); return durableEntityClient(${alias}, scope); }`);
   lines.push(`export {factory${index} as ${handler.export}};`);
 }
