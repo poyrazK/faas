@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/url"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -196,6 +197,16 @@ func eventReplayBackfillItemsProblem(err, contextErr error) *api.Problem {
 	return eventReplayBackfillProblem(err, nil)
 }
 
+// eventReplayBackfillRangeProblem names the plan's settled-receipt window
+// and the requested range, in seconds.
+func eventReplayBackfillRangeProblem(err error) *api.Problem {
+	var rangeErr *state.EventReplayBackfillRangeError
+	if !errors.As(err, &rangeErr) {
+		return api.ErrValidation("backfill range cannot exceed the plan's settled-receipt retention window")
+	}
+	return api.ErrEventReplayBackfillRange(int64(rangeErr.Limit/time.Second), int64((rangeErr.Range+time.Second-1)/time.Second))
+}
+
 func eventReplayBackfillProblem(err, contextErr error) *api.Problem {
 	switch {
 	case errors.Is(err, state.ErrNotFound):
@@ -203,7 +214,7 @@ func eventReplayBackfillProblem(err, contextErr error) *api.Problem {
 	case errors.Is(err, state.ErrEventReplayBackfillQuery):
 		return api.ErrValidation(err.Error())
 	case errors.Is(err, state.ErrEventReplayBackfillRange):
-		return api.ErrValidation("backfill range cannot exceed the 30-day settled-receipt retention window")
+		return eventReplayBackfillRangeProblem(err)
 	case errors.Is(err, state.ErrEventReplayBackfillDisabled):
 		return api.NewProblem(http.StatusConflict, "event_replay_backfill_disabled", "Subscription disabled", err.Error())
 	case errors.Is(err, state.ErrEventReplayBackfillUnsupported):

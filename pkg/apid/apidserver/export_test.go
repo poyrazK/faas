@@ -46,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
@@ -1653,4 +1654,12 @@ func (e sourceRefTestEnv) SetDatabaseSwitchDrain(drain state.DatabaseSwitchDrain
 // switches.
 func (e sourceRefTestEnv) DatabaseSwitchWorkerConfigured() bool {
 	return e.srv.databaseSwitchWorker() != nil
+}
+
+// PrepareGitOpsWorkloadCandidatesForTest runs the GitOps backend's candidate
+// preparation against s's runtime configuration (ADR 20261022140000).
+func (s *server) PrepareGitOpsWorkloadCandidatesForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore,
+	lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
+	b := &environmentGitOpsBackend{server: s, intent: intent}
+	return b.prepareWorkloadCandidates(ctx, lease, plan)
 }
