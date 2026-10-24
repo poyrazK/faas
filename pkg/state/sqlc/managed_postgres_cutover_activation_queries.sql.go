@@ -117,7 +117,7 @@ func (q *Queries) InsertActivatedManagedPostgresSecret(ctx context.Context, db D
 }
 
 const lockManagedPostgresActivationSecretTarget = `-- name: LockManagedPostgresActivationSecretTarget :exec
-SELECT pg_advisory_xact_lock(managed_secret_target_lock_key($1::text,$2::text,$3::text))
+SELECT pg_advisory_xact_lock(managed_secret_target_lock_key($1::text::uuid,$2::text,$3::text))
 `
 
 type LockManagedPostgresActivationSecretTargetParams struct {

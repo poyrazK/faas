@@ -48,7 +48,7 @@ VALUES(sqlc.arg(id)::text::uuid,sqlc.arg(account_id)::text::uuid,sqlc.arg(databa
  sqlc.arg(now)::timestamptz,sqlc.arg(now)::timestamptz,sqlc.arg(now)::timestamptz);
 
 -- name: LockManagedPostgresActivationSecretTarget :exec
-SELECT pg_advisory_xact_lock(managed_secret_target_lock_key(sqlc.arg(app_id)::text,sqlc.arg(scope)::text,sqlc.arg(key)::text));
+SELECT pg_advisory_xact_lock(managed_secret_target_lock_key(sqlc.arg(app_id)::text::uuid,sqlc.arg(scope)::text,sqlc.arg(key)::text));
 
 -- name: InsertActivatedManagedPostgresSecret :exec
 INSERT INTO app_secrets(account_id,app_id,scope,key,ciphertext,kid,value_hash,managed_postgres_binding_id,
