@@ -80,6 +80,8 @@ type Handler struct {
 	spoolDir        string
 	maxPutBytes     int64
 	putSlots        chan struct{}
+	slotMu          sync.Mutex
+	accountSlots    map[string]int
 	maxSpoolBytes   int64
 	minSpoolFree    int64
 	transferTimeout time.Duration
@@ -175,7 +177,7 @@ func New(c Config) (*Handler, error) {
 		maxSpoolBytes: c.MaxSpoolBytes, minSpoolFree: c.MinSpoolFreeBytes,
 		transferTimeout: c.Registry.TransferTimeout(),
 		spoolAvailable:  func() (uint64, error) { return availableSpoolBytes(c.SpoolDir) },
-		now:             c.Now, log: c.Log, lastTouch: map[string]time.Time{},
+		now:             c.Now, log: c.Log, lastTouch: map[string]time.Time{}, accountSlots: map[string]int{},
 	}, nil
 }
 
@@ -1037,6 +1039,11 @@ func copyObjectHeaders(dst, src http.Header) {
 	}
 }
 
+const (
+	objectBusyMessage     = "Other work on this bucket is settling. Reduce concurrency or retry shortly."
+	objectConflictMessage = "A conflicting operation on this bucket or key must finish first, such as an open multipart upload or a versioning change."
+)
+
 func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requestContext, err error, key string) {
 	resource := r.URL.Path
 	if errors.Is(err, objectstorage.ErrPreconditionFailed) {
@@ -1050,6 +1057,18 @@ func (h *Handler) providerError(w http.ResponseWriter, r *http.Request, req requ
 	if errors.Is(err, state.ErrObjectVersionProtectionPending) {
 		w.Header().Set("Retry-After", "30")
 		writeS3Error(w, http.StatusConflict, "OperationAborted", "Object version protection is pending.", resource, req.requestID)
+		return
+	}
+	// Contention is the customer's own concurrent work, never a provider
+	// outage: SDKs retry SlowDown with backoff, and 409 tells them waiting
+	// will not help yet.
+	if errors.Is(err, state.ErrObjectBucketBusy) {
+		w.Header().Set("Retry-After", "1")
+		writeS3Error(w, http.StatusServiceUnavailable, "SlowDown", objectBusyMessage, resource, req.requestID)
+		return
+	}
+	if errors.Is(err, state.ErrConflict) || errors.Is(err, objectstorage.ErrConflict) {
+		writeS3Error(w, http.StatusConflict, "OperationAborted", objectConflictMessage, resource, req.requestID)
 		return
 	}
 	if errors.Is(err, objectstorage.ErrNotFound) {

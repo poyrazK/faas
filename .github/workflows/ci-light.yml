@@ -11,9 +11,10 @@ name: ci-light
 #                             packages and `go vet` of the importers that use
 #                             a changed exported name; -race tests of changed
 #                             packages and the §6.2 invariants; for
-#                             cmd/gregale, pkg/state and pkg/apid/apidserver
-#                             only the tests related to the change, without
-#                             -race (scripts/ci/select_package_tests.py);
+#                             cmd/gregale, pkg/sched, pkg/state and
+#                             pkg/apid/apidserver only the tests related to
+#                             the change, without -race
+#                             (scripts/ci/select_package_tests.py);
 #                             boot-contract, generated-code drift, policy
 #                             gates, version-skew (N±1) checks and migration
 #                             ID/expand-contract/apply/replay checks.
@@ -278,10 +279,11 @@ jobs:
           if (( i < ${#pkgs[@]} )); then
             echo "::warning::importer compile check reached the job's 15-minute budget; not checked here (the mega tier vets them): ${pkgs[*]:i}"
           fi
-      # Main pushes lint cmd/gregale, pkg/state and pkg/apid/apidserver even
-      # when unchanged, so the saved cache holds their dependencies' export
-      # data and analysis facts: a pull request touching one of them then
-      # re-analyses only what it changed (about a minute, not ten).
+      # Main pushes lint cmd/gregale, pkg/sched, pkg/state and
+      # pkg/apid/apidserver even when unchanged, so the saved cache holds
+      # their dependencies' export data and analysis facts: a pull request
+      # touching one of them then re-analyses only what it changed (about a
+      # minute, not ten).
       - name: warm the large packages' lint cache (main)
         if: github.ref == 'refs/heads/main'
         env:
@@ -291,10 +293,11 @@ jobs:
           GOMAXPROCS: 4
         run: |
           for shard in 1 2 3; do
-            pkg="$(python3 scripts/ci/affected_packages.py pinned --shard "$shard" --shards 3 < /dev/null)"
-            echo "Warming $pkg"
-            golangci-lint run --timeout=20m "$pkg" >/dev/null \
-              || echo "::warning::golangci-lint reports findings in $pkg on main; the mega tier's lint shards fail on them"
+            for pkg in $(python3 scripts/ci/affected_packages.py pinned --shard "$shard" --shards 3 < /dev/null); do
+              echo "Warming $pkg"
+              golangci-lint run --timeout=20m "$pkg" >/dev/null \
+                || echo "::warning::golangci-lint reports findings in $pkg on main; the mega tier's lint shards fail on them"
+            done
           done
       - name: save Go build + lint cache
         if: always() && github.ref == 'refs/heads/main'
@@ -529,10 +532,11 @@ jobs:
     name: "light: tests (shard ${{ matrix.shard }})"
     runs-on: ubuntu-latest
     # Changed packages run in full with -race. Each shard also runs related
-    # tests of one large package (cmd/gregale, pkg/state or pkg/apid/apidserver;
-    # see SELECTIVE_SHARD in affected_packages.py), without -race. The mega
-    # tier (ci.yml) runs every suite in full with -race nightly and before
-    # every release. Main pushes also warm the large-package build for PRs.
+    # tests of its large packages (cmd/gregale; pkg/sched and pkg/state;
+    # pkg/apid/apidserver; see SELECTIVE_SHARD in affected_packages.py),
+    # without -race. The mega tier (ci.yml) runs every suite in full with
+    # -race nightly and before every release. Main pushes also warm the
+    # large-package builds for PRs.
     # Cold native fixtures and large-package builds can exceed 20 minutes.
     # Use main's budget on PRs too; the Go test deadlines below stay bounded.
     timeout-minutes: 40
@@ -714,8 +718,8 @@ jobs:
       # Two kinds of package per shard:
       #   - changed packages (and the §6.2 invariants in tests/property when
       #     anything in their import tree changed) run in full with -race;
-      #   - the shard's pinned large package (cmd/gregale, pkg/state or
-      #     pkg/apid/apidserver), when changed, runs only the tests
+      #   - the shard's pinned large packages (cmd/gregale; pkg/sched and
+      #     pkg/state; pkg/apid/apidserver), when changed, run only the tests
       #     scripts/ci/select_package_tests.py relates to the change, capped,
       #     without -race. The mega tier runs those suites in full with -race.
       # The race build of cmd/apid can exhaust hosted-runner memory, so race
@@ -783,8 +787,9 @@ jobs:
           SHARD: ${{ matrix.shard }}
         run: |
           set -euo pipefail
-          pkg="$(python3 scripts/ci/affected_packages.py pinned --shard "$SHARD" --shards 3 < /dev/null)"
-          go test -count=1 -run '^$' "$pkg"
+          pkgs="$(python3 scripts/ci/affected_packages.py pinned --shard "$SHARD" --shards 3 < /dev/null)"
+          # shellcheck disable=SC2086 # space-separated package list
+          go test -count=1 -run '^$' $pkgs
       - name: save Go build + test cache
         if: always() && github.ref == 'refs/heads/main'
         uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4

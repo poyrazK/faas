@@ -103,8 +103,13 @@ Create a bucket with `public: true` and a stable `serve_at` path, for example
 is ready, `GET` and `HEAD` requests to
 `https://<app>.<apps-domain>/assets/<key>` are served directly by
 `gatewayd-public`; a route hit never wakes or proxies to the app. Responses
-use `Cache-Control: public, max-age=31536000, immutable` and do not require a
-Gregale or S3 signed URL. The mount path is immutable after creation; choose a
+use `Cache-Control: public, max-age=300, must-revalidate` and do not require a
+Gregale or S3 signed URL. Caches revalidate every five minutes, so deleting or
+replacing an object takes it down everywhere within that time. Anonymous reads
+may use at most 75% of the account's monthly request and egress ceilings, so
+private access always keeps the rest. Each bucket also serves at most 100
+reads per second per gateway (burst 200). Past either limit, readers get 429
+([ADR 20261023223000](adr/20261023223000-object-storage-bucket-scoped-availability.md)). The mount path is immutable after creation; choose a
 new bucket if an app needs a different public path. Public reads still pass
 through the configured object-storage accounting policy, and successful bytes
 are recorded in the per-bucket request ledger; provider-authoritative egress

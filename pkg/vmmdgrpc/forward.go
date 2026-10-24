@@ -66,10 +66,12 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 	"google.golang.org/protobuf/types/known/timestamppb"
+	"google.golang.org/protobuf/types/known/wrapperspb"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/safetext"
 )
@@ -1522,25 +1524,31 @@ func (s *Server) resumeQuiet(ctx context.Context, instanceID string) error {
 	return nil
 }
 
-// quietReporter reports an instance's ADR-1151 quiet pause state.
+// quietReporter reports an instance's ADR-1151 quiet pause record.
 type quietReporter interface {
-	QuietPauseState(instance string) (paused bool, since time.Time)
+	QuietPauseReport(instance string) fcvm.QuietPauseReport
 }
 
-// addQuietPauseState fills InstanceStats.quiet_paused(_since) so schedd
-// can leave a quiet-paused instance's vCPUs out of the node's active vCPU.
+// addQuietPauseState fills InstanceStats' quiet pause fields: the current
+// pause, so schedd can leave a quiet-paused instance's vCPUs out of the
+// node's active vCPU (ADR-1151), and the last completed pause with the
+// incarnation's paused total, for the pause ledger (ADR-20261023171905).
 func (s *Server) addQuietPauseState(row *vmmdpb.InstanceStats) {
 	q, ok := s.vmm.(quietReporter)
 	if !ok {
 		return
 	}
-	paused, since := q.QuietPauseState(row.GetInstance())
-	if !paused {
-		return
+	r := q.QuietPauseReport(row.GetInstance())
+	if r.Paused {
+		row.QuietPaused = true
+		if !r.Since.IsZero() {
+			row.QuietPausedSince = timestamppb.New(r.Since)
+		}
 	}
-	row.QuietPaused = true
-	if !since.IsZero() {
-		row.QuietPausedSince = timestamppb.New(since)
+	if !r.LastStarted.IsZero() && !r.LastEnded.IsZero() {
+		row.QuietLastPauseStartedAt = timestamppb.New(r.LastStarted)
+		row.QuietLastPauseEndedAt = timestamppb.New(r.LastEnded)
+		row.QuietPausedNsTotal = wrapperspb.Int64(r.PausedTotal.Nanoseconds())
 	}
 }
 

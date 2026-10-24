@@ -7759,7 +7759,7 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 	if installationID == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: installation_id must be non-zero")
 	}
-	if len(secret.Value) == 0 {
+	if len(secret.Value) == 0 && len(secret.Sealed) == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: secret must be non-empty")
 	}
 	if upgradedBy == "" {
@@ -7771,10 +7771,14 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 	if m.githubWebhookSecrets == nil {
 		m.githubWebhookSecrets = map[int64]GithubWebhookSecret{}
 	}
-	m.githubWebhookSecrets[installationID] = GithubWebhookSecret{
-		Value:  append([]byte(nil), secret.Value...),
-		Sealed: append([]byte(nil), secret.Sealed...),
+	stored := GithubWebhookSecret{}
+	if len(secret.Value) > 0 {
+		stored.Value = append([]byte(nil), secret.Value...)
 	}
+	if len(secret.Sealed) > 0 {
+		stored.Sealed = append([]byte(nil), secret.Sealed...)
+	}
+	m.githubWebhookSecrets[installationID] = stored
 	if m.githubWebhookSecretMeta == nil {
 		m.githubWebhookSecretMeta = map[int64]webhookSecretMeta{}
 	}
