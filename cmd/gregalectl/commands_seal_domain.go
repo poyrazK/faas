@@ -248,6 +248,7 @@ func runSealDomainMigrate(args []string) error {
 	readersVerified := fs.Bool("readers-verified", false, "every reader of the domain verified its identity (gregalectl seal-domain verify) and the previous release left the rollback window")
 	dsn := fs.String("pg-dsn", "", "PostgreSQL DSN (default: FAAS_PG_DSN, DATABASE_URL, or deploy env)")
 	dbEnv := fs.String("db-env", "", "systemd env file containing DATABASE_URL")
+	bindAccounts := fs.Bool("bind-accounts", false, "runtime only: re-seal every stored runtime secret bound to the account that owns it (ADR-20261023173624)")
 	jsonOut := fs.Bool("json", false, "emit JSON")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -255,6 +256,15 @@ func runSealDomainMigrate(args []string) error {
 	d, err := parseSealDomainFlag(*domainName)
 	if err != nil {
 		return err
+	}
+	if *bindAccounts {
+		if d != sealdomain.Runtime {
+			return errors.New("--bind-accounts applies to --domain runtime only")
+		}
+		if !*readersVerified {
+			return errors.New("bound runtime secrets open only on a vmmd that checks bindings, and the pass re-seals them to the runtime domain alone; pass --readers-verified once every vmmd runs a release that checks account bindings, reports faas_seal_domain_loaded{domain=\"runtime\"} 1, and the previous release left the rollback window")
+		}
+		return runRuntimeBindingPass(*dsn, *dbEnv, *dir, *fleetKey, *hostKey, *jsonOut || jsonOutput)
 	}
 	switch d {
 	case sealdomain.Outbound, sealdomain.Runtime, sealdomain.Source, sealdomain.Build:
@@ -316,19 +326,77 @@ func runSealDomainMigrate(args []string) error {
 	return nil
 }
 
-// migrateDomain re-seals a wired domain's rows to its identity after
-// checking that the identity is the one the domain's probe was sealed to.
-func migrateDomain(ctx context.Context, store *state.PgStore, d sealdomain.Domain, dir, fleetKey, hostKey string) (sealmigrate.MigrationReport, error) {
+// runRuntimeBindingPass binds every stored runtime secret to its account
+// (ADR-20261023173624). Unlike the domain migration it needs no fleet
+// identity: once the runtime migration is complete the domain opens every
+// envelope, and the legacy identities are used only when present.
+func runRuntimeBindingPass(dsn, dbEnv, dir, fleetKey, hostKey string, jsonOut bool) error {
+	pool, err := openFleetSealPool(dsn, dbEnv)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Minute)
+	defer cancel()
+	if err := db.MigrateUp(ctx, pool); err != nil {
+		return fmt.Errorf("apply schema before the runtime binding pass: %w", err)
+	}
+	store := state.NewPgStore(pool)
+	domain, err := loadMigrationDomainIdentity(ctx, store, sealdomain.Runtime, dir)
+	if err != nil {
+		return err
+	}
+	legacy, err := sealdomain.LoadReaderIdentities("", fleetKey, hostKey)
+	if err != nil && !errors.Is(err, sealdomain.ErrNoIdentity) {
+		return err
+	}
+	report, err := sealmigrate.BindRuntime(ctx, store, domain, legacy)
+	if err != nil {
+		return err
+	}
+	if jsonOut {
+		if err := json.NewEncoder(osStdout).Encode(report); err != nil {
+			return err
+		}
+	} else {
+		PrintOK(osStdout, "Runtime secrets bound to their accounts: %d scanned, %d re-sealed, %d current, %d changed concurrently, %d bound to another account, %d failed\n",
+			report.Scanned, report.Resealed, report.Current, report.Changed, report.Mismatched, report.Failed)
+		for _, cursor := range report.MismatchedDocuments {
+			_, _ = fmt.Fprintf(osStdout, "  bound to another account: %s\n", cursor)
+		}
+	}
+	if report.Mismatched > 0 {
+		return fmt.Errorf("%d documents hold a secret bound to another account; investigate them before requiring bindings", report.Mismatched)
+	}
+	if report.Failed > 0 {
+		return fmt.Errorf("%d documents could not be bound: an envelope opened with no supplied identity, or the document has no owner", report.Failed)
+	}
+	return nil
+}
+
+// loadMigrationDomainIdentity loads a domain's identity and checks that it
+// is the one the domain's probe was sealed to.
+func loadMigrationDomainIdentity(ctx context.Context, store *state.PgStore, d sealdomain.Domain, dir string) (*age.X25519Identity, error) {
 	domain, err := secretbox.LoadHostKey(sealdomain.IdentityPath(dir, d))
 	if err != nil {
-		return sealmigrate.MigrationReport{}, fmt.Errorf("load %s domain identity: %w", d, err)
+		return nil, fmt.Errorf("load %s domain identity: %w", d, err)
 	}
 	probe, err := store.LoadSealDomainProbe(ctx, string(d))
 	if err != nil {
-		return sealmigrate.MigrationReport{}, fmt.Errorf("load %s probe (run seal-domain verify --publish first): %w", d, err)
+		return nil, fmt.Errorf("load %s probe (run seal-domain verify --publish first): %w", d, err)
 	}
 	if probe.Recipient != domain.Recipient().String() {
-		return sealmigrate.MigrationReport{}, fmt.Errorf("the %s probe is sealed to %s, not this identity's %s", d, probe.Recipient, domain.Recipient())
+		return nil, fmt.Errorf("the %s probe is sealed to %s, not this identity's %s", d, probe.Recipient, domain.Recipient())
+	}
+	return domain, nil
+}
+
+// migrateDomain re-seals a wired domain's rows to its identity after
+// checking that the identity is the one the domain's probe was sealed to.
+func migrateDomain(ctx context.Context, store *state.PgStore, d sealdomain.Domain, dir, fleetKey, hostKey string) (sealmigrate.MigrationReport, error) {
+	domain, err := loadMigrationDomainIdentity(ctx, store, d, dir)
+	if err != nil {
+		return sealmigrate.MigrationReport{}, err
 	}
 	legacy, err := sealdomain.LoadReaderIdentities("", fleetKey, hostKey)
 	if err != nil {

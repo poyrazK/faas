@@ -68,13 +68,52 @@ runtime secrets since seal domains, so every copy moves bytes unchanged.
   the previous release has left the rollback window, set
   `faas_seal_domain_runtime_binding: account` with
   `faas_seal_domain_runtime_binding_readers_verified: true`.
-- **Bind stored secrets (follow-up).** `gregalectl seal-domain migrate` gains
-  a binding pass. It re-seals each stored envelope bound to the account of
+- **Bind stored secrets.** `gregalectl seal-domain migrate --domain runtime
+  --bind-accounts` re-seals each stored envelope bound to the account of
   the row or document that owns it. It runs as an operator command, as the
   domain re-seal does, because only a holder of the runtime identity can
-  re-seal.
-- **Contract (follow-up).** vmmd refuses unbound runtime envelopes once the
-  count reaches zero.
+  re-seal. See *Binding pass and contract* below.
+- **Contract.** vmmd refuses unbound runtime envelopes once a rerun of the
+  pass binds nothing, behind a switch that is off by default.
+
+### Binding pass and contract (amendment, 2026-10-24)
+
+- **Coverage.** Every ciphertext vmmd opens with a binding check comes from
+  `app_secrets`, `project_environment_secrets` or
+  `deployment_release_secret_snapshots`. Bundles, release captures and
+  promotion captures reach vmmd only after they are copied into a deployment
+  snapshot. All six are documents of `release_secret_rekey_documents`, so the
+  pass covers them all. Sidecar direct env (`SealBytes`) stays outside
+  bindings.
+- **Owners.** `ListSecretBindingDocuments` lists every document with its
+  owner. For app, bundle, capture and project documents that is the id's
+  account prefix. For deployment snapshots it is the deployment's
+  `apps.account_id`, the value schedd sends vmmd. For promotion captures it
+  is `project_environment_promotions.account_id`, which every workload in
+  the capture shares. The binding is sealed inside each envelope, so the
+  pass reads every document, not only those labelled for another key.
+- **What it writes.** It opens envelopes with the runtime domain identity
+  and any legacy identities present. An unbound envelope, or one sealed for
+  another key, is re-sealed to the domain recipient alone, bound to the
+  owner, with the same compare-and-swap as the domain re-seal (kid and
+  ciphertext only). The pass therefore has the runtime migration's
+  precondition and needs `--readers-verified`.
+- **What it never writes.** An envelope bound to an account other than its
+  document's owner is the copy this ADR exists to catch. The pass reports it
+  by document and exits non-zero; it never rebinds it. Envelopes no identity
+  opens, and documents with no owner, are reported as failed.
+- **Contract switch.** `FAAS_RUNTIME_SECRET_BINDING_REQUIRED` on vmmd (off by
+  default, set by the seal_domains role from
+  `faas_seal_domain_runtime_binding_required`, which needs `binding:
+  account`) makes every path that opens runtime secrets use
+  `Binding.Require`, which refuses unbound envelopes as well as foreign ones.
+  vmmd reads it at start and reports `faas_runtime_secret_binding_required`.
+- **schedd's owner cache.** A re-seal changes only kid and ciphertext, so
+  for project secrets and deployment snapshots it does not move the app's
+  runtime generation, and schedd may keep sending the ciphertext it cached
+  before the pass. Restart every schedd after the last pass and before
+  turning the switch on. The same holds for the domain re-seal before a
+  fleet identity is removed from vmmd.
 
 ## Consequences
 
@@ -91,3 +130,6 @@ runtime secrets since seal domains, so every copy moves bytes unchanged.
 - Sidecar direct env (`SealBytes`, namespace `sidecar_env`) uses the byte
   format and is not bound yet.
 - Unbound rows keep working until the binding pass and the contract.
+- After the contract a row written unbound fails at wake. Every writer must
+  bind (`faas_seal_domain_runtime_binding: account`) before the switch is
+  turned on, and a rollback of the switch is a converge plus a vmmd restart.

@@ -192,3 +192,36 @@ func TestRuntimeRoleTasksSkipTheStandby(t *testing.T) {
 		t.Error("the faas_compute task logs the compute password")
 	}
 }
+
+// The audit log is append-only for daemons: runtime-roles.sql revokes row
+// changes, so no query a daemon runs may update or delete it. A new one
+// would fail with permission denied once units move to their runtime roles.
+func TestAuditLogStaysAppendOnly(t *testing.T) {
+	if !strings.Contains(runtimeRolesSQL(t), "REVOKE UPDATE, DELETE ON public.audit_log FROM faas_runtime;") {
+		t.Error("runtime-roles.sql no longer makes audit_log append-only for faas_runtime")
+	}
+	mutation := regexp.MustCompile(`(?i)\b(UPDATE\s+(public\.)?audit_log\b|DELETE\s+FROM\s+(public\.)?audit_log\b|TRUNCATE\s+(TABLE\s+)?(public\.)?audit_log\b)`)
+	root := repoRoot(t)
+	for _, dir := range []string{"pkg", "cmd"} {
+		err := filepath.WalkDir(filepath.Join(root, dir), func(path string, d os.DirEntry, err error) error {
+			if err != nil || d.IsDir() || strings.HasSuffix(path, "_test.go") {
+				return err
+			}
+			if !strings.HasSuffix(path, ".sql") && !strings.HasSuffix(path, ".go") {
+				return nil
+			}
+			body, err := os.ReadFile(path)
+			if err != nil {
+				return err
+			}
+			if m := mutation.Find(body); m != nil {
+				rel, _ := filepath.Rel(root, path)
+				t.Errorf("%s: %q changes audit_log rows, which daemons may not", rel, m)
+			}
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+}

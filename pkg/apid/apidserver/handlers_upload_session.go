@@ -58,6 +58,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -184,6 +185,10 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 		// slug. Besides avoiding a later commit failure, this keeps
 		// the cap/budget queries from becoming an app-existence oracle.
 		s.notFound(w, "no such app")
+		return
+	}
+	if prob := s.authorizeUploadApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 
@@ -625,6 +630,12 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
 		return
 	}
+	// The session was opened while the caller could deploy; membership,
+	// role and organization status are checked again at commit.
+	if prob := s.authorizeUploadApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := s.enforceSecurityPostureGate(r.Context(), app); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -682,15 +693,6 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			return
 		}
 		opts.SourceRoot = root
-		present, rootErr := archiveHasSourceRoot(row.PartPath, opts.SourceRoot)
-		if rootErr != nil || !present {
-			if rootErr != nil {
-				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", rootErr.Error()))
-			} else {
-				api.WriteProblem(w, api.ErrSourceInvalid(fmt.Sprintf("source_root %q is not present in the source archive", opts.SourceRoot)))
-			}
-			return
-		}
 	}
 	sched, prob := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
 	if prob != nil {
@@ -745,6 +747,22 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	if prob := validateTarballShape(row.PartPath); prob != nil {
 		api.WriteProblem(w, prob)
 		return
+	}
+	// The source_root scan reads every entry body, three passes in all, so it
+	// runs only after the shape check has refused archives whose declared sizes
+	// exceed the budget. Before, a small compression bomb with source_root set
+	// was inflated in full on each commit retry; a failed commit leaves the
+	// session open.
+	if opts.SourceRoot != "" {
+		present, rootErr := archiveHasSourceRoot(row.PartPath, opts.SourceRoot)
+		if rootErr != nil || !present {
+			if rootErr != nil {
+				api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeSourceInvalid, "Bad source", rootErr.Error()))
+			} else {
+				api.WriteProblem(w, api.ErrSourceInvalid(fmt.Sprintf("source_root %q is not present in the source archive", opts.SourceRoot)))
+			}
+			return
+		}
 	}
 	if prob := scanSourceTarballSecrets(row.PartPath, api.MustLimitsFor(acct.Plan)); prob != nil {
 		api.WriteProblem(w, prob)
@@ -977,6 +995,16 @@ func (s *server) handleCancelUpload(w http.ResponseWriter, r *http.Request, acct
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// authorizeUploadApp applies the organization access check that the
+// /v1/apps routes get from appaccess.Wrap. The upload routes name their app
+// in the request body or the stored session, which Wrap cannot see, so a
+// member removed from, demoted in or suspended with the app's organization
+// could still deploy an app they had created through them.
+func (s *server) authorizeUploadApp(r *http.Request, acct state.Account, app state.App) *api.Problem {
+	_, prob := appaccess.Authorize(r, s.store, loadOrgAuditFrom(s.audit), actorAccount(r, acct), app)
+	return prob
 }
 
 func uploadSessionExpired(row sqlc.UploadSession) bool {
