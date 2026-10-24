@@ -106224,6 +106224,15 @@ components:
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
         penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
+        unreleased_features:
+          type: array
+          description: |
+            Gated features this rule uses that are not yet released to the
+            account (ADR-20261023113721). The gateway does not enforce them:
+            a challenge rule is inert, a warn or block WAF rule only
+            observes, and a penalty boxes nobody. Absent when every feature
+            the rule uses is released.
+          items: { type: string, enum: [challenge, waf_blocking, penalty_box] }
 
     DeploymentRoutePolicySnapshotResponse:
       description: Immutable gateway edge-rule state recorded on the deployment's first live transition.

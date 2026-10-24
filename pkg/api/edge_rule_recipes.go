@@ -83,7 +83,11 @@ const (
 
 // recipePenaltyParam boxes a client the recipe's rule keeps refusing
 // (ADR-20261022105846); empty leaves the rule without a penalty.
-var recipePenaltyParam = EdgeRuleRecipeParam{Name: "penalty_minutes", Label: "Penalty box (minutes)",
+// EdgeRuleRecipePenaltyParamName is the recipe parameter that sets a
+// penalty box (ADR-20261022105846).
+const EdgeRuleRecipePenaltyParamName = "penalty_minutes"
+
+var recipePenaltyParam = EdgeRuleRecipeParam{Name: EdgeRuleRecipePenaltyParamName, Label: "Penalty box (minutes)",
 	Help: "Optional: once the rule has refused a client, block that client from the whole app for this many minutes (1 to 1440)."}
 
 // recipePenaltyAfter is how many refusals box a client, by recipe: a

@@ -10453,9 +10453,13 @@ type EdgeRuleResponse struct {
 	// Mode (ADR-960) is "enforce" or "log"; log-mode rules only count matches.
 	Mode string `json:"mode"`
 	// Penalty is the rule's penalty box (ADR-20261022105846), if any.
-	Penalty   *EdgeRulePenalty `json:"penalty,omitempty"`
-	CreatedAt time.Time        `json:"created_at"`
-	UpdatedAt time.Time        `json:"updated_at"`
+	Penalty *EdgeRulePenalty `json:"penalty,omitempty"`
+	// UnreleasedFeatures names the gated features the rule uses that are
+	// not yet released to the account (EdgeFeature*, ADR-20261023113721);
+	// the gateway does not enforce them.
+	UnreleasedFeatures []string  `json:"unreleased_features,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // Edge-rule metadata bounds; the edge_rules CHECK constraints mirror them.

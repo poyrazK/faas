@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -605,6 +606,8 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 			row.Status, row.Reason = "skipped", "rule expired at "+rule.ExpiresAt.UTC().Format(time.RFC3339)
 		case !rule.Enabled:
 			row.Status, row.Reason = "skipped", "rule is disabled"
+		case unreleasedChallenge(rule):
+			row.Status, row.Reason = "skipped", "challenge rules are not yet available to this account; the gateway does not enforce this rule"
 		case !HostMatches(rule.MatchHost, input.Host):
 			row.Status, row.Reason = "skipped", fmt.Sprintf("host %q does not match %q", input.Host, rule.MatchHost)
 		case !ruleMethodMatches(rule.Kind, rule.MatchMethods, matchMethod):
@@ -1238,11 +1241,17 @@ func previewAppCORSDefault(input Input, headers http.Header) (SimulationStep, []
 	return step, responseOps
 }
 
+// unreleasedChallenge reports a challenge rule whose account has not been
+// released challenge rules (ADR-20261023113721): the gateway leaves it inert.
+func unreleasedChallenge(rule api.EdgeRuleResponse) bool {
+	return rule.Kind == "challenge" && slices.Contains(rule.UnreleasedFeatures, api.EdgeFeatureChallenge)
+}
+
 func firstPhaseRule(rules []api.EdgeRuleResponse, kind string, input Input, requestPath, method string, headers http.Header) (*api.EdgeRuleResponse, bool) {
 	var first *api.EdgeRuleResponse
 	for i := range rules {
 		rule := &rules[i]
-		if rule.Kind != kind || !rule.Enabled || !HostMatches(rule.MatchHost, input.Host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
+		if rule.Kind != kind || !rule.Enabled || unreleasedChallenge(*rule) || !HostMatches(rule.MatchHost, input.Host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
 			continue
 		}
 		if rule.Mode == api.EdgeRuleModeLog || !traceConditionMatches(*rule, input, requestPath, method, headers) {

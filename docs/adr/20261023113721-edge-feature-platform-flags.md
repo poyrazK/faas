@@ -72,6 +72,28 @@ accounts first, or to withdraw one from an account without a deploy.
   suggestions still show for accounts outside a flag; applying one is
   refused with the same 422. The edge-rule trace simulator
   (`pkg/edgeruletrace`) reports what a rule set does with every feature
-  released.
+  released. (Superseded by amendment 1.)
 - Attack mode and AI crawler controls, not yet merged, get their own flags
   on their branches under this decision.
+
+## Amendment 1 (2026-10-24): saying what is not released
+
+A rule that went inert when the flags shipped looked the same as one the
+edge enforced, and the dashboard and suggestions kept offering features the
+account could not use.
+
+- **Rule responses** (list, get, create, update) carry
+  `unreleased_features`: the gated features the rule uses that the
+  account's flags do not release (`challenge`, `waf_blocking`,
+  `penalty_box`), whether or not the rule is enabled. It is omitted when
+  empty, so clients and N-1 readers see no change for released accounts.
+- **The trace simulator** reads it: an unreleased challenge rule is skipped
+  with the reason, as the gateway leaves it inert. WAF and penalties are
+  not simulated, so nothing else changes there.
+- **The dashboard** marks such rules "not enforced: … not yet available",
+  shows the challenge recipe as not yet available instead of offering its
+  form, and leaves the penalty field out of recipe forms while penalties
+  are unreleased.
+- **Recipe suggestions** offer the challenge alternative only once
+  challenge rules are released.
+- **`gregale edge-rules list`** marks rules that are not enforced.

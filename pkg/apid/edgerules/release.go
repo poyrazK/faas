@@ -9,14 +9,38 @@ import (
 )
 
 // edgeFeature is an edge rule feature a platform flag releases
-// (ADR-20261023113721); name is how a refusal names it.
-type edgeFeature struct{ flag, name string }
+// (ADR-20261023113721); name is how a refusal names it, and wire how a rule
+// response's unreleased_features does.
+type edgeFeature struct{ flag, name, wire string }
 
 var (
-	featureChallenge   = edgeFeature{platformflags.EdgeChallenge, "Challenge rules"}
-	featureWAFBlocking = edgeFeature{platformflags.EdgeWAFBlocking, "WAF warn and block modes"}
-	featurePenaltyBox  = edgeFeature{platformflags.EdgePenaltyBox, "Edge rule penalties"}
+	featureChallenge   = edgeFeature{platformflags.EdgeChallenge, "Challenge rules", api.EdgeFeatureChallenge}
+	featureWAFBlocking = edgeFeature{platformflags.EdgeWAFBlocking, "WAF warn and block modes", api.EdgeFeatureWAFBlocking}
+	featurePenaltyBox  = edgeFeature{platformflags.EdgePenaltyBox, "Edge rule penalties", api.EdgeFeaturePenaltyBox}
 )
+
+// RuleResponse is the rule as acct sees it: EdgeRuleResponse plus the gated
+// features it uses that the account's flags do not release, enabled or not.
+func (s *Service) RuleResponse(acct state.Account, row state.EdgeRule) api.EdgeRuleResponse {
+	resp := EdgeRuleResponse(row)
+	for _, f := range storedRuleShape(row).features() {
+		if !s.Host.PlatformFlagEnabled(f.flag, acct) {
+			resp.UnreleasedFeatures = append(resp.UnreleasedFeatures, f.wire)
+		}
+	}
+	return resp
+}
+
+// FeatureReleased reports whether acct may use an edge feature
+// (api.EdgeFeature*); an unknown feature is not released.
+func (s *Service) FeatureReleased(acct state.Account, feature string) bool {
+	for _, f := range []edgeFeature{featureChallenge, featureWAFBlocking, featurePenaltyBox} {
+		if f.wire == feature {
+			return s.Host.PlatformFlagEnabled(f.flag, acct)
+		}
+	}
+	return false
+}
 
 // ruleShape is what the release gate reads from a rule.
 type ruleShape struct {

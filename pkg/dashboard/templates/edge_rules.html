@@ -304,7 +304,7 @@
               <td>{{if .Name}}<strong>{{.Name}}</strong><br>{{end}}<strong>{{.Kind}}</strong>{{if .SecurityPreset}}<br><small class="muted">security preset</small>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
               <td>{{if .AppWide}}<em>every app host</em> <code>{{.MatchPath}}</code>{{else}}<code>{{.MatchHost}}{{.MatchPath}}</code>{{end}}</td>
               <td>{{if .MatchMethods}}{{.MatchMethods}}{{else}}any{{end}}</td>
-              <td>{{if .Enabled}}<span class="enabled">enabled</span>{{else}}<span class="disabled">disabled</span>{{end}}{{if eq .Mode "log"}}<br><span class="muted">log mode</span>{{end}}</td>
+              <td>{{if .Enabled}}<span class="enabled">enabled</span>{{else}}<span class="disabled">disabled</span>{{end}}{{if eq .Mode "log"}}<br><span class="muted">log mode</span>{{end}}{{range .Unreleased}}<br><span class="muted">not enforced: {{.}} not yet available</span>{{end}}</td>
               <td>{{if eq .Mode "log"}}{{.Logged24h}} logged{{else}}{{.Matched24h}}{{end}}{{if .SparkPoints}}<br><svg class="sparkline" width="84" height="20" viewBox="0 0 84 20" role="img" aria-label="{{.Matches7d}} matches in the last 7 days"><title>{{.Matches7d}} matches in the last 7 days</title><polyline points="{{.SparkPoints}}" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>{{end}}{{if or .Matched24h .Logged24h}}<br><a href="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules?rule={{.ID}}#security-events">events</a>{{end}}</td>
               <td><span class="muted">{{.ActionSummary}}</span><br><code class="rule-action">{{.ActionJSON}}</code></td>
               <td class="actions nowrap">
