@@ -834,6 +834,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifyInstanceFailureRelayed, // issue #3359: vmmd reports relayed by the hosting schedd to the app's owner.
 	}, l.log)
 	if err != nil {
+		if ctx.Err() != nil {
+			// Stopped before the first LISTEN came up: a clean drain,
+			// not a failed start.
+			return nil
+		}
 		return err
 	}
 	// SubscribeWithReconnect owns its own cancel via the deferred
