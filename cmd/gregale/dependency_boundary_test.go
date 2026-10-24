@@ -11,9 +11,10 @@ import (
 // paid for in download size and in init time on every invocation, including
 // each shell completion. Manifest validation once imported pkg/sched for one
 // cron parser, which linked the scheduler, the Firecracker driver, Kafka and
-// Redis clients into the CLI (9 MiB of a 100 MiB binary). The rule is
-// transitive, which depguard's direct-import rules cannot express. Add a
-// package here once the CLI stops linking it.
+// Redis clients into the CLI (9 MiB of a 100 MiB binary), and stripe-go's
+// init ran `uname -a` on every invocation. The rule is transitive, which
+// depguard's direct-import rules cannot express. Add a package here once
+// the CLI stops linking it.
 func TestCLILinksNoRuntimePackages(t *testing.T) {
 	goBin, err := exec.LookPath("go")
 	if err != nil {
@@ -21,6 +22,7 @@ func TestCLILinksNoRuntimePackages(t *testing.T) {
 	}
 	forbidden := []string{
 		"github.com/onebox-faas/faas/pkg/apislogs",
+		"github.com/onebox-faas/faas/pkg/billing/stripe",
 		"github.com/onebox-faas/faas/pkg/builderd",
 		"github.com/onebox-faas/faas/pkg/fcvm",
 		"github.com/onebox-faas/faas/pkg/imaged",
@@ -33,9 +35,14 @@ func TestCLILinksNoRuntimePackages(t *testing.T) {
 		"github.com/rabbitmq/amqp091-go",
 		"github.com/redis/go-redis",
 		"github.com/segmentio/kafka-go",
+		"github.com/stripe/stripe-go",
 	}
 	// Standard-library-only leaves the CLI shares with the runtime.
-	allowed := map[string]bool{"github.com/onebox-faas/faas/pkg/fcvm/logbuf": true}
+	allowed := map[string]bool{
+		"github.com/onebox-faas/faas/pkg/billing/stripe/pushresult": true,
+		"github.com/onebox-faas/faas/pkg/billing/stripe/webhooksig": true,
+		"github.com/onebox-faas/faas/pkg/fcvm/logbuf":               true,
+	}
 	// The release workflow builds the CLI for these targets.
 	for _, goos := range []string{"linux", "darwin"} {
 		t.Run(goos, func(t *testing.T) {
