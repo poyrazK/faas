@@ -4353,6 +4353,10 @@ type Limits struct {
 	// WorkflowMaxConcurrent is the maximum number of in-flight workflow
 	// runs for one app.
 	WorkflowMaxConcurrent int
+	// WorkflowMaxParked is how many of an app's runs waiting on an event
+	// (awaiting_event) stay off WorkflowMaxConcurrent; parked runs beyond
+	// it count as concurrent (ADR-20261023215834).
+	WorkflowMaxParked int
 	// WorkflowStepMaxTimeout is the maximum active execution timeout for
 	// one workflow step.
 	WorkflowStepMaxTimeout time.Duration
@@ -4850,6 +4854,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowsAllowed:           false,
 		WorkflowMaxPerApp:          0,
 		WorkflowMaxConcurrent:      0,
+		WorkflowMaxParked:          0,
 		WorkflowStepMaxTimeout:     0,
 		WorkflowMaxWaitDays:        0,
 	},
@@ -5282,6 +5287,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowsAllowed:           true,
 		WorkflowMaxPerApp:          3,
 		WorkflowMaxConcurrent:      10,
+		WorkflowMaxParked:          100,
 		WorkflowStepMaxTimeout:     10 * time.Minute,
 		WorkflowMaxWaitDays:        30,
 	},
@@ -5679,6 +5685,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowsAllowed:           true,
 		WorkflowMaxPerApp:          10,
 		WorkflowMaxConcurrent:      50,
+		WorkflowMaxParked:          1000,
 		WorkflowStepMaxTimeout:     30 * time.Minute,
 		WorkflowMaxWaitDays:        90,
 	},
@@ -6107,6 +6114,7 @@ var planLimits = map[Plan]Limits{
 		WorkflowsAllowed:           true,
 		WorkflowMaxPerApp:          50,
 		WorkflowMaxConcurrent:      200,
+		WorkflowMaxParked:          10000,
 		WorkflowStepMaxTimeout:     2 * time.Hour,
 		WorkflowMaxWaitDays:        365,
 	},
@@ -6245,6 +6253,11 @@ const (
 
 	// Metering (spec §1, §10).
 	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1430)
+	// ObjectStorageMillicentsPerGiBMonth is the published rate for average
+	// stored bytes beyond a plan's ObjectStorage.IncludedBytes: $0.03 per
+	// GiB-month (ADR-1430). Requests and egress are free. The operator's
+	// object-storage rate card applies it.
+	ObjectStorageMillicentsPerGiBMonth int64 = 3_000
 	// ADR-566: strict compute reserves startup, execution, and bounded teardown.
 	// Strict egress credits are conservative interface-byte bounds, not invoice usage.
 	FinancialEgressMinimumCreditBytes = int64(4096)
@@ -6338,6 +6351,21 @@ const (
 	BuildVMVCPU            = 2
 	BuildTimeoutSeconds    = 900 // 15 min build; cold rootless Railpack export needs headroom
 	BuildE2ETimeoutSeconds = 900 // 15 min end-to-end
+
+	// Deployment watchdog (ADR-20261024140100). apid fails an in-flight
+	// deployment that can no longer finish on its own, so every deployment
+	// reaches a terminal state. DeploymentQueuedBuildTimeoutSeconds bounds a
+	// build's wait in the builder queue; it is generous so a builder pause
+	// or a single-slot backlog does not fail work that would still run.
+	// DeploymentStallTimeoutSeconds bounds how long an in-flight deployment
+	// with no queued or running build may go without a stage transition
+	// (imaging, snapshotting, a lost pipeline notification). Running builds
+	// stay with builderd's reaper. DeploymentWatchdogIntervalSeconds is the
+	// sweep cadence and DeploymentWatchdogBatch the rows failed per pass.
+	DeploymentQueuedBuildTimeoutSeconds = 6 * 60 * 60
+	DeploymentStallTimeoutSeconds       = 3 * 60 * 60
+	DeploymentWatchdogIntervalSeconds   = 5 * 60
+	DeploymentWatchdogBatch             = 100
 
 	// Jobs (issue #1184 Workstream A / ADR-099 supplement). Run-to-completion
 	// workloads: stored image + command + env, Firecracker boots, guest runs
@@ -8886,6 +8914,22 @@ func (p Plan) WorkflowMaxConcurrentRuns() int {
 		return 0
 	}
 	return l.WorkflowMaxConcurrent
+}
+
+// WorkflowMaxParkedRuns returns how many runs parked on an event an app holds
+// outside WorkflowMaxConcurrentRuns.
+func (p Plan) WorkflowMaxParkedRuns() int {
+	l, ok := LimitsFor(p)
+	if !ok {
+		return 0
+	}
+	return l.WorkflowMaxParked
+}
+
+// WorkflowAdmittedRuns is what the concurrency cap compares: an app's pending
+// and running runs plus its parked runs beyond the parked allowance.
+func WorkflowAdmittedRuns(active, parked, maxParked int) int {
+	return active + max(0, parked-maxParked)
 }
 
 // WorkflowStepMaxTimeout returns the maximum allowed timeout for any single step.

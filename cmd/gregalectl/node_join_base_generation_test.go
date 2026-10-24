@@ -172,3 +172,75 @@ func TestNodeJoinDrainWaitOutlastsTheDrainParkPoint(t *testing.T) {
 			wait, api.DrainParkAfterSeconds, parkSeconds, rounds)
 	}
 }
+
+// adr: 20261024191249 — production-us 2026-10-24 (rc.293): the rolled fsn-2
+// could not adopt base-minimal's new generation, and the play still let the
+// controller return it to service. The adoption gate runs after the
+// installed daemons are ready and before the play reports readiness, which
+// is what the controller's activation waits for.
+func TestNodeJoinGatesActivationOnRuntimeBaseAdoption(t *testing.T) {
+	playbook := nodeJoinPlaybook(t)
+	order := []string{
+		"Pre-stage changed runtime bases behind the drain barrier",
+		"Enable and restart the compute-only daemon set",
+		"Require dependency-aware readiness after release installation",
+		"Require the installed vmmd to adopt every configured runtime base before activation",
+		"Read the installed vmmd process before the runtime base adoption check",
+		"Wait for the installed vmmd to adopt every configured runtime base",
+		"Keep the node drained when its vmmd cannot adopt a configured runtime base",
+		"Report local node readiness to the controller",
+	}
+	last := -1
+	for _, name := range order {
+		at := strings.Index(playbook, "- name: "+name)
+		if at < 0 {
+			t.Fatalf("node_join.yml is missing %q", name)
+		}
+		if at < last {
+			t.Fatalf("%q is out of order", name)
+		}
+		last = at
+	}
+
+	cases := []struct {
+		task   string
+		tokens []string
+	}{
+		// A drained or fresh node only: a no-drain restart changes no
+		// generation (its decision requires the generation check's 0).
+		{task: "Require the installed vmmd to adopt every configured runtime base before activation",
+			tokens: []string{"when: not (faas_join_skip_drain | bool)", "rescue:"}},
+		// The installed binary judges the installed vmmd's configuration.
+		{task: "Wait for the installed vmmd to adopt every configured runtime base",
+			tokens: []string{"/opt/faas/current/bin/vmmd", "base-adoption-check", "--serving-pid", "faas_join_installed_vmmd_pid.stdout", "until: faas_join_base_adoption.rc == 0"}},
+		// The failure leaves the node drained, says so, and names each base
+		// (yaml.Marshal doubles the single quotes).
+		{task: "Keep the node drained when its vmmd cannot adopt a configured runtime base",
+			tokens: []string{"LEFT DRAINED", "faas_join_base_adoption.rc | default(1)) == 3", "selectattr(''verdict'', ''equalto'', ''stale'')", "503 scan_critical", "ADR-20261024191249"}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.task, func(t *testing.T) {
+			text := yamlText(t, nodeJoinTask(t, tc.task))
+			flat := strings.Join(strings.Fields(text), " ")
+			for _, token := range tc.tokens {
+				if !strings.Contains(flat, token) {
+					t.Errorf("task %q is missing %q:\n%s", tc.task, token, text)
+				}
+			}
+		})
+	}
+
+	// The rescue never activates: the controller does that, and only after
+	// the play succeeds.
+	rescue := yamlText(t, nodeJoinTask(t, "Require the installed vmmd to adopt every configured runtime base before activation")["rescue"])
+	if strings.Contains(rescue, "activate") {
+		t.Fatalf("the adoption gate's rescue must not activate the node:\n%s", rescue)
+	}
+	// Bounded: the gate fits the join-node budget it shares with the drain.
+	wait := nodeJoinTask(t, "Wait for the installed vmmd to adopt every configured runtime base")
+	retries, rok := wait["retries"].(int)
+	delay, dok := wait["delay"].(int)
+	if !rok || !dok || retries*delay > 300 || retries*delay < 60 {
+		t.Fatalf("adoption wait retries=%v delay=%v, want a bound between 1 and 5 minutes", wait["retries"], wait["delay"])
+	}
+}

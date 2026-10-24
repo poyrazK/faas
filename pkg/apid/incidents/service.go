@@ -39,6 +39,10 @@ type Host interface {
 	// Changes returns the app's change timeline (ADR-751) for the window,
 	// or false while the change timeline is off for the account.
 	Changes(ctx context.Context, acct state.Account, app state.App, since, until time.Time) (api.AppChangeTimelineResponse, bool)
+	// AppVisible reports whether the request's principal may still read
+	// app's incidents: the account inventories' rule, so a company app is
+	// hidden from a creator who left the company or a key bound to another.
+	AppVisible(ctx context.Context, acct state.Account, app state.App) bool
 	// Actor names who made the request: the signed-in email, or
 	// api_key:<id>.
 	Actor(r *http.Request, acct state.Account) string
@@ -126,14 +130,16 @@ type source struct {
 // UnavailableSources instead of failing the list.
 func (s *Service) list(ctx context.Context, acct state.Account, app state.App, since time.Time) api.IncidentsResponse {
 	resp := api.IncidentsResponse{Since: since, Incidents: []api.Incident{}, UnavailableSources: []string{}}
-	slugs := s.slugger(ctx, app)
+	apps := s.apps(ctx, acct, app)
 	store := s.Host.Store()
 	sources := []source{
 		{api.IncidentSourceAlert, func(ctx context.Context) ([]api.Incident, error) {
 			eps, err := store.ListAlertEpisodes(ctx, acct.ID, app.ID, since, sourceRows)
 			out := make([]api.Incident, 0, len(eps))
 			for _, ep := range eps {
-				out = append(out, alertIncident(ep, slugs(ep.AppID)))
+				if slug, visible := apps(ep.AppID); visible {
+					out = append(out, alertIncident(ep, slug))
+				}
 			}
 			return out, err
 		}},
@@ -141,7 +147,9 @@ func (s *Service) list(ctx context.Context, acct state.Account, app state.App, s
 			incs, err := store.ListRouteMonitorIncidentSummaries(ctx, acct.ID, app.ID, since, sourceRows)
 			out := make([]api.Incident, 0, len(incs))
 			for _, inc := range incs {
-				out = append(out, routeIncident(inc, slugs(inc.AppID)))
+				if slug, visible := apps(inc.AppID); visible {
+					out = append(out, routeIncident(inc, slug))
+				}
 			}
 			return out, err
 		}},
@@ -221,23 +229,32 @@ func markAcknowledged(inc *api.Incident, ack state.IncidentNote) {
 	inc.AcknowledgedAt, inc.AcknowledgedBy = &at, ack.Author
 }
 
-// slugger maps app ids to slugs, reading each app once per request. The
-// filtered app is known up front.
-func (s *Service) slugger(ctx context.Context, known state.App) func(string) string {
-	slugs := map[string]string{"": ""}
-	if known.ID != "" {
-		slugs[known.ID] = known.Slug
+// apps maps app ids to slugs, reading each app once per request, and
+// reports whether the caller may read the app's incidents. An app that is
+// hidden, or that cannot be read, hides its incidents. The filtered app is
+// known up front.
+func (s *Service) apps(ctx context.Context, acct state.Account, known state.App) func(string) (string, bool) {
+	type resolved struct {
+		slug    string
+		visible bool
 	}
-	return func(id string) string {
-		if slug, ok := slugs[id]; ok {
-			return slug
+	seen := map[string]resolved{"": {visible: true}}
+	if known.ID != "" {
+		seen[known.ID] = resolved{known.Slug, s.Host.AppVisible(ctx, acct, known)}
+	}
+	return func(id string) (string, bool) {
+		if r, ok := seen[id]; ok {
+			return r.slug, r.visible
 		}
+		var r resolved
 		app, err := s.Host.Store().AppByID(ctx, id)
 		if err != nil {
 			s.Host.Logger().WarnContext(ctx, "incidents: resolve app", "app_id", id, "err", err)
+		} else {
+			r = resolved{app.Slug, s.Host.AppVisible(ctx, acct, app)}
 		}
-		slugs[id] = app.Slug
-		return app.Slug
+		seen[id] = r
+		return r.slug, r.visible
 	}
 }
 

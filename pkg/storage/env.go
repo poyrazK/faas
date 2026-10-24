@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/url"
 	"os"
@@ -535,6 +536,23 @@ func AsCacheBackend(root StorageBackend) *LocalCacheBackend {
 		}
 	}
 	return nil
+}
+
+// GetCanonical reads key's canonical copy: through its read-through cache's
+// parent without filling or replacing the cache, or with an ordinary Get on
+// an uncached route, whose copy is the canonical one.
+func GetCanonical(ctx context.Context, root StorageBackend, key string) (io.ReadCloser, error) {
+	cache, rel, err := CacheBackendForKey(root, key)
+	if err != nil {
+		return nil, err
+	}
+	if cache != nil {
+		return cache.GetCanonical(ctx, rel)
+	}
+	if root == nil {
+		return nil, fmt.Errorf("storage: get canonical %q: no storage backend", key)
+	}
+	return root.Get(ctx, key)
 }
 
 // CacheBackendForKey resolves key through the same PrefixRouter chain as Get

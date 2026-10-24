@@ -151,7 +151,7 @@ func insertWorkflowRun(ctx context.Context, q workflowRunQueryer, r *WorkflowRun
 // CreateWorkflowRunAdmitted holds a transaction-scoped advisory lock keyed by
 // app before checking and consuming the active-run quota. This closes the
 // count-then-insert race between concurrent apid requests and replicas.
-func (s *PgStore) CreateWorkflowRunAdmitted(ctx context.Context, r *WorkflowRun, maxActive int) (int, error) {
+func (s *PgStore) CreateWorkflowRunAdmitted(ctx context.Context, r *WorkflowRun, maxActive, maxParked int) (int, error) {
 	if maxActive < 1 {
 		return 0, ErrWorkflowRunQuotaExceeded
 	}
@@ -166,11 +166,8 @@ func (s *PgStore) CreateWorkflowRunAdmitted(ctx context.Context, r *WorkflowRun,
 	if err := sqlc.New().LockWorkflowRunAdmission(ctx, tx, r.AppID); err != nil {
 		return 0, fmt.Errorf("pgstore: lock workflow admission: %w", err)
 	}
-	var active int
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*) FROM workflow_runs
-		WHERE app_id = $1 AND status IN ('pending', 'running', 'awaiting_event')
-	`, r.AppID).Scan(&active); err != nil {
+	active, err := workflowAdmissionCount(ctx, tx, r.AppID, maxParked)
+	if err != nil {
 		return 0, fmt.Errorf("pgstore: count workflow admission: %w", err)
 	}
 	if active >= maxActive {
@@ -208,7 +205,7 @@ func (s *PgStore) GetWorkflowRunByIdempotencyKey(ctx context.Context, appID, wor
 	return s.GetWorkflowRun(ctx, runID)
 }
 
-func (s *PgStore) CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Context, r *WorkflowRun, maxActive int, key string, requestFingerprint []byte) (int, bool, error) {
+func (s *PgStore) CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Context, r *WorkflowRun, maxActive, maxParked int, key string, requestFingerprint []byte) (int, bool, error) {
 	if err := validateWorkflowRunCreateIdempotency(key, requestFingerprint); err != nil {
 		return 0, false, err
 	}
@@ -252,11 +249,8 @@ func (s *PgStore) CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Contex
 	if maxActive < 1 {
 		return 0, false, ErrWorkflowRunQuotaExceeded
 	}
-	var active int
-	if err := tx.QueryRow(ctx, `
-		SELECT count(*) FROM workflow_runs
-		WHERE app_id = $1 AND status IN ('pending', 'running', 'awaiting_event')
-	`, r.AppID).Scan(&active); err != nil {
+	active, err := workflowAdmissionCount(ctx, tx, r.AppID, maxParked)
+	if err != nil {
 		return 0, false, fmt.Errorf("pgstore: count idempotent workflow admission: %w", err)
 	}
 	if active >= maxActive {
@@ -710,7 +704,7 @@ func (s *PgStore) CancelUnstartedWorkflowRuns(ctx context.Context, appID, workfl
 // RetryWorkflowStep requeues one failed HTTP step in the existing workflow
 // run. The run and step rows are locked before eligibility is checked, then
 // the per-app admission lock serializes the active-run quota transition.
-func (s *PgStore) RetryWorkflowStep(ctx context.Context, runID, stepName string, maxActive int) (*WorkflowRun, int, error) {
+func (s *PgStore) RetryWorkflowStep(ctx context.Context, runID, stepName string, maxActive, maxParked int) (*WorkflowRun, int, error) {
 	if maxActive < 1 {
 		return nil, 0, ErrWorkflowRunQuotaExceeded
 	}
@@ -749,7 +743,7 @@ func (s *PgStore) RetryWorkflowStep(ctx context.Context, runID, stepName string,
 	if err := queries.LockWorkflowRetryAdmission(ctx, tx, appID); err != nil {
 		return nil, 0, fmt.Errorf("pgstore: lock workflow retry quota: %w", err)
 	}
-	activeCount, err := queries.CountActiveWorkflowRunsForRetry(ctx, tx, appID)
+	activeCount, err := queries.CountActiveWorkflowRunsForRetry(ctx, tx, sqlc.CountActiveWorkflowRunsForRetryParams{AppID: appID, ParkedMax: int64(maxParked)})
 	if err != nil {
 		return nil, 0, fmt.Errorf("pgstore: count active workflow runs for retry: %w", err)
 	}

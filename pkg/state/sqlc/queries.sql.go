@@ -9795,32 +9795,48 @@ func (q *Queries) CountActiveTenantWorkflowRunsForAdmission(ctx context.Context,
 }
 
 const countActiveWorkflowRunsForAdmission = `-- name: CountActiveWorkflowRunsForAdmission :one
-SELECT count(*) FROM workflow_runs
-WHERE app_id = $1 AND status IN ('pending', 'running', 'awaiting_event')
-  AND ($2::text = '' OR workflow_name = $2)
+SELECT (count(*) FILTER (WHERE status IN ('pending', 'running'))
+  + CASE WHEN $1::text = '' THEN greatest(0, count(*) FILTER (WHERE status = 'awaiting_event') - $2::bigint)
+         ELSE count(*) FILTER (WHERE status = 'awaiting_event') END)::bigint
+FROM workflow_runs
+WHERE app_id = $3 AND status IN ('pending', 'running', 'awaiting_event')
+  AND ($1::text = '' OR workflow_name = $1)
 `
 
 type CountActiveWorkflowRunsForAdmissionParams struct {
-	AppID        pgtype.UUID
 	WorkflowName string
+	ParkedMax    int64
+	AppID        pgtype.UUID
 }
 
+// ADR-20261023215834: the app-wide count (no workflow name) counts runs
+// parked on an event only beyond the plan's parked allowance. A named count
+// decides schedule overlap, where a parked run is still in progress, so it
+// counts every unfinished run of that workflow.
 func (q *Queries) CountActiveWorkflowRunsForAdmission(ctx context.Context, db DBTX, arg CountActiveWorkflowRunsForAdmissionParams) (int64, error) {
-	row := db.QueryRow(ctx, countActiveWorkflowRunsForAdmission, arg.AppID, arg.WorkflowName)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	row := db.QueryRow(ctx, countActiveWorkflowRunsForAdmission, arg.WorkflowName, arg.ParkedMax, arg.AppID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countActiveWorkflowRunsForRetry = `-- name: CountActiveWorkflowRunsForRetry :one
-SELECT count(*)::bigint
+SELECT (count(*) FILTER (WHERE status IN ('pending','running'))
+  + greatest(0, count(*) FILTER (WHERE status='awaiting_event') - $1::bigint))::bigint
 FROM workflow_runs
-WHERE app_id=$1::text::uuid
+WHERE app_id=$2::text::uuid
   AND status IN ('pending','running','awaiting_event')
 `
 
-func (q *Queries) CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, appID string) (int64, error) {
-	row := db.QueryRow(ctx, countActiveWorkflowRunsForRetry, appID)
+type CountActiveWorkflowRunsForRetryParams struct {
+	ParkedMax int64
+	AppID     string
+}
+
+// ADR-20261023215834: runs parked on an event count only beyond the plan's
+// parked allowance.
+func (q *Queries) CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, arg CountActiveWorkflowRunsForRetryParams) (int64, error) {
+	row := db.QueryRow(ctx, countActiveWorkflowRunsForRetry, arg.ParkedMax, arg.AppID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -27176,6 +27192,7 @@ SELECT now()::timestamptz AS observed_at,ac.plan,
   (EXISTS(SELECT 1 FROM api_consumers c WHERE c.platform_tenant_id=t.id AND c.account_id=a.account_id AND c.app_id=a.id AND c.status='active' AND c.revoked_at IS NULL)
   OR EXISTS(SELECT 1 FROM tenant_surfaces s WHERE s.platform_tenant_id=t.id AND s.account_id=a.account_id AND s.app_id=a.id AND s.status='active'))))::boolean AS tenant_active,
  (SELECT count(*) FROM app_runs)::bigint AS active_runs,
+ (SELECT count(*) FROM app_runs WHERE status='awaiting_event')::bigint AS parked_runs,
  (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL)::bigint AS app_running,
  (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL AND platform_tenant_id=selected.platform_tenant_id)::bigint AS tenant_running,
  (SELECT count(*) FROM app_runs WHERE workflow_name=selected.workflow_name AND
@@ -27199,6 +27216,7 @@ type GetWorkflowRecoveryTargetRow struct {
 	PinnedDeployment       bool
 	TenantActive           bool
 	ActiveRuns             int64
+	ParkedRuns             int64
 	AppRunning             int64
 	TenantRunning          int64
 	WorkflowActive         int64
@@ -27218,6 +27236,7 @@ func (q *Queries) GetWorkflowRecoveryTarget(ctx context.Context, db DBTX, arg Ge
 		&i.PinnedDeployment,
 		&i.TenantActive,
 		&i.ActiveRuns,
+		&i.ParkedRuns,
 		&i.AppRunning,
 		&i.TenantRunning,
 		&i.WorkflowActive,
@@ -65364,6 +65383,63 @@ func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg Object
 	return items, nil
 }
 
+const objectStorageGatewayStorageAdvance = `-- name: ObjectStorageGatewayStorageAdvance :execrows
+UPDATE object_storage_gateway_storage g
+SET stored_byte_hours = LEAST(1152921504606846976::numeric, g.stored_byte_hours
+        + COALESCE(u.observed_bytes, 0)::numeric
+        * EXTRACT(EPOCH FROM (LEAST(now(), ((g.period_start AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC',
+              CASE WHEN b.state = 'deleted' THEN GREATEST(b.updated_at, g.accrued_through) ELSE 'infinity'::timestamptz END)
+            - g.accrued_through)) / 3600),
+    accrued_through = LEAST(now(), ((g.period_start AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC',
+        CASE WHEN b.state = 'deleted' THEN GREATEST(b.updated_at, g.accrued_through) ELSE 'infinity'::timestamptz END)
+FROM object_buckets b
+LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
+WHERE b.id = g.bucket_id
+  AND g.period_start >= (date_trunc('month', now() AT TIME ZONE 'UTC') - interval '1 month') AT TIME ZONE 'UTC'
+  AND g.accrued_through < LEAST(now(), ((g.period_start AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC',
+        CASE WHEN b.state = 'deleted' THEN GREATEST(b.updated_at, g.accrued_through) ELSE 'infinity'::timestamptz END)
+`
+
+// Accrues each open row of this or last month from accrued_through to now,
+// the end of its month or the bucket's deletion, whichever is first, at the
+// bucket's last inventoried bytes. Concurrent callers serialize on the row,
+// and each starts from the committed accrued_through, so time is never
+// counted twice.
+func (q *Queries) ObjectStorageGatewayStorageAdvance(ctx context.Context, db DBTX) (int64, error) {
+	result, err := db.Exec(ctx, objectStorageGatewayStorageAdvance)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectStorageGatewayStorageOpen = `-- name: ObjectStorageGatewayStorageOpen :execrows
+INSERT INTO object_storage_gateway_storage (bucket_id, period_start, accrued_from, accrued_through)
+SELECT b.id, p.period_start,
+       CASE WHEN EXISTS (SELECT 1 FROM object_storage_gateway_storage prev
+                         WHERE prev.bucket_id = b.id AND prev.period_start = p.previous_start)
+            THEN p.period_start ELSE now() END,
+       CASE WHEN EXISTS (SELECT 1 FROM object_storage_gateway_storage prev
+                         WHERE prev.bucket_id = b.id AND prev.period_start = p.previous_start)
+            THEN p.period_start ELSE now() END
+FROM object_buckets b,
+     (SELECT date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS period_start,
+             (date_trunc('month', now() AT TIME ZONE 'UTC') - interval '1 month') AT TIME ZONE 'UTC' AS previous_start) p
+WHERE b.state <> 'deleted'
+ON CONFLICT (bucket_id, period_start) DO NOTHING
+`
+
+// ADR-20261024132844: one row per live bucket for the current UTC month. A
+// bucket metered last month continues from the start of this month; any other
+// bucket starts now, so storage is never billed for time Gregale did not meter.
+func (q *Queries) ObjectStorageGatewayStorageOpen(ctx context.Context, db DBTX) (int64, error) {
+	result, err := db.Exec(ctx, objectStorageGatewayStorageOpen)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectStorageManagedSecretRotate = `-- name: ObjectStorageManagedSecretRotate :execrows
 UPDATE app_secrets SET ciphertext=$6, kid=$7, value_hash=$8,
   delivery_version=delivery_version+1, delivery_status='pending',
@@ -66740,9 +66816,12 @@ COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_gra
 JOIN object_storage_multipart_uploads m ON m.id=g.upload_id
 WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes,
 COALESCE(r.request_count, 0)::bigint AS gateway_request_count,
-COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes
+COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes,
+COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
+s.accrued_through AS gateway_storage_through
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = $1
+LEFT JOIN object_storage_gateway_storage s ON s.bucket_id = b.id AND s.period_start = $1
 WHERE object_storage_usage_subject(b.org_id,b.account_id,$1) = $2
 `
 
@@ -66788,6 +66867,8 @@ type ObjectUsageBucketsRow struct {
 	MultipartBytes                 int64
 	GatewayRequestCount            int64
 	GatewayEgressBytes             int64
+	GatewayStoredByteHours         int64
+	GatewayStorageThrough          pgtype.Timestamptz
 }
 
 func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error) {
@@ -66836,6 +66917,8 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsa
 			&i.MultipartBytes,
 			&i.GatewayRequestCount,
 			&i.GatewayEgressBytes,
+			&i.GatewayStoredByteHours,
+			&i.GatewayStorageThrough,
 		); err != nil {
 			return nil, err
 		}
