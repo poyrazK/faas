@@ -49,7 +49,7 @@ func (s *switchServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusConflict)
 			_ = json.NewEncoder(w).Encode(api.Problem{Status: 409, Code: api.CodeRollbackCrossesRelease, Title: "Rollback crosses release commands",
 				CrossedReleases: []api.RollbackCrossedRelease{{DeploymentID: "d42", Revision: 42, Status: "succeeded", StartedAt: "2026-10-23T12:03:10Z"}},
-				RestorePoints: []api.ReleaseRestorePoint{{DatabaseID: "db-1", DatabaseName: "orders", PointInTime: "2026-10-23T12:03:10Z"}}})
+				RestorePoints:   []api.ReleaseRestorePoint{{DatabaseID: "db-1", DatabaseName: "orders", PointInTime: "2026-10-23T12:03:10Z"}}})
 			return
 		}
 		sw := s.switchAt("restoring")

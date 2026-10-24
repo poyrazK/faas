@@ -1648,4 +1648,6 @@ func (e sourceRefTestEnv) SetDatabaseSwitchDrain(drain state.DatabaseSwitchDrain
 
 // DatabaseSwitchWorkerConfigured reports whether the server can run database
 // switches.
-func (e sourceRefTestEnv) DatabaseSwitchWorkerConfigured() bool { return e.srv.databaseSwitchWorker() != nil }
+func (e sourceRefTestEnv) DatabaseSwitchWorkerConfigured() bool {
+	return e.srv.databaseSwitchWorker() != nil
+}
