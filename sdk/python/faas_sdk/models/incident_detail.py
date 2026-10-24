@@ -22,6 +22,8 @@ T = TypeVar("T", bound="IncidentDetail")
 
 @_attrs_define
 class IncidentDetail:
+    """An incident with the evidence the platform has for it and the account's notes."""
+
     incident: Incident
     """An alert rule's firing period, a route monitor incident, or a platform incident."""
     notes: list[IncidentNote]

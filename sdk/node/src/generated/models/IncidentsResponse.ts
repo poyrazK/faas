@@ -3,6 +3,9 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { Incident } from './Incident.js';
+/**
+ * The account's open incidents and those resolved since `since`, open first.
+ */
 export type IncidentsResponse = {
   since: string;
   incidents: Array<Incident>;

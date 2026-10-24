@@ -16,6 +16,8 @@ T = TypeVar("T", bound="IncidentsResponse")
 
 @_attrs_define
 class IncidentsResponse:
+    """The account's open incidents and those resolved since `since`, open first."""
+
     since: datetime.datetime
     incidents: list[Incident]
     truncated: bool

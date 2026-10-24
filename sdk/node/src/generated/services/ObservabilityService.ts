@@ -327,7 +327,7 @@ export class ObservabilityService {
   /**
    * Delete a custom dashboard.
    * Deletes one of the account's dashboards.
-   * @returns Problem No such dashboard (dashboard_not_found), or the preview is disabled.
+   * @returns Problem No dashboard to delete (dashboard_not_found), or the preview is disabled.
    * @throws ApiError
    */
   public static deleteDashboard({
@@ -354,7 +354,7 @@ export class ObservabilityService {
    * and no value; the rest still resolve.
    *
    * @returns DashboardData The resolved widgets.
-   * @returns Problem No such dashboard (dashboard_not_found), or the preview is disabled.
+   * @returns Problem No dashboard to read widgets for (dashboard_not_found), or the preview is disabled.
    * @throws ApiError
    */
   public static getDashboardData({

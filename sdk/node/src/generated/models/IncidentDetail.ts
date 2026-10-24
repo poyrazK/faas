@@ -7,6 +7,9 @@ import type { Incident } from './Incident.js';
 import type { IncidentFire } from './IncidentFire.js';
 import type { IncidentNote } from './IncidentNote.js';
 import type { IncidentUpdate } from './IncidentUpdate.js';
+/**
+ * An incident with the evidence the platform has for it and the account's notes.
+ */
 export type IncidentDetail = {
   incident: Incident;
   fires?: Array<IncidentFire>;

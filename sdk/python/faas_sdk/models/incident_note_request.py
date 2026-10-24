@@ -11,6 +11,8 @@ T = TypeVar("T", bound="IncidentNoteRequest")
 
 @_attrs_define
 class IncidentNoteRequest:
+    """A note to append to an incident."""
+
     body: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
