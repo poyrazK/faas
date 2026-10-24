@@ -56,8 +56,8 @@ func TestDashboardEdgeAttackMode(t *testing.T) {
 	if body := page(); !strings.Contains(body, "Attack mode is not yet available") || strings.Contains(body, "Turn on attack mode") {
 		t.Fatal("unreleased page offers to turn attack mode on")
 	}
-	if rec := post(map[string]string{"attack_mode": "on", "duration_seconds": "3600"}); rec.Code != http.StatusSeeOther || strings.Contains(rec.Header().Get("Location"), "action=attack_mode_on") {
-		t.Fatalf("unreleased on: %d %s", rec.Code, rec.Header().Get("Location"))
+	if rec := post(map[string]string{"attack_mode": "on", "duration_seconds": "3600"}); rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), "edge_feature_unavailable") {
+		t.Fatalf("unreleased on: %d %s %s", rec.Code, rec.Header().Get("Location"), rec.Body.String())
 	}
 	if rules, _ := store.ListEdgeRulesForApp(t.Context(), app.ID); len(rules) != 0 {
 		t.Fatalf("unreleased on created %d rules", len(rules))
