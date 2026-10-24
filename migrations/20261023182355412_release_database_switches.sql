@@ -108,7 +108,7 @@ CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS managed_postgres_cutovers_open_ap
 DROP INDEX CONCURRENTLY IF EXISTS managed_postgres_cutovers_active_app_scope_idx;
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.guard_managed_postgres_admission_fence() RETURNS trigger
+CREATE OR REPLACE FUNCTION guard_managed_postgres_admission_fence() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE intent managed_postgres_cutovers%ROWTYPE; checked_at timestamptz;
@@ -145,7 +145,7 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.guard_managed_postgres_cutover_binding() RETURNS trigger
+CREATE OR REPLACE FUNCTION guard_managed_postgres_cutover_binding() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE pinned uuid;
@@ -169,7 +169,7 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.guard_managed_postgres_cutover_database() RETURNS trigger
+CREATE OR REPLACE FUNCTION guard_managed_postgres_cutover_database() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -187,7 +187,7 @@ $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.guard_managed_postgres_source_fence_cancellation() RETURNS trigger
+CREATE OR REPLACE FUNCTION guard_managed_postgres_source_fence_cancellation() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -206,7 +206,7 @@ END $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.postgres_capacity_reserve(kind text, owner uuid, ep text, rk text, place text, gen bigint, conns bigint, sl bigint, se bigint, wo bigint) RETURNS void
+CREATE OR REPLACE FUNCTION postgres_capacity_reserve(kind text, owner uuid, ep text, rk text, place text, gen bigint, conns bigint, sl bigint, se bigint, wo bigint) RETURNS void
     LANGUAGE plpgsql
     AS $$
 DECLARE r postgres_capacity_resources; used record; held postgres_capacity_reservations;
@@ -314,7 +314,7 @@ END $$;
 -- +goose StatementEnd
 DROP TABLE IF EXISTS release_database_switches;
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.guard_managed_postgres_admission_fence() RETURNS trigger
+CREATE OR REPLACE FUNCTION guard_managed_postgres_admission_fence() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE intent managed_postgres_cutovers%ROWTYPE; checked_at timestamptz;
@@ -350,7 +350,7 @@ END;
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.guard_managed_postgres_cutover_binding() RETURNS trigger
+CREATE OR REPLACE FUNCTION guard_managed_postgres_cutover_binding() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 DECLARE pinned uuid;
@@ -373,7 +373,7 @@ END;
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.guard_managed_postgres_cutover_database() RETURNS trigger
+CREATE OR REPLACE FUNCTION guard_managed_postgres_cutover_database() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -390,7 +390,7 @@ END;
 $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.guard_managed_postgres_source_fence_cancellation() RETURNS trigger
+CREATE OR REPLACE FUNCTION guard_managed_postgres_source_fence_cancellation() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
 BEGIN
@@ -405,7 +405,7 @@ BEGIN
 END $$;
 -- +goose StatementEnd
 -- +goose StatementBegin
-CREATE OR REPLACE FUNCTION public.postgres_capacity_reserve(kind text, owner uuid, ep text, rk text, place text, gen bigint, conns bigint, sl bigint, se bigint, wo bigint) RETURNS void
+CREATE OR REPLACE FUNCTION postgres_capacity_reserve(kind text, owner uuid, ep text, rk text, place text, gen bigint, conns bigint, sl bigint, se bigint, wo bigint) RETURNS void
     LANGUAGE plpgsql
     AS $$
 DECLARE r postgres_capacity_resources; used record; held postgres_capacity_reservations;
