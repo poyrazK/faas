@@ -162,7 +162,7 @@ steps must be deterministic:
 | Recorded results, payloads and errors per run | 1.5 MiB |
 | Results reported by one call (parallel steps share it) | 960 KiB of JSON |
 | Workflow output | 960 KiB of JSON |
-| Operation name | 1–128 of `A-Z a-z 0-9 _ . : # / -`, starting with a letter or digit |
+| Operation name | 1–128 of `A-Z a-z 0-9 _ . : / -`, starting with a letter or digit; `#` is reserved for repeated names |
 
 A step whose result would push one call's answer past 960 KiB fails without
 retry. Large data belongs in [object storage](object-storage.md); return its

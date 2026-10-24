@@ -33,9 +33,31 @@ const (
 	// EntryRetrying is a step whose last attempt failed and which the SDK
 	// must run again.
 	EntryRetrying = "retrying"
+	// EntryScheduled is a retrying step whose back-off has not elapsed. The
+	// SDK leaves it suspended; the engine calls again when it is due. Only
+	// the request carries it (Journal.Sent); the journal itself keeps
+	// EntryRetrying, so an SDK that runs the step early is still accepted.
+	EntryScheduled = "scheduled"
 	// EntryWaiting is a sleep or event wait that has not resolved.
 	EntryWaiting = "waiting"
 )
+
+// Sent returns the entries for an entry-handler request at now: retrying
+// steps whose back-off has not elapsed are marked EntryScheduled, so another
+// operation settling does not run them before their retry time.
+func (j Journal) Sent(now time.Time) []Entry {
+	entries := make([]Entry, len(j.Entries))
+	copy(entries, j.Entries)
+	for i, entry := range entries {
+		if entry.Status != EntryRetrying {
+			continue
+		}
+		if retryAt := j.Rows[entry.Name].Row.NextRetry; retryAt != nil && now.Before(*retryAt) {
+			entries[i].Status = EntryScheduled
+		}
+	}
+	return entries
+}
 
 // Result statuses reported by the SDK.
 const (
@@ -448,7 +470,9 @@ func progresses(journal Journal, plan Plan) bool {
 		return true
 	}
 	for _, entry := range journal.Entries {
-		if entry.Status == EntryWaiting {
+		// A retrying step the SDK left suspended (EntryScheduled in the
+		// request) runs when its back-off elapses.
+		if entry.Status == EntryWaiting || entry.Status == EntryRetrying {
 			return true
 		}
 	}

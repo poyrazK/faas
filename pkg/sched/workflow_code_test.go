@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/sched"
@@ -304,6 +305,57 @@ func TestCodeWorkflowDriverCallsUseDistinctIdempotencyKeys(t *testing.T) {
 			}
 		}
 	})
+}
+
+// A retrying step is sent as scheduled until its back-off elapses, even when
+// another operation settling calls the code first.
+func TestCodeWorkflowSendsRetriesThatAreNotDueAsScheduled(t *testing.T) {
+	store := state.NewMemStore()
+	var statuses []string
+	executor := &codeTestExecutor{run: func(wf *codeTestWF, call int) (any, error) {
+		if call == 2 {
+			statuses = append(statuses, wf.journal[0].Status)
+		}
+		if _, err := wf.Step("flaky", &api.WorkflowRetrySpec{MaxAttempts: 3, Backoff: "fixed"}, func(attempt int) (any, error) {
+			if attempt == 1 {
+				return nil, errors.New("upstream 503")
+			}
+			return attempt, nil
+		}); err != nil {
+			return nil, err
+		}
+		return nil, nil
+	}}
+	run := sched.CreateGuardedRun(t, store, codeSpec(nil), `{}`)
+	orchestrator := sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil)
+	dispatchCode(t, orchestrator)
+	time.Sleep(1100 * time.Millisecond)
+	dispatchCode(t, orchestrator)
+	final, _ := store.GetWorkflowRun(context.Background(), run.ID)
+	if final.Status != state.WorkflowRunStatusSucceeded || len(statuses) != 1 || statuses[0] != workflowcode.EntryRetrying {
+		t.Fatalf("a due retry must be sent as retrying: run=%s statuses=%v", final.Status, statuses)
+	}
+	journal, err := workflowcode.BuildJournal([]workflowcode.Row{{Name: "flaky", Status: workflowcode.RowPending, Attempt: 1, NextRetry: ptrTime(time.Now().Add(time.Hour)), Input: workflowcode.EncodeDescriptor(workflowcode.Descriptor{Kind: workflowcode.KindStep})}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sent := journal.Sent(time.Now()); sent[0].Status != workflowcode.EntryScheduled {
+		t.Fatalf("a retry that is not due must be sent as scheduled: %+v", sent)
+	}
+}
+
+func ptrTime(t time.Time) *time.Time { return &t }
+
+// Stored error text must be valid UTF-8 without NUL, or PostgreSQL refuses
+// the write and the failed call is retried at once instead of backing off.
+func TestTruncateCodeErrorKeepsValidUTF8(t *testing.T) {
+	long := strings.Repeat("a", api.WorkflowCodeErrorMaxBytes-1) + "ş" + "tail"
+	if got := sched.TruncateCodeError(long); len(got) != api.WorkflowCodeErrorMaxBytes-1 || !utf8.ValidString(got) {
+		t.Fatalf("cut through a rune: len=%d valid=%v", len(got), utf8.ValidString(got))
+	}
+	if got := sched.TruncateCodeError("bad \xff\xfe body\x00"); got != "bad  body" {
+		t.Fatalf("got %q", got)
+	}
 }
 
 func TestCodeWorkflowEntryFailureRetriesWithBackoff(t *testing.T) {

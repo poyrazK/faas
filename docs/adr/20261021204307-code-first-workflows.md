@@ -64,6 +64,8 @@ or `failed` with an error).
   `asyncio.gather` over steps runs them concurrently in one invocation.
 - Operation names come from the code. A repeated name gets a deterministic
   `#n` suffix, so `step("charge")` in a loop records `charge`, `charge#2`, …
+  The SDKs refuse `#` in a name the code passes, so an explicit `charge#2`
+  cannot collide with a generated one (amended 2026-10-24, Hunt 13).
 - **Determinism is checked on both sides.** The SDK refuses to replay when the
   code asks for a different name or kind at a recorded sequence number. The
   engine refuses a response whose operations skip a sequence number, rename a
@@ -82,7 +84,11 @@ new tables. A row's `input` holds its operation descriptor
   output. A failure is retried under the step's policy (per-step override,
   else `code.retry`, else 3 attempts with exponential back-off, the declarative
   `EvaluateWorkflowRetry` delays). The engine schedules the retry and calls the
-  entry handler when it is due; the SDK runs the step again. When attempts are
+  entry handler when it is due; the SDK runs the step again. A call made
+  earlier, because another operation settled, sends the step as `scheduled`
+  and the SDK leaves it suspended (amended 2026-10-24, Hunt 13: SDKs used to
+  run it at once, skipping its back-off). The engine still accepts an early
+  attempt from an older SDK. When attempts are
   exhausted the row is `failed` and the next invocation throws the step error
   into the workflow function, which may catch it.
 - **sleep**: a duration from 1 s to the plan's `WorkflowMaxWaitDays`. The row

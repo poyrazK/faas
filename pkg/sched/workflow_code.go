@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -219,7 +220,7 @@ func (o *WorkflowOrchestrator) invokeCodeWorkflow(ctx context.Context, store sta
 	}
 	body, err := json.Marshal(workflowcode.Request{
 		Protocol: api.WorkflowCodeProtocol, RunID: run.ID, Workflow: run.WorkflowName,
-		Input: input, Invocation: attempt, Journal: journal.Entries,
+		Input: input, Invocation: attempt, Journal: journal.Sent(time.Now().UTC()),
 	})
 	if err != nil {
 		return false, err
@@ -283,11 +284,14 @@ func (o *WorkflowOrchestrator) invokeCodeWorkflow(ctx context.Context, store sta
 	return false, o.store.SetWorkflowRunWake(ctx, run.ID, state.WorkflowRunStatusPending, retryAt)
 }
 
+// truncateCodeError bounds stored error text. PostgreSQL text refuses
+// invalid UTF-8 and NUL, and a refused write would leave the call unrecorded
+// and retried at once, so a cut through a rune and stray bytes are dropped.
 func truncateCodeError(message string) string {
-	if len(message) <= api.WorkflowCodeErrorMaxBytes {
-		return message
+	if len(message) > api.WorkflowCodeErrorMaxBytes {
+		message = message[:api.WorkflowCodeErrorMaxBytes]
 	}
-	return message[:api.WorkflowCodeErrorMaxBytes]
+	return strings.ReplaceAll(strings.ToValidUTF8(message, ""), "\x00", "")
 }
 
 // applyCodeResponse records a validated answer in one transaction, then

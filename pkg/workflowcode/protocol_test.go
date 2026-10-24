@@ -218,3 +218,32 @@ func TestRetryDelay(t *testing.T) {
 		t.Fatal("fixed delay")
 	}
 }
+
+// A retrying step whose back-off has not elapsed is sent as scheduled, so an
+// SDK does not run it early when another operation settles; a call that
+// leaves it suspended and reports nothing else is still progress, and an
+// older SDK that runs it anyway is accepted.
+func TestSentMarksRetriesThatAreNotDueAsScheduled(t *testing.T) {
+	now := time.Now().UTC()
+	later, earlier := now.Add(time.Minute), now.Add(-time.Second)
+	rows := []workflowcode.Row{
+		{Name: "flaky", Status: workflowcode.RowPending, Attempt: 2, NextRetry: &later, Input: workflowcode.EncodeDescriptor(workflowcode.Descriptor{Seq: 0, Kind: workflowcode.KindStep})},
+		{Name: "due", Status: workflowcode.RowPending, Attempt: 1, NextRetry: &earlier, Input: workflowcode.EncodeDescriptor(workflowcode.Descriptor{Seq: 1, Kind: workflowcode.KindStep})},
+	}
+	journal, err := workflowcode.BuildJournal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sent := journal.Sent(now)
+	if sent[0].Status != workflowcode.EntryScheduled || sent[1].Status != workflowcode.EntryRetrying || journal.Entries[0].Status != workflowcode.EntryRetrying {
+		t.Fatalf("sent=%+v journal=%+v", sent, journal.Entries)
+	}
+	if _, err := workflowcode.Validate(journal, response(workflowcode.ResultRunning), limits()); err != nil {
+		t.Fatalf("a call that waits for a scheduled retry must be accepted: %v", err)
+	}
+	if _, err := workflowcode.Validate(journal, response(workflowcode.ResultRunning,
+		workflowcode.ReportedOp{Seq: 0, Name: "flaky", Kind: workflowcode.KindStep, Status: workflowcode.ResultSucceeded, Output: json.RawMessage(`1`)},
+	), limits()); err != nil {
+		t.Fatalf("an early re-run from an older SDK must stay accepted: %v", err)
+	}
+}
