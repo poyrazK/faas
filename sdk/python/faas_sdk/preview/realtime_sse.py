@@ -13,7 +13,7 @@ from urllib.parse import urlsplit
 
 import httpx
 
-from ._sse import SseEvent, _parse_frame
+from .._sse import SseEvent, _parse_frame
 from .realtime_catch_up import _sequence
 from .realtime_expiry import RealtimeMessageExpiry, _notify_expiry
 from .realtime_filters import RealtimeEventFilter

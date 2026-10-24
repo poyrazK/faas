@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, ManagedPostgresService } from '../src/index.js';
+import { FaaSClient, ManagedPostgresService } from '../src/preview.js';
 
 test('company PostgreSQL clients keep the tenant in every resource path', async (t) => {
   const paths: string[] = [];

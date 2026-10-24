@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"context"
@@ -8,10 +8,12 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func TestAlertRollbackStatusUsesGETAndPreservesPair(t *testing.T) {
-	receipt := AlertRollback{ID: "3e9f323a-ade6-442b-8444-c91da107fe44", RuleID: "a2b9cc53-907f-4b5c-88a4-fd0c21214556", AppID: "142b7504-f03a-4ee2-aeb3-14d922a845d4", Scope: "default", CandidateDeploymentID: "5b87c415-7c93-4932-acab-a3c90e98be86", PredecessorDeploymentID: "6b87c415-7c93-4932-acab-a3c90e98be86", Status: "blocked", FiredAt: time.Now(), UpdatedAt: time.Now(), Blockers: []BindingCheckFinding{{Code: "binding_verification_missing", Message: "verify predecessor"}}}
+	receipt := AlertRollback{ID: "3e9f323a-ade6-442b-8444-c91da107fe44", RuleID: "a2b9cc53-907f-4b5c-88a4-fd0c21214556", AppID: "142b7504-f03a-4ee2-aeb3-14d922a845d4", Scope: "default", CandidateDeploymentID: "5b87c415-7c93-4932-acab-a3c90e98be86", PredecessorDeploymentID: "6b87c415-7c93-4932-acab-a3c90e98be86", Status: "blocked", FiredAt: time.Now(), UpdatedAt: time.Now(), Blockers: []faas.BindingCheckFinding{{Code: "binding_verification_missing", Message: "verify predecessor"}}}
 	receipt.Service, receipt.ServiceRequestID, receipt.ServicePhase = true, receipt.ID, "pending"
 	reads := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

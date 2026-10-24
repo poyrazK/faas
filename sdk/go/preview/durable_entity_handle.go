@@ -1,5 +1,5 @@
 // ADR-938: scope-bound typed entity clients.
-package faas
+package preview
 
 import (
 	"context"
@@ -40,7 +40,7 @@ func (h *DurableEntityHandle[Payload, Result]) Invoke(ctx context.Context, reque
 	if err != nil {
 		return out, fmt.Errorf("encode entity payload: %w", err)
 	}
-	raw, err := h.client.InvokeDurableEntity(ctx, h.slug, DurableEntityInvokeRequest{Namespace: h.scope.Namespace, Key: h.scope.Key, Environment: h.scope.Environment, PlatformTenantID: h.scope.PlatformTenantID, RequestID: requestID, Payload: body})
+	raw, err := h.client.PreviewClient.InvokeDurableEntity(ctx, h.slug, DurableEntityInvokeRequest{Namespace: h.scope.Namespace, Key: h.scope.Key, Environment: h.scope.Environment, PlatformTenantID: h.scope.PlatformTenantID, RequestID: requestID, Payload: body})
 	if err != nil {
 		return out, err
 	}
@@ -52,12 +52,12 @@ func (h *DurableEntityHandle[Payload, Result]) Invoke(ctx context.Context, reque
 }
 
 func (h *DurableEntityHandle[Payload, Result]) Inspect(ctx context.Context) (DurableEntityInspectResponse, error) {
-	return h.client.InspectDurableEntity(ctx, h.slug, h.scope)
+	return h.client.PreviewClient.InspectDurableEntity(ctx, h.slug, h.scope)
 }
 
 // Retry accepts a caller-observed fence; it never silently fetches a newer one.
 func (h *DurableEntityHandle[Payload, Result]) Retry(ctx context.Context, request DurableEntityRetryRequest) (DurableEntityRetryResponse, error) {
 	request.Namespace, request.Key = h.scope.Namespace, h.scope.Key
 	request.Environment, request.PlatformTenantID = h.scope.Environment, h.scope.PlatformTenantID
-	return h.client.RetryDurableEntity(ctx, h.slug, request)
+	return h.client.PreviewClient.RetryDurableEntity(ctx, h.slug, request)
 }

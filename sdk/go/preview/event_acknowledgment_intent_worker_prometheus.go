@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"io"

@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"context"
@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func (s *eventAcknowledgmentWorker) scope(status EventAcknowledgmentStatus) bool {
@@ -38,7 +40,7 @@ func (s *eventAcknowledgmentWorker) startLease(ctx context.Context) error {
 		if err == nil {
 			return s.renewed(status)
 		}
-		var problem *APIError
+		var problem *faas.APIError
 		offered := false
 		if errors.As(err, &problem) && problem.Problem.Status == http.StatusConflict {
 			callCtx, cancel := context.WithTimeout(ctx, s.options.CallbackTimeout)
@@ -149,7 +151,7 @@ func (s *eventAcknowledgmentWorker) validTerminal(status EventAcknowledgmentStat
 }
 func (s *eventAcknowledgmentWorker) retryDelay(err error) (time.Duration, bool) {
 	delay := s.options.RetryBackoff
-	var problem *APIError
+	var problem *faas.APIError
 	if !errors.As(err, &problem) {
 		return delay, true
 	}
@@ -193,7 +195,7 @@ func eventWorkerWait(ctx context.Context, delay time.Duration) error {
 func eventWorkerCallbackError(err error, ctx context.Context) error {
 	// Remote error bodies and transport diagnostics can echo credentials. Expose
 	// only a bounded status plus sentinels, never the raw callback error text.
-	var problem *APIError
+	var problem *faas.APIError
 	if errors.As(err, &problem) {
 		status := problem.Problem.Status
 		if status == http.StatusConflict || status == http.StatusNotFound || status == http.StatusGone {

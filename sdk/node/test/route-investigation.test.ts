@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {AppsService, FaaSClient, type RouteHealthInvestigation} from '../src/index.js';
+import {AppsService, FaaSClient, type RouteHealthInvestigation} from '../src/preview.js';
 
 for (const fixture of ['route-investigation.json', 'route-latency-investigation.json']) test(`route investigation binds scope and evidence: ${fixture}`, async (t) => {
   const payload: RouteHealthInvestigation = JSON.parse(readFileSync(resolve('../../tests/fixtures', fixture), 'utf8'));

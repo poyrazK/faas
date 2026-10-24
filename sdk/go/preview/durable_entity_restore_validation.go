@@ -1,5 +1,5 @@
 // ADR-943: verdict-only pure application validation; no transition builder.
-package faas
+package preview
 
 import (
 	"bytes"

@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"context"
@@ -6,8 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/poyrazK/faas/sdk/go/internal/api"
 	"time"
+
+	"github.com/poyrazK/faas/sdk/go/internal/api"
 )
 
 func (r *CustomerOperationRuntime) publishCustomerOperationMilestones(ctx context.Context, db *sql.DB, input customerOperationInput) error {
@@ -58,7 +59,7 @@ func (r *CustomerOperationRuntime) publishCustomerOperationMilestones(ctx contex
 			cancel()
 			return err
 		}
-		receipt, err := client.ReportOperationMilestone(requestCtx, input.operationID, input.proof, request)
+		receipt, err := api.NewPreviewClient(client).ReportOperationMilestone(requestCtx, input.operationID, input.proof, request)
 		cancel()
 		if err != nil {
 			return fmt.Errorf("faas: publish Customer Operation milestone: %w", err)
@@ -198,7 +199,7 @@ func (r *CustomerOperationRuntime) publishCustomerOperationWorkflowStates(ctx co
 			cancel()
 			return err
 		}
-		receipt, err := client.ReportOperationWorkflowState(requestCtx, input.operationID, input.proof, report)
+		receipt, err := api.NewPreviewClient(client).ReportOperationWorkflowState(requestCtx, input.operationID, input.proof, report)
 		cancel()
 		if err != nil {
 			return fmt.Errorf("faas: publish Customer Operation workflow state: %w", err)

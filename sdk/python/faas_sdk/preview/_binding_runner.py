@@ -17,7 +17,7 @@ from ._binding_runner_diagnostics import Diagnostics, diagnose_async, diagnose_s
 from .models.binding_verification_qualification import BindingVerificationQualification
 from .models.binding_verification_run import BindingVerificationRun
 from .models.project_binding_verification_run import ProjectBindingVerificationRun
-from ._rfc7807 import FaasProblemError, parse_problem, raise_for_problem
+from .._rfc7807 import FaasProblemError, parse_problem, raise_for_problem
 
 
 @dataclass(frozen=True)

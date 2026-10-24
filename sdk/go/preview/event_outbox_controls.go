@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // EventOutboxControlReceipt is a retained command result, not a current status
@@ -46,7 +48,7 @@ func eventOutboxControlErrorCode(err error) (string, bool) {
 		return "unconfirmed", true
 	case errors.Is(err, ErrEventOutboxBusy):
 		return "busy", true
-	case errors.Is(err, ErrNotFound):
+	case errors.Is(err, faas.ErrNotFound):
 		return "not_found", true
 	default:
 		return "", false
@@ -63,7 +65,7 @@ func eventOutboxControlError(code string) error {
 	case "busy":
 		return ErrEventOutboxBusy
 	case "not_found":
-		return ErrNotFound
+		return faas.ErrNotFound
 	default:
 		return ErrEventOutboxStore
 	}
@@ -193,7 +195,7 @@ func GetEventOutboxControlReceipt(ctx context.Context, db *sql.DB, accountID, ap
 	}
 	receipt, _, err := eventOutboxControlReceipt(db.QueryRowContext(ctx, `SELECT `+eventOutboxControlColumns+` FROM public.gregale_event_outbox_controls WHERE account_id=$1::uuid AND app_id=$2::uuid AND command_id=$3::uuid`, account, app, commandID))
 	if errors.Is(err, sql.ErrNoRows) {
-		return zero, ErrNotFound
+		return zero, faas.ErrNotFound
 	}
 	if err != nil {
 		return zero, eventOutboxStoreError(ctx)

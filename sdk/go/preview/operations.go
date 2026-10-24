@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"bytes"
@@ -14,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"unicode/utf8"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // OperationReceiptSchema is customer-owned DDL. Install explicitly as the
@@ -51,7 +53,7 @@ type OperationRequest struct {
 
 type OperationOutcome struct {
 	Result  json.RawMessage
-	Effects []ManagedOperationEffect
+	Effects []faas.ManagedOperationEffect
 }
 
 type OperationTransactionResult struct {
@@ -160,12 +162,12 @@ func OperationRequestDigest(input OperationRequest) ([]byte, error) {
 
 func encodeOperationOutcome(outcome OperationOutcome) ([]byte, error) {
 	if outcome.Effects == nil {
-		outcome.Effects = []ManagedOperationEffect{}
+		outcome.Effects = []faas.ManagedOperationEffect{}
 	}
 	var buffer bytes.Buffer
 	encoder := json.NewEncoder(&buffer)
 	encoder.SetEscapeHTML(false)
-	if err := encoder.Encode(ManagedOperationResult{Version: 1, Result: outcome.Result, Effects: outcome.Effects}); err != nil {
+	if err := encoder.Encode(faas.ManagedOperationResult{Version: 1, Result: outcome.Result, Effects: outcome.Effects}); err != nil {
 		return nil, fmt.Errorf("operation response encode: %w", err)
 	}
 	body := bytes.TrimSuffix(buffer.Bytes(), []byte("\n"))
@@ -176,7 +178,7 @@ func validateOperationResponse(body []byte) error {
 	if len(body) > operationResponseBytes || !utf8.Valid(body) {
 		return errors.New("invalid or oversized operation response")
 	}
-	var envelope ManagedOperationResult
+	var envelope faas.ManagedOperationResult
 	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&envelope); err != nil || !json.Valid(body) || envelope.Version != 1 || len(envelope.Result) == 0 || envelope.Effects == nil || len(envelope.Effects) > operationEffects {

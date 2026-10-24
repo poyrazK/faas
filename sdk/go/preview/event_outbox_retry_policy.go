@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"crypto/sha256"
@@ -8,6 +8,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // EventOutboxRetryPolicySchema upgrades the existing application-owned last_code
@@ -16,8 +18,6 @@ import (
 //
 //go:embed event_outbox_retry_policy_schema.sql
 var EventOutboxRetryPolicySchema string
-
-type eventOutboxPolicyContextKey struct{}
 
 // EventOutboxRetryPolicy opts into capped exponential jitter and Retry-After on
 // HTTP 429/503. Durations are whole milliseconds (1 ms..1 hour). Initial defaults
@@ -63,7 +63,7 @@ func (c eventOutboxClaim) retryDelay(options EventOutboxRecoveryOptions) time.Du
 // Relative guidance is capped to the longest possible retry window. An absolute
 // HTTP-date is passed to PostgreSQL, avoiding dependence on the client's clock.
 func eventOutboxRetryAfter(err error) (time.Duration, *time.Time) {
-	apiErr, ok := AsAPIError(err)
+	apiErr, ok := faas.AsAPIError(err)
 	if !ok || apiErr.Problem.Status != http.StatusTooManyRequests && apiErr.Problem.Status != http.StatusServiceUnavailable {
 		return 0, nil
 	}

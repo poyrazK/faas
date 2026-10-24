@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // CustomerOperationRequest is an explicitly negotiated HTTP receipt context.
@@ -78,7 +80,7 @@ func WithCustomerOperationTransaction(ctx context.Context, db *sql.DB, input Cus
 }
 
 func customerOperationResult(body []byte) (json.RawMessage, error) {
-	var envelope ManagedOperationResult
+	var envelope faas.ManagedOperationResult
 	if err := json.Unmarshal(body, &envelope); err != nil || len(envelope.Result) == 0 || len(envelope.Effects) != 0 {
 		return nil, ErrInvalidOperationRequest
 	}

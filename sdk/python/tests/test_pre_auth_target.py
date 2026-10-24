@@ -55,6 +55,7 @@ def test_regen_preserves_pre_auth_target_wrapper(monkeypatch, tmp_path):
     monkeypatch.setattr(module, "REPO_ROOT", tmp_path)
     monkeypatch.setattr(module, "OUT", sdk_root)
     monkeypatch.setattr(module, "SPEC", source_spec)
+    monkeypatch.setattr(module, "PUBLIC_SPEC", source_spec)
     monkeypatch.setattr(module, "CONFIG", config)
     monkeypatch.setattr(module, "pre_normalize_spec", lambda _: normalized)
     monkeypatch.setattr(module, "_rewrite_init_py", lambda _: None)
@@ -64,8 +65,12 @@ def test_regen_preserves_pre_auth_target_wrapper(monkeypatch, tmp_path):
 
     def generate(command, **kwargs):
         if "openapi_python_client" in command:
-            (package / "__init__.py").write_text("# generated\n")
-            models = package / "models"
+            # The package root, then the preview tree into a scratch output.
+            generated = Path(command[command.index("--output-path") + 1]) / "faas_sdk"
+            generated.mkdir(parents=True, exist_ok=True)
+            (generated / "__init__.py").write_text("# generated\n")
+            (generated / "api").mkdir()
+            models = generated / "models"
             models.mkdir()
             (models / "__init__.py").write_text(
                 "from .create_commit_source_request import CreateCommitSourceRequest\n"

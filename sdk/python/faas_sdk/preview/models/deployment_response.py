@@ -1,0 +1,1541 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+from uuid import UUID
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+
+from ..models.deployment_response_build_cache_status import (
+    DeploymentResponseBuildCacheStatus,
+    check_deployment_response_build_cache_status,
+)
+from ..models.deployment_response_canary_preset import (
+    DeploymentResponseCanaryPreset,
+    check_deployment_response_canary_preset,
+)
+from ..models.deployment_response_deployed_via_type_1 import (
+    DeploymentResponseDeployedViaType1,
+    check_deployment_response_deployed_via_type_1,
+)
+from ..models.deployment_response_deployed_via_type_2_type_1 import (
+    DeploymentResponseDeployedViaType2Type1,
+    check_deployment_response_deployed_via_type_2_type_1,
+)
+from ..models.deployment_response_deployed_via_type_3_type_1 import (
+    DeploymentResponseDeployedViaType3Type1,
+    check_deployment_response_deployed_via_type_3_type_1,
+)
+from ..models.deployment_response_parked_reason_type_1 import (
+    DeploymentResponseParkedReasonType1,
+    check_deployment_response_parked_reason_type_1,
+)
+from ..models.deployment_response_parked_reason_type_2_type_1 import (
+    DeploymentResponseParkedReasonType2Type1,
+    check_deployment_response_parked_reason_type_2_type_1,
+)
+from ..models.deployment_response_parked_reason_type_3_type_1 import (
+    DeploymentResponseParkedReasonType3Type1,
+    check_deployment_response_parked_reason_type_3_type_1,
+)
+from ..models.deployment_response_rollout_state import (
+    DeploymentResponseRolloutState,
+    check_deployment_response_rollout_state,
+)
+from ..models.deployment_response_tag import DeploymentResponseTag, check_deployment_response_tag
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.app_release_review import AppReleaseReview
+    from ..models.build_plan import BuildPlan
+    from ..models.deployment_configuration_status import DeploymentConfigurationStatus
+    from ..models.deployment_healthcheck import DeploymentHealthcheck
+    from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+    from ..models.deployment_promotion_hold import DeploymentPromotionHold
+    from ..models.deployment_readiness_probe import DeploymentReadinessProbe
+    from ..models.deployment_release import DeploymentRelease
+    from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
+    from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
+    from ..models.deployment_stage_state import DeploymentStageState
+    from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
+    from ..models.dev_patch_preview import DevPatchPreview
+    from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
+    from ..models.log_excerpt import LogExcerpt
+    from ..models.rollback_operation import RollbackOperation
+    from ..models.rollout_decision import RolloutDecision
+    from ..models.scan_result import ScanResult
+    from ..models.scheduled_release import ScheduledRelease
+    from ..models.secret_scan_result import SecretScanResult
+    from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
+    from ..models.workflow_spec import WorkflowSpec
+    from ..models.workload_dependency import WorkloadDependency
+
+
+T = TypeVar("T", bound="DeploymentResponse")
+
+
+@_attrs_define
+class DeploymentResponse:
+    """One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional
+    `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 /
+    ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy
+    pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the
+    ref shape is non-secret by design.
+
+    """
+
+    id: str
+    app_id: str
+    image_digest: str
+    kind: str
+    status: str
+    created_at: datetime.datetime
+    configuration: DeploymentConfigurationStatus | Unset = UNSET
+    """Server-managed cron activation diagnostics. CLI-owned settings are additionally reflected in CLI receipt
+    configuration_complete. Reads never create builds or modify schedules."""
+    staged_review: AppReleaseReview | Unset = UNSET
+    """Atomic app configuration and serving-deployment identities used to fence release admission."""
+    worker_drain: DeploymentWorkerDrainStatus | Unset = UNSET
+    """Worker instance shutdown progress from the deployment audit timeline. Counts are instances, not application
+    tasks. Overdue spans passed their deadline without a recorded outcome."""
+    promotion_hold: DeploymentPromotionHold | Unset = UNSET
+    """Compatibility hold and durable recovery progress for a deployment awaiting promotion."""
+    scheduled_release: ScheduledRelease | Unset = UNSET
+    """A release built ahead of time that starts its rollout at release_at (ADR-20261021152201)."""
+    durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset = UNSET
+    """Observational validator readiness on deployment detail; not a reservation or code-purity attestation."""
+    stage_state: DeploymentStageState | Unset = UNSET
+    """Customer-visible deployment stage progress (ADR-117). `current` is the open stage, or an empty string once
+    the deployment is live, failed or cancelled and that stage has moved into `history`."""
+    dev_patch: DevPatchPreview | Unset = UNSET
+    """Set only on the response to a developer source upload (`gregale dev`). Reports whether the sync could have
+    been applied as a live source patch to the deployment that was live at upload time (ADR-740 phase 1). It is a
+    measurement only; the normal developer build always runs."""
+    revision: int | Unset = UNSET
+    """Per-app deployment revision (ADR-198), rendered as `v42`. Accepted in place of a deployment id wherever this
+    API takes one (e.g. `target_deployment_id` on rollback). This is the same N that appears in the
+    `deploy-{N}-{slug}` preview hostname. Omitted for rows created before the column existed; address those by id.
+   """
+    build_id: None | str | Unset = UNSET
+    build_cache_status: DeploymentResponseBuildCacheStatus | Unset = UNSET
+    """Builderd cache decision for the associated build. Omitted until the build reaches its cache lookup."""
+    cache_key_sha256: str | Unset = UNSET
+    """SHA-256 digest of the versioned BuildCacheRecipe. Plan, runtime base, builder identity, platform, framework,
+    and source root remain part of the digest input."""
+    error: None | str | Unset = UNSET
+    error_code: None | str | Unset = UNSET
+    error_hint: None | str | Unset = UNSET
+    """One-line next-action lifted from pkg/whycopy catalog."""
+    error_why: None | str | Unset = UNSET
+    """Human-readable cause with observed value."""
+    error_fix: None | str | Unset = UNSET
+    """Prescriptive remediation (1-3 lines)."""
+    error_relevant_logs: list[LogExcerpt] | Unset = UNSET
+    """Per-line log excerpts explaining the failure (error-explanations cluster). Capped at 20 entries × 512 bytes
+    by the CLI tripwire."""
+    source_url: None | str | Unset = UNSET
+    """Upstream repository or registry reference that produced this deployment, when known."""
+    commit_sha: None | str | Unset = UNSET
+    """Upstream commit SHA that produced this deployment, when known."""
+    source_root: str | Unset = UNSET
+    """Repository-relative build root used by a workspace context upload; omitted when the archive root is built."""
+    source_sha256: str | Unset = UNSET
+    """SHA-256 digest of the exact source archive handed to the builder; stable identity for local-source
+    revisions."""
+    has_overrides: bool | Unset = UNSET
+    """True when this deployment carries a non-null override_* column set."""
+    disable_startup_cpu_boost: bool | Unset = UNSET
+    """Whether the deployment opted out of the temporary startup CPU allowance; absent/false preserves the default
+    boost."""
+    override_entrypoint: list[str] | Unset = UNSET
+    """Entrypoint override echoed verbatim from the create request. nil when no override was supplied."""
+    override_cmd: list[str] | Unset = UNSET
+    """Cmd override echoed verbatim from the create request."""
+    override_env_keys: list[str] | Unset = UNSET
+    """Sorted set of env-var keys set by the env override. VALUES ARE NEVER ECHOED (ADR-053 §Decision 4)."""
+    override_env_secret_keys: list[str] | Unset = UNSET
+    """Sorted set of env-var keys set by the env_secrets override. The parallel refs are echoed in
+    `override_env_secret_refs` because the ref shape is non-secret by design."""
+    override_env_secret_refs: DeploymentResponseOverrideEnvSecretRefs | Unset = UNSET
+    """Verbatim `secret:NAME` ref map; the customer needs to see which secret they bound to which env var to debug
+    a misconfigured deploy."""
+    override_port: int | Unset = UNSET
+    """Listen-port override; 0 = absent (fall back to image default)."""
+    override_healthcheck: DeploymentHealthcheck | None | Unset = UNSET
+    """Startup readiness-probe override echoed verbatim."""
+    override_readiness_probe: DeploymentReadinessProbe | None | Unset = UNSET
+    """Continuous primary-app readiness probe echoed verbatim. Unready instances are withdrawn from request routing
+    and restored after recovery; the VM is not restarted."""
+    override_main_depends_on: list[WorkloadDependency] | Unset = UNSET
+    """Primary workload startup dependencies echoed verbatim. Init companions remain implicit prerequisites."""
+    override_liveness_probe: DeploymentLivenessProbe | None | Unset = UNSET
+    """Liveness-probe override echoed verbatim (issue #554 / ADR-078). nil when the deployment used the per-plan
+    default (Hobby/Pro/Scale → 5s / 3 consecutive / 60s cooldown). Echoed on GET /v1/apps/{slug}/deployments/{id} so
+    the customer can audit which probe the host (cmd/vmmd) is running against the VM."""
+    min_instances: int | Unset = UNSET
+    """Per-deployment cold-wake floor override (issue #557 closure / ADR-072). 0 = inherit from parent app
+    (default); positive value is the deployment's own floor. Effective per-instance floor =
+    max(app.EffectiveMinInstances(), d.EffectiveMinInstances()). Validated against the parent app's plan
+    MaxMinInstances cap on PATCH."""
+    scan: None | ScanResult | Unset = UNSET
+    """Per-deploy grype CVE scan surface (issue #464 / ADR-055). nil on pre-feature rows (the migration backfilled
+    scan_status='skipped' + scan_result={reason: 'pre-feature'} on those; the apid read path returns nil so the
+    dashboard / CLI see a clean absence — the /scan route surfaces the 'skipped' sentinel for those rows). Non-nil
+    for post-feature rows in any of the {pending, complete, failed, skipped} states. With security_policy=enforce,
+    the deployment is promoted only after a complete, digest-matched scan with no HIGH, CRITICAL, or UNKNOWN
+    findings; off/warn remain advisory."""
+    parked_reason: (
+        DeploymentResponseParkedReasonType1
+        | DeploymentResponseParkedReasonType2Type1
+        | DeploymentResponseParkedReasonType3Type1
+        | None
+        | Unset
+    ) = UNSET
+    """Per-deployment parking reason (issue #554 / ADR-079 follow-up and scheduled image quarantine). Closed-set
+    vocabulary enforced at the schema layer via the deployments_parked_reason_check constraint. nil for never-parked
+    deployments — surfaced as no field on the wire via omitempty."""
+    parked_at: datetime.datetime | None | Unset = UNSET
+    """Wall-clock timestamp the deployment was parked (set once, idempotent across schedd restart cycles). nil for
+    never-parked deployments."""
+    traffic_percent: int | Unset = UNSET
+    """Per-deployment traffic-split weight (issue #556 PR-A). Summed across live rows for the app = 100 by
+    construction."""
+    scope: None | str | Unset = UNSET
+    """Per-deployment env scope (ADR-091 / PR-D). Lowercase alnum + dash, 1..40 chars, no leading/trailing dash.
+    nil/omitted = `default`."""
+    secret_scan: None | SecretScanResult | Unset = UNSET
+    """Per-deploy secret-scan audit row (PR-A / ADR-101). Mirrors
+    the `scan` field shape — absent when the row has not been
+    scanned yet (deploy mid-pipeline or pre-PR-A), present
+    with `findings=[]` for a clean walk, present with
+    one-or-more entries for a hit. Read by the dashboard's
+    "secret scan" card and the CLI's `--show-secret-scan`
+    flag. Stamped both for the imaged-side layer walk (main
+    image + each sidecar; post-build, loud-fail on any
+    finding) and — forward-compat — for the apid-side
+    source-tree 422 path. Status closed-set the writer
+    stamps: "complete" (clean) | "complete_with_redactions"
+    (hit). The `image_digest` sub-field records which OCI
+    digest the imaged walk ran against; null on legacy
+    pre-PR-A rows. See `pkg/imaged/secretscan.go`.
+    """
+    build_plan: BuildPlan | None | Unset = UNSET
+    """Auto-detected build plan (issue #961 / Mega-A PR-2). One-line summary the CLI prints after `gregale deploy`.
+    nil for image deploys."""
+    workflows: list[WorkflowSpec] | Unset = UNSET
+    """Validated workflow definitions persisted with this immutable deployment revision."""
+    hosting_receipt: DeploymentResponseHostingReceiptType0 | None | Unset = UNSET
+    """Durable non-secret deployment evidence captured after readiness, including the resolved API profile,
+    artifact identity, and post-readiness smoke result."""
+    deployed_by_user_id: None | Unset | UUID = UNSET
+    """UUID of the deploying local account (FK → accounts.id, ON DELETE SET NULL). Empty when the deploy came from
+    a non-local source (e.g. a githubd pusher not bound to a local account)."""
+    deployed_via: (
+        DeploymentResponseDeployedViaType1
+        | DeploymentResponseDeployedViaType2Type1
+        | DeploymentResponseDeployedViaType3Type1
+        | None
+        | Unset
+    ) = UNSET
+    """Closed-set classifier of how this deployment was submitted. One of `api` (SDK / API key) / `cli` (bearer
+    token) / `dashboard` (session cookie) / `github` (githubd_bridge) / `operator` (admin). Enforced at the schema
+    layer by migrations/00303_deployments_actor.sql's CHECK constraint."""
+    deployed_from_ip: None | str | Unset = UNSET
+    """Trusted remote IP captured by `pkg/middleware.ClientIP` at handler entry (XFF + loopback trust contract).
+    Loopback (127.0.0.1) for the githubd_bridge path. Both IPv4 and IPv6 are accepted at the wire and stored in
+    Postgres' native `inet` type (which canonicalises both families); the OpenAPI schema intentionally omits
+    `format: ipv4` so v6 deployments (which grow as the public gateway picks up AAAA records) do not fail schema
+    validation. v6 is rendered as the bracketed colon-hex form per RFC 5952."""
+    pusher_login: None | str | Unset = UNSET
+    """Raw GitHub login of the pusher when `deployed_via == "github"`. Empty for all other via values. Distinct
+    from the human-readable `DeployedBy` text column (issue #977 / PR #984) — pusher_login is the unmodified GH
+    identity, suitable for downstream GitHub-API correlation."""
+    reason: str | Unset = UNSET
+    """Free-form operator note on the source-ref deploy request (≤280 chars). Example: 'Emergency rollback after
+    payment provider incident'."""
+    tag: DeploymentResponseTag | Unset = UNSET
+    """Closed-set annotation tag on the source-ref deploy request for grouping/filtering."""
+    deployed_by: str | Unset = UNSET
+    """Human-readable actor label on the source-ref deploy request. CLI auto-captures from `git config user.name`;
+    githubd stamps pusher.name; the GitHub Action defaults to ${{ github.actor }}."""
+    pr_number: int | Unset = UNSET
+    """Pull-request number that drove this source-ref deploy request (githubd pull_request.number; Action ${{
+    github.event.pull_request.number }}). NULL for push-to-main with no inferred PR."""
+    canary_preset: DeploymentResponseCanaryPreset | Unset = UNSET
+    """Canary preset used by the deployment's progressive rollout. `none` preserves the default 100% deployment
+    path."""
+    canary_step: int | Unset = UNSET
+    """Current zero-based canary ladder step."""
+    canary_total_steps: int | Unset = UNSET
+    """Total number of canary ladder steps; zero means no canary ladder."""
+    canary_step_started_at: datetime.datetime | None | Unset = UNSET
+    """Wall-clock timestamp at which the current canary step began."""
+    rollout_state: DeploymentResponseRolloutState | Unset = UNSET
+    """Durable rollout state used by the canary orchestrator and operator recovery path."""
+    rollout_started_at: datetime.datetime | None | Unset = UNSET
+    """Wall-clock timestamp at which rollout processing began."""
+    rollout_completed_at: datetime.datetime | None | Unset = UNSET
+    """Wall-clock timestamp at which the rollout reached complete."""
+    rollout_aborted_at: datetime.datetime | None | Unset = UNSET
+    """Wall-clock timestamp at which the rollout was aborted."""
+    rollout_aborted_reason: str | Unset = UNSET
+    """Operator or orchestrator reason recorded when the rollout is aborted."""
+    rollout_decision: RolloutDecision | Unset = UNSET
+    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was
+    aborted. Aggregates only; no request payloads, routes, URLs or customer text."""
+    rollout_hold: RolloutDecision | Unset = UNSET
+    """Evidence behind one decision about a rollout (ADR-1447): why a canary stage advanced, is held, or was
+    aborted. Aggregates only; no request payloads, routes, URLs or customer text."""
+    release: DeploymentRelease | Unset = UNSET
+    """A deployment's release command run (ADR-1448)."""
+    rollback_operation: RollbackOperation | Unset = UNSET
+    """Durable progress of a rollback. A checked historical rollback reports its binding gates; a plain rollback
+    (manual, dashboard, alert, or first-wake 5xx auto-rollback, ADR-1446) reports preparing until its target serves
+    (complete, with recovery_ms) or fails. This receipt grants no authority to reuse binding evidence or move
+    traffic for another operation."""
+    service_rollout_handoff: ServiceRolloutHandoffResponse | Unset = UNSET
+    """Durable scheduler progress for a zero-downtime service rollout routing and request-drain handoff."""
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        from ..models.build_plan import BuildPlan
+        from ..models.deployment_healthcheck import DeploymentHealthcheck
+        from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+        from ..models.deployment_readiness_probe import DeploymentReadinessProbe
+        from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
+        from ..models.scan_result import ScanResult
+        from ..models.secret_scan_result import SecretScanResult
+
+        id = self.id
+
+        app_id = self.app_id
+
+        image_digest = self.image_digest
+
+        kind = self.kind
+
+        status = self.status
+
+        created_at = self.created_at.isoformat()
+
+        configuration: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.configuration, Unset):
+            configuration = self.configuration.to_dict()
+
+        staged_review: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.staged_review, Unset):
+            staged_review = self.staged_review.to_dict()
+
+        worker_drain: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.worker_drain, Unset):
+            worker_drain = self.worker_drain.to_dict()
+
+        promotion_hold: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.promotion_hold, Unset):
+            promotion_hold = self.promotion_hold.to_dict()
+
+        scheduled_release: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.scheduled_release, Unset):
+            scheduled_release = self.scheduled_release.to_dict()
+
+        durable_entity_validator: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.durable_entity_validator, Unset):
+            durable_entity_validator = self.durable_entity_validator.to_dict()
+
+        stage_state: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.stage_state, Unset):
+            stage_state = self.stage_state.to_dict()
+
+        dev_patch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.dev_patch, Unset):
+            dev_patch = self.dev_patch.to_dict()
+
+        revision = self.revision
+
+        build_id: None | str | Unset
+        if isinstance(self.build_id, Unset):
+            build_id = UNSET
+        else:
+            build_id = self.build_id
+
+        build_cache_status: str | Unset = UNSET
+        if not isinstance(self.build_cache_status, Unset):
+            build_cache_status = self.build_cache_status
+
+        cache_key_sha256 = self.cache_key_sha256
+
+        error: None | str | Unset
+        if isinstance(self.error, Unset):
+            error = UNSET
+        else:
+            error = self.error
+
+        error_code: None | str | Unset
+        if isinstance(self.error_code, Unset):
+            error_code = UNSET
+        else:
+            error_code = self.error_code
+
+        error_hint: None | str | Unset
+        if isinstance(self.error_hint, Unset):
+            error_hint = UNSET
+        else:
+            error_hint = self.error_hint
+
+        error_why: None | str | Unset
+        if isinstance(self.error_why, Unset):
+            error_why = UNSET
+        else:
+            error_why = self.error_why
+
+        error_fix: None | str | Unset
+        if isinstance(self.error_fix, Unset):
+            error_fix = UNSET
+        else:
+            error_fix = self.error_fix
+
+        error_relevant_logs: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.error_relevant_logs, Unset):
+            error_relevant_logs = []
+            for error_relevant_logs_item_data in self.error_relevant_logs:
+                error_relevant_logs_item = error_relevant_logs_item_data.to_dict()
+                error_relevant_logs.append(error_relevant_logs_item)
+
+        source_url: None | str | Unset
+        if isinstance(self.source_url, Unset):
+            source_url = UNSET
+        else:
+            source_url = self.source_url
+
+        commit_sha: None | str | Unset
+        if isinstance(self.commit_sha, Unset):
+            commit_sha = UNSET
+        else:
+            commit_sha = self.commit_sha
+
+        source_root = self.source_root
+
+        source_sha256 = self.source_sha256
+
+        has_overrides = self.has_overrides
+
+        disable_startup_cpu_boost = self.disable_startup_cpu_boost
+
+        override_entrypoint: list[str] | Unset = UNSET
+        if not isinstance(self.override_entrypoint, Unset):
+            override_entrypoint = self.override_entrypoint
+
+        override_cmd: list[str] | Unset = UNSET
+        if not isinstance(self.override_cmd, Unset):
+            override_cmd = self.override_cmd
+
+        override_env_keys: list[str] | Unset = UNSET
+        if not isinstance(self.override_env_keys, Unset):
+            override_env_keys = self.override_env_keys
+
+        override_env_secret_keys: list[str] | Unset = UNSET
+        if not isinstance(self.override_env_secret_keys, Unset):
+            override_env_secret_keys = self.override_env_secret_keys
+
+        override_env_secret_refs: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.override_env_secret_refs, Unset):
+            override_env_secret_refs = self.override_env_secret_refs.to_dict()
+
+        override_port = self.override_port
+
+        override_healthcheck: dict[str, Any] | None | Unset
+        if isinstance(self.override_healthcheck, Unset):
+            override_healthcheck = UNSET
+        elif isinstance(self.override_healthcheck, DeploymentHealthcheck):
+            override_healthcheck = self.override_healthcheck.to_dict()
+        else:
+            override_healthcheck = self.override_healthcheck
+
+        override_readiness_probe: dict[str, Any] | None | Unset
+        if isinstance(self.override_readiness_probe, Unset):
+            override_readiness_probe = UNSET
+        elif isinstance(self.override_readiness_probe, DeploymentReadinessProbe):
+            override_readiness_probe = self.override_readiness_probe.to_dict()
+        else:
+            override_readiness_probe = self.override_readiness_probe
+
+        override_main_depends_on: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.override_main_depends_on, Unset):
+            override_main_depends_on = []
+            for override_main_depends_on_item_data in self.override_main_depends_on:
+                override_main_depends_on_item = override_main_depends_on_item_data.to_dict()
+                override_main_depends_on.append(override_main_depends_on_item)
+
+        override_liveness_probe: dict[str, Any] | None | Unset
+        if isinstance(self.override_liveness_probe, Unset):
+            override_liveness_probe = UNSET
+        elif isinstance(self.override_liveness_probe, DeploymentLivenessProbe):
+            override_liveness_probe = self.override_liveness_probe.to_dict()
+        else:
+            override_liveness_probe = self.override_liveness_probe
+
+        min_instances = self.min_instances
+
+        scan: dict[str, Any] | None | Unset
+        if isinstance(self.scan, Unset):
+            scan = UNSET
+        elif isinstance(self.scan, ScanResult):
+            scan = self.scan.to_dict()
+        else:
+            scan = self.scan
+
+        parked_reason: None | str | Unset
+        if isinstance(self.parked_reason, Unset):
+            parked_reason = UNSET
+        elif isinstance(self.parked_reason, str):
+            parked_reason = self.parked_reason
+        elif isinstance(self.parked_reason, str):
+            parked_reason = self.parked_reason
+        elif isinstance(self.parked_reason, str):
+            parked_reason = self.parked_reason
+        else:
+            parked_reason = self.parked_reason
+
+        parked_at: None | str | Unset
+        if isinstance(self.parked_at, Unset):
+            parked_at = UNSET
+        elif isinstance(self.parked_at, datetime.datetime):
+            parked_at = self.parked_at.isoformat()
+        else:
+            parked_at = self.parked_at
+
+        traffic_percent = self.traffic_percent
+
+        scope: None | str | Unset
+        if isinstance(self.scope, Unset):
+            scope = UNSET
+        else:
+            scope = self.scope
+
+        secret_scan: dict[str, Any] | None | Unset
+        if isinstance(self.secret_scan, Unset):
+            secret_scan = UNSET
+        elif isinstance(self.secret_scan, SecretScanResult):
+            secret_scan = self.secret_scan.to_dict()
+        else:
+            secret_scan = self.secret_scan
+
+        build_plan: dict[str, Any] | None | Unset
+        if isinstance(self.build_plan, Unset):
+            build_plan = UNSET
+        elif isinstance(self.build_plan, BuildPlan):
+            build_plan = self.build_plan.to_dict()
+        else:
+            build_plan = self.build_plan
+
+        workflows: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.workflows, Unset):
+            workflows = []
+            for workflows_item_data in self.workflows:
+                workflows_item = workflows_item_data.to_dict()
+                workflows.append(workflows_item)
+
+        hosting_receipt: dict[str, Any] | None | Unset
+        if isinstance(self.hosting_receipt, Unset):
+            hosting_receipt = UNSET
+        elif isinstance(self.hosting_receipt, DeploymentResponseHostingReceiptType0):
+            hosting_receipt = self.hosting_receipt.to_dict()
+        else:
+            hosting_receipt = self.hosting_receipt
+
+        deployed_by_user_id: None | str | Unset
+        if isinstance(self.deployed_by_user_id, Unset):
+            deployed_by_user_id = UNSET
+        elif isinstance(self.deployed_by_user_id, UUID):
+            deployed_by_user_id = str(self.deployed_by_user_id)
+        else:
+            deployed_by_user_id = self.deployed_by_user_id
+
+        deployed_via: None | str | Unset
+        if isinstance(self.deployed_via, Unset):
+            deployed_via = UNSET
+        elif isinstance(self.deployed_via, str):
+            deployed_via = self.deployed_via
+        elif isinstance(self.deployed_via, str):
+            deployed_via = self.deployed_via
+        elif isinstance(self.deployed_via, str):
+            deployed_via = self.deployed_via
+        else:
+            deployed_via = self.deployed_via
+
+        deployed_from_ip: None | str | Unset
+        if isinstance(self.deployed_from_ip, Unset):
+            deployed_from_ip = UNSET
+        else:
+            deployed_from_ip = self.deployed_from_ip
+
+        pusher_login: None | str | Unset
+        if isinstance(self.pusher_login, Unset):
+            pusher_login = UNSET
+        else:
+            pusher_login = self.pusher_login
+
+        reason = self.reason
+
+        tag: str | Unset = UNSET
+        if not isinstance(self.tag, Unset):
+            tag = self.tag
+
+        deployed_by = self.deployed_by
+
+        pr_number = self.pr_number
+
+        canary_preset: str | Unset = UNSET
+        if not isinstance(self.canary_preset, Unset):
+            canary_preset = self.canary_preset
+
+        canary_step = self.canary_step
+
+        canary_total_steps = self.canary_total_steps
+
+        canary_step_started_at: None | str | Unset
+        if isinstance(self.canary_step_started_at, Unset):
+            canary_step_started_at = UNSET
+        elif isinstance(self.canary_step_started_at, datetime.datetime):
+            canary_step_started_at = self.canary_step_started_at.isoformat()
+        else:
+            canary_step_started_at = self.canary_step_started_at
+
+        rollout_state: str | Unset = UNSET
+        if not isinstance(self.rollout_state, Unset):
+            rollout_state = self.rollout_state
+
+        rollout_started_at: None | str | Unset
+        if isinstance(self.rollout_started_at, Unset):
+            rollout_started_at = UNSET
+        elif isinstance(self.rollout_started_at, datetime.datetime):
+            rollout_started_at = self.rollout_started_at.isoformat()
+        else:
+            rollout_started_at = self.rollout_started_at
+
+        rollout_completed_at: None | str | Unset
+        if isinstance(self.rollout_completed_at, Unset):
+            rollout_completed_at = UNSET
+        elif isinstance(self.rollout_completed_at, datetime.datetime):
+            rollout_completed_at = self.rollout_completed_at.isoformat()
+        else:
+            rollout_completed_at = self.rollout_completed_at
+
+        rollout_aborted_at: None | str | Unset
+        if isinstance(self.rollout_aborted_at, Unset):
+            rollout_aborted_at = UNSET
+        elif isinstance(self.rollout_aborted_at, datetime.datetime):
+            rollout_aborted_at = self.rollout_aborted_at.isoformat()
+        else:
+            rollout_aborted_at = self.rollout_aborted_at
+
+        rollout_aborted_reason = self.rollout_aborted_reason
+
+        rollout_decision: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rollout_decision, Unset):
+            rollout_decision = self.rollout_decision.to_dict()
+
+        rollout_hold: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rollout_hold, Unset):
+            rollout_hold = self.rollout_hold.to_dict()
+
+        release: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.release, Unset):
+            release = self.release.to_dict()
+
+        rollback_operation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.rollback_operation, Unset):
+            rollback_operation = self.rollback_operation.to_dict()
+
+        service_rollout_handoff: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_rollout_handoff, Unset):
+            service_rollout_handoff = self.service_rollout_handoff.to_dict()
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "id": id,
+                "app_id": app_id,
+                "image_digest": image_digest,
+                "kind": kind,
+                "status": status,
+                "created_at": created_at,
+            }
+        )
+        if configuration is not UNSET:
+            field_dict["configuration"] = configuration
+        if staged_review is not UNSET:
+            field_dict["staged_review"] = staged_review
+        if worker_drain is not UNSET:
+            field_dict["worker_drain"] = worker_drain
+        if promotion_hold is not UNSET:
+            field_dict["promotion_hold"] = promotion_hold
+        if scheduled_release is not UNSET:
+            field_dict["scheduled_release"] = scheduled_release
+        if durable_entity_validator is not UNSET:
+            field_dict["durable_entity_validator"] = durable_entity_validator
+        if stage_state is not UNSET:
+            field_dict["stage_state"] = stage_state
+        if dev_patch is not UNSET:
+            field_dict["dev_patch"] = dev_patch
+        if revision is not UNSET:
+            field_dict["revision"] = revision
+        if build_id is not UNSET:
+            field_dict["build_id"] = build_id
+        if build_cache_status is not UNSET:
+            field_dict["build_cache_status"] = build_cache_status
+        if cache_key_sha256 is not UNSET:
+            field_dict["cache_key_sha256"] = cache_key_sha256
+        if error is not UNSET:
+            field_dict["error"] = error
+        if error_code is not UNSET:
+            field_dict["error_code"] = error_code
+        if error_hint is not UNSET:
+            field_dict["error_hint"] = error_hint
+        if error_why is not UNSET:
+            field_dict["error_why"] = error_why
+        if error_fix is not UNSET:
+            field_dict["error_fix"] = error_fix
+        if error_relevant_logs is not UNSET:
+            field_dict["error_relevant_logs"] = error_relevant_logs
+        if source_url is not UNSET:
+            field_dict["source_url"] = source_url
+        if commit_sha is not UNSET:
+            field_dict["commit_sha"] = commit_sha
+        if source_root is not UNSET:
+            field_dict["source_root"] = source_root
+        if source_sha256 is not UNSET:
+            field_dict["source_sha256"] = source_sha256
+        if has_overrides is not UNSET:
+            field_dict["has_overrides"] = has_overrides
+        if disable_startup_cpu_boost is not UNSET:
+            field_dict["disable_startup_cpu_boost"] = disable_startup_cpu_boost
+        if override_entrypoint is not UNSET:
+            field_dict["override_entrypoint"] = override_entrypoint
+        if override_cmd is not UNSET:
+            field_dict["override_cmd"] = override_cmd
+        if override_env_keys is not UNSET:
+            field_dict["override_env_keys"] = override_env_keys
+        if override_env_secret_keys is not UNSET:
+            field_dict["override_env_secret_keys"] = override_env_secret_keys
+        if override_env_secret_refs is not UNSET:
+            field_dict["override_env_secret_refs"] = override_env_secret_refs
+        if override_port is not UNSET:
+            field_dict["override_port"] = override_port
+        if override_healthcheck is not UNSET:
+            field_dict["override_healthcheck"] = override_healthcheck
+        if override_readiness_probe is not UNSET:
+            field_dict["override_readiness_probe"] = override_readiness_probe
+        if override_main_depends_on is not UNSET:
+            field_dict["override_main_depends_on"] = override_main_depends_on
+        if override_liveness_probe is not UNSET:
+            field_dict["override_liveness_probe"] = override_liveness_probe
+        if min_instances is not UNSET:
+            field_dict["min_instances"] = min_instances
+        if scan is not UNSET:
+            field_dict["scan"] = scan
+        if parked_reason is not UNSET:
+            field_dict["parked_reason"] = parked_reason
+        if parked_at is not UNSET:
+            field_dict["parked_at"] = parked_at
+        if traffic_percent is not UNSET:
+            field_dict["traffic_percent"] = traffic_percent
+        if scope is not UNSET:
+            field_dict["scope"] = scope
+        if secret_scan is not UNSET:
+            field_dict["secret_scan"] = secret_scan
+        if build_plan is not UNSET:
+            field_dict["build_plan"] = build_plan
+        if workflows is not UNSET:
+            field_dict["workflows"] = workflows
+        if hosting_receipt is not UNSET:
+            field_dict["hosting_receipt"] = hosting_receipt
+        if deployed_by_user_id is not UNSET:
+            field_dict["deployed_by_user_id"] = deployed_by_user_id
+        if deployed_via is not UNSET:
+            field_dict["deployed_via"] = deployed_via
+        if deployed_from_ip is not UNSET:
+            field_dict["deployed_from_ip"] = deployed_from_ip
+        if pusher_login is not UNSET:
+            field_dict["pusher_login"] = pusher_login
+        if reason is not UNSET:
+            field_dict["reason"] = reason
+        if tag is not UNSET:
+            field_dict["tag"] = tag
+        if deployed_by is not UNSET:
+            field_dict["deployed_by"] = deployed_by
+        if pr_number is not UNSET:
+            field_dict["pr_number"] = pr_number
+        if canary_preset is not UNSET:
+            field_dict["canary_preset"] = canary_preset
+        if canary_step is not UNSET:
+            field_dict["canary_step"] = canary_step
+        if canary_total_steps is not UNSET:
+            field_dict["canary_total_steps"] = canary_total_steps
+        if canary_step_started_at is not UNSET:
+            field_dict["canary_step_started_at"] = canary_step_started_at
+        if rollout_state is not UNSET:
+            field_dict["rollout_state"] = rollout_state
+        if rollout_started_at is not UNSET:
+            field_dict["rollout_started_at"] = rollout_started_at
+        if rollout_completed_at is not UNSET:
+            field_dict["rollout_completed_at"] = rollout_completed_at
+        if rollout_aborted_at is not UNSET:
+            field_dict["rollout_aborted_at"] = rollout_aborted_at
+        if rollout_aborted_reason is not UNSET:
+            field_dict["rollout_aborted_reason"] = rollout_aborted_reason
+        if rollout_decision is not UNSET:
+            field_dict["rollout_decision"] = rollout_decision
+        if rollout_hold is not UNSET:
+            field_dict["rollout_hold"] = rollout_hold
+        if release is not UNSET:
+            field_dict["release"] = release
+        if rollback_operation is not UNSET:
+            field_dict["rollback_operation"] = rollback_operation
+        if service_rollout_handoff is not UNSET:
+            field_dict["service_rollout_handoff"] = service_rollout_handoff
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_release_review import AppReleaseReview
+        from ..models.build_plan import BuildPlan
+        from ..models.deployment_configuration_status import DeploymentConfigurationStatus
+        from ..models.deployment_healthcheck import DeploymentHealthcheck
+        from ..models.deployment_liveness_probe import DeploymentLivenessProbe
+        from ..models.deployment_promotion_hold import DeploymentPromotionHold
+        from ..models.deployment_readiness_probe import DeploymentReadinessProbe
+        from ..models.deployment_release import DeploymentRelease
+        from ..models.deployment_response_hosting_receipt_type_0 import DeploymentResponseHostingReceiptType0
+        from ..models.deployment_response_override_env_secret_refs import DeploymentResponseOverrideEnvSecretRefs
+        from ..models.deployment_stage_state import DeploymentStageState
+        from ..models.deployment_worker_drain_status import DeploymentWorkerDrainStatus
+        from ..models.dev_patch_preview import DevPatchPreview
+        from ..models.durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
+        from ..models.log_excerpt import LogExcerpt
+        from ..models.rollback_operation import RollbackOperation
+        from ..models.rollout_decision import RolloutDecision
+        from ..models.scan_result import ScanResult
+        from ..models.scheduled_release import ScheduledRelease
+        from ..models.secret_scan_result import SecretScanResult
+        from ..models.service_rollout_handoff_response import ServiceRolloutHandoffResponse
+        from ..models.workflow_spec import WorkflowSpec
+        from ..models.workload_dependency import WorkloadDependency
+
+        d = dict(src_dict)
+        id = d.pop("id")
+
+        app_id = d.pop("app_id")
+
+        image_digest = d.pop("image_digest")
+
+        kind = d.pop("kind")
+
+        status = d.pop("status")
+
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
+
+        _configuration = d.pop("configuration", UNSET)
+        configuration: DeploymentConfigurationStatus | Unset
+        if isinstance(_configuration, Unset):
+            configuration = UNSET
+        else:
+            configuration = DeploymentConfigurationStatus.from_dict(_configuration)
+
+        _staged_review = d.pop("staged_review", UNSET)
+        staged_review: AppReleaseReview | Unset
+        if isinstance(_staged_review, Unset):
+            staged_review = UNSET
+        else:
+            staged_review = AppReleaseReview.from_dict(_staged_review)
+
+        _worker_drain = d.pop("worker_drain", UNSET)
+        worker_drain: DeploymentWorkerDrainStatus | Unset
+        if isinstance(_worker_drain, Unset):
+            worker_drain = UNSET
+        else:
+            worker_drain = DeploymentWorkerDrainStatus.from_dict(_worker_drain)
+
+        _promotion_hold = d.pop("promotion_hold", UNSET)
+        promotion_hold: DeploymentPromotionHold | Unset
+        if isinstance(_promotion_hold, Unset):
+            promotion_hold = UNSET
+        else:
+            promotion_hold = DeploymentPromotionHold.from_dict(_promotion_hold)
+
+        _scheduled_release = d.pop("scheduled_release", UNSET)
+        scheduled_release: ScheduledRelease | Unset
+        if isinstance(_scheduled_release, Unset):
+            scheduled_release = UNSET
+        else:
+            scheduled_release = ScheduledRelease.from_dict(_scheduled_release)
+
+        _durable_entity_validator = d.pop("durable_entity_validator", UNSET)
+        durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset
+        if isinstance(_durable_entity_validator, Unset):
+            durable_entity_validator = UNSET
+        else:
+            durable_entity_validator = DurableEntityValidatorDeploymentInfo.from_dict(_durable_entity_validator)
+
+        _stage_state = d.pop("stage_state", UNSET)
+        stage_state: DeploymentStageState | Unset
+        if isinstance(_stage_state, Unset):
+            stage_state = UNSET
+        else:
+            stage_state = DeploymentStageState.from_dict(_stage_state)
+
+        _dev_patch = d.pop("dev_patch", UNSET)
+        dev_patch: DevPatchPreview | Unset
+        if isinstance(_dev_patch, Unset):
+            dev_patch = UNSET
+        else:
+            dev_patch = DevPatchPreview.from_dict(_dev_patch)
+
+        revision = d.pop("revision", UNSET)
+
+        def _parse_build_id(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        build_id = _parse_build_id(d.pop("build_id", UNSET))
+
+        _build_cache_status = d.pop("build_cache_status", UNSET)
+        build_cache_status: DeploymentResponseBuildCacheStatus | Unset
+        if isinstance(_build_cache_status, Unset):
+            build_cache_status = UNSET
+        else:
+            build_cache_status = check_deployment_response_build_cache_status(_build_cache_status)
+
+        cache_key_sha256 = d.pop("cache_key_sha256", UNSET)
+
+        def _parse_error(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        error = _parse_error(d.pop("error", UNSET))
+
+        def _parse_error_code(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        error_code = _parse_error_code(d.pop("error_code", UNSET))
+
+        def _parse_error_hint(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        error_hint = _parse_error_hint(d.pop("error_hint", UNSET))
+
+        def _parse_error_why(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        error_why = _parse_error_why(d.pop("error_why", UNSET))
+
+        def _parse_error_fix(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        error_fix = _parse_error_fix(d.pop("error_fix", UNSET))
+
+        _error_relevant_logs = d.pop("error_relevant_logs", UNSET)
+        error_relevant_logs: list[LogExcerpt] | Unset = UNSET
+        if _error_relevant_logs is not UNSET:
+            error_relevant_logs = []
+            for error_relevant_logs_item_data in _error_relevant_logs:
+                error_relevant_logs_item = LogExcerpt.from_dict(error_relevant_logs_item_data)
+
+                error_relevant_logs.append(error_relevant_logs_item)
+
+        def _parse_source_url(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        source_url = _parse_source_url(d.pop("source_url", UNSET))
+
+        def _parse_commit_sha(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        commit_sha = _parse_commit_sha(d.pop("commit_sha", UNSET))
+
+        source_root = d.pop("source_root", UNSET)
+
+        source_sha256 = d.pop("source_sha256", UNSET)
+
+        has_overrides = d.pop("has_overrides", UNSET)
+
+        disable_startup_cpu_boost = d.pop("disable_startup_cpu_boost", UNSET)
+
+        override_entrypoint = cast(list[str], d.pop("override_entrypoint", UNSET))
+
+        override_cmd = cast(list[str], d.pop("override_cmd", UNSET))
+
+        override_env_keys = cast(list[str], d.pop("override_env_keys", UNSET))
+
+        override_env_secret_keys = cast(list[str], d.pop("override_env_secret_keys", UNSET))
+
+        _override_env_secret_refs = d.pop("override_env_secret_refs", UNSET)
+        override_env_secret_refs: DeploymentResponseOverrideEnvSecretRefs | Unset
+        if isinstance(_override_env_secret_refs, Unset):
+            override_env_secret_refs = UNSET
+        else:
+            override_env_secret_refs = DeploymentResponseOverrideEnvSecretRefs.from_dict(_override_env_secret_refs)
+
+        override_port = d.pop("override_port", UNSET)
+
+        def _parse_override_healthcheck(data: object) -> DeploymentHealthcheck | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                override_healthcheck_type_0 = DeploymentHealthcheck.from_dict(data)
+
+                return override_healthcheck_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(DeploymentHealthcheck | None | Unset, data)
+
+        override_healthcheck = _parse_override_healthcheck(d.pop("override_healthcheck", UNSET))
+
+        def _parse_override_readiness_probe(data: object) -> DeploymentReadinessProbe | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                override_readiness_probe_type_0 = DeploymentReadinessProbe.from_dict(data)
+
+                return override_readiness_probe_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(DeploymentReadinessProbe | None | Unset, data)
+
+        override_readiness_probe = _parse_override_readiness_probe(d.pop("override_readiness_probe", UNSET))
+
+        _override_main_depends_on = d.pop("override_main_depends_on", UNSET)
+        override_main_depends_on: list[WorkloadDependency] | Unset = UNSET
+        if _override_main_depends_on is not UNSET:
+            override_main_depends_on = []
+            for override_main_depends_on_item_data in _override_main_depends_on:
+                override_main_depends_on_item = WorkloadDependency.from_dict(override_main_depends_on_item_data)
+
+                override_main_depends_on.append(override_main_depends_on_item)
+
+        def _parse_override_liveness_probe(data: object) -> DeploymentLivenessProbe | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                override_liveness_probe_type_0 = DeploymentLivenessProbe.from_dict(data)
+
+                return override_liveness_probe_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(DeploymentLivenessProbe | None | Unset, data)
+
+        override_liveness_probe = _parse_override_liveness_probe(d.pop("override_liveness_probe", UNSET))
+
+        min_instances = d.pop("min_instances", UNSET)
+
+        def _parse_scan(data: object) -> None | ScanResult | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                scan_type_0 = ScanResult.from_dict(data)
+
+                return scan_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ScanResult | Unset, data)
+
+        scan = _parse_scan(d.pop("scan", UNSET))
+
+        def _parse_parked_reason(
+            data: object,
+        ) -> (
+            DeploymentResponseParkedReasonType1
+            | DeploymentResponseParkedReasonType2Type1
+            | DeploymentResponseParkedReasonType3Type1
+            | None
+            | Unset
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                parked_reason_type_1 = check_deployment_response_parked_reason_type_1(data)
+
+                return parked_reason_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                parked_reason_type_2_type_1 = check_deployment_response_parked_reason_type_2_type_1(data)
+
+                return parked_reason_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                parked_reason_type_3_type_1 = check_deployment_response_parked_reason_type_3_type_1(data)
+
+                return parked_reason_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                DeploymentResponseParkedReasonType1
+                | DeploymentResponseParkedReasonType2Type1
+                | DeploymentResponseParkedReasonType3Type1
+                | None
+                | Unset,
+                data,
+            )
+
+        parked_reason = _parse_parked_reason(d.pop("parked_reason", UNSET))
+
+        def _parse_parked_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                parked_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return parked_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        parked_at = _parse_parked_at(d.pop("parked_at", UNSET))
+
+        traffic_percent = d.pop("traffic_percent", UNSET)
+
+        def _parse_scope(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        scope = _parse_scope(d.pop("scope", UNSET))
+
+        def _parse_secret_scan(data: object) -> None | SecretScanResult | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                secret_scan_type_0 = SecretScanResult.from_dict(data)
+
+                return secret_scan_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | SecretScanResult | Unset, data)
+
+        secret_scan = _parse_secret_scan(d.pop("secret_scan", UNSET))
+
+        def _parse_build_plan(data: object) -> BuildPlan | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                build_plan_type_0 = BuildPlan.from_dict(data)
+
+                return build_plan_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(BuildPlan | None | Unset, data)
+
+        build_plan = _parse_build_plan(d.pop("build_plan", UNSET))
+
+        _workflows = d.pop("workflows", UNSET)
+        workflows: list[WorkflowSpec] | Unset = UNSET
+        if _workflows is not UNSET:
+            workflows = []
+            for workflows_item_data in _workflows:
+                workflows_item = WorkflowSpec.from_dict(workflows_item_data)
+
+                workflows.append(workflows_item)
+
+        def _parse_hosting_receipt(data: object) -> DeploymentResponseHostingReceiptType0 | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                hosting_receipt_type_0 = DeploymentResponseHostingReceiptType0.from_dict(data)
+
+                return hosting_receipt_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(DeploymentResponseHostingReceiptType0 | None | Unset, data)
+
+        hosting_receipt = _parse_hosting_receipt(d.pop("hosting_receipt", UNSET))
+
+        def _parse_deployed_by_user_id(data: object) -> None | Unset | UUID:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                deployed_by_user_id_type_0 = UUID(data)
+
+                return deployed_by_user_id_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | UUID, data)
+
+        deployed_by_user_id = _parse_deployed_by_user_id(d.pop("deployed_by_user_id", UNSET))
+
+        def _parse_deployed_via(
+            data: object,
+        ) -> (
+            DeploymentResponseDeployedViaType1
+            | DeploymentResponseDeployedViaType2Type1
+            | DeploymentResponseDeployedViaType3Type1
+            | None
+            | Unset
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                deployed_via_type_1 = check_deployment_response_deployed_via_type_1(data)
+
+                return deployed_via_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                deployed_via_type_2_type_1 = check_deployment_response_deployed_via_type_2_type_1(data)
+
+                return deployed_via_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                deployed_via_type_3_type_1 = check_deployment_response_deployed_via_type_3_type_1(data)
+
+                return deployed_via_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                DeploymentResponseDeployedViaType1
+                | DeploymentResponseDeployedViaType2Type1
+                | DeploymentResponseDeployedViaType3Type1
+                | None
+                | Unset,
+                data,
+            )
+
+        deployed_via = _parse_deployed_via(d.pop("deployed_via", UNSET))
+
+        def _parse_deployed_from_ip(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        deployed_from_ip = _parse_deployed_from_ip(d.pop("deployed_from_ip", UNSET))
+
+        def _parse_pusher_login(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        pusher_login = _parse_pusher_login(d.pop("pusher_login", UNSET))
+
+        reason = d.pop("reason", UNSET)
+
+        _tag = d.pop("tag", UNSET)
+        tag: DeploymentResponseTag | Unset
+        if isinstance(_tag, Unset):
+            tag = UNSET
+        else:
+            tag = check_deployment_response_tag(_tag)
+
+        deployed_by = d.pop("deployed_by", UNSET)
+
+        pr_number = d.pop("pr_number", UNSET)
+
+        _canary_preset = d.pop("canary_preset", UNSET)
+        canary_preset: DeploymentResponseCanaryPreset | Unset
+        if isinstance(_canary_preset, Unset):
+            canary_preset = UNSET
+        else:
+            canary_preset = check_deployment_response_canary_preset(_canary_preset)
+
+        canary_step = d.pop("canary_step", UNSET)
+
+        canary_total_steps = d.pop("canary_total_steps", UNSET)
+
+        def _parse_canary_step_started_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                canary_step_started_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return canary_step_started_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        canary_step_started_at = _parse_canary_step_started_at(d.pop("canary_step_started_at", UNSET))
+
+        _rollout_state = d.pop("rollout_state", UNSET)
+        rollout_state: DeploymentResponseRolloutState | Unset
+        if isinstance(_rollout_state, Unset):
+            rollout_state = UNSET
+        else:
+            rollout_state = check_deployment_response_rollout_state(_rollout_state)
+
+        def _parse_rollout_started_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                rollout_started_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return rollout_started_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        rollout_started_at = _parse_rollout_started_at(d.pop("rollout_started_at", UNSET))
+
+        def _parse_rollout_completed_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                rollout_completed_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return rollout_completed_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        rollout_completed_at = _parse_rollout_completed_at(d.pop("rollout_completed_at", UNSET))
+
+        def _parse_rollout_aborted_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                rollout_aborted_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return rollout_aborted_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        rollout_aborted_at = _parse_rollout_aborted_at(d.pop("rollout_aborted_at", UNSET))
+
+        rollout_aborted_reason = d.pop("rollout_aborted_reason", UNSET)
+
+        _rollout_decision = d.pop("rollout_decision", UNSET)
+        rollout_decision: RolloutDecision | Unset
+        if isinstance(_rollout_decision, Unset):
+            rollout_decision = UNSET
+        else:
+            rollout_decision = RolloutDecision.from_dict(_rollout_decision)
+
+        _rollout_hold = d.pop("rollout_hold", UNSET)
+        rollout_hold: RolloutDecision | Unset
+        if isinstance(_rollout_hold, Unset):
+            rollout_hold = UNSET
+        else:
+            rollout_hold = RolloutDecision.from_dict(_rollout_hold)
+
+        _release = d.pop("release", UNSET)
+        release: DeploymentRelease | Unset
+        if isinstance(_release, Unset):
+            release = UNSET
+        else:
+            release = DeploymentRelease.from_dict(_release)
+
+        _rollback_operation = d.pop("rollback_operation", UNSET)
+        rollback_operation: RollbackOperation | Unset
+        if isinstance(_rollback_operation, Unset):
+            rollback_operation = UNSET
+        else:
+            rollback_operation = RollbackOperation.from_dict(_rollback_operation)
+
+        _service_rollout_handoff = d.pop("service_rollout_handoff", UNSET)
+        service_rollout_handoff: ServiceRolloutHandoffResponse | Unset
+        if isinstance(_service_rollout_handoff, Unset):
+            service_rollout_handoff = UNSET
+        else:
+            service_rollout_handoff = ServiceRolloutHandoffResponse.from_dict(_service_rollout_handoff)
+
+        deployment_response = cls(
+            id=id,
+            app_id=app_id,
+            image_digest=image_digest,
+            kind=kind,
+            status=status,
+            created_at=created_at,
+            configuration=configuration,
+            staged_review=staged_review,
+            worker_drain=worker_drain,
+            promotion_hold=promotion_hold,
+            scheduled_release=scheduled_release,
+            durable_entity_validator=durable_entity_validator,
+            stage_state=stage_state,
+            dev_patch=dev_patch,
+            revision=revision,
+            build_id=build_id,
+            build_cache_status=build_cache_status,
+            cache_key_sha256=cache_key_sha256,
+            error=error,
+            error_code=error_code,
+            error_hint=error_hint,
+            error_why=error_why,
+            error_fix=error_fix,
+            error_relevant_logs=error_relevant_logs,
+            source_url=source_url,
+            commit_sha=commit_sha,
+            source_root=source_root,
+            source_sha256=source_sha256,
+            has_overrides=has_overrides,
+            disable_startup_cpu_boost=disable_startup_cpu_boost,
+            override_entrypoint=override_entrypoint,
+            override_cmd=override_cmd,
+            override_env_keys=override_env_keys,
+            override_env_secret_keys=override_env_secret_keys,
+            override_env_secret_refs=override_env_secret_refs,
+            override_port=override_port,
+            override_healthcheck=override_healthcheck,
+            override_readiness_probe=override_readiness_probe,
+            override_main_depends_on=override_main_depends_on,
+            override_liveness_probe=override_liveness_probe,
+            min_instances=min_instances,
+            scan=scan,
+            parked_reason=parked_reason,
+            parked_at=parked_at,
+            traffic_percent=traffic_percent,
+            scope=scope,
+            secret_scan=secret_scan,
+            build_plan=build_plan,
+            workflows=workflows,
+            hosting_receipt=hosting_receipt,
+            deployed_by_user_id=deployed_by_user_id,
+            deployed_via=deployed_via,
+            deployed_from_ip=deployed_from_ip,
+            pusher_login=pusher_login,
+            reason=reason,
+            tag=tag,
+            deployed_by=deployed_by,
+            pr_number=pr_number,
+            canary_preset=canary_preset,
+            canary_step=canary_step,
+            canary_total_steps=canary_total_steps,
+            canary_step_started_at=canary_step_started_at,
+            rollout_state=rollout_state,
+            rollout_started_at=rollout_started_at,
+            rollout_completed_at=rollout_completed_at,
+            rollout_aborted_at=rollout_aborted_at,
+            rollout_aborted_reason=rollout_aborted_reason,
+            rollout_decision=rollout_decision,
+            rollout_hold=rollout_hold,
+            release=release,
+            rollback_operation=rollback_operation,
+            service_rollout_handoff=service_rollout_handoff,
+        )
+
+        deployment_response.additional_properties = d
+        return deployment_response
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

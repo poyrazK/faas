@@ -1,8 +1,9 @@
-package faas
+package preview
 
 import (
 	"context"
 	"errors"
+
 	"github.com/poyrazK/faas/sdk/go/internal/api"
 )
 

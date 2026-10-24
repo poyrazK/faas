@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"bytes"
@@ -10,6 +10,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // EventAcknowledgmentIntentPolicyAdoptionSchema creates optional application-owned
@@ -88,7 +90,7 @@ func eventIntentAdoptionOutcomeError(outcome string) error {
 	case "conflict":
 		return ErrEventAcknowledgmentIntentConflict
 	case "not_found":
-		return ErrNotFound
+		return faas.ErrNotFound
 	default:
 		return ErrEventAcknowledgmentIntentStore
 	}
@@ -201,7 +203,7 @@ func commitEventIntentAdoption(ctx context.Context, tx *sql.Tx, account, app, co
 		body = string(encoded)
 	case errors.Is(actionErr, ErrEventAcknowledgmentIntentConflict):
 		out.Outcome = "conflict"
-	case errors.Is(actionErr, ErrNotFound):
+	case errors.Is(actionErr, faas.ErrNotFound):
 		out.Outcome = "not_found"
 	default:
 		return zero, actionErr
@@ -225,7 +227,7 @@ func adoptEventIntentPolicy(ctx context.Context, tx *sql.Tx, account, app string
 	}
 	_, err := eventIntentStatus(tx.QueryRowContext(ctx, `SELECT `+eventIntentStatusColumns+` FROM public.gregale_event_acknowledgment_intents WHERE account_id=$1::uuid AND app_id=$2::uuid AND invocation_id=$3::uuid AND replay_generation=$4 AND attempt=$5 FOR UPDATE`, account, app, request.InvocationID, request.ReplayGeneration, request.Attempt))
 	if errors.Is(err, sql.ErrNoRows) {
-		return zero, ErrNotFound
+		return zero, faas.ErrNotFound
 	}
 	if err != nil {
 		return zero, eventIntentStoreError(ctx)

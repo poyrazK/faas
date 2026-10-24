@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // EventOutboxRateLimitOptions configures one token per Interval, up to Burst.
@@ -150,7 +152,7 @@ func GetEventOutboxRateLimitCommand(ctx context.Context, db *sql.DB, accountID, 
 	}
 	receipt, _, err := eventOutboxRateReceipt(db.QueryRowContext(ctx, `SELECT `+eventOutboxRateCommandColumns+` FROM public.gregale_event_outbox_rate_commands WHERE account_id=$1::uuid AND app_id=$2::uuid AND command_id=$3::uuid`, account, app, commandID))
 	if errors.Is(err, sql.ErrNoRows) {
-		return zero, ErrNotFound
+		return zero, faas.ErrNotFound
 	}
 	if err != nil {
 		return zero, eventOutboxStoreError(ctx)

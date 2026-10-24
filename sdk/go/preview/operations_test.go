@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"bytes"
@@ -21,7 +21,7 @@ func TestOperationRequestContract(t *testing.T) {
 		Body    string            `json:"body_base64"`
 		Digest  string            `json:"digest"`
 	}
-	raw, err := os.ReadFile(filepath.Join("testdata", "operation-request.json"))
+	raw, err := os.ReadFile(filepath.Join("..", "testdata", "operation-request.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

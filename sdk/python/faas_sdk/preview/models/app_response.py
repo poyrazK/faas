@@ -1,0 +1,1223 @@
+from __future__ import annotations
+
+import datetime
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+from uuid import UUID
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+
+from ..models.app_response_app_protocol import AppResponseAppProtocol, check_app_response_app_protocol
+from ..models.app_response_consumer_auth_mode import AppResponseConsumerAuthMode, check_app_response_consumer_auth_mode
+from ..models.app_response_cpu_millicores import AppResponseCpuMillicores, check_app_response_cpu_millicores
+from ..models.app_response_deployment_availability import (
+    AppResponseDeploymentAvailability,
+    check_app_response_deployment_availability,
+)
+from ..models.app_response_eviction_priority import AppResponseEvictionPriority, check_app_response_eviction_priority
+from ..models.app_response_preview_pr_state import AppResponsePreviewPrState, check_app_response_preview_pr_state
+from ..models.app_response_release_policy import AppResponseReleasePolicy, check_app_response_release_policy
+from ..models.app_response_runtime import AppResponseRuntime, check_app_response_runtime
+from ..models.app_response_status import AppResponseStatus, check_app_response_status
+from ..models.app_response_type import AppResponseType, check_app_response_type
+from ..models.app_response_visibility import AppResponseVisibility, check_app_response_visibility
+from ..models.app_response_workload_class import AppResponseWorkloadClass, check_app_response_workload_class
+from ..models.preview_service_calls_policy import PreviewServiceCallsPolicy, check_preview_service_calls_policy
+from ..models.resource_profile import ResourceProfile, check_resource_profile
+from ..models.service_binding_policy import ServiceBindingPolicy, check_service_binding_policy
+from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.app_configured_resources import AppConfiguredResources
+    from ..models.app_effective_limits import AppEffectiveLimits
+    from ..models.app_manifest import AppManifest
+    from ..models.app_service_binding import AppServiceBinding
+    from ..models.declared_route import DeclaredRoute
+    from ..models.parked_deployment_ref import ParkedDeploymentRef
+    from ..models.public_auth_status import PublicAuthStatus
+    from ..models.retry_policy_dto import RetryPolicyDTO
+    from ..models.scaling_policy import ScalingPolicy
+    from ..models.service_caller_scopes import ServiceCallerScopes
+    from ..models.service_reliability_policies import ServiceReliabilityPolicies
+
+
+T = TypeVar("T", bound="AppResponse")
+
+
+@_attrs_define
+class AppResponse:
+    """An app: slug, type, runtime (for functions), RAM/cpu/idle-timeout config, current state, last-deploy pointer, per-
+    app outbound CIDR allowlist (ADR-031 + ADR-032), and reactive scale-up trigger targets (issue #169 / #172).
+
+    """
+
+    id: str
+    slug: str
+    type_: AppResponseType
+    ram_mb: int
+    vcpu: int
+    """Plan-derived guest vCPU count. Present on read responses; explicit create-time values must match the
+    canonical plan RAM/vCPU pair."""
+    cpu_millicores: AppResponseCpuMillicores
+    configured_resources: AppConfiguredResources
+    """The memory and sustained CPU shape selected for each instance of this app."""
+    max_concurrency: int
+    concurrency_per_vm: int
+    effective_limits: AppEffectiveLimits
+    """The resource, scaling, rate, and timeout envelope currently applied to an app. Values are resolved from the
+    app configuration and current plan; they describe enforcement rather than guest hardware alone."""
+    min_instances: int
+    status: AppResponseStatus
+    """Customer-visible app state. `undeployed` is projected when the app has no deployment rows; its persisted
+    lifecycle remains active until the first deploy."""
+    build_cache_hit_rate_pct: float
+    """Trailing 30-day percentage of cache-eligible deployments served from the builder cache. Zero means no cache
+    decision was recorded in the window."""
+    url: str
+    """Stable platform hostname for the app (for example, https://my-app.gregale.dev)."""
+    manifest: AppManifest
+    """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-
+    as-source flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings)
+    resolved by the host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are
+    NEVER sealed ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`,
+    `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per
+    JSON semantics, so the widen is wire-compatible. M-2 (ADR-137 + ADR-138) widens additively with
+    `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern
+    the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults
+    preserve today's behaviour (execution_mode=request, restart_policy=on-failure)."""
+    autoscale_target_rps: int
+    """Per-instance RPS target for the reactive scale-up trigger. 0 = disabled. Hobby/Pro/Scale only. When measured
+    per-instance RPS exceeds this value, schedd admits another instance (up to max_concurrency). See ADR-037."""
+    autoscale_target_cpu_pct: int
+    """Per-instance CPU% target (1..100) for the reactive scale-up trigger. 0 = disabled. Pro/Scale only. When
+    measured per-instance CPU% exceeds this value, schedd admits another instance (up to max_concurrency). See
+    ADR-037."""
+    service_binding_fingerprint: str | Unset = UNSET
+    """Opaque fingerprint of app identity, source ownership and service binding settings. Use as the atomic
+    precondition for a reviewed service-only update."""
+    project_id: UUID | Unset = UNSET
+    """Parent project (ADR-050) as a canonical hyphenated UUID. Omitted when the app is standalone. Read-only: app
+    create and update requests do not accept it."""
+    visibility: AppResponseVisibility | Unset = "public"
+    """Public exposes the app through the edge; internal keeps it available only to authenticated service-to-
+    service routing. Available on every plan."""
+    workload_class: AppResponseWorkloadClass | Unset = UNSET
+    """Runtime-observed application shape. Repository scanning seeds the value and the first characterization boot
+    may replace it. Distinct from type, which selects the app-vs-function execution contract."""
+    runtime: AppResponseRuntime | Unset = UNSET
+    """Runtime for `type: function` apps. Omit for `type: app` (the default)."""
+    resource_profile: ResourceProfile | Unset = UNSET
+    """Named resource profile resolved to a stable memory and sustained CPU shape. Profiles use the existing cgroup
+    and placement controls."""
+    idle_timeout_s: int | None | Unset = UNSET
+    request_timeout_s: int | Unset = UNSET
+    """Configured per-app request wall-clock timeout in seconds; 0 means the plan/type default."""
+    function_concurrency: int | Unset = UNSET
+    """Requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 keeps one request per worker;
+    the plan's concurrency_per_vm bound caps it. Python runs sync handlers on threads. Takes effect on the next
+    deploy."""
+    deployment_availability: AppResponseDeploymentAvailability | Unset = UNSET
+    """Present on app list/detail reads. Reports whether any deployment is currently live; this is independent from
+    the app lifecycle status and does not assert that a historical artifact is safe to restore."""
+    deleted_at: datetime.datetime | None | Unset = UNSET
+    delete_grace_until: datetime.datetime | None | Unset = UNSET
+    canonical_url: str | Unset = UNSET
+    """Customer-facing URL to share. Uses the verified default custom domain when configured, otherwise the
+    platform URL."""
+    default_domain: str | Unset = UNSET
+    """Verified custom domain selected as the app's canonical host, when configured."""
+    preview_of_slug: str | Unset = UNSET
+    """Parent app slug for a pull-request or developer preview. Absent for production apps."""
+    preview_pr_number: int | Unset = UNSET
+    """Pull-request number for a GitHub preview. Zero identifies a developer preview; absent for production apps."""
+    preview_pr_state: AppResponsePreviewPrState | Unset = UNSET
+    """Preview lifecycle state. Absent for production apps."""
+    preview_expires_at: datetime.datetime | None | Unset = UNSET
+    """Automatic teardown deadline for a preview, when one is configured."""
+    service_bindings: list[AppServiceBinding] | Unset = UNSET
+    """Declared same-account service dependencies injected into this workload as legacy `_URL` environment
+    variables plus additive `_HTTPS_URL` canary companions. Project workloads derive these from Compose; standalone
+    apps derive them from service_binding_targets. They are discovery metadata under the `account` policy and the
+    outbound authorization allowlist under the `declared` policy."""
+    service_reliability: ServiceReliabilityPolicies | Unset = UNSET
+    """Map of declared target service names to caller-owned reliability policies. Only names in this app's service
+    bindings may appear."""
+    service_binding_policy: ServiceBindingPolicy | Unset = UNSET
+    """Caller-side authorization policy for internal service requests. `account` preserves same-account
+    reachability; `declared` permits only targets present in the caller's service bindings; `project` also permits
+    every service in the caller's own project (ADR-20261022111119)."""
+    service_binding_transport: ServiceBindingTransport | Unset = UNSET
+    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
+    preview_service_calls_policy: PreviewServiceCallsPolicy | Unset = UNSET
+    """Production target policy for internal service calls from preview apps. `allow` preserves existing behavior;
+    `deny` rejects preview callers before waking the target."""
+    allowed_service_callers: list[str] | Unset = UNSET
+    """Target-side service allowlist of logical app slugs (ADR-266 / ADR-267). Omitted means any same-account
+    caller; an explicit empty array denies all. Compose owns project policies; the app API owns standalone policies.
+   """
+    allowed_service_call_scopes: ServiceCallerScopes | Unset = UNSET
+    """Target-owned service authorization map from logical caller app name to allowed HTTP methods and path
+    prefixes. When present, callers missing from the map are denied."""
+    egress_allowlist: list[str] | Unset = UNSET
+    """Per-app outbound CIDR allowlist (ADR-031 + ADR-032). Each entry is a CIDR string — v4 (`1.2.3.0/24`) or v6
+    (`2001:db8::/32`). v4-mapped v6 form (`::ffff:1.2.3.0/120`) is silently canonicalised to its v4 form at write
+    time. Empty array means no allowlist rule; the per-netns chain's default-accept policy applies."""
+    egress_ports: list[int] | Unset = UNSET
+    """Extra TCP destination ports the app's guests may reach on top of 80 and 443 (ADR-361). All other guest-
+    originated traffic except DNS (pinned to the platform resolver) is dropped. Sorted; empty array when none are
+    declared."""
+    streaming_enabled: bool | Unset = UNSET
+    """Per-app streaming flag (issue #471). Free customers always see this as false; Hobby/Pro/Scale can PATCH it.
+    PR-B activates the streamed response path; PR-A only persists the flag."""
+    websocket_enabled: bool | Unset = UNSET
+    """Per-app raw-bytes Upgrade bridge flag (issue #676 / ADR-080). Default-on for Hobby/Pro/Scale; Free customers
+    always see this as false. PATCH-true on Free is rejected by apid with 403 plan_websocket_not_allowed."""
+    session_affinity: bool | Unset = UNSET
+    """Whether the edge should prefer the same running instance for this app. Best effort only; stale or unhealthy
+    instances are bypassed automatically."""
+    version_affinity_cookie: str | Unset = UNSET
+    """Optional browser cookie name used for rollout affinity when Gregale-Version-Key is absent. The edge hashes
+    the value before forwarding it as a key."""
+    version_affinity_managed_cookie: bool | Unset = False
+    """Whether the edge issues an opaque, host-only browser cookie before the first rollout pick. Mutually
+    exclusive with version_affinity_cookie."""
+    revision_pin_ttl_seconds: int | Unset = 0
+    """Retain superseded live deployments for revision-pinned requests for up to this many seconds. Zero disables
+    revision pinning."""
+    release_policy: AppResponseReleasePolicy | Unset = UNSET
+    """Default rollout for production releases that name no rollout policy (ADR-1446). safe (or unset) uses the
+    adaptive health-gated canary (ADR-1321: each stage advances on clean evidence after a minute) with first-wake
+    5xx rollback; fast uses the aggressive ladder with the same rollback (ADR-1450); immediate moves all traffic at
+    once."""
+    release_probe_paths: list[str] | Unset = UNSET
+    """Up to 3 concrete GET paths the default rollout probe checks instead of / (ADR-1449). No queries, fragments,
+    wildcards or parameters."""
+    route_metrics_enabled: bool | Unset = UNSET
+    """Per-app per-route observability flag (ADR-093). When true, gatewayd-internal emits
+    gateway_request_duration_seconds{app,route,class} and serves the bounded reader at GET /v1/apps/{slug}/routes.
+    Default-on for Hobby/Pro/Scale; Free customers always see this as false. PATCH-true on Free is rejected by apid
+    with 403 plan_route_metrics_not_allowed."""
+    only_allow_declared_routes: bool | Unset = UNSET
+    """When true, gatewayd rejects paths not present in declared_routes or the imported OpenAPI document before
+    waking an app."""
+    declared_routes: list[DeclaredRoute] | Unset = UNSET
+    """Optional explicit route contract. When non-empty it takes precedence over the imported OpenAPI document."""
+    maintenance_mode: bool | Unset = UNSET
+    """Coarse per-app maintenance toggle (ADR-091 amendment). When true the gatewayd-internal hot-path short-
+    circuits every request to this app with 503 + Retry-After (default 60 s) BEFORE auth, BEFORE wake, BEFORE any
+    kind=maintenance edge rule. Free-tier allowed. Surfaced in the GET /v1/apps/{slug} response so dashboards can
+    show 'maintenance on / off' alongside the streaming/WS pills."""
+    scaling_policy: None | ScalingPolicy | Unset = UNSET
+    """Per-app scaling policy (issue #462 / ADR-058). null = legacy row, project the empty-policy shape from
+    min_instances / max_concurrency. Non-null = customer-authored policy persisted to the jsonb column
+    `apps.scaling_policy`."""
+    retry_policy: None | RetryPolicyDTO | Unset = UNSET
+    """App-level default for invocation retries. Queue binding and per-invocation policies override this value."""
+    last_scale_out_at: datetime.datetime | None | Unset = UNSET
+    """RFC 3339 timestamp of the most recent scale-out event schedd admitted for this app, or null if the app has
+    never scaled out."""
+    last_scale_in_at: datetime.datetime | None | Unset = UNSET
+    """RFC 3339 timestamp of the most recent scale-in event schedd reaped for this app, or null if the app has
+    never scaled in."""
+    require_signed: bool | Unset = UNSET
+    """Per-app cosign signature-enforcement flag (issue #472 / ADR-054). When true, OCI image deploys must carry a
+    valid signature from a publisher in the per-app trusted_signers list. Default false."""
+    warm_snapshot_enabled: bool | Unset = UNSET
+    """Per-app two-tier snapshot flag (issue #470 / ADR-055). True on Pro/Scale by default; Free/Hobby always
+    false."""
+    warm_snapshot_min_requests: int | Unset = UNSET
+    """Effective per-app request-count threshold for warm-tier capture on this app (issue #470 / ADR-055). Range
+    [1, 100]."""
+    warm_snapshot_min_ms: int | Unset = UNSET
+    """Per-app time-since-first-ready threshold for warm-tier capture, milliseconds (issue #470 / ADR-055). Range
+    [100, 60000]."""
+    warm_pool_size: int | Unset = UNSET
+    """Desired paused warm-pool size (issue #1056 / ADR-074). Zero disables the pool; bounded by max_concurrency
+    and available on Hobby+ plans."""
+    eviction_priority: AppResponseEvictionPriority | Unset = UNSET
+    """Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper
+    behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction."""
+    require_authn: bool | Unset = UNSET
+    """Per-deployment token-gate flag (issue #560). When true, gatewayd-internal demands `Authorization: Bearer
+    <token>` on every request; cross-account tokens receive 403 insufficient_scope. Pro/Scale only — Free/Hobby
+    PATCH-true is rejected with 403 plan_require_authn_not_allowed."""
+    consumer_auth_mode: AppResponseConsumerAuthMode | Unset = "optional"
+    """End-customer credential policy (ADR-120). optional accepts anonymous requests and attributes valid consumer
+    keys; required mandates a valid consumer key."""
+    platform_tenant_required: bool | Unset = False
+    """Require a verified platform tenant from a linked consumer key, verified tenant surface, or opted-in JWT
+    authorization rule before app traffic is served. Default false."""
+    parked_deployment: None | ParkedDeploymentRef | Unset = UNSET
+    """Most-recently parked deployment for this app, or null if never parked (issue #554 / ADR-079 follow-up). The
+    reference surfaces the closed-set parking reason + timestamp on GET /v1/apps/{slug} so operators can answer 'why
+    is my app evicted_cold?' without grepping the audit log."""
+    overflow_node: None | Unset | UUID = UNSET
+    """Per-app preferred spill target for cross-node pressure rebalance (Tier A10 / ADR-088). Resolved UUID from
+    the customer's named compute_nodes.name preference (null when unset). Consulted by Engine.RebalancePressuredApps
+    before the A9 fallback; falls through to A9 when the target is inactive or full."""
+    cors_default_enabled: bool | None | Unset = UNSET
+    cors_default_origins: list[str] | Unset = UNSET
+    public_auth: PublicAuthStatus | Unset = UNSET
+    """Read-only per-app public-URL auth shape on AppResponse (issue #477 / ADR-077 + ADR-118). Mirrors the row
+    contents without the plaintext credentials. The redaction posture is a load-bearing invariant — see ADR-077
+    §Decision 're-redaction invariant': neither basic_user nor basic_pass is EVER returned on the wire, even when
+    mode='basic'. To rotate credentials, the customer PATCHes a fresh public_auth block."""
+    auth_default_flipped_at: datetime.datetime | None | Unset = UNSET
+    app_protocol: AppResponseAppProtocol | Unset = UNSET
+    """Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Default 'http1' (universal).
+    Setting 'grpc' is plan-gated to Hobby+/Pro/Scale; Free customers see this as 'http1'."""
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        from ..models.parked_deployment_ref import ParkedDeploymentRef
+        from ..models.retry_policy_dto import RetryPolicyDTO
+        from ..models.scaling_policy import ScalingPolicy
+
+        id = self.id
+
+        slug = self.slug
+
+        type_: str = self.type_
+
+        ram_mb = self.ram_mb
+
+        vcpu = self.vcpu
+
+        cpu_millicores: int = self.cpu_millicores
+
+        configured_resources = self.configured_resources.to_dict()
+
+        max_concurrency = self.max_concurrency
+
+        concurrency_per_vm = self.concurrency_per_vm
+
+        effective_limits = self.effective_limits.to_dict()
+
+        min_instances = self.min_instances
+
+        status: str = self.status
+
+        build_cache_hit_rate_pct = self.build_cache_hit_rate_pct
+
+        url = self.url
+
+        manifest = self.manifest.to_dict()
+
+        autoscale_target_rps = self.autoscale_target_rps
+
+        autoscale_target_cpu_pct = self.autoscale_target_cpu_pct
+
+        service_binding_fingerprint = self.service_binding_fingerprint
+
+        project_id: str | Unset = UNSET
+        if not isinstance(self.project_id, Unset):
+            project_id = str(self.project_id)
+
+        visibility: str | Unset = UNSET
+        if not isinstance(self.visibility, Unset):
+            visibility = self.visibility
+
+        workload_class: str | Unset = UNSET
+        if not isinstance(self.workload_class, Unset):
+            workload_class = self.workload_class
+
+        runtime: str | Unset = UNSET
+        if not isinstance(self.runtime, Unset):
+            runtime = self.runtime
+
+        resource_profile: str | Unset = UNSET
+        if not isinstance(self.resource_profile, Unset):
+            resource_profile = self.resource_profile
+
+        idle_timeout_s: int | None | Unset
+        if isinstance(self.idle_timeout_s, Unset):
+            idle_timeout_s = UNSET
+        else:
+            idle_timeout_s = self.idle_timeout_s
+
+        request_timeout_s = self.request_timeout_s
+
+        function_concurrency = self.function_concurrency
+
+        deployment_availability: str | Unset = UNSET
+        if not isinstance(self.deployment_availability, Unset):
+            deployment_availability = self.deployment_availability
+
+        deleted_at: None | str | Unset
+        if isinstance(self.deleted_at, Unset):
+            deleted_at = UNSET
+        elif isinstance(self.deleted_at, datetime.datetime):
+            deleted_at = self.deleted_at.isoformat()
+        else:
+            deleted_at = self.deleted_at
+
+        delete_grace_until: None | str | Unset
+        if isinstance(self.delete_grace_until, Unset):
+            delete_grace_until = UNSET
+        elif isinstance(self.delete_grace_until, datetime.datetime):
+            delete_grace_until = self.delete_grace_until.isoformat()
+        else:
+            delete_grace_until = self.delete_grace_until
+
+        canonical_url = self.canonical_url
+
+        default_domain = self.default_domain
+
+        preview_of_slug = self.preview_of_slug
+
+        preview_pr_number = self.preview_pr_number
+
+        preview_pr_state: str | Unset = UNSET
+        if not isinstance(self.preview_pr_state, Unset):
+            preview_pr_state = self.preview_pr_state
+
+        preview_expires_at: None | str | Unset
+        if isinstance(self.preview_expires_at, Unset):
+            preview_expires_at = UNSET
+        elif isinstance(self.preview_expires_at, datetime.datetime):
+            preview_expires_at = self.preview_expires_at.isoformat()
+        else:
+            preview_expires_at = self.preview_expires_at
+
+        service_bindings: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.service_bindings, Unset):
+            service_bindings = []
+            for service_bindings_item_data in self.service_bindings:
+                service_bindings_item = service_bindings_item_data.to_dict()
+                service_bindings.append(service_bindings_item)
+
+        service_reliability: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_reliability, Unset):
+            service_reliability = self.service_reliability.to_dict()
+
+        service_binding_policy: str | Unset = UNSET
+        if not isinstance(self.service_binding_policy, Unset):
+            service_binding_policy = self.service_binding_policy
+
+        service_binding_transport: str | Unset = UNSET
+        if not isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = self.service_binding_transport
+
+        preview_service_calls_policy: str | Unset = UNSET
+        if not isinstance(self.preview_service_calls_policy, Unset):
+            preview_service_calls_policy = self.preview_service_calls_policy
+
+        allowed_service_callers: list[str] | Unset = UNSET
+        if not isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = self.allowed_service_callers
+
+        allowed_service_call_scopes: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = self.allowed_service_call_scopes.to_dict()
+
+        egress_allowlist: list[str] | Unset = UNSET
+        if not isinstance(self.egress_allowlist, Unset):
+            egress_allowlist = self.egress_allowlist
+
+        egress_ports: list[int] | Unset = UNSET
+        if not isinstance(self.egress_ports, Unset):
+            egress_ports = self.egress_ports
+
+        streaming_enabled = self.streaming_enabled
+
+        websocket_enabled = self.websocket_enabled
+
+        session_affinity = self.session_affinity
+
+        version_affinity_cookie = self.version_affinity_cookie
+
+        version_affinity_managed_cookie = self.version_affinity_managed_cookie
+
+        revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
+        release_policy: str | Unset = UNSET
+        if not isinstance(self.release_policy, Unset):
+            release_policy = self.release_policy
+
+        release_probe_paths: list[str] | Unset = UNSET
+        if not isinstance(self.release_probe_paths, Unset):
+            release_probe_paths = self.release_probe_paths
+
+        route_metrics_enabled = self.route_metrics_enabled
+
+        only_allow_declared_routes = self.only_allow_declared_routes
+
+        declared_routes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.declared_routes, Unset):
+            declared_routes = []
+            for declared_routes_item_data in self.declared_routes:
+                declared_routes_item = declared_routes_item_data.to_dict()
+                declared_routes.append(declared_routes_item)
+
+        maintenance_mode = self.maintenance_mode
+
+        scaling_policy: dict[str, Any] | None | Unset
+        if isinstance(self.scaling_policy, Unset):
+            scaling_policy = UNSET
+        elif isinstance(self.scaling_policy, ScalingPolicy):
+            scaling_policy = self.scaling_policy.to_dict()
+        else:
+            scaling_policy = self.scaling_policy
+
+        retry_policy: dict[str, Any] | None | Unset
+        if isinstance(self.retry_policy, Unset):
+            retry_policy = UNSET
+        elif isinstance(self.retry_policy, RetryPolicyDTO):
+            retry_policy = self.retry_policy.to_dict()
+        else:
+            retry_policy = self.retry_policy
+
+        last_scale_out_at: None | str | Unset
+        if isinstance(self.last_scale_out_at, Unset):
+            last_scale_out_at = UNSET
+        elif isinstance(self.last_scale_out_at, datetime.datetime):
+            last_scale_out_at = self.last_scale_out_at.isoformat()
+        else:
+            last_scale_out_at = self.last_scale_out_at
+
+        last_scale_in_at: None | str | Unset
+        if isinstance(self.last_scale_in_at, Unset):
+            last_scale_in_at = UNSET
+        elif isinstance(self.last_scale_in_at, datetime.datetime):
+            last_scale_in_at = self.last_scale_in_at.isoformat()
+        else:
+            last_scale_in_at = self.last_scale_in_at
+
+        require_signed = self.require_signed
+
+        warm_snapshot_enabled = self.warm_snapshot_enabled
+
+        warm_snapshot_min_requests = self.warm_snapshot_min_requests
+
+        warm_snapshot_min_ms = self.warm_snapshot_min_ms
+
+        warm_pool_size = self.warm_pool_size
+
+        eviction_priority: str | Unset = UNSET
+        if not isinstance(self.eviction_priority, Unset):
+            eviction_priority = self.eviction_priority
+
+        require_authn = self.require_authn
+
+        consumer_auth_mode: str | Unset = UNSET
+        if not isinstance(self.consumer_auth_mode, Unset):
+            consumer_auth_mode = self.consumer_auth_mode
+
+        platform_tenant_required = self.platform_tenant_required
+
+        parked_deployment: dict[str, Any] | None | Unset
+        if isinstance(self.parked_deployment, Unset):
+            parked_deployment = UNSET
+        elif isinstance(self.parked_deployment, ParkedDeploymentRef):
+            parked_deployment = self.parked_deployment.to_dict()
+        else:
+            parked_deployment = self.parked_deployment
+
+        overflow_node: None | str | Unset
+        if isinstance(self.overflow_node, Unset):
+            overflow_node = UNSET
+        elif isinstance(self.overflow_node, UUID):
+            overflow_node = str(self.overflow_node)
+        else:
+            overflow_node = self.overflow_node
+
+        cors_default_enabled: bool | None | Unset
+        if isinstance(self.cors_default_enabled, Unset):
+            cors_default_enabled = UNSET
+        else:
+            cors_default_enabled = self.cors_default_enabled
+
+        cors_default_origins: list[str] | Unset = UNSET
+        if not isinstance(self.cors_default_origins, Unset):
+            cors_default_origins = self.cors_default_origins
+
+        public_auth: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.public_auth, Unset):
+            public_auth = self.public_auth.to_dict()
+
+        auth_default_flipped_at: None | str | Unset
+        if isinstance(self.auth_default_flipped_at, Unset):
+            auth_default_flipped_at = UNSET
+        elif isinstance(self.auth_default_flipped_at, datetime.datetime):
+            auth_default_flipped_at = self.auth_default_flipped_at.isoformat()
+        else:
+            auth_default_flipped_at = self.auth_default_flipped_at
+
+        app_protocol: str | Unset = UNSET
+        if not isinstance(self.app_protocol, Unset):
+            app_protocol = self.app_protocol
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "id": id,
+                "slug": slug,
+                "type": type_,
+                "ram_mb": ram_mb,
+                "vcpu": vcpu,
+                "cpu_millicores": cpu_millicores,
+                "configured_resources": configured_resources,
+                "max_concurrency": max_concurrency,
+                "concurrency_per_vm": concurrency_per_vm,
+                "effective_limits": effective_limits,
+                "min_instances": min_instances,
+                "status": status,
+                "build_cache_hit_rate_pct": build_cache_hit_rate_pct,
+                "url": url,
+                "manifest": manifest,
+                "autoscale_target_rps": autoscale_target_rps,
+                "autoscale_target_cpu_pct": autoscale_target_cpu_pct,
+            }
+        )
+        if service_binding_fingerprint is not UNSET:
+            field_dict["service_binding_fingerprint"] = service_binding_fingerprint
+        if project_id is not UNSET:
+            field_dict["project_id"] = project_id
+        if visibility is not UNSET:
+            field_dict["visibility"] = visibility
+        if workload_class is not UNSET:
+            field_dict["workload_class"] = workload_class
+        if runtime is not UNSET:
+            field_dict["runtime"] = runtime
+        if resource_profile is not UNSET:
+            field_dict["resource_profile"] = resource_profile
+        if idle_timeout_s is not UNSET:
+            field_dict["idle_timeout_s"] = idle_timeout_s
+        if request_timeout_s is not UNSET:
+            field_dict["request_timeout_s"] = request_timeout_s
+        if function_concurrency is not UNSET:
+            field_dict["function_concurrency"] = function_concurrency
+        if deployment_availability is not UNSET:
+            field_dict["deployment_availability"] = deployment_availability
+        if deleted_at is not UNSET:
+            field_dict["deleted_at"] = deleted_at
+        if delete_grace_until is not UNSET:
+            field_dict["delete_grace_until"] = delete_grace_until
+        if canonical_url is not UNSET:
+            field_dict["canonical_url"] = canonical_url
+        if default_domain is not UNSET:
+            field_dict["default_domain"] = default_domain
+        if preview_of_slug is not UNSET:
+            field_dict["preview_of_slug"] = preview_of_slug
+        if preview_pr_number is not UNSET:
+            field_dict["preview_pr_number"] = preview_pr_number
+        if preview_pr_state is not UNSET:
+            field_dict["preview_pr_state"] = preview_pr_state
+        if preview_expires_at is not UNSET:
+            field_dict["preview_expires_at"] = preview_expires_at
+        if service_bindings is not UNSET:
+            field_dict["service_bindings"] = service_bindings
+        if service_reliability is not UNSET:
+            field_dict["service_reliability"] = service_reliability
+        if service_binding_policy is not UNSET:
+            field_dict["service_binding_policy"] = service_binding_policy
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
+        if preview_service_calls_policy is not UNSET:
+            field_dict["preview_service_calls_policy"] = preview_service_calls_policy
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
+        if allowed_service_call_scopes is not UNSET:
+            field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
+        if egress_allowlist is not UNSET:
+            field_dict["egress_allowlist"] = egress_allowlist
+        if egress_ports is not UNSET:
+            field_dict["egress_ports"] = egress_ports
+        if streaming_enabled is not UNSET:
+            field_dict["streaming_enabled"] = streaming_enabled
+        if websocket_enabled is not UNSET:
+            field_dict["websocket_enabled"] = websocket_enabled
+        if session_affinity is not UNSET:
+            field_dict["session_affinity"] = session_affinity
+        if version_affinity_cookie is not UNSET:
+            field_dict["version_affinity_cookie"] = version_affinity_cookie
+        if version_affinity_managed_cookie is not UNSET:
+            field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
+        if release_policy is not UNSET:
+            field_dict["release_policy"] = release_policy
+        if release_probe_paths is not UNSET:
+            field_dict["release_probe_paths"] = release_probe_paths
+        if route_metrics_enabled is not UNSET:
+            field_dict["route_metrics_enabled"] = route_metrics_enabled
+        if only_allow_declared_routes is not UNSET:
+            field_dict["only_allow_declared_routes"] = only_allow_declared_routes
+        if declared_routes is not UNSET:
+            field_dict["declared_routes"] = declared_routes
+        if maintenance_mode is not UNSET:
+            field_dict["maintenance_mode"] = maintenance_mode
+        if scaling_policy is not UNSET:
+            field_dict["scaling_policy"] = scaling_policy
+        if retry_policy is not UNSET:
+            field_dict["retry_policy"] = retry_policy
+        if last_scale_out_at is not UNSET:
+            field_dict["last_scale_out_at"] = last_scale_out_at
+        if last_scale_in_at is not UNSET:
+            field_dict["last_scale_in_at"] = last_scale_in_at
+        if require_signed is not UNSET:
+            field_dict["require_signed"] = require_signed
+        if warm_snapshot_enabled is not UNSET:
+            field_dict["warm_snapshot_enabled"] = warm_snapshot_enabled
+        if warm_snapshot_min_requests is not UNSET:
+            field_dict["warm_snapshot_min_requests"] = warm_snapshot_min_requests
+        if warm_snapshot_min_ms is not UNSET:
+            field_dict["warm_snapshot_min_ms"] = warm_snapshot_min_ms
+        if warm_pool_size is not UNSET:
+            field_dict["warm_pool_size"] = warm_pool_size
+        if eviction_priority is not UNSET:
+            field_dict["eviction_priority"] = eviction_priority
+        if require_authn is not UNSET:
+            field_dict["require_authn"] = require_authn
+        if consumer_auth_mode is not UNSET:
+            field_dict["consumer_auth_mode"] = consumer_auth_mode
+        if platform_tenant_required is not UNSET:
+            field_dict["platform_tenant_required"] = platform_tenant_required
+        if parked_deployment is not UNSET:
+            field_dict["parked_deployment"] = parked_deployment
+        if overflow_node is not UNSET:
+            field_dict["overflow_node"] = overflow_node
+        if cors_default_enabled is not UNSET:
+            field_dict["cors_default_enabled"] = cors_default_enabled
+        if cors_default_origins is not UNSET:
+            field_dict["cors_default_origins"] = cors_default_origins
+        if public_auth is not UNSET:
+            field_dict["public_auth"] = public_auth
+        if auth_default_flipped_at is not UNSET:
+            field_dict["auth_default_flipped_at"] = auth_default_flipped_at
+        if app_protocol is not UNSET:
+            field_dict["app_protocol"] = app_protocol
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.app_configured_resources import AppConfiguredResources
+        from ..models.app_effective_limits import AppEffectiveLimits
+        from ..models.app_manifest import AppManifest
+        from ..models.app_service_binding import AppServiceBinding
+        from ..models.declared_route import DeclaredRoute
+        from ..models.parked_deployment_ref import ParkedDeploymentRef
+        from ..models.public_auth_status import PublicAuthStatus
+        from ..models.retry_policy_dto import RetryPolicyDTO
+        from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
+
+        d = dict(src_dict)
+        id = d.pop("id")
+
+        slug = d.pop("slug")
+
+        type_ = check_app_response_type(d.pop("type"))
+
+        ram_mb = d.pop("ram_mb")
+
+        vcpu = d.pop("vcpu")
+
+        cpu_millicores = check_app_response_cpu_millicores(d.pop("cpu_millicores"))
+
+        configured_resources = AppConfiguredResources.from_dict(d.pop("configured_resources"))
+
+        max_concurrency = d.pop("max_concurrency")
+
+        concurrency_per_vm = d.pop("concurrency_per_vm")
+
+        effective_limits = AppEffectiveLimits.from_dict(d.pop("effective_limits"))
+
+        min_instances = d.pop("min_instances")
+
+        status = check_app_response_status(d.pop("status"))
+
+        build_cache_hit_rate_pct = d.pop("build_cache_hit_rate_pct")
+
+        url = d.pop("url")
+
+        manifest = AppManifest.from_dict(d.pop("manifest"))
+
+        autoscale_target_rps = d.pop("autoscale_target_rps")
+
+        autoscale_target_cpu_pct = d.pop("autoscale_target_cpu_pct")
+
+        service_binding_fingerprint = d.pop("service_binding_fingerprint", UNSET)
+
+        _project_id = d.pop("project_id", UNSET)
+        project_id: UUID | Unset
+        if isinstance(_project_id, Unset):
+            project_id = UNSET
+        else:
+            project_id = UUID(_project_id)
+
+        _visibility = d.pop("visibility", UNSET)
+        visibility: AppResponseVisibility | Unset
+        if isinstance(_visibility, Unset):
+            visibility = UNSET
+        else:
+            visibility = check_app_response_visibility(_visibility)
+
+        _workload_class = d.pop("workload_class", UNSET)
+        workload_class: AppResponseWorkloadClass | Unset
+        if isinstance(_workload_class, Unset):
+            workload_class = UNSET
+        else:
+            workload_class = check_app_response_workload_class(_workload_class)
+
+        _runtime = d.pop("runtime", UNSET)
+        runtime: AppResponseRuntime | Unset
+        if isinstance(_runtime, Unset):
+            runtime = UNSET
+        else:
+            runtime = check_app_response_runtime(_runtime)
+
+        _resource_profile = d.pop("resource_profile", UNSET)
+        resource_profile: ResourceProfile | Unset
+        if isinstance(_resource_profile, Unset):
+            resource_profile = UNSET
+        else:
+            resource_profile = check_resource_profile(_resource_profile)
+
+        def _parse_idle_timeout_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        idle_timeout_s = _parse_idle_timeout_s(d.pop("idle_timeout_s", UNSET))
+
+        request_timeout_s = d.pop("request_timeout_s", UNSET)
+
+        function_concurrency = d.pop("function_concurrency", UNSET)
+
+        _deployment_availability = d.pop("deployment_availability", UNSET)
+        deployment_availability: AppResponseDeploymentAvailability | Unset
+        if isinstance(_deployment_availability, Unset):
+            deployment_availability = UNSET
+        else:
+            deployment_availability = check_app_response_deployment_availability(_deployment_availability)
+
+        def _parse_deleted_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                deleted_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return deleted_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        deleted_at = _parse_deleted_at(d.pop("deleted_at", UNSET))
+
+        def _parse_delete_grace_until(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                delete_grace_until_type_0 = datetime.datetime.fromisoformat(data)
+
+                return delete_grace_until_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        delete_grace_until = _parse_delete_grace_until(d.pop("delete_grace_until", UNSET))
+
+        canonical_url = d.pop("canonical_url", UNSET)
+
+        default_domain = d.pop("default_domain", UNSET)
+
+        preview_of_slug = d.pop("preview_of_slug", UNSET)
+
+        preview_pr_number = d.pop("preview_pr_number", UNSET)
+
+        _preview_pr_state = d.pop("preview_pr_state", UNSET)
+        preview_pr_state: AppResponsePreviewPrState | Unset
+        if isinstance(_preview_pr_state, Unset):
+            preview_pr_state = UNSET
+        else:
+            preview_pr_state = check_app_response_preview_pr_state(_preview_pr_state)
+
+        def _parse_preview_expires_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                preview_expires_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return preview_expires_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        preview_expires_at = _parse_preview_expires_at(d.pop("preview_expires_at", UNSET))
+
+        _service_bindings = d.pop("service_bindings", UNSET)
+        service_bindings: list[AppServiceBinding] | Unset = UNSET
+        if _service_bindings is not UNSET:
+            service_bindings = []
+            for service_bindings_item_data in _service_bindings:
+                service_bindings_item = AppServiceBinding.from_dict(service_bindings_item_data)
+
+                service_bindings.append(service_bindings_item)
+
+        _service_reliability = d.pop("service_reliability", UNSET)
+        service_reliability: ServiceReliabilityPolicies | Unset
+        if isinstance(_service_reliability, Unset):
+            service_reliability = UNSET
+        else:
+            service_reliability = ServiceReliabilityPolicies.from_dict(_service_reliability)
+
+        _service_binding_policy = d.pop("service_binding_policy", UNSET)
+        service_binding_policy: ServiceBindingPolicy | Unset
+        if isinstance(_service_binding_policy, Unset):
+            service_binding_policy = UNSET
+        else:
+            service_binding_policy = check_service_binding_policy(_service_binding_policy)
+
+        _service_binding_transport = d.pop("service_binding_transport", UNSET)
+        service_binding_transport: ServiceBindingTransport | Unset
+        if isinstance(_service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        else:
+            service_binding_transport = check_service_binding_transport(_service_binding_transport)
+
+        _preview_service_calls_policy = d.pop("preview_service_calls_policy", UNSET)
+        preview_service_calls_policy: PreviewServiceCallsPolicy | Unset
+        if isinstance(_preview_service_calls_policy, Unset):
+            preview_service_calls_policy = UNSET
+        else:
+            preview_service_calls_policy = check_preview_service_calls_policy(_preview_service_calls_policy)
+
+        allowed_service_callers = cast(list[str], d.pop("allowed_service_callers", UNSET))
+
+        _allowed_service_call_scopes = d.pop("allowed_service_call_scopes", UNSET)
+        allowed_service_call_scopes: ServiceCallerScopes | Unset
+        if isinstance(_allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = UNSET
+        else:
+            allowed_service_call_scopes = ServiceCallerScopes.from_dict(_allowed_service_call_scopes)
+
+        egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
+
+        egress_ports = cast(list[int], d.pop("egress_ports", UNSET))
+
+        streaming_enabled = d.pop("streaming_enabled", UNSET)
+
+        websocket_enabled = d.pop("websocket_enabled", UNSET)
+
+        session_affinity = d.pop("session_affinity", UNSET)
+
+        version_affinity_cookie = d.pop("version_affinity_cookie", UNSET)
+
+        version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
+
+        revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
+
+        _release_policy = d.pop("release_policy", UNSET)
+        release_policy: AppResponseReleasePolicy | Unset
+        if isinstance(_release_policy, Unset):
+            release_policy = UNSET
+        else:
+            release_policy = check_app_response_release_policy(_release_policy)
+
+        release_probe_paths = cast(list[str], d.pop("release_probe_paths", UNSET))
+
+        route_metrics_enabled = d.pop("route_metrics_enabled", UNSET)
+
+        only_allow_declared_routes = d.pop("only_allow_declared_routes", UNSET)
+
+        _declared_routes = d.pop("declared_routes", UNSET)
+        declared_routes: list[DeclaredRoute] | Unset = UNSET
+        if _declared_routes is not UNSET:
+            declared_routes = []
+            for declared_routes_item_data in _declared_routes:
+                declared_routes_item = DeclaredRoute.from_dict(declared_routes_item_data)
+
+                declared_routes.append(declared_routes_item)
+
+        maintenance_mode = d.pop("maintenance_mode", UNSET)
+
+        def _parse_scaling_policy(data: object) -> None | ScalingPolicy | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                scaling_policy_type_1 = ScalingPolicy.from_dict(data)
+
+                return scaling_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ScalingPolicy | Unset, data)
+
+        scaling_policy = _parse_scaling_policy(d.pop("scaling_policy", UNSET))
+
+        def _parse_retry_policy(data: object) -> None | RetryPolicyDTO | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                retry_policy_type_1 = RetryPolicyDTO.from_dict(data)
+
+                return retry_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | RetryPolicyDTO | Unset, data)
+
+        retry_policy = _parse_retry_policy(d.pop("retry_policy", UNSET))
+
+        def _parse_last_scale_out_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                last_scale_out_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return last_scale_out_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        last_scale_out_at = _parse_last_scale_out_at(d.pop("last_scale_out_at", UNSET))
+
+        def _parse_last_scale_in_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                last_scale_in_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return last_scale_in_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        last_scale_in_at = _parse_last_scale_in_at(d.pop("last_scale_in_at", UNSET))
+
+        require_signed = d.pop("require_signed", UNSET)
+
+        warm_snapshot_enabled = d.pop("warm_snapshot_enabled", UNSET)
+
+        warm_snapshot_min_requests = d.pop("warm_snapshot_min_requests", UNSET)
+
+        warm_snapshot_min_ms = d.pop("warm_snapshot_min_ms", UNSET)
+
+        warm_pool_size = d.pop("warm_pool_size", UNSET)
+
+        _eviction_priority = d.pop("eviction_priority", UNSET)
+        eviction_priority: AppResponseEvictionPriority | Unset
+        if isinstance(_eviction_priority, Unset):
+            eviction_priority = UNSET
+        else:
+            eviction_priority = check_app_response_eviction_priority(_eviction_priority)
+
+        require_authn = d.pop("require_authn", UNSET)
+
+        _consumer_auth_mode = d.pop("consumer_auth_mode", UNSET)
+        consumer_auth_mode: AppResponseConsumerAuthMode | Unset
+        if isinstance(_consumer_auth_mode, Unset):
+            consumer_auth_mode = UNSET
+        else:
+            consumer_auth_mode = check_app_response_consumer_auth_mode(_consumer_auth_mode)
+
+        platform_tenant_required = d.pop("platform_tenant_required", UNSET)
+
+        def _parse_parked_deployment(data: object) -> None | ParkedDeploymentRef | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                parked_deployment_type_0 = ParkedDeploymentRef.from_dict(data)
+
+                return parked_deployment_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ParkedDeploymentRef | Unset, data)
+
+        parked_deployment = _parse_parked_deployment(d.pop("parked_deployment", UNSET))
+
+        def _parse_overflow_node(data: object) -> None | Unset | UUID:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                overflow_node_type_0 = UUID(data)
+
+                return overflow_node_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | Unset | UUID, data)
+
+        overflow_node = _parse_overflow_node(d.pop("overflow_node", UNSET))
+
+        def _parse_cors_default_enabled(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        cors_default_enabled = _parse_cors_default_enabled(d.pop("cors_default_enabled", UNSET))
+
+        cors_default_origins = cast(list[str], d.pop("cors_default_origins", UNSET))
+
+        _public_auth = d.pop("public_auth", UNSET)
+        public_auth: PublicAuthStatus | Unset
+        if isinstance(_public_auth, Unset):
+            public_auth = UNSET
+        else:
+            public_auth = PublicAuthStatus.from_dict(_public_auth)
+
+        def _parse_auth_default_flipped_at(data: object) -> datetime.datetime | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                auth_default_flipped_at_type_0 = datetime.datetime.fromisoformat(data)
+
+                return auth_default_flipped_at_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(datetime.datetime | None | Unset, data)
+
+        auth_default_flipped_at = _parse_auth_default_flipped_at(d.pop("auth_default_flipped_at", UNSET))
+
+        _app_protocol = d.pop("app_protocol", UNSET)
+        app_protocol: AppResponseAppProtocol | Unset
+        if isinstance(_app_protocol, Unset):
+            app_protocol = UNSET
+        else:
+            app_protocol = check_app_response_app_protocol(_app_protocol)
+
+        app_response = cls(
+            id=id,
+            slug=slug,
+            type_=type_,
+            ram_mb=ram_mb,
+            vcpu=vcpu,
+            cpu_millicores=cpu_millicores,
+            configured_resources=configured_resources,
+            max_concurrency=max_concurrency,
+            concurrency_per_vm=concurrency_per_vm,
+            effective_limits=effective_limits,
+            min_instances=min_instances,
+            status=status,
+            build_cache_hit_rate_pct=build_cache_hit_rate_pct,
+            url=url,
+            manifest=manifest,
+            autoscale_target_rps=autoscale_target_rps,
+            autoscale_target_cpu_pct=autoscale_target_cpu_pct,
+            service_binding_fingerprint=service_binding_fingerprint,
+            project_id=project_id,
+            visibility=visibility,
+            workload_class=workload_class,
+            runtime=runtime,
+            resource_profile=resource_profile,
+            idle_timeout_s=idle_timeout_s,
+            request_timeout_s=request_timeout_s,
+            function_concurrency=function_concurrency,
+            deployment_availability=deployment_availability,
+            deleted_at=deleted_at,
+            delete_grace_until=delete_grace_until,
+            canonical_url=canonical_url,
+            default_domain=default_domain,
+            preview_of_slug=preview_of_slug,
+            preview_pr_number=preview_pr_number,
+            preview_pr_state=preview_pr_state,
+            preview_expires_at=preview_expires_at,
+            service_bindings=service_bindings,
+            service_reliability=service_reliability,
+            service_binding_policy=service_binding_policy,
+            service_binding_transport=service_binding_transport,
+            preview_service_calls_policy=preview_service_calls_policy,
+            allowed_service_callers=allowed_service_callers,
+            allowed_service_call_scopes=allowed_service_call_scopes,
+            egress_allowlist=egress_allowlist,
+            egress_ports=egress_ports,
+            streaming_enabled=streaming_enabled,
+            websocket_enabled=websocket_enabled,
+            session_affinity=session_affinity,
+            version_affinity_cookie=version_affinity_cookie,
+            version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
+            release_policy=release_policy,
+            release_probe_paths=release_probe_paths,
+            route_metrics_enabled=route_metrics_enabled,
+            only_allow_declared_routes=only_allow_declared_routes,
+            declared_routes=declared_routes,
+            maintenance_mode=maintenance_mode,
+            scaling_policy=scaling_policy,
+            retry_policy=retry_policy,
+            last_scale_out_at=last_scale_out_at,
+            last_scale_in_at=last_scale_in_at,
+            require_signed=require_signed,
+            warm_snapshot_enabled=warm_snapshot_enabled,
+            warm_snapshot_min_requests=warm_snapshot_min_requests,
+            warm_snapshot_min_ms=warm_snapshot_min_ms,
+            warm_pool_size=warm_pool_size,
+            eviction_priority=eviction_priority,
+            require_authn=require_authn,
+            consumer_auth_mode=consumer_auth_mode,
+            platform_tenant_required=platform_tenant_required,
+            parked_deployment=parked_deployment,
+            overflow_node=overflow_node,
+            cors_default_enabled=cors_default_enabled,
+            cors_default_origins=cors_default_origins,
+            public_auth=public_auth,
+            auth_default_flipped_at=auth_default_flipped_at,
+            app_protocol=app_protocol,
+        )
+
+        app_response.additional_properties = d
+        return app_response
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

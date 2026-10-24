@@ -9,12 +9,14 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func TestBucketObjectLockClient(t *testing.T) {
 	days, years := int32(3), int32(1)
-	cfg := faas.ObjectBucketObjectLockConfiguration{Enabled: true, DefaultRetention: &faas.ObjectLockDefaultRetention{Mode: "COMPLIANCE", Days: &days, DefaultEventHold: &faas.ObjectRetentionPeriod{Years: &years}}}
+	cfg := preview.ObjectBucketObjectLockConfiguration{Enabled: true, DefaultRetention: &preview.ObjectLockDefaultRetention{Mode: "COMPLIANCE", Days: &days, DefaultEventHold: &preview.ObjectRetentionPeriod{Years: &years}}}
 	calls := []string{}
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !strings.HasPrefix(r.URL.EscapedPath(), "/v1/apps/demo%2Fx/buckets/bucket%2Fx/object-lock") || r.Header.Get("Authorization") != "Bearer token" {
@@ -27,7 +29,7 @@ func TestBucketObjectLockClient(t *testing.T) {
 			return
 		}
 		if r.Method == "PUT" {
-			var in faas.ObjectBucketObjectLockRequest
+			var in preview.ObjectBucketObjectLockRequest
 			if json.NewDecoder(r.Body).Decode(&in) != nil || !in.Configuration.Equal(cfg) {
 				t.Error(in)
 			}
@@ -40,15 +42,15 @@ func TestBucketObjectLockClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	caps, err := c.GetObjectBucketObjectLockCapabilities(context.Background(), "demo/x", "bucket/x")
+	caps, err := preview.Wrap(c).GetObjectBucketObjectLockCapabilities(context.Background(), "demo/x", "bucket/x")
 	if err != nil || !caps.DefaultEventHold || !caps.VersionEventHold {
 		t.Fatal(caps, err)
 	}
-	j, err := c.PutObjectBucketObjectLock(context.Background(), "demo/x", "bucket/x", cfg)
+	j, err := preview.Wrap(c).PutObjectBucketObjectLock(context.Background(), "demo/x", "bucket/x", cfg)
 	if err != nil || !j.EnabledRequired || j.ObservedKnown || j.DesiredConfiguration == nil || !j.DesiredConfiguration.Equal(cfg) {
 		t.Fatal(j, err)
 	}
-	if _, err = c.GetObjectBucketObjectLock(context.Background(), "demo/x", "bucket/x"); err != nil {
+	if _, err = preview.Wrap(c).GetObjectBucketObjectLock(context.Background(), "demo/x", "bucket/x"); err != nil {
 		t.Fatal(err)
 	}
 	if fmt.Sprint(calls) != "[GET PUT GET]" {

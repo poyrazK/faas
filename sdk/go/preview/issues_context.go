@@ -1,6 +1,8 @@
-package faas
+package preview
 
-func boundedIssueContext(in IssueContext) ([]IssueBreadcrumb, int, map[string]string) {
+import faas "github.com/poyrazK/faas/sdk/go"
+
+func boundedIssueContext(in IssueContext) ([]faas.IssueBreadcrumb, int, map[string]string) {
 	dropped := in.BreadcrumbsDropped
 	if dropped < 0 {
 		dropped = 0
@@ -18,7 +20,7 @@ func boundedIssueContext(in IssueContext) ([]IssueBreadcrumb, int, map[string]st
 		}
 		entries = entries[extra:]
 	}
-	out := append([]IssueBreadcrumb(nil), entries...)
+	out := append([]faas.IssueBreadcrumb(nil), entries...)
 	for i := range out {
 		out[i].Message = boundedIssueString(out[i].Message, 256)
 	}

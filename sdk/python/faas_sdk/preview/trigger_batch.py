@@ -11,7 +11,7 @@ payload. The function answers 2xx to complete every record, or
 ``{"batchItemFailures": [{"itemIdentifier": "…"}]}`` to retry some of them.
 ``handle_trigger_batch`` runs a handler for each record and builds that answer::
 
-    from faas_sdk.trigger_batch import handle_trigger_batch
+    from faas_sdk.preview.trigger_batch import handle_trigger_batch
 
     def handler(request):
         return handle_trigger_batch(request.body, lambda record: save(record.data))

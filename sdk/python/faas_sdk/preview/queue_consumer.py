@@ -8,7 +8,7 @@ Inside a Gregale VM the consumer authenticates with a workload-identity token
 for audience ``gregale:queues``; elsewhere it takes an API key with
 ``queues:consume``.
 
-    from faas_sdk.queue_consumer import consume_queue
+    from faas_sdk.preview.queue_consumer import consume_queue
 
     async def handle(message):
         await process(message.payload)

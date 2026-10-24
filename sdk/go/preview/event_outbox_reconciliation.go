@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"bytes"
@@ -10,6 +10,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // EventOutboxReconciliationOptions optionally supplies a renamed app's current
@@ -81,7 +83,7 @@ func reconcileEventOutbox(ctx context.Context, db eventOutboxControlStore, clien
 	var expiry, accepted sql.NullTime
 	err = db.QueryRowContext(ctx, `SELECT `+eventOutboxStatusColumns+`,request_body,request_digest,coalesce(claim_expires_at>clock_timestamp(),false) FROM public.gregale_event_outbox WHERE account_id=$1::uuid AND app_id=$2::uuid AND producer_key=$3`, account, app, key).Scan(&s.ProducerKey, &s.AppSlug, &s.State, &s.Attempts, &s.NextAttemptAt, &s.RetryUntil, &expiry, &accepted, &s.LastCode, &s.CreatedAt, &s.UpdatedAt, &body, &digest, &live)
 	if errors.Is(err, sql.ErrNoRows) {
-		return out, ErrNotFound
+		return out, faas.ErrNotFound
 	}
 	if err != nil {
 		return out, eventOutboxStoreError(ctx)
@@ -111,7 +113,7 @@ func reconcileEventOutbox(ctx context.Context, db eventOutboxControlStore, clien
 		slug = options.AppSlug
 	}
 	callCtx, cancel := context.WithTimeout(ctx, options.RequestTimeout)
-	evidence, verifyErr := client.VerifyAppEventPublication(callCtx, slug, request)
+	evidence, verifyErr := client.PreviewClient.VerifyAppEventPublication(callCtx, slug, request)
 	cancel()
 	out.Outcome = "unverified"
 	if verifyErr != nil {

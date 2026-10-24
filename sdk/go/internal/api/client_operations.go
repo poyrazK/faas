@@ -10,28 +10,28 @@ import (
 	"strconv"
 )
 
-func (c *Client) PutOperationDefinition(ctx context.Context, slug, deployment, name string, spec OperationDefinitionSpec) (OperationDefinitionResponse, error) {
+func (c *PreviewClient) PutOperationDefinition(ctx context.Context, slug, deployment, name string, spec OperationDefinitionSpec) (OperationDefinitionResponse, error) {
 	var out OperationDefinitionResponse
 	path := "/v1/apps/" + url.PathEscape(slug) + "/deployments/" + url.PathEscape(deployment) + "/operation-definitions/" + url.PathEscape(name)
 	err := c.doOperation(ctx, http.MethodPut, path, spec, &out)
 	return out, err
 }
 
-func (c *Client) ListOperationDefinitions(ctx context.Context, slug, deployment string) (OperationDefinitionsResponse, error) {
+func (c *PreviewClient) ListOperationDefinitions(ctx context.Context, slug, deployment string) (OperationDefinitionsResponse, error) {
 	var out OperationDefinitionsResponse
 	path := "/v1/apps/" + url.PathEscape(slug) + "/deployments/" + url.PathEscape(deployment) + "/operation-definitions"
 	err := c.doOperation(ctx, http.MethodGet, path, nil, &out)
 	return out, err
 }
 
-func (c *Client) GetOperationDefinition(ctx context.Context, slug, deployment, name string) (OperationDefinitionResponse, error) {
+func (c *PreviewClient) GetOperationDefinition(ctx context.Context, slug, deployment, name string) (OperationDefinitionResponse, error) {
 	var out OperationDefinitionResponse
 	path := "/v1/apps/" + url.PathEscape(slug) + "/deployments/" + url.PathEscape(deployment) + "/operation-definitions/" + url.PathEscape(name)
 	err := c.doOperation(ctx, http.MethodGet, path, nil, &out)
 	return out, err
 }
 
-func (c *Client) GetOperationDoctor(ctx context.Context, slug, deployment, tenant, name string) (OperationDoctorResponse, error) {
+func (c *PreviewClient) GetOperationDoctor(ctx context.Context, slug, deployment, tenant, name string) (OperationDoctorResponse, error) {
 	var out OperationDoctorResponse
 	query := url.Values{"tenant_id": {tenant}}
 	if name != "" {
@@ -42,7 +42,7 @@ func (c *Client) GetOperationDoctor(ctx context.Context, slug, deployment, tenan
 	return out, err
 }
 
-func (c *Client) GetPlatformTenantSelfOperationIdentity(ctx context.Context) (OperationTenantIdentity, error) {
+func (c *PreviewClient) GetPlatformTenantSelfOperationIdentity(ctx context.Context) (OperationTenantIdentity, error) {
 	var out OperationTenantIdentity
 	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/customer-operations/identity", nil, &out)
 	return out, err
@@ -60,7 +60,7 @@ func (c *Client) CancelOperation(ctx context.Context, slug, id string, req Opera
 	return out, err
 }
 
-func (c *Client) StartPlatformTenantSelfOperation(ctx context.Context, req OperationStartRequest, key string) (OperationAcceptedResponse, error) {
+func (c *PreviewClient) StartPlatformTenantSelfOperation(ctx context.Context, req OperationStartRequest, key string) (OperationAcceptedResponse, error) {
 	var out OperationAcceptedResponse
 	if !validOperationSubmissionKey(key) {
 		return out, fmt.Errorf("operation submission requires a stable idempotency key")
@@ -75,7 +75,7 @@ func (c *Client) GetPlatformTenantSelfOperation(ctx context.Context, id string) 
 	return out, err
 }
 
-func (c *Client) ListPlatformTenantSelfOperations(ctx context.Context, opts OperationListOptions) (OperationListResponse, error) {
+func (c *PreviewClient) ListPlatformTenantSelfOperations(ctx context.Context, opts OperationListOptions) (OperationListResponse, error) {
 	var out OperationListResponse
 	query := url.Values{"app_id": {opts.AppID}, "scope": {opts.Scope}}
 	if opts.SubjectType != "" {
@@ -184,24 +184,24 @@ type OperationRuntimeProof struct {
 func (p OperationRuntimeProof) headers() http.Header {
 	return http.Header{InvocationIDHeader: {p.InvocationID}, OperationAttemptHeader: {strconv.Itoa(p.Attempt)}, OperationCapabilityHeader: {p.Capability}}
 }
-func (c *Client) ReportOperationProgress(ctx context.Context, id string, proof OperationRuntimeProof, req OperationReportRequest) (OperationResponse, error) {
+func (c *PreviewClient) ReportOperationProgress(ctx context.Context, id string, proof OperationRuntimeProof, req OperationReportRequest) (OperationResponse, error) {
 	var out OperationResponse
 	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/progress", req, &out, proof.headers())
 	return out, err
 }
-func (c *Client) GetOperationExecutionControl(ctx context.Context, id string, proof OperationRuntimeProof) (OperationExecutionControlResponse, error) {
+func (c *PreviewClient) GetOperationExecutionControl(ctx context.Context, id string, proof OperationRuntimeProof) (OperationExecutionControlResponse, error) {
 	var out OperationExecutionControlResponse
 	err := c.doOperationWithHeaders(ctx, http.MethodGet, "/v1/runtime/operations/"+url.PathEscape(id)+"/control", nil, &out, proof.headers())
 	return out, err
 }
 
-func (c *Client) AttachOperationArtifact(ctx context.Context, id string, proof OperationRuntimeProof, req OperationArtifactRequest) (OperationResponse, error) {
+func (c *PreviewClient) AttachOperationArtifact(ctx context.Context, id string, proof OperationRuntimeProof, req OperationArtifactRequest) (OperationResponse, error) {
 	var out OperationResponse
 	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/artifacts", req, &out, proof.headers())
 	return out, err
 }
 
-func (c *Client) ListAccountOperations(ctx context.Context, slug string, opts OperationListOptions) (OperationListResponse, error) {
+func (c *PreviewClient) ListAccountOperations(ctx context.Context, slug string, opts OperationListOptions) (OperationListResponse, error) {
 	var out OperationListResponse
 	query := url.Values{"scope": {opts.Scope}}
 	if opts.TenantID != "" {
@@ -279,25 +279,25 @@ func (c *Client) RetryOperationDeliveryWithReceipt(ctx context.Context, slug, id
 }
 
 // ReportOperationMilestone publishes a fact already committed by the application.
-func (c *Client) ReportOperationMilestone(ctx context.Context, id string, proof OperationRuntimeProof, req OperationMilestoneRequest) (OperationMilestone, error) {
+func (c *PreviewClient) ReportOperationMilestone(ctx context.Context, id string, proof OperationRuntimeProof, req OperationMilestoneRequest) (OperationMilestone, error) {
 	var out OperationMilestone
 	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/milestones", req, &out, proof.headers())
 	return out, err
 }
 
-func (c *Client) ValidateOperationMilestones(ctx context.Context, id string, proof OperationRuntimeProof, req OperationMilestoneValidationRequest) (OperationMilestoneValidationResponse, error) {
+func (c *PreviewClient) ValidateOperationMilestones(ctx context.Context, id string, proof OperationRuntimeProof, req OperationMilestoneValidationRequest) (OperationMilestoneValidationResponse, error) {
 	var out OperationMilestoneValidationResponse
 	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/milestones/validate", req, &out, proof.headers())
 	return out, err
 }
 
-func (c *Client) ReportOperationWorkflowState(ctx context.Context, id string, proof OperationRuntimeProof, req OperationWorkflowStateReport) (OperationWorkflowStateReportResponse, error) {
+func (c *PreviewClient) ReportOperationWorkflowState(ctx context.Context, id string, proof OperationRuntimeProof, req OperationWorkflowStateReport) (OperationWorkflowStateReportResponse, error) {
 	var out OperationWorkflowStateReportResponse
 	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/workflow-states", req, &out, proof.headers())
 	return out, err
 }
 
-func (c *Client) ValidateOperationWorkflowStates(ctx context.Context, id string, proof OperationRuntimeProof, req OperationWorkflowStateValidationRequest) (OperationWorkflowStateValidationResponse, error) {
+func (c *PreviewClient) ValidateOperationWorkflowStates(ctx context.Context, id string, proof OperationRuntimeProof, req OperationWorkflowStateValidationRequest) (OperationWorkflowStateValidationResponse, error) {
 	var out OperationWorkflowStateValidationResponse
 	err := c.doOperationWithHeaders(ctx, http.MethodPost, "/v1/runtime/operations/"+url.PathEscape(id)+"/workflow-states/validate", req, &out, proof.headers())
 	return out, err
@@ -352,7 +352,7 @@ func (c *Client) ListAccountBusinessMilestones(ctx context.Context, slug string,
 	return out, err
 }
 
-func (c *Client) ListPlatformTenantSelfBusinessMilestones(ctx context.Context, opts OperationMilestoneListOptions) (OperationMilestonesResponse, error) {
+func (c *PreviewClient) ListPlatformTenantSelfBusinessMilestones(ctx context.Context, opts OperationMilestoneListOptions) (OperationMilestonesResponse, error) {
 	var out OperationMilestonesResponse
 	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/customer-operation-milestones"+operationMilestoneQuery(opts, true, true), nil, &out)
 	return out, err
@@ -383,7 +383,7 @@ func (c *Client) ListAccountWorkflowAttention(ctx context.Context, slug string, 
 	err := c.doOperation(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-attention"+operationWorkflowAttentionQuery(opts, false), nil, &out)
 	return out, err
 }
-func (c *Client) ListPlatformTenantSelfWorkflowAttention(ctx context.Context, opts OperationWorkflowAttentionOptions) (OperationWorkflowAttentionResponse, error) {
+func (c *PreviewClient) ListPlatformTenantSelfWorkflowAttention(ctx context.Context, opts OperationWorkflowAttentionOptions) (OperationWorkflowAttentionResponse, error) {
 	var out OperationWorkflowAttentionResponse
 	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-attention"+operationWorkflowAttentionQuery(opts, true), nil, &out)
 	return out, err
@@ -401,7 +401,7 @@ func (c *Client) SummarizeAccountWorkflowAttention(ctx context.Context, slug str
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-attention/summary"+operationWorkflowAttentionSummaryQuery(opts, false), nil, &out)
 	return out, err
 }
-func (c *Client) SummarizePlatformTenantSelfWorkflowAttention(ctx context.Context, opts OperationWorkflowAttentionSummaryOptions) (OperationWorkflowAttentionSummary, error) {
+func (c *PreviewClient) SummarizePlatformTenantSelfWorkflowAttention(ctx context.Context, opts OperationWorkflowAttentionSummaryOptions) (OperationWorkflowAttentionSummary, error) {
 	var out OperationWorkflowAttentionSummary
 	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-attention/summary"+operationWorkflowAttentionSummaryQuery(opts, true), nil, &out)
 	return out, err
@@ -439,13 +439,13 @@ func (c *Client) SummarizeAccountWorkflowOutcomes(ctx context.Context, slug stri
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-outcomes/summary"+query, nil, &out)
 	return out, err
 }
-func (c *Client) ListPlatformTenantSelfWorkflowOutcomes(ctx context.Context, opts OperationWorkflowOutcomeOptions) (OperationWorkflowOutcomesResponse, error) {
+func (c *PreviewClient) ListPlatformTenantSelfWorkflowOutcomes(ctx context.Context, opts OperationWorkflowOutcomeOptions) (OperationWorkflowOutcomesResponse, error) {
 	query := operationWorkflowOutcomeQuery(opts, true)
 	var out OperationWorkflowOutcomesResponse
 	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-outcomes"+query, nil, &out)
 	return out, err
 }
-func (c *Client) SummarizePlatformTenantSelfWorkflowOutcomes(ctx context.Context, opts OperationWorkflowOutcomeSummaryOptions) (OperationWorkflowOutcomeSummary, error) {
+func (c *PreviewClient) SummarizePlatformTenantSelfWorkflowOutcomes(ctx context.Context, opts OperationWorkflowOutcomeSummaryOptions) (OperationWorkflowOutcomeSummary, error) {
 	query := operationWorkflowOutcomeQuery(opts.OperationWorkflowOutcomeOptions, true)
 	if opts.GroupBy != "" {
 		query += "&group_by=" + url.QueryEscape(opts.GroupBy)
@@ -463,7 +463,7 @@ func (c *Client) CheckAccountWorkflowReadiness(ctx context.Context, slug string,
 }
 
 // CheckPlatformTenantSelfWorkflowReadiness uses the authenticated customer boundary.
-func (c *Client) CheckPlatformTenantSelfWorkflowReadiness(ctx context.Context, req OperationWorkflowReadinessRequest) (OperationWorkflowReadinessResponse, error) {
+func (c *PreviewClient) CheckPlatformTenantSelfWorkflowReadiness(ctx context.Context, req OperationWorkflowReadinessRequest) (OperationWorkflowReadinessResponse, error) {
 	var out OperationWorkflowReadinessResponse
 	err := c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-readiness", req, &out)
 	return out, err
@@ -475,7 +475,7 @@ func (c *Client) PreviewAccountWorkflowActions(ctx context.Context, slug string,
 	return out, err
 }
 
-func (c *Client) PreviewPlatformTenantSelfWorkflowActions(ctx context.Context, req OperationWorkflowActionPreviewRequest) (OperationWorkflowActionPreviewResponse, error) {
+func (c *PreviewClient) PreviewPlatformTenantSelfWorkflowActions(ctx context.Context, req OperationWorkflowActionPreviewRequest) (OperationWorkflowActionPreviewResponse, error) {
 	var out OperationWorkflowActionPreviewResponse
 	err := c.do(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-actions/preview", req, &out)
 	return out, err
@@ -502,7 +502,7 @@ func (c *Client) SummarizeAccountWorkflowPerformance(ctx context.Context, slug s
 }
 
 // SummarizePlatformTenantSelfWorkflowPerformance uses authenticated customer ownership.
-func (c *Client) SummarizePlatformTenantSelfWorkflowPerformance(ctx context.Context, opts OperationWorkflowPerformanceOptions) (OperationWorkflowPerformanceSummary, error) {
+func (c *PreviewClient) SummarizePlatformTenantSelfWorkflowPerformance(ctx context.Context, opts OperationWorkflowPerformanceOptions) (OperationWorkflowPerformanceSummary, error) {
 	var out OperationWorkflowPerformanceSummary
 	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-performance/summary"+operationWorkflowPerformanceQuery(opts, true), nil, &out)
 	return out, err
@@ -533,7 +533,7 @@ func (c *Client) ListAccountWorkflowPerformanceInstances(ctx context.Context, sl
 }
 
 // ListPlatformTenantSelfWorkflowPerformanceInstances uses authenticated customer ownership.
-func (c *Client) ListPlatformTenantSelfWorkflowPerformanceInstances(ctx context.Context, opts OperationWorkflowPerformanceInstanceOptions) (OperationWorkflowPerformanceInstancesResponse, error) {
+func (c *PreviewClient) ListPlatformTenantSelfWorkflowPerformanceInstances(ctx context.Context, opts OperationWorkflowPerformanceInstanceOptions) (OperationWorkflowPerformanceInstancesResponse, error) {
 	var out OperationWorkflowPerformanceInstancesResponse
 	err := c.do(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-performance/instances"+operationWorkflowPerformanceInstanceQuery(opts, true), nil, &out)
 	return out, err

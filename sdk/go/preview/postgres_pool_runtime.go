@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // PostgresPoolConfig contains an explicit managed connection URI. Factories
@@ -58,8 +60,8 @@ func (b *PostgresPoolBinding[T]) Reload(ctx context.Context, values map[string]s
 	return b.core.Reload(ctx, values)
 }
 
-func (b *PostgresPoolBinding[T]) Invalidate()                    { b.core.Invalidate() }
-func (b *PostgresPoolBinding[T]) SecretConsumer() SecretConsumer { return b.core.SecretConsumer() }
+func (b *PostgresPoolBinding[T]) Invalidate()                         { b.core.Invalidate() }
+func (b *PostgresPoolBinding[T]) SecretConsumer() faas.SecretConsumer { return b.core.SecretConsumer() }
 
 // WaitForRetirement ignores the active pool. Stop reloads/requests and invalidate
 // before shutdown. Cancelling this wait does not terminate leased transactions.

@@ -1,5 +1,5 @@
 // adr: 521
-package faas
+package preview
 
 import "github.com/poyrazK/faas/sdk/go/internal/api"
 

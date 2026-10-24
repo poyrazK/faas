@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, decodeDurableEntityRestoreValidationRequest, encodeDurableEntityRestoreValidation, validateDurableEntityRestore } from '../src/index.js';
+import { FaaSClient, decodeDurableEntityRestoreValidationRequest, encodeDurableEntityRestoreValidation, validateDurableEntityRestore } from '../src/preview.js';
 
 const envelope = { protocol_version: 1, event: 'validate_restore', entity: { account_id: 'a', app_id: 'b', namespace: 'counters', key: 'counter' }, request_id: 'restore', deployment_id: 'deployment', expected_version: 2, source_version: 1, candidate: { schema_version: 2, data: { count: 1 } } };
 

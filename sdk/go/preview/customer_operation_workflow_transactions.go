@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"bytes"
@@ -10,7 +10,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/poyrazK/faas/sdk/go/internal/api"
 	"net/http"
 	"reflect"
 	"regexp"
@@ -18,6 +17,8 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+
+	"github.com/poyrazK/faas/sdk/go/internal/api"
 )
 
 var (
@@ -321,7 +322,7 @@ func (r *CustomerOperationRuntime) validateCustomerOperationMilestones(ctx conte
 	if err != nil {
 		return err
 	}
-	response, err := client.ValidateOperationMilestones(requestCtx, input.operationID, input.proof, OperationMilestoneValidationRequest{Milestones: reports})
+	response, err := api.NewPreviewClient(client).ValidateOperationMilestones(requestCtx, input.operationID, input.proof, OperationMilestoneValidationRequest{Milestones: reports})
 	if err != nil {
 		return fmt.Errorf("faas: validate Customer Operation milestones: %w", err)
 	}
@@ -338,7 +339,7 @@ func (r *CustomerOperationRuntime) validateCustomerOperationWorkflowStates(ctx c
 	if err != nil {
 		return err
 	}
-	response, err := client.ValidateOperationWorkflowStates(requestCtx, input.operationID, input.proof,
+	response, err := api.NewPreviewClient(client).ValidateOperationWorkflowStates(requestCtx, input.operationID, input.proof,
 		OperationWorkflowStateValidationRequest{WorkflowStates: reports, Milestones: milestones})
 	if err != nil {
 		return fmt.Errorf("faas: validate Customer Operation workflow states: %w", err)

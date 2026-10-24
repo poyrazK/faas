@@ -1,5 +1,5 @@
 // ADR-939: explicit application-state upgrades inside pure transitions.
-package faas
+package preview
 
 import (
 	"encoding/json"

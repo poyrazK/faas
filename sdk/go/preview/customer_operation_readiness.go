@@ -1,13 +1,14 @@
-package faas
+package preview
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"github.com/poyrazK/faas/sdk/go/internal/api"
 	"strings"
 	"time"
+
+	"github.com/poyrazK/faas/sdk/go/internal/api"
 )
 
 // CustomerOperationReadinessError carries unmet requirements without committing business writes.

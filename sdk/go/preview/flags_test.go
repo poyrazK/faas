@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"context"
@@ -28,8 +28,8 @@ func TestFlagAllocationMatchesSharedRuntimeVectors(t *testing.T) {
 		file string
 		fn   func(string, string, string) int
 	}{
-		{file: "../../pkg/flags/testdata/allocation.json", fn: flagBucket},
-		{file: "../../pkg/flags/testdata/variant_allocation.json", fn: flagVariantBucket},
+		{file: "../../../pkg/flags/testdata/allocation.json", fn: flagBucket},
+		{file: "../../../pkg/flags/testdata/variant_allocation.json", fn: flagVariantBucket},
 	} {
 		raw, err := os.ReadFile(test.file)
 		if err != nil {
@@ -51,7 +51,7 @@ func TestFlagAllocationMatchesSharedRuntimeVectors(t *testing.T) {
 }
 
 func TestSubjectAllocationMatchesSharedRuntimeVectors(t *testing.T) {
-	raw, err := os.ReadFile("../../pkg/flags/testdata/subject_allocation.json")
+	raw, err := os.ReadFile("../../../pkg/flags/testdata/subject_allocation.json")
 	if err != nil {
 		t.Fatal(err)
 	}

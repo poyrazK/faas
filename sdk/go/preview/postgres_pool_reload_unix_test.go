@@ -1,12 +1,14 @@
 //go:build unix
 
-package faas
+package preview
 
 import (
 	"context"
 	"errors"
 	"sync/atomic"
 	"testing"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func TestPostgresPoolCoordinatedACK(t *testing.T) {
@@ -20,10 +22,10 @@ func TestPostgresPoolCoordinatedACK(t *testing.T) {
 		}
 		return nil
 	})
-	f := newSecretFixture(t, func(options *SecretReloadOptions, fixture *secretFixture) {
+	f := newSecretFixture(t, func(options *faas.SecretReloadOptions, fixture *secretFixture) {
 		fixture.raw = secretEnvelope("a", poolValues("private-first"))
-		options.Consumers = []SecretConsumer{b.SecretConsumer(), {
-			Apply: func(context.Context, SecretSnapshot) error {
+		options.Consumers = []faas.SecretConsumer{b.SecretConsumer(), {
+			Apply: func(context.Context, faas.SecretSnapshot) error {
 				if fail.Load() {
 					return errors.New("private-other-consumer")
 				}

@@ -81955,6 +81955,7 @@ components:
         version: { type: integer, format: int64, minimum: 1 }
         reason: { type: string, minLength: 3, maxLength: 500 }
         expected_version: { type: integer, format: int64, minimum: 0 }
+        force: { type: boolean, description: "Confirms restoring a revision that turns a core capability flag off for every account (ADR-20261023115741)." }
 
     # ─── Platform flags (ADR-1700) ───────────────────────────────────────
 
@@ -82114,6 +82115,10 @@ components:
           items: { $ref: '#/components/schemas/OperatorRuntimeConfigApplyReceipt' }
         convergence: { $ref: '#/components/schemas/OperatorPlatformFlagConvergence' }
         opt_ins: { $ref: '#/components/schemas/OperatorPlatformFlagOptIns' }
+        maturity: { type: string, enum: [ga, beta, preview, internal], description: "Tier of the capability the flag releases (ADR-20261023115741)." }
+        parent: { type: string, description: "Parent capability flag; a sub-feature is released only while its parent is." }
+        core: { type: boolean, description: "Core capability flag: turning it off for every account needs force." }
+        enforcement: { type: string, description: "What the flag gates today, joined with +: routes, settings, daemons; or handler or none." }
 
     OperatorPlatformFlagGroups:
       description: "Shared named account sets referenced by platform-flag rules."
@@ -82578,6 +82583,10 @@ components:
         capabilities:
           type: array
           items: { $ref: '#/components/schemas/CapabilityStatus' }
+        hidden_capabilities:
+          type: array
+          items: { type: string }
+          description: Catalog capabilities, internal ones included, whose platform flag is off for this account (ADR-20261023115741). Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
 
     AccountResponse:
       description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count."

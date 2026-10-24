@@ -1,5 +1,5 @@
 // ADR-934: pure, versioned durable entity guest transitions.
-package faas
+package preview
 
 import (
 	"bytes"

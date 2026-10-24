@@ -22,7 +22,7 @@ from ._event_acknowledgment_protocol import (
     observation,
     pause,
 )
-from ._rfc7807 import FaasProblemError
+from .._rfc7807 import FaasProblemError
 
 _RESPONSE_MAX = 65536
 

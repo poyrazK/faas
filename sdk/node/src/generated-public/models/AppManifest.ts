@@ -1,0 +1,138 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { AfterRestoreHook } from './AfterRestoreHook.js';
+import type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
+import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
+import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
+import type { ProfilingConfig } from './ProfilingConfig.js';
+import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
+import type { ServiceReplicas } from './ServiceReplicas.js';
+import type { TracingConfig } from './TracingConfig.js';
+import type { WorkerScaling } from './WorkerScaling.js';
+import type { WorkloadPort } from './WorkloadPort.js';
+/**
+ * App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings) resolved by the host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are NEVER sealed ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`, `stop_signal`, `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the widen is wire-compatible. M-2 (ADR-137 + ADR-138) widens additively with `execution_mode`, `restart_policy`, `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour (execution_mode=request, restart_policy=on-failure).
+ */
+export type AppManifest = {
+  profiling?: ProfilingConfig;
+  tracing?: TracingConfig;
+  entrypoint: Array<string>;
+  env?: Record<string, string>;
+  /**
+   * Env override via sealed-secret refs. Each value is "secret:NAME"; the host resolver looks up NAME against the app_secrets table at wake.
+   */
+  env_secrets?: Record<string, string>;
+  working_dir?: string | null;
+  port?: number | null;
+  /**
+   * Scheme for canonical service binding URLs. Omitted manifests retain the legacy HTTP behavior.
+   */
+  service_binding_transport?: ServiceBindingTransport;
+  /**
+   * Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries remain available for in-task discovery (ADR-165, ADR-176).
+   */
+  ports?: Array<WorkloadPort>;
+  healthz?: string | null;
+  user?: string | null;
+  healthcheck?: AppManifestHealthcheck;
+  /**
+   * OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow in M-2.
+   */
+  stop_signal?: string | null;
+  /**
+   * Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Main and long-running sidecar images opt in independently, including deployments with companions; each workload reloads only its own granted secrets. Must differ from stop_signal (ADR-222).
+   */
+  secret_reload_signal?: 'SIGHUP' | 'SIGUSR1' | 'SIGUSR2';
+  /**
+   * Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal. Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506).
+   */
+  secret_reload_readiness?: boolean;
+  /**
+   * OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4.
+   */
+  stop_grace_period?: string | null;
+  /**
+   * Lifecycle contract for this app (ADR-137 §Decision 1). Default 'request' preserves today's behaviour.
+   */
+  execution_mode?: 'request' | 'service' | 'worker' | 'job';
+  /**
+   * Restart behaviour when the main workload exits (ADR-137 §Decision 2). Default is mode-derived: always for worker/service, no for job, on-failure for request.
+   */
+  restart_policy?: 'no' | 'on-failure' | 'always' | 'unless-stopped';
+  after_restore?: AfterRestoreHook;
+  before_checkpoint?: BeforeCheckpointHook;
+  /**
+   * The app's declared pause tier (ADR-1151). Absent means the default for its type: between_requests for a function, when_idle for a request-mode app.
+   */
+  pause?: 'between_requests' | 'when_idle' | 'never';
+  /**
+   * Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0 means 'use plan default'.
+   */
+  startup_deadline_s?: number | null;
+  /**
+   * Consecutive restart-attempt cap (ADR-138 §Decision 3). Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0 means 'use plan default'.
+   */
+  max_retries?: number | null;
+  /**
+   * Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default.
+   */
+  request_timeout_s?: number | null;
+  /**
+   * Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY (ADR-1342). 0 or 1 means one request per worker.
+   */
+  function_concurrency?: number | null;
+  service_replicas?: ServiceReplicas;
+  worker_replicas?: WorkerScaling;
+  /**
+   * Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB.
+   */
+  favicon?: string | null;
+  /**
+   * Persisted per-app robots.txt body; empty uses the platform allow-all default.
+   */
+  robots_txt?: string | null;
+  /**
+   * Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer.
+   */
+  head_wakes?: boolean;
+  /**
+   * Effective policy for known monitor/crawler requests.
+   */
+  crawler_policy?: 'wake' | 'cached' | 'block';
+  pre_auth_rate_limit?: PreAuthRateLimitConfig;
+  /**
+   * Monitor-facing health path.
+   */
+  health_path?: string;
+  /**
+   * Whether health probes may wake this app.
+   */
+  health_path_wakes?: boolean;
+  /**
+   * Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are bypassed automatically.
+   */
+  session_affinity?: boolean;
+  /**
+   * Configured browser cookie name for rollout affinity; omitted when disabled.
+   */
+  version_affinity_cookie?: string;
+  /**
+   * Whether the edge issues its own host-only rollout-affinity cookie.
+   */
+  version_affinity_managed_cookie?: boolean;
+  /**
+   * Configured revision pin window in seconds; zero disables pinning.
+   */
+  revision_pin_ttl_seconds?: number;
+  /**
+   * Effective default rollout for production releases (ADR-1446, ADR-1450).
+   */
+  release_policy?: 'safe' | 'fast' | 'immediate';
+  /**
+   * Paths the default rollout probe checks; absent means / (ADR-1449).
+   */
+  release_probe_paths?: Array<string>;
+};
+

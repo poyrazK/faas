@@ -14,14 +14,14 @@ from uuid import UUID
 
 import httpx
 
-from ._sse import SseEvent, aiter_sse, iter_sse
+from .._sse import SseEvent, aiter_sse, iter_sse
 from .api.runs import create_execution, get_execution
 from .models.execution_artifact import ExecutionArtifact
 from .models.execution_response import ExecutionResponse
 from .types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ._wrapper import FaaSClient
+    from .._wrapper import FaaSClient
 
 ExecutionID = str | UUID
 

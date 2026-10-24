@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"bytes"
@@ -9,6 +9,8 @@ import (
 	"encoding/json"
 	"errors"
 	"time"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // EventOutboxStoredRetryPolicySchema upgrades application-owned policy/control
@@ -99,7 +101,7 @@ func GetEventOutboxRetryPolicy(ctx context.Context, db *sql.DB, accountID, appID
 	}
 	policy, _, err := eventOutboxStoredPolicy(db.QueryRowContext(ctx, `SELECT `+eventOutboxStoredPolicyColumns+` FROM public.gregale_event_outbox_retry_policies WHERE account_id=$1::uuid AND app_id=$2::uuid AND producer_key=$3`, account, app, key))
 	if errors.Is(err, sql.ErrNoRows) {
-		return zero, ErrNotFound
+		return zero, faas.ErrNotFound
 	}
 	if err != nil {
 		return zero, eventOutboxStoreError(ctx)

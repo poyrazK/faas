@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"context"
@@ -8,6 +8,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 type cycleIssueError struct{}
@@ -36,7 +38,7 @@ func TestIssueErrorCausesPreserveRootWithoutInventedFrames(t *testing.T) {
 }
 
 func TestIssueCauseReporterSerializesWrappedErrors(t *testing.T) {
-	var event IssueEvent
+	var event faas.IssueEvent
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if err := json.NewDecoder(r.Body).Decode(&event); err != nil {
 			t.Error(err)

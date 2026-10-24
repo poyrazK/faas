@@ -6,7 +6,7 @@ from dataclasses import dataclass, field
 from typing import TypeVar
 from urllib.parse import parse_qsl, unquote, urlsplit
 
-from ._binding_client_runtime import _Cancellation, _ClientBinding, _ClientLease
+from .._binding_client_runtime import _Cancellation, _ClientBinding, _ClientLease
 
 T = TypeVar("T")
 

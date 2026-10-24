@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"context"
@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 type clientBinding[T any] struct {
@@ -157,9 +159,11 @@ func (b *clientBinding[T]) invalidateLocked() {
 	b.clearActiveLocked()
 }
 
-func (b *clientBinding[T]) SecretConsumer() SecretConsumer {
-	return SecretConsumer{
-		Apply:      func(ctx context.Context, snapshot SecretSnapshot) error { return b.Reload(ctx, snapshot.Secrets()) },
+func (b *clientBinding[T]) SecretConsumer() faas.SecretConsumer {
+	return faas.SecretConsumer{
+		Apply: func(ctx context.Context, snapshot faas.SecretSnapshot) error {
+			return b.Reload(ctx, snapshot.Secrets())
+		},
 		Invalidate: b.Invalidate,
 	}
 }

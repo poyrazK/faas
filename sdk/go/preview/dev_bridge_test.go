@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"context"
@@ -10,6 +10,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func TestDevBridgePropagationDestinationBoundaries(t *testing.T) {
@@ -66,7 +68,7 @@ func TestDevBridgeCreationIsNotAutomaticallyRetried(t *testing.T) {
 	var attempts atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { attempts.Add(1); w.WriteHeader(503) }))
 	defer server.Close()
-	client, err := NewClient(server.URL, "api-key", WithRetry(2, time.Millisecond))
+	client, err := NewClient(server.URL, "api-key", faas.WithRetry(2, time.Millisecond))
 	if err != nil {
 		t.Fatal(err)
 	}

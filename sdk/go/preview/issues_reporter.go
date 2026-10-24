@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"bytes"
@@ -18,6 +18,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 const (
@@ -35,7 +37,7 @@ const (
 // ingestion endpoint. It deliberately has no arbitrary tags or customer
 // identity fields. Operational tags use a fixed allowlist.
 type IssueContext struct {
-	Breadcrumbs         []IssueBreadcrumb
+	Breadcrumbs         []faas.IssueBreadcrumb
 	BreadcrumbsDropped  int
 	Tags                map[string]string
 	TraceID             string
@@ -358,7 +360,7 @@ func (r *IssueReporter) capture(exceptionType, message string, ctx IssueContext,
 		return ""
 	}
 	frames, stack := issueStack(stackSkip)
-	event := IssueEvent{
+	event := faas.IssueEvent{
 		EventID:             id,
 		OccurredAt:          time.Now().UTC(),
 		ExceptionType:       boundedIssueString(exceptionType, issueReporterTypeBytes),
@@ -508,12 +510,12 @@ func issueEventID() (string, error) {
 	return encoded[:8] + "-" + encoded[8:12] + "-" + encoded[12:16] + "-" + encoded[16:20] + "-" + encoded[20:], nil
 }
 
-func issueStack(skip int) ([]IssueFrame, string) {
+func issueStack(skip int) ([]faas.IssueFrame, string) {
 	var pcs [64]uintptr
 	// skip counts runtime.Callers itself as frame zero. The capture methods
 	// supply a value that begins with their application caller.
 	n := runtime.Callers(skip, pcs[:])
-	frames := make([]IssueFrame, 0, issueReporterMaxFrames)
+	frames := make([]faas.IssueFrame, 0, issueReporterMaxFrames)
 	var stack strings.Builder
 	iterator := runtime.CallersFrames(pcs[:n])
 	for len(frames) < issueReporterMaxFrames {
@@ -522,7 +524,7 @@ func issueStack(skip int) ([]IssueFrame, string) {
 			file := boundedIssueString(filepath.ToSlash(frame.File), issueReporterFrameBytes)
 			function := boundedIssueString(frame.Function, issueReporterFrameBytes)
 			inApp := !strings.HasPrefix(file, filepath.ToSlash(runtime.GOROOT())+"/")
-			frames = append(frames, IssueFrame{File: file, Function: function, Line: frame.Line, InApp: inApp})
+			frames = append(frames, faas.IssueFrame{File: file, Function: function, Line: frame.Line, InApp: inApp})
 			if stack.Len() > 0 {
 				stack.WriteByte('\n')
 			}
@@ -551,7 +553,7 @@ func boundedIssueString(value string, limit int) string {
 }
 
 // Standard errors have no throw-site frames. Bound traversal even for non-comparable errors.
-func issueErrorCauses(err error) (causes []IssueCause, incomplete bool) {
+func issueErrorCauses(err error) (causes []faas.IssueCause, incomplete bool) {
 	defer func() {
 		if recover() != nil {
 			incomplete = true
@@ -578,7 +580,7 @@ func issueErrorCauses(err error) (causes []IssueCause, incomplete bool) {
 		if reflect.TypeOf(next).Comparable() && seen[next] {
 			return causes, true
 		}
-		causes = append(causes, IssueCause{ExceptionType: boundedIssueString(reflect.TypeOf(next).String(), issueReporterTypeBytes), Message: boundedIssueString(next.Error(), issueReporterMessageBytes)})
+		causes = append(causes, faas.IssueCause{ExceptionType: boundedIssueString(reflect.TypeOf(next).String(), issueReporterTypeBytes), Message: boundedIssueString(next.Error(), issueReporterMessageBytes)})
 		err = next
 	}
 	return causes, false

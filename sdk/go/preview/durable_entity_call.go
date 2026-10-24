@@ -1,5 +1,5 @@
 // ADR-938: typed, pure guest transitions.
-package faas
+package preview
 
 import (
 	"encoding/json"

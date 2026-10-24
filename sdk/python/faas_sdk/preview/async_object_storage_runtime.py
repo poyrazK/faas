@@ -4,8 +4,8 @@ import re
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
-from ._async_binding_client_runtime import _AsyncClientBinding, _AsyncClientLease
-from .async_secret_reload_runtime import AsyncSecretReloadCancellation
+from .._async_binding_client_runtime import _AsyncClientBinding, _AsyncClientLease
+from ..async_secret_reload_runtime import AsyncSecretReloadCancellation
 from .object_storage_runtime import ObjectStorageBindingError, ObjectStorageClientConfig, _configuration
 
 T = TypeVar("T")

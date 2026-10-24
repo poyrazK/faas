@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"bytes"
@@ -11,6 +11,8 @@ import (
 	"errors"
 	"math"
 	"time"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // EventOutboxRecoveryOptions bounds one recovery iteration. Backoff is applied
@@ -192,9 +194,9 @@ func (c eventOutboxClaim) publish(ctx context.Context, db *sql.DB, client *Clien
 	}
 	callCtx, cancel := context.WithTimeout(ctx, budget)
 	if options.RetryPolicy != nil {
-		callCtx = context.WithValue(callCtx, eventOutboxPolicyContextKey{}, true)
+		callCtx = faas.WithoutTransportRetry(callCtx)
 	}
-	response, publishErr := client.PublishAppEvent(callCtx, c.slug, request)
+	response, publishErr := client.PreviewClient.PublishAppEvent(callCtx, c.slug, request)
 	cancel()
 	state, code := "unconfirmed", "unconfirmed"
 	var accepted *time.Time
@@ -204,7 +206,7 @@ func (c eventOutboxClaim) publish(ctx context.Context, db *sql.DB, client *Clien
 		state, code = "published", "publication_confirmed"
 		accepted = &response.Receipt.AcceptedAt
 		resultErr = nil
-	} else if apiErr, ok := AsAPIError(publishErr); ok && apiErr.Problem.Status >= 400 && apiErr.Problem.Status < 500 && apiErr.Problem.Status != 408 && apiErr.Problem.Status != 429 {
+	} else if apiErr, ok := faas.AsAPIError(publishErr); ok && apiErr.Problem.Status >= 400 && apiErr.Problem.Status < 500 && apiErr.Problem.Status != 408 && apiErr.Problem.Status != 429 {
 		state, code = "blocked", "publication_rejected"
 		resultErr = ErrEventOutboxBlocked
 	}

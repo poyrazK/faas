@@ -1,0 +1,938 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+
+from ..models.app_manifest_crawler_policy import AppManifestCrawlerPolicy, check_app_manifest_crawler_policy
+from ..models.app_manifest_execution_mode_type_1 import (
+    AppManifestExecutionModeType1,
+    check_app_manifest_execution_mode_type_1,
+)
+from ..models.app_manifest_execution_mode_type_2_type_1 import (
+    AppManifestExecutionModeType2Type1,
+    check_app_manifest_execution_mode_type_2_type_1,
+)
+from ..models.app_manifest_execution_mode_type_3_type_1 import (
+    AppManifestExecutionModeType3Type1,
+    check_app_manifest_execution_mode_type_3_type_1,
+)
+from ..models.app_manifest_pause import AppManifestPause, check_app_manifest_pause
+from ..models.app_manifest_release_policy import AppManifestReleasePolicy, check_app_manifest_release_policy
+from ..models.app_manifest_restart_policy_type_1 import (
+    AppManifestRestartPolicyType1,
+    check_app_manifest_restart_policy_type_1,
+)
+from ..models.app_manifest_restart_policy_type_2_type_1 import (
+    AppManifestRestartPolicyType2Type1,
+    check_app_manifest_restart_policy_type_2_type_1,
+)
+from ..models.app_manifest_restart_policy_type_3_type_1 import (
+    AppManifestRestartPolicyType3Type1,
+    check_app_manifest_restart_policy_type_3_type_1,
+)
+from ..models.app_manifest_secret_reload_signal_type_1 import (
+    AppManifestSecretReloadSignalType1,
+    check_app_manifest_secret_reload_signal_type_1,
+)
+from ..models.app_manifest_secret_reload_signal_type_2_type_1 import (
+    AppManifestSecretReloadSignalType2Type1,
+    check_app_manifest_secret_reload_signal_type_2_type_1,
+)
+from ..models.app_manifest_secret_reload_signal_type_3_type_1 import (
+    AppManifestSecretReloadSignalType3Type1,
+    check_app_manifest_secret_reload_signal_type_3_type_1,
+)
+from ..models.service_binding_transport import ServiceBindingTransport, check_service_binding_transport
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.after_restore_hook import AfterRestoreHook
+    from ..models.app_manifest_env import AppManifestEnv
+    from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
+    from ..models.app_manifest_healthcheck import AppManifestHealthcheck
+    from ..models.before_checkpoint_hook import BeforeCheckpointHook
+    from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+    from ..models.profiling_config import ProfilingConfig
+    from ..models.service_replicas import ServiceReplicas
+    from ..models.tracing_config import TracingConfig
+    from ..models.worker_scaling import WorkerScaling
+    from ..models.workload_port import WorkloadPort
+
+
+T = TypeVar("T", bound="AppManifest")
+
+
+@_attrs_define
+class AppManifest:
+    """App manifest: environment variables, build commands, working directory, healthcheck, user, and Dockerfile-as-source
+    flag (§ux 6.3). The optional `env_secrets` field carries sealed-secret refs ("secret:NAME" strings) resolved by the
+    host at wake time against the app_secrets table (issue #460 / ADR-053 §Decision 1). Values are NEVER sealed
+    ciphertext — only refs. M-1 (ADR-136) widens the contract additively with `healthcheck`, `stop_signal`,
+    `stop_grace_period` from the OCI image-config spec; old guest-init ignores unknown fields per JSON semantics, so the
+    widen is wire-compatible. M-2 (ADR-137 + ADR-138) widens additively with `execution_mode`, `restart_policy`,
+    `startup_deadline_s`, `max_retries`, and `service_replicas` — these govern the lifecycle contract (request vs
+    service vs worker vs job) and the per-mode replica scaffold. Defaults preserve today's behaviour
+    (execution_mode=request, restart_policy=on-failure).
+
+    """
+
+    entrypoint: list[str]
+    profiling: ProfilingConfig | Unset = UNSET
+    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
+    tracing: TracingConfig | Unset = UNSET
+    """Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database,
+    cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own
+    OTel exporter are left untouched."""
+    env: AppManifestEnv | Unset = UNSET
+    env_secrets: AppManifestEnvSecrets | Unset = UNSET
+    """Env override via sealed-secret refs. Each value is "secret:NAME"; the host resolver looks up NAME against
+    the app_secrets table at wake."""
+    working_dir: None | str | Unset = UNSET
+    port: int | None | Unset = UNSET
+    service_binding_transport: ServiceBindingTransport | Unset = UNSET
+    """Scheme used by the canonical GREGALE_SERVICE_<NAME>_URL environment variable. `https` selects the private
+    `.internal` alias; `http` preserves the legacy `.svc.gregale` endpoint."""
+    ports: list[WorkloadPort] | Unset = UNSET
+    """Protocol-aware listeners preserved from OCI ExposedPorts. The legacy port remains the primary HTTP/readiness
+    listener; named TCP entries may be selected through the app--port-<name> public hostname, while all entries
+    remain available for in-task discovery (ADR-165, ADR-176)."""
+    healthz: None | str | Unset = UNSET
+    user: None | str | Unset = UNSET
+    healthcheck: AppManifestHealthcheck | Unset = UNSET
+    """AppManifest-level healthcheck shape: OCI HEALTHCHECK fields plus typed deployment probe overrides. Durations
+    are integer seconds at the JSON boundary to match OCI/Docker conventions."""
+    stop_signal: None | str | Unset = UNSET
+    """OCI STOPSIGNAL (default SIGTERM). Wired into the Engine.StopInstance signal-and-grace flow in M-2."""
+    secret_reload_signal: (
+        AppManifestSecretReloadSignalType1
+        | AppManifestSecretReloadSignalType2Type1
+        | AppManifestSecretReloadSignalType3Type1
+        | None
+        | Unset
+    ) = UNSET
+    """Opt this image's workload into live secret-file refresh by selecting the signal guest-init sends after
+    replacing FAAS_SECRETS_FILE; the app must handle the signal and reload its config. Main and long-running sidecar
+    images opt in independently, including deployments with companions; each workload reloads only its own granted
+    secrets. Must differ from stop_signal (ADR-222)."""
+    secret_reload_readiness: bool | Unset = False
+    """Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal.
+    Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506)."""
+    stop_grace_period: None | str | Unset = UNSET
+    """OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s)
+    enforced by Validate() — ADR-138 §Decision 4."""
+    execution_mode: (
+        AppManifestExecutionModeType1
+        | AppManifestExecutionModeType2Type1
+        | AppManifestExecutionModeType3Type1
+        | None
+        | Unset
+    ) = UNSET
+    """Lifecycle contract for this app (ADR-137 §Decision 1). Default 'request' preserves today's behaviour."""
+    restart_policy: (
+        AppManifestRestartPolicyType1
+        | AppManifestRestartPolicyType2Type1
+        | AppManifestRestartPolicyType3Type1
+        | None
+        | Unset
+    ) = UNSET
+    """Restart behaviour when the main workload exits (ADR-137 §Decision 2). Default is mode-derived: always for
+    worker/service, no for job, on-failure for request."""
+    after_restore: AfterRestoreHook | Unset = UNSET
+    """Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes,
+    before the instance becomes ready."""
+    before_checkpoint: BeforeCheckpointHook | Unset = UNSET
+    """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
+    warm snapshots; snapshot reuse skips the callback."""
+    pause: AppManifestPause | Unset = UNSET
+    """The app's declared pause tier (ADR-1151). Absent means the default for its type: between_requests for a
+    function, when_idle for a request-mode app."""
+    startup_deadline_s: int | None | Unset = UNSET
+    """Upper bound on time-to-ready (seconds). Per-plan cap enforced by Validate() (ADR-138 §Decision 3). Default 0
+    means 'use plan default'."""
+    max_retries: int | None | Unset = UNSET
+    """Consecutive restart-attempt cap (ADR-138 §Decision 3). Per-plan cap: Hobby 5, Pro 10, Scale 20. Default 0
+    means 'use plan default'."""
+    request_timeout_s: int | None | Unset = UNSET
+    """Runtime request wall-clock timeout in seconds. 0 inherits the plan/type default."""
+    function_concurrency: int | None | Unset = UNSET
+    """Per-worker request concurrency imaged stamps into the function's build as FAAS_FUNCTION_CONCURRENCY
+    (ADR-1342). 0 or 1 means one request per worker."""
+    service_replicas: ServiceReplicas | Unset = UNSET
+    """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
+    Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
+    the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
+    image-digest pinning semantics land in M-4."""
+    worker_replicas: WorkerScaling | Unset = UNSET
+    """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
+    min=0."""
+    favicon: None | str | Unset = UNSET
+    """Persisted base64-encoded favicon for the gateway edge answer; the decoded payload is capped at 32 KiB."""
+    robots_txt: None | str | Unset = UNSET
+    """Persisted per-app robots.txt body; empty uses the platform allow-all default."""
+    head_wakes: bool | Unset = False
+    """Persisted opt-in to waking a parked app for HEAD / instead of receiving the cached edge answer."""
+    crawler_policy: AppManifestCrawlerPolicy | Unset = "wake"
+    """Effective policy for known monitor/crawler requests."""
+    pre_auth_rate_limit: PreAuthRateLimitConfig | Unset = UNSET
+    """Optional per-source gateway limit evaluated before consumer-key lookup, JWT verification, and VM wake. App-
+    wide and failed-response budgets are replica-local; exact routes can opt into shared request budgets. Observe
+    mode records threshold crossings without rejecting requests."""
+    health_path: str | Unset = "/healthz"
+    """Monitor-facing health path."""
+    health_path_wakes: bool | Unset = False
+    """Whether health probes may wake this app."""
+    session_affinity: bool | Unset = False
+    """Whether the edge prefers the same running instance. Best effort only; stale or unhealthy instances are
+    bypassed automatically."""
+    version_affinity_cookie: str | Unset = UNSET
+    """Configured browser cookie name for rollout affinity; omitted when disabled."""
+    version_affinity_managed_cookie: bool | Unset = False
+    """Whether the edge issues its own host-only rollout-affinity cookie."""
+    revision_pin_ttl_seconds: int | Unset = 0
+    """Configured revision pin window in seconds; zero disables pinning."""
+    release_policy: AppManifestReleasePolicy | Unset = UNSET
+    """Effective default rollout for production releases (ADR-1446, ADR-1450)."""
+    release_probe_paths: list[str] | Unset = UNSET
+    """Paths the default rollout probe checks; absent means / (ADR-1449)."""
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        entrypoint = self.entrypoint
+
+        profiling: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.profiling, Unset):
+            profiling = self.profiling.to_dict()
+
+        tracing: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tracing, Unset):
+            tracing = self.tracing.to_dict()
+
+        env: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.env, Unset):
+            env = self.env.to_dict()
+
+        env_secrets: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.env_secrets, Unset):
+            env_secrets = self.env_secrets.to_dict()
+
+        working_dir: None | str | Unset
+        if isinstance(self.working_dir, Unset):
+            working_dir = UNSET
+        else:
+            working_dir = self.working_dir
+
+        port: int | None | Unset
+        if isinstance(self.port, Unset):
+            port = UNSET
+        else:
+            port = self.port
+
+        service_binding_transport: str | Unset = UNSET
+        if not isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = check_service_binding_transport(self.service_binding_transport)
+
+        ports: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.ports, Unset):
+            ports = []
+            for ports_item_data in self.ports:
+                ports_item = ports_item_data.to_dict()
+                ports.append(ports_item)
+
+        healthz: None | str | Unset
+        if isinstance(self.healthz, Unset):
+            healthz = UNSET
+        else:
+            healthz = self.healthz
+
+        user: None | str | Unset
+        if isinstance(self.user, Unset):
+            user = UNSET
+        else:
+            user = self.user
+
+        healthcheck: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.healthcheck, Unset):
+            healthcheck = self.healthcheck.to_dict()
+
+        stop_signal: None | str | Unset
+        if isinstance(self.stop_signal, Unset):
+            stop_signal = UNSET
+        else:
+            stop_signal = self.stop_signal
+
+        secret_reload_signal: None | str | Unset
+        if isinstance(self.secret_reload_signal, Unset):
+            secret_reload_signal = UNSET
+        elif isinstance(self.secret_reload_signal, str):
+            secret_reload_signal = self.secret_reload_signal
+        elif isinstance(self.secret_reload_signal, str):
+            secret_reload_signal = self.secret_reload_signal
+        elif isinstance(self.secret_reload_signal, str):
+            secret_reload_signal = self.secret_reload_signal
+        else:
+            secret_reload_signal = self.secret_reload_signal
+
+        secret_reload_readiness = self.secret_reload_readiness
+
+        stop_grace_period: None | str | Unset
+        if isinstance(self.stop_grace_period, Unset):
+            stop_grace_period = UNSET
+        else:
+            stop_grace_period = self.stop_grace_period
+
+        execution_mode: None | str | Unset
+        if isinstance(self.execution_mode, Unset):
+            execution_mode = UNSET
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        else:
+            execution_mode = self.execution_mode
+
+        restart_policy: None | str | Unset
+        if isinstance(self.restart_policy, Unset):
+            restart_policy = UNSET
+        elif isinstance(self.restart_policy, str):
+            restart_policy = self.restart_policy
+        elif isinstance(self.restart_policy, str):
+            restart_policy = self.restart_policy
+        elif isinstance(self.restart_policy, str):
+            restart_policy = self.restart_policy
+        else:
+            restart_policy = self.restart_policy
+
+        after_restore: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.after_restore, Unset):
+            after_restore = self.after_restore.to_dict()
+
+        before_checkpoint: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.before_checkpoint, Unset):
+            before_checkpoint = self.before_checkpoint.to_dict()
+
+        pause: str | Unset = UNSET
+        if not isinstance(self.pause, Unset):
+            pause = self.pause
+
+        startup_deadline_s: int | None | Unset
+        if isinstance(self.startup_deadline_s, Unset):
+            startup_deadline_s = UNSET
+        else:
+            startup_deadline_s = self.startup_deadline_s
+
+        max_retries: int | None | Unset
+        if isinstance(self.max_retries, Unset):
+            max_retries = UNSET
+        else:
+            max_retries = self.max_retries
+
+        request_timeout_s: int | None | Unset
+        if isinstance(self.request_timeout_s, Unset):
+            request_timeout_s = UNSET
+        else:
+            request_timeout_s = self.request_timeout_s
+
+        function_concurrency: int | None | Unset
+        if isinstance(self.function_concurrency, Unset):
+            function_concurrency = UNSET
+        else:
+            function_concurrency = self.function_concurrency
+
+        service_replicas: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_replicas, Unset):
+            service_replicas = self.service_replicas.to_dict()
+
+        worker_replicas: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.worker_replicas, Unset):
+            worker_replicas = self.worker_replicas.to_dict()
+
+        favicon: None | str | Unset
+        if isinstance(self.favicon, Unset):
+            favicon = UNSET
+        else:
+            favicon = self.favicon
+
+        robots_txt: None | str | Unset
+        if isinstance(self.robots_txt, Unset):
+            robots_txt = UNSET
+        else:
+            robots_txt = self.robots_txt
+
+        head_wakes = self.head_wakes
+
+        crawler_policy: str | Unset = UNSET
+        if not isinstance(self.crawler_policy, Unset):
+            crawler_policy = self.crawler_policy
+
+        pre_auth_rate_limit: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = self.pre_auth_rate_limit.to_dict()
+
+        health_path = self.health_path
+
+        health_path_wakes = self.health_path_wakes
+
+        session_affinity = self.session_affinity
+
+        version_affinity_cookie = self.version_affinity_cookie
+
+        version_affinity_managed_cookie = self.version_affinity_managed_cookie
+
+        revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
+        release_policy: str | Unset = UNSET
+        if not isinstance(self.release_policy, Unset):
+            release_policy = self.release_policy
+
+        release_probe_paths: list[str] | Unset = UNSET
+        if not isinstance(self.release_probe_paths, Unset):
+            release_probe_paths = self.release_probe_paths
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update(
+            {
+                "entrypoint": entrypoint,
+            }
+        )
+        if profiling is not UNSET:
+            field_dict["profiling"] = profiling
+        if tracing is not UNSET:
+            field_dict["tracing"] = tracing
+        if env is not UNSET:
+            field_dict["env"] = env
+        if env_secrets is not UNSET:
+            field_dict["env_secrets"] = env_secrets
+        if working_dir is not UNSET:
+            field_dict["working_dir"] = working_dir
+        if port is not UNSET:
+            field_dict["port"] = port
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
+        if ports is not UNSET:
+            field_dict["ports"] = ports
+        if healthz is not UNSET:
+            field_dict["healthz"] = healthz
+        if user is not UNSET:
+            field_dict["user"] = user
+        if healthcheck is not UNSET:
+            field_dict["healthcheck"] = healthcheck
+        if stop_signal is not UNSET:
+            field_dict["stop_signal"] = stop_signal
+        if secret_reload_signal is not UNSET:
+            field_dict["secret_reload_signal"] = secret_reload_signal
+        if secret_reload_readiness is not UNSET:
+            field_dict["secret_reload_readiness"] = secret_reload_readiness
+        if stop_grace_period is not UNSET:
+            field_dict["stop_grace_period"] = stop_grace_period
+        if execution_mode is not UNSET:
+            field_dict["execution_mode"] = execution_mode
+        if restart_policy is not UNSET:
+            field_dict["restart_policy"] = restart_policy
+        if after_restore is not UNSET:
+            field_dict["after_restore"] = after_restore
+        if before_checkpoint is not UNSET:
+            field_dict["before_checkpoint"] = before_checkpoint
+        if pause is not UNSET:
+            field_dict["pause"] = pause
+        if startup_deadline_s is not UNSET:
+            field_dict["startup_deadline_s"] = startup_deadline_s
+        if max_retries is not UNSET:
+            field_dict["max_retries"] = max_retries
+        if request_timeout_s is not UNSET:
+            field_dict["request_timeout_s"] = request_timeout_s
+        if function_concurrency is not UNSET:
+            field_dict["function_concurrency"] = function_concurrency
+        if service_replicas is not UNSET:
+            field_dict["service_replicas"] = service_replicas
+        if worker_replicas is not UNSET:
+            field_dict["worker_replicas"] = worker_replicas
+        if favicon is not UNSET:
+            field_dict["favicon"] = favicon
+        if robots_txt is not UNSET:
+            field_dict["robots_txt"] = robots_txt
+        if head_wakes is not UNSET:
+            field_dict["head_wakes"] = head_wakes
+        if crawler_policy is not UNSET:
+            field_dict["crawler_policy"] = crawler_policy
+        if pre_auth_rate_limit is not UNSET:
+            field_dict["pre_auth_rate_limit"] = pre_auth_rate_limit
+        if health_path is not UNSET:
+            field_dict["health_path"] = health_path
+        if health_path_wakes is not UNSET:
+            field_dict["health_path_wakes"] = health_path_wakes
+        if session_affinity is not UNSET:
+            field_dict["session_affinity"] = session_affinity
+        if version_affinity_cookie is not UNSET:
+            field_dict["version_affinity_cookie"] = version_affinity_cookie
+        if version_affinity_managed_cookie is not UNSET:
+            field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
+        if release_policy is not UNSET:
+            field_dict["release_policy"] = release_policy
+        if release_probe_paths is not UNSET:
+            field_dict["release_probe_paths"] = release_probe_paths
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.after_restore_hook import AfterRestoreHook
+        from ..models.app_manifest_env import AppManifestEnv
+        from ..models.app_manifest_env_secrets import AppManifestEnvSecrets
+        from ..models.app_manifest_healthcheck import AppManifestHealthcheck
+        from ..models.before_checkpoint_hook import BeforeCheckpointHook
+        from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+        from ..models.profiling_config import ProfilingConfig
+        from ..models.service_replicas import ServiceReplicas
+        from ..models.tracing_config import TracingConfig
+        from ..models.worker_scaling import WorkerScaling
+        from ..models.workload_port import WorkloadPort
+
+        d = dict(src_dict)
+        entrypoint = cast(list[str], d.pop("entrypoint"))
+
+        _profiling = d.pop("profiling", UNSET)
+        profiling: ProfilingConfig | Unset
+        if isinstance(_profiling, Unset):
+            profiling = UNSET
+        else:
+            profiling = ProfilingConfig.from_dict(_profiling)
+
+        _tracing = d.pop("tracing", UNSET)
+        tracing: TracingConfig | Unset
+        if isinstance(_tracing, Unset):
+            tracing = UNSET
+        else:
+            tracing = TracingConfig.from_dict(_tracing)
+
+        _env = d.pop("env", UNSET)
+        env: AppManifestEnv | Unset
+        if isinstance(_env, Unset):
+            env = UNSET
+        else:
+            env = AppManifestEnv.from_dict(_env)
+
+        _env_secrets = d.pop("env_secrets", UNSET)
+        env_secrets: AppManifestEnvSecrets | Unset
+        if isinstance(_env_secrets, Unset):
+            env_secrets = UNSET
+        else:
+            env_secrets = AppManifestEnvSecrets.from_dict(_env_secrets)
+
+        def _parse_working_dir(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        working_dir = _parse_working_dir(d.pop("working_dir", UNSET))
+
+        def _parse_port(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        port = _parse_port(d.pop("port", UNSET))
+
+        _service_binding_transport = d.pop("service_binding_transport", UNSET)
+        service_binding_transport: ServiceBindingTransport | Unset
+        if isinstance(_service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        else:
+            service_binding_transport = check_service_binding_transport(_service_binding_transport)
+
+        _ports = d.pop("ports", UNSET)
+        ports: list[WorkloadPort] | Unset = UNSET
+        if _ports is not UNSET:
+            ports = []
+            for ports_item_data in _ports:
+                ports_item = WorkloadPort.from_dict(ports_item_data)
+
+                ports.append(ports_item)
+
+        def _parse_healthz(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        healthz = _parse_healthz(d.pop("healthz", UNSET))
+
+        def _parse_user(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        user = _parse_user(d.pop("user", UNSET))
+
+        _healthcheck = d.pop("healthcheck", UNSET)
+        healthcheck: AppManifestHealthcheck | Unset
+        if isinstance(_healthcheck, Unset):
+            healthcheck = UNSET
+        else:
+            healthcheck = AppManifestHealthcheck.from_dict(_healthcheck)
+
+        def _parse_stop_signal(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        stop_signal = _parse_stop_signal(d.pop("stop_signal", UNSET))
+
+        def _parse_secret_reload_signal(
+            data: object,
+        ) -> (
+            AppManifestSecretReloadSignalType1
+            | AppManifestSecretReloadSignalType2Type1
+            | AppManifestSecretReloadSignalType3Type1
+            | None
+            | Unset
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                secret_reload_signal_type_1 = check_app_manifest_secret_reload_signal_type_1(data)
+
+                return secret_reload_signal_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                secret_reload_signal_type_2_type_1 = check_app_manifest_secret_reload_signal_type_2_type_1(data)
+
+                return secret_reload_signal_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                secret_reload_signal_type_3_type_1 = check_app_manifest_secret_reload_signal_type_3_type_1(data)
+
+                return secret_reload_signal_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                AppManifestSecretReloadSignalType1
+                | AppManifestSecretReloadSignalType2Type1
+                | AppManifestSecretReloadSignalType3Type1
+                | None
+                | Unset,
+                data,
+            )
+
+        secret_reload_signal = _parse_secret_reload_signal(d.pop("secret_reload_signal", UNSET))
+
+        secret_reload_readiness = d.pop("secret_reload_readiness", UNSET)
+
+        def _parse_stop_grace_period(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        stop_grace_period = _parse_stop_grace_period(d.pop("stop_grace_period", UNSET))
+
+        def _parse_execution_mode(
+            data: object,
+        ) -> (
+            AppManifestExecutionModeType1
+            | AppManifestExecutionModeType2Type1
+            | AppManifestExecutionModeType3Type1
+            | None
+            | Unset
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_1 = check_app_manifest_execution_mode_type_1(data)
+
+                return execution_mode_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_2_type_1 = check_app_manifest_execution_mode_type_2_type_1(data)
+
+                return execution_mode_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_3_type_1 = check_app_manifest_execution_mode_type_3_type_1(data)
+
+                return execution_mode_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                AppManifestExecutionModeType1
+                | AppManifestExecutionModeType2Type1
+                | AppManifestExecutionModeType3Type1
+                | None
+                | Unset,
+                data,
+            )
+
+        execution_mode = _parse_execution_mode(d.pop("execution_mode", UNSET))
+
+        def _parse_restart_policy(
+            data: object,
+        ) -> (
+            AppManifestRestartPolicyType1
+            | AppManifestRestartPolicyType2Type1
+            | AppManifestRestartPolicyType3Type1
+            | None
+            | Unset
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                restart_policy_type_1 = check_app_manifest_restart_policy_type_1(data)
+
+                return restart_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                restart_policy_type_2_type_1 = check_app_manifest_restart_policy_type_2_type_1(data)
+
+                return restart_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                restart_policy_type_3_type_1 = check_app_manifest_restart_policy_type_3_type_1(data)
+
+                return restart_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                AppManifestRestartPolicyType1
+                | AppManifestRestartPolicyType2Type1
+                | AppManifestRestartPolicyType3Type1
+                | None
+                | Unset,
+                data,
+            )
+
+        restart_policy = _parse_restart_policy(d.pop("restart_policy", UNSET))
+
+        _after_restore = d.pop("after_restore", UNSET)
+        after_restore: AfterRestoreHook | Unset
+        if isinstance(_after_restore, Unset):
+            after_restore = UNSET
+        else:
+            after_restore = AfterRestoreHook.from_dict(_after_restore)
+
+        _before_checkpoint = d.pop("before_checkpoint", UNSET)
+        before_checkpoint: BeforeCheckpointHook | Unset
+        if isinstance(_before_checkpoint, Unset):
+            before_checkpoint = UNSET
+        else:
+            before_checkpoint = BeforeCheckpointHook.from_dict(_before_checkpoint)
+
+        _pause = d.pop("pause", UNSET)
+        pause: AppManifestPause | Unset
+        if isinstance(_pause, Unset):
+            pause = UNSET
+        else:
+            pause = check_app_manifest_pause(_pause)
+
+        def _parse_startup_deadline_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        startup_deadline_s = _parse_startup_deadline_s(d.pop("startup_deadline_s", UNSET))
+
+        def _parse_max_retries(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        max_retries = _parse_max_retries(d.pop("max_retries", UNSET))
+
+        def _parse_request_timeout_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        request_timeout_s = _parse_request_timeout_s(d.pop("request_timeout_s", UNSET))
+
+        def _parse_function_concurrency(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        function_concurrency = _parse_function_concurrency(d.pop("function_concurrency", UNSET))
+
+        _service_replicas = d.pop("service_replicas", UNSET)
+        service_replicas: ServiceReplicas | Unset
+        if isinstance(_service_replicas, Unset):
+            service_replicas = UNSET
+        else:
+            service_replicas = ServiceReplicas.from_dict(_service_replicas)
+
+        _worker_replicas = d.pop("worker_replicas", UNSET)
+        worker_replicas: WorkerScaling | Unset
+        if isinstance(_worker_replicas, Unset):
+            worker_replicas = UNSET
+        else:
+            worker_replicas = WorkerScaling.from_dict(_worker_replicas)
+
+        def _parse_favicon(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        favicon = _parse_favicon(d.pop("favicon", UNSET))
+
+        def _parse_robots_txt(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        robots_txt = _parse_robots_txt(d.pop("robots_txt", UNSET))
+
+        head_wakes = d.pop("head_wakes", UNSET)
+
+        _crawler_policy = d.pop("crawler_policy", UNSET)
+        crawler_policy: AppManifestCrawlerPolicy | Unset
+        if isinstance(_crawler_policy, Unset):
+            crawler_policy = UNSET
+        else:
+            crawler_policy = check_app_manifest_crawler_policy(_crawler_policy)
+
+        _pre_auth_rate_limit = d.pop("pre_auth_rate_limit", UNSET)
+        pre_auth_rate_limit: PreAuthRateLimitConfig | Unset
+        if isinstance(_pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = UNSET
+        else:
+            pre_auth_rate_limit = PreAuthRateLimitConfig.from_dict(_pre_auth_rate_limit)
+
+        health_path = d.pop("health_path", UNSET)
+
+        health_path_wakes = d.pop("health_path_wakes", UNSET)
+
+        session_affinity = d.pop("session_affinity", UNSET)
+
+        version_affinity_cookie = d.pop("version_affinity_cookie", UNSET)
+
+        version_affinity_managed_cookie = d.pop("version_affinity_managed_cookie", UNSET)
+
+        revision_pin_ttl_seconds = d.pop("revision_pin_ttl_seconds", UNSET)
+
+        _release_policy = d.pop("release_policy", UNSET)
+        release_policy: AppManifestReleasePolicy | Unset
+        if isinstance(_release_policy, Unset):
+            release_policy = UNSET
+        else:
+            release_policy = check_app_manifest_release_policy(_release_policy)
+
+        release_probe_paths = cast(list[str], d.pop("release_probe_paths", UNSET))
+
+        app_manifest = cls(
+            entrypoint=entrypoint,
+            profiling=profiling,
+            tracing=tracing,
+            env=env,
+            env_secrets=env_secrets,
+            working_dir=working_dir,
+            port=port,
+            service_binding_transport=service_binding_transport,
+            ports=ports,
+            healthz=healthz,
+            user=user,
+            healthcheck=healthcheck,
+            stop_signal=stop_signal,
+            secret_reload_signal=secret_reload_signal,
+            secret_reload_readiness=secret_reload_readiness,
+            stop_grace_period=stop_grace_period,
+            execution_mode=execution_mode,
+            restart_policy=restart_policy,
+            after_restore=after_restore,
+            before_checkpoint=before_checkpoint,
+            pause=pause,
+            startup_deadline_s=startup_deadline_s,
+            max_retries=max_retries,
+            request_timeout_s=request_timeout_s,
+            function_concurrency=function_concurrency,
+            service_replicas=service_replicas,
+            worker_replicas=worker_replicas,
+            favicon=favicon,
+            robots_txt=robots_txt,
+            head_wakes=head_wakes,
+            crawler_policy=crawler_policy,
+            pre_auth_rate_limit=pre_auth_rate_limit,
+            health_path=health_path,
+            health_path_wakes=health_path_wakes,
+            session_affinity=session_affinity,
+            version_affinity_cookie=version_affinity_cookie,
+            version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
+            release_policy=release_policy,
+            release_probe_paths=release_probe_paths,
+        )
+
+        app_manifest.additional_properties = d
+        return app_manifest
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

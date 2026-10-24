@@ -1,6 +1,6 @@
 //go:build unix
 
-package faas
+package preview
 
 import (
 	"context"
@@ -19,6 +19,8 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 func secretRuntimeEnv() map[string]string {
@@ -36,16 +38,16 @@ type secretFixture struct {
 	raw      []byte
 	receipts []map[string]string
 	storage  *ObjectStorageBinding[string]
-	runtime  *SecretReloadCoordinator
+	runtime  *faas.SecretReloadCoordinator
 }
 
-func newSecretFixture(t *testing.T, change func(*SecretReloadOptions, *secretFixture)) *secretFixture {
+func newSecretFixture(t *testing.T, change func(*faas.SecretReloadOptions, *secretFixture)) *secretFixture {
 	t.Helper()
 	f := &secretFixture{raw: secretEnvelope("a", runtimeStorageValues())}
 	f.storage, _ = NewObjectStorageBinding("ASSETS", func(_ context.Context, config ObjectStorageClientConfig) (string, error) {
 		return config.SecretAccessKey, nil
 	})
-	options := SecretReloadOptions{Consumers: []SecretConsumer{f.storage.SecretConsumer()}, Environment: secretRuntimeEnv(), IO: SecretReloadIO{
+	options := faas.SecretReloadOptions{Consumers: []faas.SecretConsumer{f.storage.SecretConsumer()}, Environment: secretRuntimeEnv(), IO: faas.SecretReloadIO{
 		Read: func(context.Context, string) ([]byte, error) {
 			f.mu.Lock()
 			defer f.mu.Unlock()
@@ -68,7 +70,7 @@ func newSecretFixture(t *testing.T, change func(*SecretReloadOptions, *secretFix
 		change(&options, f)
 	}
 	var err error
-	f.runtime, err = NewSecretReloadCoordinator(options)
+	f.runtime, err = faas.NewSecretReloadCoordinator(options)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +102,7 @@ func TestSecretReloadManagedLeasesSurvivePartialAdoptionAndStop(t *testing.T) {
 	retired := make(map[string]int)
 	completed := make(chan string, 3)
 	fail := false
-	f := newSecretFixture(t, func(options *SecretReloadOptions, f *secretFixture) {
+	f := newSecretFixture(t, func(options *faas.SecretReloadOptions, f *secretFixture) {
 		f.storage, _ = NewObjectStorageBinding("ASSETS", func(_ context.Context, config ObjectStorageClientConfig) (string, error) {
 			return config.SecretAccessKey, nil
 		}, ObjectStorageBindingOptions[string]{Retire: func(client string) error {
@@ -110,8 +112,8 @@ func TestSecretReloadManagedLeasesSurvivePartialAdoptionAndStop(t *testing.T) {
 			completed <- client
 			return nil
 		}})
-		options.Consumers = []SecretConsumer{f.storage.SecretConsumer(), {
-			Apply: func(context.Context, SecretSnapshot) error {
+		options.Consumers = []faas.SecretConsumer{f.storage.SecretConsumer(), {
+			Apply: func(context.Context, faas.SecretSnapshot) error {
 				if fail {
 					return errors.New("private-other-consumer")
 				}
@@ -187,7 +189,7 @@ func TestSecretReloadManagedLeasesSurvivePartialAdoptionAndStop(t *testing.T) {
 func TestSecretReloadStartupReadinessAndAllConsumers(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	ready, reads := false, 0
-	f := newSecretFixture(t, func(options *SecretReloadOptions, f *secretFixture) {
+	f := newSecretFixture(t, func(options *faas.SecretReloadOptions, f *secretFixture) {
 		options.IO.Ready = func(context.Context, string) error { ready = true; return nil }
 		options.IO.Read = func(context.Context, string) ([]byte, error) {
 			if !ready {
@@ -199,7 +201,7 @@ func TestSecretReloadStartupReadinessAndAllConsumers(t *testing.T) {
 			}
 			return secretEnvelope("a", runtimeStorageValues()), nil
 		}
-		options.Consumers = append(options.Consumers, SecretConsumer{Apply: func(_ context.Context, snapshot SecretSnapshot) error {
+		options.Consumers = append(options.Consumers, faas.SecretConsumer{Apply: func(_ context.Context, snapshot faas.SecretSnapshot) error {
 			secrets := snapshot.Secrets()
 			secrets["ASSETS_SECRET_ACCESS_KEY"] = "private-mutated"
 			if snapshot.Secrets()["ASSETS_SECRET_ACCESS_KEY"] != "private-secret" {
@@ -234,8 +236,8 @@ func TestSecretReloadStartupReadinessAndAllConsumers(t *testing.T) {
 
 func TestSecretReloadRotationRevocationAndPartialFailure(t *testing.T) {
 	fail := false
-	f := newSecretFixture(t, func(options *SecretReloadOptions, _ *secretFixture) {
-		options.Consumers = append(options.Consumers, SecretConsumer{Apply: func(context.Context, SecretSnapshot) error {
+	f := newSecretFixture(t, func(options *faas.SecretReloadOptions, _ *secretFixture) {
+		options.Consumers = append(options.Consumers, faas.SecretConsumer{Apply: func(context.Context, faas.SecretSnapshot) error {
 			if fail {
 				return errors.New("private-driver-error")
 			}
@@ -281,7 +283,7 @@ func TestSecretReloadStaleTransportAndImmutableIdentity(t *testing.T) {
 	env := secretRuntimeEnv()
 	var bodies [][]byte
 	reads := 0
-	f := newSecretFixture(t, func(options *SecretReloadOptions, f *secretFixture) {
+	f := newSecretFixture(t, func(options *faas.SecretReloadOptions, f *secretFixture) {
 		options.Environment = env
 		options.IO.Read = func(_ context.Context, path string) ([]byte, error) {
 			if path != "/snapshot" {
@@ -347,7 +349,7 @@ func TestSecretReloadInvalidSnapshotsNoACKAndBoundedFailures(t *testing.T) {
 	for _, code := range []int{400, 401, 302, 500, 503, 409} {
 		t.Run(fmt.Sprint(code), func(t *testing.T) {
 			calls := 0
-			f := newSecretFixture(t, func(options *SecretReloadOptions, _ *secretFixture) {
+			f := newSecretFixture(t, func(options *faas.SecretReloadOptions, _ *secretFixture) {
 				options.IO.Post = func(context.Context, string, []byte) (int, error) { calls++; return code, nil }
 			})
 			if _, err := f.runtime.Start(context.Background()); err == nil {
@@ -372,7 +374,7 @@ func TestSecretReloadInvalidSnapshotsNoACKAndBoundedFailures(t *testing.T) {
 
 func TestSecretReloadENOENTInitialTimeoutAndPanics(t *testing.T) {
 	reads := 0
-	f := newSecretFixture(t, func(options *SecretReloadOptions, _ *secretFixture) {
+	f := newSecretFixture(t, func(options *faas.SecretReloadOptions, _ *secretFixture) {
 		options.IO.Read = func(context.Context, string) ([]byte, error) {
 			reads++
 			if reads < 3 {
@@ -386,7 +388,7 @@ func TestSecretReloadENOENTInitialTimeoutAndPanics(t *testing.T) {
 	}
 	for _, phase := range []string{"pending", "ready", "apply", "invalidate"} {
 		t.Run(phase, func(t *testing.T) {
-			f := newSecretFixture(t, func(options *SecretReloadOptions, _ *secretFixture) {
+			f := newSecretFixture(t, func(options *faas.SecretReloadOptions, _ *secretFixture) {
 				switch phase {
 				case "pending":
 					options.StartupTimeout = 10 * time.Millisecond
@@ -395,9 +397,9 @@ func TestSecretReloadENOENTInitialTimeoutAndPanics(t *testing.T) {
 				case "ready":
 					options.IO.Ready = func(context.Context, string) error { panic("private-ready") }
 				case "apply":
-					options.Consumers = append(options.Consumers, SecretConsumer{Apply: func(context.Context, SecretSnapshot) error { panic("private-consumer") }, Invalidate: func() {}})
+					options.Consumers = append(options.Consumers, faas.SecretConsumer{Apply: func(context.Context, faas.SecretSnapshot) error { panic("private-consumer") }, Invalidate: func() {}})
 				case "invalidate":
-					options.Consumers = append([]SecretConsumer{{Apply: func(context.Context, SecretSnapshot) error { return nil }, Invalidate: func() { panic("private-invalidation") }}}, options.Consumers...)
+					options.Consumers = append([]faas.SecretConsumer{{Apply: func(context.Context, faas.SecretSnapshot) error { return nil }, Invalidate: func() { panic("private-invalidation") }}}, options.Consumers...)
 				}
 			})
 			if _, err := f.runtime.Start(context.Background()); err == nil || strings.Contains(err.Error(), "private-") {
@@ -420,7 +422,7 @@ func TestSecretReloadENOENTInitialTimeoutAndPanics(t *testing.T) {
 func TestSecretReloadCancellationFencesLateFactoryAndQueuedRequests(t *testing.T) {
 	entered, release := make(chan struct{}), make(chan struct{})
 	calls := 0
-	f := newSecretFixture(t, func(options *SecretReloadOptions, f *secretFixture) {
+	f := newSecretFixture(t, func(options *faas.SecretReloadOptions, f *secretFixture) {
 		f.storage, _ = NewObjectStorageBinding("ASSETS", func(context.Context, ObjectStorageClientConfig) (string, error) {
 			calls++
 			if calls == 2 {
@@ -429,7 +431,7 @@ func TestSecretReloadCancellationFencesLateFactoryAndQueuedRequests(t *testing.T
 			}
 			return "candidate", nil
 		})
-		options.Consumers = []SecretConsumer{f.storage.SecretConsumer()}
+		options.Consumers = []faas.SecretConsumer{f.storage.SecretConsumer()}
 	})
 	if _, err := f.runtime.Start(context.Background()); err != nil {
 		t.Fatal(err)
@@ -453,7 +455,7 @@ func TestSecretReloadCancellationFencesLateFactoryAndQueuedRequests(t *testing.T
 	// Stop fences consumers promptly; wait for the cancelled worker's final
 	// invalidation before starting an independent reload. The factory is still
 	// blocked here, so coordinator shutdown must not depend on its completion.
-	waitSecret(t, f.runtime.workerDone)
+	waitSecret(t, f.runtime.Done())
 	close(release)
 	// A fresh factory can only run after the late one drains; it cannot overlap.
 	if err := f.storage.Reload(context.Background(), runtimeStorageValues()); err != nil {
@@ -492,11 +494,11 @@ func TestObjectStorageInvalidationFencesLateAndQueuedFactories(t *testing.T) {
 }
 
 func TestSecretReloadContractValidation(t *testing.T) {
-	consumer := SecretConsumer{Apply: func(context.Context, SecretSnapshot) error { return nil }, Invalidate: func() {}}
+	consumer := faas.SecretConsumer{Apply: func(context.Context, faas.SecretSnapshot) error { return nil }, Invalidate: func() {}}
 	for _, input := range []struct{ key, value string }{{"FAAS_SECRETS_SNAPSHOT_FILE", "relative"}, {"FAAS_SECRETS_RELOAD_READY_FILE", ""}, {"FAAS_SECRETS_RELOAD_GENERATION", ""}, {"FAAS_SECRETS_RELOAD_ACK_ENDPOINT", "https://user:private@host.test/ack"}} {
 		env := secretRuntimeEnv()
 		env[input.key] = input.value
-		if _, err := NewSecretReloadCoordinator(SecretReloadOptions{Consumers: []SecretConsumer{consumer}, Environment: env}); err == nil || strings.Contains(err.Error(), "private-") {
+		if _, err := faas.NewSecretReloadCoordinator(faas.SecretReloadOptions{Consumers: []faas.SecretConsumer{consumer}, Environment: env}); err == nil || strings.Contains(err.Error(), "private-") {
 			t.Fatal("unsafe contract validation")
 		}
 	}
@@ -513,7 +515,7 @@ func TestSecretReloadChildProcess(t *testing.T) {
 	b, _ := NewObjectStorageBinding("ASSETS", func(_ context.Context, config ObjectStorageClientConfig) (string, error) {
 		return config.SecretAccessKey, nil
 	})
-	c, err := NewSecretReloadCoordinator(SecretReloadOptions{Consumers: []SecretConsumer{b.SecretConsumer()}})
+	c, err := faas.NewSecretReloadCoordinator(faas.SecretReloadOptions{Consumers: []faas.SecretConsumer{b.SecretConsumer()}})
 	if err != nil {
 		t.Fatal("runtime construction failed")
 	}

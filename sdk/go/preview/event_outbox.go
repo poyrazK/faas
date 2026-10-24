@@ -1,4 +1,4 @@
-package faas
+package preview
 
 import (
 	"bytes"
@@ -10,6 +10,8 @@ import (
 	"errors"
 	"strings"
 	"time"
+
+	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // EventOutboxSchema is opt-in application-owned PostgreSQL DDL. Payloads require
@@ -124,7 +126,7 @@ func GetEventOutboxStatus(ctx context.Context, db *sql.DB, accountID, appID, key
 	}
 	s, err := eventOutboxStatus(db.QueryRowContext(ctx, `SELECT `+eventOutboxStatusColumns+` FROM public.gregale_event_outbox WHERE account_id=$1::uuid AND app_id=$2::uuid AND producer_key=$3`, account, app, key))
 	if errors.Is(err, sql.ErrNoRows) {
-		return zero, ErrNotFound
+		return zero, faas.ErrNotFound
 	}
 	if err != nil {
 		return zero, eventOutboxStoreError(ctx)

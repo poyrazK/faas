@@ -111,7 +111,7 @@ class IssueReporter:
         self._grouping_strategy = grouping_strategy
         self._url = f"{parsed.scheme}://{parsed.netloc}/v1/apps/{quote(app, safe='')}/issue-events"
         self._token = token
-        from . import __version__  # resolved once the package has finished importing
+        from .. import __version__  # resolved once the package has finished importing
 
         # Cloudflare's browser integrity check answers urllib's default
         # "Python-urllib/3.x" User-Agent on api.gregale.dev with 403 (error

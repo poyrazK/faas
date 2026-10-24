@@ -6,7 +6,7 @@ Install the extra that brings ES256 verification::
 
 Then verify tokens and check permissions::
 
-    from faas_sdk.auth import AuthClient, bearer_token, resource
+    from faas_sdk.preview.auth import AuthClient, bearer_token, resource
 
     auth = AuthClient("https://shop-auth.gregale.app")
     claims = auth.verify(bearer_token(request.headers.get("Authorization")))
@@ -235,7 +235,7 @@ def _ecdsa():
         from cryptography.hazmat.primitives.asymmetric import ec
         from cryptography.hazmat.primitives.asymmetric.utils import encode_dss_signature
     except ImportError as exc:  # pragma: no cover - exercised only without the extra
-        raise ImportError("faas_sdk.auth needs the 'auth' extra: pip install 'faas_sdk[auth]'") from exc
+        raise ImportError("faas_sdk.preview.auth needs the 'auth' extra: pip install 'faas_sdk[auth]'") from exc
     return InvalidSignature, hashes, ec, encode_dss_signature
 
 
