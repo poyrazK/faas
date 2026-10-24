@@ -86,7 +86,7 @@ func TestPostgresBindRuntime(t *testing.T) {
 	}
 	ours := map[string]bool{
 		"app|" + account.ID + "/" + app.ID + "/" + state.DefaultEnvScope + "/OPENAI_API_KEY": true,
-		"project|" + account.ID + "/" + project.ID + "/staging/DATABASE_URL":               true,
+		"project|" + account.ID + "/" + project.ID + "/staging/DATABASE_URL":                 true,
 		"deployment|" + dep.ID:     true,
 		"promotion|" + promotionID: true,
 	}
