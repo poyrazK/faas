@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -59,8 +60,12 @@ type Input struct {
 	// (ADR-973): verified_bot is then the known crawler the User-Agent
 	// header claims. The simulator does no DNS.
 	VerifiedBot bool
-	Headers     http.Header
-	Body        []byte
+	// VerifiedAICrawler simulates a client IP inside the published ranges
+	// of the AI crawler the User-Agent claims (ADR-20261022083601), so
+	// verified_ai_crawler is that crawler when it publishes ranges.
+	VerifiedAICrawler bool
+	Headers           http.Header
+	Body              []byte
 	// CorsPresets supplies caller-resolved presets for preset-backed CORS
 	// rules. Missing or cross-account presets remain incomplete instead of
 	// being guessed.
@@ -605,6 +610,8 @@ func previewNormalized(input Input, rules []api.EdgeRuleResponse) Result {
 			row.Status, row.Reason = "skipped", "rule expired at "+rule.ExpiresAt.UTC().Format(time.RFC3339)
 		case !rule.Enabled:
 			row.Status, row.Reason = "skipped", "rule is disabled"
+		case unreleasedChallenge(rule):
+			row.Status, row.Reason = "skipped", "challenge rules or attack mode are not yet available to this account; the gateway does not enforce this rule"
 		case !HostMatches(rule.MatchHost, input.Host):
 			row.Status, row.Reason = "skipped", fmt.Sprintf("host %q does not match %q", input.Host, rule.MatchHost)
 		case !ruleMethodMatches(rule.Kind, rule.MatchMethods, matchMethod):
@@ -1238,11 +1245,20 @@ func previewAppCORSDefault(input Input, headers http.Header) (SimulationStep, []
 	return step, responseOps
 }
 
+// unreleasedChallenge reports a challenge rule the gateway leaves inert
+// because its account has not been released challenge rules
+// (ADR-20261023113721) or, for the attack-mode rule, attack mode
+// (ADR-20261021220456 amendment 1).
+func unreleasedChallenge(rule api.EdgeRuleResponse) bool {
+	return rule.Kind == "challenge" && (slices.Contains(rule.UnreleasedFeatures, api.EdgeFeatureChallenge) ||
+		slices.Contains(rule.UnreleasedFeatures, api.EdgeFeatureAttackMode))
+}
+
 func firstPhaseRule(rules []api.EdgeRuleResponse, kind string, input Input, requestPath, method string, headers http.Header) (*api.EdgeRuleResponse, bool) {
 	var first *api.EdgeRuleResponse
 	for i := range rules {
 		rule := &rules[i]
-		if rule.Kind != kind || !rule.Enabled || !HostMatches(rule.MatchHost, input.Host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
+		if rule.Kind != kind || !rule.Enabled || unreleasedChallenge(*rule) || !HostMatches(rule.MatchHost, input.Host) || !ruleMethodMatches(rule.Kind, rule.MatchMethods, method) || !api.EdgeRuleRequestHeadersMatch(rule.MatchHeaders, headers) {
 			continue
 		}
 		if rule.Mode == api.EdgeRuleModeLog || !traceConditionMatches(*rule, input, requestPath, method, headers) {
@@ -2636,8 +2652,27 @@ func traceConditionMatches(rule api.EdgeRuleResponse, input Input, requestPath, 
 	return program.Matches(api.EdgeRuleMatchInput{
 		Method: method, Path: requestPath, Host: input.Host, Headers: headers,
 		ClientIP: net.ParseIP(input.ClientIP), Country: input.Country, ASN: input.ASN,
-		VerifiedBot: traceVerifiedBot(input.VerifiedBot, headers),
+		VerifiedBot:       traceVerifiedBot(input.VerifiedBot, headers),
+		VerifiedAICrawler: traceVerifiedAICrawler(input.VerifiedAICrawler, headers),
+		// ADR-20261022083601 amendment 1: as the gateway reads them.
+		AICrawlersUnreleased: slices.Contains(rule.UnreleasedFeatures, api.EdgeFeatureAICrawlers),
 	})
+}
+
+// traceVerifiedAICrawler is the simulated verified_ai_crawler value
+// (ADR-20261022083601). A crawler without published ranges never verifies,
+// as at the gateway.
+func traceVerifiedAICrawler(verified bool, headers http.Header) func() string {
+	if !verified {
+		return nil
+	}
+	return func() string {
+		crawler, ok := api.ClaimedAICrawler(headers.Get("User-Agent"))
+		if !ok || crawler.RangesURL == "" {
+			return ""
+		}
+		return crawler.Name
+	}
 }
 
 // traceVerifiedBot is the simulated verified_bot value (ADR-973).

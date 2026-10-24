@@ -3705,6 +3705,14 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
 				{Name: "range", Short: "time window (default 1h)", Value: "WINDOW", ClosedSet: appmetrics.Ranges()},
 			}},
+			{Name: "attack-mode", Short: "Switch attack mode on, off, or show it: challenge every visitor to the app for a while (15m to 24h); clients that are not browsers need a verified API key or JWT", Positionals: []string{"[on|off|status]"}, Examples: []string{
+				"gregale edge-rules attack-mode on --app my-api --for 1h",
+				"gregale edge-rules attack-mode --app my-api",
+				"gregale edge-rules attack-mode off --app my-api",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "slug"},
+				{Name: "for", Short: "with on: how long attack mode stays on (default 1h, 15m to 24h)", Value: "DURATION"},
+			}},
 			{Name: "trace", Short: "Simulate composed edge-rule outcomes and request policies", Notes: []string{"Covers budget, throttle, retry, circuit-breaker and async-route policy. --config loads reusable JSON scenarios; see the edge-rule-trace docs."}, Flags: []cliFlag{
 				{Name: "config", Short: "load a versioned JSON scenario (headers array; body or body_base64); - reads stdin and is exclusive with request flags", Value: "file|-"},
 				{Name: "app", Short: "app slug (required unless --config is used)", Value: "slug"},
@@ -3714,6 +3722,7 @@ var cliCommands = []cliCommand{
 				{Name: "country", Short: "simulated ISO alpha-2 country for kind=geo rules", Value: "CC"},
 				{Name: "asn", Short: "simulated client autonomous system for asn conditions (e.g. AS13335)", Value: "AS"},
 				{Name: "verified-bot", Short: "simulate a client IP that passes crawler verification (verified_bot = the crawler the User-Agent claims)", Bool: true},
+				{Name: "verified-ai-crawler", Short: "simulate a client IP inside the published ranges of the AI crawler the User-Agent claims (verified_ai_crawler)", Bool: true},
 				{Name: "header", Short: "simulated request header; repeat for multiple values", Value: "Name:Value"},
 				{Name: "body-file", Short: "request body file or - for stdin (max 1 MiB; contents are withheld)", Value: "path|-"},
 				{Name: "proposal", Short: "compare against a proposed change: JSON {add,update,remove} file or - for stdin", Value: "file|-"},
