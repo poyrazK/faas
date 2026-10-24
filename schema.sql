@@ -13210,14 +13210,16 @@ $$;
 CREATE FUNCTION public.guard_account_managed_postgres_databases() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
+DECLARE live bigint;
 BEGIN
-    IF NEW.status = 'deleted_pending' AND EXISTS (
-        SELECT 1 FROM managed_postgres_databases d JOIN orgs o ON o.id=d.org_id
+    IF NEW.status = 'deleted_pending' THEN
+        SELECT count(*) INTO live FROM managed_postgres_databases d JOIN orgs o ON o.id=d.org_id
         WHERE d.account_id=NEW.id AND d.state<>'deleted'
-          AND (o.personal_org OR NOT o.resource_ownership_enabled)
-    ) THEN
-        RAISE EXCEPTION 'account has managed postgres databases'
-            USING ERRCODE = '23514', CONSTRAINT = 'account_has_managed_postgres_databases';
+          AND (o.personal_org OR NOT o.resource_ownership_enabled);
+        IF live > 0 THEN
+            RAISE EXCEPTION 'account has managed postgres databases'
+                USING ERRCODE = '23514', CONSTRAINT = 'account_has_managed_postgres_databases', DETAIL = live::text;
+        END IF;
     END IF;
     RETURN NEW;
 END;
