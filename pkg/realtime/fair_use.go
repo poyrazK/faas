@@ -58,9 +58,12 @@ func (m *Manager) remoteConnections(account *accountConnections) int64 {
 }
 
 // reserveAccount admits one more connection for the endpoint's account, or
-// explains why not. Accounts are always counted so syncs report them; only an
-// endpoint registered with an account limit enforces one, and only with
-// Config.FairUse.
+// explains why not. Accounts are always counted so syncs report them. Every
+// account is held to its share of this node's connections, with or without
+// fair use: otherwise one endpoint (an auth_mode=none endpoint any client can
+// open) took every slot and the node answered 429 to all other tenants. Only
+// an endpoint registered with an account limit enforces that limit across
+// nodes, and only with Config.FairUse.
 func (m *Manager) reserveAccount(state *endpointState) (connectionRefusal, bool) {
 	account := state.account
 	limit := int64(state.config.Load().AccountMaxConnections)
@@ -70,10 +73,10 @@ func (m *Manager) reserveAccount(state *endpointState) (connectionRefusal, bool)
 	share := int64(m.cfg.MaxConnections) * api.RealtimeAccountNodeSharePercent / 100
 	for {
 		local := account.local.Load()
+		if share > 0 && local >= share {
+			return connectionRefusal{scope: api.RealtimeConnectionLimitAccountNode, limit: share, observed: local}, false
+		}
 		if limit > 0 {
-			if local >= share {
-				return connectionRefusal{scope: api.RealtimeConnectionLimitAccountNode, limit: share, observed: local}, false
-			}
 			if observed := local + m.remoteConnections(account); observed >= limit {
 				return connectionRefusal{scope: api.RealtimeConnectionLimitAccount, limit: limit, observed: observed}, false
 			}

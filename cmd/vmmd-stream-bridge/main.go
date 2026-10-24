@@ -124,6 +124,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/bridgeproc"
+	"github.com/onebox-faas/faas/pkg/instancebridge"
 )
 
 // dialTimeout caps the inner-leg TCP dial against the guest.
@@ -224,9 +225,12 @@ func main() {
 		}()
 	}
 
+	// Raw, TCP and UDP sessions share the socket (connection-survival ADR
+	// §2, P1b): each starts with a hello, HTTP connections never do.
+	httpLn := instancebridge.Split(ctx, ln, &instancebridge.Sessions{GuestIP: guestIP, Dial: dialGuest})
 	errc := make(chan error, 1)
 	go func() {
-		err := srv.Serve(ln)
+		err := srv.Serve(httpLn)
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 			return
@@ -246,6 +250,12 @@ func main() {
 			os.Exit(4)
 		}
 	}
+}
+
+// dialGuest dials a session's guest socket from the bridge's namespace, as
+// the per-connection bridges do.
+func dialGuest(ctx context.Context, network, address string) (net.Conn, error) {
+	return netns.DialBridgeContext(ctx, &net.Dialer{}, network, address)
 }
 
 // buildServer constructs the stdlib http.Server the bridge
