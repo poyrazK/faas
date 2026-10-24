@@ -7,6 +7,31 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Routes at public scale — 2026-10-24
+
+[ADR-20261024154324](adr/20261024154324-route-subsystems-at-public-scale.md)
+removes the three limits a routes readiness review found and gives operators
+signals for the route workers:
+
+- Each `gatewayd-internal` exports per-route series for at most
+  `RouteMetricsMaxRoutesPerGateway` (5,000) (app, route) pairs and deletes an
+  app's series after an idle hour, so the export no longer grows with every
+  app a gateway has served. apid lists routes over a seven-day lookback.
+- The route insights evaluator walks every app on a telemetry plan, least
+  recently evaluated first, claiming each one (`route_insight_evaluations`),
+  instead of the first 500 app IDs; stale insights of apps no longer
+  evaluated resolve.
+- The production route monitor evaluates every due monitor, four at a time,
+  instead of 20 per 30 s.
+- Metrics and five warn alerts cover the series budget, the insights
+  evaluator, monitor lag and worker failures (runbooks
+  `GatewayRouteMetricsBudget.md`, `FaasRouteWorkers.md`).
+
+Verified with unit tests (series budget under `-race`, evaluator rotation past
+one batch, concurrent drain), a PostgreSQL test of the claim, candidate and
+batch-resolve queries, and promtool fixtures for every alert. Open: none of
+the routes capabilities has end-to-end coverage yet, and all remain `preview`.
+
 ## Edge security release gate — 2026-10-24
 
 All five edge features sit behind platform flags that are off for every
@@ -29,10 +54,13 @@ Open:
   sizing, which models 0.003-0.013%; needs a `FAAS_E2E_WAF_LOAD_GATE=1` run
   of `TestEdgeWAFInlineLoad_E2E` on the reference node.
 - Challenge solve time on a low-end phone (no measurement yet).
-- Runbooks for the five features' failure modes.
 - The 14-day reviews at the internal and design-partner stages (penalties,
   attack mode, AI crawler controls), and the WAF production false-positive
-  review.
+  review (the review tool and procedure exist: ADR-831 amendment 13,
+  `docs/runbooks/edge-waf-false-positive-review.md`).
+
+Alerts and runbooks for the five features' failure modes (criterion C3) are
+in the `faas_edge_security` group (ADR-20261024082000 amendment 1).
 
 ## Event substrate benchmark (V12) — 2026-10-23
 

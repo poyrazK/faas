@@ -1,0 +1,244 @@
+# ADR-20261024082000 amendment 1 (criterion C3): alerts for the edge
+# security features.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - name: busy WAF check skips above 0.1% warn per gateway; budget skips and a quiet gateway do not
+    interval: 1m
+    input_series:
+      # gw-1: 10 checks/s, 0.05 busy skips/s (0.5%).
+      - series: gateway_waf_inline_checks_total{instance="gw-1",app="a",outcome="clean"}
+        values: 0+600x40
+      - series: gateway_waf_inline_skips_total{instance="gw-1",app="a",reason="busy"}
+        values: 0+3x40
+      # gw-2: 0.03% busy, plus a flood's budget skips that do not count.
+      - series: gateway_waf_inline_checks_total{instance="gw-2",app="a",outcome="clean"}
+        values: 0+600x40
+      - series: gateway_waf_inline_skips_total{instance="gw-2",app="a",reason="busy"}
+        values: 0+0.2x40
+      - series: gateway_waf_inline_skips_total{instance="gw-2",app="a",reason="budget"}
+        values: 0+60x40
+    alert_rule_test:
+      - eval_time: 31m
+        alertname: FaasEdgeWAFChecksSkipped
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+              instance: gw-1
+            exp_annotations:
+              summary: "gw-1 is skipping more than 0.1% of in-path WAF checks for lack of a check slot"
+              description: "gateway_waf_inline_skips_total{reason=\"busy\"} is above 0.1% of in-path checks on gw-1 for 15m. Skipped requests pass without the WAF's verdict (it fails open); the node is short of CPU for its check load."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeWAFInline.md"
+
+  - name: in-path WAF checks slower than 2 ms at p95 warn
+    interval: 1m
+    input_series:
+      # 90% of checks take 2-3 ms.
+      - series: gateway_waf_inline_seconds_bucket{instance="gw-1",le="0.002"}
+        values: 0+60x40
+      - series: gateway_waf_inline_seconds_bucket{instance="gw-1",le="0.003"}
+        values: 0+600x40
+      - series: gateway_waf_inline_seconds_bucket{instance="gw-1",le="+Inf"}
+        values: 0+600x40
+      - series: gateway_waf_inline_seconds_count{instance="gw-1"}
+        values: 0+600x40
+    alert_rule_test:
+      - eval_time: 31m
+        alertname: FaasEdgeWAFCheckSlow
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+              instance: gw-1
+            exp_annotations:
+              summary: "In-path WAF checks on gw-1 add more than 2 ms at p95"
+              description: "The p95 of gateway_waf_inline_seconds on gw-1 has been above 2 ms (criterion W1) for 15m. Every request matched by a warn or block rule pays this latency."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeWAFInline.md"
+
+  - name: a fleet solve rate below half warns; refused solutions under half do not
+    interval: 1m
+    input_series:
+      - series: gateway_edge_challenge_total{instance="gw-1",app="a",outcome="issued"}
+        values: 0+600x100
+      - series: gateway_edge_challenge_total{instance="gw-1",app="a",outcome="solved"}
+        values: 0+120x100
+      - series: gateway_edge_challenge_total{instance="gw-1",app="a",outcome="invalid"}
+        values: 0+6x100
+    alert_rule_test:
+      - eval_time: 95m
+        alertname: FaasEdgeChallengeSolveRateLow
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+            exp_annotations:
+              summary: "Fewer than half of the challenge pages served in the last hour were solved"
+              description: "gateway_edge_challenge_total solved/issued has been below 0.5 for 30m with at least 3 pages a minute. Either one app is being flooded by clients that never solve (expected) or browsers cannot solve the page (a regression)."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeChallenge.md"
+      - eval_time: 95m
+        alertname: FaasEdgeChallengeSolutionsRefused
+        exp_alerts: []
+
+  - name: a gateway refusing most solutions warns
+    interval: 1m
+    input_series:
+      - series: gateway_edge_challenge_total{instance="gw-2",app="a",outcome="solved"}
+        values: 0+6x40
+      - series: gateway_edge_challenge_total{instance="gw-2",app="a",outcome="expired"}
+        values: 0+60x40
+    alert_rule_test:
+      - eval_time: 31m
+        alertname: FaasEdgeChallengeSolutionsRefused
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+              instance: gw-2
+            exp_annotations:
+              summary: "gw-2 refuses most challenge solutions it receives"
+              description: "More than half of the challenge solutions gw-2 received in 15m were invalid or expired. If only this gateway does it, its challenge key or clock differs from the gateway that issued the pages; visitors are sent back to the challenge."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeChallenge.md"
+
+  - name: penalty box sharing errors, drops and slow propagation warn
+    interval: 1m
+    input_series:
+      - series: gateway_edge_penalty_share_total{instance="gw-1",op="flush",outcome="error"}
+        values: 0+1x30
+      - series: gateway_edge_penalty_share_total{instance="gw-1",op="sync",outcome="ok"}
+        values: 0+4x30
+      - series: gateway_edge_penalty_share_dropped_total{instance="gw-1"}
+        values: 0 0 0 0 0 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5 5
+      # Boxes reach gw-2 on the 15 s repair tick, not on notifications.
+      - series: gateway_edge_penalty_share_seconds_bucket{instance="gw-2",stage="propagated",le="1"}
+        values: 0+0x30
+      - series: gateway_edge_penalty_share_seconds_bucket{instance="gw-2",stage="propagated",le="15"}
+        values: 0+10x30
+      - series: gateway_edge_penalty_share_seconds_bucket{instance="gw-2",stage="propagated",le="+Inf"}
+        values: 0+10x30
+      - series: gateway_edge_penalty_share_seconds_count{instance="gw-2",stage="propagated"}
+        values: 0+10x30
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasEdgePenaltyShareFailing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+              instance: gw-1
+              op: flush
+            exp_annotations:
+              summary: "gw-1 cannot flush shared penalty boxes"
+              description: "gateway_edge_penalty_share_total{op=\"flush\",outcome=\"error\"} has kept rising for 10m. Boxes still hold on the gateway that made them, but not on the others or across a restart."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgePenaltyShare.md"
+      - eval_time: 8m
+        alertname: FaasEdgePenaltyShareDropped
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+              instance: gw-1
+            exp_annotations:
+              summary: "gw-1 dropped penalty boxes at the share queue bound"
+              description: "gateway_edge_penalty_share_dropped_total rose on gw-1: more than 10,000 boxes were waiting for a flush. Those boxes hold on this gateway only."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgePenaltyShare.md"
+      - eval_time: 30m
+        alertname: FaasEdgePenaltyShareSlow
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+              instance: gw-2
+            exp_annotations:
+              summary: "Penalty boxes take more than 1 s to reach gw-2"
+              description: "The p95 of gateway_edge_penalty_share_seconds{stage=\"propagated\"} on gw-2 has been above 1 s (criterion P2) for 15m. The gateway is probably missing the edge_penalty_box notifications and reading boxes only on its 15 s repair tick."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgePenaltyShare.md"
+
+  - name: a crawler whose every refresh failed for 36 h warns; one another apid refreshed does not
+    interval: 1h
+    input_series:
+      - series: edge_crawler_ranges_refresh_total{instance="apid-1",crawler="openai",outcome="fetch_error"}
+        values: 0+1x45
+      - series: edge_crawler_ranges_refresh_total{instance="apid-1",crawler="google",outcome="fetch_error"}
+        values: 0+1x45
+      - series: edge_crawler_ranges_refresh_total{instance="apid-2",crawler="google",outcome="fresh"}
+        values: 0+1x45
+    alert_rule_test:
+      - eval_time: 40h
+        alertname: FaasEdgeCrawlerRangesStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: apid
+              family: edge_security
+              public_status: internal
+              crawler: openai
+            exp_annotations:
+              summary: "Published IP ranges for crawler openai have not refreshed in 36 h"
+              description: "Every edge_crawler_ranges_refresh_total attempt for openai in 36h failed. Gateways keep the last good ranges for 7 days, then stop verifying openai, so verified_ai_crawler rules stop matching it."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCrawlerRangesStale.md"
+
+  - name: attack mode in use is noted; refusing most of an app's requests warns
+    interval: 1m
+    input_series:
+      - series: gateway_edge_attack_mode_total{instance="gw-1",app="a",outcome="rejected"}
+        values: 0+120x40
+      - series: gateway_edge_attack_mode_total{instance="gw-1",app="a",outcome="issued"}
+        values: 0+30x40
+      # App b's attack mode refuses only 0.1 requests a second.
+      - series: gateway_edge_attack_mode_total{instance="gw-1",app="b",outcome="rejected"}
+        values: 0+6x40
+    alert_rule_test:
+      - eval_time: 31m
+        alertname: FaasEdgeAttackModeRefusingClients
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+              app: a
+            exp_annotations:
+              summary: "Attack mode refuses most of app a's requests"
+              description: "More than half of the requests app a's attack mode decided in 15m were refused with 403 challenge_required (not browser navigations, no verified credential). Either a script flood is being turned away, or the app's own API clients are locked out."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeAttackMode.md"
+      - eval_time: 31m
+        alertname: FaasEdgeAttackModeActive
+        exp_alerts:
+          - exp_labels:
+              severity: info
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+              app: a
+            exp_annotations:
+              summary: "App a is in attack mode"
+              description: "gateway_edge_attack_mode_total shows app a's attack mode deciding requests for 15m. While attack mode is preview, review each use: did it stop the flood, and did the app's own clients get through?"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeAttackMode.md"
+          - exp_labels:
+              severity: info
+              component: gatewayd-internal
+              family: edge_security
+              public_status: internal
+              app: b
+            exp_annotations:
+              summary: "App b is in attack mode"
+              description: "gateway_edge_attack_mode_total shows app b's attack mode deciding requests for 15m. While attack mode is preview, review each use: did it stop the flood, and did the app's own clients get through?"
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeAttackMode.md"

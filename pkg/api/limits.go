@@ -6832,6 +6832,20 @@ const (
 	// MaxEdgeWAFExcludedRules bounds the CRS rule IDs one rule may
 	// exclude from scoring.
 	MaxEdgeWAFExcludedRules = 50
+	// EdgeWAFReviewMaxEvents bounds the detection events one WAF review
+	// reads per outcome, newest first, and EdgeWAFReviewMaxGroups the
+	// groups it returns (ADR-831 amendment 13).
+	EdgeWAFReviewMaxEvents = 5000
+	EdgeWAFReviewMaxGroups = 50
+	// EdgeWAFReviewMinClients is how many distinct clients one CRS rule
+	// must flag on one path, none of them sending most of the detections,
+	// before the review calls it a likely false positive.
+	EdgeWAFReviewMinClients = 3
+	// EdgeWAFReviewScannerPaths is how many distinct paths a client must be
+	// flagged on in the window before the review treats it as a scanner.
+	EdgeWAFReviewScannerPaths = 5
+	// EdgeWAFReviewExamples is how many example request IDs a group keeps.
+	EdgeWAFReviewExamples = 3
 
 	// --- ADR-831 amendment 7: kind=challenge bounds -------------------
 
@@ -9449,6 +9463,21 @@ func (p Plan) HealthPathWakesAllowed() bool {
 // not make this per-plan without a separate ADR (the §12 budget math
 // is global, not per-tenant).
 const RouteMetricsPerAppCap = 50
+
+// Per-route series at fleet scale (ADR-20261024154324). Every Hobby+ app opts
+// into per-route metrics, so each gatewayd-internal bounds its own export: at
+// most RouteMetricsMaxRoutesPerGateway (app, route) pairs carry live
+// gateway_*_by_route series (FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES overrides
+// it), and an app's series are deleted once it has gone
+// RouteMetricsSeriesIdleTTL without a request on that gateway, checked every
+// RouteMetricsSweepInterval. Readers that list an app's routes look back
+// RouteMetricsObservedWindow, so an evicted app's routes stay listed.
+const (
+	RouteMetricsMaxRoutesPerGateway = 5000
+	RouteMetricsSeriesIdleTTL       = time.Hour
+	RouteMetricsSweepInterval       = 5 * time.Minute
+	RouteMetricsObservedWindow      = 7 * 24 * time.Hour
+)
 
 // RouteRequirementsMaxBytes and RouteRequirementsMaxRoutes bound local,
 // customer-owned requirements documents and read-only evaluation work. These
@@ -12163,17 +12192,21 @@ const (
 )
 
 // RouteInsight bounds proactive route insights (ADR-1198): every
-// RouteInsightInterval apid evaluates at most RouteInsightMaxApps apps that
-// ran in the last RouteInsightWindow. An insight no evaluation has observed
-// for RouteInsightResolveAfter resolves. A kept_awake insight needs the app
-// awake for at least RouteInsightKeptAwakeMinShare of the window. Listings
-// show active insights and those resolved within RouteInsightResolvedListWindow,
+// RouteInsightInterval apid evaluates every app on a plan with request
+// telemetry that ran in the last RouteInsightWindow, least recently evaluated
+// first, reading RouteInsightBatchApps candidates at a time; an app evaluated
+// within half an interval is not due (ADR-20261024154324). An insight no
+// evaluation has observed for RouteInsightResolveAfter resolves, at most
+// RouteInsightResolveBatch per run. A kept_awake insight needs the app awake
+// for at least RouteInsightKeptAwakeMinShare of the window. Listings show
+// active insights and those resolved within RouteInsightResolvedListWindow,
 // at most RouteInsightListLimit rows.
 const (
 	RouteInsightInterval           = 6 * time.Hour
 	RouteInsightWindow             = 24 * time.Hour
 	RouteInsightResolveAfter       = 24 * time.Hour
-	RouteInsightMaxApps            = 500
+	RouteInsightBatchApps          = 500
+	RouteInsightResolveBatch       = 5000
 	RouteInsightKeptAwakeMinShare  = 0.5
 	RouteInsightListLimit          = 50
 	RouteInsightResolvedListWindow = 7 * 24 * time.Hour
@@ -12368,6 +12401,14 @@ const RouteHealthTransitionVersion = 1
 // error-budget incident must open within this long after the deployment
 // started serving all traffic.
 const RouteMonitorRollbackWindow = 30 * time.Minute
+
+// A route monitor drain reads RouteMonitorBatchSize monitors at a time until
+// none it has not taken is due or RouteMonitorDrainBudget passes, evaluating
+// RouteMonitorWorkerConcurrency at once (ADR-20261024154324).
+const (
+	RouteMonitorDrainBudget       = RouteMonitorEvaluationInterval
+	RouteMonitorWorkerConcurrency = 4
+)
 
 // Production route monitoring and bounded customer evidence (ADR-498/499).
 const (

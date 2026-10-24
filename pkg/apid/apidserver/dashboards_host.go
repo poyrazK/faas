@@ -7,8 +7,10 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/dashboards"
 	"github.com/onebox-faas/faas/pkg/appmetrics"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -19,16 +21,35 @@ type dashboardsHost struct{ s *server }
 var _ dashboards.Host = dashboardsHost{}
 
 // AppForAccount resolves an app the account owns; deleted apps and other
-// accounts' apps read as absent.
+// accounts' apps read as absent. A widget names its app by slug, outside
+// appaccess.Wrap, so it applies the account inventories' rule: a company app
+// stays hidden from a creator who left the company or from a key bound to
+// another one.
 func (h dashboardsHost) AppForAccount(ctx context.Context, acct state.Account, slug string) (state.App, bool) {
 	if slug == "" {
 		return state.App{}, false
 	}
 	app, err := h.s.store.AppBySlug(ctx, slug)
-	if err != nil || app.AccountID != acct.ID {
+	if err != nil || app.AccountID != acct.ID || !accountViewAppVisible(ctx, h.s.store, h.s.log, acct, app) {
 		return state.App{}, false
 	}
 	return app, true
+}
+
+// accountViewAppVisible reports whether an account view (a dashboard widget
+// or an incident) may show app's data to the request's principal. A failed
+// read hides the app.
+func accountViewAppVisible(ctx context.Context, store appaccess.Store, log *slog.Logger, acct state.Account, app state.App) bool {
+	actor := acct
+	if principal, _, ok := middleware.AccountFromCtx(ctx); ok {
+		actor = principal
+	}
+	visible, err := appaccess.VisibleAppsContext(ctx, store, actor, []state.App{app})
+	if err != nil {
+		log.WarnContext(ctx, "account view: app access", "app_id", app.ID, "err", err)
+		return false
+	}
+	return len(visible) == 1
 }
 
 func (h dashboardsHost) Dashboards() state.DashboardStore { return h.s.store }

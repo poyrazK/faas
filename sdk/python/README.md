@@ -296,7 +296,8 @@ See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
 
 ## Application Auth tokens
 
-`pip install 'faas_sdk[auth]'`, then verify application Auth access tokens and
+Install `gregale-sdk[auth]` as [Install the SDKs](../../docs/sdks.md#python)
+shows (never `faas_sdk` from PyPI: that is another company's package), then verify application Auth access tokens and
 check permissions with `faas_sdk.auth.AuthClient` (`verify`, `authorize` and
 their `_async` forms). See
 [Application Auth](../../docs/application-auth.md#in-your-backend).
@@ -1574,7 +1575,8 @@ trackers during a run. Timeline callbacks capture state only, not event payloads
 
 ### Native managed WebSocket client
 
-Install the optional transport dependency with `pip install 'faas_sdk[realtime]'`.
+Install the optional transport dependency with the `realtime` extra,
+`gregale-sdk[realtime]` (see [Install the SDKs](../../docs/sdks.md#python)).
 `RealtimeWebSocketClient` supplies the recovery adapter; no custom socket layer is
 needed for retained channel events or principal inbox notifications.
 

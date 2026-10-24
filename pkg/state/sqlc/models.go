@@ -13329,6 +13329,12 @@ type RouteInsight struct {
 	FixAction       pgtype.Text
 }
 
+type RouteInsightEvaluation struct {
+	AppID       pgtype.UUID
+	AccountID   pgtype.UUID
+	EvaluatedAt pgtype.Timestamptz
+}
+
 type RouteLifecycleApproval struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID
