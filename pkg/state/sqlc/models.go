@@ -6135,6 +6135,14 @@ type InstanceBillingInterval struct {
 	EndedAt    pgtype.Timestamptz
 }
 
+type InstanceQuietPause struct {
+	InstanceID pgtype.UUID
+	NodeID     pgtype.UUID
+	StartedAt  pgtype.Timestamptz
+	EndedAt    pgtype.Timestamptz
+	RecordedAt pgtype.Timestamptz
+}
+
 type InstanceRuntimeConfigReceipt struct {
 	InstanceID            pgtype.UUID
 	WakeID                pgtype.UUID
@@ -12795,6 +12803,12 @@ type QueueBindingCanary struct {
 	CompletedDeploymentID pgtype.UUID
 	CompletedAttempt      pgtype.Int4
 	CompletedGeneration   pgtype.Int8
+}
+
+type QuietPauseWatermark struct {
+	NodeID       pgtype.UUID
+	CoveredUntil pgtype.Timestamptz
+	UpdatedAt    pgtype.Timestamptz
 }
 
 type RealtimeNodeConnection struct {
