@@ -6622,6 +6622,89 @@ groups:
           summary: "{{ $labels.instance }} is routing from last-known-good routes"
           description: "Route lookups on {{ $labels.instance }} are erroring and the edge has served from its stale route tier for 5m. Routes change no faster than FAAS_GATEWAY_ROUTE_STALE_TTL allows; check Postgres reachability from this node."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteLookupStaleServed.md"
+      # ADR-20261024154324: the per-route series budget and apid's route
+      # workers (insights evaluator, production route monitor, automatic
+      # route checks).
+      - alert: GatewayRouteMetricsBudgetExhausted
+        expr: sum by (job, instance) (increase(gateway_route_metrics_rejected_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: route_metrics
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} has no room for more per-route series"
+          description: "{{ $labels.instance }} holds its full budget of live (app, route) pairs and has declined new ones for 15m, so some apps' route lists and throttle suggestions miss routes. Raise FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES if Prometheus has headroom."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GatewayRouteMetricsBudget.md"
+      - alert: FaasRouteInsightsStalled
+        expr: time() - max(max_over_time(apid_route_insights_last_success_timestamp_seconds[13h])) > 13 * 3600
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: route_workers
+          public_status: internal
+        annotations:
+          summary: "No route insights evaluation has finished in 13h"
+          description: "No apid replica has finished a route insights run without error for more than two six-hour intervals, so customers' route insights and their webhooks are going stale."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+      - alert: FaasRouteInsightsFailing
+        expr: |
+          sum(increase(apid_route_insights_runs_total{outcome="failed"}[13h])) > 1
+          or
+          (
+            sum(increase(apid_route_insights_apps_total{outcome="failed"}[13h]))
+            /
+            clamp_min(sum(increase(apid_route_insights_apps_total{outcome=~"evaluated|failed"}[13h])), 1)
+          ) > 0.25
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: route_workers
+          public_status: internal
+        annotations:
+          summary: "Route insights evaluations are failing"
+          description: "More than one route insights run failed, or more than a quarter of the apps evaluated failed, in the last 13h. Read apid's 'route insights' warnings for the failing query."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+      - alert: FaasRouteMonitorLagging
+        expr: max(apid_route_monitor_lag_seconds) > 300
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: route_workers
+          public_status: internal
+        annotations:
+          summary: "Production route monitors are more than 5m overdue"
+          description: "The oldest due production route monitor waited {{ $value | humanizeDuration }} at the latest drain. Budget incidents and opt-in automatic rollbacks are delayed until the monitors catch up."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+      - alert: FaasRouteWorkersFailing
+        expr: |
+          sum(increase(apid_route_worker_queue_unavailable_total[15m])) > 2
+          or
+          (
+            sum(rate(apid_route_monitor_evaluations_total{outcome="failed"}[15m]))
+            /
+            clamp_min(sum(rate(apid_route_monitor_evaluations_total{outcome=~"evaluated|failed"}[15m])), 1e-9)
+          ) > 0.1
+          or
+          (
+            sum(rate(apid_route_checks_total{outcome="retried"}[30m]))
+            /
+            clamp_min(sum(rate(apid_route_checks_total[30m])), 1e-9)
+          ) > 0.5
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: route_workers
+          public_status: internal
+        annotations:
+          summary: "apid's route monitor or route check workers are failing"
+          description: "A route worker cannot read its queue, more than 10% of production route monitor evaluations fail, or more than half of automatic route checks are being retried."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
       - alert: FaasDBNotifyHubReconnects
         expr: sum by (job, instance) (increase({__name__=~".+_db_notify_hub_reconnects_total"}[5m])) > 1
         for: 5m

@@ -2882,6 +2882,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// per-app flag (apps.route_metrics_enabled). Same merge point as
 	// WithStreamingEnabled above; both flags ride the same plumbing.
 	handler.WithRouteMetricsEnabled(deps.routeMetricsEnabled)
+	// ADR-20261024154324: bound this gateway's per-route series and drop
+	// idle apps' series so the export tracks recently active apps.
+	if deps.routeMetricsEnabled && deps.metrics != nil {
+		deps.metrics.SetRouteSeriesBudget(routeMetricsMaxRoutesFromEnv(log), 0)
+		go sweepRouteSeries(ctx, deps.metrics, log)
+	}
 	// Issue #560: per-deployment require_authn. The adapter
 	// + auditor are nil-safe; the pre-issue public-by-default
 	// behaviour is preserved for unit tests + dev boxes that
@@ -4928,6 +4934,41 @@ func buildCentralRateLimitBackend(pool *pgxpool.Pool, log *slog.Logger) (*state.
 		return float64(limits.RateLimitRPS), true
 	}
 	return state.NewPGRateLimitBackend(pool), rps
+}
+
+// routeMetricsMaxRoutesFromEnv reads FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES,
+// the operator override of api.RouteMetricsMaxRoutesPerGateway. Zero keeps
+// the default; an invalid value is logged and ignored.
+func routeMetricsMaxRoutesFromEnv(log *slog.Logger) int {
+	raw := strings.TrimSpace(os.Getenv("FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES"))
+	if raw == "" {
+		return 0
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		if log != nil {
+			log.Warn("gatewayd-internal: ignoring invalid FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES", "value", raw)
+		}
+		return 0
+	}
+	return n
+}
+
+// sweepRouteSeries deletes the per-route series of apps idle on this gateway
+// for api.RouteMetricsSeriesIdleTTL (ADR-20261024154324).
+func sweepRouteSeries(ctx context.Context, metrics *gateway.Metrics, log *slog.Logger) {
+	ticker := time.NewTicker(api.RouteMetricsSweepInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			if n := metrics.SweepRouteSeries(now); n > 0 && log != nil {
+				log.Debug("gatewayd-internal: dropped idle per-route series", "apps", n)
+			}
+		}
+	}
 }
 
 // prunePreAuthCounters bounds storage left by source rotation and removed
