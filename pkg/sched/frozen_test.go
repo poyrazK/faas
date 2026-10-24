@@ -73,8 +73,14 @@ func newFrozenFixture(t *testing.T, withSnapshot bool, appType ...state.AppType)
 // before it is created.
 func newFrozenFixtureWith(t *testing.T, withSnapshot bool, shape func(*state.App)) *frozenFixture {
 	t.Helper()
+	return newFrozenFixtureInStore(t, state.NewMemStore(), withSnapshot, shape)
+}
+
+// newFrozenFixtureInStore is newFrozenFixtureWith on a store the caller may
+// have seeded, for example with an organization the app joins in shape.
+func newFrozenFixtureInStore(t *testing.T, store *state.MemStore, withSnapshot bool, shape func(*state.App)) *frozenFixture {
+	t.Helper()
 	ctx := t.Context()
-	store := state.NewMemStore()
 	acct, err := store.CreateAccount(ctx, "frozen@example.com", api.PlanPro)
 	if err != nil {
 		t.Fatal(err)

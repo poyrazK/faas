@@ -42,9 +42,20 @@ func NormalizeVerification(task state.BindingVerificationTask) *api.BindingVerif
 			result.Reason = "managed_service_report_invalid"
 			return result
 		}
-		reportFailed = report.Error != "" || task.Pin.ManagedService != nil && (!report.Passed() || report.URL != "https://"+task.Pin.Binding+".internal")
+		reportFailed = report.Error != "" || task.Pin.ManagedService != nil && (!report.Passed() ||
+			report.URL != api.ServiceBindingCanonicalURL(task.Pin.Binding, task.Pin.ManagedService.ProbeTransport()))
 		names = []string{"dns", "tls", "authorization", "routing"}
 		statuses = []string{report.DNS.Status, report.TLS.Status, report.Authorization.Status, report.Routing.Status}
+		if report.Transport != "" {
+			// ADR-20261019200059: an HTTP probe has no TLS stage to record.
+			if report.Transport != api.ServiceBindingTransportHTTP || report.TLS.Status != "not_checked" ||
+				report.URL != api.ServiceBindingCanonicalURL(report.Service, api.ServiceBindingTransportHTTP) {
+				result.Reason = "report_invalid"
+				return result
+			}
+			names = []string{"dns", "authorization", "routing"}
+			statuses = []string{report.DNS.Status, report.Authorization.Status, report.Routing.Status}
+		}
 	case api.BindingTypePostgres:
 		var report api.PostgresBindingProbeReport
 		if json.Unmarshal([]byte(task.Stdout), &report) != nil || report.EnvironmentKey != task.Pin.Binding {

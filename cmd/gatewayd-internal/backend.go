@@ -137,7 +137,7 @@ func (r pgRouter) IsDynamicRouteHost(host string) bool {
 }
 
 func (r pgRouter) CachedCustomDomainRouteActive(ctx context.Context, host, appID string) (bool, error) {
-	domain, err := r.store.DomainByName(ctx, host)
+	domain, err := r.liveDomainByName(ctx, host)
 	if errors.Is(err, state.ErrNotFound) {
 		if wildcardStore, ok := r.store.(state.CustomDomainWildcardStore); ok {
 			domain, err = wildcardStore.WildcardDomainForHost(ctx, host)
@@ -367,8 +367,20 @@ func (r pgRouter) appBySlug(ctx context.Context, slug string) (gateway.App, bool
 // customDomain — the legacy custom_domains branch (spec §7).
 // Must exist AND be verified before we route to it; a deleted
 // parent app falls through to a clean 404.
-func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, bool, error) {
+// liveDomainByName returns the exact custom-domain row for host while it still
+// reserves the hostname. An expired, unverified claim reads as not found so
+// it cannot shadow a verified wildcard: any account may create one with no
+// DNS proof, and nothing deletes it once its deadline passes.
+func (r pgRouter) liveDomainByName(ctx context.Context, host string) (state.CustomDomain, error) {
 	dom, err := r.store.DomainByName(ctx, host)
+	if err == nil && !dom.ClaimLive(time.Now()) {
+		return state.CustomDomain{}, state.ErrNotFound
+	}
+	return dom, err
+}
+
+func (r pgRouter) customDomain(ctx context.Context, host string) (gateway.App, bool, error) {
+	dom, err := r.liveDomainByName(ctx, host)
 	if errors.Is(err, state.ErrNotFound) {
 		// Wildcard rows are a separate optional seam so narrow test doubles
 		// and older adapters keep the exact-domain behavior unchanged.
@@ -612,12 +624,14 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 	maxQueueDepth := 0
 	wakeMaxQueueDepth := 0
 	wakeMaxQueueWaitSeconds := 0
+	perInstanceConcurrency := 0
 	if app.ScalingPolicy != nil {
 		concurrencyOverflow = app.ScalingPolicy.ConcurrencyOverflow
 		maxQueueWaitMS = app.ScalingPolicy.MaxQueueWaitMS
 		maxQueueDepth = app.ScalingPolicy.MaxQueueDepth
 		wakeMaxQueueDepth = app.ScalingPolicy.WakeMaxQueueDepth
 		wakeMaxQueueWaitSeconds = app.ScalingPolicy.WakeMaxQueueWaitSeconds
+		perInstanceConcurrency = app.ScalingPolicy.PerInstanceConcurrency
 	}
 	requestRateLimitRPS, requestRateLimitBurst := 0, 0
 	if app.RequestRateLimitRPS != nil {
@@ -638,6 +652,7 @@ func (r pgRouter) toAppWithDeployment(ctx context.Context, app state.App, exact 
 		Plan:                         acct.Plan,
 		RequestInvocationsEnabled:    app.AcceptsRequestInvocations(),
 		MaxConcurrency:               app.MaxConcurrency,
+		PerInstanceConcurrency:       perInstanceConcurrency,
 		ConcurrencyOverflow:          concurrencyOverflow,
 		MaxQueueWaitMS:               maxQueueWaitMS,
 		MaxQueueDepth:                maxQueueDepth,

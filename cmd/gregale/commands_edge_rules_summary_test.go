@@ -47,6 +47,14 @@ func TestRenderEdgeProtection(t *testing.T) {
 		}
 	}
 
+	// adr: 20261022105846 — the penalty box line appears once it has acted.
+	buf.Reset()
+	main.RenderEdgeProtection(&buf, "shop", api.EdgeProtectionResponse{Range: "1h", Source: "prometheus",
+		Penalty: api.EdgeProtectionPenalty{Boxed: 4, Rejected: 31}})
+	if !strings.Contains(buf.String(), "4 clients boxed, 31 requests refused while boxed") {
+		t.Errorf("penalty output missing:\n%s", buf.String())
+	}
+
 	buf.Reset()
 	main.RenderEdgeProtection(&buf, "shop", api.EdgeProtectionResponse{Range: "1h", Source: "prometheus",
 		WAF: api.EdgeProtectionWAF{Inspected: 96, Detected: 6, NotInspected: 4, Warned: 2, Blocked: 8, InlineSkipped: 1,

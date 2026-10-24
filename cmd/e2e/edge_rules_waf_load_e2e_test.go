@@ -106,6 +106,7 @@ func TestEdgeWAFInlineLoad_E2E(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Gatewayd, nil)
+	releaseEdgeFeatures(t, pool)
 	key := h.SeedAccount(ctx, api.PlanPro)
 	hosts := seedWAFLoadApps(t, h, pool, key, apps, mode)
 	resetEdgeRuleCache(t, h)

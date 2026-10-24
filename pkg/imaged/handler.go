@@ -100,6 +100,12 @@ type Handler struct {
 	oci                    oci.Puller
 	builder                LayerBuilder
 	log                    *slog.Logger
+	// profilingOnDemand stamps dormant guest collectors into manifests for
+	// plans that include profiling (ADR-1155, FAAS_PROFILING_ON_DEMAND).
+	profilingOnDemand bool
+	// continuousProfiling lets an app's profiling.enabled reach its guest
+	// (ADR-819, FAAS_PROFILING_ENABLED).
+	continuousProfiling bool
 	// hostingSmoke is optional in single-box and offline deployments. When
 	// configured, it must pass before the deployment is promoted to live.
 	hostingSmoke func(context.Context, state.App, state.Deployment) (apihostingreceipt.SmokeResult, error)
@@ -292,6 +298,10 @@ type Handler struct {
 	// stay anonymous (matches the Free plan / no-credential case).
 	secretboxIdentity   *age.X25519Identity
 	secretboxIdentities []*age.X25519Identity
+	// registryIdentities, when set, open private-registry passwords in
+	// place of the secretbox identities: the build seal-domain identity
+	// first, then the fleet and host identities (ADR 20261022111812).
+	registryIdentities []*age.X25519Identity
 	// baseConvergence (ADR-567) tracks the bases this daemon staged so the
 	// convergence loop can keep each local copy byte-identical to the
 	// shared publication.
@@ -498,6 +508,39 @@ func (h *Handler) emitSignatureAudit(ctx context.Context, kind string, app state
 func (h *Handler) WithFunctionRunnerNode22(p string) *Handler {
 	h.functionRunnerNode22Path = p
 	return h
+}
+
+// WithProfilingOnDemand enables dormant on-demand profile collectors in new
+// deployments (ADR-1155). Existing deployments gain them on their next deploy.
+func (h *Handler) WithProfilingOnDemand(enabled bool) *Handler {
+	h.profilingOnDemand = enabled
+	return h
+}
+
+// WithContinuousProfiling lets apps that set profiling.enabled run continuous
+// guest collectors in new deployments (ADR-819). Without it imaged turns the
+// setting off in the guest manifest, so no profiling code runs in a guest
+// unless an installation flag allows it: apid refuses the setting on most
+// paths, but deploys from a source ref copy it from gregale.yaml as is.
+func (h *Handler) WithContinuousProfiling(enabled bool) *Handler {
+	h.continuousProfiling = enabled
+	return h
+}
+
+// stampProfiling applies the installation's profiling flags to the guest
+// manifest. Dormant on-demand collectors are stamped when the account's plan
+// includes profiling; the control plane enforces the plan again at capture
+// time. The rest of the app's profiling settings stay, as pprof_port also
+// serves on-demand captures.
+func (h *Handler) stampProfiling(manifest api.AppManifest, acct state.Account) api.AppManifest {
+	limits, ok := api.LimitsFor(acct.Plan)
+	manifest.ProfilingOnDemand = h.profilingOnDemand && ok && limits.Profiling.Enabled
+	if manifest.Profiling != nil && manifest.Profiling.Enabled && !h.continuousProfiling {
+		cfg := *manifest.Profiling
+		cfg.Enabled = false
+		manifest.Profiling = &cfg
+	}
+	return manifest
 }
 
 // WithNodeName pins the handler to a compute node identity for split-box
@@ -806,6 +849,27 @@ func (h *Handler) WithSecretboxIdentity(ident *age.X25519Identity) *Handler {
 		h.secretboxIdentities = []*age.X25519Identity{ident}
 	}
 	return h
+}
+
+// WithRegistryIdentities sets the identities that open private-registry
+// passwords. Crash captures keep the secretbox identities.
+func (h *Handler) WithRegistryIdentities(identities []*age.X25519Identity) *Handler {
+	h.registryIdentities = identities
+	return h
+}
+
+// registryCredentialIdentities returns the identities that open a
+// private-registry password; nil leaves pulls anonymous.
+func (h *Handler) registryCredentialIdentities() []*age.X25519Identity {
+	switch {
+	case len(h.registryIdentities) > 0:
+		return h.registryIdentities
+	case len(h.secretboxIdentities) > 0:
+		return h.secretboxIdentities
+	case h.secretboxIdentity != nil:
+		return []*age.X25519Identity{h.secretboxIdentity}
+	}
+	return nil
 }
 
 // WithSecretboxIdentities wires the fleet-first identity set while retaining
@@ -2166,7 +2230,8 @@ func (h *Handler) handleAppTaskChanged(ctx context.Context, payload db.AppTaskCh
 // parsed ref ensures a customer can never accidentally widen the
 // credential to a different registry by manipulating a request body.
 func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host string) (*oci.BasicAuth, error) {
-	if h.secretboxIdentity == nil {
+	identities := h.registryCredentialIdentities()
+	if len(identities) == 0 {
 		return nil, nil
 	}
 	if host == "" {
@@ -2186,10 +2251,6 @@ func (h *Handler) resolveRegistryAuth(ctx context.Context, app state.App, host s
 	// app_secret namespace check). A namespace mismatch
 	// means the envelope was sealed for a different
 	// secretbox slot — refuse rather than passing through.
-	identities := h.secretboxIdentities
-	if len(identities) == 0 && h.secretboxIdentity != nil {
-		identities = []*age.X25519Identity{h.secretboxIdentity}
-	}
 	ns, plaintext, err := secretbox.OpenBytesMulti(identities, cred.PasswordEncrypted)
 	if err != nil {
 		// Don't echo the unseal error verbatim — it can include
@@ -2355,7 +2416,7 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyAppLifecycle(manifest, app)
+	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), acct)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)
@@ -3028,7 +3089,7 @@ func (h *Handler) buildFunctionLayer(ctx context.Context, app state.App, dep sta
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest overrides: decode failed")
 		return fmt.Errorf("imaged: apply overrides: %w", err)
 	}
-	manifest = applyFunctionConcurrency(applyAppLifecycle(manifest, app), app)
+	manifest = applyFunctionConcurrency(h.stampProfiling(applyAppLifecycle(manifest, app), acct), app)
 	manifest, err = state.ApplyDeploymentRuntime(manifest, dep)
 	if err != nil {
 		return fmt.Errorf("imaged: scoped runtime: %w", err)

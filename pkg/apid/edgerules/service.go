@@ -33,6 +33,8 @@ type Host interface {
 	Notifier() Notifier
 	// PromQL is nil when no Prometheus endpoint is configured.
 	PromQL() *promql.Client
+	// PlatformFlagEnabled decides a platform flag (ADR-1700) for acct.
+	PlatformFlagEnabled(flagKey string, acct state.Account) bool
 }
 
 // Service is the edge rules surface.

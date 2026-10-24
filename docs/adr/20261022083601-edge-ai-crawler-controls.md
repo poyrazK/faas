@@ -130,3 +130,28 @@ it:
 - Verifying crawlers whose operators document reverse DNS but publish no
   ranges (Amazonbot): only the range method is implemented for AI
   crawlers.
+
+## Amendment 1 (2026-10-24): released by a platform flag
+
+Edge features launch behind platform flags that are off for every account
+(ADR-20261023113721). The AI crawler conditions get `edge_ai_crawlers`.
+
+- **apid** refuses creating a rule whose condition tests `ai_crawler`,
+  `ai_crawler_purpose` or `verified_ai_crawler` anywhere in its expression,
+  and an update that switches such a condition on for a rule that did not
+  already enforce one (enabling the rule, leaving log mode, or adding the
+  condition), with 422 `edge_feature_unavailable`. Clearing the condition,
+  disabling the rule and deleting it always work. The `control-ai-crawlers`
+  recipe goes through the same create path, so it is refused too.
+- **The gateway** marks the request once the app is known, before the
+  first edge gate, and the three fields then read as absent for an account
+  the flag leaves out: a condition on them does not match, and a negated
+  one does. Routing rules resolved before the app is known still see the
+  fields; apid refuses creating such a rule while the flag is off.
+- **Not gated:** counting AI crawler requests for the edge-protection
+  summary (it shows traffic whatever rules do), the crawler range refresh
+  (platform data), and verified_bot verifying search crawlers from
+  published ranges.
+- The dashboard still shows the recipe card; applying it is refused with
+  the same 422 until the flag-aware surfaces (ADR-20261023113721
+  amendment 1) cover AI crawler conditions too.

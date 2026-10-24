@@ -16,9 +16,17 @@ func prepareWorkloadRuntimeSecrets(imageRoot string, manifest api.AppManifest, i
 	if err != nil {
 		return nil, fmt.Errorf("resolve secret projection owner: %w", err)
 	}
-	return newProjectedRuntimeSecretsState(initial, runtimeSecretProjection{
+	state, err := newProjectedRuntimeSecretsState(initial, runtimeSecretProjection{
 		secretsPath: projectionPath, revisionPath: revisionPath, uid: int(credential.Uid),
 	})
+	if err != nil {
+		return nil, err
+	}
+	// Boot already wrote the files; live reloads rewrite them.
+	if state.files, err = newSecretFileWriter(imageRoot, manifest, nil); err != nil {
+		return nil, err
+	}
+	return state, nil
 }
 
 // Prepare sidecar projections before workers can fetch updates, even when

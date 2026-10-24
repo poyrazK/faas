@@ -7,12 +7,17 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
+from ..models.operator_platform_flag_attributes_item import (
+    OperatorPlatformFlagAttributesItem,
+    check_operator_platform_flag_attributes_item,
+)
 from ..models.operator_platform_flag_source import OperatorPlatformFlagSource, check_operator_platform_flag_source
 from ..models.operator_platform_flag_status import OperatorPlatformFlagStatus, check_operator_platform_flag_status
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.operator_platform_flag_convergence import OperatorPlatformFlagConvergence
+    from ..models.operator_platform_flag_opt_ins import OperatorPlatformFlagOptIns
     from ..models.operator_runtime_config_apply_receipt import OperatorRuntimeConfigApplyReceipt
     from ..models.platform_flag_definition import PlatformFlagDefinition
 
@@ -31,6 +36,9 @@ class OperatorPlatformFlag:
     description: str
     adr: str
     consumers: list[str]
+    attributes: list[OperatorPlatformFlagAttributesItem]
+    """Subject attributes every consumer can supply, so rules may constrain them; a write using any other is
+    refused (ADR 20261021080640)."""
     legacy_env: list[str]
     definition: PlatformFlagDefinition
     """Stored value of a platform flag. Enabled is the kill switch; default applies to accounts no rule matches."""
@@ -40,6 +48,8 @@ class OperatorPlatformFlag:
     receipts: list[OperatorRuntimeConfigApplyReceipt]
     convergence: OperatorPlatformFlagConvergence
     """Consumers of a platform flag grouped by whether every instance applied its current version."""
+    opt_ins: OperatorPlatformFlagOptIns
+    """How many accounts and organizations joined a self-serve preview, and the opt-in row's version."""
     capability: str | Unset = UNSET
     retire_by: datetime.date | Unset = UNSET
     last_error: str | Unset = UNSET
@@ -59,6 +69,11 @@ class OperatorPlatformFlag:
 
         consumers = self.consumers
 
+        attributes = []
+        for attributes_item_data in self.attributes:
+            attributes_item: str = attributes_item_data
+            attributes.append(attributes_item)
+
         legacy_env = self.legacy_env
 
         definition = self.definition.to_dict()
@@ -75,6 +90,8 @@ class OperatorPlatformFlag:
             receipts.append(receipts_item)
 
         convergence = self.convergence.to_dict()
+
+        opt_ins = self.opt_ins.to_dict()
 
         capability = self.capability
 
@@ -98,6 +115,7 @@ class OperatorPlatformFlag:
                 "description": description,
                 "adr": adr,
                 "consumers": consumers,
+                "attributes": attributes,
                 "legacy_env": legacy_env,
                 "definition": definition,
                 "source": source,
@@ -105,6 +123,7 @@ class OperatorPlatformFlag:
                 "status": status,
                 "receipts": receipts,
                 "convergence": convergence,
+                "opt_ins": opt_ins,
             }
         )
         if capability is not UNSET:
@@ -121,6 +140,7 @@ class OperatorPlatformFlag:
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.operator_platform_flag_convergence import OperatorPlatformFlagConvergence
+        from ..models.operator_platform_flag_opt_ins import OperatorPlatformFlagOptIns
         from ..models.operator_runtime_config_apply_receipt import OperatorRuntimeConfigApplyReceipt
         from ..models.platform_flag_definition import PlatformFlagDefinition
 
@@ -136,6 +156,13 @@ class OperatorPlatformFlag:
         adr = d.pop("adr")
 
         consumers = cast(list[str], d.pop("consumers"))
+
+        attributes = []
+        _attributes = d.pop("attributes")
+        for attributes_item_data in _attributes:
+            attributes_item = check_operator_platform_flag_attributes_item(attributes_item_data)
+
+            attributes.append(attributes_item)
 
         legacy_env = cast(list[str], d.pop("legacy_env"))
 
@@ -155,6 +182,8 @@ class OperatorPlatformFlag:
             receipts.append(receipts_item)
 
         convergence = OperatorPlatformFlagConvergence.from_dict(d.pop("convergence"))
+
+        opt_ins = OperatorPlatformFlagOptIns.from_dict(d.pop("opt_ins"))
 
         capability = d.pop("capability", UNSET)
 
@@ -181,6 +210,7 @@ class OperatorPlatformFlag:
             description=description,
             adr=adr,
             consumers=consumers,
+            attributes=attributes,
             legacy_env=legacy_env,
             definition=definition,
             source=source,
@@ -188,6 +218,7 @@ class OperatorPlatformFlag:
             status=status,
             receipts=receipts,
             convergence=convergence,
+            opt_ins=opt_ins,
             capability=capability,
             retire_by=retire_by,
             last_error=last_error,

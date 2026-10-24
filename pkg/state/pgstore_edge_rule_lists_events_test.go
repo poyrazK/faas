@@ -107,6 +107,7 @@ func TestPgStore_EdgeRuleEvents(t *testing.T) {
 		})
 	}
 	events[1].ClientIP = ""
+	events[2].RequestID = "req-7f3a"
 	events = append(events, state.EdgeRuleEvent{RuleID: rule.ID, AppID: app, OccurredAt: base.Add(-10 * 24 * time.Hour), Outcome: state.EdgeRuleHitMatched})
 	if err := s.RecordEdgeRuleEvents(ctx, events); err != nil {
 		t.Fatal(err)
@@ -123,6 +124,12 @@ func TestPgStore_EdgeRuleEvents(t *testing.T) {
 	logged, err := s.ListEdgeRuleEvents(ctx, state.EdgeRuleEventQuery{AppID: app, RuleID: rule.ID, Outcome: state.EdgeRuleHitLogged, Since: base.Add(-time.Hour), Limit: 10})
 	if err != nil || len(logged) != 1 {
 		t.Fatalf("logged = %+v, %v", logged, err)
+	}
+	// ADR-831 amendment 8: one request's events, by the reference the
+	// challenge page shows.
+	byRequest, err := s.ListEdgeRuleEvents(ctx, state.EdgeRuleEventQuery{AppID: app, RequestID: "req-7f3a", Since: base.Add(-time.Hour), Limit: 10})
+	if err != nil || len(byRequest) != 1 || byRequest[0].RequestID != "req-7f3a" {
+		t.Fatalf("by request = %+v, %v", byRequest, err)
 	}
 	// ADR-831 amendment 5: WAF detail survives the per-row array encoding;
 	// events without it read back empty.

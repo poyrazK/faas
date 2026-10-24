@@ -35,6 +35,36 @@ func (q *Queries) CompareAndSwapProjectSecretEnvelope(ctx context.Context, db DB
 	return result.RowsAffected(), nil
 }
 
+const copyProjectEnvironmentSecrets = `-- name: CopyProjectEnvironmentSecrets :execrows
+INSERT INTO project_environment_secrets (account_id, project_id, environment_slug, key, ciphertext, kid, value_hash, secret_version)
+SELECT s.account_id, s.project_id, $1::text, s.key, s.ciphertext, s.kid, s.value_hash, s.secret_version
+FROM project_environment_secrets s
+WHERE s.account_id = $2::uuid AND s.project_id = $3::uuid
+  AND s.environment_slug = $4::text
+`
+
+type CopyProjectEnvironmentSecretsParams struct {
+	TargetSlug string
+	AccountID  pgtype.UUID
+	ProjectID  pgtype.UUID
+	SourceSlug string
+}
+
+// An environment clone copies the source environment's shared secrets as it
+// copies app secrets: the envelope is not bound to an environment.
+func (q *Queries) CopyProjectEnvironmentSecrets(ctx context.Context, db DBTX, arg CopyProjectEnvironmentSecretsParams) (int64, error) {
+	result, err := db.Exec(ctx, copyProjectEnvironmentSecrets,
+		arg.TargetSlug,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.SourceSlug,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const countProjectEnvironmentSecrets = `-- name: CountProjectEnvironmentSecrets :one
 SELECT count(*)::bigint AS keys, coalesce(bool_or(key = $1::text), false)::bool AS exists
 FROM project_environment_secrets

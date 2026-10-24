@@ -287,7 +287,10 @@ func TestPgCloneEnvironmentCleanupScopeColumnInventory(t *testing.T) {
 		"application_standard_assignments.scope", // ADR-595 hierarchy level (organization/project/application), not an environment.
 		"binding_verification_runs.scope",        // Retained verification evidence blocks deployment and scope cleanup.
 		"custom_domains.environment_id",
+		"customer_operation_approval_forms.scope",
+		"customer_operation_concurrency_policies.scope",
 		"customer_operation_definitions.scope",
+		"customer_operation_queue.scope",
 		"customer_operation_webhook_bindings.scope",
 		"customer_operation_workflow_states.scope",
 		"customer_workflow_readiness_subscriptions.scope",

@@ -44,6 +44,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -95,8 +96,17 @@ func (s *server) handleSetGithubWebhookSecret(w http.ResponseWriter, r *http.Req
 			"Bad secret length", "secret must be 16..64 bytes (32..128 hex chars)"))
 		return
 	}
+	sealed, prob := sealGithubWebhookSecret(raw)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	// ADR 20261022111812: only the sealed copy is stored. githubd has
+	// preferred it since the release that added it, so the plaintext column
+	// is no longer written.
+	clear(raw)
 	upgradedAt, upgradedBy, err := s.store.UpsertGithubWebhookSecret(r.Context(),
-		req.InstallationID, raw, "admin:"+acct.ID)
+		req.InstallationID, state.GithubWebhookSecret{Sealed: sealed}, "admin:"+acct.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not set webhook secret"))
 		return
@@ -112,4 +122,19 @@ func (s *server) handleSetGithubWebhookSecret(w http.ResponseWriter, r *http.Req
 		UpgradedAt:     upgradedAt,
 		UpgradedBy:     upgradedBy,
 	})
+}
+
+// sealGithubWebhookSecret seals the copy githubd opens (ADR 20261022111812)
+// to the source domain's write recipients: the fleet recipient until the
+// domain is staged, then the domain under its write mode.
+func sealGithubWebhookSecret(raw []byte) ([]byte, *api.Problem) {
+	recipients, err := githubWebhookSecretRecipients()
+	if err != nil {
+		return nil, api.ErrCapacity("could not seal webhook secret")
+	}
+	sealed, err := sealdomain.SealGithubWebhookSecret(recipients, raw)
+	if err != nil {
+		return nil, api.ErrCapacity("could not seal webhook secret")
+	}
+	return sealed, nil
 }

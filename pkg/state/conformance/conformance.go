@@ -97,6 +97,8 @@ func Run(t *testing.T, open Open) {
 		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
 		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
+		{"observed_workload_class_without_a_proof", testObservedWorkloadClass},
+		{"source_runtime_profile_records_a_frozen_compose_healthcheck", testSourceRuntimeProfileHealthcheck},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
 		{"service_recovery_claim_and_retry_are_durable", testServiceRecoveryClaims},
@@ -183,6 +185,7 @@ func Run(t *testing.T, open Open) {
 		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
 		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
 		{"queue_dead_letter_replay_rearms_original_receipt", testQueueReplayReceipt},
+		{"queue_dead_letter_message_is_one_entry", testQueueDeadLetterSingleEntry},
 		{"queue_consumer_and_trigger_share_account_quota", testQueueConsumerAccountQuota},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
 		{"invocation_retry_releases_reserved_slot", testInvocationRetryReleasesReservedSlot},
@@ -3500,7 +3503,11 @@ func testAppSecretRuntimeProcessGenerationFence(t *testing.T, fx *Fixture) {
 	// instance) may replace it without knowing its generation; a start from
 	// an attempt that predates the registration is still fenced.
 	live, stray, fresh := strings.Repeat("d", 32), strings.Repeat("e", 32), strings.Repeat("f", 32)
-	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(live, third)); err != nil {
+	// Register a minute ago: a replacement stamped time.Now() right after an
+	// unstamped registration can share its microsecond and not be "later".
+	registered := process(live, third)
+	registered.AttemptedAt = time.Now().Add(-time.Minute)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, registered); err != nil {
 		t.Fatalf("BeginAppSecretRuntimeProcess(after retire): %v", err)
 	}
 	earlier := process(stray, "")
@@ -4531,6 +4538,7 @@ func testScalingPolicyRoundTrip(t *testing.T, fx *Fixture) {
 		MaxQueueDepth:           17,
 		WakeMaxQueueDepth:       31,
 		WakeMaxQueueWaitSeconds: 41,
+		PerInstanceConcurrency:  2,
 		Timezone:                "Europe/Istanbul",
 		Schedules: []state.ScalingSchedule{
 			{Cron: "0 8 * * 1-5", DurationS: 12 * 3600, MinInstances: 3},

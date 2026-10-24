@@ -20,6 +20,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -1204,5 +1205,53 @@ func TestListOrgInvitations_BadLimit(t *testing.T) {
 	}
 	if problem.Code != "validation_failed" {
 		t.Errorf("problem.code = %q, want validation_failed", problem.Code)
+	}
+}
+
+// The invitation's email match binds acceptance to the invitee only when the
+// accepting account has proved that address. Without the verification gate,
+// anyone holding a leaked token could sign up with the invitee's address,
+// leave it unverified, pass step-up with their own authenticator and join.
+func TestAcceptInvitation_RequiresVerifiedEmail(t *testing.T) {
+	ensureRecoveryTestSecret(t)
+	e, mgr, _ := setupWithSessionForTest(t)
+	ctx := context.Background()
+	const invitee = "invitee-unverified@acme.test"
+	created, err := e.store.CreateAccountWithPersonalOrg(ctx, state.CreateAccountWithPersonalOrgParams{
+		Email: invitee, Plan: api.PlanPro, RequireEmailVerification: true,
+	})
+	if err != nil {
+		t.Fatalf("CreateAccountWithPersonalOrg: %v", err)
+	}
+	accepting := created.Account
+	if accepting.EmailVerified() {
+		t.Fatal("fixture account is already verified")
+	}
+	sid := uuid.NewString()
+	if _, err := e.store.CreateSession(ctx, sid, accepting.ID, "192.0.2.40", "invite-unverified-ua"); err != nil {
+		t.Fatalf("CreateSession: %v", err)
+	}
+	token, err := mgr.IssueWithSessionAndBindingHashAndStepUp(sid, accepting.ID, "", time.Now().Add(-30*time.Second), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cookie := &http.Cookie{Name: sessionCookie, Value: token}
+	org := seedSharedOrgWithOutsideOwner(t, e, "acme-unverified", "Acme Unverified", api.PlanPro)
+	wireToken, _ := seedInvitationForPrincipal(t, e.store, &org, e.acct.ID, invitee, state.OrgRoleDeveloper)
+
+	rec := e.doWithCookie(t, http.MethodPost, "/v1/invitations/"+wireToken+"/accept", cookie)
+	if rec.Code != http.StatusForbidden || !strings.Contains(rec.Body.String(), api.CodeEmailVerificationRequired) {
+		t.Fatalf("unverified accept: code=%d body=%s, want 403 %s", rec.Code, rec.Body.String(), api.CodeEmailVerificationRequired)
+	}
+	if _, err := e.store.OrgMemberByAccount(ctx, org.ID, accepting.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("unverified account became a member: err=%v", err)
+	}
+
+	if err := e.store.MarkAccountEmailVerified(ctx, accepting.ID); err != nil {
+		t.Fatalf("MarkAccountEmailVerified: %v", err)
+	}
+	rec = e.doWithCookie(t, http.MethodPost, "/v1/invitations/"+wireToken+"/accept", cookie)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("verified accept: code=%d body=%s, want 200", rec.Code, rec.Body.String())
 	}
 }

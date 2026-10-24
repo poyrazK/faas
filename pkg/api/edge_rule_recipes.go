@@ -82,6 +82,16 @@ const (
 	edgeRuleRecipeMaxBurst     = 1000
 )
 
+// recipePenaltyParam boxes a client the recipe's rule keeps refusing
+// (ADR-20261022105846); empty leaves the rule without a penalty.
+var recipePenaltyParam = EdgeRuleRecipeParam{Name: "penalty_minutes", Label: "Penalty box (minutes)",
+	Help: "Optional: once the rule has refused a client, block that client from the whole app for this many minutes (1 to 1440)."}
+
+// recipePenaltyAfter is how many refusals box a client, by recipe: a
+// scanner path is suspect on the first hit, a rate limit only when the
+// client keeps going.
+var recipePenaltyAfter = map[string]int{EdgeRuleRecipeBlockScannerPaths: 1, EdgeRuleRecipeRateLimitPath: 3}
+
 var recipePathParam = EdgeRuleRecipeParam{Name: "path", Label: "Path", Help: "Path the rule covers: /** is every path, /shop/** is /shop and everything under it.", Default: "/**"}
 
 // EdgeRuleRecipes is the recipe catalog, in display order.
@@ -106,6 +116,7 @@ var EdgeRuleRecipes = []EdgeRuleRecipe{
 			{Name: "methods", Label: "Methods", Help: "Comma-separated; empty means every method.", Default: "POST"},
 			{Name: "per_minute", Label: "Requests per minute", Help: "Sustained rate per client IP.", Default: "10"},
 			{Name: "burst", Label: "Burst", Help: "Requests allowed at once before the rate applies; empty uses the per-minute value.", Placeholder: "10"},
+			recipePenaltyParam,
 		},
 		build: buildRateLimitPath,
 	},
@@ -141,6 +152,7 @@ var EdgeRuleRecipes = []EdgeRuleRecipe{
 		LogNote: "In log mode the match count is the requests it would block.",
 		Params: []EdgeRuleRecipeParam{
 			{Name: "paths", Label: "Path prefixes", Help: "Blocked when a request path starts with one of these; comma- or space-separated.", Default: strings.Join(EdgeRuleScannerPrefixes(), ", ")},
+			recipePenaltyParam,
 		},
 		build: buildBlockScannerPaths,
 	},
@@ -214,6 +226,13 @@ func BuildEdgeRuleRecipe(id, host string, values map[string]string, enforce bool
 	req, err := recipe.build(v)
 	if err != nil {
 		return CreateEdgeRuleRequest{}, ErrValidation(fmt.Sprintf("recipe %s: %v", id, err))
+	}
+	if raw := v[recipePenaltyParam.Name]; raw != "" {
+		minutes, err := strconv.Atoi(raw)
+		if err != nil || minutes < 1 || minutes > MaxEdgePenaltySeconds/60 {
+			return CreateEdgeRuleRequest{}, ErrValidation(fmt.Sprintf("recipe %s: penalty_minutes must be a whole number from 1 to %d", id, MaxEdgePenaltySeconds/60))
+		}
+		req.Penalty = &EdgeRulePenalty{Seconds: minutes * 60, After: recipePenaltyAfter[recipe.ID], WithinSeconds: EdgePenaltyDefaultWithinSeconds}
 	}
 	req.MatchHost = host
 	req.Name = recipe.Title

@@ -85,6 +85,9 @@ func (m *MemStore) CaptureProjectEnvironmentCloneWorkloads(ctx context.Context, 
 		if _, pinned := m.releaseEnvironmentPins[source.ID]; pinned {
 			return nil, ErrReleaseConfigurationTransferUnsupported
 		}
+		if len(m.projectEnvironmentSecretsLocked(projectID, op.SourceEnvironment)) > 0 {
+			return nil, ErrProjectSecretCloneTransferUnsupported
+		}
 		snapshot := projectCloneWorkloadSnapshot{WorkloadSlug: app.Slug, Artifact: projectCloneArtifactFromDeployment(source), Settings: settings, SidecarSignals: map[string]string{}, ProjectConfig: &projectConfig}
 		variables, secrets := m.projectCloneValuesLocked(map[string]string{appID: scopes[appID]})
 		snapshot.Values = &projectCloneWorkloadValues{Variables: variables, Secrets: secrets}

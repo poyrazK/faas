@@ -147,6 +147,11 @@ func TestSQLLiteralsPrepareAgainstMigratedSchema(t *testing.T) {
 		if strings.HasPrefix(pos, "../../pkg/datapipeline/") && strings.Contains(s.sql, "gregale_pipeline.") {
 			continue
 		}
+		// The function SQL witness (pkg/e2etest/functionsql) creates its notes
+		// table in its own disposable database and runs this SQL only there.
+		if strings.HasPrefix(pos, "../../pkg/e2etest/functionsql/") {
+			continue
+		}
 		if strings.HasPrefix(pos, "../../pkg/commit/") || strings.HasPrefix(pos, "../../pkg/commitmanaged/") {
 			target = customerConn
 			query = s.sql

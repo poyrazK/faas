@@ -96,7 +96,10 @@ func healthcheckGRPCFromDep(dep state.Deployment) (bool, string) {
 }
 
 func imageHealthcheckRequiredFromDep(dep state.Deployment) bool {
-	return dep.Kind == state.DeploymentKindImage && frameworkprofile.RequiresImageHealthcheck(dep.InferredProfile)
+	if dep.Kind == state.DeploymentKindImage {
+		return frameworkprofile.RequiresImageHealthcheck(dep.InferredProfile)
+	}
+	return frameworkprofile.RequiresSourceImageHealthcheck(dep.InferredProfile)
 }
 
 func validRuntimeHealthPath(path string) bool {

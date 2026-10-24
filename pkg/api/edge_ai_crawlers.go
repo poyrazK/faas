@@ -158,3 +158,27 @@ const (
 	EdgeCrawlerRangesMinIPv4Bits = 16
 	EdgeCrawlerRangesMinIPv6Bits = 32
 )
+
+// EdgeRuleMatchUsesAICrawlerFields reports whether expr tests ai_crawler,
+// ai_crawler_purpose or verified_ai_crawler anywhere, the fields the
+// edge_ai_crawlers platform flag releases (ADR-20261022083601 amendment 1).
+func EdgeRuleMatchUsesAICrawlerFields(expr *EdgeRuleMatchExpr) bool {
+	if expr == nil {
+		return false
+	}
+	switch expr.Field {
+	case "ai_crawler", "ai_crawler_purpose", "verified_ai_crawler":
+		return true
+	}
+	for i := range expr.All {
+		if EdgeRuleMatchUsesAICrawlerFields(&expr.All[i]) {
+			return true
+		}
+	}
+	for i := range expr.Any {
+		if EdgeRuleMatchUsesAICrawlerFields(&expr.Any[i]) {
+			return true
+		}
+	}
+	return EdgeRuleMatchUsesAICrawlerFields(expr.Not)
+}

@@ -253,7 +253,17 @@ func cmdIssues(args []string) int {
 		// came back "resolution requires fixed_deployment_id", a field name
 		// the CLI never mentions.
 		if action == "resolve" && strings.TrimSpace(*deployment) == "" {
-			return printErr("Invalid issue resolution", errors.New("--deployment <uuid> is required: name the deployment that fixed the issue"))
+			return printErr("Invalid issue resolution", errors.New("--deployment <uuid|vN> is required: name the deployment that fixed the issue"))
+		}
+		// `--deployment v4` reached the server as a non-UUID and came back
+		// "resolution requires fixed_deployment_id"; resolve a revision the
+		// way traffic and deployment commands do (Hunt 12 H12-50).
+		if action == "resolve" {
+			resolved, err := resolveDeploymentReadArg(ctx, c, *app, strings.TrimSpace(*deployment))
+			if err != nil {
+				return printErr("Could not resolve the fixing deployment", err)
+			}
+			*deployment = resolved
 		}
 		if action == "merge" && strings.TrimSpace(*targetIssue) == "" || action == "split" && strings.TrimSpace(*memberIssue) == "" {
 			return printErr("Invalid issue regrouping", errors.New("merge requires --target <uuid>; split requires --member <uuid>"))

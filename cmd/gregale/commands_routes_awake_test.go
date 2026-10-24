@@ -22,6 +22,10 @@ func routeAwakeServer(t *testing.T, queries *[]string) *httptest.Server {
 		Sources: []api.RouteAwakeSource{
 			{Source: api.RouteAwakeSourceRouteProbe, Events: 600, AwakeSeconds: 2 * 3600, AwakeShare: 0.02},
 			{Source: api.RouteAwakeSourcePrewarm, Events: 3},
+			// adr: 20261022184757 — a cron job, named by what it runs and its schedule.
+			{Source: api.RouteAwakeSourceCron, Name: "/sync (* * * * *)", Events: 1440, AwakeSeconds: 3 * 3600, AwakeShare: 0.03,
+				Pattern: api.RouteAwakePatternPeriodic, IntervalSeconds: 60,
+				Suggestion: &api.RouteAwakeSuggestion{Kind: api.RouteAwakeSuggestRunLessOften, Message: "Cron job /sync (* * * * *) fires about every 1m0s"}},
 		},
 		Routes: []api.RouteAwakeRoute{{
 			Method: "GET", Route: "/health", Requests: 10080, Wakes: 2, AwakeSeconds: 110 * 3600, AwakeShare: 0.92,
@@ -69,6 +73,7 @@ func TestRoutesAwakeCLI(t *testing.T) {
 		"GET /health", "every ~60s", "-100h 0m awake, +40 wakes", "POST /orders", "no change",
 		"Other routes", "Unattributed", "Suggestions", "GET /health is called about every 1m0s",
 		"Route probes (canary)", "keeps at least 1 instance(s) running",
+		"Cron /sync (* * * * *)", "Cron job /sync (* * * * *) fires about every 1m0s", "min instances, pruned history",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("output missing %q:\n%s", want, out)

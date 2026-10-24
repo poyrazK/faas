@@ -75,7 +75,13 @@ func (s *PgStore) ListProjectEnvironmentSecrets(ctx context.Context, accountID, 
 	}); err != nil {
 		return nil, mapErr(err)
 	}
-	rows, err := q.ListProjectEnvironmentSecrets(ctx, s.pool, sqlc.ListProjectEnvironmentSecretsParams{
+	return projectEnvironmentSecretsDB(ctx, s.pool, accountID, projectID, environmentSlug)
+}
+
+// projectEnvironmentSecretsDB lists an environment's secrets (metadata only)
+// on any connection, so qualifications read them in their own transaction.
+func projectEnvironmentSecretsDB(ctx context.Context, db sqlc.DBTX, accountID, projectID, environmentSlug string) ([]ProjectEnvironmentSecret, error) {
+	rows, err := sqlc.New().ListProjectEnvironmentSecrets(ctx, db, sqlc.ListProjectEnvironmentSecretsParams{
 		AccountID: mustPgUUID(accountID), ProjectID: mustPgUUID(projectID), EnvironmentSlug: environmentSlug,
 	})
 	if err != nil {

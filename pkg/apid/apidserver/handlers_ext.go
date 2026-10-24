@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/orgbilling"
 	"github.com/onebox-faas/faas/pkg/apid/release"
@@ -147,6 +148,24 @@ func validateIdleTimeout(v int, limits api.Limits) *api.Problem {
 		return api.ErrValidation(fmt.Sprintf("idle_timeout_s must be 0 (plan default) or %d..%d; got %d", floor, ceiling, v))
 	}
 	return nil
+}
+
+// validatePerInstanceConcurrency gates and bounds
+// scaling_policy.per_instance_concurrency (ADR-20261022203523). Until the
+// account is listed in FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS the field is
+// answered exactly like the unknown field it is to an N-1 apid. Keeping the
+// stored value, or clearing it to 0, is always allowed, so a read-modify-write
+// of another policy field never fails for an account that was delisted.
+func validatePerInstanceConcurrency(requested int, acct state.Account, app state.App) *api.Problem {
+	stored := 0
+	if app.ScalingPolicy != nil {
+		stored = app.ScalingPolicy.PerInstanceConcurrency
+	}
+	if requested != 0 && requested != stored && !api.PerInstanceConcurrencyEnabled(acct.ID) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid scaling policy", "unknown field(s): per_instance_concurrency")
+	}
+	return api.ValidatePerInstanceConcurrency(acct.Plan, requested)
 }
 
 func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
@@ -788,6 +807,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				"Invalid scaling policy",
 				fmt.Sprintf("wake_max_queue_wait_seconds must be between 0 and %d", api.WakeQueueMaxWaitSeconds))
 		}
+		if problem := validatePerInstanceConcurrency(sp.PerInstanceConcurrency, acct, app); problem != nil {
+			return problem
+		}
 		// Worker-class carve-out (PR-D): live here in the validator
 		// (rather than at the call site in updateApp) so an
 		// unknown-field error surfaces before the workload-class
@@ -979,9 +1001,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, environmentProblem)
 		return
 	}
-	var req api.UpdateAppRequest
-	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+	req, decodeErr := httpkit.DecodeUpdateAppRequest(r)
+	if decodeErr != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", decodeErr.Error()))
 		return
 	}
 	if problem := validateDeploySettingsCondition(req, environment); problem != nil {
@@ -1085,7 +1107,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("CPU profiling is unavailable on this installation"))
 		return
 	}
-	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingFor(acct) {
 		api.WriteProblem(w, api.ErrCapacity("request tracing is unavailable on this installation"))
 		return
 	}
@@ -3125,6 +3147,24 @@ func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct stat
 
 // --- custom domains --------------------------------------------------------
 
+// domainOutsideForeignWildcard refuses a domain below another account's
+// verified wildcard (state.ForeignVerifiedWildcard) and reports whether the
+// create may continue.
+func (s *server) domainOutsideForeignWildcard(ctx context.Context, w http.ResponseWriter, domain, accountID string) bool {
+	wildcard, err := state.ForeignVerifiedWildcard(ctx, s.store, domain, accountID)
+	if err != nil {
+		s.log.Warn("create domain: wildcard ownership check failed", "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not check wildcard-domain ownership"))
+		return false
+	}
+	if wildcard != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain taken",
+			fmt.Sprintf("%s is below the verified wildcard domain %s, which belongs to another account", domain, wildcard)))
+		return false
+	}
+	return true
+}
+
 func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateCustomDomainRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -3150,6 +3190,9 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	}
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such app")
+		return
+	}
+	if !s.domainOutsideForeignWildcard(r.Context(), w, domain, acct.ID) {
 		return
 	}
 	environmentID := ""
@@ -3238,6 +3281,14 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	} else {
 		d, err = createDomain(r.Context())
 	}
+	if errors.Is(err, state.ErrConflict) {
+		// Another account's unverified claim yields to DNS proof
+		// (ADR-20261020090500). The takeover records its activity below,
+		// outside the create's activity transaction.
+		if d, err = s.takeOverDomainClaim(r.Context(), acct, app, domain, environmentID, perApp, perAccount, err); err == nil {
+			activityOutboxID, activityMutationAtomic = 0, false
+		}
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {
 			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Custom domain quota reached", err.Error()))
@@ -3248,8 +3299,12 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-				"Domain taken", err.Error()))
+			problem := api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain taken", err.Error())
+			var pending *claimPendingError
+			if errors.As(err, &pending) {
+				problem.Hint = pending.hint()
+			}
+			api.WriteProblem(w, problem)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not create domain"))
@@ -7668,6 +7723,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 		MaxQueueDepth:           sp.MaxQueueDepth,
 		WakeMaxQueueDepth:       sp.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: sp.WakeMaxQueueWaitSeconds,
+		PerInstanceConcurrency:  sp.PerInstanceConcurrency,
 	}
 	if sp.Target != nil {
 		out.Target = &state.ScalingTarget{

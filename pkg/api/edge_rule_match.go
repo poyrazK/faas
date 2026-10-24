@@ -59,6 +59,10 @@ type EdgeRuleMatchInput struct {
 	// the client IP is in that operator's published ranges
 	// (ADR-20261022083601), or ""; nil is absent.
 	VerifiedAICrawler func() string
+	// AICrawlersUnreleased makes ai_crawler, ai_crawler_purpose and
+	// verified_ai_crawler absent: the edge_ai_crawlers platform flag leaves
+	// the account out (ADR-20261022083601 amendment 1).
+	AICrawlersUnreleased bool
 }
 
 type matchFieldKind int
@@ -510,6 +514,9 @@ func (n *matchNode) fieldValues(in EdgeRuleMatchInput) ([]string, bool) {
 		b := in.VerifiedBot()
 		return []string{b}, b != ""
 	case fieldAICrawler, fieldAICrawlerPurpose:
+		if in.AICrawlersUnreleased {
+			return nil, false
+		}
 		c, ok := ClaimedAICrawler(in.Headers.Get("User-Agent"))
 		if !ok {
 			return nil, false
@@ -519,7 +526,7 @@ func (n *matchNode) fieldValues(in EdgeRuleMatchInput) ([]string, bool) {
 		}
 		return []string{c.Name}, true
 	case fieldVerifiedAICrawler:
-		if in.VerifiedAICrawler == nil {
+		if in.VerifiedAICrawler == nil || in.AICrawlersUnreleased {
 			return nil, false
 		}
 		c := in.VerifiedAICrawler()
