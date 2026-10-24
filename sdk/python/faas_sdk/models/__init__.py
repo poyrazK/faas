@@ -72,6 +72,8 @@ from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsRes
 from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .ai_deployment_usage import AIDeploymentUsage
+from .ai_deployment_usage_list import AIDeploymentUsageList
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_readiness_destination import AlertDeliveryResponseReadinessDestination
 from .alert_delivery_response_readiness_failover_reason import AlertDeliveryResponseReadinessFailoverReason
@@ -96,6 +98,7 @@ from .alert_rule_response_metric import AlertRuleResponseMetric
 from .alert_rule_response_state import AlertRuleResponseState
 from .alert_rule_response_window_spec import AlertRuleResponseWindowSpec
 from .api_consumer_billing_policy_response import APIConsumerBillingPolicyResponse
+from .api_consumer_closed_webhook_payload import APIConsumerClosedWebhookPayload
 from .api_consumer_credit_balance import APIConsumerCreditBalance
 from .api_consumer_credit_list_response import APIConsumerCreditListResponse
 from .api_consumer_credit_response import APIConsumerCreditResponse
@@ -105,6 +108,7 @@ from .api_consumer_overdue_hold_list_response import APIConsumerOverdueHoldListR
 from .api_consumer_overdue_hold_response import APIConsumerOverdueHoldResponse
 from .api_consumer_plan_assignment_list_response import APIConsumerPlanAssignmentListResponse
 from .api_consumer_plan_assignment_response import APIConsumerPlanAssignmentResponse
+from .api_consumer_plan_changed_webhook_payload import APIConsumerPlanChangedWebhookPayload
 from .api_consumer_plan_list_response import APIConsumerPlanListResponse
 from .api_consumer_plan_response import APIConsumerPlanResponse
 from .api_consumer_rate_card_list_response import APIConsumerRateCardListResponse
@@ -114,6 +118,7 @@ from .api_consumer_rate_card_response_tier_mode import APIConsumerRateCardRespon
 from .api_consumer_rate_card_tier import APIConsumerRateCardTier
 from .api_consumer_response import APIConsumerResponse
 from .api_consumer_response_status import APIConsumerResponseStatus
+from .api_consumer_signed_up_webhook_payload import APIConsumerSignedUpWebhookPayload
 from .api_consumer_spend_cap_response import APIConsumerSpendCapResponse
 from .api_consumer_statement_fee_response import APIConsumerStatementFeeResponse
 from .api_consumer_statement_fee_response_kind import APIConsumerStatementFeeResponseKind
@@ -170,6 +175,14 @@ from .app_event_publish_status_response import AppEventPublishStatusResponse
 from .app_event_publish_status_response_acceptance import AppEventPublishStatusResponseAcceptance
 from .app_event_publish_status_response_reason import AppEventPublishStatusResponseReason
 from .app_event_publish_status_response_status import AppEventPublishStatusResponseStatus
+from .app_fork_exec_list_response import AppForkExecListResponse
+from .app_fork_exec_response import AppForkExecResponse
+from .app_fork_exec_response_failure import AppForkExecResponseFailure
+from .app_fork_exec_response_status import AppForkExecResponseStatus
+from .app_fork_list_response import AppForkListResponse
+from .app_fork_response import AppForkResponse
+from .app_fork_response_failure import AppForkResponseFailure
+from .app_fork_response_status import AppForkResponseStatus
 from .app_health_capacity import AppHealthCapacity
 from .app_health_changed_webhook_payload import AppHealthChangedWebhookPayload
 from .app_health_changed_webhook_payload_change import AppHealthChangedWebhookPayloadChange
@@ -676,6 +689,7 @@ from .capability_status import CapabilityStatus
 from .capability_status_maturity import CapabilityStatusMaturity
 from .capability_status_plans_item import CapabilityStatusPlansItem
 from .capability_status_unavailable_reason import CapabilityStatusUnavailableReason
+from .change_consumer_billing_plan_request import ChangeConsumerBillingPlanRequest
 from .change_managed_postgres_compute_policy_request import ChangeManagedPostgresComputePolicyRequest
 from .change_member_role_request import ChangeMemberRoleRequest
 from .change_member_role_request_role import ChangeMemberRoleRequestRole
@@ -719,12 +733,16 @@ from .commit_source_response import CommitSourceResponse
 from .commit_source_response_contract_version import CommitSourceResponseContractVersion
 from .commit_source_response_destination import CommitSourceResponseDestination
 from .compare_platform_tenant_self_workflow_readiness_body import ComparePlatformTenantSelfWorkflowReadinessBody
+from .complete_consumer_signup_request import CompleteConsumerSignupRequest
+from .complete_consumer_signup_response import CompleteConsumerSignupResponse
 from .complete_object_multipart_upload_request import CompleteObjectMultipartUploadRequest
 from .complete_workflow_callback_response import CompleteWorkflowCallbackResponse
 from .complete_workflow_callback_response_status import CompleteWorkflowCallbackResponseStatus
 from .compose_healthcheck import ComposeHealthcheck
 from .compose_process import ComposeProcess
 from .compose_process_stop_signal import ComposeProcessStopSignal
+from .compose_resources import ComposeResources
+from .compose_resources_cpu_millicores import ComposeResourcesCpuMillicores
 from .config_change_receipt import ConfigChangeReceipt
 from .config_guard import ConfigGuard
 from .config_guard_decision import ConfigGuardDecision
@@ -754,10 +772,14 @@ from .connection_budget_runtime_observations_source import ConnectionBudgetRunti
 from .connection_budget_runtime_observations_state import ConnectionBudgetRuntimeObservationsState
 from .consume_invoice_response import ConsumeInvoiceResponse
 from .consumed_credit_row import ConsumedCreditRow
+from .consumer_billing_close_response import ConsumerBillingCloseResponse
 from .consumer_billing_day import ConsumerBillingDay
 from .consumer_billing_invoice import ConsumerBillingInvoice
 from .consumer_billing_invoice_payment_status import ConsumerBillingInvoicePaymentStatus
 from .consumer_billing_plan import ConsumerBillingPlan
+from .consumer_billing_plan_change_response import ConsumerBillingPlanChangeResponse
+from .consumer_billing_plans_response import ConsumerBillingPlansResponse
+from .consumer_billing_portal_response import ConsumerBillingPortalResponse
 from .consumer_billing_spend_cap import ConsumerBillingSpendCap
 from .consumer_billing_statement import ConsumerBillingStatement
 from .consumer_billing_statements_response import ConsumerBillingStatementsResponse
@@ -766,6 +788,14 @@ from .consumer_billing_usage_response import ConsumerBillingUsageResponse
 from .consumer_key_list_response import ConsumerKeyListResponse
 from .consumer_key_response import ConsumerKeyResponse
 from .consumer_key_response_scopes_item import ConsumerKeyResponseScopesItem
+from .consumer_signup_form_response import ConsumerSignupFormResponse
+from .consumer_signup_list_response import ConsumerSignupListResponse
+from .consumer_signup_plan import ConsumerSignupPlan
+from .consumer_signup_price import ConsumerSignupPrice
+from .consumer_signup_response import ConsumerSignupResponse
+from .consumer_signup_response_status import ConsumerSignupResponseStatus
+from .consumer_signup_settings_response import ConsumerSignupSettingsResponse
+from .consumer_signup_settings_response_provider import ConsumerSignupSettingsResponseProvider
 from .control_application_standard_operation_request import ControlApplicationStandardOperationRequest
 from .control_data_pipeline_request import ControlDataPipelineRequest
 from .control_data_pipeline_request_action import ControlDataPipelineRequestAction
@@ -777,6 +807,13 @@ from .control_workflow_recovery_policy_request import ControlWorkflowRecoveryPol
 from .control_workflow_recovery_policy_request_operation import ControlWorkflowRecoveryPolicyRequestOperation
 from .cors_preset_list_response import CorsPresetListResponse
 from .cors_preset_response import CorsPresetResponse
+from .crash_capture_list_response import CrashCaptureListResponse
+from .crash_capture_response import CrashCaptureResponse
+from .crash_capture_response_failure import CrashCaptureResponseFailure
+from .crash_capture_response_status import CrashCaptureResponseStatus
+from .crash_capture_response_trigger import CrashCaptureResponseTrigger
+from .crash_snapshot_settings_request import CrashSnapshotSettingsRequest
+from .crash_snapshot_settings_response import CrashSnapshotSettingsResponse
 from .create_account_release_webhook_request import CreateAccountReleaseWebhookRequest
 from .create_account_release_webhook_request_delivery_format import CreateAccountReleaseWebhookRequestDeliveryFormat
 from .create_account_release_webhook_request_event_filter_item import CreateAccountReleaseWebhookRequestEventFilterItem
@@ -794,6 +831,8 @@ from .create_api_consumer_rate_card_request_route_weights import CreateAPIConsum
 from .create_api_consumer_rate_card_request_tier_mode import CreateAPIConsumerRateCardRequestTierMode
 from .create_api_consumer_request import CreateAPIConsumerRequest
 from .create_api_consumer_usage_statement_request import CreateAPIConsumerUsageStatementRequest
+from .create_app_fork_exec_request import CreateAppForkExecRequest
+from .create_app_fork_request import CreateAppForkRequest
 from .create_app_log_drain_request import CreateAppLogDrainRequest
 from .create_app_log_drain_request_kind import CreateAppLogDrainRequestKind
 from .create_app_request import CreateAppRequest
@@ -825,8 +864,11 @@ from .create_commit_source_body import CreateCommitSourceBody
 from .create_commit_source_request import CreateCommitSourceRequest
 from .create_commit_source_request_contract_version import CreateCommitSourceRequestContractVersion
 from .create_commit_source_request_destination import CreateCommitSourceRequestDestination
+from .create_consumer_billing_portal_request import CreateConsumerBillingPortalRequest
 from .create_consumer_key_request import CreateConsumerKeyRequest
 from .create_consumer_key_request_scopes_item import CreateConsumerKeyRequestScopesItem
+from .create_consumer_signup_request import CreateConsumerSignupRequest
+from .create_consumer_signup_response import CreateConsumerSignupResponse
 from .create_cors_preset_request import CreateCorsPresetRequest
 from .create_cron_request import CreateCronRequest
 from .create_custom_domain_request import CreateCustomDomainRequest
@@ -945,6 +987,8 @@ from .create_platform_tenant_webhook_request_retry_policy import CreatePlatformT
 from .create_preview_request import CreatePreviewRequest
 from .create_private_network_peering_request import CreatePrivateNetworkPeeringRequest
 from .create_private_network_request import CreatePrivateNetworkRequest
+from .create_profile_capture_request import CreateProfileCaptureRequest
+from .create_profile_capture_request_kinds_item import CreateProfileCaptureRequestKindsItem
 from .create_project_binding_verification_run_request import CreateProjectBindingVerificationRunRequest
 from .create_project_binding_verification_run_request_review_digests import (
     CreateProjectBindingVerificationRunRequestReviewDigests,
@@ -1318,6 +1362,7 @@ from .diff_change_kind import DiffChangeKind
 from .diff_env_row import DiffEnvRow
 from .diff_payload import DiffPayload
 from .diff_payload_plan import DiffPayloadPlan
+from .diff_profile_captures_kind import DiffProfileCapturesKind
 from .diff_request import DiffRequest
 from .diff_request_env_by_scope import DiffRequestEnvByScope
 from .diff_response import DiffResponse
@@ -1341,6 +1386,7 @@ from .domain_doctor_check import DomainDoctorCheck
 from .domain_doctor_check_name import DomainDoctorCheckName
 from .domain_doctor_check_status import DomainDoctorCheckStatus
 from .domain_doctor_report import DomainDoctorReport
+from .download_profile_capture_kind import DownloadProfileCaptureKind
 from .dry_run_app_open_api_body import DryRunAppOpenAPIBody
 from .dry_run_app_open_api_body_info import DryRunAppOpenAPIBodyInfo
 from .dry_run_app_open_api_body_paths import DryRunAppOpenAPIBodyPaths
@@ -1373,6 +1419,7 @@ from .durable_entity_validator_deployment_info_source import DurableEntityValida
 from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
 from .edge_protection_response import EdgeProtectionResponse
 from .edge_protection_response_challenge import EdgeProtectionResponseChallenge
+from .edge_protection_response_penalty import EdgeProtectionResponsePenalty
 from .edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
 from .edge_protection_response_range import EdgeProtectionResponseRange
 from .edge_protection_response_rejections_item import EdgeProtectionResponseRejectionsItem
@@ -1409,6 +1456,7 @@ from .edge_rule_list_response_kind import EdgeRuleListResponseKind
 from .edge_rule_maintenance_action import EdgeRuleMaintenanceAction
 from .edge_rule_match_expr import EdgeRuleMatchExpr
 from .edge_rule_match_expr_op import EdgeRuleMatchExprOp
+from .edge_rule_penalty import EdgeRulePenalty
 from .edge_rule_recipe_suggestion import EdgeRuleRecipeSuggestion
 from .edge_rule_recipe_suggestion_alternative import EdgeRuleRecipeSuggestionAlternative
 from .edge_rule_recipe_suggestion_alternative_params import EdgeRuleRecipeSuggestionAlternativeParams
@@ -2087,6 +2135,7 @@ from .get_obs_recording_coverage_expected_set import GetObsRecordingCoverageExpe
 from .get_obs_rule_coverage_expected_set import GetObsRuleCoverageExpectedSet
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_outbound_ai_price_catalog_provider import GetOutboundAIPriceCatalogProvider
+from .get_profile_capture_view_kind import GetProfileCaptureViewKind
 from .get_route_health_investigation_customer_group_by import GetRouteHealthInvestigationCustomerGroupBy
 from .get_route_health_investigation_method import GetRouteHealthInvestigationMethod
 from .get_route_health_investigation_signal import GetRouteHealthInvestigationSignal
@@ -3865,13 +3914,17 @@ from .operator_park_execution_response_action import OperatorParkExecutionRespon
 from .operator_park_execution_response_phase import OperatorParkExecutionResponsePhase
 from .operator_park_execution_response_terminal_state import OperatorParkExecutionResponseTerminalState
 from .operator_platform_flag import OperatorPlatformFlag
+from .operator_platform_flag_attributes_item import OperatorPlatformFlagAttributesItem
 from .operator_platform_flag_convergence import OperatorPlatformFlagConvergence
 from .operator_platform_flag_decision import OperatorPlatformFlagDecision
+from .operator_platform_flag_decision_opt_in import OperatorPlatformFlagDecisionOptIn
 from .operator_platform_flag_decision_reason import OperatorPlatformFlagDecisionReason
+from .operator_platform_flag_decision_schedule_state import OperatorPlatformFlagDecisionScheduleState
 from .operator_platform_flag_groups import OperatorPlatformFlagGroups
 from .operator_platform_flag_groups_groups import OperatorPlatformFlagGroupsGroups
 from .operator_platform_flag_groups_references import OperatorPlatformFlagGroupsReferences
 from .operator_platform_flag_list import OperatorPlatformFlagList
+from .operator_platform_flag_opt_ins import OperatorPlatformFlagOptIns
 from .operator_platform_flag_source import OperatorPlatformFlagSource
 from .operator_platform_flag_status import OperatorPlatformFlagStatus
 from .operator_restart_execution_response import OperatorRestartExecutionResponse
@@ -3945,9 +3998,15 @@ from .outbound_ai_moderation_action import OutboundAIModerationAction
 from .outbound_ai_moderation_categories_item import OutboundAIModerationCategoriesItem
 from .outbound_ai_moderation_kind import OutboundAIModerationKind
 from .outbound_ai_moderation_on_error import OutboundAIModerationOnError
+from .outbound_ai_online_evaluation import OutboundAIOnlineEvaluation
 from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
+from .outbound_ai_quality_alert import OutboundAIQualityAlert
+from .outbound_ai_quality_alert_list import OutboundAIQualityAlertList
+from .outbound_ai_quality_alert_metric import OutboundAIQualityAlertMetric
+from .outbound_ai_quality_drift_webhook_payload import OutboundAIQualityDriftWebhookPayload
+from .outbound_ai_quality_drift_webhook_payload_metric import OutboundAIQualityDriftWebhookPayloadMetric
 from .outbound_ai_replay import OutboundAIReplay
 from .outbound_ai_replay_result import OutboundAIReplayResult
 from .outbound_ai_replay_source import OutboundAIReplaySource
@@ -3955,7 +4014,9 @@ from .outbound_ai_replay_state import OutboundAIReplayState
 from .outbound_ai_replay_target import OutboundAIReplayTarget
 from .outbound_ai_request_content import OutboundAIRequestContent
 from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
+from .outbound_ai_request_log_entry_feedback import OutboundAIRequestLogEntryFeedback
 from .outbound_ai_request_log_entry_outcome import OutboundAIRequestLogEntryOutcome
+from .outbound_ai_request_log_entry_quality_flags_item import OutboundAIRequestLogEntryQualityFlagsItem
 from .outbound_ai_request_log_list import OutboundAIRequestLogList
 from .outbound_ai_response_policy import OutboundAIResponsePolicy
 from .outbound_ai_response_policy_blocked_terms import OutboundAIResponsePolicyBlockedTerms
@@ -3981,6 +4042,11 @@ from .outbound_ai_tag_limits import OutboundAITagLimits
 from .outbound_ai_tag_usage_export_row import OutboundAITagUsageExportRow
 from .outbound_ai_tag_usage_item import OutboundAITagUsageItem
 from .outbound_ai_tag_usage_response import OutboundAITagUsageResponse
+from .outbound_ai_trace import OutboundAITrace
+from .outbound_ai_trace_call import OutboundAITraceCall
+from .outbound_ai_trace_call_outcome import OutboundAITraceCallOutcome
+from .outbound_ai_trace_list import OutboundAITraceList
+from .outbound_ai_trace_response import OutboundAITraceResponse
 from .outbound_ai_usage_item import OutboundAIUsageItem
 from .outbound_ai_usage_response import OutboundAIUsageResponse
 from .outbound_ai_user_usage_export_row import OutboundAIUserUsageExportRow
@@ -4038,9 +4104,17 @@ from .plan_workload_class import PlanWorkloadClass
 from .plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
 from .plan_workload_depends_on_conditions_additional_property import PlanWorkloadDependsOnConditionsAdditionalProperty
 from .plan_workload_tier import PlanWorkloadTier
+from .plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
+from .plan_workload_unset_env_key_reasons_additional_property import PlanWorkloadUnsetEnvKeyReasonsAdditionalProperty
+from .plan_workload_visibility import PlanWorkloadVisibility
 from .platform_flag_definition import PlatformFlagDefinition
+from .platform_flag_opt_ins import PlatformFlagOptIns
+from .platform_flag_ramp import PlatformFlagRamp
+from .platform_flag_ramp_on_breach import PlatformFlagRampOnBreach
 from .platform_flag_rule import PlatformFlagRule
 from .platform_flag_rule_plans_item import PlatformFlagRulePlansItem
+from .platform_flag_self_serve import PlatformFlagSelfServe
+from .platform_flag_self_serve_plans_item import PlatformFlagSelfServePlansItem
 from .platform_tenant_access_token_list_response import PlatformTenantAccessTokenListResponse
 from .platform_tenant_access_token_response import PlatformTenantAccessTokenResponse
 from .platform_tenant_access_token_response_scopes_item import PlatformTenantAccessTokenResponseScopesItem
@@ -4203,6 +4277,7 @@ from .prepare_project_rollback_request import PrepareProjectRollbackRequest
 from .prepare_workflow_operation_artifact_x_gregale_operation_execution_kind import (
     PrepareWorkflowOperationArtifactXGregaleOperationExecutionKind,
 )
+from .preview import Preview
 from .preview_account_workflow_actions_body import PreviewAccountWorkflowActionsBody
 from .preview_artifact_response import PreviewArtifactResponse
 from .preview_created_webhook_payload import PreviewCreatedWebhookPayload
@@ -4228,6 +4303,7 @@ from .preview_event_response import PreviewEventResponse
 from .preview_issue_compound_alert_request import PreviewIssueCompoundAlertRequest
 from .preview_issue_lifecycle_alert_request import PreviewIssueLifecycleAlertRequest
 from .preview_issue_lifecycle_alert_request_event import PreviewIssueLifecycleAlertRequestEvent
+from .preview_list import PreviewList
 from .preview_platform_tenant_self_workflow_actions_body import PreviewPlatformTenantSelfWorkflowActionsBody
 from .preview_production_changes_response import PreviewProductionChangesResponse
 from .preview_production_changes_response_configuration_changed_groups_item import (
@@ -4269,6 +4345,24 @@ from .profile_canary_gate_policy_on_timeout import ProfileCanaryGatePolicyOnTime
 from .profile_canary_gate_state import ProfileCanaryGateState
 from .profile_canary_gate_state_status import ProfileCanaryGateStateStatus
 from .profile_canary_history_page import ProfileCanaryHistoryPage
+from .profile_capture import ProfileCapture
+from .profile_capture_diff import ProfileCaptureDiff
+from .profile_capture_diff_kind import ProfileCaptureDiffKind
+from .profile_capture_diff_unit import ProfileCaptureDiffUnit
+from .profile_capture_function import ProfileCaptureFunction
+from .profile_capture_function_delta import ProfileCaptureFunctionDelta
+from .profile_capture_kinds_item import ProfileCaptureKindsItem
+from .profile_capture_list import ProfileCaptureList
+from .profile_capture_profile import ProfileCaptureProfile
+from .profile_capture_profile_kind import ProfileCaptureProfileKind
+from .profile_capture_stack import ProfileCaptureStack
+from .profile_capture_stack_delta import ProfileCaptureStackDelta
+from .profile_capture_status import ProfileCaptureStatus
+from .profile_capture_trigger import ProfileCaptureTrigger
+from .profile_capture_view import ProfileCaptureView
+from .profile_capture_view_kind import ProfileCaptureViewKind
+from .profile_capture_view_unit import ProfileCaptureViewUnit
+from .profile_capture_webhook_payload import ProfileCaptureWebhookPayload
 from .profile_compare_request import ProfileCompareRequest
 from .profile_compare_response import ProfileCompareResponse
 from .profile_coverage import ProfileCoverage
@@ -4281,6 +4375,9 @@ from .profile_function_delta import ProfileFunctionDelta
 from .profile_gate_override import ProfileGateOverride
 from .profile_gate_route_streak import ProfileGateRouteStreak
 from .profile_gate_route_streak_status import ProfileGateRouteStreakStatus
+from .profile_heap_response import ProfileHeapResponse
+from .profile_heap_response_kind import ProfileHeapResponseKind
+from .profile_heap_response_unit import ProfileHeapResponseUnit
 from .profile_investigation import ProfileInvestigation
 from .profile_investigation_input import ProfileInvestigationInput
 from .profile_investigation_response import ProfileInvestigationResponse
@@ -4321,6 +4418,7 @@ from .profile_source_location import ProfileSourceLocation
 from .profile_stack import ProfileStack
 from .profile_stack_delta import ProfileStackDelta
 from .profiling_config import ProfilingConfig
+from .profiling_config_kinds_item import ProfilingConfigKindsItem
 from .programmatic_api_key import ProgrammaticAPIKey
 from .programmatic_auth_response import ProgrammaticAuthResponse
 from .programmatic_auth_response_plan import ProgrammaticAuthResponsePlan
@@ -4617,6 +4715,9 @@ from .put_billing_connection_request import PutBillingConnectionRequest
 from .put_billing_connection_request_collection import PutBillingConnectionRequestCollection
 from .put_billing_run_schedule_request import PutBillingRunScheduleRequest
 from .put_commit_source_connection_body import PutCommitSourceConnectionBody
+from .put_consumer_signup_request import PutConsumerSignupRequest
+from .put_consumer_signup_request_key_scopes_item import PutConsumerSignupRequestKeyScopesItem
+from .put_consumer_signup_request_provider import PutConsumerSignupRequestProvider
 from .put_data_upstream_request import PutDataUpstreamRequest
 from .put_data_upstream_request_kind import PutDataUpstreamRequestKind
 from .put_issue_saved_view_request import PutIssueSavedViewRequest
@@ -4625,6 +4726,8 @@ from .put_issue_tracker_link_request import PutIssueTrackerLinkRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
 from .put_operation_webhook_binding_request_mode import PutOperationWebhookBindingRequestMode
+from .put_outbound_ai_feedback_request import PutOutboundAIFeedbackRequest
+from .put_outbound_ai_feedback_request_rating import PutOutboundAIFeedbackRequestRating
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
@@ -4966,6 +5069,7 @@ from .route_awake_response import RouteAwakeResponse
 from .route_awake_route import RouteAwakeRoute
 from .route_awake_route_pattern import RouteAwakeRoutePattern
 from .route_awake_source import RouteAwakeSource
+from .route_awake_source_pattern import RouteAwakeSourcePattern
 from .route_awake_source_source import RouteAwakeSourceSource
 from .route_awake_suggestion import RouteAwakeSuggestion
 from .route_awake_suggestion_kind import RouteAwakeSuggestionKind
@@ -5365,6 +5469,7 @@ from .seal_scenario_postgres_request import SealScenarioPostgresRequest
 from .search_app_log_events_source import SearchAppLogEventsSource
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
+from .secret_file import SecretFile
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
 from .secret_revocation_target import SecretRevocationTarget
@@ -5827,6 +5932,7 @@ from .workflow_callback_response import WorkflowCallbackResponse
 from .workflow_callback_webhook_binding_response import WorkflowCallbackWebhookBindingResponse
 from .workflow_callback_webhook_receipt_response import WorkflowCallbackWebhookReceiptResponse
 from .workflow_callback_webhook_receipt_response_status import WorkflowCallbackWebhookReceiptResponseStatus
+from .workflow_code_spec import WorkflowCodeSpec
 from .workflow_condition_spec import WorkflowConditionSpec
 from .workflow_diagnostic_blocker import WorkflowDiagnosticBlocker
 from .workflow_diagnostic_blocker_code import WorkflowDiagnosticBlockerCode
@@ -6128,6 +6234,8 @@ __all__ = (
     "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AIDeploymentUsage",
+    "AIDeploymentUsageList",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseReadinessDestination",
     "AlertDeliveryResponseReadinessFailoverReason",
@@ -6152,6 +6260,7 @@ __all__ = (
     "AlertRuleResponseState",
     "AlertRuleResponseWindowSpec",
     "APIConsumerBillingPolicyResponse",
+    "APIConsumerClosedWebhookPayload",
     "APIConsumerCreditBalance",
     "APIConsumerCreditListResponse",
     "APIConsumerCreditResponse",
@@ -6161,6 +6270,7 @@ __all__ = (
     "APIConsumerOverdueHoldResponse",
     "APIConsumerPlanAssignmentListResponse",
     "APIConsumerPlanAssignmentResponse",
+    "APIConsumerPlanChangedWebhookPayload",
     "APIConsumerPlanListResponse",
     "APIConsumerPlanResponse",
     "APIConsumerRateCardListResponse",
@@ -6170,6 +6280,7 @@ __all__ = (
     "APIConsumerRateCardTier",
     "APIConsumerResponse",
     "APIConsumerResponseStatus",
+    "APIConsumerSignedUpWebhookPayload",
     "APIConsumerSpendCapResponse",
     "APIConsumerStatementFeeResponse",
     "APIConsumerStatementFeeResponseKind",
@@ -6226,6 +6337,14 @@ __all__ = (
     "AppEventPublishStatusResponseAcceptance",
     "AppEventPublishStatusResponseReason",
     "AppEventPublishStatusResponseStatus",
+    "AppForkExecListResponse",
+    "AppForkExecResponse",
+    "AppForkExecResponseFailure",
+    "AppForkExecResponseStatus",
+    "AppForkListResponse",
+    "AppForkResponse",
+    "AppForkResponseFailure",
+    "AppForkResponseStatus",
     "AppHealthCapacity",
     "AppHealthChangedWebhookPayload",
     "AppHealthChangedWebhookPayloadChange",
@@ -6724,6 +6843,7 @@ __all__ = (
     "CapabilityStatusMaturity",
     "CapabilityStatusPlansItem",
     "CapabilityStatusUnavailableReason",
+    "ChangeConsumerBillingPlanRequest",
     "ChangeManagedPostgresComputePolicyRequest",
     "ChangeMemberRoleRequest",
     "ChangeMemberRoleRequestRole",
@@ -6761,12 +6881,16 @@ __all__ = (
     "CommitSourceResponseContractVersion",
     "CommitSourceResponseDestination",
     "ComparePlatformTenantSelfWorkflowReadinessBody",
+    "CompleteConsumerSignupRequest",
+    "CompleteConsumerSignupResponse",
     "CompleteObjectMultipartUploadRequest",
     "CompleteWorkflowCallbackResponse",
     "CompleteWorkflowCallbackResponseStatus",
     "ComposeHealthcheck",
     "ComposeProcess",
     "ComposeProcessStopSignal",
+    "ComposeResources",
+    "ComposeResourcesCpuMillicores",
     "ConfigChangeReceipt",
     "ConfigGuard",
     "ConfigGuardDecision",
@@ -6794,10 +6918,14 @@ __all__ = (
     "ConnectionBudgetRuntimeObservationsState",
     "ConsumedCreditRow",
     "ConsumeInvoiceResponse",
+    "ConsumerBillingCloseResponse",
     "ConsumerBillingDay",
     "ConsumerBillingInvoice",
     "ConsumerBillingInvoicePaymentStatus",
     "ConsumerBillingPlan",
+    "ConsumerBillingPlanChangeResponse",
+    "ConsumerBillingPlansResponse",
+    "ConsumerBillingPortalResponse",
     "ConsumerBillingSpendCap",
     "ConsumerBillingStatement",
     "ConsumerBillingStatementsResponse",
@@ -6806,6 +6934,14 @@ __all__ = (
     "ConsumerKeyListResponse",
     "ConsumerKeyResponse",
     "ConsumerKeyResponseScopesItem",
+    "ConsumerSignupFormResponse",
+    "ConsumerSignupListResponse",
+    "ConsumerSignupPlan",
+    "ConsumerSignupPrice",
+    "ConsumerSignupResponse",
+    "ConsumerSignupResponseStatus",
+    "ConsumerSignupSettingsResponse",
+    "ConsumerSignupSettingsResponseProvider",
     "ControlApplicationStandardOperationRequest",
     "ControlDataPipelineRequest",
     "ControlDataPipelineRequestAction",
@@ -6817,6 +6953,13 @@ __all__ = (
     "ControlWorkflowRecoveryPolicyRequestOperation",
     "CorsPresetListResponse",
     "CorsPresetResponse",
+    "CrashCaptureListResponse",
+    "CrashCaptureResponse",
+    "CrashCaptureResponseFailure",
+    "CrashCaptureResponseStatus",
+    "CrashCaptureResponseTrigger",
+    "CrashSnapshotSettingsRequest",
+    "CrashSnapshotSettingsResponse",
     "CreateAccountReleaseWebhookRequest",
     "CreateAccountReleaseWebhookRequestDeliveryFormat",
     "CreateAccountReleaseWebhookRequestEventFilterItem",
@@ -6834,6 +6977,8 @@ __all__ = (
     "CreateAPIConsumerRateCardRequestTierMode",
     "CreateAPIConsumerRequest",
     "CreateAPIConsumerUsageStatementRequest",
+    "CreateAppForkExecRequest",
+    "CreateAppForkRequest",
     "CreateApplicationStandardLogDestinationRequest",
     "CreateApplicationStandardLogDestinationRequestKind",
     "CreateApplicationStandardPublisherRequest",
@@ -6865,8 +7010,11 @@ __all__ = (
     "CreateCommitSourceRequest",
     "CreateCommitSourceRequestContractVersion",
     "CreateCommitSourceRequestDestination",
+    "CreateConsumerBillingPortalRequest",
     "CreateConsumerKeyRequest",
     "CreateConsumerKeyRequestScopesItem",
+    "CreateConsumerSignupRequest",
+    "CreateConsumerSignupResponse",
     "CreateCorsPresetRequest",
     "CreateCronRequest",
     "CreateCustomDomainRequest",
@@ -6978,6 +7126,8 @@ __all__ = (
     "CreatePreviewRequest",
     "CreatePrivateNetworkPeeringRequest",
     "CreatePrivateNetworkRequest",
+    "CreateProfileCaptureRequest",
+    "CreateProfileCaptureRequestKindsItem",
     "CreateProjectBindingVerificationRunRequest",
     "CreateProjectBindingVerificationRunRequestReviewDigests",
     "CreateProjectEnvironmentApprovalRequest",
@@ -7340,6 +7490,7 @@ __all__ = (
     "DiffEnvRow",
     "DiffPayload",
     "DiffPayloadPlan",
+    "DiffProfileCapturesKind",
     "DiffRequest",
     "DiffRequestEnvByScope",
     "DiffResponse",
@@ -7361,6 +7512,7 @@ __all__ = (
     "DomainDoctorCheckName",
     "DomainDoctorCheckStatus",
     "DomainDoctorReport",
+    "DownloadProfileCaptureKind",
     "DryRunAppOpenAPIBody",
     "DryRunAppOpenAPIBodyInfo",
     "DryRunAppOpenAPIBodyPaths",
@@ -7393,6 +7545,7 @@ __all__ = (
     "DurableEntityValidatorDeploymentInfoStatus",
     "EdgeProtectionResponse",
     "EdgeProtectionResponseChallenge",
+    "EdgeProtectionResponsePenalty",
     "EdgeProtectionResponsePreAuth",
     "EdgeProtectionResponseRange",
     "EdgeProtectionResponseRejectionsItem",
@@ -7429,6 +7582,7 @@ __all__ = (
     "EdgeRuleMaintenanceAction",
     "EdgeRuleMatchExpr",
     "EdgeRuleMatchExprOp",
+    "EdgeRulePenalty",
     "EdgeRuleRecipeSuggestion",
     "EdgeRuleRecipeSuggestionAlternative",
     "EdgeRuleRecipeSuggestionAlternativeParams",
@@ -8069,6 +8223,7 @@ __all__ = (
     "GetObsRuleCoverageExpectedSet",
     "GetOpenAPISpecJSONResponse200",
     "GetOutboundAIPriceCatalogProvider",
+    "GetProfileCaptureViewKind",
     "GetRouteHealthInvestigationCustomerGroupBy",
     "GetRouteHealthInvestigationMethod",
     "GetRouteHealthInvestigationSignal",
@@ -9673,13 +9828,17 @@ __all__ = (
     "OperatorParkExecutionResponsePhase",
     "OperatorParkExecutionResponseTerminalState",
     "OperatorPlatformFlag",
+    "OperatorPlatformFlagAttributesItem",
     "OperatorPlatformFlagConvergence",
     "OperatorPlatformFlagDecision",
+    "OperatorPlatformFlagDecisionOptIn",
     "OperatorPlatformFlagDecisionReason",
+    "OperatorPlatformFlagDecisionScheduleState",
     "OperatorPlatformFlagGroups",
     "OperatorPlatformFlagGroupsGroups",
     "OperatorPlatformFlagGroupsReferences",
     "OperatorPlatformFlagList",
+    "OperatorPlatformFlagOptIns",
     "OperatorPlatformFlagSource",
     "OperatorPlatformFlagStatus",
     "OperatorRestartExecutionResponse",
@@ -9749,9 +9908,15 @@ __all__ = (
     "OutboundAIModerationCategoriesItem",
     "OutboundAIModerationKind",
     "OutboundAIModerationOnError",
+    "OutboundAIOnlineEvaluation",
     "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
+    "OutboundAIQualityAlert",
+    "OutboundAIQualityAlertList",
+    "OutboundAIQualityAlertMetric",
+    "OutboundAIQualityDriftWebhookPayload",
+    "OutboundAIQualityDriftWebhookPayloadMetric",
     "OutboundAIReplay",
     "OutboundAIReplayResult",
     "OutboundAIReplaySource",
@@ -9759,7 +9924,9 @@ __all__ = (
     "OutboundAIReplayTarget",
     "OutboundAIRequestContent",
     "OutboundAIRequestLogEntry",
+    "OutboundAIRequestLogEntryFeedback",
     "OutboundAIRequestLogEntryOutcome",
+    "OutboundAIRequestLogEntryQualityFlagsItem",
     "OutboundAIRequestLogList",
     "OutboundAIResponsePolicy",
     "OutboundAIResponsePolicyBlockedTerms",
@@ -9785,6 +9952,11 @@ __all__ = (
     "OutboundAITagUsageExportRow",
     "OutboundAITagUsageItem",
     "OutboundAITagUsageResponse",
+    "OutboundAITrace",
+    "OutboundAITraceCall",
+    "OutboundAITraceCallOutcome",
+    "OutboundAITraceList",
+    "OutboundAITraceResponse",
     "OutboundAIUsageItem",
     "OutboundAIUsageResponse",
     "OutboundAIUserUsageExportRow",
@@ -9842,9 +10014,17 @@ __all__ = (
     "PlanWorkloadDependsOnConditions",
     "PlanWorkloadDependsOnConditionsAdditionalProperty",
     "PlanWorkloadTier",
+    "PlanWorkloadUnsetEnvKeyReasons",
+    "PlanWorkloadUnsetEnvKeyReasonsAdditionalProperty",
+    "PlanWorkloadVisibility",
     "PlatformFlagDefinition",
+    "PlatformFlagOptIns",
+    "PlatformFlagRamp",
+    "PlatformFlagRampOnBreach",
     "PlatformFlagRule",
     "PlatformFlagRulePlansItem",
+    "PlatformFlagSelfServe",
+    "PlatformFlagSelfServePlansItem",
     "PlatformTenantAccessTokenListResponse",
     "PlatformTenantAccessTokenResponse",
     "PlatformTenantAccessTokenResponseScopesItem",
@@ -9987,6 +10167,7 @@ __all__ = (
     "PrepareManagedPostgresCutoverRequest",
     "PrepareProjectRollbackRequest",
     "PrepareWorkflowOperationArtifactXGregaleOperationExecutionKind",
+    "Preview",
     "PreviewAccountWorkflowActionsBody",
     "PreviewArtifactResponse",
     "PreviewCreatedWebhookPayload",
@@ -10012,6 +10193,7 @@ __all__ = (
     "PreviewIssueCompoundAlertRequest",
     "PreviewIssueLifecycleAlertRequest",
     "PreviewIssueLifecycleAlertRequestEvent",
+    "PreviewList",
     "PreviewPlatformTenantSelfWorkflowActionsBody",
     "PreviewProductionChangesResponse",
     "PreviewProductionChangesResponseConfigurationChangedGroupsItem",
@@ -10051,6 +10233,24 @@ __all__ = (
     "ProfileCanaryGateState",
     "ProfileCanaryGateStateStatus",
     "ProfileCanaryHistoryPage",
+    "ProfileCapture",
+    "ProfileCaptureDiff",
+    "ProfileCaptureDiffKind",
+    "ProfileCaptureDiffUnit",
+    "ProfileCaptureFunction",
+    "ProfileCaptureFunctionDelta",
+    "ProfileCaptureKindsItem",
+    "ProfileCaptureList",
+    "ProfileCaptureProfile",
+    "ProfileCaptureProfileKind",
+    "ProfileCaptureStack",
+    "ProfileCaptureStackDelta",
+    "ProfileCaptureStatus",
+    "ProfileCaptureTrigger",
+    "ProfileCaptureView",
+    "ProfileCaptureViewKind",
+    "ProfileCaptureViewUnit",
+    "ProfileCaptureWebhookPayload",
     "ProfileCompareRequest",
     "ProfileCompareResponse",
     "ProfileCoverage",
@@ -10063,6 +10263,9 @@ __all__ = (
     "ProfileGateOverride",
     "ProfileGateRouteStreak",
     "ProfileGateRouteStreakStatus",
+    "ProfileHeapResponse",
+    "ProfileHeapResponseKind",
+    "ProfileHeapResponseUnit",
     "ProfileInvestigation",
     "ProfileInvestigationInput",
     "ProfileInvestigationResponse",
@@ -10103,6 +10306,7 @@ __all__ = (
     "ProfileStack",
     "ProfileStackDelta",
     "ProfilingConfig",
+    "ProfilingConfigKindsItem",
     "ProgrammaticAPIKey",
     "ProgrammaticAuthResponse",
     "ProgrammaticAuthResponsePlan",
@@ -10369,6 +10573,9 @@ __all__ = (
     "PutBillingConnectionRequestCollection",
     "PutBillingRunScheduleRequest",
     "PutCommitSourceConnectionBody",
+    "PutConsumerSignupRequest",
+    "PutConsumerSignupRequestKeyScopesItem",
+    "PutConsumerSignupRequestProvider",
     "PutDataUpstreamRequest",
     "PutDataUpstreamRequestKind",
     "PutIssueSavedViewRequest",
@@ -10377,6 +10584,8 @@ __all__ = (
     "PutJobRegistryCredentialRequest",
     "PutOperationWebhookBindingRequest",
     "PutOperationWebhookBindingRequestMode",
+    "PutOutboundAIFeedbackRequest",
+    "PutOutboundAIFeedbackRequestRating",
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",
@@ -10706,6 +10915,7 @@ __all__ = (
     "RouteAwakeRoute",
     "RouteAwakeRoutePattern",
     "RouteAwakeSource",
+    "RouteAwakeSourcePattern",
     "RouteAwakeSourceSource",
     "RouteAwakeSuggestion",
     "RouteAwakeSuggestionKind",
@@ -11103,6 +11313,7 @@ __all__ = (
     "SearchAppLogEventsSource",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
+    "SecretFile",
     "SecretFinding",
     "SecretFindingSeverity",
     "SecretRevocationTarget",
@@ -11525,6 +11736,7 @@ __all__ = (
     "WorkflowCallbackWebhookBindingResponse",
     "WorkflowCallbackWebhookReceiptResponse",
     "WorkflowCallbackWebhookReceiptResponseStatus",
+    "WorkflowCodeSpec",
     "WorkflowConditionSpec",
     "WorkflowDiagnosticBlocker",
     "WorkflowDiagnosticBlockerCode",

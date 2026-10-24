@@ -123,6 +123,7 @@ import (
 	"golang.org/x/net/http2/h2c"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/bridgeproc"
 )
 
 // dialTimeout caps the inner-leg TCP dial against the guest.
@@ -164,6 +165,7 @@ const defaultSessionDeadline = 24 * time.Hour
 const requestChunkSize = 8 * 1024
 
 func main() {
+	bridgeproc.MustHarden()
 	if len(os.Args) != 5 {
 		fmt.Fprintf(os.Stderr, "usage: vmmd-stream-bridge <bind-unix-sock> <guest-ip> <guest-port> <deadline>\n")
 		os.Exit(2)

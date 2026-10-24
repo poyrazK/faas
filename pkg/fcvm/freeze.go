@@ -130,6 +130,7 @@ func (m *Manager) Freeze(ctx context.Context, instance string, opts FreezeOption
 		return FreezeReport{}, fmt.Errorf("freeze %s: %w", instance, err)
 	}
 	defer m.finishInstanceFlight(instance, flight)
+	defer m.beginAdoptionOp(instance, adoptionOpFreeze)()
 	gate, frozen, err := m.announceFreeze(inst)
 	if err != nil {
 		return FreezeReport{}, fmt.Errorf("freeze %s: %w", instance, err)
@@ -161,6 +162,7 @@ func (m *Manager) Freeze(ctx context.Context, instance string, opts FreezeOption
 	m.mu.Lock()
 	inst.Frozen, inst.FrozenSince = true, pausedAt
 	m.mu.Unlock()
+	m.markAdoptionDirty(instance)
 	m.freezeMetrics.observeFreeze(time.Since(started))
 	m.log.Info("frozen", "instance", instance, "reclaim", opts.Reclaim, "pause_ms", rep.Pause.Milliseconds(),
 		"reclaim_ms", rep.Reclaim.Milliseconds(), "before_bytes", rep.BeforeBytes,
@@ -334,6 +336,7 @@ func (m *Manager) ThawWith(ctx context.Context, instance string, opts ThawOption
 	if err := m.checkLiveAdmission(operationCtx, inst); err != nil {
 		return err
 	}
+	defer m.beginAdoptionOp(instance, adoptionOpThaw)()
 	// The guest runs again: its memory stays resident from here on.
 	if m.functionActivity != nil && functionlifetime.NativeNode(inst.Runtime) {
 		opts.RunResumeHook = true
@@ -357,6 +360,7 @@ func (m *Manager) clearFrozen(inst *Instance) {
 	m.mu.Lock()
 	inst.Frozen, inst.FrozenSince = false, time.Time{}
 	m.mu.Unlock()
+	m.markAdoptionDirty(inst.Lease.Instance)
 }
 
 // FrozenState reports whether an instance is frozen and since when, for

@@ -16,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 )
 
@@ -31,12 +30,13 @@ var errResourceJournalClosed = errors.New("resource journal closed")
 // or physical deletion by a replacement Manager.
 // No environment, command, credential or artifact contents are stored.
 type ResourceJournal struct {
-	mu            sync.Mutex
+	mu            journalMutex
 	dir           *os.Root
 	lock          *os.File
 	records       map[string]resourceJournalRecord
 	closed        bool
 	directorySync func() error
+	timing        map[string]resourceJournalTiming // see resource_journal_timing.go
 }
 
 type resourceProcessIdentity struct {
@@ -51,6 +51,8 @@ type resourceJournalRecord struct {
 	Process  *resourceProcessIdentity `json:"process,omitempty"`
 	Assets   []resourceAsset          `json:"assets,omitempty"`
 	Prepared *resourcePreparedNetwork `json:"prepared,omitempty"`
+	// Adoption is the version-7 adoption block (resource_adoption.go).
+	Adoption *resourceAdoption `json:"adoption,omitempty"`
 }
 
 func resourceRecordName(id string) string {
@@ -163,8 +165,8 @@ func (j *ResourceJournal) load() error {
 	identities := make(map[string]bool)
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == ".lock" {
-			continue
+		if name == ".lock" || name == resourceEpochFile {
+			continue // The epoch claim is read separately (resource_epoch.go).
 		}
 		if strings.HasPrefix(name, ".pending-") && entry.Type().IsRegular() {
 			if err := j.dir.Remove(name); err != nil {
@@ -234,7 +236,7 @@ func (j *ResourceJournal) readRecord(name string) (resourceJournalRecord, error)
 
 func (r resourceJournalRecord) validate() error {
 	l := r.Lease
-	if (r.Version < 1 || r.Version > 6) || !restartResourceID(l.Instance) || len(l.Instance) > 64 || l.Slot < 0 || l.Slot >= MaxSlots || (!r.preparedSpare() && (!l.Plan.Valid() || l.MemoryMaxMiB <= 0)) {
+	if (r.Version < 1 || r.Version > resourceAdoptionVersion) || !restartResourceID(l.Instance) || len(l.Instance) > 64 || l.Slot < 0 || l.Slot >= MaxSlots || (!r.preparedSpare() && (!l.Plan.Valid() || l.MemoryMaxMiB <= 0)) {
 		return errors.New("invalid resource journal lease/version")
 	}
 	want := leaseForSlot(l.Instance, l.Slot)
@@ -245,6 +247,9 @@ func (r resourceJournalRecord) validate() error {
 		return errors.New("invalid resource journal process incarnation")
 	}
 	if err := r.validatePrepared(); err != nil {
+		return err
+	}
+	if err := r.validateAdoption(); err != nil {
 		return err
 	}
 	return r.validateAssets()
@@ -301,6 +306,31 @@ func (j *ResourceJournal) persist(r resourceJournalRecord) error {
 	if len(b) > resourceRecordLimit {
 		return errors.New("oversized resource journal record")
 	}
+	key := r.timingKey()
+	j.noteCommit(key)
+	return j.persistFile(resourceRecordName(r.storageIdentity()), b, key, func() {
+		if r.Prepared != nil {
+			delete(j.records, r.Prepared.Source)
+			if r.Prepared.Source != key {
+				delete(j.timing, r.Prepared.Source) // the spare's own, off any wake's path
+			}
+		}
+		j.records[r.Lease.Instance] = r
+	})
+}
+
+// persistFile durably replaces one journal file: private temporary file,
+// fsync, atomic rename, then directory fsync. published runs once the rename
+// has replaced the target and before the directory fsync, even when that
+// fsync then fails. A non-empty key accounts the fsyncs to that record's
+// commit (noteCommit first). The caller holds j.mu.
+func (j *ResourceJournal) persistFile(target string, b []byte, key string, published func()) error {
+	synced := func(fn func() error) error {
+		if key == "" {
+			return fn()
+		}
+		return j.timedSync(key, fn)
+	}
 	name := ".pending-" + rand.Text()
 	f, err := j.dir.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
 	if err != nil {
@@ -312,20 +342,19 @@ func (j *ResourceJournal) persist(r resourceJournalRecord) error {
 		err = io.ErrShortWrite
 	}
 	if err == nil {
-		err = f.Sync()
+		err = synced(f.Sync)
 	}
 	err = errors.Join(err, f.Close())
 	if err != nil {
 		return err
 	}
-	if err = j.dir.Rename(name, resourceRecordName(r.storageIdentity())); err != nil {
+	if err = j.dir.Rename(name, target); err != nil {
 		return err
 	}
-	if r.Prepared != nil {
-		delete(j.records, r.Prepared.Source)
+	if published != nil {
+		published()
 	}
-	j.records[r.Lease.Instance] = r
-	return j.directorySync()
+	return synced(j.directorySync)
 }
 
 // forget is called after physical cleanup, before allocator release. An
@@ -338,6 +367,7 @@ func (j *ResourceJournal) forget(l Lease) error {
 	}
 	r, ok := j.recordForInstance(l.Instance)
 	if !ok {
+		delete(j.timing, l.Instance) // a commit that failed before its record existed
 		return nil
 	} // Validation failures can precede journal intent.
 	if !resourceLeaseMatches(r.Lease, l) && !pendingPreparedLeaseMatches(r, l) {
@@ -347,13 +377,17 @@ func (j *ResourceJournal) forget(l Lease) error {
 }
 
 func (j *ResourceJournal) forgetRecord(r resourceJournalRecord) error {
+	key := r.timingKey()
+	j.noteCommit(key)
 	if err := j.dir.Remove(resourceRecordName(r.storageIdentity())); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := j.directorySync(); err != nil {
+	if err := j.timedSync(key, j.directorySync); err != nil {
 		return err
 	}
 	delete(j.records, r.Lease.Instance)
+	delete(j.timing, key)
+	delete(j.timing, r.Lease.Instance)
 	return nil
 }
 
@@ -374,6 +408,7 @@ func (j *ResourceJournal) snapshot() ([]resourceJournalRecord, error) {
 			p := *r.Process
 			r.Process = &p
 		}
+		r.Adoption = r.Adoption.clone()
 		items = append(items, r)
 	}
 	return items, nil
@@ -409,6 +444,7 @@ func (j *ResourceJournal) lookup(instance string) (resourceJournalRecord, bool, 
 		p := *r.Process
 		r.Process = &p
 	}
+	r.Adoption = r.Adoption.clone()
 	return r, ok, nil
 }
 

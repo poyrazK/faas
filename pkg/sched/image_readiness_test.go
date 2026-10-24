@@ -78,6 +78,24 @@ func TestImageHealthcheckSpecProjection(t *testing.T) {
 			t.Fatalf("profile %s requires=%v want=%v", tc.raw, got, tc.want)
 		}
 	}
+	// A built service requires the check only when its profile froze a Compose
+	// healthcheck (ADR-20261019195000); a stray receipt alone never does.
+	const captured = `"image_healthcheck":{"version":"v1","override":{"test":["CMD","/check"]}}`
+	for _, tc := range []struct {
+		raw  string
+		want bool
+	}{
+		{`{"version":"v1","image_healthcheck_required":true}`, false}, {`{bad`, false},
+		{`{"version":"v1",` + captured + `,"image_healthcheck_required":true}`, true},
+		{`{"version":"v1",` + captured + `,"image_healthcheck_required":false}`, false},
+	} {
+		for _, kind := range []state.DeploymentKind{state.DeploymentKindDockerfile, state.DeploymentKindTarball, state.DeploymentKindGitHub} {
+			dep := state.Deployment{Kind: kind, InferredProfile: []byte(tc.raw)}
+			if got := imageHealthcheckRequiredFromDep(dep); got != tc.want {
+				t.Fatalf("%s profile %s requires=%v want=%v", kind, tc.raw, got, tc.want)
+			}
+		}
+	}
 	got := (AppSpec{ImageHealthcheckRequired: true}).toProto()
 	if !got.GetImageHealthcheckRequired() {
 		t.Fatal("wake wire lost required image check")

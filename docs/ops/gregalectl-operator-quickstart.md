@@ -192,7 +192,14 @@ authenticated API. Lifecycle mutations require an MFA-stepped-up operator
 session and create a durable `operator_intents` receipt retaining actor,
 reason, trace, preflight impact, and terminal outcome. Refresh the five-minute
 proof with `gregalectl auth step-up`; inspect or revoke it with `auth status` /
-`auth logout`.
+`auth logout`. `auth login` already counts as a step-up. Each authenticator code
+works once, across the CLI and the dashboard: a code that already verified a
+session is refused with "this code was already used", so wait for the next one.
+`auth step-up` does nothing when the last step-up is under a minute old, since
+the code on screen may be the one just used; `--force` asks anyway. A cookie
+passed in `FAAS_OPERATOR_SESSION` cannot be stepped up, because step-up
+re-issues the cookie: unset it and run `auth login`, which keeps a session file
+that step-up can refresh.
 
 `retired` is terminal and excluded from placement and automatic recovery. The
 row stays available for audit; do not re-enroll replacement hardware under the
@@ -301,6 +308,12 @@ combined into `custom`. Reserved resources count each app once, even when it has
 multiple live instances. Store read failures return 503 rather than zero totals.
 
 ### Telemetry health
+
+Every `gregalectl obs` read authenticates with, in order: an explicit
+`--admin-token`, the MFA-completed session from `gregalectl auth login`, then
+`$FAAS_ADMIN_TOKEN`. A logged-in operator therefore reads with MFA even with
+`FAAS_ADMIN_TOKEN` exported; automation without a session keeps using the
+token. `obs incidents --ownership mine` always needs the session.
 
 Run `gregalectl obs health` to inspect each audit counter and the firing-alert
 count independently. A `healthy` zero is observed zero activity. `no_samples`,

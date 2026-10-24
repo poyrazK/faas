@@ -10,12 +10,14 @@ import (
 )
 
 // cmdEdgeRulesEvents prints sampled requests edge rules matched (ADR-964),
-// newest first. --rule / --outcome filter; --cursor continues a listing.
+// newest first. --rule / --outcome / --request-id filter; --cursor continues
+// a listing.
 func cmdEdgeRulesEvents(args []string) int {
 	fs := newFlagSet("edge-rules events", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
 	rule := fs.String("rule", "", "only this rule id")
-	outcome := fs.String("outcome", "", "matched, logged, or a kind=waf detection: detected, warned, blocked")
+	outcome := fs.String("outcome", "", "matched, logged, a kind=waf detection (detected, warned, blocked) or a kind=challenge outcome (challenged, rejected, solved, failed)")
+	requestID := fs.String("request-id", "", "only this request, e.g. the reference a visitor without JavaScript saw on the challenge page")
 	since := fs.String("since", "24h", "how far back, e.g. 1h, 24h, 7d (clamped to the plan window)")
 	limit := fs.Int("limit", 50, "events per page (1..200)")
 	cursor := fs.String("cursor", "", "continue from a previous page's next cursor")
@@ -23,7 +25,7 @@ func cmdEdgeRulesEvents(args []string) int {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules events --app <slug> [--rule ID] [--outcome matched|logged|detected|warned|blocked] [--since 24h] [--limit N] [--cursor C]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules events --app <slug> [--rule ID] [--outcome OUTCOME] [--request-id ID] [--since 24h] [--limit N] [--cursor C]", "edge-rules")
 		return 1
 	}
 	client, err := authedClient()
@@ -31,7 +33,7 @@ func cmdEdgeRulesEvents(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	out, err := client.ListEdgeRuleEvents(context.Background(), *slug, api.EdgeRuleEventsQuery{
-		RuleID: *rule, Outcome: *outcome, Since: *since, Limit: *limit, Cursor: *cursor,
+		RuleID: *rule, Outcome: *outcome, RequestID: *requestID, Since: *since, Limit: *limit, Cursor: *cursor,
 	})
 	if err != nil {
 		return printErr("Events failed", err)
@@ -48,14 +50,16 @@ func printEdgeRuleEvents(slug string, out api.EdgeRuleEventsResponse) {
 		_, _ = fmt.Fprintf(osStdout, "(no edge-rule events on %s since %s)\n", slug, out.Since.Format("2006-01-02 15:04 MST"))
 		return
 	}
-	_, _ = fmt.Fprintf(osStdout, "%-20s %-8s %-24s %-7s %-39s %-3s %s\n", "TIME", "OUTCOME", "RULE", "METHOD", "CLIENT", "CC", "HOST+PATH")
+	// Rows are UTC like the empty-result line and the rest of the CLI; they
+	// were printed in the viewer's local zone with no label (Hunt 12).
+	_, _ = fmt.Fprintf(osStdout, "%-20s %-8s %-24s %-7s %-39s %-3s %s\n", "TIME (UTC)", "OUTCOME", "RULE", "METHOD", "CLIENT", "CC", "HOST+PATH")
 	for _, e := range out.Events {
 		rule := e.RuleName
 		if rule == "" {
 			rule = e.RuleID
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-20s %-8s %-24s %-7s %-39s %-3s %s\n",
-			e.OccurredAt.Local().Format("2006-01-02 15:04:05"), e.Outcome, truncate(rule, 24), e.Method,
+			e.OccurredAt.UTC().Format("2006-01-02 15:04:05"), e.Outcome, truncate(rule, 24), e.Method,
 			e.ClientIP, e.Country, truncate(e.Host+e.Path, 80))
 		if waf := e.WAFSummary(); waf != "" {
 			_, _ = fmt.Fprintf(osStdout, "%-20s waf: %s\n", "", waf)

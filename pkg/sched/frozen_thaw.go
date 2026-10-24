@@ -115,8 +115,8 @@ type frozenCandidate struct {
 
 // frozenCandidates lists the deployment's frozen rows, newest first, with
 // the wake's preferred instance (WithPreferredInstance) ahead of the rest.
-// Rows whose shape no longer matches the app, or whose node is gone or
-// stale, are parked. Each node is read once however many candidates it holds.
+// Rows whose shape no longer matches the app, or whose node is gone, stale
+// or leaving (draining, maintenance), are parked. Each node is read once however many candidates it holds.
 func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.Deployment) ([]frozenCandidate, error) {
 	instances, err := e.store.ListInstancesForApp(ctx, app.ID)
 	if err != nil {
@@ -139,6 +139,13 @@ func (e *Engine) frozenCandidates(ctx context.Context, app state.App, dep state.
 		}
 		if candidate.nodeMissing || candidate.haveNode && e.frozenNodeRowUnreachable(candidate.node) {
 			e.parkFrozenLocked(ctx, ins, "node_restart")
+			continue
+		}
+		// A node that no longer admits work must not take a VM back into
+		// service: a thaw there keeps the drain waiting on it
+		// (ADR-20261024085817). The wake then places a fresh instance.
+		if candidate.haveNode && nodeLeaving(candidate.node) {
+			e.parkFrozenLocked(ctx, ins, parkReasonNodeDraining)
 			continue
 		}
 		candidate.ins = ins

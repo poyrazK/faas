@@ -174,7 +174,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.anomalyAlertsGate(acct, req.Comparison); prob != nil {
+	if prob := s.anomalyAlertsGate(appFlagSubject(acct, app), req.Comparison); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -458,7 +458,7 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.anomalyAlertsGate(acct, string(merged.Comparison)); prob != nil {
+	if prob := s.anomalyAlertsGate(flagSubject(r, acct), string(merged.Comparison)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -856,8 +856,8 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // anomalyAlertsGate keeps baseline comparisons (ADR-744) dark until the
 // operator enables FAAS_ANOMALY_ALERTS_ENABLED, or releases the
 // anomaly_alerts platform flag (ADR-1700) to the account.
-func (s *server) anomalyAlertsGate(acct state.Account, comparison string) *api.Problem {
-	if api.IsAnomalyAlertComparison(comparison) && !s.platformFlagOr(platformflags.AnomalyAlerts, acct, s.anomalyAlertsEnabled) {
+func (s *server) anomalyAlertsGate(subject platformflags.Subject, comparison string) *api.Problem {
+	if api.IsAnomalyAlertComparison(comparison) && !s.platformFlagOr(platformflags.AnomalyAlerts, subject, s.anomalyAlertsEnabled) {
 		return api.NewProblem(http.StatusServiceUnavailable, "anomaly_alerts_unavailable",
 			"Anomaly alerts unavailable", "baseline comparisons are not enabled for this deployment")
 	}

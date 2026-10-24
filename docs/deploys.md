@@ -189,6 +189,8 @@ gregale release-gates add --name checkout-slo --slo checkout --max-burn-rate 10
 gregale release-gates add --name no-new-errors --new-errors --min-events 3
 # ...when orders per minute average below 5.
 gregale release-gates add --name orders --metric orders_per_minute --below 5
+# ...when its AI gateway calls cost 30% more each than the previous release's.
+gregale release-gates add --name ai-cost --ai cost_per_call --max-increase 30
 
 gregale release-gates list
 gregale release-gates rm orders
@@ -210,6 +212,15 @@ How each gate judges:
 - **`custom_metric` gates** bound the metric's average. Custom metrics are
   reported per app, not per revision, so these gates are most useful after
   the release takes all the traffic.
+- **`ai` gates** compare the release's AI gateway calls with the previous
+  release's ([ADR 20261022153155](adr/20261022153155-ai-signals-per-deployment-and-release-gates.md)):
+  `error_rate` (provider errors), `flagged_rate` (answers truncated, refused,
+  empty, invalid JSON or with a failed tool call), `cost_per_call` or
+  `ttfb_ms` (time to first byte). The gate fails when the release is more
+  than `--max-increase` percent worse (default 50), and worse by more than a
+  floor: 1 percentage point, 1 millicent per call or 50 ms. Both releases need
+  `--min-samples` calls. Only calls from the app's instances count;
+  `gregale ai deployments` lists them by deployment.
 
 A gate that has too few requests or values (`--min-samples`, default 20) is
 not judged. A gate never holds a rollout on missing evidence.
@@ -364,6 +375,17 @@ An `--after-rollback` freeze is a policy. Each time the rollout circuit
 breaker, the post-release watch, the first-wake 5xx guard or an alert rule
 rolls an app back, Gregale freezes that app for the given time. The freeze
 names the release that was rolled back, and you can lift it like any other.
+
+### Platform release pause
+
+While Gregale handles a security incident, it may pause new releases for
+every account
+([ADR-20261022140000](adr/20261022140000-break-glass-controls.md)). Deploys
+and new schedules then fail with 503 `platform_release_paused`, which nothing
+in the request overrides. Queued builds wait, and scheduled releases start
+once the pause is lifted. Your running apps keep serving, rollbacks still
+work, and you can still change env vars and secrets, so you can rotate a
+credential during the incident. Retry the deploy after the pause is lifted.
 
 ## Scheduled releases
 

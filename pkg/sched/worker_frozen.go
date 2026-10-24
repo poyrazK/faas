@@ -73,9 +73,8 @@ func (e *Engine) workerFreezeRefusal(ctx context.Context, app state.App, ins sta
 
 // workerConfigProofCurrent reports whether the worker's captured config proof
 // still matches its deployment's configuration, which a thaw requires
-// (ADR-1151). A worker whose proof is already stale would only stop at its
-// thaw. The app's first cold boot that observes a new workload class is one:
-// ADR-051 records the class after it publishes that worker's proof.
+// (ADR-1151). A worker whose proof is already stale, because its deployment's
+// configuration changed after its boot, would only stop at its thaw.
 func (e *Engine) workerConfigProofCurrent(ctx context.Context, app state.App, ins state.Instance) bool {
 	dep, err := e.store.DeploymentByID(ctx, ins.DeploymentID)
 	if err != nil {

@@ -202,6 +202,7 @@ WRAPPER_MODULES = (
     "idempotency.py",
     "executions.py",
     "release_context.py",
+    "crash_snapshots.py",
     "dev_bridge.py",
     "webhook.py",
     "auth.py",
@@ -293,6 +294,7 @@ WRAPPER_MODULES = (
     "business_effects.py",
     "business_compensation.py",
     "workflow_reconciliation.py",
+    "workflows.py",
 )
 PROJECT_FILES = ("pyproject.toml", "README.md")
 
@@ -512,7 +514,7 @@ def regen(overwrite: bool = True) -> None:
                         "--quiet",
                         str(sdk_root),
                         "--exclude",
-                        "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
+                        "_wrapper.py,_rfc7807.py,_sse.py,_transport.py,idempotency.py,executions.py,release_context.py,crash_snapshots.py,dev_bridge.py,webhook.py,flags.py,realtime_workers.py,realtime_activity.py,realtime_presence.py,realtime_publisher.py,realtime_scopes.py,realtime_read_progress.py,realtime_read_publisher.py,realtime_read_refresh.py,realtime_connection_status.py,realtime_health.py,realtime_catch_up.py,realtime_subscriptions.py,realtime_readiness.py,realtime_diagnostics.py,realtime_timeline.py,realtime_recovery.py,realtime_websocket.py,realtime_channels.py,realtime_websocket_presence.py,realtime_filters.py,realtime_websocket_reads.py,realtime_direct_messages.py,realtime_expiry.py,realtime_sse.py,realtime_transport.py,realtime_backpressure.py,realtime_drain.py,__init__.py",
                     ],
                     check=False,
                     capture_output=True,
@@ -822,6 +824,12 @@ from ._transport import RetryOptions, WrapperOptions, install_chain
 from ._wrapper import FaaSClient, FaaSClientOptions
 from .client import AuthenticatedClient, Client
 from .commit import CommitEventRouting, ainsert_commit_event, insert_commit_event
+from .crash_snapshots import (
+    CRASH_SNAPSHOT_ENDPOINT,
+    CrashSnapshotResult,
+    acapture_crash_snapshot,
+    capture_crash_snapshot,
+)
 from .customer_operations import (
     CustomerOperationConflictError,
     CustomerOperationPublicationError,
@@ -960,6 +968,10 @@ __all__ = (
     "AsyncGregaleReleaseTransport",
     "current_gregale_release",
     "with_gregale_release",
+    "CRASH_SNAPSHOT_ENDPOINT",
+    "CrashSnapshotResult",
+    "capture_crash_snapshot",
+    "acapture_crash_snapshot",
     "verify_webhook",
     "VerifiedWebhook",
     "WebhookVerificationError",

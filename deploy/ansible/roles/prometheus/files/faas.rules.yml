@@ -20,6 +20,26 @@
 # implicitly anchored, so the regex MUST match the case exactly.
 
 groups:
+  # ADR 20261021080640: preview platform flags carry a retire-by date. Past it,
+  # a ticket reminds operators to fold the preview into general availability
+  # or remove the flag, so flags do not accumulate as permanent gates.
+  - name: faas_platform_flags
+    interval: 1h
+    rules:
+      - alert: FaasPlatformFlagPastRetireBy
+        expr: |
+          max by (flag) (apid_platform_flag_retire_by_timestamp_seconds) < time()
+        for: 1h
+        labels:
+          severity: warn
+          component: apid
+          family: platform_flags
+          public_status: internal
+        annotations:
+          summary: "Platform flag {{ $labels.flag }} is past its retire-by date"
+          description: "The preview platform flag {{ $labels.flag }} has passed the retire-by date in its catalog entry. Release it to everyone and remove the gate, or move the date with a reason in the PR."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPlatformFlagPastRetireBy.md"
+
   # ADR-387: source discovery health is separate from approved-intent/runtime
   # convergence. Counts come from one durable fleet observation per scrape;
   # max avoids counting the same sources again on every apid replica.
@@ -728,6 +748,39 @@ groups:
           summary: "Compute nodes report different cluster signing kids"
           description: "More than one cluster signing kid is reported by verified fleet nodes. Internal-service JWTs can fail across nodes until every node verifies the current singleton key."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasFleetSealDomain.md"
+
+  # ADR 20261022111812: per-reader seal domains. `gregalectl seal-domain
+  # verify` (run by the seal_domains role) writes faas_seal_domain_ready to the
+  # node's textfile collector; a reader daemon exports faas_seal_domain_loaded
+  # from its start. Neither series exists until the domain is staged, so both
+  # alerts stay quiet before a rollout.
+  - name: seal_domains
+    interval: 30s
+    rules:
+      - alert: FaasSealDomainUnverified
+        expr: faas_seal_domain_ready == 0
+        for: 5m
+        labels:
+          severity: warn
+          family: seal_domains
+        annotations:
+          summary: "{{ $labels.instance }} could not prove the {{ $labels.domain }} seal domain"
+          description: "gregalectl seal-domain verify failed on {{ $labels.instance }}: the staged {{ $labels.domain }} identity is missing, or it does not open the domain probe. Once writers seal to the domain alone, the reader on this host cannot open that domain's secrets."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSealDomain.md"
+
+      - alert: FaasSealDomainIdentityMissing
+        expr: |
+          faas_seal_domain_loaded == 0
+          and on(domain)
+          (max by (domain) (faas_seal_domain_loaded) == 1)
+        for: 10m
+        labels:
+          severity: warn
+          family: seal_domains
+        annotations:
+          summary: "{{ $labels.job }} on {{ $labels.instance }} started without the {{ $labels.domain }} seal-domain identity"
+          description: "Other {{ $labels.job }} instances hold the {{ $labels.domain }} identity, but this one started without it. Once writers seal to the domain alone, it cannot open those secrets: for runtime, wakes on this node fail for every app with a secret sealed to the domain, which is every app once the re-seal has run. Stage the identity and restart the daemon before it takes traffic."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSealDomain.md"
 
   - name: gcp_ops_agent
     interval: 30s
@@ -3445,6 +3498,26 @@ groups:
           description: "Cold-boot fallback rate has exceeded 30 % of all wakes for 10m. The §6.2 budget is approaching saturation on the wake-economics curve — sustained cold-boot at this rate is ~3x the wake-side I/O of a healthy fleet and stresses lv-fc (pkg/fcvm/lvfc.go). Catching this trend before snapshot_fleet_avg exceeds 160 MB gives ~24 h headroom. Drill-down: `rate(vmmd_wake_failure_total{reason=\"disk_full\"}[5m])` (storage pressure), `fcvm_snapshot_fleet_avg_bytes` (growth signal). Recover: see docs/runbooks/FaasColdBootRatioHigh.md."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasColdBootRatioHigh.md"
 
+      # Hunt 12 H12-1: vmmd's base scan gate (issue #299) refused every boot
+      # of the python313 runner base on prod after a node-side Grype scan
+      # found two fixable CRITICAL findings, and nothing alerted. A refusal
+      # in every 10-minute window for 15 minutes catches a base that stays
+      # refused, even with sparse boots, and rides out the short
+      # sidecar-missing window after a release roll (H11-33): a single
+      # burst keeps increase(...[10m]) above zero for about 11 minutes on
+      # Prometheus 2.x, whose range selectors include the window's start.
+      - alert: FaasBaseScanRefusingBoots
+        expr: sum by (node, base, reason) (increase(vmmd_base_scan_refusals_total[10m])) > 0
+        for: 15m
+        labels:
+          severity: page
+          component: vmmd
+          family: base_scan_gate
+        annotations:
+          summary: "vmmd refuses to boot {{ $labels.base }} ({{ $labels.reason }}) on {{ $labels.node }}"
+          description: "vmmd's base scan gate has kept refusing boots on {{ $labels.base }} for fifteen minutes with reason {{ $labels.reason }}. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
+
       # ─────────────────────────────────────────────────────────────────
       # ADR-127 PR-B production debugger alerts. Mirrors the
       # FaasDomainDoctorStalled / FaasAuditRetentionLoopStalled
@@ -5630,6 +5703,38 @@ groups:
           description: "At least three terminal init snapshot attempts failed in 15m, and failures exceeded 10% of attempts. before_checkpoint_failed is excluded because it is an application callback rejection. Inspect the capture outcome dashboard and schedd/vmmd logs."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInitSnapshotCaptureFailures.md"
 
+  # ADR-20261023171905 unbilled quiet pause: schedd's pause ledger and what
+  # meterd subtracts from it. Both alerts mean customers were billed for pause
+  # time the ledger could not prove, never the reverse;
+  # docs/runbooks/FaasQuietPauseBilling.md covers them.
+  - name: faas_quiet_pause_billing
+    interval: 30s
+    rules:
+      - alert: FaasQuietPauseLedgerWriteErrors
+        expr: |
+          sum by (instance) (increase(schedd_quiet_pause_ledger_writes_total{outcome=~"error|load_error"}[15m])) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: quiet_pause_billing
+        annotations:
+          summary: "schedd on {{ $labels.instance }} cannot write the quiet pause ledger"
+          description: "At least three quiet pause ledger writes or open-pause loads failed in 15m. The node's watermark stops, so meterd bills open pauses as running time until the writes succeed. Check schedd logs for 'quiet pause ledger' and Postgres reachability."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasQuietPauseBilling.md"
+      - alert: FaasQuietPauseUnprovenMinutes
+        expr: |
+          sum (increase(meterd_quiet_pause_unproven_minutes_total{mode="on"}[1h])) > 30
+        for: 15m
+        labels:
+          severity: warn
+          component: meterd
+          family: quiet_pause_billing
+        annotations:
+          summary: "meterd is billing quiet pauses the ledger could not prove"
+          description: "More than 30 instance-minutes in 1h had an open quiet pause past its node's ledger watermark, so their uncovered pause time was billed. A schedd that stopped writing its node's ledger is the usual cause; see FaasQuietPauseLedgerWriteErrors and schedd_quiet_pause_ledger_watermark_seconds."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasQuietPauseBilling.md"
+
   # ADR-1151 pause tiers: the frozen tier and quiet pause. Warnings while the
   # tiers are in canary; the dashboard is deploy/grafana/frozen-tier.json and
   # docs/runbooks/FaasFrozenTier.md covers every alert.
@@ -6091,6 +6196,50 @@ groups:
           summary: "UDP peer resource limits are ending sessions"
           description: "UDP peer byte/message or transport resource limits are being reached repeatedly. Inspect client traffic and configured limits; this is distinct from an admission or forwarding failure."
 
+  - name: faas_object_storage
+    rules:
+      # ADR-20261023223000: a bucket whose inventory keeps failing becomes
+      # stale and refuses its own transfers; other buckets keep working.
+      - alert: FaasObjectStorageInventoryFailing
+        expr: |
+          sum(rate(faas_object_storage_inventory_scans_total{outcome="failed"}[15m]))
+            / clamp_min(sum(rate(faas_object_storage_inventory_scans_total[15m])), 1e-9) > 0.2
+          and sum(rate(faas_object_storage_inventory_scans_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Object storage inventory scans are failing"
+          description: "More than 20% of apid's bucket inventory scans failed over 15m. A bucket whose inventory is older than 900 s refuses its own uploads and reads until a scan succeeds."
+      - alert: FaasS3GatewayErrorRateHigh
+        expr: |
+          sum(rate(s3_gateway_ops_total{op="s3_request",code="5xx"}[10m]))
+            / clamp_min(sum(rate(s3_gateway_ops_total{op="s3_request"}[10m])), 1e-9) > 0.05
+          and sum(rate(s3_gateway_ops_total{op="s3_request"}[10m])) > 0.1
+        for: 10m
+        labels:
+          severity: warn
+          component: s3-gatewayd
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "s3-gatewayd is answering more than 5% of requests with 5xx"
+          description: "Provider failures, stale accounting or sustained SlowDown contention. Check s3-gatewayd logs by request status and the provider's status page."
+      - alert: FaasObjectStorageUsageExportStale
+        expr: time() - s3_gateway_usage_export_last_success_timestamp_seconds > 3600
+        for: 15m
+        labels:
+          severity: warn
+          component: s3-gatewayd
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Object storage provider usage export is stale"
+          description: "s3-gatewayd has not exported provider usage for backend {{ $labels.backend }} for over an hour. With provider-report accounting, admission fails closed once reports exceed max_report_age_seconds."
+
   - name: faas-durable-entity-health
     rules:
       - alert: FaasDurableEntityHealthScanFailed
@@ -6137,6 +6286,97 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDurableEntityHealth.md"
           summary: "Durable entity {{ $labels.target }} backlog has aged"
           description: "A recent rotation observed work older than five minutes. Alarm age starts at its saved deadline; outbox age uses known stored timestamps. This is sampled bucket backlog, not receiver-delivery latency."
+  # ADR-732/733: production forks and crash snapshots. Crash captures are
+  # copies of production memory: the DPA promises they are encrypted at
+  # rest within one imaged pass, so a missing key or a stuck backlog is
+  # a compliance problem, not only an availability one.
+  - name: faas_crash_snapshots
+    interval: 30s
+    rules:
+      - alert: FaasCrashCaptureEncryptionKeyMissing
+        expr: max(imaged_crash_capture_encryption_key_missing) == 1
+        for: 5m
+        labels:
+          severity: page
+          component: imaged
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "Crash captures are not being encrypted: imaged has no host age identity"
+          description: "imaged has crash captures waiting for encryption and no host age identity (FAAS_HOST_AGE_IDENTITY_PATH). Their plaintext stays on disk until the key is restored."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+      - alert: FaasCrashCaptureUnencrypted
+        expr: max(imaged_crash_capture_unencrypted_oldest_age_seconds) > 120
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "A crash capture has been unencrypted for more than 2 minutes"
+          description: "ADR-733 encrypts a ready crash capture within one 5 s imaged pass. The oldest unencrypted capture is over 2 minutes old; check imaged_crash_capture_ops_total{op=\"encrypt\",result=\"error\"} and imaged logs."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+      - alert: FaasCrashCaptureFileOpErrors
+        expr: sum by (op) (increase(imaged_crash_capture_ops_total{result="error"}[30m])) >= 3
+        for: 5m
+        labels:
+          severity: warn
+          component: imaged
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "Crash capture {{ $labels.op }} is failing"
+          description: "imaged failed to {{ $labels.op }} crash capture files at least three times in 30m. A failing purge leaves plaintext on disk; a failing expire keeps captures past their retention."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+      - alert: FaasCrashCaptureFailures
+        expr: |
+          (
+            sum by (trigger) (increase(schedd_crash_captures_total{result=~"capture_failed|capture_timeout"}[1h])) >= 3
+          )
+          and on (trigger)
+          (
+            sum by (trigger) (increase(schedd_crash_captures_total{result=~"capture_failed|capture_timeout"}[1h]))
+            /
+            clamp_min(sum by (trigger) (increase(schedd_crash_captures_total[1h])), 1)
+            > 0.5
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "Crash captures ({{ $labels.trigger }}) are failing"
+          description: "At least three crash captures failed or timed out in 1h, more than half of all attempts. A failed capture destroys the instance it paused; check schedd and vmmd logs for the snapshot error."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
+
+      - alert: FaasForkRestoreFailures
+        expr: |
+          (
+            sum by (source) (increase(schedd_fork_restores_total{result="restore_failed"}[1h])) >= 3
+          )
+          and on (source)
+          (
+            sum by (source) (increase(schedd_fork_restores_total{result="restore_failed"}[1h]))
+            /
+            clamp_min(sum by (source) (increase(schedd_fork_restores_total[1h])), 1)
+            > 0.5
+          )
+        for: 5m
+        labels:
+          severity: warn
+          component: schedd
+          family: crash_snapshots
+          public_status: internal
+        annotations:
+          summary: "Fork restores from {{ $labels.source }} are failing"
+          description: "At least three fork restores failed with restore_failed in 1h, more than half of all attempts. Customer-side refusals (no_capture, no_capacity, account_inactive, deployment_unavailable) are excluded."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
 
   # ─────────────────────────────────────────────────────────────────
   # Spec §12 operator signals (ADR-1235). These rows of the §12 table

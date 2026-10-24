@@ -57,14 +57,14 @@ jobs:
       CUSTOMER_MIGRATION_DATABASE_URL: postgres://customer_migration:customer_migration_test@127.0.0.1:5432/customer_platform?sslmode=disable
       CUSTOMER_DATABASE_URL: postgres://customer_app:customer_test@127.0.0.1:5432/customer_platform?sslmode=disable
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Restore-only: read main's non-race `checks` Go cache instead of letting
       # setup-go save a ~0.8 GB entry per pull-request ref, which evicted main's
       # CI cache families from the 10 GB repository budget.
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + module cache from main
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -73,11 +73,11 @@ jobs:
           restore-keys: |
             go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-checks-${{ runner.os }}-
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false  # restored from main above
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
       - name: Create separate schema-owner and runtime roles
@@ -120,8 +120,8 @@ jobs:
           --health-timeout 3s
           --health-retries 10
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
           cache: npm

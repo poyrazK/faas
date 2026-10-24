@@ -634,6 +634,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return fmt.Errorf("schedd: init engine: %w", err)
 	}
+	// vmmd restart adoption ADR §3: creates retry through a planned vmmd
+	// restart instead of failing.
+	vmmRouter.WithRestartNotices(engine.RestartNotices())
 	validatorArtifacts, artifactErr := validatorbundle.OpenArtifacts(os.Getenv)
 	if artifactErr != nil {
 		return artifactErr
@@ -935,9 +938,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	recoveryArbiter := sched.NewArbiter(
 		sched.MigrationDispatcherFunc(engine.MigrateRecoveryInstance),
 		engine,
-	)
+	).WithParkDispatcher(engine)
 	engine.WithRecoveryArbiter(recoveryArbiter)
-	recoveryRunner := sched.NewRecoveryRunner(store, recoveryArbiter, eventsPlatform, log)
+	recoveryRunner := sched.NewRecoveryRunner(store, recoveryArbiter, eventsPlatform, log).
+		WithNodeObserver(engine.ObserveNodeLifecycles)
 	go func() {
 		if err := recoveryRunner.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Warn("schedd: recovery runner: run returned", "err", err)
@@ -1600,6 +1604,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// interval through runDeps.heartbeatInterval.
 	hb := sched.NewHeartbeat(store, sched.HeartbeatDialerFunc(deps.dialVMM), vmmTLS, log).
 		WithOwnerNodeID(ownerNodeID).
+		WithRestartNotices(engine.RestartNotices()).
 		WithStalePeerObserver(ownerNodeID != "").
 		WithStoreOutageAtStartup(storeOutageAtStartup).
 		WithNodeRegistry(nodeRegistry).
@@ -1653,12 +1658,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithEgressAbuseHandler(func(ctx context.Context, row instancestats.InstanceStat, reason sched.EgressAbuseReason, observed, limit int64) error {
 			return engine.RecycleForEgressAbuse(ctx, row.InstanceID, reason, observed, limit)
 		})
+	if os.Getenv("FAAS_PROFILING_ON_DEMAND") == "1" {
+		statsPoller.WithCPUSaturationHandler(cpuSaturationCaptures{engine: engine, log: log})
+		log.Info("automatic CPU captures on CPU saturation enabled (ADR-1155)")
+	}
 	if cfg.MeasuredAdmission {
 		engine.Ledger().EnableMeasuredAdmission(func(nodeID string) (int, time.Time, bool) {
 			return reader.MeasuredMB(nodeID, time.Now())
 		})
 		log.Info("measured admission enabled (ADR-909)",
 			"max_overcommit_percent", api.MeasuredAdmissionMaxOvercommitPercent)
+	}
+	if cfg.QuietPauseLedger {
+		ledger := instancestats.NewPauseLedger(store,
+			time.Duration(api.QuietPauseLedgerFlushSeconds)*time.Second, log,
+			instancestats.NewPauseLedgerMetrics(ops.Registry()))
+		statsPoller.WithPauseLedger(ledger)
+		log.Info("quiet pause ledger enabled (ADR-20261023171905)",
+			"flush_seconds", api.QuietPauseLedgerFlushSeconds)
 	}
 	if cfg.QuietPauseAdmission {
 		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
@@ -1675,7 +1692,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.FrozenTierWorkers {
 			engine.EnableFrozenTierWorkers()
 		}
+		if cfg.FrozenTierEarlyFreezeAfterS > 0 {
+			engine.EnableEarlyFreeze(time.Duration(cfg.FrozenTierEarlyFreezeAfterS) * time.Second)
+		}
 		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps, "workers", cfg.FrozenTierWorkers,
+			"early_freeze_after_s", cfg.FrozenTierEarlyFreezeAfterS,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
 	}
 	if cfg.FrozenFastPath {
@@ -1944,6 +1965,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("schedd: instance divergence sweep wired",
 		"interval_s", api.InstanceDivergenceIntervalSeconds,
 		"enforce", sched.DivergenceEnforceEnabled())
+	// vmmd restart adoption ADR §3: after a vmmd restart, fail the rows
+	// whose guests the new vmmd did not adopt. A node whose vmmd does not
+	// adopt never claims an epoch, so this stays idle there.
+	adoptionReports := sched.NewAdoptionReportReconciler(engine, log)
+	loop.WithAdoptionReports(sched.NewDeadNodeReconciler(
+		adoptionReports.Reconcile,
+		time.Duration(api.AdoptionReportIntervalSeconds)*time.Second,
+		log))
 	// Issue #171: share a single HTTPPromScraper between the gateway
 	// scrape path for the RPS scale-up trigger and the aggressive-
 	// reaper signal mirror.
@@ -2280,6 +2309,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}, log)
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}
+	crashForkMetrics := wire.NewCrashForkMetrics(ops.Registry())
+	var forkCoordinator *sched.ForkCoordinator
+	if appForksEnabled(os.Getenv("FAAS_APP_FORKS")) {
+		// ADR-732: the lease owner scopes TTL teardown to this scheduler,
+		// so it must name this process's node.
+		owner := strings.TrimSpace(ownerNodeID)
+		if owner == "" {
+			owner = "schedd"
+		}
+		forkCoordinator = sched.NewForkCoordinator(store, engine, sched.ForkCoordinatorConfig{Owner: owner, Metrics: crashForkMetrics}, log).
+			WithForkExecs(store, engine)
+		log.Info("schedd: production forks enabled", "owner", owner)
+	}
 	loopErr := make(chan error, 1)
 	loopDone := make(chan struct{})
 	go func() {
@@ -2332,6 +2374,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				log.Error("schedd: app task coordinator exited", "err", err)
 			}
 		}()
+	}
+	if forkCoordinator != nil {
+		go forkCoordinator.Run(ctx)
+	}
+	if strings.TrimSpace(os.Getenv("FAAS_CRASH_SNAPSHOTS")) == "1" {
+		// ADR-733: captures pause a serving instance, so one coordinator
+		// runs them one at a time. vmmd seals every capture at the source,
+		// so plaintext never reaches storage (local or remote) or a node's
+		// read-through cache.
+		engine.WithSealedCrashCaptures(true)
+		go sched.NewCrashCaptureCoordinator(store, engine, 0, log).WithMetrics(crashForkMetrics).Run(ctx)
+		log.Info("schedd: crash snapshots enabled", "sealed_at_source", true)
 	}
 
 	// Issue #757 / ADR-0NN (commit #16): trigger dispatch

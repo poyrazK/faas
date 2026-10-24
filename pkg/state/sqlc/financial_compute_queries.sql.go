@@ -252,6 +252,57 @@ func (q *Queries) FinancialComputeAppOwned(ctx context.Context, db DBTX, arg Fin
 	return owned, err
 }
 
+const financialComputeAppPolicies = `-- name: FinancialComputeAppPolicies :many
+SELECT p.id, p.account_id, p.revision, p.spec, p.created_at, p.updated_at, p.deleted_at, COALESCE(a.project_id::text,'')::text AS project_id
+FROM financial_budget_policies p
+LEFT JOIN apps a ON a.account_id=p.account_id AND a.id=$1::uuid
+WHERE p.account_id=$2::uuid AND p.deleted_at IS NULL
+ORDER BY p.id LIMIT $3::integer
+`
+
+type FinancialComputeAppPoliciesParams struct {
+	AppID     pgtype.UUID
+	AccountID pgtype.UUID
+	PageSize  int32
+}
+
+type FinancialComputeAppPoliciesRow struct {
+	FinancialBudgetPolicy FinancialBudgetPolicy
+	ProjectID             string
+}
+
+// The account's budgets with the app's project, the one scope an app's
+// budget check needs without a deployment. An account without budgets reads
+// no app row; every admission of its apps runs this.
+func (q *Queries) FinancialComputeAppPolicies(ctx context.Context, db DBTX, arg FinancialComputeAppPoliciesParams) ([]FinancialComputeAppPoliciesRow, error) {
+	rows, err := db.Query(ctx, financialComputeAppPolicies, arg.AppID, arg.AccountID, arg.PageSize)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []FinancialComputeAppPoliciesRow{}
+	for rows.Next() {
+		var i FinancialComputeAppPoliciesRow
+		if err := rows.Scan(
+			&i.FinancialBudgetPolicy.ID,
+			&i.FinancialBudgetPolicy.AccountID,
+			&i.FinancialBudgetPolicy.Revision,
+			&i.FinancialBudgetPolicy.Spec,
+			&i.FinancialBudgetPolicy.CreatedAt,
+			&i.FinancialBudgetPolicy.UpdatedAt,
+			&i.FinancialBudgetPolicy.DeletedAt,
+			&i.ProjectID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const financialComputeAppScopes = `-- name: FinancialComputeAppScopes :one
 SELECT COALESCE(a.project_id::text,'')::text AS project_id, COALESCE(d.id::text,'')::text AS deployment_id,
  COALESCE(financial_compute_deployment_environment(d.id)::text,'')::text AS environment_id

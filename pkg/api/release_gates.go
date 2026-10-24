@@ -12,7 +12,7 @@ import (
 // ReleaseGate is one of an app's release gates (ADR-20261019071734).
 type ReleaseGate struct {
 	Name string `json:"name"`
-	// Kind is slo, new_errors or custom_metric.
+	// Kind is slo, new_errors, custom_metric or ai.
 	Kind string `json:"kind"`
 	// SLO names the SLO an slo gate judges; MaxBurnRate fails the gate.
 	SLO         string `json:"slo,omitempty"`
@@ -21,12 +21,15 @@ type ReleaseGate struct {
 	MaxNewGroups *int `json:"max_new_groups,omitempty"`
 	MinEvents    int  `json:"min_events,omitempty"`
 	// Metric, Comparison (below or above) and Threshold configure a
-	// custom_metric gate.
-	Metric     string   `json:"metric,omitempty"`
-	Comparison string   `json:"comparison,omitempty"`
-	Threshold  *float64 `json:"threshold,omitempty"`
-	// MinSamples is the requests or metric values a release needs before
-	// the gate is judged.
+	// custom_metric gate. An ai gate takes Metric (error_rate,
+	// flagged_rate, cost_per_call or ttfb_ms) and MaxIncreasePercent, the
+	// largest increase over the baseline (ADR 20261022153155).
+	Metric             string   `json:"metric,omitempty"`
+	Comparison         string   `json:"comparison,omitempty"`
+	Threshold          *float64 `json:"threshold,omitempty"`
+	MaxIncreasePercent int      `json:"max_increase_percent,omitempty"`
+	// MinSamples is the requests, metric values or AI calls a release
+	// needs before the gate is judged.
 	MinSamples int    `json:"min_samples"`
 	CreatedBy  string `json:"created_by"`
 	CreatedAt  string `json:"created_at"`
@@ -44,7 +47,9 @@ type CreateReleaseGateRequest struct {
 	Metric       string   `json:"metric,omitempty"`
 	Comparison   string   `json:"comparison,omitempty"`
 	Threshold    *float64 `json:"threshold,omitempty"`
-	MinSamples   int      `json:"min_samples,omitempty"`
+	// MaxIncreasePercent configures an ai gate (ADR 20261022153155).
+	MaxIncreasePercent int `json:"max_increase_percent,omitempty"`
+	MinSamples         int `json:"min_samples,omitempty"`
 }
 
 // ListReleaseGatesResponse lists an app's release gates.
@@ -58,11 +63,13 @@ type ReleaseGateResult struct {
 	Name   string `json:"name"`
 	Kind   string `json:"kind"`
 	Passed bool   `json:"passed"`
-	// Observed is the burn rate, the number of new error groups, or the
-	// metric average; Bound is the value that fails the gate.
+	// Observed is the burn rate, the number of new error groups, the
+	// metric average, or the release's AI metric; Bound is the value that
+	// fails the gate.
 	Observed float64 `json:"observed"`
 	Bound    float64 `json:"bound"`
-	// Samples is the release's requests, new-error events, or metric values.
+	// Samples is the release's requests, new-error events, metric values or
+	// AI calls.
 	Samples int64 `json:"samples"`
 	// BaselineBadFraction is the predecessor's bad fraction (slo gates).
 	BaselineBadFraction float64 `json:"baseline_bad_fraction,omitempty"`
@@ -76,7 +83,7 @@ func (r ReleaseGateResult) valid() bool {
 		return false
 	}
 	switch r.Kind {
-	case "slo", "new_errors", "custom_metric":
+	case "slo", "new_errors", "custom_metric", "ai":
 	default:
 		return false
 	}

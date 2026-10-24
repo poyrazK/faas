@@ -7,6 +7,7 @@ import type { AppManifestHealthcheck } from './AppManifestHealthcheck.js';
 import type { BeforeCheckpointHook } from './BeforeCheckpointHook.js';
 import type { PreAuthRateLimitConfig } from './PreAuthRateLimitConfig.js';
 import type { ProfilingConfig } from './ProfilingConfig.js';
+import type { SecretFile } from './SecretFile.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceReplicas } from './ServiceReplicas.js';
 import type { TracingConfig } from './TracingConfig.js';
@@ -18,6 +19,10 @@ import type { WorkloadPort } from './WorkloadPort.js';
 export type AppManifest = {
   profiling?: ProfilingConfig;
   tracing?: TracingConfig;
+  /**
+   * Dormant on-demand profile collectors stamped by imaged (ADR-1155).
+   */
+  profiling_on_demand?: boolean;
   entrypoint: Array<string>;
   env?: Record<string, string>;
   /**
@@ -49,6 +54,10 @@ export type AppManifest = {
    * Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal. Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506).
    */
   secret_reload_readiness?: boolean;
+  /**
+   * App secrets guest-init writes to /run/secrets for the main workload (ADR-20261023090000). Set from the app's Compose service secrets.
+   */
+  secret_files?: Array<SecretFile>;
   /**
    * OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4.
    */

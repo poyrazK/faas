@@ -143,7 +143,8 @@ type CoordInstance struct {
 //
 // MaxInFlight is the selected deployment's configured instance ceiling;
 // PerVM is how many concurrent requests one instance is expected to
-// absorb (the plan's ConcurrencyPerVMBound). Existing is the scheduler
+// absorb (the app's per_instance_concurrency, else the plan's
+// ConcurrencyPerVMBound; ADR-20261022203523). Existing is the scheduler
 // ledger's count for its environment across RUNNING, WAKING, and COLD_BOOTING
 // when a coordinator generation begins. A zero or negative value in
 // either limit field disables fan-out and restores strict single-flight,

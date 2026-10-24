@@ -47,6 +47,14 @@ type SecretRuntimeReloadObservation struct {
 	ApplicationAckErrorCode string `json:"application_ack_error_code,omitempty"`
 }
 
+// errEmptySecretValue refuses an empty secret value. The seal path cannot
+// fingerprint an empty plaintext, so without this check an empty value
+// reached it and came back as a 503 "Secret storage temporarily
+// unavailable" (Hunt 11 H11-39): a validation case reported as an outage.
+func errEmptySecretValue() *Problem {
+	return ErrValidation("secret value must not be empty; to remove a secret, run `gregale secrets unset`")
+}
+
 // Validate enforces the byte cap against maxBytes. Used by apid's PUT
 // handler so the cap is checked before pkg/secretbox ever sees the value
 // (defense in depth — secretbox.SealOne also checks).
@@ -54,6 +62,9 @@ type SecretRuntimeReloadObservation struct {
 // Returns *Problem directly (not error) so the call site can pass it
 // straight to api.WriteProblem without an AsProblem unwrap.
 func (r PutAppSecretRequest) Validate(maxBytes int) *Problem {
+	if r.Value == "" {
+		return errEmptySecretValue()
+	}
 	if maxBytes > 0 && len(r.Value) > maxBytes {
 		return ErrSecretValueTooLarge(Limits{SecretValueMaxBytes: maxBytes}, len(r.Value))
 	}
@@ -308,6 +319,9 @@ type RotateAppSecretRequest struct {
 // PutAppSecretRequest.Validate so the rotate and PUT paths share the
 // pre-seal cap enforcement.
 func (r RotateAppSecretRequest) Validate(maxBytes int) *Problem {
+	if r.Value == "" {
+		return errEmptySecretValue()
+	}
 	if maxBytes > 0 && len(r.Value) > maxBytes {
 		return ErrSecretValueTooLarge(Limits{SecretValueMaxBytes: maxBytes}, len(r.Value))
 	}

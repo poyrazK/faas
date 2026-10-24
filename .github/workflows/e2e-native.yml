@@ -90,7 +90,7 @@ permissions:
   id-token: write
 
 env:
-  GO_VERSION: "1.26.9"
+  GO_VERSION: "1.26.10"
   GCP_PROJECT: project-5ae37259-04cf-4070-bef
   GCP_ZONE: europe-west3-c
   GCP_INSTANCE: faas-acceptance-1
@@ -121,17 +121,17 @@ jobs:
         run: |
           echo 'optional promotion qualification requires the project-environment-promotion-only lane' >&2
           exit 1
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
           cache: 'npm'
@@ -159,13 +159,13 @@ jobs:
 
       - id: auth
         name: Authenticate to GCP with GitHub OIDC
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       - name: Start the acceptance node when CI owns its lifecycle
         id: compute-node
@@ -662,7 +662,7 @@ jobs:
 
       - name: Refresh GCP authentication for cleanup
         if: always() && steps.auth.outcome == 'success'
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -995,7 +995,7 @@ jobs:
 
       - name: Upload e2e log
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: native-e2e-${{ github.sha }}-${{ matrix.group }}
           path: |
@@ -1044,10 +1044,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
-      - uses: actions/download-artifact@v5
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           pattern: native-e2e-${{ github.sha }}-*
           path: ${{ runner.temp }}/native-evidence
@@ -1065,21 +1065,21 @@ jobs:
           if [[ "$EVENT_NAME" == schedule ]]; then selected_lane=full; fi
           native_e2e_combined_verdict "$GITHUB_WORKSPACE" "$RUNNER_TEMP/native-evidence" "$GITHUB_SHA" "$JOB_RESULT" "$selected_lane" "${QUALIFY_SERVICE_GRAPH:-false}" "${QUALIFY_COORDINATED:-false}"
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always() && inputs.lane == 'project-environment-promotion-only'
         with:
           name: promotion-qualification-${{ github.sha }}
           path: ${{ runner.temp }}/native-evidence/promotion-qualification.json
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always() && inputs.lane == 'project-environment-promotion-only' && (inputs.qualify_service_graph || inputs.qualify_coordinated)
         with:
           name: service-graph-qualification-${{ github.sha }}
           path: ${{ runner.temp }}/native-evidence/service-graph-qualification.json
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: always() && inputs.lane == 'project-environment-promotion-only' && inputs.qualify_coordinated
         with:
           name: coordinated-qualification-${{ github.sha }}
@@ -1094,11 +1094,11 @@ jobs:
     # compilation/cleanup; 300m leaves staging, collection and node-stop time.
     timeout-minutes: 300
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
@@ -1111,12 +1111,12 @@ jobs:
           bash scripts/ci/package-go-toolchain.sh "$(go env GOROOT)" "$RUNNER_TEMP/binding-go.tar.gz"
       - id: auth
         name: Authenticate to GCP with GitHub OIDC
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
       - name: Start the dedicated acceptance node
         id: compute-node
         run: |
@@ -1157,7 +1157,7 @@ jobs:
             --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=270m --property=TimeoutStopSec=120 --property='StandardOutput=append:$remote_root/binding-native.log' --property='StandardError=append:$remote_root/binding-native.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' /bin/bash scripts/ci/run-binding-native.sh"
       - name: Refresh binding authentication for cleanup
         if: always() && steps.auth.outcome == 'success'
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -1182,7 +1182,7 @@ jobs:
           test -s "$RUNNER_TEMP/binding-evidence/summary.json"
       - name: Retain binding reports
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: binding-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/binding-evidence/*.json
@@ -1215,17 +1215,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 100
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
           cache: 'npm'
@@ -1253,13 +1253,13 @@ jobs:
 
       - id: auth
         name: Authenticate to GCP with GitHub OIDC
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       - name: Start the acceptance node when CI owns its lifecycle
         id: compute-node
@@ -1332,7 +1332,7 @@ jobs:
 
       - name: Refresh GCP authentication for cleanup
         if: always() && steps.auth.outcome == 'success'
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -1377,7 +1377,7 @@ jobs:
 
       - name: Upload financial evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: native-financial-system-${{ github.sha }}
           path: |

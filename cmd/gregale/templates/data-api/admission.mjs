@@ -4,7 +4,7 @@ import { markAdmission } from './logging.mjs'
 // One gate per HTTP server, before asynchronous verification or upstream work.
 // A disconnect cannot release an active verifier until that verifier settles.
 export function createAdmission(concurrency, reject) {
-  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > limits.pool) throw Error('Invalid admission concurrency')
+  if (!Number.isInteger(concurrency) || concurrency < 1 || concurrency > limits.poolMax) throw Error('Invalid admission concurrency')
   let active = 0
   const queue = []
   const gone = (req, res) => req.aborted || res.destroyed || res.writableEnded

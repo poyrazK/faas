@@ -1,0 +1,214 @@
+# ADR-732 · Production forks: quarantined debug restores of an app's capture
+
+- **Status:** proposed
+- **Date:** 2026-10-08
+- **Amends:** spec §6.1/§6.2 (a new non-serving instance mode and how it
+  counts against invariants 1 and 2), spec §7 (a per-instance egress mode),
+  ADR-031 (a quarantined instance ignores the app egress allowlist), ADR-159
+  (a capture can be restored into a non-serving instance).
+- **Decision:**
+  - **What a fork is.** A customer asks for a fork of an app. Gregale
+    restores the app's newest non-stale capture of its live deployment
+    (warm tier when the plan allows it, otherwise init, the same choice as
+    `Engine.chooseWakeSnapshot`) into a new instance that never serves
+    production traffic, cannot reach the network, and is destroyed when its
+    TTL ends. Phase 1 never takes a new capture, so production is never
+    paused by a fork. A live fork (capture a running instance via
+    `WarmSnapshot`) came later, on ADR-733's non-servable captures; see the
+    amendment below.
+  - **Intent table.** apid owns a new `app_forks` table: one row per fork
+    request with `status ∈ {queued, restoring, running, expired, cancelled,
+    failed}`, a lease (`lease_token/owner/expires_at`), `expires_at` (the
+    TTL), and the source `deployment_id` and `snapshot_id` once resolved. A
+    trigger enforces the transition graph and makes terminal rows
+    immutable, mirroring `app_tasks` (ADR-230). schedd claims queued rows
+    with `FOR UPDATE SKIP LOCKED` through a `ForkCoordinator` shaped like
+    `AppTaskCoordinator`, and its sweeper destroys the instance and expires
+    the row at `expires_at`.
+  - **Instance mode.** A fork is an `instances` row with `kind='wake'` and a
+    new `mode='fork'`. schedd stays the only writer.
+    - **Invariant 1:** a fork does not count toward `max_concurrency`. The
+      admission ledger gets a `KindFork` that `kindCountsConcurrency`
+      excludes, like `KindAppTask` (not a serving replica).
+    - **Invariant 2:** a fork counts toward the 47,600 MB RAM ceiling at
+      `ram_mb + 8` like any live instance. Forks are admitted below tenant
+      wakes: a fork is refused, never queued, when admission would need to
+      park or evict a serving instance.
+    - **Billing:** a fork bills like a running instance (plan RAM + 8 MB per
+      second, spec §4.7). It is not a skippable mode like `mirror`.
+  - **Never routed.** The gateway's live-target loader skips `mode='fork'`
+    rows. Today it keeps any `running` row on a live deployment, so this
+    filter ships in the same PR as the first code that can create a fork
+    instance, never later.
+  - **Quarantined network.** The fork keeps its NIC (Firecracker restores the
+    snapshot's device set), inside its own netns as usual (invariant 5,
+    ADR-009). `netns.Config` gets `Quarantine`, rendered as separate base
+    chains (`quarantine_forward`, `quarantine_input`) at priority −10 in
+    both the `ip` and `ip6` tables:
+    - forward: accept `established,related`; drop everything else from
+      `tap0`; drop any new flow to `tap0` that did not arrive on the
+      platform veth (so a private-network side-link cannot reach the fork).
+    - input: drop everything from `tap0`.
+    - Separate base chains, not rules in the regular forward chain: a drop
+      in any base chain is final, and several patch paths (private network,
+      `insertNftRule`) insert accepts at the top of the regular chain, which
+      would otherwise bypass a drop placed there.
+    - `fcvm` also clears the allowlist, private network, static egress IP
+      and operator bundle from a quarantined wake, so no route, SNAT
+      registration or side-link exists for the chains to have to stop.
+      The flag lives on `Instance.Net`, so in-place updates re-render it.
+    Inbound DNAT from the veth peer keeps working, so the platform can still
+    reach the guest port. `AppSpec.quarantine` (field 35) carries the flag
+    on both the restore and the cold-boot wire.
+  - **Secrets.** Secrets are in the guest's memory and in the captured
+    drive1 (`upper/etc/faas/secrets.env`, ADR-210), so a fork cannot be
+    redacted in memory. Gregale therefore treats creating a fork as reading
+    secrets:
+    - The API requires the secrets-read scope and MFA, like secret export.
+    - Every create, cancel and exec writes an audit event. Requests through
+      the access route are not audited (see the 2026-10-23 amendment).
+    - The restore removes `secrets.env`, the secret reload projection and
+      each sidecar's `workloads/<name>/env.json` from the fork's private
+      drive1 copy before resume, so a later process start inside the fork
+      cannot reload them; values already in process memory remain.
+    - Quarantine makes credentials in memory unusable from the fork.
+  - **Entitlement and limits.** Pro and Scale only. Default TTL 1 h, maximum
+    4 h; at most one active fork per app and two per account. All of these
+    live in `pkg/api/limits.go`.
+  - **Access.** apid mints a random `gfk_` access token per fork, returns it
+    once at creation, and stores only its SHA-256
+    (`app_forks.access_token_hash`). A request to the app's hostname with
+    `X-Gregale-Fork: <id>` and `X-Gregale-Fork-Token: <token>` is routed by
+    `gatewayd-internal` straight to the fork's instance: the token is
+    compared in constant time, the fork must be running and unexpired, and
+    the instance must be a running `fork` row of the same app. The request
+    never touches the serving path (no wake, picker, cache, retries or edge
+    rules) and both headers are stripped before the guest. Any refusal is
+    the same `404 fork_not_found`, so the route is not an oracle. A guest
+    exec channel over vsock is out of scope.
+- **Why:** reproducing a production bug today means redeploying and
+  replaying traffic, which loses the in-memory state that caused it. A
+  capture already holds that state (warm captures are taken from a running,
+  framework-ready VM), and the restore path already gives each restored
+  instance its own IP, netns, jail uid and reseeded RNG. What is missing is
+  an instance that is guaranteed not to serve, not to reach the network,
+  and not to outlive its purpose.
+- **Consequences:**
+  - A fork competes for tenant RAM. Two forks per account at Scale's 1 GiB
+    is at most about 2 GB of the 47,600 MB budget, and forks lose to wakes.
+  - A fork is a copy of production memory, including end-user data. It never
+    leaves the node it was restored on, is destroyed at its TTL, and its
+    private drive copy is deleted with the instance.
+  - `instances.mode` gains `fork`. Triggers and readers that switch on mode
+    (billing intervals, service capacity, environment-workload guards,
+    reapers) must handle it; each is listed in the PR that adds the mode.
+  - Apps with ephemeral-class secrets never publish a capture, so they
+    cannot be forked. The API answers 409 with a clear code.
+  - `fcvm.Lease` gains `Quarantine`. Like every lease field it is part of
+    vmmd's resource and native launch journal schemas (both reject unknown
+    and missing fields), so rolling vmmd back past this change needs an
+    empty resource journal: drain the node first.
+- **Amendment (2026-10-09): live forks.** `POST /v1/apps/{slug}/forks`
+  with `"live": true` captures the app's newest running instance now and
+  forks that capture. It reuses ADR-733's in-place capture rather than a
+  new snapshot tier: apid writes, in one transaction, a `crash_captures`
+  row with `trigger='live_fork'` (no crash snapshot opt-in, since the
+  customer asked; the in-flight rule and a 1 min `LiveForkCaptureCooldown`
+  bound how often a serving instance is paused) and a fork pinned to it.
+  The fork limits are checked first, so a refused fork captures nothing.
+  The claim waits while the capture is requested or capturing; a failed
+  capture is claimed so the restore fails with `no_capture`. The capture
+  is encrypted, staged and purged like a crash snapshot, and kept for
+  `LiveForkCaptureRetention` (the 4 h fork maximum plus 10 min) instead of
+  7 days. Live forks need the capture coordinator, so apid answers
+  `501 live_forks_not_enabled` unless `FAAS_CRASH_SNAPSHOTS=1`.
+- **Amendment (2026-10-10): fork exec.** `POST /v1/apps/{slug}/forks/
+  {id}/execs` runs one non-interactive command inside a running fork.
+  apid only records it (`app_fork_execs`, same scopes as creating the
+  fork: deploy:write + secrets:read, MFA; audited without arguments). The
+  fork coordinator that holds the fork's lease claims queued commands one
+  per fork and runs each in its own goroutine (so a long command never
+  delays lease renewal) through the fork node's vmmd: `ExecForkCommand`
+  reuses the app-task protocol (`apptaskproto`) and the host-initiated
+  vsock CONNECT, on a new guest port (1034). Every app VM's guest-init
+  listens there; only the host can reach a guest vsock port, and vmmd
+  refuses (`FailedPrecondition`) any instance whose lease is not
+  quarantined, so a serving instance is never reached. The command runs
+  with the app's working directory, user and manifest environment, but no
+  secrets (they were scrubbed at restore), bounded by `timeout_seconds`
+  (≤600) and `max_output_bytes` (≤1 MiB, tail kept). Commands of a fork
+  that ends, or that run past their timeout plus a minute, are failed.
+  Interactive sessions (a PTY) are out of scope.
+- **Amendment (2026-10-23): hardening.**
+  - **Access token.** The create response carries the only copy of the
+    token, so it is sent with `Cache-Control: no-store` and never kept as an
+    Idempotency-Key receipt (`httpkit.SkipIdempotentReplay`). Before this the
+    receipt held the plaintext token for 24 h and replayed it to a retry. A
+    keyed retry now runs again.
+  - **Sidecar secrets.** vmmd writes each sidecar's unsealed env and app
+    secrets to `upper/etc/faas/workloads/<name>/env.json` on the main
+    drive1. The restore scrub now removes those too, keeping the sidecar's
+    non-secret `workload.json`.
+  - **Exec output retention.** Output of fork commands comes from inside a
+    copy of production memory. The fork coordinator empties `stdout` and
+    `stderr` once the fork has been over for `AppForkExecOutputRetention`
+    (24 h, `pkg/api/limits.go`); the command record, exit code and audit
+    event stay.
+  - **Access is not audited.** The decision above said every access writes
+    an audit event; the access route never did. A fork is short-lived and
+    its token is a bearer credential held only by whoever created it, so
+    per-request events would add volume without a decision behind them.
+    Creation, cancellation and each exec are the audited acts.
+- **Rejected alternatives:**
+  - **Networkless restore.** `SnapshotRef.networkless` removes the NIC, but
+    Firecracker must restore the device set the snapshot was taken with, and
+    vmmd rejects networkless restores of app captures.
+  - **A routed instance with an auth gate.** One missing filter would send
+    production traffic to a debug copy. Excluding the mode from routing is
+    simpler to prove.
+  - **A new snapshot tier for every fork.** Not needed, live forks included
+    (they use ADR-733 captures). Reusing captures keeps GC, replication and
+    invariant 3 untouched.
+  - **Redacting secrets from memory.** Not possible in general for an
+    arbitrary process image.
+- **Rollout (each step is one PR):**
+  1. This ADR, the `app_forks` table and state layer, limits, and the
+     flag-gated create/list/get/delete API that records intent.
+  2. `netns.Config.Quarantine` and the `AppSpec` field that requests it,
+     with metal tests that a quarantined guest cannot open any outbound
+     flow and still answers on its port.
+  3. a. Make a fork row safe before anything creates one: `mode='fork'`,
+        `KindFork` (also when `SeedLedger` rebuilds after a restart),
+        the scheduler `AppSpec.Quarantine`, the scheduler-side lease
+        store, and a fork exclusion in every path that would route,
+        park, snapshot, drain, reap or concurrency-count it (gateway
+        live and smoke loaders, tcpd/udpd resolvers,
+        `RunningInstanceForApp`, wake reuse, reaper, `ParkApp`,
+        `StopInstance`, service drain). `snapshotAndPark` destroys a
+        fork instead of capturing it, so no caller can turn fork memory
+        into a restorable capture.
+     b. The `ForkCoordinator` (claim, restore, renew, TTL teardown,
+        abandoned-lease takeover) and its schedd wiring behind
+        `FAAS_APP_FORKS`. `Engine.RestoreFork` does not use the wake path:
+        it places, reserves `KindFork`, creates the `fork` row, restores
+        the newest compatible capture of the pinned deployment with
+        `Quarantine` and no sealed secrets, and publishes RUNNING. A fork
+        whose scheduler stops is adopted by another if it is running, and
+        failed with `scheduler_lost` if it was mid-restore.
+  4. The drive1 secrets scrub on fork restores.
+  5. Access (separate ADR), then promotion to `preview`.
+- **Verification:**
+  - Metal, 2026-10-09, internal test node (n2-highmem-2, nested KVM,
+    Firecracker 1.7.0, kernel 6.1.134): `TestMetalQuarantineDataPlane`
+    (open and quarantined, including namespace → guest for vmmd's bridge)
+    and `TestForkMetal` (restore, quarantine chains only on the fork,
+    token routing with 404 on a wrong token, ordinary traffic never on the
+    fork, cancel and TTL destroy) all pass. Nested KVM is a functional
+    environment, not a CLAUDE.md acceptance host.
+  - PR 1: migration CHECK and transition-trigger tests; MemStore and
+    PgStore parity; API tests for the flag gate, plan gate, scopes, limits,
+    IDOR and audit.
+  - PR 3: the invariant property tests gain fork instances
+    (`TestProperty_EngineWake_RespectsMaxConcurrency`,
+    `FuzzLedgerInvariants`), and a gateway test proves a running fork on a
+    live deployment is never a target.

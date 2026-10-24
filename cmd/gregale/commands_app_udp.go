@@ -41,7 +41,7 @@ func cmdAppsUDP(slug string, args []string) int {
 		}
 		listeners, err := client.ListAppUDPListeners(context.Background(), slug)
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not list UDP listeners", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeNDJSON(listeners))
@@ -74,7 +74,7 @@ func cmdAppsUDP(slug string, args []string) int {
 			Name: *name, GuestPort: *guestPort, PublicPort: *publicPort,
 		})
 		if err != nil {
-			return printErr("Create failed", err)
+			return printErr("Could not create UDP listener", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(out))
@@ -90,7 +90,7 @@ func cmdAppsUDP(slug string, args []string) int {
 		enabled := verb == "enable"
 		out, err := client.UpdateAppUDPListener(context.Background(), slug, args[0], api.UpdateUDPListenerRequest{Enabled: &enabled})
 		if err != nil {
-			return printErr("Request failed", err)
+			return printErr("Could not update UDP listener", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(out))
@@ -108,7 +108,7 @@ func cmdAppsUDP(slug string, args []string) int {
 			return 1
 		}
 		if err := client.DeleteAppUDPListener(context.Background(), slug, args[0]); err != nil {
-			return printErr("Delete failed", err)
+			return printErr("Could not delete UDP listener", err)
 		}
 		if jsonOutput {
 			return jsonOut(writeJSON(map[string]any{"slug": slug, "name": args[0], "deleted": true}))

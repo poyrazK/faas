@@ -37,12 +37,11 @@ func TestPrimeStartupExtension(t *testing.T) {
 	}
 }
 
-// TestColdBootWatchdogHonoursPrimeStartupDeadline reproduces production-us:
-// a Scale app (ADR-138 default startup deadline 120 s) that listened after
-// 40 s was killed 30.6 s into its first boot, and its deployment failed with
-// "cold_boot_timeout". The watchdog now leaves a priming instance alone until
-// its extended budget runs out. A Hobby prime (30 s deadline) and a Scale
-// wake of a live deployment keep the spec budget.
+// TestColdBootWatchdogHonoursPrimeStartupDeadline: a deploy prime gets the
+// app's startup deadline, which no plan sets past the 30 s cold-boot window
+// any more (ADR-138 amendment, Hunt 12 H12-10). Scale's former 120 s default
+// let a prime survive to 40 s, deploying an app that no later cold boot could
+// start. Primes and wakes alike now end at the spec budget.
 func TestColdBootWatchdogHonoursPrimeStartupDeadline(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -51,8 +50,8 @@ func TestColdBootWatchdogHonoursPrimeStartupDeadline(t *testing.T) {
 		age     time.Duration
 		survive bool
 	}{
-		{"scale prime at 40s", api.PlanScale, state.DeploySnapshotting, 40 * time.Second, true},
-		{"scale prime past extended budget", api.PlanScale, state.DeploySnapshotting, sched.ColdBootSweepBudget + 106*time.Second, false},
+		{"scale prime within the window", api.PlanScale, state.DeploySnapshotting, 29 * time.Second, true},
+		{"scale prime at 40s", api.PlanScale, state.DeploySnapshotting, 40 * time.Second, false},
 		{"hobby prime at 31s", api.PlanHobby, state.DeploySnapshotting, 31 * time.Second, false},
 		{"scale wake of live deployment at 31s", api.PlanScale, state.DeployLive, 31 * time.Second, false},
 	} {

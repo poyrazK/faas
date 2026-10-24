@@ -26,6 +26,8 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Local help: `gregale deploy --help` and `gregale app --help` show common tasks. Add `--all` to see every option grouped by purpose, or use `gregale help deploy --all`. This reference always lists every option.")
 	_, _ = fmt.Fprintln(w)
+	_, _ = fmt.Fprintln(w, "App target: a command that takes `--app` and no other arguments also accepts the app as its first argument (`gregale alerts list my-api` is `gregale alerts list --app my-api`), and slug-first commands such as `logs` and `ps` accept `--app`.")
+	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.")
 	_, _ = fmt.Fprintln(w)
 	_, _ = fmt.Fprintln(w, "| Command | What it does |")
@@ -72,6 +74,7 @@ func renderMarkdownReference(w io.Writer, cmds []cliCommand) {
 			if len(s.Examples) > 0 {
 				writeMarkdownExamples(w, s.Examples)
 			}
+			writeMarkdownNotes(w, s.Notes)
 			for _, child := range s.Subcommands {
 				renderMarkdownSubtree(w, c, []string{s.Name}, child, 4)
 			}
@@ -89,6 +92,7 @@ func renderMarkdownSubtree(w io.Writer, command cliCommand, ancestors []string, 
 	if len(child.Examples) > 0 {
 		writeMarkdownExamples(w, child.Examples)
 	}
+	writeMarkdownNotes(w, child.Notes)
 	for _, next := range child.Subcommands {
 		renderMarkdownSubtree(w, command, names, next, depth+1)
 	}
@@ -124,6 +128,12 @@ func mdSubSynopsis(command cliCommand, names, positionals []string, flags []cliF
 		parts = append(parts, "<"+terminal.subcommandChoice()+">")
 	}
 	return strings.Join(parts, " ")
+}
+
+func writeMarkdownNotes(w io.Writer, notes []string) {
+	for _, note := range notes {
+		_, _ = fmt.Fprintf(w, "%s\n\n", mdText(note))
+	}
 }
 
 func writeMarkdownExamples(w io.Writer, examples []string) {

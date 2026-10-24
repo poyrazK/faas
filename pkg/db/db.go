@@ -27,6 +27,8 @@ import (
 //  2. $FAAS_DATABASE_URL
 //  3. default `postgres:///faas?host=/run/postgresql&user=faas` (peer auth,
 //     matches the ansible postgres role).
+//
+// FAAS_DB_ROLE, when set, replaces the DSN's user (see RuntimeRoleEnv).
 func Open(ctx context.Context, dsnOverride string) (*pgxpool.Pool, error) {
 	return open(ctx, dsnOverride, "")
 }
@@ -123,6 +125,35 @@ var DaemonMaxConnectionsNotifyHubDisabled = map[string]int32{
 
 const defaultMaxConnections int32 = 4
 
+// DaemonMinConnections is the warm floor of a daemon's ordinary pool: the
+// connections pgxpool keeps open past MaxConnIdleTime. Daemons absent here
+// keep MinConns=0, so their burst connections close after a quiet minute.
+//
+// A new PostgreSQL backend compiles every PL/pgSQL function and plans every
+// statement inside it on first use. A wake's insert into instances fires
+// about thirty trigger functions: on PostgreSQL 16 it took 22-34 ms on a
+// fresh backend and 1.4 ms on a warm one, and the wake's later statements pay
+// the same first-use cost. Without a floor, schedd's first wake after a quiet
+// minute ran on new backends. pgxpool hands out the most recently released
+// idle connection, so a small floor keeps the connections wakes reuse warm.
+//
+// A floor never exceeds the daemon's maximum, which postgres_capacity already
+// provisions: it keeps sessions idle but needs no extra capacity.
+var DaemonMinConnections = map[string]int32{
+	"schedd": 4,
+}
+
+// warmFloorLifetimeJitter spreads the replacement of a floor's connections.
+// pgxpool replaces each one after MaxConnLifetime (an hour by default), and a
+// floor opened at once would otherwise go cold at once.
+const warmFloorLifetimeJitter = 10 * time.Minute
+
+// daemonMinConnections resolves appName's warm floor, capped at its maximum.
+func daemonMinConnections(appName string) int32 {
+	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
+	return min(DaemonMinConnections[name], daemonMaxConnections(appName))
+}
+
 // Shared with direct.go so both pools age and probe identically.
 const (
 	healthCheckPeriod = 30 * time.Second
@@ -179,27 +210,10 @@ func open(ctx context.Context, dsnOverride, appName string, readOnly ...bool) (*
 		dsn = "postgres:///faas?host=/run/postgresql&user=faas"
 	}
 
-	cfg, err := pgxpool.ParseConfig(dsn)
+	cfg, err := poolConfig(dsn, appName, len(readOnly) > 0 && readOnly[0])
 	if err != nil {
-		return nil, fmt.Errorf("db: parse config: %w", err)
+		return nil, err
 	}
-	// Direct pools have per-daemon budgets. MinConns=0 and the short idle
-	// lifetime keep burst capacity from becoming permanent idle ClientRead
-	// sessions; LISTEN subscribers naturally retain only the sessions they use.
-	cfg.MaxConns = daemonMaxConnections(appName)
-	cfg.MinConns = 0
-	cfg.MaxConnIdleTime = time.Minute
-	cfg.HealthCheckPeriod = healthCheckPeriod
-	if appName != "" {
-		cfg.ConnConfig.RuntimeParams["application_name"] = appName
-	}
-	if len(readOnly) > 0 && readOnly[0] {
-		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
-	}
-	// Safe under a transaction-mode pooler; a no-op without one.
-	applyPooledExecMode(cfg, dsn)
-	instrumentAcquires(cfg)
-
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("db: open pool: %w", err)
@@ -224,6 +238,38 @@ func open(ctx context.Context, dsnOverride, appName string, readOnly ...bool) (*
 	}
 	registerDirectPool(pool, direct)
 	return pool, nil
+}
+
+// poolConfig builds the ordinary pool's configuration for appName.
+func poolConfig(dsn, appName string, readOnly bool) (*pgxpool.Config, error) {
+	cfg, err := pgxpool.ParseConfig(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("db: parse config: %w", err)
+	}
+	if err := applyRuntimeRole(cfg.ConnConfig); err != nil {
+		return nil, err
+	}
+	// Direct pools have per-daemon budgets. Connections above the daemon's
+	// warm floor close after a quiet minute, so burst capacity never becomes
+	// permanent idle ClientRead sessions; LISTEN subscribers naturally retain
+	// only the sessions they use.
+	cfg.MaxConns = daemonMaxConnections(appName)
+	cfg.MinConns = daemonMinConnections(appName)
+	if cfg.MinConns > 0 {
+		cfg.MaxConnLifetimeJitter = warmFloorLifetimeJitter
+	}
+	cfg.MaxConnIdleTime = time.Minute
+	cfg.HealthCheckPeriod = healthCheckPeriod
+	if appName != "" {
+		cfg.ConnConfig.RuntimeParams["application_name"] = appName
+	}
+	if readOnly {
+		cfg.ConnConfig.RuntimeParams["default_transaction_read_only"] = "on"
+	}
+	// Safe under a transaction-mode pooler; a no-op without one.
+	applyPooledExecMode(cfg, dsn)
+	instrumentAcquires(cfg)
+	return cfg, nil
 }
 
 // Close closes p and its session-scoped sibling. Daemons that call

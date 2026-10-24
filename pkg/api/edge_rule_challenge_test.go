@@ -19,6 +19,13 @@ func TestEdgeRuleChallengeActionValidate(t *testing.T) {
 		{name: "difficulty too high", in: EdgeRuleChallengeAction{Difficulty: MaxEdgeChallengeDifficulty + 1}, wantErr: true},
 		{name: "pass too short", in: EdgeRuleChallengeAction{PassTTLSeconds: MinEdgeChallengePassTTLSeconds - 1}, wantErr: true},
 		{name: "pass too long", in: EdgeRuleChallengeAction{PassTTLSeconds: MaxEdgeChallengePassTTLSeconds + 1}, wantErr: true},
+		// adr: 831 — amendment 8: max_difficulty is optional, from the difficulty up.
+		{name: "max difficulty kept", in: EdgeRuleChallengeAction{Difficulty: 14, MaxDifficulty: 20},
+			want: EdgeRuleChallengeAction{Difficulty: 14, PassTTLSeconds: EdgeChallengeDefaultPassTTLSeconds, MaxDifficulty: 20}},
+		{name: "max difficulty equal", in: EdgeRuleChallengeAction{MaxDifficulty: EdgeChallengeDefaultDifficulty},
+			want: EdgeRuleChallengeAction{Difficulty: EdgeChallengeDefaultDifficulty, PassTTLSeconds: EdgeChallengeDefaultPassTTLSeconds, MaxDifficulty: EdgeChallengeDefaultDifficulty}},
+		{name: "max difficulty below default", in: EdgeRuleChallengeAction{MaxDifficulty: EdgeChallengeDefaultDifficulty - 1}, wantErr: true},
+		{name: "max difficulty too high", in: EdgeRuleChallengeAction{MaxDifficulty: MaxEdgeChallengeDifficulty + 1}, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			a := tc.in

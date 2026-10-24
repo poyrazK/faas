@@ -104,7 +104,21 @@ const (
 	// VsockFrameworkReadyHostTypeQualificationConfig acknowledges that
 	// guest-init parsed the private qualification runtime configuration.
 	VsockFrameworkReadyHostTypeQualificationConfig byte = 0x09
+	// VsockFrameworkReadyHostTypeMemoryPressure carries a guest memory
+	// pressure report that schedd turns into an automatic heap capture
+	// (ADR-1155). Mirrors guest/init/memory_pressure_linux.go.
+	VsockFrameworkReadyHostTypeMemoryPressure byte = 0x0A
 )
+
+// memoryPressureWire is the type=0x0A JSON body. Values are MiB.
+type memoryPressureWire struct {
+	AvailableMB int `json:"available_mb"`
+	TotalMB     int `json:"total_mb"`
+	AnonMB      int `json:"anon_mb"`
+}
+
+// vsockMemoryPressureMaxBody bounds the type=0x0A envelope.
+const vsockMemoryPressureMaxBody = 256
 
 // Sidecar init-exit status closed enum (issue #463 / ADR-069 /
 // PR-C §3, PR-B AC #1). The constants live in
@@ -221,6 +235,10 @@ func (r *FrameworkReadyReceiver) handleGuestStream(instance string, conn net.Con
 		r.dispatchTailEvent(instance, msg.Tail)
 	case parseFWReadyKindWorkloadOOM:
 		r.dispatchWorkloadOOM(instance, msg.WorkloadOOM)
+	case parseFWReadyKindMemoryPressure:
+		if r.mgr != nil {
+			r.mgr.ReportMemoryPressure(r.ctx, instance, msg.MemoryPressure.AvailableMB, msg.MemoryPressure.TotalMB, msg.MemoryPressure.AnonMB)
+		}
 	case parseFWReadyKindDisk:
 		r.dispatchDiskUsage(instance, msg.Disk)
 	case parseFWReadyKindEventPublish:
@@ -326,9 +344,9 @@ func (r *FrameworkReadyReceiver) dispatchSidecarInitExit(instance string, wire s
 		r.log.Warn("sidecar_init_exit unknown status", "instance", instance, "status", wire.Status)
 		return
 	}
-	depID, appID, perr := r.mgr.InstanceDeploymentIDAndAppID(instance)
+	depID, appID, perr := r.mgr.InstanceSidecarOwner(instance, wire.Sidecar)
 	if perr != nil {
-		r.log.Debug("sidecar_init_exit unknown instance", "instance", instance, "err", perr)
+		r.log.Debug("sidecar_init_exit dropped", "instance", instance, "err", perr)
 		return
 	}
 	r.emitter.EmitSidecarInitExit(r.ctx, instance, appID, depID, "" /* wakeID not on wire — see pkg/events.SidecarInitExit's struct doc */, wire)
@@ -354,9 +372,9 @@ func (r *FrameworkReadyReceiver) dispatchSidecarInitExit(instance string, wire s
 // guest-init Supervisor.OnCrash emit hook to actually drive
 // type=0x03.
 func (r *FrameworkReadyReceiver) dispatchSidecarRestart(instance string, wire sidecarRestartWire) {
-	appID, perr := r.mgr.InstanceAppID(instance)
+	_, appID, perr := r.mgr.InstanceSidecarOwner(instance, wire.Sidecar)
 	if perr != nil {
-		r.log.Debug("sidecar_restart unknown instance", "instance", instance, "err", perr)
+		r.log.Debug("sidecar_restart dropped", "instance", instance, "err", perr)
 		return
 	}
 	r.emitter.EmitSidecarRestart(r.ctx, instance, appID, "" /* wakeID not on wire — see pkg/events.SidecarRestart's struct doc */, wire)
@@ -375,9 +393,9 @@ func (r *FrameworkReadyReceiver) dispatchSidecarHealth(instance string, wire sid
 		return
 	}
 	wire.Reason = clampSidecarHealthReason(wire.Reason)
-	appID, perr := r.mgr.InstanceAppID(instance)
+	_, appID, perr := r.mgr.InstanceSidecarOwner(instance, wire.Sidecar)
 	if perr != nil {
-		r.log.Debug("sidecar_health unknown instance", "instance", instance, "err", perr)
+		r.log.Debug("sidecar_health dropped", "instance", instance, "err", perr)
 		return
 	}
 	r.emitter.EmitSidecarHealth(r.ctx, instance, appID, "", wire)
@@ -551,6 +569,7 @@ const (
 	// lifecycle transitions (type=0x08).
 	parseFWReadyKindSidecarHealth
 	parseFWReadyKindQualificationConfig
+	parseFWReadyKindMemoryPressure
 )
 
 // tailEventOutcome (issue #667 / ADR-078) mirrors the
@@ -602,6 +621,7 @@ type parseFWReadyMsg struct {
 	Disk                diskUsageWire
 	EventPublish        []byte
 	QualificationConfig fcvm.EnvironmentQualificationConfigReceipt
+	MemoryPressure      memoryPressureWire
 }
 
 type diskUsageWire struct {
@@ -669,6 +689,8 @@ func (m parseFWReadyMsg) TypeLabel() string {
 		return fmt.Sprintf("sidecar_health(0x%02x)", VsockFrameworkReadyHostTypeSidecarHealth)
 	case parseFWReadyKindQualificationConfig:
 		return fmt.Sprintf("qualification_config(0x%02x)", VsockFrameworkReadyHostTypeQualificationConfig)
+	case parseFWReadyKindMemoryPressure:
+		return fmt.Sprintf("memory_pressure(0x%02x)", VsockFrameworkReadyHostTypeMemoryPressure)
 	default:
 		return "unknown"
 	}
@@ -750,6 +772,14 @@ func parseFrameworkReadyDatagram(b []byte) (parseFWReadyMsg, error) {
 		// just to discard it.
 		if len(rest) >= 15 {
 			msg.Tail.ElapsedMs = int64(binary.BigEndian.Uint64(rest[7:15]))
+		}
+	case VsockFrameworkReadyHostTypeMemoryPressure:
+		if uint32(len(rest)) > vsockMemoryPressureMaxBody {
+			return msg, fmt.Errorf("memory_pressure: body too large: %d", len(rest))
+		}
+		msg.Kind = parseFWReadyKindMemoryPressure
+		if err := json.Unmarshal(rest, &msg.MemoryPressure); err != nil {
+			return msg, fmt.Errorf("memory_pressure: %w", err)
 		}
 	case VsockFrameworkReadyHostTypeWorkloadOOM:
 		// Cluster C / ADR-121: workload OOM signal emitted

@@ -34,6 +34,8 @@ func releaseGateView(g state.ReleaseGate, sloNames map[string]string) api.Releas
 	case state.ReleaseGateCustomMetric:
 		threshold := g.Threshold
 		out.Metric, out.Comparison, out.Threshold = g.MetricName, g.Comparison, &threshold
+	case state.ReleaseGateAI:
+		out.Metric, out.MaxIncreasePercent = g.MetricName, int(g.Threshold)
 	}
 	return out
 }
@@ -105,7 +107,8 @@ func (s *server) createReleaseGate(w http.ResponseWriter, r *http.Request, acct 
 			}
 		}
 		if gate.SLOID == "" {
-			api.WriteProblem(w, api.ErrValidation("the app has no SLO named "+spec.SLOName+"; list SLOs with `gregale slo list`"))
+			// `gregale slo list` read "list" as an app slug (Hunt 12 H12-32).
+			api.WriteProblem(w, api.ErrValidation("the app has no SLO named "+spec.SLOName+"; list SLOs with `gregale slos list --app "+app.Slug+"`"))
 			return
 		}
 	}

@@ -90,7 +90,13 @@ func (m *MemStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, po
 	}
 	pending, unsafe, multipart, versions := m.capacityReadinessLocked(b.ID)
 	v := m.objectBucketVersioning[b.ID]
-	if b.State != "ready" || m.objectCapacityFencedLocked(b.ID) || pending > 0 || multipart || !immutableDeletion(j) && unsafe && (versions || v.ObservedStatus != "") {
+	if b.State != "ready" || multipart || !immutableDeletion(j) && unsafe && (versions || v.ObservedStatus != "") {
+		return ObjectDeletion{}, false, ErrConflict
+	}
+	if pending > 0 {
+		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketBusy)
+	}
+	if m.objectCapacityFencedLocked(b.ID) {
 		return ObjectDeletion{}, false, ErrConflict
 	}
 	if !immutableDeletion(j) && versions && (m.objectUsage[b.ID].InventoryScope != ObjectInventoryAllVersions || v.ObservedStatus == "") {

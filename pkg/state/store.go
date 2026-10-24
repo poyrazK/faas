@@ -935,6 +935,10 @@ type ProjectReconcileMutation struct {
 	Op                        string
 	App                       App
 	SetPlatformTenantRequired bool
+	// SetResources writes App's positive RAMMB, CPUMillicores and
+	// MaxConcurrency on an update or a restored app, because the source
+	// declares Compose resources (ADR-20261023120000). A zero keeps the app's.
+	SetResources bool
 }
 
 // ProjectReconcileCron is the desired cron attached to a scanned workload.
@@ -2650,14 +2654,17 @@ type Store interface {
 	//
 	// Returns the (upgraded_at, upgraded_by) stamp so the apid
 	// admin route can echo the row back without a follow-up
-	// SELECT.
-	UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret []byte, upgradedBy string) (time.Time, string, error)
-	// GetGithubWebhookSecret returns the raw bytes for the per-tenant
-	// row, or ErrNotFound if the install hasn't been migrated off the
+	// SELECT. secret.Sealed is the copy sealed for githubd (ADR
+	// 20261022111812); secret.Value stays written for the previous
+	// release, which reads only the plaintext column.
+	UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret GithubWebhookSecret, upgradedBy string) (time.Time, string, error)
+	// GetGithubWebhookSecret returns the per-tenant row, or
+	// ErrNotFound if the install hasn't been migrated off the
 	// platform secret yet. Used by pkg/githubd's resolver cache;
 	// the resolver treats ErrNotFound as a fall-through to
-	// FAAS_GITHUB_WEBHOOK_SECRET rather than as an error.
-	GetGithubWebhookSecret(ctx context.Context, installationID int64) ([]byte, error)
+	// FAAS_GITHUB_WEBHOOK_SECRET rather than as an error. Readers
+	// prefer Sealed when it is present.
+	GetGithubWebhookSecret(ctx context.Context, installationID int64) (GithubWebhookSecret, error)
 
 	// Deployments.
 	// CreateDeployment atomically inserts a new pending deployment row
@@ -3618,6 +3625,14 @@ type Store interface {
 	// This stays separate from ExecutionStore because app tasks inherit the
 	// app's artifact, scoped configuration, bindings, and network policy.
 	AppTaskStore
+
+	// Production fork intent (ADR-732): quarantined, non-serving restores of
+	// an app's newest capture. apid admits; schedd owns the lifecycle.
+	AppForkStore
+	AppForkLifecycleStore
+	AppForkExecStore
+	// ADR-733 crash snapshots: captures of running instances, opened as forks.
+	CrashCaptureStore
 
 	// Sanitized runtime snapshot catalog (ADR-171 follow-up). Publication is
 	// trusted and insert-only; scheduler reads may observe retired rows and
@@ -6945,11 +6960,13 @@ type CustomerEventLister interface {
 
 // IdempotencyReservation is the outcome of ReserveIdempotent. Exactly one of
 // Reserved (the caller owns the key and must complete it with
-// PutIdempotent), InFlight (another request holds the key), or a completed
-// response (Status/Body to replay) applies.
+// PutIdempotent), InFlight (another request holds the key), Conflict (the key
+// is bound to a different request fingerprint, ADR-20261022204036), or a
+// completed response (Status/Body to replay) applies.
 type IdempotencyReservation struct {
 	Reserved bool
 	InFlight bool
+	Conflict bool
 	Status   int
 	Body     []byte
 }

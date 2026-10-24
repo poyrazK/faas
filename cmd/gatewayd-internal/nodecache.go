@@ -225,6 +225,10 @@ func newNodeCache(store *state.PgStore, vmmdTLS *tls.Config, log *slog.Logger, m
 		},
 		log,
 	)
+	if store != nil {
+		// vmmd restart adoption ADR: forwards wait out a planned restart.
+		cache.WithRestartNotices(store)
+	}
 	return &nodeCache{cache: cache, log: log, metrics: m, subscribe: db.SubscribeWithReconnect}
 }
 

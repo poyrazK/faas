@@ -223,6 +223,57 @@ func (q *Queries) ReleaseGateCustomMetricWindow(ctx context.Context, db DBTX, ar
 	return i, err
 }
 
+const releaseGateDeploymentAI = `-- name: ReleaseGateDeploymentAI :one
+SELECT COALESCE(SUM(calls), 0)::bigint AS calls,
+       COALESCE(SUM(error_calls), 0)::bigint AS error_calls,
+       COALESCE(SUM(flagged_calls), 0)::bigint AS flagged_calls,
+       COALESCE(SUM(cost_millicents), 0)::bigint AS cost_millicents,
+       COALESCE(SUM(ttfb_calls), 0)::bigint AS ttfb_calls,
+       COALESCE(SUM(ttfb_ms_total), 0)::bigint AS ttfb_ms_total
+  FROM outbound_ai_deployment_minutes
+ WHERE deployment_id = $1::uuid
+   AND app_id = $2::uuid
+   AND minute >= date_trunc('minute', $3::timestamptz)
+   AND minute < $4::timestamptz
+`
+
+type ReleaseGateDeploymentAIParams struct {
+	DeploymentID pgtype.UUID
+	AppID        pgtype.UUID
+	Since        pgtype.Timestamptz
+	Until        pgtype.Timestamptz
+}
+
+type ReleaseGateDeploymentAIRow struct {
+	Calls          int64
+	ErrorCalls     int64
+	FlaggedCalls   int64
+	CostMillicents int64
+	TtfbCalls      int64
+	TtfbMsTotal    int64
+}
+
+// ADR 20261022153155: a deployment's AI calls in the UTC minutes of
+// [since, until).
+func (q *Queries) ReleaseGateDeploymentAI(ctx context.Context, db DBTX, arg ReleaseGateDeploymentAIParams) (ReleaseGateDeploymentAIRow, error) {
+	row := db.QueryRow(ctx, releaseGateDeploymentAI,
+		arg.DeploymentID,
+		arg.AppID,
+		arg.Since,
+		arg.Until,
+	)
+	var i ReleaseGateDeploymentAIRow
+	err := row.Scan(
+		&i.Calls,
+		&i.ErrorCalls,
+		&i.FlaggedCalls,
+		&i.CostMillicents,
+		&i.TtfbCalls,
+		&i.TtfbMsTotal,
+	)
+	return i, err
+}
+
 const releaseGateDeploymentSLI = `-- name: ReleaseGateDeploymentSLI :one
 SELECT COALESCE(SUM(count::bigint), 0)::bigint AS requests,
        COALESCE(SUM(count::bigint) FILTER (WHERE status >= 500 AND status < 600), 0)::bigint AS server_errors,
