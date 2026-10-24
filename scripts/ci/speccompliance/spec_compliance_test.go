@@ -575,6 +575,8 @@ var routeExclude = map[string]bool{
 	"POST /cli-auth":                                                             true, // dashboard claim form submit
 	"GET /docs":                                                                  true, // anonymous Swagger UI metadata page; no SDK method
 	"GET /docs/":                                                                 true, // slash alias of the documented /docs route
+	"GET /docs/assets/{file}":                                                    true, // vendored Swagger UI for /docs; static files, no SDK method
+	"GET /dashboard/assets/{file}":                                               true, // vendored htmx for the dashboard; static files, no SDK method
 	"GET /status":                                                                true, // public HTML status page
 	"GET /status/slo.json":                                                       true, // public status JSON
 	"GET /healthz":                                                               true, // loopback infra probe

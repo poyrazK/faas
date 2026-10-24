@@ -272,6 +272,10 @@ type Handler struct {
 	// Interface (not concrete *VMMClient) so tests can inject a
 	// fakeVMMClient (defined in vmmclient.go) without dialing.
 	vmmClient VMMClientIface
+	// nativeSnapshotRoot is vmmd's private tree for native runtime
+	// snapshots (ADR 20261022184951 amendment 1). imaged reads it to learn
+	// which objects vmmd must remove; "" keeps every delete on the backend.
+	nativeSnapshotRoot string
 	// runtimeBaseMu serializes on-demand runtime-base staging. Multiple
 	// deployments can arrive together after a cold start; without this
 	// guard they could concurrently rebuild the same ext4 and race the
@@ -3811,13 +3815,14 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 	// deliberately activates an older revision. Like a checked rollback it
 	// must skip the latest-revision fence and the source-branch freshness
 	// check, which would otherwise supersede every rollback target.
+	preparedRollback := false
 	if !checkedRollback {
 		if prepared, ok := h.store.(state.RollbackPreparedStore); ok {
 			isPrepared, err := prepared.DeploymentRollbackPrepared(ctx, dep.ID)
 			if err != nil && !errors.Is(err, state.ErrNotFound) {
 				return fmt.Errorf("imaged: read rollback marker: %w", err)
 			}
-			checkedRollback = isPrepared
+			checkedRollback, preparedRollback = isPrepared, isPrepared
 		}
 	}
 
@@ -3856,6 +3861,10 @@ func (h *Handler) handleDeploymentActivation(ctx context.Context, snapshot snaps
 		promoteErr = h.store.MarkMCPTaskRecoveryDeploymentLive(ctx, dep.ID, !checkedRollback && dep.Kind.RequiresLatestRevision())
 	} else if !checkedRollback && dep.Kind.RequiresLatestRevision() {
 		promoteErr = h.store.MarkDeploymentLiveIfLatest(ctx, dep.ID)
+	} else if preparedRollback {
+		// The store rechecks the marker under its lock: a rollback withdrawn
+		// since the read above (its receipt failed) must not cut over.
+		promoteErr = h.store.MarkDeploymentLive(state.WithPreparedRollbackPromotion(ctx), dep.ID)
 	} else {
 		promoteErr = h.store.MarkDeploymentLive(ctx, dep.ID)
 	}

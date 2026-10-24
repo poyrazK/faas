@@ -10,12 +10,19 @@
 # drop and we want to fail loudly so the operator sees it before the next
 # task (enable + start) reports a confusing "unit not found" error.
 
+# Both handlers listen on the topic the tasks notify, so the detect handler
+# always runs first and registers systemd_available. Notified by name alone,
+# the reload ran without it and failed "'systemd_available' is undefined"
+# (rc.292 control-plane converge, 2026-10-24, once #5280 changed the units
+# in a play where log_archive's handlers did not fire).
 - name: detect systemd availability
+  listen: daemon-reload postgres_backup
   ansible.builtin.stat:
     path: /run/systemd/system
   register: systemd_available
 
 - name: daemon-reload postgres_backup
+  listen: daemon-reload postgres_backup
   ansible.builtin.systemd:
     daemon_reload: true
   when: systemd_available.stat.exists | bool

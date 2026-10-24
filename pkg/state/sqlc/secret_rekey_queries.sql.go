@@ -131,6 +131,58 @@ func (q *Queries) EnableReleaseSecretRekey(ctx context.Context, db DBTX) error {
 	return err
 }
 
+const listSecretBindingDocuments = `-- name: ListSecretBindingDocuments :many
+SELECT d.kind::text AS kind,d.id::text AS id,d.payload::jsonb AS payload,
+ coalesce(CASE d.kind
+  WHEN 'deployment' THEN (SELECT a.account_id::text FROM deployments dep JOIN apps a ON a.id=dep.app_id WHERE dep.id=d.id::uuid)
+  WHEN 'promotion' THEN (SELECT p.account_id::text FROM project_environment_promotions p WHERE p.id=d.id::uuid)
+  ELSE split_part(d.id,'/',1) END,'')::text AS account_id
+FROM release_secret_rekey_documents d
+WHERE d.kind||'|'||d.id > $1::text
+ORDER BY d.kind,d.id LIMIT $2::integer
+`
+
+type ListSecretBindingDocumentsParams struct {
+	AfterCursor string
+	BatchLimit  int32
+}
+
+type ListSecretBindingDocumentsRow struct {
+	Kind      string
+	ID        string
+	Payload   []byte
+	AccountID string
+}
+
+// Every rekey document with the account that owns it (ADR-20261023173624):
+// the id prefix, or the deployment's app or the promotion for kinds whose id
+// carries no account. The binding is sealed inside each envelope, so the
+// binding pass reads every document; it is an operator command, not a hot path.
+func (q *Queries) ListSecretBindingDocuments(ctx context.Context, db DBTX, arg ListSecretBindingDocumentsParams) ([]ListSecretBindingDocumentsRow, error) {
+	rows, err := db.Query(ctx, listSecretBindingDocuments, arg.AfterCursor, arg.BatchLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListSecretBindingDocumentsRow{}
+	for rows.Next() {
+		var i ListSecretBindingDocumentsRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.ID,
+			&i.Payload,
+			&i.AccountID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listSecretRekeyDocuments = `-- name: ListSecretRekeyDocuments :many
 SELECT kind::text AS kind,id::text AS id,payload::jsonb AS payload FROM release_secret_rekey_documents d
 WHERE kind||'|'||id > $1::text

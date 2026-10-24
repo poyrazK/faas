@@ -769,6 +769,22 @@ groups:
   # node's textfile collector; a reader daemon exports faas_seal_domain_loaded
   # from its start. Neither series exists until the domain is staged, so both
   # alerts stay quiet before a rollout.
+  # ADR 20261024014500: a honeytoken is a decoy API key that belongs to no
+  # account, so nothing legitimate presents one. A single presentation means
+  # the place it was planted, usually the secret store, has been read.
+  - name: honeytokens
+    interval: 30s
+    rules:
+      - alert: FaasHoneytokenPresented
+        expr: sum by (kind) (increase(faas_honeytoken_presented_total[15m])) > 0
+        labels:
+          severity: page
+          family: honeytokens
+        annotations:
+          summary: "A honeytoken ({{ $labels.kind }}) was presented to the API"
+          description: "Someone presented a decoy credential that belongs to no account. Whoever holds it has read the place it was planted, usually the secret store. Start the customer secret store compromise runbook; the security.honeytoken_presented audit event names the honeytoken and the caller."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHoneytokenPresented.md"
+
   - name: seal_domains
     interval: 30s
     rules:

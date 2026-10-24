@@ -1245,6 +1245,11 @@ const NativeHostHelperCgroupEventsMaxBytes = 4096
 const ExclusiveArtifactDecoderMaxMemoryBytes = 64 << 20
 const NativeSnapshotPublicationRecordMaxBytes = 2 << 20
 
+// NativeRuntimeCaptureMaxDuration caps the durable deadline of one native park
+// or warm capture (ADR 20261022184951). vmmd clamps the caller's deadline to it;
+// the scheduler's per-RAM snapshot budget is far shorter.
+const NativeRuntimeCaptureMaxDuration = 10 * time.Minute
+
 // NativeSnapshotPublicationRecoveryBatchMax bounds each periodic scan of
 // already-authorized artifact retirement records.
 const NativeSnapshotPublicationRecoveryBatchMax = 64
@@ -7110,6 +7115,13 @@ const (
 	// graceful-drain contract would be a lie.
 	ParkTailDrainTimeoutSeconds = 5
 
+	// ParkForwardDrainTimeoutSeconds bounds how long vmmd's terminal park
+	// waits for forwards that reached the guest before the park began
+	// (ADR-20261024090000). New forwards wait for the park and are
+	// re-routed to a fresh wake; a forward still running at the deadline
+	// is cut by the pause, as before.
+	ParkForwardDrainTimeoutSeconds = 5
+
 	// OCI puller (spec §17 G1, ADR-021). Per-pull HTTP timeout for the
 	// registry client. cmd/imaged passes this to oci.WithTimeout; the
 	// daemon may override at boot via FAAS_OCI_PULL_TIMEOUT_SECONDS but
@@ -7453,6 +7465,28 @@ const (
 	// unresolved database operation keeps the lease and VMs for later recovery.
 	MigrateLiveCommitRecoveryTimeout = 5 * time.Second
 
+	// DrainLiveMigrationWindowSeconds bounds how long after a graceful
+	// drain began (compute_nodes.drain_initiated_at) the recovery arbiter
+	// still starts live migrations of the node's RUNNING instances.
+	// DrainParkAfterSeconds is when it moves what is still RUNNING off the
+	// node instead (withdrawn from routing, in-flight requests drained, then
+	// stopped): one migration lease after the window closes plus a
+	// clock-skew margin, so no handoff a schedd started inside the window
+	// is still in flight when any schedd begins a park. A handoff that
+	// keeps failing (rc.290, 2026-10-22: one busy instance held fsn-3's
+	// drain for the whole rollout window) then delays a drain by minutes,
+	// not forever (ADR-20261024085817). The window plus the parks fit
+	// inside node_join.yml's 10-minute drain wait.
+	DrainLiveMigrationWindowSeconds = 120
+	DrainParkAfterSeconds           = DrainLiveMigrationWindowSeconds + MigrateLiveLeaseSeconds + 30
+	// DrainParkConcurrency bounds the drain parks one recovery tick runs at
+	// once for a node. A RUNNING instance is withdrawn from routing, given
+	// ServiceReplicaDrainTimeoutSeconds for its in-flight requests and then
+	// destroyed; no snapshot is written, so these run wider than handoffs.
+	// A node at its admission ceiling of 1 GiB instances (46) finishes in
+	// three rounds.
+	DrainParkConcurrency = 16
+
 	// Tier A6 (migrating-instance watchdog, ADR-067 follow-up to
 	// ADR-070): self-heal stuck state='migrating' rows that
 	// never committed (the new owner vmmd died mid-handoff, the
@@ -7787,11 +7821,16 @@ const (
 	// endpoint makes (a refused lookup denies; the edge asks again on the
 	// next handshake). OnDemandTLSAskNegativeCacheSeconds/Entries remember
 	// hostnames with no custom-domain row at all so repeated scans of one
-	// name cost nothing.
+	// name cost nothing. OnDemandTLSAskKnownHostSeconds/Entries remember
+	// hostnames the endpoint recently allowed: their lookups skip the shared
+	// bucket (they are still authoritative), so a flood of random server
+	// names cannot starve renewals and post-reload loads of real domains.
 	OnDemandTLSAskLookupsPerSecond     = 50
 	OnDemandTLSAskLookupBurst          = 200
 	OnDemandTLSAskNegativeCacheSeconds = 30
 	OnDemandTLSAskNegativeCacheEntries = 10000
+	OnDemandTLSAskKnownHostSeconds     = 7 * 24 * 60 * 60
+	OnDemandTLSAskKnownHostEntries     = 100000
 
 	// Tier A8 (active-passive HA topology, ADR-083 — closes the
 	// §14 M8 "Gate-A runbook (2nd box active-passive)" gap left
@@ -11217,6 +11256,12 @@ const AttestationWarmRetryBackoff = 5 * time.Minute
 // verifications of one layer share a single read and hash that outlives a
 // caller that gives up, so the next wake finds the layer verified.
 const LayerVerifyTimeout = 2 * time.Minute
+
+// LayerAttestationRecordMaxAgeHours is how long schedd trusts a remembered
+// layer verification across restarts (ADR-038 amendment, 2026-10-24). A
+// record only stands for the exact node-cache file that was hashed; past
+// this age the layer is read and hashed again.
+const LayerAttestationRecordMaxAgeHours = 168
 
 // NodeSizing is the per-host RAM/vCPU shape derived from the machine a
 // compute node actually runs on, rather than the single-box constants.

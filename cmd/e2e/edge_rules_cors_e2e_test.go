@@ -41,7 +41,7 @@ func TestEdgeRulesCORS_E2E(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-cors.apps.test.example"
+	synthHost := "edgectl-cors.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
@@ -92,7 +92,7 @@ func TestEdgeRulesCORS_E2E(t *testing.T) {
 	// routable target). This is distinct from a 204 with no CORS
 	// headers — gateway's CORS hook returns false when no rule
 	// matches.
-	header, _, status = doReqHeaders(t, h, "edgectl-nocors.apps.test.example",
+	header, _, status = doReqHeaders(t, h, "edgectl-nocors.edge-e2e.example",
 		http.MethodOptions, "/", nil, map[string]string{
 			"Origin":                        "https://app.test",
 			"Access-Control-Request-Method": "POST",
@@ -147,7 +147,7 @@ func TestEdgeRulesCORS_NonPreflight_HappyPath(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-cors-np.apps.test.example"
+	synthHost := "edgectl-cors-np.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)

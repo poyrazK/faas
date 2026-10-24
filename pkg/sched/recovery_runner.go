@@ -23,6 +23,16 @@ type RecoveryRunner struct {
 	// Interval is the recovery sweep cadence. Zero uses the one-second
 	// recovery budget from ADR-137.
 	Interval time.Duration
+	// observeNodes, when set, receives every node list a sweep reads
+	// (Engine.ObserveNodeLifecycles, ADR-20261024085817).
+	observeNodes func([]state.ComputeNode)
+}
+
+// WithNodeObserver hands every node list a sweep reads to fn, before the
+// sweep dispatches anything.
+func (r *RecoveryRunner) WithNodeObserver(fn func([]state.ComputeNode)) *RecoveryRunner {
+	r.observeNodes = fn
+	return r
 }
 
 // NewRecoveryRunner constructs the production recovery loop.
@@ -50,6 +60,9 @@ func (r *RecoveryRunner) Tick(ctx context.Context) error {
 	nodes, err := r.store.NodeList(ctx, "")
 	if err != nil {
 		return fmt.Errorf("sched: recovery: list nodes: %w", err)
+	}
+	if r.observeNodes != nil {
+		r.observeNodes(nodes)
 	}
 	var firstErr error
 	for _, node := range nodes {

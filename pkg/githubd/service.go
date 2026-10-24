@@ -589,7 +589,11 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 	var changedFiles []string
 	filterMode := filterModePaths
 	if len(touched) > 0 {
-		changedFiles, filterMode = s.lookupChangedFiles(ctx, ev, install.InstallationID)
+		compared := ev
+		if !isTag {
+			compared.Before = s.changedFilesBase(ctx, ev, binding.AccountID, touched, deploymentScope, branch)
+		}
+		changedFiles, filterMode = s.lookupChangedFiles(ctx, compared, install.InstallationID)
 		if filterMode == filterModePaths {
 			changedFiles = filterIgnoredGitHubPaths(changedFiles, policy)
 		}
@@ -829,6 +833,51 @@ func (s *Service) writeAppCheck(ctx context.Context, installationID int64, repoF
 //
 // Any error from the client is logged at warn level so the
 // dashboard can group by mode + truncated flag.
+// changedFilesBase picks the commit the path filter compares the push head
+// against. A delivery dropped because a newer push had already moved the
+// branch never ran its own compare, so the next push compared only its own
+// before..after range: in a monorepo, an app changed only by the dropped push
+// was never rebuilt (the same happens when a partially enqueued delivery's
+// retry is dropped). The base is the commit of the project's most recent
+// GitHub deployment from this branch and scope; a push that is not built on
+// it widens its compare to cover what was skipped. Without such a deployment,
+// or when it is the push's own before or head, the push's before stands.
+func (s *Service) changedFilesBase(ctx context.Context, ev PushEvent, accountID string, touched []state.App, scope, branch string) string {
+	if ev.Before == "" || s.Reconcile == nil || s.Reconcile.Store == nil {
+		return ev.Before
+	}
+	latest, err := s.Reconcile.Store.ListLatestDeploymentPerApp(ctx, accountID)
+	if err != nil {
+		s.Log.Warn("githubd: latest deployments unavailable; comparing the push range only",
+			"repo", ev.Repository.FullName, "sha", ev.After, "err", err)
+		return ev.Before
+	}
+	var base state.Deployment
+	for _, app := range touched {
+		dep, ok := latest[app.ID]
+		if !ok || dep.Kind != state.DeploymentKindGitHub || dep.GitHubSourceRef != branch || dep.CommitSHA == "" ||
+			dep.CommitSHA == ev.After || deploymentScopeKey(dep.Scope) != deploymentScopeKey(scope) {
+			continue
+		}
+		if base.ID == "" || dep.CreatedAt.After(base.CreatedAt) {
+			base = dep
+		}
+	}
+	if base.ID == "" || base.CommitSHA == ev.Before {
+		return ev.Before
+	}
+	s.Log.Info("githubd: push is not built on the last deployed commit; widening the compare",
+		"repo", ev.Repository.FullName, "before", ev.Before, "base", base.CommitSHA, "head", ev.After)
+	return base.CommitSHA
+}
+
+func deploymentScopeKey(scope string) string {
+	if scope == "" {
+		return "default"
+	}
+	return scope
+}
+
 func (s *Service) lookupChangedFiles(ctx context.Context, ev PushEvent, installationID int64) ([]string, string) {
 	if s.ChangedFiles == nil {
 		s.ObserveFilterMode(filterModeFullFallback)
@@ -1503,7 +1552,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		PreviewPrState:   previewState,
 		PreviewExpiresAt: &expiresAt,
 	}
-	previewApp = applyGitHubRootPolicy(previewApp, policy)
+	previewApp = withParentAccessGates(applyGitHubRootPolicy(previewApp, policy), parentApp)
 	// Resolve the account server-side so the separate, bounded PR-preview
 	// allowance comes from the plan table, including dependency previews.
 	account, err := s.Reconcile.Store.AccountByID(ctx, binding.AccountID)

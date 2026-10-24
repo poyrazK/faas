@@ -433,8 +433,56 @@ there.
 Rollback: set `faas_seal_domain_runtime_binding: off` and converge. New
 secrets are written unbound again. Secrets written while binding was on stay
 bound, so never roll a reader back past the release that carries the check.
-Secrets stored before this step stay unbound until a later binding pass of
-`seal-domain migrate`.
+Secrets stored before this step stay unbound until 4f binds them.
+
+### 4f. Bind stored runtime secrets; then require bindings
+
+This step needs 4d and 4e both complete: runtime secrets are sealed to the
+domain alone, and apid binds every new one. The pass re-seals to the domain
+recipient alone, so it has 4d's precondition too.
+
+On a compute host, as in 4d (it needs `runtime.age`, and its `gregalectl`
+must not be newer than the data release):
+
+```bash
+sudo gregalectl seal-domain migrate --domain runtime --readers-verified --bind-accounts --db-env /etc/faas/compute-db.env
+```
+
+It reads every stored runtime secret: app and project environment secrets,
+staged release bundles, deployment snapshots, and release and promotion
+captures. It re-seals each unbound envelope bound to the account that owns
+its row. Secret versions and fingerprints stay as they were.
+
+- Run it again until it reports `0 re-sealed`. `changed concurrently` means
+  a customer changed that secret during the run.
+- `bound to another account` must be 0. Each such document is listed: its
+  secret was copied from another account's row. Do not re-seal it, and do
+  not go on. Find how it got there, as in 4e.
+- `failed` must be 0. A failed document either holds an envelope no key on
+  the host opens (see 4d) or has no owning row.
+
+Then restart schedd on every node, one at a time. A re-seal of a project
+secret or a deployment snapshot does not invalidate schedd's owner cache,
+so a schedd that has not restarted can still send ciphertext from before
+the pass.
+
+Last, require bindings on every compute host. Add to the local variables
+file and converge the compute nodes:
+
+```yaml
+faas_seal_domain_runtime_binding_required: true
+```
+
+The role writes vmmd's drop-in but does not restart vmmd. vmmd applies it at
+its next start (the next release, or a planned restart), and
+`faas_runtime_secret_binding_required` says which vmmds enforce it. From then
+on a wake whose secret is unbound fails with `envelope is not bound to an
+account`. If one does, a writer is still sealing unbound: check
+`faas_seal_domain_runtime_binding` on that control plane, run the pass
+again, and restart schedd.
+
+Rollback: set `faas_seal_domain_runtime_binding_required: false`, converge
+the compute nodes, and restart vmmd. Bound secrets stay bound.
 
 ## 5. Source seal domain
 
