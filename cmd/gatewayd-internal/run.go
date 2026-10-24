@@ -3032,8 +3032,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-973 — verified crawlers via forward-confirmed reverse DNS.
 	handler.WithBotVerifier(gateway.NewBotVerifier(nil))
-	// ADR-20261022105846 — rule penalty boxes, held in this node's memory.
-	handler.WithPenaltyBox(gateway.NewPenaltyBox())
+	// ADR-20261022105846 — rule penalty boxes. Amendment 1: with a store
+	// that has the capability, boxes are shared with every gateway through
+	// Postgres and survive a restart; otherwise they stay in this node.
+	penaltyBox := gateway.NewPenaltyBox()
+	handler.WithPenaltyBox(penaltyBox)
+	if boxStore, ok := any(deps.pgStore).(state.EdgePenaltyBoxStore); ok && deps.pgStore != nil {
+		sharer := newPenaltyBoxSharer(penaltyBox, boxStore, log)
+		penaltyBox.OnBox(sharer.queue)
+		go sharer.run(ctx, penaltyBoxNotifications(ctx, deps.pool, log))
+	}
 	// ADR-960 — per-rule hit counts, flushed to Postgres once a minute. Only
 	// a store with the hit-count capability gets a recorder, so test and
 	// legacy wiring keep counting disabled.

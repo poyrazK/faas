@@ -34638,6 +34638,35 @@ UNION
 
 
 --
+-- Name: edge_penalty_boxes; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.edge_penalty_boxes (
+    id bigint NOT NULL,
+    app_id uuid NOT NULL,
+    rule_id uuid NOT NULL,
+    client cidr NOT NULL,
+    boxed_until timestamp with time zone NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT edge_penalty_boxes_client_check CHECK ((((family((client)::inet) = 4) AND (masklen((client)::inet) = 32)) OR ((family((client)::inet) = 6) AND (masklen((client)::inet) = 64))))
+);
+
+
+--
+-- Name: edge_penalty_boxes_id_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+ALTER TABLE public.edge_penalty_boxes ALTER COLUMN id ADD GENERATED ALWAYS AS IDENTITY (
+    SEQUENCE NAME public.edge_penalty_boxes_id_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1
+);
+
+
+--
 -- Name: edge_rule_change_log; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -58014,6 +58043,14 @@ ALTER TABLE ONLY public.domain_doctor_observations
 
 
 --
+-- Name: edge_penalty_boxes edge_penalty_boxes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.edge_penalty_boxes
+    ADD CONSTRAINT edge_penalty_boxes_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: edge_rule_change_log edge_rule_change_log_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -69587,6 +69624,20 @@ CREATE INDEX developer_sync_history_app_created_idx ON public.developer_sync_his
 --
 
 CREATE INDEX domain_doctor_observations_stale_idx ON public.domain_doctor_observations USING btree (observed_at);
+
+
+--
+-- Name: edge_penalty_boxes_created_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_penalty_boxes_created_idx ON public.edge_penalty_boxes USING btree (created_at);
+
+
+--
+-- Name: edge_penalty_boxes_until_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_penalty_boxes_until_idx ON public.edge_penalty_boxes USING btree (boxed_until);
 
 
 --

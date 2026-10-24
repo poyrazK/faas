@@ -460,8 +460,10 @@ Some details to know:
   machine can rotate through.
 - Many people can share one address (offices, mobile carriers). A threshold
   above 1 and a short penalty keep one of them from locking out the rest.
-- Each edge node keeps its own boxes in memory, so a client that reaches
-  several nodes is boxed on each one separately. A restart releases them.
+- A box made on one edge node holds on every node within about a second,
+  and survives a restart. Each node counts refusals toward a box on its
+  own, so a client spread over several nodes can be refused a few more
+  times before its first box.
 - Removing the penalty, disabling the rule, or switching it to log mode lets
   its clients go. A log-mode rule never boxes anyone.
 - The edge protection summary shows how many clients were boxed and how many
