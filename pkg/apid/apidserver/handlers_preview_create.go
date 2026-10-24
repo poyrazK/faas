@@ -95,7 +95,17 @@ func (s *server) provisionPreview(r *http.Request, acct state.Account, parent st
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return state.App{}, false, api.ErrCapacity("look up preview")
 	}
-	created, err := s.store.CreateAppIfUnderQuota(r.Context(), previewAppFromParent(parent, slug, req.PRNumber, expiresAt), api.MustLimitsFor(acct.Plan))
+	desired := previewAppFromParent(parent, slug, req.PRNumber, expiresAt)
+	created, err := s.store.CreateAppIfUnderQuota(r.Context(), desired, api.MustLimitsFor(acct.Plan))
+	if errors.Is(err, state.ErrConflict) {
+		// A torn-down preview's tombstone keeps the slug for the restore
+		// window; the same preview is re-created as a fresh row instead.
+		if releaser, ok := s.store.(state.PreviewTombstoneStore); ok {
+			if released, releaseErr := releaser.ReleaseDeletedPreviewSlug(r.Context(), desired); releaseErr == nil && released {
+				created, err = s.store.CreateAppIfUnderQuota(r.Context(), desired, api.MustLimitsFor(acct.Plan))
+			}
+		}
+	}
 	if err == nil {
 		return created, true, nil
 	}
