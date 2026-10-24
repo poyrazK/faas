@@ -61,6 +61,7 @@ ClaimNextAppForkExec
 ClaimNextCrashCapture
 ClaimNextPendingRun
 ClearDeployment
+ClearExpiredAppForkExecOutput
 ClearInstanceFrameworkReadyAt
 ClearMFA
 ClearObsoleteDeployments

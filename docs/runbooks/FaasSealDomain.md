@@ -5,6 +5,8 @@ give each reading service its own age identity in
 `/etc/faas/secrets/domains/<domain>.age`. Two alerts cover them. Neither
 fires before an operator stages a domain.
 
+## Symptom
+
 - **FaasSealDomainUnverified:** `gregalectl seal-domain verify` failed on a
   host. The `seal_domains` role runs `verify` after it stages the identity,
   and writes `faas_seal_domain_ready{domain}` to the node's textfile
@@ -13,11 +15,12 @@ fires before an operator stages a domain.
   - it does not open the domain probe (a different key from the one
     writers seal to);
   - the database was unreachable.
-- **FaasSealDomainIdentityMissing:** a reader daemon (vmmd for `runtime`)
+- **FaasSealDomainIdentityMissing:** a reader daemon (outboundd for
+  `outbound`, vmmd for `runtime`, githubd for `source`, imaged for `build`)
   started without the domain identity while other readers of the same
-  domain hold it. This is usually a compute node that joined or was rebuilt
-  after the rollout, since CD and node join do not stage domain identities
-  yet.
+  domain hold it. This is usually a node that joined or was rebuilt after
+  the rollout, before the domain's `SEAL_DOMAIN_*` secrets were in CD, or a
+  vmmd that has not restarted since its key was staged.
 
 Impact depends on the write mode:
 - **Before writers seal to the domain alone** (apid's
@@ -63,8 +66,10 @@ shows `write_mode` for each domain.
 
 ## Recover
 
-Stage the identity from the operator machine, with the local variables
-file used for the rollout ([Seal domains rollout](seal-domains-rollout.md)).
+Stage the identity through CD when the domain's `SEAL_DOMAIN_*` secrets are
+set: rerun the control-plane CD, or the node's join. Otherwise stage it from
+the operator machine with the local variables file used for the rollout. See
+[Seal domains rollout](seal-domains-rollout.md#where-the-keys-and-settings-live).
 The `seal_domains` role installs the identity and reruns `verify`, which
 clears FaasSealDomainUnverified.
 

@@ -56,5 +56,11 @@ imaged and proves the probe), control-plane hosts
 `faas_seal_domain_build_recipient_src` (apid seals to it, to both keys until
 `faas_seal_domain_build_writes: domain`).
 
+In production, CD supplies the `*_src` variables from the
+`SEAL_DOMAIN_<DOMAIN>_AGE_KEY` and `_AGE_RECIPIENT` secrets
+(`scripts/ci/seal_domain_vars.sh`), on every control-plane converge and
+compute join. The write modes and `*_readers_verified` stay in the
+environment's Ansible variables.
+
 The checklist for every domain, with checks and rollbacks for each step, is
 [docs/runbooks/seal-domains-rollout.md](../../../../docs/runbooks/seal-domains-rollout.md).

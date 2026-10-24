@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -51,6 +52,9 @@ type Host interface {
 	// RuntimeSecretRecipient seals the app secrets a binding hands to the
 	// workload, which vmmd opens (ADR 20261022111812).
 	RuntimeSecretRecipient() *age.X25519Recipient
+	// RuntimeSecretBinding is the account binding those secrets are sealed
+	// with (ADR-20261023173624); zero while binding is off.
+	RuntimeSecretBinding(accountID string) secretbox.Binding
 	HostHMACKey() []byte
 	MFAIdentities() []*age.X25519Identity
 }

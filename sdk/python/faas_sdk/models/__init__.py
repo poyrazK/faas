@@ -72,6 +72,8 @@ from .adopt_environment_git_ops_response_status import AdoptEnvironmentGitOpsRes
 from .advance_automation_live_suite_request import AdvanceAutomationLiveSuiteRequest
 from .advance_canary_request import AdvanceCanaryRequest
 from .after_restore_hook import AfterRestoreHook
+from .ai_deployment_usage import AIDeploymentUsage
+from .ai_deployment_usage_list import AIDeploymentUsageList
 from .alert_delivery_response import AlertDeliveryResponse
 from .alert_delivery_response_readiness_destination import AlertDeliveryResponseReadinessDestination
 from .alert_delivery_response_readiness_failover_reason import AlertDeliveryResponseReadinessFailoverReason
@@ -739,6 +741,8 @@ from .complete_workflow_callback_response_status import CompleteWorkflowCallback
 from .compose_healthcheck import ComposeHealthcheck
 from .compose_process import ComposeProcess
 from .compose_process_stop_signal import ComposeProcessStopSignal
+from .compose_resources import ComposeResources
+from .compose_resources_cpu_millicores import ComposeResourcesCpuMillicores
 from .config_change_receipt import ConfigChangeReceipt
 from .config_guard import ConfigGuard
 from .config_guard_decision import ConfigGuardDecision
@@ -3966,9 +3970,15 @@ from .outbound_ai_moderation_action import OutboundAIModerationAction
 from .outbound_ai_moderation_categories_item import OutboundAIModerationCategoriesItem
 from .outbound_ai_moderation_kind import OutboundAIModerationKind
 from .outbound_ai_moderation_on_error import OutboundAIModerationOnError
+from .outbound_ai_online_evaluation import OutboundAIOnlineEvaluation
 from .outbound_ai_price_catalog_response import OutboundAIPriceCatalogResponse
 from .outbound_ai_price_entry import OutboundAIPriceEntry
 from .outbound_ai_price_list_response import OutboundAIPriceListResponse
+from .outbound_ai_quality_alert import OutboundAIQualityAlert
+from .outbound_ai_quality_alert_list import OutboundAIQualityAlertList
+from .outbound_ai_quality_alert_metric import OutboundAIQualityAlertMetric
+from .outbound_ai_quality_drift_webhook_payload import OutboundAIQualityDriftWebhookPayload
+from .outbound_ai_quality_drift_webhook_payload_metric import OutboundAIQualityDriftWebhookPayloadMetric
 from .outbound_ai_replay import OutboundAIReplay
 from .outbound_ai_replay_result import OutboundAIReplayResult
 from .outbound_ai_replay_source import OutboundAIReplaySource
@@ -3976,7 +3986,9 @@ from .outbound_ai_replay_state import OutboundAIReplayState
 from .outbound_ai_replay_target import OutboundAIReplayTarget
 from .outbound_ai_request_content import OutboundAIRequestContent
 from .outbound_ai_request_log_entry import OutboundAIRequestLogEntry
+from .outbound_ai_request_log_entry_feedback import OutboundAIRequestLogEntryFeedback
 from .outbound_ai_request_log_entry_outcome import OutboundAIRequestLogEntryOutcome
+from .outbound_ai_request_log_entry_quality_flags_item import OutboundAIRequestLogEntryQualityFlagsItem
 from .outbound_ai_request_log_list import OutboundAIRequestLogList
 from .outbound_ai_response_policy import OutboundAIResponsePolicy
 from .outbound_ai_response_policy_blocked_terms import OutboundAIResponsePolicyBlockedTerms
@@ -4002,6 +4014,11 @@ from .outbound_ai_tag_limits import OutboundAITagLimits
 from .outbound_ai_tag_usage_export_row import OutboundAITagUsageExportRow
 from .outbound_ai_tag_usage_item import OutboundAITagUsageItem
 from .outbound_ai_tag_usage_response import OutboundAITagUsageResponse
+from .outbound_ai_trace import OutboundAITrace
+from .outbound_ai_trace_call import OutboundAITraceCall
+from .outbound_ai_trace_call_outcome import OutboundAITraceCallOutcome
+from .outbound_ai_trace_list import OutboundAITraceList
+from .outbound_ai_trace_response import OutboundAITraceResponse
 from .outbound_ai_usage_item import OutboundAIUsageItem
 from .outbound_ai_usage_response import OutboundAIUsageResponse
 from .outbound_ai_user_usage_export_row import OutboundAIUserUsageExportRow
@@ -4681,6 +4698,8 @@ from .put_issue_tracker_link_request import PutIssueTrackerLinkRequest
 from .put_job_registry_credential_request import PutJobRegistryCredentialRequest
 from .put_operation_webhook_binding_request import PutOperationWebhookBindingRequest
 from .put_operation_webhook_binding_request_mode import PutOperationWebhookBindingRequestMode
+from .put_outbound_ai_feedback_request import PutOutboundAIFeedbackRequest
+from .put_outbound_ai_feedback_request_rating import PutOutboundAIFeedbackRequestRating
 from .put_outbound_ai_policy_request import PutOutboundAIPolicyRequest
 from .put_outbound_ai_policy_request_ai_provider import PutOutboundAIPolicyRequestAiProvider
 from .put_outbound_ai_prices_request import PutOutboundAIPricesRequest
@@ -5022,6 +5041,7 @@ from .route_awake_response import RouteAwakeResponse
 from .route_awake_route import RouteAwakeRoute
 from .route_awake_route_pattern import RouteAwakeRoutePattern
 from .route_awake_source import RouteAwakeSource
+from .route_awake_source_pattern import RouteAwakeSourcePattern
 from .route_awake_source_source import RouteAwakeSourceSource
 from .route_awake_suggestion import RouteAwakeSuggestion
 from .route_awake_suggestion_kind import RouteAwakeSuggestionKind
@@ -5420,6 +5440,7 @@ from .seal_scenario_objects_request import SealScenarioObjectsRequest
 from .seal_scenario_postgres_request import SealScenarioPostgresRequest
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
+from .secret_file import SecretFile
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
 from .secret_revocation_target import SecretRevocationTarget
@@ -6184,6 +6205,8 @@ __all__ = (
     "AdvanceAutomationLiveSuiteRequest",
     "AdvanceCanaryRequest",
     "AfterRestoreHook",
+    "AIDeploymentUsage",
+    "AIDeploymentUsageList",
     "AlertDeliveryResponse",
     "AlertDeliveryResponseReadinessDestination",
     "AlertDeliveryResponseReadinessFailoverReason",
@@ -6837,6 +6860,8 @@ __all__ = (
     "ComposeHealthcheck",
     "ComposeProcess",
     "ComposeProcessStopSignal",
+    "ComposeResources",
+    "ComposeResourcesCpuMillicores",
     "ConfigChangeReceipt",
     "ConfigGuard",
     "ConfigGuardDecision",
@@ -9826,9 +9851,15 @@ __all__ = (
     "OutboundAIModerationCategoriesItem",
     "OutboundAIModerationKind",
     "OutboundAIModerationOnError",
+    "OutboundAIOnlineEvaluation",
     "OutboundAIPriceCatalogResponse",
     "OutboundAIPriceEntry",
     "OutboundAIPriceListResponse",
+    "OutboundAIQualityAlert",
+    "OutboundAIQualityAlertList",
+    "OutboundAIQualityAlertMetric",
+    "OutboundAIQualityDriftWebhookPayload",
+    "OutboundAIQualityDriftWebhookPayloadMetric",
     "OutboundAIReplay",
     "OutboundAIReplayResult",
     "OutboundAIReplaySource",
@@ -9836,7 +9867,9 @@ __all__ = (
     "OutboundAIReplayTarget",
     "OutboundAIRequestContent",
     "OutboundAIRequestLogEntry",
+    "OutboundAIRequestLogEntryFeedback",
     "OutboundAIRequestLogEntryOutcome",
+    "OutboundAIRequestLogEntryQualityFlagsItem",
     "OutboundAIRequestLogList",
     "OutboundAIResponsePolicy",
     "OutboundAIResponsePolicyBlockedTerms",
@@ -9862,6 +9895,11 @@ __all__ = (
     "OutboundAITagUsageExportRow",
     "OutboundAITagUsageItem",
     "OutboundAITagUsageResponse",
+    "OutboundAITrace",
+    "OutboundAITraceCall",
+    "OutboundAITraceCallOutcome",
+    "OutboundAITraceList",
+    "OutboundAITraceResponse",
     "OutboundAIUsageItem",
     "OutboundAIUsageResponse",
     "OutboundAIUserUsageExportRow",
@@ -10489,6 +10527,8 @@ __all__ = (
     "PutJobRegistryCredentialRequest",
     "PutOperationWebhookBindingRequest",
     "PutOperationWebhookBindingRequestMode",
+    "PutOutboundAIFeedbackRequest",
+    "PutOutboundAIFeedbackRequestRating",
     "PutOutboundAIPolicyRequest",
     "PutOutboundAIPolicyRequestAiProvider",
     "PutOutboundAIPricesRequest",
@@ -10818,6 +10858,7 @@ __all__ = (
     "RouteAwakeRoute",
     "RouteAwakeRoutePattern",
     "RouteAwakeSource",
+    "RouteAwakeSourcePattern",
     "RouteAwakeSourceSource",
     "RouteAwakeSuggestion",
     "RouteAwakeSuggestionKind",
@@ -11214,6 +11255,7 @@ __all__ = (
     "SealScenarioPostgresRequest",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
+    "SecretFile",
     "SecretFinding",
     "SecretFindingSeverity",
     "SecretRevocationTarget",

@@ -238,7 +238,7 @@ func (s *server) sealAndPersistWithKid(c stdctx, acct state.Account, app state.A
 			"Gregale could not securely store this value.",
 			"Retry in a few seconds; if it still fails, contact support.", err)
 	}
-	ciphertext, err := secretbox.SealOne(recipient, key, value, limits.SecretValueMaxBytes)
+	ciphertext, err := secretbox.SealOneBound(recipient, runtimeSecretBinding(app.AccountID), key, value, limits.SecretValueMaxBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			return prob

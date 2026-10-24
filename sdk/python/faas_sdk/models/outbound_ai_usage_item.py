@@ -56,6 +56,26 @@ class OutboundAIUsageItem:
     """Audio part of input_tokens, priced at the audio input price (ADR 20261019072722)."""
     output_audio_tokens: int
     """Audio part of output_tokens, priced at the audio output price."""
+    truncated_requests: int
+    """Answered calls that stopped at the output-token limit (ADR 20261021171712)."""
+    refused_requests: int
+    """Answered calls the provider refused or filtered."""
+    empty_requests: int
+    """Answered calls with no text and no requested tools."""
+    invalid_json_requests: int
+    """Answered calls whose requested JSON, or tool-call arguments, did not parse."""
+    tool_error_requests: int
+    """Calls whose newest turn reported a failed tool."""
+    good_feedback: int
+    """Calls rated good (ADR 20261021171712)."""
+    bad_feedback: int
+    """Calls rated bad."""
+    evaluated_requests: int
+    """Calls an online evaluation scored."""
+    evaluation_score_sum: int
+    """Sum of their scores from 1 to 5; divide by evaluated_requests for the mean."""
+    evaluation_errors: int
+    """Sampled calls the judge could not score."""
     cost_millicents: int | Unset = UNSET
     """Priced from the list in effect at each call, else the built-in catalog, and rounded up per call; zero for an
     unpriced model."""
@@ -104,6 +124,26 @@ class OutboundAIUsageItem:
 
         output_audio_tokens = self.output_audio_tokens
 
+        truncated_requests = self.truncated_requests
+
+        refused_requests = self.refused_requests
+
+        empty_requests = self.empty_requests
+
+        invalid_json_requests = self.invalid_json_requests
+
+        tool_error_requests = self.tool_error_requests
+
+        good_feedback = self.good_feedback
+
+        bad_feedback = self.bad_feedback
+
+        evaluated_requests = self.evaluated_requests
+
+        evaluation_score_sum = self.evaluation_score_sum
+
+        evaluation_errors = self.evaluation_errors
+
         cost_millicents = self.cost_millicents
 
         field_dict: dict[str, Any] = {}
@@ -131,6 +171,16 @@ class OutboundAIUsageItem:
                 "prompt_cache_saved_millicents": prompt_cache_saved_millicents,
                 "input_audio_tokens": input_audio_tokens,
                 "output_audio_tokens": output_audio_tokens,
+                "truncated_requests": truncated_requests,
+                "refused_requests": refused_requests,
+                "empty_requests": empty_requests,
+                "invalid_json_requests": invalid_json_requests,
+                "tool_error_requests": tool_error_requests,
+                "good_feedback": good_feedback,
+                "bad_feedback": bad_feedback,
+                "evaluated_requests": evaluated_requests,
+                "evaluation_score_sum": evaluation_score_sum,
+                "evaluation_errors": evaluation_errors,
             }
         )
         if cost_millicents is not UNSET:
@@ -183,6 +233,26 @@ class OutboundAIUsageItem:
 
         output_audio_tokens = d.pop("output_audio_tokens")
 
+        truncated_requests = d.pop("truncated_requests")
+
+        refused_requests = d.pop("refused_requests")
+
+        empty_requests = d.pop("empty_requests")
+
+        invalid_json_requests = d.pop("invalid_json_requests")
+
+        tool_error_requests = d.pop("tool_error_requests")
+
+        good_feedback = d.pop("good_feedback")
+
+        bad_feedback = d.pop("bad_feedback")
+
+        evaluated_requests = d.pop("evaluated_requests")
+
+        evaluation_score_sum = d.pop("evaluation_score_sum")
+
+        evaluation_errors = d.pop("evaluation_errors")
+
         cost_millicents = d.pop("cost_millicents", UNSET)
 
         outbound_ai_usage_item = cls(
@@ -207,6 +277,16 @@ class OutboundAIUsageItem:
             prompt_cache_saved_millicents=prompt_cache_saved_millicents,
             input_audio_tokens=input_audio_tokens,
             output_audio_tokens=output_audio_tokens,
+            truncated_requests=truncated_requests,
+            refused_requests=refused_requests,
+            empty_requests=empty_requests,
+            invalid_json_requests=invalid_json_requests,
+            tool_error_requests=tool_error_requests,
+            good_feedback=good_feedback,
+            bad_feedback=bad_feedback,
+            evaluated_requests=evaluated_requests,
+            evaluation_score_sum=evaluation_score_sum,
+            evaluation_errors=evaluation_errors,
             cost_millicents=cost_millicents,
         )
 

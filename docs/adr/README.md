@@ -1,6 +1,7 @@
 # Architecture Decision Records
 
 - [Bucket-scoped object storage availability](20261023223000-object-storage-bucket-scoped-availability.md) — per-bucket inventory freshness, maintenance listings off the customer meter, no fence on a never-versioned baseline, busy deletions wait, public-read share and revalidation
+- [Compose profiles from COMPOSE_PROFILES in .env](20261022190000-compose-profiles-from-dotenv.md)
 - [Compose deploy resources and replicas set app settings](20261023120000-compose-deploy-resources.md)
 - [Compose service secrets as files in /run/secrets](20261023090000-compose-runtime-secret-files.md)
 - [ADR-20261023113721: Platform flags for edge rule features](20261023113721-edge-feature-platform-flags.md)
@@ -9,6 +10,7 @@
 - [ADR-20261022203653: One dead-letter entry per queue message](20261022203653-one-dead-letter-entry-per-queue-message.md) — Proposed; amends ADR-179: a push receipt is captured but not listed
 - [ADR-20261022105846: Penalty box for edge rules](20261022105846-edge-rule-penalty-box.md)
 - [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)
+- [ADR-20261023173624: Runtime secrets are bound to their account](20261023173624-runtime-secrets-bound-to-their-account.md) — vmmd opens a bound envelope only for its account; writers opt in with FAAS_RUNTIME_SECRET_BINDING
 - [ADR-20261023104734: Daemons log in as runtime roles, not the schema owner](20261023104734-database-runtime-roles.md) — faas_runtime group, per-daemon roles, opt-in FAAS_DB_ROLE
 - [Product Control trial-to-paid conversion](20261022180921-product-control-trial-conversion.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
@@ -1851,3 +1853,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)
 
 - [ADR-20261020161310: Route insight fixes, dashboard panel and alerts](20261020161310-route-insight-fixes-and-alerts.md)
+
+- [ADR-20261022184757: Background work and waitUntil in the awake report](20261022184757-route-awake-background-work.md)

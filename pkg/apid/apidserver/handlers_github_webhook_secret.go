@@ -101,8 +101,12 @@ func (s *server) handleSetGithubWebhookSecret(w http.ResponseWriter, r *http.Req
 		api.WriteProblem(w, prob)
 		return
 	}
+	// ADR 20261022111812: only the sealed copy is stored. githubd has
+	// preferred it since the release that added it, so the plaintext column
+	// is no longer written.
+	clear(raw)
 	upgradedAt, upgradedBy, err := s.store.UpsertGithubWebhookSecret(r.Context(),
-		req.InstallationID, state.GithubWebhookSecret{Value: raw, Sealed: sealed}, "admin:"+acct.ID)
+		req.InstallationID, state.GithubWebhookSecret{Sealed: sealed}, "admin:"+acct.ID)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not set webhook secret"))
 		return
@@ -120,10 +124,9 @@ func (s *server) handleSetGithubWebhookSecret(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// sealGithubWebhookSecret seals the copy githubd opens (ADR 20261022111812).
-// The source domain is not wired yet, so it is sealed to the fleet
-// recipient; the plaintext column stays written for the release that reads
-// only it.
+// sealGithubWebhookSecret seals the copy githubd opens (ADR 20261022111812)
+// to the source domain's write recipients: the fleet recipient until the
+// domain is staged, then the domain under its write mode.
 func sealGithubWebhookSecret(raw []byte) ([]byte, *api.Problem) {
 	recipients, err := githubWebhookSecretRecipients()
 	if err != nil {

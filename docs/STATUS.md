@@ -1802,6 +1802,11 @@ remain open; production admission is disabled.
   (2026-10-22): a built service's `entrypoint` joins its start command, and
   `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
   deployment and applied to the built image. Unit tests pass; no native run.
+- **Compose profiles.**
+  [ADR-20261022190000](adr/20261022190000-compose-profiles-from-dotenv.md)
+  (2026-10-22): `COMPOSE_PROFILES` in the source's `.env` activates Compose
+  profiles (`*` for all); services in inactive profiles are skipped with a
+  warning. Unit tests pass.
 - **No native run recorded.** The `containers` native lane has no recorded
   passing run; [container qualification](container-qualification.md) remains
   the coverage plan.

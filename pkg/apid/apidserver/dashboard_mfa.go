@@ -33,7 +33,7 @@ func (s *server) dashboardMFA(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, "/dashboard/", http.StatusFound)
 		return
 	}
-	s.renderDashboardMFA(w, r, acct, http.StatusOK, false, dashboardMFANext(r.URL.Query().Get("next")))
+	s.renderDashboardMFA(w, r, acct, http.StatusOK, "", dashboardMFANext(r.URL.Query().Get("next")))
 }
 
 func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
@@ -68,7 +68,7 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 		s.totp.fail(acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": reason, "via": "dashboard"})
 		// 401 so the dashboard auth limiter counts the guess.
-		s.renderDashboardMFA(w, r, acct, http.StatusUnauthorized, true, dashboardMFANext(r.PostFormValue("next")))
+		s.renderDashboardMFA(w, r, acct, http.StatusUnauthorized, reason, dashboardMFANext(r.PostFormValue("next")))
 		return
 	}
 	s.totp.reset(acct.ID)
@@ -84,7 +84,8 @@ func (s *server) dashboardMFAVerify(w http.ResponseWriter, r *http.Request) {
 	http.Redirect(w, r, dashboardMFANext(r.PostFormValue("next")), http.StatusSeeOther)
 }
 
-func (s *server) renderDashboardMFA(w http.ResponseWriter, r *http.Request, acct state.Account, status int, failed bool, next string) {
+// failure is the acceptTOTP reason of a refused code, or "" for none.
+func (s *server) renderDashboardMFA(w http.ResponseWriter, r *http.Request, acct state.Account, status int, failure, next string) {
 	token, err := middleware.IssueForAuthenticatedNamed(s.sessions, dashboardMFAAction, acct.ID, dashboardMFACSRFCookie)
 	if err != nil {
 		s.log.Error("dashboard.mfa.csrf_issue", "err", err.Error())
@@ -104,7 +105,7 @@ func (s *server) renderDashboardMFA(w http.ResponseWriter, r *http.Request, acct
 		Title:   "Two-factor authentication",
 		Account: acctViewFrom(acct),
 		Body:    "mfa",
-		Data:    dashboard.MFAChallengeData{CSRFToken: token, Failed: failed, Enrolled: acct.MFAEnrolled(), Next: next},
+		Data:    dashboard.MFAChallengeData{CSRFToken: token, Failed: failure != "", Reused: failure == totpCodeReplayed, Enrolled: acct.MFAEnrolled(), Next: next},
 	}
 	// Render sets these too, but only before the first write; a non-200
 	// status has to be written first.

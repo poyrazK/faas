@@ -5415,6 +5415,9 @@ type Querier interface {
 	ReleaseEnvironmentGitSourceOwners(ctx context.Context, db DBTX, sourceID pgtype.UUID) error
 	ReleaseEnvironmentQueueDeliveryQuota(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	ReleaseGateCustomMetricWindow(ctx context.Context, db DBTX, arg ReleaseGateCustomMetricWindowParams) (ReleaseGateCustomMetricWindowRow, error)
+	// ADR 20261022153155: a deployment's AI calls in the UTC minutes of
+	// [since, until).
+	ReleaseGateDeploymentAI(ctx context.Context, db DBTX, arg ReleaseGateDeploymentAIParams) (ReleaseGateDeploymentAIRow, error)
 	// A deployment's organic requests in [since, until): all, 5xx, and those
 	// slower than latency_threshold_ms (0 counts none as slow).
 	ReleaseGateDeploymentSLI(ctx context.Context, db DBTX, arg ReleaseGateDeploymentSLIParams) (ReleaseGateDeploymentSLIRow, error)
@@ -5713,6 +5716,12 @@ type Querier interface {
 	// auth rejection (ADR-847; probe observations are pruned after a day), and
 	// scheduled prewarms that admitted instances.
 	RouteAwakeSourceMinutes(ctx context.Context, db DBTX, arg RouteAwakeSourceMinutesParams) ([]RouteAwakeSourceMinutesRow, error)
+	// Deliveries schedd made to the app (ADR-20261022184757), per minute and
+	// source: how many were running and how many started. Cron firings are keyed
+	// by cron job and queue deliveries by queue. A delivery runs from received_at
+	// to completed_at; one still running ends at until_at, and none counts for
+	// more than max_minutes.
+	RouteAwakeWorkMinutes(ctx context.Context, db DBTX, arg RouteAwakeWorkMinutesParams) ([]RouteAwakeWorkMinutesRow, error)
 	// Advisory identity cohorts use the same exact routes, deployment pair and
 	// closed windows as aggregate health. Rank before bounding output and sorting
 	// weighted latency. Request-time attribution never follows today's tenant link.

@@ -945,6 +945,181 @@ output_tokens, tokens, cost_millicents`. The API's default format is NDJSON.
 The tag check joins admission's existing database read, so it adds no round
 trip.
 
+## AI traces
+
+An AI trace groups the calls of one task, such as one agent run that calls the
+model, a tool and the model again (ADR 20261020202035). A call belongs to the
+trace named by:
+
+- `X-Gregale-AI-Trace`: an ID of 1 to 64 letters, digits or
+  `. _ : @ + = / | -`. A malformed header gets `400 outbound_ai_trace_invalid`.
+  The gateway never forwards it.
+- otherwise the trace ID of a valid W3C `traceparent` header, so apps that
+  already trace their requests get AI traces with no change. `traceparent` is
+  still forwarded.
+
+A call with neither belongs to no trace.
+
+**Recording.** Traces are recorded when the integration keeps a request log or
+has trace limits.
+
+- Each trace keeps its first and last call, calls, errors, calls with unknown
+  usage, tokens, cost, the tool calls the model requested, and up to 8 models.
+  The first call's app and end user name the trace.
+- The gateway reads the tool calls a model requests from OpenAI Chat
+  Completions and Responses, Anthropic Messages (also through Bedrock),
+  Gemini, Vertex and Bedrock Converse responses, streamed or not, up to 16 per
+  response. It keeps the tool names and a hash of the arguments, never the
+  arguments themselves.
+- Request-log entries carry `trace_id` and `tool_calls`. The log-export line
+  carries `trace_id`, and OTLP drains get `gregale.ai.trace_id`.
+- Each integration records up to 100,000 new traces per UTC day. Calls of
+  later new traces still settle and are logged, but no trace is recorded.
+- Traces are kept for 7 days, like the request log.
+- A realtime session belongs to the trace of its upgrade request. Each
+  response or Live turn adds to the trace, but its tool calls are not read.
+
+**Viewing.** `gregale ai traces <id> [--app APP-ID] [--user USER] [--limit N]`
+(or `GET .../ai-traces?app_id=&end_user=&before=&limit=`) lists traces, newest
+last call first, up to 200 per page. `gregale ai traces <id> <trace-id>` (or
+`GET .../ai-traces/{trace}`) shows one trace and up to 500 of its logged
+calls in order, with each call's model, status, tokens, cost, duration, time
+to first byte and requested tools. Without a request log the trace has totals
+but no calls.
+
+**Limits.** `gregale ai policy <id>` takes:
+
+| Flag | Policy field | Refuses a trace's next call when |
+| --- | --- | --- |
+| `--trace-max-calls N` | `trace_max_calls` | the trace's settled and in-flight calls reach N (1 to 1,000,000) |
+| `--trace-max-cost USD` | `trace_max_cost_millicents` | settled cost, plus in-flight reservations, plus the call's own reservation would pass the limit |
+| `--trace-max-repeated-tool-calls N` | `trace_max_repeated_tool_calls` | N consecutive calls requested the same tools with the same arguments (1 to 1,000) |
+
+`none` clears a limit. A refused call gets `429 outbound_budget_exhausted`
+with `X-Gregale-Outbound-Rejection` set to `trace_call_limit`,
+`trace_cost_limit` or `trace_tool_loop`, and no `Retry-After`: a trace never
+resets, so start a new one.
+
+- A response with no tool calls ends a repeat streak; an error leaves it as it
+  was.
+- Calls of one trace can run in parallel, so "consecutive" is the order they
+  settle in, and the calls already in flight when a limit is reached can pass
+  it by up to their reservations.
+- With trace limits set, a call of a new trace past the day's 100,000 is
+  refused with `trace_untracked`, since it could not be limited.
+
+## AI calls by deployment
+
+Settlement adds an app instance's call to its deployment's row for the
+current UTC minute in `outbound_ai_deployment_minutes` (ADR 20261022153155).
+The deployment is read from `instances` in the same statement, by the
+verified workload identity's instance and app; a call whose instance row is
+gone is not attributed. Rows have no foreign keys and are pruned after
+`OutboundAIDeploymentStatsRetentionDays` (14) with the other AI rollups.
+
+| Reader | Reads |
+| --- | --- |
+| `ai` release gates | The release's and the baseline's rows in the gate's windows, through the primary key. |
+| `GET /v1/apps/{slug}/ai-deployments` | The app's rows of the last 14 days through `(app_id, minute)`, summed by deployment, at most 50. |
+
+An `ai` gate is skipped by meterd and apid N-1, and an N-1 apid refuses a
+rollout decision carrying an `ai` result. Roll apid back only after the
+`ai` gates are removed, with `gregale release-gates rm --app <slug> <name>`
+for each one; the down migration removes any that are left.
+
+## AI gateway dashboard
+
+The dashboard's AI pages read what the API serves (ADR 20261022145950). The
+same gate applies: the platform flag, the account's rollout and the plan;
+a gated account sees why.
+
+| Page | Shows |
+| --- | --- |
+| `/dashboard/ai` | Each AI integration with today's calls, error rate, cost, quality flags and mean score. |
+| `/dashboard/ai/{integration}` | One UTC day (last 90): cost and quality by model and by caller, the 20 most expensive tags and end users (last 31 days), latency and errors by model, the latest drift alerts and traces. |
+| `/dashboard/ai/{integration}/traces` | Traces newest first, filtered by the first call's app or end user, 50 per page. |
+| `/dashboard/ai/{integration}/traces/{trace}` | One trace's logged calls as a timeline, with each call's model, tokens, cost, time to first byte, requested tools, quality flags, rating and score. |
+
+Latency and error rate by model come from the latest 5,000 logged calls of
+the last 24 hours, read through the request log's (integration, time)
+index: the p50 and p95 time to first byte and duration. Without the request
+log the page says so.
+
+## AI quality signals
+
+The gateway reports the quality of AI answers it can see without reading them
+for meaning (ADR 20261021171712).
+
+**Call IDs.** Every AI call's response carries `X-Gregale-AI-Call: <uuid>`,
+the ID of its request-log entry. The log-export line carries it as `call_id`
+and OTLP drains get `gregale.ai.call_id`. Realtime turns get IDs in the log,
+but a WebSocket has no per-turn header.
+
+**Quality flags.** A call that answered (2xx with known usage) of a text
+generation endpoint is marked with:
+
+| Flag | When |
+| --- | --- |
+| `truncated` | The model stopped at the output-token limit (`finish_reason` `length`, `stop_reason` `max_tokens`, `MAX_TOKENS`, `max_output_tokens`). |
+| `refused` | The provider refused or filtered the answer: a refusal field, `content_filter`, Anthropic `refusal`, a Gemini safety block, a Bedrock guardrail. |
+| `empty` | The answer had no text and requested no tools. Thoughts do not count as text. |
+| `invalid_json` | JSON was asked for (`response_format` or `text.format` `json_object`/`json_schema`, Gemini `responseMimeType: application/json`) and the answer is not JSON; a tool call's arguments are not JSON; or Gemini reports `MALFORMED_FUNCTION_CALL`. Up to 64 KiB of text and 16 KiB of arguments per call are checked. |
+| `tool_error` | The newest message of the request reports a failed tool: an Anthropic `tool_result` with `is_error: true` or a Bedrock `toolResult` with `status: error`. |
+
+Flags are on request-log entries (`quality_flags`), the log-export line,
+`gregale.ai.quality_flags`, the daily usage (`truncated_requests` and the
+rest, the QUALITY column of `gregale ai usage`) and
+`outbound_ai_quality_flags_total{integration_id, flag}`. They describe the
+provider's answer, before response guardrails change it.
+
+**Feedback.** An app rates its own logged call with `POST
+/i/<integration>/_gregale/feedback` and `{"call_id": "...", "rating":
+"good"|"bad", "label": "wrong_answer"}`, authenticated as for AI calls. For a
+route call, use the integration `X-Gregale-AI-Route-Target` names.
+
+- Feedback needs the request log; a call that is not logged, or that another
+  app made, gets `404 outbound_ai_call_not_found`.
+- A later rating replaces the earlier one. The label is optional: up to 32
+  lowercase letters, digits, `_`, `.` or `-`, starting with a letter. There
+  is no free text.
+- A person can rate any logged call with `gregale ai feedback <id> <call-id>
+  --good|--bad [--label L]` (or `PUT .../ai-requests/{request}/feedback`).
+- Ratings leave with the request log after 7 days; the daily usage keeps
+  `good_feedback` and `bad_feedback`.
+
+**Online evaluations.** `gregale ai policy <id> --online-eval-percent 5
+--online-eval-judge <integration-id> --online-eval-model <model>
+[--online-eval-rubric TEXT]` (policy field `online_evaluation`) scores that
+share of answered app calls from 1 to 5.
+
+- It needs `--request-log-content on`: only calls whose bodies were captured
+  whole are sampled. The judge integration must be one of the account's
+  enabled AI integrations.
+- outboundd's worker sends the redacted request and answer text, and the
+  rubric, to the judge. The call is metered and capped under the caller
+  `evaluation` on the judge integration.
+- At most 1,000 calls per integration per UTC day are evaluated. A call whose
+  capture expired, or whose judge reply has no score, counts as a judge
+  error.
+- Scores are on request-log entries (`evaluation_score`) and in the daily
+  usage (`evaluated_requests`, `evaluation_score_sum`, `evaluation_errors`;
+  the SCORE column).
+
+**Drift alerts.** With `--quality-alerts on`, outboundd compares each model's
+UTC day so far with its previous 7 days every 10 minutes, over app and Runs
+calls:
+
+- A flag rate, or the share of bad ratings, alerts when it is at least 5
+  percentage points and at least twice the baseline. The day needs 100
+  answered calls and the baseline 500; for ratings, each side needs 20 rated
+  calls.
+- The mean evaluation score alerts when it drops by at least 0.5, with 20
+  evaluations on each side.
+- Each alert fires once per integration, model, metric and UTC day, goes to
+  every bound app as `outbound.ai_quality.drift`, and is listed by `gregale
+  ai quality-alerts <id>` (or `GET .../ai-quality-alerts`) for 31 days.
+  Rates are basis points and scores hundredths.
+
 ## Provider key pools
 
 `gregale ai keys add <id> --label second --from-stdin` adds an extra sealed

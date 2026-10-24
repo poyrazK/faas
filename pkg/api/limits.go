@@ -974,6 +974,14 @@ const ReleaseGateDefaultMinEvents = 3
 const ReleaseGateDefaultMinSamples = 20
 const ReleaseGateErrorClassesMax = 5
 
+// AI release gates (ADR 20261022153155) fail when a release's AI metric is
+// more than a threshold percent above its baseline's: between
+// ReleaseGateAIMaxIncreaseMin and ReleaseGateAIMaxIncreaseMax percent,
+// ReleaseGateAIDefaultMaxIncrease by default. Plan-independent.
+const ReleaseGateAIMaxIncreaseMin = 1
+const ReleaseGateAIMaxIncreaseMax = 1000
+const ReleaseGateAIDefaultMaxIncrease = 50
+
 // Release approvals (ADR-20261020085706). A policy requires 1 to
 // ReleaseApprovalsRequiredMax approvals, waits in canary stage 1 to
 // ReleaseApprovalStageMax, and aborts a release that waited longer than its
@@ -1699,6 +1707,53 @@ const (
 	OutboundAITagsPerDay       = 1_000
 	OutboundAITagLimitsMax     = 20
 	OutboundAITagUsagePageMax  = 1_000
+	// AI traces (ADR 20261020202035): the new traces one integration
+	// records per UTC day (with trace limits set, later new traces are
+	// refused), the distinct models a trace lists, the tool names kept per
+	// response, the longest tool name, the page size of a trace listing,
+	// the logged calls one trace read returns, and the largest per-trace
+	// call and repeated-tool-call limits. Traces follow
+	// OutboundAIRequestLogRetentionDays.
+	OutboundAITracesPerDay                    = 100_000
+	OutboundAITraceModelsMax                  = 8
+	OutboundAIToolCallsPerResponseMax         = 16
+	OutboundAIToolNameMaxBytes                = 64
+	OutboundAITracePageMax                    = 200
+	OutboundAITraceCallsMax                   = 500
+	MaxOutboundAITraceCalls             int64 = 1_000_000
+	MaxOutboundAITraceRepeatedToolCalls int64 = 1_000
+	// Quality signals (ADR 20261021171712): the answer text and the tool
+	// arguments the invalid_json check reads, the longest feedback label,
+	// the online evaluations one integration runs per UTC day and the
+	// longest rubric, and the drift check: how often it runs, the baseline
+	// days, the calls (or rated calls) a day and its baseline need, the
+	// percentage points a rate must rise by, and the evaluations each side
+	// needs for a score drop of at least the given tenths of a point.
+	// Quality alerts are kept for OutboundAIQualityAlertRetentionDays.
+	OutboundAIQualityTextMaxBytes            = 64 << 10
+	OutboundAIQualityToolArgumentsMaxBytes   = 16 << 10
+	OutboundAIFeedbackLabelMaxBytes          = 32
+	OutboundAIOnlineEvaluationsPerDay        = 1_000
+	OutboundAIOnlineEvaluationRubricMaxBytes = 1_000
+	OutboundAIOnlineEvaluationClaimMinutes   = 10
+	OutboundAIQualityDriftCheckMinutes       = 10
+	OutboundAIQualityDriftBaselineDays       = 7
+	OutboundAIQualityDriftMinCalls           = 100
+	OutboundAIQualityDriftMinBaselineCalls   = 500
+	OutboundAIQualityDriftPoints             = 5
+	OutboundAIQualityDriftMinEvaluations     = 20
+	OutboundAIQualityDriftScoreDropTenths    = 5
+	OutboundAIQualityAlertRetentionDays      = 31
+	OutboundAIQualityAlertsPageMax           = 100
+	// Dashboard latency (ADR 20261022145950): the latest logged calls of an
+	// integration, from the last hours given, that per-model latency and
+	// error rate are taken over.
+	OutboundAICallStatsCallsMax    = 5_000
+	OutboundAICallStatsWindowHours = 24
+	// AI calls per deployment (ADR 20261022153155): the days a deployment's
+	// minute rows are kept, and the deployments one listing returns.
+	OutboundAIDeploymentStatsRetentionDays = 14
+	OutboundAIDeploymentsListMax           = 50
 	// Automatic prompt caching (ADR-1437): the estimated prompt or prefix
 	// tokens below which no breakpoint is added, and the cache lifetime a
 	// repeated prefix must recur within.
@@ -10556,6 +10611,18 @@ func (l Limits) EffectiveIdleTimeoutS(appType string, configured int) int {
 	return min(max(configured, floor), ceiling)
 }
 
+// WaitUntilTimeoutS is how long a waitUntil task can hold an instance after
+// its response: TailTimeoutS when the plan enables waitUntil, else zero
+// (ADR-078). The reaper does not park an instance with tasks in flight, so
+// surfaces that explain awake time take the later of this and the idle
+// timeout (ADR-20261022184757).
+func (l Limits) WaitUntilTimeoutS() int {
+	if !l.TailEnabled {
+		return 0
+	}
+	return l.TailTimeoutS
+}
+
 // Obs admin pagination (issue #777 / ADR-091). The operator surface
 // differs from the customer surface (pkg/api/paging.go defaults to
 // 25/100) because the operator UI is fleet-wide and a single page
@@ -11906,6 +11973,10 @@ const (
 	// An edge-cache suggestion needs this share of anonymous 2xx GET/HEAD
 	// requests on the route.
 	RouteAwakeCacheMinAnonymousShare = 0.9
+	// RouteAwakeWorkMaxMinutes caps how long one cron, queue or other
+	// delivery counts as running (ADR-20261022184757), so a delivery that
+	// never completed cannot claim the rest of the window.
+	RouteAwakeWorkMaxMinutes = 60
 )
 
 // RouteContent bounds learned cacheability (ADR-1188). Each gateway

@@ -461,6 +461,7 @@ type MemStore struct {
 	outboundAIAccessTokens      map[string]OutboundAIAccessToken
 	outboundCredentialKeys      map[string][]OutboundCredentialKey
 	outboundAIBudgetAlerts      map[string][]OutboundAIBudgetAlert
+	outboundAIDeploymentStats   map[string][]OutboundAIDeploymentStats
 	outboundAIRequestLog        map[string][]OutboundAIRequestLogEntry
 	outboundAIRequestContent    map[string]OutboundAIRequestContent
 	outboundAIReplays           map[string]OutboundAIReplay
@@ -468,6 +469,8 @@ type MemStore struct {
 	outboundAIUserUsage         map[string][]OutboundAIUserUsageItem
 	outboundAITagUsage          map[string][]OutboundAITagUsageItem
 	outboundAITagLimits         map[string][]api.OutboundAITagLimit
+	outboundAITraces            map[string][]OutboundAITrace
+	outboundAIQualityAlerts     map[string][]OutboundAIQualityAlert
 	outboundAppBindings         map[string]OutboundAppBinding
 	outboundCredentials         map[string][]byte
 	mu                          sync.Mutex
@@ -7756,7 +7759,7 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 	if installationID == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: installation_id must be non-zero")
 	}
-	if len(secret.Value) == 0 {
+	if len(secret.Value) == 0 && len(secret.Sealed) == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: secret must be non-empty")
 	}
 	if upgradedBy == "" {
@@ -7768,10 +7771,14 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 	if m.githubWebhookSecrets == nil {
 		m.githubWebhookSecrets = map[int64]GithubWebhookSecret{}
 	}
-	m.githubWebhookSecrets[installationID] = GithubWebhookSecret{
-		Value:  append([]byte(nil), secret.Value...),
-		Sealed: append([]byte(nil), secret.Sealed...),
+	stored := GithubWebhookSecret{}
+	if len(secret.Value) > 0 {
+		stored.Value = append([]byte(nil), secret.Value...)
 	}
+	if len(secret.Sealed) > 0 {
+		stored.Sealed = append([]byte(nil), secret.Sealed...)
+	}
+	m.githubWebhookSecrets[installationID] = stored
 	if m.githubWebhookSecretMeta == nil {
 		m.githubWebhookSecretMeta = map[int64]webhookSecretMeta{}
 	}

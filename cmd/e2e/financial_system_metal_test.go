@@ -290,7 +290,7 @@ func releaseStrictBudgetsForSystem(t *testing.T, s *state.PgStore) {
 		t.Fatal(err)
 	}
 	key := platformflags.ConfigKey(platformflags.StrictBudgets)
-	row, err := s.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: key, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: value, ApplyMode: state.RuntimeConfigApplyHot, ActorID: "e2e", Reason: "native financial system acceptance"})
+	row, err := s.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: key, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: value, ApplyMode: state.RuntimeConfigApplyHot, ActorID: uuid.NewString(), Reason: "native financial system acceptance"})
 	if err != nil {
 		t.Fatal(err)
 	}
