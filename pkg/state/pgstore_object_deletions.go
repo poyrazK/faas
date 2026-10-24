@@ -146,7 +146,13 @@ func (s *PgStore) BeginObjectDeletion(ctx context.Context, j ObjectDeletion, pol
 			j.ProviderStatus = "GCS_" + v.ObservedStatus
 		}
 	}
-	if fenced || ready.Pending > 0 || ready.Multipart || !immutableDeletion(j) && ready.Unsafe && (ready.Versions.Bool || j.ProviderStatus != "") {
+	if ready.Multipart || !immutableDeletion(j) && ready.Unsafe && (ready.Versions.Bool || j.ProviderStatus != "") {
+		return ObjectDeletion{}, false, ErrConflict
+	}
+	if ready.Pending > 0 {
+		return ObjectDeletion{}, false, errors.Join(ErrConflict, ErrObjectBucketBusy)
+	}
+	if fenced {
 		return ObjectDeletion{}, false, ErrConflict
 	}
 	now, e := q.ObjectVersioningNow(ctx, tx)

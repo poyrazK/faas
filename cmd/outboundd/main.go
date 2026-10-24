@@ -182,6 +182,11 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// moves every row to the domain.
 	domainPath := os.Getenv("FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH")
 	fleetPath := os.Getenv("FAAS_FLEET_AGE_IDENTITY_PATH")
+	domainLoaded, err := outboundSealDomainLoaded(domainPath)
+	if err != nil {
+		return err
+	}
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Outbound, domainLoaded)
 	if domainPath != "" || fleetPath != "" {
 		identities, err := sealdomain.LoadReaderIdentities(domainPath, fleetPath)
 		if err != nil {
@@ -192,7 +197,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("outboundd: customer credential resolver: %w", err)
 		}
 		handler.CredentialResolver = credentialResolver
-		log.Info("outbound customer credential identities loaded", "domain_identity", domainPath != "", "identities", len(identities))
+		log.Info("outbound customer credential identities loaded", "domain_identity", domainLoaded, "identities", len(identities))
 	} else if needCustomerCredentials {
 		return errors.New("outboundd: customer-sealed credentials require FAAS_SEAL_DOMAIN_OUTBOUND_IDENTITY_PATH or FAAS_FLEET_AGE_IDENTITY_PATH")
 	}

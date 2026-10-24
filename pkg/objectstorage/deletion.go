@@ -1,11 +1,14 @@
 package objectstorage
 
 import (
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"math/rand/v2"
 	"slices"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -27,6 +30,8 @@ type DeletionService struct {
 	Provider      Provider
 	BeforeRequest func(context.Context) error
 	Preflight     func(context.Context, state.ObjectBucket, state.ObjectDeletion) error
+	// admissionWait overrides ObjectDeletionAdmissionWait in tests.
+	admissionWait time.Duration
 }
 
 func (s DeletionService) before(ctx context.Context) error {
@@ -34,6 +39,29 @@ func (s DeletionService) before(ctx context.Context) error {
 		return s.BeforeRequest(ctx)
 	}
 	return nil
+}
+
+// begin journals the deletion intent. While the bucket is only busy settling
+// other admitted work, it retries with jittered backoff for up to
+// ObjectDeletionAdmissionWait; every other refusal returns at once.
+func (s DeletionService) begin(ctx context.Context, j state.ObjectDeletion, p api.ObjectStoragePolicy) (state.ObjectDeletion, bool, error) {
+	deadline := time.Now().Add(cmp.Or(s.admissionWait, api.ObjectDeletionAdmissionWait))
+	poll := api.ObjectDeletionAdmissionPoll
+	for {
+		j.Token = uuid.NewString()
+		out, created, err := s.Store.BeginObjectDeletion(ctx, j, p)
+		if !errors.Is(err, state.ErrObjectBucketBusy) || !time.Now().Add(poll).Before(deadline) {
+			return out, created, err
+		}
+		timer := time.NewTimer(poll/2 + rand.N(poll/2+1))
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return out, created, err
+		case <-timer.C:
+		}
+		poll = min(2*poll, api.ObjectDeletionAdmissionMaxPoll)
+	}
 }
 func (s DeletionService) Start(ctx context.Context, b state.ObjectBucket, key, selector, id string, p api.ObjectStoragePolicy) (state.ObjectDeletion, error) {
 	return s.start(ctx, b, key, selector, id, nil, p)
@@ -66,7 +94,7 @@ func (s DeletionService) start(ctx context.Context, b state.ObjectBucket, key, s
 	}
 	ctx, cancel := context.WithTimeout(ctx, api.ObjectDeletionOperationTimeout)
 	defer cancel()
-	j, created, e := s.Store.BeginObjectDeletion(ctx, state.ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: id, BucketID: b.ID, Key: key, Selector: selector}, AccountID: b.AccountID, AppID: b.AppID, Token: uuid.NewString(), Lifecycle: binding, NativeGCS: isGCSProvider(s.Provider)}, p)
+	j, created, e := s.begin(ctx, state.ObjectDeletion{ObjectDeletion: api.ObjectDeletion{ID: id, BucketID: b.ID, Key: key, Selector: selector}, AccountID: b.AccountID, AppID: b.AppID, Lifecycle: binding, NativeGCS: isGCSProvider(s.Provider)}, p)
 	if e != nil || !created {
 		return j, e
 	}

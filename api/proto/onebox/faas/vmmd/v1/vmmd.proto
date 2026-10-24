@@ -1718,6 +1718,17 @@ message InstanceStats {
   bool frozen = 23;
   // ADR-1151: when the current freeze took effect; absent unless frozen.
   google.protobuf.Timestamp frozen_since = 24;
+  // ADR-20261023171905: this incarnation's most recent completed quiet
+  // pause, from the moment the VM stopped to the moment it ran again.
+  // Absent until the first resume. schedd records it in the pause ledger
+  // that meterd subtracts from billed seconds; a pause that ends and is
+  // replaced before schedd reads it is billed.
+  google.protobuf.Timestamp quiet_last_pause_started_at = 25;
+  google.protobuf.Timestamp quiet_last_pause_ended_at = 26;
+  // ADR-20261023171905: total time this incarnation spent in completed
+  // quiet pauses, measured on vmmd's monotonic clock. It restarts at zero
+  // with each new VM. It cross-checks the ledger; billing reads the ledger.
+  google.protobuf.Int64Value quiet_paused_ns_total = 27;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the

@@ -101,7 +101,10 @@ type DPAView struct {
 type MFAChallengeData struct {
 	CSRFToken string
 	Failed    bool
-	Enrolled  bool
+	// Reused marks a failure where the code was right but had already
+	// verified a session; the page asks for the next code, not a retype.
+	Reused   bool
+	Enrolled bool
 	// Next is where a passed challenge continues (already validated as a
 	// same-origin dashboard or CLI-approval path).
 	Next string

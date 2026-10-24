@@ -38088,11 +38088,18 @@ CREATE TABLE public.github_webhook_deliveries (
 
 CREATE TABLE public.github_webhook_secrets (
     installation_id bigint NOT NULL,
-    secret_value bytea NOT NULL,
+    secret_value bytea,
     upgraded_at timestamp with time zone DEFAULT now() NOT NULL,
     upgraded_by text DEFAULT 'platform'::text NOT NULL,
     secret_sealed bytea
 );
+
+
+--
+-- Name: COLUMN github_webhook_secrets.secret_value; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.github_webhook_secrets.secret_value IS 'Plaintext webhook secret, no longer written (ADR 20261022111812). Read only as a fallback for rows without secret_sealed; dropped in a later release.';
 
 
 --
@@ -38561,6 +38568,20 @@ CREATE SEQUENCE public.instance_billing_intervals_id_seq
 --
 
 ALTER SEQUENCE public.instance_billing_intervals_id_seq OWNED BY public.instance_billing_intervals.id;
+
+
+--
+-- Name: instance_quiet_pauses; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.instance_quiet_pauses (
+    instance_id uuid NOT NULL,
+    node_id uuid NOT NULL,
+    started_at timestamp with time zone NOT NULL,
+    ended_at timestamp with time zone,
+    recorded_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT instance_quiet_pauses_order CHECK (((ended_at IS NULL) OR (ended_at >= started_at)))
+);
 
 
 --
@@ -50656,6 +50677,17 @@ CREATE TABLE public.queue_binding_canaries (
 
 
 --
+-- Name: quiet_pause_watermarks; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.quiet_pause_watermarks (
+    node_id uuid NOT NULL,
+    covered_until timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
 -- Name: realtime_node_connection_syncs; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -59454,6 +59486,14 @@ ALTER TABLE ONLY public.github_webhook_secrets
 
 
 --
+-- Name: github_webhook_secrets github_webhook_secrets_secret_present_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.github_webhook_secrets
+    ADD CONSTRAINT github_webhook_secrets_secret_present_chk CHECK (((secret_value IS NOT NULL) OR (secret_sealed IS NOT NULL))) NOT VALID;
+
+
+--
 -- Name: github_webhook_secrets github_webhook_secrets_secret_sealed_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -59731,6 +59771,14 @@ ALTER TABLE ONLY public.instance_application_standard_rebinds
 
 ALTER TABLE ONLY public.instance_billing_intervals
     ADD CONSTRAINT instance_billing_intervals_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: instance_quiet_pauses instance_quiet_pauses_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.instance_quiet_pauses
+    ADD CONSTRAINT instance_quiet_pauses_pkey PRIMARY KEY (instance_id, started_at);
 
 
 --
@@ -64891,6 +64939,14 @@ ALTER TABLE ONLY public.queue_bindings
 
 ALTER TABLE ONLY public.queue_bindings
     ADD CONSTRAINT queue_bindings_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: quiet_pause_watermarks quiet_pause_watermarks_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.quiet_pause_watermarks
+    ADD CONSTRAINT quiet_pause_watermarks_pkey PRIMARY KEY (node_id);
 
 
 --
@@ -70880,6 +70936,20 @@ CREATE INDEX instance_billing_intervals_range_idx ON public.instance_billing_int
 
 
 --
+-- Name: instance_quiet_pauses_open; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_quiet_pauses_open ON public.instance_quiet_pauses USING btree (node_id) WHERE (ended_at IS NULL);
+
+
+--
+-- Name: instance_quiet_pauses_started_at; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX instance_quiet_pauses_started_at ON public.instance_quiet_pauses USING btree (started_at);
+
+
+--
 -- Name: instances_app_deployment_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -71192,6 +71262,13 @@ CREATE INDEX invocations_app_pending_idx ON public.invocations USING btree (app_
 --
 
 CREATE INDEX invocations_app_queue_pending_idx ON public.invocations USING btree (app_id, queue_name, source, state, due_at) WHERE (state = ANY (ARRAY['pending'::text, 'dispatching'::text]));
+
+
+--
+-- Name: invocations_app_received_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_app_received_idx ON public.invocations USING btree (app_id, received_at) WHERE (received_at IS NOT NULL);
 
 
 --
