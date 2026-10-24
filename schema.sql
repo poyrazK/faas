@@ -25081,7 +25081,7 @@ DECLARE p scenario_test_action_policies%ROWTYPE; participant jsonb; dep uuid; de
  doc jsonb; attempts jsonb; item jsonb; outcome text; invalid boolean:=false;
 BEGIN
  SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=CASE WHEN TG_OP='INSERT' THEN NEW.app_id ELSE OLD.app_id END;
- IF TG_OP='UPDATE' AND p.managed_work_plan IS NULL THEN SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=NEW.app_id; END IF;
+ IF TG_OP='UPDATE' AND p.managed_work_plan IS NULL AND NEW.app_id IS DISTINCT FROM OLD.app_id THEN SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=NEW.app_id; END IF;
  IF p.managed_work_plan IS NULL THEN RETURN COALESCE(NEW,OLD); END IF;
  PERFORM pg_advisory_xact_lock(hashtextextended('scenario-action-run:'||p.account_id::text||':'||p.run_id,0));
  SELECT * INTO p FROM scenario_test_action_policies WHERE app_id=p.app_id;
@@ -82573,7 +82573,14 @@ CREATE TRIGGER scenario_postgres_fault_policy_guard BEFORE INSERT OR UPDATE ON p
 -- Name: invocations scenario_postgres_fault_scope; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER scenario_postgres_fault_scope BEFORE INSERT OR UPDATE OF state, attempts, instance_id ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.scenario_postgres_fault_scope();
+CREATE TRIGGER scenario_postgres_fault_scope BEFORE INSERT ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.scenario_postgres_fault_scope();
+
+
+--
+-- Name: invocations scenario_postgres_fault_scope_dispatch; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER scenario_postgres_fault_scope_dispatch BEFORE UPDATE OF state, attempts, instance_id ON public.invocations FOR EACH ROW WHEN (((new.state = 'dispatching'::text) AND (((new.state IS DISTINCT FROM old.state) OR (new.attempts IS DISTINCT FROM old.attempts)) OR (new.instance_id IS DISTINCT FROM old.instance_id)))) EXECUTE FUNCTION public.scenario_postgres_fault_scope();
 
 
 --
@@ -82657,7 +82664,7 @@ CREATE TRIGGER scenario_suspend_command_guard BEFORE INSERT ON public.app_tasks 
 -- Name: invocations scenario_suspend_dispatch_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER scenario_suspend_dispatch_guard BEFORE UPDATE OF state, attempts, instance_id ON public.invocations FOR EACH ROW EXECUTE FUNCTION public.scenario_suspend_dispatch_guard();
+CREATE TRIGGER scenario_suspend_dispatch_guard BEFORE UPDATE OF state, attempts, instance_id ON public.invocations FOR EACH ROW WHEN (((new.state = 'dispatching'::text) AND (((new.state IS DISTINCT FROM old.state) OR (new.attempts IS DISTINCT FROM old.attempts)) OR (new.instance_id IS DISTINCT FROM old.instance_id)))) EXECUTE FUNCTION public.scenario_suspend_dispatch_guard();
 
 
 --

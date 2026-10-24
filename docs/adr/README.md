@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261024100845: Rehearsal triggers on invocations skip work that cannot matter](20261024100845-rehearsal-invocation-trigger-guards.md)
 - [ADR-20261023111825: Same-run delivery of captured queue sends](20261023111825-rehearsal-same-run-queue-delivery.md)
 - [ADR-20261022194510: Contained cron fire-now and captured cron requests](20261022194510-rehearsal-contained-cron-fire-now.md)
 - [ADR-20261022191742: Rehearsal batches, publisher publishes, receipt reads and entities](20261022191742-rehearsal-realtime-batches-publishers-receipts.md)
