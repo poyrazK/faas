@@ -444,6 +444,7 @@ type MemStore struct {
 	objectOrgOwnedFrom          map[string]time.Time
 	orgAsyncQuotaPooled         map[string]time.Time
 	objectProviderRequests      map[string]int64
+	objectGatewayStorage        map[string]*memGatewayStorage
 	objectAccessGrants          map[string]ObjectBucketAccessGrant
 	objectS3Credentials         map[string]ObjectS3Credential
 	objectS3CopySources         map[string]ObjectS3CopySource

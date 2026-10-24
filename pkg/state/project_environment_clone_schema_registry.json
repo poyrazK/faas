@@ -11210,6 +11210,17 @@
     "kind": "operational"
   },
   {
+    "table": "object_storage_gateway_storage",
+    "columns": [
+      "accrued_from",
+      "accrued_through",
+      "bucket_id",
+      "period_start",
+      "stored_byte_hours"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "object_storage_request_metrics",
     "columns": [
       "bucket_id",

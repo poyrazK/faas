@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Gateway-metered object storage billing](20261024132844-gateway-metered-object-storage-billing.md) — gateway safety meters stored byte-hours from inventory; storage-only rate card bills ADR-1430's $0.03/GiB-month
 - [ADR-20261024191249: A rolled node publishes every runtime base its release configures, and is not activated until its vmmd can adopt them](20261024191249-rollout-publishes-release-bases-and-gates-activation.md) — proposed; the pre-stage publishes each configured base this node could not adopt (whoever owns its apps), a rebuild's scan refusal names no generation, `vmmd base-adoption-check` keeps a node drained until it can boot every base; amends ADR-20261024085817 (production-us 2026-10-24, rc.293 fsn-2)
 - [ADR-20261024140100: Every deployment reaches a terminal state](20261024140100-deployment-watchdog.md) — apid's watchdog fails a build queued over 6 h (`deployment_queue_timeout`) or an in-flight deployment with no build and no progress for 3 h (`deployment_stalled`)
 - [Build secrets resolve like the runtime environment](20261024140000-build-secrets-resolve-like-the-runtime.md)

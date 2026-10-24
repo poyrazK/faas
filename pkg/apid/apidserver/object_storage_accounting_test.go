@@ -100,13 +100,21 @@ func TestValidateObjectStorageBillingSetupRequiresBillingCurrency(t *testing.T) 
 	}
 }
 
-// adr: 627
-func TestGatewaySafetyAccountingRejectsBilling(t *testing.T) {
+// adr: 627, 20261024132844 — gateway safety bills Gregale's own storage meter only.
+func TestGatewaySafetyAccountingBillsStorageOnly(t *testing.T) {
 	registry := &objectstorage.Registry{Accounting: api.ObjectStoragePolicy{AccountingMode: api.ObjectStorageGatewaySafetyV1}}
-	if err := object.ValidateObjectStorageBillingSetup(&objectStorageBillingStatusProvider{}, registry); err == nil || !strings.Contains(err.Error(), "billing to be off") {
-		t.Fatal("gateway safety admitted live billing", err)
+	if err := object.ValidateObjectStorageBillingSetup(&objectStorageBillingStatusProvider{}, registry); err == nil || !strings.Contains(err.Error(), "requires object-storage pricing") {
+		t.Fatal("gateway safety billed without a rate card", err)
 	}
-	if err := object.ValidateObjectStorageBillingSetup(nil, registry); err != nil {
+	registry.Pricing = &api.ObjectStoragePricing{Currency: api.BillingCurrency, StorageMillicentsPerGiBMonth: 3000, RequestsMillicentsPerMillion: 1}
+	if err := object.ValidateObjectStorageBillingSetup(&objectStorageBillingStatusProvider{}, registry); err == nil || !strings.Contains(err.Error(), "bills storage only") {
+		t.Fatal("gateway safety billed unmetered requests", err)
+	}
+	registry.Pricing.RequestsMillicentsPerMillion = 0
+	if err := object.ValidateObjectStorageBillingSetup(&objectStorageBillingStatusProvider{}, registry); err != nil {
+		t.Fatal("storage-only rate card rejected", err)
+	}
+	if err := object.ValidateObjectStorageBillingSetup(nil, &objectstorage.Registry{Accounting: registry.Accounting}); err != nil {
 		t.Fatal("billing-off qualification rejected", err)
 	}
 }
