@@ -8906,7 +8906,14 @@ func (s *statusRecorder) doFlush() {
 		// Renew the write window on every flush (ADR-047). A deadline set
 		// only once cuts off a healthy stream even while it makes progress.
 		// Writers without deadline support retain the server's safety net.
-		_ = http.NewResponseController(s.ResponseWriter).SetWriteDeadline(time.Now().Add(s.writeDeadline))
+		controller := http.NewResponseController(s.ResponseWriter)
+		_ = controller.SetWriteDeadline(time.Now().Add(s.writeDeadline))
+		// An HTTP/1.1 server cancels the request context once the
+		// whole-request read deadline (the listener's ReadTimeout) passes,
+		// so an active stream over the HTTP/1.1 hop still ended at the
+		// envelope. Slide it with the stream's idle window, which only
+		// ever extends it.
+		_ = controller.SetReadDeadline(time.Now().Add(streamIdleTimeout))
 	}
 	s.firstFlush = false
 	if s.onFlush != nil {

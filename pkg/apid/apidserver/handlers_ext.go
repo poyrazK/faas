@@ -3245,6 +3245,10 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		s.notFound(w, "no such app")
 		return
 	}
+	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if !s.domainOutsideForeignWildcard(r.Context(), w, domain, acct.ID) {
 		return
 	}
@@ -4117,6 +4121,10 @@ func (s *server) createCron(w http.ResponseWriter, r *http.Request, acct state.A
 			return
 		}
 	}
+	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -4183,6 +4191,10 @@ func (s *server) listCrons(w http.ResponseWriter, r *http.Request, acct state.Ac
 		app, ok := s.ownedAppByRef(r.Context(), acct.ID, ref)
 		if !ok {
 			s.notFound(w, "no such app")
+			return
+		}
+		if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+			api.WriteProblem(w, prob)
 			return
 		}
 		apps = []state.App{app}

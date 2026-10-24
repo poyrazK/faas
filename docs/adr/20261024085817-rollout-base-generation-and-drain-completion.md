@@ -1,6 +1,9 @@
 # ADR 20261024085817 · A compute rollout never strands a node on a runtime base it cannot boot, and its drain finishes
 
-- **Status:** proposed (2026-10-24)
+- **Status:** proposed (2026-10-24); amended by
+  [ADR-20261024191249](20261024191249-rollout-publishes-release-bases-and-gates-activation.md)
+  (the pre-stage publishes every configured base, and activation waits for
+  adoption)
 - **Date:** 2026-10-24
 - **Related:** ADR-005 (cold boot always works), ADR-137 (recovery arbiter),
   ADR-510 (snapshot backing identity), ADR-567 (runtime base convergence),

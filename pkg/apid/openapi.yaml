@@ -63058,9 +63058,10 @@ paths:
       - $ref: '#/components/parameters/OrgProjectOrganization'
       - $ref: '#/components/parameters/OrgProjectSlug'
       - $ref: '#/components/parameters/OrgProjectEnvironment'
-      - $ref: '#/components/parameters/OrgProjectFrom'
-      - $ref: '#/components/parameters/OrgProjectSyncConfig'
     get:
+      parameters:
+        - $ref: '#/components/parameters/OrgProjectFrom'
+        - $ref: '#/components/parameters/OrgProjectSyncConfig'
       tags: [projects]
       operationId: getOrgProjectEnvironmentPromotionPreview
       summary: "Preview promotion between organization project environments."
@@ -63078,6 +63079,31 @@ paths:
 
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
+    post:
+      tags: [projects]
+      operationId: previewOrgProjectEnvironmentPromotionSecrets
+      summary: "Preview a company promotion with destination production secret changes."
+      description: "Read-only, bounded preview with immutable secret version references, with the same rules as the personal secret preview. Requires MFA, secrets write permission and deployment permission in the organization."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionSecretPreviewRequest' }
+      responses:
+        '200':
+          description: "Company promotion preview listing secret key changes as version references only."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionPreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Company secret releases or destination verification are unavailable."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/orgs/{organization}/projects/{slug}/environments/{environment}/approvals/{approval}:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -63374,6 +63400,105 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
         '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/abort:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectPromotion'
+    post:
+      tags: [projects]
+      operationId: abortOrgProjectEnvironmentPromotion
+      summary: "Abort an in-progress company environment promotion."
+      description: "Generation-fenced operator decision on a company promotion, with the same semantics as the personal abort route. Requires deployment permission in the organization."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPromotionControlRequest' }
+      responses:
+        '200':
+          description: "Terminal acknowledgement of the company abort decision."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '202':
+          description: "Company abort accepted; fresh baseline checks run before restoration."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Company abort refused: the generation, request identity, phase or destination intent changed; inspect the promotion.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/recover:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectPromotion'
+    post:
+      tags: [projects]
+      operationId: recoverOrgProjectEnvironmentPromotion
+      summary: "Retry guarded restoration of a blocked company environment promotion."
+      description: "Retries a blocked company restoration with fresh baseline health and worker startup proof, like the personal recover route. Requires deployment permission in the organization."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPromotionControlRequest' }
+      responses:
+        '200':
+          description: "Terminal acknowledgement of the company restoration retry."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '202':
+          description: "Company restoration retry accepted; baseline and worker checks are pending."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Company restoration retry refused: the inspected generation, request identity, phase or destination intent no longer allows it.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectPromotion'
+    post:
+      tags: [projects]
+      operationId: recoverOrgProjectEnvironmentPromotionMigration
+      summary: "Recover an interrupted company promotion migration without replaying SQL."
+      description: "Records explicit database inspection and resumes or resolves an interrupted company promotion migration, like the personal recover-migration route. Requires deployment permission in the organization."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPromotionMigrationRecoveryRequest' }
+      responses:
+        '200':
+          description: "Existing terminal acknowledgement of the company migration recovery."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionMigrationRecovery' }
+        '202':
+          description: "Company migration recovery accepted; teardown or verification is pending."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionMigrationRecovery' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Company migration recovery refused: the task, generation, runtime or destination intent changed.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/policies:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'

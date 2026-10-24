@@ -12137,7 +12137,10 @@ WHERE id=sqlc.arg(run_id)::text::uuid AND status='running';
 SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(app_id)::text, 0));
 
 -- name: CountActiveWorkflowRunsForRetry :one
-SELECT count(*)::bigint
+-- ADR-20261023215834: runs parked on an event count only beyond the plan's
+-- parked allowance.
+SELECT (count(*) FILTER (WHERE status IN ('pending','running'))
+  + greatest(0, count(*) FILTER (WHERE status='awaiting_event') - sqlc.arg(parked_max)::bigint))::bigint
 FROM workflow_runs
 WHERE app_id=sqlc.arg(app_id)::text::uuid
   AND status IN ('pending','running','awaiting_event');
@@ -15912,7 +15915,14 @@ WHERE r.app_id=sqlc.arg(app_id) AND r.workflow_name=sqlc.arg(workflow_name)
   AND r.status IN ('pending','running','awaiting_event') AND s.status='running';
 
 -- name: CountActiveWorkflowRunsForAdmission :one
-SELECT count(*) FROM workflow_runs
+-- ADR-20261023215834: the app-wide count (no workflow name) counts runs
+-- parked on an event only beyond the plan's parked allowance. A named count
+-- decides schedule overlap, where a parked run is still in progress, so it
+-- counts every unfinished run of that workflow.
+SELECT (count(*) FILTER (WHERE status IN ('pending', 'running'))
+  + CASE WHEN sqlc.arg(workflow_name)::text = '' THEN greatest(0, count(*) FILTER (WHERE status = 'awaiting_event') - sqlc.arg(parked_max)::bigint)
+         ELSE count(*) FILTER (WHERE status = 'awaiting_event') END)::bigint
+FROM workflow_runs
 WHERE app_id = sqlc.arg(app_id) AND status IN ('pending', 'running', 'awaiting_event')
   AND (sqlc.arg(workflow_name)::text = '' OR workflow_name = sqlc.arg(workflow_name));
 
@@ -19546,6 +19556,7 @@ SELECT now()::timestamptz AS observed_at,ac.plan,
   (EXISTS(SELECT 1 FROM api_consumers c WHERE c.platform_tenant_id=t.id AND c.account_id=a.account_id AND c.app_id=a.id AND c.status='active' AND c.revoked_at IS NULL)
   OR EXISTS(SELECT 1 FROM tenant_surfaces s WHERE s.platform_tenant_id=t.id AND s.account_id=a.account_id AND s.app_id=a.id AND s.status='active'))))::boolean AS tenant_active,
  (SELECT count(*) FROM app_runs)::bigint AS active_runs,
+ (SELECT count(*) FROM app_runs WHERE status='awaiting_event')::bigint AS parked_runs,
  (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL)::bigint AS app_running,
  (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL AND platform_tenant_id=selected.platform_tenant_id)::bigint AS tenant_running,
  (SELECT count(*) FROM app_runs WHERE workflow_name=selected.workflow_name AND

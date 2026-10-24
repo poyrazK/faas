@@ -9795,32 +9795,48 @@ func (q *Queries) CountActiveTenantWorkflowRunsForAdmission(ctx context.Context,
 }
 
 const countActiveWorkflowRunsForAdmission = `-- name: CountActiveWorkflowRunsForAdmission :one
-SELECT count(*) FROM workflow_runs
-WHERE app_id = $1 AND status IN ('pending', 'running', 'awaiting_event')
-  AND ($2::text = '' OR workflow_name = $2)
+SELECT (count(*) FILTER (WHERE status IN ('pending', 'running'))
+  + CASE WHEN $1::text = '' THEN greatest(0, count(*) FILTER (WHERE status = 'awaiting_event') - $2::bigint)
+         ELSE count(*) FILTER (WHERE status = 'awaiting_event') END)::bigint
+FROM workflow_runs
+WHERE app_id = $3 AND status IN ('pending', 'running', 'awaiting_event')
+  AND ($1::text = '' OR workflow_name = $1)
 `
 
 type CountActiveWorkflowRunsForAdmissionParams struct {
-	AppID        pgtype.UUID
 	WorkflowName string
+	ParkedMax    int64
+	AppID        pgtype.UUID
 }
 
+// ADR-20261023215834: the app-wide count (no workflow name) counts runs
+// parked on an event only beyond the plan's parked allowance. A named count
+// decides schedule overlap, where a parked run is still in progress, so it
+// counts every unfinished run of that workflow.
 func (q *Queries) CountActiveWorkflowRunsForAdmission(ctx context.Context, db DBTX, arg CountActiveWorkflowRunsForAdmissionParams) (int64, error) {
-	row := db.QueryRow(ctx, countActiveWorkflowRunsForAdmission, arg.AppID, arg.WorkflowName)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	row := db.QueryRow(ctx, countActiveWorkflowRunsForAdmission, arg.WorkflowName, arg.ParkedMax, arg.AppID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countActiveWorkflowRunsForRetry = `-- name: CountActiveWorkflowRunsForRetry :one
-SELECT count(*)::bigint
+SELECT (count(*) FILTER (WHERE status IN ('pending','running'))
+  + greatest(0, count(*) FILTER (WHERE status='awaiting_event') - $1::bigint))::bigint
 FROM workflow_runs
-WHERE app_id=$1::text::uuid
+WHERE app_id=$2::text::uuid
   AND status IN ('pending','running','awaiting_event')
 `
 
-func (q *Queries) CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, appID string) (int64, error) {
-	row := db.QueryRow(ctx, countActiveWorkflowRunsForRetry, appID)
+type CountActiveWorkflowRunsForRetryParams struct {
+	ParkedMax int64
+	AppID     string
+}
+
+// ADR-20261023215834: runs parked on an event count only beyond the plan's
+// parked allowance.
+func (q *Queries) CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, arg CountActiveWorkflowRunsForRetryParams) (int64, error) {
+	row := db.QueryRow(ctx, countActiveWorkflowRunsForRetry, arg.ParkedMax, arg.AppID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -27176,6 +27192,7 @@ SELECT now()::timestamptz AS observed_at,ac.plan,
   (EXISTS(SELECT 1 FROM api_consumers c WHERE c.platform_tenant_id=t.id AND c.account_id=a.account_id AND c.app_id=a.id AND c.status='active' AND c.revoked_at IS NULL)
   OR EXISTS(SELECT 1 FROM tenant_surfaces s WHERE s.platform_tenant_id=t.id AND s.account_id=a.account_id AND s.app_id=a.id AND s.status='active'))))::boolean AS tenant_active,
  (SELECT count(*) FROM app_runs)::bigint AS active_runs,
+ (SELECT count(*) FROM app_runs WHERE status='awaiting_event')::bigint AS parked_runs,
  (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL)::bigint AS app_running,
  (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL AND platform_tenant_id=selected.platform_tenant_id)::bigint AS tenant_running,
  (SELECT count(*) FROM app_runs WHERE workflow_name=selected.workflow_name AND
@@ -27199,6 +27216,7 @@ type GetWorkflowRecoveryTargetRow struct {
 	PinnedDeployment       bool
 	TenantActive           bool
 	ActiveRuns             int64
+	ParkedRuns             int64
 	AppRunning             int64
 	TenantRunning          int64
 	WorkflowActive         int64
@@ -27218,6 +27236,7 @@ func (q *Queries) GetWorkflowRecoveryTarget(ctx context.Context, db DBTX, arg Ge
 		&i.PinnedDeployment,
 		&i.TenantActive,
 		&i.ActiveRuns,
+		&i.ParkedRuns,
 		&i.AppRunning,
 		&i.TenantRunning,
 		&i.WorkflowActive,

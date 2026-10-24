@@ -1654,6 +1654,11 @@ const (
 	CodeAccountNotRestorable   = "account_not_restorable"
 	CodeAppNotRestorable       = "app_not_restorable"
 
+	// CodeAccountDeletionManagedPostgres (409): the account still owns live
+	// managed PostgreSQL databases, which must be deleted before the account
+	// can be scheduled for deletion. Detail carries the count.
+	CodeAccountDeletionManagedPostgres = "account_deletion_managed_postgres_databases"
+
 	// App rename (issue #63). One code covers both "slug taken by
 	// another live app" and "DB unique violation"; the Detail field
 	// distinguishes the two so the CLI can render actionable guidance.
@@ -2333,7 +2338,7 @@ func StatusForCode(code string) int {
 		return http.StatusBadRequest
 	case CodeTrustedSignerNotFound:
 		return http.StatusNotFound
-	case CodeAccountDeletionConfirm, CodeAccountDeletionPending, CodeAccountNotRestorable:
+	case CodeAccountDeletionConfirm, CodeAccountDeletionPending, CodeAccountNotRestorable, CodeAccountDeletionManagedPostgres:
 		return http.StatusConflict
 	case CodeAppRenameFailed:
 		return http.StatusConflict
@@ -5006,6 +5011,24 @@ func ErrManagedSecretConflict() *Problem {
 		"Secret is managed",
 		"This environment key is controlled by an active managed PostgreSQL binding. Delete the binding before changing the secret.").
 		WithDocs(docsBase + "/postgres#bindings")
+}
+
+// ErrAccountDeletionManagedPostgres refuses to schedule an account deletion
+// while the account owns live managed PostgreSQL databases. live is the number
+// the deletion guard reported; 0 means it reported none.
+func ErrAccountDeletionManagedPostgres(live int64) *Problem {
+	what := "managed PostgreSQL databases"
+	switch {
+	case live == 1:
+		what = "1 managed PostgreSQL database"
+	case live > 1:
+		what = fmt.Sprintf("%d managed PostgreSQL databases", live)
+	}
+	return NewProblem(http.StatusConflict, CodeAccountDeletionManagedPostgres,
+		"Managed PostgreSQL databases must be deleted first",
+		fmt.Sprintf("this account still has %s; delete them before deleting the account. Run `gregale postgres list` to see them and `gregale postgres delete <database>` to delete each one, then delete the account again.", what)).
+		WithHint("run `gregale postgres list`, then `gregale postgres delete <database>` for each database").
+		WithDocs(docsBase + "/postgres")
 }
 
 // ErrManagedObjectStorageSecretConflict protects an environment key owned by

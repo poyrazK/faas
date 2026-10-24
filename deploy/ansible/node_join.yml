@@ -1890,6 +1890,63 @@
         # before service activation. This pass proves live dependencies.
         faas_verify_run_doctor: false
 
+    # ADR-20261024191249. Production-us 2026-10-24 (rc.293): fsn-2's
+    # pre-stage published nothing because it owned no app, the shared scan
+    # sidecar kept naming the previous base-minimal generation, and this play
+    # still let the controller return fsn-2 to service, where every wake
+    # failed 503 scan_critical. The controller activates the node only after
+    # this play succeeds, so a node whose installed vmmd cannot adopt a
+    # configured runtime base generation stops here and stays drained. The
+    # pre-stage publishes every such base; the bounded wait covers a
+    # publication still in flight from the serving imaged or another node.
+    # A no-drain restart changes no generation and never left service.
+    - name: Require the installed vmmd to adopt every configured runtime base before activation
+      when: not (faas_join_skip_drain | bool)
+      block:
+        - name: Read the installed vmmd process before the runtime base adoption check
+          ansible.builtin.command:
+            argv:
+              - systemctl
+              - show
+              - --property=MainPID
+              - --value
+              - faas-vmmd.service
+          register: faas_join_installed_vmmd_pid
+          changed_when: false
+
+        - name: Wait for the installed vmmd to adopt every configured runtime base
+          ansible.builtin.command:
+            argv:
+              - /opt/faas/current/bin/vmmd
+              - base-adoption-check
+              - --serving-pid
+              - "{{ faas_join_installed_vmmd_pid.stdout | trim }}"
+          register: faas_join_base_adoption
+          changed_when: false
+          # 18 x 10 s = 3 minutes. Exit 0 adoptable, 3 a base the shared
+          # store publishes in another generation, 1 the check failed.
+          retries: 18
+          delay: 10
+          until: faas_join_base_adoption.rc == 0
+      rescue:
+        - name: Keep the node drained when its vmmd cannot adopt a configured runtime base
+          ansible.builtin.fail:
+            msg: >-
+              the node was LEFT DRAINED (a first join stays unavailable) and
+              not returned to service: its installed vmmd cannot adopt
+              {% if (faas_join_base_adoption.rc | default(1)) == 3 %}{% for base in
+              (faas_join_base_adoption.stdout | from_json).bases
+              | selectattr('verdict', 'equalto', 'stale') %}{{ base.key }} (configured
+              {{ base.generation }}, shared copy names {{ base.published | default('no generation', true) }},
+              cached {{ base.cached | default('nothing', true) }}){{ '; ' if not loop.last else '' }}{% endfor %}{%
+              else %}every configured runtime base: the check did not answer
+              ({{ faas_join_base_adoption.stderr | default('check did not run', true) }}){% endif %},
+              so every wake placed on it would fail 503 scan_critical
+              (ADR-20261024191249; production-us 2026-10-24, rc.293). Re-run
+              the rollout for this node: its pre-stage publishes every runtime
+              base the release configures. If the shared copy names an older
+              generation again, a node on an older release republished it.
+
     - name: Report local node readiness to the controller
       ansible.builtin.debug:
         msg: >-
