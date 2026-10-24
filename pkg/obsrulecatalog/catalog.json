@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "21c3deb56a3af2ad71195c60203949dbdba1eb720b773dd0083e0cd605f71403",
+      "revision": "d4028dfc54002234384ef4259aba6f26a1e40e9350a70ea724520e196d04af2a",
       "files": [
         "faas.rules.yml"
       ],
@@ -1005,9 +1005,9 @@
           "definition": {
             "expression_hash": "00646d86c3d2926030e968300c0e7b00de6f6a73567dbfcf74b7be7457b5e7d8",
             "labels_hash": "fe5e649389a6ea385686b19a4df3c52f947301a0cb28c9e4e981ceefb7461732",
-            "for_seconds": 600,
+            "for_seconds": 900,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "6e72ea8eebaa96c768bf4ef894d27b93276033178cc525b89d58e4657ac4a611"
+            "fingerprint": "ffd194b4a67bdfe64f297f5b238db6fb8436ecd196cb80a8b4b05481d2bc4aac"
           }
         },
         {
@@ -5070,7 +5070,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "289a1fbb893a5a080e9513dd381c9fba816bf36878f18611af69baa04d7382df",
+      "revision": "01e48fe07b182c87abb49322c6e0d2cbeb8ad0bb63f654cbe3c8f3cfd5c5b0e2",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -6153,9 +6153,9 @@
           "definition": {
             "expression_hash": "00646d86c3d2926030e968300c0e7b00de6f6a73567dbfcf74b7be7457b5e7d8",
             "labels_hash": "fe5e649389a6ea385686b19a4df3c52f947301a0cb28c9e4e981ceefb7461732",
-            "for_seconds": 600,
+            "for_seconds": 900,
             "keep_firing_for_seconds": 0,
-            "fingerprint": "6e72ea8eebaa96c768bf4ef894d27b93276033178cc525b89d58e4657ac4a611"
+            "fingerprint": "ffd194b4a67bdfe64f297f5b238db6fb8436ecd196cb80a8b4b05481d2bc4aac"
           }
         },
         {
