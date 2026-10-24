@@ -1,6 +1,7 @@
 # Architecture Decision Records
 
 - [Every capability behind a platform flag](20261023115741-every-capability-behind-a-platform-flag.md)
+- [ADR-20261024135625: Resource journal: durable commits only for reboot-surviving assets](20261024135625-resource-journal-volatile-commits.md)
 - [Dockerfile HEALTHCHECK gates readiness on source builds](20261024100000-dockerfile-healthcheck-enforced.md)
 - [ADR-20261024090000: Idle parks re-check activity, and a park holds new forwards](20261024090000-idle-park-recheck-and-forward-hold.md) — the reaper's park re-checks fresh activity before SNAPSHOTTING; vmmd holds new forwards for the park and drains in-flight ones up to 5 s (amends spec §6)
 - [ADR-20261022083601: AI crawler controls](20261022083601-edge-ai-crawler-controls.md)
