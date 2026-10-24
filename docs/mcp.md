@@ -1631,6 +1631,33 @@ Checking never changes the saved proposal, expiry, replay payload or durable
 state, resolves a source branch, probes workloads or executes a mutation. See
 [ADR-20261024120000](adr/20261024120000-management-mcp-plan-applicability.md).
 
+Two read-only prompts provide an original-plan recovery recipe:
+
+- `gregale_saved_plan_review`: required `app` and `plan_id`; supply both `project`
+  and `environment` for a named target.
+- `gregale_environment_plan_review`: required `project`, target `environment`
+  and original `plan_id`.
+
+Prompt retrieval verifies current read consent and an available unexpired plan
+from this connection. Environment prompts require both original environments and
+every current project workload; regression plans require diagnostic consent.
+The result contains fixed guidance and exact JSON calls to the matching history,
+saved-review and applicability tools. It includes no saved-plan prose, private
+execution material or configuration values. Unknown/expired/inaccessible plans
+return errors; retrieval does not fetch fresh baselines or native completion,
+renew expiry, poll approval, create a plan or execute a mutation.
+
+Follow the recipe as a read-only review. Explain stale unattempted intent before
+separately requested replanning, preserve ambiguous original retries, and use
+consented exact native observations to distinguish receipts from completion.
+Future mutations require separate explicit instruction and existing guarded
+tools. Plan-ID completion never enumerates IDs; use consented action history.
+Catalog: 57 read/planning tools, 66 with writes enabled, eight prompts and eight
+resource templates. The pinned Codex app-server API has no prompt-get RPC;
+prompt retrieval is covered by native MCP SDK clients on both supported protocols,
+while Codex acceptance verifies tool/resource compatibility. See
+[ADR-20261024140000](adr/20261024140000-management-mcp-saved-plan-recovery-prompts.md).
+
 For a lost apply response:
 
 1. Read `gregale_list_actions` with `{"app":"demo","limit":20}`.

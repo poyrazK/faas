@@ -1,4 +1,5 @@
 // adr: 1618
+// adr: 20261024140000
 package mcpmanagement
 
 import (
@@ -20,7 +21,7 @@ func TestContextCatalogReadOnlyResourcesAndPrompts(t *testing.T) {
 		t.Fatalf("templates=%+v %v", templates, err)
 	}
 	prompts, err := cs.ListPrompts(ctx, nil)
-	if err != nil || len(prompts.Prompts) != 6 {
+	if err != nil || len(prompts.Prompts) != 8 {
 		t.Fatalf("prompts=%+v %v", prompts, err)
 	}
 	resource, err := cs.ReadResource(ctx, &mcp.ReadResourceParams{URI: "gregale://default/apps/alpha/health"})
@@ -123,7 +124,7 @@ func TestContextCatalogRemoteProtocols(t *testing.T) {
 				t.Fatal(err)
 			}
 			prompts, err := cs.ListPrompts(ctx, nil)
-			if err != nil || len(prompts.Prompts) != 6 {
+			if err != nil || len(prompts.Prompts) != 8 {
 				t.Fatalf("remote prompts=%+v %v", prompts, err)
 			}
 			if _, err := cs.GetPrompt(ctx, &mcp.GetPromptParams{Name: "gregale_deployment_review", Arguments: map[string]string{"app": "alpha"}}); err != nil {

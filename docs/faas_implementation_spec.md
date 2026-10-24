@@ -3118,6 +3118,23 @@ no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
 
 
+## Management MCP saved-plan recovery prompts (ADR-20261024140000)
+
+`gregale_saved_plan_review` and `gregale_environment_plan_review` return fixed
+read-only recovery guidance and JSON history/review/check calls bound to original
+plan IDs and selectors. Verify current read/diagnostic consent, immutable target
+identities, both environments and whole-project access for environment plans,
+storage, original plan presence and expiry before releasing output. Exclude saved
+prose, configuration/preview/approval values and replay material. Preserve ambiguous
+original retries; explain stale unattempted intent before separately requested
+replanning. Retrieval performs no freshness/receipt/native-completion reads,
+mutation, approval action, persistence or expiry renewal. Plan-ID completion does
+not enumerate IDs. Catalog stays 57 read/planning tools, 66 with writes enabled;
+prompts increase to eight, with eight resource templates. Native MCP SDK clients
+qualify retrieval on both protocols; the pinned Codex app-server API lacks a
+prompt-get RPC. See
+[ADR-20261024140000](adr/20261024140000-management-mcp-saved-plan-recovery-prompts.md).
+
 ## Management MCP plan drift details (ADR-20261024123000)
 
 Existing plan applicability tools add a fixed-field `drift` projection of changed

@@ -7,6 +7,24 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP saved-plan recovery prompts — 2026-10-24 (branch, not released)
+
+Two prompts bind a read-only recovery recipe to original saved app/environment
+plan IDs. Final saved-plan guards protect consent, identities, storage, presence
+and expiry; prompt text contains fixed guidance and exact selectors without saved
+proposal prose or credentials. Ambiguous attempts preserve original requests;
+review does not apply, replan, renew expiry or start/poll approval. Catalog stays
+57 read/planning tools, 66 with writes enabled; prompts increase to eight.
+Full MCP race tests pass, including SDK retrieval on both protocols, HTTP grant
+isolation, encrypted restart, ambiguity, diagnostic consent and final expiry/
+identity/storage/presence checks. Passive-read tests verify retrieval fetches no
+fresh baselines, receipts or approvals and performs no native writes. Existing
+pinned Codex 0.159.0-alpha.3 tool/resource acceptance passes in all three profiles;
+its app-server API does not expose prompt-get. CLI contracts, affected-package
+lint, fake-store/seal-domain guards and spec/docs gates pass without generated
+drift. Native/provider deployment qualification remains separate.
+See [ADR-20261024140000](adr/20261024140000-management-mcp-saved-plan-recovery-prompts.md).
+
 ## Management MCP plan drift details — 2026-10-24 (branch, not released)
 
 Applicability checks explain individual changed baselines through fixed safe
