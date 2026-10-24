@@ -506,7 +506,7 @@ const (
 	CodeBuildOOM             = "build_oom"
 	CodeBuildTimeout         = "build_timeout"
 	// CodeDeploymentQueueTimeout and CodeDeploymentStalled are the
-	// deployment watchdog's failures (ADR-20261024140000): a build waited
+	// deployment watchdog's failures (ADR-20261024140100): a build waited
 	// past DeploymentQueuedBuildTimeoutSeconds, or an in-flight deployment
 	// with no build in progress made no stage progress for
 	// DeploymentStallTimeoutSeconds. Both are retryable by redeploying.
@@ -6018,6 +6018,18 @@ func ErrInvalidPublicAuthIPAllowlist(entry string, reason error) *Problem {
 func ErrValidation(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeValidation,
 		"Validation failed", detail)
+}
+
+// ErrEventReplayBackfillRange is the 400 for a backfill acceptance range
+// longer than the plan's settled-receipt window (ADR-20261023215834):
+// receipts older than the window are already pruned. Limit and observed
+// values are seconds.
+func ErrEventReplayBackfillRange(limitSeconds, observedSeconds int64) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeValidation, "Validation failed",
+		fmt.Sprintf("A backfill range can span at most %s on this plan, its settled-receipt retention window; the requested range spans %s.",
+			time.Duration(limitSeconds)*time.Second, time.Duration(observedSeconds)*time.Second)).
+		WithLimit(limitSeconds, observedSeconds).
+		WithDocs(docsBase + "/event-driven#settled-receipt-retention")
 }
 
 // ErrEdgeRulesVersionMismatch (ADR-961) is the 412 for an edge-rule mutation

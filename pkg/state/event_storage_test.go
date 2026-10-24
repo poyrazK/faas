@@ -112,7 +112,7 @@ func TestEventStorageAtomicCountAdmission(t *testing.T) {
 		if len(after) != len(before)+1 {
 			t.Fatalf("ledger rows before=%d after=%d", len(before), len(after))
 		}
-		if n, err := store.PruneDeliveredPublishedEvents(ctx, time.Now().Add(60*24*time.Hour), 100); err != nil || n != 0 {
+		if n, err := store.PruneSettledPublishedEvents(ctx, time.Now().Add(60*24*time.Hour), 100); err != nil || n != 0 {
 			t.Fatalf("pending receipts pruned=%d %v", n, err)
 		}
 		work, err := store.ClaimDuePublishedEvent(ctx, time.Now())
@@ -126,7 +126,7 @@ func TestEventStorageAtomicCountAdmission(t *testing.T) {
 		if settled.RetainedEvents != limit || settled.PendingEvents != limit-1 || settled.RetainedBytes != usage.RetainedBytes {
 			t.Fatalf("settled=%+v", settled)
 		}
-		if n, err := store.PruneDeliveredPublishedEvents(ctx, time.Now().Add(state.PublishedEventIdentityRetention+time.Minute), 1); err != nil || n != 1 {
+		if n, err := store.PruneSettledPublishedEvents(ctx, time.Now().Add(api.EventSettledRetentionMax()+time.Minute), 1); err != nil || n != 1 {
 			t.Fatalf("prune=%d %v", n, err)
 		}
 		if err := store.AppendEvent(ctx, "apid", "event.published", &account.ID, storagePayload("after-prune", "orders", "{}")); err != nil {

@@ -6206,6 +6206,19 @@ haveApp:
 	// table — a customer who flipped the whole app should never see
 	// a per-route 503 from a different Problem.code, because that
 	// would leak the existence of the fine-grained rule.
+	//
+	// ADR-20261022083601: AI crawler traffic is counted before any gate,
+	// so the edge-protection summary shows it whether or not a rule then
+	// blocks it.
+	if crawler, ok := api.ClaimedAICrawler(r.Header.Get("User-Agent")); ok {
+		h.metrics.ObserveAICrawlerRequest(app.ID, crawler.Name)
+	}
+	// ADR-20261022083601 amendment 1: the AI crawler condition fields read
+	// as absent for an account the edge_ai_crawlers flag leaves out. Set
+	// here, once the app is known and before the first edge gate.
+	if m := edgeRuleMatchContextFrom(r.Context()); m != nil {
+		m.aiCrawlersUnreleased = !h.edgeFeatureReleased(platformflags.EdgeAICrawlers, app)
+	}
 	// ADR-20261022105846: a client a rule's penalty box holds is refused
 	// before any other gate.
 	if h.applyEdgePenaltyBox(w, r, app, deploymentSmoke) {
@@ -8890,7 +8903,14 @@ func (s *statusRecorder) doFlush() {
 		// Renew the write window on every flush (ADR-047). A deadline set
 		// only once cuts off a healthy stream even while it makes progress.
 		// Writers without deadline support retain the server's safety net.
-		_ = http.NewResponseController(s.ResponseWriter).SetWriteDeadline(time.Now().Add(s.writeDeadline))
+		controller := http.NewResponseController(s.ResponseWriter)
+		_ = controller.SetWriteDeadline(time.Now().Add(s.writeDeadline))
+		// An HTTP/1.1 server cancels the request context once the
+		// whole-request read deadline (the listener's ReadTimeout) passes,
+		// so an active stream over the HTTP/1.1 hop still ended at the
+		// envelope. Slide it with the stream's idle window, which only
+		// ever extends it.
+		_ = controller.SetReadDeadline(time.Now().Add(streamIdleTimeout))
 	}
 	s.firstFlush = false
 	if s.onFlush != nil {

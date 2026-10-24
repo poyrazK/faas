@@ -560,6 +560,17 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			"Retry the commit request; contact support if it continues.", err)
 		return
 	}
+	// The commit unpacks, scans, hashes and publishes the whole archive before
+	// it records the deployment. For a 240 MiB source that outran the 30 s
+	// deploy-submission ceiling on production-us, and every store call after
+	// the scans failed with "context deadline exceeded", so no retry could
+	// succeed (hunt #10, H10-26). It runs under a size-scaled bound instead,
+	// from here on so the session-app authorization below shares it; the
+	// outcome is recorded idempotently (H9-127), so a client that stops
+	// waiting recovers the deployment on its retry.
+	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(row.TotalSize))
+	defer cancel()
+	r = r.WithContext(ctx)
 	// Membership, role and organization status are checked again at commit:
 	// the session may have been opened while the caller could still deploy.
 	// From here on acct is the account that owns the app's resources (limits,
@@ -606,17 +617,6 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			fmt.Sprintf("Session received %d of %d bytes; PATCH the remaining bytes before committing.", row.ReceivedBytes, row.TotalSize)))
 		return
 	}
-	// The rest of the commit unpacks, scans, hashes and publishes the whole
-	// archive before it records the deployment. For a 240 MiB source that
-	// outran the 30 s deploy-submission ceiling on production-us, and every
-	// store call after the scans failed with "context deadline exceeded", so
-	// no retry could succeed (hunt #10, H10-26). It runs under a size-scaled
-	// bound instead; the outcome is recorded idempotently (H9-127), so a client
-	// that stops waiting recovers the deployment on its retry.
-	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(row.TotalSize))
-	defer cancel()
-	r = r.WithContext(ctx)
-
 	if prob := s.enforceSecurityPostureGate(r.Context(), app); prob != nil {
 		api.WriteProblem(w, prob)
 		return

@@ -79,7 +79,7 @@ type ListStuckDeploymentsRow struct {
 	Since  pgtype.Timestamptz
 }
 
-// Deployment watchdog (ADR-20261024140000). An in-flight deployment that can
+// Deployment watchdog (ADR-20261024140100). An in-flight deployment that can
 // no longer finish on its own: a build queued since before queued_before, or
 // no queued or running build and no stage progress since stalled_before.
 // Deployments that are in flight by design are never candidates: a prepared

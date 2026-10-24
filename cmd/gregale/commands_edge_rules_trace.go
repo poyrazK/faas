@@ -37,6 +37,7 @@ func cmdEdgeRulesTrace(args []string) int {
 	country := fs.String("country", "", "simulated ISO 3166-1 alpha-2 country for kind=geo rules")
 	asnFlag := fs.String("asn", "", "simulated client autonomous system for asn conditions, e.g. AS13335")
 	verifiedBot := fs.Bool("verified-bot", false, "simulate a client IP that passes crawler verification, so verified_bot is the crawler the User-Agent header claims")
+	verifiedAICrawler := fs.Bool("verified-ai-crawler", false, "simulate a client IP inside the published ranges of the AI crawler the User-Agent header claims, so verified_ai_crawler is that crawler")
 	bodyFile := fs.String("body-file", "", fmt.Sprintf("read request body from file (max %d bytes; contents are not output)", edgeruletrace.MaxTraceBodyBytes))
 	var headerArgs multiFlag
 	fs.Var(&headerArgs, "header", "simulated request header (Name:Value; repeat; values compare exactly)")
@@ -107,7 +108,7 @@ func cmdEdgeRulesTrace(args []string) int {
 			asn = uint32(n)
 		}
 		input, err = edgeruletrace.NormalizeInput(edgeruletrace.Input{
-			Project: *project, Environment: *environment, ASN: asn, VerifiedBot: *verifiedBot,
+			Project: *project, Environment: *environment, ASN: asn, VerifiedBot: *verifiedBot, VerifiedAICrawler: *verifiedAICrawler,
 			App: *slug, Host: u.Hostname(), Path: requestPath, Query: u.RawQuery, Method: *method,
 			ClientIP: *clientIP, Country: *country, Headers: requestHeaders,
 			Body: requestBody, BodyProvided: bodyProvided,

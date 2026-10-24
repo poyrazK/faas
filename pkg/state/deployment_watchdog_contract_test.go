@@ -15,7 +15,7 @@ func TestMemDeploymentWatchdog(t *testing.T) {
 	testDeploymentWatchdog(t, state.NewMemStore())
 }
 
-// Every deployment must reach a terminal state (ADR-20261024140000). A build
+// Every deployment must reach a terminal state (ADR-20261024140100). A build
 // queued past its bound, or an in-flight deployment with no build in
 // progress and no stage progress, is listed; a running build, or anything
 // within its bounds, is not. Failing re-checks under the row lock, so a

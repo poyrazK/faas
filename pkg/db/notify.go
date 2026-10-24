@@ -960,6 +960,12 @@ const (
 	//   phase of an edge-rule convergence barrier. This channel is consumed
 	//   only by the mutation request that allocated the generation.
 	NotifyEdgeRuleAck = "edge_rule_ack"
+	// NotifyEdgePenaltyBox "<rows>"
+	//   gatewayd-internal -> gatewayd-internal: a gateway appended penalty
+	//   boxes to edge_penalty_boxes (ADR-20261022105846 amendment 1). The
+	//   payload is informational; every gateway re-reads the boxes created
+	//   since its last read, and also every 15 s against notify loss.
+	NotifyEdgePenaltyBox = "edge_penalty_box"
 	// NotifyDeploymentRouteChanged {"app_id":uuid,
 	//   "deployment_id":uuid,"generation":int}
 	//   schedd -> gatewayd-internal: a readiness-gated service rollout has

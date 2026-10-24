@@ -1243,7 +1243,11 @@ type Querier interface {
 	EventReplayBackfillMarkScanned(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillMaterializeSnapshot(ctx context.Context, db DBTX, id int64) error
 	EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFlightMax int64) (EventReplayJob, error)
-	EventReplayBackfillPruneAccounts(ctx context.Context, db DBTX, arg EventReplayBackfillPruneAccountsParams) ([]pgtype.UUID, error)
+	// ADR-20261023215834: owners with an unheld settled receipt past their
+	// plan's window, oldest first, each with its cutoff. Every owner with a
+	// receipt has a usage row, and its retention index bounds each probe. An
+	// owner without a known plan keeps the longest window.
+	EventReplayBackfillPruneAccounts(ctx context.Context, db DBTX, arg EventReplayBackfillPruneAccountsParams) ([]EventReplayBackfillPruneAccountsRow, error)
 	// Caller holds the account range lock acquired in a previous SQL statement.
 	// This statement's READ COMMITTED snapshot sees every hold committed before it.
 	EventReplayBackfillPruneEnvelopes(ctx context.Context, db DBTX, arg EventReplayBackfillPruneEnvelopesParams) (int64, error)
@@ -1295,7 +1299,11 @@ type Querier interface {
 	EventStorageAppend(ctx context.Context, db DBTX, arg EventStorageAppendParams) error
 	EventStorageIdentity(ctx context.Context, db DBTX, arg EventStorageIdentityParams) (bool, error)
 	EventStorageLockAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	// Pending receipts are read through the pending and lease indexes, so the
+	// account's settled history is not scanned.
 	EventStoragePublicUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStoragePublicUsageRow, error)
+	// ADR-20261023215834: the trigger-kept counts, not a scan of every
+	// retained receipt under the account's admission lock.
 	EventStorageUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStorageUsageRow, error)
 	EventSubscriptionCapacityAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	EventSubscriptionCapacityCommandBudget(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandBudgetParams) (EventSubscriptionCapacityCommandBudgetRow, error)
@@ -3442,7 +3450,7 @@ type Querier interface {
 	// settled; a parent that started none qualifies at once.
 	ListSettledChildParents(ctx context.Context, db DBTX, arg ListSettledChildParentsParams) ([]ListSettledChildParentsRow, error)
 	ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]string, error)
-	// Deployment watchdog (ADR-20261024140000). An in-flight deployment that can
+	// Deployment watchdog (ADR-20261024140100). An in-flight deployment that can
 	// no longer finish on its own: a build queued since before queued_before, or
 	// no queued or running build and no stage progress since stalled_before.
 	// Deployments that are in flight by design are never candidates: a prepared

@@ -64,6 +64,8 @@
     {{if eq .Data.Action "recipe_log_alert"}}<div class="flash ok" role="status">Recipe added in log mode with a spike alert. Watch its matches in the rules table, then choose Start enforcing.</div>{{end}}
     {{if eq .Data.Action "recipe_enforce_alert"}}<div class="flash ok" role="status">Recipe added and enforced, with a spike alert.</div>{{end}}
     {{if eq .Data.Action "recipe_alert_failed"}}<div class="flash error" role="alert">Recipe added, but its alert could not be created. Check the webhook URL and secret, then add it with gregale alerts add --metric edge_rule_activity --edge-rule-id.</div>{{end}}
+    {{if eq .Data.Action "attack_mode_on"}}<div class="flash ok" role="status">Attack mode is on. Every visitor is now challenged until it ends.</div>{{end}}
+    {{if eq .Data.Action "attack_mode_off"}}<div class="flash ok" role="status">Attack mode is off.</div>{{end}}
     {{if eq .Data.Action "error"}}<div class="flash error" role="alert">The edge-rule action could not be completed. Refresh and try again.</div>{{end}}
     {{if .Data.ErrorMessage}}<div class="flash error" role="alert">{{.Data.ErrorMessage}}</div>{{end}}
 
@@ -237,6 +239,30 @@
 
     <section aria-labelledby="edge-protection-heading">
       <h2 id="edge-protection-heading">Edge protection (last {{.Data.Protection.Range}})</h2>
+      <div id="attack-mode" class="card">
+        <h3>Attack mode</h3>
+        {{with .Data.Protection.AttackMode}}{{if .Active}}
+          <p role="status"><strong>Attack mode is on</strong>{{with .ExpiresAt}} until {{.UTC.Format "2006-01-02 15:04 UTC"}}{{end}}. Every visitor is challenged: browsers solve a short check once and continue, verified search crawlers and requests with a verified API key or JWT pass straight through, and other clients (scripts, webhooks, uptime checks) get 403 until it ends.</p>
+        {{else}}
+          <p>Under attack? Attack mode challenges every visitor to every host of this app for a while, then ends on its own. Browsers solve a short check once and continue; verified search crawlers and requests with a verified API key or JWT pass straight through; other clients (scripts, webhooks, uptime checks) get 403 until it ends.</p>
+        {{end}}{{end}}
+        {{if not .Data.AttackModeAvailable}}<p class="muted">Attack mode is not yet available to this account.</p>{{else}}
+        <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-protection/attack-mode" class="inline">
+          <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
+          <input type="hidden" name="attack_mode" value="on">
+          <label>{{if .Data.Protection.AttackMode.Active}}Extend to{{else}}Turn on for{{end}}
+            <select name="duration_seconds"><option value="3600">1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></label>
+          <button type="submit">{{if .Data.Protection.AttackMode.Active}}Extend attack mode{{else}}Turn on attack mode{{end}}</button>
+        </form>{{end}}
+        {{if .Data.Protection.AttackMode.Active}}
+        <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-protection/attack-mode" class="inline">
+          <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
+          <input type="hidden" name="attack_mode" value="off">
+          <button type="submit">Turn off attack mode</button>
+        </form>
+        {{end}}
+        <p class="muted">CLI: <code>gregale edge-rules attack-mode on --app {{$.Data.App.Slug}} --for 1h</code>.</p>
+      </div>
       {{with .Data.Protection}}
         {{if ne .Source "prometheus"}}
           <p class="muted" role="status">Edge protection counts are unavailable right now ({{.Source}}). This is not the same as zero.</p>
@@ -260,6 +286,9 @@
             {{if .Categories}}<p>Detections by category: {{range $i, $c := .Categories}}{{if $i}}, {{end}}{{$c.Name}} <strong>{{$c.Count}}</strong>{{end}}.</p>{{end}}
             {{if .TopRules}}<p>Top CRS rules: {{range $i, $c := .TopRules}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong>{{end}}. Exclude a false positive with <code>exclude_rule_ids</code>.</p>{{end}}
           {{end}}{{end}}
+          {{if .AICrawlers}}
+            <p>AI crawlers: {{range $i, $c := .AICrawlers}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong> <span class="muted">({{$c.Operator}}, {{$c.Purpose}})</span>{{end}}. Block or challenge them by purpose with the <em>Control AI crawlers</em> recipe.</p>
+          {{end}}
           {{with .Penalty}}{{if or .Boxed .Rejected}}
             <p>Penalty box: <strong>{{.Boxed}}</strong> clients boxed, <strong>{{.Rejected}}</strong> requests refused while boxed.</p>
           {{end}}{{end}}
@@ -301,16 +330,18 @@
           {{range .Data.Rules}}
             <tr>
               <td>{{.Priority}}</td>
-              <td>{{if .Name}}<strong>{{.Name}}</strong><br>{{end}}<strong>{{.Kind}}</strong>{{if .SecurityPreset}}<br><small class="muted">security preset</small>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
+              <td>{{if .Name}}<strong>{{.Name}}</strong><br>{{end}}<strong>{{.Kind}}</strong>{{if .SecurityPreset}}<br><small class="muted">security preset</small>{{end}}{{if .AttackMode}}<br><small class="muted">managed by attack mode</small>{{end}}<br><small class="muted"><code>{{.ID}}</code></small></td>
               <td>{{if .AppWide}}<em>every app host</em> <code>{{.MatchPath}}</code>{{else}}<code>{{.MatchHost}}{{.MatchPath}}</code>{{end}}</td>
               <td>{{if .MatchMethods}}{{.MatchMethods}}{{else}}any{{end}}</td>
-              <td>{{if .Enabled}}<span class="enabled">enabled</span>{{else}}<span class="disabled">disabled</span>{{end}}{{if eq .Mode "log"}}<br><span class="muted">log mode</span>{{end}}</td>
+              <td>{{if .Enabled}}<span class="enabled">enabled</span>{{else}}<span class="disabled">disabled</span>{{end}}{{if eq .Mode "log"}}<br><span class="muted">log mode</span>{{end}}{{range .Unreleased}}<br><span class="muted">not enforced: {{.}} not yet available</span>{{end}}</td>
               <td>{{if eq .Mode "log"}}{{.Logged24h}} logged{{else}}{{.Matched24h}}{{end}}{{if .SparkPoints}}<br><svg class="sparkline" width="84" height="20" viewBox="0 0 84 20" role="img" aria-label="{{.Matches7d}} matches in the last 7 days"><title>{{.Matches7d}} matches in the last 7 days</title><polyline points="{{.SparkPoints}}" fill="none" stroke="currentColor" stroke-width="1.5"/></svg>{{end}}{{if or .Matched24h .Logged24h}}<br><a href="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules?rule={{.ID}}#security-events">events</a>{{end}}</td>
               <td><span class="muted">{{.ActionSummary}}</span><br><code class="rule-action">{{.ActionJSON}}</code></td>
               <td class="actions nowrap">
+                {{if .AttackMode}}<a href="#attack-mode">Attack mode controls</a>{{else}}
                 <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/mode"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">{{if eq .Mode "log"}}<input type="hidden" name="mode" value="enforce"><button type="submit">Start enforcing</button>{{else}}<input type="hidden" name="mode" value="log"><button type="submit">Log only</button>{{end}}</form>
                 <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/toggle"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">{{if .Enabled}}Disable{{else}}Enable{{end}}</button></form>
                 <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.ID}}/delete"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><button type="submit">Delete</button></form>
+                {{end}}
               </td>
             </tr>
           {{end}}

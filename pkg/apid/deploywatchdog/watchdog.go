@@ -1,6 +1,6 @@
 // Package deploywatchdog fails in-flight deployments that can no longer
 // finish on their own, so every deployment reaches a terminal state
-// (ADR-20261024140000). apid owns deployments; builderd's reaper keeps
+// (ADR-20261024140100). apid owns deployments; builderd's reaper keeps
 // running builds, and schedd keeps instances.
 package deploywatchdog
 

@@ -55,6 +55,13 @@ type BuildCacheRecipe struct {
 	// buildSecretScope). Omitted when the build mounts none, so every
 	// existing recipe key is unchanged.
 	BuildSecretScope string `json:"build_secret_scope,omitempty"`
+	// AccountID partitions every build by the account that owns the app. The
+	// rest of the recipe describes the build's inputs, and its output comes
+	// from a builder VM the tenant controls: without the account, a tenant who
+	// built a popular public commit first (the CLI packs a commit
+	// byte-reproducibly) served its artifact to every later account deploying
+	// that commit, which then ran it with its own secrets.
+	AccountID string `json:"account_id,omitempty"`
 }
 
 // buildSecretScope keys a build that mounts secrets to its account, app,

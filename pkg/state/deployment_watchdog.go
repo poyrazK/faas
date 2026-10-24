@@ -15,7 +15,7 @@ import (
 )
 
 // StuckDeploymentReason says why the deployment watchdog may fail an
-// in-flight deployment (ADR-20261024140000).
+// in-flight deployment (ADR-20261024140100).
 type StuckDeploymentReason string
 
 const (

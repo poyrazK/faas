@@ -1,11 +1,18 @@
 # Architecture Decision Records
 
-- [ADR-20261024140000: Every deployment reaches a terminal state](20261024140000-deployment-watchdog.md) — apid's watchdog fails a build queued over 6 h (`deployment_queue_timeout`) or an in-flight deployment with no build and no progress for 3 h (`deployment_stalled`)
+- [ADR-20261024140100: Every deployment reaches a terminal state](20261024140100-deployment-watchdog.md) — apid's watchdog fails a build queued over 6 h (`deployment_queue_timeout`) or an in-flight deployment with no build and no progress for 3 h (`deployment_stalled`)
+- [Build secrets resolve like the runtime environment](20261024140000-build-secrets-resolve-like-the-runtime.md)
+- [ADR-20261024135625: Resource journal: durable commits only for reboot-surviving assets](20261024135625-resource-journal-volatile-commits.md)
 - [Dockerfile HEALTHCHECK gates readiness on source builds](20261024100000-dockerfile-healthcheck-enforced.md)
+- [ADR-20261024132405: Language runtimes are supported until upstream end of life; their CVEs are triaged, not migrated away](20261024132405-runtime-language-version-support-and-cves.md) — accepted; deprecation dates, weekly base-digest refresh, version-pinned scanner exceptions; amends ADR 20261023220532 decision 4 for Python 3.12
 - [ADR-20261024090000: Idle parks re-check activity, and a park holds new forwards](20261024090000-idle-park-recheck-and-forward-hold.md) — the reaper's park re-checks fresh activity before SNAPSHOTTING; vmmd holds new forwards for the park and drains in-flight ones up to 5 s (amends spec §6)
+- [ADR-20261022083601: AI crawler controls](20261022083601-edge-ai-crawler-controls.md)
 - [ADR-20261024085817: A compute rollout never strands a node on a runtime base it cannot boot, and its drain finishes](20261024085817-rollout-base-generation-and-drain-completion.md) — proposed; a changed base generation pre-stages behind the drain barrier, the rescue never re-activates a node whose cache moved, a drain withdraws, drains and stops what it cannot hand off (2026-10-22 fsn-3)
+- [ADR-20261021220456: Attack mode](20261021220456-edge-attack-mode.md)
 - [Bucket-scoped object storage availability](20261023223000-object-storage-bucket-scoped-availability.md) — per-bucket inventory freshness, maintenance listings off the customer meter, no fence on a never-versioned baseline, busy deletions wait, public-read share and revalidation
+- [ADR-20261024082000: Release gate for edge security features](20261024082000-edge-security-ga-gate.md)
 - [ADR-20261023171905: Unbilled quiet pause — bill the seconds a VM runs, not the seconds it waits](20261023171905-unbilled-quiet-pause.md) — schedd `quiet_pause_ledger` + meterd `quiet_pause_unbilled` (amends §4.7, ADR-1151 decision 1, ADR-20261021215353)
+- [ADR-20261023214253: Operators need MFA, and a session to read customer data](20261023214253-operators-need-mfa-and-sessions-for-customer-data.md) — proposed; operator sign-ins start mfa_pending; operator keys read fleet telemetry only (FAAS_OPERATOR_BEARER_READS grace)
 - [Compose profiles from COMPOSE_PROFILES in .env](20261022190000-compose-profiles-from-dotenv.md)
 - [Compose deploy resources and replicas set app settings](20261023120000-compose-deploy-resources.md)
 - [Compose service secrets as files in /run/secrets](20261023090000-compose-runtime-secret-files.md)
@@ -18,6 +25,7 @@
 - [ADR-20261023173624: Runtime secrets are bound to their account](20261023173624-runtime-secrets-bound-to-their-account.md) — vmmd opens a bound envelope only for its account; writers opt in with FAAS_RUNTIME_SECRET_BINDING
 - [ADR-20261023104734: Daemons log in as runtime roles, not the schema owner](20261023104734-database-runtime-roles.md) — faas_runtime group, per-daemon roles, opt-in FAAS_DB_ROLE
 - [Product Control trial-to-paid conversion](20261022180921-product-control-trial-conversion.md)
+- [Native runtime snapshot capture for park and warm](20261022184951-native-runtime-snapshot-capture.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
 - [ADR-20261024014500: Honeytokens and unseal telemetry](20261024014500-honeytokens-and-unseal-telemetry.md)
@@ -31,6 +39,9 @@
 - [ADR-20261021204307: Code-first workflows](20261021204307-code-first-workflows.md) — one entry handler replays the run's journal; Node, Python and Go SDKs
 - [Platform flags: company targeting, full coverage, scheduled and automatic rollouts, self-serve previews](20261021080640-platform-flag-extensions.md)
 - [Product Control free trials](20261021195901-product-control-free-trials.md)
+- [ADR-20261022193512: Unified incidents](20261022193512-unified-incidents.md)
+- [ADR-20261022173833: Custom dashboards](20261022173833-custom-dashboards.md)
+- [ADR-20261022172052: Alerts carry what the logs show](20261022172052-alert-log-context.md)
 - [ADR-20261021210000: Enrolled apps receive no account events](20261021210000-rehearsal-event-fanout-exclusion.md)
 - [Data API engine pool size and server-key limits](20261021180534-data-api-engine-pool-and-server-key-limits.md)
 - [ADR-20261021180000: Rehearsal capture of realtime publishes and signals](20261021180000-rehearsal-realtime-capture.md)
@@ -71,6 +82,7 @@
 - [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)
 - [ADR-1743: Publish final Node build source maps with build completion](1743-builder-issue-source-map-publication.md)
 - [ADR-1742: Publish prebuilt Issues source maps during CLI deployment](1742-deploy-issue-source-map-publication.md)
+- [Customer log search and analytics over the unified ledger](20261018083536-customer-log-search.md)
 
 - [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
 

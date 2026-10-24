@@ -119,8 +119,13 @@ func (r *linuxNativeLoopReservation) Configure() error {
 	return unix.IoctlLoopConfigure(int(r.loop.Fd()), &config)
 }
 
+// nativeGuestDiskMountData is the ext4 data string for the native loop
+// mount, whose flags already carry nodev, nosuid and noexec: the same error
+// behaviour override as guestDiskMountOptions.
+const nativeGuestDiskMountData = "errors=remount-ro"
+
 func (r *linuxNativeLoopReservation) Mount(point string) (uint64, error) {
-	if err := unix.Mount(nativeLoopDevicePath(r.device.Number), point, "ext4", unix.MS_NODEV|unix.MS_NOSUID|unix.MS_NOEXEC, ""); err != nil {
+	if err := unix.Mount(nativeLoopDevicePath(r.device.Number), point, "ext4", unix.MS_NODEV|unix.MS_NOSUID|unix.MS_NOEXEC, nativeGuestDiskMountData); err != nil {
 		return 0, err
 	}
 	entry, err := readNativeLoopMount(point)

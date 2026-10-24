@@ -272,6 +272,10 @@ type Handler struct {
 	// Interface (not concrete *VMMClient) so tests can inject a
 	// fakeVMMClient (defined in vmmclient.go) without dialing.
 	vmmClient VMMClientIface
+	// nativeSnapshotRoot is vmmd's private tree for native runtime
+	// snapshots (ADR 20261022184951 amendment 1). imaged reads it to learn
+	// which objects vmmd must remove; "" keeps every delete on the backend.
+	nativeSnapshotRoot string
 	// runtimeBaseMu serializes on-demand runtime-base staging. Multiple
 	// deployments can arrive together after a cold start; without this
 	// guard they could concurrently rebuild the same ext4 and race the
