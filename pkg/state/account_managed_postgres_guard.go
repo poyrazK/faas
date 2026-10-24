@@ -17,7 +17,7 @@ const accountManagedPostgresDatabasesConstraint = "account_has_managed_postgres_
 
 // AccountManagedPostgresDatabasesError carries how many live databases block
 // the transition. Live is 0 when the guard did not report a count (a schema
-// older than migration 20261024092659388).
+// older than migration 20261024145700943).
 type AccountManagedPostgresDatabasesError struct{ Live int64 }
 
 func (e *AccountManagedPostgresDatabasesError) Error() string {
