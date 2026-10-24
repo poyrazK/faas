@@ -229,11 +229,14 @@ func (o *WorkflowOrchestrator) invokeCodeWorkflow(ctx context.Context, store sta
 		return false, o.finishCodeRunDead(ctx, store, run, attempt, nil, failures, seen, message)
 	}
 	headers := map[string]string{
-		"X-Faas-Internal-Wake":     "workflow",
-		"X-Faas-Workflow-Run-Id":   run.ID,
-		"X-Faas-Workflow-Step":     api.WorkflowCodeDriverStep,
-		"X-Faas-Workflow-Attempt":  strconv.Itoa(attempt),
-		"Idempotency-Key":          workflowStepIdempotencyKey(run.ID, api.WorkflowCodeDriverStep),
+		"X-Faas-Internal-Wake":    "workflow",
+		"X-Faas-Workflow-Run-Id":  run.ID,
+		"X-Faas-Workflow-Step":    api.WorkflowCodeDriverStep,
+		"X-Faas-Workflow-Attempt": strconv.Itoa(attempt),
+		// Every call sends a different journal, so it is its own request: a
+		// run-wide key let the app's idempotency middleware replay the first
+		// answer, which the engine then refused as nondeterministic.
+		"Idempotency-Key":          fmt.Sprintf("%s/%d", workflowStepIdempotencyKey(run.ID, api.WorkflowCodeDriverStep), attempt),
 		"Content-Type":             "application/json",
 		api.WorkflowCodeModeHeader: "code",
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -276,6 +277,31 @@ func TestCodeWorkflowEventOccurrencesAndNondeterminism(t *testing.T) {
 		dead, _ := store.GetWorkflowRun(ctx, drifted.ID)
 		if dead.Status != state.WorkflowRunStatusDead || dead.LastError == nil || !strings.Contains(*dead.LastError, "nondeterministic") {
 			t.Fatalf("drifted run=%+v", dead)
+		}
+	})
+}
+
+// Each entry-handler call carries a different journal, so it needs its own
+// Idempotency-Key: an app's idempotency middleware would otherwise replay the
+// first call's answer and the engine would close the run as nondeterministic.
+func TestCodeWorkflowDriverCallsUseDistinctIdempotencyKeys(t *testing.T) {
+	sched.GuardOrchestrationStores(t, func(t *testing.T, store state.Store) {
+		executor := &codeTestExecutor{run: func(wf *codeTestWF, _ int) (any, error) {
+			if _, err := wf.Step("charge", nil, func(int) (any, error) { return 1, nil }); err != nil {
+				return nil, err
+			}
+			return wf.Step("email", nil, func(int) (any, error) { return 2, nil })
+		}}
+		run := sched.CreateGuardedRun(t, store, codeSpec(nil), `{}`)
+		dispatchCode(t, sched.NewWorkflowOrchestrator(store, executor, nil, nil, nil))
+		if executor.calls != 3 {
+			t.Fatalf("calls = %d, want 3", executor.calls)
+		}
+		for i, headers := range executor.headers {
+			want := "workflow/" + run.ID + "/" + api.WorkflowCodeDriverStep + "/" + strconv.Itoa(i+1)
+			if headers["Idempotency-Key"] != want {
+				t.Fatalf("call %d Idempotency-Key = %q, want %q", i+1, headers["Idempotency-Key"], want)
+			}
 		}
 	})
 }
