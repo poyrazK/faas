@@ -248,3 +248,36 @@ Compatibility:
   would force every call site to handle tx errors. Best-effort +
   ON CONFLICT is the honest answer for a metadata table that
   doesn't gate customer success.
+
+## Amendment 2026-10-24: verified layers survive a schedd restart
+
+The verifier kept successful verifications in memory only, so every schedd
+restart (every release) re-read and re-hashed each layer, up to 1-2 GB. The
+check runs on every wake, restores included, between `wake.admitted` and
+`wake.boot_started`, so the first wakes after a restart waited for it: 9-10 s
+on production-us (rc.288, rc.290). Skipping the check for snapshot restores
+was rejected: vmmd falls back to a cold boot of the layer when a restore
+fails (ADR-005), and that boot must stay verified.
+
+schedd now remembers verifications in `/var/lib/faas/schedd/layer-attestations.json`
+(`FAAS_LAYER_ATTESTATION_RECORDS`). The directory is 0700 for faas-schedd and
+created by the unit. A record holds the layer and signature keys, a
+fingerprint of the verifying public key, and the device, inode and size of the
+node-cache file that was hashed. A later verification of a local cache file
+whose identity matches a record younger than
+`api.LayerAttestationRecordMaxAgeHours` (7 days) skips the hash.
+
+- **The same file means the same bytes.** The node cache writes a file once
+  and replaces it only by renaming a new one over it, and the verifier hashes
+  from the file descriptor it took the identity from. A replaced, evicted or
+  re-fetched file is a different file and is verified in full.
+- **A record never outlives its key.** A record made under another key is
+  ignored, so a key rotation re-verifies everything.
+- **A forged record would skip a hash, so records are trusted only from a
+  regular file that is mode 0600 and owned by the daemon's uid.** Anything
+  else keeps verifications in memory only, as before.
+- **A backend without local files records nothing** and streams the layer
+  as before.
+- **Not covered:** a write into the cached file in place, with its size kept.
+  That needs write access to the node cache, which the startup re-hash
+  detected only at the next restart.
