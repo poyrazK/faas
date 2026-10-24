@@ -101,7 +101,9 @@ func TestOrgOffboardingCreatorLosesNamedAndIndirectAppRoutes(t *testing.T) {
 	}{
 		{"GET", "/v1/workflows/runs/" + run.ID, nil, http.StatusOK},
 		{"GET", "/v1/delayed-tasks/" + task.ID, nil, http.StatusOK},
-		{"POST", "/v1/triggers/" + triggerID + "/pause", nil, http.StatusOK},
+		// Legacy /v1/triggers administration covers personal apps only
+		// (docs/organization-queues.md); company triggers are unreviewed.
+		{"POST", "/v1/triggers/" + triggerID + "/pause", nil, http.StatusForbidden},
 		{"GET", "/v1/crons?slug=company-api", nil, http.StatusOK},
 		{"POST", "/v1/crons", api.CreateCronRequest{AppID: app.ID, Schedule: "*/5 * * * *", Path: "/"}, http.StatusCreated},
 		{"POST", "/v1/domains", api.CreateCustomDomainRequest{AppID: "company-api", Domain: "api.company.example"}, http.StatusAccepted},
