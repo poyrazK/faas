@@ -473,6 +473,11 @@ type Instance struct {
 	// freezing is non-nil while a Freeze decides and pauses, and closes once
 	// that freeze has settled either way. Guarded by Manager.mu.
 	freezing chan struct{}
+	// parking is non-nil while a terminal Park runs and closes once it ends;
+	// parkHeld counts the forwards waiting on it (park_hold.go). Both are
+	// guarded by Manager.mu.
+	parking  chan struct{}
+	parkHeld int64
 	// IsJob marks run-to-completion VMs whose expected Firecracker exit is
 	// settled by the lease-fenced job receipt, not the app liveness relay.
 	IsJob bool
@@ -5987,6 +5992,14 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	}
 	if m.isFrozen(inst) {
 		return SnapshotInfo{}, false, fmt.Errorf("park %s: %w", instance, ErrInstanceFrozen)
+	}
+	// Hold new forwards until teardown and let the ones already at the guest
+	// finish before the pause (park_hold.go). Released after cleanup, so a
+	// held forward finds the instance gone and is re-routed.
+	defer m.holdForwardsForPark(inst)()
+	if remaining := m.drainForwardsForPark(operationCtx, inst); remaining > 0 {
+		m.log.Warn("park: forwards still in flight at the drain deadline", "instance", instance,
+			"forwards", remaining, "drain_s", parkForwardDrainTimeout.Seconds())
 	}
 	m.mu.Lock()
 	flight.parking = true
