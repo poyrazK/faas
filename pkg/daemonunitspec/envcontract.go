@@ -405,6 +405,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL", Owners: []string{"gatewayd-internal"}, Source: EnvSourceSecretsEnv, Validate: EnvValidationURL, Note: "ADR-288 legacy direct URL delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env; cannot coexist with FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL_FILE"},
 	{Name: "FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL_FILE", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDropin, Validate: EnvValidationPathExists, Note: "Ansible projects one common Vault Redis URL through LoadCredential and sets this credential path in the gateway drop-in"},
 	{Name: "FAAS_GATEWAY_ROUTE_METRICS", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
+	{Name: "FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "ADR-20261024154324; most (app, route) pairs this gateway exports per-route series for (default api.RouteMetricsMaxRoutesPerGateway)"},
 	{Name: "FAAS_GATEWAY_ROUTE_STALE_TTL", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "ADR-190; how long a last-known-good route is served while the Postgres route lookup errors (default 10m, 0 disables)"},
 	{Name: "FAAS_GATEWAY_STREAMING", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault, Note: "emergency override only; production enables streaming via streaming_enabled=true in gatewayd-internal.toml (ADR-143)"},
 	{Name: "FAAS_GATEWAY_SYNTH_SOCKET", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
