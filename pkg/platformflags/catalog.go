@@ -304,8 +304,9 @@ var catalog = []Spec{
 		RetireBy:    "2027-01-31",
 	},
 	{
-		Key:   EdgeWAFBlocking,
-		Label: "Edge WAF warn and block",
+		Key:        EdgeWAFBlocking,
+		Capability: "edge-waf-blocking",
+		Label:      "Edge WAF warn and block",
 		Description: "Release warn and block modes of WAF edge rules (kind=waf) to accounts. Off by default until launch; observe mode is not gated. " +
 			"While it is off apid refuses creating a warn or block rule or switching a rule to one, and gateways inspect existing warn and block rules in observe mode only.",
 		ADR:        "ADR-20261023113721",
@@ -314,8 +315,9 @@ var catalog = []Spec{
 		RetireBy:   "2027-03-31",
 	},
 	{
-		Key:   EdgeChallenge,
-		Label: "Edge challenge rules",
+		Key:        EdgeChallenge,
+		Capability: "edge-browser-challenge",
+		Label:      "Edge challenge rules",
 		Description: "Release challenge edge rules (kind=challenge, with difficulty escalation) to accounts. Off by default until launch. " +
 			"While it is off apid refuses creating a challenge rule or switching one on, and gateways serve no challenge pages, so existing rules are inert.",
 		ADR:        "ADR-20261023113721",
@@ -324,8 +326,9 @@ var catalog = []Spec{
 		RetireBy:   "2027-03-31",
 	},
 	{
-		Key:   EdgePenaltyBox,
-		Label: "Edge penalty box",
+		Key:        EdgePenaltyBox,
+		Capability: "edge-penalty-box",
+		Label:      "Edge penalty box",
 		Description: "Release edge rule penalties (penalty box) to accounts. Off by default until launch. " +
 			"While it is off apid refuses adding a penalty to a rule or switching on a rule that has one, and gateways neither box clients nor refuse boxed ones; the rules themselves keep enforcing.",
 		ADR:        "ADR-20261023113721",

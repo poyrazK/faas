@@ -126,6 +126,56 @@
       "evidence": [{"kind": "test", "locator": "pkg/apid/apidserver/handlers_inbound_webhooks_test.go::TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries"}]
     },
     {
+      "id": "edge-browser-challenge-preview",
+      "name": "Browser challenge release qualification",
+      "category": "security",
+      "description": "A browser navigation on a challenged route solves the page and passes on its pass while a script is refused with 403 challenge_required, verified credentials and crawlers pass, the browser's solver agrees with the gateway, raised difficulty is capped and falls back, and the edge_challenge platform flag makes rules inert for accounts it leaves out (ADR-831 amendments 7-8, ADR-20261023113721, ADR-20261024082000).",
+      "capabilities": ["edge-browser-challenge"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}, {"metric": "p95", "operator": "lte", "value": 2000, "unit": "milliseconds"}, {"metric": "ratio", "operator": "gte", "value": 90, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/e2e/edge_rules_challenge_e2e_test.go::TestEdgeRulesChallenge_E2E"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_test.go::TestApplyEdgeRuleChallenge"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_test.go::TestChallengeSolveRoundTrip"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_solver_test.go::TestChallengeSolverJS"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_load_test.go::TestChallengeLoadRaisesAndLowers"},
+        {"kind": "test", "locator": "pkg/gateway/edge_feature_flags_test.go::TestEdgeChallengeFlag"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
+    },
+    {
+      "id": "edge-penalty-box-preview",
+      "name": "Edge penalty box release qualification",
+      "category": "security",
+      "description": "A rule with a penalty boxes a client after its threshold of policy refusals and refuses it on every path with 403 penalty_box and Retry-After, lets it go when the rule loses its penalty, stays within its per-app and per-gateway caps, and the edge_penalty_box platform flag stops boxing for accounts it leaves out (ADR-20261022105846, ADR-20261023113721, ADR-20261024082000).",
+      "capabilities": ["edge-penalty-box"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}, {"metric": "p95", "operator": "lte", "value": 1000, "unit": "milliseconds"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxRefusesBoxedClientAcrossPaths"},
+        {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxThresholdWindowAndExpiry"},
+        {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxPerAppCap"},
+        {"kind": "test", "locator": "pkg/apid/edgerules/penalty_test.go::TestCreateValidatesAndStoresPenalty"},
+        {"kind": "test", "locator": "pkg/gateway/edge_feature_flags_test.go::TestEdgePenaltyBoxFlag"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
+    },
+    {
+      "id": "edge-waf-blocking-preview",
+      "name": "WAF warn and block release qualification",
+      "category": "security",
+      "description": "On the reference compute node the in-path check stays within 2 ms at p95 and skips at most 0.1% of checks at 100-500 req/s, detects the CRS regression corpus with no benign request flagged beyond the documented ones, fails open, and the edge_waf_blocking platform flag inspects warn and block rules as observe for accounts it leaves out (ADR-831 amendments 4-11, ADR-20261023113721, ADR-20261024082000).",
+      "capabilities": ["edge-waf-blocking"],
+      "targets": [{"metric": "p95", "operator": "lte", "value": 2, "unit": "milliseconds"}, {"metric": "ratio", "operator": "lte", "value": 0.1, "unit": "percent"}, {"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/e2e/edge_rules_waf_load_e2e_test.go::TestEdgeWAFInlineLoad_E2E"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_waf_test.go::TestApplyEdgeRuleWAFInline"},
+        {"kind": "test", "locator": "pkg/edgewaf/inline_test.go::TestCheckInline"},
+        {"kind": "test", "locator": "pkg/edgewaf/ftw_test.go::TestCRSRegressionCorpus"},
+        {"kind": "test", "locator": "pkg/edgewaf/benign_test.go::TestBenignCorpus"},
+        {"kind": "test", "locator": "pkg/gateway/edge_feature_flags_test.go::TestEdgeWAFBlockingFlag"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
+    },
+    {
       "id": "first-healthy-api",
       "name": "Time to first healthy API",
       "category": "activation",
