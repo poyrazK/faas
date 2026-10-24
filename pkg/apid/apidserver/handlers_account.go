@@ -226,15 +226,7 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 		}
 		outboxed, err := s.markDeletionPendingWithMail(ctx, acct.ID)
 		if err != nil {
-			if errors.Is(err, state.ErrOrgAppOwnershipPending) {
-				return acct, api.NewProblem(http.StatusConflict, api.CodeConflict,
-					"Company app ownership migration required",
-					"company applications still depend on this account; contact support to complete their ownership transfer before deleting your account")
-			}
-			if errors.Is(err, state.ErrNotFound) {
-				return acct, accountDeletionBlocked()
-			}
-			return acct, api.ErrCapacity("could not mark for deletion")
+			return acct, deletionRefusedProblem(err)
 		}
 		s.notifyAccountLifecycle(ctx, acct.ID, "account_deleted_pending")
 		fresh, err := s.store.AccountByID(ctx, acct.ID)
@@ -396,6 +388,24 @@ func (s *server) sharedOrgOwnershipBlocksDeletion(ctx context.Context, accountID
 			fmt.Sprintf("transfer ownership of %q or delete it before deleting your account", org.Slug))
 	}
 	return nil
+}
+
+// deletionRefusedProblem explains why the store refused to schedule the
+// deletion. Each guard is something the customer must resolve first, so it is
+// a 409, never the 503 a client would retry forever.
+func deletionRefusedProblem(err error) *api.Problem {
+	var databases *state.AccountManagedPostgresDatabasesError
+	switch {
+	case errors.Is(err, state.ErrOrgAppOwnershipPending):
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Company app ownership migration required",
+			"company applications still depend on this account; contact support to complete their ownership transfer before deleting your account")
+	case errors.As(err, &databases):
+		return api.ErrAccountDeletionManagedPostgres(databases.Live)
+	case errors.Is(err, state.ErrNotFound):
+		return accountDeletionBlocked()
+	}
+	return api.ErrCapacity("could not mark for deletion")
 }
 
 func accountDeletionBlocked() *api.Problem {
