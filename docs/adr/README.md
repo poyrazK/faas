@@ -1856,3 +1856,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261020161310: Route insight fixes, dashboard panel and alerts](20261020161310-route-insight-fixes-and-alerts.md)
 
 - [ADR-20261022184757: Background work and waitUntil in the awake report](20261022184757-route-awake-background-work.md)
+- [ADR-20261023220532: Move the Debian-based runtime bases to Debian 13](20261023220532-debian-13-runtime-bases.md) — accepted; clears the bookworm `<no-dsa>` glibc/SQLite criticals (#5206), matches Railpack's Debian 13 builder, audits `base-minimal` apps first
