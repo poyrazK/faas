@@ -45,6 +45,8 @@ func TestDrainDecisionsFollowTheDrainTimeline(t *testing.T) {
 		{name: "running long after the park point parks", elapsed: time.Hour, instance: state.RecoveryInstance{State: "running"}, want: sched.DecisionPark},
 		{name: "running without drain_initiated_at keeps migrating", noStart: true, instance: state.RecoveryInstance{State: "running"}, want: sched.DecisionLiveMigrate},
 		{name: "warm parks at once", elapsed: 0, instance: state.RecoveryInstance{State: "warm"}, want: sched.DecisionPark},
+		{name: "a withdrawn row before the park point is left to its owner", elapsed: window, instance: state.RecoveryInstance{State: "draining"}, want: sched.DecisionNone},
+		{name: "a withdrawn row at the park point is finished", elapsed: parkAfter, instance: state.RecoveryInstance{State: "draining"}, want: sched.DecisionPark},
 		{name: "frozen is recreated (parked)", elapsed: 0, instance: state.RecoveryInstance{State: "frozen"}, want: sched.DecisionRecreate},
 		{name: "waking stays with its healthy node", elapsed: parkAfter, instance: state.RecoveryInstance{State: "waking"}, want: sched.DecisionNone},
 		{name: "snapshotting is in flight", elapsed: parkAfter, instance: state.RecoveryInstance{State: "snapshotting"}, want: sched.DecisionNone},
@@ -127,6 +129,7 @@ func TestDrainTickParksWhatItCouldNotHandOff(t *testing.T) {
 	instances := []state.RecoveryInstance{
 		{ID: "busy-1", State: "running"}, {ID: "busy-2", State: "running"},
 		{ID: "pool", State: "warm"}, {ID: "idle", State: "frozen"}, {ID: "booting", State: "cold_booting"},
+		{ID: "withdrawn", State: "draining"},
 	}
 	cases := []struct {
 		name                            string
@@ -138,13 +141,13 @@ func TestDrainTickParksWhatItCouldNotHandOff(t *testing.T) {
 		wantErr                         bool
 	}{
 		{name: "inside the window running instances migrate and the pool parks", elapsed: time.Minute, withPark: true,
-			wantMigrated: []string{"busy-1", "busy-2"}, wantParked: []string{"pool"}, wantLive: 2, wantRecreate: 2, wantSkp: 1},
+			wantMigrated: []string{"busy-1", "busy-2"}, wantParked: []string{"pool"}, wantLive: 2, wantRecreate: 2, wantSkp: 2},
 		{name: "past the park point everything resident parks", elapsed: 10 * time.Minute, withPark: true,
-			wantParked: []string{"busy-1", "busy-2", "pool"}, wantRecreate: 4, wantSkp: 1},
+			wantParked: []string{"busy-1", "busy-2", "pool", "withdrawn"}, wantRecreate: 5, wantSkp: 1},
 		{name: "a failed park is retried next tick, not counted", elapsed: 10 * time.Minute, withPark: true, parkErr: errors.New("vmmd unreachable"),
 			wantRecreate: 1, wantSkp: 1, wantErr: true},
 		{name: "without a park dispatcher park verdicts are skipped", elapsed: 10 * time.Minute,
-			wantRecreate: 1, wantSkp: 4},
+			wantRecreate: 1, wantSkp: 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -349,19 +352,111 @@ func TestDrainingNodeDiscardsWarmPoolVMs(t *testing.T) {
 	}
 }
 
-// ParkForDrain parks a RUNNING instance on its own node through the
-// ordinary park, so the drain completes and the next request wakes it on an
-// admitting node.
-func TestParkForDrainParksARunningInstance(t *testing.T) {
-	f := sched.NewFrozenFixture(t, true)
-	if err := (*f.E()).ParkForDrain(t.Context(), (*f.Ins()).ID); err != nil {
+// A drain park never cuts requests in flight: the instance leaves routing
+// (DRAINING) before the request barrier, and is destroyed only once vmmd
+// reports it idle or the bound passes. On 2026-10-22 the instance holding
+// fsn-3's drain was busy, which is exactly the instance a drain park meets.
+func TestDrainParkWithdrawsAndDrainsRequestsBeforeRetiring(t *testing.T) {
+	cases := []struct {
+		name        string
+		start       state.State
+		busySamples int // Stats calls that report a request in flight; -1 = always
+		bound       time.Duration
+		minElapsed  time.Duration
+	}{
+		{name: "requests finish inside the bound", start: state.StateRunning, busySamples: 3, bound: time.Minute,
+			minElapsed: time.Duration(api.ServiceReplicaDrainQuietSeconds) * time.Second},
+		{name: "requests outlast the bound", start: state.StateRunning, busySamples: -1, bound: 400 * time.Millisecond,
+			minElapsed: 400 * time.Millisecond},
+		{name: "a withdrawn row is resumed", start: state.StateDraining, busySamples: 1, bound: time.Minute,
+			minElapsed: time.Duration(api.ServiceReplicaDrainQuietSeconds) * time.Second},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			store := state.NewMemStore()
+			_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 5)
+			node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+			if err != nil {
+				t.Fatal(err)
+			}
+			ins, err := store.CreateInstance(ctx, app.ID, dep.ID, string(tc.start), app.RAMMB, node.ID, uuid.NewString())
+			if err != nil {
+				t.Fatal(err)
+			}
+			vmm := &sched.FakeVMM{}
+			var (
+				mu                sync.Mutex
+				calls             int
+				stateAtFirstStats string
+				destroysWhileBusy int
+			)
+			(*vmm.StatsHook()) = func(ctx context.Context, _ string) (*sched.StatsSnapshot, error) {
+				row, _ := store.InstanceByID(ctx, ins.ID)
+				vmm.Mu().Lock()
+				destroys := *vmm.Destroys()
+				vmm.Mu().Unlock()
+				mu.Lock()
+				defer mu.Unlock()
+				calls++
+				if calls == 1 {
+					stateAtFirstStats = row.State
+				}
+				inflight := int64(0)
+				if tc.busySamples < 0 || calls <= tc.busySamples {
+					inflight = 1
+					destroysWhileBusy += destroys
+				}
+				return &sched.StatsSnapshot{Instances: []sched.VMInstanceStat{{InstanceID: ins.ID, InflightRequests: inflight}}}, nil
+			}
+			e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
+			*e.DrainRequestBound() = tc.bound
+			started := time.Now()
+			if err := e.ParkForDrain(ctx, ins.ID); err != nil {
+				t.Fatalf("ParkForDrain: %v", err)
+			}
+			elapsed := time.Since(started)
+			mu.Lock()
+			defer mu.Unlock()
+			if stateAtFirstStats != string(state.StateDraining) {
+				t.Fatalf("instance state while its requests drained = %q, want draining (withdrawn from routing)", stateAtFirstStats)
+			}
+			if destroysWhileBusy != 0 {
+				t.Fatalf("the VM was destroyed while vmmd still reported a request in flight")
+			}
+			if elapsed < tc.minElapsed {
+				t.Fatalf("retired after %s, want the request barrier to hold at least %s", elapsed, tc.minElapsed)
+			}
+			if row, _ := store.InstanceByID(ctx, ins.ID); row.State != string(state.StateStopped) || *vmm.Destroys() != 1 {
+				t.Fatalf("state %q destroys %d, want stopped after one destroy", row.State, *vmm.Destroys())
+			}
+		})
+	}
+}
+
+// WARM rows serve no requests and take the ordinary park.
+func TestDrainParkParksAWarmInstance(t *testing.T) {
+	ctx := t.Context()
+	store := state.NewMemStore()
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 5)
+	node, err := store.ComputeNodeByName(ctx, state.DefaultLocalNodeName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	warm, err := store.CreateInstanceWithMode(ctx, app.ID, dep.ID, string(state.StateWaking), app.RAMMB, node.ID, uuid.NewString(), string(state.InstanceModeNormal))
+	if err != nil {
+		t.Fatal(err)
+	}
+	warm = sched.PublishWarmFixture(t, store, warm)
+	e := sched.XNewEngine(t, store, sched.NewWarmResumeFakeVMM(), &sched.FakeNotifier{}, "1.10.0")
+	if err := e.ParkForDrain(ctx, warm.ID); err != nil {
 		t.Fatalf("ParkForDrain: %v", err)
 	}
-	if row, _ := (*f.Store()).InstanceByID(t.Context(), (*f.Ins()).ID); row.State != string(state.StateParked) {
-		t.Fatalf("state %q, want parked", row.State)
+	if row, _ := store.InstanceByID(ctx, warm.ID); row.State != string(state.StateParked) {
+		t.Fatalf("warm row: state %q, want parked", row.State)
 	}
-	// A second dispatch (another schedd's arbiter) finds nothing to park.
-	if err := (*f.E()).ParkForDrain(t.Context(), (*f.Ins()).ID); err != nil {
+	// A second dispatch (another schedd's arbiter) finds nothing to do.
+	if err := e.ParkForDrain(ctx, warm.ID); err != nil {
 		t.Fatalf("second ParkForDrain: %v", err)
 	}
 }

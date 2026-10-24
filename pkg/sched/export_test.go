@@ -710,4 +710,6 @@ type WarmResumeFakeVMM = warmResumeFakeVMM
 
 func NewWarmResumeFakeVMM() *warmResumeFakeVMM { return &warmResumeFakeVMM{fakeVMM: &fakeVMM{}} }
 
+func (r *Engine) DrainRequestBound() *time.Duration { return &r.drainRequestBound }
+
 func (r *warmResumeFakeVMM) ResumeCalls() *int { return &r.resumeCalls }

@@ -1190,8 +1190,9 @@
 
     # Existing nodes enter draining first: placement stops admitting new work,
     # while the forwarding bridge remains available to live instances until
-    # the recovery controller migrates them, or parks what it cannot hand off
-    # once the drain's park point passes (ADR-20261024085817). Maintenance
+    # the recovery controller migrates them, or withdraws from routing, drains
+    # and stops what it cannot hand off once the drain's park point passes
+    # (ADR-20261024085817). Maintenance
     # plus zero live rows is the deterministic cache/traffic barrier before
     # listener shutdown. If that barrier times out, no service or release has
     # been touched yet, so restore a node that entered the rollout active

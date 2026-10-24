@@ -666,6 +666,10 @@ type Engine struct {
 	// (ADR-20261024085817). Thaw, warm-pool resume and freeze consult it
 	// so a draining node does not take resident work back.
 	leavingNodes atomic.Pointer[map[string]struct{}]
+	// drainRequestBound bounds how long a drain park waits for a withdrawn
+	// instance's in-flight requests; zero is
+	// api.ServiceReplicaDrainTimeoutSeconds.
+	drainRequestBound time.Duration
 	// ownerCacheEnabled (ADR-1741, schedd `owner_cache`) serves production
 	// admissions from owners, the per-app owner cache.
 	ownerCacheEnabled atomic.Bool

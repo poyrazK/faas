@@ -148,19 +148,40 @@ Combine (d) with (a) as a backstop, and make the drain bounded.
      live-migrate as before.
    - From then until `DrainParkAfterSeconds` (window + one 180 s migration
      lease + 30 s of clock skew = 330 s), no new handoff starts. A handoff that
-     began inside the window is still in flight then, and no park may race it
-     on any schedd.
+     began inside the window may still be in flight then, and no park may race
+     it on any schedd.
    - From `DrainParkAfterSeconds`, whatever is still RUNNING gets a new
-     `DecisionPark`, which is the ordinary park on its own node.
-   - WARM rows park at once.
+     `DecisionPark`. `Engine.ParkForDrain` reuses the runtime-config
+     retirement barrier (`retireRuntimeConfigInstance`):
+     1. It moves the row to DRAINING, which is not routable but still
+        accounted.
+     2. It waits for every gateway to acknowledge the new routes.
+     3. It waits up to `ServiceReplicaDrainTimeoutSeconds` (25 s) for vmmd to
+        report the instance idle.
+     4. Only then does it destroy the VM and stop the row.
 
-   Parks run with the migrations' concurrency bound
-   (`MigrateLiveConcurrency`). Any schedd may park, including the draining
-   node's own, so a single node's drain also completes. The exclusive-snapshot
-   barrier and the RUNNING→SNAPSHOTTING compare-and-set keep two schedds from
-   parking one row. Force-drain, recovery and unavailable lifecycles keep
-   their behaviour. The 600-second drain wait in `node_join.yml` covers the
-   park point plus at least two minutes of parks; a contract test pins this.
+     The VM is gone only after its requests finish or the bound passes. A
+     drain must finish, so a route round that does not converge, or requests
+     that outlast the bound, are logged and the instance is retired anyway. The
+     state machine has no DRAINING→SNAPSHOTTING edge, so no capture is written.
+     The next request wakes the app from the deployment's snapshot, or cold
+     boots it (ADR-005). A failed destroy leaves the row DRAINING; past the
+     park point the arbiter finishes it.
+   - WARM rows park at once (destroyed; the pool refills on admitting nodes).
+     Worker, job and fork instances take their ordinary park.
+
+   Drain parks run `DrainParkConcurrency` (16) at a time, wider than handoffs
+   because they write no snapshot. Any schedd may park, including the draining
+   node's own, so a single node's drain also completes. The DRAINING
+   compare-and-set and the exclusive-snapshot barrier keep two schedds from
+   retiring one row twice. Force-drain, recovery and unavailable lifecycles
+   keep their behaviour.
+
+   The timing must fit the play. A node at its admission ceiling of 1 GiB
+   instances (46) needs three rounds of at most 40 s each (route round 5 s,
+   request bound 25 s, destroy 10 s). That ends by about 450 s, inside the
+   600-second drain wait in `node_join.yml`, and a contract test computes this
+   from the constants.
 5. **A node that no longer admits work does not take resident work back.**
    This covers draining, force-draining, maintenance, retired and unavailable
    nodes; the predicate is placement's `IsAdmitting` reversed.
@@ -184,10 +205,18 @@ Combine (d) with (a) as a backstop, and make the drain bounded.
   node on a base it cannot boot through the rollout's own steps. The fsn-3
   failure, the phased `prepare` exposure and the no-drain window are closed.
 - A drain on a healthy node finishes within about `DrainParkAfterSeconds`
-  plus the parks, whatever the traffic. Busy instances parked after the grace
-  pay one wake on an admitting node (a restore, about 0.5 s) instead of a
-  handoff. A handoff pauses the guest for its capture anyway, so an in-flight
-  request is cut either way.
+  plus the parks, whatever the traffic. An instance moved off by a drain park
+  does not cut its in-flight requests:
+  - it leaves routing first, and new requests wake the app on an admitting
+    node;
+  - requests already inside it get up to 25 s;
+  - only requests longer than that, or a connection held open past the bound
+    (a long stream), are ended.
+
+  It loses its warm in-memory state and its next wake restores from the
+  deployment's snapshot.
+- Instance events record the drain park as kind `node_drain`
+  (`routes_withdrawn`, then `drain_park_point`).
 - New metric labels: `schedd_frozen_parks_total{reason="node_draining"}`,
   `schedd_frozen_fast_path_skipped_total{reason="node_draining"}`, and the
   freeze outcome `node_draining`. Existing dashboards keep working.

@@ -58,11 +58,12 @@ const (
 	// event. The recreation re-uses the snapshot at the
 	// next wake.
 	DecisionRecreate
-	// DecisionPark — park the instance on its own, still healthy
-	// node through the ordinary park (capture then destroy for
-	// RUNNING, destroy for WARM), so its next request wakes it on
+	// DecisionPark — move the instance off its own, still healthy
+	// node (Engine.ParkForDrain): a RUNNING instance is withdrawn
+	// from routing and its in-flight requests drained before it is
+	// stopped, a WARM one is destroyed. Its next request wakes it on
 	// an admitting node. A graceful drain uses it for WARM rows at
-	// once and for RUNNING rows that are still on the node
+	// once and for RUNNING rows still on the node
 	// api.DrainParkAfterSeconds after the drain began
 	// (ADR-20261024085817).
 	DecisionPark
@@ -120,9 +121,11 @@ type Arbiter struct {
 	liveMig  MigrationDispatcher
 	recreate RecreateDispatcher
 	park     ParkDispatcher
-	// liveMigConcurrency bounds the live migrations and parks Tick runs
-	// at once for one node (api.MigrateLiveConcurrency).
+	// liveMigConcurrency bounds the live migrations Tick runs at once
+	// for one node (api.MigrateLiveConcurrency); parkConcurrency bounds
+	// its drain parks (api.DrainParkConcurrency).
 	liveMigConcurrency int
+	parkConcurrency    int
 	// drainMigrationWindow and drainParkAfter time a graceful drain from
 	// its drain_initiated_at (api.DrainLiveMigrationWindowSeconds,
 	// api.DrainParkAfterSeconds).
@@ -138,6 +141,7 @@ type Arbiter struct {
 func NewArbiter(lm MigrationDispatcher, rp RecreateDispatcher) *Arbiter {
 	return &Arbiter{
 		liveMig: lm, recreate: rp, liveMigConcurrency: api.MigrateLiveConcurrency,
+		parkConcurrency:      api.DrainParkConcurrency,
 		drainMigrationWindow: time.Duration(api.DrainLiveMigrationWindowSeconds) * time.Second,
 		drainParkAfter:       time.Duration(api.DrainParkAfterSeconds) * time.Second,
 		now:                  time.Now,
@@ -218,6 +222,8 @@ func (a *Arbiter) WithLiveMigrationConcurrency(n int) *Arbiter {
 //	draining          running         → LiveMigrate inside the drain's
 //	                                    live-migration window, None
 //	                                    while handoffs settle, then Park
+//	                  draining        → None, then Park past the park
+//	                                    point (resumes a withdrawal)
 //	                  warm            → Park (a paused pool VM; the
 //	                                    pool refills on admitting nodes)
 //	                  frozen          → Recreate (parks it)
@@ -316,11 +322,18 @@ func (a *Arbiter) Decide(node state.ComputeNode, instance state.RecoveryInstance
 // decideDraining is Decide for a graceful drain. A handoff that keeps
 // failing must not hold the node forever (ADR-20261024085817): after the
 // live-migration window and one migration lease, whatever is still RUNNING
-// is parked on the node like an idle instance.
+// is withdrawn from routing, drained of its requests and stopped. A row
+// already withdrawn (a drain park that a failed destroy interrupted, or a
+// runtime-config predecessor) is finished the same way.
 func (a *Arbiter) decideDraining(node state.ComputeNode, instanceState string) Decision {
 	switch instanceState {
 	case string(state.StateWarm):
 		return DecisionPark
+	case string(state.StateDraining):
+		if a.drainPhaseOf(node) == drainParking {
+			return DecisionPark
+		}
+		return DecisionNone
 	case string(state.StateRunning):
 		switch a.drainPhaseOf(node) {
 		case drainParking:
@@ -395,26 +408,29 @@ type nodeJob struct {
 	park bool
 }
 
-// dispatchNode runs one node's live migrations and parks with at most
-// liveMigConcurrency in flight. A handoff is dominated by snapshot transfer
-// (~85 s measured in production), so dispatching them one by one made a
-// drain take that long per running instance; a park captures too. Recreates
-// stay inline in Tick: they are row updates. A park counts in fellBack.
+// dispatchNode runs one node's live migrations with at most
+// liveMigConcurrency in flight, and its drain parks with at most
+// parkConcurrency. A handoff is dominated by snapshot transfer (~85 s
+// measured in production), so dispatching them one by one made a drain take
+// that long per running instance; a drain park waits up to the request
+// bound. Recreates stay inline in Tick: they are row updates. A park counts
+// in fellBack.
 func (a *Arbiter) dispatchNode(ctx context.Context, node state.ComputeNode, jobs []nodeJob) (migrated, fellBack int, err error) {
-	limit := a.liveMigConcurrency
-	if limit < 1 {
-		limit = 1
-	}
 	var (
 		mu   sync.Mutex
 		wg   sync.WaitGroup
 		errs []error
 	)
-	slots := make(chan struct{}, limit)
+	migrateSlots := make(chan struct{}, max(a.liveMigConcurrency, 1))
+	parkSlots := make(chan struct{}, max(a.parkConcurrency, 1))
 	for _, job := range jobs {
+		slots := migrateSlots
+		if job.park {
+			slots = parkSlots
+		}
 		slots <- struct{}{}
 		wg.Add(1)
-		go func(job nodeJob) {
+		go func(job nodeJob, slots chan struct{}) {
 			defer func() { <-slots; wg.Done() }()
 			var m, f int
 			var e error
@@ -432,7 +448,7 @@ func (a *Arbiter) dispatchNode(ctx context.Context, node state.ComputeNode, jobs
 			if e != nil {
 				errs = append(errs, e)
 			}
-		}(job)
+		}(job, slots)
 	}
 	wg.Wait()
 	return migrated, fellBack, errors.Join(errs...)

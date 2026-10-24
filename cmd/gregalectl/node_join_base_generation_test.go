@@ -151,8 +151,11 @@ func TestNodeJoinGatesEveryRuntimeBaseDecisionOnTheGenerationCheck(t *testing.T)
 }
 
 // The drain wait must outlast the arbiter's park point (api.DrainParkAfterSeconds)
-// with room for the parks themselves; otherwise the rollout gives up on a
-// drain that is about to finish.
+// plus the drain parks of a node at its admission ceiling of 1 GiB instances.
+// Each park withdraws the instance from routing (one route round), waits for
+// its in-flight requests (bounded) and destroys it; DrainParkConcurrency of
+// them run at once. Otherwise the rollout gives up on a drain that is about
+// to finish.
 func TestNodeJoinDrainWaitOutlastsTheDrainParkPoint(t *testing.T) {
 	task := nodeJoinTask(t, "Wait for the existing node to reach an empty maintenance hold")
 	retries, rok := task["retries"].(int)
@@ -160,8 +163,12 @@ func TestNodeJoinDrainWaitOutlastsTheDrainParkPoint(t *testing.T) {
 	if !rok || !dok {
 		t.Fatalf("drain wait retries=%v delay=%v, want integers", task["retries"], task["delay"])
 	}
-	const parkRoomSeconds = 120
-	if wait := retries * delay; wait < api.DrainParkAfterSeconds+parkRoomSeconds {
-		t.Fatalf("drain wait %d s, want at least DrainParkAfterSeconds %d + %d s to park", wait, api.DrainParkAfterSeconds, parkRoomSeconds)
+	const destroySeconds = 10 // sched.DestroyTimeout
+	fullNode := api.RAMAdmissionCeilingMB / (1024 + api.PerVMOverheadMB)
+	rounds := (fullNode + api.DrainParkConcurrency - 1) / api.DrainParkConcurrency
+	parkSeconds := rounds * (api.ServiceRouteConvergenceTimeoutSeconds + api.ServiceReplicaDrainTimeoutSeconds + destroySeconds)
+	if wait := retries * delay; wait < api.DrainParkAfterSeconds+parkSeconds {
+		t.Fatalf("drain wait %d s, want at least DrainParkAfterSeconds %d + %d s for %d rounds of drain parks",
+			wait, api.DrainParkAfterSeconds, parkSeconds, rounds)
 	}
 }
