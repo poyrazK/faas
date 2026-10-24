@@ -7,6 +7,46 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Every capability behind a platform flag — 2026-10-23 (branch, not released)
+
+The product catalog now lists every customer capability (161, from the
+[GA inventory](ga-capability-inventory.md)) with its tier and the apid routes
+it owns, and every capability has a platform flag
+([ADR-20261023115741](adr/20261023115741-every-capability-behind-a-platform-flag.md)).
+GA and beta flags are on for every account; preview and internal flags are off
+by default and released per account. apid hides a capability whose flag is
+off: before authentication when its kill switch is off, per account after.
+Dashboard links and `GET /v1/capabilities` follow the same decision. Core
+capability flags need `--force` to turn off.
+
+Large capabilities are split into 90 sub-feature flags, each released only
+while its parent is; always-on capabilities have no flag; `gregalectl flags`
+writes by `--tier` or `--capability` in bulk and lists each flag's tier,
+parent and enforcement. Settings are gated too: app create/update fields, edge
+rule kinds, function runtimes, gregale.yaml blocks and wildcard domains are
+refused with `403 capability_not_released` while their capability is off.
+Flags also stop work outside apid: schedd defers crons, triggers, queued
+deliveries, jobs and workflows without spending attempts; githubd ignores
+pushes and PR previews; gatewayd-internal drops cache, async, retry and
+breaker rules and stops mirroring, session affinity and the wake page
+(restrictive edge rules keep enforcing); apid withdraws realtime endpoints
+from realtimed. The gregale CLI hides the commands and verbs of capabilities
+that are off for the account (help, completion, man pages, suggestions) from
+`hidden_capabilities` in `GET /v1/capabilities`, and logged-out CLIs follow
+tier defaults. The anonymous OpenAPI spec and `/docs` publish only what every
+account gets, and the SDKs are generated from `sdk/openapi.yaml` (GA and beta):
+`@gregale/sdk-node`, `faas_sdk` and `faas.Client` cover GA and beta, and
+`@gregale/sdk-node/preview`, `faas_sdk.preview` and `sdk/go/preview` add the
+preview capabilities, their helpers included. 236 of 246 flags are enforced; the rest are VM behavior
+or CLI-side.
+
+Portable tests cover the catalog, the generated flags, the gate, route
+coverage (`TestEveryApidRouteHasACapability`), the dashboard and the CLI, and
+ci-light's `make capability-coverage-check` fails any new customer entry point
+(route, command, manifest key, flag, SDK file, table, ...) that maps to no
+inventory row. Open: a production usage check of preview capabilities before
+rollout.
+
 ## Event substrate benchmark (V12) — 2026-10-22
 
 `make bench-event-substrate` measures event publish, fanout routing, the

@@ -193,16 +193,16 @@
     <nav>
       <a href="/dashboard/">Overview</a>
       <a href="/dashboard/apps">Apps</a>
-      <a href="/dashboard/mcp">MCP operations</a>
-      <a href="/dashboard/app-costs">App costs</a>
-      <a href="/dashboard/developers">Developer environments</a>
-      <a href="/dashboard/projects">Projects</a>
+      {{if $.On "mcp-hosting"}}<a href="/dashboard/mcp">MCP operations</a>{{end}}
+      {{if $.On "app-costs"}}<a href="/dashboard/app-costs">App costs</a>{{end}}
+      {{if $.On "developer-environments"}}<a href="/dashboard/developers">Developer environments</a>{{end}}
+      {{if $.On "projects"}}<a href="/dashboard/projects">Projects</a>{{end}}
       <a href="/dashboard/usage">Usage</a>
       <a href="#analytics">Analytics</a>
       <a href="/dashboard/billing">Billing</a>
       <a href="/dashboard/pricing">Pricing</a>
       <a href="/dashboard/invoices">Invoices</a>
-      <a href="/dashboard/stateless">Stateless</a>
+      {{if $.On "stateless-contract"}}<a href="/dashboard/stateless">Stateless</a>{{end}}
       <a href="/dashboard/account">Account</a>
     </nav>
   </header>
@@ -297,25 +297,25 @@
         {{end}}
       </section>
       {{end}}
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/logs">View live logs →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/issues">Investigate issues →</a></p>
+      {{if $.On "logs"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/logs">View live logs →</a></p>{{end}}
+      {{if $.On "issues"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/issues">Investigate issues →</a></p>{{end}}
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/customer-operations">View customer operations →</a></p>
       {{if .Data.ProductControlURL}}<p><a href="{{.Data.ProductControlURL}}">Manage Product Control →</a></p>{{end}}
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/errors">View grouped errors →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/debug">Open production debugger →</a></p>
+      {{if $.On "issues"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/errors">View grouped errors →</a></p>{{end}}
+      {{if $.On "debug"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/debug">Open production debugger →</a></p>{{end}}
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/domains">Manage custom domains →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/instances">Inspect instances →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/edge-rules">Manage edge rules →</a></p>
+      {{if $.On "instances"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/instances">Inspect instances →</a></p>{{end}}
+      {{if $.On "edge-rules"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/edge-rules">Manage edge rules →</a></p>{{end}}
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/pre-auth">Inspect pre-auth protection →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/data-api">Open Data API →</a></p>
+      {{if $.On "data-api"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/data-api">Open Data API →</a></p>{{end}}
       {{if .Data.ApplicationAuth}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/auth">Manage application Auth users →</a></p>{{end}}
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/env">Manage environment &amp; secrets →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/realtime">Inspect realtime events →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/webhooks">Manage outbound webhooks →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/log-drains">Inspect log-drain health →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/tenant-surfaces">Manage tenant surfaces →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/mirrors">Manage traffic mirrors →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/storage">Manage object storage →</a></p>
+      {{if $.On "env-vars"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/env">Manage environment &amp; secrets →</a></p>{{end}}
+      {{if $.On "realtime"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/realtime">Inspect realtime events →</a></p>{{end}}
+      {{if $.On "outbound-webhooks"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/webhooks">Manage outbound webhooks →</a></p>{{end}}
+      {{if $.On "log-drains"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/log-drains">Inspect log-drain health →</a></p>{{end}}
+      {{if $.On "tenant-surfaces"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/tenant-surfaces">Manage tenant surfaces →</a></p>{{end}}
+      {{if $.On "traffic-mirroring"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/mirrors">Manage traffic mirrors →</a></p>{{end}}
+      {{if $.On "object-storage"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/storage">Manage object storage →</a></p>{{end}}
 
       {{if .Data.GitHubConnection}}
       <h2>GitHub connection</h2>
@@ -580,7 +580,7 @@
       {{end}}
 
       <h2>Workflows</h2>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/automations">Build and manage automations →</a></p>
+      {{if $.On "automations"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/automations">Build and manage automations →</a></p>{{end}}
       {{if .Data.Workflows}}
         <p class="muted">Recent durable workflow runs. Inputs and outputs stay in the workflow API; this view is for run state and step diagnostics.</p>
         {{range .Data.Workflows}}

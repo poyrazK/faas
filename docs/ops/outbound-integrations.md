@@ -884,7 +884,7 @@ format is NDJSON.
 
 ```ts
 import OpenAI from 'openai';
-import { aiGatewayURL, aiGatewayHeaders, opaqueAIUserId } from '@gregale/sdk-node';
+import { aiGatewayURL, aiGatewayHeaders, opaqueAIUserId } from '@gregale/sdk-node/preview';
 
 const client = new OpenAI({ baseURL: `${aiGatewayURL({ route: routeId })}/v1`, apiKey: 'unused' });
 const user = opaqueAIUserId(email, process.env.USER_ID_SECRET);

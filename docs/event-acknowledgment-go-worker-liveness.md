@@ -8,8 +8,8 @@ scraping. A combined cache-only HTTP adapter exposes both contracts.
 ## Observe actual passes
 
 ```go
-metrics, err := faas.NewEventAcknowledgmentIntentRecoveryWorkerMetrics(accountID, appID,
-    faas.EventAcknowledgmentIntentRecoveryWorkerMetricsOptions{
+metrics, err := preview.NewEventAcknowledgmentIntentRecoveryWorkerMetrics(accountID, appID,
+    preview.EventAcknowledgmentIntentRecoveryWorkerMetricsOptions{
         MaxIdle: time.Minute,
         MaxPassDuration: 5 * time.Minute,
     })
@@ -17,8 +17,8 @@ if err != nil {
     return err
 }
 // Called explicitly by the application's scheduler, using its existing resources:
-progress, err := faas.RecoverEventAcknowledgmentIntentsWithMetrics(ctx, db, client,
-    accountID, appID, faas.EventAcknowledgmentIntentRecoveryPassOptions{
+progress, err := preview.RecoverEventAcknowledgmentIntentsWithMetrics(ctx, db, client,
+    accountID, appID, preview.EventAcknowledgmentIntentRecoveryPassOptions{
         MaxAttempts: 100, Concurrency: 4,
     }, metrics)
 // Inspect BOTH original progress and err before deciding whether to schedule again.

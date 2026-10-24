@@ -1,6 +1,8 @@
 package apid
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -153,11 +155,50 @@ func TestOpenAPIHandlersFollowMonetization(t *testing.T) {
 
 // Every component reference left in the public spec must resolve.
 func TestPublicOpenAPIHasNoDanglingRefs(t *testing.T) {
-	var doc any
-	if err := yaml.Unmarshal(PublicOpenAPIYAML(), &doc); err != nil {
-		t.Fatalf("decode public spec: %v", err)
+	assertNoDanglingRefs(t, PublicOpenAPIYAML())
+}
+
+// adr: 20261023115741 — heavy filtering keeps every component a surviving
+// path or component references, including components no path references.
+func TestFilterSpecLeavesNoDanglingRefs(t *testing.T) {
+	n := 0
+	assertNoDanglingRefs(t, FilterSpec(openapiYAML, func(string) bool { n++; return n%2 == 0 }, false))
+}
+
+// adr: 20261023115741 — the served spec and API reference leave out the
+// paths Hidden reports, and the docs page names the document it serves.
+func TestOpenAPIHandlersHideCapabilityPaths(t *testing.T) {
+	hidden := func(path string) bool { return strings.HasPrefix(path, "/v1/apps/{slug}/realtime") }
+	o := OpenAPI{Hidden: func() (string, func(string) bool) { return "realtime", hidden }}
+	rec := httptest.NewRecorder()
+	o.ServeJSON(rec, httptest.NewRequest(http.MethodGet, "/v1/openapi.json", nil))
+	var spec specShape
+	if err := json.Unmarshal(rec.Body.Bytes(), &spec); err != nil {
+		t.Fatalf("decode JSON spec: %v", err)
 	}
-	components := decodeSpec(t, PublicOpenAPIYAML()).Components
+	if _, ok := spec.Paths["/v1/apps"]; !ok {
+		t.Fatal("a released path left the served spec")
+	}
+	for path := range spec.Paths {
+		if hidden(path) {
+			t.Errorf("hidden path %s is served", path)
+		}
+	}
+	docs := httptest.NewRecorder()
+	o.ServeDocs(docs, httptest.NewRequest(http.MethodGet, "/docs", nil))
+	sum := sha256.Sum256(rec.Body.Bytes())
+	if !strings.Contains(docs.Body.String(), hex.EncodeToString(sum[:])) {
+		t.Error("the docs page names another document than the served spec")
+	}
+}
+
+func assertNoDanglingRefs(t *testing.T, raw []byte) {
+	t.Helper()
+	var doc any
+	if err := yaml.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("decode spec: %v", err)
+	}
+	components := decodeSpec(t, raw).Components
 	var walk func(any)
 	walk = func(v any) {
 		switch v := v.(type) {

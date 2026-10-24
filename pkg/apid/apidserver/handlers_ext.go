@@ -985,6 +985,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", decodeErr.Error()))
 		return
 	}
+	if problem := s.appUpdateSettingsProblem(r, acct, app, req); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if problem := validateDeploySettingsCondition(req, environment); problem != nil {
 		api.WriteProblem(w, problem)
 		return
@@ -3156,6 +3160,10 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 		return
 	}
 	domain := strings.ToLower(strings.TrimSpace(req.Domain))
+	if problem := s.domainSettingsProblem(r, acct, domain); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if err := state.ValidateCustomDomainName(domain); err != nil {
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid domain", err.Error()))
