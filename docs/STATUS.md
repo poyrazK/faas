@@ -32,8 +32,15 @@ do. Removing their no-op reads, writes and re-plans (#5182,
 [report](ops/evidence/20261022-event-path-planning-waste/REPORT.md)) cut
 database time per delivered event from 37.8 to 26.3 ms. The pipeline then
 held 48.7/s at 50 offered (p95 437 ms) and 30.1/s at 150 offered, against
-18.0/s on main. Event caps stay where they are until the benchmark runs on
-the reference node.
+18.0/s on main. The owner raised the event caps on this provisional bound
+rather than wait for the reference node
+([ADR-20261023215834](adr/20261023215834-event-plan-caps.md)): settled
+receipts are kept 1/3/7/14 days by plan instead of 30, and the retained
+budgets sustain at most 6.9 events/s per Scale account. Publish admission
+now reads trigger-kept counts instead of counting the account's retained
+receipts, which took 0.7–1.4 s per publish at a million
+([report](ops/evidence/20261024-event-plan-caps/REPORT.md)). The caps are
+revisited when the benchmark runs on the reference node.
 
 ## Tenant egress denies NAT64 — 2026-10-18 (branch, not released)
 

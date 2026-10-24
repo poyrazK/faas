@@ -39,12 +39,23 @@ func eventSettledRetention(ctx context.Context, q *sqlc.Queries, db sqlc.DBTX, o
 	return eventSettledRetentionForPlan(api.Plan(plan)), nil
 }
 
+// eventSettledRetentionLocked accepts the compact and hyphenated forms of a
+// MemStore owner ID, as receipt keys carry the hyphenated one.
 func (m *MemStore) eventSettledRetentionLocked(owner string) time.Duration {
-	plan, ok := m.invocationOwnerPlanLocked(owner)
-	if !ok {
-		return api.EventSettledRetentionMax()
+	if plan, ok := m.invocationOwnerPlanLocked(owner); ok {
+		return eventSettledRetentionForPlan(plan)
 	}
-	return eventSettledRetentionForPlan(plan)
+	for _, account := range m.accounts {
+		if sameMemUUID(account.ID, owner) {
+			return eventSettledRetentionForPlan(account.Plan)
+		}
+	}
+	for _, org := range m.orgs {
+		if sameMemUUID(org.ID, owner) && !org.Personal && org.ResourceOwnershipEnabled {
+			return eventSettledRetentionForPlan(org.Plan)
+		}
+	}
+	return api.EventSettledRetentionMax()
 }
 
 // memEventFanoutOwner is the owner part of a MemStore receipt key.
