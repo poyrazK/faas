@@ -50,6 +50,10 @@ RULES = [
     (r"^apps/security", "Signed deploys"),
     (r"open-api-doc", "OpenAPI:"),
     (r"web-socket", "Streaming, SSE"),
+    # log search, custom dashboards and unified incidents (merged from main 2026-10-24)
+    (r"log-search|log-events|log-saved-search|log-projection|logsearch", "Logs, tail"),
+    (r"^/v1/dashboards|custom-dashboard|^dashboards$", "App, service and account metrics"),
+    (r"^/v1/incidents|^incidents?$|^incident-notes$|^incidents-enabled$", "Alerts, notification channels"),
     # --- deploy env and gateway internals (round 4)
     (r"^dev-patch-delivery$", "Developer environments"),
     (r"^notifications-unsubscribe-url$", "Customer notification emails"),

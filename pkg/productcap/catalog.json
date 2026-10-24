@@ -1047,6 +1047,24 @@
       ]
     },
     {
+      "id": "custom-dashboards",
+      "name": "Custom dashboards",
+      "category": "observability",
+      "description": "Save named dashboards that combine request metrics, log search counts, custom metrics, and SLOs across an account's apps.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261022173833-custom-dashboards",
+      "operator_flag": "FAAS_CUSTOM_DASHBOARDS_ENABLED",
+      "acceptance_test": "pkg/apid/dashboards/service_test.go::TestDashboardLifecycle",
+      "routes": [
+        "/dashboard/dashboards",
+        "/v1/dashboards"
+      ],
+      "cli": [
+        "dashboards"
+      ]
+    },
+    {
       "id": "custom-domains",
       "name": "Custom domains",
       "category": "edge",
@@ -2620,6 +2638,24 @@
       ]
     },
     {
+      "id": "incidents",
+      "name": "Incidents",
+      "category": "observability",
+      "description": "One list of an account's open and recent incidents: alert rule firing periods, route monitor incidents and platform status incidents, each with its notifications, log context and the app's changes, plus the account's acknowledgements and notes.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261022193512-unified-incidents",
+      "operator_flag": "FAAS_INCIDENTS_ENABLED",
+      "acceptance_test": "pkg/apid/incidents/service_test.go::TestListMergesSourcesOpenFirst",
+      "routes": [
+        "/dashboard/incidents",
+        "/v1/incidents"
+      ],
+      "cli": [
+        "incidents"
+      ]
+    },
+    {
       "id": "instances",
       "name": "Instances",
       "category": "runtime",
@@ -2898,6 +2934,27 @@
       ],
       "cli": [
         "log-drains"
+      ]
+    },
+    {
+      "id": "log-search",
+      "name": "Log search",
+      "category": "observability",
+      "description": "Search an app's logs by text, level, route, status, release, request, and trace, and count the matches by facet, across the plan's log retention.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261018083536-customer-log-search",
+      "operator_flag": "FAAS_LOG_SEARCH_ENABLED",
+      "acceptance_test": "pkg/apid/logsearch/service_test.go::TestSearchPagesNewestFirst",
+      "routes": [
+        "/dashboard/apps/{}/log-search",
+        "/v1/apps/{}/log-events",
+        "/v1/apps/{}/log-searches"
+      ],
+      "cli": [
+        "logs facets",
+        "logs saved",
+        "logs search"
       ]
     },
     {
