@@ -32,7 +32,7 @@ func TestObsCapacity_HappyPath_ReturnsBoundedSnapshot(t *testing.T) {
 
 func TestObsTenant360_RejectsBadMonth(t *testing.T) {
 	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.Do(t, "GET", "/v1/admin/obs/tenants/"+(*e.Acct()).ID+"/360?month=not-a-month", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/tenants/"+(*e.Acct()).ID+"/360?month=not-a-month", nil, nil)
 	if rec.Code != 400 {
 		t.Fatalf("tenant 360 bad month: got status %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
@@ -47,7 +47,7 @@ func TestObsTenant360_HappyPath_ReturnsUsageAndBilling(t *testing.T) {
 		time.Date(2026, 8, 4, 12, 0, 0, 0, time.UTC), 0, 0, 0, gib, 2*gib, 0, 0, 0); err != nil {
 		t.Fatalf("seed egress usage: %v", err)
 	}
-	rec := e.Do(t, "GET", "/v1/admin/obs/tenants/"+(*e.Acct()).ID+"/360?month=2026-08", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/tenants/"+(*e.Acct()).ID+"/360?month=2026-08", nil, nil)
 	if rec.Code != 200 {
 		t.Fatalf("tenant 360: got status %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -71,7 +71,7 @@ func TestObsTenant360_HappyPath_ReturnsUsageAndBilling(t *testing.T) {
 
 func TestObsTenant360_UnknownTenant(t *testing.T) {
 	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.Do(t, "GET", "/v1/admin/obs/tenants/00000000-0000-0000-0000-000000000000/360", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/tenants/00000000-0000-0000-0000-000000000000/360", nil, nil)
 	if rec.Code != 404 {
 		t.Fatalf("tenant 360 unknown tenant: got status %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
@@ -79,7 +79,7 @@ func TestObsTenant360_UnknownTenant(t *testing.T) {
 
 func TestObsTenantActivity_UnknownTenant(t *testing.T) {
 	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.Do(t, "GET", "/v1/admin/obs/tenants/00000000-0000-0000-0000-000000000000/activity", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/tenants/00000000-0000-0000-0000-000000000000/activity", nil, nil)
 	if rec.Code != 404 {
 		t.Fatalf("tenant activity: got status %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}
@@ -87,7 +87,7 @@ func TestObsTenantActivity_UnknownTenant(t *testing.T) {
 
 func TestObsAppDetail_RejectsBadID(t *testing.T) {
 	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.Do(t, "GET", "/v1/admin/obs/apps/not-a-uuid", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/apps/not-a-uuid", nil, nil)
 	if rec.Code != 400 {
 		t.Fatalf("app detail: got status %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
@@ -95,7 +95,7 @@ func TestObsAppDetail_RejectsBadID(t *testing.T) {
 
 func TestObsNodeDetail_UnknownNode(t *testing.T) {
 	e := apidserver.NewObsEnv(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.Do(t, "GET", "/v1/admin/obs/nodes/missing-node/detail", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/nodes/missing-node/detail", nil, nil)
 	if rec.Code != 404 {
 		t.Fatalf("node detail: got status %d, want 404; body=%s", rec.Code, rec.Body.String())
 	}

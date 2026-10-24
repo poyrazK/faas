@@ -226,6 +226,9 @@ func authorizeShared(r *http.Request, store Store, audit authz.AuditEmitter, act
 	*r = *r.WithContext(ctx)
 	*r = *r.WithContext(authz.WithRequestOnContext(r.Context(), r))
 	action, supported := routeActions[r.Pattern]
+	if !supported && dashboardRead(r) {
+		action, supported = authz.OrgActionReadApp, true
+	}
 	if authz.QueuePattern(r.Pattern) {
 		action, supported = authz.QueueAction(r.Pattern)
 		if !supported {

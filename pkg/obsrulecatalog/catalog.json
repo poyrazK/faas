@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "4f830a51e1a7c03dbffee1451dc2145fa4b016b8523e53f250a65230c1924e5a",
+      "revision": "ac10f642218f25ef63090076f7347ffd5aa5b77541e79bf940b1dc9180e58ccc",
       "files": [
         "faas.rules.yml"
       ],
@@ -2233,6 +2233,19 @@
           }
         },
         {
+          "id": "679f357803a69cbab3ebe4ffa1698f3d4c69c7e5de51f76d83eca91d7482ba05",
+          "file_name": "faas.rules.yml",
+          "group_name": "secret_unseals",
+          "rule_name": "FaasSecretUnsealFailures",
+          "definition": {
+            "expression_hash": "b9d4a6e438bc5da097e50555962f55439ae5083b0e814bc4a3c846ca927a53b7",
+            "labels_hash": "838e30e8d767ae0b9ccb7521a8e4dd45cb67d4efb1397a08663d6e6f7e2efc60",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9bd36df0594f5ceb4c7af2b59c0e72c0c5b9b6c19902fc8ff131918a5e033496"
+          }
+        },
+        {
           "id": "67ba118b316541f56fca360f4331e1c00803c967a01a56816004770f926d034f",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -3702,6 +3715,19 @@
           }
         },
         {
+          "id": "b9523562dbfff2f5a0101b04b8d67cc9d4c7500ddbf46f05596ac66a20ff6709",
+          "file_name": "faas.rules.yml",
+          "group_name": "secret_unseals",
+          "rule_name": "FaasSecretUnsealSurge",
+          "definition": {
+            "expression_hash": "ae91f3e97a4ca7c28b081be5bb1130f3a6c70d1bc6e6702b7cc5dd5d60bb9d4f",
+            "labels_hash": "838e30e8d767ae0b9ccb7521a8e4dd45cb67d4efb1397a08663d6e6f7e2efc60",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e5254b8b29203e0c57696dea92ea82c30516e59ec9cba274efae17833421a614"
+          }
+        },
+        {
           "id": "b9e10545c2a816ef8a5be14929da02ec58b14efe6410170a23f6e89af986991c",
           "file_name": "faas.rules.yml",
           "group_name": "faas_spec12_operator_signals",
@@ -5161,7 +5187,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "5a558efec8f2e719eed15a40b9256461c015a19dbf543c4cebb53fbcaa1d357d",
+      "revision": "fa56d40b90ea53207c5c5497ce1dcfd629a9c6ad56b65eabc469cbe8f3dec90a",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7498,6 +7524,19 @@
           }
         },
         {
+          "id": "679f357803a69cbab3ebe4ffa1698f3d4c69c7e5de51f76d83eca91d7482ba05",
+          "file_name": "faas.rules.yml",
+          "group_name": "secret_unseals",
+          "rule_name": "FaasSecretUnsealFailures",
+          "definition": {
+            "expression_hash": "b9d4a6e438bc5da097e50555962f55439ae5083b0e814bc4a3c846ca927a53b7",
+            "labels_hash": "838e30e8d767ae0b9ccb7521a8e4dd45cb67d4efb1397a08663d6e6f7e2efc60",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9bd36df0594f5ceb4c7af2b59c0e72c0c5b9b6c19902fc8ff131918a5e033496"
+          }
+        },
+        {
           "id": "67ba118b316541f56fca360f4331e1c00803c967a01a56816004770f926d034f",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -9068,6 +9107,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "e856c9e562eff9a9f8f923eb518602c9a900fc9c60b9b1e3ab4e11fb6d715863"
+          }
+        },
+        {
+          "id": "b9523562dbfff2f5a0101b04b8d67cc9d4c7500ddbf46f05596ac66a20ff6709",
+          "file_name": "faas.rules.yml",
+          "group_name": "secret_unseals",
+          "rule_name": "FaasSecretUnsealSurge",
+          "definition": {
+            "expression_hash": "ae91f3e97a4ca7c28b081be5bb1130f3a6c70d1bc6e6702b7cc5dd5d60bb9d4f",
+            "labels_hash": "838e30e8d767ae0b9ccb7521a8e4dd45cb67d4efb1397a08663d6e6f7e2efc60",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e5254b8b29203e0c57696dea92ea82c30516e59ec9cba274efae17833421a614"
           }
         },
         {

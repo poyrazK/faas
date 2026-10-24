@@ -149,6 +149,35 @@ old name; the dispatcher refuses new code paths to call it.
 
 ## 5. Day-2 fleet ops
 
+### Operator authentication
+
+apid enforces this for every account in `FAAS_ADMIN_EMAILS`
+([ADR 20261023214253](../adr/20261023214253-operators-need-mfa-and-sessions-for-customer-data.md)):
+
+- **MFA is mandatory.** Every operator sign-in starts `mfa_pending`. An
+  operator without an authenticator can only enroll one. A session of an
+  operator with no authenticator gets `403 mfa_required` on the reads
+  below. `POST /v1/auth/login` does not mint keys for operators. Create
+  automation keys from an MFA-completed session.
+- **Customer data needs a session.** Reads that return tenant records,
+  events, audit rows, traces or client IPs refuse API keys with
+  `403 insufficient_scope` ("operator session required"). These are tenants, tenant
+  360 and activity, apps, node detail, node events, overview, anomalies,
+  rate limits, audit-log search, events, traces, incidents with their
+  evidence, context and recurrence, egress flows, managed Postgres usage and
+  accounting, job runs, deployments, account flags and `/v1/audit-log/all`.
+  Sign in with `gregalectl auth login` and use that session.
+- **Fleet telemetry accepts a key.** Probes and scripts may keep an
+  operator key (`FAAS_ADMIN_TOKEN`) for capacity, nodes, heartbeats, wake
+  latency, builder heartbeats, `obs/health`, the notification, rule,
+  recording and input health and coverage reads, collection history, and
+  the platform-alert summary, response times and triage history.
+- **One-release grace.** Setting `FAAS_OPERATOR_BEARER_READS=deprecated` on
+  apid lets operator keys read customer data again, marked with
+  `Deprecation: true` and a `Warning` header. Each such read writes an
+  `auth.operator_bearer_read_deprecated` audit row. Use it only while you
+  move automation to a session, then remove it. The next release drops it.
+
 ### Compute node state machine
 
 ```
@@ -313,7 +342,9 @@ Every `gregalectl obs` read authenticates with, in order: an explicit
 `--admin-token`, the MFA-completed session from `gregalectl auth login`, then
 `$FAAS_ADMIN_TOKEN`. A logged-in operator therefore reads with MFA even with
 `FAAS_ADMIN_TOKEN` exported; automation without a session keeps using the
-token. `obs incidents --ownership mine` always needs the session.
+token. `obs incidents --ownership mine` always needs the session. A token
+reads only the fleet-telemetry routes; reads of customer data need the
+session (see [Operator authentication](#operator-authentication)).
 
 Run `gregalectl obs health` to inspect each audit counter and the firing-alert
 count independently. A `healthy` zero is observed zero activity. `no_samples`,

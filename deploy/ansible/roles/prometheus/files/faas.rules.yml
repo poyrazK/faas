@@ -785,6 +785,36 @@ groups:
           description: "Someone presented a decoy credential that belongs to no account. Whoever holds it has read the place it was planted, usually the secret store. Start the customer secret store compromise runbook; the security.honeytoken_presented audit event names the honeytoken and the caller."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasHoneytokenPresented.md"
 
+  # ADR 20261024014500: every reader daemon counts the sealed values it
+  # opens. A daemon in an attacker's hands can be made to open secrets in
+  # bulk, or to try envelopes its keys do not open.
+  - name: secret_unseals
+    rules:
+      - alert: FaasSecretUnsealSurge
+        expr: |
+          sum by (job, instance) (rate(faas_secret_unseal_total{result="ok"}[15m]))
+            > 10 * sum by (job, instance) (rate(faas_secret_unseal_total{result="ok"}[1d]))
+          and
+          sum by (job, instance) (rate(faas_secret_unseal_total{result="ok"}[15m])) > 1
+        for: 10m
+        labels:
+          severity: warn
+          family: secret_unseals
+        annotations:
+          summary: "{{ $labels.job }} on {{ $labels.instance }} is opening sealed values at over ten times its daily rate"
+          description: "For the last 10 minutes this daemon has decrypted sealed values at over ten times its 24-hour average, and more than one per second. A traffic surge does this too; if its request or wake rate has not risen to match, treat it as a daemon being used to read the secret store."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSecretUnseal.md"
+      - alert: FaasSecretUnsealFailures
+        expr: sum by (job, instance) (increase(faas_secret_unseal_total{result="failed"}[15m])) > 20
+        for: 5m
+        labels:
+          severity: warn
+          family: secret_unseals
+        annotations:
+          summary: "{{ $labels.job }} on {{ $labels.instance }} failed to open over 20 sealed values in 15 minutes"
+          description: "This daemon was handed sealed values that none of its keys open. Usually a key is missing after a seal-domain change; it can also be someone trying envelopes from another domain through this daemon."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSecretUnseal.md"
+
   - name: seal_domains
     interval: 30s
     rules:
