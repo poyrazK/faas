@@ -7,6 +7,24 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Edge security release gate — 2026-10-24
+
+WAF warn and block, challenge rules and rule penalties are catalog
+capabilities at `preview`, behind platform flags that are off for every
+account, each with a scorecard gate
+([ADR-20261024082000](adr/20261024082000-edge-security-ga-gate.md)). None
+can reach GA yet. Met: the kill switches, WAF latency at 100-500 req/s on
+the reference node (p95 1.49-2.00 ms before the slot change), corpus
+detection, fail-open, the challenge journey, solver and escalation, and
+penalty correctness and caps. Open:
+- WAF skips under load (2.5-8% measured): the slot sizing on
+  `feat/edge-waf-inline-capacity` models 0.003-0.013% and needs a merge and
+  a gate-mode run of `TestEdgeWAFInlineLoad_E2E` on the reference node.
+- Challenge solve time on a low-end phone (no measurement yet).
+- Shared penalty boxes (`feat/edge-penalty-shared`) and unreleased-feature
+  visibility (`feat/edge-flag-aware-surfaces`): built, not merged.
+- Runbooks, and 14-day reviews at the internal and design-partner stages.
+
 ## Event substrate benchmark (V12) — 2026-10-23
 
 `make bench-event-substrate` measures event publish, fanout routing, the
