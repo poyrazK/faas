@@ -661,6 +661,15 @@ type Engine struct {
 	// VM from the ticket recorded when it froze; thawTickets holds them.
 	frozenFastPath atomic.Bool
 	thawTickets    frozenTickets
+	// leavingNodes holds the IDs of nodes that no longer admit work
+	// (draining, maintenance, ...), from the recovery runner's node list
+	// (ADR-20261024085817). Thaw, warm-pool resume and freeze consult it
+	// so a draining node does not take resident work back.
+	leavingNodes atomic.Pointer[map[string]struct{}]
+	// drainRequestBound bounds how long a drain park waits for a withdrawn
+	// instance's in-flight requests; zero is
+	// api.ServiceReplicaDrainTimeoutSeconds.
+	drainRequestBound time.Duration
 	// ownerCacheEnabled (ADR-1741, schedd `owner_cache`) serves production
 	// admissions from owners, the per-app owner cache.
 	ownerCacheEnabled atomic.Bool

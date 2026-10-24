@@ -702,3 +702,14 @@ func (r *Loop) SettleTriggerDeadLetters(ctx context.Context, t sqlc.Trigger, pol
 	r.settleTriggerDeadLetters(ctx, t, poller, store, queue, claimed, terminalTriggerResults{
 		recordIDs: recordIDs, items: items, reasons: reasons, errors: lastErrors, attempts: attempts})
 }
+
+// ADR-20261024085817: a draining node keeps no resident work.
+var PublishWarmFixture = publishWarmFixture
+
+type WarmResumeFakeVMM = warmResumeFakeVMM
+
+func NewWarmResumeFakeVMM() *warmResumeFakeVMM { return &warmResumeFakeVMM{fakeVMM: &fakeVMM{}} }
+
+func (r *Engine) DrainRequestBound() *time.Duration { return &r.drainRequestBound }
+
+func (r *warmResumeFakeVMM) ResumeCalls() *int { return &r.resumeCalls }

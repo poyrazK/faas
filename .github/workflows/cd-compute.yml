@@ -390,7 +390,7 @@ jobs:
 
       - name: Check out and validate the declarative node claim
         if: inputs.claim_file != ''
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.release_tag }}
           path: claim-source
@@ -398,7 +398,7 @@ jobs:
 
       - name: Check out release source for signed bundle validation
         if: inputs.fleet_bundle_url != ''
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.release_tag }}
           path: bundle-source
@@ -407,7 +407,7 @@ jobs:
       - id: fleet_bundle_auth
         name: Authenticate fleet bundle reader with GitHub OIDC
         if: startsWith(inputs.fleet_bundle_url, 'https://storage.googleapis.com/')
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_FLEET_BUNDLE_READER_PROVIDER }}
@@ -417,7 +417,7 @@ jobs:
 
       - name: Set up Go for claim validation
         if: inputs.claim_file != ''
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: claim-source/go.mod
           cache: true
@@ -425,7 +425,7 @@ jobs:
 
       - name: Set up Go for signed bundle validation
         if: inputs.fleet_bundle_url != ''
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: bundle-source/go.mod
           cache: true
@@ -706,7 +706,7 @@ jobs:
 
     steps:
       - name: Check out the release source and Ansible roles
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.release_tag }}
           # Only the tag's tree and the tag ref are used (git rev-list -n1 on
@@ -716,7 +716,7 @@ jobs:
       - id: fleet_bundle_auth
         name: Authenticate fleet bundle reader with GitHub OIDC
         if: startsWith(inputs.fleet_bundle_url, 'https://storage.googleapis.com/')
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_FLEET_BUNDLE_READER_PROVIDER }}

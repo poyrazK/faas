@@ -1,7 +1,7 @@
 # runner-python312 — base rootfs (drive0) for Python 3.12 apps and functions
 # (spec §4.6, §4.9). Same two-drive rationale as runner-node22.
 # Content-addressed, staged to /srv/fc/base/runner-python312.ext4.
-FROM mirror.gcr.io/library/python:3.12-slim-bookworm@sha256:57d96f71de145a98e7ceca18ee4ade77bba4103a33a72dfaea026b23625c6bf0
+FROM mirror.gcr.io/library/python:3.12-slim-trixie@sha256:e8a38829209aea82774882e5157e1f7c3e8c8393ff53a697b3580896e57f345c
 # Issue #197 B3.6: mutable tag pinned via images/Dockerfile.lock.
 RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt apt-get update && DEBIAN_FRONTEND=noninteractive \
     apt-get upgrade -y --no-install-recommends && \
