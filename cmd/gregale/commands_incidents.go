@@ -227,15 +227,17 @@ func cmdIncidentsAck(args []string) int {
 
 func cmdIncidentsNote(args []string) int {
 	fs := newFlagSet("incidents note", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil || fs.NArg() < 2 {
-		PrintUsage(os.Stderr, "usage: gregale incidents note <incident-id> <text>", "incidents")
+	// The note is one quoted argument, so a stray flag after it is refused
+	// instead of being posted as part of the note.
+	if err := fs.Parse(args); err != nil || fs.NArg() != 2 {
+		PrintUsage(os.Stderr, `usage: gregale incidents note <incident-id> "<text>"`, "incidents")
 		return 1
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
-	note, err := client.AddIncidentNote(context.Background(), fs.Arg(0), strings.Join(fs.Args()[1:], " "))
+	note, err := client.AddIncidentNote(context.Background(), fs.Arg(0), fs.Arg(1))
 	if err != nil {
 		return printErr("Could not add the note", err)
 	}
