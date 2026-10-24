@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "d4028dfc54002234384ef4259aba6f26a1e40e9350a70ea724520e196d04af2a",
+      "revision": "9ac41b51e918a49c3743973ad883a3817923f7bc4793baebbe6b7fbcbf7032ed",
       "files": [
         "faas.rules.yml"
       ],
@@ -2308,6 +2308,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4983d761a8cc58d32d402db27a86622ec77211d6390a1be510b1426fcd62006c"
+          }
+        },
+        {
+          "id": "6ad36b7c9bceb676a86272fe397e8df004404ea6588c9c43f682b5a9b1aee831",
+          "file_name": "faas.rules.yml",
+          "group_name": "honeytokens",
+          "rule_name": "FaasHoneytokenPresented",
+          "definition": {
+            "expression_hash": "2d78b066463f9462f8e6c6730aebbebbd4293831ce2892a497dde83de14c735d",
+            "labels_hash": "4e53ddcb399800a4588cb306c22cf979a6062ee4a82e7e44dfb15374c7f1f817",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4683415c2c60fa6d6d095c36b9cd98cafb1c3f319d33595dc5fee149c80b6a24"
           }
         },
         {
@@ -5070,7 +5083,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "01e48fe07b182c87abb49322c6e0d2cbeb8ad0bb63f654cbe3c8f3cfd5c5b0e2",
+      "revision": "da3aeb28cae43eed3af300fee56fb80139918c7f5e9b548581c6528c361be5ba",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -7482,6 +7495,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "4983d761a8cc58d32d402db27a86622ec77211d6390a1be510b1426fcd62006c"
+          }
+        },
+        {
+          "id": "6ad36b7c9bceb676a86272fe397e8df004404ea6588c9c43f682b5a9b1aee831",
+          "file_name": "faas.rules.yml",
+          "group_name": "honeytokens",
+          "rule_name": "FaasHoneytokenPresented",
+          "definition": {
+            "expression_hash": "2d78b066463f9462f8e6c6730aebbebbd4293831ce2892a497dde83de14c735d",
+            "labels_hash": "4e53ddcb399800a4588cb306c22cf979a6062ee4a82e7e44dfb15374c7f1f817",
+            "for_seconds": 0,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "4683415c2c60fa6d6d095c36b9cd98cafb1c3f319d33595dc5fee149c80b6a24"
           }
         },
         {

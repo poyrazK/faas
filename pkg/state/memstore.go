@@ -563,6 +563,8 @@ type MemStore struct {
 	// pkg/githubd/webhook_secret.go can match the prod
 	// ON CONFLICT (installation_id) DO UPDATE shape.
 	githubWebhookSecrets map[int64]GithubWebhookSecret
+	// honeytokens is keyed by HoneytokenDigest (ADR 20261024014500).
+	honeytokens map[string]Honeytoken
 	// githubWebhookSecretMeta stamps (upgraded_at, upgraded_by)
 	// for each per-tenant row so the apid admin route can echo
 	// the row back without a second query.

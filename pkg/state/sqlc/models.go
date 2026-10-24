@@ -5877,6 +5877,16 @@ type GooseDbVersion struct {
 	Tstamp    pgtype.Timestamp
 }
 
+// Decoy credentials that belong to no account (ADR 20261024014500). Presenting one pages: whoever holds it read the place it was planted.
+type Honeytoken struct {
+	ID          pgtype.UUID
+	Kind        string
+	TokenDigest string
+	Label       string
+	PlantedAt   pgtype.Timestamptz
+	RetiredAt   pgtype.Timestamptz
+}
+
 type HostingAutomationCredential struct {
 	ID          pgtype.UUID
 	AccountID   pgtype.UUID
