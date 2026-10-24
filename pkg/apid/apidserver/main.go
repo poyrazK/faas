@@ -1782,6 +1782,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// so a config change requires a restart — acceptable for the
 	// tiny operator surface that exists today.
 	srv.WithAdminAllowlist(deps.getenv("FAAS_ADMIN_EMAILS"))
+	// ADR 20261023214253: operator keys cannot read customer data. The
+	// "deprecated" mode keeps them working, marked, for one release.
+	srv.WithOperatorBearerReads(deps.getenv("FAAS_OPERATOR_BEARER_READS"))
 
 	// Prometheus registry + ops observer middleware (this PR).
 	// Built unconditionally so /metrics works even with FAAS_APID_METRICS_ADDR

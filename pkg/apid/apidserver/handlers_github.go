@@ -317,7 +317,7 @@ func (s *server) handleGitHubOAuthCallback(w http.ResponseWriter, r *http.Reques
 	//
 	// IAM-3 (ADR-039) goes through the unified helper so the sessions
 	// row is created + auth.session.created is emitted.
-	cookie, _, err := s.issueDashboardSessionWithGithub(r.Context(), r, acct.ID, mfaSessionPending(acct), "github", githubUser.Login)
+	cookie, _, err := s.issueDashboardSessionWithGithub(r.Context(), r, acct.ID, s.sessionMFAPending(acct), "github", githubUser.Login)
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "create GitHub dashboard session",
 			"Gregale could not start your dashboard session.",
