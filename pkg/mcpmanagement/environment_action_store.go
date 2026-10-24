@@ -158,5 +158,5 @@ func validateEnvironmentAction(e environmentActionRecord) error {
 
 func (m *management) environmentActionPlanAvailable(e environmentActionRecord, now time.Time) bool {
 	p := m.environmentPlans[e.PlanID]
-	return p != nil && p.Action == e.Action && p.AccountID == e.AccountID && p.APIBase == e.APIBase && p.ProjectID == e.ProjectID && p.EnvironmentID == e.EnvironmentID && p.FromID == e.FromID && now.Before(p.ExpiresAt)
+	return p != nil && p.ID == e.PlanID && p.Action == e.Action && p.AccountID == e.AccountID && p.APIBase == e.APIBase && p.Project == e.Project && p.ProjectID == e.ProjectID && p.Environment == e.Environment && p.EnvironmentID == e.EnvironmentID && p.FromEnvironment == e.FromEnvironment && p.FromID == e.FromID && now.Before(p.ExpiresAt)
 }

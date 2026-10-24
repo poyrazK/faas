@@ -278,6 +278,7 @@ def remote_fixture_acceptance(args):
         budget_history_plan_id = None
         saved_reviews = {}
         saved_recoveries = {}
+        saved_discovery_links = {}
         def start():
             nonlocal phase
             phase += 1
@@ -342,9 +343,25 @@ def remote_fixture_acceptance(args):
             review_call = workflow["review"]
             saved_review_call(rpc, thread_id, review_call["tool"], review_call["arguments"])
 
+        def recovery_discovery(action, selector, environment=False):
+            links = action.get("recovery", {})
+            prompt = "gregale_environment_plan_review" if environment else "gregale_saved_plan_review"
+            check = "gregale_check_environment_plan" if environment else "gregale_check_plan"
+            uri = links.get("resource_uri")
+            if set(links) != {"resource_uri", "prompt", "check"} or not isinstance(uri, str) or not uri.startswith("gregale://"):
+                raise RuntimeError("Codex action history omitted its recovery resource link")
+            if links.get("prompt") != {"name": prompt, "arguments": selector} or links.get("check") != {"tool": check, "arguments": selector}:
+                raise RuntimeError("Codex discovery changed the original selectors or exposed an unexpected call")
+            canonical = json.dumps(links, sort_keys=True)
+            original = saved_discovery_links.setdefault(selector["plan_id"], canonical)
+            if original != canonical:
+                raise RuntimeError("Codex discovery links changed across restart/refresh")
+            return links
+
         def read(rpc):
             nonlocal history_plan_id, workload_history_plan_id, environment_history_plan_id, budget_history_plan_id
             thread_id, server = connect(rpc)
+            discoveries = []
             if not server or server.get("toolsError") or not server["tools"]:
                 raise RuntimeError("Codex remote MCP discovery failed")
             inventory = server["tools"]
@@ -369,6 +386,7 @@ def remote_fixture_acceptance(args):
             action = detail.get("action", {})
             if result.get("isError") or action.get("plan_id") != history_plan_id or action.get("apply", {}).get("state") != "not_attempted" or action.get("plan_available") is not True or detail.get("native_completion") != "not_observed":
                 raise RuntimeError("Codex action history lost its original plan across restart/refresh")
+            discoveries.append((recovery_discovery(action, {"app": "alpha", "plan_id": history_plan_id}, environment=False), {"app": "alpha", "plan_id": history_plan_id}, False))
             for value in (page, detail):
                 encoded = json.dumps(value)
                 if any(marker in encoded for marker in ["read-only source planning acceptance", '"source"', '"configuration_hash"', "fp_test_", '"reason"', '"requested_ref"']):
@@ -388,6 +406,7 @@ def remote_fixture_acceptance(args):
             action = detail.get("action", {})
             if result.get("isError") or action.get("plan_id") != workload_history_plan_id or action.get("workload", {}).get("mode") != "worker" or action.get("apply", {}).get("state") != "not_attempted" or action.get("plan_available") is not True or detail.get("native_completion") != "not_observed":
                 raise RuntimeError("Codex workload history changed across restart/refresh")
+            discoveries.append((recovery_discovery(action, {"app": "alpha", "plan_id": workload_history_plan_id}, environment=False), {"app": "alpha", "plan_id": workload_history_plan_id}, False))
             if any(marker in json.dumps(detail) for marker in ["PRIVATE_WORKLOAD_HISTORY", '"image"', '"rollout_policy"', '"configuration_hash"']):
                 raise RuntimeError("Codex workload history exposed excluded plan data")
             if not {"gregale_list_environment_actions", "gregale_get_environment_action"}.issubset(names):
@@ -405,6 +424,7 @@ def remote_fixture_acceptance(args):
             action = detail.get("action", {})
             if result.get("isError") or action.get("plan_id") != environment_history_plan_id or action.get("from_environment") != "staging" or action.get("apply", {}).get("state") != "not_attempted" or action.get("approval_required") is not True or action.get("plan_available") is not True or detail.get("native_completion") != "not_observed" or detail.get("durable") is not True:
                 raise RuntimeError("Codex environment history changed across restart/refresh")
+            discoveries.append((recovery_discovery(action, {"project": "shop", "environment": "production", "plan_id": environment_history_plan_id}, environment=True), {"project": "shop", "environment": "production", "plan_id": environment_history_plan_id}, True))
             if any(marker in json.dumps(detail) for marker in ["PRIVATE_ENV_REASON", "PRIVATE_ENV_PREVIEW", '"promotion_hash"', '"promotion_token"', '"approval_token"', '"changes"', '"review_url"', '"exchange_code"']):
                 raise RuntimeError("Codex environment history exposed excluded plan data")
             if budget_history_plan_id is None:
@@ -419,6 +439,7 @@ def remote_fixture_acceptance(args):
             action = detail.get("action", {})
             if result.get("isError") or action.get("plan_id") != budget_history_plan_id or action.get("budget", {}).get("change") != "inherit_app_policy" or action.get("apply", {}).get("state") != "not_attempted" or action.get("plan_available") is not True or action.get("observation") != {"tool": "gregale_get_route_budgets", "arguments": {"app": "budget-history"}} or detail.get("native_completion") != "not_observed" or detail.get("durable") is not True:
                 raise RuntimeError("Codex budget history changed across restart/refresh")
+            discoveries.append((recovery_discovery(action, {"app": "budget-history", "plan_id": budget_history_plan_id}, environment=False), {"app": "budget-history", "plan_id": budget_history_plan_id}, False))
             if any(marker in json.dumps(detail) for marker in ["PRIVATE_BUDGET_HISTORY", '"routes"', '"config"', '"request_id"', '"reason"']):
                 raise RuntimeError("Codex budget history exposed excluded plan data")
             if not {"gregale_get_plan", "gregale_get_environment_plan"}.issubset(names):
@@ -429,13 +450,9 @@ def remote_fixture_acceptance(args):
             saved_review_call(rpc, thread_id, "gregale_get_environment_plan", {"project": "shop", "environment": "production", "plan_id": environment_history_plan_id})
             if not {"gregale_check_plan", "gregale_check_environment_plan"}.issubset(names):
                 raise RuntimeError("Codex applicability tools are missing")
-            for check_tool, selector in [
-                ("gregale_check_plan", {"app": "alpha", "plan_id": history_plan_id}),
-                ("gregale_check_plan", {"app": "alpha", "plan_id": workload_history_plan_id}),
-                ("gregale_check_plan", {"app": "budget-history", "plan_id": budget_history_plan_id}),
-                ("gregale_check_environment_plan", {"project": "shop", "environment": "production", "plan_id": environment_history_plan_id}),
-            ]:
-                result, checked = invoke(rpc, thread_id, check_tool, selector)
+            for links, selector, _environment in discoveries:
+                check_tool = links["check"]["tool"]
+                result, checked = invoke(rpc, thread_id, check_tool, links["check"]["arguments"])
                 if result.get("isError") or checked.get("plan_id") != selector["plan_id"] or checked.get("apply_eligibility") != "blocked" or "writes_disabled" not in checked.get("blockers", []) or checked.get("native_completion") != "not_observed":
                     raise RuntimeError("Codex applicability check lost read-only authority or original identity")
                 original = json.loads(saved_reviews[selector["plan_id"]])
@@ -453,10 +470,8 @@ def remote_fixture_acceptance(args):
             saved_review_call(rpc, thread_id, "gregale_get_plan", {"app": "alpha", "plan_id": history_plan_id})
             scoped_telemetry_calls(rpc, thread_id)
             rollout_watch_call(rpc, thread_id)
-            for plan_id in (history_plan_id, workload_history_plan_id):
-                recovery_resource_call(rpc, thread_id, "gregale://default/apps/alpha/plans/" + plan_id + "/review", {"app": "alpha", "plan_id": plan_id})
-            recovery_resource_call(rpc, thread_id, "gregale://default/apps/budget-history/plans/" + budget_history_plan_id + "/review", {"app": "budget-history", "plan_id": budget_history_plan_id})
-            recovery_resource_call(rpc, thread_id, "gregale://projects/shop/environments/production/plans/" + environment_history_plan_id + "/review", {"project": "shop", "environment": "production", "plan_id": environment_history_plan_id}, environment=True)
+            for links, selector, environment in discoveries:
+                recovery_resource_call(rpc, thread_id, links["resource_uri"], selector, environment=environment)
             context_resource_call(rpc, thread_id)
             preflight_call(rpc, thread_id)
             if request_mode:
@@ -1277,7 +1292,7 @@ def remote_fixture_acceptance(args):
                     raise RuntimeError("Codex retained recovery resource access after revocation")
         finally:
             rpc.close()
-        print(json.dumps({"action_history": "passed", "workload_action_history": "passed", "environment_action_history": "passed", "budget_action_history": "passed", "saved_plan_review": "passed", "plan_applicability": "passed", "plan_drift": "passed", "recovery_resources": "passed", "client": "codex", "fixture": True, "transport": "streamable-http", "tools": tools, "oauth_login": "passed", "discovery": "passed", "read_calls": "passed", "source_planning": "passed", "scoped_telemetry": "passed", "rollout_watch": "passed", "resources": "passed", "restart": "passed", "refresh": "passed", "revocation": "passed", "request_diagnostics": request_mode, "request_discovery": "passed" if request_mode else "not_requested", "performance_diagnosis": "passed" if request_mode else "not_requested", "empty_performance": "passed" if request_mode == "approved" else "not_requested", "residency_diagnosis": "passed" if request_mode else "not_requested", "empty_residency": "passed" if request_mode == "approved" else "not_requested", "critical_paths": "passed" if request_mode else "not_requested", "empty_critical_paths": "passed" if request_mode == "approved" else "not_requested", "deployment_comparison": "passed" if request_mode else "not_requested", "empty_comparison": "passed" if request_mode == "approved" else "not_requested", "regression_inbox": "passed" if request_mode else "not_requested", "regression_resource": "passed" if request_mode else "not_requested", "fleet_regressions": "passed" if request_mode else "not_requested", "incident_bundle": "passed" if request_mode else "not_requested", "selected_trace": "passed" if request_mode else "not_requested", "partial_trace": "passed" if request_mode == "approved" else "not_requested", "empty_regressions": "passed" if request_mode == "approved" else "not_requested", "request_explanations": "passed" if request_mode else "not_requested", "empty_request_explanation": "passed" if request_mode == "approved" else "not_requested", "request_critical_path": "passed" if request_mode else "not_requested", "empty_request_critical_path": "passed" if request_mode == "approved" else "not_requested", "guest_execution": "passed" if request_mode else "not_requested", "missing_guest_execution": "passed" if request_mode == "approved" else "not_requested", "request_regression_context": "passed" if request_mode else "not_requested", "missing_request_regression": "passed" if request_mode == "approved" else "not_requested", "request_dependency_comparison": "passed" if request_mode else "not_requested", "missing_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "truncated_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "dependency_impact": "passed" if request_mode else "not_requested", "empty_dependency_impact": "passed" if request_mode == "approved" else "not_requested", "request_analytics": "passed" if request_mode else "not_requested", "empty_request_analytics": "passed" if request_mode == "approved" else "not_requested", "request_analytics_timeseries": "passed" if request_mode else "not_requested", "empty_request_analytics_timeseries": "passed" if request_mode == "approved" else "not_requested", "request_wake": "passed" if request_mode else "not_requested", "missing_request_wake": "passed" if request_mode == "approved" else "not_requested", "invalid_request_wake": "passed" if request_mode == "approved" else "not_requested", "request_wake_recommendation": "passed" if request_mode == "approved" else "not_requested", "wake_pagination": "passed" if request_mode else "not_requested", "wake_history_pagination": "passed" if request_mode else "not_requested", "wake_timeline": "passed" if request_mode else "not_requested", "empty_wake_timeline": "passed" if request_mode == "approved" else "not_requested", "wake_history": "passed" if request_mode else "not_requested", "empty_wake_history": "passed" if request_mode == "approved" else "not_requested", "error_triage": "passed" if request_mode else "not_requested", "empty_error_triage": "passed" if request_mode == "approved" else "not_requested", "profiles": "passed" if request_mode else "not_requested", "empty_profiles": "passed" if request_mode == "approved" else "not_requested", "model_requests": 0, "deployment_writes": 0}))
+        print(json.dumps({"action_history": "passed", "workload_action_history": "passed", "environment_action_history": "passed", "budget_action_history": "passed", "saved_plan_review": "passed", "plan_applicability": "passed", "plan_drift": "passed", "recovery_resources": "passed", "recovery_discovery": "passed", "client": "codex", "fixture": True, "transport": "streamable-http", "tools": tools, "oauth_login": "passed", "discovery": "passed", "read_calls": "passed", "source_planning": "passed", "scoped_telemetry": "passed", "rollout_watch": "passed", "resources": "passed", "restart": "passed", "refresh": "passed", "revocation": "passed", "request_diagnostics": request_mode, "request_discovery": "passed" if request_mode else "not_requested", "performance_diagnosis": "passed" if request_mode else "not_requested", "empty_performance": "passed" if request_mode == "approved" else "not_requested", "residency_diagnosis": "passed" if request_mode else "not_requested", "empty_residency": "passed" if request_mode == "approved" else "not_requested", "critical_paths": "passed" if request_mode else "not_requested", "empty_critical_paths": "passed" if request_mode == "approved" else "not_requested", "deployment_comparison": "passed" if request_mode else "not_requested", "empty_comparison": "passed" if request_mode == "approved" else "not_requested", "regression_inbox": "passed" if request_mode else "not_requested", "regression_resource": "passed" if request_mode else "not_requested", "fleet_regressions": "passed" if request_mode else "not_requested", "incident_bundle": "passed" if request_mode else "not_requested", "selected_trace": "passed" if request_mode else "not_requested", "partial_trace": "passed" if request_mode == "approved" else "not_requested", "empty_regressions": "passed" if request_mode == "approved" else "not_requested", "request_explanations": "passed" if request_mode else "not_requested", "empty_request_explanation": "passed" if request_mode == "approved" else "not_requested", "request_critical_path": "passed" if request_mode else "not_requested", "empty_request_critical_path": "passed" if request_mode == "approved" else "not_requested", "guest_execution": "passed" if request_mode else "not_requested", "missing_guest_execution": "passed" if request_mode == "approved" else "not_requested", "request_regression_context": "passed" if request_mode else "not_requested", "missing_request_regression": "passed" if request_mode == "approved" else "not_requested", "request_dependency_comparison": "passed" if request_mode else "not_requested", "missing_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "truncated_request_dependency_comparison": "passed" if request_mode == "approved" else "not_requested", "dependency_impact": "passed" if request_mode else "not_requested", "empty_dependency_impact": "passed" if request_mode == "approved" else "not_requested", "request_analytics": "passed" if request_mode else "not_requested", "empty_request_analytics": "passed" if request_mode == "approved" else "not_requested", "request_analytics_timeseries": "passed" if request_mode else "not_requested", "empty_request_analytics_timeseries": "passed" if request_mode == "approved" else "not_requested", "request_wake": "passed" if request_mode else "not_requested", "missing_request_wake": "passed" if request_mode == "approved" else "not_requested", "invalid_request_wake": "passed" if request_mode == "approved" else "not_requested", "request_wake_recommendation": "passed" if request_mode == "approved" else "not_requested", "wake_pagination": "passed" if request_mode else "not_requested", "wake_history_pagination": "passed" if request_mode else "not_requested", "wake_timeline": "passed" if request_mode else "not_requested", "empty_wake_timeline": "passed" if request_mode == "approved" else "not_requested", "wake_history": "passed" if request_mode else "not_requested", "empty_wake_history": "passed" if request_mode == "approved" else "not_requested", "error_triage": "passed" if request_mode else "not_requested", "empty_error_triage": "passed" if request_mode == "approved" else "not_requested", "profiles": "passed" if request_mode else "not_requested", "empty_profiles": "passed" if request_mode == "approved" else "not_requested", "model_requests": 0, "deployment_writes": 0}))
 
 
 def main():

@@ -31,7 +31,8 @@ type getActionArgs struct {
 }
 
 type actionView struct {
-	Review *savedPlanReference `json:"review,omitempty"`
+	Review   *savedPlanReference  `json:"review,omitempty"`
+	Recovery *actionRecoveryLinks `json:"recovery,omitempty"`
 	actionRecord
 	PlanAvailable bool               `json:"plan_available"`
 	NextStep      string             `json:"next_step"`
@@ -100,7 +101,8 @@ func actionTargetMatches(entry, target actionRecord) bool {
 }
 
 func (m *management) guardActionHistory(value any, args appArgs, target actionRecord, diagnostics bool) *guardedRead {
-	return &guardedRead{value: value, check: func(ctx context.Context) error {
+	read := &guardedRead{value: value}
+	read.check = func(ctx context.Context) error {
 		current, err := m.actionTarget(ctx, args)
 		if err != nil {
 			return err
@@ -108,8 +110,9 @@ func (m *management) guardActionHistory(value any, args appArgs, target actionRe
 		if !actionTargetMatches(current, target) || diagnostics && !m.requestReadAllowed(target.App, target.AppID) {
 			return invalid("app_access_denied", "action history identity or diagnostic consent changed during the read")
 		}
-		return nil
-	}}
+		return m.refreshHistoryRecoveryLinks(read)
+	}
+	return read
 }
 
 func (m *management) actionHistoryMetadata(now time.Time) actionHistoryMetadata {
@@ -196,6 +199,7 @@ func (m *management) actionView(entry actionRecord, now time.Time) actionView {
 			environment = ""
 		}
 		view.Review = &savedPlanReference{Tool: "gregale_get_plan", Arguments: getActionArgs{App: entry.App, Project: entry.Project, Environment: environment, PlanID: entry.PlanID}}
+		view.Recovery = m.recoveryLinks(getActionArgs{App: entry.App, Project: entry.Project, Environment: environment, PlanID: entry.PlanID}, false)
 	}
 	phase, tool := entry.Apply, map[string]string{"deploy": "gregale_apply_deploy", "rollback": "gregale_apply_rollback", "regression_action": "gregale_apply_regression_action", "workload_rollout": "gregale_apply_workload_rollout", "service_abort": "gregale_apply_service_abort", "route_budgets": "gregale_apply_route_budgets"}[entry.Action]
 	view.Observation = workloadActionObservation(entry)

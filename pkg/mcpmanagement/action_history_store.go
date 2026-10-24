@@ -235,5 +235,5 @@ func actionNewer(a, b actionRecord) bool {
 
 func (m *management) actionPlanAvailable(entry actionRecord, now time.Time) bool {
 	p := m.plans[entry.PlanID]
-	return p != nil && p.Action == entry.Action && p.AccountID == entry.AccountID && p.AppID == entry.AppID && p.EnvironmentID == entry.EnvironmentID && now.Before(p.ExpiresAt)
+	return p != nil && p.ID == entry.PlanID && p.Action == entry.Action && p.AccountID == entry.AccountID && p.APIBase == entry.APIBase && p.App == entry.App && p.AppID == entry.AppID && p.Scope == entry.Scope && p.Project == entry.Project && p.ProjectID == entry.ProjectID && p.EnvironmentID == entry.EnvironmentID && now.Before(p.ExpiresAt)
 }

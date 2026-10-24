@@ -3118,6 +3118,21 @@ no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
 
 
+## Management MCP history recovery discovery (ADR-20261024180000)
+
+Available original app/environment action rows add exact recovery resource,
+prompt and applicability-check links, preserving the existing review call.
+Require complete original plan/target bindings. Final history guards recheck
+storage and availability after identity/consent reads, removing hints if a plan
+expired, disappeared or lost its binding while retaining historical uncertainty,
+receipts, ordering and pagination. Initially unavailable snapshots never gain
+hints during that read. No discovery hint grants authority, extends expiry,
+persists state, polls approval or refreshes a native baseline. Followed calls
+retain their independent guards; checks concern original apply rather than later
+request promotion. Catalog stays 57 read/planning tools, 66 with writes enabled,
+eight prompts and eleven templates. See
+[ADR-20261024180000](adr/20261024180000-management-mcp-history-recovery-discovery.md).
+
 ## Management MCP saved-plan recovery resources (ADR-20261024160000)
 
 Default/named app and environment-plan resource templates expose the existing

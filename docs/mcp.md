@@ -1684,11 +1684,31 @@ IDs. Catalog now has eleven resource templates, with 57 read/planning tools,
 66 with writes enabled and eight prompts. See
 [ADR-20261024160000](adr/20261024160000-management-mcp-saved-plan-recovery-resources.md).
 
+Available original plans in app/environment action list and detail rows now
+include a `recovery` object with an exact `resource_uri`, a `prompt` name and
+string arguments, and a `check` tool call. Follow these returned links to keep the
+original plan and scope intact. The existing `review` call remains available.
+These links are read-only discovery metadata: they grant no write, retry or
+approval authority. `recovery.check` concerns the original apply phase; inspect
+recorded promotion state separately for later traffic promotion.
+
+Expired, missing or mismatched plans omit review/recovery links. New recovery
+links also require selectors that the shared prompt/resource validator can render
+exactly. Final read guards
+also remove discovery/retry hints when availability changes during a history
+read, retaining recorded phases/receipts and native-inspection guidance. An
+initially unavailable snapshot never gains new hints later in the same read.
+Consent/storage failure still withholds output. Discovery performs no native
+freshness checks, approval polling, persistence, replanning or expiry renewal.
+Every followed resource, prompt and tool enforces current access independently.
+See [ADR-20261024180000](adr/20261024180000-management-mcp-history-recovery-discovery.md).
+
 For a lost apply response:
 
 1. Read `gregale_list_actions` with `{"app":"demo","limit":20}`.
 2. Inspect the selected `plan_id` through `gregale_get_action`; if its original
-   plan is available, reopen the saved proposal through the returned `review` call.
+   plan is available, read its `recovery.resource_uri` or reopen the saved proposal
+   through the returned `review` call.
 3. An `outcome_unknown` phase means the native request may have committed.
    If the original plan is available and writes are enabled, retry the indicated
    existing apply/promotion tool with that **same plan ID**. Normal expiry,

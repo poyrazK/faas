@@ -7,6 +7,7 @@
 // adr: 20261024120000
 // adr: 20261024123000
 // adr: 20261024160000
+// adr: 20261024180000
 package mcpmanagement
 
 import (
@@ -591,7 +592,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	if json.Unmarshal(output, &report) != nil || report["revocation"] != "passed" || report["refresh"] != "passed" || report["restart"] != "passed" {
 		t.Fatal("incomplete real-client evidence")
 	}
-	if report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" || report["budget_action_history"] != "passed" || report["saved_plan_review"] != "passed" || report["plan_applicability"] != "passed" || report["plan_drift"] != "passed" || report["recovery_resources"] != "passed" {
+	if report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" || report["budget_action_history"] != "passed" || report["saved_plan_review"] != "passed" || report["plan_applicability"] != "passed" || report["plan_drift"] != "passed" || report["recovery_resources"] != "passed" || report["recovery_discovery"] != "passed" {
 		t.Fatal("incomplete real-client action history restart/refresh evidence")
 	}
 	if requestMode != "" && (report["request_diagnostics"] != requestMode || report["request_discovery"] != "passed" || nativeWrites.Load() != 0 || requestReads.Load() != map[string]int32{"denied": 0, "approved": 32}[requestMode]) {

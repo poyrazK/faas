@@ -7,6 +7,24 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP history recovery discovery — 2026-10-24 (branch, not released)
+
+Action list/detail rows advertise original-plan recovery resource, prompt and
+check calls. Final guards remove hints if availability expires or disappears
+during a read, preserving retained uncertainty/receipts and original cursors.
+Read-only discovery does not confer write authority or refresh native evidence.
+Catalog stays 57 read/planning tools, 66 with writes enabled, eight prompts and
+eleven templates. Full MCP race tests pass; final selector/discovery race tests
+and pinned real Codex 0.159.0-alpha.3 acceptance confirm following returned URIs
+and check calls across restart/refresh in all three read-only profiles. Native
+SDK clients also follow prompt links on both protocols, for default/named app
+and environment promotion/rollback plans. Tests cover in-flight expiry/removal/
+binding changes, retained ambiguity, unchanged encrypted state and no availability
+upgrades. Read fixtures make zero model requests and native writes. CLI contracts,
+affected-package lint, fake-store/seal-domain guards and spec/docs gates pass
+without generated drift. Native/provider qualification remains separate.
+See [ADR-20261024180000](adr/20261024180000-management-mcp-history-recovery-discovery.md).
+
 ## Management MCP saved-plan recovery resources — 2026-10-24 (branch, not released)
 
 Three canonical JSON resource templates expose the same fixed guarded recovery

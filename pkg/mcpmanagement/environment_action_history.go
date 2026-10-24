@@ -32,7 +32,8 @@ type environmentActionObservation struct {
 }
 
 type environmentActionView struct {
-	Review *savedPlanReference `json:"review,omitempty"`
+	Review   *savedPlanReference  `json:"review,omitempty"`
+	Recovery *actionRecoveryLinks `json:"recovery,omitempty"`
 	environmentActionRecord
 	PlanAvailable bool                          `json:"plan_available"`
 	NextStep      string                        `json:"next_step"`
@@ -90,7 +91,8 @@ func (m *management) environmentHistorySource(ctx context.Context, entry environ
 }
 
 func (m *management) guardEnvironmentHistory(value any, target environmentActionRecord, sources []environmentActionRecord) *guardedRead {
-	return &guardedRead{value: value, check: func(ctx context.Context) error {
+	read := &guardedRead{value: value}
+	read.check = func(ctx context.Context) error {
 		for _, source := range sources {
 			allowed, err := m.environmentHistorySource(ctx, source)
 			if err != nil {
@@ -109,8 +111,9 @@ func (m *management) guardEnvironmentHistory(value any, target environmentAction
 		if !environmentHistoryTargetMatches(current, target) {
 			return invalid("environment_access_denied", "environment history identity changed during the read")
 		}
-		return nil
-	}}
+		return m.refreshHistoryRecoveryLinks(read)
+	}
+	return read
 }
 
 func (m *management) environmentHistoryMetadata(now time.Time) actionHistoryMetadata {
@@ -224,6 +227,7 @@ func (m *management) environmentActionView(e environmentActionRecord, now time.T
 	view := environmentActionView{environmentActionRecord: e, PlanAvailable: m.environmentActionPlanAvailable(e, now), NextStep: "inspect_recorded_receipt"}
 	if view.PlanAvailable {
 		view.Review = &savedPlanReference{Tool: "gregale_get_environment_plan", Arguments: getEnvironmentActionArgs{Project: e.Project, Environment: e.Environment, PlanID: e.PlanID}}
+		view.Recovery = m.recoveryLinks(getActionArgs{Project: e.Project, Environment: e.Environment, PlanID: e.PlanID}, true)
 	}
 	id := e.PromotionID
 	if e.Apply.Receipt != nil {
