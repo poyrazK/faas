@@ -39,6 +39,24 @@ func TestSnapshotGrantFreshAuthorityAndOwnedHistory(t *testing.T) {
 	}
 }
 
+func TestSnapshotGrantWarmCheckpointRemainsExplicit(t *testing.T) {
+	g, a := snapshotGrantFixture(t)
+	g.Mode = "warm"
+	g.MemoryKey = strings.Replace(g.MemoryKey, "/captures/", "/warm/captures/", 1)
+	g.VMStateKey = strings.Replace(g.VMStateKey, "/captures/", "/warm/captures/", 1)
+	g.PrivateDriveKey = strings.Replace(g.PrivateDriveKey, "/captures/", "/warm/captures/", 1)
+	g.BeforeCheckpoint = true
+	a.Grant = g.Clone()
+	a.Capture.Memory.StorageKey, a.Capture.VMState.StorageKey, a.Capture.PrivateDrive.StorageKey = g.MemoryKey, g.VMStateKey, g.PrivateDriveKey
+	if err := a.Check(g, time.Now()); err != nil {
+		t.Fatal("warm capture cannot retain checkpoint authority", err)
+	}
+	a.Grant.BeforeCheckpoint = false
+	if err := a.Check(g, time.Now()); err == nil {
+		t.Fatal("warm ACK silently changed the granted checkpoint contract")
+	}
+}
+
 func TestSnapshotGrantRejectsCrossCaptureAndInvalidAuthority(t *testing.T) {
 	for _, tc := range []struct {
 		name string

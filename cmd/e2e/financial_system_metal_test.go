@@ -23,6 +23,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -91,6 +92,7 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 		eg, egErr := s.FinancialEgressReady(t.Context(), account)
 		return err == nil && egErr == nil && ok && eg
 	})
+	releaseStrictBudgetsForSystem(t, s)
 	spec := financial.BudgetSpec{Name: "native shared account cap", Scope: financial.BudgetScope{Kind: "account"}, Currency: "USD", Meters: []string{"compute", "egress"}, Basis: "net_usage", LimitMillicents: 20000, NotifyMillicents: []int64{}, Mode: "strict", Action: "suspend_workloads", ResumeRule: "manual", Enabled: true}
 	raw, status := doReq(t, h, key, http.MethodPost, "/v1/billing/budgets", api.CreateFinancialBudgetRequest{Spec: spec}, map[string]string{"Idempotency-Key": uuid.NewString()})
 	var budget api.FinancialBudgetResponse
@@ -277,6 +279,30 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 		t.Fatalf("shared monetary ceiling: %+v", b)
 	}
 	t.Logf("financial-system evidence: account=%s budget=%s original_instance=%s physical_bytes=%d issued_bytes=%d shared_limit_millicents=%d", account, budget.ID, instance, counter, lease.EgressGranted, spec.LimitMillicents)
+}
+
+// releaseStrictBudgetsForSystem writes the strict_budgets platform flag the
+// way an operator does (ADR-1750) and waits until apid has applied it.
+func releaseStrictBudgetsForSystem(t *testing.T, s *state.PgStore) {
+	t.Helper()
+	value, err := json.Marshal(platformflags.Definition{Enabled: true, Default: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := platformflags.ConfigKey(platformflags.StrictBudgets)
+	row, err := s.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: key, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: value, ApplyMode: state.RuntimeConfigApplyHot, ActorID: uuid.NewString(), Reason: "native financial system acceptance"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	financialSystemWait(t, 30*time.Second, "apid applies strict_budgets", func() bool {
+		receipts, err := s.ListRuntimeConfigApplyReceipts(t.Context(), []string{key})
+		for _, r := range receipts {
+			if err == nil && r.Daemon == "apid" && r.Status == state.RuntimeConfigReceiptApplied && r.Version >= row.Version {
+				return true
+			}
+		}
+		return false
+	})
 }
 
 func financialSystemWait(t *testing.T, timeout time.Duration, what string, ready func() bool) {

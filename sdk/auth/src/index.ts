@@ -510,8 +510,15 @@ export function createAuthClient(options: AuthClientOptions) {
     async getUser(): Promise<User> {
       return call<User>('GET', '/auth/v1/user', { token: await bearer() })
     },
-    async updateUser(input: { email?: string; password?: string; data?: Record<string, unknown> }): Promise<User> {
-      return call<User>('PUT', '/auth/v1/user', { token: await bearer(), body: input })
+    /**
+     * A new password needs currentPassword, except in a password reset
+     * (resetPasswordForEmail's link) or for a user who has no password yet;
+     * otherwise it fails with current_password_required or
+     * current_password_invalid.
+     */
+    async updateUser(input: { email?: string; password?: string; currentPassword?: string; data?: Record<string, unknown> }): Promise<User> {
+      const { currentPassword, ...fields } = input
+      return call<User>('PUT', '/auth/v1/user', { token: await bearer(), body: { ...fields, ...(currentPassword !== undefined ? { current_password: currentPassword } : {}) } })
     },
     async resetPasswordForEmail(email: string, input: { redirectTo?: string } & Captcha = {}): Promise<void> {
       await call('POST', withRedirect('/auth/v1/recover', input.redirectTo ?? `${origin}/ui/reset-password`), { body: { email, ...captcha(input) } })

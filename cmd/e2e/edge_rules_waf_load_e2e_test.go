@@ -106,6 +106,7 @@ func TestEdgeWAFInlineLoad_E2E(t *testing.T) {
 		t.Fatalf("migrate: %v", err)
 	}
 	h := e2etest.StartWithEnv(t, pool, e2etest.APID|e2etest.Gatewayd, nil)
+	releaseEdgeFeatures(t, pool)
 	key := h.SeedAccount(ctx, api.PlanPro)
 	hosts := seedWAFLoadApps(t, h, pool, key, apps, mode)
 	resetEdgeRuleCache(t, h)
@@ -168,7 +169,7 @@ func seedWAFLoadApps(t *testing.T, h *e2etest.Harness, pool *pgxpool.Pool, key s
 			t.Fatalf("insert preview %s: %v", slug, err)
 		}
 		app := getAppBySlug(t, pool, slug)
-		hosts[i] = fmt.Sprintf("wafload-%d.apps.test.example", i)
+		hosts[i] = fmt.Sprintf("wafload-%d.edge-e2e.example", i)
 		seedRouteSubstitute(t, ctx, pool, accountID, app.ID, hosts[i], slug)
 		if mode != "none" {
 			seedEdgeRuleDirect(t, ctx, pool, accountID, app.ID, hosts[i], state.EdgeRuleKindWAF,

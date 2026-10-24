@@ -162,6 +162,24 @@ func (q *Queries) FormatConfigureSchema(ctx context.Context, db DBTX, roleName s
 	return column_1, err
 }
 
+const formatCount = `-- name: FormatCount :one
+SELECT pg_catalog.format('SELECT count(*) FROM (SELECT 1 FROM ONLY %I.%I LIMIT 10001) s',
+ $1::text,$2::text)::text
+`
+
+type FormatCountParams struct {
+	SchemaName string
+	TableName  string
+}
+
+// Server quoting builds the bounded row count of one undeclared table.
+func (q *Queries) FormatCount(ctx context.Context, db DBTX, arg FormatCountParams) (string, error) {
+	row := db.QueryRow(ctx, formatCount, arg.SchemaName, arg.TableName)
+	var column_1 string
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
 const formatCreateDatabase = `-- name: FormatCreateDatabase :one
 SELECT pg_catalog.format('CREATE DATABASE %I TEMPLATE template0 ENCODING ''UTF8''',$1::text)::text
 `
@@ -369,7 +387,7 @@ const relations = `-- name: Relations :many
 SELECT n.nspname::text AS schema_name,c.relname::text AS table_name,c.relkind::text AS kind,c.relpersistence::text AS persistence
 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
 WHERE n.nspname NOT IN ('pg_catalog','information_schema') AND n.nspname::text NOT LIKE 'pg_toast%'
- AND n.nspname::text NOT LIKE 'pg_temp_%' AND c.relkind IN ('r','p','v','m','f') ORDER BY n.nspname,c.relname LIMIT 17
+ AND n.nspname::text NOT LIKE 'pg_temp_%' AND c.relkind IN ('r','p','v','m','f') ORDER BY n.nspname,c.relname LIMIT 65
 `
 
 type RelationsRow struct {
@@ -426,6 +444,84 @@ func (q *Queries) SampleLockWait(ctx context.Context, db DBTX, databaseName stri
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
+}
+
+const schemaInventory = `-- name: SchemaInventory :many
+WITH user_ns AS (
+ SELECT oid,nspname FROM pg_catalog.pg_namespace WHERE nspname NOT IN ('pg_catalog','information_schema')
+  AND nspname::text NOT LIKE 'pg_toast%' AND nspname::text NOT LIKE 'pg_temp_%'
+)
+SELECT o.kind::text AS kind,o.name::text AS name,o.definition::text AS definition,o.rel_schema::text AS rel_schema,o.rel_name::text AS rel_name FROM (
+ SELECT CASE c.relkind WHEN 'r' THEN 'table' WHEN 'p' THEN 'partitioned_table' WHEN 'v' THEN 'view' WHEN 'm' THEN 'materialized_view'
+   WHEN 'f' THEN 'foreign_table' ELSE 'sequence' END AS kind,
+  n.nspname||'.'||c.relname AS name,
+  CASE WHEN c.relkind IN ('v','m') THEN pg_catalog.pg_get_viewdef(c.oid)
+   WHEN c.relkind='S' THEN coalesce((SELECT pg_catalog.format('%s start %s increment %s',pg_catalog.format_type(s.seqtypid,NULL),s.seqstart,s.seqincrement)
+    FROM pg_catalog.pg_sequence s WHERE s.seqrelid=c.oid),'')
+   ELSE coalesce((SELECT string_agg(pg_catalog.format('%I %s%s%s',a.attname,pg_catalog.format_type(a.atttypid,a.atttypmod),
+     CASE WHEN a.attnotnull THEN ' not null' ELSE '' END,coalesce(' default '||pg_catalog.pg_get_expr(d.adbin,d.adrelid),'')),', ' ORDER BY a.attnum)
+    FROM pg_catalog.pg_attribute a LEFT JOIN pg_catalog.pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum
+    WHERE a.attrelid=c.oid AND a.attnum>0 AND NOT a.attisdropped),'')||CASE WHEN c.relpersistence='u' THEN ' unlogged' ELSE '' END END AS definition,
+  CASE WHEN c.relkind='r' THEN n.nspname ELSE '' END AS rel_schema,CASE WHEN c.relkind='r' THEN c.relname ELSE '' END AS rel_name
+ FROM pg_catalog.pg_class c JOIN user_ns n ON n.oid=c.relnamespace WHERE c.relkind IN ('r','p','v','m','f','S')
+ UNION ALL
+ SELECT 'index',n.nspname||'.'||i.relname,pg_catalog.pg_get_indexdef(x.indexrelid),'',''
+ FROM pg_catalog.pg_index x JOIN pg_catalog.pg_class i ON i.oid=x.indexrelid JOIN user_ns n ON n.oid=i.relnamespace
+ UNION ALL
+ SELECT 'constraint',n.nspname||'.'||t.relname||'.'||c.conname,pg_catalog.pg_get_constraintdef(c.oid),'',''
+ FROM pg_catalog.pg_constraint c JOIN pg_catalog.pg_class t ON t.oid=c.conrelid JOIN user_ns n ON n.oid=t.relnamespace
+ UNION ALL
+ SELECT 'type',n.nspname||'.'||t.typname,CASE t.typtype
+   WHEN 'e' THEN 'enum ('||coalesce((SELECT string_agg(pg_catalog.quote_literal(e.enumlabel),', ' ORDER BY e.enumsortorder) FROM pg_catalog.pg_enum e WHERE e.enumtypid=t.oid),'')||')'
+   WHEN 'd' THEN 'domain '||pg_catalog.format_type(t.typbasetype,t.typtypmod)||coalesce(' default '||t.typdefault,'')
+   ELSE 'type '||t.typtype::text END,'',''
+ FROM pg_catalog.pg_type t JOIN user_ns n ON n.oid=t.typnamespace
+ WHERE t.typtype IN ('e','d','r','m') OR t.typtype='c' AND EXISTS(SELECT 1 FROM pg_catalog.pg_class c WHERE c.oid=t.typrelid AND c.relkind='c')
+ UNION ALL
+ SELECT 'function',n.nspname||'.'||p.proname||'('||pg_catalog.pg_get_function_identity_arguments(p.oid)||')',
+  'sha256:'||pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(pg_catalog.pg_get_functiondef(p.oid),'UTF8')),'hex'),'',''
+ FROM pg_catalog.pg_proc p JOIN user_ns n ON n.oid=p.pronamespace WHERE p.prokind IN ('f','p')
+ UNION ALL
+ SELECT 'trigger',n.nspname||'.'||c.relname||'.'||t.tgname,pg_catalog.pg_get_triggerdef(t.oid),'',''
+ FROM pg_catalog.pg_trigger t JOIN pg_catalog.pg_class c ON c.oid=t.tgrelid JOIN user_ns n ON n.oid=c.relnamespace WHERE NOT t.tgisinternal
+) o ORDER BY o.kind,o.name LIMIT 257
+`
+
+type SchemaInventoryRow struct {
+	Kind       string
+	Name       string
+	Definition string
+	RelSchema  string
+	RelName    string
+}
+
+// Every user-schema object a migration can create, with a definition that is
+// stable across two databases built from the same fixture: no OIDs or
+// database names (ADR-20261020180000). Table rows are counted separately.
+func (q *Queries) SchemaInventory(ctx context.Context, db DBTX) ([]SchemaInventoryRow, error) {
+	rows, err := db.Query(ctx, schemaInventory)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SchemaInventoryRow{}
+	for rows.Next() {
+		var i SchemaInventoryRow
+		if err := rows.Scan(
+			&i.Kind,
+			&i.Name,
+			&i.Definition,
+			&i.RelSchema,
+			&i.RelName,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
 }
 
 const supportedExtensions = `-- name: SupportedExtensions :one

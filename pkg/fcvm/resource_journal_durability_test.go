@@ -1,4 +1,4 @@
-// adr: 20261021120000 — only journal writes that name a reboot-surviving
+// adr: 20261024135625 — only journal writes that name a reboot-surviving
 // asset fsync the directory; every write still fsyncs the record file.
 
 package fcvm
@@ -6,6 +6,8 @@ package fcvm
 import (
 	"path/filepath"
 	"testing"
+
+	"github.com/google/uuid"
 )
 
 func TestResourceJournalCommitDurability(t *testing.T) {
@@ -53,6 +55,36 @@ func TestResourceJournalCommitDurability(t *testing.T) {
 		}
 		if len(got) != 1 || got[0] != s.durable {
 			t.Errorf("%s: commits %v, want one with durable=%v", s.name, got, s.durable)
+		}
+	}
+}
+
+// Writes added after the ADR was drafted run off the wake path and keep the
+// full protocol: the epoch claim and the adoption block.
+func TestResourceJournalOffWakePathWritesAreDurable(t *testing.T) {
+	f := newAdoptionFixture(t)
+	var got []bool
+	f.journal.commitSync = func(durable bool) error {
+		got = append(got, durable)
+		return nil
+	}
+	steps := []struct {
+		name string
+		do   func() error
+	}{
+		{"epoch claim", func() error {
+			return f.journal.WriteEpoch(JournalEpoch{NodeID: uuid.NewString(), Epoch: 1, BootID: uuid.NewString(),
+				Incarnation: uuid.NewString(), State: JournalEpochClaiming})
+		}},
+		{"adoption block", func() error { return f.journal.recordAdoption(f.lease, f.process, f.block()) }},
+	}
+	for _, s := range steps {
+		got = got[:0]
+		if err := s.do(); err != nil {
+			t.Fatalf("%s: %v", s.name, err)
+		}
+		if len(got) != 1 || !got[0] {
+			t.Errorf("%s: commits %v, want one durable commit", s.name, got)
 		}
 	}
 }

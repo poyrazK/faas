@@ -92,6 +92,10 @@ type Problem struct {
 	// Freezes lists the active freezes behind release_frozen
 	// (ADR-20261019071733).
 	Freezes []ReleaseFreeze `json:"freezes,omitempty"`
+	// ReleaseApproval is the release's approval status behind
+	// release_approval_required and release_approval_rejected
+	// (ADR-20261020085706).
+	ReleaseApproval *ReleaseApprovalStatus `json:"release_approval,omitempty"`
 	// Type is a URI identifying the problem class (RFC 9457 "type").
 	Type string `json:"type"`
 	// Title is a short, stable, human-readable summary.
@@ -645,6 +649,10 @@ const (
 	// navigation (ADR-831 amendment 7). A browser earns the pass by loading
 	// a page on the route; other clients need a verified credential.
 	CodeChallengeRequired = "challenge_required"
+	// CodePenaltyBox is returned by gatewayd for a request from a client
+	// an edge rule's penalty box holds (ADR-20261022105846). Retry-After
+	// says when the box ends.
+	CodePenaltyBox = "penalty_box"
 	// CodePreviewProductionDependencyDenied is returned by the internal
 	// service proxy when a project preview tries to call a production
 	// dependency while its preview_service_policy is deny. The rejection
@@ -670,10 +678,18 @@ const (
 	CodeRealtimeEntityVersionConflict  = "realtime_entity_version_conflict"
 	CodeRealtimeSequenceConflict       = "realtime_sequence_conflict"
 	CodeConflict                       = "conflict"
+	// CodeIdempotencyKeyReused (422, ADR-20261022204036): the request's
+	// Idempotency-Key was used within its 24 h replay window for a different
+	// request. Nothing ran, and the first request's result is kept.
+	CodeIdempotencyKeyReused = "idempotency_key_reused"
 
 	// ADR-961: an edge-rule mutation's If-Match named a rule-set version
 	// that is no longer the app's latest.
 	CodeEdgeRulesVersionMismatch = "edge_rules_version_mismatch"
+	// CodeEdgeFeatureUnavailable refuses configuring an edge rule feature
+	// (challenge rules, WAF warn and block, penalties) that its platform
+	// flag has not released to the account (ADR-20261023113721).
+	CodeEdgeFeatureUnavailable = "edge_feature_unavailable"
 	// ADR-963 reusable edge-rule lists.
 	CodeEdgeRuleListNotFound            = "edge_rule_list_not_found"
 	CodeEdgeRuleListExists              = "edge_rule_list_exists"
@@ -890,6 +906,10 @@ const (
 	// app (ADR-20261019071733); the problem lists the active freezes.
 	// override_freeze with a reason releases anyway, audited.
 	CodeReleaseFrozen = "release_frozen"
+	// CodePlatformReleasePaused means an operator paused every release on the
+	// platform (ADR 20261022140000), for example while a security incident is
+	// contained. Nothing the caller sends overrides it; rollbacks still work.
+	CodePlatformReleasePaused = "platform_release_paused"
 	// CodeReleaseFreezeNotFound means the account has no such unlifted freeze.
 	CodeReleaseFreezeNotFound = "release_freeze_not_found"
 	// CodeReleaseFreezeLimit means the account already holds
@@ -900,6 +920,34 @@ const (
 	CodeReleaseGateLimit = "release_gate_limit"
 	// CodeReleaseGateNotFound means the app has no release gate by that name.
 	CodeReleaseGateNotFound = "release_gate_not_found"
+	// CodeReleaseApprovalRequired means the release waits for approvals
+	// before it may take more traffic (ADR-20261020085706); the problem
+	// carries the release's approval status.
+	CodeReleaseApprovalRequired = "release_approval_required"
+	// CodeReleaseApprovalRejected means someone rejected the release, so it
+	// can never take more traffic.
+	CodeReleaseApprovalRejected = "release_approval_rejected"
+	// CodeReleaseApprovalCanaryRequired means the app requires approvals and
+	// the production release would take traffic without a canary to wait in.
+	CodeReleaseApprovalCanaryRequired = "release_approval_canary_required"
+	// CodeReleaseApprovalSelf means the deployer tried to approve their own
+	// release while the policy does not allow self-approval.
+	CodeReleaseApprovalSelf = "release_approval_self"
+	// CodeReleaseApprovalDecided means this person already decided on the
+	// release, or the release no longer accepts decisions.
+	CodeReleaseApprovalDecided = "release_approval_decided"
+	// CodeReleaseApprovalPolicyNotFound means the app has no approval policy.
+	CodeReleaseApprovalPolicyNotFound = "release_approval_policy_not_found"
+	// CodeReleaseScheduled means the release waits for its scheduled start
+	// (ADR-20261021152201), so it takes no traffic by hand until the schedule
+	// is cancelled or moved.
+	CodeReleaseScheduled = "release_scheduled"
+	// CodeReleaseNotParked means the release cannot be scheduled: it is not
+	// live without traffic, or it already has a canary ladder.
+	CodeReleaseNotParked = "release_not_parked"
+	// CodeScheduledReleaseNotFound means the release has no schedule, or no
+	// pending one to cancel.
+	CodeScheduledReleaseNotFound = "scheduled_release_not_found"
 	// CodeConfigRevisionNotFound means the scope has no such config revision
 	// (ADR-1451), or it was pruned past ConfigRevisionsRetained.
 	CodeConfigRevisionNotFound = "config_revision_not_found"
@@ -1252,6 +1300,9 @@ const (
 	// lets the dashboard render a "move to Scale to lift the cap"
 	// hint without parsing prose.
 	CodePlanQueueDepth = "plan_queue_depth"
+	// CodePlanQueueBacklogBytes: the account's pending queue messages hold
+	// the plan's MaxQueueBacklogBytesPerAccount (ADR-20261022105723).
+	CodePlanQueueBacklogBytes = "plan_queue_backlog_bytes"
 	// CodeCustomMetricLimit: a push of a NEW ADR-202 metric name by an app
 	// already at MaxCustomMetricsPerApp. A push to an EXISTING name never
 	// produces this — it is an upsert and cannot grow the count.
@@ -1988,7 +2039,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeProfileInvestigationLimit:
 		return http.StatusTooManyRequests
-	case CodeAutomationInvalid:
+	case CodeAutomationInvalid, CodeEdgeFeatureUnavailable:
 		return http.StatusUnprocessableEntity
 	case CodeEdgeRulesVersionMismatch:
 		return http.StatusPreconditionFailed
@@ -2049,7 +2100,7 @@ func StatusForCode(code string) int {
 		return http.StatusServiceUnavailable
 	case CodeUnauthorized, CodeConsumerKeyRequired, CodeConsumerKeyInvalid, CodeConsumerKeyInactive:
 		return http.StatusUnauthorized
-	case CodeConsumerScopeMissing, CodePlatformTenantRequired, CodeChallengeRequired:
+	case CodeConsumerScopeMissing, CodePlatformTenantRequired, CodeChallengeRequired, CodePenaltyBox:
 		return http.StatusForbidden
 	case CodeSessionExpired, CodeSessionInvalid:
 		return http.StatusUnauthorized
@@ -2290,7 +2341,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotFound
 	case CodeCliAuthUnavailable, CodeBrowserApprovalUnavailable:
 		return http.StatusGone
-	case CodePlanQueueDepth, CodePlanDelayedCap:
+	case CodePlanQueueDepth, CodePlanDelayedCap, CodePlanQueueBacklogBytes:
 		return http.StatusForbidden
 	case CodePlanSourceBytes:
 		return http.StatusRequestEntityTooLarge
@@ -2589,6 +2640,17 @@ func ErrAppLayerTooLarge(l Limits, observedBytes int64) *Problem {
 		WithDocs(docsBase + "/build/limits#app-layer")
 }
 
+// ErrAppLayerTooManyEntries is returned when an image's layers apply more tar
+// entries than one build may extract (LayerExtractionMaxEntries). It shares
+// ErrAppLayerTooLarge's stable code: the image is too large to assemble.
+func ErrAppLayerTooManyEntries(l Limits, limit int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeAppLayerTooBig,
+		"App too large",
+		fmt.Sprintf("image layers contain more than %d files, directories and links in total; %s plan builds stop at that limit.", limit, l.Plan)).
+		WithLimit(int64(limit), int64(limit)+1).
+		WithDocs(docsBase + "/build/limits#app-layer")
+}
+
 // ErrPlanLimitConcurrency is returned when waking another instance would exceed
 // the app's concurrency (spec §4.3 admission, invariant §6.2-1).
 func ErrPlanLimitConcurrency(l Limits, observed int) *Problem {
@@ -2649,6 +2711,15 @@ func ErrCapacity(detail string) *Problem {
 	return NewProblem(http.StatusServiceUnavailable, CodeCapacity,
 		"Briefly at capacity", detail).
 		WithDocs("https://gregale.dev/status")
+}
+
+// ErrIdempotencyKeyReused reports an Idempotency-Key sent with a request
+// other than the one it was first used for (ADR-20261022204036).
+func ErrIdempotencyKeyReused() *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeIdempotencyKeyReused,
+		"Idempotency-Key reused",
+		"this Idempotency-Key was used for a different request in the last 24 hours, whose result is kept; send a new key for a new request, or resend the original request unchanged to get its result").
+		WithDocs(docsBase + "/errors")
 }
 
 func ErrSafeReleaseUnavailable() *Problem {
@@ -4597,6 +4668,17 @@ func ErrTenantHostnameQuota(p Plan, surfaceID string, limit, observed int) *Prob
 		WithDocs(docsBase + "/plans#tenant-surfaces")
 }
 
+// ErrTenantHostnamePendingQuota is the tenant_hostname_quota problem for
+// the unverified-hostname cap (ADR-20261020090500).
+func ErrTenantHostnamePendingQuota(p Plan, surfaceID string, limit, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodeTenantHostnameQuota,
+		"Tenant hostname limit reached",
+		fmt.Sprintf("%s plan caps unverified tenant hostnames at %d per surface; you have %d pending on surface %s. Verify or remove one to add another.",
+			p, limit, observed, surfaceID)).
+		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#tenant-surfaces")
+}
+
 // ErrTenantHostnameAlreadyClaimed is returned when the global UQ on
 // tenant_hostnames.hostname trips (the same hostname is already
 // attached to another surface on any account). 409 surfaces the
@@ -5996,6 +6078,18 @@ func ErrPlanQueueDepth(limit, observed int) *Problem {
 		WithDocs(docsBase + "/event-driven#queue-depth")
 }
 
+// ErrPlanQueueBacklogBytes is returned on a queue send when the account's
+// pending queue messages already hold the plan's
+// MaxQueueBacklogBytesPerAccount (ADR-20261022105723). Observed is the
+// payload bytes they hold.
+func ErrPlanQueueBacklogBytes(limit, observed int64) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanQueueBacklogBytes,
+		"Account queue backlog full",
+		fmt.Sprintf("the plan caps this account's pending queue messages at %d bytes; observed %d.", limit, observed)).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/event-driven#queue-backlog")
+}
+
 // ErrPlanSourceBytes is returned when a request body for an event-shaped
 // surface (sync / async / queue :send / delayed-task create) exceeds
 // the per-plan MaxSourceBytesPerInvocation.
@@ -6468,6 +6562,14 @@ func ErrEdgeRuleConflict(reason string) *Problem {
 		"Edge rule conflict", reason)
 }
 
+// ErrEdgeFeatureUnavailable is the 422 returned when a rule would switch on
+// an edge feature its platform flag has not released to the account
+// (ADR-20261023113721). feature names it, capitalized, in the plural.
+func ErrEdgeFeatureUnavailable(feature string) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeEdgeFeatureUnavailable, "Edge feature not released",
+		feature+" are not yet available to this account. Rules that already use them can be edited, disabled and deleted.")
+}
+
 // ErrPlanLimitEdgeRules is the 403 returned when
 // CreateEdgeRuleIfUnderQuota surfaces a *state.EdgeRuleQuotaError.
 // Per-app scope only — there's no account-wide flavour. 403 (not
@@ -6656,6 +6758,15 @@ func ErrRolloutStateInvalid(state string) *Problem {
 	return NewProblem(http.StatusConflict, CodeRolloutStateInvalid,
 		"Rollout state does not permit recovery",
 		fmt.Sprintf("rollout_state=%q; recovery requires rollout_state in {pending, rolling_out}.", state)).
+		WithDocs(docsBase + "/deploys#recover-rollout")
+}
+
+// ErrRolloutAmbiguous is the 409 for an app-level rollout recovery while
+// rollouts are in flight in more than one environment of the app.
+func ErrRolloutAmbiguous() *Problem {
+	return NewProblem(http.StatusConflict, CodeRolloutStateInvalid,
+		"Rollouts are in progress in more than one environment",
+		"More than one environment of this app has a rollout in progress, so an app-level recovery cannot tell which one to change. Wait for one rollout to finish, or abort a specific rollout with deployment_id and expected_predecessor_deployment_id.").
 		WithDocs(docsBase + "/deploys#recover-rollout")
 }
 

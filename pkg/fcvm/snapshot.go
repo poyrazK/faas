@@ -1,6 +1,9 @@
 package fcvm
 
-import "github.com/onebox-faas/faas/pkg/runtimeadmission"
+import (
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/storage"
+)
 
 // FAAS_BASE_IMAGE_VERSION is the per-image-version stamp the
 // h2c-capable base rootfs image is published under. Mirrors
@@ -60,6 +63,14 @@ type Snapshot struct {
 	// runtime catalog. Ordinary app snapshots must never be selected by the
 	// dedicated execution restore path.
 	Networkless bool
+	// CaptureID and SealedKey mark an ADR-733 sealed crash capture; the
+	// Manager opens the key and sets Storage before restoring.
+	CaptureID string
+	SealedKey []byte
+	// Storage, when set, carries a sealed crash capture's objects
+	// (ADR-733): the backing identity is verified and the capture restored
+	// through it instead of the shared store.
+	Storage storage.StorageBackend
 }
 
 // Usable reports whether snap can be loaded by the given running Firecracker
@@ -219,6 +230,11 @@ type RestoreSpec struct {
 	// before Restore was entered, so the wake.restore_breakdown event can
 	// attribute the whole vmmd window rather than only the JailerVMM part.
 	Prepare WakePrepareTimings
+	// Storage, when set, carries a sealed crash capture's memory, vmstate,
+	// private drive and backing identity (a crashcrypt.Backend decrypting
+	// on read). Those objects are copied into this instance's staging and
+	// never resolved through the shared store's local paths.
+	Storage storage.StorageBackend
 }
 
 // WakePrepareTimings (ADR-192) are the Manager.Wake phases that precede the
@@ -252,10 +268,12 @@ type SnapshotSpec struct {
 	operatorGeneration string // ADR-1525: checked before quiet resume or snapshot.
 	// Only Manager can populate the retained parent. Wire callers never supply
 	// an admission receipt as authority for a snapshot of another live VM.
-	admittedParent runtimeadmission.Receipt
-	admittedGrant  *runtimeadmission.SnapshotGrant
-	StageMemPath   string // vmmd-allocated; never caller-supplied post-#96 slice 3
-	VMStatePath    string // host location vmmd hands to the FC socket during pause
+	admittedParent         runtimeadmission.Receipt
+	admittedGrant          *runtimeadmission.SnapshotGrant
+	functionMigrationGrant *runtimeadmission.FunctionMigrationGrant
+	functionMigration      *FunctionMigrationBinding
+	StageMemPath           string // vmmd-allocated; never caller-supplied post-#96 slice 3
+	VMStatePath            string // host location vmmd hands to the FC socket during pause
 	// StorageKey (mem only) is the storage key the mem blob is published
 	// under post-snapshot.
 	StorageKey string
@@ -268,12 +286,17 @@ type SnapshotSpec struct {
 	// ResumeBeforePublish is set only by the warm-snapshot path. Once
 	// Firecracker has atomically created the local snapshot files, resume
 	// the guest before slower shared-storage uploads so ordinary traffic is
-	// paused for snapshot creation rather than registry latency. Migration
-	// and terminal park captures leave this false and remain paused.
+	// paused for snapshot creation rather than registry latency. Qualified
+	// Node resource recovery, migration and terminal park leave this false.
 	ResumeBeforePublish bool
-	// BeforeCheckpoint requests the guest-local callback for a new terminal
-	// init capture. Warm and migration captures must leave this false.
+	// BeforeCheckpoint requests the guest-local callback before capture.
+	// Qualified Node warm captures recover resources under the same flight;
+	// ordinary warm and unqualified migration captures must leave this false.
 	BeforeCheckpoint bool
+	// Storage, when set, carries this capture's objects instead of the
+	// shared backend (ADR-733 sealed crash captures: a crashcrypt.Backend
+	// that stores only ciphertext). Local-path publication is disabled.
+	Storage storage.StorageBackend
 }
 
 // SnapshotInfo is the result of a snapshot create.

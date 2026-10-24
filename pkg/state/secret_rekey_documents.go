@@ -15,6 +15,14 @@ type SecretRekeyDocument struct {
 
 func (d SecretRekeyDocument) Cursor() string { return d.Kind + "|" + d.ID }
 
+// SecretBindingDocument is a rekey document with the account that owns it,
+// the account its envelopes are bound to (ADR-20261023173624). AccountID is
+// empty when no owner row is found.
+type SecretBindingDocument struct {
+	SecretRekeyDocument
+	AccountID string
+}
+
 type SecretRekeyEnvelope struct {
 	Key, Kid, ValueHash string
 	Ciphertext          []byte
@@ -105,7 +113,7 @@ func TransformSecretRekeyDocument(d SecretRekeyDocument, transform func(SecretRe
 				}
 			}
 		}
-	case "app", "bundle", "deployment":
+	case "app", "bundle", "deployment", "project":
 		if err := visit(value); err != nil {
 			return nil, err
 		}

@@ -91,7 +91,8 @@ def sync_detailed(
     """Add a release gate (ADR-20261019071734).
 
      An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced
-    first; a custom_metric gate bounds a custom metric's average. Omitted numbers take Gregale's
+    first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI
+    gateway calls got worse than its baseline's (ADR 20261022153155). Omitted numbers take Gregale's
     defaults.
 
     Args:
@@ -128,7 +129,8 @@ def sync(
     """Add a release gate (ADR-20261019071734).
 
      An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced
-    first; a custom_metric gate bounds a custom metric's average. Omitted numbers take Gregale's
+    first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI
+    gateway calls got worse than its baseline's (ADR 20261022153155). Omitted numbers take Gregale's
     defaults.
 
     Args:
@@ -160,7 +162,8 @@ async def asyncio_detailed(
     """Add a release gate (ADR-20261019071734).
 
      An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced
-    first; a custom_metric gate bounds a custom metric's average. Omitted numbers take Gregale's
+    first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI
+    gateway calls got worse than its baseline's (ADR 20261022153155). Omitted numbers take Gregale's
     defaults.
 
     Args:
@@ -195,7 +198,8 @@ async def asyncio(
     """Add a release gate (ADR-20261019071734).
 
      An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced
-    first; a custom_metric gate bounds a custom metric's average. Omitted numbers take Gregale's
+    first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI
+    gateway calls got worse than its baseline's (ADR 20261022153155). Omitted numbers take Gregale's
     defaults.
 
     Args:

@@ -25,7 +25,7 @@ func cmdCronsRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteCron(context.Background(), id); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete cron", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{

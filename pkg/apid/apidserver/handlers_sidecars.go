@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -319,7 +320,16 @@ func sealSidecarsForDeploy(ss api.Sidecars, limits api.Limits) ([]byte, *api.Pro
 	if len(ss) == 0 {
 		return []byte("[]"), nil
 	}
-	return sealSidecars(ss, setSidecarRecipient(), limits)
+	return sealSidecars(ss, sidecarRecipient(), limits)
+}
+
+// sidecarRecipient seals sidecar env for vmmd: the runtime seal domain in
+// domain mode (ADR 20261022111812), the fleet recipient otherwise.
+func sidecarRecipient() *age.X25519Recipient {
+	if runtimeWriteMode == sealdomain.WriteDomain {
+		return runtimeSecretRecipient()
+	}
+	return recipientOrNil(setSidecarRecipient)
 }
 
 // applyOverridesToDeployment marshals the validated

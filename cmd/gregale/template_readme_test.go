@@ -68,7 +68,11 @@ func TestTemplateReadmesMatchMaterializationAndCLIContract(t *testing.T) {
 	}
 }
 
-func TestEditableHelloReadmesUseInitializedSource(t *testing.T) {
+// TestEditableHelloReadmesEditInPlace pins that the hello READMEs, which are
+// read inside the directory start or init created, keep edits: they say to
+// edit and redeploy that directory, never to initialize another copy or to
+// re-materialize the template over the customer's changes.
+func TestEditableHelloReadmesEditInPlace(t *testing.T) {
 	for _, name := range []string{"hello-go", "hello-node", "hello-python"} {
 		name := name
 		t.Run(name, func(t *testing.T) {
@@ -77,18 +81,20 @@ func TestEditableHelloReadmesUseInitializedSource(t *testing.T) {
 				t.Fatalf("read README: %v", err)
 			}
 			readme := string(readmeBytes)
-			if !strings.Contains(readme, "gregale init --template "+name+" --path "+name) {
-				t.Errorf("README must initialize a local source directory before editing")
+			_, editSection, ok := strings.Cut(readme, "## Edit and re-deploy")
+			if !ok {
+				t.Fatalf("README has no edit section:\n%s", readme)
 			}
-			if !strings.Contains(readme, "gregale deploy --name <slug>") {
-				t.Errorf("README must redeploy the initialized source with gregale deploy --name <slug>")
+			editSection, _, _ = strings.Cut(editSection, "\n## ")
+			for _, want := range []string{"run `gregale start` again from this directory", "`gregale deploy` updates the same app"} {
+				if !strings.Contains(editSection, want) {
+					t.Errorf("edit section missing %q:\n%s", want, editSection)
+				}
 			}
-			editSection := readme
-			if idx := strings.Index(readme, "## Edit and re-deploy"); idx >= 0 {
-				editSection = readme[idx:]
-			}
-			if strings.Contains(editSection, "gregale deploy --template "+name) {
-				t.Errorf("README edit instructions must not re-materialize --template %s", name)
+			for _, unwanted := range []string{"gregale init", "--template"} {
+				if strings.Contains(readme, unwanted) {
+					t.Errorf("README run inside the source directory mentions %q", unwanted)
+				}
 			}
 		})
 	}

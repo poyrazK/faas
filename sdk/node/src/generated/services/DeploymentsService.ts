@@ -14,6 +14,7 @@ import type { ClearObsoleteReport } from '../models/ClearObsoleteReport.js';
 import type { CreateDeploymentRequest } from '../models/CreateDeploymentRequest.js';
 import type { CreateReleaseFreezeRequest } from '../models/CreateReleaseFreezeRequest.js';
 import type { CreateReleaseGateRequest } from '../models/CreateReleaseGateRequest.js';
+import type { DecideReleaseApprovalRequest } from '../models/DecideReleaseApprovalRequest.js';
 import type { DeploymentAliasListResponse } from '../models/DeploymentAliasListResponse.js';
 import type { DeploymentAliasResponse } from '../models/DeploymentAliasResponse.js';
 import type { DeploymentCronStagingRequest } from '../models/DeploymentCronStagingRequest.js';
@@ -33,11 +34,15 @@ import type { DeploymentSubmissionReceipt } from '../models/DeploymentSubmission
 import type { DeploymentSummaryResponse } from '../models/DeploymentSummaryResponse.js';
 import type { LatestDeploymentsByAppResponse } from '../models/LatestDeploymentsByAppResponse.js';
 import type { ListDeploymentAuditResponse } from '../models/ListDeploymentAuditResponse.js';
+import type { ListReleaseApprovalsResponse } from '../models/ListReleaseApprovalsResponse.js';
 import type { ListReleaseFreezesResponse } from '../models/ListReleaseFreezesResponse.js';
 import type { ListReleaseGatesResponse } from '../models/ListReleaseGatesResponse.js';
 import type { Problem } from '../models/Problem.js';
 import type { ProfileCanaryGateDecision } from '../models/ProfileCanaryGateDecision.js';
 import type { RecoverRolloutRequest } from '../models/RecoverRolloutRequest.js';
+import type { ReleaseApprovalPolicy } from '../models/ReleaseApprovalPolicy.js';
+import type { ReleaseApprovalStatus } from '../models/ReleaseApprovalStatus.js';
+import type { ReleaseDiff } from '../models/ReleaseDiff.js';
 import type { ReleaseFreeze } from '../models/ReleaseFreeze.js';
 import type { ReleaseFreezeStatus } from '../models/ReleaseFreezeStatus.js';
 import type { ReleaseGate } from '../models/ReleaseGate.js';
@@ -47,8 +52,12 @@ import type { RollbackRequest } from '../models/RollbackRequest.js';
 import type { RolloutTransitionResponse } from '../models/RolloutTransitionResponse.js';
 import type { RuntimeUpgradePreviewResponse } from '../models/RuntimeUpgradePreviewResponse.js';
 import type { ScanResult } from '../models/ScanResult.js';
+import type { ScheduledRelease } from '../models/ScheduledRelease.js';
+import type { ScheduledReleaseListResponse } from '../models/ScheduledReleaseListResponse.js';
+import type { ScheduleReleaseRequest } from '../models/ScheduleReleaseRequest.js';
 import type { SecretScanResult } from '../models/SecretScanResult.js';
 import type { SetDeploymentAliasRequest } from '../models/SetDeploymentAliasRequest.js';
+import type { SetReleaseApprovalPolicyRequest } from '../models/SetReleaseApprovalPolicyRequest.js';
 import type { SourceRefDeployRequest } from '../models/SourceRefDeployRequest.js';
 import type { SourceTarballDeployRequest } from '../models/SourceTarballDeployRequest.js';
 import type { UpdateDeploymentTrafficRequest } from '../models/UpdateDeploymentTrafficRequest.js';
@@ -1197,6 +1206,37 @@ export class DeploymentsService {
     });
   }
   /**
+   * List scheduled releases (ADR-20261021152201).
+   * The account's scheduled releases: pending ones first, soonest first, then the most recently ended.
+   * @returns ScheduledReleaseListResponse The scheduled releases.
+   * @throws ApiError
+   */
+  public static listScheduledReleases({
+    app,
+  }: {
+    /**
+     * Only this app's schedules.
+     */
+    app?: string,
+  }): CancelablePromise<ScheduledReleaseListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/scheduled-releases',
+      query: {
+        'app': app,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * List deploy freezes (ADR-20261019071733).
    * Unlifted freezes that have not ended: active and upcoming windows, weekly windows and after-rollback policies. `app` narrows the list to the freezes covering one app.
    * @returns ListReleaseFreezesResponse The account's freezes.
@@ -1351,7 +1391,7 @@ export class DeploymentsService {
   }
   /**
    * Add a release gate (ADR-20261019071734).
-   * An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average. Omitted numbers take Gregale's defaults.
+   * An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI gateway calls got worse than its baseline's (ADR 20261022153155). Omitted numbers take Gregale's defaults.
    * @returns ReleaseGate The release gate.
    * @throws ApiError
    */
@@ -1411,6 +1451,138 @@ export class DeploymentsService {
       path: {
         'slug': slug,
         'name': name,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show an app's release approval policy (ADR-20261020085706).
+   * 404 `release_approval_policy_not_found` when the app does not require approvals.
+   * @returns ReleaseApprovalPolicy The app's approval policy.
+   * @throws ApiError
+   */
+  public static getReleaseApprovalPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ReleaseApprovalPolicy> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/release-approval-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Require approvals for an app's production releases (ADR-20261020085706).
+   * Creates or replaces the policy. Each production release then waits in a canary stage until enough eligible people approve it. Organization owners and admins may change the policy. An app outside an organization always counts its owner's own approval.
+   * @returns ReleaseApprovalPolicy The saved policy.
+   * @throws ApiError
+   */
+  public static setReleaseApprovalPolicy({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: SetReleaseApprovalPolicyRequest,
+  }): CancelablePromise<ReleaseApprovalPolicy> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/release-approval-policy',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Stop requiring release approvals (ADR-20261020085706).
+   * Releases waiting for approval continue on the canary's next step.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteReleaseApprovalPolicy({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/release-approval-policy',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List an app's releases waiting for approval (ADR-20261020085706).
+   * Releases in state waiting, and those past their timeout that the canary worker is about to abort.
+   * @returns ListReleaseApprovalsResponse The waiting releases.
+   * @throws ApiError
+   */
+  public static listReleaseApprovals({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ListReleaseApprovalsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/release-approvals',
+      path: {
+        'slug': slug,
       },
       errors: {
         401: `code: unauthorized`,
@@ -1950,6 +2122,214 @@ export class DeploymentsService {
         503: `code: capacity_unavailable — no host headroom.
         Resource increases can return service_recovery_capacity_unavailable
         when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Show a release's approvals (ADR-20261020085706).
+   * The release's approval state, the decisions so far, and when its wait expires.
+   * @returns ReleaseApprovalStatus The release's approval status.
+   * @throws ApiError
+   */
+  public static getReleaseApproval({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ReleaseApprovalStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/approvals',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Approve or reject a release (ADR-20261020085706).
+   * Records one decision per person. A rejection is final and aborts the rollout, restoring the previous release. 403 `release_approval_self` when the deployer approves their own release and the policy does not allow it; 409 `release_approval_decided` for a second decision or a release that no longer accepts one.
+   * @returns ReleaseApprovalStatus The release's approval status after the decision.
+   * @throws ApiError
+   */
+  public static decideReleaseApproval({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: DecideReleaseApprovalRequest,
+  }): CancelablePromise<ReleaseApprovalStatus> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/deployments/{id}/approvals',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show what changed between two releases (ADR-20261021101117).
+   * Compares the code, configuration keys, packages, runtime settings and release command of two releases of one app. Never returns variable values, secret fingerprints or SBOM files. A section whose history is missing reports known=false with a note.
+   * @returns ReleaseDiff The release diff.
+   * @throws ApiError
+   */
+  public static getReleaseDiff({
+    id,
+    against,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * The release to compare with; defaults to the release of the same scope that served before this one.
+     */
+    against?: string,
+  }): CancelablePromise<ReleaseDiff> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/diff',
+      path: {
+        'id': id,
+      },
+      query: {
+        'against': against,
+      },
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Show a release's schedule (ADR-20261021152201).
+   * The release's newest schedule: pending, or how it ended. 404 `scheduled_release_not_found` when the release was never scheduled.
+   * @returns ScheduledRelease The schedule.
+   * @throws ApiError
+   */
+  public static getDeploymentSchedule({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ScheduledRelease> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/deployments/{id}/schedule',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Schedule, or move, the start of a release waiting without traffic (ADR-20261021152201).
+   * The release must be live without traffic and without a canary ladder, or still building to go live without traffic; otherwise 409 `release_not_parked`. A release_at that has passed starts it on apid's next pass. Freezes active at release_at refuse the schedule with 409 `release_frozen` unless override_freeze gives a reason. An app that requires approvals needs a canary: 409 `release_approval_canary_required`. An app's earlier pending schedule is cancelled.
+   * @returns ScheduledRelease The pending schedule.
+   * @throws ApiError
+   */
+  public static scheduleDeployment({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: ScheduleReleaseRequest,
+  }): CancelablePromise<ScheduledRelease> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/deployments/{id}/schedule',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | env_var_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Cancel a release's pending schedule (ADR-20261021152201).
+   * The release stays live without traffic. 404 `scheduled_release_not_found` when it has no pending schedule.
+   * @returns ScheduledRelease The cancelled schedule.
+   * @throws ApiError
+   */
+  public static cancelDeploymentSchedule({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<ScheduledRelease> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/deployments/{id}/schedule',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
         `,
       },
     });

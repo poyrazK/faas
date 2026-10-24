@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"os"
 	"syscall"
+	"time"
 	"unsafe"
 
+	"github.com/onebox-faas/faas/pkg/resumetimingproto"
 	"golang.org/x/sys/unix"
 )
 
@@ -97,22 +99,43 @@ func GetResumeTraceparent() string { return resumeTraceparent }
 // between two restores of one snapshot (ADR-022). Cold boot never runs the
 // hook.
 func RunResumeHook(hostTimeUnixNano int64, hostEntropy []byte) error {
+	return runResumeHookTimed(hostTimeUnixNano, hostEntropy, nil)
+}
+
+// runResumeHookTimed is RunResumeHook recording each step's duration into t
+// (nil discards them). Durations come from the monotonic clock, so stepping
+// the wall clock part-way through does not distort the later steps.
+func runResumeHookTimed(hostTimeUnixNano int64, hostEntropy []byte, t *resumetimingproto.Timings) error {
+	if t == nil {
+		t = &resumetimingproto.Timings{}
+	}
+	step := time.Now()
+	lap := func(dst *int64) {
+		now := time.Now()
+		*dst = now.Sub(step).Microseconds()
+		step = now
+	}
 	if err := addHostEntropy(hostEntropy); err != nil {
 		resumeDiag(fmt.Sprintf("resume: addHostEntropy err=%v", err))
 		return fmt.Errorf("resume: add entropy: %w", err)
 	}
+	lap(&t.EntropyUs)
 	if err := reseedFromHWRNG(); err != nil {
 		resumeDiag(fmt.Sprintf("resume: reseedFromHWRNG err=%v", err))
 		return fmt.Errorf("resume: reseed entropy: %w", err)
 	}
+	lap(&t.HWRNGUs)
 	if err := stepClockTo(hostTimeUnixNano); err != nil {
 		resumeDiag(fmt.Sprintf("resume: stepClockTo err=%v", err))
 		return fmt.Errorf("resume: step clock: %w", err)
 	}
+	lap(&t.ClockUs)
 	if err := writeUUIDMarker(hostTimeUnixNano); err != nil {
 		resumeDiag(fmt.Sprintf("resume: writeUUIDMarker err=%v", err))
 		return fmt.Errorf("resume: write uuid marker: %w", err)
 	}
+	lap(&t.UUIDMarkerUs)
+	restoreGeneration.bump()
 	return nil
 }
 

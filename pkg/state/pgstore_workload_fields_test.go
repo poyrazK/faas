@@ -49,6 +49,11 @@ func TestPgCreateApp_PersistsWorkloadFields(t *testing.T) {
 	}
 }
 
+func TestPgCreateAppIfUnderQuotaPersistsAccessGates(t *testing.T) {
+	s, _ := pgStore(t)
+	testCreateAppIfUnderQuotaPersistsAccessGates(t, s)
+}
+
 func TestPgCreateAppIfUnderQuota_PersistsWorkloadFields(t *testing.T) {
 	s, ctx := pgStore(t)
 	acct, err := s.CreateAccount(ctx, "workload-fields-quota@example.test", api.PlanPro)

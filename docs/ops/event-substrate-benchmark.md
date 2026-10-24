@@ -70,6 +70,7 @@ version and configuration next to the results.
 | `FAAS_EVENT_SUBSTRATE_BENCH_PUBLISHERS` | 12 | concurrent publishers (apid's pool size) |
 | `FAAS_EVENT_SUBSTRATE_BENCH_DRAIN_CONCURRENCY` | production default | drain dispatch workers |
 | `FAAS_EVENT_SUBSTRATE_BENCH_HANDLER_MS` | 0 | simulated handler time per invocation |
+| `FAAS_EVENT_SUBSTRATE_BENCH_ORDERED_KEYS` | 0 (unordered) | route every subscription through an ordered work-policy lane (ADR-795) keyed on `data.key`, cycling each tenant's events through this many keys |
 | `FAAS_EVENT_SUBSTRATE_BENCH_PIPELINE_RATES` | `50,200` | offered end-to-end rates, events/s |
 | `FAAS_EVENT_SUBSTRATE_BENCH_PIPELINE_SECONDS` | 20 | seconds of offered load per rate |
 | `FAAS_EVENT_SUBSTRATE_BENCH_WEBHOOK_DELIVERIES` | 1000 | webhook deliveries |
@@ -79,6 +80,28 @@ version and configuration next to the results.
 
 Keep the defaults for evidence. Change one variable at a time to explore a
 bottleneck, and say so in the evidence report.
+
+## Profiling a run
+
+Stage rates on a shared host move with its load, and the planner can pick a
+different plan for one statement between runs: tables the run grows from
+empty, such as `invocations` and `event_delivery_slots`, carry the
+statistics of the `ANALYZE` taken before they grew. To compare branches,
+compare database time per statement as well as rates. Start the disposable
+PostgreSQL with
+
+```
+-c shared_preload_libraries=pg_stat_statements -c pg_stat_statements.track=all
+-c pg_stat_statements.track_planning=on
+```
+
+reset `pg_stat_statements` before the run, and read `total_exec_time` plus
+`total_plan_time` per statement after it. `track=all` also counts statements
+inside functions and triggers; their time is already included in the
+top-level statement that ran them, so sum only top-level rows. Planning time
+on a nested statement is a SQL-language function being re-planned on every
+call. To see a slow statement's plan, add `auto_explain` with
+`log_min_duration`, `log_analyze=on` and `log_timing=off`.
 
 ## Recording evidence
 

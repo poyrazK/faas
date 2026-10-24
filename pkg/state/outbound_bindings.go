@@ -56,6 +56,16 @@ type OutboundIntegrationOffer struct {
 	// AILogExport sends settled app calls to the app's log drains
 	// (ADR-1340).
 	AILogExport bool
+	// Per-trace limits (ADR 20261020202035).
+	AITraceMaxCalls             *int64
+	AITraceMaxCostMillicents    *int64
+	AITraceMaxRepeatedToolCalls *int64
+	// Online evaluations and drift alerts (ADR 20261021171712).
+	AIOnlineEvalPercent            *int32
+	AIOnlineEvalJudgeIntegrationID string
+	AIOnlineEvalModel              string
+	AIOnlineEvalRubric             string
+	AIQualityAlerts                bool
 }
 
 // OutboundAIContentPolicyStore owns an integration's content guardrails
@@ -95,6 +105,18 @@ type OutboundAIUsageItem struct {
 	// Audio tokens (ADR 20261019072722).
 	InputAudioTokens  int64
 	OutputAudioTokens int64
+	// Quality signals (ADR 20261021171712): calls per flag, ratings, and
+	// online evaluations with the sum of their scores and judge errors.
+	TruncatedRequests   int64
+	RefusedRequests     int64
+	EmptyRequests       int64
+	InvalidJSONRequests int64
+	ToolErrorRequests   int64
+	GoodFeedback        int64
+	BadFeedback         int64
+	EvaluatedRequests   int64
+	EvaluationScoreSum  int64
+	EvaluationErrors    int64
 }
 
 // OutboundAIUsage is one UTC day of AI usage for an integration.
@@ -139,6 +161,19 @@ type OutboundAIPolicy struct {
 	// AutoPromptCache adds prompt-cache breakpoints to Claude requests; it
 	// requires a provider (ADR-1437).
 	AutoPromptCache bool
+	// TraceMaxCalls, TraceMaxCost and TraceMaxRepeatedToolCalls cap each AI
+	// trace; each requires a provider (ADR 20261020202035).
+	TraceMaxCalls             *int64
+	TraceMaxCost              *int64
+	TraceMaxRepeatedToolCalls *int64
+	// OnlineEvalPercent samples answered app calls for a judge model, which
+	// needs content capture; QualityAlerts turns on drift alerts. Both need
+	// a provider (ADR 20261021171712).
+	OnlineEvalPercent            *int32
+	OnlineEvalJudgeIntegrationID string
+	OnlineEvalModel              string
+	OnlineEvalRubric             string
+	QualityAlerts                bool
 }
 
 func (p OutboundAIPolicy) valid() bool {
@@ -147,7 +182,11 @@ func (p OutboundAIPolicy) valid() bool {
 		api.ValidOutboundAIUserLimits(p.Provider, p.UserDailyTokenLimit, p.UserDailyCostLimit) &&
 		(!p.RequestLogEnabled || p.Provider != "") && (!p.RequestLogContent || p.RequestLogEnabled) &&
 		(!p.LogExport || p.Provider != "") && (!p.AllowUnmetered || p.Provider != "") &&
-		(!p.AutoPromptCache || p.Provider != "")
+		(!p.AutoPromptCache || p.Provider != "") &&
+		api.ValidOutboundAITraceLimits(p.Provider, p.TraceMaxCalls, p.TraceMaxCost, p.TraceMaxRepeatedToolCalls) &&
+		api.ValidOutboundAIOnlineEvaluation(p.Provider, p.OnlineEvalPercent, p.OnlineEvalJudgeIntegrationID, p.OnlineEvalModel,
+			p.OnlineEvalRubric) &&
+		(p.OnlineEvalPercent == nil || p.RequestLogContent) && (!p.QualityAlerts || p.Provider != "")
 }
 
 // OutboundAIPriceList is the current price list; EffectiveFrom is nil when

@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/url"
-	"os"
 	"strconv"
 	"time"
 
@@ -19,7 +18,7 @@ func cmdObsResponseTimes(args []string) int {
 	fs := flag.NewFlagSet(subObsResponseTimes, flag.ContinueOnError)
 	fs.SetOutput(osStderr)
 	since := fs.String("since", "", "activation-cohort lower bound (RFC3339)")
-	token := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	token := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
 	if err := fs.Parse(args); err != nil {
@@ -35,11 +34,8 @@ func cmdObsResponseTimes(args []string) int {
 			return 2
 		}
 	}
-	if *token == "" {
-		*token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if *token == "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs response-times: admin token required")
+	cred, ok := resolveObsCredential("obs response-times", *token)
+	if !ok {
 		return 2
 	}
 	path := operatorobs.AlertResponseTimesPath
@@ -47,7 +43,7 @@ func cmdObsResponseTimes(args []string) int {
 		path += "?" + url.Values{"since": {*since}}.Encode()
 	}
 	var out api.ObsAlertResponseTimes
-	if err := fetchObsBundleSection(context.Background(), &http.Client{Timeout: *timeout}, apidBase()+path, *token, "response-times", &out); err != nil {
+	if err := fetchObsBundleSection(context.Background(), &http.Client{Timeout: *timeout}, apidBase()+path, cred, "response-times", &out); err != nil {
 		_, _ = fmt.Fprintf(osStderr, "gregalectl obs %v\n", err)
 		return 1
 	}

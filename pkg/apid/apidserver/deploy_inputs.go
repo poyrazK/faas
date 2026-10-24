@@ -143,6 +143,8 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		disableStartupCPUBoost   *bool
 		mcpTaskMigrationOverride bool
 		overrideFreeze           string
+		releaseAt                string
+		releaseNotify            []string
 		healthcheck              *api.DeploymentHealthcheck
 		overrideEnv              map[string]string
 		overrideEnvSeen          bool
@@ -314,6 +316,20 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				return
 			}
 			overrideFreeze = strings.TrimSpace(string(b))
+		case "release_at":
+			b, readErr := io.ReadAll(io.LimitReader(part, 65))
+			if readErr != nil || len(b) > 64 {
+				api.WriteProblem(w, api.ErrValidation("release_at must be an RFC 3339 time"))
+				return
+			}
+			releaseAt = strings.TrimSpace(string(b))
+		case "release_notify":
+			b, readErr := io.ReadAll(io.LimitReader(part, 257))
+			if readErr != nil || len(b) > 256 || len(releaseNotify) >= api.ScheduledReleaseNotifyChannelsMax {
+				api.WriteProblem(w, api.ErrValidation(fmt.Sprintf("release_notify names at most %d channels of at most 256 characters", api.ScheduledReleaseNotifyChannelsMax)))
+				return
+			}
+			releaseNotify = append(releaseNotify, strings.TrimSpace(string(b)))
 		case "healthcheck":
 			b, readErr := io.ReadAll(io.LimitReader(part, (64<<10)+1))
 			if readErr != nil || len(b) > 64<<10 || json.Unmarshal(b, &healthcheck) != nil {
@@ -375,7 +391,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
-	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, OverrideFreeze: overrideFreeze, Sidecars: sidecars}
+	rolloutReq := &api.CreateDeploymentRequest{Scope: scope, Environment: environment, TrafficPercent: trafficPercent, Canary: canarySpec, RollbackOn5xx: rollbackOn5xx, DisableStartupCPUBoost: disableStartupCPUBoost, MCPTaskMigrationOverride: mcpTaskMigrationOverride, OverrideFreeze: overrideFreeze, ReleaseAt: releaseAt, ReleaseNotify: releaseNotify, Sidecars: sidecars}
 	rolloutReq.Overrides = sourceHealthcheckOverrides(healthcheck)
 	if len(overrideEnv) > 0 {
 		if rolloutReq.Overrides == nil {
@@ -398,11 +414,16 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 			return
 		}
 	}
-	if prob := s.releaseFreezeProblem(r, acct, app, rolloutReq.Scope, rolloutReq.OverrideFreeze); prob != nil {
+	sched, prob := s.releaseFreezeOrSchedule(r, acct, app, rolloutReq)
+	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
 	release.ApplyDefault(r.Context(), s.store, s.log, app, acct.Plan, rolloutReq)
+	if ap := s.releaseApprovalCanaryProblem(r.Context(), app, rolloutReq); ap != nil {
+		api.WriteProblem(w, ap)
+		return
+	}
 	if prob := validateDeploymentTrafficOptions(rolloutReq, acct.Plan); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -419,6 +440,7 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		api.WriteProblem(w, prob)
 		return
 	}
+	sched.park(rolloutReq)
 	rollout, prob := buildDeploymentForInsert(app, rolloutReq, deploymentOverrides, limits, acct.Plan)
 	if prob != nil {
 		api.WriteProblem(w, prob)
@@ -612,6 +634,10 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 		if developerSource {
 			s.recordDevPatchSource(r.Context(), app, d.ID, sourcePath, sourceRoot, devPatch)
 		}
+		if prob := s.recordReleaseSchedule(r, acct, app, d, sched); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
 		response := s.deploymentResponse(r.Context(), d, app)
 		response.DevPatch = devPatch.preview
 		writeJSON(w, http.StatusAccepted, response)
@@ -729,7 +755,7 @@ func validateSourceProvenance(sourceURL, commitSHA string) *api.Problem {
 //
 //nolint:forbidigo // path is the tmp file apid just wrote via os.Create in validateAndSpool above with a fresh random id; apid OWNS the parent directory AND the inode, customer never touched them — symlink-attack impossible. Tarball-shape validation re-reads the bytes to enforce spec §9.
 func validateTarballShape(path string) *api.Problem {
-	err := tarball.ValidateShape(path, maxSourceFiles)
+	err := tarball.ValidateShape(path, maxSourceFiles, api.SourceArchiveMaxExpandedBytes)
 	if err == nil {
 		return nil
 	}

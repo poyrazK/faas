@@ -3,6 +3,7 @@
 /* tslint:disable */
 /* eslint-disable */
 import type { OutboundAIContentPolicy } from './OutboundAIContentPolicy.js';
+import type { OutboundAIOnlineEvaluation } from './OutboundAIOnlineEvaluation.js';
 import type { OutboundRequestPolicy } from './OutboundRequestPolicy.js';
 /**
  * Account-owned managed integration metadata; never contains a provider key or gateway token.
@@ -73,6 +74,18 @@ export type OutboundIntegrationOffer = {
    */
   ai_auto_prompt_cache?: boolean;
   /**
+   * Calls each AI trace may make, settled and in flight (ADR 20261020202035). Absent when unlimited.
+   */
+  ai_trace_max_calls?: number;
+  /**
+   * Cost each AI trace may reach, with live reservations (ADR 20261020202035). Absent when unlimited.
+   */
+  ai_trace_max_cost_millicents?: number;
+  /**
+   * Consecutive calls of a trace whose responses may request the same tools with the same arguments (ADR 20261020202035). Absent when unlimited.
+   */
+  ai_trace_max_repeated_tool_calls?: number;
+  /**
    * UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994).
    */
   ai_user_daily_token_limit?: number | null;
@@ -80,5 +93,13 @@ export type OutboundIntegrationOffer = {
    * UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994).
    */
   ai_user_daily_cost_limit_millicents?: number | null;
+  /**
+   * The sample of answered app calls a judge model scores (ADR 20261021171712).
+   */
+  ai_online_evaluation?: OutboundAIOnlineEvaluation;
+  /**
+   * Drift alerts on the integration's quality signals are on (ADR 20261021171712).
+   */
+  ai_quality_alerts?: boolean;
 };
 

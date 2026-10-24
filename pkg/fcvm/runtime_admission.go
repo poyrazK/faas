@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/netip"
 	"slices"
 	"strings"
@@ -16,6 +17,7 @@ import (
 	"github.com/google/uuid"
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/functionlifetime"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
@@ -23,6 +25,8 @@ type AdmittedWakeRequest struct {
 	Request         WakeRequest
 	Binding         runtimeadmission.Binding
 	NativeInputHash string
+	Migration       *runtimeadmission.FunctionMigrationDestinationGrant
+	migrationOwner  *functionMigrationDestination
 }
 
 type runtimeAdmissionFlight struct {
@@ -54,6 +58,18 @@ func (m *Manager) RuntimeAdmissionIdentity() (runtimeadmission.Identity, error) 
 		return runtimeadmission.Identity{}, err
 	}
 	return identity, nil
+}
+
+// RestartIncarnation is this Manager's process incarnation, the identity a
+// vmmd claims the node's ownership epoch under (adoption ADR §3). It is the
+// same random value RuntimeAdmissionIdentity publishes.
+func (m *Manager) RestartIncarnation() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.runtimeAdmissionIncarnation == "" {
+		m.runtimeAdmissionIncarnation = uuid.NewString()
+	}
+	return m.runtimeAdmissionIncarnation
 }
 
 // NativeWakeInputHash covers every exported native boot input, including sealed
@@ -130,7 +146,7 @@ func (m *Manager) WakeAdmitted(ctx context.Context, request AdmittedWakeRequest,
 func (m *Manager) prepareAdmittedInputs(request AdmittedWakeRequest, identity runtimeadmission.Identity) (WakeRequest, string, error) {
 	binding := request.Binding
 	// Restore requires explicit measured backend support before consuming authority.
-	if binding.SnapshotCaptureToken != "" && identity.SnapshotRestoreVersion != runtimeadmission.SnapshotRestoreVersion {
+	if binding.SnapshotCaptureToken != "" && identity.SnapshotRestoreVersion != runtimeadmission.SnapshotRestoreVersion && (request.Migration == nil || m.FunctionMigrationDestinationVersion() != 1) {
 		return WakeRequest{}, "", runtimeadmission.ErrUnavailable
 	}
 	if binding.NodeID != identity.NodeID || binding.Incarnation != identity.Incarnation {
@@ -142,6 +158,20 @@ func (m *Manager) prepareAdmittedInputs(request AdmittedWakeRequest, identity ru
 	req, err := cloneAdmittedWake(request.Request)
 	if err != nil {
 		return WakeRequest{}, "", err
+	}
+	if request.Migration != nil {
+		g := request.Migration.Clone()
+		m.mu.Lock()
+		owner := m.functionMigrationDestinations[req.Instance]
+		owned := owner != nil && owner == request.migrationOwner && owner.grant.Equal(g) && !owner.retired && !owner.published && owner.err == nil
+		m.mu.Unlock()
+		if !owned {
+			return WakeRequest{}, "", runtimeadmission.ErrUnavailable
+		}
+		if !functionlifetime.NativeQualificationBuild || g.Binding != binding || g.Validate(time.Now()) != nil || request.NativeInputHash != binding.PayloadHash || req.KeepPaused {
+			return WakeRequest{}, "", runtimeadmission.ErrUnavailable
+		}
+		req.functionMigrationDestination = &g
 	}
 	hash, err := NativeWakeInputHash(req)
 	if err != nil || hash != request.NativeInputHash || req.Instance != binding.InstanceID || req.AppID != binding.AppID || req.DeploymentID != binding.DeploymentID || req.AccountID != binding.AccountID || req.ExecutionOnly || req.AppTaskOnly || req.ExportDir != "" || req.BuildTimeoutSec != 0 || req.KeepPaused && req.Snapshot == nil {
@@ -195,6 +225,14 @@ func (m *Manager) finishAdmittedWake(ctx, flightCtx context.Context, binding run
 	inst.runtimeAdmissionEgress = WakeRequest{AppID: req.AppID, Plan: req.Plan, EgressAllowlist: slices.Clone(req.EgressAllowlist), EgressPorts: slices.Clone(req.EgressPorts)}
 	m.finishRuntimeAdmissionFlightLocked(req.Instance, flight)
 	m.mu.Unlock()
+	// The receipt joins the adoption block before schedd sees it. Until
+	// then the block marks the guest admitted without a receipt, which a
+	// successor refuses rather than adopting it as unadmitted.
+	if w := m.adoption.Load(); w != nil {
+		if err := m.commitAdoption(req.Instance, w); err != nil && !errors.Is(err, errAdoptionRecordStale) {
+			slog.Warn("vmmd: admission receipt not recorded for adoption", "instance", req.Instance, "err", err)
+		}
+	}
 	return inst, receipt, nil
 }
 
@@ -204,6 +242,21 @@ func admittedWakeReceipt(binding runtimeadmission.Binding, hash string, inst *In
 		method = vmmdpb.WakeMethod_WAKE_RESTORE
 	}
 	return runtimeadmission.Receipt{Binding: binding, NativeInputHash: hash, Netns: inst.Net.Netns, HostIP: inst.Lease.HostIP.String(), LeaseUID: int32(inst.Lease.UID), Method: method, Paused: inst.Paused, CompletedAtUnixNano: completedAt.UnixNano(), ArtifactConsumption: consumption}
+}
+
+// ensureRuntimeAdmissionMapsLocked creates the replay and flight maps. A
+// successor that adopted an admitted guest consumes a promotion or capture
+// grant before it has admitted a boot of its own.
+func (m *Manager) ensureRuntimeAdmissionMapsLocked() {
+	if m.runtimeAdmissionTokens == nil {
+		m.runtimeAdmissionTokens = map[string]time.Time{}
+	}
+	if m.runtimeAdmissionInstances == nil {
+		m.runtimeAdmissionInstances = map[string]time.Time{}
+	}
+	if m.runtimeAdmissionFlights == nil {
+		m.runtimeAdmissionFlights = map[string]*runtimeAdmissionFlight{}
+	}
 }
 
 func (m *Manager) consumeRuntimeAdmission(binding runtimeadmission.Binding, flight *runtimeAdmissionFlight) error {
@@ -232,15 +285,7 @@ func (m *Manager) consumeRuntimeAdmission(binding runtimeadmission.Binding, flig
 	if len(m.runtimeAdmissionTokens) >= api.ApplicationStandardRuntimeAdmissionReplayLimit {
 		return runtimeadmission.ErrCapacity
 	}
-	if m.runtimeAdmissionTokens == nil {
-		m.runtimeAdmissionTokens = map[string]time.Time{}
-	}
-	if m.runtimeAdmissionInstances == nil {
-		m.runtimeAdmissionInstances = map[string]time.Time{}
-	}
-	if m.runtimeAdmissionFlights == nil {
-		m.runtimeAdmissionFlights = map[string]*runtimeAdmissionFlight{}
-	}
+	m.ensureRuntimeAdmissionMapsLocked()
 	m.runtimeAdmissionTokens[binding.Token] = time.Unix(0, binding.ExpiresAtUnixNano)
 	m.runtimeAdmissionInstances[binding.InstanceID] = time.Unix(0, binding.ExpiresAtUnixNano)
 	m.runtimeAdmissionFlights[binding.InstanceID] = flight

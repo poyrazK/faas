@@ -106,10 +106,10 @@ func scanFileLines(path string, data []byte) []Finding {
 		}
 		// PEM-block state update before the match pass so the
 		// -----BEGIN line itself still scans.
-		if bytes.Contains(line, []byte("-----BEGIN ")) && bytes.Contains(line, []byte("PRIVATE KEY")) {
+		if pemArmorLine(line, "-----BEGIN ") {
 			inPEMBlock = true
 		}
-		if bytes.Contains(line, []byte("-----END ")) && bytes.Contains(line, []byte("PRIVATE KEY")) {
+		if pemArmorLine(line, "-----END ") {
 			inPEMBlock = false
 		}
 		out = scanOneLine(path, lineNo, line, out, inPEMBlock, dependencyLock)
@@ -117,6 +117,17 @@ func scanFileLines(path string, data []byte) []Finding {
 			return out
 		}
 	}
+}
+
+// pemArmorLine reports whether line is the given BEGIN/END marker of a PEM
+// block whose base64 body must not drive entropy findings: a private key,
+// whose BEGIN line is already one private_key_block finding, or a public
+// certificate or certificate request. A committed CA bundle (a starter's
+// trust anchor, an RDS chain) is not a secret, but each body line read as
+// high_entropy and strict scanning refused the upload.
+func pemArmorLine(line []byte, marker string) bool {
+	return bytes.Contains(line, []byte(marker)) &&
+		(bytes.Contains(line, []byte("PRIVATE KEY")) || bytes.Contains(line, []byte("CERTIFICATE")))
 }
 
 // scanOneLine routes one line through either matchValue (if the line
@@ -133,7 +144,7 @@ func scanFileLines(path string, data []byte) []Finding {
 // `API_KEY=foo:bar` line lands on the key= side.
 //
 // inPEMBlock suppresses the entropy fallback on body lines of an
-// armoured-key block (review finding #3).
+// armoured-key block (review finding #3) or a certificate block.
 func scanOneLine(path string, lineNo int, line []byte, out []Finding, inPEMBlock, dependencyLock bool) []Finding {
 	// Skip blanks and shell-style comments. Comments are not scanned
 	// even if they contain a real-looking token, because the token is by

@@ -105,6 +105,12 @@ type MFAVerifyRequest struct {
 	CSRFToken string `json:"csrf_token,omitempty"`
 }
 
+// MFACodeReusedDetail is the CodeMFAInvalidCode detail for a correct
+// code whose time step already verified a session (RFC 6238 §5.2). The
+// code stays mfa_invalid_code so clients that switch on it are unchanged;
+// only the detail tells the caller to wait rather than retype.
+const MFACodeReusedDetail = "this code was already used; wait for your authenticator app to show the next code"
+
 // MFADisableRequest is the body for /disable. Exactly one of
 // Password / RecoveryCode is required; the handler validates
 // the constraint and returns CodeValidation if neither or

@@ -7,7 +7,8 @@ import { createHookServer, hookAddress, hookEnv, newHookSecret } from '../email.
 const user = (email, provider = 'email') => ({ user: { email, app_metadata: { provider } } })
 
 // fakeDB answers the access and waitlist queries from in-memory rows.
-function fakeDB({ approved = [], invited = [], pending = [], capacity = 10000 } = {}) {
+// providers maps an identity provider's ID to { selfService, domains }.
+function fakeDB({ approved = [], invited = [], pending = [], capacity = 10000, providers = {} } = {}) {
   const requests = new Set(pending)
   const log = []
   return {
@@ -15,6 +16,10 @@ function fakeDB({ approved = [], invited = [], pending = [], capacity = 10000 } 
     async query(sql, args) {
       log.push(sql.trim().split(/\s+/).slice(0, 3).join(' '))
       if (sql.includes('AS allowed')) return { rows: [{ allowed: approved.includes(args[0]) || invited.includes(args[0]) }] }
+      if (sql.includes('sso_signup_rules')) {
+        const idp = providers[args[0]] ?? { selfService: false, domains: [] }
+        return { rows: [{ self_service: idp.selfService, in_domain: idp.domains.includes(args[1]) }] }
+      }
       if (sql.startsWith('INSERT INTO gregale_auth.signup_access (email, requested_at)')) {
         if (requests.has(args[0]) || requests.size >= Math.min(capacity, args[1])) return { rowCount: 0 }
         requests.add(args[0]); return { rowCount: 1 }
@@ -61,6 +66,25 @@ test('invitation-only lets approved and invited addresses and SSO people in', as
   assert.equal(await signupRefusal(db, policy, user('carol@acme.com', 'sso:6a1b2c3d-0000-4000-8000-000000000001')), null, 'an identity provider vouches')
   assert.deepEqual(await signupRefusal(db, policy, { user: { is_anonymous: true } }), { status: 403, code: 'signup_restricted' })
   assert.equal(db.requests.size, 0, 'nothing joins a waitlist')
+})
+
+test('an organization\'s own identity provider vouches only for its domains and gets no exemption', async () => {
+  const own = '7c9e6679-7425-40de-944b-e07fc1f90ae7', operator = '6a1b2c3d-0000-4000-8000-000000000001'
+  const db = fakeDB({ invited: ['dan@acme.com'], providers: { [own]: { selfService: true, domains: ['acme.com'] }, [operator]: { selfService: false, domains: ['globex.com'] } } })
+  // With no other rules, only the domain check applies (policy null).
+  assert.deepEqual(await signupRefusal(db, null, user('ceo@victim.example', `sso:${own}`)), { status: 403, code: 'sso_email_domain_not_allowed' })
+  assert.deepEqual(await signupRefusal(db, null, user('noone', `sso:${own}`)), { status: 403, code: 'sso_email_domain_not_allowed' }, 'no address at all')
+  assert.equal(await signupRefusal(db, null, user('carol@ACME.com', `sso:${own}`)), null)
+  assert.equal(await signupRefusal(db, null, user('carol@elsewhere.example', `sso:${operator}`)), null, 'the operator\'s provider is trusted as before')
+  assert.equal(await signupRefusal(db, null, user('ada@victim.example')), null, 'others need no database')
+  // Invitation-only applies to an organization's own provider.
+  const invite = signupPolicy({ AUTH_SIGNUP_ACCESS: 'invite' })
+  assert.deepEqual(await signupRefusal(db, invite, user('carol@acme.com', `sso:${own}`)), { status: 403, code: 'signup_invitation_required' })
+  assert.equal(await signupRefusal(db, invite, user('dan@acme.com', `sso:${own}`)), null, 'an invited person gets in')
+  assert.equal(await signupRefusal(db, invite, user('erin@globex.com', `sso:${operator}`)), null)
+  // The domain allowlist reads the asserted address only after the provider's domains.
+  const allowlist = signupPolicy({ AUTH_SIGNUP_ALLOWED_DOMAINS: 'victim.example' })
+  assert.deepEqual(await signupRefusal(db, allowlist, user('ceo@victim.example', `sso:${own}`)), { status: 403, code: 'sso_email_domain_not_allowed' })
 })
 
 test('the waitlist records one request per address until it is full', async () => {

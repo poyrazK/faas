@@ -75,6 +75,7 @@ type ProjectEnvironmentCloneResponse struct {
 	VariablesCopied        int      `json:"variables_copied"`
 	SecretsCopied          int      `json:"secrets_copied"`
 	SecretReferencesCopied int      `json:"secret_references_copied"`
+	ProjectSecretsCopied   int      `json:"project_secrets_copied,omitempty"` // ADR-1139
 	WorkloadsCopied        int      `json:"workloads_copied"`
 	BindingsCopied         int      `json:"bindings_copied"`
 	RoutesCopied           int      `json:"routes_copied"`

@@ -257,9 +257,9 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 	}
 	m.mu.Lock()
 	if m.waking == nil {
-		m.waking = make(map[string]struct{})
+		m.waking = make(map[string]wakingInstance)
 	}
-	m.waking[frame.InstanceID] = struct{}{}
+	m.waking[frame.InstanceID] = wakingInstance{}
 	m.mu.Unlock()
 	if err := m.setupNetwork(bootCtx, nc); err != nil {
 		return nil, fmt.Errorf("native qualification restore: private network setup: %w", err)

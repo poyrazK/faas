@@ -14,7 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/safetext"
 )
 
-func (s *PgStore) ListRuntimeConfigs(ctx context.Context, scope RuntimeConfigScope, scopeID string) ([]RuntimeConfig, error) {
+func (s *pgCore) ListRuntimeConfigs(ctx context.Context, scope RuntimeConfigScope, scopeID string) ([]RuntimeConfig, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, config_key, scope, scope_id, desired_value,
 		       COALESCE(effective_value, 'null'::jsonb), version,

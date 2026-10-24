@@ -251,6 +251,9 @@ type LiveMigrationAdopt struct {
 // (nodeID, targetURL) tuple is fixed at startup via
 // ActiveComputeNodes.
 type VMMRouter struct {
+	// notices retries a create on a node whose vmmd is restarting under a
+	// planned notice instead of failing it (vmmd restart adoption ADR §3).
+	notices          *RestartNotices
 	computeAuthority state.FinancialComputeStore
 	mu               sync.Mutex
 	cache            map[string]VMM    // nodeID -> dialed client (targetURL stored separately for the dial path)
@@ -382,6 +385,12 @@ type ComputeNodeInfo struct {
 // NewVMMRouter time. Calling SetClient on a node the router has
 // already dialed replaces the cached client (tests that want to
 // reset state between subtests use this).
+// WithRestartNotices retries creates through a planned vmmd restart.
+func (r *VMMRouter) WithRestartNotices(n *RestartNotices) *VMMRouter {
+	r.notices = n
+	return r
+}
+
 func (r *VMMRouter) SetClient(nodeID string, c VMM) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -545,7 +554,7 @@ func (r *VMMRouter) CreateColdBoot(ctx context.Context, nodeID, instance string,
 	if err != nil {
 		return nil, err
 	}
-	return cli.CreateColdBoot(ctx, instance, app)
+	return withRestartNoticeRetry(ctx, r.notices, nodeID, func() (*WakeOutcome, error) { return cli.CreateColdBoot(ctx, instance, app) })
 }
 
 type executionVMMClient interface {
@@ -738,6 +747,9 @@ func (r *VMMRouter) JobColdBoot(ctx context.Context, spec JobVmmSpec) (JobVmmRes
 }
 
 // WaitJobExit routes the exit wait to the same vmmd that owns the task VM.
+// A wait the node's planned vmmd restart cut short is made again against the
+// successor, which adopted the job and kept its exit (vmmd restart adoption
+// ADR, workload kinds).
 func (r *VMMRouter) WaitJobExit(ctx context.Context, spec JobExitSpec) (JobExitResult, error) {
 	cli, err := r.resolveFor(ctx, spec.NodeID)
 	if err != nil {
@@ -748,7 +760,7 @@ func (r *VMMRouter) WaitJobExit(ctx context.Context, spec JobExitSpec) (JobExitR
 		return JobExitResult{}, api.NewProblem(501, api.CodeNotImplemented,
 			"Job execution unavailable", "vmmd client does not support jobs")
 	}
-	return jobClient.WaitJobExit(ctx, spec)
+	return withRestartNoticeRetry(ctx, r.notices, spec.NodeID, func() (JobExitResult, error) { return jobClient.WaitJobExit(ctx, spec) })
 }
 
 func (r *VMMRouter) ReleaseJobStart(ctx context.Context, spec JobStartSpec) error {
@@ -761,7 +773,10 @@ func (r *VMMRouter) ReleaseJobStart(ctx context.Context, spec JobStartSpec) erro
 		return api.NewProblem(501, api.CodeNotImplemented,
 			"Held job start unavailable", "vmmd client does not support held job start")
 	}
-	return releaser.ReleaseJobStart(ctx, spec)
+	// The guest treats a repeated release as success, so a release the
+	// node's planned restart cut short is safe to make again.
+	_, err = withRestartNoticeRetry(ctx, r.notices, spec.NodeID, func() (struct{}, error) { return struct{}{}, releaser.ReleaseJobStart(ctx, spec) })
+	return err
 }
 
 // CreateFromSnapshot implements RoutedVMM.
@@ -783,7 +798,7 @@ func (r *VMMRouter) CreateFromSnapshot(ctx context.Context, nodeID, instance str
 	if err != nil {
 		return nil, err
 	}
-	return cli.CreateFromSnapshot(ctx, instance, app, snap)
+	return withRestartNoticeRetry(ctx, r.notices, nodeID, func() (*WakeOutcome, error) { return cli.CreateFromSnapshot(ctx, instance, app, snap) })
 }
 
 // CreatePausedFromSnapshot implements the additive warm-pool capability.
@@ -812,7 +827,9 @@ func (r *VMMRouter) CreatePausedFromSnapshot(ctx context.Context, nodeID, instan
 	if err != nil {
 		return nil, err
 	}
-	return paused.CreatePausedFromSnapshot(ctx, instance, app, snap)
+	return withRestartNoticeRetry(ctx, r.notices, nodeID, func() (*WakeOutcome, error) {
+		return paused.CreatePausedFromSnapshot(ctx, instance, app, snap)
+	})
 }
 
 // PauseAndSnapshot implements RoutedVMM.
@@ -834,6 +851,23 @@ func (r *VMMRouter) WarmSnapshot(ctx context.Context, nodeID, instance, storageK
 		return SnapshotBytes{}, err
 	}
 	return cli.WarmSnapshot(ctx, instance, storageKey, vmstateStorageKey)
+}
+
+// WarmSnapshotSealed forwards an ADR-733 sealed crash capture to the node's
+// vmmd client.
+func (r *VMMRouter) WarmSnapshotSealed(ctx context.Context, nodeID, instance, storageKey, vmstateStorageKey, captureID string) (SnapshotBytes, []byte, error) {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return SnapshotBytes{}, nil, err
+	}
+	sealer, ok := cli.(interface {
+		WarmSnapshotSealed(context.Context, string, string, string, string) (SnapshotBytes, []byte, error)
+	})
+	if !ok {
+		return SnapshotBytes{}, nil, api.NewProblem(501, api.CodeNotImplemented,
+			"Sealed capture unavailable", "vmmd client does not support sealed crash captures")
+	}
+	return sealer.WarmSnapshotSealed(ctx, instance, storageKey, vmstateStorageKey, captureID)
 }
 
 // ResumeWarmInstance resumes a paused warm-pool VM in place. The scheduler
@@ -910,7 +944,12 @@ func (r *VMMRouter) Destroy(ctx context.Context, nodeID, instance string) error 
 	if err != nil {
 		return err
 	}
-	return cli.Destroy(ctx, instance)
+	// Destroy is idempotent, so one the node's planned vmmd restart cut short
+	// is made again against the successor: an app task or execution whose
+	// teardown would otherwise withhold its terminal acknowledgement, or a
+	// guest the successor already killed or never adopted.
+	_, err = withRestartNoticeRetry(ctx, r.notices, nodeID, func() (struct{}, error) { return struct{}{}, cli.Destroy(ctx, instance) })
+	return err
 }
 
 // StopInstanceOnNode (M-2 / ADR-138 §Decision 1) implements
@@ -1031,6 +1070,23 @@ func (r *VMMRouter) CancelLiveMigration(ctx context.Context, dyingNodeID, instan
 		}
 	}
 	return cli.CancelLiveMigration(ctx, dyingNodeID, instanceID, leaseToken)
+}
+
+func (r *VMMRouter) CancelFunctionMigrationSource(ctx context.Context, node, id, token string) (bool, error) {
+	client, err := r.resolveFor(ctx, node)
+	if err != nil {
+		return false, err
+	}
+	qualified, ok := client.(functionMigrationCanceller)
+	if !ok {
+		return false, state.ErrMigrationCommitUnresolved
+	}
+	if r.migrationResume != nil {
+		if err := r.migrationResume(ctx, id, node, token); err != nil {
+			return false, err
+		}
+	}
+	return qualified.CancelFunctionMigrationSource(ctx, node, id, token)
 }
 
 // UpdateEgressAllowlist (ADR-031 + ADR-033, tier-2 PR-B) routes the

@@ -22,6 +22,17 @@ func platformFailureUnbillable(r *http.Request, status int) bool {
 	return !guestResponded
 }
 
+// platformErrorForSLO reports whether a response counts in
+// gateway_platform_errors_total, which feeds the public availability SLO
+// (FaasApiAvailabilityLow, the status page). It is platformFailureUnbillable
+// minus a request whose budget expired while the guest was handling it: the
+// customer is told their app was slow, and one slow customer endpoint must not
+// page on-call as a platform outage (Hunt 11 H11-34). Billing still follows
+// platformFailureUnbillable.
+func platformErrorForSLO(r *http.Request, status int) bool {
+	return platformFailureUnbillable(r, status) && !appBudgetExpiredFrom(r)
+}
+
 // unattributedUsage reports whether a consumer-usage event carries nothing any
 // reader uses (ADR-234 amendment). That means no consumer, no platform tenant,
 // no request-audit evidence, and no discovered route.

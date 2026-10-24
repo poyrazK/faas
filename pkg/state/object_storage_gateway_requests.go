@@ -18,7 +18,7 @@ func checkGatewayRequest(snapshot ObjectUsageSnapshot, bucket string, at time.Ti
 		return err
 	}
 	p = snapshot.planPolicy(p)
-	u := SummarizeObjectUsage(snapshot, p, time.Now().UTC())
+	u, _ := summarizeObjectUsage(snapshot, p, time.Now().UTC())
 	if u.RequestCount >= p.MaxMonthlyRequests {
 		return &ObjectStorageLimitError{Kind: "requests", Observed: u.RequestCount, Limit: p.MaxMonthlyRequests, Cause: ErrObjectBudget}
 	}
@@ -48,7 +48,7 @@ func (m *MemStore) ReserveObjectStorageGatewayRequest(ctx context.Context, bucke
 	return nil
 }
 
-func (s *PgStore) ReserveObjectStorageGatewayRequest(ctx context.Context, bucket string, at time.Time, p api.ObjectStoragePolicy) error {
+func (s *pgCore) ReserveObjectStorageGatewayRequest(ctx context.Context, bucket string, at time.Time, p api.ObjectStoragePolicy) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err

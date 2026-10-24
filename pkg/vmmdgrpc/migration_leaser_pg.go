@@ -95,6 +95,15 @@ func (l *pgMigrationLeaser) Release(ctx context.Context, token leaser.Token, own
 	if lease.SourceNodeID != ownerID {
 		return fmt.Errorf("%w: owner=%s", leaser.ErrHeldByOther, lease.SourceNodeID)
 	}
+	if sources, ok := l.store.(state.FunctionMigrationSourceStore); ok {
+		_, err := sources.GetFunctionMigrationSource(ctx, lease.InstanceID, lease.LeaseToken)
+		if err == nil {
+			return fmt.Errorf("%w: function source requires phase completion", state.ErrConflict)
+		}
+		if !errors.Is(err, state.ErrNotFound) {
+			return err
+		}
+	}
 	err = l.store.DeleteMigrationLease(ctx, string(token))
 	if errors.Is(err, state.ErrNotFound) {
 		return leaser.ErrNotFound

@@ -3,6 +3,7 @@
 package fcvm
 
 import (
+	"fmt"
 	"os"
 	"syscall"
 	"time"
@@ -18,6 +19,26 @@ func lastUse(info os.FileInfo) time.Time {
 		return time.Unix(st.Atim.Sec, st.Atim.Nsec)
 	}
 	return info.ModTime()
+}
+
+// pmemBaseFileIdentity names the base file itself rather than its
+// timestamps: its device and inode, and its birth time where the filesystem
+// records one (XFS and ext4 do), so a recycled inode number is not mistaken
+// for the base it replaced. info is base's os.Stat result.
+func pmemBaseFileIdentity(base string, info os.FileInfo) (string, error) {
+	var stx unix.Statx_t
+	if err := unix.Statx(unix.AT_FDCWD, base, 0, unix.STATX_INO|unix.STATX_BTIME, &stx); err != nil {
+		return "", fmt.Errorf("statx %s: %w", base, err)
+	}
+	id := fmt.Sprintf("%d:%d:%d", stx.Dev_major, stx.Dev_minor, stx.Ino)
+	if stx.Mask&unix.STATX_BTIME != 0 {
+		id += fmt.Sprintf(":%d.%d", stx.Btime.Sec, stx.Btime.Nsec)
+	} else if st, ok := info.Sys().(*syscall.Stat_t); ok {
+		// Without a birth time, the change time still moves when the file is
+		// replaced; it also moves on a touch, which only costs a re-clone.
+		id += fmt.Sprintf(":c%d.%d", st.Ctim.Sec, st.Ctim.Nsec)
+	}
+	return id, nil
 }
 
 func reflinkFile(dst, src string) error {

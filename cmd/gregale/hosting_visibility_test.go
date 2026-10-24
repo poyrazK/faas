@@ -15,7 +15,7 @@ func TestHostingDiscoveryRequiresLocalOptIn(t *testing.T) {
 		t.Run(value, func(t *testing.T) {
 			t.Setenv("FAAS_FRONTEND_HOSTING_ENABLED", value)
 			enabled := value == "1" || value == "true"
-			if strings.Contains(main.TopLevelUsage(true), "  sites ") != enabled {
+			if strings.Contains(main.TopLevelUsage(true, true), "  sites ") != enabled {
 				t.Fatal("advanced help does not follow local opt-in")
 			}
 			for _, args := range [][]string{{"help", "sites"}, {"sites", "--help"}, {"sites", "deploy", "--help"}, {"man", "sites"}} {

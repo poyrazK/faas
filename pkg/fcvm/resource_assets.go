@@ -149,7 +149,7 @@ func (r resourceJournalRecord) validateAssets() error {
 
 // outlivesReboot reports whether an asset's effect survives a host reboot,
 // which decides whether a journal write naming it must be durable
-// (ADR-20261021120000). Files on disk do: layer clones, materialised
+// (ADR-20261024135625). Files on disk do: layer clones, materialised
 // snapshot copies and jail directories (kept durable even though production
 // jails are on tmpfs). So does a bind whose read permission vmmd widens on its
 // source file, because the widened mode stays on disk until the last owner
@@ -250,6 +250,40 @@ func (j *ResourceJournal) checkpointAsset(instance, path string, file resourceFi
 		return j.persist(r, r.Assets[i].Kind != "bind" && r.Assets[i].outlivesReboot())
 	}
 	return errors.New("resource checkpoint requires asset intent")
+}
+
+// reanchorNamespace records that an adopting vmmd re-created a network
+// namespace binding in its own mount namespace (adoption ADR §2). The
+// namespace itself must be the recorded one; its creator context and mount
+// checkpoint become this vmmd's.
+func (j *ResourceJournal) reanchorNamespace(instance string, anchored resourceAsset) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed {
+		return errResourceJournalClosed
+	}
+	r, ok := j.recordForInstance(instance)
+	if !ok {
+		return errors.New("namespace re-anchor requires a recorded guest")
+	}
+	r.Assets = cloneResourceAssets(r.Assets)
+	for i := range r.Assets {
+		a := &r.Assets[i]
+		if a.Kind != "netns" || a.Path != anchored.Path {
+			continue
+		}
+		if a.File == nil || anchored.File == nil || *a.File != *anchored.File {
+			return errors.New("re-anchored namespace differs from the recorded one")
+		}
+		a.Namespace, a.Mount = anchored.Namespace, anchored.Mount
+		if err := r.validate(); err != nil {
+			return err
+		}
+		// Durable although a namespace does not outlive a reboot: re-anchoring
+		// runs once per adoption, off the wake path.
+		return j.persist(r, true)
+	}
+	return errors.New("namespace re-anchor requires a recorded namespace")
 }
 
 func (j *ResourceJournal) retireAsset(instance, path string) error {

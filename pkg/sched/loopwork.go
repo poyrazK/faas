@@ -61,8 +61,11 @@ const (
 	workReaper               workKind = "reaper"
 	workRehearsalFault       workKind = "rehearsal_worker_fault"
 	workRehearsalSuspend     workKind = "rehearsal_suspend_resume"
+	workRehearsalSweep       workKind = "rehearsal_sweep"
 	workWorkerRecovery       workKind = "worker_recovery"
 	workWorkerRecoverySweep  workKind = "worker_recovery_sweep"
+	// workAdoptionReport applies restarted vmmds' adoption reports.
+	workAdoptionReport workKind = "adoption_report"
 )
 
 // workKinds is the iteration order for metric pre-instantiation.
@@ -70,7 +73,7 @@ var workKinds = []workKind{
 	workServiceRecovery, workServiceRecoverySweep,
 	workPrime, workRestart, workAppReconcile, workDeploymentReconcile, workJobCancel, workJobDispatch, workPrimeRecovery,
 	workWorkflowDispatch, workWorkflowSchedules, workTriggerDispatch, workQueuePushDispatch, workEventFanout,
-	workReaper, workRehearsalFault, workRehearsalSuspend, workWorkerRecovery, workWorkerRecoverySweep,
+	workReaper, workAdoptionReport, workRehearsalFault, workRehearsalSuspend, workRehearsalSweep, workWorkerRecovery, workWorkerRecoverySweep,
 }
 
 // overflowPolicy decides what submit does when a kind has no free slot.
@@ -132,6 +135,12 @@ var workSpecs = map[workKind]workSpec{
 	workReaper:           {slots: 1, overflow: overflowDrop},
 	workRehearsalFault:   {slots: 1, overflow: overflowDrop},
 	workRehearsalSuspend: {slots: 1, overflow: overflowDrop},
+	// The rehearsal listing sweep runs off the loop goroutine (ADR-20261019120000);
+	// its durable rows make the next trigger tick a safe retry.
+	workRehearsalSweep: {slots: 1, overflow: overflowDrop},
+	// One pass at a time; a tick during a pass coalesces, and an
+	// unapplied report is fetched again on the next tick.
+	workAdoptionReport: {slots: 1, overflow: overflowDrop},
 }
 
 // workPool runs bounded, coalesced, off-loop tasks for Loop.

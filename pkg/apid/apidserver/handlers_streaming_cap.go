@@ -111,12 +111,13 @@ type streamingCapUpstreamResponse struct {
 // probe remains useful during a rolling restart or on a single-box install
 // where the control listener is not configured.
 func (s *server) resolveStreamingCapOverride(r *http.Request, slug, appID, host, requestPath, method string) (int64, bool) {
-	if s.gatewaydControlURL == "" {
+	controlURL := s.gatewayControlURL(r.Context())
+	if controlURL == "" {
 		return 0, false
 	}
 	dialCtx, cancel := context.WithTimeout(r.Context(), routesDialTimeout)
 	defer cancel()
-	endpoint, err := url.JoinPath(s.gatewaydControlURL, "v1", "internal", "apps", slug, "streaming-cap")
+	endpoint, err := url.JoinPath(controlURL, "v1", "internal", "apps", slug, "streaming-cap")
 	if err != nil {
 		return 0, false
 	}

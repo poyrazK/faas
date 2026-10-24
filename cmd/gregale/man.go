@@ -197,6 +197,9 @@ func renderManCommand(w io.Writer, c cliCommand) {
 				if len(s.Examples) > 0 {
 					writeManExamples(w, s.Examples)
 				}
+				for _, note := range s.Notes {
+					writeRoffParagraph(w, note)
+				}
 				for _, child := range s.Subcommands {
 					_, _ = fmt.Fprintln(w, ".RS")
 					_, _ = fmt.Fprintln(w, ".TP")
@@ -205,6 +208,9 @@ func renderManCommand(w io.Writer, c cliCommand) {
 					writeRoffParagraph(w, mdSubSynopsis(c, []string{s.Name, child.Name}, child.Positionals, child.Flags))
 					if len(child.Examples) > 0 {
 						writeManExamples(w, child.Examples)
+					}
+					for _, note := range child.Notes {
+						writeRoffParagraph(w, note)
 					}
 					_, _ = fmt.Fprintln(w, ".RE")
 				}
@@ -238,6 +244,17 @@ func renderManCommand(w io.Writer, c cliCommand) {
 		})
 	}
 	manSection(w, "SEE ALSO", func(w io.Writer) {
+		related := cliSeeAlso(c.Name, customerCliCommands())
+		for i, command := range related {
+			separator := ","
+			if i == len(related)-1 {
+				separator = ""
+			}
+			_, _ = fmt.Fprintf(w, ".BR gregale-%s (1)%s\n", command.Name, separator)
+		}
+		if len(related) > 0 {
+			_, _ = fmt.Fprintln(w, ".PP")
+		}
 		_, _ = fmt.Fprintf(w, ".UR %s\n", cliDocsURL)
 		_, _ = fmt.Fprintf(w, "gregale %s (docs)\n", c.Name)
 		_, _ = fmt.Fprintln(w, ".UE")
@@ -406,12 +423,12 @@ func escapeRoff(s string) string {
 }
 
 // suggestCommand returns the closest cliCommand.Name to query by
-// Levenshtein distance, but only when exactly one candidate is at
-// the minimum distance AND that distance is ≤2. Ties and distances
-// above the threshold return ("", false) so the caller falls
-// through to a plain "unknown command" message — ambiguous
-// suggestions are worse than none (a user might pick the wrong
-// one of two equally-close candidates). The threshold of 2 covers
+// editDistance (a swap of adjacent letters is one edit), but only
+// when exactly one candidate is at the minimum distance AND that
+// distance is ≤2. Ties and distances above the threshold return
+// ("", false) so the caller falls through to a plain "unknown
+// command" message — ambiguous suggestions are worse than none (a
+// user might pick the wrong one of two equally-close candidates). The threshold of 2 covers
 // the common typos (`aps`, `appss`, `appsss`) without suggesting
 // across unrelated commands (`apps` → `mfa` is distance 4).
 func suggestCommand(query string) (string, bool) {
@@ -423,7 +440,7 @@ func suggestCommand(query string) (string, bool) {
 		if !cliCommandAvailable(c.Name) {
 			continue
 		}
-		d := levenshtein(query, c.Name)
+		d := editDistance(query, c.Name)
 		switch {
 		case d < bestDist:
 			bestName, bestDist, tied = c.Name, d, false
@@ -440,7 +457,7 @@ func suggestCommand(query string) (string, bool) {
 }
 
 // suggestSubcommand is the per-top-level twin of suggestCommand:
-// walks c.Subcommands and returns the closest-by-Levenshtein name
+// walks c.Subcommands and returns the closest-by-editDistance name
 // when exactly one candidate is at the minimum distance ≤2. Ties
 // and over-threshold distances return ("", false) so the caller
 // falls through to a plain "unknown subcommand" message — same
@@ -454,7 +471,7 @@ func suggestSubcommand(query string, c cliCommand) (string, bool) {
 	bestDist := maxDist + 1
 	tied := false
 	for _, s := range c.Subcommands {
-		d := levenshtein(query, s.Name)
+		d := editDistance(query, s.Name)
 		switch {
 		case d < bestDist:
 			bestName, bestDist, tied = s.Name, d, false
@@ -482,14 +499,16 @@ func maybeSuggestSub(sug string) {
 	_, _ = fmt.Fprintf(os.Stderr, "  Did you mean %q?\n", sug)
 }
 
-// levenshtein computes the edit distance between a and b using
-// the classic dynamic-programming algorithm: O(len(a)*len(b))
-// time and space. We use a single-row rolling buffer (size
-// len(b)+1) to keep allocations small — the caller is the man
-// dispatcher, which fires at most once per `gregale man` invocation,
-// so the work is tiny. No third-party dependency: a real dep
-// would be 5x the code and one more thing to vet.
-func levenshtein(a, b string) int {
+// editDistance is the optimal string alignment (restricted
+// Damerau-Levenshtein) distance between a and b: an insertion,
+// deletion, substitution, or swap of two adjacent bytes each costs
+// one. Swaps are the most common typing slip (`deplyo`, `--naem`);
+// plain Levenshtein charges them two edits, which is over every
+// suggestion threshold for short names. It compares bytes, which is
+// enough for ASCII command, flag, and key names. Three rolling rows
+// keep allocations small. No third-party dependency: a real dep would
+// be 5x the code and one more thing to vet.
+func editDistance(a, b string) int {
 	la, lb := len(a), len(b)
 	if la == 0 {
 		return lb
@@ -497,8 +516,8 @@ func levenshtein(a, b string) int {
 	if lb == 0 {
 		return la
 	}
-	// prev is the row for i-1; cur is the row for i. We allocate
-	// once and reuse across iterations.
+	// before is row i-2, prev is row i-1, cur is row i.
+	before := make([]int, lb+1)
 	prev := make([]int, lb+1)
 	cur := make([]int, lb+1)
 	for j := 0; j <= lb; j++ {
@@ -511,26 +530,12 @@ func levenshtein(a, b string) int {
 			if a[i-1] == b[j-1] {
 				cost = 0
 			}
-			del := prev[j] + 1
-			ins := cur[j-1] + 1
-			sub := prev[j-1] + cost
-			cur[j] = min3(del, ins, sub)
+			cur[j] = min(prev[j]+1, cur[j-1]+1, prev[j-1]+cost)
+			if i > 1 && j > 1 && a[i-1] == b[j-2] && a[i-2] == b[j-1] {
+				cur[j] = min(cur[j], before[j-2]+1)
+			}
 		}
-		prev, cur = cur, prev
+		before, prev, cur = prev, cur, before
 	}
 	return prev[lb]
-}
-
-// min3 returns the smallest of three ints. Inlined because Go 1.23
-// doesn't have a stdlib helper, and the function is hot (one call
-// per cell of the DP table).
-func min3(a, b, c int) int {
-	m := a
-	if b < m {
-		m = b
-	}
-	if c < m {
-		m = c
-	}
-	return m
 }

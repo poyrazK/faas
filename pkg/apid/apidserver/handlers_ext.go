@@ -25,6 +25,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/orgbilling"
 	"github.com/onebox-faas/faas/pkg/apid/release"
@@ -147,6 +148,24 @@ func validateIdleTimeout(v int, limits api.Limits) *api.Problem {
 		return api.ErrValidation(fmt.Sprintf("idle_timeout_s must be 0 (plan default) or %d..%d; got %d", floor, ceiling, v))
 	}
 	return nil
+}
+
+// validatePerInstanceConcurrency gates and bounds
+// scaling_policy.per_instance_concurrency (ADR-20261022203523). Until the
+// account is listed in FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS the field is
+// answered exactly like the unknown field it is to an N-1 apid. Keeping the
+// stored value, or clearing it to 0, is always allowed, so a read-modify-write
+// of another policy field never fails for an account that was delisted.
+func validatePerInstanceConcurrency(requested int, acct state.Account, app state.App) *api.Problem {
+	stored := 0
+	if app.ScalingPolicy != nil {
+		stored = app.ScalingPolicy.PerInstanceConcurrency
+	}
+	if requested != 0 && requested != stored && !api.PerInstanceConcurrencyEnabled(acct.ID) {
+		return api.NewProblem(http.StatusUnprocessableEntity, api.CodeValidation,
+			"Invalid scaling policy", "unknown field(s): per_instance_concurrency")
+	}
+	return api.ValidatePerInstanceConcurrency(acct.Plan, requested)
 }
 
 func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api.Limits, app state.App) *api.Problem {
@@ -788,6 +807,9 @@ func validateUpdateApp(req *api.UpdateAppRequest, acct state.Account, limits api
 				"Invalid scaling policy",
 				fmt.Sprintf("wake_max_queue_wait_seconds must be between 0 and %d", api.WakeQueueMaxWaitSeconds))
 		}
+		if problem := validatePerInstanceConcurrency(sp.PerInstanceConcurrency, acct, app); problem != nil {
+			return problem
+		}
 		// Worker-class carve-out (PR-D): live here in the validator
 		// (rather than at the call site in updateApp) so an
 		// unknown-field error surfaces before the workload-class
@@ -979,9 +1001,9 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, environmentProblem)
 		return
 	}
-	var req api.UpdateAppRequest
-	if err := decodeJSON(r, &req); err != nil {
-		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", err.Error()))
+	req, decodeErr := httpkit.DecodeUpdateAppRequest(r)
+	if decodeErr != nil {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Bad request", decodeErr.Error()))
 		return
 	}
 	if problem := validateDeploySettingsCondition(req, environment); problem != nil {
@@ -1085,7 +1107,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		api.WriteProblem(w, api.ErrCapacity("CPU profiling is unavailable on this installation"))
 		return
 	}
-	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingEnabled {
+	if req.Tracing != nil && req.Tracing.Enabled && !s.guestTracingFor(acct) {
 		api.WriteProblem(w, api.ErrCapacity("request tracing is unavailable on this installation"))
 		return
 	}
@@ -2178,6 +2200,13 @@ func (s *server) updateDeploymentTraffic(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInvalidTrafficPercent(req.TrafficPercent))
 		return
 	}
+	// ADR-20261020085706: a release waiting for approval cannot gain traffic.
+	if req.TrafficPercent > d.TrafficPercent {
+		if p := s.releaseApprovalTrafficProblem(r, app, d); p != nil {
+			api.WriteProblem(w, p)
+			return
+		}
+	}
 	guardCtx, problem := trafficguard.Prepare(r.Context(), acct.ID, app.ID, &req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
@@ -2374,38 +2403,79 @@ func (s *server) zeroTrafficRollbackCandidates(ctx context.Context, appID string
 	return out
 }
 
-// trafficSplitEarlierRelease reports whether more than one deployment of a
+// plainRollbackScope picks the environment a plain rollback restores. The
+// request names no environment, so it is production whenever production
+// serves, otherwise the app's only serving environment. A rollback chosen
+// across environments rolled back staging while the bad production release
+// kept serving. ok is false when several non-production environments serve
+// and production does not: the caller must name the target.
+func (s *server) plainRollbackScope(ctx context.Context, appID string) (string, bool) {
+	rows, err := s.store.LiveDeployments(ctx, appID)
+	if err != nil {
+		return state.DefaultEnvScope, true
+	}
+	production := state.ProductionRoutingDeployments(rows)
+	for _, d := range production {
+		if d.TrafficPercent > 0 {
+			return d.Scope, true
+		}
+	}
+	others := map[string]bool{}
+	for _, d := range rows {
+		if d.TrafficPercent > 0 && !state.IsProductionScope(d.Scope) {
+			others[d.Scope] = true
+		}
+	}
+	switch {
+	case len(others) == 1:
+		for scope := range others {
+			return scope, true
+		}
+	case len(others) > 1:
+		return "", false
+	case len(production) > 0:
+		return production[0].Scope, true
+	}
+	return state.DefaultEnvScope, true
+}
+
+func rollbackEnvironmentAmbiguousProblem(appSlug string) *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
+		"More than one environment serves this app",
+		fmt.Sprintf("the app serves in several environments and none is production, so a plain rollback cannot tell which one to restore. Name the release: gregale rollback %s --to <deployment|vN>", appSlug)).
+		WithDocs("https://gregale.dev/docs/deploys#rollback")
+}
+
+// trafficSplitEarlierRelease reports whether more than one deployment of the
 // scope serves a share of traffic, and the oldest of them as a retypeable
 // ref. A plain rollback then has no single previous release: the latest
 // superseded row is one nobody serves, so `rollback` re-activated a release
 // the customer had rolled away from while the split stayed in place (H10-10).
-func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID string) (string, bool) {
-	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, 50, 0)
+// A split in another environment does not block this one's rollback.
+func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID, scope string) (string, bool) {
+	deployments, err := s.store.LiveDeployments(ctx, appID)
 	if err != nil {
 		return "", false
 	}
-	serving := map[string][]state.Deployment{}
+	var rows []state.Deployment
 	for _, d := range deployments {
-		if d.Status == state.DeployLive && d.TrafficPercent > 0 && d.TrafficPercent < 100 {
-			serving[d.Scope] = append(serving[d.Scope], d)
+		if d.Status == state.DeployLive && d.TrafficPercent > 0 && d.TrafficPercent < 100 && recoveryScope(d.Scope) == recoveryScope(scope) {
+			rows = append(rows, d)
 		}
 	}
-	for _, rows := range serving {
-		if len(rows) < 2 {
-			continue
-		}
-		earliest := rows[0]
-		for _, d := range rows[1:] {
-			if d.CreatedAt.Before(earliest.CreatedAt) {
-				earliest = d
-			}
-		}
-		if earliest.Revision > 0 {
-			return fmt.Sprintf("v%d", earliest.Revision), true
-		}
-		return earliest.ID, true
+	if len(rows) < 2 {
+		return "", false
 	}
-	return "", false
+	earliest := rows[0]
+	for _, d := range rows[1:] {
+		if d.CreatedAt.Before(earliest.CreatedAt) {
+			earliest = d
+		}
+	}
+	if earliest.Revision > 0 {
+		return fmt.Sprintf("v%d", earliest.Revision), true
+	}
+	return earliest.ID, true
 }
 
 func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
@@ -2468,10 +2538,14 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 			}
 		}
 	} else {
-		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID); split {
+		scope, ok := s.plainRollbackScope(ctx, app.ID)
+		if !ok {
+			return state.Deployment{}, nil, rollbackEnvironmentAmbiguousProblem(app.Slug)
+		}
+		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID, scope); split {
 			return state.Deployment{}, nil, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
 		}
-		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
+		target, err = s.store.LatestSupersededDeployment(ctx, app.ID, scope)
 		if err != nil {
 			return state.Deployment{}, nil, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}
@@ -3118,6 +3192,24 @@ func (s *server) listInstances(w http.ResponseWriter, r *http.Request, acct stat
 
 // --- custom domains --------------------------------------------------------
 
+// domainOutsideForeignWildcard refuses a domain below another account's
+// verified wildcard (state.ForeignVerifiedWildcard) and reports whether the
+// create may continue.
+func (s *server) domainOutsideForeignWildcard(ctx context.Context, w http.ResponseWriter, domain, accountID string) bool {
+	wildcard, err := state.ForeignVerifiedWildcard(ctx, s.store, domain, accountID)
+	if err != nil {
+		s.log.Warn("create domain: wildcard ownership check failed", "err", err)
+		api.WriteProblem(w, api.ErrCapacity("could not check wildcard-domain ownership"))
+		return false
+	}
+	if wildcard != "" {
+		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain taken",
+			fmt.Sprintf("%s is below the verified wildcard domain %s, which belongs to another account", domain, wildcard)))
+		return false
+	}
+	return true
+}
+
 func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	var req api.CreateCustomDomainRequest
 	if err := decodeJSON(r, &req); err != nil {
@@ -3143,6 +3235,9 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	}
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such app")
+		return
+	}
+	if !s.domainOutsideForeignWildcard(r.Context(), w, domain, acct.ID) {
 		return
 	}
 	environmentID := ""
@@ -3231,6 +3326,14 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 	} else {
 		d, err = createDomain(r.Context())
 	}
+	if errors.Is(err, state.ErrConflict) {
+		// Another account's unverified claim yields to DNS proof
+		// (ADR-20261020090500). The takeover records its activity below,
+		// outside the create's activity transaction.
+		if d, err = s.takeOverDomainClaim(r.Context(), acct, app, domain, environmentID, perApp, perAccount, err); err == nil {
+			activityOutboxID, activityMutationAtomic = 0, false
+		}
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrCustomDomainQuotaExceeded) {
 			api.WriteProblem(w, api.NewProblem(http.StatusTooManyRequests, api.CodeQuotaExhausted, "Custom domain quota reached", err.Error()))
@@ -3241,8 +3344,12 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
-				"Domain taken", err.Error()))
+			problem := api.NewProblem(http.StatusConflict, api.CodeValidation, "Domain taken", err.Error())
+			var pending *claimPendingError
+			if errors.As(err, &pending) {
+				problem.Hint = pending.hint()
+			}
+			api.WriteProblem(w, problem)
 			return
 		}
 		api.WriteProblem(w, api.ErrCapacity("could not create domain"))
@@ -5983,6 +6090,7 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 	if len(d.OverrideCmd) > 0 {
 		resp.OverrideCmd = d.OverrideCmd
 	}
+	resp.ScheduledRelease = s.deploymentScheduleView(parent, d, app)
 	if len(d.OverrideEnv) > 0 {
 		// Decode the jsonb map to surface the KEYS only. Values are
 		// never echoed (ADR-053 §Decision 4). Stable order: sorted
@@ -7558,13 +7666,8 @@ func (s *server) getBuildSbom(w http.ResponseWriter, r *http.Request, acct state
 		api.WriteProblem(w, prob)
 		return
 	}
-	var f io.ReadCloser
-	var err error
-	if s.sbomStorage != nil {
-		f, err = s.sbomStorage.Get(r.Context(), sbomKey)
-	} else if s.sbomRoot != "" {
-		f, err = os.Open(filepath.Join(s.sbomRoot, sbomKey)) //nolint:forbidigo // trusted root + validated database key; single-box compatibility fallback
-	} else {
+	f, err := s.openBuildSBOM(r.Context(), sbomKey)
+	if errors.Is(err, errSBOMStorageUnset) {
 		api.WriteProblem(w, api.ErrBuildSBOMUnavailable())
 		return
 	}
@@ -7604,11 +7707,36 @@ func (s *server) resolveSbomKey(r *http.Request, buildID string, acct state.Acco
 	if err != nil || prov.SBOMStorageKey == "" {
 		return "", api.ErrBuildSBOMUnavailable()
 	}
-	clean := filepath.Clean(prov.SBOMStorageKey)
-	if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "..") || clean == "." {
+	clean, ok := cleanSBOMKey(prov.SBOMStorageKey)
+	if !ok {
 		return "", api.ErrBuildSBOMUnavailable()
 	}
 	return clean, nil
+}
+
+// errSBOMStorageUnset means apid has neither SBOM storage nor a local root.
+var errSBOMStorageUnset = errors.New("apid: SBOM storage is not configured")
+
+// cleanSBOMKey validates a database SBOM key before any storage backend
+// sees it: relative, inside the root.
+func cleanSBOMKey(key string) (string, bool) {
+	clean := filepath.Clean(key)
+	if strings.HasPrefix(clean, "/") || strings.HasPrefix(clean, "..") || clean == "." {
+		return "", false
+	}
+	return clean, true
+}
+
+// openBuildSBOM opens a validated SBOM key from shared storage, or from the
+// local root on a single box.
+func (s *server) openBuildSBOM(ctx context.Context, key string) (io.ReadCloser, error) {
+	if s.sbomStorage != nil {
+		return s.sbomStorage.Get(ctx, key)
+	}
+	if s.sbomRoot != "" {
+		return os.Open(filepath.Join(s.sbomRoot, key)) //nolint:forbidigo // trusted root + validated database key; single-box compatibility fallback
+	}
+	return nil, errSBOMStorageUnset
 }
 
 // policyPtrFromReq converts the wire DTO `*api.ScalingPolicy` to the
@@ -7640,6 +7768,7 @@ func policyPtrFromReq(req *api.UpdateAppRequest) *state.ScalingPolicy {
 		MaxQueueDepth:           sp.MaxQueueDepth,
 		WakeMaxQueueDepth:       sp.WakeMaxQueueDepth,
 		WakeMaxQueueWaitSeconds: sp.WakeMaxQueueWaitSeconds,
+		PerInstanceConcurrency:  sp.PerInstanceConcurrency,
 	}
 	if sp.Target != nil {
 		out.Target = &state.ScalingTarget{

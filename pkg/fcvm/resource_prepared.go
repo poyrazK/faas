@@ -40,7 +40,7 @@ func (r resourceJournalRecord) validatePrepared() error {
 	}
 	p := r.Prepared
 	id, err := uuid.Parse(strings.TrimPrefix(p.Source, "prepared-"))
-	if err != nil || p.Source != "prepared-"+id.String() || (r.Version != 5 && r.Version != 6) || r.Lease.Networkless ||
+	if err != nil || p.Source != "prepared-"+id.String() || (r.Version != 5 && r.Version != 6 && r.Version != resourceAdoptionVersion) || r.Lease.Networkless ||
 		(p.Target != "" && (!restartResourceID(p.Target) || len(p.Target) > 64 || strings.HasPrefix(p.Target, "prepared-"))) ||
 		(r.Lease.Instance != p.Source && r.Lease.Instance != p.Target) {
 		return errors.New("invalid prepared network record identity")
@@ -48,7 +48,8 @@ func (r resourceJournalRecord) validatePrepared() error {
 	if r.Version == 5 && p.BootID != "" {
 		return errors.New("legacy prepared record cannot carry creator boot")
 	}
-	if r.Version == 6 {
+	// Version 7 adds the adoption block to version 6 and keeps its rules.
+	if r.Version == 6 || r.Version == resourceAdoptionVersion {
 		boot, err := uuid.Parse(p.BootID)
 		if err != nil || p.BootID != boot.String() {
 			return errors.New("prepared record requires canonical creator boot")
@@ -65,6 +66,9 @@ func (r resourceJournalRecord) validatePrepared() error {
 		}
 	}
 	if r.preparedSpare() {
+		if r.Version == resourceAdoptionVersion {
+			return errors.New("prepared spare cannot be a version-7 record")
+		}
 		if r.Lease != leaseForSlot(p.Source, r.Lease.Slot) || r.Process != nil || len(r.Assets) > 2 {
 			return errors.New("prepared spare cannot carry guest state")
 		}

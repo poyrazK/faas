@@ -83,10 +83,10 @@
     {{if .Data.Hosts}}
     <section class="card" id="host-coverage" aria-labelledby="host-coverage-heading">
       <h2 id="host-coverage-heading">Hosts</h2>
-      <p class="muted">Every hostname this app serves and how many enabled edge rules apply to it. Rules for "every app host" (match host <code>@app</code>) cover custom domains too, including ones added later.</p>
+      <p class="muted">Every hostname this app serves and how many enabled edge rules apply to it. Rules for "every app host" (match host <code>@app</code>) cover custom domains too, including ones added later. A companion that declares a port, and each public listener, is reachable from the internet at its own <code>&lt;app&gt;--&lt;name&gt;</code> hostname; a rule that names only the app's main hostname does not cover it.</p>
       <ul>
         {{range .Data.Hosts}}
-          <li><code>{{.Host}}</code>{{if .Custom}} <span class="muted">custom domain</span>{{end}} — {{if .Rules}}{{.Rules}} rule{{if ne .Rules 1}}s{{end}} apply{{else}}<strong>no edge rules apply</strong>{{end}}</li>
+          <li><code>{{.Host}}</code>{{if .Custom}} <span class="muted">custom domain</span>{{end}}{{if .PublicPort}} <span class="muted">public listener {{.Selector}}</span>{{else if .Selector}} <span class="muted">companion {{.Selector}}</span>{{end}} — {{if .Rules}}{{.Rules}} rule{{if ne .Rules 1}}s{{end}} apply{{else}}<strong>no edge rules apply</strong>{{end}}</li>
         {{end}}
       </ul>
     </section>
@@ -260,8 +260,11 @@
             {{if .Categories}}<p>Detections by category: {{range $i, $c := .Categories}}{{if $i}}, {{end}}{{$c.Name}} <strong>{{$c.Count}}</strong>{{end}}.</p>{{end}}
             {{if .TopRules}}<p>Top CRS rules: {{range $i, $c := .TopRules}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong>{{end}}. Exclude a false positive with <code>exclude_rule_ids</code>.</p>{{end}}
           {{end}}{{end}}
+          {{with .Penalty}}{{if or .Boxed .Rejected}}
+            <p>Penalty box: <strong>{{.Boxed}}</strong> clients boxed, <strong>{{.Rejected}}</strong> requests refused while boxed.</p>
+          {{end}}{{end}}
           {{with .Challenge}}{{if or .Issued .Solved .Rejected .Passed .Bypassed .Invalid}}
-            <p>Challenges: <strong>{{.Issued}}</strong> pages served, <strong>{{.Solved}}</strong> solved, <strong>{{.Rejected}}</strong> non-browser requests refused, <strong>{{.Passed}}</strong> let through on an earlier solve, <strong>{{.Bypassed}}</strong> verified API clients, <strong>{{.Invalid}}</strong> invalid solutions.</p>
+            <p>Challenges: <strong>{{.Issued}}</strong> pages served, <strong>{{.Solved}}</strong> solved, <strong>{{.Rejected}}</strong> non-browser requests refused, <strong>{{.Passed}}</strong> let through on an earlier solve, <strong>{{.Bypassed}}</strong> verified API clients, <strong>{{.Invalid}}</strong> invalid solutions.{{if .Raised}} <strong>{{.Raised}}</strong> pages were served at a difficulty raised under attack.{{end}}</p>
           {{end}}{{end}}
           <p class="muted">Get alerted on bursts with the <code>pre_auth_pressure</code>, <code>edge_validation_failures</code>, <code>edge_rejection_pressure</code>, and <code>edge_waf_detections</code> alert presets. CLI: <code>gregale edge-rules summary --app {{$.Data.App.Slug}} --range 24h</code>.</p>
         {{end}}
@@ -323,7 +326,7 @@
           <select name="rule"><option value="">all rules</option>{{range .Data.Rules}}<option value="{{.ID}}" {{if eq .ID $.Data.Events.Rule}}selected{{end}}>{{if .Name}}{{.Name}}{{else}}{{.Kind}} {{.MatchHost}}{{.MatchPath}}{{end}}</option>{{end}}</select>
         </label>
         <label>Outcome
-          <select name="outcome"><option value="">any</option><option value="matched" {{if eq .Data.Events.Outcome "matched"}}selected{{end}}>matched (enforced)</option><option value="logged" {{if eq .Data.Events.Outcome "logged"}}selected{{end}}>logged (log mode)</option><option value="detected" {{if eq .Data.Events.Outcome "detected"}}selected{{end}}>WAF detected (sampled)</option><option value="warned" {{if eq .Data.Events.Outcome "warned"}}selected{{end}}>WAF warned</option><option value="blocked" {{if eq .Data.Events.Outcome "blocked"}}selected{{end}}>WAF blocked</option></select>
+          <select name="outcome"><option value="">any</option><option value="matched" {{if eq .Data.Events.Outcome "matched"}}selected{{end}}>matched (enforced)</option><option value="logged" {{if eq .Data.Events.Outcome "logged"}}selected{{end}}>logged (log mode)</option><option value="detected" {{if eq .Data.Events.Outcome "detected"}}selected{{end}}>WAF detected (sampled)</option><option value="warned" {{if eq .Data.Events.Outcome "warned"}}selected{{end}}>WAF warned</option><option value="blocked" {{if eq .Data.Events.Outcome "blocked"}}selected{{end}}>WAF blocked</option><option value="challenged" {{if eq .Data.Events.Outcome "challenged"}}selected{{end}}>challenge page served</option><option value="rejected" {{if eq .Data.Events.Outcome "rejected"}}selected{{end}}>challenge: non-browser refused</option><option value="solved" {{if eq .Data.Events.Outcome "solved"}}selected{{end}}>challenge solved</option><option value="failed" {{if eq .Data.Events.Outcome "failed"}}selected{{end}}>challenge solution refused</option></select>
         </label>
         <label>Since
           <select name="since"><option value="1h" {{if eq .Data.Events.Since "1h"}}selected{{end}}>1h</option><option value="24h" {{if eq .Data.Events.Since "24h"}}selected{{end}}>24h</option><option value="72h" {{if eq .Data.Events.Since "72h"}}selected{{end}}>72h</option><option value="7d" {{if eq .Data.Events.Since "7d"}}selected{{end}}>7d</option></select>

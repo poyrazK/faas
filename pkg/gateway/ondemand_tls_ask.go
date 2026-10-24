@@ -85,6 +85,7 @@ type OnDemandTLSPolicy struct {
 	tokens   float64
 	refilled time.Time
 	unknown  map[string]time.Time // host → negative-cache expiry
+	known    map[string]time.Time // recently allowed host → bucket-bypass expiry
 }
 
 // NewOnDemandTLSPolicy builds the policy. appsDomain is the platform zone
@@ -128,13 +129,18 @@ func (p *OnDemandTLSPolicy) Decide(ctx context.Context, rawHost string) (bool, s
 	if decision, ok := p.admitLookup(host); !ok {
 		return false, decision
 	}
-	// An exact row wins over any wildcard, verified or not: an unverified
-	// exact reservation shadows the broader wildcard in routing too.
+	// A live exact row wins over any wildcard, verified or not: an unverified
+	// exact reservation shadows the broader wildcard in routing too. An
+	// expired claim reserves nothing and falls through, as it does in routing.
 	lookupCtx, cancel := context.WithTimeout(ctx, onDemandTLSLookupTimeout)
 	exact, err := p.store.DomainByName(lookupCtx, host)
 	cancel()
+	if err == nil && !exact.ClaimLive(p.now()) {
+		err = state.ErrNotFound
+	}
 	switch {
 	case err == nil && exact.Verified():
+		p.rememberKnown(host)
 		return true, OnDemandTLSAllowExact
 	case err == nil:
 		return false, OnDemandTLSDenyUnverified
@@ -178,6 +184,7 @@ func (p *OnDemandTLSPolicy) decideWildcard(ctx context.Context, host string) (bo
 			"wildcard", wildcard.Domain, "limit", api.OnDemandTLSWildcardNewHostsPerWeek)
 		return false, OnDemandTLSDenyBudget
 	}
+	p.rememberKnown(host)
 	return true, OnDemandTLSAllowWildcard
 }
 
@@ -207,8 +214,11 @@ func (p *OnDemandTLSPolicy) Handler() http.Handler {
 }
 
 // admitLookup decides whether host may cost store lookups: a recently
-// unknown host is denied from the negative cache, otherwise a token bucket
-// bounds lookups per second.
+// unknown host is denied from the negative cache, a recently allowed host
+// is admitted outside the bucket, and a token bucket bounds every other
+// lookup per second. The bucket is shared by every server name a client can
+// send, so without the known-host bypass a flood of random names denied
+// real domains their renewals and post-reload certificate loads.
 func (p *OnDemandTLSPolicy) admitLookup(host string) (string, bool) {
 	now := p.now()
 	p.mu.Lock()
@@ -218,6 +228,12 @@ func (p *OnDemandTLSPolicy) admitLookup(host string) (string, bool) {
 			return OnDemandTLSDenyUnknown, false
 		}
 		delete(p.unknown, host)
+	}
+	if until, ok := p.known[host]; ok {
+		if now.Before(until) {
+			return "", true
+		}
+		delete(p.known, host)
 	}
 	burst := float64(api.OnDemandTLSAskLookupBurst)
 	if p.refilled.IsZero() {
@@ -243,6 +259,19 @@ func (p *OnDemandTLSPolicy) rememberUnknown(host string) {
 		p.unknown = make(map[string]time.Time)
 	}
 	p.unknown[host] = p.now().Add(time.Duration(api.OnDemandTLSAskNegativeCacheSeconds) * time.Second)
+}
+
+// rememberKnown records a host the policy just allowed so its next lookups
+// skip the shared bucket. Only an allow decision adds a host, so a client
+// choosing server names cannot grow the set. Like the negative cache it is
+// dropped wholesale when full.
+func (p *OnDemandTLSPolicy) rememberKnown(host string) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	if p.known == nil || len(p.known) >= api.OnDemandTLSAskKnownHostEntries {
+		p.known = make(map[string]time.Time)
+	}
+	p.known[host] = p.now().Add(time.Duration(api.OnDemandTLSAskKnownHostSeconds) * time.Second)
 }
 
 func normalizeTLSHost(host string) string {

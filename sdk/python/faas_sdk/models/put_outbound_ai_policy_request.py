@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
-from typing import Any, TypeVar, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
@@ -11,6 +11,10 @@ from ..models.put_outbound_ai_policy_request_ai_provider import (
     check_put_outbound_ai_policy_request_ai_provider,
 )
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.outbound_ai_online_evaluation import OutboundAIOnlineEvaluation
+
 
 T = TypeVar("T", bound="PutOutboundAIPolicyRequest")
 
@@ -46,10 +50,26 @@ class PutOutboundAIPolicyRequest:
     conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
     marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1437). Requires ai_provider.
    """
+    trace_max_calls: int | Unset = UNSET
+    """Refuse a trace's call once the trace made this many calls, settled and in flight, with 429
+    outbound_budget_exhausted and X-Gregale-Outbound-Rejection trace_call_limit (ADR 20261020202035). Requires
+    ai_provider."""
+    trace_max_cost_millicents: int | Unset = UNSET
+    """Refuse a trace's call that would take the trace's cost past this, with trace_cost_limit (ADR
+    20261020202035). Requires ai_provider."""
+    trace_max_repeated_tool_calls: int | Unset = UNSET
+    """Refuse a trace's call once this many consecutive calls requested the same tools with the same arguments,
+    with trace_tool_loop: the agent is looping (ADR 20261020202035). Requires ai_provider."""
     user_daily_token_limit: int | None | Unset = UNSET
     """Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider."""
     user_daily_cost_limit_millicents: int | None | Unset = UNSET
     """Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider."""
+    online_evaluation: OutboundAIOnlineEvaluation | Unset = UNSET
+    """Score sample_percent of answered app calls from 1 to 5 with judge_model through judge_integration_id, one of
+    the account's AI integrations, metered under the caller evaluation (ADR 20261021171712)."""
+    quality_alerts: bool | Unset = UNSET
+    """Alert bound apps with outbound.ai_quality.drift when a model's quality signals move away from its previous 7
+    days (ADR 20261021171712). Requires ai_provider."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -80,6 +100,12 @@ class PutOutboundAIPolicyRequest:
 
         auto_prompt_cache = self.auto_prompt_cache
 
+        trace_max_calls = self.trace_max_calls
+
+        trace_max_cost_millicents = self.trace_max_cost_millicents
+
+        trace_max_repeated_tool_calls = self.trace_max_repeated_tool_calls
+
         user_daily_token_limit: int | None | Unset
         if isinstance(self.user_daily_token_limit, Unset):
             user_daily_token_limit = UNSET
@@ -91,6 +117,12 @@ class PutOutboundAIPolicyRequest:
             user_daily_cost_limit_millicents = UNSET
         else:
             user_daily_cost_limit_millicents = self.user_daily_cost_limit_millicents
+
+        online_evaluation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.online_evaluation, Unset):
+            online_evaluation = self.online_evaluation.to_dict()
+
+        quality_alerts = self.quality_alerts
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -114,15 +146,27 @@ class PutOutboundAIPolicyRequest:
             field_dict["allow_unmetered"] = allow_unmetered
         if auto_prompt_cache is not UNSET:
             field_dict["auto_prompt_cache"] = auto_prompt_cache
+        if trace_max_calls is not UNSET:
+            field_dict["trace_max_calls"] = trace_max_calls
+        if trace_max_cost_millicents is not UNSET:
+            field_dict["trace_max_cost_millicents"] = trace_max_cost_millicents
+        if trace_max_repeated_tool_calls is not UNSET:
+            field_dict["trace_max_repeated_tool_calls"] = trace_max_repeated_tool_calls
         if user_daily_token_limit is not UNSET:
             field_dict["user_daily_token_limit"] = user_daily_token_limit
         if user_daily_cost_limit_millicents is not UNSET:
             field_dict["user_daily_cost_limit_millicents"] = user_daily_cost_limit_millicents
+        if online_evaluation is not UNSET:
+            field_dict["online_evaluation"] = online_evaluation
+        if quality_alerts is not UNSET:
+            field_dict["quality_alerts"] = quality_alerts
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.outbound_ai_online_evaluation import OutboundAIOnlineEvaluation
+
         d = dict(src_dict)
         ai_provider = check_put_outbound_ai_policy_request_ai_provider(d.pop("ai_provider"))
 
@@ -163,6 +207,12 @@ class PutOutboundAIPolicyRequest:
 
         auto_prompt_cache = d.pop("auto_prompt_cache", UNSET)
 
+        trace_max_calls = d.pop("trace_max_calls", UNSET)
+
+        trace_max_cost_millicents = d.pop("trace_max_cost_millicents", UNSET)
+
+        trace_max_repeated_tool_calls = d.pop("trace_max_repeated_tool_calls", UNSET)
+
         def _parse_user_daily_token_limit(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -183,6 +233,15 @@ class PutOutboundAIPolicyRequest:
             d.pop("user_daily_cost_limit_millicents", UNSET)
         )
 
+        _online_evaluation = d.pop("online_evaluation", UNSET)
+        online_evaluation: OutboundAIOnlineEvaluation | Unset
+        if isinstance(_online_evaluation, Unset):
+            online_evaluation = UNSET
+        else:
+            online_evaluation = OutboundAIOnlineEvaluation.from_dict(_online_evaluation)
+
+        quality_alerts = d.pop("quality_alerts", UNSET)
+
         put_outbound_ai_policy_request = cls(
             ai_provider=ai_provider,
             daily_token_limit=daily_token_limit,
@@ -193,8 +252,13 @@ class PutOutboundAIPolicyRequest:
             log_export=log_export,
             allow_unmetered=allow_unmetered,
             auto_prompt_cache=auto_prompt_cache,
+            trace_max_calls=trace_max_calls,
+            trace_max_cost_millicents=trace_max_cost_millicents,
+            trace_max_repeated_tool_calls=trace_max_repeated_tool_calls,
             user_daily_token_limit=user_daily_token_limit,
             user_daily_cost_limit_millicents=user_daily_cost_limit_millicents,
+            online_evaluation=online_evaluation,
+            quality_alerts=quality_alerts,
         )
 
         put_outbound_ai_policy_request.additional_properties = d

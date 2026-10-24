@@ -61,7 +61,7 @@ func TestAppsMaintenanceMode_E2E_PatchTrueReturns503(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-maintenance-mode.apps.test.example"
+	synthHost := "edgectl-maintenance-mode.edge-e2e.example"
 	accountID := accountIDFromKey(t, context.Background(), pool, key)
 
 	// Precondition: warm the gateway's apps cache by hitting the host
@@ -165,7 +165,7 @@ func TestAppsMaintenanceMode_E2E_CoarseGateBeatsEdgeRule(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-coarse-beats-fine.apps.test.example"
+	synthHost := "edgectl-coarse-beats-fine.edge-e2e.example"
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
 

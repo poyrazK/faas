@@ -1,6 +1,6 @@
 # ADR-20261019100333: Paddle invoices sent by Paddle
 
-- **Status:** accepted
+- **Status:** accepted; amended by ADR-20261020120000 amendment 1 (the address is the newest created, not the most recently updated)
 - **Date:** 2026-10-19
 - **Decision:** A Paddle billing connection (ADR-1507) can set `collection: send`. Paddle then emails the exported invoice to the customer and collects it, as `send` does for Stripe (ADR-1311).
   - **Billing.** The export still creates a manually collected draft transaction, now with the connection's `days_until_due` as payment terms. It then reads the customer's most recently updated active address and patches the transaction to `billed` with it, after which Paddle numbers the invoice and emails it.

@@ -121,7 +121,13 @@ func (s *server) autoAdvanceFeatureFlagRollout(ctx context.Context, candidate st
 		}
 		return err
 	}
-	if !s.platformFlagEnabled(platformflags.CustomerFlags, account) {
+	// Decide as the project's organization, as management and runtime reads
+	// do (ADR 20261021080640); a project lookup is fine in a worker.
+	subject := platformflags.Subject{AccountID: account.ID, Plan: string(account.Plan)}
+	if project, err := s.store.ProjectByID(ctx, candidate.Scope.ProjectID); err == nil {
+		subject.OrgID = project.OrgID
+	}
+	if !s.platformFlagFor(platformflags.CustomerFlags, subject) {
 		return nil
 	}
 	limits := api.MustLimitsFor(account.Plan)

@@ -1,33 +1,39 @@
 # hello-go
 
-A minimal stdlib-only HTTP handler for gregale.
+A minimal Go HTTP app for Gregale, using only the standard library. `GET /`
+returns a JSON greeting and `GET /healthz` returns `{"ok":true}`.
 
-Gregale supplies a minimal `go.mod` for this template with `go 1.26.9`.
-`gregale init` writes it into your working copy; a direct template deploy
-includes the same module in the upload archive.
+The template includes a minimal `go.mod` with `go 1.26.10`.
 
 ## Deploy
 
-```
-gregale deploy --template hello-go --name <slug>
-```
-
-The CLI detects `main.go` and selects the Go 1.26.9 builder.
-
-## Try it
+From this directory:
 
 ```
-gregale open <slug>      # browser
+gregale start
 ```
+
+Start signs you in if needed, shows the app name and settings for review,
+deploys after you confirm, and tests the first response. Gregale detects
+`main.go` and builds with Go 1.26.10.
 
 ## Edit and re-deploy
 
-`--template` creates a fresh copy on every run, so use an initialized
-directory when you want to keep edits:
+Edit `main.go`, then run `gregale start` again from this directory. It
+offers to update the same app and tests the new response. For scripts,
+`gregale deploy` updates the same app without prompts.
+
+## Try it
+
+Use the app name (slug) that Start showed:
 
 ```
-gregale init --template hello-go --path hello-go
-cd hello-go
-# edit main.go, then:
-gregale deploy --name <slug>
+gregale open <slug>             # browser
+gregale logs <slug> --follow    # app logs
+```
+
+## Run it locally
+
+```
+go run .                 # http://localhost:8080
 ```

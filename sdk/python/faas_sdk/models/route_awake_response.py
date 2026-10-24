@@ -39,10 +39,12 @@ class RouteAwakeResponse:
     wakes: int
     """Cold boots in the window."""
     unattributed_seconds: int
-    """Awake time no recorded request, probe or prewarm explains: minimum instances, queue, cron and waitUntil
-    work, probes older than a day, or telemetry the plan's rate cap dropped."""
+    """Awake time no recorded request, probe, prewarm or delivery explains: minimum instances, probes older than a
+    day, deliveries already pruned by result retention, or telemetry the plan's rate cap dropped."""
     sources: list[RouteAwakeSource]
-    """Awake time credited to causes other than customer requests, for minutes no request explains (ADR-1199)."""
+    """Awake time credited to causes other than customer requests, for minutes no request explains: route probes
+    and prewarms (ADR-1199), and cron, queue and other deliveries schedd made to the app, per cron job and per queue
+    (ADR-20261022184757)."""
     min_instances: int
     """The app's current minimum instance count; above zero the app never parks, so unattributed time is expected."""
     other_routes_seconds: int
@@ -50,6 +52,10 @@ class RouteAwakeResponse:
     routes_limit: int
     routes: list[RouteAwakeRoute]
     window_clamped: bool | Unset = UNSET
+    wait_until_timeout_seconds: int | Unset = UNSET
+    """The plan's waitUntil task timeout when the plan enables waitUntil. An instance parks no earlier than the
+    later of the idle timeout and its last waitUntil task, so a request keeps the app awake for the longer of the
+    two (ADR-20261022184757)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -93,6 +99,8 @@ class RouteAwakeResponse:
 
         window_clamped = self.window_clamped
 
+        wait_until_timeout_seconds = self.wait_until_timeout_seconds
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -117,6 +125,8 @@ class RouteAwakeResponse:
         )
         if window_clamped is not UNSET:
             field_dict["window_clamped"] = window_clamped
+        if wait_until_timeout_seconds is not UNSET:
+            field_dict["wait_until_timeout_seconds"] = wait_until_timeout_seconds
 
         return field_dict
 
@@ -170,6 +180,8 @@ class RouteAwakeResponse:
 
         window_clamped = d.pop("window_clamped", UNSET)
 
+        wait_until_timeout_seconds = d.pop("wait_until_timeout_seconds", UNSET)
+
         route_awake_response = cls(
             slug=slug,
             from_=from_,
@@ -188,6 +200,7 @@ class RouteAwakeResponse:
             routes_limit=routes_limit,
             routes=routes,
             window_clamped=window_clamped,
+            wait_until_timeout_seconds=wait_until_timeout_seconds,
         )
 
         route_awake_response.additional_properties = d

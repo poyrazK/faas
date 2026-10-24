@@ -53,10 +53,10 @@ jobs:
       GOMEMLIMIT: 2GiB
       GOMAXPROCS: 2
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: ${{ github.event_name != 'pull_request' }}
@@ -65,7 +65,7 @@ jobs:
       # evicted ci-light's main families, so light jobs compiled cold.
       - name: restore Go cache from main (pull requests)
         if: github.event_name == 'pull_request'
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -73,12 +73,12 @@ jobs:
           key: setup-go-${{ runner.os }}-x64-ubuntu24-go-pr-restore-only
           restore-keys: |
             setup-go-${{ runner.os }}-x64-ubuntu24-go-
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
       - name: Verify release-candidate artifacts, installation, rollouts and RLS
         run: bash scripts/test-data-api-packaging.sh --out-dir "$RUNNER_TEMP/data-api-bundle"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-data-api-${{ github.sha }}
           path: ${{ runner.temp }}/data-api-bundle/
@@ -109,14 +109,14 @@ jobs:
       DATA_API_POSTGREST_BIN: /tmp/gregale-postgrest
       DATA_API_BROWSER_REQUIRED: "1"
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       # Restore-only: read main's non-race `checks` Go cache instead of letting
       # setup-go save a ~0.8 GB entry per pull-request ref, which evicted main's
       # CI cache families from the 10 GB repository budget.
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + module cache from main
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -125,11 +125,11 @@ jobs:
           restore-keys: |
             go-checks-${{ runner.os }}-${{ hashFiles('go.sum') }}-
             go-checks-${{ runner.os }}-
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false  # restored from main above
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: "22"
       - name: Download the checksum-pinned PostgREST runtime
@@ -149,7 +149,7 @@ jobs:
         run: make data-api-acceptance
       - name: Retain redacted local load and recovery evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-data-api-load-${{ github.sha }}
           path: ${{ runner.temp }}/data-api-load-report.json

@@ -9,9 +9,17 @@ instance parks and the request restores from the deployment's snapshot
 requests, except `FaasQuietResumeErrors`.
 
 Dashboard: **faas frozen tier and quiet pause (ADR-1151)**
-(`deploy/grafana/frozen-tier.json`). Switches: schedd `frozen_tier` and
-`frozen_tier_apps` (`FAAS_FROZEN_TIER`, `FAAS_FROZEN_TIER_APPS`), vmmd
-`quiet_pause` (`FAAS_QUIET_PAUSE`); all off by default.
+(`deploy/grafana/frozen-tier.json`). Switches: schedd `frozen_tier`,
+`frozen_tier_apps` and `frozen_tier_workers` (`FAAS_FROZEN_TIER`,
+`FAAS_FROZEN_TIER_APPS`, `FAAS_FROZEN_TIER_WORKERS`), schedd
+`frozen_tier_early_freeze_after_s` (`FAAS_FROZEN_TIER_EARLY_FREEZE_AFTER_S`,
+ADR-20261021215353: freeze `between_requests` instances that many seconds
+after their last request; `schedd_frozen_total{outcome="frozen_early"}`),
+vmmd `quiet_pause` (`FAAS_QUIET_PAUSE`); all off by default. Frozen workers
+(ADR-20261019103000) stop rather than park, so their frozen parks
+(`reason`, including `slot_needed`) end in a cold boot on the next demand. To
+back out early freeze, set it to 0 on the node's schedd; instances already
+frozen park on their usual TTL.
 
 ```sh
 curl -fsS http://127.0.0.1:9103/metrics | grep -E '^schedd_frozen_'

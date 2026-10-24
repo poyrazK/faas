@@ -41,6 +41,15 @@ func EvaluateFinancialBudget(report api.FinancialCostsResponse, spec financial.B
 		return out, err
 	}
 	out.KnownMillicents = &amount
+	// A projection from partial or stale evidence would understate the run
+	// rate, so only complete, fresh months are projected.
+	if out.CoverageComplete && out.Fresh {
+		if out.ProjectedMillicents, out.ProjectionReason, err = ProjectFinancialBudget(report, spec); err != nil {
+			return out, err
+		}
+	} else {
+		out.ProjectionReason = "incomplete_evidence"
+	}
 	slices.Sort(out.Reasons)
 	out.Reasons = slices.Compact(out.Reasons)
 	return out, nil

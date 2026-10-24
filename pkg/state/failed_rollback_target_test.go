@@ -18,7 +18,7 @@ type failedRollbackStore interface {
 	SetDeploymentFailedEx(context.Context, string, string, string, string, string, string, []api.LogExcerpt) (state.Deployment, error)
 	UpdateDeploymentStatus(context.Context, string, state.DeploymentStatus, string) error
 	DeploymentByID(context.Context, string) (state.Deployment, error)
-	LatestSupersededDeployment(context.Context, string) (state.Deployment, error)
+	LatestSupersededDeployment(context.Context, string, string) (state.Deployment, error)
 	UpdateDeploymentTraffic(context.Context, string, int, ...string) (state.Deployment, error)
 }
 
@@ -58,7 +58,7 @@ func runFailedRollbackScenario(t *testing.T, ctx context.Context, s failedRollba
 	if err != nil || got.Status != state.DeploySuperseded {
 		t.Fatalf("rollback target after a failed re-prime = %q err=%v, want superseded", got.Status, err)
 	}
-	if target, err := s.LatestSupersededDeployment(ctx, appID); err != nil || target.ID != v1.ID {
+	if target, err := s.LatestSupersededDeployment(ctx, appID, state.DefaultEnvScope); err != nil || target.ID != v1.ID {
 		t.Fatalf("rollback target = %+v err=%v, want v1 still eligible", target.ID, err)
 	}
 

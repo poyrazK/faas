@@ -47,6 +47,13 @@ const (
 	// tracks the maximum number of end users and per-user limits are set
 	// (ADR-996).
 	ReasonUserTrackingFull = "user_tracking_full"
+	// Per-trace limits (ADR 20261020202035): a trace's calls, its cost, its
+	// streak of identical tool requests, and a new trace past the day's
+	// recorded traces. A trace never resets, so none carries a retry.
+	ReasonTraceCallLimit = "trace_call_limit"
+	ReasonTraceCostLimit = "trace_cost_limit"
+	ReasonTraceToolLoop  = "trace_tool_loop"
+	ReasonTraceUntracked = "trace_untracked"
 
 	ProviderAuthApplication        = "application"
 	ProviderAuthManaged            = "managed"
@@ -135,6 +142,15 @@ type Integration struct {
 	// AITagDailyCostLimits caps the UTC-day cost of exact usage tags
 	// (ADR-1436).
 	AITagDailyCostLimits map[string]int64
+	// AITraceMaxCalls, AITraceMaxCostMillicents and
+	// AITraceMaxRepeatedToolCalls cap each AI trace (ADR 20261020202035).
+	AITraceMaxCalls             *int64
+	AITraceMaxCostMillicents    *int64
+	AITraceMaxRepeatedToolCalls *int64
+	// AIOnlineEvalPercent samples this share of answered, captured app
+	// calls for the online evaluation worker; zero is off
+	// (ADR 20261021171712).
+	AIOnlineEvalPercent int
 }
 
 // AIGuardrails are one app binding's AI restrictions; nil fields are unset.
@@ -260,6 +276,9 @@ func (i Integration) Validate() error {
 	if !api.ValidOutboundAIUserLimits(i.AIProvider, i.AIUserDailyTokenLimit, i.AIUserDailyCostLimit) {
 		return fmt.Errorf("%w: per-end-user AI limits are invalid", ErrInvalidIntegration)
 	}
+	if !api.ValidOutboundAITraceLimits(i.AIProvider, i.AITraceMaxCalls, i.AITraceMaxCostMillicents, i.AITraceMaxRepeatedToolCalls) {
+		return fmt.Errorf("%w: per-trace AI limits are invalid", ErrInvalidIntegration)
+	}
 	for appID, limit := range i.BindingDailyRequestLimits {
 		if strings.TrimSpace(appID) == "" || !i.AllowsApp(appID) || (limit != nil && (*limit < 1 || *limit > api.MaxOutboundRequestsPerDay)) {
 			return fmt.Errorf("%w: binding daily request limit is invalid", ErrInvalidIntegration)
@@ -362,6 +381,11 @@ type AdmissionSpec struct {
 	// a tag's UTC day; the Postgres backend reads the stored limits.
 	AITags               []string
 	AITagDailyCostLimits map[string]int64
+	// AITraceID is the call's AI trace when its integration records traces
+	// (ADR 20261020202035); its lease carries it. AITraceLimits caps the
+	// trace; the Postgres backend reads the stored limits.
+	AITraceID     string
+	AITraceLimits aiTraceLimits
 	// BindingAppID scopes an explicit app binding budget. It is set from
 	// verified workload identity, never from a guest-controlled header.
 	BindingAppID                   string

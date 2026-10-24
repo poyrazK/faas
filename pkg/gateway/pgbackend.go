@@ -339,6 +339,12 @@ type PGBackend struct {
 	// authenticated verification only. It must not populate the ordinary
 	// picker, whose weights represent customer-routable live deployments.
 	deploymentSmokeTargetLoader func(ctx context.Context, appID, deploymentID string) (Target, bool, error)
+	// forkTargetLoader resolves an ADR-732 fork request to its instance; it
+	// validates the token and fork state (ForkTargetFromState).
+	forkTargetLoader func(ctx context.Context, appID, forkID, token string) (Target, bool, error)
+	// crashCaptureRequest records an ADR-733 crash capture request; nil
+	// when crash snapshots are disabled on this node.
+	crashCaptureRequest func(ctx context.Context, appID, instanceID string, statusCode int, route string)
 	// liveTargetHydration coalesces cache-reconciliation reads for the same
 	// app. A gateway restart can receive a burst before the first request has
 	// populated the process-local picker; those requests must share one
@@ -552,6 +558,39 @@ func (b *PGBackend) WithDeploymentSmokeTargetLoader(fn func(context.Context, str
 		b.deploymentSmokeTargetLoader = fn
 	}
 	return b
+}
+
+// WithForkTargetLoader installs the ADR-732 fork routing lookup.
+func (b *PGBackend) WithForkTargetLoader(fn func(context.Context, string, string, string) (Target, bool, error)) *PGBackend {
+	if b != nil {
+		b.forkTargetLoader = fn
+	}
+	return b
+}
+
+// WithCrashCaptureRequester installs the ADR-733 5xx trigger.
+func (b *PGBackend) WithCrashCaptureRequester(fn func(context.Context, string, string, int, string)) *PGBackend {
+	if b != nil {
+		b.crashCaptureRequest = fn
+	}
+	return b
+}
+
+// RequestCrashCapture forwards a 5xx to the installed requester, if any.
+func (b *PGBackend) RequestCrashCapture(ctx context.Context, appID, instanceID string, statusCode int, route string) {
+	if b == nil || b.crashCaptureRequest == nil {
+		return
+	}
+	b.crashCaptureRequest(ctx, appID, instanceID, statusCode, route)
+}
+
+// ResolveForkTarget routes a fork request. It always reads durable state:
+// forks are never cached in the serving picker.
+func (b *PGBackend) ResolveForkTarget(ctx context.Context, appID, forkID, token string) (Target, bool, error) {
+	if b == nil || b.forkTargetLoader == nil || appID == "" || forkID == "" || token == "" {
+		return Target{}, false, nil
+	}
+	return b.forkTargetLoader(ctx, appID, forkID, token)
 }
 
 // ResolveDeploymentSmokeTarget consults durable instance state without
@@ -1999,7 +2038,8 @@ func (b *PGBackend) recordAdmissionWithIdentity(ctx context.Context, appID, depl
 //
 // Walks every per-deployment targetSet under the app's picker —
 // we don't know which bucket owns the instance without an index.
-// If the picker is empty after the walk, the picker is dropped.
+// If the picker is empty after the walk and its weights did not come
+// from the store, the picker is dropped.
 // Per-bucket targetSets are preserved even when their entries
 // become empty (cold deployment under non-zero weight); only the
 // picker-level drop happens here. The per-deployment weight
@@ -2047,7 +2087,11 @@ func (b *PGBackend) removeInstance(appID, instanceID string, quarantine bool) {
 	for _, set := range picker.sets {
 		totalRemaining += set.remove(instanceID)
 	}
-	if totalRemaining == 0 {
+	// An empty picker keeps weights read from the store: deployment_changed
+	// keeps them current, and a target recorded later (a thaw or restore
+	// another request is waiting for) is routable only through them.
+	// Without weights, HealthyCount and Pick never see it.
+	if totalRemaining == 0 && !picker.weightsAuthoritative {
 		delete(b.appsPicker, appID)
 	}
 	b.tgtMu.Unlock()

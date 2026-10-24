@@ -7,6 +7,10 @@ import "github.com/onebox-faas/faas/pkg/authz"
 // Reviewed routes are explicit: adding a new app endpoint never implicitly
 // grants organization members access to a creator's other resources.
 var routeActions = map[string]authz.OrgAction{
+	// The resumable upload routes name their app in the request body or the
+	// stored session, so the handlers call Authorize once they resolve it.
+	"POST /v1/uploads":                                authz.OrgActionDeployApp,
+	"POST /v1/uploads/{id}/commit":                    authz.OrgActionDeployApp,
 	"GET /v1/apps/{slug}":                             authz.OrgActionReadApp,
 	"PATCH /v1/apps/{slug}":                           authz.OrgActionConfigureApp,
 	"DELETE /v1/apps/{slug}":                          authz.OrgActionDeleteApp,
@@ -46,4 +50,20 @@ var routeActions = map[string]authz.OrgAction{
 	"GET /v1/builds/{id}/provenance":                  authz.OrgActionReadApp,
 	"GET /v1/builds/{id}/sbom":                        authz.OrgActionReadApp,
 	"GET /v1/apps/{slug}/logs":                        authz.OrgActionReadAppLogs,
+
+	// Release approvals (ADR-20261020085706): only owners and admins may
+	// change the policy, so a developer cannot switch approvals off.
+	"GET /v1/apps/{slug}/release-approval-policy":    authz.OrgActionReadApp,
+	"PUT /v1/apps/{slug}/release-approval-policy":    authz.OrgActionManageAppSecurity,
+	"DELETE /v1/apps/{slug}/release-approval-policy": authz.OrgActionManageAppSecurity,
+	"GET /v1/apps/{slug}/release-approvals":          authz.OrgActionReadApp,
+	"GET /v1/deployments/{id}/approvals":             authz.OrgActionReadApp,
+	"POST /v1/deployments/{id}/approvals":            authz.OrgActionApproveAppRelease,
+	// Release diff (ADR-20261021101117).
+	"GET /v1/deployments/{id}/diff": authz.OrgActionReadApp,
+	// Scheduled releases (ADR-20261021152201): scheduling a release is
+	// deploying it.
+	"GET /v1/deployments/{id}/schedule":    authz.OrgActionReadApp,
+	"PUT /v1/deployments/{id}/schedule":    authz.OrgActionDeployApp,
+	"DELETE /v1/deployments/{id}/schedule": authz.OrgActionDeployApp,
 }

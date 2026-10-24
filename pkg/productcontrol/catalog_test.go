@@ -27,6 +27,12 @@ func TestProductCatalogValidationAndRevision(t *testing.T) {
 		{"unbounded quota", func(s *api.ProductCatalogSpec) {
 			s.Plans["starter"].Features["export"] = api.ProductFeatureGrant{MonthlyStarts: api.ProductControlMaxMonthlyStarts + 1}
 		}},
+		{"included above the monthly limit", func(s *api.ProductCatalogSpec) {
+			s.Plans["starter"].Features["export"] = api.ProductFeatureGrant{MonthlyStarts: 10, UnitPriceMillicents: 1, IncludedStarts: 11}
+		}},
+		{"negative included", func(s *api.ProductCatalogSpec) {
+			s.Plans["starter"].Features["export"] = api.ProductFeatureGrant{MonthlyStarts: 10, IncludedStarts: -1}
+		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			s := base()
@@ -51,6 +57,16 @@ func TestProductCatalogValidationAndRevision(t *testing.T) {
 	}
 	if Period(time.Date(2026, 11, 1, 0, 30, 0, 0, time.FixedZone("east", 3600))) != "2026-10" {
 		t.Fatal("period is not UTC")
+	}
+	// adr: 20261021154511 — all starts included is valid, and only included
+	// starts need the plan pricing release gate.
+	if UsesPlanPricing(base()) {
+		t.Fatal("a catalog without included starts needs the plan pricing gate")
+	}
+	included := base()
+	included.Plans["starter"].Features["export"] = api.ProductFeatureGrant{MonthlyStarts: 100, UnitPriceMillicents: 25000, IncludedStarts: 100}
+	if _, err := Compile(included); err != nil || !UsesPlanPricing(included) {
+		t.Fatalf("included starts: %v, uses plan pricing %v", err, UsesPlanPricing(included))
 	}
 }
 

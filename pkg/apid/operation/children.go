@@ -3,8 +3,10 @@ package operation
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
@@ -15,7 +17,7 @@ import (
 // account. A closed account sees the routes as absent.
 func (s *Service) childStore(w http.ResponseWriter, accountID string) (state.OperationChildStore, bool) {
 	w.Header().Set("Cache-Control", "no-store")
-	if !api.OperationChildrenEnabled(accountID) {
+	if !s.childrenOpen(accountID) {
 		httpkit.NoSuchRoute(w)
 		return nil, false
 	}
@@ -56,16 +58,8 @@ func (s *Service) StartRuntimeChildOperation(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeUnauthorized, "Workload identity required", "provide a current operation workload assertion"))
 		return
 	}
-	children, ok := s.childStore(w, authority.AccountID)
-	if !ok {
-		return
-	}
 	operations, ok := s.OperationStore(w)
 	if !ok {
-		return
-	}
-	var req api.OperationChildRequest
-	if !DecodeOperationBody(w, r, &req, api.OperationChildBodyMaxBytes) {
 		return
 	}
 	parent, err := operations.OperationByID(r.Context(), authority.AccountID, "", r.PathValue("id"))
@@ -73,7 +67,80 @@ func (s *Service) StartRuntimeChildOperation(w http.ResponseWriter, r *http.Requ
 		writeChildError(w, err)
 		return
 	}
-	def, err := operations.OperationDefinitionForDeployment(r.Context(), parent.AccountID, parent.AppID, parent.DeploymentID, req.Operation)
+	s.startChild(w, r, operations, parent, state.OperationChildStart{ParentID: parent.ID, AccountID: authority.AccountID, Authority: authority})
+}
+
+// StartRuntimeJobChildOperation lets a running job Operation start a child
+// with its job run proof.
+func (s *Service) StartRuntimeJobChildOperation(w http.ResponseWriter, r *http.Request) {
+	adapter, authority, ok := s.jobOperationRuntime(w, r)
+	if !ok {
+		return
+	}
+	operations, ok := s.OperationStore(w)
+	if !ok {
+		return
+	}
+	parent, exists, err := adapter.OperationForJobRun(r.Context(), authority.RunID)
+	if err != nil || !exists {
+		writeChildError(w, state.ErrNotFound)
+		return
+	}
+	s.startChild(w, r, operations, parent, state.OperationChildStart{ParentID: parent.ID, AccountID: parent.AccountID, JobAuthority: &authority})
+}
+
+// StartRuntimeWorkflowChildOperation lets a running workflow step start a
+// child with its workflow step proof.
+func (s *Service) StartRuntimeWorkflowChildOperation(w http.ResponseWriter, r *http.Request) {
+	authority, ok := s.workflowOperationRuntimeAuthority(w, r)
+	if !ok {
+		return
+	}
+	operations, ok := s.OperationStore(w)
+	if !ok {
+		return
+	}
+	parent, err := operations.OperationByID(r.Context(), authority.AccountID, "", r.PathValue("id"))
+	if err != nil {
+		writeChildError(w, err)
+		return
+	}
+	s.startChild(w, r, operations, parent, state.OperationChildStart{ParentID: parent.ID, AccountID: authority.AccountID, WorkflowAuthority: &authority})
+}
+
+// ListRuntimeWorkflowOperationChildren lets a workflow step read its
+// Operation's children.
+func (s *Service) ListRuntimeWorkflowOperationChildren(w http.ResponseWriter, r *http.Request) {
+	authority, ok := s.workflowOperationRuntimeAuthority(w, r)
+	if !ok {
+		return
+	}
+	control, ok := s.Host.Store().(state.OperationWorkflowControlStore)
+	if !ok {
+		api.WriteProblem(w, api.ErrCapacity("workflow operation control unavailable"))
+		return
+	}
+	if _, err := control.WorkflowOperationExecutionControl(r.Context(), r.PathValue("id"), authority); err != nil {
+		WriteOperationError(w, err)
+		return
+	}
+	children, ok := s.childStore(w, authority.AccountID)
+	if ok {
+		s.writeChildren(w, r, children, authority.AccountID, "", r.PathValue("id"))
+	}
+}
+
+func (s *Service) startChild(w http.ResponseWriter, r *http.Request, operations state.OperationStore, parent state.Operation, start state.OperationChildStart) {
+	children, ok := s.childStore(w, parent.AccountID)
+	if !ok {
+		return
+	}
+	result := "refused"
+	defer func() { s.Metrics.childStart(childParentKind(start), result) }()
+	if !DecodeOperationBody(w, r, &start.Request, api.OperationChildBodyMaxBytes) {
+		return
+	}
+	def, err := operations.OperationDefinitionForDeployment(r.Context(), parent.AccountID, parent.AppID, parent.DeploymentID, start.Request.Operation)
 	if err != nil {
 		writeChildError(w, err)
 		return
@@ -81,14 +148,14 @@ func (s *Service) StartRuntimeChildOperation(w http.ResponseWriter, r *http.Requ
 	if !s.operationAdmissionOpen(w, parent.AccountID, def.AppID, def.Scope, parent.PlatformTenantID, def.Spec) {
 		return
 	}
-	child, created, err := children.StartChildOperation(r.Context(), state.OperationChildStart{ParentID: parent.ID, Authority: authority, Request: req})
+	child, created, err := children.StartChildOperation(r.Context(), start)
 	if err != nil {
 		writeChildError(w, err)
 		return
 	}
-	status := http.StatusOK
+	status, result := http.StatusOK, "replayed"
 	if created {
-		status = http.StatusCreated
+		status, result = http.StatusCreated, "started"
 		s.Host.EmitAudit(r.Context(), "app.operation_child_started", &parent.AccountID, map[string]any{"parent_operation_id": parent.ID, "operation_id": child.Operation.ID, "key": child.Key, "platform_tenant_id": parent.PlatformTenantID})
 	}
 	httpkit.WriteJSON(w, status, api.OperationChildStartResponse{OperationChild: api.OperationChild{Key: child.Key, Operation: child.Operation.OperationResponse}, Replayed: !created})
@@ -102,6 +169,23 @@ func (s *Service) ListRuntimeOperationChildren(w http.ResponseWriter, r *http.Re
 		return
 	}
 	children, ok := s.childStore(w, authority.AccountID)
+	if ok {
+		s.writeChildren(w, r, children, parent.AccountID, "", parent.ID)
+	}
+}
+
+// ListRuntimeJobOperationChildren lets the job parent read its children.
+func (s *Service) ListRuntimeJobOperationChildren(w http.ResponseWriter, r *http.Request) {
+	adapter, authority, ok := s.jobOperationRuntime(w, r)
+	if !ok {
+		return
+	}
+	parent, exists, err := adapter.OperationForJobRun(r.Context(), authority.RunID)
+	if err != nil || !exists {
+		writeChildError(w, state.ErrNotFound)
+		return
+	}
+	children, ok := s.childStore(w, parent.AccountID)
 	if ok {
 		s.writeChildren(w, r, children, parent.AccountID, "", parent.ID)
 	}
@@ -143,7 +227,7 @@ func (s *Service) writeChildren(w http.ResponseWriter, r *http.Request, store st
 // lock, so none starts after that commit; repeating the parent's cancel
 // finishes a cascade this process did not.
 func (s *Service) cancelOperationChildren(ctx context.Context, store state.OperationStore, accountID, tenantID, parentID string) {
-	if !api.OperationChildrenEnabled(accountID) {
+	if !s.childrenOpen(accountID) {
 		return
 	}
 	children, ok := s.Host.Store().(state.OperationChildStore)
@@ -163,4 +247,105 @@ func (s *Service) cancelOperationChildren(ctx context.Context, store state.Opera
 			s.Host.Logger().Warn("child operation cancel failed", "parent_operation_id", parentID, "operation_id", child.Operation.ID, "err", err)
 		}
 	}
+}
+
+// The settlement signaller runs on every apid replica; signal IDs make a
+// repeated delivery a no-op.
+const (
+	childSettlementInterval  = 5 * time.Second
+	childSettlementWakeDelay = 250 * time.Millisecond
+	childSettlementBatch     = 100
+	childSettlementSignalID  = "children-settled"
+)
+
+// RunChildSettlementSignals signals operation.children.settled to parents
+// waiting on it once their children have settled, until ctx ends. It wakes
+// on customer_operation_changed, which every Operation save notifies, and
+// also polls in case a notification is dropped.
+func (s *Service) RunChildSettlementSignals(ctx context.Context) {
+	children, ok := s.Host.Store().(state.OperationChildStore)
+	if !ok {
+		return
+	}
+	signals, ok := s.Host.Store().(state.OperationSignalStore)
+	if !ok {
+		return
+	}
+	wakes, unsubscribe, err := s.Host.Subscribe(ctx, []string{"customer_operation_changed"})
+	if err != nil {
+		wakes = nil
+	} else {
+		defer unsubscribe()
+	}
+	ticker := time.NewTicker(childSettlementInterval)
+	defer ticker.Stop()
+	var soon <-chan time.Time
+	for {
+		s.signalSettledChildren(ctx, children, signals)
+		for ready := false; !ready; {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				ready = true
+			case _, ok := <-wakes:
+				if !ok {
+					wakes = nil
+				} else if soon == nil {
+					soon = time.After(childSettlementWakeDelay)
+				}
+			case <-soon:
+				soon, ready = nil, true
+			}
+		}
+	}
+}
+
+func (s *Service) signalSettledChildren(ctx context.Context, children state.OperationChildStore, signals state.OperationSignalStore) {
+	now := time.Now()
+	settled, err := children.OperationChildSettlements(ctx, childSettlementBatch)
+	if err != nil {
+		if ctx.Err() == nil {
+			s.Host.Logger().Warn("child settlement scan failed", "err", err)
+		}
+		return
+	}
+	// Parents of accounts outside the allowlist get no signal; they wait out
+	// their step's timeout and do not count as stuck.
+	var oldest *time.Time
+	for _, parent := range settled {
+		if !api.OperationChildrenEnabled(parent.AccountID) {
+			continue
+		}
+		if oldest == nil || parent.ReadySince.Before(*oldest) {
+			ready := parent.ReadySince
+			oldest = &ready
+		}
+		payload, _ := json.Marshal(parent.Children)
+		_, err := signals.SignalOperation(ctx, state.OperationSignalInput{AccountID: parent.AccountID, OperationID: parent.ParentID, SignalID: childSettlementSignalID,
+			Event: api.OperationChildrenSettledEvent, Payload: payload, Source: api.OperationSignalSourceAccount})
+		switch {
+		case err == nil:
+			s.Metrics.fanInSignal("signaled")
+		case errors.Is(err, state.ErrOperationNotActive), errors.Is(err, state.ErrOperationSignalUnexpected):
+			s.Metrics.fanInSignal("skipped")
+		case ctx.Err() != nil:
+			return
+		default:
+			s.Metrics.fanInSignal("error")
+			s.Host.Logger().Warn("children-settled signal failed", "parent_operation_id", parent.ParentID, "err", err)
+		}
+	}
+	s.Metrics.fanIn(oldest, now)
+}
+
+// childParentKind names the parent's execution for metrics.
+func childParentKind(start state.OperationChildStart) string {
+	switch {
+	case start.WorkflowAuthority != nil:
+		return "workflow"
+	case start.JobAuthority != nil:
+		return "job"
+	}
+	return "http"
 }

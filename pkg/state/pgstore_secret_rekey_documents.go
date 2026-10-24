@@ -24,6 +24,23 @@ func (s *PgStore) ListSecretRekeyDocuments(ctx context.Context, kid, after strin
 	return docs, nil
 }
 
+// ListSecretBindingDocuments lists every rekey document after the cursor
+// with its owning account, whatever its envelopes' labels.
+func (s *PgStore) ListSecretBindingDocuments(ctx context.Context, after string, limit int) ([]SecretBindingDocument, error) {
+	if limit < 1 || limit > math.MaxInt32 {
+		return nil, ErrInvalidArgument
+	}
+	rows, err := sqlc.New().ListSecretBindingDocuments(ctx, s.pool, sqlc.ListSecretBindingDocumentsParams{AfterCursor: after, BatchLimit: int32(limit)})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	docs := make([]SecretBindingDocument, 0, len(rows))
+	for _, row := range rows {
+		docs = append(docs, SecretBindingDocument{SecretRekeyDocument{row.Kind, row.ID, row.Payload}, row.AccountID})
+	}
+	return docs, nil
+}
+
 func (s *PgStore) CompareAndSwapSecretRekeyDocument(ctx context.Context, before SecretRekeyDocument, after json.RawMessage) error {
 	if !validSecretRekeyReplacement(before, after) {
 		return ErrInvalidArgument
@@ -52,6 +69,10 @@ func (s *PgStore) CompareAndSwapSecretRekeyDocument(ctx context.Context, before 
 		changed, err = q.CompareAndSwapPromotionSecretCapture(ctx, tx, sqlc.CompareAndSwapPromotionSecretCaptureParams{DocumentID: before.ID, Previous: before.Payload, Replacement: after})
 	case "deployment":
 		changed, err = q.CompareAndSwapReleaseSecretSnapshot(ctx, tx, sqlc.CompareAndSwapReleaseSecretSnapshotParams{DocumentID: before.ID, Previous: before.Payload, Replacement: after})
+	case "project":
+		// ADR-1139: the reseal changes kid and ciphertext only, so the
+		// runtime-change trigger does not fire.
+		changed, err = q.CompareAndSwapProjectSecretEnvelope(ctx, tx, sqlc.CompareAndSwapProjectSecretEnvelopeParams{DocumentID: before.ID, Previous: before.Payload, Replacement: after})
 	default:
 		return ErrInvalidArgument
 	}

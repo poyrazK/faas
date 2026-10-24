@@ -147,6 +147,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// totpLastSteps is each account's last accepted TOTP step
+	// (AcceptTOTPStep), created on first use.
+	totpLastSteps                              map[string]int64
 	migrationContracts                         map[string]projectMigrationContract
 	projectCanaries                            map[string]projectCanaryRecord
 	workerReleasePins                          map[string]projectWorkerReleasePin
@@ -294,39 +297,52 @@ type MemStore struct {
 	instanceApplicationStandardPromotions      map[string]instanceStandardPromotion
 	instanceApplicationStandardPromotionTokens map[string]string
 	computeNodeRuntimeHistory                  map[string]runtimeadmission.Identity
-	computeNodeRuntimeIncarnations             map[string]string
-	computeNodeRuntimeProtocols                map[string]uint32
-	appEgressRevisions                         map[string]int64
-	applicationStandardVersions                map[string][]ApplicationStandardVersion
-	applicationStandardLogDestinations         map[string]ApplicationStandardLogDestination
-	applicationStandardPublishers              map[string]api.ApplicationStandardPublisher
-	applicationStandardAssignments             map[string]applicationStandardAssignmentRecord
-	applicationStandardEnrollments             map[string]ApplicationStandardEnrollment
-	applicationStandardExceptions              map[string]ApplicationStandardException
-	applicationStandardLogDeliveries           map[string]ApplicationStandardLogDeliveryObservation
-	applicationStandardLogConsumers            map[string]ApplicationStandardLogConsumerSession
-	applicationStandardLogConsumerSessions     map[string]ApplicationStandardLogConsumerSession
-	applicationStandardLogConsumerClosures     map[string]ApplicationStandardLogConsumerClosure
-	applicationStandardLogInventories          map[string]ApplicationStandardLogInventoryObservation
-	applicationStandardLogHealth               map[string]ApplicationStandardLogHealthObservation
-	applicationStandardEgressObservations      map[string]ApplicationStandardEgressObservation
-	applicationStandardReviewPlans             map[string]ApplicationStandardReviewPlan
-	applicationStandardOperations              map[string]ApplicationStandardOperation
-	applicationStandardWorkerClaims            map[string]ApplicationStandardWorkerClaim
-	applicationStandardEnrollmentClaims        map[string]ApplicationStandardEnrollmentClaim
-	standardObservationChecks                  map[string]standardAutomaticObservationCheck
-	standardRuntimeRefreshRequests             map[string]ApplicationStandardRuntimeRefreshRequest
-	applicationStandardControlBindings         map[string]standardControlBinding
-	applicationStandardControlBackups          map[string]standardControlBackup
-	financialBudgetEvaluations                 map[string]financialBudgetMemoryEvaluation
-	financialBudgetAlerts                      map[string]FinancialBudgetAlertDelivery
-	financialBudgetStops                       map[string]FinancialBudgetStop
-	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
-	financialComputeBooks                      map[string]financialComputeBook
-	financialComputeLeases                     map[string]financialComputeLease
-	financialComputeHolds                      map[string][]financialComputeHold
-	financialComputeOwners                     map[string]financialComputeOwner
-	financialComputeJobAttempts                map[string]financialComputeJobAttempt
+	// computeNodeRuntimeOrder is each node incarnation's registration order,
+	// as application_standard_native_incarnations.registered_at orders them.
+	computeNodeRuntimeOrder map[string]uint64
+	computeNodeRuntimeSeq   uint64
+	// instanceApplicationStandardRebinds are each instance's admission
+	// re-binds, oldest first (ADR-595 extension).
+	instanceApplicationStandardRebinds     map[string][]ApplicationStandardRebind
+	computeNodeVMMDEpochs                  map[string]VMMDEpoch
+	computeNodeVMMDNotices                 map[string]time.Time
+	computeNodeRuntimeIncarnations         map[string]string
+	computeNodeRuntimeProtocols            map[string]uint32
+	appEgressRevisions                     map[string]int64
+	applicationStandardVersions            map[string][]ApplicationStandardVersion
+	applicationStandardLogDestinations     map[string]ApplicationStandardLogDestination
+	applicationStandardPublishers          map[string]api.ApplicationStandardPublisher
+	applicationStandardAssignments         map[string]applicationStandardAssignmentRecord
+	applicationStandardEnrollments         map[string]ApplicationStandardEnrollment
+	applicationStandardExceptions          map[string]ApplicationStandardException
+	applicationStandardLogDeliveries       map[string]ApplicationStandardLogDeliveryObservation
+	applicationStandardLogConsumers        map[string]ApplicationStandardLogConsumerSession
+	applicationStandardLogConsumerSessions map[string]ApplicationStandardLogConsumerSession
+	applicationStandardLogConsumerClosures map[string]ApplicationStandardLogConsumerClosure
+	applicationStandardLogInventories      map[string]ApplicationStandardLogInventoryObservation
+	applicationStandardLogHealth           map[string]ApplicationStandardLogHealthObservation
+	applicationStandardEgressObservations  map[string]ApplicationStandardEgressObservation
+	applicationStandardReviewPlans         map[string]ApplicationStandardReviewPlan
+	applicationStandardOperations          map[string]ApplicationStandardOperation
+	applicationStandardWorkerClaims        map[string]ApplicationStandardWorkerClaim
+	applicationStandardEnrollmentClaims    map[string]ApplicationStandardEnrollmentClaim
+	standardObservationChecks              map[string]standardAutomaticObservationCheck
+	standardRuntimeRefreshRequests         map[string]ApplicationStandardRuntimeRefreshRequest
+	applicationStandardControlBindings     map[string]standardControlBinding
+	applicationStandardControlBackups      map[string]standardControlBackup
+	financialBudgetEvaluations             map[string]financialBudgetMemoryEvaluation
+	financialBudgetAlerts                  map[string]FinancialBudgetAlertDelivery
+	financialBudgetStops                   map[string]FinancialBudgetStop
+	financialBudgetChannels                map[string][]string                            // policy id → channel ids (ADR-20261019193500)
+	financialBudgetChannelDeliveries       map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
+	financialBudgetProjections             map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
+	financialObjectStorageEstimates        map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
+	financialPreviewCommands               map[string]FinancialPreviewCommandRuntime
+	financialComputeBooks                  map[string]financialComputeBook
+	financialComputeLeases                 map[string]financialComputeLease
+	financialComputeHolds                  map[string][]financialComputeHold
+	financialComputeOwners                 map[string]financialComputeOwner
+	financialComputeJobAttempts            map[string]financialComputeJobAttempt
 
 	eventCircuitBreakers              map[string]*eventCircuitRecord
 	eventSubscriptionControls         map[string]*memEventSubscriptionControl
@@ -365,6 +381,14 @@ type MemStore struct {
 	releaseFreezes map[string]ReleaseFreeze
 	// releaseGates mirrors app_release_gates (ADR-20261019071734).
 	releaseGates map[string]ReleaseGate
+	// releaseApprovalPolicies mirrors app_release_approval_policies, keyed by
+	// app ID; releaseApprovals mirrors deployment_release_approvals
+	// (ADR-20261020085706).
+	releaseApprovalPolicies map[string]ReleaseApprovalPolicy
+	releaseApprovals        map[string]ReleaseApproval
+	releaseApprovalEvents   map[string]ReleaseApprovalEvent
+	// scheduledReleases mirrors scheduled_releases (ADR-20261021152201).
+	scheduledReleases map[string]ScheduledRelease
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex
@@ -437,6 +461,7 @@ type MemStore struct {
 	outboundAIAccessTokens      map[string]OutboundAIAccessToken
 	outboundCredentialKeys      map[string][]OutboundCredentialKey
 	outboundAIBudgetAlerts      map[string][]OutboundAIBudgetAlert
+	outboundAIDeploymentStats   map[string][]OutboundAIDeploymentStats
 	outboundAIRequestLog        map[string][]OutboundAIRequestLogEntry
 	outboundAIRequestContent    map[string]OutboundAIRequestContent
 	outboundAIReplays           map[string]OutboundAIReplay
@@ -444,6 +469,8 @@ type MemStore struct {
 	outboundAIUserUsage         map[string][]OutboundAIUserUsageItem
 	outboundAITagUsage          map[string][]OutboundAITagUsageItem
 	outboundAITagLimits         map[string][]api.OutboundAITagLimit
+	outboundAITraces            map[string][]OutboundAITrace
+	outboundAIQualityAlerts     map[string][]OutboundAIQualityAlert
 	outboundAppBindings         map[string]OutboundAppBinding
 	outboundCredentials         map[string][]byte
 	mu                          sync.Mutex
@@ -465,6 +492,9 @@ type MemStore struct {
 	scenarioPostgres          map[string]rehearsalpg.Resource
 	scenarioObjects           map[string]rehearsalobj.Resource
 	scenarioActionPolicies    map[string]scenarioActionPolicy
+	scenarioCapturedEvents    []memScenarioCapturedEvent
+	scenarioQueueCaptures     []memScenarioCapturedQueueMessage
+	scenarioPlatformCalls     []memScenarioCapturedPlatformCall
 	scenarioTestChaosPlans    map[string]chaos.Lease
 	scenarioTestChaosMatches  map[string]map[string]int64
 	previewSets               map[string]PRPreviewSet
@@ -495,6 +525,8 @@ type MemStore struct {
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers                         map[string]APIConsumer
 	apiConsumerTrials                    map[string]APIConsumerTrial               // ADR-1314
+	apiConsumerSignupSettings            map[string]APIConsumerSignupSettings      // ADR-20261021143000, by app ID
+	apiConsumerSignups                   map[string]APIConsumerSignup              // ADR-20261021143000
 	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket    // ADR-1318
 	platformTenantMeterUsage             map[string]PlatformTenantMeterUsageBucket // ADR-1319
 	platformTenantTrials                 map[string]PlatformTenantTrial            // ADR-1322, by tenant
@@ -530,7 +562,9 @@ type MemStore struct {
 	// installation_id so the resolver cache at
 	// pkg/githubd/webhook_secret.go can match the prod
 	// ON CONFLICT (installation_id) DO UPDATE shape.
-	githubWebhookSecrets map[int64][]byte
+	githubWebhookSecrets map[int64]GithubWebhookSecret
+	// honeytokens is keyed by HoneytokenDigest (ADR 20261024014500).
+	honeytokens map[string]Honeytoken
 	// githubWebhookSecretMeta stamps (upgraded_at, upgraded_by)
 	// for each per-tenant row so the apid admin route can echo
 	// the row back without a second query.
@@ -631,10 +665,13 @@ type MemStore struct {
 	// migrationLeases mirrors the durable source-side migration lease table.
 	// It lets vmmd migration tests exercise restart-safe lease semantics without
 	// requiring Postgres.
-	migrationLeases       map[string]MigrationLease // lease_token → lease
-	migrationSources      map[string]MigrationSource
-	migrationAdmissions   map[string]MigrationAdmission
-	migrationResumeFences map[string]bool
+	migrationLeases               map[string]MigrationLease
+	functionMigrationSources      map[string]FunctionMigrationSource      // instance_id → source
+	functionMigrationPermissions  map[string]functionMigrationPermissions // lease_token → permissions
+	functionMigrationDestinations map[string]FunctionMigrationDestination // lease_token → immutable destination epoch
+	migrationSources              map[string]MigrationSource
+	migrationAdmissions           map[string]MigrationAdmission
+	migrationResumeFences         map[string]bool
 
 	// workflows / workflowSteps / workflowEvents mirror ADR-081 (the
 	// timestamped workflow schema migration).
@@ -795,6 +832,7 @@ type MemStore struct {
 	routePolicyReceipts       map[string]routePolicyStoredReceipt
 	savedRouteRequirements    map[string]api.SavedRouteRequirements
 	profileInvestigations     map[string]api.ProfileInvestigation
+	profileCaptures           map[string]*memProfileCapture
 	profileDeploymentPolicies map[string]api.ProfileDeploymentPolicy
 	profileDeploymentChecks   map[string]*memProfileDeploymentCheck
 	profileCanaryChecks       map[string]*memProfileCanaryCheck
@@ -952,6 +990,13 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appForks are production fork intents (ADR-732), keyed by fork id.
+	appForks map[string]AppFork
+	// appForkExecs mirrors app_fork_execs (ADR-732 fork exec).
+	appForkExecs map[string]AppForkExec
+	// crashCaptures / crashSettings are ADR-733 crash snapshots.
+	crashCaptures map[string]CrashCapture
+	crashSettings map[string]CrashSnapshotSettings
 	// appTaskAttach holds ADR-1037 interactive-session records by task id.
 	appTaskAttach map[string]AppTaskAttach
 	// jobRunAttach holds ADR-1330 interactive image-run sessions by run id.
@@ -1076,6 +1121,11 @@ type MemStore struct {
 	// committed gRPC batch after a response loss.
 	apiConsumerUsage      map[string]APIConsumerUsageBucket
 	apiConsumerRouteUsage map[string]APIConsumerRouteUsageBucket
+	// apiConsumerUsageRecordedAt and platformTenantUsageRecordedAt are
+	// when usage was last recorded per consumer and per tenant, as the
+	// usage minutes' updated_at (ADR-20261020211500).
+	apiConsumerUsageRecordedAt    map[string]time.Time
+	platformTenantUsageRecordedAt map[string]time.Time
 	// serviceWakeAhead holds ADR-977 opt-ins keyed by app ID.
 	serviceWakeAhead map[string]memServiceWakeAhead
 	// routePriorities holds ADR-978 saved route priorities keyed by app ID.
@@ -1159,7 +1209,7 @@ type MemStore struct {
 	// (migration 00050, issue #259).
 	invoices               map[string]Invoice
 	invoiceRefunds         map[string]InvoiceRefund
-	billingUsageDeliveries map[string]struct{}
+	billingUsageDeliveries map[string]billingUsageDelivery
 	// objectStorageBilling is the in-memory mirror of the finalized
 	// object-storage month-close ledger.
 	objectStorageBilling           map[string]ObjectStorageBillingRecord
@@ -1310,6 +1360,7 @@ type MemStore struct {
 	projectEnvironmentCloneObjectCredentials  map[string]ProjectEnvironmentCloneObjectCredentialPreparation
 	projectEnvironmentApprovals               map[string]ProjectEnvironmentApproval
 	projectEnvironmentConfigs                 map[string][]ProjectEnvironmentConfig
+	projectEnvironmentSecrets                 map[string]ProjectEnvironmentSecret
 	projectEnvironmentRoutePolicies           map[string]ProjectEnvironmentRoutePolicy
 	projectEnvironmentEdgePolicies            map[string]ProjectEnvironmentEdgePolicy
 	projectEnvironmentPromotions              map[string]ProjectEnvironmentPromotion
@@ -1572,7 +1623,7 @@ func NewMemStore() *MemStore {
 		githubInstalls:          map[string]GitHubInstall{},
 		// PR-D / ADR-012 §7 amendment: per-tenant webhook secret
 		// store (mirror of github_webhook_secrets).
-		githubWebhookSecrets:    map[int64][]byte{},
+		githubWebhookSecrets:    map[int64]GithubWebhookSecret{},
 		githubWebhookSecretMeta: map[int64]webhookSecretMeta{},
 		// Issue #246 acceptance item 7: mail suppression list mirror.
 		mailSuppressions:    map[string]mailSuppressionRow{},
@@ -1783,6 +1834,8 @@ func NewMemStore() *MemStore {
 		usage:                             []usageMinute{},
 		usageByMonth:                      []Usage{},
 		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
+		apiConsumerUsageRecordedAt:        map[string]time.Time{},
+		platformTenantUsageRecordedAt:     map[string]time.Time{},
 		apiConsumerRouteUsage:             map[string]APIConsumerRouteUsageBucket{},
 		platformTenantUsage:               map[string]APIConsumerUsageBucket{},
 		apiConsumerPlans:                  map[string]APIConsumerPlan{},
@@ -1814,7 +1867,7 @@ func NewMemStore() *MemStore {
 		// PR B writes via UpsertInvoice (webhook ingestion).
 		invoices:                       map[string]Invoice{},
 		invoiceRefunds:                 map[string]InvoiceRefund{},
-		billingUsageDeliveries:         map[string]struct{}{},
+		billingUsageDeliveries:         map[string]billingUsageDelivery{},
 		objectStorageBilling:           map[string]ObjectStorageBillingRecord{},
 		objectStorageBillingDeliveries: map[string]ObjectStorageBillingDelivery{},
 		// accountCredits starts empty; the operator-only
@@ -3873,6 +3926,11 @@ func (m *MemStore) deleteProjectLocked(projectID string) error {
 			delete(m.projectEnvironmentConfigs, key)
 		}
 	}
+	for key, secret := range m.projectEnvironmentSecrets {
+		if secret.ProjectID == projectID {
+			delete(m.projectEnvironmentSecrets, key)
+		}
+	}
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.ProjectID == projectID {
 			delete(m.projectEnvironmentRoutePolicies, key)
@@ -4106,6 +4164,7 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 		}
 	}
 	delete(m.projectEnvironmentConfigs, projectEnvironmentConfigKey(projectID, slug))
+	m.deleteProjectEnvironmentSecretsLocked(projectID, slug)
 	for key, policy := range m.projectEnvironmentRoutePolicies {
 		if policy.ProjectID == projectID && policy.EnvironmentSlug == slug {
 			delete(m.projectEnvironmentRoutePolicies, key)
@@ -4448,6 +4507,20 @@ func (m *MemStore) ApplyProjectPlan(
 	return project, insertedApps, insertedCrons, nil
 }
 
+// applyProjectReconcileResources mirrors the Postgres rule: each positive
+// declared value replaces the app's (ADR-20261023120000).
+func applyProjectReconcileResources(app *App, declared App) {
+	if declared.RAMMB > 0 {
+		app.RAMMB = declared.RAMMB
+	}
+	if declared.CPUMillicores > 0 {
+		app.CPUMillicores = declared.CPUMillicores
+	}
+	if declared.MaxConcurrency > 0 {
+		app.MaxConcurrency = declared.MaxConcurrency
+	}
+}
+
 // ApplyProjectReconcile applies an existing project's desired app and cron
 // membership under one MemStore critical section. The map snapshots make
 // the operation rollback-safe even when a validation or uniqueness error is
@@ -4623,6 +4696,9 @@ func (m *MemStore) ApplyProjectReconcile(
 				if mutation.SetPlatformTenantRequired {
 					tombstone.PlatformTenantRequired = app.PlatformTenantRequired
 				}
+				if mutation.SetResources {
+					applyProjectReconcileResources(&tombstone, app)
+				}
 				tombstone.Status = AppActive
 				tombstone.DeletedAt = nil
 				tombstone.DeleteGraceUntil = nil
@@ -4672,6 +4748,9 @@ func (m *MemStore) ApplyProjectReconcile(
 			app.Manifest = mutation.App.Manifest
 			if mutation.SetPlatformTenantRequired {
 				app.PlatformTenantRequired = mutation.App.PlatformTenantRequired
+			}
+			if mutation.SetResources {
+				applyProjectReconcileResources(&app, mutation.App)
 			}
 			m.apps[app.ID] = app
 			if routeCheckAppInputsChanged(before, app) {
@@ -5662,7 +5741,7 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 
 	siblings := make([]siblingRow, 0)
 	for otherID, other := range m.deployments {
-		if other.AppID == d.AppID && other.Status == DeployLive && otherID != id {
+		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && otherID != id {
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
 		}
 	}
@@ -5792,6 +5871,12 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	if d.Status != DeployLive {
 		return Deployment{}, ErrDeploymentNotLive
 	}
+	start, starting := scheduledStartFrom(ctx, id)
+	if starting {
+		if err := m.checkScheduledStartLocked(start, d); err != nil {
+			return Deployment{}, err
+		}
+	}
 	ctx, admission := captureMCPAdmission(ctx, id, newPercent)
 	defer func() { m.finishMCPAdmissionLocked(admission, resultErr) }()
 	if err := m.checkMCPAccessPolicyLocked(ctx, d.AppID); err != nil {
@@ -5899,6 +5984,10 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 	if sum != 100 {
 		return Deployment{}, ErrTrafficPercentSumInvalid
+	}
+	if starting {
+		applyScheduledStart(&d, start)
+		m.finishScheduledStartLocked(start)
 	}
 	m.putDeploymentLocked(id, d)
 	for i, sibling := range siblings {
@@ -6044,7 +6133,7 @@ func (m *MemStore) ListOwnedCronsByNodeID(_ context.Context, nodeID string) ([]C
 	var out []Cron
 	for _, c := range m.crons {
 		app, ok := m.apps[c.AppID]
-		if ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled {
+		if _, rehearsal := m.scenarioActionPolicies[c.AppID]; ok && owner[c.AppID] == nodeID && app.Status != AppDeleted && c.Enabled && !rehearsal {
 			out = append(out, c)
 		}
 	}
@@ -6252,6 +6341,9 @@ func (m *MemStore) MarkInstanceMigrating(ctx context.Context, instanceID, curren
 	if ins.NodeID != currentNodeID || ins.State != string(StateRunning) {
 		return ErrConflict
 	}
+	if err := m.markFunctionMigrationSourceLocked(ctx, ins, leaseToken); err != nil {
+		return err
+	}
 	ins.State = string(StateMigrating)
 	ins.LeaseToken = leaseToken
 	now := time.Now().UTC()
@@ -6370,6 +6462,9 @@ func (m *MemStore) ListExpiredMigrations(_ context.Context, maxPerTick int, olde
 	var out []Instance
 	for _, ins := range m.instances {
 		if ins.State != string(StateMigrating) || ins.LeaseToken == "" {
+			continue
+		}
+		if _, tracked := m.functionMigrationSources[ins.ID]; tracked {
 			continue
 		}
 		if !cutoff.IsZero() && (ins.MigrationStartedAt == nil || ins.MigrationStartedAt.After(cutoff)) {
@@ -7171,6 +7266,11 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.appTasks, key)
 		}
 	}
+	for key, fork := range m.appForks {
+		if fork.AppID == id {
+			delete(m.appForks, key)
+		}
+	}
 	for key, v := range m.crons {
 		if v.AppID == id {
 			delete(m.crons, key)
@@ -7657,11 +7757,11 @@ func (m *MemStore) RecordGitHubInstallationSync(_ context.Context, installationI
 // amendment). The MemStore is the unit-test stand-in for the
 // resolver; the bytea is held in an in-memory map keyed by
 // installation_id.
-func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID int64, secret []byte, upgradedBy string) (time.Time, string, error) {
+func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID int64, secret GithubWebhookSecret, upgradedBy string) (time.Time, string, error) {
 	if installationID == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: installation_id must be non-zero")
 	}
-	if len(secret) == 0 {
+	if len(secret.Value) == 0 && len(secret.Sealed) == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: secret must be non-empty")
 	}
 	if upgradedBy == "" {
@@ -7671,11 +7771,16 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.githubWebhookSecrets == nil {
-		m.githubWebhookSecrets = map[int64][]byte{}
+		m.githubWebhookSecrets = map[int64]GithubWebhookSecret{}
 	}
-	cp := make([]byte, len(secret))
-	copy(cp, secret)
-	m.githubWebhookSecrets[installationID] = cp
+	stored := GithubWebhookSecret{}
+	if len(secret.Value) > 0 {
+		stored.Value = append([]byte(nil), secret.Value...)
+	}
+	if len(secret.Sealed) > 0 {
+		stored.Sealed = append([]byte(nil), secret.Sealed...)
+	}
+	m.githubWebhookSecrets[installationID] = stored
 	if m.githubWebhookSecretMeta == nil {
 		m.githubWebhookSecretMeta = map[int64]webhookSecretMeta{}
 	}
@@ -7687,19 +7792,20 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 }
 
 // GetGithubWebhookSecret mirrors PgStore. ErrNotFound on miss.
-func (m *MemStore) GetGithubWebhookSecret(_ context.Context, installationID int64) ([]byte, error) {
+func (m *MemStore) GetGithubWebhookSecret(_ context.Context, installationID int64) (GithubWebhookSecret, error) {
 	if installationID == 0 {
-		return nil, ErrNotFound
+		return GithubWebhookSecret{}, ErrNotFound
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	secret, ok := m.githubWebhookSecrets[installationID]
-	if !ok || len(secret) == 0 {
-		return nil, ErrNotFound
+	if !ok || (len(secret.Value) == 0 && len(secret.Sealed) == 0) {
+		return GithubWebhookSecret{}, ErrNotFound
 	}
-	cp := make([]byte, len(secret))
-	copy(cp, secret)
-	return cp, nil
+	return GithubWebhookSecret{
+		Value:  append([]byte(nil), secret.Value...),
+		Sealed: append([]byte(nil), secret.Sealed...),
+	}, nil
 }
 
 // GetGithubInstallBindingForApp mirrors PgStore. accountID scopes
@@ -8608,22 +8714,30 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		return Deployment{}, 0, err
 	}
 	// Find the active deployment for this app: rollout_state ∈
-	// ('pending','rolling_out') and status='live'. There can be
-	// at most one active rollout per app at a time (canary
-	// progression auto-supersedes the prior live row).
+	// ('pending','rolling_out') and status='live'. Like Postgres, pick the
+	// newest in-flight row, and refuse an app-level recovery when rollouts
+	// are in flight in more than one environment.
 	var target *Deployment
+	scopes := map[string]bool{}
 	for id, d := range m.deployments {
-		if d.AppID != appID || d.Status != DeployLive || (deploymentID != "" && id != deploymentID) {
+		if d.AppID != appID || d.Status != DeployLive {
 			continue
 		}
 		d.RolloutState = NormalizeRolloutState(d.RolloutState)
 		if d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
 			continue
 		}
-		d := d
-		target = &d
-		_ = id
-		break
+		scopes[normalizedDeploymentScope(d.Scope)] = true
+		if deploymentID != "" && id != deploymentID {
+			continue
+		}
+		if target == nil || d.CreatedAt.After(target.CreatedAt) {
+			d := d
+			target = &d
+		}
+	}
+	if deploymentID == "" && len(scopes) > 1 {
+		return Deployment{}, 0, ErrRolloutAmbiguous
 	}
 	if target == nil {
 		return Deployment{}, 0, ErrNotFound
@@ -8774,7 +8888,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		// Redistribute residual across sibling live rows.
 		siblings := []siblingRow{}
 		for otherID, other := range m.deployments {
-			if other.AppID != appID || other.Status != DeployLive || otherID == target.ID {
+			if other.AppID != appID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) || other.Status != DeployLive || otherID == target.ID {
 				continue
 			}
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
@@ -8833,7 +8947,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 
 		// Zero sibling live rows so Σ = 100.
 		for otherID, other := range m.deployments {
-			if other.AppID != appID || other.Status != DeployLive || otherID == target.ID {
+			if other.AppID != appID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) || other.Status != DeployLive || otherID == target.ID {
 				continue
 			}
 			other.TrafficPercent = 0
@@ -8891,7 +9005,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		}
 		siblings := []siblingRow{}
 		for otherID, other := range m.deployments {
-			if other.AppID != appID || other.Status != DeployLive || otherID == target.ID {
+			if other.AppID != appID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) || other.Status != DeployLive || otherID == target.ID {
 				continue
 			}
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
@@ -9064,14 +9178,15 @@ func (m *MemStore) CountLiveInstancesByDeployment(_ context.Context, deploymentI
 	return n, nil
 }
 
-func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID string) (Deployment, error) {
+func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID, scope string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	scope = normalizedDeploymentScope(scope)
 	var latest Deployment
 	found := false
 	for _, d := range m.deployments {
 		rollbackEligible := !abortedCanaryCandidate(d) && (d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID))))
-		if d.AppID == appID && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
+		if d.AppID == appID && normalizedDeploymentScope(d.Scope) == scope && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
 			latest, found = d, true
 		}
 	}
@@ -9464,7 +9579,7 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 	// live rows carrying all traffic must not collapse their split (H10-11).
 	remaining := 0
 	for id, other := range m.deployments {
-		if id != d.ID && other.AppID == d.AppID && other.Status == DeployLive && other.DeletedAt == nil {
+		if id != d.ID && other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && other.DeletedAt == nil {
 			remaining += other.TrafficPercent
 		}
 	}
@@ -9474,7 +9589,8 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 	var fallbackID string
 	var fallback Deployment
 	for id, candidate := range m.deployments {
-		if id == d.ID || candidate.AppID != d.AppID || candidate.Status != DeployLive || !m.runtimeUpgradeTrafficAllowedLocked(candidate) {
+		if id == d.ID || candidate.AppID != d.AppID || normalizedDeploymentScope(candidate.Scope) != normalizedDeploymentScope(d.Scope) ||
+			candidate.Status != DeployLive || !m.runtimeUpgradeTrafficAllowedLocked(candidate) {
 			continue
 		}
 		if fallbackID == "" || candidate.TrafficPercent > fallback.TrafficPercent ||
@@ -9628,6 +9744,18 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
 		return err
+	}
+	if _, prepared := m.rollbackPrepared[id]; preparedRollbackPromotion(ctx) && d.Status != DeployLive && !prepared {
+		return ErrDeploymentSuperseded
+	}
+	if !fenceLatest && d.Status != DeployLive && m.rollbackOutpacedLocked(d) {
+		// Mirrors withdrawOutpacedRollbackTx.
+		d.Status = DeploySuperseded
+		d.ErrorCode = RollbackOutpacedCode
+		d.Error = rollbackOutpacedMessage
+		m.putDeploymentLocked(id, d)
+		delete(m.rollbackPrepared, id)
+		return ErrDeploymentSuperseded
 	}
 	if fenceLatest || recovery {
 		if fenceLatest && (!d.Kind.RequiresLatestRevision() || d.Revision <= 0) {
@@ -9812,7 +9940,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	// build time must not consume the customer's observation window.
 	siblings := make([]siblingRow, 0)
 	for otherID, other := range m.deployments {
-		if other.AppID == d.AppID && other.Status == DeployLive && otherID != id {
+		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && otherID != id {
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
 		}
 	}
@@ -10684,8 +10812,9 @@ func (m *MemStore) SetDeploymentRuntimeProfile(_ context.Context, id string, pro
 	if !ok {
 		return ErrNotFound
 	}
-	if d.Kind != DeploymentKindImage ||
-		(d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging) {
+	// Source builds record imaged's HEALTHCHECK verdict here too
+	// (ADR-20261024100000), while the deployment is still being assembled.
+	if d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging {
 		return ErrInvalidStateTransition
 	}
 	updated, err := frameworkprofile.PreserveImageRuntime(d.InferredProfile, profile)
@@ -12500,16 +12629,17 @@ func (m *MemStore) DefaultCustomDomain(_ context.Context, appID string) (string,
 	return domain, nil
 }
 
-// WildcardDomainForHost returns the most-specific wildcard custom domain that
-// covers host. The strict suffix check keeps example.com from matching
+// WildcardDomainForHost returns the most-specific live wildcard custom domain
+// that covers host. The strict suffix check keeps example.com from matching
 // *.example.com and prevents look-alike domains such as badexample.com from
-// matching.
+// matching. An expired, unverified claim is skipped (CustomDomain.ClaimLive).
 func (m *MemStore) WildcardDomainForHost(_ context.Context, host string) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := time.Now()
 	var best CustomDomain
 	for _, d := range m.domains {
-		if !WildcardMatchesHost(d.Domain, host) {
+		if !WildcardMatchesHost(d.Domain, host) || !d.ClaimLive(now) {
 			continue
 		}
 		if best.Domain == "" || len(d.Domain) > len(best.Domain) {
@@ -13500,7 +13630,8 @@ func (m *MemStore) ListEnabledCrons(_ context.Context) ([]Cron, error) {
 	defer m.mu.Unlock()
 	var out []Cron
 	for _, c := range m.crons {
-		if c.Enabled && c.SuspendedReason == "" {
+		// Mirrors PgStore: rehearsal-enrolled apps never fire from the clock.
+		if _, rehearsal := m.scenarioActionPolicies[c.AppID]; c.Enabled && c.SuspendedReason == "" && !rehearsal {
 			out = append(out, c)
 		}
 	}
@@ -13757,7 +13888,7 @@ func (m *MemStore) ListEnabledTriggers(_ context.Context) ([]sqlc.Trigger, error
 	defer m.mu.Unlock()
 	var out []sqlc.Trigger
 	for _, t := range m.triggers {
-		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) {
+		if t.Enabled && !m.workloadAdmissionRetiredLocked(t.AppID.String(), t.QueueBindingScope) && !m.rehearsalBrokerTriggerLocked(t) {
 			out = append(out, t)
 		}
 	}
@@ -14011,7 +14142,7 @@ func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoc
 	if err := m.validateInvocationEnvironmentLocked(inv, info); err != nil {
 		return Invocation{}, err
 	}
-	if err := invocationAdmissionDepth(inv, m.pendingProductionInvocationsLocked(inv.AppID, inv.Source, nil)); err != nil {
+	if err := m.checkInvocationAdmissionLocked(inv, nil); err != nil {
 		return Invocation{}, err
 	}
 	return m.enqueueInvocationLocked(inv)
@@ -16432,7 +16563,7 @@ func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Insta
 	var newest Instance
 	found := false
 	for _, ins := range m.instances {
-		if ins.AppID != appID || ins.State != "running" {
+		if ins.AppID != appID || ins.State != "running" || IsFork(ins.Mode) {
 			continue
 		}
 		dep, ok := m.deployments[ins.DeploymentID]
@@ -17057,7 +17188,7 @@ func (m *MemStore) ComputeNodeByName(_ context.Context, name string) (ComputeNod
 func (m *MemStore) ComputeNodeUsedMB(_ context.Context, nodeID string) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	var used int64
+	used := m.functionMigrationNodeUsageLocked(nodeID).RAM
 	for _, ins := range m.instances {
 		if ins.NodeID != nodeID {
 			continue
@@ -17138,6 +17269,11 @@ func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs
 	for _, r := range m.migrationSources {
 		if _, ok := wanted[r.SourceNodeID]; ok {
 			used[r.SourceNodeID] += m.migrationSourceCostLocked(r, true).CPU
+		}
+	}
+	for node := range wanted {
+		if c := m.functionMigrationNodeUsageLocked(node); c.CPU != 0 {
+			used[node] += c.CPU
 		}
 	}
 	return used, nil
@@ -17775,10 +17911,13 @@ func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
 	}
 	delete(m.computeNodes, id)
 	delete(m.computeNodeRuntimeIncarnations, id)
+	delete(m.computeNodeVMMDEpochs, id)
+	delete(m.computeNodeVMMDNotices, id)
 	delete(m.computeNodeRuntimeProtocols, id)
 	m.eraseStandardLogConsumerNodeLocked(id)
 	m.eraseStandardEgressLocked("", id)
 	m.eraseNativeRuntimeHistoryLocked(id)
+	m.eraseStandardRebindsForNodeLocked(id)
 	// CP-1: cascade the heartbeat history. Mirrors the FK ON DELETE
 	// CASCADE on compute_node_heartbeats.node_id; the endpoint
 	// resolves the parent by name first, so a missing history rows
@@ -19960,6 +20099,15 @@ func (m *MemStore) UsageWindows(_ context.Context, start, end time.Time) ([]Usag
 	return out, nil
 }
 
+// billingUsageDelivery is one MemStore receipt; the first recorded quantity
+// wins, as in billing_usage_deliveries.
+type billingUsageDelivery struct {
+	provider, accountID string
+	meter               BillingMeter
+	hour                time.Time
+	quantity            int64
+}
+
 func billingUsageDeliveryKey(provider, accountID string, meter BillingMeter, hour time.Time) string {
 	return provider + "\x00" + accountID + "\x00" + string(meter) + "\x00" + hour.UTC().Truncate(time.Hour).Format(time.RFC3339)
 }
@@ -20039,7 +20187,10 @@ func (m *MemStore) RecordBillingMeterUsageDelivery(_ context.Context, provider, 
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.billingUsageDeliveries[billingUsageDeliveryKey(provider, accountID, meter, windowStart)] = struct{}{}
+	key := billingUsageDeliveryKey(provider, accountID, meter, windowStart)
+	if _, exists := m.billingUsageDeliveries[key]; !exists { // Postgres: ON CONFLICT DO NOTHING
+		m.billingUsageDeliveries[key] = billingUsageDelivery{provider: provider, accountID: accountID, meter: meter, hour: windowStart.UTC().Truncate(time.Hour), quantity: quantity}
+	}
 	return nil
 }
 
@@ -20605,15 +20756,27 @@ func (m *MemStore) GetIdempotent(_ context.Context, accountID, key string) (int,
 }
 
 // ReserveIdempotent mirrors PgStore.ReserveIdempotent.
-func (m *MemStore) ReserveIdempotent(_ context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+func (m *MemStore) ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	return m.ReserveIdempotentRequest(ctx, accountID, key, nil, abandonAfter)
+}
+
+// ReserveIdempotentRequest mirrors PgStore.ReserveIdempotentRequest.
+func (m *MemStore) ReserveIdempotentRequest(_ context.Context, accountID, key string, fingerprint []byte, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	if fingerprint != nil && len(fingerprint) != IdempotencyFingerprintSize {
+		return IdempotencyReservation{}, errors.New("state: idempotency request fingerprint must be 32 bytes")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	id := accountID + "\x00" + key
 	e, ok := m.idem[id]
 	age := time.Since(e.created)
-	if !ok || age > 24*time.Hour || (e.status == 0 && age >= abandonAfter) {
-		m.idem[id] = idemEntry{created: time.Now()}
+	conflict := idempotencyFingerprintsConflict(e.requestDigest, fingerprint)
+	if !ok || age > 24*time.Hour || (e.status == 0 && age >= abandonAfter && !conflict) {
+		m.idem[id] = idemEntry{created: time.Now(), requestDigest: append([]byte(nil), fingerprint...)}
 		return IdempotencyReservation{Reserved: true}, nil
+	}
+	if conflict {
+		return IdempotencyReservation{Conflict: true}, nil
 	}
 	if e.status == 0 {
 		return IdempotencyReservation{InFlight: true}, nil
@@ -23378,6 +23541,26 @@ func (m *MemStore) DeleteAccount(_ context.Context, id string) error {
 			delete(m.financialBudgetAlerts, key)
 		}
 	}
+	for key, d := range m.financialBudgetChannelDeliveries {
+		if d.Alert.AccountID == id {
+			delete(m.financialBudgetChannelDeliveries, key)
+		}
+	}
+	for key, a := range m.financialBudgetProjections {
+		if a.AccountID == id {
+			delete(m.financialBudgetProjections, key)
+		}
+	}
+	for key, e := range m.financialObjectStorageEstimates {
+		if e.AccountID == id {
+			delete(m.financialObjectStorageEstimates, key)
+		}
+	}
+	for key := range m.financialBudgetChannels {
+		if p, ok := m.financialBudgets[key]; !ok || p.AccountID == id {
+			delete(m.financialBudgetChannels, key)
+		}
+	}
 	for key, stop := range m.financialBudgetStops {
 		if stop.AccountID == id {
 			delete(m.financialBudgetStops, key)
@@ -24429,6 +24612,9 @@ func (m *MemStore) CountFailedDeploymentsSince(_ context.Context, accountID, app
 		if appID != "" && d.AppID != appID {
 			continue
 		}
+		if m.rehearsalAlertExcludedLocked(appID, d.AppID) {
+			continue
+		}
 		if d.Status != DeployFailed {
 			continue
 		}
@@ -24451,6 +24637,9 @@ func (m *MemStore) WasInvokedSuccessfullySince(_ context.Context, accountID, app
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if m.rehearsalAlertExcludedLocked(appID, inv.AppID) {
 			continue
 		}
 		// MemStore keeps no request telemetry; mirror PgStore's
@@ -24995,6 +25184,9 @@ func (m *MemStore) CountFailedInvocationsSince(_ context.Context, accountID, app
 			continue
 		}
 		if appID != "" && inv.AppID != appID {
+			continue
+		}
+		if m.rehearsalAlertExcludedLocked(appID, inv.AppID) {
 			continue
 		}
 		if source != "" && inv.Source != source {
@@ -27760,6 +27952,13 @@ func unifiedDeadLetterEventID(source, sourceID string) string {
 	return uuid.NewSHA1(uuid.Nil, []byte(source+":"+sourceID)).String()
 }
 
+// queueReceiptDeadLetterOrigin mirrors production_dead_letter_events
+// (ADR-20261022203653): a queue message's push receipt is audit evidence, and
+// its invocation is the message's one unified dead-letter entry.
+func queueReceiptDeadLetterOrigin(source, origin string) bool {
+	return source == "trigger_record" && origin == "queue"
+}
+
 func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 	out := make([]DeadLetterEvent, 0)
 	for _, inv := range m.invocations {
@@ -27804,7 +28003,7 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 			continue
 		}
 		trigger, ok := m.triggers[dl.TriggerID.String()]
-		if !ok || !sameMemUUID(trigger.AppID.String(), appID) {
+		if !ok || !sameMemUUID(trigger.AppID.String(), appID) || queueReceiptDeadLetterOrigin("trigger_record", trigger.Kind) {
 			continue
 		}
 		createdAt := time.Time{}
@@ -27931,7 +28130,7 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 		seen[ev.ID] = struct{}{}
 	}
 	for id, ev := range m.deadLetterSnapshots {
-		if _, purged := m.deadLetterPurged[id]; purged {
+		if _, purged := m.deadLetterPurged[id]; purged || queueReceiptDeadLetterOrigin(ev.Source, ev.Origin) {
 			continue
 		}
 		if ev.Source == "invocation" {

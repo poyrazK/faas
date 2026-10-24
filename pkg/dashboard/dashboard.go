@@ -101,7 +101,10 @@ type DPAView struct {
 type MFAChallengeData struct {
 	CSRFToken string
 	Failed    bool
-	Enrolled  bool
+	// Reused marks a failure where the code was right but had already
+	// verified a session; the page asks for the next code, not a retype.
+	Reused   bool
+	Enrolled bool
 	// Next is where a passed challenge continues (already validated as a
 	// same-origin dashboard or CLI-approval path).
 	Next string
@@ -1016,6 +1019,11 @@ type EdgeRuleHostCoverage struct {
 	Host   string
 	Custom bool
 	Rules  int
+	// Selector names the companion, or the public listener when PublicPort
+	// is set, that this <app>--<name> hostname reaches instead of the main
+	// workload (ADR-069, ADR-176).
+	Selector   string
+	PublicPort bool
 }
 
 // EdgeRuleRecipeView is one protection recipe on the edge-rules page.
@@ -1498,6 +1506,9 @@ type AppCostOverviewRow struct {
 
 // AppDetailData combines the bits the app detail page renders.
 type AppDetailData struct {
+	// AnnouncedCaptures is the banner for profile captures the platform
+	// took on its own or that an OOM kill followed (ADR-1155); nil hides it.
+	AnnouncedCaptures  *AnnouncedProfileCapturesView
 	ProductControlURL  string
 	ProfilingAvailable bool
 	// ApplicationAuth shows the application Auth screens' link, a dark
@@ -1603,6 +1614,9 @@ type AppDetailData struct {
 	// DiscoveredRoutes is the persistent, opt-in API route catalog. The
 	// dashboard keeps the rest of the app page available if this read fails.
 	DiscoveredRoutes DiscoveredRoutesView
+	// RouteInsights is the route insights panel (ADR-20261020161310); nil
+	// when the plan has no request telemetry, so no insights are evaluated.
+	RouteInsights *RouteInsightsView
 	// Alerts is the per-app (and account-wide) alert-rule snapshot
 	// (issue #396 / ADR-045, PR 4). nil means the apid dashboard
 	// query failed non-fatally (the page renders the "Alerts"
@@ -1754,6 +1768,9 @@ type WorkflowStepItem struct {
 // button. Alive=false still carries a non-nil pointer with
 // Host="" — the same shape api.DeploymentPreviewURL returns.
 type DeploymentDetailData struct {
+	// OOMCaptureURL links an OOM-failed deployment to the heap capture taken
+	// before the kill (ADR-1155); empty when none exists.
+	OOMCaptureURL               string
 	ProfileCheck                *api.ProfileDeploymentCheck
 	CanaryProfileSignal         *api.CanaryProfileSignal
 	CanaryProfileTraffic        *ProfileTrafficView
@@ -2288,6 +2305,7 @@ type AppMetricsView struct {
 	CacheHitRateAvailable bool
 	ErrorBudgetPct        float64
 	ErrorBudgetAvailable  bool
+	WakeP95Unavailable    bool // too few fleet wakes for a p95 (Hunt 12 H12-40)
 }
 
 // RequestAnalyticsView is the dashboard-facing projection of the customer
@@ -2450,6 +2468,36 @@ type DiscoveredRouteItem struct {
 	RequestCount int64
 	Contract     string
 	Policy       string
+}
+
+// RouteInsightsView is the app page's route insights panel
+// (ADR-20261020161310): active insights with their one-click fixes, and the
+// ones resolved in the last seven days.
+type RouteInsightsView struct {
+	// Available is false when the best-effort read failed.
+	Available bool
+	Active    []RouteInsightItem
+	Resolved  []RouteInsightItem
+	// CSRF is the named token the fix forms post.
+	CSRF string
+	// Flash reports the last fix: "fixed", "changed" or "error".
+	Flash       string
+	FlashDetail string
+}
+
+// RouteInsightItem is one insight; FixID and FixSummary are empty when the
+// platform has no fix to apply.
+type RouteInsightItem struct {
+	ID              string
+	KindLabel       string
+	Method          string
+	Route           string
+	Message         string
+	FirstDetectedAt string
+	ResolvedAt      string
+	FixedAt         string
+	FixID           string
+	FixSummary      string
 }
 
 // DebugPageData is the server-rendered production debugger surface for one
@@ -2735,6 +2783,9 @@ type DebugRequestDetailView struct {
 	Findings                   []DebugEvidenceFindingView
 	Recommendations            []DebugEvidenceRecommendationView
 	GeneratedAt                string
+	// ProfileCaptureURL links the stack snapshot taken while the request was
+	// in flight (ADR-1155 slow_request capture), when one exists.
+	ProfileCaptureURL string
 }
 
 // DebugCriticalPathView is the template-safe projection of the selected

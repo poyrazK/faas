@@ -914,9 +914,10 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	operational := s.appOperationalSummary(ctx, acct, app)
 	appCosts := s.dashboardAppCosts(ctx, log, acct, app, costMonth, costMonthNotice)
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
+		AnnouncedCaptures:  s.announcedProfileCaptures(ctx, log, acct, app),
 		ProductControlURL:  s.productControlConsoleURL(app.Slug),
 		ProfilingAvailable: s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled,
-		ApplicationAuth:    s.applicationAuthEnabled(acct),
+		ApplicationAuth:    s.applicationAuthEnabled(appFlagSubject(acct, app)),
 		Operational:        &operational,
 		App:                appRow,
 		AppCosts:           appCosts,
@@ -973,6 +974,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 		// plans without request-telemetry retention.
 		RequestAnalytics: s.fetchDashboardRequestAnalytics(ctx, log, app, acct, analyticsGroupBy, analyticsRoute, analyticsMethod),
 		DiscoveredRoutes: s.fetchDashboardDiscoveredRoutes(ctx, log, acct, app),
+		RouteInsights:    s.fetchDashboardRouteInsights(ctx, log, w, r, acct, app),
 		// Issue #396 / ADR-045 PR 4 — best-effort alert-rule
 		// snapshot. Failure is non-fatal: a Postgres blip on the
 		// alert_rules read renders the panel's warning empty-state
@@ -1143,6 +1145,7 @@ func (s *server) fetchDashboardMetrics(ctx context.Context, log *slog.Logger, ap
 		ColdStartPct: resp.ColdStartPct,
 		WakeP95MS:    resp.WakeP95MS,
 	}
+	view.WakeP95Unavailable = resp.WakeSamples != nil && *resp.WakeSamples < api.FleetWakeP95MinSamples
 	if resp.CacheHitRatePct != nil {
 		view.CacheHitRatePct = *resp.CacheHitRatePct
 		view.CacheHitRateAvailable = true
@@ -2943,6 +2946,9 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	data := dashboard.DeploymentDetailData{
 		App:        dashboard.AppListItem{Slug: app.Slug},
 		Deployment: dashboardDeploymentItem(dep),
+	}
+	if dep.ErrorCode == api.CodeAppRuntimeOOM {
+		data.OOMCaptureURL = s.oomProfileCaptureURL(r.Context(), acct, app, dep)
 	}
 	// Keep the dashboard's failure explanation aligned with the API/CLI
 	// projection: the persisted profile is the source of truth for the
