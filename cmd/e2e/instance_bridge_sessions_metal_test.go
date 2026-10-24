@@ -74,6 +74,12 @@ func TestInstanceBridgeSessionsMetal(t *testing.T) {
 	}); got != http.StatusCreated {
 		t.Fatalf("create app: status=%d", got)
 	}
+	// Pro apps default to public_auth_mode=bearer as well as require_authn;
+	// the requests below are anonymous, so open both gates.
+	if _, status := doReq(t, h, key, http.MethodPatch, "/v1/apps/hello", api.UpdateAppRequest{RequireAuthn: &falsy,
+		PublicAuth: &api.PublicAuthBlock{Mode: api.AppPublicAuthModeOpen}}); status != http.StatusOK {
+		t.Fatalf("open app auth: status %d", status)
+	}
 	appID := mustGetAppID(t, h, key, "hello")
 	raw, status := doReq(t, h, key, http.MethodPost, "/v1/apps/hello/deployments", api.CreateDeploymentRequest{Image: ref})
 	if status != http.StatusAccepted {
