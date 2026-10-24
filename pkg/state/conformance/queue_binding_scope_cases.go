@@ -83,6 +83,16 @@ func testQueueBindingEnvironmentIdentity(t *testing.T, fx *Fixture) {
 		if err != nil || stats.Depth != 2 {
 			t.Fatalf("scope backlog includes neighbor/legacy: %+v %v", stats, err)
 		}
+		// The scaling readers follow the same identity and stop at their limit.
+		for _, limit := range []int{10, 1} {
+			depth, err := fx.Store.QueueDepthForBindingInScope(fx.Ctx, app.ID, binding.ID, "", limit)
+			if err != nil || depth != min(2, limit) {
+				t.Fatalf("binding depth limit %d = %d, %v", limit, depth, err)
+			}
+		}
+		if inFlight, err := fx.Store.QueueBindingHasInFlight(fx.Ctx, app.ID, binding.ID, ""); err != nil || inFlight != (stats.InFlight > 0) {
+			t.Fatalf("binding in flight = %v, %v; stats %+v", inFlight, err, stats)
+		}
 	}
 	bind("staging", "payments") // Multiple named consumers are independent in one environment.
 	if got := enqueue("staging", ""); got.QueueBindingID != "" {
