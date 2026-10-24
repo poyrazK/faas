@@ -4294,7 +4294,7 @@
       "rotated_from_id",
       "scopes",
       "status",
-      "token_digest"
+      "token_sha256"
     ],
     "kind": "account_identity"
   },
