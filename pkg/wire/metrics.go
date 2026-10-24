@@ -26,7 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing/paddle"
 	"github.com/onebox-faas/faas/pkg/billing/polar"
-	"github.com/onebox-faas/faas/pkg/billing/stripe"
+	"github.com/onebox-faas/faas/pkg/billing/stripe/pushresult"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/prometheus/client_golang/prometheus"
@@ -5256,9 +5256,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// HistogramVec series with zero observed label tuples, which would
 	// render the dashboard's stripe-push panel as "no data" until at
 	// least one push happened (a real ops hazard). The label set is
-	// the canonical closed list from stripe.PushResultLabels —
-	// adding a label there must also extend this loop. ADR-024.
-	for _, label := range stripe.PushResultLabels() {
+	// the canonical closed list from pushresult.Labels, which
+	// stripe.ClassifyPushError emits. ADR-024.
+	for _, label := range pushresult.Labels() {
 		stripePushDur.WithLabelValues(label)
 	}
 	// Pre-instantiate every label in the closed result set for the

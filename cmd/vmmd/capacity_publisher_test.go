@@ -90,6 +90,12 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 					State: "ESTABLISHED", Direction: "outbound", Count: 2,
 				}},
 				LastRequestAt: timestamppb.New(time.Unix(123, 0)),
+				// ADR-20261023171905: the quiet pause record rides the stream.
+				QuietPaused:             true,
+				QuietPausedSince:        timestamppb.New(time.Unix(200, 0)),
+				QuietLastPauseStartedAt: timestamppb.New(time.Unix(150, 0)),
+				QuietLastPauseEndedAt:   timestamppb.New(time.Unix(160, 0)),
+				QuietPausedNsTotal:      wrapperspb.Int64(int64(10 * time.Second)),
 			}},
 		}, nil
 	})
@@ -110,6 +116,13 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 	}
 	if row.GetEgressNewDestinationsPerMin().GetValue() != 42 || row.GetEgressNewDestinationsLimitPerMin() != 120 {
 		t.Fatalf("egress fan-out = %v/%d, want 42/120", row.GetEgressNewDestinationsPerMin(), row.GetEgressNewDestinationsLimitPerMin())
+	}
+	if !row.GetQuietPaused() || row.GetQuietPausedSince().AsTime().Unix() != 200 ||
+		row.GetQuietLastPauseStartedAt().AsTime().Unix() != 150 || row.GetQuietLastPauseEndedAt().AsTime().Unix() != 160 ||
+		row.GetQuietPausedNsTotal().GetValue() != int64(10*time.Second) {
+		t.Fatalf("quiet pause record = paused %v since %v last [%v, %v] total %v",
+			row.GetQuietPaused(), row.GetQuietPausedSince(), row.GetQuietLastPauseStartedAt(),
+			row.GetQuietLastPauseEndedAt(), row.GetQuietPausedNsTotal())
 	}
 }
 

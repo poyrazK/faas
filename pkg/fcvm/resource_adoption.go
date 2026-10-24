@@ -156,6 +156,10 @@ type resourceAdoptionAdmission struct {
 	Plan            string                   `json:"plan"`
 	EgressAllowlist []string                 `json:"egress_allowlist,omitempty"`
 	EgressPorts     []uint16                 `json:"egress_ports,omitempty"`
+	// Drives pins a measured cold boot's drives by the inodes Firecracker
+	// holds, so a successor can rebuild the drive handoff a capture needs
+	// (runtime_drive_handoff_adopt.go). Absent for every other guest.
+	Drives []resourceAdoptionDrivePin `json:"drives,omitempty"`
 }
 
 // validate checks the receipt is a well-formed acknowledgment of a lease
@@ -168,6 +172,9 @@ func (a resourceAdoptionAdmission) validate(l Lease) error {
 	if r.Binding.InstanceID != l.Instance || r.Netns != l.Netns || r.HostIP != l.HostIP.String() || r.LeaseUID != int32(l.UID) ||
 		!api.Plan(a.Plan).Valid() || len(a.EgressAllowlist) > adoptionMaxAllowlist || len(a.EgressPorts) > 65535 {
 		return errors.New("adoption admission does not describe this lease")
+	}
+	if len(a.Drives) != 0 {
+		return checkDrivePins(r, a.Drives)
 	}
 	return nil
 }
@@ -737,6 +744,15 @@ func (m *Manager) commitAdoptionLocked(instance string, w *adoptionWriter) error
 	m.adoptionPolicyFor(lease.Instance, block.Instance.AppID, &block)
 	if c, ok := m.vmm.(interface{ consoleIsFile(string) bool }); ok {
 		block.Firecracker.ConsoleFile = c.consoleIsFile(instance)
+	}
+	if adm := block.Instance.Admission; adm != nil && measuredColdBoot(adm.Receipt) {
+		if p, ok := m.vmm.(interface {
+			adoptionDrivePins(Lease) []resourceAdoptionDrivePin
+		}); ok {
+			if pins := p.adoptionDrivePins(lease); checkDrivePins(adm.Receipt, pins) == nil {
+				adm.Drives = pins
+			}
+		}
 	}
 	exe, err := adoptionExeIdentity(w.procDir, *r.Process)
 	if err != nil {
