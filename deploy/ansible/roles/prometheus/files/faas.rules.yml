@@ -5519,6 +5519,19 @@ groups:
           description: "Known artifact bytes remain after their app deletion grace expired. Apid retains the database references and retries cleanup rather than orphaning the objects."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppDeletionGraceDegraded.md"
 
+      - alert: FaasAppDeletionPurgeBlocked
+        expr: max by (reason) (apid_app_grace_blocked_apps{reason=~"foreign_key|managed_postgres_binding"}) > 0
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: app_deletion_grace
+          public_status: internal
+        annotations:
+          summary: "Expired app purges are blocked ({{ $labels.reason }})"
+          description: "Apid cannot permanently delete at least one expired app. foreign_key: a row the purge does not remove still references the app, and the sweep backs off up to 6 h between attempts; the apid log names the constraint. managed_postgres_binding: a live binding holds a deleted app and only the binding service may revoke it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAppDeletionGraceDegraded.md"
+
   - name: compute_node_key_lifecycle
     interval: 1m
     rules:
