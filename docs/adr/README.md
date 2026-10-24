@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Build secrets resolve like the runtime environment](20261024140000-build-secrets-resolve-like-the-runtime.md)
 - [ADR-20261024135625: Resource journal: durable commits only for reboot-surviving assets](20261024135625-resource-journal-volatile-commits.md)
 - [Dockerfile HEALTHCHECK gates readiness on source builds](20261024100000-dockerfile-healthcheck-enforced.md)
 - [ADR-20261024090000: Idle parks re-check activity, and a park holds new forwards](20261024090000-idle-park-recheck-and-forward-hold.md) — the reaper's park re-checks fresh activity before SNAPSHOTTING; vmmd holds new forwards for the park and drains in-flight ones up to 5 s (amends spec §6)
@@ -36,6 +37,9 @@
 - [ADR-20261021204307: Code-first workflows](20261021204307-code-first-workflows.md) — one entry handler replays the run's journal; Node, Python and Go SDKs
 - [Platform flags: company targeting, full coverage, scheduled and automatic rollouts, self-serve previews](20261021080640-platform-flag-extensions.md)
 - [Product Control free trials](20261021195901-product-control-free-trials.md)
+- [ADR-20261022193512: Unified incidents](20261022193512-unified-incidents.md)
+- [ADR-20261022173833: Custom dashboards](20261022173833-custom-dashboards.md)
+- [ADR-20261022172052: Alerts carry what the logs show](20261022172052-alert-log-context.md)
 - [ADR-20261021210000: Enrolled apps receive no account events](20261021210000-rehearsal-event-fanout-exclusion.md)
 - [Data API engine pool size and server-key limits](20261021180534-data-api-engine-pool-and-server-key-limits.md)
 - [ADR-20261021180000: Rehearsal capture of realtime publishes and signals](20261021180000-rehearsal-realtime-capture.md)
@@ -76,6 +80,7 @@
 - [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)
 - [ADR-1743: Publish final Node build source maps with build completion](1743-builder-issue-source-map-publication.md)
 - [ADR-1742: Publish prebuilt Issues source maps during CLI deployment](1742-deploy-issue-source-map-publication.md)
+- [Customer log search and analytics over the unified ledger](20261018083536-customer-log-search.md)
 
 - [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
 

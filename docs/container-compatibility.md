@@ -340,8 +340,13 @@ secrets:
 ```
 
 Each entry names a top-level secret declared with `environment: NAME`; the
-build mounts the app secret `NAME` from the deployment's scope, under the id
-the entry gives (`{source, target}` sets the id to `target`). `file:` and
+build mounts the secret the app receives as `NAME` at runtime, under the id the
+entry gives (`{source, target}` sets the id to `target`). That is the app's own
+secret in the deployment's scope, an environment reference that points `NAME`
+at another secret, or a project environment secret the app inherits
+([ADR-20261024140000](adr/20261024140000-build-secrets-resolve-like-the-runtime.md)).
+A deployment with an explicit secret selection inherits no project secrets, at
+build or at runtime. `file:` and
 external secrets are not uploaded and are left out with a warning. The value is
 opened only inside the builder VM, mounted with BuildKit's secret mount, and
 never stored in the image, its cache or Gregale's records; a build whose

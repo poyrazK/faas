@@ -1091,6 +1091,41 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    "dashboards",
+		DocSlug: "dashboards",
+		Short:   "Save dashboards that combine metrics, log counts and SLOs across apps",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List the account's dashboards", Examples: []string{"gregale dashboards list"}},
+			{Name: "show", Short: "Show every widget's current value", Positionals: []string{"<dashboard-id>"}, Examples: []string{"gregale dashboards show DASHBOARD_ID"}},
+			{Name: "get", Short: "Show a dashboard's widgets", Positionals: []string{"<dashboard-id>"}},
+			{Name: "create", Short: "Create a dashboard from a widgets JSON file", Positionals: []string{"<name>"}, Flags: []cliFlag{
+				{Name: "file", Short: "JSON file with the widgets array (- for stdin)", Req: true, Value: "PATH"},
+			}, Examples: []string{"gregale dashboards create checkout --file checkout.json"}},
+			{Name: "replace", Short: "Replace a dashboard's name and widgets", Positionals: []string{"<dashboard-id>"}, Flags: []cliFlag{
+				{Name: "name", Short: "dashboard name", Req: true, Value: "NAME"},
+				{Name: "file", Short: "JSON file with the widgets array (- for stdin)", Req: true, Value: "PATH"},
+			}},
+			{Name: "rm", Short: "Delete a dashboard", Positionals: []string{"<dashboard-id>"}},
+		},
+	},
+	{
+		Name:    "incidents",
+		DocSlug: "incidents",
+		Short:   "List open and recent incidents: alerts, route monitors, status page",
+		Subcommands: []cliSub{
+			{Name: "list", Short: "List open incidents and those resolved in the window", Flags: []cliFlag{
+				{Name: "app", Short: "keep one app's incidents", Value: "SLUG"},
+				{Name: "open", Short: "open incidents only"},
+				{Name: "since", Short: "resolved incidents from this long ago (default 7d, at most 30d)", Value: "DURATION"},
+			}, Examples: []string{"gregale incidents list", "gregale incidents list --app shop --open"}},
+			{Name: "show", Short: "Show an incident with its evidence and notes", Notes: []string{
+				"Evidence is what the platform has for the incident: an alert's notifications and the log context its newest one carried, a platform incident's status updates, and an app incident's changes from an hour before it opened.",
+			}, Positionals: []string{"<incident-id>"}, Examples: []string{"gregale incidents show INCIDENT_ID"}},
+			{Name: "ack", Short: "Acknowledge an open incident so the account sees someone is on it", Positionals: []string{"<incident-id>"}, Examples: []string{"gregale incidents ack INCIDENT_ID"}},
+			{Name: "note", Short: "Add a note to an incident; notes cannot be edited", Positionals: []string{"<incident-id>", "<text>"}, Examples: []string{`gregale incidents note INCIDENT_ID "rolled back to v41"`}},
+		},
+	},
+	{
 		Name:    "slos",
 		DocSlug: "slos",
 		Short:   "Define SLOs and track their error budgets",
@@ -1176,6 +1211,8 @@ var cliCommands = []cliCommand{
 				{Name: "failure-source", Short: "any|cron|queue|delayed_task|async_invoke|inbound_webhook", Value: "SOURCE"},
 				{Name: "channel", Short: "notification channel id (repeatable); with one, the webhook is optional", Value: "CHANNEL_ID", Repeatable: true},
 				{Name: "custom-metric", Short: "Pushed custom metric to watch; required with --metric custom_metric", Value: "NAME"},
+				{Name: "log-query", Short: "Log search filters to count, e.g. level=error&q=timeout; with --metric log_search_matches", Value: "FILTERS"},
+				{Name: "saved-search", Short: "Copy a saved log search's filters; with --metric log_search_matches", Value: "NAME"},
 				{Name: "slo", Short: "SLO id for slo_budget_burn or slo_budget_remaining_pct", Value: "SLO_ID"},
 				{Name: "synthetic-check", Short: "synthetic check id for synthetic_check_* metrics", Value: "CHECK_ID"},
 				{Name: "webhook-url", Short: "http(s) webhook URL (https recommended: deliveries are signed, not encrypted); required unless --channel", Value: "URL"},
@@ -3668,7 +3705,9 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Value: "slug", Req: true},
 				{Name: "range", Short: "time window (default 1h)", Value: "WINDOW", ClosedSet: appmetrics.Ranges()},
 			}},
-			{Name: "attack-mode", Short: "Turn attack mode on or off, or show whether it is on", Notes: []string{"Attack mode challenges every visitor to the app for a while (15m to 24h); clients that are not browsers need a verified API key or JWT."}, Positionals: []string{"[on|off|status]"}, Examples: []string{
+			{Name: "attack-mode", Short: "Switch attack mode on, off, or show it", Notes: []string{
+				"Attack mode challenges every visitor to the app for a while (15m to 24h); clients that are not browsers need a verified API key or JWT.",
+			}, Positionals: []string{"[on|off|status]"}, Examples: []string{
 				"gregale edge-rules attack-mode on --app my-api --for 1h",
 				"gregale edge-rules attack-mode --app my-api",
 				"gregale edge-rules attack-mode off --app my-api",
@@ -4758,6 +4797,64 @@ var cliCommands = []cliCommand{
 			{Name: "date", Short: "UTC day for --archive: today, yesterday, or YYYY-MM-DD", Value: "DAY"},
 		},
 		Subcommands: []cliSub{
+			{Name: "search", Short: "Search the app's log events by text, level, route and more", Notes: []string{
+				"Filters combine: text, level, route, HTTP status, release, request ID and trace ID.",
+			}, Positionals: []string{"[<slug>]"}, Examples: []string{
+				"gregale logs search my-api --level error --since 6h",
+				"gregale logs search my-api --q timeout --status 5xx --since 2h --json",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (same as the <slug> positional; defaults to linked context)", Value: "SLUG"},
+				{Name: "q", Short: "case-insensitive text the message contains (2..256 characters; windows up to 24h)", Value: "TEXT"},
+				{Name: "since", Short: "window start: lookback or RFC3339 (default 1h)", Value: "15m|6h|3d|RFC3339"},
+				{Name: "until", Short: "window end (default now)", Value: "RFC3339"},
+				{Name: "source", Short: "ledger source", Value: "SOURCE", ClosedSet: []string{"runtime", "build", "deploy", "http", "network", "dns"}},
+				{Name: "level", Short: "comma list of levels (trace, debug, info, warn, error, fatal)", Value: "LEVELS"},
+				{Name: "route", Short: "exact route template, e.g. /checkout/{id}", Value: "ROUTE"},
+				{Name: "status", Short: "HTTP status or class", Value: "502|5xx"},
+				{Name: "deployment", Short: "deployment id", Value: "ID"},
+				{Name: "request", Short: "request id or trace id", Value: "ID"},
+				{Name: "trace", Short: "W3C trace id", Value: "TRACE_ID"},
+				{Name: "limit", Short: "events per page (1..200)", Value: "N"},
+				{Name: "saved", Short: "apply a saved search's filters; other flags override them", Value: "NAME"},
+				{Name: "cursor", Short: "next_cursor from the previous page", Value: "CURSOR"},
+			}},
+			{Name: "facets", Short: "Count matching log events by source, level, status class and route", Positionals: []string{"[<slug>]"}, Examples: []string{
+				"gregale logs facets my-api --since 24h",
+				"gregale logs facets my-api --source http --status 5xx --since 7d",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (same as the <slug> positional; defaults to linked context)", Value: "SLUG"},
+				{Name: "q", Short: "case-insensitive text the message contains (2..256 characters; windows up to 24h)", Value: "TEXT"},
+				{Name: "since", Short: "window start: lookback or RFC3339 (default 1h)", Value: "15m|6h|3d|RFC3339"},
+				{Name: "until", Short: "window end (default now)", Value: "RFC3339"},
+				{Name: "source", Short: "ledger source", Value: "SOURCE", ClosedSet: []string{"runtime", "build", "deploy", "http", "network", "dns"}},
+				{Name: "level", Short: "comma list of levels (trace, debug, info, warn, error, fatal)", Value: "LEVELS"},
+				{Name: "route", Short: "exact route template, e.g. /checkout/{id}", Value: "ROUTE"},
+				{Name: "status", Short: "HTTP status or class", Value: "502|5xx"},
+				{Name: "deployment", Short: "deployment id", Value: "ID"},
+				{Name: "request", Short: "request id or trace id", Value: "ID"},
+				{Name: "trace", Short: "W3C trace id", Value: "TRACE_ID"},
+				{Name: "saved", Short: "apply a saved search's filters; other flags override them", Value: "NAME"},
+			}},
+			{Name: "saved", Short: "List, save or delete the app's server-side saved log searches", Positionals: []string{"[<slug>]"}, Examples: []string{
+				"gregale logs saved my-api",
+				"gregale logs saved save checkout-5xx my-api --route /checkout --status 5xx",
+				"gregale logs saved delete checkout-5xx my-api",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (same as the <slug> positional; defaults to linked context)", Value: "SLUG"},
+			}, Subcommands: []cliSub{
+				{Name: "list", Short: "List the app's saved searches and their filters", Positionals: []string{"[<slug>]"}, Examples: []string{"gregale logs saved list my-api"}},
+				{Name: "save", Short: "Create a saved search or replace its filters (windows are not stored)", Positionals: []string{"<name>", "[<slug>]"}, Examples: []string{"gregale logs saved save db-errors my-api --source runtime --level error --q database"}, Flags: []cliFlag{
+					{Name: "q", Short: "case-insensitive text the message contains (2..256 characters)", Value: "TEXT"},
+					{Name: "source", Short: "ledger source", Value: "SOURCE", ClosedSet: []string{"runtime", "build", "deploy", "http", "network", "dns"}},
+					{Name: "level", Short: "comma list of levels (trace, debug, info, warn, error, fatal)", Value: "LEVELS"},
+					{Name: "route", Short: "exact route template, e.g. /checkout/{id}", Value: "ROUTE"},
+					{Name: "status", Short: "HTTP status or class", Value: "502|5xx"},
+					{Name: "deployment", Short: "deployment id", Value: "ID"},
+					{Name: "request", Short: "request id or trace id", Value: "ID"},
+					{Name: "trace", Short: "W3C trace id", Value: "TRACE_ID"},
+				}},
+				{Name: "delete", Short: "Delete a saved search", Positionals: []string{"<name>", "[<slug>]"}, Examples: []string{"gregale logs saved delete db-errors my-api"}},
+			}},
 			{Name: "defaults", Short: "Show or manage the project-local preferred log view", Examples: []string{"gregale logs defaults", "gregale logs defaults --help"}, Subcommands: []cliSub{
 				{Name: "set", Short: "Save one existing log view name locally", Positionals: []string{"<name>"}, Flags: []cliFlag{{Name: "dry-run", Bool: true, Short: "preview the preference path and selected filters without saving"}}, Examples: []string{"gregale logs defaults set errors --dry-run"}},
 				{Name: "show", Short: "Show the preferred view, filters, reference health and preview", Flags: []cliFlag{{Name: "app", Value: "SLUG", Short: "target the preview command at an explicit, unverified app"}}, Examples: []string{"gregale logs defaults show --app payments-api"}},
