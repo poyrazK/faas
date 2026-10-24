@@ -70,6 +70,7 @@ type BuildManifest struct {
 	DeploymentID          string            `json:"deployment_id"`
 	SourceTarPath         string            `json:"source_tar_path"`           // absolute path on drive1
 	BuildContext          string            `json:"build_context,omitempty"`   // extracted repository context
+	RepositoryDir         string            `json:"repository_dir,omitempty"`  // repository root below a transport wrapper: the Dockerfile context (ADR-144); empty = BuildContext
 	Workdir               string            `json:"workdir"`                   // default /build/src
 	DockerfilePath        string            `json:"dockerfile_path,omitempty"` // relative to Workdir; empty = Dockerfile
 	// DockerfileBuild is the Compose build arguments and target stage

@@ -48,6 +48,23 @@ func TestBuildManifestForRequestIssueSourceMaps(t *testing.T) {
 	}
 }
 
+// A wrapped archive extracts below /build/src; the Dockerfile context is the
+// repository under the wrapper, and a flat archive keeps the guest default.
+func TestBuildManifestForRequestRepositoryDir(t *testing.T) {
+	for _, tc := range []struct{ root, repository, want string }{
+		{"gregale-source/jobs/report", "gregale-source", "/build/src/gregale-source"},
+		{"jobs/report", "", ""},
+	} {
+		m, err := buildManifestForRequest(VMRequest{SourceRoot: tc.root, RepositoryRoot: tc.repository, Framework: FrameworkDocker}, 60)
+		if err != nil || m.BuildContext != "/build/src" || m.RepositoryDir != tc.want || m.Workdir != "/build/src/"+tc.root {
+			t.Fatalf("manifest context/repository/workdir = %q/%q/%q, %v; want repository %q", m.BuildContext, m.RepositoryDir, m.Workdir, err, tc.want)
+		}
+	}
+	if _, err := buildManifestForRequest(VMRequest{SourceRoot: "x/app", RepositoryRoot: "../x"}, 60); err == nil {
+		t.Fatal("an escaping repository root reached the guest manifest")
+	}
+}
+
 func (c *warmSnapshotFailureClient) WaitBuilderReady(context.Context, *vmmdpb.WaitBuilderReadyRequest, ...grpc.CallOption) (*vmmdpb.WaitBuilderReadyResponse, error) {
 	if c.readyErr != nil {
 		return nil, c.readyErr

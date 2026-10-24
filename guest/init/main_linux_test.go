@@ -416,6 +416,20 @@ func TestBuildArgv_WorkspaceContextUsesSelectedWorkdir(t *testing.T) {
 		!strings.Contains(dockerJoined, "--opt filename=deploy/Dockerfile.production") {
 		t.Fatalf("workspace docker argv has wrong context/workdir: %s", dockerJoined)
 	}
+
+	// A wrapped archive keeps COPY paths repository-relative: the context is
+	// the repository below the wrapper, never the wrapper's parent.
+	wrapped := strings.Join(buildArgv(api.BuildManifest{
+		Framework:     api.FrameworkDockerfile,
+		BuildContext:  "/build/src",
+		RepositoryDir: "/build/src/gregale-source",
+		Workdir:       "/build/src/gregale-source/apps/api",
+		OutDir:        "/build/out",
+	}), " ")
+	if !strings.Contains(wrapped, "--local context=/build/src/gregale-source ") ||
+		!strings.Contains(wrapped, "--local dockerfile=/build/src/gregale-source/apps/api") {
+		t.Fatalf("wrapped docker argv has wrong context/workdir: %s", wrapped)
+	}
 }
 
 func TestBuildArgv_DependencyCache(t *testing.T) {

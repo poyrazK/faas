@@ -177,6 +177,12 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 	if err != nil {
 		return api.BuildManifest{}, fmt.Errorf("builderd: Dockerfile path: %w", err)
 	}
+	repositoryDir := ""
+	if req.RepositoryRoot != "" {
+		if repositoryDir, err = buildWorkdir(req.RepositoryRoot); err != nil {
+			return api.BuildManifest{}, fmt.Errorf("builderd: repository root: %w", err)
+		}
+	}
 	return api.BuildManifest{
 		PublicBuildURLs:       req.PublicBuildURLs,
 		DockerfileBuild:       req.DockerfileBuild.Clone(),
@@ -187,6 +193,7 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 		DeploymentID:          req.DeploymentID,
 		SourceTarPath:         "/build/src.tar",
 		BuildContext:          "/build/src",
+		RepositoryDir:         repositoryDir,
 		Workdir:               workdir,
 		DockerfilePath:        dockerfilePath,
 		OutDir:                "/build/out",

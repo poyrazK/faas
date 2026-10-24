@@ -1047,7 +1047,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	}
 
 	dependencyCacheKey := dependencyCacheKeyForApp(app, fw, dep.SourceRoot, runtimeBaseRef)
-	vmRoot, err := vmSourceRoot(dep.SourcePath, dep.SourceRoot)
+	vmRoot, repositoryRoot, err := vmSourceRoot(dep.SourcePath, dep.SourceRoot)
 	if err != nil {
 		b.markFailed(ctx, build, state.FailureInfra, "resolve source root in archive: "+err.Error(), buildStart)
 		return BuildResult{}, err
@@ -1062,6 +1062,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		SourcePath:            dep.SourcePath,
 		SourceSHA256:          srcHash,
 		SourceRoot:            vmRoot,
+		RepositoryRoot:        repositoryRoot,
 		DockerfilePath:        dockerfilePath,
 		Framework:             fw,
 		Runtime:               runtimeName,

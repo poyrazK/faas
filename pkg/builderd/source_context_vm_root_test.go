@@ -40,23 +40,24 @@ func writeSourceArchive(t *testing.T, names ...string) string {
 
 // The builder VM extracts the archive as delivered, so a non-default root
 // resolves through a transport wrapper; a GitOps subdirectory build without
-// this ran Railpack in an empty directory beside the wrapped source.
+// this ran Railpack in an empty directory beside the wrapped source, and gave a
+// Dockerfile build the wrapper's parent as its repository context.
 func TestVMSourceRootResolvesTransportWrapper(t *testing.T) {
 	t.Parallel()
 	gitops := writeSourceArchive(t, "gregale-source/jobs/report/package.json", "gregale-source/jobs/report/index.js")
 	direct := writeSourceArchive(t, "jobs/report/package.json", "README.md")
 	for _, tc := range []struct {
-		name, archive, root, want, workdir string
+		name, archive, root, want, repository, workdir string
 	}{
-		{"gitops wrapper", gitops, "jobs/report", "gregale-source/jobs/report", "/build/src/gregale-source/jobs/report"},
-		{"unwrapped workspace", direct, "jobs/report", "jobs/report", "/build/src/jobs/report"},
-		{"default root keeps guest flatten", gitops, "", "", "/build/src"},
-		{"dot root keeps guest flatten", gitops, ".", ".", "/build/src"},
+		{"gitops wrapper", gitops, "jobs/report", "gregale-source/jobs/report", "gregale-source", "/build/src/gregale-source/jobs/report"},
+		{"unwrapped workspace", direct, "jobs/report", "jobs/report", "", "/build/src/jobs/report"},
+		{"default root keeps guest flatten", gitops, "", "", "", "/build/src"},
+		{"dot root keeps guest flatten", gitops, ".", ".", "", "/build/src"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := vmSourceRoot(tc.archive, tc.root)
-			if err != nil || got != tc.want {
-				t.Fatalf("vmSourceRoot = %q, %v; want %q", got, err, tc.want)
+			got, repository, err := vmSourceRoot(tc.archive, tc.root)
+			if err != nil || got != tc.want || repository != tc.repository {
+				t.Fatalf("vmSourceRoot = %q, %q, %v; want %q, %q", got, repository, err, tc.want, tc.repository)
 			}
 			workdir, err := buildWorkdir(got)
 			if err != nil || workdir != tc.workdir {
@@ -64,7 +65,7 @@ func TestVMSourceRootResolvesTransportWrapper(t *testing.T) {
 			}
 		})
 	}
-	if _, err := vmSourceRoot(filepath.Join(t.TempDir(), "missing.tar.gz"), "jobs/report"); err == nil {
+	if _, _, err := vmSourceRoot(filepath.Join(t.TempDir(), "missing.tar.gz"), "jobs/report"); err == nil {
 		t.Fatal("a missing archive resolved a root")
 	}
 }

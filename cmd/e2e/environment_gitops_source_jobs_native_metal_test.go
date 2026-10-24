@@ -148,7 +148,9 @@ func (j *nativeSourceJobJourney) addSourceRevision(t *testing.T, sha string, hol
 	if j.kind == "dockerfile" {
 		command = []string{"/gitops-job"}
 		files["jobs/report/gitops-job"] = j.binary
-		dockerfile := "FROM scratch\nCOPY --chmod=0755 gitops-job /gitops-job\nCOPY commit.txt /app/commit.txt\n"
+		// The Dockerfile sits in the workload directory; its context is the
+		// repository (ADR-144), so COPY paths are repository-relative.
+		dockerfile := "FROM scratch\nCOPY --chmod=0755 jobs/report/gitops-job /gitops-job\nCOPY jobs/report/commit.txt /app/commit.txt\n"
 		if hold {
 			dockerfile += "RUN [\"/gitops-job\",\"--build-hold\"]\n"
 		}

@@ -1828,6 +1828,9 @@ func buildArgv(m api.BuildManifest) []string {
 }
 
 func manifestBuildContext(m api.BuildManifest) string {
+	if m.RepositoryDir != "" {
+		return m.RepositoryDir
+	}
 	if m.BuildContext != "" {
 		return m.BuildContext
 	}

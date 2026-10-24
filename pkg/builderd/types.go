@@ -46,6 +46,7 @@ type VMRequest struct {
 	SourcePath            string // tarball or dockerfile source on disk
 	SourceSHA256          string // digest already verified by the orchestrator
 	SourceRoot            string // repository-relative build root inside the archive; empty = archive root
+	RepositoryRoot        string // archive-relative repository root above a transport wrapper; empty = archive root
 	DockerfilePath        string // relative to SourceRoot; empty selects Dockerfile
 	Framework             Framework
 	Runtime               string // app runtime id (node22, python312, go124-alpine, ...)
