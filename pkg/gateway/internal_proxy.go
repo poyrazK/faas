@@ -480,8 +480,13 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// The shutdown notice lets a gateway restart end an SSE stream cleanly.
-	streamCtx, detachBudget, touch, cancelStream := newStreamSession(drain.WithShutdownNotice(r.Context(), p.Drain), 0, streamIdleTimeout)
+	streamCtx, detachBudget, sessionTouch, cancelStream := newStreamSession(drain.WithShutdownNotice(r.Context(), p.Drain), 0, streamIdleTimeout)
 	defer cancelStream()
+	deadlines := newStreamDeadlines(w, streamIdleTimeout)
+	touch := func() {
+		sessionTouch()
+		deadlines.touch()
+	}
 	outReq := r.Clone(streamCtx)
 	outReq.URL.Scheme = p.Target.Scheme
 	outReq.URL.Host = p.Target.Host
@@ -741,6 +746,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// in-flight goroutine, not the listener.
 	if isLongLivedResponse(resp.StatusCode, resp.Header) {
 		detachBudget()
+		deadlines.start()
 		touch()
 		if isEventStream(resp.Header) {
 			// Ends as a clean close (the copy sees context.Canceled); the

@@ -94,6 +94,14 @@ Roll a release out in this order, and roll back in the reverse order:
 A contract migration (a drop, or tightening a constraint) is the data step of
 a *later* release, after every unit that read the old shape has moved past it.
 
+The public edge's Caddy follows the same rule for a new upstream protocol.
+gatewayd-public accepts HTTP/2 cleartext (h2c) for gRPC on its loopback
+listener; Caddy only starts sending gRPC that way when the operator sets
+`faas_public_edge_grpc_h2c`, which is safe once every gatewayd-public in the
+fleet runs that release. Rolling back past it means turning the variable off
+first. Every other request stays on HTTP/1.1, so an older gatewayd-public
+behind an h2c-enabled Caddy fails gRPC only.
+
 ## Gate 1: version skew (CI, every pull request)
 
 `make version-skew-check` runs `scripts/ci/versionskew`, a Go tool. CI runs
