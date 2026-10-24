@@ -26,7 +26,7 @@
       "capabilities": ["custom-domains", "openapi-contract-preview", "streaming-and-grpc"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
-        {"kind": "test", "locator": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"},
+        {"kind": "test", "locator": "cmd/gatewayd-internal/custom_domain_acceptance_test.go::TestCustomDomainAcceptance"},
         {"kind": "test", "locator": "pkg/openapidiff/preview_test.go::TestBuildRoutePolicyPreview"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handler_app_openapi_test.go::TestGetAppOpenAPIPolicyPreview_ReadOnly"},
         {"kind": "test", "locator": "pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode"}
@@ -425,7 +425,7 @@
       "capabilities": ["firecracker-isolation", "scale-to-zero"],
       "targets": [{"metric": "p95", "operator": "lte", "value": 350, "unit": "milliseconds"}],
       "evidence": [
-        {"kind": "test", "locator": "pkg/gateway/handler_test.go::TestColdWakeReturns200AndHeader"},
+        {"kind": "test", "locator": "cmd/e2e/park_wake_cycle_e2e_test.go::TestE2E_ParkWakeCycle_RestoresTheSnapshotItJustWrote"},
         {"kind": "test", "locator": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal"},
         {"kind": "test", "locator": "cmd/e2e/catalog_runtime_metal_test.go::TestCatalogRuntimeParityMetal"},
         {"kind": "test", "locator": "cmd/e2e/direct_oci_autoscale_metal_test.go::TestDirectOCIAutoscaleScaleToZeroMetal"}
