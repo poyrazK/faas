@@ -67,6 +67,9 @@ func Run(t *testing.T, open Open) {
 		{"post_release_watch_candidates_follow_the_newest_release", testPostReleaseWatchCandidates},
 		{"release_freezes_limit_list_and_lift", testReleaseFreezes},
 		{"release_gates_round_trip_and_follow_their_slo", testReleaseGates},
+		{"release_approvals_policy_and_one_decision_per_person", testReleaseApprovals},
+		{"release_approval_events_once_due_and_retried", testReleaseApprovalEvents},
+		{"scheduled_releases_one_pending_and_start_in_the_traffic_change", testScheduledReleases},
 		{"app_secret_revocation_ack_survives_secret_deletion", testAppSecretRevocationAckSurvivesDeletion},
 		{"custom_metrics_cap_applies_to_new_names_only", testCustomMetricsContract},
 		{"scaling_policy_survives_a_store_round_trip", testScalingPolicyRoundTrip},
@@ -94,6 +97,8 @@ func Run(t *testing.T, open Open) {
 		{"git_driven_deployment_promotion_is_scope_and_revision_fenced", testGitDrivenDeploymentPromotionFence},
 		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
+		{"observed_workload_class_without_a_proof", testObservedWorkloadClass},
+		{"source_runtime_profile_records_a_healthcheck_verdict", testSourceRuntimeProfileHealthcheck},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
 		{"service_recovery_claim_and_retry_are_durable", testServiceRecoveryClaims},
@@ -109,6 +114,11 @@ func Run(t *testing.T, open Open) {
 		{"ownership_recovery_pages_are_scoped_exclusive_and_bounded", testOwnershipRecoveryPages},
 		{"ownership_recovery_transfer_fences_health_cooldown_and_peers", testOwnershipRecoveryTransfer},
 		{"scenario_rehearsal_reads_for_unenrolled_app", testScenarioRehearsalReadsForUnenrolledApp},
+		{"rehearsal_apps_leave_account_alerts", testRehearsalAppsLeaveAccountAlerts},
+		{"rehearsal_app_logs_stay_inside_the_run", testRehearsalAppLogsStayInsideTheRun},
+		{"rehearsal_apps_never_poll_real_brokers", testRehearsalAppsNeverPollRealBrokers},
+		{"rehearsal_crons_never_fire_from_the_clock", testRehearsalCronsNeverFireFromTheClock},
+		{"rehearsal_apps_receive_no_account_events", testRehearsalAppsReceiveNoAccountEvents},
 		{"usage_rollup_merges_minutes", testUsageRollup},
 		{"archived_logs_are_scoped_to_the_owning_app", testInstanceLogsOwnedByApp},
 		{"invalid_instance_state_is_rejected", testInvalidInstanceState},
@@ -175,6 +185,7 @@ func Run(t *testing.T, open Open) {
 		{"queue_binding_retirement_holds_work_and_retains_receipts", testQueueBindingRetirement},
 		{"queue_binding_identity_survives_rename_replacement_and_replay", testInvocationQueueBindingIdentity},
 		{"queue_dead_letter_replay_rearms_original_receipt", testQueueReplayReceipt},
+		{"queue_dead_letter_message_is_one_entry", testQueueDeadLetterSingleEntry},
 		{"queue_consumer_and_trigger_share_account_quota", testQueueConsumerAccountQuota},
 		{"invocation_claim_preserves_stored_cap", testInvocationClaimPreservesStoredCap},
 		{"invocation_retry_releases_reserved_slot", testInvocationRetryReleasesReservedSlot},
@@ -207,6 +218,14 @@ func Run(t *testing.T, open Open) {
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
 		{"snapshot_delete_intent_is_durable", testSnapshotDeleteIntent},
 		{"log_event_insert_is_idempotent_and_queries_are_tenant_scoped", testLogEventInsertAndList},
+		{"log_event_search_filters_and_facets", testLogEventSearchAndFacets},
+		{"log_event_projection_sources", testLogProjectionSources},
+		{"log_saved_searches", testLogSavedSearches},
+		{"log_search_alert_rule_round_trips", testLogSearchAlertRuleRoundTrips},
+		{"dashboards_are_account_scoped", testDashboards},
+		{"alert_episodes_follow_rule_state", testAlertEpisodesFollowRuleState},
+		{"route_monitor_incident_summaries_are_account_scoped", testRouteMonitorIncidentSummariesAreAccountScoped},
+		{"incident_notes_follow_their_incident", testIncidentNotesFollowTheirIncident},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},
@@ -244,6 +263,8 @@ func Run(t *testing.T, open Open) {
 		{"scoped_runtime_changes_preserve_neighbor_snapshots", testScopedRuntimeChangesPreserveNeighborSnapshots},
 		{"project_config_reaches_runtime_values", testProjectConfigReachesRuntimeValues},
 		{"project_config_change_invalidates_member_snapshots", testProjectConfigChangeInvalidatesMemberSnapshots},
+		{"project_secrets_reach_runtime_values", testProjectSecretsReachRuntimeValues},
+		{"project_secret_change_invalidates_member_snapshots", testProjectSecretChangeInvalidatesMemberSnapshots},
 		{"runtime_input_receipts_are_immutable_and_preserved_in_snapshots", testRuntimeInputReceipts},
 		{"runtime_input_receipts_check_secret_versions", testRuntimeInputReceiptSecretVersions},
 		{"runtime_input_receipts_preserve_sidecar_secret_access", testRuntimeInputReceiptSidecarSecretAccess},
@@ -2159,7 +2180,7 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 		AppID: fx.App.ID, WorkflowName: "conformance", Status: state.WorkflowRunStatusRunning,
 		Input: []byte(`{"input":true}`), DefinitionSnapshot: []byte(`{"steps":["first","second"]}`),
 	}
-	active, err := fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, run, 1)
+	active, err := fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, run, 1, 0)
 	if err != nil || active != 1 {
 		t.Fatalf("CreateWorkflowRunAdmitted = (%d, %v), want (1, nil)", active, err)
 	}
@@ -2167,7 +2188,7 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 		AppID: fx.App.ID, WorkflowName: "over-quota",
 		Input: []byte(`{}`), DefinitionSnapshot: []byte(`{"steps":[]}`),
 	}
-	active, err = fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, overQuota, 1)
+	active, err = fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, overQuota, 1, 0)
 	if !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) || active != 1 {
 		t.Fatalf("CreateWorkflowRunAdmitted(over quota) = (%d, %v), want (1, ErrWorkflowRunQuotaExceeded)", active, err)
 	}
@@ -2287,7 +2308,7 @@ func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
 				AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
 				Input: json.RawMessage(`{"order_id":"same"}`), DefinitionSnapshot: json.RawMessage(`{"name":"idempotent-create","steps":[]}`),
 			}
-			active, replayed, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, run, 1, key, fingerprint)
+			active, replayed, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, run, 1, 0, key, fingerprint)
 			results <- result{run: run, active: active, replayed: replayed, err: err}
 		}()
 	}
@@ -2321,7 +2342,7 @@ func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
 		AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
 		Input: json.RawMessage(`{"order_id":"same"}`), DefinitionSnapshot: json.RawMessage(`{"name":"new-published-definition","steps":[]}`),
 	}
-	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, changedDefinition, 1, key, fingerprint); err != nil || !isReplay {
+	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, changedDefinition, 1, 0, key, fingerprint); err != nil || !isReplay {
 		t.Fatalf("replay after definition update = (replayed:%t, err:%v), want original run", isReplay, err)
 	}
 	var replayedSnapshot, expectedSnapshot any
@@ -2341,12 +2362,12 @@ func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
 		AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
 		Input: json.RawMessage(`{"order_id":"different"}`), DefinitionSnapshot: json.RawMessage(`{"name":"idempotent-create","steps":[]}`),
 	}
-	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, conflict, 1, key, changedInputFingerprint); !errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) || isReplay {
+	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, conflict, 1, 0, key, changedInputFingerprint); !errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) || isReplay {
 		t.Fatalf("changed-input retry = (replayed:%t, err:%v), want idempotency conflict", isReplay, err)
 	}
 
 	other := &state.WorkflowRun{AppID: fx.App.ID, WorkflowName: "idempotent-create", Input: json.RawMessage(`{}`), DefinitionSnapshot: json.RawMessage(`{}`)}
-	if _, _, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, other, 1, "other-"+uuid.NewString(), fingerprint); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+	if _, _, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, other, 1, 0, "other-"+uuid.NewString(), fingerprint); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
 		t.Fatalf("new key after quota consumed = %v, want ErrWorkflowRunQuotaExceeded", err)
 	}
 }
@@ -3485,6 +3506,34 @@ func testAppSecretRuntimeProcessGenerationFence(t *testing.T, fx *Fixture) {
 	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, process(third, third)); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("reactivated a retired generation: %v", err)
 	}
+	// ADR-508 amendment 1: a guest process attempt that vmmd started after a
+	// registration (a restore that fell back to cold boot under the same
+	// instance) may replace it without knowing its generation; a start from
+	// an attempt that predates the registration is still fenced.
+	live, stray, fresh := strings.Repeat("d", 32), strings.Repeat("e", 32), strings.Repeat("f", 32)
+	// Register a minute ago: a replacement stamped time.Now() right after an
+	// unstamped registration can share its microsecond and not be "later".
+	registered := process(live, third)
+	registered.AttemptedAt = time.Now().Add(-time.Minute)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, registered); err != nil {
+		t.Fatalf("BeginAppSecretRuntimeProcess(after retire): %v", err)
+	}
+	earlier := process(stray, "")
+	earlier.ProcessStartedAt = time.Now().Add(-time.Hour)
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, earlier); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("an earlier process attempt replaced a later registration: %v", err)
+	}
+	replacement := process(fresh, "")
+	replacement.ProcessStartedAt = time.Now()
+	if err := fx.Store.BeginAppSecretRuntimeProcess(fx.Ctx, replacement); err != nil {
+		t.Fatalf("a later process attempt was fenced by the replaced attempt's registration: %v", err)
+	}
+	if err := ack(live); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("accepted ACK from the replaced attempt's process: %v", err)
+	}
+	if err := ack(fresh); err != nil {
+		t.Fatalf("ACK the replacement attempt's process: %v", err)
+	}
 }
 
 func testSidecarSecretReloadSignal(t *testing.T, fx *Fixture) {
@@ -4497,6 +4546,7 @@ func testScalingPolicyRoundTrip(t *testing.T, fx *Fixture) {
 		MaxQueueDepth:           17,
 		WakeMaxQueueDepth:       31,
 		WakeMaxQueueWaitSeconds: 41,
+		PerInstanceConcurrency:  2,
 		Timezone:                "Europe/Istanbul",
 		Schedules: []state.ScalingSchedule{
 			{Cron: "0 8 * * 1-5", DurationS: 12 * 3600, MinInstances: 3},

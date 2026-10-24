@@ -30,7 +30,7 @@ go get github.com/poyrazK/faas/sdk/go
 ```
 
 The SDK targets `go 1.23` (the floor of the daemon's own toolchain
-at the moment of extraction). The daemon's `go.mod` is `go 1.26.9`,
+at the moment of extraction). The daemon's `go.mod` is `go 1.26.10`,
 but the SDK stays on 1.23 so a customer pinned to an older Go
 toolchain can still consume it.
 
@@ -78,6 +78,26 @@ func main() {
     fmt.Println(app.Slug, app.Status)
 }
 ```
+
+## Request tracing
+
+The `tracing` package sends request, HTTP client and `database/sql` spans to
+the Gregale debugger when the app sets `tracing.enabled`, using only the
+standard library:
+
+```go
+import "github.com/poyrazK/faas/sdk/go/tracing"
+
+shutdown := tracing.Start() // does nothing unless tracing is enabled
+defer shutdown(context.Background())
+
+http.DefaultTransport = tracing.Transport(http.DefaultTransport)
+db, err := tracing.Open("pgx", os.Getenv("DATABASE_URL"), "postgresql")
+log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), tracing.Handler(mux)))
+```
+
+Pass the request's context to outgoing calls so they appear under the
+request. See [`docs/tracing.md`](../../docs/tracing.md#go).
 
 ## Gregale Issues exception reporting
 

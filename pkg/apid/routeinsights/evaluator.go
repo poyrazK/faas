@@ -158,7 +158,7 @@ func (e *Evaluator) findings(ctx context.Context, acct state.Account, app state.
 	}
 	out := KeptAwake(routeawake.Analyze(routeawake.Inputs{
 		App: app.Slug, From: since, Until: now,
-		IdleTimeoutS: limits.EffectiveIdleTimeoutS(string(app.Type), app.IdleTimeoutS), RAMMB: app.RAMMB,
+		IdleTimeoutS: limits.EffectiveIdleTimeoutS(string(app.Type), app.IdleTimeoutS), TailTimeoutS: limits.WaitUntilTimeoutS(), RAMMB: app.RAMMB,
 		Awake: data.Awake, Routes: data.Routes, Sources: data.Sources,
 	}))
 	stats, err := e.Store.RouteAdviceRouteStats(ctx, sqlc.RouteAdviceRouteStatsParams{
@@ -197,6 +197,9 @@ func (e *Evaluator) upsert(ctx context.Context, accountID, appID string, f Findi
 	if err := e.Store.UpsertRouteInsight(ctx, sqlc.UpsertRouteInsightParams{
 		AccountID: pgUUID(accountID), AppID: pgUUID(appID), Kind: f.Kind, Method: f.Method, Route: f.Route,
 		Message: message, Evidence: evidence, ObservedAt: timestamptz(now),
+		// A fixed insight's window still holds pre-fix evidence; it may
+		// reopen only once a full window has passed (ADR-20261020161310).
+		RefixBefore: timestamptz(now.Add(-api.RouteInsightWindow)),
 	}); err != nil {
 		return fmt.Errorf("upsert %s insight for %s %s: %w", f.Kind, f.Method, f.Route, err)
 	}

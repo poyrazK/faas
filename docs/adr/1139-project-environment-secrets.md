@@ -111,10 +111,18 @@ still depends on it.
 ### 7. Environments, clones and promotion
 
 An environment clone copies the source environment's project secrets as it
-copies app secrets. A promotion does not: the destination keeps its own, as it
-does for app secrets. A qualification records a revision hash of the
-environment's project secrets beside the per-app hashes, so a promotion refuses
-when a source project secret changed after qualification.
+copies app secrets. A durable (checkpointed) clone cannot carry them yet, so
+its capture refuses a source environment that has any rather than producing an
+environment whose services boot without them. A promotion does not copy them:
+the destination keeps its own, as it does for app secrets.
+
+A qualification records a revision hash of the environment's project secrets
+(keys and versions) beside the per-app hashes, under the key
+`project:secrets`, which no workload slug can take. The server adds it when it
+stores the qualification, so clients keep sending per-app hashes only, and it
+is present only when the environment has project secrets, so qualifications
+recorded earlier stay comparable. A promotion refuses when a source project
+secret changed after qualification.
 
 ### 8. API, permissions and limits
 

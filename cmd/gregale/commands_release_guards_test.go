@@ -63,6 +63,8 @@ func TestReleaseGateRequest(t *testing.T) {
 		metric    string
 		below     string
 		above     string
+		aiMetric  string
+		increase  int
 		wantKind  string
 		wantErr   bool
 	}{
@@ -75,9 +77,14 @@ func TestReleaseGateRequest(t *testing.T) {
 		{name: "metric bound not a number", metric: "orders", below: "many", maxGroups: -1, wantErr: true},
 		{name: "burn rate on new errors", newErrors: true, maxBurn: 5, maxGroups: -1, wantErr: true},
 		{name: "min events on slo", slo: "checkout", minEvents: 3, maxGroups: -1, wantErr: true},
+		// ADR 20261022153155.
+		{name: "ai", aiMetric: "cost_per_call", increase: 30, maxGroups: -1, wantKind: "ai"},
+		{name: "ai and metric", aiMetric: "cost_per_call", metric: "orders", below: "5", maxGroups: -1, wantErr: true},
+		{name: "increase on slo", slo: "checkout", increase: 30, maxGroups: -1, wantErr: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			req, err := main.ReleaseGateRequest("g", tc.slo, tc.maxBurn, tc.newErrors, tc.maxGroups, tc.minEvents, tc.metric, tc.below, tc.above, 0)
+			req, err := main.ReleaseGateRequest("g", tc.slo, tc.maxBurn, tc.newErrors, tc.maxGroups, tc.minEvents, tc.metric, tc.below, tc.above,
+				tc.aiMetric, tc.increase, 0)
 			if tc.wantErr != (err != nil) {
 				t.Fatalf("err = %v, wantErr %v", err, tc.wantErr)
 			}
@@ -88,6 +95,9 @@ func TestReleaseGateRequest(t *testing.T) {
 				t.Fatalf("request = %+v", req)
 			}
 			if tc.name == "metric below" && (req.Comparison != "below" || req.Threshold == nil || *req.Threshold != 5) {
+				t.Fatalf("request = %+v", req)
+			}
+			if tc.name == "ai" && (req.Metric != "cost_per_call" || req.MaxIncreasePercent != 30 || req.Threshold != nil) {
 				t.Fatalf("request = %+v", req)
 			}
 		})

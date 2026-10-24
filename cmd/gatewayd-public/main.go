@@ -646,35 +646,15 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
 		}
 	} else if publicStorageRegistry != nil {
-		requestMetrics, _ := any(pgStore).(state.ObjectStorageProviderUsageStore)
-		accounting, _ := any(pgStore).(state.ObjectStorageAccountingStore)
-		publicHandler, publicErr := objectstorage.NewPublicReadHandler(objectstorage.PublicReadConfig{
-			Store: pgStore, Registry: publicStorageRegistry, RequestMetrics: requestMetrics,
-			Accounting: accounting, Enabled: s3Flag.Load, AppsDomain: os.Getenv("FAAS_APPS_DOMAIN"),
-			Next: controlPlaneHandler, Log: log,
-		})
-		if publicErr != nil {
-			return fmt.Errorf("gatewayd-public: public object storage handler: %w", publicErr)
+		rootHandler, err = publicObjectStorageRoot(pgStore, publicStorageRegistry, s3Flag.Load,
+			os.Getenv("FAAS_APPS_DOMAIN"), controlPlaneHandler, log)
+		if err != nil {
+			return err
 		}
-		rootHandler = publicHandler
-		if routes, routeStoreOK := any(pgStore).(state.ObjectUploadRouteStore); routeStoreOK {
-			if buckets, bucketStoreOK := any(pgStore).(state.ObjectBucketStore); bucketStoreOK {
-				if authenticator, authOK := any(pgStore).(objectstorage.UploadAuthenticator); authOK {
-					upload, uploadErr := objectstorage.NewUploadHandler(objectstorage.UploadConfig{
-						Store: pgStore, Routes: routes, Buckets: buckets, Authenticator: authenticator,
-						Registry: publicStorageRegistry, Accounting: accounting, RequestMetrics: requestMetrics, Enabled: s3Flag.Load,
-						AppsDomain: os.Getenv("FAAS_APPS_DOMAIN"), Next: publicHandler, Log: log,
-					})
-					if uploadErr != nil {
-						return fmt.Errorf("gatewayd-public: object upload handler: %w", uploadErr)
-					}
-					rootHandler = upload
-					log.Info("gatewayd-public: policy-controlled object uploads enabled")
-				}
-			}
-		}
-		log.Info("gatewayd-public: public object storage reads enabled")
 	}
+	// Outside both the control-plane proxy and the compute edge: neither may
+	// forward gatewayd-internal's private paths for a public request.
+	rootHandler = refuseComputePrivatePaths(rootHandler)
 	tenantRoot = rootHandler
 	traceMux.Handle("/", rootHandler)
 
@@ -913,6 +893,14 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    api.DefaultMaxHeaderBytes,
 	}
+	// The public edge sends gRPC over HTTP/2 with prior knowledge (h2c)
+	// once it opts in (faas_public_edge_grpc_h2c), so bidirectional streams
+	// work end to end; every other request keeps HTTP/1.1 on the same
+	// loopback listener. Accepting h2c first lets that opt-in follow this
+	// release without an older edge ever sending a preface we cannot read.
+	publicSrv.Protocols = new(http.Protocols)
+	publicSrv.Protocols.SetHTTP1(true)
+	publicSrv.Protocols.SetUnencryptedHTTP2(true)
 	controlSrv := &http.Server{
 		Addr:              controlAddr,
 		Handler:           trace.HTTPHandler("gatewayd-public-control", controlMux),

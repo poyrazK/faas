@@ -242,3 +242,23 @@ func (c *Contract) ValidateProgress(report api.OperationReportRequest) error {
 	}
 	return fmt.Errorf("operation progress stage is not declared")
 }
+
+// ApprovalInputSchema is a compiled approval form schema (ADR-20261019001500).
+type ApprovalInputSchema struct{ schema *jsonschema.Schema }
+
+// CompileApprovalInputSchema compiles an approval form's input schema with
+// the same dialect, closed references and bounds as Operation schemas, and
+// returns its canonical form.
+func CompileApprovalInputSchema(raw json.RawMessage, maxBytes int) (ApprovalInputSchema, json.RawMessage, error) {
+	schema, canonical, err := compileSchema(raw, maxBytes)
+	return ApprovalInputSchema{schema: schema}, canonical, err
+}
+
+// Validate checks one approval input: a JSON object within maxBytes that
+// matches the schema.
+func (s ApprovalInputSchema) Validate(raw json.RawMessage, maxBytes int) error {
+	if trimmed := bytes.TrimSpace(raw); len(trimmed) == 0 || trimmed[0] != '{' {
+		return fmt.Errorf("approval input must be a JSON object")
+	}
+	return validateValue(s.schema, raw, maxBytes)
+}

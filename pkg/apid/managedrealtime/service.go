@@ -84,6 +84,14 @@ type Service struct {
 	// LiveRoutes lists the live-query keys an app's endpoints route
 	// (ADR-20261016151947): those of live databases bound to the app. Nil routes none.
 	LiveRoutes func(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error)
+	// PreviewReleased decides a realtime preview platform flag for a request
+	// (ADR 20261021080640); legacy is the environment gate that decides until
+	// an operator writes the flag. Nil uses legacy.
+	PreviewReleased func(r *http.Request, acct state.Account, flagKey string, legacy bool) bool
+	// EndpointPreviews are the per-account preview decisions sent with an
+	// endpoint's registration. A nil result sends none, so realtimed's own
+	// switches decide.
+	EndpointPreviews func(ctx context.Context, accountID, appID string) (*realtime.EndpointPreviews, error)
 
 	publishIdempotencySweep atomic.Uint64
 }

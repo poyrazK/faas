@@ -48,7 +48,13 @@ func renderSyntheticStatus(w io.Writer, c api.SyntheticCheckResponse) {
 		return
 	}
 	_, _ = fmt.Fprintf(w, "  Uptime:   %s (24h, %d runs) · %s (7d)\n", fmtUptime(res.Uptime24hPct), res.Runs24h, fmtUptime(res.Uptime7dPct))
-	_, _ = fmt.Fprintf(w, "  Latency:  p95 %.0f ms over 24h, including wakes\n", res.P95LatencyMS24h)
+	// The p95 covers successful runs only and is 0 when there were none; a
+	// failing check printed "p95 0 ms" (Hunt 12 H12-25).
+	if res.P95LatencyMS24h > 0 {
+		_, _ = fmt.Fprintf(w, "  Latency:  p95 %.0f ms over 24h of successful runs, including wakes\n", res.P95LatencyMS24h)
+	} else {
+		_, _ = fmt.Fprintln(w, "  Latency:  — (no successful runs in 24h)")
+	}
 	_, _ = fmt.Fprintln(w, "  Recent runs:")
 	for _, run := range res.Recent {
 		outcome := "ok"

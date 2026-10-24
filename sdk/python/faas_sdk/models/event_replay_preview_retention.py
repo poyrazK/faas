@@ -17,7 +17,8 @@ class EventReplayPreviewRetention:
     """Existing receipt retention information without a complete archive guarantee."""
 
     settled_retention_seconds: int
-    """Retention duration after routing settlement (2592000 seconds); unresolved receipts may survive longer."""
+    """The plan's retention duration after routing settlement (86400, 259200, 604800 or 1209600 seconds on Free,
+    Hobby, Pro and Scale); unresolved receipts may survive longer."""
     history_complete: bool
     """Always false because retained receipts are not a guaranteed complete archive."""
     earliest_retained_at: datetime.datetime | Unset = UNSET

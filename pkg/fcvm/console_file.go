@@ -1,8 +1,31 @@
 package fcvm
 
+// File-backed guest consoles (vmmd restart adoption ADR §2 "Console").
+//
+// By default Firecracker's stdout is a pipe into vmmd, which copies it into
+// the console file and the log ring. When vmmd dies the pipe's reader goes
+// with it, and Firecracker stays alive but stops answering its API (fsn-4,
+// V-A3, 2026-10-17), so the guest cannot be adopted. With a file console,
+// Firecracker's stdout and stderr are the console file itself, and vmmd
+// tails it into the log ring. Nothing Firecracker writes to depends on vmmd
+// being alive, and a stalled reader can no longer back-pressure the serial
+// device.
+
 import (
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
+	"time"
+)
+
+const (
+	consoleTailBusy = 20 * time.Millisecond
+	consoleTailIdle = 200 * time.Millisecond
+	consoleTailRead = 32 << 10
 )
 
 // defaultConsoleLogDir holds each VM's serial console copy,
@@ -26,8 +49,9 @@ type consoleFileOpen struct {
 
 // openConsoleFile creates or truncates a console file. A failure leaves the
 // VM without the file copy; the per-instance ring still gets the output.
+// O_APPEND lets Firecracker write a file console itself.
 func openConsoleFile(path string) *os.File {
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o640)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC|os.O_APPEND, 0o640)
 	if err != nil {
 		return nil
 	}
@@ -81,6 +105,18 @@ func (v *JailerVMM) takeConsoleFile(instance string) *os.File {
 	return o.f
 }
 
+// PreserveFailedRestoreConsole keeps a failed restore's serial console, which
+// holds guest-init's resume-hook diagnosis, before the fallback cold boot of
+// the same instance reopens and truncates the console log.
+func (v *JailerVMM) PreserveFailedRestoreConsole(instance string) (string, error) {
+	src := v.consoleLogPath(instance)
+	dst := strings.TrimSuffix(src, ".console") + ".restore-failed.console"
+	if err := os.Rename(src, dst); err != nil {
+		return "", fmt.Errorf("vmm: keep failed restore console: %w", err)
+	}
+	return dst, nil
+}
+
 // closeConsoleFileOpen closes an untaken console file once its open ends,
 // without making the caller wait for it.
 func closeConsoleFileOpen(o *consoleFileOpen) {
@@ -93,4 +129,78 @@ func closeConsoleFileOpen(o *consoleFileOpen) {
 			_ = o.f.Close()
 		}
 	}()
+}
+
+// WithFileConsole makes every guest launched from now on write its console
+// straight to its console file. vmmd turns it on with adoption records:
+// only file-console guests can be adopted.
+func (v *JailerVMM) WithFileConsole() *JailerVMM {
+	v.mu.Lock()
+	v.fileConsole = true
+	v.mu.Unlock()
+	return v
+}
+
+func (v *JailerVMM) fileConsoleEnabled() bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.fileConsole
+}
+
+// consoleIsFile reports whether instance's running guest writes its console
+// to a file (and so survives this vmmd for adoption).
+func (v *JailerVMM) consoleIsFile(instance string) bool {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	rec := v.recs[instance]
+	return rec != nil && rec.fileConsole
+}
+
+// tailConsole copies the console file from offset into w until done closes,
+// then drains what is left and flushes the last partial line.
+func tailConsole(path string, from int64, w io.Writer, flush func() error, done <-chan struct{}) {
+	f, err := os.Open(path)
+	if err != nil {
+		slog.Warn("vmm: console tail unavailable", "path", path, "err", err)
+		return
+	}
+	defer func() { _ = f.Close() }()
+	if _, err := f.Seek(from, io.SeekStart); err != nil {
+		slog.Warn("vmm: console tail seek", "path", path, "err", err)
+		return
+	}
+	buf := make([]byte, consoleTailRead)
+	wait := consoleTailBusy
+	for {
+		n, err := f.Read(buf)
+		if n > 0 {
+			_, _ = w.Write(buf[:n])
+			wait = consoleTailBusy
+			continue
+		}
+		if err != nil && !errors.Is(err, io.EOF) {
+			slog.Warn("vmm: console tail read", "path", path, "err", err)
+			return
+		}
+		select {
+		case <-done:
+			for {
+				n, err := f.Read(buf)
+				if n > 0 {
+					_, _ = w.Write(buf[:n])
+				}
+				if n == 0 || err != nil {
+					break
+				}
+			}
+			if flush != nil {
+				_ = flush()
+			}
+			return
+		case <-time.After(wait):
+			if wait < consoleTailIdle {
+				wait *= 2
+			}
+		}
+	}
 }

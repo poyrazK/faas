@@ -101,7 +101,7 @@ func cmdJobsRegistryRmInteractive() int {
 	writeCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	if err := client.DeleteJobRegistryCredential(writeCtx, job.Name, registry); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete registry credential", err)
 	}
 	PrintOK(osStdout, "Registry credential for %s removed from %s.", oneLine(credential.Registry), job.Name)
 	return 0

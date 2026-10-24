@@ -10,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // Realtime preview rollout (ADR-20261019102657). The FAAS_REALTIME_* preview
@@ -100,6 +101,14 @@ func (s *Service) previewUnavailable(w http.ResponseWriter, accountID string, en
 		return true
 	}
 	return false
+}
+
+// previewFlagUnavailable is previewUnavailable for a preview that a platform
+// flag also decides per request (ADR 20261021080640): outside the rollout the
+// route does not exist, and inside it the flag decides, with legacy the
+// environment gate until an operator writes the flag.
+func (s *Service) previewFlagUnavailable(w http.ResponseWriter, r *http.Request, acct state.Account, flagKey string, legacy bool, detail string) bool {
+	return s.previewUnavailable(w, acct.ID, s.previewOn(r, acct, flagKey, legacy), detail)
 }
 
 // hiddenEndpointField refuses an endpoint's preview fields (slug,

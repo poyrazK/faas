@@ -37,7 +37,8 @@ func (m *MemStore) productPlanViewLocked(s ProductPlanScope) (productPlanView, e
 	if err := productPlanAuthorized(s, head, c, m.platformTenants[s.TenantID]); err != nil {
 		return v, err
 	}
-	v = productPlanView{head: head, current: d.revisions[s.AppID+"/"+c.Revision], customer: c, starts: map[string]int64{}, period: productcontrol.Period(time.Now())}
+	now := time.Now()
+	v = productPlanView{head: head, current: d.revisions[s.AppID+"/"+c.Revision], customer: c, starts: map[string]int64{}, period: productcontrol.Period(now), now: now}
 	features := map[string]bool{}
 	for _, name := range productPlanFeatures(v) {
 		features[name] = true
@@ -99,7 +100,7 @@ func (m *MemStore) ApplyProductPlanChange(_ context.Context, s ProductPlanScope,
 	if d.planChanges == nil {
 		d.planChanges = map[string]productMemoryPlanChange{}
 	}
-	d.customers[s.AppID+"/"+s.TenantID] = p.AfterCustomer
+	m.assignProductCustomerLocked(s.AccountID, s.AppID, p.AfterCustomer)
 	d.planChanges[r.ID] = productMemoryPlanChange{account: s.AccountID, app: s.AppID, tenant: s.TenantID, fingerprint: fingerprint, receipt: r}
 	return cloneProductBilling(r), nil
 }

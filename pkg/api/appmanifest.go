@@ -204,6 +204,10 @@ type AppManifest struct {
 	SecretReloadSignal string `json:"secret_reload_signal,omitempty"`
 	// SecretReloadReadiness waits for a per-process ready marker before signaling.
 	SecretReloadReadiness bool `json:"secret_reload_readiness,omitempty"`
+	// SecretFiles are app secrets guest-init writes to /run/secrets for the
+	// main workload (ADR-20261023090000). Names only; values come from the
+	// secrets vmmd hands the guest at boot and on live reload.
+	SecretFiles []SecretFile `json:"secret_files,omitempty"`
 	// StopGracePeriod mirrors OCI StopGracePeriod (the OCI image
 	// spec doesn't carry it; M-2 will populate from operator
 	// override or per-plan cap). Currently always zero.
@@ -225,6 +229,10 @@ type AppManifest struct {
 	Pause     string           `json:"pause,omitempty"`
 	Profiling *ProfilingConfig `json:"profiling,omitempty"`
 	Tracing   *TracingConfig   `json:"tracing,omitempty"`
+	// ProfilingOnDemand starts dormant collectors that the control plane can
+	// arm for a bounded capture without a redeploy (ADR-1155). imaged stamps it
+	// when the operator enables on-demand profiling and the plan includes it.
+	ProfilingOnDemand bool `json:"profiling_on_demand,omitempty"`
 	// StartupDeadlineS is the upper bound on time-to-ready. After this
 	// many seconds without reaching READY the instance transitions to
 	// FAILED with lifecycle_failure_reason='startup_fail' (ADR-138
@@ -862,6 +870,9 @@ func (m AppManifest) ValidatePlan(plan Plan) error {
 		}
 	}
 	if err := ValidateWorkloadPorts(m.Ports); err != nil {
+		return fmt.Errorf("app manifest: %w", err)
+	}
+	if err := ValidateSecretFiles(m.SecretFiles); err != nil {
 		return fmt.Errorf("app manifest: %w", err)
 	}
 	limits, ok := LimitsFor(plan)

@@ -522,6 +522,7 @@ type endpointRequest struct {
 	Preview                    bool                      `json:"preview,omitempty"`
 	ChannelRules               []api.RealtimeChannelRule `json:"channel_rules,omitempty"`
 	LiveRoutes                 []LiveRoute               `json:"live_routes,omitempty"`
+	Previews                   *EndpointPreviews         `json:"previews,omitempty"`
 }
 
 func (r endpointRequest) endpoint() Endpoint {
@@ -548,6 +549,7 @@ func (r endpointRequest) endpoint() Endpoint {
 		MaxMessageBytes:  r.MaxMessageBytes,
 		MaxConnectionAge: time.Duration(r.MaxConnectionAgeSeconds) * time.Second,
 		LiveRoutes:       append([]LiveRoute(nil), r.LiveRoutes...),
+		Previews:         clonePreviews(r.Previews),
 
 		AccountMaxConnections: r.AccountMaxConnections,
 		Preview:               r.Preview,

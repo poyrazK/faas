@@ -11,6 +11,9 @@ const (
 	// RouteAwakeSuggestCallLessOften: a client calls the route more often
 	// than the idle timeout, so the app never parks.
 	RouteAwakeSuggestCallLessOften = "call_less_often"
+	// RouteAwakeSuggestRunLessOften: a cron job fires more often than the
+	// idle timeout, so the app never parks (ADR-20261022184757).
+	RouteAwakeSuggestRunLessOften = "run_less_often"
 
 	// Awake sources other than customer requests (ADR-1199).
 	// RouteAwakeSourceRouteProbe: synthetic canary probes the app answered
@@ -18,6 +21,16 @@ const (
 	// admitted.
 	RouteAwakeSourceRouteProbe = "route_probe"
 	RouteAwakeSourcePrewarm    = "prewarm"
+
+	// Deliveries schedd made to the app (ADR-20261022184757), named after
+	// the invocation sources.
+	RouteAwakeSourceCron           = "cron"
+	RouteAwakeSourceQueue          = "queue"
+	RouteAwakeSourceDelayedTask    = "delayed_task"
+	RouteAwakeSourceAsyncInvoke    = "async_invoke"
+	RouteAwakeSourceInboundWebhook = "inbound_webhook"
+	RouteAwakeSourceReplay         = "replay"
+	RouteAwakeSourceEventSource    = "esm"
 )
 
 // RouteAwakeResponse is GET /v1/apps/{slug}/routes/awake: how long a
@@ -31,16 +44,22 @@ type RouteAwakeResponse struct {
 	WindowClamped bool   `json:"window_clamped,omitempty"`
 	// IdleTimeoutSeconds is the app's effective idle timeout: how long it
 	// stays awake after its last successful request.
-	IdleTimeoutSeconds int     `json:"idle_timeout_seconds"`
-	WindowSeconds      int64   `json:"window_seconds"`
-	AwakeSeconds       int64   `json:"awake_seconds"`
-	AwakeShare         float64 `json:"awake_share"`
-	MBSeconds          int64   `json:"mb_seconds"`
-	GBHours            float64 `json:"gb_hours"`
-	Wakes              int64   `json:"wakes"`
-	// UnattributedSeconds is awake time no recorded request, probe or
-	// prewarm explains: minimum instances, queue, cron and waitUntil work,
-	// probes older than a day, or telemetry the plan's rate cap dropped.
+	IdleTimeoutSeconds int `json:"idle_timeout_seconds"`
+	// WaitUntilTimeoutSeconds is the plan's waitUntil task timeout when the
+	// plan enables waitUntil. An instance parks no earlier than the later of
+	// the idle timeout and its last waitUntil task, so a request keeps the
+	// app awake for the longer of the two (ADR-20261022184757).
+	WaitUntilTimeoutSeconds int     `json:"wait_until_timeout_seconds,omitempty"`
+	WindowSeconds           int64   `json:"window_seconds"`
+	AwakeSeconds            int64   `json:"awake_seconds"`
+	AwakeShare              float64 `json:"awake_share"`
+	MBSeconds               int64   `json:"mb_seconds"`
+	GBHours                 float64 `json:"gb_hours"`
+	Wakes                   int64   `json:"wakes"`
+	// UnattributedSeconds is awake time no recorded request, probe,
+	// prewarm or delivery explains: minimum instances, probes older than a
+	// day, deliveries already pruned by result retention, or telemetry the
+	// plan's rate cap dropped.
 	UnattributedSeconds int64 `json:"unattributed_seconds"`
 	// Sources is awake time credited to causes other than customer requests
 	// (ADR-1199), for minutes no request explains.
@@ -57,14 +76,25 @@ type RouteAwakeResponse struct {
 
 // RouteAwakeSource is the awake time one non-request cause explains.
 type RouteAwakeSource struct {
-	// Source is route_probe or prewarm.
+	// Source is route_probe, prewarm, or the invocation source of
+	// deliveries schedd made to the app: cron, queue, delayed_task,
+	// async_invoke, inbound_webhook, replay or esm.
 	Source string `json:"source"`
+	// Name identifies one cron job (the path or command it runs and its
+	// schedule) or one queue; empty for other sources.
+	Name string `json:"name,omitempty"`
 	// Events are probe requests the app answered without a 5xx or an auth
-	// rejection, or instances a prewarm admitted.
+	// rejection, instances a prewarm admitted, or deliveries that started
+	// in the window.
 	Events       int64   `json:"events"`
 	AwakeSeconds int64   `json:"awake_seconds"`
 	AwakeShare   float64 `json:"awake_share"`
 	GBHours      float64 `json:"gb_hours"`
+	// Pattern is periodic when a cron job fires at a steady interval;
+	// IntervalSeconds is then the approximate interval.
+	Pattern         string                `json:"pattern,omitempty"`
+	IntervalSeconds int                   `json:"interval_seconds,omitempty"`
+	Suggestion      *RouteAwakeSuggestion `json:"suggestion,omitempty"`
 }
 
 // RouteAwakeRoute is one route's share of the app's awake time.

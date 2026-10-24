@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -50,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/rootfs"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -481,6 +483,8 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
 		WithValidatorArtifactCheck(validatorArtifacts.Check).
 		WithNodeName(getenv("FAAS_NODE_NAME")).
+		WithProfilingOnDemand(getenv("FAAS_PROFILING_ON_DEMAND") == "1").
+		WithContinuousProfiling(getenv("FAAS_PROFILING_ENABLED") == "1").
 		WithStorage(storageBackend).
 		WithGitHubSourceRefVerifier(githubdClient).
 		WithRuntimeBaseStaging().
@@ -518,7 +522,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// matches /run/faas/vmmd.sock (ADR-015); operators can
 		// override with FAAS_VMM_SOCK for dev (e.g. a bufconn
 		// test on a Mac).
-		WithVMMClient(imaged.NewVMMClientWithTLS(vmmTarget, vmmTLS, log))
+		WithVMMClient(imaged.NewVMMClientWithTLS(vmmTarget, vmmTLS, log)).
+		// ADR 20261022184951 amendment 1: native runtime snapshots live in
+		// vmmd's private tree, which imaged only reads; vmmd removes them.
+		// An absent tree (every node without native runtime capture) leaves
+		// collection exactly as before.
+		WithNativeRuntimeSnapshotRoot(envOr("FAAS_NATIVE_RUNTIME_SNAPSHOT_ROOT", "/srv/fc/native-snap"))
 	releasePhaseEnabled, err := parseBoolEnv("FAAS_RELEASE_PHASE_ENABLED", getenv("FAAS_RELEASE_PHASE_ENABLED"))
 	if err != nil {
 		return err
@@ -527,6 +536,10 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	if releasePhaseEnabled {
 		log.Info("imaged: deployment release phase enabled")
 	}
+	// Same gate and semantics as apid's contained recipe commands
+	// (ADR-20261020150000): a contained rehearsal's release runs only when the
+	// operator has qualified and enabled contained command execution.
+	h.WithRehearsalCommandsEnabled(getenv("FAAS_REHEARSAL_COMMAND_EXECUTION") == "1")
 	// Public-beta compute nodes require a configured public-origin smoke. The
 	// verifier remains optional for single-box/offline development, but the
 	// required flag installs it even when the URL is missing so deployments
@@ -584,17 +597,31 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// identity wired, the registry credential lookup is skipped
 	// and pulls stay anonymous (matches Free plan + no-cred
 	// Hobby paths).
+	var legacyIdentities []*age.X25519Identity
 	if identityPath := envOr("FAAS_HOST_AGE_IDENTITY_PATH", ""); identityPath != "" {
 		identities, err := secretbox.LoadFleetAndHostKeys(filepath.Dir(identityPath))
 		if err != nil {
 			return fmt.Errorf("imaged: load host age identity %q: %w", identityPath, err)
 		}
 		h.WithSecretboxIdentities(identities)
+		legacyIdentities = identities
 		log.Info("host age identity loaded for registry credential unseal",
 			"path", identityPath)
 	} else {
 		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — registry credential unseal disabled (Free plan + anonymous-only deployments)")
 	}
+	// ADR 20261022111812: once the seal_domains role stages the build
+	// domain, its identity opens private-registry passwords ahead of the
+	// fleet and host identities. Crash captures keep those two.
+	buildIdentities, err := loadBuildSealDomain(os.Getenv)
+	if err != nil {
+		return err
+	}
+	if len(buildIdentities) > 0 {
+		h.WithRegistryIdentities(registryReaders(buildIdentities, legacyIdentities))
+	}
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Build, len(buildIdentities) > 0)
+	log.Info("build seal domain", "domain_identity", len(buildIdentities) > 0)
 
 	// F3: function runner wiring. cmd/imaged refuses to come up if either
 	// env var is set but the path doesn't exist on disk — silent omission
@@ -726,11 +753,21 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		log.Info("imaged execution profile base ready", "profile", base.Runtime, "digest", base.ConfigDigest, "skipped", base.Skipped)
 	}
 	if prestageOnlyFromEnv(getenv) {
+		// ADR-20261024191249: the rolled vmmd must be able to boot every
+		// runtime base the release configures, not only those of the apps
+		// this node owns (rc.293: fsn-2 owned none and published nothing).
+		releaseBases, err := h.EnsureReleaseBases(ctx, arch, getenv, assignedBases)
+		if err != nil {
+			return err
+		}
 		log.Info("imaged runtime-base pre-stage complete",
 			"arch", arch,
 			"assigned_runtimes", assignedBases.Runtimes,
 			"assigned_minimal", assignedBases.Minimal,
-			"deferred_to_serving_imaged", assignedBases.Deferred,
+			"release_bases_published", releaseBases.Staged,
+			"release_bases_current", releaseBases.Current,
+			"release_bases_unpublished", releaseBases.Unpublished,
+			"deferred_to_serving_imaged", append(assignedBases.Deferred, releaseBases.Deferred...),
 		)
 		return nil
 	}

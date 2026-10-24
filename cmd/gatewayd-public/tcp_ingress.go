@@ -75,7 +75,7 @@ func startTCPIngress(ctx context.Context, log *slog.Logger, store *state.EdgeSto
 	})
 	nodes := gateway.NewNodeClientCache(func(dialCtx context.Context, target string) (*grpc.ClientConn, error) {
 		return overlay.Dial(dialCtx, overlay.New(target), vmmdTLS)
-	}, log)
+	}, log).WithRestartNotices(store)
 	var certificates *tcpd.FileCertificateProvider
 	closeDependencies := func() {
 		_ = sched.Close()

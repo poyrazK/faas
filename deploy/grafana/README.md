@@ -50,6 +50,27 @@ path. UID `faas-dev-loop-adr-740`.
 Enable delivery with `faas_dev_patch_delivery_enabled: true` on both the
 control plane and vmmd hosts.
 
+## `live-queries.json` (ADR-20261016151947)
+
+Live queries, for the hub (`livequeryd`) and realtimed's side of it. Rows:
+- **Hub:** databases served and not served, subscriptions, compiled
+  queries, released databases, and the process's engine memory.
+- **Per database:** hub running and restarts, subscriptions, and applied
+  transactions.
+- **Latency:** commit to delta p50 and p95, round duration p95,
+  maintenance statement time, recomputes and window refills.
+- **Slots and scale to zero:** slot lag, released state, resumes by reason
+  and resnapshots by reason.
+- **Keys and connections:** key reads by result, live keys, slow consumers
+  cut off, and realtimed's hub connections and drops.
+- **realtimed:** live sessions and subscriptions, frames and bytes by
+  direction, and refusals by code.
+
+Hub series carry a `database` label when one livequeryd serves several
+databases (`-databases-file`). The alerts are the `live_queries` family in
+`faas.rules.yml`, and the triage steps are in `docs/runbooks/FaasLiveQueries.md`.
+UID `faas-live-queries-adr-20261016151947`.
+
 ## `frozen-tier.json` (ADR-1151)
 
 The pause tiers. The **Frozen tier** row shows the fleet's frozen

@@ -29,7 +29,9 @@ The API and SDKs expose this evidence in the optional `coverage` object.
 
 This feature defaults off and requires an operator-configured private Pyroscope
 backend. Production availability awaits native Firecracker lifecycle and overhead
-acceptance; the capability catalog keeps it **internal**.
+acceptance; the capability catalog keeps it **internal**. Until an operator sets
+`FAAS_PROFILING_ENABLED=1` in `/etc/faas/profiling.env`, imaged deploys
+`profiling.enabled` as false, so no collector runs in the VM.
 
 ## Open the source of an expensive function
 
@@ -96,6 +98,31 @@ Call it once, and cancel the context at shutdown. Do not run another Go CPU
 profiler concurrently. Custom container images must include the runtime bootstrap
 and its pinned dependencies; enabling the manifest alone cannot instrument an
 arbitrary binary. Go source locations require the binary's symbol information.
+
+### Go applications that already serve `net/http/pprof`
+
+A Go application that serves the standard `net/http/pprof` handlers needs no
+Gregale code. Name the port they listen on:
+
+```yaml
+profiling:
+  pprof_port: 6060
+```
+
+guest-init then reads `/debug/pprof/profile`, `/debug/pprof/heap` and
+`/debug/pprof/goroutine` from `127.0.0.1:6060` inside the VM, for on-demand
+captures and, with `enabled: true`, for continuous collection. The port may be
+the application's own port when the handlers share its mux; 9191 and 4318
+belong to the platform. The endpoint is never exposed outside the VM by this
+setting.
+
+Collection starts once `/debug/pprof/` answers. If the application also calls
+`guestprofiling.Start`, that collector is used and the endpoint is left alone,
+because Go has one CPU profiler per process. Continuous profiles collected this
+way carry no route labels. A profile the endpoint cannot produce (an error
+status, no answer in time, or more than 1 MiB) is named in the capture's
+`reason`; Go's `net/http/pprof` refuses a CPU profile longer than the server's
+`WriteTimeout`.
 
 ## Compare deployments
 
@@ -225,6 +252,260 @@ and `candidate_status`. Window statuses are `retained`, `expired`,
 The bounded list sorts by last update and UUID. Saving metadata does not query
 the CPU backend; reopening uses the existing bounded profile query pipeline.
 
+## Capture a running instance on demand
+
+On-demand captures profile one running instance now, without a redeploy or
+`profiling.enabled` (ADR-1155). They are the tool for "why is this instance hot"
+and "where is this memory going":
+
+```sh
+# 30 seconds of CPU and heap from the app's earliest running instance
+gregale debug capture my-app --type cpu,heap --duration 30s
+
+# a specific instance, keeping the merged pprof files
+gregale debug capture my-app --instance INSTANCE_UUID --output ./profiles
+
+# list captures, or show one again
+gregale debug captures my-app
+gregale debug captures my-app CAPTURE_UUID --output ./profiles
+```
+
+The command prints the hottest functions per kind. `--output` writes
+`profile-<id>-<kind>.pb.gz`, which opens in `go tool pprof -http=:`,
+speedscope or Grafana Pyroscope. Windows are 1–60 seconds (default 10 s).
+
+Captures only run on a RUNNING instance; a parked app is not woken, because a
+fresh process would not show the state you are investigating. Send a request
+first. While a capture runs the instance counts as busy and is not parked for
+idleness. One capture per app runs at a time, and an account can start 60 per
+hour. Captures are kept for 7 days.
+
+What a heap capture shows depends on the runtime:
+
+- **Go** — the sampled live heap of the process (`runtime/pprof`).
+- **Node** — objects allocated during the window that are still live at its
+  end (V8 sampling heap profiler). `Buffer` contents live outside the V8 heap
+  and appear as `(external)`.
+- **Python** — allocations made during the window that are still live at its
+  end (`tracemalloc`). Tracing slows allocation-heavy code while it runs.
+
+Memory that is allocated during a capture and still held at its end is the
+shape of a leak. Repeat a capture later and compare the two.
+
+The dashboard capture page shows a flamegraph per kind (click a frame to zoom,
+search by function name) and links frames to the deployment's recorded GitHub
+commit, like continuous profiles. `gregale debug captures` prints those links.
+
+### Automatic heap capture when memory runs low
+
+When an instance with collectors runs low on memory (the kernel's available
+memory falls to 15% of the guest's total), Gregale captures its heap for 10
+seconds automatically, before the workload is killed for running out of
+memory. These captures show `trigger: memory_pressure` with a detail such as
+"guest memory available fell to 31 MiB of 246 MiB", in the dashboard and in
+`gregale debug captures`. Gregale takes at most one automatic capture per app
+per hour and none while another capture of the app is running; they count
+toward the account's hourly capture limit. Reclaimable file cache does not
+count as used memory, so file-heavy workloads are not mistaken for leaks.
+
+### When the workload is OOM-killed
+
+A fast leak can exhaust the plan's memory before a 10-second capture ends.
+Automatic captures therefore ask the collectors for an interim heap profile
+every 2 seconds. When the app is OOM-killed during the window, guest-init ends
+the capture at once and returns the last of those checkpoints, so the heap from
+just before the kill survives. Such captures are `partial`, explain why in
+`reason`, and record the kill: `oom_killed_at`, `oom_peak_mb` and
+`oom_plan_mb`. The dashboard capture page and list mark them "OOM-killed
+after".
+
+A single-process app that is OOM-killed is restarted in place on the same
+instance, so the capture records the kill only when it happens during the
+window. Apps that run declared workloads report OOM kills to the control plane
+(the deployment fails with `app_runtime_oom`); Gregale then also links the
+kill to the newest heap capture started on that instance in the previous 15
+minutes, and the deployment's error explanation links to it as **Heap profile
+before the OOM kill**.
+
+### Stack snapshots for slow and stuck requests
+
+CPU shows where time goes and heap where memory is held; neither explains a
+request that hangs while the process is idle. A `stacks` capture is an
+instant snapshot of where every goroutine or thread is waiting, taken when
+the capture starts:
+
+```sh
+gregale debug capture my-app --type stacks
+```
+
+- **Go** — every goroutine's stack (`runtime/pprof` goroutine profile).
+- **Python** — every thread's stack, plus the stack of every pending asyncio
+  task, so an async handler awaiting a slow call shows where it waits.
+- **Node** — when the event loop is free, what it is waiting on: active
+  sockets, timers, file-system and DNS requests by type. When the main thread
+  is stuck in JavaScript (a busy loop, a large synchronous computation), the
+  JavaScript stack it is stuck in, with function, file and line, plus what
+  the loop holds. A stuck main thread cannot run the collector, so Gregale
+  reaches it through Node's inspector: it opens the inspector on the VM's
+  loopback with SIGUSR1, confirms the event loop does not run a
+  `setImmediate` within 200 ms, pauses the thread for the few milliseconds
+  it takes to read the stack, resumes it, and closes the inspector again.
+  This needs the managed Node runtime's collector; an application that
+  listens for SIGUSR1 itself, or runs with `--disable-sigusr1`, is never
+  signalled and reports only what the loop waits on. A thread busy in native
+  code or garbage collection shows as "busy outside JavaScript".
+
+Values are counts: the flamegraph is as wide as the number of goroutines or
+threads parked on each path.
+
+When a request stays in flight for 10 seconds, the gateway reports it and
+Gregale captures stacks and 5 seconds of CPU from the serving instance
+automatically (`trigger: slow_request`, at most once per app every 15
+minutes). The capture records the request id; its page links to the request,
+and the request's evidence in the debugger links back to "the stack snapshot
+taken while this request was in flight"
+(`GET /v1/apps/{slug}/debug/requests/{id}` returns `profile_capture_id`).
+Streaming responses and WebSocket upgrades are long-lived by design and are
+never reported.
+
+### Lock contention in Go applications
+
+A Go service can be slow while using little CPU because its goroutines wait
+on each other. Two capture kinds show where, over the capture window:
+
+```sh
+gregale debug capture my-app --type block,mutex
+```
+
+- **`mutex`** — time goroutines waited for a contended `sync.Mutex` or
+  `sync.RWMutex`, attributed to the code that held the lock (where it called
+  `Unlock`).
+- **`block`** — time goroutines spent blocked on channel operations,
+  `select`, `sync.WaitGroup`, `sync.Cond` and lock acquisition, attributed to
+  the waiting code.
+
+Values are nanoseconds of delay; only the capture window counts, not the
+process's history. They are Go-only: Node and Python processes contribute
+nothing to these kinds.
+
+With `guestprofiling.Start`, sampling is on only for the window: one blocking
+event per 10 µs spent blocked, one in 10 mutex contentions. A mutex fraction
+the application set itself is left as it is. Go cannot report the block
+profile rate, so the first capture decides: if the process already has block
+samples, the application owns the rate and captures leave it alone;
+otherwise each capture turns block sampling on for the window and off after.
+An application that enables block profiling should do so at startup.
+
+With `profiling.pprof_port`, guest-init reads `/debug/pprof/block` and
+`/debug/pprof/mutex` over the window and never changes sampling. These
+endpoints have data only if the application calls
+`runtime.SetBlockProfileRate` and `runtime.SetMutexProfileFraction`; without
+them the capture is ready but empty.
+
+### Automatic CPU capture when an instance uses its whole CPU limit
+
+When an instance's CPU use stays at 90% or more of its CPU limit for 30
+seconds, Gregale captures 10 seconds of CPU from it automatically
+(`trigger: cpu_saturation`, at most once per app every 15 minutes). The
+capture records how hard and how long the instance was pinned, such as
+`CPU use at 98% of the 500m limit for 30s`, and its CPU profile shows where
+that time went.
+
+The limit is the app's sustained CPU limit (`cpu_millicores`). The extra CPU
+granted while an instance starts never counts, and a dip shorter than 5
+seconds does not restart the 30 seconds.
+
+### Get notified about automatic captures
+
+Captures that Gregale takes on its own, and captures followed by an OOM
+kill, appear on the app page as **Profile captures to review**, with the
+count from the last 7 days, how many an OOM kill followed, and a link to the
+newest one. Captures you start yourself are not announced unless an OOM kill
+follows them.
+
+The same captures are sent to app webhooks:
+
+| Event | Sent when |
+|---|---|
+| `profile.capture_ready` | an automatic capture (memory pressure, slow request, CPU saturation), or any capture linked to an OOM kill, finishes with at least one profile |
+| `profile.capture_oom_linked` | an OOM kill is linked to a capture that had already finished |
+
+Each event is sent once per capture. A webhook with no event filter receives
+both; to receive only these, subscribe to them explicitly:
+
+```sh
+gregale webhooks add --app my-app --target-url https://hooks.example.com/gregale \
+  --event profile.capture_ready --event profile.capture_oom_linked
+```
+
+The payload is the capture record and where to open it; it never contains
+profile samples:
+
+```json
+{
+  "version": 1,
+  "capture": {
+    "id": "3f6c…", "app_id": "…", "status": "ready", "kinds": ["heap"],
+    "trigger": "memory_pressure",
+    "trigger_detail": "guest memory available fell to 31 MiB of 246 MiB (180 MiB anonymous)",
+    "instance_id": "…", "deployment_id": "…", "partial": true,
+    "oom_killed_at": "2026-10-14T21:03:12Z", "oom_peak_mb": 263, "oom_plan_mb": 256,
+    "profiles": [{"kind": "heap", "process_id": "7", "bytes": 18234}],
+    "created_at": "2026-10-14T21:02:58Z", "completed_at": "2026-10-14T21:03:13Z"
+  },
+  "capture_path": "/dashboard/apps/my-app/profiles/captures/3f6c…",
+  "api_path": "/v1/apps/my-app/profiles/captures/3f6c…"
+}
+```
+
+Delivery uses the app's existing webhook signing, retries and delivery
+inspection.
+
+### Compare two captures
+
+A single heap capture shows where memory is held; two captures show what grew.
+Compare a capture with an earlier one of the same app:
+
+```sh
+gregale debug capture-diff my-app CAPTURE_UUID --base EARLIER_CAPTURE_UUID
+```
+
+The output lists functions by growth with their value in both captures. On the
+dashboard, a ready capture has a **Compare with** picker; the comparison page
+shows a differential flamegraph, where a frame's width is its cost in both
+captures together, red frames grew and blue frames shrank. CPU captures
+compare the same way. Values are not rescaled: Node and Python heap values
+cover each capture's own window, so compare captures of equal duration, and
+expect code changes to move cost between functions when the captures come
+from different deployments. Both cases add a note to the comparison.
+
+The REST API is `POST /v1/apps/{slug}/profiles/captures` with optional
+`kinds`, `duration_seconds` and `instance_id`; poll
+`GET /v1/apps/{slug}/profiles/captures/{id}` until `status` is `ready` or
+`failed`, then read `GET …/captures/{id}/view?kind={kind}` or download
+`GET …/captures/{id}/pprof?kind={kind}`. Compare two ready captures with
+`GET …/captures/{id}/diff?base={earlier-id}&kind={kind}`. A ready capture with zero
+`processes` means the instance has no collector: a custom image without an
+instrumented runtime, or a Go app that neither calls `guestprofiling.Start` nor
+sets `profiling.pprof_port`. With `pprof_port` set, the `reason` says when
+nothing answered on that port.
+
+## Continuous heap profiles
+
+Add heap to continuous collection with:
+
+```yaml
+profiling:
+  enabled: true
+  kinds: [cpu, heap]
+```
+
+Each instrumented process reports its live heap once per window.
+`gregale debug profiles my-app --type heap --deployment-id UUID --runtime node22
+--start … --end …` shows the live heap near `--end`: the query is narrowed to
+the last collection window so snapshots are not added together. Heap profiles
+have no route attribution or deployment comparison.
+
 ## Operator setup
 
 Run a private Pyroscope with tenant enforcement enabled. The integration is
@@ -263,6 +544,15 @@ Restart apid and vmmd to load the opt-in flag. Confirm
 readiness checks backend health. `gregale_profile_uploads_total{result=...}`
 records accepted, duplicate, invalid, limited and unavailable uploads. Add a
 local scrape or an existing private metrics tunnel for this loopback endpoint.
+
+On-demand captures need no Pyroscope backend. Set `FAAS_PROFILING_ON_DEMAND=1`
+for apid (captures API), imaged (stamps dormant collectors into new
+deployments), gatewayd-internal (slow-request captures) and schedd
+(CPU-saturation captures), apply the `profile_captures` migrations, and release
+guest-init, vmmd, schedd and the managed runtime bases together. Existing deployments gain
+collectors on their next deploy. Continuous heap profiles additionally need
+the Pyroscope backend above; they are stored as
+`memory:inuse_space:bytes:space:bytes` under the same tenant selectors.
 
 | Plan | API query history | Uploads / account / minute |
 |---|---:|---:|

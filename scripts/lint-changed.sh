@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 # Lint only what a change affects, as ci-light does: golangci-lint (govet
 # included) on each changed package, then teststorecheck on the changed test
-# files. `make lint` lints all ~520 packages one by one; a single large package
-# such as pkg/state takes minutes and several GB.
+# files and sealdomaincheck on the tree. `make lint` lints all ~520 packages
+# one by one; a single large package such as pkg/state takes minutes and
+# several GB.
 #
 # The change is everything that differs from the merge base with origin/main:
 # commits, uncommitted edits and untracked files. golangci-lint waits for
@@ -42,6 +43,7 @@ for pkg in $lint_pkgs; do
   "$go_bin" tool golangci-lint run --allow-serial-runners --timeout=20m "$pkg" || failed+=("$pkg")
 done
 "$go_bin" run ./scripts/ci/teststorecheck -base "$base" || failed+=(teststorecheck)
+"$go_bin" run ./scripts/ci/sealdomaincheck || failed+=(sealdomaincheck)
 if ((${#failed[@]})); then
   echo "lint-changed: failed: ${failed[*]}" >&2
   exit 1

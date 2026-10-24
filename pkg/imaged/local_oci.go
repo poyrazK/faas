@@ -541,6 +541,14 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	}
 	defer cleanup()
 
+	healthcheck, err := sourceComposeHealthcheck(*dep)
+	if err != nil {
+		return fmt.Errorf("imaged: frozen Compose healthcheck: %w", err)
+	}
+	if config, err = applySourceComposeHealthcheck(config, healthcheck); err != nil {
+		return fmt.Errorf("imaged: Compose healthcheck: %w", err)
+	}
+	config = applySourceBuildProcess(config, *dep)
 	manifest, err := manifestFromLocalOCIConfig(config, *dep)
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest: %w", err)
@@ -556,9 +564,14 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err != nil {
 		return fmt.Errorf("imaged: built OCI manifest overrides: %w", err)
 	}
-	manifest = applyAppLifecycle(manifest, app)
+	manifest = h.stampProfiling(applyAppLifecycle(manifest, app), acct)
 	if err := manifest.Validate(); err != nil {
 		return fmt.Errorf("imaged: built OCI manifest invalid: %w", err)
+	}
+	// The built image's command HEALTHCHECK gates readiness whether it came
+	// from the Dockerfile or a Compose override (ADR-20261024100000).
+	if err := h.recordSourceHealthcheck(ctx, dep, manifest); err != nil {
+		return err
 	}
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		return fmt.Errorf("imaged: persist local OCI secret reload support: %w", err)

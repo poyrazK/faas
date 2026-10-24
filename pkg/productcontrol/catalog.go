@@ -26,6 +26,9 @@ func Compile(spec api.ProductCatalogSpec) (api.ProductCatalog, error) {
 	if err := ValidateAccess(spec.Access); err != nil {
 		return api.ProductCatalog{}, err
 	}
+	if err := ValidateSignupPolicy(spec); err != nil {
+		return api.ProductCatalog{}, err
+	}
 	if spec.AuthApp != "" && !slug.MatchString(spec.AuthApp) {
 		return api.ProductCatalog{}, fmt.Errorf("auth_app must be an Application Auth app slug")
 	}
@@ -44,14 +47,20 @@ func Compile(spec api.ProductCatalogSpec) (api.ProductCatalog, error) {
 		definitions[binding] = true
 	}
 	for name, plan := range spec.Plans {
-		if !slug.MatchString(name) || plan.Label == "" || len(plan.Label) > api.ProductControlMaxLabelBytes || len(plan.Features) > len(spec.Features) {
+		if !slug.MatchString(name) || plan.Label == "" || len(plan.Label) > api.ProductControlMaxLabelBytes || len(plan.Features) > len(spec.Features) ||
+			plan.MonthlyFeeMillicents < 0 || plan.MonthlyFeeMillicents > api.ProductControlMaxMonthlyFeeMillicents ||
+			plan.TrialDays < 0 || plan.TrialDays > api.ProductControlMaxTrialDays {
 			return api.ProductCatalog{}, fmt.Errorf("invalid plan %q", name)
 		}
 		for feature, grant := range plan.Features {
-			if _, ok := spec.Features[feature]; !ok || grant.MonthlyStarts < 1 || grant.MonthlyStarts > api.ProductControlMaxMonthlyStarts || grant.UnitPriceMillicents < 0 || grant.UnitPriceMillicents > api.ProductControlMaxUnitPriceMillicents {
+			if _, ok := spec.Features[feature]; !ok || grant.MonthlyStarts < 1 || grant.MonthlyStarts > api.ProductControlMaxMonthlyStarts || grant.UnitPriceMillicents < 0 || grant.UnitPriceMillicents > api.ProductControlMaxUnitPriceMillicents ||
+				grant.IncludedStarts < 0 || grant.IncludedStarts > grant.MonthlyStarts {
 				return api.ProductCatalog{}, fmt.Errorf("invalid grant for %s/%s", name, feature)
 			}
 		}
+	}
+	if err := ValidateTrialConversion(spec); err != nil {
+		return api.ProductCatalog{}, err
 	}
 	encoded, err := json.Marshal(spec)
 	if err != nil {
@@ -64,6 +73,25 @@ func Compile(spec api.ProductCatalogSpec) (api.ProductCatalog, error) {
 		return api.ProductCatalog{}, err
 	}
 	return api.ProductCatalog{Revision: hex.EncodeToString(digest[:]), Spec: copy}, nil
+}
+
+// UsesPlanPricing reports whether a catalog charges a plan fee, includes
+// starts, offers a trial or requires a payment method after it, which a
+// previous apid release would ignore: it would finalize statements without
+// fees, price every start and keep every trial's plan (ADR-20261021154511,
+// ADR-20261021195901, ADR-20261022180921).
+func UsesPlanPricing(spec api.ProductCatalogSpec) bool {
+	for _, plan := range spec.Plans {
+		if plan.MonthlyFeeMillicents > 0 || plan.TrialDays > 0 || plan.RequiresPaymentMethod {
+			return true
+		}
+		for _, grant := range plan.Features {
+			if grant.IncludedStarts > 0 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 func featureBindingKey(feature api.ProductFeature) (string, error) {

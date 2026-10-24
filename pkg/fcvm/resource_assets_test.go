@@ -28,9 +28,9 @@ func assetFixture(t *testing.T) (*JailerVMM, *ResourceJournal) {
 
 func TestResourceAssetsIntentCheckpointAndReopen(t *testing.T) {
 	v, j := assetFixture(t)
-	syncDir := j.directorySync
+	syncDir := j.commitSync
 	intent, checkpoint := false, false
-	j.directorySync = func() error {
+	j.commitSync = func(durable bool) error {
 		for _, a := range j.records[idLive].Assets {
 			info, err := os.Stat(a.Path)
 			if a.File == nil {
@@ -45,7 +45,7 @@ func TestResourceAssetsIntentCheckpointAndReopen(t *testing.T) {
 				checkpoint = true
 			}
 		}
-		return syncDir()
+		return syncDir(durable)
 	}
 	f, err := v.newMaterialisedFile(idLive, t.TempDir(), "payload-*.bin", "materialised")
 	if err != nil {
@@ -60,7 +60,7 @@ func TestResourceAssetsIntentCheckpointAndReopen(t *testing.T) {
 	if !intent || !checkpoint {
 		t.Fatal("missing ordered journal commits")
 	}
-	j.directorySync = syncDir
+	j.commitSync = syncDir
 	record, _, _ := j.lookup(idLive)
 	body, _ := json.Marshal(record)
 	if strings.Contains(string(body), "private-payload-fixture") {
@@ -110,16 +110,16 @@ func TestResourceAssetsRetainedStorageLink(t *testing.T) {
 			backend := &observedMaterializationBackend{StorageBackend: cache}
 			v.WithStorage(backend)
 			injected := errors.New("retained asset fsync failure")
-			syncDir := j.directorySync
+			syncDir := j.commitSync
 			intentCommitted, retiring := false, false
-			j.directorySync = func() error {
+			j.commitSync = func(durable bool) error {
 				assets := j.records[idLive].Assets
 				if (phase == "intent" && len(assets) == 1 && assets[0].File == nil) ||
 					(phase == "checkpoint" && len(assets) == 1 && assets[0].File != nil) ||
 					(phase == "retirement" && retiring && len(assets) == 0) {
 					return injected
 				}
-				if err := syncDir(); err != nil {
+				if err := syncDir(durable); err != nil {
 					return err
 				}
 				if len(assets) == 1 && assets[0].File == nil {
@@ -145,7 +145,7 @@ func TestResourceAssetsRetainedStorageLink(t *testing.T) {
 				backend.linkErr = syscall.EXDEV
 			}
 			path, err := v.materializeFromStorage(context.Background(), idLive, "snap/dep/mem")
-			j.directorySync = syncDir
+			j.commitSync = syncDir
 			if phase == "intent" || phase == "checkpoint" {
 				if !errors.Is(err, injected) || backend.reads.Load() != 0 {
 					t.Fatalf("uncertain link fell through to copying: %v, reads=%d", err, backend.reads.Load())
@@ -206,11 +206,11 @@ func TestResourceAssetsRetainedStorageLink(t *testing.T) {
 				}
 				if phase == "retirement" {
 					retiring = true
-					j.directorySync = func() error { return injected }
+					j.commitSync = func(durable bool) error { return injected }
 					if !errors.Is(v.sweepMaterialised(idLive), injected) || len(v.materialisedTmp[idLive]) != 1 {
 						t.Fatal("failed retirement lost retry ownership")
 					}
-					j.directorySync = syncDir
+					j.commitSync = syncDir
 				}
 			}
 			if err := v.sweepMaterialised(idLive); err != nil {
@@ -230,14 +230,14 @@ func TestResourceAssetsFailedCommitRetainsCleanup(t *testing.T) {
 	for _, phase := range []string{"intent", "checkpoint", "retirement"} {
 		t.Run(phase, func(t *testing.T) {
 			v, j := assetFixture(t)
-			syncDir := j.directorySync
+			syncDir := j.commitSync
 			injected := errors.New("asset fsync failure")
-			j.directorySync = func() error {
+			j.commitSync = func(durable bool) error {
 				assets := j.records[idLive].Assets
 				if (phase == "intent" && len(assets) > 0 && assets[0].File == nil) || (phase == "checkpoint" && len(assets) > 0 && assets[0].File != nil) {
 					return injected
 				}
-				return syncDir()
+				return syncDir(durable)
 			}
 			dir := t.TempDir()
 			f, err := v.newMaterialisedFile(idLive, dir, "stage-*.bin", "materialised")
@@ -258,7 +258,7 @@ func TestResourceAssetsFailedCommitRetainsCleanup(t *testing.T) {
 					t.Fatal(err)
 				}
 				_ = f.Close()
-				j.directorySync = func() error { return injected }
+				j.commitSync = func(durable bool) error { return injected }
 				if err := v.sweepMaterialised(idLive); !errors.Is(err, injected) {
 					t.Fatalf("retirement acknowledged: %v", err)
 				}
@@ -266,7 +266,7 @@ func TestResourceAssetsFailedCommitRetainsCleanup(t *testing.T) {
 					t.Fatal("uncertain retirement lost retry identity")
 				}
 			}
-			j.directorySync = syncDir
+			j.commitSync = syncDir
 			if err := v.sweepMaterialised(idLive); err != nil {
 				t.Fatal(err)
 			}

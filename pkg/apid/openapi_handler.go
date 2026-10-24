@@ -47,8 +47,14 @@ var openapiJSON [4]struct {
 	body []byte
 }
 
+// Swagger UI is vendored (pkg/apid/docsassets, served by apid) so the page
+// needs no third-party script or style host. The paths repeat docsassets'
+// constants instead of importing it, which would link 1.6 MB of browser code
+// into every binary that uses this package; a test keeps them equal.
 const (
 	swaggerUIDistVersion = "5.17.14"
+	swaggerUIBundlePath  = "/docs/assets/swagger-ui-bundle-5.17.14.js"
+	swaggerUICSSPath     = "/docs/assets/swagger-ui-5.17.14.css"
 	swaggerUIBundleSRI   = "sha384-wmyclcVGX/WhUkdkATwhaK1X1JtiNrr2EoYJ+diV3vj4v6OC5yCeSu+yW13SYJep"
 	swaggerUICSSSRI      = "sha384-wxLW6kwyHktdDGr6Pv1zgm/VGJh99lfUbzSn6HNHBENZlCN7W602k9VkGdxuFvPn"
 )
@@ -189,18 +195,19 @@ func serveDocs(w http.ResponseWriter, r *http.Request, checksum string) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="gregale-openapi-sha256" content="%s">
+  <meta name="gregale-swagger-ui-version" content="%s">
   <title>Gregale API reference</title>
-  <link rel="stylesheet" href="https://unpkg.com/swagger-ui-dist@%s/swagger-ui.css"
+  <link rel="stylesheet" href="%s"
     integrity="%s" crossorigin="anonymous">
 </head>
 <body>
   <div id="swagger-ui"></div>
-  <script src="https://unpkg.com/swagger-ui-dist@%s/swagger-ui-bundle.js"
+  <script src="%s"
     integrity="%s" crossorigin="anonymous" defer></script>
   <script%s>%s</script>
 </body>
 </html>
-`, checksum, swaggerUIDistVersion, swaggerUICSSSRI, swaggerUIDistVersion, swaggerUIBundleSRI, nonceAttribute(nonce), inlineScript)
+`, checksum, swaggerUIDistVersion, swaggerUICSSPath, swaggerUICSSSRI, swaggerUIBundlePath, swaggerUIBundleSRI, nonceAttribute(nonce), inlineScript)
 }
 
 func nonceAttribute(nonce string) string {

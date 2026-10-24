@@ -259,6 +259,7 @@ type ServiceBindingProbeBatchReport = serviceBindingProbeBatchReport
 type Shape = shape
 type SourceRefAppPolicy = sourceRefAppPolicy
 type StartPendingSubmission = startPendingSubmission
+type StartPrompt = startPrompt
 type StartRunner = startRunner
 type TestActionEvidence = testActionEvidence
 type TestActionSpec = testActionSpec
@@ -573,6 +574,7 @@ var ApplyTestOutageCycles = applyTestOutageCycles
 var ApplyTestPoolExhaustion = applyTestPoolExhaustion
 var ApplyTestRecoveryDeadlineOverrides = applyTestRecoveryDeadlineOverrides
 var ApplyTestSweepBaseline = applyTestSweepBaseline
+var ApprovalPolicyRequest = approvalPolicyRequest
 var AssertOneProblem = assertOneProblem
 var AssessTestPreflight = assessTestPreflight
 var AttachDataAPIConnectionBudget = attachDataAPIConnectionBudget
@@ -656,14 +658,19 @@ var CheckMCPNativeRetirement = checkMCPNativeRetirement
 var CheckProfileConnection = checkProfileConnection
 var CheckRetainedHostingPlan = checkRetainedHostingPlan
 var CheckTestPoolAfterDrain = checkTestPoolAfterDrain
+var ChooseMenuAction = chooseMenuAction
 var ClassifyDevRuntimeLog = classifyDevRuntimeLog
 var CleanupUploadCacheExclusive = cleanupUploadCacheExclusive
 var CliConfigPath = cliConfigPath
 var CliHelpGroup = cliHelpGroup
+var CliHelpGroups = &cliHelpGroups
+var CliRelatedCommands = &cliRelatedCommands
+var CliSeeAlso = cliSeeAlso
 var CliPreAuthPatch = cliPreAuthPatch
 var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
 var CmdAI = cmdAI
+var CmdReleaseGates = cmdReleaseGates
 var CmdAITokens = cmdAITokens
 var CmdAccount = cmdAccount
 var CmdAccountDelete = cmdAccountDelete
@@ -697,6 +704,7 @@ var CmdAppScalePlan = cmdAppScalePlan
 var CmdAppSecurity = cmdAppSecurity
 var CmdAppStaticEgressIP = cmdAppStaticEgressIP
 var CmdAppStaticEgressIPClear = cmdAppStaticEgressIPClear
+var CmdApps = cmdApps
 var CmdAppsRm = cmdAppsRm
 var CmdAppsRoutes = cmdAppsRoutes
 var CmdAppsTCP = cmdAppsTCP
@@ -757,6 +765,7 @@ var CmdCommit = cmdCommit
 var CmdCompletionBash = cmdCompletionBash
 var CmdCompletionFish = cmdCompletionFish
 var CmdCompletionPowershell = cmdCompletionPowershell
+var PSLiteral = psLiteral
 var CmdCompletionZsh = cmdCompletionZsh
 var CmdConfig = cmdConfig
 var CmdConnect = cmdConnect
@@ -778,13 +787,17 @@ var CmdCronsRuns = cmdCronsRuns
 var CmdCronsUpdate = cmdCronsUpdate
 var CmdDLQPurge = cmdDLQPurge
 var CmdDashboard = cmdDashboard
+var CmdDashboards = cmdDashboards
+var CmdIncidents = cmdIncidents
 var CmdDataAPI = cmdDataAPI
+var CmdDataAPIConfigure = cmdDataAPIConfigure
 var CmdDataAPICreate = cmdDataAPICreate
 var CmdDataAPIDev = cmdDataAPIDev
 var CmdDataAPIExplain = cmdDataAPIExplain
 var CmdDataAPIFixture = cmdDataAPIFixture
 var CmdDataAPIInstall = cmdDataAPIInstall
 var CmdDataAPILive = cmdDataAPILive
+var CmdDataAPIStorage = cmdDataAPIStorage
 var CmdDataAPIMigration = cmdDataAPIMigration
 var CmdDataAPIOnboard = cmdDataAPIOnboard
 var CmdDataAPIRefresh = cmdDataAPIRefresh
@@ -1022,6 +1035,7 @@ var CmdRuns = cmdRuns
 var CmdSLO = cmdSLO
 var CmdSLOs = cmdSLOs
 var CmdScan = cmdScan
+var CmdScheduledReleases = cmdScheduledReleases
 var CmdSecretReferences = cmdSecretReferences
 var CmdSecrets = cmdSecrets
 var CmdSend = cmdSend
@@ -1082,6 +1096,13 @@ var CmdWorkflowsRun = cmdWorkflowsRun
 var CmdWorkflowsStatus = cmdWorkflowsStatus
 var CmdWorkflowsSteps = cmdWorkflowsSteps
 var CollectEventDeliveryPages = collectEventDeliveryPages
+
+// ReleaseGateRequest builds a release-gates add request from its flags.
+func ReleaseGateRequest(name, slo string, maxBurn int, newErrors bool, maxGroups, minEvents int, metric, below, above, aiMetric string,
+	maxIncrease, minSamples int) (api.CreateReleaseGateRequest, error) {
+	return releaseGateRequest(releaseGateFlags{name: name, slo: slo, maxBurn: maxBurn, newErrors: newErrors, maxGroups: maxGroups,
+		minEvents: minEvents, metric: metric, below: below, above: above, aiMetric: aiMetric, maxIncrease: maxIncrease, minSamples: minSamples})
+}
 
 func CollectListPages[T any](p0 context.Context, p1 string, p2 bool, p3 func(context.Context, string) ([]T, string, error)) ([]T, string, error) {
 	return collectListPages[T](p0, p1, p2, p3)
@@ -1144,6 +1165,8 @@ var DataAPIOnboardingQuote = dataAPIOnboardingQuote
 var DataAPIOnboardingSteps = dataAPIOnboardingSteps
 var DataAPIOrigin = dataAPIOrigin
 var DataAPIReadinessURL = dataAPIReadinessURL
+var DataAPIStorageName = dataAPIStorageName
+var DataAPIStorageSQL = dataAPIStorageSQL
 var DataRepairCheckPolicyFile = dataRepairCheckPolicyFile
 var DataRepairRetentionScope = dataRepairRetentionScope
 var DeadlineTestReceipt = deadlineTestReceipt
@@ -1206,6 +1229,7 @@ var DoctorImageListenerCheck = doctorImageListenerCheck
 var DrainMCPNativeRelease = drainMCPNativeRelease
 var EdgePolicySummary = edgePolicySummary
 var EdgeRuleValidateFlagsVisited = edgeRuleValidateFlagsVisited
+var EditDistance = editDistance
 var EffectiveKeyring = effectiveKeyring
 var EgressAllowlistChangeNeedsRestart = egressAllowlistChangeNeedsRestart
 var EmitInspectWatchEvent = emitInspectWatchEvent
@@ -1217,6 +1241,7 @@ var EndpointRecoveryReport = endpointRecoveryReport
 var EndpointRecoverySpec = endpointRecoverySpec
 var EnsurePostgresEgress = ensurePostgresEgress
 var EnsureSourceRefApp = ensureSourceRefApp
+var ErrAuth = errAuth
 var EnvCreate = envCreate
 var EnvPull = envPull
 var EnvPush = envPush
@@ -1311,7 +1336,6 @@ var IsTerminalBuildStatus = isTerminalBuildStatus
 var IsTerminalDeploymentStatus = isTerminalDeploymentStatus
 var IsValidDeploymentAnnotationTag = isValidDeploymentAnnotationTag
 var JsonOut = jsonOut
-var Levenshtein = levenshtein
 var LinkedAppSlug = linkedAppSlug
 var LinkedProjectContext = linkedProjectContext
 var LiveCLIView = liveCLIView
@@ -1363,6 +1387,7 @@ var McpTasksObserverMetricsTargetMatches = mcpTasksObserverMetricsTargetMatches
 var McpTasksObserverNamespacesMatch = mcpTasksObserverNamespacesMatch
 var McpToken = mcpToken
 var MdFlagLabel = mdFlagLabel
+var MenuActions = menuActions
 var MergeAppFlag = mergeAppFlag
 var MergeDevSetupYAML = mergeDevSetupYAML
 var MigrationEndpoint = migrationEndpoint
@@ -1443,6 +1468,7 @@ var ParseInterspersed = parseInterspersed
 var ParseMCPServeOptions = parseMCPServeOptions
 var ParsePortForwardSpec = parsePortForwardSpec
 var ParseProductCommand = parseProductCommand
+var ParseReleaseAtFlag = parseReleaseAtFlag
 var ParseRevisionRef = parseRevisionRef
 var ParseRouteMonitorCLI = parseRouteMonitorCLI
 var ParseRouteMonitorCodeowners = parseRouteMonitorCodeowners
@@ -1499,6 +1525,7 @@ var PrintAutomationCheckReport = printAutomationCheckReport
 var PrintAutomationDefinitionDiff = printAutomationDefinitionDiff
 var PrintAutomationRevisionDetails = printAutomationRevisionDetails
 var PrintBuildStatus = printBuildStatus
+var PrintDeployColdWakeSentence = printDeployColdWakeSentence
 var PrintDoctorReport = printDoctorReport
 var PrintDomainDNSRecords = printDomainDNSRecords
 var PrintErr = printErr
@@ -1601,7 +1628,7 @@ var RedactErrorText = redactErrorText
 var RedactTestDiagnosticText = redactTestDiagnosticText
 var RehearsalTestRepo = rehearsalTestRepo
 var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
-var ReleaseGateRequest = releaseGateRequest
+var ReleaseDiffLines = releaseDiffLines
 var ReleaseSummaryLine = releaseSummaryLine
 var ReleasedUsage = releasedUsage
 var RemoveTestFaultRules = removeTestFaultRules
@@ -1635,6 +1662,7 @@ var RenderDeploymentRowWide = renderDeploymentRowWide
 var RenderDiffPreviewJSON = renderDiffPreviewJSON
 var RenderDoctorHuman = renderDoctorHuman
 var RenderDoctorImage = renderDoctorImage
+var RenderEdgeAttackMode = renderEdgeAttackMode
 var RenderEdgeProtection = renderEdgeProtection
 var RenderEdgeRuleTrace = renderEdgeRuleTrace
 var RenderEnvDiffCell = renderEnvDiffCell
@@ -1688,6 +1716,7 @@ var ResetJSONOut = resetJSONOut
 var ResetJSONOutput = resetJSONOutput
 var ResetNOColorCache = resetNOColorCache
 var ResetStdoutTTYCache = resetStdoutTTYCache
+var ResolveDeployReleaseAt = resolveDeployReleaseAt
 var ResolveDeployRollbackOn5xx = resolveDeployRollbackOn5xx
 var ResolveDeployShape = resolveDeployShape
 var ResolveDeploySourceDir = resolveDeploySourceDir
@@ -1801,6 +1830,7 @@ var ScaffoldTestHTTPRequests = scaffoldTestHTTPRequests
 var ScanEnvRefs = scanEnvRefs
 var ScanSource = scanSource
 var ScenarioInternalServiceURLs = scenarioInternalServiceURLs
+var ScheduledReleaseLines = scheduledReleaseLines
 var SecondsOrDurationFlag = secondsOrDurationFlag
 var SecretAckProgress = secretAckProgress
 var SecretAckProgressWithRestart = secretAckProgressWithRestart
@@ -2202,6 +2232,10 @@ func (r *mcpServeOptions) StateFile() *string   { return &r.stateFile }
 // Members of mcpTasksStatusResult
 func (r *mcpTasksStatusResult) Diagnose() { r.diagnose() }
 
+// Members of menuAction
+func (r *menuAction) Args() *[]string { return &r.args }
+func (r *menuAction) Label() *string  { return &r.label }
+
 // Members of productCommand
 func (r *productCommand) App() *string         { return &r.app }
 func (r *productCommand) EmailStatus() *string { return &r.emailStatus }
@@ -2254,6 +2288,13 @@ func (r *startFileEdit) Path() *string { return &r.path }
 
 // Members of startPrompt
 func (r *startPrompt) Reader() **bufio.Reader { return &r.reader }
+func (r *startPrompt) Writer() *io.Writer     { return &r.writer }
+func (r *startPrompt) Confirm(ctx context.Context, label string) (bool, error) {
+	return r.confirm(ctx, label)
+}
+func (r *startPrompt) ConfirmYes(ctx context.Context, label string) (bool, error) {
+	return r.confirmYes(ctx, label)
+}
 
 // Members of startRequestResult
 func (r *startRequestResult) Path() *string             { return &r.path }
@@ -2272,6 +2313,7 @@ func (r *startRunner) RequestFailure() **startRequestFailure { return &r.request
 func (r *startRunner) SecretsFile() *string                  { return &r.secretsFile }
 func (r *startRunner) Session() *startSession                { return &r.session }
 func (r *startRunner) StatePath() *string                    { return &r.statePath }
+func (r *startRunner) Authenticate() int                     { return r.authenticate() }
 func (r *startRunner) CheckFirstResponse(p0 string, p1 string) int {
 	return r.checkFirstResponse(p0, p1)
 }
@@ -2341,3 +2383,41 @@ var ReconcileManifestRealtimeEndpoints = reconcileManifestRealtimeEndpoints
 var RealtimePreviewVerbs = realtimePreviewVerbs
 var RealtimeUsage = realtimeUsage
 var RealtimePublishUsage = realtimePublishUsage
+
+var PrintEdgeRuleEvents = printEdgeRuleEvents
+var ResolveArchiveInstance = resolveArchiveInstance
+var RequestLatencyMS = requestLatencyMS
+var SafeDeployWaitTimeoutSeconds = safeDeployWaitTimeoutSeconds
+var InferLatestWorkflowName = inferLatestWorkflowName
+var CompactUsage = compactUsage
+
+const UsageSynopsisLimit = usageSynopsisLimit
+
+var InvokedCommandPath = &invokedCommandPath
+
+var AppArgumentEnabled = &appArgumentEnabled
+
+// AppArgumentPaths lists every visible command path whose leaf takes the
+// app as its first argument.
+func AppArgumentPaths() [][]string {
+	var paths [][]string
+	var walk func(path []string, flags []cliFlag, positionals []string, children []cliSub)
+	walk = func(path []string, flags []cliFlag, positionals []string, children []cliSub) {
+		if takesAppArgument(flags, positionals, children) {
+			paths = append(paths, append([]string{}, path...))
+		}
+		for _, child := range children {
+			if child.SubcommandsAfterPositionals {
+				continue
+			}
+			walk(append(append([]string{}, path...), child.Name), child.Flags, child.Positionals, child.Subcommands)
+		}
+	}
+	for _, command := range visibleCliCommands() {
+		if command.SubcommandsAfterPositionals {
+			continue
+		}
+		walk([]string{command.Name}, command.Flags, command.Positionals, command.Subcommands)
+	}
+	return paths
+}

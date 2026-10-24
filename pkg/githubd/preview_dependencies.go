@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/netip"
 	"strings"
 	"time"
 
@@ -130,13 +131,29 @@ func previewManifest(parent state.AppManifest) state.AppManifest {
 	return parent
 }
 
+// withParentAccessGates copies the parent's access and egress gates onto a PR
+// preview. A preview answers on a guessable pr-<n>-<slug> host and runs the PR
+// head, so the preview of an IP-allowlisted, password-protected, signed-only
+// or egress-restricted app must keep those gates; the developer preview API
+// already copies them.
+func withParentAccessGates(preview, parent state.App) state.App {
+	preview.RequireAuthn = parent.RequireAuthn
+	preview.PublicAuthMode = parent.PublicAuthMode
+	preview.PublicAuthBasicSealed = append([]byte(nil), parent.PublicAuthBasicSealed...)
+	preview.PublicAuthIPAllowlist = append([]netip.Prefix(nil), parent.PublicAuthIPAllowlist...)
+	preview.ConsumerAuthMode = parent.ConsumerAuthMode
+	preview.RequireSigned = parent.RequireSigned
+	preview.EgressAllowlist = append([]netip.Prefix(nil), parent.EgressAllowlist...)
+	return preview
+}
+
 func makePRDependencyPreview(parent state.App, prNumber int, expiresAt time.Time, policy state.GitHubDeployPolicy) (state.App, error) {
 	slug, err := previewSlug(parent.Slug, prNumber)
 	if err != nil {
 		return state.App{}, err
 	}
-	return applyGitHubRootPolicy(state.App{
-		AccountID: parent.AccountID, OrgID: parent.OrgID, Slug: slug, Type: parent.Type,
+	return withParentAccessGates(applyGitHubRootPolicy(state.App{
+		AccountID: parent.AccountID, OrgID: parent.OrgID, Slug: slug, Visibility: parent.Visibility, Type: parent.Type,
 		Runtime: parent.Runtime, RAMMB: parent.RAMMB, MaxConcurrency: parent.MaxConcurrency,
 		IdleTimeoutS: parent.IdleTimeoutS, ProjectID: parent.ProjectID,
 		RootDir: parent.RootDir, WorkloadName: parent.WorkloadName,
@@ -144,7 +161,7 @@ func makePRDependencyPreview(parent state.App, prNumber int, expiresAt time.Time
 		Manifest: previewManifest(parent.Manifest), AppProtocol: parent.AppProtocol, Status: state.AppActive,
 		PreviewOfSlug: parent.Slug, PreviewPrNumber: prNumber,
 		PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expiresAt,
-	}, policy), nil
+	}, policy), parent), nil
 }
 
 func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, workload reposcan.Workload, available map[string]struct{}, policy state.GitHubDeployPolicy) (state.App, error) {
@@ -153,11 +170,16 @@ func (s *Service) applyPRHeadWorkload(ctx context.Context, preview state.App, wo
 	preview.Manifest = previewManifest(preview.Manifest)
 	desired := reconcile.ApplyScannedWorkloadToApp(preview, workload, available)
 	desired = applyGitHubRootPolicy(desired, policy)
-	return s.Reconcile.Store.UpdateApp(ctx, preview.ID, state.UpdateAppParams{
+	params := state.UpdateAppParams{
 		RootDir: &desired.RootDir, WorkloadName: &desired.WorkloadName,
 		WorkloadClass: &desired.WorkloadClass, StartCommand: &desired.StartCommand,
 		Manifest: &desired.Manifest,
-	})
+	}
+	// A preview runs with the resources its head declares (ADR-20261023120000).
+	if !workload.Resources.IsZero() {
+		params.RAMMB, params.CPUMillicores, params.MaxConcurrency = &desired.RAMMB, &desired.CPUMillicores, &desired.MaxConcurrency
+	}
+	return s.Reconcile.Store.UpdateApp(ctx, preview.ID, params)
 }
 
 // closePRDependencies advances every sibling in the same project and PR to

@@ -241,8 +241,12 @@ type Metrics struct {
 	wafDetections         *prometheus.CounterVec
 	wafRuleMatches        *prometheus.CounterVec
 	wafInline             *prometheus.CounterVec
+	wafInlineSkips        *prometheus.CounterVec
 	wafInlineSeconds      prometheus.Histogram
 	edgeChallenge         *prometheus.CounterVec
+	aiCrawlerRequests     *prometheus.CounterVec
+	edgePenalty           *prometheus.CounterVec
+	edgeChallengeRaised   *prometheus.CounterVec
 	wafInspectionSeconds  prometheus.Histogram
 	preAuthPolicyShadow   *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
@@ -1390,13 +1394,29 @@ func NewMetrics() *Metrics {
 			Name: "gateway_waf_inline_checks_total",
 			Help: "In-path header/URI checks for kind=waf warn and block rules (ADR-831 amendment 4), by app and outcome (clean|warned|blocked|skipped|error). skipped means the app's inline budget or the node's check slots were exhausted and the request passed unchecked.",
 		}, []string{"app", "outcome"}),
+		wafInlineSkips: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_waf_inline_skips_total",
+			Help: "Skipped in-path kind=waf checks (outcome=\"skipped\" in gateway_waf_inline_checks_total) by app and reason (ADR-831 amendment 12): budget (the app used its inline budget, as under a flood) or busy (every check slot on the node stayed busy through the slot wait, a capacity shortfall).",
+		}, []string{"app", "reason"}),
+		edgePenalty: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_penalty_total",
+			Help: "Penalty box decisions (ADR-20261022105846), by app and outcome: boxed (a rule's threshold boxed a client), rejected (a boxed client's request refused).",
+		}, []string{"app", "outcome"}),
 		edgeChallenge: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_challenge_total",
 			Help: "kind=challenge decisions (ADR-831 amendment 7), by app and outcome: passed (valid pass), bypassed (verified credential), issued (challenge page served), rejected (403 challenge_required), solved (pass set), invalid (bad solution), expired (solution after the token expired).",
 		}, []string{"app", "outcome"}),
+		aiCrawlerRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_ai_crawler_requests_total",
+			Help: "Requests whose User-Agent names an AI crawler (ADR-20261022083601), by app and crawler. Counts the claim, verified or not, before any edge rule acts.",
+		}, []string{"app", "crawler"}),
+		edgeChallengeRaised: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_challenge_raised_total",
+			Help: "kind=challenge pages served at a difficulty raised under attack (ADR-831 amendment 8), by app; a subset of gateway_edge_challenge_total{outcome=\"issued\"}.",
+		}, []string{"app"}),
 		wafInlineSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_waf_inline_seconds",
-			Help:    "Time to check one request's headers and URI in-path for a kind=waf warn or block rule; added to that request's latency.",
+			Help:    "Time to check one request's headers and URI in-path for a kind=waf warn or block rule, including any wait for a check slot (ADR-831 amendment 12); added to that request's latency.",
 			Buckets: []float64{0.00025, 0.0005, 0.001, 0.0015, 0.002, 0.003, 0.005, 0.01, 0.025},
 		}),
 		wafInspectionSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
@@ -1493,14 +1513,14 @@ func NewMetrics() *Metrics {
 			Name: "gateway_request_duration_seconds",
 			Help: "Per-app full request duration (request received to handler return), labelled by HTTP status class (2xx/3xx/4xx/5xx). Issue #273 / ADR-042.",
 			Buckets: []float64{
-				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10,
+				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, api.RequestDurationTopBucketSeconds,
 			},
 		}, []string{"app", "class"}),
 		requestDurationByDeployment: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "gateway_request_duration_by_deployment_seconds",
 			Help: "Per-deployment request duration drill-down with bounded deployment admission (ADR-127).",
 			Buckets: []float64{
-				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10,
+				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, api.RequestDurationTopBucketSeconds,
 			},
 		}, []string{"app", "class", "deployment"}),
 		// Issue #273 / ADR-042. Renamed outright from gateway_cold_wake_total.
@@ -2088,7 +2108,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
-	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSeconds, m.edgeChallenge)
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSkips, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgePenalty, m.aiCrawlerRequests)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
 	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
@@ -2686,6 +2706,18 @@ func (m *Metrics) ObserveWAFDetection(appID, category string) {
 	m.wafDetections.WithLabelValues(appID, category).Inc()
 }
 
+// ObserveWAFInlineSkip counts why an in-path kind=waf check was skipped. A
+// reason other than budget or busy counts as busy.
+func (m *Metrics) ObserveWAFInlineSkip(appID, reason string) {
+	if m == nil || m.wafInlineSkips == nil {
+		return
+	}
+	if reason != WAFInlineSkipBudget {
+		reason = WAFInlineSkipBusy
+	}
+	m.wafInlineSkips.WithLabelValues(appID, reason).Inc()
+}
+
 // ObserveWAFInline counts one in-path kind=waf check. seconds is recorded
 // only for checks that ran (seconds > 0).
 func (m *Metrics) ObserveWAFInline(appID, outcome string, seconds float64) {
@@ -2698,12 +2730,38 @@ func (m *Metrics) ObserveWAFInline(appID, outcome string, seconds float64) {
 	}
 }
 
+// ObserveAICrawlerRequest counts one request whose User-Agent names an AI
+// crawler. crawler is a catalog name, so the label set is closed.
+func (m *Metrics) ObserveAICrawlerRequest(appID, crawler string) {
+	if m == nil || m.aiCrawlerRequests == nil {
+		return
+	}
+	m.aiCrawlerRequests.WithLabelValues(appID, crawler).Inc()
+}
+
+// ObserveEdgePenalty counts one penalty box decision.
+func (m *Metrics) ObserveEdgePenalty(appID, outcome string) {
+	if m == nil || m.edgePenalty == nil {
+		return
+	}
+	m.edgePenalty.WithLabelValues(appID, outcome).Inc()
+}
+
 // ObserveEdgeChallenge counts one kind=challenge decision.
 func (m *Metrics) ObserveEdgeChallenge(appID, outcome string) {
 	if m == nil || m.edgeChallenge == nil {
 		return
 	}
 	m.edgeChallenge.WithLabelValues(appID, outcome).Inc()
+}
+
+// ObserveEdgeChallengeRaised counts one challenge page served at a raised
+// difficulty.
+func (m *Metrics) ObserveEdgeChallengeRaised(appID string) {
+	if m == nil || m.edgeChallengeRaised == nil {
+		return
+	}
+	m.edgeChallengeRaised.WithLabelValues(appID).Inc()
 }
 
 // ObserveWAFRuleMatch counts one CRS rule that scored in a detection.

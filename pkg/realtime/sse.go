@@ -51,12 +51,12 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	token, _ := bearerToken(r)
 	usesTicket := isTicket(token)
-	if usesTicket && (!m.ticketPreview(endpoint) || m.cfg.TicketReader == nil) {
+	if usesTicket && (!endpoint.ticketsOn(m.cfg) || m.cfg.TicketReader == nil) {
 		http.Error(w, "ticket unavailable", http.StatusUnauthorized)
 		return
 	}
 	authorizer, ok := m.hooks.(ChannelAuthorizer)
-	if !m.resumePreview(endpoint) || m.cfg.HistoryReader == nil || (!ok && !usesTicket) {
+	if !endpoint.resumeOn(m.cfg) || m.cfg.HistoryReader == nil || (!ok && !usesTicket) {
 		http.Error(w, "realtime history unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -122,7 +122,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	var issued time.Time
-	if !usesTicket && m.accessPreview(endpoint) {
+	if !usesTicket && endpoint.accessOn(m.cfg) {
 		issued, err = verifiedTokenIssuedAt(token)
 		if err != nil || m.cfg.AccessReader == nil {
 			http.Error(w, "access unavailable", http.StatusUnauthorized)
@@ -131,7 +131,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	}
 	auth := &sseAuthorization{m: m, node: node, r: r, authorizer: authorizer, endpointID: id, channel: channel,
 		principal: principal, token: token, connectionID: "sse_" + uuid.NewString(), usesTicket: usesTicket,
-		issued: issued, ticketExpiry: ticketExpiry, identity: identity, accessPreview: m.accessPreview(endpoint)}
+		issued: issued, ticketExpiry: ticketExpiry, identity: identity}
 	switch auth.check(ctx) {
 	case sseDenied:
 		http.Error(w, "not authorized", http.StatusForbidden)
@@ -212,7 +212,7 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 	// ?occupancy=1 adds live occupancy events (ADR-1324), written while the
 	// stream waits for new history.
 	var occupancy <-chan int
-	if value := r.URL.Query().Get("occupancy"); m.occupancyPreview(endpoint) && (value == "1" || value == "true") {
+	if value := r.URL.Query().Get("occupancy"); endpoint.occupancyOn(m.cfg) && (value == "1" || value == "true") {
 		watcher := newSSEOccupancyWatcher()
 		if m.watchOccupancy(id, channel, watcher) {
 			defer m.unwatchOccupancy(id, channel, watcher)
@@ -308,7 +308,7 @@ type sseAuthorization struct {
 	r                                                   *http.Request
 	authorizer                                          ChannelAuthorizer
 	endpointID, channel, principal, token, connectionID string
-	usesTicket, accessPreview                           bool
+	usesTicket                                          bool
 	issued, ticketExpiry                                time.Time
 	authorizedAt, refreshedAt                           time.Time
 }
@@ -420,7 +420,7 @@ func (a *sseAuthorization) authorize(ctx context.Context) sseVerdict {
 }
 
 func (a *sseAuthorization) checkAccess(ctx context.Context, now time.Time) sseVerdict {
-	if !a.accessPreview || now.Sub(a.refreshedAt) < realtimeAccessRefreshInterval {
+	if !a.node.config.Load().accessOn(a.m.cfg) || now.Sub(a.refreshedAt) < realtimeAccessRefreshInterval {
 		return sseAllowed
 	}
 	accessCtx, done := context.WithTimeout(ctx, realtimeAccessReadTimeout)

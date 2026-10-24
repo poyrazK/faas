@@ -46,7 +46,8 @@ func (s *Service) billProductCustomer(ctx context.Context, acct state.Account, r
 			item.Outcome, item.Reason = state.BillingRunItemHeld, held
 			return nil
 		}
-		if review.Starts == 0 {
+		// A month with a plan fee is billed without runs (ADR-20261021154511).
+		if review.Starts == 0 && len(review.Fees) == 0 {
 			item.Outcome, item.Reason = state.BillingRunItemUpToDate, productNoReceipts
 			return nil
 		}

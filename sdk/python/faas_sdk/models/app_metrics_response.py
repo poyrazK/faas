@@ -53,6 +53,9 @@ class AppMetricsResponse:
     """
     wake_p95_ms: float
     """FLEET p95 wake latency (the unlabeled histogram). Labelled as such in the UI."""
+    wake_samples: int | Unset = UNSET
+    """Number of fleet wakes wake_p95_ms was computed from. Below 20 the p95 is not meaningful and clients show it
+    as unavailable. Omitted when the count is unknown."""
     queue_depth: int | Unset = UNSET
     """Current wake-queue depth
     (`gateway_queue_depth{app, account_id}` — `account_id`
@@ -142,6 +145,8 @@ class AppMetricsResponse:
 
         wake_p95_ms = self.wake_p95_ms
 
+        wake_samples = self.wake_samples
+
         queue_depth = self.queue_depth
 
         egress_bytes = self.egress_bytes
@@ -178,6 +183,8 @@ class AppMetricsResponse:
                 "wake_p95_ms": wake_p95_ms,
             }
         )
+        if wake_samples is not UNSET:
+            field_dict["wake_samples"] = wake_samples
         if queue_depth is not UNSET:
             field_dict["queue_depth"] = queue_depth
         if egress_bytes is not UNSET:
@@ -222,6 +229,8 @@ class AppMetricsResponse:
 
         wake_p95_ms = d.pop("wake_p95_ms")
 
+        wake_samples = d.pop("wake_samples", UNSET)
+
         queue_depth = d.pop("queue_depth", UNSET)
 
         egress_bytes = d.pop("egress_bytes", UNSET)
@@ -255,6 +264,7 @@ class AppMetricsResponse:
             error_rate_pct=error_rate_pct,
             cold_start_pct=cold_start_pct,
             wake_p95_ms=wake_p95_ms,
+            wake_samples=wake_samples,
             queue_depth=queue_depth,
             egress_bytes=egress_bytes,
             tx_bytes=tx_bytes,

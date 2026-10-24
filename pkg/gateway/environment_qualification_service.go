@@ -112,7 +112,9 @@ func (p *environmentQualificationServiceProxy) servePrivate(w http.ResponseWrite
 	target := route.Target
 	observed := &qualificationExchangeWriter{ResponseWriter: w}
 	p.config.Forward(Target{AppID: target.AppID, NodeID: target.NodeID, InstanceID: target.InstanceID, DeploymentID: target.DeploymentID, WakeID: target.WakeID, Port: route.Port}).ServeHTTP(observed, request)
-	if route.RequireHTTPS && route.Caller.CaptureInstanceID != "" && route.Target.CaptureInstanceID != "" && observed.status >= 200 && observed.status <= 299 && !observed.failed && ctx.Err() == nil {
+	// ADR-20261019200059: an HTTP caller's exchange is evidence too; the
+	// receipt keeps RequireHTTPS so activation can match the caller transport.
+	if route.Caller.CaptureInstanceID != "" && route.Target.CaptureInstanceID != "" && observed.status >= 200 && observed.status <= 299 && !observed.failed && ctx.Err() == nil {
 		if receipts, ok := p.config.Store.(state.EnvironmentQualificationServiceReceiptStore); ok {
 			if err := receipts.RecordEnvironmentQualificationServiceExchange(ctx, state.EnvironmentQualificationServiceRequest{NodeID: nodeID, HostIP: hostIP, GraphID: graphID, Binding: binding}, route); err != nil {
 				slog.WarnContext(ctx, "candidate service exchange evidence was not recorded", "graph_id", graphID, "binding", binding, "error", err)

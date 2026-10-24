@@ -141,6 +141,10 @@ func (f *fakeStore) RouteAwakeSourceMinutes(context.Context, sqlc.RouteAwakeSour
 	return nil, nil
 }
 
+func (f *fakeStore) RouteAwakeWorkMinutes(context.Context, sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error) {
+	return nil, nil
+}
+
 func (f *fakeStore) RouteAwakeRouteMinutes(context.Context, sqlc.RouteAwakeRouteMinutesParams) ([]sqlc.RouteAwakeRouteMinutesRow, error) {
 	var out []sqlc.RouteAwakeRouteMinutesRow
 	for m := 0; m < 24*60; m++ {
@@ -201,6 +205,10 @@ func TestEvaluatorRunOnce(t *testing.T) {
 	for _, u := range store.upserts {
 		if uuid.UUID(u.AppID.Bytes).String() != proApp || !u.ObservedAt.Time.Equal(now) {
 			t.Fatalf("upsert = %+v", u)
+		}
+		// adr: 20261020161310 — a fixed insight reopens only after a full window.
+		if !u.RefixBefore.Time.Equal(now.Add(-api.RouteInsightWindow)) {
+			t.Fatalf("refix bound = %v, want %v", u.RefixBefore.Time, now.Add(-api.RouteInsightWindow))
 		}
 		var evidence map[string]any
 		if err := json.Unmarshal(u.Evidence, &evidence); err != nil {

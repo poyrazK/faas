@@ -19,6 +19,7 @@ type memoryLease struct {
 	bindingApp     string
 	endUser        string
 	tags           []string
+	traceID        string
 	reservedTokens int64
 	reservedCost   int64
 }
@@ -64,14 +65,24 @@ type memoryState struct {
 	bindingTokenLimits map[string]*int64
 	aiAlerts           []AIBudgetAlert
 	aiRequestLog       []AIUsageRecord
+	// feedback holds the ratings of logged calls by call ID, and
+	// pendingEvaluations the calls sampled for online evaluation
+	// (ADR 20261021171712).
+	feedback           map[string]AIFeedback
+	pendingEvaluations []string
 	// contentCaptures counts today's captured calls (ADR-996).
 	contentCaptures int
 	// settledLeases keys today's settlements (ADR-1120).
 	settledLeases map[string]struct{}
 	// batches keep created batches' reservations until they settle
 	// (ADR-1431).
-	batches     map[string]*memoryBatch
-	initialized bool
+	batches map[string]*memoryBatch
+	// traces are the recorded AI traces, and traceDayCount the new ones
+	// recorded on traceDay (ADR 20261020202035).
+	traces        map[string]*memoryTrace
+	traceDay      string
+	traceDayCount int64
+	initialized   bool
 }
 
 // memoryAIRequestLogMax bounds the in-process request log.
@@ -264,6 +275,11 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	if reason, retry, limited := aiTagBudgetExhausted(utcNow, state.tagStates(spec), reserve); limited {
 		return Decision{RetryAfter: retry, Reason: reason, RequestTimeout: ttl}, nil
 	}
+	if spec.AITraceID != "" {
+		if reason := aiTraceRejection(state.traceState(spec.AITraceID, today, now), spec.AITraceLimits, reserve); reason != "" {
+			return Decision{Reason: reason, RequestTimeout: ttl}, nil
+		}
+	}
 	minute := state.bindingMinute(spec.BindingAppID, utcNow)
 	if spec.BindingAppID != "" {
 		if reason, retry, limited := aiMinuteExhausted(utcNow, aiMinuteState{
@@ -281,7 +297,7 @@ func (b *MemoryBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decision
 	}
 	id := uuid.NewString()
 	state.leases[id] = memoryLease{expiresAt: now.Add(ttl), bindingApp: spec.BindingAppID, endUser: spec.AIEndUser,
-		tags: append([]string(nil), spec.AITags...), reservedTokens: reserve.tokens, reservedCost: reserve.cost}
+		tags: append([]string(nil), spec.AITags...), traceID: spec.AITraceID, reservedTokens: reserve.tokens, reservedCost: reserve.cost}
 	decision := Decision{
 		Granted: true, LeaseID: id, RequestTimeout: ttl,
 		CircuitBreakerFailureThreshold: spec.CircuitBreakerFailureThreshold,
@@ -689,10 +705,20 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 			}
 			record.Log = &logged
 		}
+		if record.CallID == "" {
+			record.CallID = uuid.NewString()
+		}
+		if content := record.Log.Content; record.EvaluationSampled && content != nil && !content.RequestTruncated &&
+			!content.ResponseTruncated {
+			state.pendingEvaluations = append(state.pendingEvaluations, record.CallID)
+		}
 		state.aiRequestLog = append(state.aiRequestLog, record)
 		if len(state.aiRequestLog) > memoryAIRequestLogMax {
 			state.aiRequestLog = state.aiRequestLog[len(state.aiRequestLog)-memoryAIRequestLogMax:]
 		}
+	}
+	if record.TraceID != "" {
+		state.recordTrace(record, utcNow.Format("2006-01-02"))
 	}
 	if record.Route != nil && len(b.routeAttempts) < memoryAIRequestLogMax {
 		b.routeAttempts = append(b.routeAttempts, *record.Route)
@@ -701,6 +727,59 @@ func (b *MemoryBackend) RecordAIUsageAlerts(ctx context.Context, record AIUsageR
 		b.logExports = append(b.logExports, *record.Export)
 	}
 	return recorded, nil
+}
+
+// AITrace reports one recorded AI trace, for tests (ADR 20261020202035).
+func (b *MemoryBackend) AITrace(integrationID, traceID string) (AITrace, bool) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	state := b.states[integrationID]
+	if state == nil || state.traces[traceID] == nil {
+		return AITrace{}, false
+	}
+	trace := state.traces[traceID].trace
+	trace.Models = append([]string(nil), trace.Models...)
+	return trace, true
+}
+
+// traceState is a trace as admission reads it, with its live leases.
+func (s *memoryState) traceState(traceID, today string, now time.Time) aiTraceState {
+	state := aiTraceState{}
+	if s.traceDay == today {
+		state.dayTraces = s.traceDayCount
+	}
+	if trace := s.traces[traceID]; trace != nil {
+		state.known = true
+		state.calls, state.cost, state.repeats = trace.trace.Calls, trace.trace.CostMillicents, trace.trace.RepeatedToolCalls
+	}
+	for _, lease := range s.leases {
+		if lease.traceID == traceID && lease.expiresAt.After(now) {
+			state.inflightCalls++
+			state.inflightCost += lease.reservedCost
+		}
+	}
+	return state
+}
+
+// recordTrace settles a call into its trace; a new trace takes one of the
+// day's slots, and past them is not recorded.
+func (s *memoryState) recordTrace(record AIUsageRecord, today string) {
+	trace := s.traces[record.TraceID]
+	if trace == nil {
+		if s.traceDay != today {
+			s.traceDay, s.traceDayCount = today, 0
+		}
+		if s.traceDayCount >= api.OutboundAITracesPerDay {
+			return
+		}
+		s.traceDayCount++
+		if s.traces == nil {
+			s.traces = make(map[string]*memoryTrace)
+		}
+		trace = &memoryTrace{trace: AITrace{TraceID: record.TraceID, Caller: record.Caller, EndUser: record.EndUser}}
+		s.traces[record.TraceID] = trace
+	}
+	trace.add(record)
 }
 
 // AIRouteAttempts reports the canary-tracked route attempts settled so far,

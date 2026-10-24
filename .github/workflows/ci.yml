@@ -50,10 +50,10 @@ permissions:
 env:
   # Pinned to a patch (not a minor) so the govulncheck supply-chain gate
   # and the go.mod toolchain directive resolve to the same Go runtime.
-  # Go 1.26.9 fixes the reachable stdlib advisories reported by the
-  # October 2026 supply-chain gate. Keep all runtime/build pins aligned
-  # with the go.mod toolchain directive.
-  GO_VERSION: "1.26.9"
+  # Go 1.26.10 fixes the reachable stdlib advisories reported by the
+  # October 2026 supply-chain gate (latest: GO-2026-6809, crypto/x509).
+  # Keep all runtime/build pins aligned with the go.mod toolchain directive.
+  GO_VERSION: "1.26.10"
   # Bound cold CLI compilation just as the apid compiler guard below does.
   GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1"'
   # vacuum is the OpenAPI ruleset linter used by `make spec-check`.
@@ -167,11 +167,11 @@ jobs:
       GOGC: 100
       GOMAXPROCS: 4
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore lint shard cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -182,7 +182,7 @@ jobs:
             go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-lint-shard-${{ matrix.shard }}-${{ runner.os }}-go${{ env.GO_VERSION }}-
             go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
@@ -202,7 +202,7 @@ jobs:
         run: python3 scripts/ci/lint_go_shard.py --shard ${{ matrix.shard }} --shards 4 -- golangci-lint
       - name: save lint shard cache
         if: always() && github.ref == 'refs/heads/main'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -221,7 +221,7 @@ jobs:
         env:
           LINT_RESULT: ${{ needs.go-lint.result }}
         run: test "$LINT_RESULT" = success
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # PR-4a compares the PR head against the event's base SHA and
           # scans every commit subject for fix-shaped changes.
@@ -236,7 +236,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -249,7 +249,7 @@ jobs:
       # Restore the module cache before setup-go downloads the requested
       # toolchain. The cache includes ~/go/pkg/mod; reversing this order makes
       # a cache hit untar over the toolchain's existing files.
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
@@ -266,6 +266,8 @@ jobs:
         run: make coverage-checker-test
       - name: CVE monitor parser and issue-payload tests
         run: scripts/ci/cve-monitor_test.sh
+      - name: base-image refresh tests (ADR 20261024132405)
+        run: python3 scripts/ci/images_lock_refresh_test.py
 
       # S4 PR-4a advisory: a useful regression pin should fail on the
       # merge-base. This report is intentionally non-blocking while the
@@ -504,6 +506,12 @@ jobs:
       - name: sealed.env scope gate
         run: make sealed-env-scope-check
 
+      # Seal domains (ADR 20261022111812): holders of private age identities,
+      # direct identity loaders in daemon code and unsealed bytea columns are
+      # a baseline that only shrinks.
+      - name: seal domain scope gate
+        run: make seal-domain-scope-check
+
       # +incompatible direct-dep gate (release blocker B1). Today this
       # flags github.com/stripe/stripe-go v70.15.0+incompatible (go.mod:25)
       # — v70 pre-dates the modern lookup_key primitive on PlanParams
@@ -672,8 +680,8 @@ jobs:
               exit 1
             fi
           done
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
@@ -687,7 +695,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -703,7 +711,7 @@ jobs:
             go-light-test-1-${{ runner.os }}-
             go-light-checks-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
             go-light-checks-${{ runner.os }}-
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
       - name: build SDK for portable Operations HTTP acceptance
@@ -751,7 +759,7 @@ jobs:
         run: scripts/ci/with-pg16-unix.sh go test -race -count=1 -p 1 -timeout=20m ./pkg/db -run '^TestApplicationStandardLedgerRecovery'
 
       - name: upload public API state-adapter coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-state-api
           path: coverage/cover-shard1.out
@@ -805,15 +813,15 @@ jobs:
       FAAS_PGTEST_TEMPLATE_DATABASE: "1"
       GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/apid/apidserver=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/cmd/gregale=-dwarf=false -c=1" "-gcflags=github.com/onebox-faas/faas/pkg/state=-dwarf=false -c=1"'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -860,7 +868,7 @@ jobs:
           go test -race -count=1 -timeout=60m -run "$RUN" -coverpkg="$APIDPKG,$STATEPKG" -covermode=atomic -coverprofile=coverage/cover-shard1-pgclone-${{ matrix.part }}.out ./pkg/apid/apidserver
           python3 scripts/ci/normalize_go_cover_profile.py coverage/cover-shard1-pgclone-${{ matrix.part }}.out
       - name: upload state-adapter coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-state-api-pgclone-${{ matrix.part }}
           path: coverage/cover-shard1-pgclone-${{ matrix.part }}.out
@@ -872,16 +880,17 @@ jobs:
   unit-tests-state:
     name: unit tests (state shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    # Six shards keep each near 10-15 min of tests: with four, shard 3 alone
+    # Eight shards keep each near 10-15 min of tests: with four, shard 3 alone
     # needed ~20 min and hit the 20m go test timeout (runs 39174391154 and
-    # 39181126528). The race+coverage compile of pkg/state adds 3-4 min, and a
+    # 39181126528); with six, shard 5 took 1185 s and then timed out (runs
+    # 40045127593 and 40057341878) as the suite grew. The race+coverage compile of pkg/state adds 3-4 min, and a
     # slow shared runner has taken 26 min for it alone, so leave room for one
     # without hiding a hung test: the go test -timeout bounds the tests.
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     permissions:
       contents: read
       id-token: write
@@ -905,15 +914,15 @@ jobs:
       FAAS_PGTEST_TEMPLATE_DATABASE: "1"
       GREGALE_GITOPS_ACCEPTANCE: "1"
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -935,7 +944,7 @@ jobs:
         run: |
           mkdir -p coverage
           go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
-          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=6 -check -list-file=coverage/state-inventory.txt
+          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=8 -check -list-file=coverage/state-inventory.txt
       - name: install PostgreSQL 16 recovery runtime
         run: |
           scripts/ci/use-https-ubuntu-mirrors.sh
@@ -945,11 +954,11 @@ jobs:
         run: |
           # Recovery with an actual serving receipt requires local database authority.
           scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'STATE_TESTS'
-          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=6 -shard=${{ matrix.shard }})
+          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=8 -shard=${{ matrix.shard }})
           go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
           STATE_TESTS
       - name: upload state coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-state-${{ matrix.shard }}
           path: coverage/cover-shard-state-${{ matrix.shard }}.out
@@ -1054,8 +1063,8 @@ jobs:
               exit 1
             fi
           done
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
@@ -1069,7 +1078,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -1104,7 +1113,7 @@ jobs:
           go test -race -p 1 -count=1 -v -timeout=5m
           ./pkg/rehearsalpg/runtime ./pkg/rehearsalwork/acceptance
           -run 'TestPostgresFault|TestPostgresCollectorFailureAndCleanupFailureCannotPass'
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         if: matrix.id == 'b'
         with:
           node-version: '22'
@@ -1134,7 +1143,7 @@ jobs:
         run: |
           go test -race -p 1 -tags metal,managed_postgres_native ./pkg/apid/apidserver -run '^TestManagedPostgresFixturePublicRotation$' -count=1 -v -timeout=180s
           go test -race -p 1 -tags metal,managed_postgres_native,object_storage_native,queue_binding_native,managed_service_native -c -o "$RUNNER_TEMP/binding-native.test" ./cmd/e2e
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         if: matrix.id == 'b'
         with:
           python-version: '3.12'
@@ -1189,7 +1198,7 @@ jobs:
 
       - name: upload external state-adapter coverage
         if: matrix.state_coverage
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: coverage-state-parity
           path: coverage/${{ matrix.coverage_file }}
@@ -1203,7 +1212,7 @@ jobs:
 
       - name: upload PostgreSQL operation-policy retirement log
         if: always() && matrix.id == 'a'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: operation-policy-postgres-contract
           path: operation-policy-postgres-contract.log
@@ -1219,7 +1228,7 @@ jobs:
 
       - name: upload PostgreSQL UDP contract log
         if: always() && matrix.id == 'a'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: udp-postgres-contract
           path: udp-postgres-contract.log
@@ -1253,15 +1262,15 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/download-artifact@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           pattern: coverage-state-*
           path: coverage
           merge-multiple: true
       - name: exact pkg/state coverage gate
         run: |
-          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard-state-5.out coverage/cover-shard-state-6.out coverage/cover-shard2a.out coverage/cover-shard1.out coverage/cover-shard1-pgclone-1.out coverage/cover-shard1-pgclone-2.out coverage/cover-shard1-pgclone-3.out coverage/cover-shard1-pgclone-4.out
+          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard-state-5.out coverage/cover-shard-state-6.out coverage/cover-shard-state-7.out coverage/cover-shard-state-8.out coverage/cover-shard2a.out coverage/cover-shard1.out coverage/cover-shard1-pgclone-1.out coverage/cover-shard1-pgclone-2.out coverage/cover-shard1-pgclone-3.out coverage/cover-shard1-pgclone-4.out
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
 
@@ -1306,8 +1315,8 @@ jobs:
     env:
       GOFLAGS: '"-gcflags=github.com/onebox-faas/faas/pkg/sched=-dwarf=false -c=1"'
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           # stale between dependency bumps; here every push to main saves
@@ -1324,7 +1333,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -1408,8 +1417,8 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
@@ -1424,7 +1433,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -1489,8 +1498,8 @@ jobs:
       GOGC: 10
       GOMAXPROCS: 2
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
@@ -1500,7 +1509,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore container contract builds
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -1549,7 +1558,7 @@ jobs:
           python3 scripts/ci/udp-contract-check.py --packages cmd/gregale cmd/gatewayd-public pkg/e2etest api/proto/onebox/faas/vmmd/v1 2>&1 | tee udp-contract-customer-protocol.log
       - name: retain container qualification log
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: container-contract-${{ github.run_id }}-${{ github.run_attempt }}
           path: |
@@ -1574,7 +1583,8 @@ jobs:
     # final watchdog rule check. Retain time for every contract and safety
     # gate after bounded APID compilation, SQLC, vulnerability and Ansible.
     # A cold run on 2026-10-13 spent 18 minutes in the standards gates and
-    # 11 in promtool, and was cancelled at 45 during the last gate.
+    # 11 in promtool, and was cancelled at 45 during the last gate. The
+    # promtool rule fixtures have since moved to the promtool-fixtures job.
     timeout-minutes: 70
     permissions:
       contents: read
@@ -1586,7 +1596,7 @@ jobs:
       GOGC: 10
       GOMAXPROCS: 2
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # PR-4b compares changed core-path tests against the event base SHA.
           fetch-depth: 0
@@ -1629,7 +1639,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -1649,7 +1659,7 @@ jobs:
       # toolchain. The cache includes ~/go/pkg/mod; reversing this order makes
       # a cache hit untar over the toolchain's existing files and can hang the
       # runner with "Cannot open: File exists".
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
@@ -1899,14 +1909,7 @@ jobs:
             examples/event-acknowledgment-monitoring/prometheus-recovery-go-worker.yml \
             examples/event-acknowledgment-monitoring/prometheus-recovery-node-worker.yml
           python3 -m json.tool examples/event-acknowledgment-monitoring/recovery-dashboard.json >/dev/null
-          # Every rule fixture, not a hand-picked list: an unlisted
-          # fixture (slo_low_traffic) broke unnoticed when an alert changed.
-          # Fixtures are independent and several take minutes each; serially
-          # they ran past 40 minutes and the job hit its 70-minute budget (run
-          # 39181126528). Run them on every core and print each fixture's
-          # output as one block; xargs fails the step if any fixture fails.
-          printf '%s\n' deploy/ansible/roles/prometheus/files/*.test.yml pkg/promqlrules/testdata/*.test.yml |
-            xargs -P "$(nproc)" -I{} sh -c 'out=$(promtool test rules "$1" 2>&1); status=$?; printf "promtool test rules %s\n%s\n" "$1" "$out"; exit $status' _ {}
+          # The rule fixtures run in the promtool-fixtures job.
           go test -count=1 -tags=integration ./pkg/promqlrules -run '^TestComputeMetricsDiscoveryScrapeLabels$'
 
       - name: Prometheus alert metadata check
@@ -2095,6 +2098,46 @@ jobs:
       - name: Alertmanager config check
         run: make alertmanager-config-check
 
+  # Every promtool rule fixture, not a hand-picked list: an unlisted fixture
+  # (slo_low_traffic) broke unnoticed when an alert changed. Each fixture
+  # evaluates the full rule set, so they slow as rules grow: in the checks
+  # job they took 11 minutes on 2026-10-13 and 34 on 2026-10-24, when the job
+  # was cancelled at its 70-minute budget (run 40051087761). They run here in
+  # two shards on every core instead. Each fixture's output prints as one
+  # block, and xargs fails the step if any fixture fails.
+  promtool-fixtures:
+    name: promtool rule fixtures (shard ${{ matrix.shard }}/2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - name: install promtool
+        run: |
+          set -euo pipefail
+          PROM_TARBALL="prometheus-${PROM_VERSION}.linux-amd64.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
+            -o "/tmp/${PROM_TARBALL}" \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/${PROM_TARBALL}"
+          echo "${PROM_TARBALL_SHA256_LINUX_AMD64}  /tmp/${PROM_TARBALL}" | sha256sum --check --strict
+          tar -xzf "/tmp/${PROM_TARBALL}" -C /tmp "prometheus-${PROM_VERSION}.linux-amd64/promtool"
+          sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+      - name: promtool test rules
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' deploy/ansible/roles/prometheus/files/*.test.yml pkg/promqlrules/testdata/*.test.yml |
+            awk -v shards=2 -v shard="$SHARD" '(NR - 1) % shards == shard - 1' > "$RUNNER_TEMP/fixtures"
+          test -s "$RUNNER_TEMP/fixtures"
+          echo "shard ${SHARD}/2: $(wc -l < "$RUNNER_TEMP/fixtures") fixtures"
+          xargs -P "$(nproc)" -I{} sh -c 'out=$(promtool test rules "$1" 2>&1); status=$?; printf "promtool test rules %s\n%s\n" "$1" "$out"; exit $status' _ {} < "$RUNNER_TEMP/fixtures"
+
   # fakeapid fixture (issue #266, PR 4). The cross-language smoke
   # fixture for the public SDKs — a stdlib-only Go binary that
   # mimics apid's surface so Node (PR 5) and Python (PR 6) SDKs
@@ -2114,14 +2157,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           # setup-go's cache would save a ~0.9 GB entry per ref (every
           # release tag included); mega runs are rare enough to download.
           cache: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
           cache: 'npm'
@@ -2186,8 +2229,8 @@ jobs:
     env:
       ISSUE_SLACK_TEST_DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
           cache: 'npm'
@@ -2210,8 +2253,8 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
           cache: 'npm'
@@ -2233,14 +2276,14 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           # setup-go's cache would save a ~0.9 GB entry per ref (every
           # release tag included); mega runs are rare enough to download.
           cache: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
           cache: 'npm'
@@ -2287,19 +2330,19 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           # setup-go's cache would save a ~0.9 GB entry per ref (every
           # release tag included); mega runs are rare enough to download.
           cache: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
           cache: 'npm'
           cache-dependency-path: sdk/node/package-lock.json
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -2353,14 +2396,14 @@ jobs:
     env:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           # setup-go's cache would save a ~0.9 GB entry per ref (every
           # release tag included); mega runs are rare enough to download.
           cache: false
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
           cache: 'npm'
@@ -2383,14 +2426,14 @@ jobs:
     # took 9.4 of 10 minutes on run 39169411988 and was cancelled on the next.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           # setup-go's cache would save a ~0.9 GB entry per ref (every
           # release tag included); mega runs are rare enough to download.
           cache: false
-      - uses: actions/setup-python@v7
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
         with:
           python-version: '3.11'
           cache: 'pip'
@@ -2466,8 +2509,8 @@ jobs:
     # timeout; the 1k rps latency assertions and runner remain unchanged.
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
@@ -2480,7 +2523,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -2578,10 +2621,10 @@ jobs:
             fi
           done
       # fetch-depth: 0 — replay-safety diffs against origin/<base>.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
@@ -2603,7 +2646,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -2751,15 +2794,15 @@ jobs:
       # unnecessary for this disposable fixture; production settings stay intact.
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable&synchronous_commit=off
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -2865,8 +2908,8 @@ jobs:
       DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
       FAAS_SKIP_PG_TESTS: ""
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
@@ -2929,8 +2972,8 @@ jobs:
               exit 1
             fi
           done
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
@@ -2943,7 +2986,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -3021,8 +3064,8 @@ jobs:
               exit 1
             fi
           done
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
@@ -3035,7 +3078,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -3105,8 +3148,8 @@ jobs:
               exit 1
             fi
           done
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
@@ -3119,7 +3162,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -3189,8 +3232,8 @@ jobs:
               exit 1
             fi
           done
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false  # managed by the restore/save steps below
@@ -3203,7 +3246,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: restore Go build + test cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build

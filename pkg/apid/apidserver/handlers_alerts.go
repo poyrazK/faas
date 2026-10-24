@@ -48,6 +48,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
+	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/oci"
@@ -169,7 +170,11 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.anomalyAlertsGate(acct, req.Comparison); prob != nil {
+	if prob := api.ValidateRouteInsightAlert(req.Metric, req.WindowSpec, app.ID); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	if prob := s.anomalyAlertsGate(appFlagSubject(acct, app), req.Comparison); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -193,6 +198,11 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	if prob := s.validateSyntheticCheckAlert(r.Context(), app.ID, req); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	logQuery, prob := logsearch.ValidateAlertQuery(req.Metric, req.LogQuery, req.WindowSpec, req.Action, s.logSearch.Enabled)
+	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -231,6 +241,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		EdgeRuleID:                      req.EdgeRuleID,
 		FailureSource:                   state.AlertFailureSource(req.FailureSource),
 		CustomMetricName:                req.CustomMetricName,
+		LogQuery:                        logQuery,
 		SLOID:                           req.SLOID,
 		SyntheticCheckID:                req.SyntheticCheckID,
 		Action:                          alertRuleActionFrom(req.Action),
@@ -282,6 +293,7 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		"window_spec":                         row.WindowSpec,
 		"failure_source":                      row.FailureSource,
 		"custom_metric_name":                  row.CustomMetricName,
+		"log_query":                           row.LogQuery,
 		"slo_id":                              row.SLOID,
 		"synthetic_check_id":                  row.SyntheticCheckID,
 		"edge_rule_id":                        row.EdgeRuleID,
@@ -446,7 +458,7 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.anomalyAlertsGate(acct, string(merged.Comparison)); prob != nil {
+	if prob := s.anomalyAlertsGate(flagSubject(r, acct), string(merged.Comparison)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -755,6 +767,7 @@ func alertRuleResponse(r state.AlertRule) api.AlertRuleResponse {
 		EdgeRuleID:                      r.EdgeRuleID,
 		FailureSource:                   string(r.FailureSource),
 		CustomMetricName:                r.CustomMetricName,
+		LogQuery:                        r.LogQuery,
 		SLOID:                           r.SLOID,
 		SyntheticCheckID:                r.SyntheticCheckID,
 		Action:                          string(r.Action),
@@ -843,8 +856,8 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // anomalyAlertsGate keeps baseline comparisons (ADR-744) dark until the
 // operator enables FAAS_ANOMALY_ALERTS_ENABLED, or releases the
 // anomaly_alerts platform flag (ADR-1700) to the account.
-func (s *server) anomalyAlertsGate(acct state.Account, comparison string) *api.Problem {
-	if api.IsAnomalyAlertComparison(comparison) && !s.platformFlagOr(platformflags.AnomalyAlerts, acct, s.anomalyAlertsEnabled) {
+func (s *server) anomalyAlertsGate(subject platformflags.Subject, comparison string) *api.Problem {
+	if api.IsAnomalyAlertComparison(comparison) && !s.platformFlagOr(platformflags.AnomalyAlerts, subject, s.anomalyAlertsEnabled) {
 		return api.NewProblem(http.StatusServiceUnavailable, "anomaly_alerts_unavailable",
 			"Anomaly alerts unavailable", "baseline comparisons are not enabled for this deployment")
 	}
@@ -943,6 +956,9 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	if p := api.ValidateMCPProtocolAlert(string(merged.Metric), string(merged.Comparison), string(merged.WindowSpec), merged.Threshold, merged.MCPMinCalls, merged.MCPForMinutes); p != nil {
 		return p
 	}
+	if p := api.ValidateRouteInsightAlert(string(merged.Metric), string(merged.WindowSpec), merged.AppID); p != nil {
+		return p
+	}
 	if api.IsMCPProtocolMetric(string(merged.Metric)) && merged.AppID == "" {
 		return api.ErrAlertRuleInvalid("MCP performance alerts require an app")
 	}
@@ -990,6 +1006,11 @@ func validateAlertRuleRowUpdate(merged state.AlertRule) *api.Problem {
 	}
 	if merged.Metric == state.AlertMetricCustomMetric {
 		if p := validateCustomMetricAlertWindow(string(merged.WindowSpec)); p != nil {
+			return p
+		}
+	}
+	if merged.Metric == state.AlertMetricLogSearchMatches {
+		if p := logsearch.ValidateAlertWindow(string(merged.WindowSpec)); p != nil {
 			return p
 		}
 	}
@@ -1099,6 +1120,10 @@ func alertRuleFamily(m state.AlertMetric) string {
 		// The rule's custom_metric_name only means something for this
 		// metric (alert_rules_custom_metric_chk); swapping away would orphan it.
 		return api.AlertRuleMetricCustomMetric
+	}
+	if m == state.AlertMetricLogSearchMatches {
+		// log_query only means something for this metric (alert_rules_log_search_chk).
+		return api.AlertRuleMetricLogSearchMatches
 	}
 	if api.IsSLOAlertMetric(string(m)) {
 		// slo_id only means something for these metrics (alert_rules_slo_chk).

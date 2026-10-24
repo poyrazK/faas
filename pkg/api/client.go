@@ -3729,7 +3729,7 @@ func (c *Client) GetEdgeRuleStatsWithSeries(ctx context.Context, slug, window st
 // first (ADR-964). Pass the response's NextCursor to continue.
 func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRuleEventsQuery) (EdgeRuleEventsResponse, error) {
 	v := url.Values{}
-	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "since": q.Since, "cursor": q.Cursor} {
+	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "request_id": q.RequestID, "since": q.Since, "cursor": q.Cursor} {
 		if val != "" {
 			v.Set(k, val)
 		}
@@ -5117,6 +5117,27 @@ func (c *Client) GetAppEdgeProtection(ctx context.Context, slug, rng string) (Ed
 		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppEdgeAttackMode reads slug's attack mode (ADR-20261021220456).
+func (c *Client) GetAppEdgeAttackMode(ctx context.Context, slug string) (EdgeAttackModeStatus, error) {
+	var out EdgeAttackModeStatus
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-protection/attack-mode", nil, &out)
+}
+
+// EnableAppEdgeAttackMode switches slug's attack mode on for
+// durationSeconds from now, or moves the end of an active one. Zero applies
+// the server's default.
+func (c *Client) EnableAppEdgeAttackMode(ctx context.Context, slug string, durationSeconds int) (EdgeAttackModeStatus, error) {
+	var out EdgeAttackModeStatus
+	return out, c.do(ctx, "PUT", "/v1/apps/"+slug+"/edge-protection/attack-mode",
+		EnableEdgeAttackModeRequest{DurationSeconds: durationSeconds}, &out)
+}
+
+// DisableAppEdgeAttackMode switches slug's attack mode off.
+func (c *Client) DisableAppEdgeAttackMode(ctx context.Context, slug string) (EdgeAttackModeStatus, error) {
+	var out EdgeAttackModeStatus
+	return out, c.do(ctx, "DELETE", "/v1/apps/"+slug+"/edge-protection/attack-mode", nil, &out)
 }
 
 // AppWakeTimelineOptions controls the optional query params for

@@ -63,6 +63,7 @@ type Provider struct {
 	authEnabled            bool
 	credentialPollInterval time.Duration
 	roles                  credentialRoleManager
+	liveLogins             liveLoginManager
 	historicalPoints       historicalPointReader
 	now                    func() time.Time
 	cooldown               requestCooldown
@@ -184,6 +185,7 @@ func newProvider(logicalRegion, organizationID, apiKey string, baseURL *url.URL,
 		maxRestoreWindow:       parsed.maxRestoreWindow,
 		credentialPollInterval: defaultCredentialPollInterval,
 		roles:                  &sqlCredentialRoles{},
+		liveLogins:             &sqlLiveLogins{},
 		historicalPoints:       sqlHistoricalPointReader{},
 		now:                    time.Now,
 	}

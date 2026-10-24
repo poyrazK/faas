@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
@@ -410,6 +411,7 @@ var PrepareSourceBuildRootfs = prepareSourceBuildRootfs
 var ProductActivityContract = productActivityContract
 var ProductBillingPGFixture = productBillingPGFixture
 var ProductControlContract = productControlContract
+var ProductIncludedStartsContract = productIncludedStartsContract
 var ProductDeploymentPilot = productDeploymentPilot
 var ProductHelpContract = productHelpContract
 var ProductNotificationAttention = productNotificationAttention
@@ -919,7 +921,8 @@ func (r *MemStore) RouteHealthHistory() *map[string][]routeHealthStoredDecision 
 func (r *MemStore) RouteLifecycleApprovals() *map[string]api.RouteLifecycleApproval {
 	return &r.routeLifecycleApprovals
 }
-func (r *MemStore) SafeReleaseWorkerLeaseUntil() *time.Time { return &r.safeReleaseWorkerLeaseUntil }
+func (r *MemStore) SafeReleaseWorkerLeaseUntil() *time.Time            { return &r.safeReleaseWorkerLeaseUntil }
+func (r *MemStore) ScenarioPostgres() *map[string]rehearsalpg.Resource { return &r.scenarioPostgres }
 func (r *MemStore) ScheduleOccurrences() *map[string]ScheduleOccurrence {
 	return &r.scheduleOccurrences
 }

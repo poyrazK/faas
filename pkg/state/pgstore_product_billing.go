@@ -9,6 +9,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/productcontrol"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -112,7 +113,54 @@ func reviewProductBillingPG(ctx context.Context, db sqlc.DBTX, scope ProductBill
 	for _, r := range rows {
 		lines = append(lines, api.ProductBillingLine{Feature: r.Feature, Revision: r.Revision, Plan: r.Plan, UnitPriceMillicents: r.UnitPriceMillicents, Starts: r.Starts, Succeeded: r.Succeeded, Failed: r.Failed, Cancelled: r.Cancelled, Waived: r.Waived, Unresolved: r.Unresolved, AmountMillicents: r.AmountMillicents, ChangedAt: r.ChangedAt.Time.UTC()})
 	}
-	return productBillingReview(scope, catalog.Spec.Currency, lines, time.Now())
+	fee, err := productMonthFeePG(ctx, db, scope)
+	if err != nil {
+		return api.ProductBillingReview{}, err
+	}
+	return productBillingReview(scope, catalog.Spec.Currency, lines, fee, time.Now())
+}
+
+// productMonthFeePG prices the plans a customer held in the month
+// (ADR-20261021154511).
+func productMonthFeePG(ctx context.Context, db sqlc.DBTX, scope ProductBillingScope) (*api.ProductBillingFee, error) {
+	start, end := productMonthBounds(scope.Period)
+	p := productBillingParams(scope)
+	rows, err := sqlc.New().ProductControlMonthPlans(ctx, db, sqlc.ProductControlMonthPlansParams{AccountID: p.AccountID, AppID: p.AppID, TenantID: p.TenantID,
+		MonthStart: pgtype.Timestamptz{Time: start, Valid: true}, MonthEnd: pgtype.Timestamptz{Time: end, Valid: true}, PageLimit: api.ProductControlPlanHistoryMonthMaxPlans + 1})
+	if err != nil {
+		return nil, err
+	}
+	if len(rows) > api.ProductControlPlanHistoryMonthMaxPlans {
+		return nil, NewOperationLimitError("product_plan_history", api.ProductControlPlanHistoryMonthMaxPlans, int64(len(rows)))
+	}
+	held := make([]productcontrol.PlanHeld, 0, len(rows))
+	catalogs := map[string]api.ProductCatalog{}
+	for _, r := range rows {
+		h := productcontrol.PlanHeld{Revision: r.Revision, Plan: r.Plan, Since: r.Since.Time.UTC(), First: r.FirstAssignment}
+		if r.HeldUntil.Valid {
+			h.Until = r.HeldUntil.Time.UTC()
+		}
+		held = append(held, h)
+		if _, ok := catalogs[r.Revision]; ok {
+			continue
+		}
+		catalog, err := productCatalogTx(ctx, db, scope.AccountID, scope.AppID, r.Revision)
+		if err != nil {
+			return nil, err
+		}
+		catalogs[r.Revision] = catalog
+	}
+	// The trial's minutes owe no fee (ADR-20261021195901).
+	var trial *productcontrol.Trial
+	if customer, err := productCustomerTx(ctx, db, scope.AccountID, scope.AppID, scope.TenantID); err == nil {
+		trial = productTrial(customer)
+	} else if !errors.Is(err, ErrNotFound) {
+		return nil, err
+	}
+	return productMonthFee(held, scope.Period, trial, func(revision string) (api.ProductCatalog, bool) {
+		c, ok := catalogs[revision]
+		return c, ok
+	}), nil
 }
 
 func (s *PgStore) ReviewProductBilling(ctx context.Context, scope ProductBillingScope) (api.ProductBillingReview, error) {

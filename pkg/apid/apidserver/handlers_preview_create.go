@@ -95,7 +95,17 @@ func (s *server) provisionPreview(r *http.Request, acct state.Account, parent st
 	} else if !errors.Is(err, state.ErrNotFound) {
 		return state.App{}, false, api.ErrCapacity("look up preview")
 	}
-	created, err := s.store.CreateAppIfUnderQuota(r.Context(), previewAppFromParent(parent, slug, req.PRNumber, expiresAt), api.MustLimitsFor(acct.Plan))
+	desired := previewAppFromParent(parent, slug, req.PRNumber, expiresAt)
+	created, err := s.store.CreateAppIfUnderQuota(r.Context(), desired, api.MustLimitsFor(acct.Plan))
+	if errors.Is(err, state.ErrConflict) {
+		// A torn-down preview's tombstone keeps the slug for the restore
+		// window; the same preview is re-created as a fresh row instead.
+		if releaser, ok := s.store.(state.PreviewTombstoneStore); ok {
+			if released, releaseErr := releaser.ReleaseDeletedPreviewSlug(r.Context(), desired); releaseErr == nil && released {
+				created, err = s.store.CreateAppIfUnderQuota(r.Context(), desired, api.MustLimitsFor(acct.Plan))
+			}
+		}
+	}
 	if err == nil {
 		return created, true, nil
 	}
@@ -151,6 +161,7 @@ func previewAppFromParent(parent state.App, slug string, prNumber int, expiresAt
 		RequireSigned:           parent.RequireSigned, StartCommand: parent.StartCommand, Manifest: manifest,
 		WarmSnapshotEnabled: parent.WarmSnapshotEnabled, RequireAuthn: parent.RequireAuthn,
 		PublicAuthMode: parent.PublicAuthMode, ConsumerAuthMode: parent.ConsumerAuthMode,
+		PublicAuthBasicSealed:   append([]byte(nil), parent.PublicAuthBasicSealed...),
 		WarmSnapshotMinRequests: parent.WarmSnapshotMinRequests, WarmSnapshotMinMs: parent.WarmSnapshotMinMs,
 		EvictionPriority: parent.EvictionPriority, Status: state.AppActive,
 		PreviewOfSlug: parent.Slug, PreviewPrNumber: prNumber, PreviewPrState: state.PreviewPrStateOpen,

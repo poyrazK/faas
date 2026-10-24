@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/financial"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/checkpointselection"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copyarchive"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
@@ -25,10 +26,14 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"DeleteAppPermanently":                   true,
+	"ListApplicationStandardRebinds":         true,
+	"RecordApplicationStandardRebind":        true,
 	"RestoreApp":                             true,
 	"RestoreAppWithActivity":                 true,
 	"AppTaskByID":                            true,
 	"LiveDeployment":                         true,
+	"RuntimeConfigReceiptRequired":           true,
 	"ResolveEnvironmentGitOpsServiceBinding": true,
 
 	"ClaimNextQueuedBuild":                                    true,
@@ -85,12 +90,14 @@ var memDispatched = map[string]bool{
 	"CreateProjectEnvironmentPromotion":                       true,
 	"CreateTCPListener":                                       true,
 	"DeadLetterEventByID":                                     true,
+	"DomainByName":                                            true,
 	"DeploymentByID":                                          true,
 	"DeploymentSnapshotBackoffActive":                         true,
 	"EdgeRuleHitStatsForApp":                                  true,
 	"EnqueueInvocation":                                       true,
 	"FailRunningInstanceIfOwnedByNode":                        true,
 	"FinalizeManagedPostgresBindingRotationsForApp":           true,
+	"FinancialEvidenceCoverage":                               true,
 	"FinalizeObjectS3CredentialRotationsForApp":               true,
 	"GetAppErrorSample":                                       true,
 	"GetFeatureFlags":                                         true,
@@ -116,6 +123,8 @@ var memDispatched = map[string]bool{
 	"ListTCPListenerTLSObservations":                          true,
 	"ListWorkflowScheduleCandidates":                          true,
 	"LiveDeploymentForScope":                                  true,
+	"FinancialComputeBalance":                                 true,
+	"FinancialComputePolicies":                                true,
 	"ManagedPostgresAdmissionFenced":                          true,
 	"MigrateInstanceOwner":                                    true,
 	"MigrateInstanceOwnerWithRuntimeConfig":                   true,
@@ -154,12 +163,16 @@ var memDispatched = map[string]bool{
 	"RouteAdviceRouteStats":                                   true,
 	"RouteAdviceThrottleExcess":                               true,
 	"ListRouteInsights":                                       true,
+	"GetRouteInsight":                                         true,
+	"MarkRouteInsightsFixed":                                  true,
 	"ResolveStaleRouteInsights":                               true,
 	"RouteAwakeMinutes":                                       true,
 	"RouteInsightCandidateApps":                               true,
+	"RouteInsightsDetectedSince":                              true,
 	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
 	"RouteAwakeSourceMinutes":                                 true,
+	"RouteAwakeWorkMinutes":                                   true,
 	"RuntimeAppValuesForDeployment":                           true,
 	"RuntimeScalingStateForDeployment":                        true,
 	"SafeReleaseWorkerLeaseHealth":                            true,
@@ -237,6 +250,15 @@ func (s *Mem) AppTaskByID(ctx context.Context, account, app, id string) (state.A
 		return over.AppTaskByID(ctx, account, app, id)
 	}
 	return s.MemStore.AppTaskByID(ctx, account, app, id)
+}
+
+func (s *Mem) RuntimeConfigReceiptRequired(ctx context.Context, appID, scope string) (bool, error) {
+	if o, ok := s.over.(interface {
+		RuntimeConfigReceiptRequired(context.Context, string, string) (bool, error)
+	}); ok {
+		return o.RuntimeConfigReceiptRequired(ctx, appID, scope)
+	}
+	return s.MemStore.RuntimeConfigReceiptRequired(ctx, appID, scope)
 }
 
 func (s *Mem) LiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {
@@ -361,6 +383,24 @@ func (s *Mem) DeploymentClearSnapshotBackoff(p0 context.Context, p1 string) erro
 		return o.DeploymentClearSnapshotBackoff(p0, p1)
 	}
 	return s.MemStore.DeploymentClearSnapshotBackoff(p0, p1)
+}
+
+func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
+	if o, ok := s.over.(interface {
+		FinancialEvidenceCoverage(context.Context) (time.Time, error)
+	}); ok {
+		return o.FinancialEvidenceCoverage(p0)
+	}
+	return s.MemStore.FinancialEvidenceCoverage(p0)
+}
+
+func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
+	if o, ok := s.over.(interface {
+		DeleteAppPermanently(context.Context, string) error
+	}); ok {
+		return o.DeleteAppPermanently(p0, p1)
+	}
+	return s.MemStore.DeleteAppPermanently(p0, p1)
 }
 
 func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {
@@ -498,6 +538,15 @@ func (s *Mem) DeadLetterEventByID(p0 context.Context, p1 string, p2 string) (sta
 	return s.MemStore.DeadLetterEventByID(p0, p1, p2)
 }
 
+func (s *Mem) DomainByName(p0 context.Context, p1 string) (state.CustomDomain, error) {
+	if o, ok := s.over.(interface {
+		DomainByName(context.Context, string) (state.CustomDomain, error)
+	}); ok {
+		return o.DomainByName(p0, p1)
+	}
+	return s.MemStore.DomainByName(p0, p1)
+}
+
 func (s *Mem) DeploymentByID(p0 context.Context, p1 string) (state.Deployment, error) {
 	if o, ok := s.over.(interface {
 		DeploymentByID(context.Context, string) (state.Deployment, error)
@@ -523,6 +572,15 @@ func (s *Mem) EdgeRuleHitStatsForApp(p0 context.Context, p1 string, p2 time.Time
 		return o.EdgeRuleHitStatsForApp(p0, p1, p2)
 	}
 	return s.MemStore.EdgeRuleHitStatsForApp(p0, p1, p2)
+}
+
+func (s *Mem) RouteInsightsDetectedSince(p0 context.Context, p1 string, p2 time.Time, p3 int) ([]state.RouteInsightDetection, int64, error) {
+	if o, ok := s.over.(interface {
+		RouteInsightsDetectedSince(context.Context, string, time.Time, int) ([]state.RouteInsightDetection, int64, error)
+	}); ok {
+		return o.RouteInsightsDetectedSince(p0, p1, p2, p3)
+	}
+	return s.MemStore.RouteInsightsDetectedSince(p0, p1, p2, p3)
 }
 
 func (s *Mem) EnvironmentWorkloadAdmissionRetired(p0 context.Context, p1 string, p2 string) (bool, error) {
@@ -784,6 +842,24 @@ func (s *Mem) LiveDeploymentForScope(p0 context.Context, p1 string, p2 string) (
 		return o.LiveDeploymentForScope(p0, p1, p2)
 	}
 	return s.MemStore.LiveDeploymentForScope(p0, p1, p2)
+}
+
+func (s *Mem) FinancialComputeBalance(p0 context.Context, p1 state.FinancialBudget, p2 time.Time) (financial.ComputeBalance, error) {
+	if o, ok := s.over.(interface {
+		FinancialComputeBalance(context.Context, state.FinancialBudget, time.Time) (financial.ComputeBalance, error)
+	}); ok {
+		return o.FinancialComputeBalance(p0, p1, p2)
+	}
+	return s.MemStore.FinancialComputeBalance(p0, p1, p2)
+}
+
+func (s *Mem) FinancialComputePolicies(p0 context.Context, p1 string, p2 string) ([]state.FinancialBudget, error) {
+	if o, ok := s.over.(interface {
+		FinancialComputePolicies(context.Context, string, string) ([]state.FinancialBudget, error)
+	}); ok {
+		return o.FinancialComputePolicies(p0, p1, p2)
+	}
+	return s.MemStore.FinancialComputePolicies(p0, p1, p2)
 }
 
 func (s *Mem) ManagedPostgresAdmissionFenced(p0 context.Context, p1 string) (bool, error) {
@@ -1135,6 +1211,24 @@ func (s *Mem) ListRouteInsights(p0 context.Context, p1 sqlc.ListRouteInsightsPar
 	return s.MemStore.ListRouteInsights(p0, p1)
 }
 
+func (s *Mem) GetRouteInsight(p0 context.Context, p1 sqlc.GetRouteInsightParams) (sqlc.GetRouteInsightRow, error) {
+	if o, ok := s.over.(interface {
+		GetRouteInsight(context.Context, sqlc.GetRouteInsightParams) (sqlc.GetRouteInsightRow, error)
+	}); ok {
+		return o.GetRouteInsight(p0, p1)
+	}
+	return s.MemStore.GetRouteInsight(p0, p1)
+}
+
+func (s *Mem) MarkRouteInsightsFixed(p0 context.Context, p1 sqlc.MarkRouteInsightsFixedParams) (int64, error) {
+	if o, ok := s.over.(interface {
+		MarkRouteInsightsFixed(context.Context, sqlc.MarkRouteInsightsFixedParams) (int64, error)
+	}); ok {
+		return o.MarkRouteInsightsFixed(p0, p1)
+	}
+	return s.MemStore.MarkRouteInsightsFixed(p0, p1)
+}
+
 func (s *Mem) ResolveStaleRouteInsights(p0 context.Context, p1 sqlc.ResolveStaleRouteInsightsParams) (int64, error) {
 	if o, ok := s.over.(interface {
 		ResolveStaleRouteInsights(context.Context, sqlc.ResolveStaleRouteInsightsParams) (int64, error)
@@ -1187,6 +1281,15 @@ func (s *Mem) RouteAwakeSourceMinutes(p0 context.Context, p1 sqlc.RouteAwakeSour
 		return o.RouteAwakeSourceMinutes(p0, p1)
 	}
 	return s.MemStore.RouteAwakeSourceMinutes(p0, p1)
+}
+
+func (s *Mem) RouteAwakeWorkMinutes(p0 context.Context, p1 sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error) {
+	if o, ok := s.over.(interface {
+		RouteAwakeWorkMinutes(context.Context, sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error)
+	}); ok {
+		return o.RouteAwakeWorkMinutes(p0, p1)
+	}
+	return s.MemStore.RouteAwakeWorkMinutes(p0, p1)
 }
 
 func (s *Mem) RuntimeAppValuesForDeployment(p0 context.Context, p1 string, p2 string, p3 string) (state.RuntimeAppValuesSnapshot, error) {
@@ -1259,6 +1362,24 @@ func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]str
 		return o.WarmPoolReconciliationAppIDs(p0, p1)
 	}
 	return s.MemStore.WarmPoolReconciliationAppIDs(p0, p1)
+}
+
+func (s *Mem) ListApplicationStandardRebinds(p0 context.Context, p1 string) ([]state.ApplicationStandardRebind, error) {
+	if o, ok := s.over.(interface {
+		ListApplicationStandardRebinds(context.Context, string) ([]state.ApplicationStandardRebind, error)
+	}); ok {
+		return o.ListApplicationStandardRebinds(p0, p1)
+	}
+	return s.MemStore.ListApplicationStandardRebinds(p0, p1)
+}
+
+func (s *Mem) RecordApplicationStandardRebind(p0 context.Context, p1 state.ApplicationStandardRebind) error {
+	if o, ok := s.over.(interface {
+		RecordApplicationStandardRebind(context.Context, state.ApplicationStandardRebind) error
+	}); ok {
+		return o.RecordApplicationStandardRebind(p0, p1)
+	}
+	return s.MemStore.RecordApplicationStandardRebind(p0, p1)
 }
 
 func (s *Mem) DeploymentSidecarRAMs(p0 context.Context, p1 string) ([]int, error) {

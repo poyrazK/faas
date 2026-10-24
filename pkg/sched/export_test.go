@@ -23,6 +23,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -113,6 +114,8 @@ var EventsForInstance = eventsForInstance
 var EventuallyEventsForInstance = eventuallyEventsForInstance
 var ExecutionCoordinatorTestConfig = executionCoordinatorTestConfig
 var ExecutionModeForApp = executionModeForApp
+var QualificationWorkerPushDelivery = qualificationWorkerPushDelivery
+var WorkerPushDelivery = (*Engine).workerPushDelivery
 var ExerciseApplicationStandardComposedWaves = exerciseApplicationStandardComposedWaves
 var ExerciseApplicationStandardOrdinaryWarmMeasuredPromotion = exerciseApplicationStandardOrdinaryWarmMeasuredPromotion
 var ExerciseServiceRecoveryRestart = exerciseServiceRecoveryRestart
@@ -131,6 +134,7 @@ var JsonStdUnmarshal = jsonStdUnmarshal
 var KafkaSASLMechanism = kafkaSASLMechanism
 var KindsOf = kindsOf
 var ListServiceReplicas = listServiceReplicas
+var LiveCount = liveCount
 var MakeEngine = makeEngine
 var MakeLoopForDLQ = makeLoopForDLQ
 var MarshalJSON = marshalJSON
@@ -143,6 +147,11 @@ var NewExecutionCoordinatorFixture = newExecutionCoordinatorFixture
 var NewFakeNotify = newFakeNotify
 var NewFireNowHarness = newFireNowHarness
 var NewFrozenFixture = newFrozenFixture
+var NewFrozenFixtureInStore = newFrozenFixtureInStore
+
+// SetStore replaces the store the fixture's engine reads through.
+func (r *frozenFixture) SetStore(s state.Store) { r.e.store = s }
+
 var NewMockChecker = newMockChecker
 var NewNodeCapacityTable = newNodeCapacityTable
 var NewNodePresenceTracker = newNodePresenceTracker
@@ -185,11 +194,13 @@ var ScrubCIJobEnv = scrubCIJobEnv
 var SeedApp = seedApp
 var SeedDrainInvocation = seedDrainInvocation
 var SeedJobRun = seedJobRun
+var SeedScopedWorker = seedScopedWorker
 var SeedStageSnapshotPolicy = seedStageSnapshotPolicy
 var SeedTwoNodes = seedTwoNodes
 var SeedWorkerScopes = seedWorkerScopes
 var SilenceLog = silenceLog
 var StageReaperPolicyDeployment = stageReaperPolicyDeployment
+var StalledSurgeMirror = stalledSurgeMirror
 var StandardNativeTestNodeID = standardNativeTestNodeID
 var StartupCPUBoostQuota = startupCPUBoostQuota
 var StartupDeadlineForApp = startupDeadlineForApp
@@ -203,6 +214,7 @@ var ValidRuntimeSnapshotIdentity = validRuntimeSnapshotIdentity
 var ValidRuntimeSnapshotRequest = validRuntimeSnapshotRequest
 var WaitFor = waitFor
 var WakeEngineWithEvents = wakeEngineWithEvents
+var WakeN = wakeN
 var WireRenderMetrics = wireRenderMetrics
 var WithAppTaskStage = withAppTaskStage
 var WithRequestedWakeID = withRequestedWakeID
@@ -215,6 +227,7 @@ var XBaseKey = baseKey
 var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
+var ReadWakeRPC = readWakeRPC
 
 // XEventFanoutSafetyTick and XRunEventFanoutSweep let the event substrate
 // benchmark schedule fanout exactly as Loop.Run does (spec Appendix D V12).
@@ -222,6 +235,10 @@ var XNewEngine = newEngine
 const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
+
+// XRunEventRecipientSweep runs only the sweep's independent recipient stage.
+// adr: 614 — recipients are claimed in batches and unrouted claims released.
+func (l *Loop) XRunEventRecipientSweep(ctx context.Context) { l.runEventRecipientSweep(ctx) }
 
 var XNewMemCacheOverageChecker = newMemCacheOverageChecker
 var XTestWorkerScopedDemandLifecycle = testWorkerScopedDemandLifecycle
@@ -364,6 +381,9 @@ func (r *Engine) WakeInstanceModeMatchesApp(p0 context.Context, p1 string, p2 st
 	return r.wakeInstanceModeMatchesApp(p0, p1, p2)
 }
 func (r *Engine) XOwnsApp(p0 state.App) bool { return r.ownsApp(p0) }
+
+// Members of ForkCoordinator
+func (r *ForkCoordinator) Now() *func() time.Time { return &r.now }
 
 // Members of Heartbeat
 func (r *Heartbeat) Now() *func() time.Time { return &r.now }
@@ -639,6 +659,75 @@ func (r *warmHintBroadcaster) Subscribe(p0 int) (<-chan WarmHintEvent, func()) {
 }
 func (r *warmHintBroadcaster) SubscriberCount() int { return r.subscriberCount() }
 
+// CreateRuntimeWithRehearsalRun boots spec through createRuntimeWithStandards
+// with the app's rehearsal run already read, as a wake hands it over.
+// adr: 20261021090000
+func CreateRuntimeWithRehearsalRun(ctx context.Context, vmm RoutedVMM, spec AppSpec, runID string) error {
+	e := &Engine{vmm: vmm}
+	// A wake's correlation envelope names the instance, so the boot needs no
+	// instance lookup.
+	ctx = wire.WithContext(ctx, wire.CorrelationFields{WakeID: "8f0e2b4c-2f3a-4c55-9d7e-0c1f6a2b3c4d", InstanceID: "instance", NodeID: "node", AppID: spec.AppID})
+	ctx = withBootPrepared(ctx, bootPrepared{instanceID: "instance", rehearsalRunID: runID, haveRehearsal: true, haveCapture: true})
+	_, err := e.createRuntimeWithStandards(ctx, "node", "instance", string(state.StateColdBooting), spec, nil, false)
+	return err
+}
+
 // Members of workPool
 func (r *workPool) Drain()                                          { r.drain() }
 func (r *workPool) Submit(p0 workKind, p1 string, p2 func()) string { return r.submit(p0, p1, p2) }
+
+// QueueRetryGroups exposes the queue retry last_error grouping (Hunt 12
+// H12-34).
+func QueueRetryGroups(items []string, statusByID map[string]TriggerDispatchResult) map[string][]string {
+	out := map[string][]string{}
+	for _, group := range queueRetryGroups(items, statusByID) {
+		out[group.reason] = group.items
+	}
+	return out
+}
+
+// WarmCaptureInstanceGatesOpen exposes the warm-capture gates shared by the
+// capture and the freeze decision (Hunt 12 H12-52).
+var WarmCaptureInstanceGatesOpen = warmCaptureInstanceGatesOpen
+
+// SettleTriggerDeadLetters runs the per-record DLQ settlement; queue selects
+// the queue poller's Nack-first order (ADR-20261022203653).
+func (r *Loop) SettleTriggerDeadLetters(ctx context.Context, t sqlc.Trigger, poller triggerSource, store storeLike, queue bool,
+	recordIDs, items, reasons, lastErrors []string, attempts []int32) {
+	claimed := make(map[string]sqlc.TriggerRecord, len(recordIDs))
+	for _, id := range recordIDs {
+		var record sqlc.TriggerRecord
+		_ = record.ID.Scan(id)
+		claimed[id] = record
+	}
+	r.settleTriggerDeadLetters(ctx, t, poller, store, queue, claimed, terminalTriggerResults{
+		recordIDs: recordIDs, items: items, reasons: reasons, errors: lastErrors, attempts: attempts})
+}
+
+// ADR-20261024085817: a draining node keeps no resident work.
+var PublishWarmFixture = publishWarmFixture
+
+type WarmResumeFakeVMM = warmResumeFakeVMM
+
+func NewWarmResumeFakeVMM() *warmResumeFakeVMM { return &warmResumeFakeVMM{fakeVMM: &fakeVMM{}} }
+
+func (r *Engine) DrainRequestBound() *time.Duration { return &r.drainRequestBound }
+
+func (r *warmResumeFakeVMM) ResumeCalls() *int { return &r.resumeCalls }
+
+// ADR-20261024140000: build secrets resolve with state.ResolveRuntimeSecretSources;
+// RuntimeMainSecretEntries is the wake's own serving delivery to compare it with.
+func RuntimeMainSecretEntries(snapshot state.RuntimeAppValuesSnapshot, intent state.AppEnvironmentSecretIntent) ([]fcvm.SealedEnvEntry, error) {
+	refs, err := state.DeploymentSecretReferences(snapshot.SecretGrants.OverrideEnvSecrets)
+	if err != nil {
+		return nil, err
+	}
+	delivery, err := sealedEnvDeliveryFromRowsWithIntent(snapshot.Secrets, snapshot.AccountID, snapshot.AppID, snapshot.Scope, refs, false, intent, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(refs) == 0 {
+		return withInheritedProjectSecrets(snapshot.InheritedSecrets, delivery.Entries), nil
+	}
+	return delivery.Entries, nil
+}

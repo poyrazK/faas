@@ -57,6 +57,17 @@ closes five product gaps, all opt-in:
   users, visitors on public relations and server keys, with RLS deciding each
   row. Live reads verify tokens exactly as the Data API does. Accounts get
   them through the `live_queries` platform flag.
+- **Engine pool and server-key limits.** `data-api configure --pool N` runs
+  up to eight engine connections per instance instead of two, and connection
+  budgets follow the reported pools. Server keys keep a slot free for users
+  by default: their requests past it wait briefly in order, then answer 429.
+  `--server-key-concurrency` and `--server-key-rate-limit` are optional.
+  Upgrade the CLI before changing the pool.
+- **File storage.** `gregale data-api storage enable` binds a bucket and turns
+  storage on. Files stream through the Data API, and RLS policies on
+  `storage_objects` decide every upload, download and removal, so file lists
+  are ordinary queries and live reads. `@gregale/data` adds
+  `createStorageClient`.
 
 Every request now carries a gateway-owned `gregale_access` claim (`user`,
 `anonymous` or `server`) for policies. Logs and `data-api diagnostics` report

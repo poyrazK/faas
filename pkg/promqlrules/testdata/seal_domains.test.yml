@@ -1,0 +1,80 @@
+# ADR 20261022111812: per-reader seal domains.
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - name: a failed seal-domain verification warns after five minutes
+    interval: 30s
+    input_series:
+      - series: faas_seal_domain_ready{domain="outbound",instance="cp-1:9100",job="node"}
+        values: 0x20
+      - series: faas_seal_domain_ready{domain="runtime",instance="compute-1:9100",job="node-compute"}
+        values: 1x20
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasSealDomainUnverified
+        exp_alerts: []
+      - eval_time: 6m
+        alertname: FaasSealDomainUnverified
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              family: seal_domains
+              domain: outbound
+              instance: cp-1:9100
+              job: node
+            exp_annotations:
+              summary: "cp-1:9100 could not prove the outbound seal domain"
+              description: "gregalectl seal-domain verify failed on cp-1:9100: the staged outbound identity is missing, or it does not open the domain probe. Once writers seal to the domain alone, the reader on this host cannot open that domain's secrets."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSealDomain.md"
+
+  - name: no reader holds the identity yet, so nothing fires before a rollout
+    interval: 30s
+    input_series:
+      - series: faas_seal_domain_loaded{domain="runtime",instance="compute-1:9101",job="vmmd"}
+        values: 0x40
+      - series: faas_seal_domain_loaded{domain="runtime",instance="compute-2:9101",job="vmmd"}
+        values: 0x40
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasSealDomainIdentityMissing
+        exp_alerts: []
+
+  - name: a reader without the identity warns once another reader holds it
+    interval: 30s
+    input_series:
+      - series: faas_seal_domain_loaded{domain="runtime",instance="compute-1:9101",job="vmmd"}
+        values: 1x40
+      - series: faas_seal_domain_loaded{domain="runtime",instance="compute-2:9101",job="vmmd"}
+        values: 0x40
+    alert_rule_test:
+      - eval_time: 9m
+        alertname: FaasSealDomainIdentityMissing
+        exp_alerts: []
+      - eval_time: 11m
+        alertname: FaasSealDomainIdentityMissing
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              family: seal_domains
+              domain: runtime
+              instance: compute-2:9101
+              job: vmmd
+            exp_annotations:
+              summary: "vmmd on compute-2:9101 started without the runtime seal-domain identity"
+              description: "Other vmmd instances hold the runtime identity, but this one started without it. Once writers seal to the domain alone, it cannot open those secrets: for runtime, wakes on this node fail for every app with a secret sealed to the domain, which is every app once the re-seal has run. Stage the identity and restart the daemon before it takes traffic."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSealDomain.md"
+
+  - name: one domain's rollout does not flag readers of another domain
+    interval: 30s
+    input_series:
+      - series: faas_seal_domain_loaded{domain="runtime",instance="compute-1:9101",job="vmmd"}
+        values: 1x40
+      - series: faas_seal_domain_loaded{domain="outbound",instance="cp-1:9300",job="outboundd"}
+        values: 0x40
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: FaasSealDomainIdentityMissing
+        exp_alerts: []

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 )
 
 // challengeSolveMaxBody bounds the solve form: a token, a counter and a
@@ -14,7 +15,8 @@ const challengeSolveMaxBody = 8 << 10
 
 // WithEdgeChallengeKey arms kind=challenge (ADR-831 amendment 7) with the
 // key from DeriveEdgeChallengeKey. Without it challenge rules are not
-// enforced.
+// enforced; neither are they for an account the edge_challenge platform
+// flag leaves out (ADR-20261023113721).
 func (h *Handler) WithEdgeChallengeKey(key []byte) *Handler {
 	h.challengeKey = append([]byte(nil), key...)
 	return h
@@ -41,7 +43,7 @@ func (h *Handler) challengeMatcher() ChallengeEdgeRuleMatcher {
 // challenge_required for anything else.
 func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request, app App, deploymentSmoke bool) bool {
 	m := h.challengeMatcher()
-	if m == nil || deploymentSmoke {
+	if m == nil || deploymentSmoke || !h.edgeFeatureReleased(platformflags.EdgeChallenge, app) {
 		return false
 	}
 	rule := m.MatchChallenge(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
@@ -51,6 +53,13 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 	}
 	if rule.AccountID != app.AccountID {
 		h.metrics.ObserveEdgeRuleMatch("challenge", "blocked")
+		return false
+	}
+	// ADR-20261021220456 amendment 1: an attack-mode rule is inert for an
+	// account the edge_attack_mode flag leaves out. The solve path stays
+	// open: no attack-mode page is served, and the app's own challenge rules
+	// still need it.
+	if rule.AttackMode && !h.edgeFeatureReleased(platformflags.EdgeAttackMode, app) {
 		return false
 	}
 	h.metrics.ObserveEdgeRuleMatch("challenge", "match")
@@ -69,16 +78,36 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 		h.recordChallengeEvent(r, rule.ID, app.ID, EdgeRuleEventRejected)
 		return true
 	}
+	difficulty := h.challengeDifficulty(rule, app.ID, now)
 	nonce := make([]byte, 16)
 	_, _ = rand.Read(nonce)
 	token := sealChallenge(h.challengeKey, "token", challengeTokenPrefix, challengeToken{
-		AppID: app.ID, RuleID: rule.ID, Nonce: nonce, Difficulty: rule.Difficulty, PassTTL: rule.PassTTLSeconds,
+		AppID: app.ID, RuleID: rule.ID, Nonce: nonce, Difficulty: difficulty, PassTTL: rule.PassTTLSeconds,
 		Expires: now.Add(api.EdgeChallengeTokenTTLSeconds * time.Second).Unix(),
 	}, bindingFor(r))
-	writeChallengePage(w, r, token, rule.Difficulty)
+	writeChallengePage(w, r, token, difficulty)
 	h.metrics.ObserveEdgeChallenge(app.ID, "issued")
+	if difficulty > rule.Difficulty {
+		h.metrics.ObserveEdgeChallengeRaised(app.ID)
+	}
 	h.recordChallengeEvent(r, rule.ID, app.ID, EdgeRuleEventChallenged)
 	return true
+}
+
+// challengeDifficulty is the difficulty for the challenge page served now:
+// the rule's own, raised while this gateway serves the rule far more pages
+// than usual (ADR-831 amendment 8). A step up or down is logged.
+func (h *Handler) challengeDifficulty(rule *EdgeRuleChallengeResolved, appID string, now time.Time) int {
+	difficulty, moved := h.challengeLoad.issue(rule, now)
+	if moved != 0 && h.log != nil {
+		msg := "edge challenge difficulty raised under load"
+		if moved < 0 {
+			msg = "edge challenge difficulty lowered as load eased"
+		}
+		h.log.Info(msg, "app_id", appID, "rule_id", rule.ID, "difficulty", difficulty,
+			"base_difficulty", rule.Difficulty, "max_difficulty", rule.MaxDifficulty)
+	}
+	return difficulty
 }
 
 // handleChallengeSolve checks a solution posted to ChallengeSolvePath and,
@@ -91,7 +120,7 @@ func (h *Handler) handleChallengeSolve(w http.ResponseWriter, r *http.Request, a
 		return false
 	}
 	m := h.challengeMatcher()
-	if m == nil {
+	if m == nil || !h.edgeFeatureReleased(platformflags.EdgeChallenge, app) {
 		return false
 	}
 	rule := m.HostChallengeRule(r.Context(), hostname(r.Host))

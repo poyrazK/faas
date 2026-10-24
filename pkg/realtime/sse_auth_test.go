@@ -74,7 +74,7 @@ func newSSEAuthFixture(usesTicket bool) *sseAuthFixture {
 	node := &endpointState{}
 	node.config.Store(&Endpoint{Preview: true, ClientAuth: AuthPolicy{Mode: AuthModeOIDCJWT}})
 	f.auth = &sseAuthorization{m: m, node: node, authorizer: f.channels, endpointID: "ep", channel: "orders",
-		principal: "user-1", token: "token", connectionID: "sse_test", usesTicket: usesTicket, accessPreview: true,
+		principal: "user-1", token: "token", connectionID: "sse_test", usesTicket: usesTicket,
 		issued: time.Now().Add(-time.Minute), ticketExpiry: time.Now().Add(time.Minute)}
 	return f
 }

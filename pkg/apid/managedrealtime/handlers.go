@@ -211,6 +211,12 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 			return fmt.Errorf("live routes for endpoint %s: %w", row.ID, err)
 		}
 	}
+	var previews *realtime.EndpointPreviews
+	if s.EndpointPreviews != nil {
+		if previews, err = s.EndpointPreviews(ctx, row.AccountID, row.AppID); err != nil {
+			return fmt.Errorf("preview decisions for endpoint %s: %w", row.ID, err)
+		}
+	}
 	authMode := row.AuthMode
 	if authMode == "" {
 		if len(authToken) > 0 {
@@ -237,6 +243,7 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 		MaxMessageBytes:  row.MaxMessageBytes,
 		MaxConnectionAge: time.Duration(row.MaxConnectionAgeSeconds) * time.Second,
 		LiveRoutes:       liveRoutes,
+		Previews:         previews,
 
 		AccountMaxConnections: accountMaxConnections,
 		// Channel rules are a preview field (ADR-20261019102657): an
@@ -246,6 +253,15 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 		// (FAAS_LIVE_QUERIES_ACCOUNTS) is marked too.
 		Preview: s.PreviewVisible(row.AccountID) || len(liveRoutes) > 0,
 	})
+}
+
+// previewOn decides one realtime preview for a request: the platform flag
+// once an operator wrote it, otherwise the environment gate.
+func (s *Service) previewOn(r *http.Request, acct state.Account, flagKey string, legacy bool) bool {
+	if s.PreviewReleased == nil {
+		return legacy
+	}
+	return s.PreviewReleased(r, acct, flagKey, legacy)
 }
 
 // realtimeAccountConnectionLimit is the account's plan allowance of concurrent

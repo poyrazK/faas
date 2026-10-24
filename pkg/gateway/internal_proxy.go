@@ -480,8 +480,13 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	// The shutdown notice lets a gateway restart end an SSE stream cleanly.
-	streamCtx, detachBudget, touch, cancelStream := newStreamSession(drain.WithShutdownNotice(r.Context(), p.Drain), 0, streamIdleTimeout)
+	streamCtx, detachBudget, sessionTouch, cancelStream := newStreamSession(drain.WithShutdownNotice(r.Context(), p.Drain), 0, streamIdleTimeout)
 	defer cancelStream()
+	deadlines := newStreamDeadlines(w, streamIdleTimeout)
+	touch := func() {
+		sessionTouch()
+		deadlines.touch()
+	}
 	outReq := r.Clone(streamCtx)
 	outReq.URL.Scheme = p.Target.Scheme
 	outReq.URL.Host = p.Target.Host
@@ -741,6 +746,7 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 	// in-flight goroutine, not the listener.
 	if isLongLivedResponse(resp.StatusCode, resp.Header) {
 		detachBudget()
+		deadlines.start()
 		touch()
 		if isEventStream(resp.Header) {
 			// Ends as a clean close (the copy sees context.Canceled); the
@@ -792,9 +798,15 @@ func (p *InternalReverseProxy) ServeHTTP(w http.ResponseWriter, r *http.Request)
 func stripHopByHopInPlace(h http.Header) {
 	// Connection's options name additional hop-specific fields. Read all
 	// values before removing Connection itself (RFC 9110 §7.6.1).
+	// Platform identity headers are exempt: the gateway stamps them after
+	// reading the sender's headers, so a caller naming them here would strip
+	// the authoritative values (an internal service call carries the calling
+	// guest's own HTTP/1.1 Connection header to this point).
 	for _, value := range h.Values("Connection") {
 		for _, name := range strings.Split(value, ",") {
-			h.Del(strings.TrimSpace(name))
+			if name = strings.TrimSpace(name); !api.IsPlatformStampedHeader(name) {
+				h.Del(name)
+			}
 		}
 	}
 	for k := range h {
@@ -984,9 +996,14 @@ func makeBodyReplayable(req *http.Request) error {
 		req.ContentLength > api.InternalHopReplayableBodyBytes {
 		return nil
 	}
-	body := make([]byte, req.ContentLength)
-	_, err := io.ReadFull(req.Body, body)
+	// Grow with the bytes received rather than allocating the declared length:
+	// a client that declares a body and sends none of it would otherwise pin
+	// the whole buffer until the server's ReadTimeout.
+	body, err := io.ReadAll(io.LimitReader(req.Body, req.ContentLength))
 	_ = req.Body.Close()
+	if err == nil && int64(len(body)) < req.ContentLength {
+		err = io.ErrUnexpectedEOF
+	}
 	if err != nil {
 		return fmt.Errorf("read %d-byte request body: %w", req.ContentLength, err)
 	}

@@ -54,7 +54,7 @@ func secretKeyHints(requested, available, visible []string) []secretKeyHint {
 			}
 			best, tied := limit+1, false
 			for _, candidate := range available {
-				distance := levenshtein(key, candidate)
+				distance := editDistance(key, candidate)
 				if distance < best {
 					best, tied = distance, false
 					hint.Suggestion = candidate
