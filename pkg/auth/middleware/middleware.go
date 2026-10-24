@@ -679,12 +679,24 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if deployAuth, ok := m.Authn.(DeployTokenAuthenticator); ok {
 				acct, key, err := deployAuth.AuthenticateDeployToken(r.Context(), api.HashAPIKey(tok))
 				if err == nil {
-					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") {
+					// The resumable upload routes are the CLI's default source
+					// deploy path. They name their app in the request body or the
+					// stored session, so the app binding is enforced where the
+					// handlers resolve it (appaccess.Authorize refuses a token
+					// bound to another app) instead of from the path here.
+					uploadRoute := IsUploadSessionPath(r.URL.Path)
+					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute {
 						api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug}"))
+							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug} and /v1/uploads"))
 						return
 					}
-					bound, bindErr := m.deployTokenBoundTo(r, key)
+					var bound bool
+					var bindErr error
+					if uploadRoute {
+						bound = key.AppID != ""
+					} else {
+						bound, bindErr = m.deployTokenBoundTo(r, key)
+					}
 					if bindErr != nil {
 						m.storeUnavailable(w, r, bindErr, "could not load the app; retry shortly")
 						return
@@ -1572,6 +1584,21 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 // handlers resolve the app with a direct store lookup and never reach
 // LoadApp's AppID check. A route without a {slug} (the account-wide
 // /v1/apps/metrics) is outside a deploy token's reach.
+// IsUploadSessionPath reports whether path is one of the resumable upload
+// routes: POST /v1/uploads and /v1/uploads/{id}[/commit].
+func IsUploadSessionPath(path string) bool {
+	const root = "/v1/uploads"
+	if path == root {
+		return true
+	}
+	rest, ok := strings.CutPrefix(path, root+"/")
+	if !ok || rest == "" {
+		return false
+	}
+	id, tail, _ := strings.Cut(rest, "/")
+	return id != "" && (tail == "" || tail == "commit")
+}
+
 func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {
 	slug := r.PathValue("slug")
 	if slug == "" || key.AppID == "" {

@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261024140100: Every deployment reaches a terminal state](20261024140100-deployment-watchdog.md) — apid's watchdog fails a build queued over 6 h (`deployment_queue_timeout`) or an in-flight deployment with no build and no progress for 3 h (`deployment_stalled`)
 - [Build secrets resolve like the runtime environment](20261024140000-build-secrets-resolve-like-the-runtime.md)
 - [ADR-20261024135625: Resource journal: durable commits only for reboot-surviving assets](20261024135625-resource-journal-volatile-commits.md)
 - [Dockerfile HEALTHCHECK gates readiness on source builds](20261024100000-dockerfile-healthcheck-enforced.md)
