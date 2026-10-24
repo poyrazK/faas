@@ -86,13 +86,13 @@ func (s *server) startDatabaseSwitch(w http.ResponseWriter, r *http.Request, acc
 			"restore_databases restores and rebinds a managed PostgreSQL database; the key needs the postgres:manage scope as well"))
 		return
 	}
-	if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID); split {
-		api.WriteProblem(w, rollbackDuringTrafficSplitProblem(app.Slug, earlier))
-		return
-	}
 	plan, problem := s.planRollback(r, acct, app, req)
 	if problem != nil {
 		api.WriteProblem(w, problem)
+		return
+	}
+	if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID, plan.target.Scope); split {
+		api.WriteProblem(w, rollbackDuringTrafficSplitProblem(app.Slug, earlier))
 		return
 	}
 	sw, problem := s.databaseSwitchFor(ctx, r, acct, app, plan)

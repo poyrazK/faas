@@ -27,6 +27,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/netip"
 	"path/filepath"
 	"slices"
@@ -322,6 +323,7 @@ func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resour
 		m.alloc.unadopt(id)
 		return err
 	}
+	m.adoptDriveHandoff(ctx, adopter, lease, r)
 	inst := m.adoptedInstance(lease, r.Adoption)
 	m.restoreAdoptedPolicy(id, inst.AppID, r.Adoption)
 	m.mu.Lock()
@@ -330,6 +332,26 @@ func (m *Manager) adoptGuest(ctx context.Context, adopter guestAdopter, r resour
 	delete(m.restartQuarantine, id)
 	m.mu.Unlock()
 	return nil
+}
+
+// driveHandoffAdopter rebuilds a measured guest's drive handoff
+// (runtime_drive_handoff_adopt.go); JailerVMM implements it.
+type driveHandoffAdopter interface {
+	adoptRuntimeDriveHandoff(ctx context.Context, lease Lease, pid int, r runtimeadmission.Receipt, pins []resourceAdoptionDrivePin) error
+}
+
+// adoptDriveHandoff gives an adopted measured guest back the drive handoff
+// its captures need. Without it the guest still serves; its next capture is
+// refused and the app's next wake cold-boots (ADR-005), as before.
+func (m *Manager) adoptDriveHandoff(ctx context.Context, adopter guestAdopter, lease Lease, r resourceJournalRecord) {
+	adm := r.Adoption.Instance.Admission
+	h, ok := adopter.(driveHandoffAdopter)
+	if !r.Adoption.Instance.Admitted || adm == nil || len(adm.Drives) == 0 || !ok {
+		return
+	}
+	if err := h.adoptRuntimeDriveHandoff(ctx, lease, r.Process.PID, adm.Receipt, adm.Drives); err != nil {
+		slog.Warn("vmmd: adopted measured guest has no drive handoff; its next capture is refused", "instance", lease.Instance, "err", err)
+	}
 }
 
 // adoptedInstance rebuilds the Instance from the record. Network policy that

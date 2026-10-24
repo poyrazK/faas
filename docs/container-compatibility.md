@@ -189,9 +189,15 @@ reassembly or redeployment to gain this gate. Native boot/restore qualification
 remains pending. Compose dependency release gates are described above. A Compose
 healthcheck on a source-built service is merged onto the built image's
 HEALTHCHECK and enforced the same way
-([ADR-20261019195000](adr/20261019195000-compose-healthcheck-on-built-services.md));
-a source build without one keeps ordinary readiness, even when its Dockerfile
-declares a HEALTHCHECK.
+([ADR-20261019195000](adr/20261019195000-compose-healthcheck-on-built-services.md)).
+A Dockerfile `HEALTHCHECK` on its own is enforced too
+([ADR-20261024100000](adr/20261024100000-dockerfile-healthcheck-enforced.md)):
+a source build's next deployment waits for its command check to pass, and
+recovers from repeated failures, like a pushed image. The check runs inside the
+built image, so the tools it calls (`curl`, `wget`) must be installed there. To
+keep ordinary readiness, use `HEALTHCHECK NONE`, drop the instruction, or set
+`healthcheck: {disable: true}` on the Compose service. Deployments built before
+this change keep their readiness until they are redeployed.
 See [ADR-682](adr/682-compose-image-healthchecks.md) and
 [ADR-683](adr/683-image-healthcheck-readiness.md).
 
@@ -422,6 +428,12 @@ the scan, as in Compose. Remote includes are not loaded and warn. Variables are
 read from the root `.env` only, so an include's `project_directory` and
 `env_file` options, and a `.env` beside an included file, warn. At most 32 files
 are linked in one scan.
+
+A service with `profiles:` is deployed only when one of its profiles is active
+([ADR-20261022190000](adr/20261022190000-compose-profiles-from-dotenv.md)).
+Activate profiles with `COMPOSE_PROFILES` in the source's `.env`, as Compose
+reads it there: comma-separated names, or `*` for every profile. Other services
+are skipped with a warning naming their profiles.
 
 The scan reports every other Compose key instead of dropping it silently:
 

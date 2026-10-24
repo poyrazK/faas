@@ -219,10 +219,12 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("reposcan: %s: %w", src, err)
 	}
+	activeProfiles := composeActiveProfiles(composeEnv)
 	for _, name := range svcNames {
 		s := c.Services[name]
-		if len(s.Profiles) > 0 {
-			warnings = append(warnings, fmt.Sprintf("reposcan: %s: %s skipped because profiles %s are not active", src, name, strings.Join(s.Profiles, ",")))
+		if !activeProfiles.enables(s.Profiles) {
+			warnings = append(warnings, fmt.Sprintf("reposcan: %s: %s skipped because profiles %s are not active; list one in COMPOSE_PROFILES in .env to deploy it",
+				src, name, strings.Join(s.Profiles, ",")))
 			continue
 		}
 		if err := interpolateComposeCandidate(&s, composeEnv, src, name); err != nil {

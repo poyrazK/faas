@@ -316,6 +316,15 @@ func (e *Engine) thawFromTicketLocked(ctx context.Context, appID, deploymentID, 
 		e.observeFastPathSkip(appID, "no_ticket")
 		return WakeResult{}, false
 	}
+	// The ticket's node read is from the freeze. A node draining since
+	// must not take the VM back (ADR-20261024085817); the ordinary path
+	// then places the wake on an admitting node.
+	if e.nodeLeavingByID(ticket.plan.frozen.NodeID) {
+		// Counted first: the count is only for apps with a frozen VM.
+		e.observeFastPathSkip(appID, parkReasonNodeDraining)
+		e.parkFrozenLocked(ctx, ticket.plan.frozen, parkReasonNodeDraining)
+		return WakeResult{}, false
+	}
 	// A coordinated wake (EnsureWake, the gateway's path) selected its
 	// production deployment from fresh reads moments ago. The ticket serves
 	// it only for that deployment and environment; another selection means

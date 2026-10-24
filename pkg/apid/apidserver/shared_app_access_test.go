@@ -1,7 +1,9 @@
 package apidserver_test
 
 import (
+	"archive/tar"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -240,6 +242,53 @@ func TestSharedAppCreatorCannotBypassRoleOrMembership(t *testing.T) {
 	}
 	if rec = e.Do(t, "GET", "/v1/apps/team-api", nil, nil); rec.Code != 404 {
 		t.Fatalf("removed creator bypass: %d %s", rec.Code, rec.Body)
+	}
+}
+
+// The resumable upload routes name their app in the request body or the
+// stored session, so the organization check every /v1/apps route gets never
+// ran on them. A creator demoted to viewer, or removed from the organization,
+// could still deploy into the shared app (and its secrets) through the CLI's
+// default upload path.
+func TestSharedAppUploadsApplyOrganizationAccess(t *testing.T) {
+	t.Setenv("FAAS_SPOOL_ROOT", t.TempDir())
+	e := apidserver.Setup(t, api.PlanPro)
+	org := apidserver.SeedSharedOrgWithOwner(t, e, "team-uploads", "Team Uploads", api.PlanPro)
+	if rec := e.Do(t, "POST", "/v1/orgs/"+org.Slug+"/apps", api.CreateAppRequest{Slug: "team-api"}, nil); rec.Code != 201 {
+		t.Fatal(rec.Body)
+	}
+	raw := apidserver.BuildTestTarGz(t, []tar.Header{{Name: "index.js"}}, map[string][]byte{"index.js": []byte("console.log('ok')\n")})
+	session := startSession(t, e, "team-api", int64(len(raw)))
+	if rec := appendChunk(t, e, session.UploadID, 0, raw); rec.Code != 200 {
+		t.Fatalf("append: %d %s", rec.Code, rec.Body)
+	}
+	successor, _ := sharedAppMember(t, *e.Store(), org, state.OrgRoleDeveloper, api.ScopesAdminOnly)
+	creatorID := (*e.Acct()).ID
+	if err := (*e.Store()).TransferOrgOwnership(t.Context(), org.ID, creatorID, successor.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := (*e.Store()).UpdateOrgMemberRole(t.Context(), org.ID, creatorID, state.OrgRoleViewer); err != nil {
+		t.Fatal(err)
+	}
+	start := apidserver.StartUploadRequest{AppSlug: "team-api", TotalSize: int64(len(raw))}
+	if rec := e.Do(t, "POST", "/v1/uploads", start, nil); rec.Code != 403 {
+		t.Fatalf("demoted creator opened an upload: %d %s", rec.Code, rec.Body)
+	}
+	if rec := e.Do(t, "POST", "/v1/uploads/"+session.UploadID+"/commit", nil, nil); rec.Code != 403 {
+		t.Fatalf("demoted creator committed an upload: %d %s", rec.Code, rec.Body)
+	}
+	app, err := (*e.Store()).AppBySlug(t.Context(), "team-api")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := (*e.Store()).LatestDeployment(t.Context(), app.ID); !errors.Is(err, state.ErrNotFound) {
+		t.Fatalf("refused upload created a deployment: %v", err)
+	}
+	if err := (*e.Store()).RemoveOrgMember(t.Context(), org.ID, creatorID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.Do(t, "POST", "/v1/uploads", start, nil); rec.Code != 404 {
+		t.Fatalf("removed creator opened an upload: %d %s", rec.Code, rec.Body)
 	}
 }
 

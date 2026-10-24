@@ -2893,7 +2893,7 @@ Tags come from the X-Gregale-AI-Tags header, each with its limit. Export with: t
 
 ### ai traces
 
-List an integration&#39;s AI traces, newest first, or show one trace&#39;s calls: traces &lt;integration-id&gt; &lt;trace-id&gt;
+List an integration&#39;s AI traces, newest first, or show one trace
 
 `gregale ai traces [--app <ID>] [--user <ID>] [--limit <N>] <integration-id> [trace-id]`
 
@@ -2902,6 +2902,8 @@ List an integration&#39;s AI traces, newest first, or show one trace&#39;s calls
 | `--app <ID>` | only traces whose first call came from this app (UUID) |  |
 | `--user <ID>` | only traces whose first call named this end user |  |
 | `--limit <N>` | traces to show, 1 to 200 |  |
+
+Pass a trace ID after the integration ID to show that trace&#39;s calls.
 
 ### ai feedback
 
@@ -2927,13 +2929,15 @@ List an integration&#39;s AI quality drift alerts, newest first
 
 ### ai deployments
 
-List an app&#39;s AI gateway calls, errors, flagged answers and cost per call by deployment (last 14 days)
+List an app&#39;s AI gateway calls, errors and cost per deployment
 
 `gregale ai deployments [--app <slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (defaults to linked project app) |  |
+
+Covers the last 14 days, including flagged answers and cost per call.
 
 ### ai tag-limits
 

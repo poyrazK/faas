@@ -264,8 +264,11 @@ services:
     build: ./web
   billing:
     build: ./billing
-``` An undeclared sibling has no
-injected URL or `.internal` alias; call it at
+```
+
+An undeclared sibling has no injected URL; call it at
+`http://<name>.internal:10081`
+([ADR-20261022160248](adr/20261022160248-project-internal-aliases.md)) or
 `http://<app-slug>.svc.gregale:10081`. For an intentional same-account escape
 hatch, set `x-gregale-service-policy: account` on the caller. Under the
 `declared` policy the CLI reports service bindings as `enforced`; under
@@ -591,7 +594,12 @@ The target can independently restrict who calls it with
 not other same-account apps, even if they declare a dependency on `billing`.
 An omitted list preserves legacy same-account reachability; `[]` denies every
 internal caller. The list accepts at most 100 logical app slugs, not generated
-PR preview names. This target check runs before routing or waking `billing`. Preview callers
+PR preview names. In a project, a name in the list (or in
+`x-gregale-allow-call-scopes`) is a Compose service of the target's project,
+even when that service has a project-prefixed slug
+([ADR-20261022120205](adr/20261022120205-project-prefixed-app-slugs.md)). An
+app outside the project matches by its slug only when no service of the
+target's project has that name. This target check runs before routing or waking `billing`. Preview callers
 must also pass the existing project and target preview policies.
 
 For least-privilege access, a target can grant each caller only specific HTTP

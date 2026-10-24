@@ -99,7 +99,7 @@ func Run(t *testing.T, open Open) {
 		{"image_deployment_promotion_is_scope_and_revision_fenced", testImageDeploymentPromotionFence},
 		{"image_runtime_profile_is_persisted_before_prime", testImageRuntimeProfile},
 		{"observed_workload_class_without_a_proof", testObservedWorkloadClass},
-		{"source_runtime_profile_records_a_frozen_compose_healthcheck", testSourceRuntimeProfileHealthcheck},
+		{"source_runtime_profile_records_a_healthcheck_verdict", testSourceRuntimeProfileHealthcheck},
 		{"rollback_prepare_preserves_current_live", testPrepareDeploymentRollback},
 		{"service_rollout_abort_handoff_is_durable", testServiceRolloutAbortHandoff},
 		{"service_recovery_claim_and_retry_are_durable", testServiceRecoveryClaims},

@@ -197,14 +197,15 @@ func computeNodeDrainStatusFromDB(node string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl compute-nodes drain-status:", err)
 		return 1
 	}
-	live := 0
+	var live []state.Instance
 	for _, inst := range insts {
 		if state.IsLive(strings.ToLower(inst.State)) {
-			live++
+			live = append(live, inst)
 		}
 	}
-	if live > 0 {
-		_, _ = fmt.Fprintf(osStdout, "instances still on %s: %d\n", node, live)
+	if len(live) > 0 {
+		_, _ = fmt.Fprintf(osStdout, "instances still on %s: %d\n", node, len(live))
+		writeDrainBlockers(ctx, st, live)
 		return 1
 	}
 	if computeNode.Lifecycle != state.NodeLifecycleMaintenance && computeNode.Lifecycle != state.NodeLifecycleRetired {
@@ -213,6 +214,32 @@ func computeNodeDrainStatusFromDB(node string) int {
 	}
 	_, _ = fmt.Fprintf(osStdout, "drain-safe: %s is %s with 0 live instances\n", node, computeNode.Lifecycle)
 	return 0
+}
+
+// drainBlockerLimit caps how many blocking instances drain-status names, so
+// the rollout's failure message stays readable on a full node.
+const drainBlockerLimit = 20
+
+// writeDrainBlockers names the live instances holding a drain, one per line
+// (app slug, instance id, state), so a rollout that times out says which app
+// to look at (ADR-20261024085817). An app that cannot be read prints its id.
+func writeDrainBlockers(ctx context.Context, st state.Store, live []state.Instance) {
+	slugs := make(map[string]string)
+	for i, inst := range live {
+		if i == drainBlockerLimit {
+			_, _ = fmt.Fprintf(osStdout, "  ... and %d more\n", len(live)-drainBlockerLimit)
+			return
+		}
+		slug, seen := slugs[inst.AppID]
+		if !seen {
+			slug = inst.AppID
+			if app, err := st.AppByID(ctx, inst.AppID); err == nil && app.Slug != "" {
+				slug = app.Slug
+			}
+			slugs[inst.AppID] = slug
+		}
+		_, _ = fmt.Fprintf(osStdout, "  app=%s instance=%s state=%s\n", slug, inst.ID, strings.ToLower(inst.State))
+	}
 }
 
 // cmdComputeNodesActivate runs the inverse — flips active=true. Only

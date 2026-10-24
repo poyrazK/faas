@@ -2060,10 +2060,19 @@ const (
 	MaxObjectStorageReportAgeSeconds    int64 = 86400
 	ObjectStorageInventoryMaxAgeSeconds int64 = 900
 	ObjectStorageInventoryMaxPages            = 1000
-	ObjectCapacityReconciliationLease         = 2 * time.Minute
-	ObjectCapacityReconciliationTimeout       = time.Hour
-	ObjectCapacityReconciliationRetry         = 30 * time.Second
-	ObjectCapacityInventoryTimeout            = 45 * time.Second
+	// One apid's inventory sweep claims due buckets in batches and scans up to
+	// ObjectStorageInventorySweepConcurrency of them at once, starting new
+	// batches until none is due or ObjectStorageInventorySweepBudget has
+	// passed. Scans already running finish under their own timeout. At ~1 s a
+	// scan this refreshes thousands of buckets inside the 900 s window instead
+	// of the earlier ten buckets a minute (ADR-20261023223000).
+	ObjectStorageInventorySweepBatch       = 50
+	ObjectStorageInventorySweepConcurrency = 8
+	ObjectStorageInventorySweepBudget      = 40 * time.Second
+	ObjectCapacityReconciliationLease      = 2 * time.Minute
+	ObjectCapacityReconciliationTimeout    = time.Hour
+	ObjectCapacityReconciliationRetry      = 30 * time.Second
+	ObjectCapacityInventoryTimeout         = 45 * time.Second
 	// Read-only owned-node audits retain bounded diagnostics and publish cached
 	// metrics. These are operator work bounds, not customer allowances.
 	ObjectNodeInventoryInterval         = time.Minute
@@ -2394,6 +2403,11 @@ const (
 	OperationWorkflowDispatchBodyMaxBytes     int64 = 16 << 10
 	OperationWorkflowDispatchResponseMaxBytes int64 = 2*OperationSubmissionMaxBytes + OperationReportBodyMaxBytes
 )
+
+// ObjectUploadAccountSlotSharePercent caps one account's share of the
+// gateway's concurrent staged transfers (at least one), so a single tenant's
+// parallel uploads leave room for others (ADR-20261023223000).
+const ObjectUploadAccountSlotSharePercent = 50
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
 // Keep the first release deliberately small: it lets customers right-size
@@ -2758,6 +2772,23 @@ type ObjectStoragePlanLimits struct {
 	IncludedEgressBytes int64
 }
 
+// Anonymous reads of public bucket mounts (H9-S137, ADR-20261023223000).
+// They stop at PublicObjectReadCeilingPercent of the account's monthly
+// request, egress and authorization ceilings, and each gatewayd-public process
+// admits at most PublicObjectReadRatePerBucket reads per second per bucket
+// (burst PublicObjectReadBurstPerBucket), tracking at most
+// MaxPublicObjectReadLimiters buckets.
+const (
+	PublicObjectReadCeilingPercent = 75
+	PublicObjectReadRatePerBucket  = 100
+	PublicObjectReadBurstPerBucket = 200
+	MaxPublicObjectReadLimiters    = 10_000
+	// PublicObjectReadMaxAgeSeconds bounds how long a CDN or browser may keep
+	// a public object without revalidating, so a delete or overwrite takes
+	// effect within minutes rather than a year (H9-S144).
+	PublicObjectReadMaxAgeSeconds = 300
+)
+
 // ObjectStorageBillingHoursPerMonth is the conventional month used to price
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
@@ -2771,7 +2802,24 @@ func (l ObjectStoragePlanLimits) Policy(p ObjectStoragePolicy) ObjectStoragePoli
 	p.MaxBucketBytes = tighterObjectStorageLimit(p.MaxBucketBytes, p.MaxAccountBytes)
 	p.MaxMonthlyRequests = tighterObjectStorageLimit(p.MaxMonthlyRequests, l.MaxMonthlyRequests)
 	p.MaxMonthlyEgressBytes = tighterObjectStorageLimit(p.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
+	if p.AnonymousReads {
+		p.MaxMonthlyRequests = publicObjectReadShare(p.MaxMonthlyRequests)
+		p.MaxMonthlyEgressBytes = publicObjectReadShare(p.MaxMonthlyEgressBytes)
+		p.MaxMonthlyAuthorizations = publicObjectReadShare(p.MaxMonthlyAuthorizations)
+		p.MaxMonthlyCostMillicents = publicObjectReadShare(p.MaxMonthlyCostMillicents)
+		p.AnonymousReads = false // applied once
+	}
 	return p
+}
+
+// publicObjectReadShare is the part of a monthly ceiling anonymous reads may
+// reach. Usage is shared, so private access always keeps the remainder. A
+// zero ceiling (gateway safety has no cost ceiling) stays zero.
+func publicObjectReadShare(ceiling int64) int64 {
+	if ceiling <= 0 {
+		return ceiling
+	}
+	return max(ceiling/100*PublicObjectReadCeilingPercent+ceiling%100*PublicObjectReadCeilingPercent/100, 1)
 }
 
 // Allowance returns the plan's included usage in month-close billing units.
@@ -6117,6 +6165,16 @@ const (
 	// QuietPauseSampleMaxAgeMillis is how old the instance stats sample of
 	// quiet-paused instances may be before admission counts every booking.
 	QuietPauseSampleMaxAgeMillis = 2000
+	// QuietPauseLedgerFlushSeconds is how often schedd writes a node's quiet
+	// pauses and watermark to the pause ledger (ADR-20261023171905): one
+	// statement per node per flush, however many requests the node serves.
+	// meterd rolls a minute 60-120 s after it ends, so the ledger is current
+	// long before billing reads it.
+	QuietPauseLedgerFlushSeconds = 2
+	// QuietPauseLedgerRetentionDays is how long meterd keeps pauses: past an
+	// invoiced month plus its dispute window, the subtraction they made is
+	// final.
+	QuietPauseLedgerRetentionDays = 45
 	// FrozenTTLSeconds is how long a frozen instance (ADR-1151) stays paused
 	// in memory after its idle timeout before schedd parks it. 10 min gave
 	// the same capacity as 1 h in the ADR's simulation while holding fewer
@@ -7069,6 +7127,13 @@ const (
 	// graceful-drain contract would be a lie.
 	ParkTailDrainTimeoutSeconds = 5
 
+	// ParkForwardDrainTimeoutSeconds bounds how long vmmd's terminal park
+	// waits for forwards that reached the guest before the park began
+	// (ADR-20261024090000). New forwards wait for the park and are
+	// re-routed to a fresh wake; a forward still running at the deadline
+	// is cut by the pause, as before.
+	ParkForwardDrainTimeoutSeconds = 5
+
 	// OCI puller (spec §17 G1, ADR-021). Per-pull HTTP timeout for the
 	// registry client. cmd/imaged passes this to oci.WithTimeout; the
 	// daemon may override at boot via FAAS_OCI_PULL_TIMEOUT_SECONDS but
@@ -7412,6 +7477,28 @@ const (
 	// unresolved database operation keeps the lease and VMs for later recovery.
 	MigrateLiveCommitRecoveryTimeout = 5 * time.Second
 
+	// DrainLiveMigrationWindowSeconds bounds how long after a graceful
+	// drain began (compute_nodes.drain_initiated_at) the recovery arbiter
+	// still starts live migrations of the node's RUNNING instances.
+	// DrainParkAfterSeconds is when it moves what is still RUNNING off the
+	// node instead (withdrawn from routing, in-flight requests drained, then
+	// stopped): one migration lease after the window closes plus a
+	// clock-skew margin, so no handoff a schedd started inside the window
+	// is still in flight when any schedd begins a park. A handoff that
+	// keeps failing (rc.290, 2026-10-22: one busy instance held fsn-3's
+	// drain for the whole rollout window) then delays a drain by minutes,
+	// not forever (ADR-20261024085817). The window plus the parks fit
+	// inside node_join.yml's 10-minute drain wait.
+	DrainLiveMigrationWindowSeconds = 120
+	DrainParkAfterSeconds           = DrainLiveMigrationWindowSeconds + MigrateLiveLeaseSeconds + 30
+	// DrainParkConcurrency bounds the drain parks one recovery tick runs at
+	// once for a node. A RUNNING instance is withdrawn from routing, given
+	// ServiceReplicaDrainTimeoutSeconds for its in-flight requests and then
+	// destroyed; no snapshot is written, so these run wider than handoffs.
+	// A node at its admission ceiling of 1 GiB instances (46) finishes in
+	// three rounds.
+	DrainParkConcurrency = 16
+
 	// Tier A6 (migrating-instance watchdog, ADR-067 follow-up to
 	// ADR-070): self-heal stuck state='migrating' rows that
 	// never committed (the new owner vmmd died mid-handoff, the
@@ -7746,11 +7833,16 @@ const (
 	// endpoint makes (a refused lookup denies; the edge asks again on the
 	// next handshake). OnDemandTLSAskNegativeCacheSeconds/Entries remember
 	// hostnames with no custom-domain row at all so repeated scans of one
-	// name cost nothing.
+	// name cost nothing. OnDemandTLSAskKnownHostSeconds/Entries remember
+	// hostnames the endpoint recently allowed: their lookups skip the shared
+	// bucket (they are still authoritative), so a flood of random server
+	// names cannot starve renewals and post-reload loads of real domains.
 	OnDemandTLSAskLookupsPerSecond     = 50
 	OnDemandTLSAskLookupBurst          = 200
 	OnDemandTLSAskNegativeCacheSeconds = 30
 	OnDemandTLSAskNegativeCacheEntries = 10000
+	OnDemandTLSAskKnownHostSeconds     = 7 * 24 * 60 * 60
+	OnDemandTLSAskKnownHostEntries     = 100000
 
 	// Tier A8 (active-passive HA topology, ADR-083 — closes the
 	// §14 M8 "Gate-A runbook (2nd box active-passive)" gap left
@@ -10580,6 +10672,18 @@ func (l Limits) EffectiveIdleTimeoutS(appType string, configured int) int {
 	return min(max(configured, floor), ceiling)
 }
 
+// WaitUntilTimeoutS is how long a waitUntil task can hold an instance after
+// its response: TailTimeoutS when the plan enables waitUntil, else zero
+// (ADR-078). The reaper does not park an instance with tasks in flight, so
+// surfaces that explain awake time take the later of this and the idle
+// timeout (ADR-20261022184757).
+func (l Limits) WaitUntilTimeoutS() int {
+	if !l.TailEnabled {
+		return 0
+	}
+	return l.TailTimeoutS
+}
+
 // Obs admin pagination (issue #777 / ADR-091). The operator surface
 // differs from the customer surface (pkg/api/paging.go defaults to
 // 25/100) because the operator UI is fleet-wide and a single page
@@ -11165,6 +11269,12 @@ const AttestationWarmRetryBackoff = 5 * time.Minute
 // caller that gives up, so the next wake finds the layer verified.
 const LayerVerifyTimeout = 2 * time.Minute
 
+// LayerAttestationRecordMaxAgeHours is how long schedd trusts a remembered
+// layer verification across restarts (ADR-038 amendment, 2026-10-24). A
+// record only stands for the exact node-cache file that was hashed; past
+// this age the layer is read and hashed again.
+const LayerAttestationRecordMaxAgeHours = 168
+
 // NodeSizing is the per-host RAM/vCPU shape derived from the machine a
 // compute node actually runs on, rather than the single-box constants.
 type NodeSizing struct {
@@ -11749,9 +11859,17 @@ const (
 // Deletion fences survive lease expiry; only pre-dispatch cancellation,
 // definitive provider rejection or completion proof releases them.
 const (
-	ObjectDeletionLease                  = 2 * time.Minute
-	ObjectDeletionOperationTimeout       = time.Minute
-	ObjectDeletionRetry                  = 30 * time.Second
+	ObjectDeletionLease            = 2 * time.Minute
+	ObjectDeletionOperationTimeout = time.Minute
+	ObjectDeletionRetry            = 30 * time.Second
+	// A bucket admits one deletion at a time (ADR-547). A deletion refused only
+	// because other work is settling waits up to ObjectDeletionAdmissionWait,
+	// polling with backoff from ObjectDeletionAdmissionPoll to
+	// ObjectDeletionAdmissionMaxPoll, so concurrent deletes of different keys
+	// queue instead of failing (H9-S156, ADR-20261023223000).
+	ObjectDeletionAdmissionWait          = 15 * time.Second
+	ObjectDeletionAdmissionPoll          = 50 * time.Millisecond
+	ObjectDeletionAdmissionMaxPoll       = 250 * time.Millisecond
 	ObjectDeletionBatch            int32 = 20
 	ObjectDeletionHistoryPages           = 8
 	ObjectDeletionHistoryVersions        = 4096
@@ -11922,6 +12040,10 @@ const (
 	// An edge-cache suggestion needs this share of anonymous 2xx GET/HEAD
 	// requests on the route.
 	RouteAwakeCacheMinAnonymousShare = 0.9
+	// RouteAwakeWorkMaxMinutes caps how long one cron, queue or other
+	// delivery counts as running (ADR-20261022184757), so a delivery that
+	// never completed cannot claim the rest of the window.
+	RouteAwakeWorkMaxMinutes = 60
 )
 
 // RouteContent bounds learned cacheability (ADR-1188). Each gateway

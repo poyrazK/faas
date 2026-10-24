@@ -263,7 +263,9 @@ does the following.
     of an `exec.Cmd`;
   - `materialisedTmp`, `materialisedIdentity`, `runtimeDriveHandoffs` and
     `ownedJails`, rebuilt from the record's assets after their identities are
-    re-checked;
+    re-checked. `runtimeDriveHandoffs` is rebuilt for measured cold boots
+    only, through the adopted Firecracker's descriptors (re-bind ADR, open
+    question 1);
   - `bindSourceModes` refcounts, rebuilt from **all** adopted records that bind
     each source inode. A quarantined record that binds the same inode still
     blocks mode restoration, as in ADR-474.

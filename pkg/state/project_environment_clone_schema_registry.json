@@ -4294,7 +4294,7 @@
       "rotated_from_id",
       "scopes",
       "status",
-      "token_sha256"
+      "token_digest"
     ],
     "kind": "account_identity"
   },
@@ -6886,6 +6886,18 @@
     "kind": "operational"
   },
   {
+    "table": "honeytokens",
+    "columns": [
+      "id",
+      "kind",
+      "token_digest",
+      "label",
+      "planted_at",
+      "retired_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "hosting_automation_credentials",
     "columns": [
       "account_id",
@@ -7153,6 +7165,26 @@
       "id",
       "instance_id",
       "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "instance_quiet_pauses",
+    "columns": [
+      "ended_at",
+      "instance_id",
+      "node_id",
+      "recorded_at",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "quiet_pause_watermarks",
+    "columns": [
+      "covered_until",
+      "node_id",
+      "updated_at"
     ],
     "kind": "operational"
   },

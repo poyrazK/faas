@@ -24,7 +24,7 @@ tests:
               reason: critical
             exp_annotations:
               summary: "vmmd refuses to boot base/releases/runner-python313-amd64-1f08.ext4 (critical) on fsn-3"
-              description: "vmmd's base scan gate has refused boots on base/releases/runner-python313-amd64-1f08.ext4 for ten minutes with reason critical. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
+              description: "vmmd's base scan gate has kept refusing boots on base/releases/runner-python313-amd64-1f08.ext4 for fifteen minutes with reason critical. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
               runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
 
   - interval: 1m

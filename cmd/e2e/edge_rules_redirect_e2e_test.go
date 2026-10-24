@@ -41,7 +41,7 @@ func TestEdgeRulesRedirect_E2E(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-redirect.apps.test.example"
+	synthHost := "edgectl-redirect.edge-e2e.example"
 
 	// Precondition: kind=route substitute.
 	seedRouteSubstitute(t, context.Background(), pool,
@@ -78,7 +78,7 @@ func TestEdgeRulesRedirect_E2E(t *testing.T) {
 	// reuse a different synthHost without any rules — fall through
 	// Backend.Lookup miss → 404. (No rule substitute here, so we
 	// expect the bare 404 from handler.go:2261.)
-	_, _, status = doReqHeaders(t, h, "edgectl-norule.apps.test.example",
+	_, _, status = doReqHeaders(t, h, "edgectl-norule.edge-e2e.example",
 		http.MethodGet, "/", nil)
 	if status != http.StatusNotFound {
 		t.Errorf("kind=redirect negative: status=%d, want 404 (no rule, no app)", status)

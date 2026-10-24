@@ -112,9 +112,14 @@ artifact instead of rebuilding it. Without `--to`, rollback (and automatic
 rollback) returns to the deployment that most recently stopped serving
 traffic, not the most recently created one, so a rollback after an earlier
 rollback or a completed canary restores the release that was just replaced.
-A rollback that fails its readiness or hosting check leaves the current
+It rolls back production; an app that serves only in one other environment
+rolls back that environment, and a release of any other environment needs
+`--to`. A rollback that fails its readiness or hosting check leaves the current
 release serving. The target returns to `superseded` with the error recorded,
-so it remains available for another rollback.
+so it remains available for another rollback. If another release goes live in
+that environment while the target is getting ready, the rollback is not
+applied (`rollback_release_changed`), and a rollback whose receipt already
+reported a failure such as `rollback_timeout` never cuts over later.
 
 `gregale rollback APP` waits until the previous release actually serves
 again and reports how long it took:
@@ -522,6 +527,11 @@ Every deploy creates an immutable revision, numbered per app and shown as
 `v41`, `v42`, `v43`. A revision is never rewritten — a redeploy supersedes it
 and creates the next one — so it is a stable handle you can keep in a runbook
 or an incident channel.
+
+Deploys of one environment go live in the order you start them, not the order
+they finish. If you start another deploy before an earlier one goes live, the
+earlier one never goes live: it is superseded when it reaches the cutover,
+whether or not the newer deploy succeeds.
 
 Use a revision anywhere a deployment ID is accepted:
 

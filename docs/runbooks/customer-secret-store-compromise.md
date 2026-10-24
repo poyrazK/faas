@@ -3,7 +3,9 @@
 Use this when someone may have read sealed customer material: environment
 variables, AI provider and other outbound keys, registry passwords,
 integration tokens. That includes a host or daemon compromise that exposed an
-identity able to open them. It is a SEV1: follow
+identity able to open them. A [FaasHoneytokenPresented](FaasHoneytokenPresented.md)
+page is such evidence: a decoy key planted with the secrets was used. It is a
+SEV1: follow
 [breach-notification.md](breach-notification.md) for evidence, roles and the
 72-hour notice, and this page for the order of technical steps.
 

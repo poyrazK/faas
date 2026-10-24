@@ -5045,6 +5045,7 @@ from .route_awake_response import RouteAwakeResponse
 from .route_awake_route import RouteAwakeRoute
 from .route_awake_route_pattern import RouteAwakeRoutePattern
 from .route_awake_source import RouteAwakeSource
+from .route_awake_source_pattern import RouteAwakeSourcePattern
 from .route_awake_source_source import RouteAwakeSourceSource
 from .route_awake_suggestion import RouteAwakeSuggestion
 from .route_awake_suggestion_kind import RouteAwakeSuggestionKind
@@ -10865,6 +10866,7 @@ __all__ = (
     "RouteAwakeRoute",
     "RouteAwakeRoutePattern",
     "RouteAwakeSource",
+    "RouteAwakeSourcePattern",
     "RouteAwakeSourceSource",
     "RouteAwakeSuggestion",
     "RouteAwakeSuggestionKind",

@@ -76,7 +76,7 @@ func TestEdgeRulesValidate_CLIContractLifecycle(t *testing.T) {
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
-	host := "edgectl-validate-cli.apps.test.example"
+	host := "edgectl-validate-cli.edge-e2e.example"
 	seedRouteSubstitute(t, context.Background(), pool, accountID, app.ID, host, slug)
 
 	schema := `{"type":"object","properties":{"name":{"type":"string","minLength":2},"email":{"type":"string"}},"required":["name","email"],"additionalProperties":false}`
@@ -242,7 +242,7 @@ func TestEdgeRulesValidate_E2E_HappyAndReject(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-validate.apps.test.example"
+	synthHost := "edgectl-validate.edge-e2e.example"
 
 	// Precondition: kind=route substitute (synthetic host → real test app).
 	seedRouteSubstitute(t, context.Background(), pool,
@@ -333,7 +333,7 @@ func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-validate-stream.apps.test.example"
+	synthHost := "edgectl-validate-stream.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
@@ -420,7 +420,7 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-validate-xref.apps.test.example"
+	synthHost := "edgectl-validate-xref.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
