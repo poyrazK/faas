@@ -108,3 +108,24 @@ func TestCmdDashboardsShowRendersValuesAndErrors(t *testing.T) {
 		}
 	}
 }
+
+func TestCmdDashboardsListJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(api.DashboardsResponse{Dashboards: []api.Dashboard{{ID: "d-1", Name: "checkout"}}})
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "fp_live_x")
+	var out bytes.Buffer
+	previousOut, previousJSON := (*main.OsStdout), (*main.JsonOutput)
+	(*main.OsStdout), (*main.JsonOutput) = &out, false
+	t.Cleanup(func() { (*main.OsStdout), (*main.JsonOutput) = previousOut, previousJSON })
+
+	if code := main.Run([]string{"--json", "dashboards", "list"}); code != 0 {
+		t.Fatalf("exit = %d, output = %s", code, out.String())
+	}
+	var got api.DashboardsResponse
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil || len(got.Dashboards) != 1 || got.Dashboards[0].Name != "checkout" {
+		t.Fatalf("--json output = %+v, %v\n%s", got, err, out.String())
+	}
+}

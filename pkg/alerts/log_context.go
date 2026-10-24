@@ -12,8 +12,14 @@ import (
 )
 
 // SetLogContext turns on the ADR-20261022172052 log context for firing app
-// alerts; meterd calls it while FAAS_LOG_SEARCH_ENABLED=1.
-func (e *Evaluator) SetLogContext(enabled bool) { e.logContextEnabled = enabled }
+// alerts; meterd calls it while FAAS_LOG_SEARCH_ENABLED=1. A nil evaluator
+// (alerting not configured) ignores it, as SetChannels does.
+func (e *Evaluator) SetLogContext(enabled bool) {
+	if e == nil {
+		return
+	}
+	e.logContextEnabled = enabled
+}
 
 // logContext is what the app's log ledger shows around a firing alert.
 type logContext struct {

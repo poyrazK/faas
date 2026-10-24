@@ -1111,14 +1111,16 @@ var cliCommands = []cliCommand{
 	{
 		Name:    "incidents",
 		DocSlug: "incidents",
-		Short:   "List open and recent incidents: alerts, route monitors and platform status",
+		Short:   "List open and recent incidents: alerts, route monitors, status page",
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List open incidents and those resolved in the window", Flags: []cliFlag{
 				{Name: "app", Short: "keep one app's incidents", Value: "SLUG"},
 				{Name: "open", Short: "open incidents only"},
 				{Name: "since", Short: "resolved incidents from this long ago (default 7d, at most 30d)", Value: "DURATION"},
 			}, Examples: []string{"gregale incidents list", "gregale incidents list --app shop --open"}},
-			{Name: "show", Short: "Show an incident with its notifications, log context, changes and notes", Positionals: []string{"<incident-id>"}, Examples: []string{"gregale incidents show INCIDENT_ID"}},
+			{Name: "show", Short: "Show an incident with its evidence and notes", Notes: []string{
+				"Evidence is what the platform has for the incident: an alert's notifications and the log context its newest one carried, a platform incident's status updates, and an app incident's changes from an hour before it opened.",
+			}, Positionals: []string{"<incident-id>"}, Examples: []string{"gregale incidents show INCIDENT_ID"}},
 			{Name: "ack", Short: "Acknowledge an open incident so the account sees someone is on it", Positionals: []string{"<incident-id>"}, Examples: []string{"gregale incidents ack INCIDENT_ID"}},
 			{Name: "note", Short: "Add a note to an incident; notes cannot be edited", Positionals: []string{"<incident-id>", "<text>"}, Examples: []string{`gregale incidents note INCIDENT_ID "rolled back to v41"`}},
 		},
@@ -4784,7 +4786,9 @@ var cliCommands = []cliCommand{
 			{Name: "date", Short: "UTC day for --archive: today, yesterday, or YYYY-MM-DD", Value: "DAY"},
 		},
 		Subcommands: []cliSub{
-			{Name: "search", Short: "Search the app's log events by text, level, route, status, release, request or trace", Positionals: []string{"[<slug>]"}, Examples: []string{
+			{Name: "search", Short: "Search the app's log events by text, level, route and more", Notes: []string{
+				"Filters combine: text, level, route, HTTP status, release, request ID and trace ID.",
+			}, Positionals: []string{"[<slug>]"}, Examples: []string{
 				"gregale logs search my-api --level error --since 6h",
 				"gregale logs search my-api --q timeout --status 5xx --since 2h --json",
 			}, Flags: []cliFlag{

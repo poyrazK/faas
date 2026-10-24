@@ -184,7 +184,7 @@ func resolveCustomMetric(ctx context.Context, src Sources, app state.App, v *api
 	}
 	v.Series = make([]api.DashboardPoint, 0, len(series.Points))
 	for _, p := range series.Points {
-		v.Series = append(v.Series, api.DashboardPoint{At: p.At, Value: p.Value})
+		v.Series = append(v.Series, api.DashboardPoint(p))
 	}
 	return nil
 }

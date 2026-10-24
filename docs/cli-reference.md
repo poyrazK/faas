@@ -21,7 +21,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`ai`](#ai) | Configure the AI gateway: providers, cost caps, guardrails and usage |
 | [`channels`](#channels) | Manage where alerts are sent: Slack, PagerDuty or email |
 | [`dashboards`](#dashboards) | Save dashboards that combine metrics, log counts and SLOs across apps |
-| [`incidents`](#incidents) | List open and recent incidents: alerts, route monitors and platform status |
+| [`incidents`](#incidents) | List open and recent incidents: alerts, route monitors, status page |
 | [`slos`](#slos) | Define SLOs and track their error budgets |
 | [`synthetics`](#synthetics) | Schedule HTTP checks against an app |
 | [`alerts`](#alerts) | Manage an app&#39;s alert rules |
@@ -3242,7 +3242,7 @@ Delete a dashboard
 
 ## incidents
 
-List open and recent incidents: alerts, route monitors and platform status
+List open and recent incidents: alerts, route monitors, status page
 
 `gregale incidents [<subcommand>]`
 
@@ -3267,7 +3267,7 @@ gregale incidents list --app shop --open
 
 ### incidents show
 
-Show an incident with its notifications, log context, changes and notes
+Show an incident with its evidence and notes
 
 `gregale incidents show <incident-id>`
 
@@ -3276,6 +3276,8 @@ Examples:
 ```sh
 gregale incidents show INCIDENT_ID
 ```
+
+Evidence is what the platform has for the incident: an alert&#39;s notifications and the log context its newest one carried, a platform incident&#39;s status updates, and an app incident&#39;s changes from an hour before it opened.
 
 ### incidents ack
 
@@ -14326,7 +14328,7 @@ gregale logs my-api --view runtime-errors
 
 ### logs search
 
-Search the app&#39;s log events by text, level, route, status, release, request or trace
+Search the app&#39;s log events by text, level, route and more
 
 `gregale logs search [--app <SLUG>] [--q <TEXT>] [--since <15m|6h|3d|RFC3339>] [--until <RFC3339>] [--source <SOURCE>] [--level <LEVELS>] [--route <ROUTE>] [--status <502|5xx>] [--deployment <ID>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--saved <NAME>] [--cursor <CURSOR>] [<slug>]`
 
@@ -14353,6 +14355,8 @@ Examples:
 gregale logs search my-api --level error --since 6h
 gregale logs search my-api --q timeout --status 5xx --since 2h --json
 ```
+
+Filters combine: text, level, route, HTTP status, release, request ID and trace ID.
 
 ### logs facets
 

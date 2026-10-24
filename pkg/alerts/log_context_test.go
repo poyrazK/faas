@@ -98,3 +98,10 @@ func TestEvaluator_LogContextOffByDefault(t *testing.T) {
 		t.Fatal("log_context attached while the gate is off")
 	}
 }
+
+// meterd configures the evaluator it built, which is nil when alerting is not
+// configured; the setter must tolerate that as SetChannels does.
+func TestEvaluator_SetLogContextOnNilEvaluator(t *testing.T) {
+	var e *alerts.Evaluator
+	e.SetLogContext(true)
+}

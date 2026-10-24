@@ -33,7 +33,7 @@ func (h dashboardsHost) AppForAccount(ctx context.Context, acct state.Account, s
 
 func (h dashboardsHost) Dashboards() state.DashboardStore { return h.s.store }
 
-func (h dashboardsHost) Sources() dashboards.Sources { return dashboardSources{h.s} }
+func (h dashboardsHost) Sources() dashboards.Sources { return dashboardSources(h) }
 
 func (h dashboardsHost) Logger() *slog.Logger { return h.s.log }
 

@@ -21503,9 +21503,9 @@ paths:
       description: Deletes one of the account's dashboards.
       responses:
         '204':
-          description: Deleted.
+          description: The dashboard is deleted.
         default:
-          description: No such dashboard (dashboard_not_found), or the preview is disabled.
+          description: No dashboard to delete (dashboard_not_found), or the preview is disabled.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -21528,7 +21528,7 @@ paths:
             application/json:
               schema: { $ref: '#/components/schemas/DashboardData' }
         default:
-          description: No such dashboard (dashboard_not_found), or the preview is disabled.
+          description: No dashboard to read widgets for (dashboard_not_found), or the preview is disabled.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -21709,7 +21709,7 @@ paths:
       description: Deletes the app's saved search by name.
       responses:
         '204':
-          description: Deleted.
+          description: The saved search is deleted.
         default:
           description: No such saved search (log_saved_search_not_found), or the preview is disabled.
           content:
@@ -112931,11 +112931,13 @@ components:
         created_at: { type: string, format: date-time }
     IncidentNoteRequest:
       type: object
+      description: A note to append to an incident.
       required: [body]
       properties:
         body: { type: string, minLength: 1, maxLength: 2000 }
     IncidentsResponse:
       type: object
+      description: The account's open incidents and those resolved since `since`, open first.
       required: [since, incidents, truncated, unavailable_sources]
       properties:
         since: { type: string, format: date-time }
@@ -112964,6 +112966,7 @@ components:
         message: { type: string }
     IncidentDetail:
       type: object
+      description: An incident with the evidence the platform has for it and the account's notes.
       required: [incident, notes, unavailable_sources]
       properties:
         incident: { $ref: '#/components/schemas/Incident' }
