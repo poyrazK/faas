@@ -1055,7 +1055,9 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "materialize"
+    ]
   },
   {
     "table": "app_environment_secret_refs",
@@ -1070,7 +1072,9 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "materialize"
+    ]
   },
   {
     "table": "app_environment_workload_intents",
@@ -1104,7 +1108,13 @@
       "value"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "promote",
+      "rollback"
+    ]
   },
   {
     "table": "app_error_requests",
@@ -1710,7 +1720,12 @@
       "value_hash"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify"
+    ]
   },
   {
     "table": "app_service_address_cursors",
@@ -1982,7 +1997,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize"
+    ]
   },
   {
     "table": "application_standard_assignments",
@@ -3588,7 +3606,9 @@
       "verified_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "diff"
+    ]
   },
   {
     "table": "customer_operation_approval_forms",
@@ -4657,7 +4677,10 @@
       "deployment_id",
       "values_json"
     ],
-    "capabilities": []
+    "capabilities": [
+      "promote",
+      "rollback"
+    ]
   },
   {
     "table": "deployment_release_secret_snapshots",
@@ -4667,7 +4690,10 @@
       "deployment_id",
       "values_json"
     ],
-    "capabilities": []
+    "capabilities": [
+      "promote",
+      "rollback"
+    ]
   },
   {
     "table": "deployment_revision_pins",
@@ -4842,7 +4868,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize",
+      "promote"
+    ]
   },
   {
     "table": "deployment_sidecar_secret_reload_signals",
@@ -4977,7 +5007,13 @@
       "workflows"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "promote",
+      "rollback"
+    ]
   },
   {
     "table": "dev_bridge_sessions",
@@ -6389,7 +6425,9 @@
       "subscription_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture"
+    ]
   },
   {
     "table": "event_subscriptions",
@@ -6653,7 +6691,13 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize",
+      "qualify",
+      "promote",
+      "rollback"
+    ]
   },
   {
     "table": "financial_budget_policies",
@@ -8912,7 +8956,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize"
+    ]
   },
   {
     "table": "managed_postgres_checkpoint_maintenance",
@@ -9176,7 +9223,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize"
+    ]
   },
   {
     "table": "managed_postgres_health",
@@ -10877,7 +10927,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize"
+    ]
   },
   {
     "table": "object_deletions",
@@ -11019,7 +11072,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize"
+    ]
   },
   {
     "table": "object_storage_authorizations",
@@ -11264,7 +11320,10 @@
       "url_request"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize"
+    ]
   },
   {
     "table": "object_storage_upload_grants",
@@ -14499,7 +14558,14 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify",
+      "promote",
+      "rollback"
+    ]
   },
   {
     "table": "project_environment_secrets",
@@ -14516,7 +14582,10 @@
       "value_hash"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "materialize",
+      "qualify"
+    ]
   },
   {
     "table": "project_environment_edge_policies",
@@ -14530,7 +14599,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff"
+    ]
   },
   {
     "table": "project_environment_promotion_controls",
@@ -14745,7 +14818,13 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify",
+      "promote"
+    ]
   },
   {
     "table": "project_environment_workload_deployment_specs",
@@ -14754,7 +14833,14 @@
       "spec_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify",
+      "promote",
+      "rollback"
+    ]
   },
   {
     "table": "project_environment_workload_heads",
@@ -14764,7 +14850,13 @@
       "spec_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "materialize",
+      "diff",
+      "qualify",
+      "promote",
+      "rollback"
+    ]
   },
   {
     "table": "project_environment_workload_specs",
@@ -14778,7 +14870,14 @@
       "settings"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify",
+      "promote",
+      "rollback"
+    ]
   },
   {
     "table": "project_environments",
@@ -14792,7 +14891,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "materialize",
+      "diff"
+    ]
   },
   {
     "table": "project_migration_contracts",
@@ -14893,7 +14995,14 @@
       "release_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify",
+      "promote",
+      "rollback"
+    ]
   },
   {
     "table": "project_release_secret_bundles",
@@ -14924,7 +15033,14 @@
       "ttl_seconds"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize",
+      "diff",
+      "qualify",
+      "promote",
+      "rollback"
+    ]
   },
   {
     "table": "project_release_stages",
@@ -15056,7 +15172,10 @@
       "workload_class"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize"
+    ]
   },
   {
     "table": "realtime_node_connection_syncs",
@@ -16634,7 +16753,9 @@
       "trigger_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture"
+    ]
   },
   {
     "table": "triggers",

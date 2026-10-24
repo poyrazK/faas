@@ -68,6 +68,11 @@ func newCloneCoordinatorFixture(t *testing.T, withData bool) cloneCoordinatorFix
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
+	// Full clones run with the configuration write fence on; migrations leave
+	// it off until admission opens (ADR-20261023091049).
+	if _, err := pool.Exec(ctx, `SELECT set_full_clone_configuration_fences(true)`); err != nil {
+		t.Fatal(err)
+	}
 	store := &cloneCoordinatorFailureStore{PgStore: state.NewPgStore(pool)}
 	account, err := store.CreateAccount(ctx, uuid.NewString()+"@coordinator.test", api.PlanPro)
 	if err != nil {
