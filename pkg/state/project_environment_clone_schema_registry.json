@@ -4294,7 +4294,7 @@
       "rotated_from_id",
       "scopes",
       "status",
-      "token_sha256"
+      "token_digest"
     ],
     "kind": "account_identity"
   },
@@ -6884,6 +6884,18 @@
       "version_id"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "honeytokens",
+    "columns": [
+      "id",
+      "kind",
+      "token_digest",
+      "label",
+      "planted_at",
+      "retired_at"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "hosting_automation_credentials",

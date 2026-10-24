@@ -164,6 +164,8 @@ func run(args []string) int {
 		return cmdFleetSeal(args[1:])
 	case dispatchBreakGlass:
 		return cmdBreakGlass(args[1:])
+	case dispatchHoneytoken:
+		return cmdHoneytoken(args[1:])
 	case dispatchSealDomain:
 		return cmdSealDomain(args[1:])
 	case dispatchPKI:

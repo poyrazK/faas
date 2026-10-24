@@ -474,6 +474,8 @@ type server struct {
 	// prewarmMetrics shares the daemon registry with ops and records durable
 	// scheduled-prewarm lifecycle events emitted by the API handlers.
 	prewarmMetrics *wire.PrewarmMetrics
+	// honeytokenMetrics counts presented honeytokens (ADR 20261024014500).
+	honeytokenMetrics *honeytokenMetrics
 	// metricsDiscoveryMetrics is bound to the same per-daemon registry as ops.
 	// It records producer-side health for the loopback Prometheus HTTP-SD
 	// endpoints; nil keeps tests and degraded construction paths no-op.
@@ -695,6 +697,11 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	}
 	if ops != nil && (s.hostingMetrics == nil || s.hostingMetrics.Registry() != ops.Registry()) {
 		s.hostingMetrics = hostingapi.NewMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
+		s.honeytokenMetrics = nil
+	} else if s.honeytokenMetrics == nil || s.honeytokenMetrics.registry != ops.Registry() {
+		s.honeytokenMetrics = newHoneytokenMetrics(ops.Registry())
 	}
 	if ops != nil && (s.statusMetrics == nil || s.statusMetrics.registry != ops.Registry()) {
 		s.statusMetrics = newStatusMetrics(ops.Registry(), ops.MetricPrefix())
@@ -1521,6 +1528,7 @@ func newServerWithDeps(
 	// daemon start (the var is reset to the server's domain, not the
 	// empty default).
 	appsDomainFunc = func() string { return s.domain }
+	s.wireHoneytokens()
 	return s
 }
 
