@@ -1,4 +1,4 @@
-// adr: 20261019195000
+// adr: 20261019195000, 20261024100000
 package frameworkprofile
 
 import "testing"
@@ -11,7 +11,10 @@ func TestRequiresSourceImageHealthcheck(t *testing.T) {
 	}{
 		{``, false},
 		{`{bad`, false},
-		{`{"version":"v1","image_healthcheck_required":true}`, false},
+		{`{"version":"v1"}`, false},
+		// A Dockerfile HEALTHCHECK alone is enforced (ADR-20261024100000).
+		{`{"version":"v1","image_healthcheck_required":true}`, true},
+		{`{"version":"v1","image_healthcheck_required":false}`, false},
 		{`{"version":"v1",` + captured + `}`, false},
 		{`{"version":"v1",` + captured + `,"image_healthcheck_required":false}`, false},
 		{`{"version":"v1",` + captured + `,"image_healthcheck_required":true}`, true},

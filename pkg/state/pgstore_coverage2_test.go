@@ -188,7 +188,7 @@ func TestPg_CoverageDeploymentReaders(t *testing.T) {
 	if got, err := s.LatestDeployment(ctx, app.ID); err != nil || got.ID != deployment.ID {
 		t.Fatalf("latest deployment = %+v, %v", got, err)
 	}
-	if _, err := s.LatestSupersededDeployment(ctx, app.ID); !errors.Is(err, state.ErrNotFound) {
+	if _, err := s.LatestSupersededDeployment(ctx, app.ID, state.DefaultEnvScope); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("superseded before = %v", err)
 	}
 	// A second deployment leaves the first serving until promotion.
@@ -202,7 +202,7 @@ func TestPg_CoverageDeploymentReaders(t *testing.T) {
 	if err := s.MarkDeploymentLive(ctx, second.ID); err != nil {
 		t.Fatal(err)
 	}
-	if got, err := s.LatestSupersededDeployment(ctx, app.ID); err != nil || got.ID != deployment.ID {
+	if got, err := s.LatestSupersededDeployment(ctx, app.ID, state.DefaultEnvScope); err != nil || got.ID != deployment.ID {
 		t.Fatalf("superseded = %+v, %v", got, err)
 	}
 	// SetDeploymentRootfs (hit + miss).

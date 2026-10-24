@@ -1,9 +1,10 @@
 # Architecture Decision Records
 
-- [ADR-20261023214253: Operators need MFA, and a session to read customer data](20261023214253-operators-need-mfa-and-sessions-for-customer-data.md) — proposed; operator sign-ins start mfa_pending; operator keys read fleet telemetry only (FAAS_OPERATOR_BEARER_READS grace)
+- [Dockerfile HEALTHCHECK gates readiness on source builds](20261024100000-dockerfile-healthcheck-enforced.md)
 - [ADR-20261024085817: A compute rollout never strands a node on a runtime base it cannot boot, and its drain finishes](20261024085817-rollout-base-generation-and-drain-completion.md) — proposed; a changed base generation pre-stages behind the drain barrier, the rescue never re-activates a node whose cache moved, a drain withdraws, drains and stops what it cannot hand off (2026-10-22 fsn-3)
 - [Bucket-scoped object storage availability](20261023223000-object-storage-bucket-scoped-availability.md) — per-bucket inventory freshness, maintenance listings off the customer meter, no fence on a never-versioned baseline, busy deletions wait, public-read share and revalidation
 - [ADR-20261023171905: Unbilled quiet pause — bill the seconds a VM runs, not the seconds it waits](20261023171905-unbilled-quiet-pause.md) — schedd `quiet_pause_ledger` + meterd `quiet_pause_unbilled` (amends §4.7, ADR-1151 decision 1, ADR-20261021215353)
+- [ADR-20261023214253: Operators need MFA, and a session to read customer data](20261023214253-operators-need-mfa-and-sessions-for-customer-data.md) — proposed; operator sign-ins start mfa_pending; operator keys read fleet telemetry only (FAAS_OPERATOR_BEARER_READS grace)
 - [Compose profiles from COMPOSE_PROFILES in .env](20261022190000-compose-profiles-from-dotenv.md)
 - [Compose deploy resources and replicas set app settings](20261023120000-compose-deploy-resources.md)
 - [Compose service secrets as files in /run/secrets](20261023090000-compose-runtime-secret-files.md)
@@ -18,6 +19,7 @@
 - [Product Control trial-to-paid conversion](20261022180921-product-control-trial-conversion.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
+- [ADR-20261024014500: Honeytokens and unseal telemetry](20261024014500-honeytokens-and-unseal-telemetry.md)
 - [ADR-20261022140000: Break-glass controls for a compromised secret store](20261022140000-break-glass-controls.md)
 - [ADR-20261022111812: Seal domains: a sealed value opens only where it is read](20261022111812-seal-domains-per-reader.md)
 - [Product Control self-serve signup and card on file](20261022100735-product-control-self-serve-signup.md)

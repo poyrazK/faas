@@ -2304,7 +2304,8 @@ func (h *Handler) emitAuthnAudit(r *http.Request, app App, subject *string, kind
 //     tests + the e2e harness wire nil and expect the legacy
 //     host→app lookup)
 //   - the matcher returned nil (no rule whose host, path,
-//     method matched)
+//     method matched), the host resolves to no app, or the only
+//     matching rules belong to another account (routeRuleForHost)
 //   - the same-account check failed (rule.AccountID !=
 //     targetApp.AccountID): emits `edge_rule.route_blocked`
 //     audit + `outcome=blocked` metric, then SILENTLY falls
@@ -2330,9 +2331,9 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 	if _, _, ok := EnvironmentIDsFromHost(wire.DeployWildcardSuffix, hostname(r.Host)); ok {
 		return false
 	}
-	rule, blocked := h.routeRuleForHost(r, appHost)
+	rule := h.routeRuleForHost(r, appHost)
 	if rule == nil {
-		if h.metrics != nil && !blocked {
+		if h.metrics != nil {
 			h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "miss")
 		}
 		return false
@@ -2407,43 +2408,31 @@ type RouteTargetPreparer interface {
 	PrepareRouteTarget(ctx context.Context, app App) bool
 }
 
-// routeRuleForHost picks the kind=route rule for the inbound host. The
-// target check in matchAndSubstituteRoute only proves a rule points at its
-// own account's app; match_host is free-form, so a rule can also name a host
-// another account's app answers on (or "*"). Such a rule must neither route
-// that tenant's traffic nor, by winning the first-match pick, hide the
-// owner's own route rule, so the pick is repeated scoped to the host's
-// owner. A host no app claims (ADR-091's synthetic route host) keeps the
-// unscoped pick. blocked reports that a foreign rule was refused and no
-// owner rule replaced it; the refusal is already audited and counted.
-func (h *Handler) routeRuleForHost(r *http.Request, appHost string) (rule *EdgeRuleResolved, blocked bool) {
-	host := hostname(r.Host)
-	rule = h.edgeRules.MatchRoute(r.Context(), host, r.URL.Path, r.Method)
-	if rule == nil {
-		return nil, false
-	}
+// routeRuleForHost picks the kind=route rule for the inbound host from the
+// rules of the account whose app the host resolves to. The target check in
+// matchAndSubstituteRoute only proves a rule points at its own account's
+// app; match_host is free-form, so a rule can also name a host another
+// account's app answers on (or "*"). Such a rule must neither route that
+// tenant's traffic nor, by winning the first-match pick, hide the owner's
+// own route rule.
+//
+// A host that resolves to no app has no owner to authorize a substitution.
+// Platform hosts (api. and operations. on the apps domain), reserved and
+// unclaimed slugs, internal apps and the domains of deleted apps all
+// resolve that way, and routing them by whichever account's rule named them
+// let any tenant serve its app, with the visitor's cookies for that host,
+// on api.<apps domain>. They answer the ordinary 404 instead.
+func (h *Handler) routeRuleForHost(r *http.Request, appHost string) *EdgeRuleResolved {
 	hostApp, found := h.backend.Lookup(r.Context(), appHost)
-	if !found || hostApp.AccountID == rule.AccountID {
-		return rule, false
+	if !found {
+		return nil
 	}
-	if h.edgeRuleAudit != nil {
-		h.edgeRuleAudit.Emit(r.Context(), "edge_rule.route_blocked", &rule.AccountID, map[string]any{
-			"rule_id":         rule.ID,
-			"from_host":       r.Host,
-			"to_slug":         rule.TargetAppSlug,
-			"rule_account_id": rule.AccountID,
-			"reason":          "host_not_owned",
-		})
+	ctx := WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), hostApp.AccountID), hostApp.ID)
+	rule := h.edgeRules.MatchRoute(ctx, hostname(r.Host), r.URL.Path, r.Method)
+	if rule == nil || rule.AccountID != hostApp.AccountID {
+		return nil
 	}
-	if h.metrics != nil {
-		h.metrics.ObserveEdgeRuleMatch(rateLimitScopeRoute, "blocked")
-		h.metrics.ObserveEdgeRuleApply(rateLimitScopeRoute, "success")
-	}
-	owned := h.edgeRules.MatchRoute(WithEdgeRuleApp(WithEdgeRuleOwner(r.Context(), hostApp.AccountID), hostApp.ID), host, r.URL.Path, r.Method)
-	if owned == nil || owned.AccountID != hostApp.AccountID {
-		return nil, true
-	}
-	return owned, false
+	return rule
 }
 
 // matchAndApplyRewrite (ADR-089 / issue #561 PR 4) consults the

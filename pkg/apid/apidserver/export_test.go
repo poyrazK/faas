@@ -289,6 +289,7 @@ var PlanSourceCache = &planSourceCache
 var RouteProbeChallengeDelay = &routeProbeChallengeDelay
 var SetSecretRecipient = &setSecretRecipient
 var SourceDomainRecipient = &sourceDomainRecipient
+var HostHMACKeyBytes = hostHMACKeyBytes
 var BuildDomainRecipient = &buildDomainRecipient
 var BuildWriteMode = &buildWriteMode
 var SourceWriteMode = &sourceWriteMode
