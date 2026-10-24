@@ -505,6 +505,13 @@ const (
 	CodeBuildUndetected      = "build_undetected"
 	CodeBuildOOM             = "build_oom"
 	CodeBuildTimeout         = "build_timeout"
+	// CodeDeploymentQueueTimeout and CodeDeploymentStalled are the
+	// deployment watchdog's failures (ADR-20261024140100): a build waited
+	// past DeploymentQueuedBuildTimeoutSeconds, or an in-flight deployment
+	// with no build in progress made no stage progress for
+	// DeploymentStallTimeoutSeconds. Both are retryable by redeploying.
+	CodeDeploymentQueueTimeout = "deployment_queue_timeout"
+	CodeDeploymentStalled      = "deployment_stalled"
 	// CodeStage* (ADR-117 §Production-ready follow-on): per-stage
 	// RFC 7807 stable codes for the closed-6 deploy stage vocabulary.
 	// Distinct from CodeBuildXXX (which mark the whole build VM's
@@ -1654,6 +1661,11 @@ const (
 	CodeAccountNotRestorable   = "account_not_restorable"
 	CodeAppNotRestorable       = "app_not_restorable"
 
+	// CodeAccountDeletionManagedPostgres (409): the account still owns live
+	// managed PostgreSQL databases, which must be deleted before the account
+	// can be scheduled for deletion. Detail carries the count.
+	CodeAccountDeletionManagedPostgres = "account_deletion_managed_postgres_databases"
+
 	// App rename (issue #63). One code covers both "slug taken by
 	// another live app" and "DB unique violation"; the Detail field
 	// distinguishes the two so the CLI can render actionable guidance.
@@ -2333,7 +2345,7 @@ func StatusForCode(code string) int {
 		return http.StatusBadRequest
 	case CodeTrustedSignerNotFound:
 		return http.StatusNotFound
-	case CodeAccountDeletionConfirm, CodeAccountDeletionPending, CodeAccountNotRestorable:
+	case CodeAccountDeletionConfirm, CodeAccountDeletionPending, CodeAccountNotRestorable, CodeAccountDeletionManagedPostgres:
 		return http.StatusConflict
 	case CodeAppRenameFailed:
 		return http.StatusConflict
@@ -5005,6 +5017,24 @@ func ErrManagedSecretConflict() *Problem {
 		WithDocs(docsBase + "/postgres#bindings")
 }
 
+// ErrAccountDeletionManagedPostgres refuses to schedule an account deletion
+// while the account owns live managed PostgreSQL databases. live is the number
+// the deletion guard reported; 0 means it reported none.
+func ErrAccountDeletionManagedPostgres(live int64) *Problem {
+	what := "managed PostgreSQL databases"
+	switch {
+	case live == 1:
+		what = "1 managed PostgreSQL database"
+	case live > 1:
+		what = fmt.Sprintf("%d managed PostgreSQL databases", live)
+	}
+	return NewProblem(http.StatusConflict, CodeAccountDeletionManagedPostgres,
+		"Managed PostgreSQL databases must be deleted first",
+		fmt.Sprintf("this account still has %s; delete them before deleting the account. Run `gregale postgres list` to see them and `gregale postgres delete <database>` to delete each one, then delete the account again.", what)).
+		WithHint("run `gregale postgres list`, then `gregale postgres delete <database>` for each database").
+		WithDocs(docsBase + "/postgres")
+}
+
 // ErrManagedObjectStorageSecretConflict protects an environment key owned by
 // an active object-storage compute binding.
 func ErrManagedObjectStorageSecretConflict() *Problem {
@@ -6011,6 +6041,18 @@ func ErrInvalidPublicAuthIPAllowlist(entry string, reason error) *Problem {
 func ErrValidation(detail string) *Problem {
 	return NewProblem(http.StatusBadRequest, CodeValidation,
 		"Validation failed", detail)
+}
+
+// ErrEventReplayBackfillRange is the 400 for a backfill acceptance range
+// longer than the plan's settled-receipt window (ADR-20261023215834):
+// receipts older than the window are already pruned. Limit and observed
+// values are seconds.
+func ErrEventReplayBackfillRange(limitSeconds, observedSeconds int64) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeValidation, "Validation failed",
+		fmt.Sprintf("A backfill range can span at most %s on this plan, its settled-receipt retention window; the requested range spans %s.",
+			time.Duration(limitSeconds)*time.Second, time.Duration(observedSeconds)*time.Second)).
+		WithLimit(limitSeconds, observedSeconds).
+		WithDocs(docsBase + "/event-driven#settled-receipt-retention")
 }
 
 // ErrEdgeRulesVersionMismatch (ADR-961) is the 412 for an edge-rule mutation

@@ -2949,9 +2949,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// next request to its own hostname.
 	//
 	// state.App does not carry Plan because it lives on accounts. Route
-	// substitution therefore uses pgRouter.toApp below, including its account
-	// lookup, so the account and app limiters receive the same plan as the
-	// ordinary hostname path. An empty plan fails both limiters closed.
+	// substitution therefore resolves through pgRouter.toPublicApp, including
+	// its account lookup, so the account and app limiters receive the same
+	// plan as the ordinary hostname path. An empty plan fails both limiters
+	// closed.
 	//
 	// Error classification (review fix R2): state.ErrNotFound
 	// is a clean miss (the target app row was deleted) — silent
@@ -2959,39 +2960,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// pool exhaustion, ctx cancel) and gets logged at WARN +
 	// audited so a dashboard operator can distinguish a noisy
 	// transient from a sustained backend failure.
-	handler.WithEdgeRules(deps.edgeRulesMatcher, func(ctx context.Context, slug string) (gateway.App, bool) {
-		app, err := deps.pgStore.AppBySlug(ctx, slug)
-		if err != nil {
-			if !errors.Is(err, state.ErrNotFound) {
-				if log != nil {
-					log.Warn("edge rule target AppBySlug failed", "slug", slug, "err", err)
-				}
-				if deps.edgeRulesAudit != nil {
-					subject := slug
-					deps.edgeRulesAudit.Emit(ctx, "edge_rule.route_loader_error", &subject, map[string]any{
-						"slug": slug,
-						"err":  err.Error(),
-					})
-				}
-			}
-			return gateway.App{}, false
-		}
-		resolved, ok, err := (pgRouter{store: deps.pgStore}).toApp(ctx, app)
-		if err != nil {
-			if log != nil {
-				log.Warn("edge rule target account lookup failed", "slug", slug, "err", err)
-			}
-			if deps.edgeRulesAudit != nil {
-				subject := slug
-				deps.edgeRulesAudit.Emit(ctx, "edge_rule.route_loader_error", &subject, map[string]any{
-					"slug": slug,
-					"err":  err.Error(),
-				})
-			}
-			return gateway.App{}, false
-		}
-		return resolved, ok
-	}, deps.edgeRulesAudit)
+	handler.WithEdgeRules(deps.edgeRulesMatcher, routeTargetResolver(deps.pgStore, log, deps.edgeRulesAudit), deps.edgeRulesAudit)
 	if deps.pgStore != nil {
 		handler.WithAsyncRouteEnqueuer(&asyncRouteEnqueuer{store: deps.pgStore})
 	}

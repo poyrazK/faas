@@ -15,7 +15,7 @@ export type WorkflowEventReplayBackfillRequest = {
    */
   from: string;
   /**
-   * Exclusive acceptance upper bound; future values stop at job creation. At most 30 days are allowed.
+   * Exclusive acceptance upper bound; future values stop at job creation. The range may not exceed the plan's settled-receipt window.
    */
   until: string;
 };

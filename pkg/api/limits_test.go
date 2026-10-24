@@ -257,7 +257,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxQueueAttempts: 0,
 			// ADR-134 PR-B: Free's per-account cap ladder.
 			EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
-			EventStorage:                      EventStorageLimits{4096, 8 << 20},
+			EventStorage:                      EventStorageLimits{4096, 8 << 20, 86400},
 			MaxAsyncInvocationsPerAccount:     100,
 			MaxAsyncInvocationDeadlineSeconds: 300,
 			MaxAsyncResultRetentionSeconds:    86400,
@@ -419,7 +419,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxQueueAttempts: 3,
 			// ADR-134 PR-B: Hobby 1k / 1h / 7d.
 			EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
-			EventStorage:                      EventStorageLimits{16384, 64 << 20},
+			EventStorage:                      EventStorageLimits{131072, 256 << 20, 259200},
 			MaxAsyncInvocationsPerAccount:     1000,
 			MaxAsyncInvocationDeadlineSeconds: 3600,
 			MaxAsyncResultRetentionSeconds:    604800,
@@ -561,7 +561,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// retention (matches log-archive retention), 1000
 			// req/min ingest, 10 deployments max in the histogram
 			// (small Hobby app), 50 spans per trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 3, DebugTelemetryRequestsPerMinute: 1000, DebugTelemetryDeploymentsPerApp: 10, DebugTelemetrySpansPerTrace: 50, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 3, WorkflowMaxConcurrent: 10, WorkflowStepMaxTimeout: 10 * time.Minute, WorkflowMaxWaitDays: 30,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 3, DebugTelemetryRequestsPerMinute: 1000, DebugTelemetryDeploymentsPerApp: 10, DebugTelemetrySpansPerTrace: 50, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 3, WorkflowMaxConcurrent: 10, WorkflowMaxParked: 100, WorkflowStepMaxTimeout: 10 * time.Minute, WorkflowMaxWaitDays: 30,
 			// ADR-124 queue controls — Hobby unlocks the gated surface.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 5, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Pro opt-in for per-app egress allowlist with a 16-CIDR cap.
@@ -590,7 +590,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxQueueAttempts: 10,
 			// ADR-134 PR-B: Pro 10k / 6h / 30d.
 			EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
-			EventStorage:                      EventStorageLimits{131072, 512 << 20},
+			EventStorage:                      EventStorageLimits{1048576, 2 << 30, 604800},
 			MaxAsyncInvocationsPerAccount:     10000,
 			MaxAsyncInvocationDeadlineSeconds: 21600,
 			MaxAsyncResultRetentionSeconds:    2592000,
@@ -724,7 +724,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-127: Pro = "this month" debugger surface — 7-day
 			// retention, 10000 req/min ingest, 50 deployments in
 			// the histogram, 200 spans per trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 7, DebugTelemetryRequestsPerMinute: 10000, DebugTelemetryDeploymentsPerApp: 50, DebugTelemetrySpansPerTrace: 200, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 10, WorkflowMaxConcurrent: 50, WorkflowStepMaxTimeout: 30 * time.Minute, WorkflowMaxWaitDays: 90,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 7, DebugTelemetryRequestsPerMinute: 10000, DebugTelemetryDeploymentsPerApp: 50, DebugTelemetrySpansPerTrace: 200, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 10, WorkflowMaxConcurrent: 50, WorkflowMaxParked: 1000, WorkflowStepMaxTimeout: 30 * time.Minute, WorkflowMaxWaitDays: 90,
 			// ADR-124: Pro mirrors Hobby for queue controls.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 10, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Scale double-up to 64 CIDR cap (2× Pro, tracks 2×
@@ -756,7 +756,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxQueueAttempts: 25,
 			// ADR-134 PR-B: Scale 100k / 24h / 90d.
 			EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
-			EventStorage:                      EventStorageLimits{1048576, 4 << 30},
+			EventStorage:                      EventStorageLimits{8388608, 16 << 30, 1209600},
 			MaxAsyncInvocationsPerAccount:     100000,
 			MaxAsyncInvocationDeadlineSeconds: 86400,
 			MaxAsyncResultRetentionSeconds:    7776000,
@@ -898,7 +898,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// cap, a fleet with thousands of historical deployments
 			// would blow up Prometheus cardinality), 1000 spans per
 			// trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 14, DebugTelemetryRequestsPerMinute: 50000, DebugTelemetryDeploymentsPerApp: 200, DebugTelemetrySpansPerTrace: 1000, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 50, WorkflowMaxConcurrent: 200, WorkflowStepMaxTimeout: 2 * time.Hour, WorkflowMaxWaitDays: 365,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 14, DebugTelemetryRequestsPerMinute: 50000, DebugTelemetryDeploymentsPerApp: 200, DebugTelemetrySpansPerTrace: 1000, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 50, WorkflowMaxConcurrent: 200, WorkflowMaxParked: 10000, WorkflowStepMaxTimeout: 2 * time.Hour, WorkflowMaxWaitDays: 365,
 			// ADR-124: Scale gets the highest queue depth (25) and
 			// the same 60/h reorder budget as Hobby/Pro.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 25, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},

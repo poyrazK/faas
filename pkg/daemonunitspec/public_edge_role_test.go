@@ -114,6 +114,37 @@ func TestPublicEdgeFrontsGatewaydPublicBehindCloudflare(t *testing.T) {
 	if strings.Contains(customHost, "CF-Connecting-IP") {
 		t.Errorf("customer-domain site trusts CF-Connecting-IP:\n%s", customHost)
 	}
+	if strings.Contains(text, "h2c") {
+		t.Errorf("gRPC over h2c is on by default:\n%s", text)
+	}
+
+	// gRPC reached gatewayd-public over the HTTP/1.1 hop only, so
+	// bidirectional streams could not work from the internet. Opted in,
+	// gRPC requests take an h2c hop on both sites; everything else keeps
+	// HTTP/1.1 and the same client-IP header.
+	vars["faas_public_edge_grpc_h2c"] = true
+	for _, customDomains := range []bool{false, true} {
+		vars["faas_custom_domain_tls"] = customDomains
+		text = renderPublicEdgeBlock(t, block, vars)
+		if got := strings.Count(text, "reverse_proxy @grpc h2c://"+listen[1]+" {"); got != map[bool]int{false: 1, true: 2}[customDomains] {
+			t.Errorf("custom domains %v: %d gRPC h2c hops:\n%s", customDomains, got, text)
+		}
+		if !strings.Contains(text, "@grpc header Content-Type application/grpc*") {
+			t.Errorf("custom domains %v: gRPC matcher missing:\n%s", customDomains, text)
+		}
+		if !strings.Contains(text, "reverse_proxy "+listen[1]+" {") {
+			t.Errorf("custom domains %v: the HTTP/1.1 hop is gone:\n%s", customDomains, text)
+		}
+		if customDomains {
+			custom := text[strings.Index(text, "https:// {"):]
+			if strings.Contains(custom, "CF-Connecting-IP") || !strings.Contains(custom, "reverse_proxy @grpc h2c://") {
+				t.Errorf("customer-domain gRPC hop:\n%s", custom)
+			}
+			if !strings.Contains(text, "abort @direct") {
+				t.Errorf("platform site stopped aborting direct peers:\n%s", text)
+			}
+		}
+	}
 }
 
 // ADR-1431: the AI gateway's public host is its own managed block, absent

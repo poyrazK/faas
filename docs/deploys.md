@@ -56,7 +56,11 @@ secrets derive a key from the source and flags, so repeating an identical deploy
 returns the deployment already in progress or live. Branches, tags, short SHAs,
 and secret bundles use a fresh key per invocation; transport retries reuse it.
 A local wait timeout or interruption preserves accepted deployment configuration;
-resume with `gregale deployment wait <deployment-id>`. Submission errors report
+resume with `gregale deployment wait <deployment-id>`. The server bounds every
+deployment on its own: a build still waiting in the builder queue after 6 hours
+fails with `deployment_queue_timeout`, and a deployment with no build running
+that makes no progress for 3 hours fails with `deployment_stalled` (a running
+build is bounded by the build timeout). Deploy again after either. Submission errors report
 accepted, rejected, or unknown acceptance. Accepted and unknown outcomes retain
 staged triggers, profiling, and tracing; only definite rejection restores prior
 settings. Inspect deployment history and reuse the printed retry key when

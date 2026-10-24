@@ -18,7 +18,8 @@ class WorkflowEventReplayBackfillRequest:
     from_: datetime.datetime
     """Inclusive lower bound on platform event acceptance."""
     until: datetime.datetime
-    """Exclusive acceptance upper bound; future values stop at job creation. At most 30 days are allowed."""
+    """Exclusive acceptance upper bound; future values stop at job creation. The range may not exceed the plan's
+    settled-receipt window."""
 
     def to_dict(self) -> dict[str, Any]:
         workflow_name = self.workflow_name

@@ -36,12 +36,7 @@ func (m *MemStore) prepareOperationWorkflowLocked(op *Operation, inv Invocation,
 	if err != nil {
 		return WorkflowRun{}, nil, err
 	}
-	active := 0
-	for _, run := range m.workflowRuns {
-		if run.AppID == op.AppID && workflowGuardRunActive(run.Status) {
-			active++
-		}
-	}
+	active := m.workflowAdmissionLocked(op.AppID, plan.WorkflowMaxParkedRuns())
 	if active >= plan.WorkflowMaxConcurrentRuns() {
 		return WorkflowRun{}, nil, NewOperationLimitError("workflow_active_runs", int64(plan.WorkflowMaxConcurrentRuns()), int64(active+1))
 	}

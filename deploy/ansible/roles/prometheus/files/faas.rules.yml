@@ -678,6 +678,21 @@ groups:
           summary: "A non-active account retained live compute"
           description: "Schedd found and repaired a live or waking instance owned by a suspended or deletion-pending account. Verify all scheduler admission producers enforce Account.Active and confirm no additional instances remain resident."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInactiveAccountHasLiveInstance.md"
+      # meterd sets this gauge once per hourly dunning sweep and holds it until
+      # the next sweep, so one blocked sweep already reads > 0 for an hour.
+      # Two hours means the block outlived at least two consecutive sweeps.
+      - alert: FaasDunningDeletionBlocked
+        expr: max by (reason) (meterd_dunning_deletion_blocked_accounts) > 0
+        for: 2h
+        labels:
+          severity: warn
+          component: meterd
+          family: account_lifecycle
+          public_status: internal
+        annotations:
+          summary: "Non-payment deletion is blocked for suspended accounts ({{ $labels.reason }})"
+          description: "The dunning sweep cannot move suspended accounts past the non-payment deadline to deleted_pending because a deletion guard holds (managed_postgres_databases: the account still owns live managed PostgreSQL databases; shared_app_ownership: company apps still reference it). The accounts stay suspended, their provider databases keep running and erasure does not start. meterd logs each one as 'meter: non-payment deletion blocked'."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDunningDeletionBlocked.md"
 
   - name: postgres_capacity
     interval: 30s

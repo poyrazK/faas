@@ -444,6 +444,7 @@ type MemStore struct {
 	objectOrgOwnedFrom          map[string]time.Time
 	orgAsyncQuotaPooled         map[string]time.Time
 	objectProviderRequests      map[string]int64
+	objectGatewayStorage        map[string]*memGatewayStorage
 	objectAccessGrants          map[string]ObjectBucketAccessGrant
 	objectS3Credentials         map[string]ObjectS3Credential
 	objectS3CopySources         map[string]ObjectS3CopySource
@@ -1051,6 +1052,15 @@ type MemStore struct {
 	deploymentLogs map[string][]LogEntry
 	deploymentSeq  map[string]int64
 	logEvents      []LogEvent
+	// logSavedSearches mirrors log_saved_searches by id (ADR-20261018083536).
+	logSavedSearches map[string]LogSavedSearch
+	// dashboards mirrors the dashboards table by id (ADR-20261022173833).
+	dashboards map[string]Dashboard
+	// alertEpisodes mirrors alert_episodes by id (ADR-20261022193512); the
+	// rule columns are read from alertRules.
+	alertEpisodes map[string]AlertEpisode
+	// incidentNotes mirrors incident_notes in insertion order.
+	incidentNotes []IncidentNote
 	// Captured boot inputs belong to the instance wake and physical node.
 	runtimeInstanceConfigProofs map[string]runtimeInstanceConfigProof
 	// deploymentSidecarLayers (issue #463 / ADR-069 / PR-B)
@@ -11666,6 +11676,10 @@ func (m *MemStore) SetDeploymentSourceURL(_ context.Context, id, sourceURL, comm
 func (m *MemStore) SetDeploymentFailed(_ context.Context, id, code, message string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.setDeploymentFailedLocked(id, code, message)
+}
+
+func (m *MemStore) setDeploymentFailedLocked(id, code, message string) (Deployment, error) {
 	d, ok := m.deployments[id]
 	if !ok {
 		return Deployment{}, ErrNotFound
@@ -25083,6 +25097,7 @@ func (m *MemStore) SetAlertRuleState(_ context.Context, ruleID string, to AlertS
 	r.State = to
 	r.UpdatedAt = at.UTC()
 	m.alertRules[ruleID] = r
+	m.recordAlertEpisodeLocked(r, at.UTC())
 	return true, nil
 }
 

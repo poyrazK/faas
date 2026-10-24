@@ -9795,32 +9795,48 @@ func (q *Queries) CountActiveTenantWorkflowRunsForAdmission(ctx context.Context,
 }
 
 const countActiveWorkflowRunsForAdmission = `-- name: CountActiveWorkflowRunsForAdmission :one
-SELECT count(*) FROM workflow_runs
-WHERE app_id = $1 AND status IN ('pending', 'running', 'awaiting_event')
-  AND ($2::text = '' OR workflow_name = $2)
+SELECT (count(*) FILTER (WHERE status IN ('pending', 'running'))
+  + CASE WHEN $1::text = '' THEN greatest(0, count(*) FILTER (WHERE status = 'awaiting_event') - $2::bigint)
+         ELSE count(*) FILTER (WHERE status = 'awaiting_event') END)::bigint
+FROM workflow_runs
+WHERE app_id = $3 AND status IN ('pending', 'running', 'awaiting_event')
+  AND ($1::text = '' OR workflow_name = $1)
 `
 
 type CountActiveWorkflowRunsForAdmissionParams struct {
-	AppID        pgtype.UUID
 	WorkflowName string
+	ParkedMax    int64
+	AppID        pgtype.UUID
 }
 
+// ADR-20261023215834: the app-wide count (no workflow name) counts runs
+// parked on an event only beyond the plan's parked allowance. A named count
+// decides schedule overlap, where a parked run is still in progress, so it
+// counts every unfinished run of that workflow.
 func (q *Queries) CountActiveWorkflowRunsForAdmission(ctx context.Context, db DBTX, arg CountActiveWorkflowRunsForAdmissionParams) (int64, error) {
-	row := db.QueryRow(ctx, countActiveWorkflowRunsForAdmission, arg.AppID, arg.WorkflowName)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
+	row := db.QueryRow(ctx, countActiveWorkflowRunsForAdmission, arg.WorkflowName, arg.ParkedMax, arg.AppID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const countActiveWorkflowRunsForRetry = `-- name: CountActiveWorkflowRunsForRetry :one
-SELECT count(*)::bigint
+SELECT (count(*) FILTER (WHERE status IN ('pending','running'))
+  + greatest(0, count(*) FILTER (WHERE status='awaiting_event') - $1::bigint))::bigint
 FROM workflow_runs
-WHERE app_id=$1::text::uuid
+WHERE app_id=$2::text::uuid
   AND status IN ('pending','running','awaiting_event')
 `
 
-func (q *Queries) CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, appID string) (int64, error) {
-	row := db.QueryRow(ctx, countActiveWorkflowRunsForRetry, appID)
+type CountActiveWorkflowRunsForRetryParams struct {
+	ParkedMax int64
+	AppID     string
+}
+
+// ADR-20261023215834: runs parked on an event count only beyond the plan's
+// parked allowance.
+func (q *Queries) CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, arg CountActiveWorkflowRunsForRetryParams) (int64, error) {
+	row := db.QueryRow(ctx, countActiveWorkflowRunsForRetry, arg.ParkedMax, arg.AppID)
 	var column_1 int64
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -27176,6 +27192,7 @@ SELECT now()::timestamptz AS observed_at,ac.plan,
   (EXISTS(SELECT 1 FROM api_consumers c WHERE c.platform_tenant_id=t.id AND c.account_id=a.account_id AND c.app_id=a.id AND c.status='active' AND c.revoked_at IS NULL)
   OR EXISTS(SELECT 1 FROM tenant_surfaces s WHERE s.platform_tenant_id=t.id AND s.account_id=a.account_id AND s.app_id=a.id AND s.status='active'))))::boolean AS tenant_active,
  (SELECT count(*) FROM app_runs)::bigint AS active_runs,
+ (SELECT count(*) FROM app_runs WHERE status='awaiting_event')::bigint AS parked_runs,
  (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL)::bigint AS app_running,
  (SELECT count(*) FROM app_runs WHERE live AND operation_id IS NULL AND platform_tenant_id=selected.platform_tenant_id)::bigint AS tenant_running,
  (SELECT count(*) FROM app_runs WHERE workflow_name=selected.workflow_name AND
@@ -27199,6 +27216,7 @@ type GetWorkflowRecoveryTargetRow struct {
 	PinnedDeployment       bool
 	TenantActive           bool
 	ActiveRuns             int64
+	ParkedRuns             int64
 	AppRunning             int64
 	TenantRunning          int64
 	WorkflowActive         int64
@@ -27218,6 +27236,7 @@ func (q *Queries) GetWorkflowRecoveryTarget(ctx context.Context, db DBTX, arg Ge
 		&i.PinnedDeployment,
 		&i.TenantActive,
 		&i.ActiveRuns,
+		&i.ParkedRuns,
 		&i.AppRunning,
 		&i.TenantRunning,
 		&i.WorkflowActive,
@@ -30025,11 +30044,11 @@ func (q *Queries) InsertComputeNodeHeartbeat(ctx context.Context, db DBTX, arg I
 
 const insertCustomerAlertRule = `-- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query)
 VALUES($1,$2,$3,$4,$5,$6,
  $7,$8,$9,$10,$11,$12,$13,
- $14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
-RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope
+ $14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query
 `
 
 type InsertCustomerAlertRuleParams struct {
@@ -30056,6 +30075,7 @@ type InsertCustomerAlertRuleParams struct {
 	McpMinCalls                     int32
 	McpForMinutes                   int32
 	McpReadinessScope               string
+	LogQuery                        pgtype.Text
 }
 
 func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg InsertCustomerAlertRuleParams) (AlertRule, error) {
@@ -30083,6 +30103,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		arg.McpMinCalls,
 		arg.McpForMinutes,
 		arg.McpReadinessScope,
+		arg.LogQuery,
 	)
 	var i AlertRule
 	err := row.Scan(
@@ -30115,6 +30136,7 @@ func (q *Queries) InsertCustomerAlertRule(ctx context.Context, db DBTX, arg Inse
 		&i.McpMinCalls,
 		&i.McpForMinutes,
 		&i.McpReadinessScope,
+		&i.LogQuery,
 	)
 	return i, err
 }
@@ -42990,7 +43012,7 @@ func (q *Queries) ListCronsForApp(ctx context.Context, db DBTX, appID pgtype.UUI
 }
 
 const listCustomerAlertRulesByPreset = `-- name: ListCustomerAlertRulesByPreset :many
-SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id, r.mcp_min_calls, r.mcp_for_minutes, r.mcp_readiness_scope FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
+SELECT r.id, r.account_id, r.app_id, r.name, r.enabled, r.metric, r.comparison, r.threshold, r.window_spec, r.failure_source, r.webhook_url, r.webhook_secret_sealed, r.cooldown_minutes, r.state, r.last_fired_at, r.last_evaluated_at, r.created_at, r.updated_at, r.org_id, r.action, r.post_deploy_rollback_window_seconds, r.event_subscription_id, r.edge_rule_id, r.custom_metric_name, r.slo_id, r.synthetic_check_id, r.mcp_min_calls, r.mcp_for_minutes, r.mcp_readiness_scope, r.log_query FROM alert_rules r WHERE r.account_id=$1 AND r.app_id=$2
  AND r.name LIKE (SELECT p.display_name||' (%' FROM alert_presets p WHERE p.name=$3)
  ORDER BY r.created_at DESC LIMIT 2
 `
@@ -43040,6 +43062,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 			&i.McpMinCalls,
 			&i.McpForMinutes,
 			&i.McpReadinessScope,
+			&i.LogQuery,
 		); err != nil {
 			return nil, err
 		}
@@ -43052,7 +43075,7 @@ func (q *Queries) ListCustomerAlertRulesByPreset(ctx context.Context, db DBTX, a
 }
 
 const listCustomerAlertRulesForAccount = `-- name: ListCustomerAlertRulesForAccount :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query FROM alert_rules WHERE account_id=$1 ORDER BY created_at DESC
 `
 
 func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]AlertRule, error) {
@@ -43094,6 +43117,7 @@ func (q *Queries) ListCustomerAlertRulesForAccount(ctx context.Context, db DBTX,
 			&i.McpMinCalls,
 			&i.McpForMinutes,
 			&i.McpReadinessScope,
+			&i.LogQuery,
 		); err != nil {
 			return nil, err
 		}
@@ -45243,7 +45267,7 @@ func (q *Queries) ListEnabledCrons(ctx context.Context, db DBTX) ([]ListEnabledC
 }
 
 const listEnabledCustomerAlertRules = `-- name: ListEnabledCustomerAlertRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope FROM alert_rules WHERE enabled=true ORDER BY account_id
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query FROM alert_rules WHERE enabled=true ORDER BY account_id
 `
 
 func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([]AlertRule, error) {
@@ -45285,6 +45309,7 @@ func (q *Queries) ListEnabledCustomerAlertRules(ctx context.Context, db DBTX) ([
 			&i.McpMinCalls,
 			&i.McpForMinutes,
 			&i.McpReadinessScope,
+			&i.LogQuery,
 		); err != nil {
 			return nil, err
 		}
@@ -47095,7 +47120,7 @@ func (q *Queries) ListMCPDestinationEvents(ctx context.Context, db DBTX, arg Lis
 }
 
 const listMCPNotificationRules = `-- name: ListMCPNotificationRules :many
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope FROM alert_rules WHERE account_id=$1 AND app_id=$2
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query FROM alert_rules WHERE account_id=$1 AND app_id=$2
  AND metric='mcp_readiness_unhealthy' AND action='webhook'
  AND ($3::text='' OR mcp_readiness_scope='' OR mcp_readiness_scope=$3)
  AND ($4::uuid IS NULL OR id>$4)
@@ -47155,6 +47180,7 @@ func (q *Queries) ListMCPNotificationRules(ctx context.Context, db DBTX, arg Lis
 			&i.McpMinCalls,
 			&i.McpForMinutes,
 			&i.McpReadinessScope,
+			&i.LogQuery,
 		); err != nil {
 			return nil, err
 		}
@@ -65357,6 +65383,63 @@ func (q *Queries) ObjectS3MultipartList(ctx context.Context, db DBTX, arg Object
 	return items, nil
 }
 
+const objectStorageGatewayStorageAdvance = `-- name: ObjectStorageGatewayStorageAdvance :execrows
+UPDATE object_storage_gateway_storage g
+SET stored_byte_hours = LEAST(1152921504606846976::numeric, g.stored_byte_hours
+        + COALESCE(u.observed_bytes, 0)::numeric
+        * EXTRACT(EPOCH FROM (LEAST(now(), ((g.period_start AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC',
+              CASE WHEN b.state = 'deleted' THEN GREATEST(b.updated_at, g.accrued_through) ELSE 'infinity'::timestamptz END)
+            - g.accrued_through)) / 3600),
+    accrued_through = LEAST(now(), ((g.period_start AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC',
+        CASE WHEN b.state = 'deleted' THEN GREATEST(b.updated_at, g.accrued_through) ELSE 'infinity'::timestamptz END)
+FROM object_buckets b
+LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
+WHERE b.id = g.bucket_id
+  AND g.period_start >= (date_trunc('month', now() AT TIME ZONE 'UTC') - interval '1 month') AT TIME ZONE 'UTC'
+  AND g.accrued_through < LEAST(now(), ((g.period_start AT TIME ZONE 'UTC') + interval '1 month') AT TIME ZONE 'UTC',
+        CASE WHEN b.state = 'deleted' THEN GREATEST(b.updated_at, g.accrued_through) ELSE 'infinity'::timestamptz END)
+`
+
+// Accrues each open row of this or last month from accrued_through to now,
+// the end of its month or the bucket's deletion, whichever is first, at the
+// bucket's last inventoried bytes. Concurrent callers serialize on the row,
+// and each starts from the committed accrued_through, so time is never
+// counted twice.
+func (q *Queries) ObjectStorageGatewayStorageAdvance(ctx context.Context, db DBTX) (int64, error) {
+	result, err := db.Exec(ctx, objectStorageGatewayStorageAdvance)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectStorageGatewayStorageOpen = `-- name: ObjectStorageGatewayStorageOpen :execrows
+INSERT INTO object_storage_gateway_storage (bucket_id, period_start, accrued_from, accrued_through)
+SELECT b.id, p.period_start,
+       CASE WHEN EXISTS (SELECT 1 FROM object_storage_gateway_storage prev
+                         WHERE prev.bucket_id = b.id AND prev.period_start = p.previous_start)
+            THEN p.period_start ELSE now() END,
+       CASE WHEN EXISTS (SELECT 1 FROM object_storage_gateway_storage prev
+                         WHERE prev.bucket_id = b.id AND prev.period_start = p.previous_start)
+            THEN p.period_start ELSE now() END
+FROM object_buckets b,
+     (SELECT date_trunc('month', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS period_start,
+             (date_trunc('month', now() AT TIME ZONE 'UTC') - interval '1 month') AT TIME ZONE 'UTC' AS previous_start) p
+WHERE b.state <> 'deleted'
+ON CONFLICT (bucket_id, period_start) DO NOTHING
+`
+
+// ADR-20261024132844: one row per live bucket for the current UTC month. A
+// bucket metered last month continues from the start of this month; any other
+// bucket starts now, so storage is never billed for time Gregale did not meter.
+func (q *Queries) ObjectStorageGatewayStorageOpen(ctx context.Context, db DBTX) (int64, error) {
+	result, err := db.Exec(ctx, objectStorageGatewayStorageOpen)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const objectStorageManagedSecretRotate = `-- name: ObjectStorageManagedSecretRotate :execrows
 UPDATE app_secrets SET ciphertext=$6, kid=$7, value_hash=$8,
   delivery_version=delivery_version+1, delivery_status='pending',
@@ -66733,9 +66816,12 @@ COALESCE((SELECT sum(g.max_bytes)::bigint FROM object_storage_multipart_part_gra
 JOIN object_storage_multipart_uploads m ON m.id=g.upload_id
 WHERE m.bucket_id=b.id AND m.state <> 'completed'),0)::bigint AS multipart_bytes,
 COALESCE(r.request_count, 0)::bigint AS gateway_request_count,
-COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes
+COALESCE(r.egress_bytes, 0)::bigint AS gateway_egress_bytes,
+COALESCE(floor(s.stored_byte_hours), 0)::bigint AS gateway_stored_byte_hours,
+s.accrued_through AS gateway_storage_through
 FROM object_buckets b LEFT JOIN object_storage_bucket_usage u ON u.bucket_id = b.id
 LEFT JOIN object_storage_request_metrics r ON r.bucket_id = b.id AND r.period_start = $1
+LEFT JOIN object_storage_gateway_storage s ON s.bucket_id = b.id AND s.period_start = $1
 WHERE object_storage_usage_subject(b.org_id,b.account_id,$1) = $2
 `
 
@@ -66781,6 +66867,8 @@ type ObjectUsageBucketsRow struct {
 	MultipartBytes                 int64
 	GatewayRequestCount            int64
 	GatewayEgressBytes             int64
+	GatewayStoredByteHours         int64
+	GatewayStorageThrough          pgtype.Timestamptz
 }
 
 func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsageBucketsParams) ([]ObjectUsageBucketsRow, error) {
@@ -66829,6 +66917,8 @@ func (q *Queries) ObjectUsageBuckets(ctx context.Context, db DBTX, arg ObjectUsa
 			&i.MultipartBytes,
 			&i.GatewayRequestCount,
 			&i.GatewayEgressBytes,
+			&i.GatewayStoredByteHours,
+			&i.GatewayStorageThrough,
 		); err != nil {
 			return nil, err
 		}
@@ -74473,7 +74563,7 @@ func (q *Queries) ReadCronActivationDeployment(ctx context.Context, db DBTX, arg
 }
 
 const readCustomerAlertRule = `-- name: ReadCustomerAlertRule :one
-SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope FROM alert_rules WHERE id=$1
+SELECT id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query FROM alert_rules WHERE id=$1
 `
 
 func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.UUID) (AlertRule, error) {
@@ -74509,6 +74599,7 @@ func (q *Queries) ReadCustomerAlertRule(ctx context.Context, db DBTX, id pgtype.
 		&i.McpMinCalls,
 		&i.McpForMinutes,
 		&i.McpReadinessScope,
+		&i.LogQuery,
 	)
 	return i, err
 }
@@ -95402,7 +95493,7 @@ UPDATE alert_rules SET mcp_min_calls=coalesce($1::integer,mcp_min_calls),
  webhook_secret_sealed=coalesce($11::bytea,webhook_secret_sealed),
  cooldown_minutes=coalesce($12::integer,cooldown_minutes),
  post_deploy_rollback_window_seconds=coalesce($13::integer,post_deploy_rollback_window_seconds),updated_at=now()
-WHERE id=$14 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope
+WHERE id=$14 RETURNING id, account_id, app_id, name, enabled, metric, comparison, threshold, window_spec, failure_source, webhook_url, webhook_secret_sealed, cooldown_minutes, state, last_fired_at, last_evaluated_at, created_at, updated_at, org_id, action, post_deploy_rollback_window_seconds, event_subscription_id, edge_rule_id, custom_metric_name, slo_id, synthetic_check_id, mcp_min_calls, mcp_for_minutes, mcp_readiness_scope, log_query
 `
 
 type UpdateCustomerAlertRuleParams struct {
@@ -95470,6 +95561,7 @@ func (q *Queries) UpdateCustomerAlertRule(ctx context.Context, db DBTX, arg Upda
 		&i.McpMinCalls,
 		&i.McpForMinutes,
 		&i.McpReadinessScope,
+		&i.LogQuery,
 	)
 	return i, err
 }

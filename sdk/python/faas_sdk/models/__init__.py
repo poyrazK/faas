@@ -1062,11 +1062,20 @@ from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
 from .daily_usage_response import DailyUsageResponse
+from .dashboard import Dashboard
+from .dashboard_data import DashboardData
 from .dashboard_discard_account_failed_event_body import DashboardDiscardAccountFailedEventBody
 from .dashboard_discard_failed_event_body import DashboardDiscardFailedEventBody
+from .dashboard_point import DashboardPoint
 from .dashboard_replay_account_failed_event_body import DashboardReplayAccountFailedEventBody
 from .dashboard_replay_app_debug_request_body import DashboardReplayAppDebugRequestBody
 from .dashboard_replay_failed_event_body import DashboardReplayFailedEventBody
+from .dashboard_request import DashboardRequest
+from .dashboard_widget import DashboardWidget
+from .dashboard_widget_kind import DashboardWidgetKind
+from .dashboard_widget_value import DashboardWidgetValue
+from .dashboard_widget_window import DashboardWidgetWindow
+from .dashboards_response import DashboardsResponse
 from .data_api_access_config import DataAPIAccessConfig
 from .data_api_access_config_version import DataAPIAccessConfigVersion
 from .data_api_connection_budgets import DataAPIConnectionBudgets
@@ -2093,6 +2102,7 @@ from .get_account_slo_window import GetAccountSLOWindow
 from .get_app_data_api_usage_granularity import GetAppDataAPIUsageGranularity
 from .get_app_edge_protection_range import GetAppEdgeProtectionRange
 from .get_app_log_drain_analytics_window import GetAppLogDrainAnalyticsWindow
+from .get_app_log_event_facets_source import GetAppLogEventFacetsSource
 from .get_app_metrics_range import GetAppMetricsRange
 from .get_app_open_api_response_200 import GetAppOpenAPIResponse200
 from .get_app_open_api_source import GetAppOpenAPISource
@@ -2188,6 +2198,17 @@ from .inbound_webhook_endpoint_response_provider import InboundWebhookEndpointRe
 from .inbound_webhook_endpoint_response_signing_secret_masked import InboundWebhookEndpointResponseSigningSecretMasked
 from .inbound_webhook_receipt_response import InboundWebhookReceiptResponse
 from .inbound_webhook_receipt_response_status import InboundWebhookReceiptResponseStatus
+from .incident import Incident
+from .incident_detail import IncidentDetail
+from .incident_detail_log_context import IncidentDetailLogContext
+from .incident_fire import IncidentFire
+from .incident_note import IncidentNote
+from .incident_note_kind import IncidentNoteKind
+from .incident_note_request import IncidentNoteRequest
+from .incident_source import IncidentSource
+from .incident_status import IncidentStatus
+from .incident_update import IncidentUpdate
+from .incidents_response import IncidentsResponse
 from .ingest_issue_otlp_body import IngestIssueOTLPBody
 from .ingest_issue_otlp_response_200 import IngestIssueOTLPResponse200
 from .ingest_issue_otlp_signal import IngestIssueOTLPSignal
@@ -2425,6 +2446,7 @@ from .list_event_subscription_capacity_commands_outcome import ListEventSubscrip
 from .list_event_subscription_deadlines_status import ListEventSubscriptionDeadlinesStatus
 from .list_event_subscription_deadlines_waiting_reason import ListEventSubscriptionDeadlinesWaitingReason
 from .list_executions_status import ListExecutionsStatus
+from .list_incidents_status import ListIncidentsStatus
 from .list_instances_response import ListInstancesResponse
 from .list_invocations_response import ListInvocationsResponse
 from .list_issue_ingest_tokens_response import ListIssueIngestTokensResponse
@@ -2523,13 +2545,19 @@ from .list_workflow_schedules_response import ListWorkflowSchedulesResponse
 from .list_workflow_schedules_response_unavailable_reason import ListWorkflowSchedulesResponseUnavailableReason
 from .list_workflow_step_attempts_response import ListWorkflowStepAttemptsResponse
 from .list_workflow_steps_response import ListWorkflowStepsResponse
+from .log_event_facets_response import LogEventFacetsResponse
+from .log_events_response import LogEventsResponse
 from .log_excerpt import LogExcerpt
 from .log_excerpt_level import LogExcerptLevel
 from .log_excerpt_source import LogExcerptSource
+from .log_facet_count import LogFacetCount
 from .log_query_event import LogQueryEvent
 from .log_query_event_level import LogQueryEventLevel
 from .log_query_event_source import LogQueryEventSource
 from .log_query_event_stream import LogQueryEventStream
+from .log_saved_search import LogSavedSearch
+from .log_saved_search_request import LogSavedSearchRequest
+from .log_saved_searches_response import LogSavedSearchesResponse
 from .magic_link_signup_request import MagicLinkSignupRequest
 from .managed_execution_workflow_artifact_input import ManagedExecutionWorkflowArtifactInput
 from .managed_execution_workflow_response import ManagedExecutionWorkflowResponse
@@ -5444,6 +5472,7 @@ from .scoped_route_budget_report import ScopedRouteBudgetReport
 from .scoped_route_budget_report_budget_source import ScopedRouteBudgetReportBudgetSource
 from .seal_scenario_objects_request import SealScenarioObjectsRequest
 from .seal_scenario_postgres_request import SealScenarioPostgresRequest
+from .search_app_log_events_source import SearchAppLogEventsSource
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
 from .secret_file import SecretFile
@@ -7167,11 +7196,20 @@ __all__ = (
     "DailyUsageListResponse",
     "DailyUsagePoint",
     "DailyUsageResponse",
+    "Dashboard",
+    "DashboardData",
     "DashboardDiscardAccountFailedEventBody",
     "DashboardDiscardFailedEventBody",
+    "DashboardPoint",
     "DashboardReplayAccountFailedEventBody",
     "DashboardReplayAppDebugRequestBody",
     "DashboardReplayFailedEventBody",
+    "DashboardRequest",
+    "DashboardsResponse",
+    "DashboardWidget",
+    "DashboardWidgetKind",
+    "DashboardWidgetValue",
+    "DashboardWidgetWindow",
     "DataAPIAccessConfig",
     "DataAPIAccessConfigVersion",
     "DataAPIConnectionBudgets",
@@ -8160,6 +8198,7 @@ __all__ = (
     "GetAppDataAPIUsageGranularity",
     "GetAppEdgeProtectionRange",
     "GetAppLogDrainAnalyticsWindow",
+    "GetAppLogEventFacetsSource",
     "GetAppMetricsRange",
     "GetAppOpenAPIResponse200",
     "GetAppOpenAPISource",
@@ -8251,6 +8290,17 @@ __all__ = (
     "InboundWebhookEndpointResponseSigningSecretMasked",
     "InboundWebhookReceiptResponse",
     "InboundWebhookReceiptResponseStatus",
+    "Incident",
+    "IncidentDetail",
+    "IncidentDetailLogContext",
+    "IncidentFire",
+    "IncidentNote",
+    "IncidentNoteKind",
+    "IncidentNoteRequest",
+    "IncidentSource",
+    "IncidentsResponse",
+    "IncidentStatus",
+    "IncidentUpdate",
     "IngestIssueOTLPBody",
     "IngestIssueOTLPResponse200",
     "IngestIssueOTLPSignal",
@@ -8478,6 +8528,7 @@ __all__ = (
     "ListEventSubscriptionDeadlinesStatus",
     "ListEventSubscriptionDeadlinesWaitingReason",
     "ListExecutionsStatus",
+    "ListIncidentsStatus",
     "ListInstancesResponse",
     "ListInvocationsResponse",
     "ListIssueIngestTokensResponse",
@@ -8546,13 +8597,19 @@ __all__ = (
     "ListWorkflowSchedulesResponseUnavailableReason",
     "ListWorkflowStepAttemptsResponse",
     "ListWorkflowStepsResponse",
+    "LogEventFacetsResponse",
+    "LogEventsResponse",
     "LogExcerpt",
     "LogExcerptLevel",
     "LogExcerptSource",
+    "LogFacetCount",
     "LogQueryEvent",
     "LogQueryEventLevel",
     "LogQueryEventSource",
     "LogQueryEventStream",
+    "LogSavedSearch",
+    "LogSavedSearchesResponse",
+    "LogSavedSearchRequest",
     "MagicLinkSignupRequest",
     "ManagedExecutionWorkflowArtifactInput",
     "ManagedExecutionWorkflowResponse",
@@ -11265,6 +11322,7 @@ __all__ = (
     "ScopedRouteBudgetReportBudgetSource",
     "SealScenarioObjectsRequest",
     "SealScenarioPostgresRequest",
+    "SearchAppLogEventsSource",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
     "SecretFile",

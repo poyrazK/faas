@@ -171,17 +171,10 @@ func baseGenerationCheckCommand(args []string, stdout, stderr io.Writer) int {
 }
 
 func runBaseGenerationCheck(pid int, environPath, candidateEnvFile string, timeout time.Duration) (baseGenerationReport, error) {
-	if environPath == "" {
-		if pid <= 0 {
-			return baseGenerationReport{}, fmt.Errorf("--serving-pid or --serving-environ is required")
-		}
-		environPath = filepath.Join("/proc", strconv.Itoa(pid), "environ")
-	}
-	raw, err := os.ReadFile(environPath) //nolint:forbidigo // operator-supplied process environment
+	servingEnv, err := readServingEnviron(pid, environPath)
 	if err != nil {
-		return baseGenerationReport{}, fmt.Errorf("read serving environment: %w", err)
+		return baseGenerationReport{}, err
 	}
-	servingEnv := parseEnviron(raw)
 	candidateFile, err := os.ReadFile(candidateEnvFile) //nolint:forbidigo // operator-supplied release env file
 	if err != nil {
 		return baseGenerationReport{}, fmt.Errorf("read candidate runtime bases: %w", err)
@@ -215,6 +208,22 @@ func runBaseGenerationCheck(pid int, environPath, candidateEnvFile string, timeo
 		generation, ok, err := cache.CachedGeneration(cacheKey)
 		return generation, ok, true, err
 	})
+}
+
+// readServingEnviron reads a vmmd process's environment: environPath when
+// set, else /proc/<pid>/environ.
+func readServingEnviron(pid int, environPath string) (map[string]string, error) {
+	if environPath == "" {
+		if pid <= 0 {
+			return nil, fmt.Errorf("--serving-pid or --serving-environ is required")
+		}
+		environPath = filepath.Join("/proc", strconv.Itoa(pid), "environ")
+	}
+	raw, err := os.ReadFile(environPath) //nolint:forbidigo // operator-supplied process environment
+	if err != nil {
+		return nil, fmt.Errorf("read serving environment: %w", err)
+	}
+	return parseEnviron(raw), nil
 }
 
 func mapLookup(env map[string]string) func(string) string {

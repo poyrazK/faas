@@ -36,8 +36,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 
+	"github.com/onebox-faas/faas/pkg/apid/dashboards"
+	"github.com/onebox-faas/faas/pkg/apid/incidents"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
+	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
 	"github.com/onebox-faas/faas/pkg/apid/mcpcatalog"
@@ -152,6 +155,9 @@ type server struct {
 	productControl                         product.Service
 	appEvents                              appevents.Service  // ADR-977; Host wired in newServer
 	serviceMap                             servicemap.Service // ADR-1131; Host wired in newServer
+	logSearch                              logsearch.Service  // ADR-20261018083536; Host wired in newServer
+	dashboards                             dashboards.Service // ADR-20261022173833; Host wired in newServer
+	incidents                              incidents.Service  // ADR-20261022193512; Host wired in newServer
 	// configGuardTelemetry overrides the store's request telemetry for
 	// config guards (ADR-1451); nil reads it from the store.
 	configGuardTelemetry state.ConfigGuardTelemetryStore
@@ -1527,6 +1533,9 @@ func newServerWithDeps(
 		return s.platformFlagOr(platformflags.ServiceMap, flagSubject(r, acct), s.serviceMap.Enabled)
 	}
 	s.platformFlagAdmin.Host = platformFlagAdminHost{s}
+	s.logSearch.Host = logSearchHost{s}
+	s.dashboards.Host = dashboardsHost{s}
+	s.incidents.Host = incidentsHost{s}
 	s.previews.Host = previewsHost{s}
 	s.realtime.PreviewReleased = func(r *http.Request, acct state.Account, flagKey string, legacy bool) bool {
 		return s.platformFlagOr(flagKey, flagSubject(r, acct), legacy)
@@ -2436,6 +2445,22 @@ func (s *server) handler() http.Handler {
 	// because there's no slug path.
 	mux.HandleFunc("GET /v1/apps/metrics", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getAppsMetrics)))
 	mux.HandleFunc("GET /v1/service-map", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.serviceMap.Get))) // ADR-1131
+	// ADR-20261018083536 — customer log search over the ADR-213 ledger.
+	mux.HandleFunc("GET /v1/apps/{slug}/log-events", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.logSearch.Search)))
+	mux.HandleFunc("GET /v1/apps/{slug}/log-events/facets", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.logSearch.Facets)))
+	mux.HandleFunc("GET /v1/apps/{slug}/log-searches", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.logSearch.ListSaved)))
+	mux.HandleFunc("GET /v1/dashboards", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.dashboards.List)))
+	mux.HandleFunc("POST /v1/dashboards", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboards.Create)))
+	mux.HandleFunc("GET /v1/dashboards/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.dashboards.Get)))
+	mux.HandleFunc("GET /v1/dashboards/{id}/data", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.dashboards.Data)))
+	mux.HandleFunc("PUT /v1/dashboards/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboards.Replace)))
+	mux.HandleFunc("DELETE /v1/dashboards/{id}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.dashboards.Delete)))
+	mux.HandleFunc("GET /v1/incidents", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.incidents.List)))
+	mux.HandleFunc("GET /v1/incidents/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.incidents.Get)))
+	mux.HandleFunc("POST /v1/incidents/{id}/acknowledge", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.incidents.Acknowledge)))
+	mux.HandleFunc("POST /v1/incidents/{id}/notes", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.incidents.AddNote)))
+	mux.HandleFunc("PUT /v1/apps/{slug}/log-searches/{name}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.logSearch.PutSaved)))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/log-searches/{name}", s.authLimited(s.requireScope(api.ScopesDeployWriteSurface...)(s.logSearch.DeleteSaved)))
 	// Self-serve previews (ADR 20261021080640).
 	mux.HandleFunc("GET /v1/previews", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.previews.List)))
 	mux.HandleFunc("PUT /v1/previews/{key}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.previews.Join))))
@@ -4811,6 +4836,13 @@ func (s *server) handler() http.Handler {
 	mux.Handle("GET /dashboard/apps/{slug}/changes", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderAppChangesDashboard))))
 	// ADR-20261020085706: the page approval notifications link to.
 	mux.Handle("GET /dashboard/releases/{id}/approval", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderReleaseApprovalPage))))
+	mux.Handle("GET /dashboard/apps/{slug}/log-search", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderAppLogSearchDashboard))))
+	mux.Handle("GET /dashboard/dashboards", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomDashboards))))
+	mux.Handle("GET /dashboard/dashboards/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomDashboard))))
+	mux.Handle("GET /dashboard/incidents", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderIncidents))))
+	mux.Handle("GET /dashboard/incidents/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderIncident))))
+	mux.Handle("POST /dashboard/incidents/{id}/acknowledge", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIncidentAcknowledge))))
+	mux.Handle("POST /dashboard/incidents/{id}/notes", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIncidentNote))))
 	mux.Handle("GET /dashboard/apps/{slug}/custom-metrics", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.renderCustomMetricsDashboard))))
 	mux.Handle("POST /dashboard/dev-bridges/{id}/revoke", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.revokeDevBridgeDashboard))))
 

@@ -675,7 +675,10 @@ effective normalized safety ceilings and internal millicent COGS line items;
 it still omits provider resource IDs, credentials, and connection URLs.
 
 Account deletion is fail-closed until all managed databases reach their
-provider-confirmed `deleted` tombstone. The final GDPR deletion transaction
+provider-confirmed `deleted` tombstone. A self-service deletion that a live
+database blocks returns `409 account_deletion_managed_postgres_databases` with
+the number of databases; delete them with `gregale postgres list` and
+`gregale postgres delete`, then retry. The final GDPR deletion transaction
 then removes usage, binding, and database tombstones before deleting apps and
 the account, so a stale catalog row cannot block deletion or remain after the
 account is gone. Lifecycle actions emit audit events without credentials,

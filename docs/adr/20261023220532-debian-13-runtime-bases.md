@@ -98,7 +98,9 @@ move together.
    told (image deploys) before that release.
 4. **Not decided here:** Python 3.12's own CVEs (only a move to 3.13 fixes
    them), and moving the Debian lanes to the all-critical image gate that
-   `runner-python313` uses. Both are separate decisions.
+   `runner-python313` uses. Both are separate decisions. ADR 20261024132405
+   decides the Python 3.12 part and corrects the claim: 3.13 fixes three of
+   the six, and no release fixes the other three.
 
 ## Effect on running workloads
 
@@ -133,6 +135,20 @@ move together.
 3. Release, once the n2 boot passes. New function deploys and
    shared-runtime Node apps use Debian 13.
 4. Audit `base-minimal` apps (step 3); PR moving `base-minimal`; release.
+   On a control-plane node with the storage environment loaded, run
+   `gregalectl audit base-libraries --db-env /etc/faas/compute-db.env`
+   (add `--include-superseded` to cover rollback targets). It lists every
+   live deployment that boots `base-minimal` and reports each ELF file in an
+   app or sidecar layer that needs one of the 13 dropped libraries without
+   shipping it. Exit 0 means every layer was read and none needs one; exit 1
+   lists findings and any layer it could not read. The 13 were confirmed on
+   2026-10-24: `libapt-pkg.so.6`, `libcom_err.so.2`, `libe2p.so.2`,
+   `libext2fs.so.2`, `libffi.so.8`, `libgcrypt.so.20`, `libgnutls.so.30`,
+   `libgpg-error.so.0`, `libidn2.so.0`, `libp11-kit.so.0`, `libss.so.2`,
+   `libtasn1.so.6` and `libunistring.so.2`. The check modelled the build stage
+   on `debian:12-slim` and `debian:13-slim`; its Debian 12 side matched the
+   published `base-minimal` exactly. Libraries an app opens by name at run
+   time (`dlopen`, `ctypes`) are outside the audit.
 5. The next nightly cve-check shows zero criticals on all four images; close
    the Debian 12 part of #5206.
 
