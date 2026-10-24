@@ -117,6 +117,11 @@ func TestFunctionResourcesPostgres(t *testing.T) {
 		}
 	}
 	for cycle := range 2 {
+		// fcvm admits a checkpoint hook only once no execution lease is held,
+		// and a lease is released only after its worker slot. This fake host
+		// admits it unconditionally, so wait for the previous /state lease
+		// here or the runner rightly answers "workers have not quiesced".
+		awaitBackground(t, func() bool { return host.count() == 0 })
 		control.Arm()
 		control.ArmRecovery()
 		reply := startResourceHook(cfg, functionlifetime.BeforeResourcePath, "before_checkpoint")
