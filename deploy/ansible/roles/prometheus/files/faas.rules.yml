@@ -6196,6 +6196,50 @@ groups:
           summary: "UDP peer resource limits are ending sessions"
           description: "UDP peer byte/message or transport resource limits are being reached repeatedly. Inspect client traffic and configured limits; this is distinct from an admission or forwarding failure."
 
+  - name: faas_object_storage
+    rules:
+      # ADR-20261023223000: a bucket whose inventory keeps failing becomes
+      # stale and refuses its own transfers; other buckets keep working.
+      - alert: FaasObjectStorageInventoryFailing
+        expr: |
+          sum(rate(faas_object_storage_inventory_scans_total{outcome="failed"}[15m]))
+            / clamp_min(sum(rate(faas_object_storage_inventory_scans_total[15m])), 1e-9) > 0.2
+          and sum(rate(faas_object_storage_inventory_scans_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Object storage inventory scans are failing"
+          description: "More than 20% of apid's bucket inventory scans failed over 15m. A bucket whose inventory is older than 900 s refuses its own uploads and reads until a scan succeeds."
+      - alert: FaasS3GatewayErrorRateHigh
+        expr: |
+          sum(rate(s3_gateway_ops_total{op="s3_request",code="5xx"}[10m]))
+            / clamp_min(sum(rate(s3_gateway_ops_total{op="s3_request"}[10m])), 1e-9) > 0.05
+          and sum(rate(s3_gateway_ops_total{op="s3_request"}[10m])) > 0.1
+        for: 10m
+        labels:
+          severity: warn
+          component: s3-gatewayd
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "s3-gatewayd is answering more than 5% of requests with 5xx"
+          description: "Provider failures, stale accounting or sustained SlowDown contention. Check s3-gatewayd logs by request status and the provider's status page."
+      - alert: FaasObjectStorageUsageExportStale
+        expr: time() - s3_gateway_usage_export_last_success_timestamp_seconds > 3600
+        for: 15m
+        labels:
+          severity: warn
+          component: s3-gatewayd
+          family: object_storage
+        annotations:
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasObjectStorage.md"
+          summary: "Object storage provider usage export is stale"
+          description: "s3-gatewayd has not exported provider usage for backend {{ $labels.backend }} for over an hour. With provider-report accounting, admission fails closed once reports exceed max_report_age_seconds."
+
   - name: faas-durable-entity-health
     rules:
       - alert: FaasDurableEntityHealthScanFailed

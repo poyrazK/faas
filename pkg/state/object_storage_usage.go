@@ -107,10 +107,29 @@ func boundedObjectAdd(a, b int64) int64 {
 	return a + b
 }
 
+// SummarizeObjectUsage reduces an account's usage snapshot. Fresh is false
+// when an account-wide meter input is missing or stale, or when any bucket's
+// inventory is stale. Admission checks use summarizeObjectUsage instead, which
+// confines a stale inventory to its own bucket.
 func SummarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now time.Time) api.ObjectStorageUsage {
+	u, stale := summarizeObjectUsage(s, p, now)
+	if len(stale) != 0 {
+		u.Fresh = false
+	}
+	return u
+}
+
+// summarizeObjectUsage reports the account's meters with Fresh covering only
+// account-wide inputs (policy, provider reports, gateway metering coverage),
+// and returns the live buckets whose inventory is missing or older than
+// ObjectStorageInventoryMaxAgeSeconds. A stale bucket still counts toward the
+// account totals with its conservative capacity: the larger of its last
+// observation and baseline plus grants, plus open multipart reservations.
+func summarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now time.Time) (api.ObjectStorageUsage, map[string]bool) {
 	u := api.ObjectStorageUsage{Fresh: ValidObjectStoragePolicy(p), PeriodStart: ObjectStoragePeriod(now), Authorizations: s.Authorizations}
+	stale := map[string]bool{}
 	if p.GatewaySafety() {
-		return summarizeGatewaySafety(s, p, now, u)
+		return summarizeGatewaySafety(s, p, now, u, stale)
 	}
 	required := map[string]string{}
 	for _, b := range s.Buckets {
@@ -123,8 +142,8 @@ func SummarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now 
 		u.ObservedBytes = boundedObjectAdd(u.ObservedBytes, b.ObservedBytes)
 		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, boundedObjectAdd(max(b.ObservedBytes, boundedObjectAdd(b.BaselineBytes, b.GrantedBytes)), b.MultipartBytes))
 		u.CapacityKeys = boundedObjectAdd(u.CapacityKeys, max(b.ObservedKeys, boundedObjectAdd(b.BaselineKeys, b.GrantedKeys)))
-		if b.ObservedAt.IsZero() || b.ObservedAt.After(now) || now.Sub(b.ObservedAt) > time.Duration(api.ObjectStorageInventoryMaxAgeSeconds)*time.Second {
-			u.Fresh = false
+		if objectInventoryStale(b.ObservedAt, time.Duration(api.ObjectStorageInventoryMaxAgeSeconds)*time.Second, now) {
+			stale[b.Bucket.ID] = true
 		}
 	}
 	for _, r := range s.Reports {
@@ -145,10 +164,14 @@ func SummarizeObjectUsage(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now 
 	if len(required) != 0 {
 		u.Fresh = false
 	}
-	return u
+	return u, stale
 }
 
-func summarizeGatewaySafety(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now time.Time, u api.ObjectStorageUsage) api.ObjectStorageUsage {
+func objectInventoryStale(observedAt time.Time, maxAge time.Duration, now time.Time) bool {
+	return observedAt.IsZero() || observedAt.After(now) || now.Sub(observedAt) > maxAge
+}
+
+func summarizeGatewaySafety(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, now time.Time, u api.ObjectStorageUsage, stale map[string]bool) (api.ObjectStorageUsage, map[string]bool) {
 	u.UnavailableMeters = []string{"stored_byte_hours", "cost_millicents"}
 	for _, b := range s.Buckets {
 		if b.Bucket.State == "deleted" && b.Bucket.UpdatedAt.Before(u.PeriodStart) {
@@ -168,11 +191,11 @@ func summarizeGatewaySafety(s ObjectUsageSnapshot, p api.ObjectStoragePolicy, no
 		u.CapacityBytes = boundedObjectAdd(u.CapacityBytes, boundedObjectAdd(max(b.ObservedBytes, boundedObjectAdd(b.BaselineBytes, b.GrantedBytes)), b.MultipartBytes))
 		u.CapacityKeys = boundedObjectAdd(u.CapacityKeys, max(b.ObservedKeys, boundedObjectAdd(b.BaselineKeys, b.GrantedKeys)))
 		maxAge := time.Duration(min(p.MaxReportAgeSeconds, int64(api.ObjectStorageInventoryMaxAgeSeconds))) * time.Second
-		if b.ObservedAt.IsZero() || b.ObservedAt.After(now) || now.Sub(b.ObservedAt) > maxAge {
-			u.Fresh = false
+		if objectInventoryStale(b.ObservedAt, maxAge, now) {
+			stale[b.Bucket.ID] = true
 		}
 	}
-	return u
+	return u, stale
 }
 
 // SummarizeObjectStorageBillingUsage reduces the authoritative provider
@@ -235,8 +258,10 @@ func SummarizeObjectStorageBillingUsage(s ObjectUsageSnapshot, periodStart time.
 
 func checkObjectAdmission(s ObjectUsageSnapshot, bucketID string, size, oldSize int64, exists, put bool, p api.ObjectStoragePolicy, now time.Time) (int64, int64, error) {
 	p = s.planPolicy(p)
-	u := SummarizeObjectUsage(s, p, now)
-	if !u.Fresh {
+	u, stale := summarizeObjectUsage(s, p, now)
+	// Only the target bucket's own inventory gates its admission; another
+	// bucket's stale inventory is already covered by its conservative capacity.
+	if !u.Fresh || stale[bucketID] {
 		return 0, 0, ErrObjectUsageStale
 	}
 	for _, limit := range []struct {

@@ -18,7 +18,7 @@ func checkGatewayRequest(snapshot ObjectUsageSnapshot, bucket string, at time.Ti
 		return err
 	}
 	p = snapshot.planPolicy(p)
-	u := SummarizeObjectUsage(snapshot, p, time.Now().UTC())
+	u, _ := summarizeObjectUsage(snapshot, p, time.Now().UTC())
 	if u.RequestCount >= p.MaxMonthlyRequests {
 		return &ObjectStorageLimitError{Kind: "requests", Observed: u.RequestCount, Limit: p.MaxMonthlyRequests, Cause: ErrObjectBudget}
 	}
