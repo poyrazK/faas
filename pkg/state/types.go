@@ -5648,6 +5648,12 @@ type ComputeNode struct {
 	// nil on a never-recovered node. The DB CHECK constraint
 	// (00582) rejects values outside this closed set.
 	LastRecoveryOutcome *string
+	// CPUTemplate is the Firecracker CPU template vmmd boots guests with,
+	// and CPUModel the host CPU signature (fcvm.HostCPU.Signature). vmmd
+	// writes both at registration; empty means "not reported", a vmmd from
+	// before ADR-20261024225612.
+	CPUTemplate string
+	CPUModel    string
 }
 
 // NodeLifecycle is the compute-node controller state. Constants mirror the
@@ -6812,6 +6818,12 @@ type Snapshot struct {
 	Stale                           bool
 	DeletePending                   bool
 	CreatedAt                       time.Time
+	// CPUTemplate and CPUModel are the capturing node's CPU identity
+	// (ADR-20261024225612): a templated snapshot restores on any node
+	// class the template supports, a template-less one only on the same
+	// CPUModel. Both empty identifies a legacy row.
+	CPUTemplate string
+	CPUModel    string
 }
 
 // Snapshot tier constants (issue #470 / ADR-055). Use these rather

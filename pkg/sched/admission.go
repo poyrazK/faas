@@ -316,6 +316,10 @@ type Request struct {
 	// for real snapshot restores; cold boots and deployment smokes keep their
 	// existing placement rules.
 	restorePressureAware bool
+	// restoreSnapshot, when set, narrows placement to the nodes whose CPU can
+	// restore this snapshot (ADR-20261024225612). Only snapshot restores set
+	// it; cold boots may land on any node.
+	restoreSnapshot *state.Snapshot
 	// restorePressureByNode is a point-in-time count captured atomically with
 	// restore placement reservation. It is a short-lived I/O-pressure hint, not
 	// durable capacity accounting.

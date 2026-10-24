@@ -3490,9 +3490,34 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// its own transaction; a store that cannot is bound separately below.
 	recovery := &state.SnapshotRecoveryAdmission{SnapshotID: snap.ID}
 	admitStarted := time.Now()
-	ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(withPlacementPrefetch(ctx, placementAhead), placementRequest, haveSnap && snap.StorageKey != "", func(admitCtx context.Context, p Placement) (state.Instance, error) {
+	restore := haveSnap && snap.StorageKey != ""
+	if restore {
+		// ADR-20261024225612: restore only where the CPU can carry it.
+		restoreSnap := snap
+		placementRequest.restoreSnapshot = &restoreSnap
+	}
+	createInstance := func(admitCtx context.Context, p Placement) (state.Instance, error) {
 		return e.store.CreateInstanceWithMode(state.WithSnapshotRecoveryAdmission(admitCtx, recovery), appID, dep.ID, string(initState), app.RAMMB, p.NodeID, wakeID, mode)
-	})
+	}
+	ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(withPlacementPrefetch(ctx, placementAhead), placementRequest, restore, createInstance)
+	if err != nil && restore && isCapacityProblem(err) && e.snapshotExcludesNodes(ctx, snap) {
+		// Every node that can restore this snapshot is full, but a node it
+		// cannot restore on may have room: cold boot there (ADR-005).
+		e.log.Info("wake: no CPU-compatible node has room for the snapshot; cold booting",
+			"app_id", appID, "deployment_id", dep.ID, "snapshot_id", snap.ID,
+			"snapshot_cpu_template", snap.CPUTemplate, "snapshot_cpu_model", snap.CPUModel, "err", err)
+		snap, haveSnap = state.Snapshot{}, false
+		initState = state.StateColdBooting
+		coldReason = ColdReasonCPUIncompatible
+		recovery = &state.SnapshotRecoveryAdmission{}
+		placementRequest.restoreSnapshot = nil
+		if e.ops != nil {
+			if c := e.ops.WakeColdReason(coldReason); c != nil {
+				c.Inc()
+			}
+		}
+		ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(ctx, placementRequest, false, createInstance)
+	}
 	if err != nil {
 		release()
 		if errors.Is(err, state.ErrAccountWorkerCapacity) {
@@ -4920,10 +4945,16 @@ func (s placementSnapshot) choose(r Request) (Placement, error) {
 }
 
 func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placementSnapshot, error) {
-	if snapshot, err, ok := prefetchedPlacement(ctx, r); ok {
+	snapshot, err, ok := prefetchedPlacement(ctx, r)
+	if !ok {
+		snapshot, err = e.loadPlacementSnapshotFresh(ctx, r)
+	}
+	if err != nil {
 		return snapshot, err
 	}
-	return e.loadPlacementSnapshotFresh(ctx, r)
+	// ADR-20261024225612: a restore may only land on a node whose CPU can
+	// carry the snapshot's recorded CPU state, prefetched or not.
+	return snapshot.restorableFor(r), nil
 }
 
 func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (placementSnapshot, error) {
@@ -8917,7 +8948,7 @@ var ColdReasons = []string{
 	ColdReasonNoSnapshot, ColdReasonSnapshotsStale, ColdReasonLookupFailed,
 	ColdReasonFCVersion, ColdReasonNoDrive, ColdReasonRAM, ColdReasonBaseImage,
 	ColdReasonStale, ColdReasonInstanceMode, ColdReasonEphemeralSecret,
-	ColdReasonSecretPolicyUnavailable,
+	ColdReasonSecretPolicyUnavailable, ColdReasonCPUIncompatible,
 }
 
 // snapshotRejection returns why snap cannot be restored for this wake, or ""
@@ -8937,6 +8968,10 @@ func (e *Engine) snapshotRejectionFor(ctx context.Context, snap state.Snapshot, 
 		return ColdReasonStale
 	case snap.FCVersion != e.fcVer:
 		return ColdReasonFCVersion
+	case !e.snapshotRestorableSomewhere(ctx, snap):
+		// ADR-20261024225612: no active node's CPU can carry the CPU state
+		// this snapshot recorded. The row stays: a compatible node may join.
+		return ColdReasonCPUIncompatible
 	case state.SnapshotDriveKey(snap) == "":
 		// A legacy capture without its writable drive can never be
 		// restored, yet as the live row of its tier it holds the
@@ -10163,6 +10198,12 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, sourceInstanceID strin
 		"fc_version":         e.fcVer,
 		"base_image_version": fcvm.FAAS_BASE_IMAGE_VERSION,
 		"tier":               tier,
+	}
+	// ADR-20261024225612: the snapshot carries the capturing node's CPU
+	// identity so a later wake restores it only where that CPU state runs.
+	if cpuTemplate, cpuModel := e.nodeCPUIdentity(ctx, nodeID); cpuTemplate != "" || cpuModel != "" {
+		fields["cpu_template"] = cpuTemplate
+		fields["cpu_model"] = cpuModel
 	}
 	if promotion != nil {
 		fields["warm_min_requests"] = promotion.MinRequests
