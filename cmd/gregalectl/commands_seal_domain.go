@@ -362,7 +362,7 @@ func runRuntimeBindingPass(dsn, dbEnv, dir, fleetKey, hostKey string, jsonOut bo
 		PrintOK(osStdout, "Runtime secrets bound to their accounts: %d scanned, %d re-sealed, %d current, %d changed concurrently, %d bound to another account, %d failed\n",
 			report.Scanned, report.Resealed, report.Current, report.Changed, report.Mismatched, report.Failed)
 		for _, cursor := range report.MismatchedDocuments {
-			fmt.Fprintf(osStdout, "  bound to another account: %s\n", cursor)
+			_, _ = fmt.Fprintf(osStdout, "  bound to another account: %s\n", cursor)
 		}
 	}
 	if report.Mismatched > 0 {
