@@ -90,11 +90,12 @@ Point 4 changes what an existing `FAAS_ADMIN_TOKEN` reaches. The release that
 enforces it must not break operator tooling on a flag day, and apid N runs
 beside apid N-1 during a deploy.
 
-- **gregalectl.** The `gregalectl obs` commands prefer the operator session
-  (`gregalectl auth login`, or `FAAS_OPERATOR_SESSION` /
-  `FAAS_OPERATOR_SESSION_FILE`) and fall back to `--admin-token`. That change
-  ships separately. An older gregalectl still works against apid N for the
-  bearer-readable routes.
+- **gregalectl.** Since #5242 the `gregalectl obs` commands use an explicit
+  `--admin-token`, then the operator session (`gregalectl auth login`, or
+  `FAAS_OPERATOR_SESSION` / `FAAS_OPERATOR_SESSION_FILE`), then
+  `$FAAS_ADMIN_TOKEN` (`cmd/gregalectl/obs_credential.go`). A logged-in
+  operator reads customer data without changes. An older gregalectl still
+  works against apid N for the bearer-readable routes.
 - **Grace switch.** apid reads `FAAS_OPERATOR_BEARER_READS`. Unset or `deny`
   (the default) enforces the session-only tier. `deprecated` lets an
   operator key through a session-only read and marks the response with
@@ -126,5 +127,6 @@ beside apid N-1 during a deploy.
   needs the grace switch or a session until it is changed.
 - An operator who disables MFA loses operator reads until they enroll again.
 - Operator mutations are unchanged.
-- In-repo bearer clients of the session-only routes are the gregalectl obs
-  commands and the ADR-093 script. The Operations console uses a session.
+- In-repo bearer clients of the session-only routes are the ADR-093 script
+  and `gregalectl obs` run with `--admin-token` or without a session. The
+  Operations console uses a session.

@@ -342,7 +342,9 @@ Every `gregalectl obs` read authenticates with, in order: an explicit
 `--admin-token`, the MFA-completed session from `gregalectl auth login`, then
 `$FAAS_ADMIN_TOKEN`. A logged-in operator therefore reads with MFA even with
 `FAAS_ADMIN_TOKEN` exported; automation without a session keeps using the
-token. `obs incidents --ownership mine` always needs the session.
+token. `obs incidents --ownership mine` always needs the session. A token
+reads only the fleet-telemetry routes; reads of customer data need the
+session (see [Operator authentication](#operator-authentication)).
 
 Run `gregalectl obs health` to inspect each audit counter and the firing-alert
 count independently. A `healthy` zero is observed zero activity. `no_samples`,
