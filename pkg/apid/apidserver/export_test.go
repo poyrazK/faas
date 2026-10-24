@@ -1680,3 +1680,15 @@ func (s *server) PrepareGitOpsWorkloadCandidatesForTest(ctx context.Context, int
 	b := &environmentGitOpsBackend{server: s, intent: intent}
 	return b.prepareWorkloadCandidates(ctx, lease, plan)
 }
+
+// DashboardWidgetAppForTest resolves a dashboard widget's app as the
+// dashboards host does (ADR-20261022173833).
+func (s *server) DashboardWidgetAppForTest(ctx context.Context, acct state.Account, slug string) (state.App, bool) {
+	return dashboardsHost{s}.AppForAccount(ctx, acct, slug)
+}
+
+// IncidentAppVisibleForTest reports whether the incidents host serves an
+// app's incidents (ADR-20261022193512).
+func (s *server) IncidentAppVisibleForTest(ctx context.Context, acct state.Account, app state.App) bool {
+	return incidentsHost{s}.AppVisible(ctx, acct, app)
+}

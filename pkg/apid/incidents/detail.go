@@ -73,13 +73,21 @@ func (s *Service) find(ctx context.Context, acct state.Account, id string) (foun
 		if err != nil {
 			return found{}, err
 		}
-		return found{incident: alertIncident(ep, s.slugger(ctx, state.App{})(ep.AppID)), appID: ep.AppID, episode: ep}, nil
+		slug, visible := s.apps(ctx, acct, state.App{})(ep.AppID)
+		if !visible {
+			return found{}, state.ErrNotFound
+		}
+		return found{incident: alertIncident(ep, slug), appID: ep.AppID, episode: ep}, nil
 	case routePrefix:
 		rm, err := store.RouteMonitorIncidentSummaryByID(ctx, acct.ID, key)
 		if err != nil {
 			return found{}, err
 		}
-		return found{incident: routeIncident(rm, s.slugger(ctx, state.App{})(rm.AppID)), appID: rm.AppID}, nil
+		slug, visible := s.apps(ctx, acct, state.App{})(rm.AppID)
+		if !visible {
+			return found{}, state.ErrNotFound
+		}
+		return found{incident: routeIncident(rm, slug), appID: rm.AppID}, nil
 	case platformPrefix:
 		if _, err := uuid.Parse(key); err != nil {
 			return found{}, state.ErrNotFound

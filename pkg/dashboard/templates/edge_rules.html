@@ -58,6 +58,7 @@
     {{if eq .Data.Action "deleted"}}<div class="flash ok" role="status">Edge rule deleted.</div>{{end}}
     {{if eq .Data.Action "security_headers_enabled"}}<div class="flash ok" role="status">Security headers preset is enabled.</div>{{end}}
     {{if eq .Data.Action "mode_enforce"}}<div class="flash ok" role="status">Rule is now enforced.</div>{{end}}
+    {{if eq .Data.Action "waf_excluded"}}<div class="flash ok" role="status">CRS rule excluded. It no longer counts toward that WAF rule's score.</div>{{end}}
     {{if eq .Data.Action "mode_log"}}<div class="flash ok" role="status">Rule is now in log mode: it is matched and counted but never acts.</div>{{end}}
     {{if eq .Data.Action "recipe_log"}}<div class="flash ok" role="status">Recipe added in log mode. Watch its matches in the rules table, then choose Start enforcing.</div>{{end}}
     {{if eq .Data.Action "recipe_enforce"}}<div class="flash ok" role="status">Recipe added and enforced.</div>{{end}}
@@ -348,6 +349,33 @@
         </tbody>
       </table>
     {{else}}<p class="muted">No edge rules yet.</p>{{end}}
+
+    {{if .Data.WAFReview.Show}}
+    <section class="card" id="waf-review" aria-labelledby="waf-review-heading">
+      <h2 id="waf-review-heading">WAF review</h2>
+      <p class="muted">WAF detections grouped by CRS rule and path. Many unrelated clients flagged on one path usually means legitimate traffic; clients flagged across many paths are usually scanning. Excluding a CRS rule stops it counting on that WAF rule only. Detections are sampled, so counts are lower bounds.</p>
+      {{if .Data.WAFReview.ErrorMessage}}<div class="flash error" role="alert">{{.Data.WAFReview.ErrorMessage}}</div>
+      {{else if .Data.WAFReview.Groups}}
+        <table aria-label="WAF review">
+          <thead><tr><th>Assessment</th><th>CRS rule</th><th>Path</th><th>Detections</th><th>Clients</th><th>WAF rule</th><th>Manage</th></tr></thead>
+          <tbody>
+            {{range .Data.WAFReview.Groups}}
+              <tr>
+                <td><strong>{{.AssessmentLabel}}</strong><br><small class="muted">{{.Reason}}</small></td>
+                <td><code>{{.CRSRuleID}}</code><br><small class="muted">{{.Category}}</small></td>
+                <td><code>{{.Path}}</code>{{if .ExampleRequestID}}<br><a href="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules?rule={{.RuleID}}&amp;since=7d#security-events">examples</a>{{end}}</td>
+                <td>{{.Events}}</td>
+                <td>{{.Clients}}</td>
+                <td>{{.RuleLabel}}{{if .RuleMode}} <span class="muted">({{.RuleMode}})</span>{{end}}</td>
+                <td class="actions nowrap">{{if not .Excluded}}<form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-rules/{{.RuleID}}/waf-exclusions"><input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}"><input type="hidden" name="crs_rule_id" value="{{.CRSRuleID}}"><button type="submit">Exclude {{.CRSRuleID}}</button></form>{{end}}</td>
+              </tr>
+            {{end}}
+          </tbody>
+        </table>
+        <p class="muted">{{.Data.WAFReview.Scanned}} detections since {{.Data.WAFReview.SinceLabel}}.{{if .Data.WAFReview.Truncated}} More than one review reads: the oldest were left out.{{end}}</p>
+      {{else}}<p class="muted">No WAF detections since {{.Data.WAFReview.SinceLabel}}.</p>{{end}}
+    </section>
+    {{end}}
 
     <section class="card" id="security-events" aria-labelledby="security-events-heading">
       <h2 id="security-events-heading">Security events</h2>

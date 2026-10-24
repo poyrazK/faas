@@ -4013,6 +4013,24 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "events per page (1..200)", Value: "N"},
 				{Name: "cursor", Short: "continue from a previous page's next cursor", Value: "CURSOR"},
 			}},
+			{Name: "waf-review", Short: "Group WAF detections by rule and path to find false positives", Notes: []string{
+				"Each group is assessed: likely_false_positive (a documented false positive, or many clients flagged on one path), likely_attack (clients flagged on many paths), excluded or review.",
+				"Detections are sampled, so counts are lower bounds.",
+			}, Examples: []string{
+				"gregale edge-rules waf-review --app my-api",
+				"gregale edge-rules waf-review --app my-api --rule RULE_ID --since 24h",
+			}, Flags: []cliFlag{
+				{Name: "app", Short: "app slug (defaults to linked project context)", Value: "slug"},
+				{Name: "rule", Short: "only this kind=waf rule id", Value: "ID"},
+				{Name: "since", Short: "how far back, e.g. 24h or 7d (default 7d, clamped to the plan window)", Value: "DURATION"},
+			}},
+			{Name: "waf-exclude", Short: "Add or remove CRS rule IDs on a kind=waf rule's exclusions", Notes: []string{"Keeps the rest of the rule's WAF action and its penalty."}, Positionals: []string{"<rule-id>"}, Examples: []string{
+				"gregale edge-rules waf-exclude RULE_ID --add 942190",
+				"gregale edge-rules waf-exclude RULE_ID --remove 942100",
+			}, Flags: []cliFlag{
+				{Name: "add", Short: "CRS rule IDs to exclude, comma-separated", Value: "IDS"},
+				{Name: "remove", Short: "CRS rule IDs to stop excluding, comma-separated", Value: "IDS"},
+			}},
 			{Name: "rollback", Short: "Restore an app's edge rules to a recorded version", Notes: []string{"The restore is recorded as a new version."}, Examples: []string{
 				"gregale edge-rules rollback --app my-api --to 12",
 			}, Flags: []cliFlag{

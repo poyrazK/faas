@@ -247,8 +247,13 @@ type Metrics struct {
 	aiCrawlerRequests     *prometheus.CounterVec
 	edgePenalty           *prometheus.CounterVec
 	edgeChallengeRaised   *prometheus.CounterVec
-	wafInspectionSeconds  prometheus.Histogram
-	preAuthPolicyShadow   *prometheus.CounterVec
+	// ADR-20261024082000 amendment 1: penalty box sharing and attack mode.
+	edgePenaltyShare        *prometheus.CounterVec
+	edgePenaltyShareDropped prometheus.Counter
+	edgePenaltyShareSeconds *prometheus.HistogramVec
+	edgeAttackMode          *prometheus.CounterVec
+	wafInspectionSeconds    prometheus.Histogram
+	preAuthPolicyShadow     *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
 	// process-local fallback. The closed scope label keeps cardinality fixed;
 	// warning logs and audit events are separately cooled down by Handler.
@@ -1414,6 +1419,23 @@ func NewMetrics() *Metrics {
 			Name: "gateway_edge_challenge_raised_total",
 			Help: "kind=challenge pages served at a difficulty raised under attack (ADR-831 amendment 8), by app; a subset of gateway_edge_challenge_total{outcome=\"issued\"}.",
 		}, []string{"app"}),
+		edgePenaltyShare: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_penalty_share_total",
+			Help: "Penalty box sharing through Postgres (ADR-20261022105846 amendment 1), by op (flush: write this gateway's boxes; sync: read every gateway's; prune) and outcome (ok|error). A failed flush leaves its boxes on this gateway only.",
+		}, []string{"op", "outcome"}),
+		edgePenaltyShareDropped: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gateway_edge_penalty_share_dropped_total",
+			Help: "Penalty boxes not shared because the flush queue was full (ADR-20261022105846 amendment 1); they hold on this gateway only.",
+		}),
+		edgePenaltyShareSeconds: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "gateway_edge_penalty_share_seconds",
+			Help:    "How long a penalty box takes to reach the other gateways (ADR-20261024082000 criterion P2), by stage: queued (made here until written to Postgres) and propagated (written until read by this gateway, on the database clock). The two add up to the time a box takes to hold everywhere.",
+			Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 15, 30},
+		}, []string{"stage"}),
+		edgeAttackMode: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_attack_mode_total",
+			Help: "Requests an app's attack mode decided (ADR-20261021220456), by app and outcome: issued (challenge page served), passed (valid pass), bypassed (verified credential), rejected (403 challenge_required to a non-browser request). A subset of gateway_edge_challenge_total.",
+		}, []string{"app", "outcome"}),
 		wafInlineSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_waf_inline_seconds",
 			Help:    "Time to check one request's headers and URI in-path for a kind=waf warn or block rule, including any wait for a check slot (ADR-831 amendment 12); added to that request's latency.",
@@ -2108,7 +2130,8 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
-	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSkips, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgePenalty, m.aiCrawlerRequests)
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSkips, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgePenalty, m.aiCrawlerRequests,
+		m.edgePenaltyShare, m.edgePenaltyShareDropped, m.edgePenaltyShareSeconds, m.edgeAttackMode)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
 	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
@@ -2745,6 +2768,48 @@ func (m *Metrics) ObserveEdgePenalty(appID, outcome string) {
 		return
 	}
 	m.edgePenalty.WithLabelValues(appID, outcome).Inc()
+}
+
+// Penalty box sharing stages for ObservePenaltyShareDelay.
+const (
+	PenaltyShareQueued     = "queued"
+	PenaltySharePropagated = "propagated"
+)
+
+// ObservePenaltyShare counts one penalty box sharing operation.
+func (m *Metrics) ObservePenaltyShare(op string, err error) {
+	if m == nil || m.edgePenaltyShare == nil {
+		return
+	}
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
+	}
+	m.edgePenaltyShare.WithLabelValues(op, outcome).Inc()
+}
+
+// AddPenaltyShareDropped counts boxes left unshared at the queue bound.
+func (m *Metrics) AddPenaltyShareDropped(n int64) {
+	if m == nil || m.edgePenaltyShareDropped == nil || n <= 0 {
+		return
+	}
+	m.edgePenaltyShareDropped.Add(float64(n))
+}
+
+// ObservePenaltyShareDelay records one box's delay at a sharing stage.
+func (m *Metrics) ObservePenaltyShareDelay(stage string, d time.Duration) {
+	if m == nil || m.edgePenaltyShareSeconds == nil {
+		return
+	}
+	m.edgePenaltyShareSeconds.WithLabelValues(stage).Observe(max(d, 0).Seconds())
+}
+
+// ObserveEdgeAttackMode counts one request an app's attack mode decided.
+func (m *Metrics) ObserveEdgeAttackMode(appID, outcome string) {
+	if m == nil || m.edgeAttackMode == nil {
+		return
+	}
+	m.edgeAttackMode.WithLabelValues(appID, outcome).Inc()
 }
 
 // ObserveEdgeChallenge counts one kind=challenge decision.

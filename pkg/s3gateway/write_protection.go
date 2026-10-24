@@ -73,6 +73,14 @@ func writeProtectionFromHeaders(r *http.Request, signed string) (api.ObjectWrite
 }
 func (h *Handler) captureWriteProtection(w http.ResponseWriter, r *http.Request, req *requestContext) bool {
 	selection, err := writeProtectionFromHeaders(r, req.signature.SignedHeader)
+	// Retention or a legal hold chosen at upload is the same authority as
+	// PUT ?retention: a write-only or compute-binding key may upload, not
+	// make an object undeletable. A Gregale signed URL carries protection
+	// apid already authorized.
+	if err == nil && !selection.Empty() && req.credential.URL == nil && !h.can(req.credential, bucketSettingsPermission) {
+		writeS3Error(w, http.StatusForbidden, "AccessDenied", "Access Denied.", r.URL.Path, req.requestID)
+		return false
+	}
 	if err == nil && !selection.Empty() && req.credential.URL == nil && (!req.objectLockConfig.Enabled || !objectstorage.SupportsNativeObjectLock(req.provider)) {
 		err = objectstorage.ErrUnsupported
 	}
