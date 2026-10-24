@@ -4620,8 +4620,8 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 	// guest, so the mount is also nodev,nosuid,noexec: a device node the
 	// build created (the host's NVMe, /dev/zero) must not become a live
 	// device when vmmd, as root, reads the export.
-	if out, mountErr := exec.Command("mount", "-o", "loop,ro,noload,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); mountErr != nil {
-		if roOut, roErr := exec.Command("mount", "-o", "loop,ro,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); roErr != nil {
+	if out, mountErr := exec.Command("mount", guestDiskMountArgs("ro,noload", drive1, mp)...).CombinedOutput(); mountErr != nil {
+		if roOut, roErr := exec.Command("mount", guestDiskMountArgs("ro", drive1, mp)...).CombinedOutput(); roErr != nil {
 			return fmt.Errorf("mount loop: ro,noload=%w (%s); ro=%w (%s)", mountErr, bytes.TrimSpace(out), roErr, bytes.TrimSpace(roOut))
 		}
 	}
