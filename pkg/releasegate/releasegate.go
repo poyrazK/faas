@@ -1,5 +1,6 @@
 // Package releasegate judges an app's release gates (ADR-20261019071734):
-// SLO burn, new error groups and custom metric bounds. It is pure, so meterd's
+// SLO burn, new error groups, custom metric bounds and AI call regressions
+// (ADR 20261022153155). It is pure, so meterd's
 // canary circuit breaker and apid's post-release watch judge gates the same
 // way from evidence they collect themselves.
 package releasegate
@@ -18,7 +19,24 @@ const (
 	KindSLO          = "slo"
 	KindNewErrors    = "new_errors"
 	KindCustomMetric = "custom_metric"
+	KindAI           = "ai"
 )
+
+// AI gate metrics (ADR 20261022153155).
+const (
+	AIMetricErrorRate   = "error_rate"
+	AIMetricFlaggedRate = "flagged_rate"
+	AIMetricCostPerCall = "cost_per_call"
+	AIMetricTTFB        = "ttfb_ms"
+)
+
+// AIMetrics lists the AI gate metrics.
+var AIMetrics = []string{AIMetricErrorRate, AIMetricFlaggedRate, AIMetricCostPerCall, AIMetricTTFB}
+
+// aiFloors is how far above its baseline a release's AI metric must also
+// be to fail, so a near-zero baseline does not fail on noise: a percentage
+// point for the rates, 50 ms, and one millicent per call.
+var aiFloors = map[string]float64{AIMetricErrorRate: 0.01, AIMetricFlaggedRate: 0.01, AIMetricCostPerCall: 1, AIMetricTTFB: 50}
 
 // Gate is one release gate with the parameters its kind uses.
 type Gate struct {
@@ -32,12 +50,13 @@ type Gate struct {
 	// New-error gates.
 	MaxNewGroups int
 	MinEvents    int
-	// Custom metric gates.
+	// Custom metric gates. An AI gate uses MetricName for its AI metric and
+	// Threshold for the largest increase over the baseline, in percent.
 	MetricName string
 	Comparison string
 	Threshold  float64
-	// MinSamples is the requests (SLO) or metric values (custom metric) the
-	// release needs before the gate is judged.
+	// MinSamples is the requests (SLO), metric values (custom metric) or
+	// AI calls (AI, on each side) needed before the gate is judged.
 	MinSamples int
 }
 
@@ -68,13 +87,47 @@ type MetricWindow struct {
 	Average float64
 }
 
-// Evidence is what one gate measured for the release and, for SLO gates,
-// the baseline. Unavailable means the evidence could not be read.
+// AIWindow is one side's AI calls over a window (ADR 20261022153155).
+type AIWindow struct {
+	Calls          int64
+	ErrorCalls     int64
+	FlaggedCalls   int64
+	CostMillicents int64
+	TTFBCalls      int64
+	TTFBMSTotal    int64
+}
+
+// value returns an AI metric and the calls it is taken over: all calls, or
+// those with a first byte for time to first byte.
+func (w AIWindow) value(metric string) (float64, int64, bool) {
+	per := func(n, calls int64) float64 {
+		if calls <= 0 {
+			return 0
+		}
+		return float64(n) / float64(calls)
+	}
+	switch metric {
+	case AIMetricErrorRate:
+		return per(w.ErrorCalls, w.Calls), w.Calls, true
+	case AIMetricFlaggedRate:
+		return per(w.FlaggedCalls, w.Calls), w.Calls, true
+	case AIMetricCostPerCall:
+		return per(w.CostMillicents, w.Calls), w.Calls, true
+	case AIMetricTTFB:
+		return per(w.TTFBMSTotal, w.TTFBCalls), w.TTFBCalls, true
+	}
+	return 0, 0, false
+}
+
+// Evidence is what one gate measured for the release and, for SLO and AI
+// gates, the baseline. Unavailable means the evidence could not be read.
 type Evidence struct {
 	Release     SLISample
 	Baseline    SLISample
 	NewGroups   []ErrorGroup
 	Metric      MetricWindow
+	AIRelease   AIWindow
+	AIBaseline  AIWindow
 	Unavailable bool
 }
 
@@ -174,10 +227,43 @@ func judgeOne(g Gate, ev Evidence) (api.ReleaseGateResult, bool) {
 			return r, false
 		}
 		r.Summary = fmt.Sprintf("%s averaged %g over %d values (fails %s %g)", g.MetricName, round(ev.Metric.Average), ev.Metric.Samples, g.Comparison, g.Threshold)
+	case KindAI:
+		return judgeAI(g, ev)
 	default:
 		return r, false
 	}
 	return r, true
+}
+
+// judgeAI fails a release whose AI metric is more than Threshold percent,
+// and more than the metric's floor, above its baseline's. Without enough
+// calls on both sides it is not judged.
+func judgeAI(g Gate, ev Evidence) (api.ReleaseGateResult, bool) {
+	r := api.ReleaseGateResult{Name: g.Name, Kind: g.Kind}
+	release, releaseCalls, ok := ev.AIRelease.value(g.MetricName)
+	baseline, baselineCalls, _ := ev.AIBaseline.value(g.MetricName)
+	minSamples := int64(max(g.MinSamples, 1))
+	if !ok || releaseCalls < minSamples || baselineCalls < minSamples || g.Threshold <= 0 || math.IsNaN(g.Threshold) || math.IsInf(g.Threshold, 0) {
+		return r, false
+	}
+	bound := max(baseline*(1+g.Threshold/100), baseline+aiFloors[g.MetricName])
+	r.Observed, r.Bound, r.Samples = round(release), round(bound), releaseCalls
+	r.Passed = release <= bound
+	r.Summary = fmt.Sprintf("%s %s over %d calls vs %s before (fails above %s, +%g%%)", g.MetricName, aiValue(g.MetricName, release),
+		releaseCalls, aiValue(g.MetricName, baseline), aiValue(g.MetricName, bound), g.Threshold)
+	return r, true
+}
+
+// aiValue formats an AI metric: rates as percentages, time to first byte
+// in milliseconds and cost per call in dollars.
+func aiValue(metric string, v float64) string {
+	switch metric {
+	case AIMetricErrorRate, AIMetricFlaggedRate:
+		return fmt.Sprintf("%.2f%%", v*100)
+	case AIMetricTTFB:
+		return fmt.Sprintf("%.0f ms", v)
+	}
+	return fmt.Sprintf("$%.5f", v/100_000)
 }
 
 // round keeps decisions readable and JSON-stable.

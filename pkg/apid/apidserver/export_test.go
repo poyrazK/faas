@@ -64,6 +64,8 @@ import (
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
 
+var BuildDebugRequestCorrelation = buildDebugRequestCorrelation
+
 // Package-level types
 type AffectedPartition = affectedPartition
 type AnnotationForm = annotationForm
@@ -272,6 +274,12 @@ var ObsSealedBlobMarkers = &obsSealedBlobMarkers
 var OutboundCredentialRecipient = &outboundCredentialRecipient
 var OutboundDomainRecipient = &outboundDomainRecipient
 var OutboundWriteMode = &outboundWriteMode
+var RuntimeDomainRecipient = &runtimeDomainRecipient
+var RuntimeWriteMode = &runtimeWriteMode
+var RuntimeSecretRecipient = runtimeSecretRecipient
+var RuntimeSealDomainBlocksRekey = runtimeSealDomainBlocksRekey
+var RuntimeSecretsBound = &runtimeSecretsBound
+var LoadRuntimeSecretBinding = loadRuntimeSecretBinding
 var PgBackupStateRoot = &pgBackupStateRoot
 var PlanCache = &planCache
 var PlanCacheRoot = &planCacheRoot
@@ -280,6 +288,11 @@ var PlanCacheRootOnce = &planCacheRootOnce
 var PlanSourceCache = &planSourceCache
 var RouteProbeChallengeDelay = &routeProbeChallengeDelay
 var SetSecretRecipient = &setSecretRecipient
+var SourceDomainRecipient = &sourceDomainRecipient
+var HostHMACKeyBytes = hostHMACKeyBytes
+var BuildDomainRecipient = &buildDomainRecipient
+var BuildWriteMode = &buildWriteMode
+var SourceWriteMode = &sourceWriteMode
 var SseChannels = &sseChannels
 var TimeNow = &timeNow
 var TxtLookupFunc = &txtLookupFunc
@@ -1120,7 +1133,9 @@ func (r *server) GitOpsPreviewArchiveForTest(t *testing.T, definition, resolvedS
 	r.githubd = &environmentGitOpsClient{repositories: []Repo{{ID: 123, FullName: "example/shop"}},
 		archive: environmentGitOpsArchiveDefinition(t, definition), resolvedSHA: resolvedSHA}
 }
-func (r *server) Idempotent(p0 accountHandler) accountHandler { return r.idempotent(p0) }
+func (r *server) Idempotent(p0 accountHandler) accountHandler       { return r.idempotent(p0) }
+func (r *server) IdempotentDeploy(p0 accountHandler) accountHandler { return r.idempotentDeploy(p0) }
+func (r *server) IdempotentIntent(p0 accountHandler) accountHandler { return r.idempotentIntent(p0) }
 func (r *server) ImagedMetricsDiscovery(p0 http.ResponseWriter, p1 *http.Request) {
 	r.imagedMetricsDiscovery(p0, p1)
 }
@@ -1576,6 +1591,9 @@ func (s *server) ConfigureLiveQueriesForTest(getenv func(string) string) error {
 func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error) {
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
+
+// GatewayControlURL exposes gatewayControlURL (ADR-20261022004500).
+func (s *server) GatewayControlURL(ctx context.Context) string { return s.gatewayControlURL(ctx) }
 
 // ApplyManifestPathRoutesForTest reconciles manifest routes on app
 // (ADR-20261021223225). rollback undoes the changes it recorded.

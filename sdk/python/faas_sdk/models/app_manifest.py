@@ -56,6 +56,7 @@ if TYPE_CHECKING:
     from ..models.before_checkpoint_hook import BeforeCheckpointHook
     from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
     from ..models.profiling_config import ProfilingConfig
+    from ..models.secret_file import SecretFile
     from ..models.service_replicas import ServiceReplicas
     from ..models.tracing_config import TracingConfig
     from ..models.worker_scaling import WorkerScaling
@@ -86,6 +87,8 @@ class AppManifest:
     """Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database,
     cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own
     OTel exporter are left untouched."""
+    profiling_on_demand: bool | Unset = UNSET
+    """Dormant on-demand profile collectors stamped by imaged (ADR-1155)."""
     env: AppManifestEnv | Unset = UNSET
     env_secrets: AppManifestEnvSecrets | Unset = UNSET
     """Env override via sealed-secret refs. Each value is "secret:NAME"; the host resolver looks up NAME against
@@ -120,6 +123,9 @@ class AppManifest:
     secret_reload_readiness: bool | Unset = False
     """Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal.
     Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506)."""
+    secret_files: list[SecretFile] | Unset = UNSET
+    """App secrets guest-init writes to /run/secrets for the main workload (ADR-20261023090000). Set from the app's
+    Compose service secrets."""
     stop_grace_period: None | str | Unset = UNSET
     """OCI StopGracePeriod as a Go duration string (e.g. "30s"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s)
     enforced by Validate() — ADR-138 §Decision 4."""
@@ -210,6 +216,8 @@ class AppManifest:
         if not isinstance(self.tracing, Unset):
             tracing = self.tracing.to_dict()
 
+        profiling_on_demand = self.profiling_on_demand
+
         env: dict[str, Any] | Unset = UNSET
         if not isinstance(self.env, Unset):
             env = self.env.to_dict()
@@ -276,6 +284,13 @@ class AppManifest:
             secret_reload_signal = self.secret_reload_signal
 
         secret_reload_readiness = self.secret_reload_readiness
+
+        secret_files: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.secret_files, Unset):
+            secret_files = []
+            for secret_files_item_data in self.secret_files:
+                secret_files_item = secret_files_item_data.to_dict()
+                secret_files.append(secret_files_item)
 
         stop_grace_period: None | str | Unset
         if isinstance(self.stop_grace_period, Unset):
@@ -404,6 +419,8 @@ class AppManifest:
             field_dict["profiling"] = profiling
         if tracing is not UNSET:
             field_dict["tracing"] = tracing
+        if profiling_on_demand is not UNSET:
+            field_dict["profiling_on_demand"] = profiling_on_demand
         if env is not UNSET:
             field_dict["env"] = env
         if env_secrets is not UNSET:
@@ -428,6 +445,8 @@ class AppManifest:
             field_dict["secret_reload_signal"] = secret_reload_signal
         if secret_reload_readiness is not UNSET:
             field_dict["secret_reload_readiness"] = secret_reload_readiness
+        if secret_files is not UNSET:
+            field_dict["secret_files"] = secret_files
         if stop_grace_period is not UNSET:
             field_dict["stop_grace_period"] = stop_grace_period
         if execution_mode is not UNSET:
@@ -490,6 +509,7 @@ class AppManifest:
         from ..models.before_checkpoint_hook import BeforeCheckpointHook
         from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
         from ..models.profiling_config import ProfilingConfig
+        from ..models.secret_file import SecretFile
         from ..models.service_replicas import ServiceReplicas
         from ..models.tracing_config import TracingConfig
         from ..models.worker_scaling import WorkerScaling
@@ -511,6 +531,8 @@ class AppManifest:
             tracing = UNSET
         else:
             tracing = TracingConfig.from_dict(_tracing)
+
+        profiling_on_demand = d.pop("profiling_on_demand", UNSET)
 
         _env = d.pop("env", UNSET)
         env: AppManifestEnv | Unset
@@ -643,6 +665,15 @@ class AppManifest:
         secret_reload_signal = _parse_secret_reload_signal(d.pop("secret_reload_signal", UNSET))
 
         secret_reload_readiness = d.pop("secret_reload_readiness", UNSET)
+
+        _secret_files = d.pop("secret_files", UNSET)
+        secret_files: list[SecretFile] | Unset = UNSET
+        if _secret_files is not UNSET:
+            secret_files = []
+            for secret_files_item_data in _secret_files:
+                secret_files_item = SecretFile.from_dict(secret_files_item_data)
+
+                secret_files.append(secret_files_item)
 
         def _parse_stop_grace_period(data: object) -> None | str | Unset:
             if data is None:
@@ -879,6 +910,7 @@ class AppManifest:
             entrypoint=entrypoint,
             profiling=profiling,
             tracing=tracing,
+            profiling_on_demand=profiling_on_demand,
             env=env,
             env_secrets=env_secrets,
             working_dir=working_dir,
@@ -891,6 +923,7 @@ class AppManifest:
             stop_signal=stop_signal,
             secret_reload_signal=secret_reload_signal,
             secret_reload_readiness=secret_reload_readiness,
+            secret_files=secret_files,
             stop_grace_period=stop_grace_period,
             execution_mode=execution_mode,
             restart_policy=restart_policy,

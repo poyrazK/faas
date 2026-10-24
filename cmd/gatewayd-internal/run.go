@@ -1046,9 +1046,10 @@ type runDeps struct {
 	// (ADR-20261018090210), following the api_monetization_enabled runtime
 	// setting. Nil keeps monetization off.
 	apiMonetization func() bool
-	// apiMonetizationFlags is the api_monetization platform flag
-	// (ADR-20261020170649), kept current by the runtime-config watcher.
-	apiMonetizationFlags *platformflags.Set
+	// platformFlags is every platform flag gatewayd-internal decides (the
+	// api_monetization flag, ADR-20261020170649, and the edge feature flags,
+	// ADR-20261023113721), kept current by the runtime-config watcher.
+	platformFlags *platformflags.Set
 	// Private identity is built only with the process-wide drain tracker.
 	runtimeIngressIdentity http.Handler
 	listen                 func(network, addr string) (net.Listener, error)
@@ -1539,7 +1540,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
 	apiMonetizationFlag := runtimeconfig.NewBoolFlag(api.APIMonetizationEnabled())
 	deps.apiMonetization = apiMonetizationFlag.Load
-	deps.apiMonetizationFlags = platformflags.NewSet(nil)
+	deps.platformFlags = platformflags.NewSet(nil)
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	// On until the first reconcile applies the durable value, so a failed
@@ -2204,7 +2205,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 					httpsec.SetHSTSEnabled(enabled)
 				}
 				return nil
-			}, deps.apiMonetizationFlags)
+			}, deps.platformFlags)
 		watcher := runtimeconfig.New(pgStore, pool, keys, apply, log)
 		watcher.Daemon = "gatewayd-internal" // ADR-1700 apply receipts
 		if err := watcher.Reconcile(runtimeCtx); err != nil {
@@ -2772,6 +2773,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := configureOperationRoutes(handler, deps); err != nil {
 		return fmt.Errorf("gatewayd-internal: %w", err)
 	}
+	if osGetenv("FAAS_PROFILING_ON_DEMAND") == "1" && deps.scheddRouter != nil {
+		// ADR-1155: report requests in flight too long so the owning schedd
+		// can snapshot the serving instance's stacks while they are stuck.
+		watcher := gateway.NewSlowRequestWatcher(slowRequestReporter(deps.scheddRouter), log)
+		go watcher.Run(ctx)
+		handler.WithSlowRequestWatcher(watcher)
+	}
 	if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" && deps.pgStore != nil {
 		bridgeTarget := deps.apidLoopback
 		if bridgeTarget == "" {
@@ -2893,7 +2901,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
 	handler.WithAPIMonetization(deps.apiMonetization)
-	handler.WithAPIMonetizationFlags(deps.apiMonetizationFlags)
+	handler.WithAPIMonetizationFlags(deps.platformFlags)
+	handler.WithEdgeFeatureFlags(deps.platformFlags)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are
 	// read only for requests that have to queue, through a 30 s cache.
 	if pgStore := deps.pgStore; pgStore != nil {
@@ -3028,6 +3037,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-973 — verified crawlers via forward-confirmed reverse DNS.
 	handler.WithBotVerifier(gateway.NewBotVerifier(nil))
+	// ADR-20261022105846 — rule penalty boxes, held in this node's memory.
+	handler.WithPenaltyBox(gateway.NewPenaltyBox())
 	// ADR-960 — per-rule hit counts, flushed to Postgres once a minute. Only
 	// a store with the hit-count capability gets a recorder, so test and
 	// legacy wiring keep counting disabled.
@@ -3919,9 +3930,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// nil pgStore (tests / single-box dev without a DB) renders
 	// the lookup_unavailable problem so the dashboard can
 	// distinguish "DB missing" from "unknown slug".
+	// appsControl is also served on the compute node's private control
+	// listener (ADR-20261022004500), so apid on the control plane reaches it.
+	var appsControl http.HandlerFunc
 	if deps.pgStore != nil {
 		pgStore := deps.pgStore
-		controlMux.HandleFunc("/v1/internal/apps/", func(w http.ResponseWriter, r *http.Request) {
+		appsControl = func(w http.ResponseWriter, r *http.Request) {
 			// Path-keyed: ServeMux's HandleFunc uses prefix
 			// match, so /v1/internal/apps/foo/routes,
 			// /v1/internal/apps/foo/service-endpoints,
@@ -3989,7 +4003,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return
 			}
 			internalRoutesHandler(handler, resolve, log).ServeHTTP(w, r)
-		})
+		}
+		controlMux.HandleFunc("/v1/internal/apps/", appsControl)
 	}
 	// ADR-168/169: expose the node-local service proxy on the trusted control
 	// listener and, when configured, on the tenant bridge. Both listeners use
@@ -4451,6 +4466,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			errc <- err
 		}
 	}()
+	if addr := privateControlAddr(cfg.Role, os.Getenv); addr != "" {
+		var apps http.Handler
+		if appsControl != nil {
+			apps = appsControl
+		}
+		privateMux := newPrivateControlMux(apps, http.HandlerFunc(responseChecker.Capabilities))
+		go func() {
+			log.Info("gatewayd private control listening", "addr", addr)
+			if err := gateway.RunControlServer(handoffCtx, addr, privateMux); err != nil {
+				errc <- err
+			}
+		}()
+	}
 
 	// Internal unix-socket RPC for schedd's cron dispatch (spec §4.4,
 	// M7). Best-effort: if the socket can't bind (e.g. /run/faas

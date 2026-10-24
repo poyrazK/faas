@@ -45,7 +45,11 @@ type MigrationReport struct {
 	ClusterKeyCreated bool `json:"cluster_key_created"`
 	SecretsScanned    int  `json:"secrets_scanned"`
 	SecretsResealed   int  `json:"secrets_resealed"`
-	ProbeWritten      bool `json:"probe_written"`
+	// SecretsInOtherDomains counts rows whose kid names a recipient this
+	// run holds no identity for, such as the runtime seal domain (ADR
+	// 20261022111812). They are left as they are.
+	SecretsInOtherDomains int  `json:"secrets_in_other_domains"`
+	ProbeWritten          bool `json:"probe_written"`
 }
 
 type VerificationReport struct {
@@ -110,6 +114,10 @@ func Migrate(ctx context.Context, store Store, fleet *age.X25519Identity, legacy
 	const batchSize = 100
 	cursor := ""
 	seen := make(map[string]struct{})
+	held := make(map[string]bool, len(openers))
+	for _, id := range openers {
+		held[id.Recipient().String()] = true
+	}
 	for {
 		rows, err := store.ListAppSecretsForRekey(ctx, batchSize, cursor)
 		if err != nil {
@@ -134,11 +142,16 @@ func Migrate(ctx context.Context, store Store, fleet *age.X25519Identity, legacy
 					continue
 				}
 			}
-			env, openErr := secretbox.OpenMulti(openers, row.Ciphertext)
+			if row.Kid != "" && !held[row.Kid] {
+				report.SecretsInOtherDomains++
+				continue
+			}
+			env, binding, openErr := secretbox.OpenMultiBound(openers, row.Ciphertext)
 			if openErr != nil {
 				return report, fmt.Errorf("fleetseal: unseal app=%s scope=%s key=%s: %w", row.AppID, row.Scope, row.Key, openErr)
 			}
-			sealed, sealErr := secretbox.Seal(recipient, env)
+			// Keep the envelope's account binding (ADR-20261023173624).
+			sealed, sealErr := secretbox.SealBound([]*age.X25519Recipient{recipient}, binding, env)
 			for k := range env {
 				env[k] = ""
 				delete(env, k)

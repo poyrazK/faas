@@ -161,7 +161,7 @@ var cliCommands = []cliCommand{
 		Short:   "Manage the MFA-stepped-up session used for provider mutations",
 		Subcommands: []cliSub{
 			{Name: "login", Short: "Sign in and verify TOTP", Flags: []cliFlag{{Name: "email", Short: "FAAS_ADMIN_EMAILS-allowlisted operator email", Req: true}}},
-			{Name: "step-up", Short: "Refresh the five-minute TOTP step-up window"},
+			{Name: "step-up", Short: "Refresh the five-minute TOTP step-up window", Flags: []cliFlag{{Name: "force", Short: "verify a new code even when the last step-up is under a minute old"}}},
 			{Name: "status", Short: "Validate and describe the current operator session"},
 			{Name: "logout", Short: "Revoke and remove the current operator session"},
 		},
@@ -275,13 +275,23 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchHoneytoken,
+		DocSlug: "honeytoken",
+		Short:   "Plant and manage honeytokens: decoy API keys that page when presented (ADR 20261024014500)",
+		Subcommands: []cliSub{
+			{Name: "plant", Short: "Mint a decoy API key, register it and seal it into a never-deployed app (or print it once)", Flags: []cliFlag{{Name: "label", Short: "opaque reference, not the location"}, {Name: "app-id", Short: "never-deployed app to plant in"}, {Name: "var", Short: "secret name"}, {Name: "recipient-file", Short: "recipient app secrets are sealed to"}, {Name: "hmac-key", Short: "apid's host HMAC key"}, {Name: "print", Short: "print the decoy once instead"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "list", Short: "List registered honeytokens", Flags: []cliFlag{{Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "retire", Short: "Mark a honeytoken retired; it still pages if presented", Flags: []cliFlag{{Name: "id", Short: "honeytoken id"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
 		Name:    dispatchSealDomain,
 		DocSlug: "seal-domain",
 		Short:   "Provision, verify, and migrate per-reader seal domains (ADR 20261022111812)",
 		Subcommands: []cliSub{
 			{Name: "init", Short: "Create <domain>.age and <domain>.age.pub", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
-			{Name: "verify", Short: "Prove this node's domain identity opens the domain probe", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "publish", Short: "write the probe when the domain has none"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "json", Short: "emit structured JSON"}}},
-			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound or source)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "verify", Short: "Prove this node's domain identity opens the domain probe", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "publish", Short: "write the probe when the domain has none"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "recipient-only", Short: "check the staged recipient against the published probe"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime, source or build)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
 		},
 	},
 	{

@@ -1,13 +1,29 @@
 # Architecture Decision Records
 
 - [ADR-20261023091049: Full environment clones, slice 0 — a measurable gap and a dormant switch](20261023091049-full-clone-slice-0.md)
+- [ADR-20261024085817: A compute rollout never strands a node on a runtime base it cannot boot, and its drain finishes](20261024085817-rollout-base-generation-and-drain-completion.md) — proposed; a changed base generation pre-stages behind the drain barrier, the rescue never re-activates a node whose cache moved, a drain withdraws, drains and stops what it cannot hand off (2026-10-22 fsn-3)
+- [Bucket-scoped object storage availability](20261023223000-object-storage-bucket-scoped-availability.md) — per-bucket inventory freshness, maintenance listings off the customer meter, no fence on a never-versioned baseline, busy deletions wait, public-read share and revalidation
+- [ADR-20261023171905: Unbilled quiet pause — bill the seconds a VM runs, not the seconds it waits](20261023171905-unbilled-quiet-pause.md) — schedd `quiet_pause_ledger` + meterd `quiet_pause_unbilled` (amends §4.7, ADR-1151 decision 1, ADR-20261021215353)
+- [Compose profiles from COMPOSE_PROFILES in .env](20261022190000-compose-profiles-from-dotenv.md)
+- [Compose deploy resources and replicas set app settings](20261023120000-compose-deploy-resources.md)
+- [Compose service secrets as files in /run/secrets](20261023090000-compose-runtime-secret-files.md)
+- [ADR-20261023113721: Platform flags for edge rule features](20261023113721-edge-feature-platform-flags.md)
+- [ADR-20261022203523: Per-instance request concurrency](20261022203523-per-instance-request-concurrency.md) — proposed; `scaling.per_instance_concurrency` caps the gateway's per-VM gate and drives scale-out (H12-4)
+- [ADR-20261022204036: An Idempotency-Key is bound to its request](20261022204036-idempotency-key-bound-to-request.md) — another request with a used key gets `422 idempotency_key_reused`, not a replay (Proposed)
+- [ADR-20261022203653: One dead-letter entry per queue message](20261022203653-one-dead-letter-entry-per-queue-message.md) — Proposed; amends ADR-179: a push receipt is captured but not listed
+- [ADR-20261022105846: Penalty box for edge rules](20261022105846-edge-rule-penalty-box.md)
 - [Compose build secrets for Dockerfile builds](20261022185329-compose-build-secrets.md)
+- [ADR-20261023173624: Runtime secrets are bound to their account](20261023173624-runtime-secrets-bound-to-their-account.md) — vmmd opens a bound envelope only for its account; writers opt in with FAAS_RUNTIME_SECRET_BINDING
+- [ADR-20261023104734: Daemons log in as runtime roles, not the schema owner](20261023104734-database-runtime-roles.md) — faas_runtime group, per-daemon roles, opt-in FAAS_DB_ROLE
+- [Product Control trial-to-paid conversion](20261022180921-product-control-trial-conversion.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
+- [ADR-20261024014500: Honeytokens and unseal telemetry](20261024014500-honeytokens-and-unseal-telemetry.md)
 - [ADR-20261022140000: Break-glass controls for a compromised secret store](20261022140000-break-glass-controls.md)
 - [ADR-20261022111812: Seal domains: a sealed value opens only where it is read](20261022111812-seal-domains-per-reader.md)
 - [Product Control self-serve signup and card on file](20261022100735-product-control-self-serve-signup.md)
 - [ADR-20261022082721: Rehearsal reads of captured work, inbox and async invoke](20261022082721-rehearsal-captured-reads-inbox-async-invoke.md)
+- [gatewayd-internal private control listener for apid](20261022004500-gatewayd-private-control-listener.md)
 - [ADR-20261021223225: Path routes in gregale.yaml](20261021223225-manifest-routes.md) — manifest-owned kind=route (+ rewrite for strip_prefix) edge rules on the target app; rewrite to the root strips cleanly
 - [ADR-20261021215353: Early freeze — stop billing shortly after the last request](20261021215353-early-freeze.md) — schedd `frozen_tier_early_freeze_after_s` (amends ADR-1151)
 - [ADR-20261021204307: Code-first workflows](20261021204307-code-first-workflows.md) — one entry handler replays the run's journal; Node, Python and Go SDKs
@@ -180,6 +196,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 
 | ADR | Title | Status | Source |
 |---|---|---|---|
+| 20261022105723 | [Worker plan decisions: queue backlog and retention, CPU pricing, worker sizes](20261022105723-worker-queue-limits-cpu-pricing-sizes.md) | accepted | Queue backlogs grow to 10k / 100k / 1M messages per app with a 100 MiB / 1 GiB / 10 GiB account byte cap and 1 / 4 / 14-day expiry; CPU stays bundled into GB-RAM-hours; workers keep plan sizes |
 | 20261019103000 | [Frozen worker pools](20261019103000-frozen-worker-pools.md) | accepted; behind `frozen_tier_workers` | A pool scaling in freezes a surplus worker that holds no lease and thaws it before booting new ones; a frozen worker stops instead of parking and gives up its account slot when another pool needs it |
 | 20261018101500 | [Worker pools scale out off the scheduler loop, with brief characterization for proven workers](20261018101500-worker-pool-scale-out-off-loop.md) | accepted | The targets trigger reconciles worker apps in background runs, one per account at a time; a declared worker whose deployment passed the full window on the node boots with `faas.worker=proven` and is characterized in 1 s |
 | 1728 | [Owner-authorized deployment response checks](1728-owner-authorized-deployment-response-checks.md) | accepted; native deployment validation pending | Exact-deployment GET checks through the trusted gateway, with bounded HTTP evidence and no forwarded account credentials |
@@ -332,6 +349,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 826 | [Periodic route profiling for running deployments](826-periodic-route-profiling.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 827 | [Route-specific profiling code evidence](827-route-specific-profile-code-evidence.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
 | 828 | [Opt-in profiling gates for canary deployment stages](828-profile-canary-deployment-gates.md) | accepted for internal implementation; native acceptance pending | Continuous profiling and qualified deployment evidence |
+| 1155 | [On-demand CPU and heap profiling](1155-on-demand-cpu-and-heap-profiling.md) | accepted for internal implementation; native acceptance pending | Dormant guest collectors armed per instance through a Postgres queue; continuous heap profiles; automatic heap capture on memory pressure |
 | 949 | [App consumer statement revisions and unbilled platform failures](949-app-consumer-statement-revisions-and-platform-failure-billing.md) | accepted | Late usage becomes additive app-local statement revisions; gateway-generated 5xx carry zero billable units |
 | 950 | [Monthly included units on app consumer rate cards](950-api-consumer-monthly-allowances.md) | accepted | Free requests per consumer per UTC month, consumed in minute order; adjustments bill allowance lost to late usage |
 | 951 | [Graduated tiers on app consumer rate cards](951-api-consumer-graduated-tiers.md) | accepted | Per-consumer monthly price ladders with exact re-rating; tiered statements cover whole UTC months |
@@ -395,6 +413,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 20261019100333 | [Paddle invoices sent by Paddle](20261019100333-paddle-send-collection.md) | accepted | Paddle connections can collect with `send`: exports bill the draft transaction with the customer's newest address so Paddle emails it |
 | 20261019180000 | [One export attempt at a time, retargetable refusals, floored minimums and fresh overdue holds](20261019180000-monetization-review-fixes.md) | accepted | Exports claim their statement so concurrent attempts get a 409; a provider refusal before creation can be retried with another customer; finalized minimums fall only by new usage; holds need a payment status read within 24 h |
 | 20261020170649 | [API monetization released per account](20261020170649-api-monetization-per-account-release.md) | accepted | The `api_monetization` platform flag releases monetization to chosen accounts beside the all-or-nothing switch; routes 404 after authentication for others, workers and gateways decide per account; `make monetization-sandbox` qualifies the providers |
+| 20261020211500 | [Handoff reservations, usage-only credit in spend caps, reprice on change, credit on self-service statements](20261020211500-monetization-hardening.md) | accepted | Exports reserve their handoff before calling the provider; credit that paid fees no longer lifts a spend cap; spend checks reprice only on new usage or every 15 minutes; consumer statements show credit and amount due |
 | 20261021143000 | [Customers sign up for an API themselves, with Stripe Checkout](20261021143000-consumer-self-signup.md) | accepted | A hosted page and public API let an app's customers pick a plan, save a card in the owner's Stripe and get a consumer key; claim tokens, per-address and daily limits |
 | 20261021183000 | [Customers manage their own account, and owners hear about it by webhook](20261021183000-customer-self-service-and-webhooks.md) | accepted | A billing-scope key lists plans, switches between offered plans, opens Stripe's customer portal or closes the account, as the owner allows; consumer.signed_up, consumer.plan_changed and consumer.closed webhooks |
 | 650 | [Schema-generated Data APIs](650-schema-generated-data-api.md) | accepted | Ordinary app lifecycle, schema-restricted bindings, private type export and typed application clients |
@@ -1838,3 +1857,6 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)
 
 - [ADR-20261020161310: Route insight fixes, dashboard panel and alerts](20261020161310-route-insight-fixes-and-alerts.md)
+
+- [ADR-20261022184757: Background work and waitUntil in the awake report](20261022184757-route-awake-background-work.md)
+- [ADR-20261023220532: Move the Debian-based runtime bases to Debian 13](20261023220532-debian-13-runtime-bases.md) — accepted; clears the bookworm `<no-dsa>` glibc/SQLite criticals (#5206), matches Railpack's Debian 13 builder, audits `base-minimal` apps first

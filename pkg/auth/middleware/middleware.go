@@ -214,12 +214,41 @@ type Middleware struct {
 	keyTouchWindowForTest time.Duration
 	// sessionTouchWindowForTest: same override for sessions.
 	sessionTouchWindowForTest time.Duration
+	// Honeytokens, when set, is asked about a well-formed API key that
+	// matches no key (ADR 20261024014500). On a match OnHoneytoken runs and
+	// the request still gets the ordinary 401, so the caller learns nothing.
+	Honeytokens  HoneytokenMatcher
+	OnHoneytoken func(r *http.Request, h state.Honeytoken)
+
 	// BindingKeyFn is the IAM-hardening-mega-PR (logical change 5,
 	// ADR-076) HMAC key source. nil disables binding-hash
 	// computation (the envelope's `binding_hash` field is omitted;
 	// the cross-check is skipped). Production wires this to the
 	// first 32 bytes of the session-key AEAD secret.
 	BindingKeyFn func() []byte
+}
+
+// HoneytokenMatcher looks a presented credential up in the honeytoken
+// registry (ADR 20261024014500); state.ErrNotFound means no match. It gets
+// the plaintext because the registry is keyed by an HMAC the daemon holds.
+type HoneytokenMatcher interface {
+	MatchHoneytoken(ctx context.Context, token string) (state.Honeytoken, error)
+}
+
+// reportHoneytoken checks a bearer key that matched no API key against the
+// honeytoken registry. A failed lookup is logged and otherwise ignored: the
+// request is being refused either way.
+func (m *Middleware) reportHoneytoken(r *http.Request, token string) {
+	if m.Honeytokens == nil || m.OnHoneytoken == nil {
+		return
+	}
+	h, err := m.Honeytokens.MatchHoneytoken(r.Context(), token)
+	switch {
+	case err == nil:
+		m.OnHoneytoken(r, h)
+	case !errors.Is(err, state.ErrNotFound) && m.Log != nil:
+		m.Log.Warn("auth: honeytoken lookup failed", "err", err)
+	}
 }
 
 // keyTouchWindow returns the production 30s window unless an
@@ -476,7 +505,8 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			return
 		}
 		if api.ValidAPIKeyFormat(tok) {
-			acct, key, err := m.Authn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
+			keyHash := api.HashAPIKey(tok)
+			acct, key, err := m.Authn.AuthenticateKey(r.Context(), keyHash)
 			// IAM-5 (issue #189): translate the IAM-5 sentinels
 			// to RFC 7807 + emit the audit row. The store
 			// already lazily marked the key status='revoked'
@@ -504,6 +534,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					m.credentialStoreUnavailable(w, r, err)
 					return
 				}
+				m.reportHoneytoken(r, tok)
 				// Fall through to the session-cookie branch —
 				// the key may have been deleted or the hash is
 				// simply unknown; both surface as "invalid

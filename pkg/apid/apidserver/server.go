@@ -17,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid"
+	"github.com/onebox-faas/faas/pkg/apid/aiconsole"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
@@ -28,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/consumersignup"
 	pipelineapi "github.com/onebox-faas/faas/pkg/apid/datapipelines"
 	repairapi "github.com/onebox-faas/faas/pkg/apid/datarepair"
+	"github.com/onebox-faas/faas/pkg/apid/docsassets"
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	hostingapi "github.com/onebox-faas/faas/pkg/apid/hosting"
@@ -48,6 +50,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/apid/previews"
 	"github.com/onebox-faas/faas/pkg/apid/product"
+	"github.com/onebox-faas/faas/pkg/apid/profilecapture"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/queueleases"
 	"github.com/onebox-faas/faas/pkg/apid/servicemap"
@@ -59,6 +62,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/bindinghash"
 	"github.com/onebox-faas/faas/pkg/ci"
+	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/events"
@@ -153,7 +157,8 @@ type server struct {
 	// postReleaseTelemetry overrides the store's request telemetry for the
 	// post-release watch (ADR-1445); nil reads it from the store.
 	postReleaseTelemetry rollbackOn5xxTelemetry
-	outboundAI           outboundai.Service // ADR-977; Host wired in newServer
+	outboundAI           outboundai.Service     // ADR-977; Host wired in newServer
+	profileCaptures      profilecapture.Service // ADR-1155; Host wired in newServer
 	// releaseGateEvidence overrides the store's release gate evidence
 	// reader for the post-release watch (ADR-20261019071734; tests).
 	releaseGateEvidence   state.ReleaseGateEvidenceStore
@@ -290,6 +295,11 @@ type server struct {
 	// distinguishes "gatewayd not reachable" from "no traffic
 	// yet". Set via env FAAS_GATEWAYD_CONTROL_URL at boot.
 	gatewaydControlURL string
+	// gatewaydControlFromRegistry resolves the control URL per request from
+	// the compute-node registry (ADR-20261022004500); gatewayControlNext
+	// rotates through the active nodes.
+	gatewaydControlFromRegistry bool
+	gatewayControlNext          atomic.Uint64
 	// realtimeClient is retained so the leased fleet adapter can use the local
 	// Unix owner for endpoint registration and connection discovery.
 	realtimeClient *realtime.Client
@@ -398,10 +408,11 @@ type server struct {
 	// preflight handler (GET /v1/preflight). It is built on first use so the
 	// egress-guarded HTTP client and verdict cache are not allocated on
 	// deployments that never receive a check.
-	preflightOnce    sync.Once
-	preflightHandler *preflight.Handler
-	statusMetrics    *statusMetrics
-	devLoopMetrics   *devloop.Metrics
+	preflightOnce      sync.Once
+	preflightHandler   *preflight.Handler
+	statusMetrics      *statusMetrics
+	idempotencyMetrics *idempotencyMetrics
+	devLoopMetrics     *devloop.Metrics
 	// promqlClient is the Prometheus HTTP client shared by the
 	// statusCache and the per-app metrics endpoint (issue #273 /
 	// ADR-042). Owned here so the GET /v1/apps/{slug}/metrics handler
@@ -463,6 +474,8 @@ type server struct {
 	// prewarmMetrics shares the daemon registry with ops and records durable
 	// scheduled-prewarm lifecycle events emitted by the API handlers.
 	prewarmMetrics *wire.PrewarmMetrics
+	// honeytokenMetrics counts presented honeytokens (ADR 20261024014500).
+	honeytokenMetrics *honeytokenMetrics
 	// metricsDiscoveryMetrics is bound to the same per-daemon registry as ops.
 	// It records producer-side health for the loopback Prometheus HTTP-SD
 	// endpoints; nil keeps tests and degraded construction paths no-op.
@@ -685,8 +698,18 @@ func (s *server) WithOpsMetrics(ctx context.Context, ops *wire.OpsMetrics) *serv
 	if ops != nil && (s.hostingMetrics == nil || s.hostingMetrics.Registry() != ops.Registry()) {
 		s.hostingMetrics = hostingapi.NewMetrics(ops.Registry(), ops.MetricPrefix())
 	}
+	if ops == nil {
+		s.honeytokenMetrics = nil
+	} else if s.honeytokenMetrics == nil || s.honeytokenMetrics.registry != ops.Registry() {
+		s.honeytokenMetrics = newHoneytokenMetrics(ops.Registry())
+	}
 	if ops != nil && (s.statusMetrics == nil || s.statusMetrics.registry != ops.Registry()) {
 		s.statusMetrics = newStatusMetrics(ops.Registry(), ops.MetricPrefix())
+	}
+	if ops == nil {
+		s.idempotencyMetrics = nil
+	} else if s.idempotencyMetrics == nil || s.idempotencyMetrics.registry != ops.Registry() {
+		s.idempotencyMetrics = newIdempotencyMetrics(ops.Registry(), ops.MetricPrefix())
 	}
 	if ops != nil && (s.durable.Metrics == nil || s.durable.Metrics.Registry() != ops.Registry()) {
 		s.durable.Metrics = durable.NewMetrics(ops.Registry(), ops.MetricPrefix())
@@ -1082,11 +1105,9 @@ func (s *server) WithHostHashFunc(fn func(host string) (string, error)) *server 
 // (/v1/internal/apps/{slug}/routes and /streaming-cap). Default
 // http://127.0.0.1:9090 matches gatewayd-internal's default
 // control bind (see pkg/gateway/control.go ControlAddr);
-// production overrides via FAAS_GATEWAYD_CONTROL_URL when the
-// daemons are split across nodes (cross-box deployments will
-// need the public-facing reverse-proxy to terminate mTLS before
-// reaching gatewayd-internal's control mux — out of scope for
-// this PR; same-box is the only supported posture today).
+// a split control plane instead sets FAAS_GATEWAYD_CONTROL_FROM_REGISTRY
+// and reaches a compute node's private control listener
+// (ADR-20261022004500, gatewayControlURL).
 func (s *server) WithGatewaydControlURL(url string) *server {
 	s.gatewaydControlURL = url
 	return s
@@ -1474,6 +1495,7 @@ func newServerWithDeps(
 	s.productControl.CompletePaymentMethod = s.statementInvoices.CompleteStripeSetup
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
+	s.profileCaptures.Host = profileCaptureHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
 	s.realtime.Host = realtimeHost{s}
 	s.realtime.AuthLimiter = s.apiAuthLimiter
@@ -1506,6 +1528,7 @@ func newServerWithDeps(
 	// daemon start (the var is reset to the server's domain, not the
 	// empty default).
 	appsDomainFunc = func() string { return s.domain }
+	s.wireHoneytokens()
 	return s
 }
 
@@ -3619,6 +3642,11 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-tag-limits", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutTagLimits)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListBudgetAlerts)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListRequestLog)))))
+	// ADR 20261020202035: AI traces.
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-traces", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListTraces)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-traces/{trace}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetTrace)))))
+	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-quality-alerts", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListQualityAlerts)))))
+	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-requests/{request}/feedback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutRequestFeedback)))))
 	mux.HandleFunc("GET /v1/outbound/integrations/{integration}/ai-requests/{request}/content", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetRequestContent)))))
 	mux.HandleFunc("POST /v1/outbound/integrations/{integration}/ai-requests/{request}/replays", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateReplay)))))
 	mux.HandleFunc("GET /v1/outbound/ai-replays/{replay}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetReplay)))))
@@ -3629,6 +3657,8 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/outbound/ai-evaluations/{evaluation}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.GetEvaluation)))))
 	mux.HandleFunc("POST /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.CreateAccessToken)))))
 	mux.HandleFunc("GET /v1/apps/{slug}/ai-access-tokens", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListAccessTokens)))))
+	// ADR 20261022153155: an app's AI calls by deployment.
+	mux.HandleFunc("GET /v1/apps/{slug}/ai-deployments", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.aiGateway(s.outboundAI.ListDeployments)))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/ai-access-tokens/{token}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.RevokeAccessToken)))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/ai-content-policy", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.aiGateway(s.outboundAI.PutContentPolicy)))))
 	mux.HandleFunc("PUT /v1/outbound/integrations/{integration}/runs", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.putOutboundRunsBinding))))
@@ -3926,6 +3956,14 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/apps/{slug}/profiles/investigations/{id}/check", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.checkProfileRegression))))
 	mux.HandleFunc("GET /v1/apps/{slug}/profiles", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppProfiles))))
 	mux.HandleFunc("POST /v1/apps/{slug}/profiles/compare", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.compareAppProfiles))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/heap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getAppHeapProfile))))
+	// ADR-1155: on-demand CPU/heap captures, queued for schedd via Postgres.
+	mux.HandleFunc("POST /v1/apps/{slug}/profiles/captures", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.profileCaptures.Create))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.List))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Get))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/view", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.View))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/pprof", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Download))))
+	mux.HandleFunc("GET /v1/apps/{slug}/profiles/captures/{id}/diff", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.profileCaptures.Diff))))
 	mux.HandleFunc("GET /v1/apps/{slug}/debug/requests", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.debugTelemetryListHandler))))
 	// Portable incident artifact for the customer debugger. The export uses
 	// the same retention and tenant gates as the list endpoint, but is kept on
@@ -4725,6 +4763,9 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/new", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.createAppFromGitHubWizard))))
 	mux.Handle("GET /dashboard/", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
 	mux.Handle("GET /dashboard", s.dashboardChain(s.sessionAuth(s.dashboardHandler(s.log))))
+	// ADR 20261022145950: the AI gateway's pages.
+	mux.Handle("GET "+aiconsole.Prefix, s.dashboardChain(s.sessionAuth(s.aiConsoleHandler())))
+	mux.Handle("GET "+aiconsole.Prefix+"/", s.dashboardChain(s.sessionAuth(s.aiConsoleHandler())))
 	console := &automationconsole.Service{Host: automationConsoleHost{server: s}, Log: s.log}
 	mux.Handle("GET /dashboard/apps/{slug}/automations", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.Show))))
 	mux.Handle("GET /dashboard/apps/{slug}/automations/live-verifications/{run_id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(console.LiveProgress))))
@@ -5003,6 +5044,11 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/issues/impact-alert-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueImpactAlertPolicyHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/issues/ownership-rules", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardIssueOwnershipRulesHandler))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/deployment-policy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileDeploymentPolicy))))
+	// ADR-1155: on-demand capture form, capture page and session-authenticated pprof download.
+	mux.Handle("POST /dashboard/apps/{slug}/profiles/captures", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCreateProfileCapture))))
+	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCapture))))
+	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}/pprof", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDownloadProfileCapture))))
+	mux.Handle("GET /dashboard/apps/{slug}/profiles/captures/{id}/diff", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardProfileCaptureDiff))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/investigations", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardSaveProfileInvestigation))))
 	mux.Handle("POST /dashboard/apps/{slug}/profiles/investigations/{id}/check", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardCheckProfileRegression))))
 	mux.Handle("POST /dashboard/apps/{slug}/debug/requests/{req_id}/replay", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDebugReplay))))
@@ -5184,6 +5230,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/openapi.json", openAPI.ServeJSON)
 	mux.HandleFunc("GET /docs", openAPI.ServeDocs)
 	mux.HandleFunc("GET /docs/", openAPI.ServeDocs)
+	// Vendored Swagger UI and htmx, served here so the CSP names no
+	// third-party host. Anonymous: login and the API reference load them.
+	mux.HandleFunc("GET /docs/assets/{file}", docsassets.Serve)
+	mux.HandleFunc("GET /dashboard/assets/{file}", dashboard.ServeAsset)
 
 	// observeWrap (the outermost layer) feeds apid_ops_total +
 	// apid_op_duration_seconds. It's last so it sees the final
@@ -5620,32 +5670,44 @@ func (s *server) domainCreateLimited(next http.Handler) http.Handler {
 }
 
 func (s *server) idempotent(next accountHandler) accountHandler {
-	return s.idempotentWith(next, nil)
+	return s.idempotentWithInEnvironment("", next, nil, true)
 }
 
 // The legacy method/path identity is preserved for production. An owned
 // environment ID separates stage receipts, including after slug recreation.
 func (s *server) idempotentInEnvironment(environmentID string, next accountHandler) accountHandler {
-	return s.idempotentWithInEnvironment(environmentID, next, nil)
+	return s.idempotentWithInEnvironment(environmentID, next, nil, true)
 }
 
 // idempotentDeploy is idempotent for routes that create a deployment. A
 // stored response naming a deployment that has since failed, been
 // cancelled, or been superseded is not replayed; the request runs again.
-// See deployReplayIsStale.
+// See deployReplayIsStale. Its keys name a deploy intent, not one request
+// (see idempotentIntent).
 func (s *server) idempotentDeploy(next accountHandler) accountHandler {
-	return s.idempotentWith(next, s.deployReplayIsStale)
+	return s.idempotentWithInEnvironment("", next, s.deployReplayIsStale, false)
+}
+
+// idempotentIntent is idempotent for routes whose keys name an intent rather
+// than one request, so they are not bound to a request fingerprint
+// (ADR-20261022204036). The CLI derives project apply keys from the source
+// digest and flags, while a re-run carries a fresh plan token and the current
+// commit; meterd's safe-deploy workers retry a deterministic recovery key
+// with the reason and evidence of their latest tick. Both must replay.
+func (s *server) idempotentIntent(next accountHandler) accountHandler {
+	return s.idempotentWithInEnvironment("", next, nil, false)
 }
 
 // replayStaleFunc reports whether a stored response no longer describes the
 // operation's outcome, so replaying it would mislead the client.
 type replayStaleFunc func(ctx context.Context, acct state.Account, status int, body []byte) bool
 
-func (s *server) idempotentWith(next accountHandler, stale replayStaleFunc) accountHandler {
-	return s.idempotentWithInEnvironment("", next, stale)
-}
-
-func (s *server) idempotentWithInEnvironment(environmentID string, next accountHandler, stale replayStaleFunc) accountHandler {
+// idempotentWithInEnvironment replays a keyed request's stored response.
+// With bindRequest, the key is bound to the request's fingerprint
+// (ADR-20261022204036): the same key sent with a different request is
+// refused with idempotency_key_reused instead of replaying a response that
+// belongs to another request.
+func (s *server) idempotentWithInEnvironment(environmentID string, next accountHandler, stale replayStaleFunc, bindRequest bool) accountHandler {
 	return func(w http.ResponseWriter, r *http.Request, acct state.Account) {
 		key := r.Header.Get("Idempotency-Key")
 		if key == "" {
@@ -5674,7 +5736,11 @@ func (s *server) idempotentWithInEnvironment(environmentID string, next accountH
 			key = "environment " + environmentID + "\n" + key
 		}
 		if reserver, ok := s.store.(idempotencyReserver); ok {
-			s.idempotentReserved(w, r, acct, reserver, key, next, stale)
+			var fingerprint []byte
+			if bindRequest {
+				fingerprint = httpkit.IdempotencyFingerprint(r, hostHMACKeyBytes())
+			}
+			s.idempotentReserved(w, r, acct, reserver, key, fingerprint, next, stale)
 			return
 		}
 		if status, body, err := s.store.GetIdempotent(r.Context(), acct.ID, key); err == nil {
@@ -5740,7 +5806,7 @@ func idempotencyResponseReplayable(status int, body []byte) bool {
 const idempotencyAbandonAfter = 15 * time.Minute
 
 type idempotencyReserver interface {
-	ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (state.IdempotencyReservation, error)
+	ReserveIdempotentRequest(ctx context.Context, accountID, key string, fingerprint []byte, abandonAfter time.Duration) (state.IdempotencyReservation, error)
 	ReleaseIdempotent(ctx context.Context, accountID, key string) error
 }
 
@@ -5786,10 +5852,11 @@ func (s *server) deployReplayIsStale(ctx context.Context, acct state.Account, st
 // idempotentReserved claims the key before running next. Checking for a
 // cached response and storing one afterwards let two concurrent requests
 // with one key — a client retrying after a timeout while the first is
-// still running — both execute the operation.
-func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct state.Account, reserver idempotencyReserver, key string, next accountHandler, stale replayStaleFunc) {
-	res, err := reserver.ReserveIdempotent(r.Context(), acct.ID, key, idempotencyAbandonAfter)
-	if err == nil && !res.Reserved && !res.InFlight && stale != nil && stale(r.Context(), acct, res.Status, res.Body) {
+// still running — both execute the operation. A non-nil fingerprint binds
+// the key to this request (ADR-20261022204036).
+func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct state.Account, reserver idempotencyReserver, key string, fingerprint []byte, next accountHandler, stale replayStaleFunc) {
+	res, err := reserver.ReserveIdempotentRequest(r.Context(), acct.ID, key, fingerprint, idempotencyAbandonAfter)
+	if err == nil && !res.Reserved && !res.InFlight && !res.Conflict && stale != nil && stale(r.Context(), acct, res.Status, res.Body) {
 		if reclaimer, ok := reserver.(idempotencyReclaimer); ok {
 			reclaimed, reclaimErr := reclaimer.ReclaimIdempotent(r.Context(), acct.ID, key, res.Status, res.Body)
 			switch {
@@ -5797,7 +5864,7 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 				res = state.IdempotencyReservation{Reserved: true}
 			case reclaimErr == nil:
 				// A concurrent retry reclaimed it first; report its state.
-				res, err = reserver.ReserveIdempotent(r.Context(), acct.ID, key, idempotencyAbandonAfter)
+				res, err = reserver.ReserveIdempotentRequest(r.Context(), acct.ID, key, fingerprint, idempotencyAbandonAfter)
 			}
 		}
 	}
@@ -5806,6 +5873,15 @@ func (s *server) idempotentReserved(w http.ResponseWriter, r *http.Request, acct
 		// Fail open, as the replay lookup always has: an idempotency
 		// store error must not turn every keyed request into an outage.
 		next(w, r, acct)
+	case res.Conflict:
+		// Nothing ran, and the key keeps its first request's outcome: the
+		// response is not stored, so retrying that request still replays.
+		s.idempotencyMetrics.observeKeyReused(r)
+		if s.log != nil {
+			s.log.InfoContext(r.Context(), "idempotency key reused with a different request",
+				"account_id", acct.ID, "method", r.Method, "route", r.Pattern)
+		}
+		api.WriteProblem(w, api.ErrIdempotencyKeyReused())
 	case res.InFlight:
 		code := api.CodeConflict
 		if attempted, _ := r.Context().Value(deploymentSubmissionRequestKey{}).(bool); attempted {

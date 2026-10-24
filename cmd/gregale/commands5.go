@@ -818,6 +818,11 @@ func cmdAppScale(slug string, args []string) int {
 	maxQueueWaitMS := fs.Int("max-queue-wait-ms", 0, "maximum queued concurrency wait in milliseconds (0 = plan default)")
 	wakeMaxQueueDepth := fs.Int("wake-max-queue-depth", 0, "per-app cold-wake waiter cap (0 = plan default)")
 	wakeMaxQueueWaitSeconds := fs.Int("wake-max-queue-wait-seconds", 0, "per-app cold-wake wait budget in seconds (0 = plan default, max 60)")
+	// ADR-20261022203523 dark launch: a hidden flag. It parses, but stays
+	// out of help, completions, man pages and the generated reference until
+	// FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS admits every account; apid
+	// answers an unlisted account as for an unknown field.
+	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = plan's concurrency per VM)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")
 	min := fs.Int("min", 0, "min instances kept warm (Pro/Scale only; 0 = scale to zero)")
@@ -912,7 +917,10 @@ func cmdAppScale(slug string, args []string) int {
 		v := *conc
 		req.MaxConcurrency = &v
 	}
-	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] {
+	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] || explicit["per-instance-concurrency"] {
+		if explicit["per-instance-concurrency"] && *perInstanceConcurrency < 0 {
+			return printErr("Invalid concurrency policy", errNegativePerInstanceConcurrency(*perInstanceConcurrency))
+		}
 		client, err := authedClient()
 		if err != nil {
 			return printErr("Not logged in", err)
@@ -920,6 +928,9 @@ func cmdAppScale(slug string, args []string) int {
 		policy, err := cliScalingPolicyPatchWithQueues(context.Background(), environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
 		if err != nil {
 			return printErr("Invalid concurrency policy", err)
+		}
+		if explicit["per-instance-concurrency"] {
+			policy.PerInstanceConcurrency = *perInstanceConcurrency
 		}
 		req.ScalingPolicy = policy
 	}
@@ -1903,12 +1914,18 @@ func cmdTailContext(ctx context.Context, args []string) int {
 	fs := newFlagSet("tail", flag.ContinueOnError)
 	onlySlug := fs.String("app", "", "filter to a single app slug (optional)")
 	includeStateless := fs.Bool("include-stateless", false, "also print stateless.advisory frames (default: hide)")
-	if err := fs.Parse(args); err != nil {
+	// `tail <slug>` failed with a usage error although logs, ps and invoke
+	// take the slug positionally (Hunt 12 H12-45).
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale tail [--app <slug>] [--include-stateless]", "tail")
+	slugArg, rest := peelLeadingSlug(fs.Args())
+	if len(rest) != 0 {
+		PrintUsage(os.Stderr, "usage: gregale tail [<slug> | --app <slug>] [--include-stateless]", "tail")
 		return 1
+	}
+	if err := mergeLeadingSlug(onlySlug, slugArg); err != nil {
+		return printErr("Invalid tail arguments", err)
 	}
 	resolvedApp, resolveErr := resolveAppFlagOrContext(*onlySlug)
 	if resolveErr == nil {

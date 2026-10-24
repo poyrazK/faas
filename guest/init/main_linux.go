@@ -312,7 +312,7 @@ func boot() error {
 	if err != nil {
 		return err
 	}
-	if err := startProfileBridge(manifest.Profiling, slog.Default()); err != nil {
+	if err := startProfileBridge(manifest.Profiling, manifest.ProfilingOnDemand, slog.Default()); err != nil {
 		slog.Default().Warn("profile bridge unavailable", "err", err)
 	}
 	if err := startTraceBridge(manifest.Tracing, slog.Default()); err != nil {
@@ -352,6 +352,16 @@ func boot() error {
 	if secErr != nil {
 		// Don't surface the value, just the fact that the file failed.
 		slog.Default().Warn("secrets.env could not be loaded; proceeding without secrets", "err_kind", errorKind(secErr))
+	}
+	// Compose secrets declared as files (ADR-20261023090000) belong to the
+	// main workload, which runs from this root in both the single-workload
+	// and roster paths.
+	secretFiles, err := newSecretFileWriter("", manifest, slog.Default())
+	if err != nil {
+		return err
+	}
+	if err := secretFiles.write(secrets); err != nil {
+		return err
 	}
 
 	// Issue #395 / ADR-045: read /etc/faas/env.json (plaintext JSON
@@ -544,7 +554,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 	env = StampEventPublishEnv(env)
 	env = StampOutboundRelayEnv(env)
 	env = StampRuntimeConfigEnv(env)
-	env = stampProfileEnv(env, m.Profiling)
+	env = stampProfileEnv(env, m.Profiling, m.ProfilingOnDemand)
 	env = stampTracingEnv(env, m.Tracing)
 	env = StampSecretsFileEnv(env, m.SecretReloadSignal != "")
 	env = StampRestoreReseedEnv(env)
@@ -652,6 +662,7 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		return err
 	}
 	defer retireGeneration()
+	oomKillsBefore, oomKillsKnown := readVMStatOOMKills(procVMStat)
 	if err := cmd.Start(); err != nil {
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
@@ -699,6 +710,9 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 			defer oomCancel()
 			werr := WatchOOM(oomCtx, mainLeaf, ramMB,
 				func(peakMB, pMB int) {
+					// ADR-1155: the host destroys the instance on this report,
+					// so a running capture first returns its heap checkpoints.
+					flushProfileCaptureOnOOM(api.ProfileCaptureOOMFlushTimeout, peakMB)
 					if eerr := EmitWorkloadOOM(oomCtx, peakMB, pMB); eerr != nil {
 						slog.Default().Warn("EmitWorkloadOOM failed",
 							"peak_mb", peakMB, "plan_mb", pMB, "err", eerr)
@@ -715,7 +729,29 @@ func runAppWithSecretStartup(m api.AppManifest, secrets, apiEnv map[string]strin
 		// 1s poll tick on next wake.
 		defer func() { oomCancel() }()
 	}
+	// ADR-1155: report memory pressure so the control plane can capture the
+	// heap before an OOM kill. Only deployments with on-demand profiling
+	// have collectors to capture from.
+	if m.ProfilingOnDemand {
+		pressureCtx, pressureCancel := context.WithCancel(context.Background())
+		go WatchMemoryPressure(pressureCtx, "/proc/meminfo", profileCollectorsActive, EmitMemoryPressure, slog.Default())
+		defer pressureCancel()
+	}
+	// ADR-1155: a Go application serving net/http/pprof is profiled through
+	// that endpoint, labelled with this run's process, when the deployment
+	// names its port and the profile bridge is running.
+	if bridge := activeProfileBridge(); bridge != nil && m.Profiling != nil && m.Profiling.PprofPort > 0 {
+		scrapeCtx, scrapeCancel := context.WithCancel(context.Background())
+		go runPprofScraper(scrapeCtx, bridge, m.Profiling.PprofPort, cmd.Process.Pid, slog.Default())
+		defer scrapeCancel()
+	}
 	if err := cmd.Wait(); err != nil {
+		if oomKilled(err, oomKillsBefore, oomKillsKnown, func() (uint64, bool) { return readVMStatOOMKills(procVMStat) }) {
+			// ADR-1155: a capture running when the app was OOM-killed returns
+			// its heap checkpoints marked with the kill. The supervisor still
+			// restarts the app; nothing waits on the reply here.
+			go flushProfileCaptureOnOOM(api.ProfileCaptureOOMFlushTimeout, guestMemTotalMB())
+		}
 		return fmt.Errorf("run %v: %w", argv, err)
 	}
 	return nil
@@ -1715,7 +1751,7 @@ func railpackRuntimePackage(runtime string) (string, string) {
 	case "python313":
 		return "python", "3.13"
 	case "go124", "go124-alpine":
-		return "go", "1.24"
+		return "go", api.GoBuildToolchain
 	default:
 		return "", ""
 	}
@@ -2687,10 +2723,11 @@ func runCharacterizationForSup(sup *Supervisor, manifest api.AppManifest) {
 		log = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	args := RunArgs{
-		Manifest:     manifest,
-		ProvenWorker: bootProvenWorker(),
-		AppPID:       func() int { return sup.LastAppPID() },
-		ExitStatus:   func() (int, bool) { return sup.LastExitStatus() },
+		Manifest:       manifest,
+		ProvenWorker:   bootProvenWorker(),
+		FunctionRunner: bootFunctionRunner(),
+		AppPID:         func() int { return sup.LastAppPID() },
+		ExitStatus:     func() (int, bool) { return sup.LastExitStatus() },
 		RingBufferTail: func() string {
 			// Populated from the supervisor's ring buffer (Slice A
 			// PR-B). The buffer is allocated lazily on the first

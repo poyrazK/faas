@@ -514,6 +514,43 @@ func TestBoundedGuestBuildLogTailKeepsNewestDiagnostic(t *testing.T) {
 	}
 }
 
+// Hunt 11 H11-2: a successful build's log tail opened mid-line and was
+// mostly buildkitd's ref-lock retries, which read as build errors.
+func TestBoundedGuestBuildLogTailDropsRefLockRetries(t *testing.T) {
+	retry := `time="2026-10-22T00:13:07Z" level=error msg="(*service).Write failed" error="rpc error: code = Unavailable desc = ref layer-sha256:d4014f locked for 550.91972ms (since 2026-10-22 00:13:06 +0000 UTC): unavailable"` + "\n"
+	tests := []struct {
+		name     string
+		raw      string
+		want     []string
+		wantGone []string
+	}{
+		{"retries between export lines", strings.Repeat(retry, 6) + "#24 writing layer sha256:cbc1 2.3s done\n#24 DONE 120.9s\n",
+			[]string{"#24 writing layer sha256:cbc1 2.3s done", "#24 DONE 120.9s"}, []string{"(*service).Write failed"}},
+		{"other buildkitd errors stay", `time="t" level=error msg="failed to solve" error="exit code: 3"` + "\n#6 ERROR: exit code: 3\n",
+			[]string{"failed to solve", "#6 ERROR: exit code: 3"}, nil},
+		{"a cut tail starts on a whole line", strings.Repeat("#5 sha256:abcdef layer done\n", 200) + "#24 DONE 1.0s\n",
+			[]string{"#24 DONE 1.0s"}, nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := boundedGuestBuildLogTail(tt.raw)
+			for _, want := range tt.want {
+				if !strings.Contains(got, want) {
+					t.Errorf("tail lost %q:\n%s", want, got)
+				}
+			}
+			for _, gone := range tt.wantGone {
+				if strings.Contains(got, gone) {
+					t.Errorf("tail still has %q:\n%s", gone, got)
+				}
+			}
+			if first, _, _ := strings.Cut(got, "\n"); !strings.HasPrefix(first, "#") && !strings.HasPrefix(first, "time=") {
+				t.Errorf("tail opens mid-line: %q", first)
+			}
+		})
+	}
+}
+
 // production-us hunt #9: a Dockerfile RUN exiting 3 surfaced only buildkitd's
 // --debug stack traces; the failing step and its output were cut off.
 func TestBoundedGuestBuildLogTailKeepsTheCustomerBuildOutput(t *testing.T) {

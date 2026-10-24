@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
+	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -48,6 +49,12 @@ type Host interface {
 	// SecretRecipient, HostHMACKey and MFAIdentities return empty values when
 	// the host secrets are not installed.
 	SecretRecipient() *age.X25519Recipient
+	// RuntimeSecretRecipient seals the app secrets a binding hands to the
+	// workload, which vmmd opens (ADR 20261022111812).
+	RuntimeSecretRecipient() *age.X25519Recipient
+	// RuntimeSecretBinding is the account binding those secrets are sealed
+	// with (ADR-20261023173624); zero while binding is off.
+	RuntimeSecretBinding(accountID string) secretbox.Binding
 	HostHMACKey() []byte
 	MFAIdentities() []*age.X25519Identity
 }
@@ -61,9 +68,9 @@ type Service struct {
 }
 
 // wakeObjectInventory asks the inventory sweep to run now. Admission needs a
-// verified inventory of every bucket in the account, so a new bucket blocked
-// transfers on every bucket of its account until the minute-long sweep tick
-// reached it (production-us hunt #10, H10-129). Never blocks.
+// verified inventory of the target bucket, so a new bucket refused transfers
+// until the minute-long sweep tick reached it (production-us hunt #10,
+// H10-129). Never blocks.
 func (s *Service) wakeObjectInventory() {
 	select {
 	case s.InventoryWake <- struct{}{}:

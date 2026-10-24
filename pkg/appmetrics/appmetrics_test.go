@@ -816,3 +816,29 @@ func TestAppMetrics_Fetch_IdleWindowIsNotDegraded(t *testing.T) {
 		t.Fatalf("idle window = %+v, want zero counts and rates", resp)
 	}
 }
+
+// The fleet wake p95 comes with the wake count it was computed from, so a
+// p95 of 4 wakes is not quoted as fact (Hunt 12 H12-40).
+func TestAppMetrics_FetchReportsWakeSamples(t *testing.T) {
+	log, _ := captureLog(t)
+	stub := &stubPromQL{fn: func(q string) (float64, error) {
+		if strings.HasPrefix(q, "sum(increase(gateway_wake_latency_seconds_count[") {
+			return 4.0167, nil
+		}
+		return 42, nil
+	}}
+	resp, _ := appmetrics.Fetch(context.Background(), stub, log, "app-1", "1h")
+	if resp.WakeSamples == nil || *resp.WakeSamples != 4 {
+		t.Fatalf("WakeSamples = %v, want 4", resp.WakeSamples)
+	}
+	failing := &stubPromQL{fn: func(q string) (float64, error) {
+		if strings.HasPrefix(q, "sum(increase(gateway_wake_latency_seconds_count[") {
+			return 0, errors.New("prometheus down")
+		}
+		return 42, nil
+	}}
+	resp, src := appmetrics.Fetch(context.Background(), failing, log, "app-1", "1h")
+	if resp.WakeSamples != nil || src != appmetrics.SourcePrometheus || resp.WakeP95MS != 42 {
+		t.Fatalf("count failure: samples=%v src=%q p95=%v; want nil, prometheus, 42", resp.WakeSamples, src, resp.WakeP95MS)
+	}
+}

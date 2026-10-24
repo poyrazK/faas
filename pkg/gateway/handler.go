@@ -135,6 +135,10 @@ type App struct {
 	DeclaredRoutes []DeclaredRoute
 	// MaxConcurrency is the app instance ceiling; zero uses the plan ceiling.
 	MaxConcurrency int
+	// PerInstanceConcurrency is the app's declared requests per instance
+	// (scaling_policy.per_instance_concurrency, ADR-20261022203523). Zero uses
+	// the plan's concurrency_per_vm; effectiveVMConcurrencyLimit resolves it.
+	PerInstanceConcurrency int
 	// ConcurrencyOverflow controls saturation behavior at the wake and
 	// per-instance gates. Empty and "queue" retain the bounded-wait default;
 	// "drop" returns 429 immediately when no slot is available.
@@ -964,7 +968,10 @@ type Handler struct {
 	// apiMonetizationFlags is the api_monetization platform flag: it
 	// releases monetization to the accounts it admits (ADR-20261020170649).
 	apiMonetizationFlags *platformflags.Set
-	gate                 *WakeGate
+	// edgeFeatureFlags releases challenge rules, WAF warn and block, and the
+	// penalty box per account (ADR-20261023113721); nil enforces them all.
+	edgeFeatureFlags *platformflags.Set
+	gate             *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -1117,7 +1124,10 @@ type Handler struct {
 	// call paths. observe nil-checks before enqueueing. The recorder
 	// never opens a Postgres connection itself — the publisher
 	// (request_telemetry_publisher.go) ships drained rows to apid.
-	requestTelemetry    *requestTelemetryRecorder
+	requestTelemetry *requestTelemetryRecorder
+	// slowRequests reports requests in flight too long for an automatic
+	// stack capture (ADR-1155); nil disables tracking.
+	slowRequests        *SlowRequestWatcher
 	requestIDJournal    RequestIDJournalWriter
 	usageOutbox         *usageoutbox.Outbox
 	requestAuditEnabled bool
@@ -1296,7 +1306,10 @@ type Handler struct {
 	challengeKey []byte
 	// challengeNow is the challenge clock; nil means time.Now.
 	challengeNow func() time.Time
-	operations   OperationRouteEnqueuer
+	// challengeLoad tracks challenge pages per rule for raising the
+	// difficulty under attack (ADR-831 amendment 8).
+	challengeLoad challengeLoads
+	operations    OperationRouteEnqueuer
 	// geoReader is the country lookup used by applyEdgeRuleGeo and
 	// country-keyed throttles (ADR-091 D21). A nil reader is allowed
 	// at boot, but a matched policy that needs geography fails closed.
@@ -1307,6 +1320,9 @@ type Handler struct {
 	asnReader ASNReader
 	// botVerifier resolves the verified_bot match field (ADR-973); nil = absent.
 	botVerifier *BotVerifier
+	// penaltyBox holds clients rule penalties boxed (ADR-20261022105846);
+	// nil leaves penalties unenforced.
+	penaltyBox *PenaltyBox
 	// edgeRuleHits counts per-rule matches (ADR-960); nil disables counting.
 	edgeRuleHits EdgeRuleHitRecorder
 	// resolveTargetApp is the closure the matcher uses to
@@ -3202,9 +3218,12 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 	}
 	for _, denyNet := range rule.Deny {
 		if denyNet.Contains(clientIP) {
+			// ip_denied, not the API-key code insufficient_scope (Hunt 12
+			// H12-39).
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-				api.CodeForbidden, "IP denied",
+				api.CodeIPDenied, "IP denied",
 				"client IP matches a deny CIDR on this edge rule"))
+			h.penalizeEdgeRuleRejection(r, app, rule.ID)
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.ip_blocked", nil, map[string]any{
 					"rule_id":   rule.ID,
@@ -3239,8 +3258,9 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 		}
 		if !allowed {
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-				api.CodeForbidden, "IP not allowed",
+				api.CodeIPDenied, "IP not allowed",
 				"client IP does not match any allow CIDR on this edge rule"))
+			h.penalizeEdgeRuleRejection(r, app, rule.ID)
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.ip_blocked", nil, map[string]any{
 					"rule_id":   rule.ID,
@@ -4260,8 +4280,9 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 	// Deny walks first.
 	if _, denied := rule.Deny[country]; denied {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-			api.CodeForbidden, "Country denied",
+			api.CodeGeoDenied, "Country denied",
 			"client country matches a deny entry on this edge rule"))
+		h.penalizeEdgeRuleRejection(r, app, rule.ID)
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.geo_blocked", nil, map[string]any{
 				"rule_id":   rule.ID,
@@ -4279,8 +4300,9 @@ func (h *Handler) applyEdgeRuleGeo(w http.ResponseWriter, r *http.Request, app A
 	if len(rule.Allow) > 0 {
 		if _, allowed := rule.Allow[country]; !allowed {
 			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-				api.CodeForbidden, "Country not allowed",
+				api.CodeGeoDenied, "Country not allowed",
 				"client country does not match any allow entry on this edge rule"))
+			h.penalizeEdgeRuleRejection(r, app, rule.ID)
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.geo_blocked", nil, map[string]any{
 					"rule_id":   rule.ID,
@@ -4518,6 +4540,7 @@ func (h *Handler) applyEdgeRuleThrottle(w http.ResponseWriter, r *http.Request, 
 		writeRateLimited(w, bucket, fmt.Sprintf(
 			"this route allows %s requests per second with bursts of %d; slow down and retry",
 			strconv.FormatFloat(rule.RequestsPerSecond, 'f', -1, 64), rule.Burst))
+		h.penalizeEdgeRuleRejection(r, app, rule.ID)
 		if h.edgeRuleAudit != nil {
 			h.edgeRuleAudit.Emit(r.Context(), "edge_rule.throttle_rejected", nil, map[string]any{
 				"rule_id": rule.ID,
@@ -5380,6 +5403,13 @@ type capWriter struct {
 	written  int64
 	onCap    func()
 	disabled *atomic.Bool
+	// committed is set once the status line has been passed on. After
+	// that a problem document can no longer replace the response: written
+	// into the body it was appended to the customer's payload, which then
+	// ended cleanly under the committed 200 (Hunt 11 H11-36). onCap only
+	// runs while the response is uncommitted; afterwards Write returns
+	// errResponseCapExceeded and the caller aborts the stream.
+	committed bool
 	// HEAD's Content-Length describes the representation a GET would return,
 	// not bytes in this response, so it cannot trigger the body-size guard.
 	headResponse bool
@@ -5412,18 +5442,19 @@ func (c *capWriter) ProblemHTMLRequest() *http.Request {
 
 func (c *capWriter) Write(b []byte) (int, error) {
 	if c.disabled.Load() {
-		return 0, http.ErrHandlerTimeout
+		return 0, errResponseCapExceeded
 	}
 	if c.written+int64(len(b)) > c.cap {
 		// Fire once; idempotent under concurrent writes thanks
-		// to disabled CAS.
-		if c.disabled.CompareAndSwap(false, true) && c.onCap != nil {
+		// to disabled CAS. A committed response cannot become a
+		// problem document any more (see committed).
+		if c.disabled.CompareAndSwap(false, true) && c.onCap != nil && !c.committed {
 			c.onCap()
 		}
 		if c.exceeded.CompareAndSwap(false, true) && c.onWarn != nil {
 			c.onWarn("exceeded")
 		}
-		return 0, http.ErrHandlerTimeout
+		return 0, errResponseCapExceeded
 	}
 	// Pre-Write warn-on-approach hook (issue #995 Phase 4 /
 	// ADR-121): fire once at 95% of cap, once at 80% (95%
@@ -5448,12 +5479,17 @@ func (c *capWriter) Write(b []byte) (int, error) {
 			}
 		}
 	}
+	c.committed = true
 	n, err := c.ResponseWriter.Write(b)
 	if n > 0 {
 		c.written += int64(n)
 	}
 	return n, err
 }
+
+// errResponseCapExceeded is what capWriter.Write returns once the body cap
+// fired. It wraps http.ErrHandlerTimeout, which earlier callers matched.
+var errResponseCapExceeded = fmt.Errorf("gateway: response exceeded its body cap: %w", http.ErrHandlerTimeout)
 
 // WriteHeader rejects an announced oversized body before its status and
 // headers reach the client. Bodyless responses are exempt: in particular,
@@ -5485,6 +5521,9 @@ func (c *capWriter) WriteHeader(statusCode int) {
 			}
 			return
 		}
+	}
+	if statusCode >= http.StatusOK {
+		c.committed = true
 	}
 	c.ResponseWriter.WriteHeader(statusCode)
 }
@@ -6178,6 +6217,13 @@ haveApp:
 	// table — a customer who flipped the whole app should never see
 	// a per-route 503 from a different Problem.code, because that
 	// would leak the existence of the fine-grained rule.
+	// ADR-20261022105846: a client a rule's penalty box holds is refused
+	// before any other gate.
+	if h.applyEdgePenaltyBox(w, r, app, deploymentSmoke) {
+		h.metrics.ObserveEdgeRejection(app.ID, "penalty", rec.status)
+		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
+		return
+	}
 	if h.applyAppsMaintenanceMode(w, r, app) {
 		h.observe(r, rec.status, app.ID, string(app.Plan), false, Target{})
 		return
@@ -7109,7 +7155,7 @@ haveApp:
 	// URLs deliberately skip this step: burst admission uses the weighted app
 	// picker and could wake or select a sibling deployment instead of the
 	// immutable revision named by the hostname.
-	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits.ConcurrencyPerVMBound)
+	perVMConcurrency := effectiveVMConcurrencyLimit(app, limits)
 	waitedForBurst := false
 	if !exactDeployment {
 		//nolint:contextcheck // request ctx at handler boundary.
@@ -7211,7 +7257,7 @@ haveApp:
 	// the request waits under the plan's bounded capacity-admission allowance.
 	var vmRelease func()
 	var vmWaited bool
-	queuePolicy := ConcurrencyAdmissionPolicyForApp(app.Plan, app.ConcurrencyOverflow, app.MaxQueueWaitMS, app.MaxQueueDepth)
+	queuePolicy := concurrencyAdmissionPolicy(app)
 	capacityWaitCtx, cancelCapacityWait := context.WithTimeout(r.Context(), queuePolicy.MaxWait)
 	defer cancelCapacityWait()
 	capacityWaitStarted := time.Now()
@@ -7230,7 +7276,13 @@ haveApp:
 	}
 	capacitySpan.End()
 	if vmWaited {
-		h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, perVMConcurrency)
+		// The audit row marks the platform's per-VM bound. An app that
+		// declares a lower per_instance_concurrency is full by design
+		// (ADR-20261022203523); its waits are in the queue-wait metric, not
+		// one events row per queued request.
+		if perVMConcurrency >= limits.ConcurrencyPerVMBound {
+			h.emitVMConcurrencyThreshold(r.Context(), app, pick.Target, perVMConcurrency)
+		}
 		waitedFor := time.Since(capacityWaitStarted)
 		outcome := "admitted"
 		switch {
@@ -7698,6 +7750,7 @@ haveApp:
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				req, _ = stampTargetIdentity(req, app, tgt)
+				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
 				h.proxyByNode(tgt).ServeHTTP(w, req)
 			}, app)
 	} else {
@@ -7714,6 +7767,7 @@ haveApp:
 		h.proxyAttempt(capped, r, target, isStreaming, retireStaleTarget,
 			func(w http.ResponseWriter, req *http.Request, tgt Target) {
 				req, _ = stampTargetIdentity(req, app, tgt)
+				defer h.trackSlowRequest(req, app, tgt, isStreaming)()
 				h.proxyFor(tgt.NodeID, planCap).ServeHTTP(w, req)
 			}, app)
 	}
@@ -7868,7 +7922,7 @@ func (h *Handler) observe(r *http.Request, status int, appID, plan string, cold 
 			plan = "-"
 		}
 		h.metrics.ObserveRequest(appID, plan, code)
-		if platformFailureUnbillable(r, status) {
+		if platformErrorForSLO(r, status) {
 			h.metrics.ObservePlatformError(appID, plan)
 		}
 		// Per-app full request duration histogram (issue #273 / ADR-042).

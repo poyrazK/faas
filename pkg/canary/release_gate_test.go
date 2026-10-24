@@ -73,6 +73,25 @@ func TestProgressionAbortsOnAFailingReleaseGate(t *testing.T) {
 	if apid.predecessorID != decisionStableID || apid.action != "abort" || store.stable != decisionStableID {
 		t.Fatalf("abort went to %q/%q; gates judged against %q", apid.predecessorID, apid.action, store.stable)
 	}
+	// The durable reason names the gate (Hunt 12 H12-36).
+	if want := "circuit breaker: release gate checkout-slo failed; restoring predecessor " + decisionStableID; apid.reason != want {
+		t.Fatalf("reason = %q, want %q", apid.reason, want)
+	}
+}
+
+func TestReleaseGateName(t *testing.T) {
+	tests := []struct{ reason, want string }{
+		{"release gate checkout-slo: burn rate 20.0 (max 10)", "checkout-slo"},
+		{"release gate h12-no-new-errors: 1 new error group", "h12-no-new-errors"},
+		{"release gate : empty", ""},
+		{"release gate no colon", ""},
+		{"5xx regression: 2.0%", ""},
+	}
+	for _, tt := range tests {
+		if got := releaseGateName(tt.reason); got != tt.want {
+			t.Errorf("releaseGateName(%q) = %q, want %q", tt.reason, got, tt.want)
+		}
+	}
 }
 
 func TestProgressionKeepsGoingWhenGatesPassOrCannotBeRead(t *testing.T) {

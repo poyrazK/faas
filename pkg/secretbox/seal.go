@@ -56,6 +56,17 @@ func Seal(recipient *age.X25519Recipient, env Envelope) ([]byte, error) {
 	if recipient == nil {
 		return nil, errors.New("secretbox: nil recipient")
 	}
+	return SealTo([]*age.X25519Recipient{recipient}, env)
+}
+
+// SealTo is Seal for several recipients (ADR 20261022111812): any one of
+// the matching identities opens the result. Duplicate recipients are
+// written once.
+func SealTo(recipients []*age.X25519Recipient, env Envelope) ([]byte, error) {
+	stanzas, err := dedupeRecipients(recipients)
+	if err != nil {
+		return nil, err
+	}
 	if err := env.Validate(); err != nil {
 		return nil, err
 	}
@@ -63,8 +74,21 @@ func Seal(recipient *age.X25519Recipient, env Envelope) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: marshal envelope: %w", err)
 	}
+	return encryptPlaintext(stanzas, plaintext)
+}
+
+// sealPlaintext encrypts already-encoded envelope plaintext to recipients.
+func sealPlaintext(recipients []*age.X25519Recipient, plaintext []byte) ([]byte, error) {
+	stanzas, err := dedupeRecipients(recipients)
+	if err != nil {
+		return nil, err
+	}
+	return encryptPlaintext(stanzas, plaintext)
+}
+
+func encryptPlaintext(stanzas []age.Recipient, plaintext []byte) ([]byte, error) {
 	var out bytes.Buffer
-	w, err := age.Encrypt(&out, recipient)
+	w, err := age.Encrypt(&out, stanzas...)
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: open age writer: %w", err)
 	}
@@ -112,7 +136,16 @@ func Open(identity *age.X25519Identity, blob []byte) (Envelope, error) {
 // Returns an error if the blob is tampered, NO supplied identity
 // matches (every recipient stanza was tried and none decrypted), or
 // the plaintext isn't a valid Envelope (Validate() rejected).
+//
+// Bound envelopes (ADR-20261023173624) open too; their binding is dropped.
+// A caller that decrypts for a workload uses OpenMultiBound and checks it.
 func OpenMulti(identities []*age.X25519Identity, blob []byte) (Envelope, error) {
+	env, _, err := OpenMultiBound(identities, blob)
+	return env, err
+}
+
+// openPlaintext decrypts blob under any of identities.
+func openPlaintext(identities []*age.X25519Identity, blob []byte) ([]byte, error) {
 	if len(identities) == 0 {
 		return nil, errors.New("secretbox: no identities supplied")
 	}
@@ -145,14 +178,7 @@ func OpenMulti(identities []*age.X25519Identity, blob []byte) (Envelope, error) 
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: read plaintext: %w", err)
 	}
-	var env Envelope
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, fmt.Errorf("secretbox: unmarshal envelope: %w", err)
-	}
-	if err := env.Validate(); err != nil {
-		return nil, err
-	}
-	return env, nil
+	return raw, nil
 }
 
 // SealOne seals a single (key, value) pair. Convenience wrapper for apid's
@@ -193,20 +219,9 @@ func SealBytes(recipient *age.X25519Recipient, namespace string, plaintext []byt
 // until every reader holds the domain identity, then to the domain alone.
 // Duplicate recipients are written once.
 func SealBytesTo(recipients []*age.X25519Recipient, namespace string, plaintext []byte, maxValueBytes int) ([]byte, error) {
-	if len(recipients) == 0 {
-		return nil, errors.New("secretbox: no recipients")
-	}
-	stanzas := make([]age.Recipient, 0, len(recipients))
-	seen := make(map[string]struct{}, len(recipients))
-	for _, r := range recipients {
-		if r == nil {
-			return nil, errors.New("secretbox: nil recipient")
-		}
-		if _, dup := seen[r.String()]; dup {
-			continue
-		}
-		seen[r.String()] = struct{}{}
-		stanzas = append(stanzas, r)
+	stanzas, err := dedupeRecipients(recipients)
+	if err != nil {
+		return nil, err
 	}
 	if maxValueBytes > 0 && len(plaintext) > maxValueBytes {
 		return nil, api.ErrSecretValueTooLarge(api.Limits{SecretValueMaxBytes: maxValueBytes}, len(plaintext))
@@ -235,6 +250,26 @@ func SealBytesTo(recipients []*age.X25519Recipient, namespace string, plaintext 
 		return nil, fmt.Errorf("secretbox: close age writer: %w", err)
 	}
 	return out.Bytes(), nil
+}
+
+// dedupeRecipients returns recipients as age stanzas, each written once.
+func dedupeRecipients(recipients []*age.X25519Recipient) ([]age.Recipient, error) {
+	if len(recipients) == 0 {
+		return nil, errors.New("secretbox: no recipients")
+	}
+	stanzas := make([]age.Recipient, 0, len(recipients))
+	seen := make(map[string]struct{}, len(recipients))
+	for _, r := range recipients {
+		if r == nil {
+			return nil, errors.New("secretbox: nil recipient")
+		}
+		if _, dup := seen[r.String()]; dup {
+			continue
+		}
+		seen[r.String()] = struct{}{}
+		stanzas = append(stanzas, r)
+	}
+	return stanzas, nil
 }
 
 // OpenBytes is the inverse of SealBytes. Returns the namespace +

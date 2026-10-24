@@ -36,6 +36,9 @@ type EdgeRuleChallengeResolved struct {
 	MatchHeaders   map[string]string
 	Difficulty     int
 	PassTTLSeconds int
+	// MaxDifficulty is the most the gateway may raise Difficulty to under
+	// attack (ADR-831 amendment 8); equal to Difficulty keeps it fixed.
+	MaxDifficulty int
 }
 
 // ChallengeEdgeRuleMatcher is optional so existing matchers do not have to

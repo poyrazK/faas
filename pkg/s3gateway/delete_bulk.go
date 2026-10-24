@@ -59,6 +59,10 @@ func bulkDeleteError(target deleteObjectTarget, err error) deleteObjectError {
 		code, message = "NotImplemented", "This S3 operation is not implemented by the storage provider."
 	} else if errors.Is(err, state.ErrNotFound) {
 		code, message = "NoSuchVersion", "The specified version does not exist."
+	} else if errors.Is(err, state.ErrObjectBucketBusy) {
+		code, message = "SlowDown", objectBusyMessage
+	} else if errors.Is(err, state.ErrConflict) || errors.Is(err, objectstorage.ErrConflict) {
+		code, message = "OperationAborted", objectConflictMessage
 	}
 	return deleteObjectError{Key: target.Key, VersionID: target.VersionID, Code: code, Message: message}
 }

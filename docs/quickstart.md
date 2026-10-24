@@ -13,7 +13,7 @@ An unambiguous app is selected automatically; multiple candidates offer a picker
 When the directory holds two or more services (a Compose file or a workspace),
 Start first offers to deploy all of them as one project: it then shows the
 project plan from `gregale deploy --project` and creates nothing until you
-confirm it.
+confirm it. See [Deploy a multi-service app](multi-service-apps.md).
 Review the launch and confirm. It handles browser login when needed, picks the app name and access
 defaults, checks the source, shows compact launch progress, and automatically tests
 the first response. It finishes with the response, elapsed time, useful follow-up

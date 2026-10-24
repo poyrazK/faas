@@ -432,7 +432,11 @@ type Instance struct {
 	Method                    WakeMethod // how it came up; a restore that fell back reads WakeColdBoot
 
 	runtimeAdmissionReceipt runtimeadmission.Receipt
-	runtimeAdmissionEgress  WakeRequest
+	// admissionHeldFrom is the incarnation that issued runtimeAdmissionReceipt
+	// when this process adopted the guest carrying it (ADR-595 extension):
+	// grants naming that receipt as parent are then this process's to serve.
+	admissionHeldFrom      string
+	runtimeAdmissionEgress WakeRequest
 	// ExecutionOnly marks a VM created by the dedicated disposable-execution
 	// restore/cold-boot path. ExecuteExecution refuses ordinary app instances;
 	// this prevents a caller from turning a networked long-lived app VM into a
@@ -478,6 +482,8 @@ type Instance struct {
 	// JobInteractive marks a Job whose guest holds its command for one
 	// attached session (ADR-1330).
 	JobInteractive bool
+	// jobExit is the job's exit once its guest reported it (RecordJobExit).
+	jobExit *JobExitPayload
 	// ADR-098 C11: phase-decomposed wake timings stamped at the
 	// three boundary sites inside Wake / bringUp so the vmmd
 	// WakeResponse can carry the typed scalars (restore_ms /
@@ -695,6 +701,27 @@ type Instance struct {
 	// Reset to 0 on every Wake. Mirrors pkg/state/types.go
 	// where it lives on DailyUsage after the meterd rollup.
 	tailSecondsAccum int64
+	// adoptionVCPUs and adoptionMemSizeMiB are the machine configuration the
+	// guest was launched with, recorded in its adoption block (ADR §1).
+	adoptionVCPUs      int
+	adoptionMemSizeMiB int
+	// adoptionOp is the operation intent in flight, recorded in the
+	// adoption block. Guarded by Manager.mu.
+	adoptionOp *resourceAdoptionOp
+	// devPatched marks a guest served a developer live patch (ADR-740),
+	// recorded in its adoption block so a successor keeps refusing its
+	// snapshots. Guarded by Manager.mu.
+	devPatched bool
+	// migrationPaused marks a live-migration source SnapshotKeepAlive left
+	// paused for the migration lease owner, who alone may resume or destroy
+	// it. Recorded in the adoption block, so a successor keeps it paused.
+	// Guarded by Manager.mu.
+	migrationPaused bool
+	// warmSpare marks a warm-pool restore not yet claimed: it stays paused
+	// until ResumeWarmInstance. Paused alone cannot say so, because it stays
+	// set on a claimed warm instance. Recorded in the adoption block.
+	// Guarded by Manager.mu.
+	warmSpare bool
 }
 
 // LiveEgressInstance is the minimal live-instance view needed by vmmd's
@@ -868,9 +895,18 @@ type Manager struct {
 	// ADR-472: observed restart survivors have no reconstructed lifecycle
 	// owner. Their slots and IDs stay quarantined; they are never live-map
 	// entries, cleanup identities or permission to replay a failure report.
-	restartQuarantine          map[string]struct{}
-	restartInventoryDone       bool
-	resourceJournal            *ResourceJournal
+	restartQuarantine    map[string]struct{}
+	restartInventoryDone bool
+	resourceJournal      *ResourceJournal
+	// anchorNetns re-creates an adopted guest's netns binding; tests replace
+	// it. nil uses anchorAdoptedNetns.
+	anchorNetns func(name string, pid int, want resourceFileIdentity) (*resourceAsset, error)
+	// adoption writes version-7 adoption blocks once EnableAdoptionRecords
+	// is called; nil writes none. Atomic so state changes can mark an
+	// instance whether or not they hold mu.
+	adoption atomic.Pointer[adoptionWriter]
+	// adoptAdmittedRuntimes: see WithAdoptAdmittedRuntimes.
+	adoptAdmittedRuntimes      bool
 	resourceLinks              map[string]ownedResourceLink
 	linkProbe                  func(string, int) (*resourceLinkIdentity, error)
 	linkContext                func() (*resourceMountIdentity, error)
@@ -1005,6 +1041,9 @@ type Manager struct {
 	// because the workload is already dead and the VM is about
 	// to be torn down by the manager's destroy path.
 	workloadOOMRelay WorkloadOOMSink
+	// memoryPressureRelay forwards guest memory-pressure reports to schedd,
+	// which queues an automatic heap capture (ADR-1155). nil drops them.
+	memoryPressureRelay MemoryPressureSink
 	// livenessRegistry (issue #554 / ADR-078 / PR review fix)
 	// is the per-instance poll goroutine registry the cmd/vmmd
 	// main loop wires via WithLivenessProbes. The Manager owns
@@ -1976,6 +2015,31 @@ func (m *Manager) WithLivenessSink(relay LivenessFailedSink) *Manager {
 // Mirrors WithLivenessSink's signature shape (ctx + instance id +
 // observed payload); the only difference is the payload shape
 // (peakMB + planMB ints instead of a closed-set reason string).
+// MemoryPressureSink receives a guest memory-pressure report in MiB.
+type MemoryPressureSink func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int)
+
+// WithMemoryPressureSink attaches the best-effort memory-pressure relay.
+func (m *Manager) WithMemoryPressureSink(relay MemoryPressureSink) *Manager {
+	m.memoryPressureRelay = relay
+	return m
+}
+
+// ReportMemoryPressure relays one guest report for a live app instance.
+// Reports for unknown, execution-only or job VMs are dropped.
+func (m *Manager) ReportMemoryPressure(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) {
+	if m.memoryPressureRelay == nil {
+		return
+	}
+	m.mu.Lock()
+	live := m.live[instanceID]
+	ok := live != nil && !live.ExecutionOnly && !live.IsJob
+	m.mu.Unlock()
+	if !ok {
+		return
+	}
+	m.memoryPressureRelay(ctx, instanceID, availableMB, totalMB, anonMB)
+}
+
 func (m *Manager) WithWorkloadOOMSink(relay WorkloadOOMSink) *Manager {
 	m.workloadOOMRelay = relay
 	return m
@@ -2523,6 +2587,7 @@ func (m *Manager) MarkInstanceFrameworkReady(ctx context.Context, instance strin
 	appID = inst.AppID
 	runtime = inst.Runtime
 	m.mu.Unlock()
+	m.markAdoptionDirty(instance)
 	ctx, readySpan := pkgtrace.StartSpan(ctx, "guest.framework_ready",
 		attribute.String("instance_id", instance),
 		attribute.String("app_id", appID),
@@ -3361,7 +3426,7 @@ func jsonMarshalEnvelope(e secretbox.Envelope) ([]byte, error) {
 // loopback write.
 func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte, err error) {
 	if len(req.SealedEnvEntries) > 0 {
-		merged, openErr := m.openSealedEnvEntries(req.SealedEnvEntries)
+		merged, openErr := m.openSealedEnvEntries(req.SealedEnvEntries, req.AccountID)
 		if openErr != nil {
 			return nil, nil, openErr
 		}
@@ -3384,7 +3449,10 @@ func (m *Manager) prepareWakeFiles(req WakeRequest) (secretsJSON, apiJSON []byte
 	return secretsJSON, apiJSON, nil
 }
 
-func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Envelope, error) {
+// openSealedEnvEntries opens a workload's selected ciphertext for accountID,
+// the account the workload runs for. An envelope bound to another account
+// (ADR-20261023173624) is refused before any of its values are used.
+func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
 	if len(entries) == 0 {
 		return nil, nil
 	}
@@ -3393,7 +3461,7 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Enve
 	}
 	merged := secretbox.Envelope{}
 	for _, entry := range entries {
-		inner, err := secretbox.OpenMulti(m.hostIdentities, entry.Ciphertext)
+		inner, err := m.openBoundEntry(entry, accountID)
 		if err != nil {
 			return nil, fmt.Errorf("open sealed env[%s]: %w", logsanitize.Field(entry.Key), err)
 		}
@@ -3416,8 +3484,9 @@ func (m *Manager) openSealedEnvEntries(entries []SealedEnvEntry) (secretbox.Enve
 // by an authorization-aware caller. It does not perform authorization and
 // requires each envelope to contain exactly its selected source key. Plaintext
 // remains in caller memory only; callers must not log or persist it outside
-// the guest's runtime projection.
-func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]string, error) {
+// the guest's runtime projection. accountID is the account the workload runs
+// for; an envelope bound to another account is refused.
+func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry, accountID string) (map[string]string, error) {
 	if len(entries) == 0 {
 		return map[string]string{}, nil
 	}
@@ -3426,7 +3495,7 @@ func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]str
 	}
 	secrets := make(map[string]string, len(entries))
 	for _, entry := range entries {
-		inner, err := secretbox.OpenMulti(m.hostIdentities, entry.Ciphertext)
+		inner, err := m.openBoundEntry(entry, accountID)
 		if err != nil {
 			return nil, fmt.Errorf("open runtime secret[%s]: %w", logsanitize.Field(entry.Key), err)
 		}
@@ -3440,6 +3509,18 @@ func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry) (map[string]str
 		secrets[entry.Key] = value
 	}
 	return secrets, nil
+}
+
+// openBoundEntry opens one entry and enforces its account binding.
+func (m *Manager) openBoundEntry(entry SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
+	inner, binding, err := secretbox.OpenMultiBound(m.hostIdentities, entry.Ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	if err := binding.Check(accountID); err != nil {
+		return nil, err
+	}
+	return inner, nil
 }
 
 func selectedSealedValue(entry SealedEnvEntry, inner secretbox.Envelope) (string, bool) {
@@ -3490,7 +3571,7 @@ func (m *Manager) prepareSidecarEnvFiles(req *WakeRequest) error {
 			}
 			merged[entry.Key] = string(plaintext)
 		}
-		secrets, err := m.UnsealRuntimeSecrets(secretEntries)
+		secrets, err := m.UnsealRuntimeSecrets(secretEntries, req.AccountID)
 		if err != nil {
 			return fmt.Errorf("open sidecar app secrets: %w", err)
 		}
@@ -3856,6 +3937,9 @@ type WakeNetworkReady struct {
 	Instance     string
 	Netns        string
 	PublicTarget *netns.PublicForwardTarget
+	// JailUID is the lease's jail uid. vmmd derives the instance bridge's
+	// unprivileged uid from it before the instance is live.
+	JailUID int
 }
 
 // WakeNetworkReadyHook must return promptly. Manager invokes it synchronously
@@ -4084,7 +4168,7 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 	// per-task secrets.env file before Firecracker starts.
 	var secretsEnvJSON []byte
 	if len(req.SealedEnvEntries) > 0 {
-		secretsEnvJSON, _, err = m.prepareWakeFiles(WakeRequest{SealedEnvEntries: req.SealedEnvEntries})
+		secretsEnvJSON, _, err = m.prepareWakeFiles(WakeRequest{SealedEnvEntries: req.SealedEnvEntries, AccountID: req.AccountID})
 		if err != nil {
 			return nil, fmt.Errorf("manager: BootJob %s: prepare sealed env: %w", req.Instance, err)
 		}
@@ -4238,6 +4322,8 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		Lease:               lease,
 		Net:                 nc,
 		Method:              WakeColdBoot, // jobs are always cold-boot
+		adoptionVCPUs:       req.VcpuCount,
+		adoptionMemSizeMiB:  req.MemSizeMiB,
 		IsJob:               true,
 		JobInteractive:      req.Interactive != nil,
 		JobStartGateEnabled: req.StartHeld,
@@ -4264,6 +4350,9 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 		m.cidToID[GuestVsockCID(lease.Slot)] = req.Instance
 	}
 	m.mu.Unlock()
+	if !qualificationOnly {
+		m.markAdoptionDirty(req.Instance) // A job has no readiness: record it now.
+	}
 	// MarkInstanceFrameworkReady isn't called here — the
 	// supervisor doesn't emit a framework-ready receipt. The
 	// job exit frame is the only receipt.
@@ -4285,6 +4374,18 @@ func (m *Manager) BootJob(ctx context.Context, req JobBootRequest) (_ *Instance,
 func (m *Manager) WaitJobExit(ctx context.Context, instance string, deadline time.Duration) (JobExitPayload, error) {
 	if m.vmm == nil {
 		return JobExitPayload{}, fmt.Errorf("manager: WaitJobExit: nil vmm")
+	}
+	m.mu.Lock()
+	var recorded *JobExitPayload
+	if inst := m.live[instance]; inst != nil && inst.jobExit != nil {
+		v := *inst.jobExit
+		recorded = &v
+	}
+	m.mu.Unlock()
+	if recorded != nil {
+		// Recorded by this vmmd's receiver or, for an adopted job, by the
+		// predecessor's: the call is a retry after the first was cut short.
+		return *recorded, nil
 	}
 	lease := Lease{Instance: instance, Slot: -1} // WaitJobExit ignores slot
 	return m.vmm.WaitJobExit(ctx, lease, deadline)
@@ -4851,7 +4952,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		// jail; the VMM joins it before startJailer.
 		network := m.startWakeNetwork(ctx, nc, preparedNetwork, func() {
 			if networkReady != nil {
-				networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns})
+				networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, JailUID: lease.UID})
 			}
 		})
 		// Registered after the cleanup defer, so it runs first: cleanup
@@ -4911,7 +5012,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			}
 		}
 		if networkReady != nil && !req.ExecutionOnly {
-			networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, PublicTarget: publicTarget})
+			networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, PublicTarget: publicTarget, JailUID: lease.UID})
 		}
 		if m.preparedNetworks != nil && !req.ExecutionOnly {
 			m.log.Info("wake network cache", "instance", req.Instance, "hit", preparedHit)
@@ -5151,7 +5252,8 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		functionDestination: m.functionDestinationForWake(req),
 		publicForwardTarget: publicTarget,
 		Lease:               lease, Net: nc, Method: method, wakeID: wakeID,
-		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused,
+		adoptionVCPUs: req.VcpuCount, adoptionMemSizeMiB: req.MemSizeMiB,
+		ExecutionOnly: req.ExecutionOnly, DataRepairOnly: req.dataRepairOnly, AppTaskOnly: req.AppTaskOnly, QualificationOnly: qualificationOnly, Paused: req.KeepPaused, warmSpare: req.KeepPaused,
 		ExecutionID:                     executionID,
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
@@ -5318,6 +5420,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		break
 	}
 	phases.mark("post_bring_up")
+	m.markAdoptionDirty(req.Instance)
 	if !req.ExecutionOnly {
 		m.renderHostSMTPAllowlistRules(ctx, true)
 		m.seedResolvedEgress(ctx, req.Instance)
@@ -5761,21 +5864,23 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 	}
 	scanKey := wire.ScanKeyForBaseKey(baseKey)
 	if err := m.ensureBaseGeneration(ctx, baseKey, scanKey); err != nil {
+		m.imageScanMetrics.ObserveBaseScanRefusal(baseKey, "generation_unavailable")
 		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"runtime base generation unavailable",
 			fmt.Sprintf("runtime base %q could not adopt its configured generation: %v", baseKey, err))
 	}
 	scan, readErr := m.readBaseScan(ctx, scanKey)
-	gateErr := m.baseScanVerdict(baseKey, scanKey, scan, readErr)
+	reason, gateErr := m.baseScanVerdict(baseKey, scanKey, scan, readErr)
 	// The sidecar is read through this node's cache. Another node may since
 	// have published a complete scan for the same base (H10-103 left a
 	// refusal cached on fsn-3 after fsn-2 rewrote it), so a refusal is
 	// re-checked once against the canonical copy before the boot fails.
 	if gateErr != nil && m.refreshCachedScan(ctx, scanKey) {
 		scan, readErr = m.readBaseScan(ctx, scanKey)
-		gateErr = m.baseScanVerdict(baseKey, scanKey, scan, readErr)
+		reason, gateErr = m.baseScanVerdict(baseKey, scanKey, scan, readErr)
 	}
 	if gateErr != nil {
+		m.imageScanMetrics.ObserveBaseScanRefusal(baseKey, reason)
 		return gateErr
 	}
 	// Forward per-severity finding counts to the vmmd Prometheus
@@ -5789,19 +5894,20 @@ func (m *Manager) bringUpScanCheck(ctx context.Context, baseKey string) error {
 }
 
 // baseScanVerdict applies the boot gate to one read of a base's scan sidecar.
-func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar, readErr error) error {
+// A refusal also returns its wire.BaseScanRefusalReasons reason.
+func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar, readErr error) (string, error) {
 	if readErr != nil {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return "sidecar_missing", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar missing",
 			fmt.Sprintf("scan sidecar missing for base %q at %q; refusing to boot un-scanned ext4 (issue #299)", baseKey, scanKey))
 	}
 	if expected := m.baseGenerations[baseKey]; expected != "" && !scanNamesConfiguredBase(scan.Image, expected) {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return "generation_mismatch", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar generation mismatch",
 			fmt.Sprintf("scan sidecar at %q names %q, want configured runtime base %q; refusing to boot (issue #299)", scanKey, scan.Image, expected))
 	}
 	if _, ok := scan.Findings["CRITICAL"]; !ok {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return "incomplete", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar incomplete",
 			fmt.Sprintf("scan sidecar at %q has no CRITICAL total; refusing to boot (issue #299)", scanKey))
 	}
@@ -5814,16 +5920,18 @@ func (m *Manager) baseScanVerdict(baseKey, scanKey string, scan baseScanSidecar,
 	}
 	n, ok := gateFindings["CRITICAL"]
 	if !ok {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		return "incomplete", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"scan sidecar incomplete",
 			fmt.Sprintf("scan sidecar at %q has no fix-available CRITICAL total; refusing to boot (issue #299)", scanKey))
 	}
 	if n > 0 {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
+		// The deploy and wake errors carry this detail to the customer, who
+		// cannot rebuild a Gregale runtime base: say whose problem it is.
+		return "critical", api.NewProblem(http.StatusServiceUnavailable, api.CodeScanCritical,
 			"Fixable CRITICAL vulnerability in base ext4",
-			fmt.Sprintf("base %q has %d fix-available CRITICAL Grype findings; refusing to boot (issue #299)", baseKey, n))
+			fmt.Sprintf("Gregale's base image %q has %d fix-available CRITICAL vulnerabilities, so Gregale will not start instances on it until a patched base is published; this is a platform problem, not your code", baseKey, n))
 	}
-	return nil
+	return "", nil
 }
 
 // refreshCachedScan replaces this node's cached copy of scanKey with the
@@ -5864,6 +5972,7 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	m.mu.Lock()
 	flight.parking = true
 	m.mu.Unlock()
+	defer m.beginAdoptionOp(instance, adoptionOpPark, spec.StorageKey, spec.VMStateStorageKey)()
 	// Stop liveness before pausing/snapshotting. A parked VM is expected to
 	// stop answering probes; leaving the loop active through Snapshot lets it
 	// race this teardown and report a second failure for the same instance.
@@ -5946,6 +6055,7 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if m.isFrozen(inst) {
 		return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: %w", instance, ErrInstanceFrozen)
 	}
+	defer m.beginAdoptionOp(instance, adoptionOpWarmSnapshot, spec.StorageKey, spec.VMStateStorageKey)()
 	if m.functionResourcesEnabled(inst) {
 		info, err, retire = m.warmFunctionSnapshot(ctx, inst, spec, flight)
 	} else {
@@ -6054,6 +6164,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if inst.AppTaskOnly {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: app task instances cannot be snapshotted", instance)
 	}
+	defer m.beginAdoptionOp(instance, adoptionOpSnapshot, spec.StorageKey, spec.VMStateStorageKey)()
 	if m.isFrozen(inst) {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: %w", instance, ErrInstanceFrozen)
 	}
@@ -6066,6 +6177,12 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	m.cancelFrameworkReadyLoop(instance)
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	info, err = checkedNativeSnapshotResult(ctx, spec, info, err)
+	if err == nil {
+		// The source stays paused for the lease owner. Record that before
+		// the prepare answers: a successor that took the pause for a quiet
+		// one would resume it beside the destination (adoption ADR §3).
+		err = m.recordMigrationPause(instance, inst)
+	}
 	if err == nil {
 		// The migration destination verifies this capture's backing identity
 		// like any restore (ADR-510). Without it every live migration was
@@ -6162,7 +6279,10 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 	if err := m.resumeWithRehearsalNetwork(ctx, inst); err != nil {
 		return fmt.Errorf("%s %s: %w", op, instance, err)
 	}
-	m.clearFrozen(inst)
+	m.mu.Lock()
+	inst.migrationPaused, inst.warmSpare = false, false
+	m.mu.Unlock()
+	m.clearFrozen(inst) // Rewrites the adoption block, clearing all three.
 	if inst.ImageHealthcheckRequired {
 		checker, ok := m.vmm.(interface {
 			WaitImageHealthcheck(context.Context, Lease, int) error
@@ -6237,6 +6357,9 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 		return m.vmm.SignalAndKill(ctx, Lease{Instance: instance}, signal, grace)
 	}
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
+	// A completed teardown retires the record; a failed one keeps this
+	// intent so a successor resumes it (adoption ADR §3).
+	m.beginAdoptionOp(instance, adoptionOpStop)
 	if signaler, supported := m.vmm.(interface {
 		SignalJob(context.Context, Lease, syscall.Signal, time.Duration) (bool, int32, error)
 	}); inst.IsJob && supported {
@@ -6298,6 +6421,9 @@ func (m *Manager) destroyWithReservation(ctx, cleanupCtx context.Context, instan
 		return m.vmm.DestroyWithExport(ctx, Lease{Instance: instance}, exportDir)
 	}
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
+	// A completed teardown retires the record; a failed one keeps this
+	// intent so a successor resumes it (adoption ADR §3).
+	m.beginAdoptionOp(instance, adoptionOpStop)
 	exitCode, destroyErr := m.vmm.DestroyWithExport(ctx, inst.Lease, exportDir)
 	cleanupErr := m.cleanup(cleanupCtx, inst.Lease, inst.Net, inst.WorkloadNames)
 	if err = errors.Join(destroyErr, cleanupErr); err != nil {
@@ -6555,6 +6681,23 @@ func (m *Manager) InstancePID(instance string) (int, bool) {
 // NotFound without a separate liveness check.
 func (m *Manager) LogRing(instance string) *logbuf.Ring {
 	return m.vmm.LogRing(instance)
+}
+
+// BridgeCredential returns the unprivileged uid and gid an instance's bridge
+// runs as (BridgeUIDForJailUID of its lease). ok is false for an instance
+// that is not live, so a bridge is never started for a lease that has gone.
+func (m *Manager) BridgeCredential(instance string) (uid, gid int, ok bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	inst, live := m.live[instance]
+	if !live {
+		return 0, 0, false
+	}
+	uid, ok = BridgeUIDForJailUID(inst.Lease.UID)
+	if !ok {
+		return 0, 0, false
+	}
+	return uid, uid, true
 }
 
 // NetnsFor returns the network namespace name (fc-<instance>) the
@@ -7080,6 +7223,7 @@ func (m *Manager) updateEgressAllowlist(ctx context.Context, appID string, allow
 		copy(inst.Net.EgressAllowlist, allowlist)
 		inst.AllowlistHandleV4 = nh.v4
 		inst.AllowlistHandleV6 = nh.v6
+		m.markAdoptionDirty(t.instanceID)
 	}
 	m.mu.Unlock()
 	// Keep the defense-in-depth host exception in sync with the live
@@ -7351,6 +7495,7 @@ func (m *Manager) updatePrivateNetworkForTargets(ctx context.Context, appID stri
 			inst.Net.PrivateNetworkAddress = netip.Addr{}
 		}
 		inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = nh.h4, nh.h6
+		m.markAdoptionDirty(t.id)
 	}
 	m.mu.Unlock()
 	return nil
@@ -7461,6 +7606,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 				inst.Net.PrivateNetworkAllowedCIDRs = append([]netip.Prefix(nil), allowedCIDRs...)
 				inst.Net.PrivateNetworkFirewallRules = cloneNetnsPrivateNetworkFirewallRules(renderedRules)
 				inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
+				m.markAdoptionDirty(t.id)
 			}
 			m.mu.Unlock()
 			continue
@@ -7485,6 +7631,7 @@ func (m *Manager) updatePrivateNetworkAttachment(ctx context.Context, appID, net
 			m.mu.Lock()
 			if inst := m.live[t.id]; inst == t.instance {
 				inst.PrivateNetworkHandleV4, inst.PrivateNetworkHandleV6 = 0, 0
+				m.markAdoptionDirty(t.id)
 			}
 			m.mu.Unlock()
 		}

@@ -12,6 +12,13 @@ import (
 
 var ErrObjectVersionProtectionPending = errors.New("object version protection is pending")
 
+// ErrObjectBucketBusy joins ErrConflict when a bucket refuses a deletion only
+// because other admitted work has not settled yet: another deletion, version
+// protection or a tracked write. Callers may retry shortly; ADR-547 still
+// admits one deletion per bucket at a time. Configuration and capacity
+// transitions stay plain conflicts (ADR-20261023223000).
+var ErrObjectBucketBusy = errors.New("object bucket has unsettled work")
+
 type ObjectVersionProtection struct {
 	api.ObjectVersionProtection
 	AccountID, AppID, ProviderVersionID, Token string                      `json:"-"`

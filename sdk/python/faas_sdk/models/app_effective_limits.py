@@ -35,8 +35,8 @@ class AppEffectiveLimits:
     max_instances: int
     """Effective per-app live-instance ceiling after applying the scaling policy."""
     concurrency_per_instance: int
-    """Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's
-    responsibility."""
+    """Maximum in-flight requests accepted by one instance: the app's scaling_policy.per_instance_concurrency when
+    set, otherwise the plan's concurrency_per_vm."""
     concurrency_queue_depth: int
     """Effective maximum number of requests allowed to wait for warm instance capacity."""
     concurrency_queue_wait_ms: int
