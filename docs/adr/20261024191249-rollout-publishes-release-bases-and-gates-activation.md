@@ -209,10 +209,14 @@ activates the node only after the play succeeds.
     assigned bases reuse the first node's producer and scan record and only
     download.
   - **Worst case.** A release that changes all seven gated bases and the
-    parent adds about 20 minutes to the first node. Together with a full drain,
-    that exceeds the 40-minute `join-node` timeout in `cd-compute.yml`. Such a
-    release must raise that timeout, or it fails safe: the node stays drained,
-    and a resumed run reuses whatever finished (follow-up 2).
+    parent adds about 20 minutes to the first node.
+  - **Budget raised.** rc.293's first fsn-2 join, under extra disk load,
+    used its full 40 minutes before building any base: about 15 minutes of
+    validation and 22 of convergence. `cd-compute.yml` therefore raises the
+    `join-node` timeout from 40 to 70 minutes, and the job's
+    `timeout-minutes` from 45 to 80, so gregalectl's own timeout fires before
+    GitHub kills the job. A rollout that still overruns fails safe: the node
+    stays drained, and a resumed run reuses whatever finished.
 - **Mixed fleet (release N beside N-1).** Before this change, a changed
   generation reached the shared key only when a rolled node owned an app on
   it. Now the first rolled node publishes every changed base that is in use.
@@ -242,6 +246,8 @@ activates the node only after the play succeeds.
   on the newer release. Rollbacks to rc.290 run rc.290's pre-stage and keep
   the old ownership-only behaviour.
 - **New surface.**
+  - `cd-compute.yml`: `join-node --timeout 70m` (was 40m), job
+    `timeout-minutes: 80` (was 45).
   - `storage.GetCanonical` and `LocalCacheBackend.GetCanonical`.
   - `fcvm.ScanNamesConfiguredBase`, exported unchanged.
   - The `vmmd base-adoption-check` subcommand.
@@ -257,8 +263,8 @@ activates the node only after the play succeeds.
 
 1. Generation-addressed runtime base keys (ADR-20261024085817 option b),
    which close the N-1 cache-miss gap and the rollback asymmetry.
-2. Make the `join-node` timeout scale with the bases a release changes, or
+2. Make the `join-node` budget scale with the bases a release changes, or
    publish changed bases in a dedicated serialized step before the first
-   activation, so a full-matrix base change fits the rollout budget.
+   activation, instead of a fixed 70 minutes for every node.
 3. Gate the deploy-time staging of a runtime base on an N-1 node, so a
    deploy cannot republish an older generation during a rollout.
