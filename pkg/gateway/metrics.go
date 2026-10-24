@@ -628,6 +628,11 @@ type Metrics struct {
 	// Same operator kill-switch + customer-opt-in gate as
 	// requestsByRoute.
 	failuresByRoute *prometheus.CounterVec
+	// routeSeries bounds the three per-route series above on this gateway
+	// and evicts idle apps' series (ADR-20261024154324).
+	routeSeries          *routeSeriesBudget
+	routeSeriesRejected  prometheus.Counter
+	routeSeriesEvictions prometheus.Counter
 	// coldBoot backs the renamed gateway_cold_boot_total counter
 	// (issue #273 / ADR-042). Renamed outright from coldWake —
 	// gateway_cold_wake_total had zero external consumers (no
@@ -898,6 +903,7 @@ func NewMetrics() *Metrics {
 		accountLabels:    newAccountLabelSet(),
 		hostnameLabels:   newHostnameLabelSet(),
 		deploymentLabels: newDeploymentLabelSet(),
+		routeSeries:      newRouteSeriesBudget(api.RouteMetricsMaxRoutesPerGateway, api.RouteMetricsSeriesIdleTTL),
 		hostKinds:        make(map[string]string),
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_requests_total",
@@ -2137,6 +2143,24 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
 	reg.MustRegister(m.serviceWakeAhead)
 	reg.MustRegister(m.routePriorityQueue, m.routePriorityWake, m.serviceWakeAheadEdgeShare, m.serviceWakeAheadCallerWakes, m.serviceWakeAheadEdgeTotal)
+	m.routeSeriesRejected = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "gateway_route_metrics_rejected_total",
+		Help: "Per-route observations not exported because this gateway already holds gateway_route_metrics_budget_routes live (app, route) pairs (ADR-20261024154324). The request still counts in the per-app series and request telemetry.",
+	})
+	m.routeSeriesEvictions = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "gateway_route_metrics_evictions_total",
+		Help: "Apps whose per-route series this gateway deleted after RouteMetricsSeriesIdleTTL without a request (ADR-20261024154324).",
+	})
+	reg.MustRegister(m.routeSeriesRejected, m.routeSeriesEvictions,
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "gateway_route_metrics_routes",
+			Help: "(app, route) pairs with live per-route series on this gateway (ADR-20261024154324).",
+		}, func() float64 { return float64(m.routeSeries.live()) }),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "gateway_route_metrics_budget_routes",
+			Help: "Most (app, route) pairs this gateway exports per-route series for; FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES overrides the default (ADR-20261024154324).",
+		}, func() float64 { return float64(m.routeSeries.limit()) }),
+	)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageCommitAborts, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
@@ -2672,18 +2696,71 @@ func (m *Metrics) RequestFailureRoute(appID, plan, route, code string) {
 	m.failuresByRoute.WithLabelValues(appID, plan, route, code).Inc()
 }
 
+// AdmitRouteSeries reports whether this observation's per-route series may
+// be emitted under the gateway's series budget (ADR-20261024154324). The
+// first admission of a route pre-instantiates its histogram classes. A
+// rejected observation is counted and must not be emitted. nil-receiver
+// safe.
+func (m *Metrics) AdmitRouteSeries(appID, plan, route, code, class string, now time.Time) bool {
+	if m == nil || m.routeSeries == nil || appID == "" || route == "" {
+		return false
+	}
+	ok, fresh := m.routeSeries.admit(appID, routeSeriesKey{plan: plan, code: code, class: class}, route, now)
+	if !ok {
+		m.routeSeriesRejected.Inc()
+		return false
+	}
+	if fresh {
+		m.PreInstantiateAppRoute(appID, route)
+	}
+	return true
+}
+
+// SetRouteSeriesBudget overrides the per-gateway series bound; non-positive
+// values keep the defaults from pkg/api/limits.go.
+func (m *Metrics) SetRouteSeriesBudget(maxRoutes int, idleAfter time.Duration) {
+	if m != nil && m.routeSeries != nil {
+		m.routeSeries.configure(maxRoutes, idleAfter)
+	}
+}
+
+// SweepRouteSeries deletes the per-route series of every app idle since
+// now-RouteMetricsSeriesIdleTTL and returns how many apps it dropped.
+func (m *Metrics) SweepRouteSeries(now time.Time) int {
+	if m == nil || m.routeSeries == nil {
+		return 0
+	}
+	return m.routeSeries.sweep(now, m.dropRouteSeries)
+}
+
+func (m *Metrics) dropRouteSeries(appID string, routes map[string]map[routeSeriesKey]struct{}) {
+	for route, keys := range routes {
+		for _, class := range routeSeriesClasses {
+			m.durationByRoute.DeleteLabelValues(appID, route, class)
+		}
+		for k := range keys {
+			m.durationByRoute.DeleteLabelValues(appID, route, k.class)
+			m.requestsByRoute.DeleteLabelValues(appID, k.plan, route, k.code)
+			m.failuresByRoute.DeleteLabelValues(appID, k.plan, route, k.code)
+		}
+	}
+	m.routeSeriesEvictions.Inc()
+}
+
 // PreInstantiateAppRoute writes zero-valued series for the
 // closed (class) set under (appID, route) so dashboards surface
 // from the first request rather than after the first observation
 // (ADR-093 D4). The closed class set is the same as
 // PreInstantiateApp above (2xx/3xx/4xx/5xx). Caller-routed
 // through routeLabelSet — the route argument is post-admit, so
-// the cap is enforced before this is called. nil-receiver safe.
+// the cap is enforced before this is called. AdmitRouteSeries calls it
+// once per route the gateway's series budget admits, so eviction deletes
+// what it created. nil-receiver safe.
 func (m *Metrics) PreInstantiateAppRoute(appID, route string) {
 	if m == nil || appID == "" || route == "" {
 		return
 	}
-	for _, class := range []string{"2xx", "3xx", "4xx", "5xx"} {
+	for _, class := range routeSeriesClasses {
 		m.durationByRoute.WithLabelValues(appID, route, class)
 	}
 }

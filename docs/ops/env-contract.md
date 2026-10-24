@@ -325,6 +325,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL` | gatewayd-internal | `secrets-env` |  |  | `url` | ADR-288 legacy direct URL delivered by /etc/faas/secrets/gatewayd-internal/gatewayd-internal.env; cannot coexist with FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL_FILE |
 | `FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL_FILE` | gatewayd-internal | `dropin` |  |  | `path-exists` | Ansible projects one common Vault Redis URL through LoadCredential and sets this credential path in the gateway drop-in |
 | `FAAS_GATEWAY_ROUTE_METRICS` | gatewayd-internal | `default` |  |  | `` |  |
+| `FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES` | gatewayd-internal | `default` |  |  | `` | ADR-20261024154324; most (app, route) pairs this gateway exports per-route series for (default api.RouteMetricsMaxRoutesPerGateway) |
 | `FAAS_GATEWAY_ROUTE_STALE_TTL` | shared | `default` |  |  | `` | ADR-190; how long a last-known-good route is served while the Postgres route lookup errors (default 10m, 0 disables) |
 | `FAAS_GATEWAY_STREAMING` | gatewayd-internal | `default` |  |  | `` | emergency override only; production enables streaming via streaming_enabled=true in gatewayd-internal.toml (ADR-143) |
 | `FAAS_GATEWAY_SYNTH_SOCKET` | gatewayd-internal | `default` |  |  | `` |  |

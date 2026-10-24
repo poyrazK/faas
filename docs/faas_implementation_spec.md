@@ -1654,6 +1654,10 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `<daemon>_loop_last_beat_age_seconds{loop}` gauge | ≪ loop budget | none (ADR-190 diagnostic; pairs with the stalled gauge) |
 | `<daemon>_grpc_client_calls_without_deadline_total{method}` rate | 0 | none — every labelled method is a call site still relying on `FAAS_GRPC_DEFAULT_DEADLINE` (ADR-190 §1); fix the site, not the alert |
 | `gateway_route_lookup_stale_served_total` rate | 0 | > 0 / 5 m warn (ADR-190 §3 — Postgres route lookups are erroring and the edge is coasting on last-known-good routes bounded by `FAAS_GATEWAY_ROUTE_STALE_TTL`) |
+| `gateway_route_metrics_rejected_total` rate | 0 | > 0 sustained 15 m warn via `GatewayRouteMetricsBudgetExhausted` (ADR-20261024154324 — the gateway holds `gateway_route_metrics_budget_routes` live (app, route) pairs and declines new per-route series; `gateway_route_metrics_routes` and `gateway_route_metrics_evictions_total` are the live count and idle-app evictions) |
+| `apid_route_insights_last_success_timestamp_seconds` gauge | within the 6 h interval | no successful run in 13 h, warn via `FaasRouteInsightsStalled`; `apid_route_insights_runs_total{outcome}` / `apid_route_insights_apps_total{outcome}` failures warn via `FaasRouteInsightsFailing` (ADR-20261024154324) |
+| `apid_route_monitor_lag_seconds` gauge | < 60 s | > 300 s for 10 m warn via `FaasRouteMonitorLagging` (ADR-20261024154324 — production route monitors are overdue, so budget incidents and opt-in rollbacks are late) |
+| `apid_route_monitor_evaluations_total{outcome}`, `apid_route_checks_total{outcome}`, `apid_route_worker_queue_unavailable_total{worker}` rate | failures ≈ 0 | queue unreadable, > 10 % failed monitor evaluations or > 50 % retried route checks for 15 m warn via `FaasRouteWorkersFailing` (ADR-20261024154324) |
 | `<daemon>_db_notify_hub_reconnects_total` rate | 0 | > 1 / 5 m warn (ADR-190 §4 — the daemon's single LISTEN connection is being dropped; check Postgres restarts and idle-connection reaping) |
 | `<daemon>_db_notify_hub_dropped_total{channel}` rate | 0 | > 0 sustained 15 m warn (ADR-190 §4 — a subscriber is not draining its fan-out buffer; the durable table + safety tick recover the work, but the consumer is falling behind) |
 | `vmmd_snapshot_materialize_seconds{artifact,source}` p95 | `source="materialized"` rare; local sources ≪ 10 ms | `histogram_quantile(0.95, sum by (le) (rate(vmmd_snapshot_materialize_seconds_bucket{artifact="mem",source="materialized"}[5m]))) > 0.2` for 15 m warn — wakes are fetching the memory blob across the network. At the 130 MB fleet snapshot target one fetch can exceed the whole §6.3 wake budget, so a sustained rate means placement is landing away from snapshot replicas (ADR-063). Compare against the local-source quantile to price locality |
@@ -1745,6 +1749,14 @@ The in-memory reader is also exposed via the control listener at
 `GET /v1/internal/apps/{slug}/routes` (loopback-only, mTLS-free
 within the same box) and reverse-proxied by apid as
 `GET /v1/apps/{slug}/routes` for the dashboard panel.
+
+Every Hobby+ app is opted in by default, so each `gatewayd-internal` also
+bounds its own export (ADR-20261024154324): at most
+`RouteMetricsMaxRoutesPerGateway` (app, route) pairs carry live per-route
+series, and an app's series are deleted after `RouteMetricsSeriesIdleTTL`
+without a request on that gateway. apid lists an app's routes from
+`last_over_time` over `RouteMetricsObservedWindow`, so eviction does not hide
+them.
 
 ADR-042 §1 is **partially superseded** by ADR-093 — the route
 label is now opt-in for Hobby+ plans, not blanket-dropped. The

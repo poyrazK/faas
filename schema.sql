@@ -51679,6 +51679,18 @@ CREATE TABLE public.route_health_notification_state (
 
 
 --
+-- Name: route_insight_evaluations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.route_insight_evaluations (
+    app_id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    evaluated_at timestamp with time zone NOT NULL,
+    CONSTRAINT route_insight_evaluations_evaluated_at_check CHECK (isfinite(evaluated_at))
+);
+
+
+--
 -- Name: route_insights; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -65495,6 +65507,14 @@ ALTER TABLE ONLY public.route_health_history
 
 ALTER TABLE ONLY public.route_health_notification_state
     ADD CONSTRAINT route_health_notification_state_pkey PRIMARY KEY (deployment_id);
+
+
+--
+-- Name: route_insight_evaluations route_insight_evaluations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_insight_evaluations
+    ADD CONSTRAINT route_insight_evaluations_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -97013,6 +97033,22 @@ ALTER TABLE ONLY public.route_health_notification_state
 
 ALTER TABLE ONLY public.route_health_notification_state
     ADD CONSTRAINT route_health_notification_state_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_insight_evaluations route_insight_evaluations_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_insight_evaluations
+    ADD CONSTRAINT route_insight_evaluations_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: route_insight_evaluations route_insight_evaluations_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.route_insight_evaluations
+    ADD CONSTRAINT route_insight_evaluations_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --
