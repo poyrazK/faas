@@ -247,8 +247,13 @@ type Metrics struct {
 	aiCrawlerRequests     *prometheus.CounterVec
 	edgePenalty           *prometheus.CounterVec
 	edgeChallengeRaised   *prometheus.CounterVec
-	wafInspectionSeconds  prometheus.Histogram
-	preAuthPolicyShadow   *prometheus.CounterVec
+	// ADR-20261024082000 amendment 1: penalty box sharing and attack mode.
+	edgePenaltyShare        *prometheus.CounterVec
+	edgePenaltyShareDropped prometheus.Counter
+	edgePenaltyShareSeconds *prometheus.HistogramVec
+	edgeAttackMode          *prometheus.CounterVec
+	wafInspectionSeconds    prometheus.Histogram
+	preAuthPolicyShadow     *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
 	// process-local fallback. The closed scope label keeps cardinality fixed;
 	// warning logs and audit events are separately cooled down by Handler.
@@ -623,6 +628,11 @@ type Metrics struct {
 	// Same operator kill-switch + customer-opt-in gate as
 	// requestsByRoute.
 	failuresByRoute *prometheus.CounterVec
+	// routeSeries bounds the three per-route series above on this gateway
+	// and evicts idle apps' series (ADR-20261024154324).
+	routeSeries          *routeSeriesBudget
+	routeSeriesRejected  prometheus.Counter
+	routeSeriesEvictions prometheus.Counter
 	// coldBoot backs the renamed gateway_cold_boot_total counter
 	// (issue #273 / ADR-042). Renamed outright from coldWake —
 	// gateway_cold_wake_total had zero external consumers (no
@@ -893,6 +903,7 @@ func NewMetrics() *Metrics {
 		accountLabels:    newAccountLabelSet(),
 		hostnameLabels:   newHostnameLabelSet(),
 		deploymentLabels: newDeploymentLabelSet(),
+		routeSeries:      newRouteSeriesBudget(api.RouteMetricsMaxRoutesPerGateway, api.RouteMetricsSeriesIdleTTL),
 		hostKinds:        make(map[string]string),
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_requests_total",
@@ -1414,6 +1425,23 @@ func NewMetrics() *Metrics {
 			Name: "gateway_edge_challenge_raised_total",
 			Help: "kind=challenge pages served at a difficulty raised under attack (ADR-831 amendment 8), by app; a subset of gateway_edge_challenge_total{outcome=\"issued\"}.",
 		}, []string{"app"}),
+		edgePenaltyShare: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_penalty_share_total",
+			Help: "Penalty box sharing through Postgres (ADR-20261022105846 amendment 1), by op (flush: write this gateway's boxes; sync: read every gateway's; prune) and outcome (ok|error). A failed flush leaves its boxes on this gateway only.",
+		}, []string{"op", "outcome"}),
+		edgePenaltyShareDropped: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "gateway_edge_penalty_share_dropped_total",
+			Help: "Penalty boxes not shared because the flush queue was full (ADR-20261022105846 amendment 1); they hold on this gateway only.",
+		}),
+		edgePenaltyShareSeconds: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "gateway_edge_penalty_share_seconds",
+			Help:    "How long a penalty box takes to reach the other gateways (ADR-20261024082000 criterion P2), by stage: queued (made here until written to Postgres) and propagated (written until read by this gateway, on the database clock). The two add up to the time a box takes to hold everywhere.",
+			Buckets: []float64{0.05, 0.1, 0.25, 0.5, 1, 2, 5, 15, 30},
+		}, []string{"stage"}),
+		edgeAttackMode: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_attack_mode_total",
+			Help: "Requests an app's attack mode decided (ADR-20261021220456), by app and outcome: issued (challenge page served), passed (valid pass), bypassed (verified credential), rejected (403 challenge_required to a non-browser request). A subset of gateway_edge_challenge_total.",
+		}, []string{"app", "outcome"}),
 		wafInlineSeconds: prometheus.NewHistogram(prometheus.HistogramOpts{
 			Name:    "gateway_waf_inline_seconds",
 			Help:    "Time to check one request's headers and URI in-path for a kind=waf warn or block rule, including any wait for a check slot (ADR-831 amendment 12); added to that request's latency.",
@@ -2108,12 +2136,31 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
-	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSkips, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgePenalty, m.aiCrawlerRequests)
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSkips, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgePenalty, m.aiCrawlerRequests,
+		m.edgePenaltyShare, m.edgePenaltyShareDropped, m.edgePenaltyShareSeconds, m.edgeAttackMode)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
 	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
 	reg.MustRegister(m.serviceWakeAhead)
 	reg.MustRegister(m.routePriorityQueue, m.routePriorityWake, m.serviceWakeAheadEdgeShare, m.serviceWakeAheadCallerWakes, m.serviceWakeAheadEdgeTotal)
+	m.routeSeriesRejected = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "gateway_route_metrics_rejected_total",
+		Help: "Per-route observations not exported because this gateway already holds gateway_route_metrics_budget_routes live (app, route) pairs (ADR-20261024154324). The request still counts in the per-app series and request telemetry.",
+	})
+	m.routeSeriesEvictions = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "gateway_route_metrics_evictions_total",
+		Help: "Apps whose per-route series this gateway deleted after RouteMetricsSeriesIdleTTL without a request (ADR-20261024154324).",
+	})
+	reg.MustRegister(m.routeSeriesRejected, m.routeSeriesEvictions,
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "gateway_route_metrics_routes",
+			Help: "(app, route) pairs with live per-route series on this gateway (ADR-20261024154324).",
+		}, func() float64 { return float64(m.routeSeries.live()) }),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "gateway_route_metrics_budget_routes",
+			Help: "Most (app, route) pairs this gateway exports per-route series for; FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES overrides the default (ADR-20261024154324).",
+		}, func() float64 { return float64(m.routeSeries.limit()) }),
+	)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageCommitAborts, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
@@ -2649,18 +2696,71 @@ func (m *Metrics) RequestFailureRoute(appID, plan, route, code string) {
 	m.failuresByRoute.WithLabelValues(appID, plan, route, code).Inc()
 }
 
+// AdmitRouteSeries reports whether this observation's per-route series may
+// be emitted under the gateway's series budget (ADR-20261024154324). The
+// first admission of a route pre-instantiates its histogram classes. A
+// rejected observation is counted and must not be emitted. nil-receiver
+// safe.
+func (m *Metrics) AdmitRouteSeries(appID, plan, route, code, class string, now time.Time) bool {
+	if m == nil || m.routeSeries == nil || appID == "" || route == "" {
+		return false
+	}
+	ok, fresh := m.routeSeries.admit(appID, routeSeriesKey{plan: plan, code: code, class: class}, route, now)
+	if !ok {
+		m.routeSeriesRejected.Inc()
+		return false
+	}
+	if fresh {
+		m.PreInstantiateAppRoute(appID, route)
+	}
+	return true
+}
+
+// SetRouteSeriesBudget overrides the per-gateway series bound; non-positive
+// values keep the defaults from pkg/api/limits.go.
+func (m *Metrics) SetRouteSeriesBudget(maxRoutes int, idleAfter time.Duration) {
+	if m != nil && m.routeSeries != nil {
+		m.routeSeries.configure(maxRoutes, idleAfter)
+	}
+}
+
+// SweepRouteSeries deletes the per-route series of every app idle since
+// now-RouteMetricsSeriesIdleTTL and returns how many apps it dropped.
+func (m *Metrics) SweepRouteSeries(now time.Time) int {
+	if m == nil || m.routeSeries == nil {
+		return 0
+	}
+	return m.routeSeries.sweep(now, m.dropRouteSeries)
+}
+
+func (m *Metrics) dropRouteSeries(appID string, routes map[string]map[routeSeriesKey]struct{}) {
+	for route, keys := range routes {
+		for _, class := range routeSeriesClasses {
+			m.durationByRoute.DeleteLabelValues(appID, route, class)
+		}
+		for k := range keys {
+			m.durationByRoute.DeleteLabelValues(appID, route, k.class)
+			m.requestsByRoute.DeleteLabelValues(appID, k.plan, route, k.code)
+			m.failuresByRoute.DeleteLabelValues(appID, k.plan, route, k.code)
+		}
+	}
+	m.routeSeriesEvictions.Inc()
+}
+
 // PreInstantiateAppRoute writes zero-valued series for the
 // closed (class) set under (appID, route) so dashboards surface
 // from the first request rather than after the first observation
 // (ADR-093 D4). The closed class set is the same as
 // PreInstantiateApp above (2xx/3xx/4xx/5xx). Caller-routed
 // through routeLabelSet — the route argument is post-admit, so
-// the cap is enforced before this is called. nil-receiver safe.
+// the cap is enforced before this is called. AdmitRouteSeries calls it
+// once per route the gateway's series budget admits, so eviction deletes
+// what it created. nil-receiver safe.
 func (m *Metrics) PreInstantiateAppRoute(appID, route string) {
 	if m == nil || appID == "" || route == "" {
 		return
 	}
-	for _, class := range []string{"2xx", "3xx", "4xx", "5xx"} {
+	for _, class := range routeSeriesClasses {
 		m.durationByRoute.WithLabelValues(appID, route, class)
 	}
 }
@@ -2745,6 +2845,48 @@ func (m *Metrics) ObserveEdgePenalty(appID, outcome string) {
 		return
 	}
 	m.edgePenalty.WithLabelValues(appID, outcome).Inc()
+}
+
+// Penalty box sharing stages for ObservePenaltyShareDelay.
+const (
+	PenaltyShareQueued     = "queued"
+	PenaltySharePropagated = "propagated"
+)
+
+// ObservePenaltyShare counts one penalty box sharing operation.
+func (m *Metrics) ObservePenaltyShare(op string, err error) {
+	if m == nil || m.edgePenaltyShare == nil {
+		return
+	}
+	outcome := "ok"
+	if err != nil {
+		outcome = "error"
+	}
+	m.edgePenaltyShare.WithLabelValues(op, outcome).Inc()
+}
+
+// AddPenaltyShareDropped counts boxes left unshared at the queue bound.
+func (m *Metrics) AddPenaltyShareDropped(n int64) {
+	if m == nil || m.edgePenaltyShareDropped == nil || n <= 0 {
+		return
+	}
+	m.edgePenaltyShareDropped.Add(float64(n))
+}
+
+// ObservePenaltyShareDelay records one box's delay at a sharing stage.
+func (m *Metrics) ObservePenaltyShareDelay(stage string, d time.Duration) {
+	if m == nil || m.edgePenaltyShareSeconds == nil {
+		return
+	}
+	m.edgePenaltyShareSeconds.WithLabelValues(stage).Observe(max(d, 0).Seconds())
+}
+
+// ObserveEdgeAttackMode counts one request an app's attack mode decided.
+func (m *Metrics) ObserveEdgeAttackMode(appID, outcome string) {
+	if m == nil || m.edgeAttackMode == nil {
+		return
+	}
+	m.edgeAttackMode.WithLabelValues(appID, outcome).Inc()
 }
 
 // ObserveEdgeChallenge counts one kind=challenge decision.

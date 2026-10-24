@@ -3745,6 +3745,32 @@ func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRule
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetEdgeWAFReview returns an app's WAF detections grouped for a
+// false-positive review (ADR-831 amendment 13). ruleID and since are
+// optional; since defaults to 7d.
+func (c *Client) GetEdgeWAFReview(ctx context.Context, slug, ruleID, since string) (EdgeWAFReviewResponse, error) {
+	v := url.Values{}
+	if ruleID != "" {
+		v.Set("rule", ruleID)
+	}
+	if since != "" {
+		v.Set("since", since)
+	}
+	path := "/v1/apps/" + slug + "/edge-rules/waf-review"
+	if len(v) > 0 {
+		path += "?" + v.Encode()
+	}
+	var out EdgeWAFReviewResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// UpdateEdgeWAFExclusions adds and removes CRS rule IDs on a kind=waf rule's
+// exclusions, keeping the rest of its action (ADR-831 amendment 13).
+func (c *Client) UpdateEdgeWAFExclusions(ctx context.Context, id string, req EdgeWAFExclusionsRequest) (EdgeRuleResponse, error) {
+	var out EdgeRuleResponse
+	return out, c.do(ctx, "POST", "/v1/edge-rules/"+url.PathEscape(id)+"/waf-exclusions", req, &out)
+}
+
 // ListEdgeRuleLists returns the account's reusable edge-rule lists, without
 // items (ADR-963).
 func (c *Client) ListEdgeRuleLists(ctx context.Context) (ListEdgeRuleListsResponse, error) {

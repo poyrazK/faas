@@ -25,6 +25,7 @@ func confirmProjectPlan(plan api.PlanResponse, excludeList []string, showAffecte
 		// --yes skips the reviewed plan, but missing configuration must
 		// still be visible before the apps start.
 		if !jsonOutput {
+			printPublicURLs(osStdout, plan.Workloads)
 			printUnsetEnvKeys(osStdout, plan.Workloads)
 		}
 		return 0

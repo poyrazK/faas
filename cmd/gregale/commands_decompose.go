@@ -616,6 +616,27 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 	return printPlanTextWithExplain(w, plan, excludeSet, showAffected, false)
 }
 
+// printPublicURLs names every workload the plan puts on the public edge, so
+// a reviewer sees which services the internet can reach before applying.
+//
+//nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
+func printPublicURLs(w io.Writer, workloads []api.PlanWorkload) {
+	ws := make([]api.PlanWorkload, 0, len(workloads))
+	for _, wl := range workloads {
+		if wl.PublicURL != "" && wl.Visibility != api.AppVisibilityInternal {
+			ws = append(ws, wl)
+		}
+	}
+	if len(ws) == 0 {
+		return
+	}
+	sort.Slice(ws, func(i, j int) bool { return ws[i].Name < ws[j].Name })
+	fmt.Fprintln(w, "\nPublic on the internet:")
+	for _, wl := range ws {
+		fmt.Fprintf(w, "  - %-20s %s\n", wl.Name, wl.PublicURL)
+	}
+}
+
 // printUnsetEnvKeys lists, per workload, the runtime keys that will have no
 // value, so an app does not start without configuration it names.
 //
@@ -768,6 +789,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 	}
 	if showAffected {
 		printAffectedText(w, plan, excludeIdx)
+		printPublicURLs(w, plan.Workloads)
 		printUnsetEnvKeys(w, plan.Workloads)
 		if explain {
 			printPlanDetectionTrace(w, plan.Workloads)
@@ -833,6 +855,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 				m.Name, m.Kind, m.EnvHint, m.Image)
 		}
 	}
+	printPublicURLs(w, plan.Workloads)
 	printUnsetEnvKeys(w, plan.Workloads)
 	if len(plan.Warnings) > 0 {
 		fmt.Fprintln(w, "\nWarnings:")

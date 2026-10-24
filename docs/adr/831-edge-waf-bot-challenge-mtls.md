@@ -1095,3 +1095,47 @@ Not yet measured on a production node. Rerun `TestEdgeWAFInlineLoad_E2E`
 on `gregale-compute-2` as in amendment 10, with `FAAS_E2E_WAF_LOAD_GATE=1`
 (ADR-20261024082000), and expect `busy` skips under 0.1% with p95 at most
 2 ms at 100-500 req/s, which retires amendment 11's known limit.
+
+## Amendment 13 (2026-10-24): the false-positive review
+
+Amendment 11 accepted verdicts validated on corpora but not on production
+traffic, and ADR-20261024082000 criterion W4 asks for 14 days of traffic
+with no false positive unexplained. The detection events of amendment 5
+hold the evidence, but reading them one at a time does not scale, and
+silencing a false positive meant restating a rule's whole WAF action
+(`edge-rules update --kind waf` replaces it). Decision:
+
+1. **A review groups the detections.** `GET
+   /v1/apps/{slug}/edge-rules/waf-review` (`rule` and `since` optional;
+   7 days by default, clamped to the plan's event window) reads the newest
+   5,000 detections of each outcome (`detected`, `warned`, `blocked`) and
+   groups them by edge rule, CRS rule and path, with id-like path segments
+   (numbers, UUIDs, hex of 16 or more, mixed tokens of 20 or more) read as
+   `{id}`. At most 50 groups are returned, largest first; `truncated` says
+   when the window held more detections. No new table or store method: the
+   review reads `edge_rule_events` through the events store.
+2. **Each group is assessed**, in this order:
+   - `excluded`: the rule already excludes the CRS rule;
+   - `likely_attack`: at least half its detections came from clients
+     flagged on 5 or more paths in the window, as scanners are;
+   - `likely_false_positive`: a documented false positive
+     (`api.EdgeWAFKnownFalsePositive`, the amendment 6 table, which
+     `TestKnownFalsePositivesMatchBenignCorpus` keeps equal to the benign
+     corpus), or at least 3 clients flagged on the path with none sending
+     most of the detections;
+   - `review`: too few clients to tell.
+   Scanning beats the catalog: a scanner that trips a rule legitimate
+   traffic also trips is still an attack. The thresholds are in
+   `pkg/api/limits.go` (`EdgeWAFReview*`). Detections are sampled (10 per
+   rule per minute per gateway), so counts are lower bounds, and an
+   assessment is advice: the customer decides.
+3. **Exclusions change in one step.** `POST
+   /v1/edge-rules/{id}/waf-exclusions` takes `add` and `remove` lists of CRS
+   rule IDs and updates `exclude_rule_ids` through the PATCH path (If-Match,
+   versioning, audit, convergence), keeping the rest of the action and the
+   rule's penalty.
+4. **Surfaces.** `gregale edge-rules waf-review` and `gregale edge-rules
+   waf-exclude <rule> --add|--remove IDS`; the dashboard's Edge rules page
+   shows the review for apps with a kind=waf rule, with an Exclude button
+   per group. The operator procedure for W4 is
+   `docs/runbooks/edge-waf-false-positive-review.md`.

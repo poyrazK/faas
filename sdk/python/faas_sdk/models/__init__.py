@@ -1502,6 +1502,11 @@ from .edge_rule_validate_parameters_path import EdgeRuleValidateParametersPath
 from .edge_rule_validate_parameters_query import EdgeRuleValidateParametersQuery
 from .edge_rule_waf_action import EdgeRuleWAFAction
 from .edge_rule_waf_action_mode import EdgeRuleWAFActionMode
+from .edge_waf_exclusions_request import EdgeWAFExclusionsRequest
+from .edge_waf_review_group import EdgeWAFReviewGroup
+from .edge_waf_review_group_assessment import EdgeWAFReviewGroupAssessment
+from .edge_waf_review_group_rule_mode import EdgeWAFReviewGroupRuleMode
+from .edge_waf_review_response import EdgeWAFReviewResponse
 from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .egress_flow_log_entry import EgressFlowLogEntry
@@ -7638,6 +7643,11 @@ __all__ = (
     "EdgeRuleValidateParametersQuery",
     "EdgeRuleWAFAction",
     "EdgeRuleWAFActionMode",
+    "EdgeWAFExclusionsRequest",
+    "EdgeWAFReviewGroup",
+    "EdgeWAFReviewGroupAssessment",
+    "EdgeWAFReviewGroupRuleMode",
+    "EdgeWAFReviewResponse",
     "EgressCircuitBreakerPolicy",
     "EgressCircuitBreakerPolicyState",
     "EgressFlowLogEntry",
