@@ -40,7 +40,7 @@ func TestObsOverviewUsesSnapshotProjection(t *testing.T) {
 	e := gapEnv(t)
 	fake := &obsOverviewProjectionStore{Store: *(*e.S()).Store()}
 	*(*e.S()).Store() = statetest.NewStore(fake)
-	rec := e.Do(t, "GET", "/v1/admin/obs/overview", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/overview", nil, nil)
 	var got api.ObsOverviewResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
 		t.Fatal(err)
@@ -54,7 +54,7 @@ func TestObsOverviewSnapshotFailureIsUnavailable(t *testing.T) {
 	e := gapEnv(t)
 	fake := &obsOverviewProjectionStore{Store: *(*e.S()).Store(), failure: errors.New("private database detail")}
 	*(*e.S()).Store() = statetest.NewStore(fake)
-	rec := e.Do(t, "GET", "/v1/admin/obs/overview", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/overview", nil, nil)
 	if rec.Code != http.StatusServiceUnavailable || fake.calls != 1 || strings.Contains(rec.Body.String(), "private database detail") {
 		t.Fatalf("calls=%d status=%d body=%s", fake.calls, rec.Code, rec.Body.String())
 	}

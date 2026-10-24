@@ -425,7 +425,9 @@ func (j *ResourceJournal) recordAdoption(l Lease, process resourceProcessIdentit
 	if err := r.validate(); err != nil {
 		return err
 	}
-	return j.persist(r)
+	// Durable: adoption writes run off the wake path, and an op intent names
+	// the artifacts its effect creates on disk (vmmd restart adoption ADR §1).
+	return j.persist(r, true)
 }
 
 var errAdoptionRecordStale = errors.New("resource journal: adoption block no longer matches the recorded guest")

@@ -12,7 +12,8 @@
 // Modes:
 //
 //	(default)      serve the contents of -body-file on / and 200 on /healthz,
-//	               echo POST /echo request bodies back;
+//	               echo POST /echo request bodies back, and the bytes after
+//	               GET /upgrade-echo's 101;
 //	               bind $PORT when -addr is omitted (falling back to 8080)
 //	-spin          also burn one CPU forever (cpu-fairness fixture)
 //	-ignore-term   ignore SIGTERM (wedged-process fixture)
@@ -22,6 +23,7 @@
 //	-echo-session  interactive app-task fixture: report tty and size, echo lines
 //	-queue-consumer pull-queue worker: fetch a gregale:queues token, never listen
 //	-pprof-addr A  serve net/http/pprof on A and skip the Gregale collector
+//	-tcp-echo P    also echo TCP on port P; -udp-echo P, UDP datagrams on P
 //
 // GET /work burns CPU and retains heap for profile captures (ADR-1155).
 package main
@@ -177,6 +179,7 @@ func main() {
 
 	mux := http.NewServeMux()
 	registerTCPFixture(mux)
+	registerStreamFixtures(mux)
 	if *identityProbe {
 		serveIdentityProbe(mux)
 	}

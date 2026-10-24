@@ -28,7 +28,7 @@ type bucketEncryptionDefaultXML struct {
 func (h *Handler) bucketEncryption(w http.ResponseWriter, r *http.Request, req requestContext) {
 	permission := state.ObjectBucketPermissionRead
 	if r.Method != http.MethodGet {
-		permission = state.ObjectBucketPermissionWrite
+		permission = bucketSettingsPermission
 	}
 	if !h.require(w, req, permission, r.URL.Path) {
 		return

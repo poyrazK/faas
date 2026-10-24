@@ -634,7 +634,20 @@ func (h *Handler) routeObject(w http.ResponseWriter, r *http.Request, req reques
 	}
 }
 
+// bucketSettingsPermission is the access needed to change a bucket-wide
+// setting (object lock, lifecycle, notifications, encryption, versioning)
+// or an object's retention and legal hold. AWS keeps these apart from
+// PutObject; here only a customer-created read_write key holds it. A
+// write-only key handed to an uploader, and a compute-binding key delivered
+// into an app's VM (possibly scoped to a prefix), still upload and delete
+// objects but cannot lock the bucket under 100-year retention, expire every
+// object, or point notifications at the account's other apps.
+const bucketSettingsPermission = "bucket_settings"
+
 func (h *Handler) can(credential state.ObjectS3Credential, permission string) bool {
+	if permission == bucketSettingsPermission {
+		return credential.Permission == state.ObjectBucketPermissionReadWrite && credential.ManagedAppID == ""
+	}
 	return credential.Permission == permission || credential.Permission == state.ObjectBucketPermissionReadWrite
 }
 

@@ -24,7 +24,7 @@ func TestObsTraceLookupCorrelatesIntentAndEvents(t *testing.T) {
 		nil, []byte(`{"result":"succeeded"}`), traceStringPtr(testOperatorTraceID)); err != nil {
 		t.Fatal(err)
 	}
-	rec := e.Do(t, http.MethodGet, "/v1/admin/obs/traces/"+testOperatorTraceID+"?limit=25", nil, nil)
+	rec := e.DoOperator(t, http.MethodGet, "/v1/admin/obs/traces/"+testOperatorTraceID+"?limit=25", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d body=%s", rec.Code, rec.Body.String())
 	}
@@ -49,7 +49,7 @@ func TestObsTraceLookupRejectsInvalidAndMissingTrace(t *testing.T) {
 		{path: "/v1/admin/obs/traces/not-hex", want: http.StatusBadRequest},
 		{path: "/v1/admin/obs/traces/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", want: http.StatusNotFound},
 	} {
-		rec := e.Do(t, http.MethodGet, tc.path, nil, nil)
+		rec := e.DoOperator(t, http.MethodGet, tc.path, nil, nil)
 		if rec.Code != tc.want {
 			t.Errorf("%s status = %d, want %d body=%s", tc.path, rec.Code, tc.want, rec.Body.String())
 		}

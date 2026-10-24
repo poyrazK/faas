@@ -84,6 +84,9 @@ type JailerVMM struct {
 	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
 	// nil keeps drive0 on virtio-blk.
 	pmemBase *pmemBaseStore
+	// restoreReseedThread boots app VMs with the thread-mode reseed barrier
+	// client (ADR-20261024105607).
+	restoreReseedThread bool
 	// preBoot tracks which pre-boot files each instance's drive and each
 	// captured drive already hold, so an unchanged restore skips the loop
 	// mount (see preboot_skip.go).
@@ -1233,6 +1236,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 
 	cfg = v.withBalloon(cfg)
 	cfg = v.withPmemBase(l, cfg)
+	cfg = v.withRestoreReseedMode(l, cfg)
 	cfg = withBlockRateLimit(l, cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
@@ -4616,8 +4620,8 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 	// guest, so the mount is also nodev,nosuid,noexec: a device node the
 	// build created (the host's NVMe, /dev/zero) must not become a live
 	// device when vmmd, as root, reads the export.
-	if out, mountErr := exec.Command("mount", "-o", "loop,ro,noload,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); mountErr != nil {
-		if roOut, roErr := exec.Command("mount", "-o", "loop,ro,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); roErr != nil {
+	if out, mountErr := exec.Command("mount", guestDiskMountArgs("ro,noload", drive1, mp)...).CombinedOutput(); mountErr != nil {
+		if roOut, roErr := exec.Command("mount", guestDiskMountArgs("ro", drive1, mp)...).CombinedOutput(); roErr != nil {
 			return fmt.Errorf("mount loop: ro,noload=%w (%s); ro=%w (%s)", mountErr, bytes.TrimSpace(out), roErr, bytes.TrimSpace(roOut))
 		}
 	}

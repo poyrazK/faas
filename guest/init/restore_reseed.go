@@ -48,9 +48,14 @@ const (
 
 	restoreReseedOptOutEnv = "GREGALE_RESTORE_RESEED"
 	restoreReseedSocketEnv = "GREGALE_RESEED_SOCKET"
-	restoreReseedHelloWait = 2 * time.Second
-	restoreReseedMaxLine   = 256
-	restoreReseedNonceSize = 32
+	// restoreReseedModeEnv selects how a preloaded process answers the
+	// barrier. "thread" (ADR-20261024105607) has Node answer from the
+	// addon's native thread; unset keeps the event-loop client.
+	restoreReseedModeEnv    = "GREGALE_RESEED_MODE"
+	restoreReseedThreadMode = "thread"
+	restoreReseedHelloWait  = 2 * time.Second
+	restoreReseedMaxLine    = 256
+	restoreReseedNonceSize  = 32
 )
 
 //go:embed rngpreload/node-reseed.cjs rngpreload/reseed.node rngpreload/python/sitecustomize.py
@@ -61,6 +66,10 @@ var restoreReseedAssets embed.FS
 // stop every Node process from starting.
 var restoreReseedEnabled atomic.Bool
 
+// restoreReseedThread is set when vmmd booted this guest with
+// api.RestoreReseedThreadBootArg.
+var restoreReseedThread atomic.Bool
+
 // StampRestoreReseedEnv injects the Node and Python preloads. A workload may
 // opt out with GREGALE_RESTORE_RESEED=off, which the docs flag as unsafe for
 // any snapshot-restored app that generates secrets or nonces.
@@ -68,7 +77,20 @@ func StampRestoreReseedEnv(env []string) []string {
 	if !restoreReseedEnabled.Load() {
 		return env
 	}
-	return stampRestoreReseedEnv(env, RestoreReseedAssetDir, RestoreReseedSocketPath)
+	env = stampRestoreReseedEnv(env, RestoreReseedAssetDir, RestoreReseedSocketPath)
+	if restoreReseedThread.Load() {
+		env = stampRestoreReseedMode(env, restoreReseedThreadMode)
+	}
+	return env
+}
+
+// stampRestoreReseedMode selects the barrier client mode. The platform owns
+// the value, like the socket path: a workload's own setting is replaced.
+func stampRestoreReseedMode(env []string, mode string) []string {
+	if strings.EqualFold(envValue(env, restoreReseedOptOutEnv), "off") {
+		return env
+	}
+	return setEnvValue(env, restoreReseedModeEnv, mode)
 }
 
 func stampRestoreReseedEnv(env []string, assetDir, socketPath string) []string {
