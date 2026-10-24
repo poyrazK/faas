@@ -1,6 +1,11 @@
 package state
 
-import "github.com/onebox-faas/faas/pkg/api"
+import (
+	"context"
+
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
+)
 
 // workflowAdmission tallies an app's unfinished runs for the concurrency cap.
 // Runs parked on an event count only beyond the plan's parked allowance
@@ -19,6 +24,12 @@ func (a *workflowAdmission) add(status string) {
 
 func (a workflowAdmission) admitted(maxParked int) int {
 	return api.WorkflowAdmittedRuns(a.active, a.parked, maxParked)
+}
+
+// workflowAdmissionCount is appID's count for the concurrency cap.
+func workflowAdmissionCount(ctx context.Context, db sqlc.DBTX, appID string, maxParked int) (int, error) {
+	n, err := sqlc.New().CountActiveWorkflowRunsForAdmission(ctx, db, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(appID), ParkedMax: int64(maxParked)})
+	return int(n), err
 }
 
 // workflowAdmissionLocked is appID's count for the concurrency cap.
