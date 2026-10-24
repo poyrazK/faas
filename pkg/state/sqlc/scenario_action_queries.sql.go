@@ -1131,6 +1131,8 @@ SELECT p.app_id::text AS app_id,acc.plan,ap.retry_policy,
  (EXISTS(SELECT 1 FROM queue_bindings b WHERE b.app_id=p.app_id)
   OR EXISTS(SELECT 1 FROM triggers t WHERE t.app_id=p.app_id AND t.kind='queue'))::boolean AS bound,
  (SELECT count(*) FROM deployments d WHERE d.app_id=p.app_id AND d.status='live')::bigint AS live,
+ (SELECT coalesce(sum(b.pending),0) FROM invocation_backlog_counters b WHERE b.app_id=p.app_id AND b.source='queue')::bigint AS backlog,
+ (SELECT coalesce(sum(b.bytes),0) FROM invocation_backlog_counters b WHERE b.account_id=p.account_id AND b.source='queue')::bigint AS backlog_bytes,
  (SELECT count(*) FROM scenario_captured_queue_messages c WHERE c.account_id=p.account_id AND c.run_id=p.run_id AND c.delivery='delivered')::bigint AS delivered
 FROM scenario_test_action_policies p JOIN apps ap ON ap.id=p.app_id JOIN accounts acc ON acc.id=p.account_id
 WHERE p.account_id=$1::text::uuid AND p.run_id=$2::text AND p.workload_name=$3::text
@@ -1143,18 +1145,21 @@ type ScenarioQueueDeliveryTargetParams struct {
 }
 
 type ScenarioQueueDeliveryTargetRow struct {
-	AppID       string
-	Plan        string
-	RetryPolicy []byte
-	Bound       bool
-	Live        int64
-	Delivered   int64
+	AppID        string
+	Plan         string
+	RetryPolicy  []byte
+	Bound        bool
+	Live         int64
+	Backlog      int64
+	BacklogBytes int64
+	Delivered    int64
 }
 
 // A same-run delivery candidate's receiving member: its app, the account plan
 // and retry policy, whether a queue binding or trigger would choose its
-// consumer, its live deployments, and the run's delivered count
-// (ADR-20261023111825).
+// consumer, its live deployments, its pending queue messages and its
+// account's pending queue bytes from the backlog counters
+// (ADR-20261022105723), and the run's delivered count (ADR-20261023111825).
 func (q *Queries) ScenarioQueueDeliveryTarget(ctx context.Context, db DBTX, arg ScenarioQueueDeliveryTargetParams) (ScenarioQueueDeliveryTargetRow, error) {
 	row := db.QueryRow(ctx, scenarioQueueDeliveryTarget, arg.AccountID, arg.RunID, arg.Workload)
 	var i ScenarioQueueDeliveryTargetRow
@@ -1164,6 +1169,8 @@ func (q *Queries) ScenarioQueueDeliveryTarget(ctx context.Context, db DBTX, arg 
 		&i.RetryPolicy,
 		&i.Bound,
 		&i.Live,
+		&i.Backlog,
+		&i.BacklogBytes,
 		&i.Delivered,
 	)
 	return i, err

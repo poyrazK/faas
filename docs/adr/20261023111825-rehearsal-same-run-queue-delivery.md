@@ -34,7 +34,7 @@ A capture is a delivery candidate when it is kind `queue` (not inbox, delayed ta
 |---|---|
 | `delivered` | The send names the default (unnamed) queue, has no `work` or `environment`, and the member has no queue bindings or queue triggers. The generic drain then dispatches it to the member's default handler, as it would in production. |
 | `unsupported` | Anything else: a named queue, a work policy, an environment, or a member whose bindings would choose the consumer. These stay captured only. Production queue selection lives in apid and is not reproduced here. |
-| `overflow` | The run already delivered 64 messages (`MaxScenarioDeliveredQueueMessages`). This bounds ping-pong between members, and it makes the queue evidence incomplete, never silently shorter. |
+| `overflow` | The run already delivered 64 messages (`MaxScenarioDeliveredQueueMessages`), or the receiving app is at its plan's pending-message cap, or its account is at its pending queue byte cap (ADR-20261022105723). The 64-message bound stops ping-pong between members, and the plan caps are ones production admission would refuse at. The queue evidence is then incomplete, never silently shorter. |
 
 Delivery happens inside the capture transaction, under the run lock the seal also takes. A capture exists if and only if its delivery does.
 

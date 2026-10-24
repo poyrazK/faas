@@ -5899,8 +5899,9 @@ type Querier interface {
 	ScenarioQueueCaptureTarget(ctx context.Context, db DBTX, arg ScenarioQueueCaptureTargetParams) (string, error)
 	// A same-run delivery candidate's receiving member: its app, the account plan
 	// and retry policy, whether a queue binding or trigger would choose its
-	// consumer, its live deployments, and the run's delivered count
-	// (ADR-20261023111825).
+	// consumer, its live deployments, its pending queue messages and its
+	// account's pending queue bytes from the backlog counters
+	// (ADR-20261022105723), and the run's delivered count (ADR-20261023111825).
 	ScenarioQueueDeliveryTarget(ctx context.Context, db DBTX, arg ScenarioQueueDeliveryTargetParams) (ScenarioQueueDeliveryTargetRow, error)
 	ScenarioRealtimeConsumerGroupByID(ctx context.Context, db DBTX, arg ScenarioRealtimeConsumerGroupByIDParams) (ScenarioRealtimeConsumerGroupByIDRow, error)
 	// A consumer group's configuration for a contained worker, which is answered

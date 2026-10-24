@@ -1371,8 +1371,9 @@ enqueued as a real invocation of that member, in the same transaction, and its
 handler runs inside the run. Each such send records `delivery: delivered` and
 the invocation's state at seal; named queues, work policies, environments,
 inbox messages and members whose queue bindings would pick the consumer record
-`unsupported` and stay captured only. A run delivers at most 64 sends; more
-make the evidence incomplete. Delayed tasks, async invokes and workflows are
+`unsupported` and stay captured only. A run delivers at most 64 sends, and
+never past the plan's queue caps; a send over either makes the evidence
+incomplete. Delayed tasks, async invokes and workflows are
 never delivered. The operator enables delivery with
 `FAAS_REHEARSAL_QUEUE_DELIVERY=1`; it cannot be combined with `managed_work`
 or `suspend_resume`. Wait for queue idle before checks. See

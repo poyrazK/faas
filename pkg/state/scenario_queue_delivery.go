@@ -16,15 +16,18 @@ import (
 
 // scenarioQueueDeliveryTarget is what decides a same-run delivery: the
 // receiving member's app, plan and retry policy, whether a queue binding or
-// trigger would choose its consumer, its live deployments, and how many sends
-// the run already delivered.
+// trigger would choose its consumer, its live deployments, its pending queue
+// messages and its account's pending queue bytes, and how many sends the run
+// already delivered.
 type scenarioQueueDeliveryTarget struct {
-	appID       string
-	plan        api.Plan
-	retryPolicy json.RawMessage
-	bound       bool
-	live        int64
-	delivered   int64
+	appID        string
+	plan         api.Plan
+	retryPolicy  json.RawMessage
+	bound        bool
+	live         int64
+	backlog      int64
+	backlogBytes int64
+	delivered    int64
 }
 
 // scenarioDeliverableQueueSend reports a captured send the generic drain
@@ -52,7 +55,11 @@ func scenarioQueueDelivery(msg ScenarioQueueCapture, target scenarioQueueDeliver
 	switch {
 	case !deliverable || target.bound || target.live != 1 || !known || limits.MaxQueueDepth == 0:
 		return api.ScenarioQueueUnsupported, Invocation{}
-	case target.delivered >= api.MaxScenarioDeliveredQueueMessages:
+	// A delivery never passes the plan's queue caps (ADR-20261022105723),
+	// which production admission would refuse; the backlog counters bound
+	// the app's pending messages from above.
+	case target.delivered >= api.MaxScenarioDeliveredQueueMessages || target.backlog >= int64(limits.MaxQueueDepth) ||
+		limits.MaxQueueBacklogBytesPerAccount > 0 && target.backlogBytes >= limits.MaxQueueBacklogBytesPerAccount:
 		return api.ScenarioQueueOverflow, Invocation{}
 	}
 	return api.ScenarioQueueDelivered, Invocation{AppID: target.appID, AccountID: accountID, Source: InvocationQueue, State: InvocationPending,
@@ -82,7 +89,8 @@ func (s *PgStore) scenarioQueueDeliveryTarget(ctx context.Context, tx sqlc.DBTX,
 	if err != nil {
 		return scenarioQueueDeliveryTarget{}, fmt.Errorf("resolve rehearsal queue delivery: %w", err)
 	}
-	return scenarioQueueDeliveryTarget{appID: row.AppID, plan: api.Plan(row.Plan), retryPolicy: row.RetryPolicy, bound: row.Bound, live: row.Live, delivered: row.Delivered}, nil
+	return scenarioQueueDeliveryTarget{appID: row.AppID, plan: api.Plan(row.Plan), retryPolicy: row.RetryPolicy, bound: row.Bound, live: row.Live,
+		backlog: row.Backlog, backlogBytes: row.BacklogBytes, delivered: row.Delivered}, nil
 }
 
 // scenarioQueueDeliveryTargetLocked mirrors ScenarioQueueDeliveryTarget.
@@ -104,6 +112,8 @@ func (m *MemStore) scenarioQueueDeliveryTargetLocked(accountID, runID, workload 
 				target.live++
 			}
 		}
+		target.backlog = int64(m.pendingProductionInvocationsLocked(app.ID, InvocationQueue, nil))
+		target.backlogBytes = m.queueBacklogBytesLocked(app.AccountID, nil)
 		for _, row := range m.scenarioQueueCaptures {
 			if sameScenarioAccount(row.accountID, accountID) && row.runID == runID && row.delivery == api.ScenarioQueueDelivered {
 				target.delivered++

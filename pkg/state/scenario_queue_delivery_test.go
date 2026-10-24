@@ -165,3 +165,27 @@ func TestScenarioQueueDeliveryRequiresAPlainContainedRun(t *testing.T) {
 		}
 	}
 }
+
+// A delivery never passes the plan's queue caps (ADR-20261022105723): at the
+// app's pending cap or the account's byte cap the send is not delivered and
+// the run's queue evidence is incomplete.
+func TestScenarioQueueDeliveryHonoursPlanQueueCaps(t *testing.T) {
+	limits := api.MustLimitsFor(api.PlanPro)
+	for _, tc := range []struct {
+		name                         string
+		backlog, backlogBytes, prior int64
+		want                         string
+	}{
+		{"room", int64(limits.MaxQueueDepth) - 1, limits.MaxQueueBacklogBytesPerAccount - 1, 0, api.ScenarioQueueDelivered},
+		{"app at its pending cap", int64(limits.MaxQueueDepth), 0, 0, api.ScenarioQueueOverflow},
+		{"account at its byte cap", 0, limits.MaxQueueBacklogBytesPerAccount, 0, api.ScenarioQueueOverflow},
+		{"run at its delivery bound", 0, 0, api.MaxScenarioDeliveredQueueMessages, api.ScenarioQueueOverflow},
+	} {
+		if got := state.ScenarioQueueDeliveryResult(api.PlanPro, tc.backlog, tc.backlogBytes, tc.prior); got != tc.want {
+			t.Errorf("%s: %s, want %s", tc.name, got, tc.want)
+		}
+	}
+	if got := state.ScenarioQueueDeliveryResult(api.PlanFree, 0, 0, 0); got != api.ScenarioQueueUnsupported {
+		t.Errorf("a plan without queues: %s", got)
+	}
+}

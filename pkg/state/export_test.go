@@ -1139,3 +1139,12 @@ func (r *standardLocalIntentFixture) Rotated() *ApplicationStandardLogDestinatio
 // Members of workflowOperationWindow
 func (r *workflowOperationWindow) Deadline() *time.Time { return &r.deadline }
 func (r *workflowOperationWindow) Lease() *time.Time    { return &r.lease }
+
+// ScenarioQueueDeliveryResult decides a deliverable same-run send for a
+// member on plan with the given queue backlog, account queue bytes and run
+// delivery count (ADR-20261023111825).
+func ScenarioQueueDeliveryResult(plan api.Plan, backlog, backlogBytes, delivered int64) string {
+	result, _ := scenarioQueueDelivery(ScenarioQueueCapture{Kind: api.ScenarioQueueKindQueue, Message: json.RawMessage(`{"payload":{}}`)},
+		scenarioQueueDeliveryTarget{appID: "app", plan: plan, live: 1, backlog: backlog, backlogBytes: backlogBytes, delivered: delivered}, "account", time.Now())
+	return result
+}
