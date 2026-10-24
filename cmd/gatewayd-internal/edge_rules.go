@@ -1964,6 +1964,7 @@ func compileChallengeRules(storeRules []state.EdgeRule) ([]gateway.EdgeRuleChall
 			Difficulty:     action.Difficulty,
 			PassTTLSeconds: action.PassTTLSeconds,
 			MaxDifficulty:  max(action.MaxDifficulty, action.Difficulty),
+			AttackMode:     rule.AttackMode(),
 		})
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Priority < out[j].Priority })

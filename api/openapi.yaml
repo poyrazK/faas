@@ -21174,6 +21174,62 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/edge-protection/attack-mode:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: getAppEdgeAttackMode
+      summary: Read an app's attack mode.
+      responses:
+        '200':
+          description: The app's attack mode.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeAttackModeStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [edge_rules]
+      operationId: enableAppEdgeAttackMode
+      summary: Switch attack mode on, or extend it.
+      description: |
+        Challenges every request to every host of the app until it ends
+        (ADR-20261021220456). Available on every plan, outside the plan's
+        edge-rule quotas. The response returns once the serving gateways
+        have applied it; `X-Faas-Edge-Rules-State: converging` with 503 means it
+        was saved but not yet acknowledged. An empty body applies the
+        default duration of one hour.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnableEdgeAttackModeRequest' }
+      responses:
+        '200':
+          description: Attack mode is on.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeAttackModeStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [edge_rules]
+      operationId: disableAppEdgeAttackMode
+      summary: Switch attack mode off.
+      description: Removes the attack-mode rule. Succeeds when attack mode is already off.
+      responses:
+        '200':
+          description: Attack mode is off.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeAttackModeStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/apps/{slug}/release-review:
     get:
       operationId: getAppReleaseReview
@@ -39626,7 +39682,9 @@ paths:
         Every field is optional. `kind` is NOT patchable — rotating
         kind mid-life would break the action union. To change kind,
         delete and recreate. `action` replaces the jsonb column
-        whole (no partial-update shape).
+        whole (no partial-update shape). The app's attack-mode rule
+        (`managed_by: attack_mode`) is refused with 409; change it through
+        `/v1/apps/{slug}/edge-protection/attack-mode`.
       requestBody:
         required: true
         content:
@@ -39641,6 +39699,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/EdgeRuleConflict' }
         '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -87784,7 +87843,7 @@ components:
     EdgeProtectionResponse:
       description: Edge rejection counts for one app over a range.
       type: object
-      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge, penalty]
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge, penalty, attack_mode, ai_crawlers]
       properties:
         app_id: { type: string }
         range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
@@ -87864,6 +87923,53 @@ components:
           properties:
             boxed: { type: integer, format: int64, minimum: 0, description: "Clients a rule's penalty boxed." }
             rejected: { type: integer, format: int64, minimum: 0, description: "Requests refused from boxed clients." }
+        attack_mode:
+          $ref: '#/components/schemas/EdgeAttackModeStatus'
+        ai_crawlers:
+          type: array
+          description: Requests whose User-Agent names an AI crawler (ADR-20261022083601), largest first, counted before any edge rule acted on them.
+          items: { $ref: '#/components/schemas/EdgeProtectionAICrawler' }
+
+    EdgeAttackModeStatus:
+      type: object
+      description: |
+        An app's attack mode (ADR-20261021220456). While it is on, every
+        request without a challenge pass is challenged: browsers solve a
+        short proof of work once and continue, verified search crawlers and
+        requests with a verified API key, consumer key or JWT pass straight
+        through, and other clients get 403 `challenge_required`. It always
+        ends on its own at `expires_at`. Read from the rules, so it is
+        current even when the edge-protection counts are degraded.
+      required: [active]
+      properties:
+        active: { type: boolean, description: Attack mode is on now. }
+        rule_id: { type: string, description: "The app-wide challenge rule that carries attack mode (managed_by attack_mode). Still set after attack mode ran out, until it is switched on again or off." }
+        started_at: { type: string, format: date-time, description: When attack mode was switched on; extending it keeps this time. }
+        expires_at: { type: string, format: date-time, description: When attack mode ends, or ended. }
+        difficulty: { type: integer, description: Leading zero bits the browser's proof of work must find. }
+        pass_ttl_seconds: { type: integer, description: Seconds a browser that solved the attack-mode challenge is let through. }
+
+    EnableEdgeAttackModeRequest:
+      type: object
+      description: Switches attack mode on for a duration, or moves the end of an active one.
+      additionalProperties: false
+      properties:
+        duration_seconds:
+          type: integer
+          minimum: 900
+          maximum: 86400
+          default: 3600
+          description: How long attack mode stays on from now. Switching it on while it is on restarts the clock with this duration.
+
+    EdgeProtectionAICrawler:
+      type: object
+      description: One AI crawler's requests over the summary's range.
+      required: [name, operator, purpose, count]
+      properties:
+        name: { type: string, description: "Crawler name as the ai_crawler match field uses it, e.g. gptbot." }
+        operator: { type: string, description: Company that runs the crawler. }
+        purpose: { type: string, enum: [training, search, assistant], description: "What its fetches are for: training models, AI search, or an assistant answering a user." }
+        count: { type: integer, format: int64, minimum: 0 }
 
     EdgeRulePenalty:
       type: object
@@ -106223,7 +106329,18 @@ components:
         expired: { type: boolean, description: True once expires_at has passed and the rule no longer applies. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
+        managed_by: { type: string, enum: [attack_mode], description: "Set on the app's attack-mode rule (ADR-20261021220456), which changes only through /v1/apps/{slug}/edge-protection/attack-mode; PATCH refuses it. Absent on every other rule." }
         penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
+        unreleased_features:
+          type: array
+          description: |
+            Gated features this rule uses that are not yet released to the
+            account (ADR-20261023113721). The gateway does not enforce them:
+            a challenge rule is inert, a warn or block WAF rule only
+            observes, a penalty boxes nobody, an AI crawler condition never
+            matches, and attack mode challenges nobody. Absent when every
+            feature the rule uses is released.
+          items: { type: string, enum: [challenge, waf_blocking, penalty_box, ai_crawlers, attack_mode] }
 
     DeploymentRoutePolicySnapshotResponse:
       description: Immutable gateway edge-rule state recorded on the deployment's first live transition.
@@ -106359,11 +106476,18 @@ components:
         path, host, client_ip, country, asn (ADR-966: the client IP's
         autonomous system, e.g. 13335 or AS13335), ua_family (ADR-973: the
         User-Agent's family, one of browser, mobile, bot, tool, other),
-        verified_bot (ADR-973: a known crawler confirmed by forward-confirmed
-        reverse DNS of the client IP, one of googlebot, bingbot, applebot,
-        yandexbot, baiduspider, yahoo, petalbot; absent otherwise),
-        header:<name>, cookie:<name>, query:<name>. ua_family and
-        verified_bot take eq, ne, in, not_in, exists, missing. Ops: eq, ne, in, not_in, prefix, suffix, contains,
+        verified_bot (ADR-973: a known crawler confirmed by its operator's
+        published IP ranges or forward-confirmed reverse DNS of the client
+        IP, one of googlebot, bingbot, applebot, yandexbot, baiduspider,
+        yahoo, petalbot; absent otherwise), ai_crawler (ADR-20261022083601:
+        the AI crawler the User-Agent claims, such as gptbot, claudebot,
+        ccbot, perplexitybot, bytespider), ai_crawler_purpose (that
+        crawler's purpose: training, search or assistant),
+        verified_ai_crawler (the claimed AI crawler when the client IP is
+        in its operator's published ranges; only crawlers that publish
+        ranges can verify), header:<name>, cookie:<name>, query:<name>.
+        ua_family, verified_bot and the AI crawler fields take eq, ne, in,
+        not_in, exists, missing. Ops: eq, ne, in, not_in, prefix, suffix, contains,
         exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-963:
         list names an account list whose kind fits the field). Depth at most 4,
         at most 32 nodes, 64 values per leaf, values and regexes at most 256

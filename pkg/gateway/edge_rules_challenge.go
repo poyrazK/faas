@@ -39,6 +39,9 @@ type EdgeRuleChallengeResolved struct {
 	// MaxDifficulty is the most the gateway may raise Difficulty to under
 	// attack (ADR-831 amendment 8); equal to Difficulty keeps it fixed.
 	MaxDifficulty int
+	// AttackMode marks the app's attack-mode rule (ADR-20261021220456),
+	// which the edge_attack_mode platform flag also gates.
+	AttackMode bool
 }
 
 // ChallengeEdgeRuleMatcher is optional so existing matchers do not have to

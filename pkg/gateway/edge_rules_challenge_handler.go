@@ -55,6 +55,13 @@ func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request,
 		h.metrics.ObserveEdgeRuleMatch("challenge", "blocked")
 		return false
 	}
+	// ADR-20261021220456 amendment 1: an attack-mode rule is inert for an
+	// account the edge_attack_mode flag leaves out. The solve path stays
+	// open: no attack-mode page is served, and the app's own challenge rules
+	// still need it.
+	if rule.AttackMode && !h.edgeFeatureReleased(platformflags.EdgeAttackMode, app) {
+		return false
+	}
 	h.metrics.ObserveEdgeRuleMatch("challenge", "match")
 	if id := authenticatedFrom(r.Context()); id.APIKeyID != "" || id.ConsumerID != "" || id.JWTSubject != "" {
 		h.metrics.ObserveEdgeChallenge(app.ID, "bypassed")
