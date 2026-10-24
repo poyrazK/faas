@@ -1,6 +1,6 @@
 import httpx
 
-from faas_sdk.api.managed_postgres import (
+from faas_sdk.preview.api.managed_postgres import (
     list_org_managed_postgres_bindings,
     list_org_managed_postgres_databases,
 )

@@ -108,11 +108,17 @@ type cliCommand struct {
 }
 
 // customerCliCommands returns the commands intended for normal application
-// developers. Keep the full cliCommands manifest intact: hidden operator and
-// legacy entries still need completion/man/dispatch coverage.
+// developers, without those whose capability is hidden for the account
+// (capability_visibility.go). Keep the full cliCommands manifest intact:
+// hidden operator and legacy entries still need completion/man/dispatch
+// coverage.
 func customerCliCommands() []cliCommand {
-	commands := make([]cliCommand, 0, len(cliCommands))
-	for _, command := range visibleCliCommands() {
+	return customerAudience(discoverableCliCommands())
+}
+
+func customerAudience(manifest []cliCommand) []cliCommand {
+	commands := make([]cliCommand, 0, len(manifest))
+	for _, command := range manifest {
 		if command.Audience == cliAudienceCustomer {
 			commands = append(commands, command)
 		}
@@ -122,7 +128,7 @@ func customerCliCommands() []cliCommand {
 
 func advancedCliCommands() []cliCommand {
 	commands := make([]cliCommand, 0, len(cliCommands))
-	for _, command := range visibleCliCommands() {
+	for _, command := range discoverableCliCommands() {
 		if command.Audience != cliAudienceCustomer && cliCommandAvailable(command.Name) {
 			commands = append(commands, command)
 		}

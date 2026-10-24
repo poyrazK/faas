@@ -67,7 +67,7 @@ type CompleteObjectMultipartUploadRequest struct {
 	Parts []ObjectMultipartCompletedPart `json:"parts"`
 }
 
-func (c *Client) CreateObjectMultipartUpload(ctx context.Context, slug, bucket string, req CreateObjectMultipartUploadRequest) (ObjectMultipartUpload, error) {
+func (c *PreviewClient) CreateObjectMultipartUpload(ctx context.Context, slug, bucket string, req CreateObjectMultipartUploadRequest) (ObjectMultipartUpload, error) {
 	var out ObjectMultipartUpload
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/multipart-uploads", req, &out)
 	return out, err
@@ -75,7 +75,7 @@ func (c *Client) CreateObjectMultipartUpload(ctx context.Context, slug, bucket s
 
 // ListObjectMultipartUploads lists durable upload sessions so clients can
 // recover an upload after losing their local session identifier.
-func (c *Client) ListObjectMultipartUploads(ctx context.Context, slug, bucket string, limit int, cursor string) (ObjectMultipartUploadList, error) {
+func (c *PreviewClient) ListObjectMultipartUploads(ctx context.Context, slug, bucket string, limit int, cursor string) (ObjectMultipartUploadList, error) {
 	query := url.Values{"cursor": {cursor}}
 	if limit != 0 {
 		query.Set("limit", strconv.Itoa(limit))
@@ -87,7 +87,7 @@ func (c *Client) ListObjectMultipartUploads(ctx context.Context, slug, bucket st
 
 // ListObjectMultipartParts lists provider-confirmed parts for a resumable
 // upload so clients can reconstruct the completion request after a retry.
-func (c *Client) ListObjectMultipartParts(ctx context.Context, slug, bucket, upload string, partNumberMarker, limit int) (ObjectMultipartPartList, error) {
+func (c *PreviewClient) ListObjectMultipartParts(ctx context.Context, slug, bucket, upload string, partNumberMarker, limit int) (ObjectMultipartPartList, error) {
 	query := url.Values{}
 	if partNumberMarker != 0 {
 		query.Set("part_number_marker", strconv.Itoa(partNumberMarker))
@@ -100,27 +100,27 @@ func (c *Client) ListObjectMultipartParts(ctx context.Context, slug, bucket, upl
 	return out, err
 }
 
-func (c *Client) GetObjectMultipartUpload(ctx context.Context, slug, bucket, upload string) (ObjectMultipartUpload, error) {
+func (c *PreviewClient) GetObjectMultipartUpload(ctx context.Context, slug, bucket, upload string) (ObjectMultipartUpload, error) {
 	var out ObjectMultipartUpload
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/multipart-uploads/"+url.PathEscape(upload), nil, &out)
 	return out, err
 }
 
-func (c *Client) SignObjectMultipartPart(ctx context.Context, slug, bucket, upload string, part int, req ObjectMultipartPartSignRequest) (ObjectSignedRequest, error) {
+func (c *PreviewClient) SignObjectMultipartPart(ctx context.Context, slug, bucket, upload string, part int, req ObjectMultipartPartSignRequest) (ObjectSignedRequest, error) {
 	var out ObjectSignedRequest
 	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/multipart-uploads/" + url.PathEscape(upload) + "/parts/" + strconv.Itoa(part) + "/signed-url"
 	err := c.do(ctx, http.MethodPost, path, req, &out)
 	return out, err
 }
 
-func (c *Client) CompleteObjectMultipartUpload(ctx context.Context, slug, bucket, upload string, req CompleteObjectMultipartUploadRequest) (ObjectMultipartUpload, error) {
+func (c *PreviewClient) CompleteObjectMultipartUpload(ctx context.Context, slug, bucket, upload string, req CompleteObjectMultipartUploadRequest) (ObjectMultipartUpload, error) {
 	var out ObjectMultipartUpload
 	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/multipart-uploads/" + url.PathEscape(upload) + "/complete"
 	err := c.do(ctx, http.MethodPost, path, req, &out)
 	return out, err
 }
 
-func (c *Client) AbortObjectMultipartUpload(ctx context.Context, slug, bucket, upload string) error {
+func (c *PreviewClient) AbortObjectMultipartUpload(ctx context.Context, slug, bucket, upload string) error {
 	path := "/v1/apps/" + url.PathEscape(slug) + "/buckets/" + url.PathEscape(bucket) + "/multipart-uploads/" + url.PathEscape(upload)
 	return c.do(ctx, http.MethodDelete, path, nil, nil)
 }

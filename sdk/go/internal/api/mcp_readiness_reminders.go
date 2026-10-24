@@ -86,7 +86,7 @@ type SetMCPReadinessReminderDefaultsRequest struct {
 	ReminderPolicy  *MCPReadinessReminderPolicy `json:"reminder_policy"`
 }
 
-func (c *Client) ListMCPReadinessAttention(ctx context.Context, app, scope, after string, limit int, includeResolved bool) (MCPReadinessAttentionPage, error) {
+func (c *PreviewClient) ListMCPReadinessAttention(ctx context.Context, app, scope, after string, limit int, includeResolved bool) (MCPReadinessAttentionPage, error) {
 	q := url.Values{}
 	if includeResolved {
 		q.Set("include_resolved", "true")
@@ -104,12 +104,12 @@ func (c *Client) ListMCPReadinessAttention(ctx context.Context, app, scope, afte
 	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/mcp-readiness-attention?"+q.Encode(), nil, &out)
 	return out, err
 }
-func (c *Client) ActMCPReadinessAttention(ctx context.Context, app, incident string, r MCPReadinessAttentionAction) (MCPReadinessAttentionReceipt, error) {
+func (c *PreviewClient) ActMCPReadinessAttention(ctx context.Context, app, incident string, r MCPReadinessAttentionAction) (MCPReadinessAttentionReceipt, error) {
 	var out MCPReadinessAttentionReceipt
 	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(app)+"/mcp-readiness-incidents/"+url.PathEscape(incident)+"/attention-actions", r, &out)
 	return out, err
 }
-func (c *Client) ListMCPReadinessAttentionHistory(ctx context.Context, app, incident, before string, limit int) (MCPReadinessAttentionHistory, error) {
+func (c *PreviewClient) ListMCPReadinessAttentionHistory(ctx context.Context, app, incident, before string, limit int) (MCPReadinessAttentionHistory, error) {
 	q := url.Values{}
 	if before != "" {
 		q.Set("before", before)
@@ -121,12 +121,12 @@ func (c *Client) ListMCPReadinessAttentionHistory(ctx context.Context, app, inci
 	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/mcp-readiness-incidents/"+url.PathEscape(incident)+"/attention-actions?"+q.Encode(), nil, &out)
 	return out, err
 }
-func (c *Client) GetMCPReadinessReminderDefaults(ctx context.Context, app, rule string) (MCPReadinessReminderDefaults, error) {
+func (c *PreviewClient) GetMCPReadinessReminderDefaults(ctx context.Context, app, rule string) (MCPReadinessReminderDefaults, error) {
 	var out MCPReadinessReminderDefaults
 	err := c.do(ctx, "GET", "/v1/apps/"+url.PathEscape(app)+"/alerts/"+url.PathEscape(rule)+"/mcp-readiness-reminder-defaults", nil, &out)
 	return out, err
 }
-func (c *Client) SetMCPReadinessReminderDefaults(ctx context.Context, app, rule string, request SetMCPReadinessReminderDefaultsRequest) (MCPReadinessReminderDefaults, error) {
+func (c *PreviewClient) SetMCPReadinessReminderDefaults(ctx context.Context, app, rule string, request SetMCPReadinessReminderDefaultsRequest) (MCPReadinessReminderDefaults, error) {
 	var out MCPReadinessReminderDefaults
 	err := c.do(ctx, "PUT", "/v1/apps/"+url.PathEscape(app)+"/alerts/"+url.PathEscape(rule)+"/mcp-readiness-reminder-defaults", request, &out)
 	return out, err

@@ -1,5 +1,5 @@
-from faas_sdk.models.event_preview_subscription import EventPreviewSubscription
-from faas_sdk.models.workflow_trigger_spec import WorkflowTriggerSpec
+from faas_sdk.preview.models.event_preview_subscription import EventPreviewSubscription
+from faas_sdk.preview.models.workflow_trigger_spec import WorkflowTriggerSpec
 
 
 def test_event_trigger_preserves_content_filter():

@@ -35,5 +35,21 @@ export type OperatorPlatformFlag = {
   receipts: Array<OperatorRuntimeConfigApplyReceipt>;
   convergence: OperatorPlatformFlagConvergence;
   opt_ins: OperatorPlatformFlagOptIns;
+  /**
+   * Tier of the capability the flag releases (ADR-20261023115741).
+   */
+  maturity?: 'ga' | 'beta' | 'preview' | 'internal';
+  /**
+   * Parent capability flag; a sub-feature is released only while its parent is.
+   */
+  parent?: string;
+  /**
+   * Core capability flag: turning it off for every account needs force.
+   */
+  core?: boolean;
+  /**
+   * What the flag gates today, joined with +: routes, settings, daemons; or handler or none.
+   */
+  enforcement?: string;
 };
 

@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Every capability behind a platform flag](20261023115741-every-capability-behind-a-platform-flag.md)
 - [Build secrets resolve like the runtime environment](20261024140000-build-secrets-resolve-like-the-runtime.md)
 - [ADR-20261024135625: Resource journal: durable commits only for reboot-surviving assets](20261024135625-resource-journal-volatile-commits.md)
 - [Dockerfile HEALTHCHECK gates readiness on source builds](20261024100000-dockerfile-healthcheck-enforced.md)

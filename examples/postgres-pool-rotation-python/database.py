@@ -1,6 +1,6 @@
 """Application-owned psycopg hooks; SDK core has no driver dependency."""
 
-from faas_sdk.async_postgres_pool_runtime import AsyncPostgresPoolBinding
+from faas_sdk.preview.async_postgres_pool_runtime import AsyncPostgresPoolBinding
 from psycopg.conninfo import conninfo_to_dict
 from psycopg_pool import AsyncConnectionPool
 

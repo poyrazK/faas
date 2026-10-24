@@ -5113,7 +5113,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, mode := range []string{PathFilterModePaths, PathFilterModeFullFallback, PathFilterModeTruncated, PathFilterModeError, PathFilterModeBreakerOpen} {
 		githubdPathFilterTotal.WithLabelValues(mode)
 	}
-	for _, reason := range []string{PushSkippedReasonMarker} {
+	for _, reason := range []string{PushSkippedReasonMarker, PushSkippedReasonCapability} {
 		githubdPushSkippedTotal.WithLabelValues(reason)
 	}
 	// issue #299: pre-instantiate the closed `severity` label set
@@ -9784,6 +9784,9 @@ const (
 	PathFilterModeError        = "error"
 	PathFilterModeBreakerOpen  = "breaker_open"
 	PushSkippedReasonMarker    = "marker"
+	// PushSkippedReasonCapability counts pushes ignored because the GitHub
+	// deploys capability flag is off for the account (ADR-20261023115741).
+	PushSkippedReasonCapability = "capability"
 )
 
 // ObserveGithubdPushSkipped increments githubd_push_skipped_total{reason}.
@@ -9793,14 +9796,14 @@ func (m *OpsMetrics) ObserveGithubdPushSkipped(reason string) {
 	if m == nil || m.githubdPushSkippedTotal == nil {
 		return
 	}
-	if reason == PushSkippedReasonMarker {
+	if reason == PushSkippedReasonMarker || reason == PushSkippedReasonCapability {
 		m.githubdPushSkippedTotal.WithLabelValues(reason).Inc()
 	}
 }
 
 // GithubdPushSkippedTotal returns the metric series for service-level tests.
 func (m *OpsMetrics) GithubdPushSkippedTotal(reason string) prometheus.Counter {
-	if m == nil || m.githubdPushSkippedTotal == nil || reason != PushSkippedReasonMarker {
+	if m == nil || m.githubdPushSkippedTotal == nil || (reason != PushSkippedReasonMarker && reason != PushSkippedReasonCapability) {
 		return nil
 	}
 	return m.githubdPushSkippedTotal.WithLabelValues(reason)

@@ -1,4 +1,4 @@
-from faas_sdk.models.mcp_readiness_incident_timeline import MCPReadinessIncidentTimeline
+from faas_sdk.preview.models.mcp_readiness_incident_timeline import MCPReadinessIncidentTimeline
 
 
 def test_readiness_incident_event_round_trip():

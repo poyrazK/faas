@@ -46,6 +46,16 @@ func specIndex(monetization bool) int {
 // publicSpec filters raw. A spec it cannot rewrite yields an error document,
 // never the unfiltered spec, so hidden paths cannot leak on failure.
 func publicSpec(raw []byte, showMonetization bool) []byte {
+	return FilterSpec(raw, nil, showMonetization)
+}
+
+// FilterSpec returns raw without the operator previews, the paths hide
+// reports (nil hides none), API monetization unless showMonetization, and
+// the components only removed paths referenced. The served spec hides the
+// capabilities off by default, and the SDK spec the preview and internal
+// ones (ADR-20261023115741). A spec it cannot rewrite yields an error
+// document, never the unfiltered spec.
+func FilterSpec(raw []byte, hide func(path string) bool, showMonetization bool) []byte {
 	const malformed = "error: openapi spec is malformed at build time\n"
 	var doc yaml.Node
 	if err := yaml.Unmarshal(raw, &doc); err != nil || len(doc.Content) == 0 {
@@ -59,7 +69,8 @@ func publicSpec(raw []byte, showMonetization bool) []byte {
 	var removed []*yaml.Node
 	kept := make([]*yaml.Node, 0, len(paths.Content))
 	for i := 0; i+1 < len(paths.Content); i += 2 {
-		if hiddenPublicPath(paths.Content[i].Value) || !showMonetization && monetization.Path(paths.Content[i].Value) {
+		path := paths.Content[i].Value
+		if hiddenPublicPath(path) || hide != nil && hide(path) || !showMonetization && monetization.Path(path) {
 			removed = append(removed, paths.Content[i+1])
 			continue
 		}
@@ -114,8 +125,19 @@ func pruneComponents(root *yaml.Node, removed []*yaml.Node) {
 			keptRoots = append(keptRoots, root.Content[i+1])
 		}
 	}
+	candidates := componentClosure(components, removed)
+	// A component the removed paths never reached stays, and so does
+	// everything it references, even when no path references it.
+	for i := 0; i+1 < len(components.Content); i += 2 {
+		group := components.Content[i+1]
+		for j := 0; j+1 < len(group.Content); j += 2 {
+			if !candidates["#/components/"+components.Content[i].Value+"/"+group.Content[j].Value] {
+				keptRoots = append(keptRoots, group.Content[j+1])
+			}
+		}
+	}
 	stillUsed := componentClosure(components, keptRoots)
-	for ref := range componentClosure(components, removed) {
+	for ref := range candidates {
 		if stillUsed[ref] {
 			continue
 		}

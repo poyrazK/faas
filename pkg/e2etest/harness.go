@@ -1420,6 +1420,9 @@ func testEnvCommon(dbURL string) []string {
 	env := []string{
 		"DATABASE_URL=" + dbURL,
 		"FAAS_SKIP_SOCKET_GROUP=1",
+		// ADR-20261023115741: e2e suites exercise preview capabilities, and
+		// apid, schedd, githubd and gatewayd-internal all decide the flags.
+		"FAAS_CAPABILITY_FLAGS_RELEASE_ALL=1",
 		"FAAS_APP_ERRORS_ENABLED=false",
 		// The retained spans writer is production-default-on, but ordinary
 		// E2E daemons run unprivileged and do not need its /run/faas socket.

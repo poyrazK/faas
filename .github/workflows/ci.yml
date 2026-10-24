@@ -2179,7 +2179,7 @@ jobs:
         working-directory: sdk/node
         run: |
           npm run gen:check || {
-            echo "::error::sdk/node/src/generated is out of sync with api/openapi.yaml."
+            echo "::error::sdk/node/src/generated or src/generated-public is out of sync with api/openapi.yaml or sdk/openapi.yaml."
             echo "::error::Run 'make sdk-gen-node-check' locally and commit the result."
             exit 1
           }

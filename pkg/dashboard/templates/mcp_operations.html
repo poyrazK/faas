@@ -8,7 +8,7 @@
 </style>
 </head>
 <body>
-<header><strong>onebox faas</strong><nav aria-label="Main"><a href="/dashboard/">Overview</a><a href="/dashboard/apps">Apps</a><a href="/dashboard/mcp" aria-current="page">MCP operations</a><a href="/dashboard/account">Account</a></nav></header>
+<header><strong>onebox faas</strong><nav aria-label="Main"><a href="/dashboard/">Overview</a><a href="/dashboard/apps">Apps</a>{{if $.On "mcp-hosting"}}<a href="/dashboard/mcp" aria-current="page">MCP operations</a>{{end}}<a href="/dashboard/account">Account</a></nav></header>
 <main>
 <h1>MCP operations</h1>
 {{if .Data.StatusMessage}}<p role="status" class="warning">{{.Data.StatusMessage}}</p>{{end}}

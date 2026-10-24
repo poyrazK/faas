@@ -8,7 +8,7 @@ import (
 
 // ValidateDurableEntityRestore executes application code; it needs mutation
 // scopes and consumes normal invocation resources. It commits no entity state.
-func (c *Client) ValidateDurableEntityRestore(ctx context.Context, slug string, request DurableEntityRestoreRequest) (DurableEntityRestoreValidationResponse, error) {
+func (c *PreviewClient) ValidateDurableEntityRestore(ctx context.Context, slug string, request DurableEntityRestoreRequest) (DurableEntityRestoreValidationResponse, error) {
 	var out DurableEntityRestoreValidationResponse
 	if request.Namespace == "" || request.Key == "" || request.RequestID == "" || request.ExpectedVersion == 0 {
 		return out, errors.New("restore validation requires selectors, request_id and expected_version")

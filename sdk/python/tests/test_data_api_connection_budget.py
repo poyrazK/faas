@@ -2,14 +2,14 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.managed_postgres import (
+from faas_sdk.preview.api.managed_postgres import (
     get_app_data_api_connection_budgets,
     get_managed_postgres_connection_budget,
 )
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.connection_budget_capacity import ConnectionBudgetCapacity
-from faas_sdk.models.data_api_connection_budgets import DataAPIConnectionBudgets
-from faas_sdk.models.managed_postgres_connection_budget import ManagedPostgresConnectionBudget
+from faas_sdk.preview.models.connection_budget_capacity import ConnectionBudgetCapacity
+from faas_sdk.preview.models.data_api_connection_budgets import DataAPIConnectionBudgets
+from faas_sdk.preview.models.managed_postgres_connection_budget import ManagedPostgresConnectionBudget
 
 
 def test_verified_zero_capacity_preserves_source_and_freshness() -> None:
@@ -26,7 +26,7 @@ def test_verified_zero_capacity_preserves_source_and_freshness() -> None:
 
 
 def test_runtime_coverage_preserves_reported_demand_and_missing_consumers() -> None:
-    from faas_sdk.models.connection_budget_demand import ConnectionBudgetDemand
+    from faas_sdk.preview.models.connection_budget_demand import ConnectionBudgetDemand
 
     value = {
         "data_api_resident_estimate": 4,

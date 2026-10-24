@@ -3875,6 +3875,9 @@ const (
 	CodeEdgeRuleConflict           = "edge_rule_conflict"
 	CodePlanLimitEdgeRules         = "plan_limit_edge_rules"
 	CodePlanEdgeRuleKindNotAllowed = "plan_edge_rule_kind_not_allowed"
+	// CodeCapabilityNotReleased refuses a setting whose capability is not
+	// released to the account (ADR-20261023115741).
+	CodeCapabilityNotReleased = "capability_not_released"
 	// CodePlanEdgeRuleKindQuotaReached is the per-kind quota error
 	// (ADR-091 D22). Distinct from CodePlanLimitEdgeRules so the
 	// customer sees the specific kind that tripped ("1/1 geo rules
@@ -6602,6 +6605,16 @@ func ErrPlanEdgeRuleKindNotAllowed(plan Plan, kind string) *Problem {
 		"Edge rule kind unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include edge rule kind %q; upgrade to Hobby or above to use it.", plan, kind)).
 		WithDocs(docsBase + "/plans#edge-rules")
+}
+
+// ErrCapabilityNotReleased refuses a request field or declaration whose
+// capability's platform flag is off for the account (ADR-20261023115741).
+// It names the setting and the capability, never the flag configuration.
+func ErrCapabilityNotReleased(setting, capability string) *Problem {
+	return NewProblem(http.StatusForbidden, CodeCapabilityNotReleased,
+		"Feature not available",
+		fmt.Sprintf("%s needs the %s capability, which is not available to this account; remove it or contact support for access.", setting, capability)).
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrPlanEdgeRuleKindQuotaReached is the 403 returned when the

@@ -1185,7 +1185,7 @@ Web Push payloads use RFC 8291 encryption and RFC 8188 `aes128gcm` framing.
 Browser/Node SDK consumers receive push actions after subscribing:
 
 ```ts
-import { realtimeWebPushRegistration } from '@gregale/sdk-node/browser';
+import { realtimeWebPushRegistration } from '@gregale/sdk-node/preview/browser';
 
 const inbox = {
   consumerId: 'browser-main',
@@ -2840,7 +2840,7 @@ scopes are required):
 
 ```typescript
 import { revokeRealtimeChannelAccess, restoreRealtimeChannelAccess,
-  revokeRealtimeSessions, RealtimeService } from '@gregale/sdk-node';
+  revokeRealtimeSessions, RealtimeService } from '@gregale/sdk-node/preview';
 
 const user = { slug: 'workspace', id: endpointId, principal: 'user-123' };
 await revokeRealtimeChannelAccess(user, 'project-42');
@@ -2937,7 +2937,7 @@ that SQL from `commit.RealtimeChangefeedSchema`. The platform never installs it
 for you. Use a regular table with a primary key; partitioned tables are unsupported.
 
 ```ts
-import { installRealtimeChangefeed, removeRealtimeChangefeed } from '@gregale/sdk-node';
+import { installRealtimeChangefeed, removeRealtimeChangefeed } from '@gregale/sdk-node/preview';
 
 // Run using the customer database owner connection, inside its own transaction.
 await installRealtimeChangefeed(ownerTx, 'public.orders', {
@@ -3012,7 +3012,7 @@ produce `resync_required` and close the stream. Refresh your application snapsho
 and explicitly choose the subsequent cursor; do not automatically skip history.
 
 ```ts
-import { subscribeRealtimeSSE } from '@gregale/sdk-node/browser';
+import { subscribeRealtimeSSE } from '@gregale/sdk-node/preview/browser';
 
 for await (const message of subscribeRealtimeSSE({
   url: `https://your-gateway/__gregale/realtime/${endpointId}`,
@@ -3138,7 +3138,7 @@ Browser WebSocket example:
 
 ```ts
 import { createBrowserRealtimeTicketSocketFactory, consumeRealtimeChannel }
-  from '@gregale/sdk-node/browser';
+  from '@gregale/sdk-node/preview/browser';
 
 const createSocket = createBrowserRealtimeTicketSocketFactory(async () => {
   const response = await fetch('/api/realtime-ticket', { method: 'POST' });
@@ -3208,7 +3208,7 @@ Requires the existing server resume/SSE preview and matching browser allowed
 origins; ticket authentication also requires ticket preview.
 
 ```ts
-import { consumeRealtimeChannelWithFallback } from '@gregale/sdk-node/browser';
+import { consumeRealtimeChannelWithFallback } from '@gregale/sdk-node/preview/browser';
 
 await consumeRealtimeChannelWithFallback({
   url: `https://your-gateway/__gregale/realtime/${endpointId}`,
@@ -3431,7 +3431,7 @@ completion count survive. A reset does not assert skipped work was completed.
 The Node worker helper renews leases while a handler runs and ACKs after success:
 
 ```ts
-import { consumeRealtimeConsumerGroup, RealtimeService } from '@gregale/sdk-node';
+import { consumeRealtimeConsumerGroup, RealtimeService } from '@gregale/sdk-node/preview';
 
 const target = { slug: 'my-app', id: endpointId, channel: 'tasks', group: 'email-workers' };
 await consumeRealtimeConsumerGroup({
@@ -3542,7 +3542,7 @@ The isolated Node client does not change global SDK credentials:
 import {
   createRealtimeConsumerGroupWorkerClient,
   consumeRealtimeConsumerGroupWithCredential,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const client = createRealtimeConsumerGroupWorkerClient({
   groupId: issued.info.group_id,
@@ -4390,7 +4390,7 @@ Apply migration `20261012102700538_realtime_replay_job_dry_runs.sql` and upgrade
 
 ### Python worker lifecycle
 
-The Python SDK exports account and scoped-credential async consumer-group helpers in `faas_sdk.realtime_workers` and at the package root. They handle bounded concurrent batch claims, lease renewal/expiry, handler complete/retry settlement and optional readiness heartbeats. Supply an async handler that awaits every effect and observes its context stop event; enforce idempotency and fencing at downstream writes. Callers own the async HTTP client and must disable custom mutation retries.
+The Python SDK exports account and scoped-credential async consumer-group helpers in `faas_sdk.preview.realtime_workers` and at the package root. They handle bounded concurrent batch claims, lease renewal/expiry, handler complete/retry settlement and optional readiness heartbeats. Supply an async handler that awaits every effect and observes its context stop event; enforce idempotency and fencing at downstream writes. Callers own the async HTTP client and must disable custom mutation retries.
 
 Use an asyncio.Event for graceful shutdown. Opt-in release waits for handlers and lease monitors to stop and only releases valid leases after caller shutdown. Task cancellation joins the same owned tasks before propagating. Expired/lost leases and uncertain terminal settlements are not followed by release. Python `settlement_retries=0` is the default; opt in to 1–3 receipt-backed retries for complete/retry/release on temporary network errors or HTTP 408/500/502/503/504. Each logical settlement reuses one UUID key and body, with 100/200/400 ms backoff. Claims and renewals never retry automatically. Cancellation interrupts requests/backoff; release still has a total five-second budget. Auth, validation, conflicts, capacity and malformed responses stop retries. Requires server settlement receipt support (ADR 1055). Scoped workers require status/claim/renew/complete/retry grants and optional heartbeat/release grants. SDK runtime validation remains deferred; this addition needs no migration.
 

@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/apid/automationconsole"
 	"github.com/onebox-faas/faas/pkg/apid/billingruns"
+	"github.com/onebox-faas/faas/pkg/apid/capgate"
 	"github.com/onebox-faas/faas/pkg/apid/ciapi"
 	"github.com/onebox-faas/faas/pkg/apid/consumerbilling"
 	"github.com/onebox-faas/faas/pkg/apid/consumercontrols"
@@ -179,8 +180,11 @@ type server struct {
 	// platformFlagBootstrap holds the boot-time fallbacks for platform flags
 	// (ADR-1700): customer Flags and the AI gateway gate and rollout.
 	platformFlagBootstrap map[string]platformflags.Definition
-	platformFlagAdmin     platformflagadmin.Service // ADR-1700; Host wired in newServer
-	previews              previews.Service          // ADR 20261021080640; Host wired in newServer
+	// capGate releases every route by its capability's platform flag
+	// (ADR-20261023115741). Nil (unit tests) releases every route.
+	capGate           *capgate.Gate
+	platformFlagAdmin platformflagadmin.Service // ADR-1700; Host wired in newServer
+	previews          previews.Service          // ADR 20261021080640; Host wired in newServer
 	// workloadVerifier is the cluster workload trust (ADR-1141); nil when unset.
 	workloadVerifier *workloadidentity.Verifier
 	// totp limits TOTP guesses per account (totp_guard.go).
@@ -1505,6 +1509,7 @@ func newServerWithDeps(
 	s.productControl.CompletePaymentMethod = s.statementInvoices.CompleteStripeSetup
 	s.dataRepair.Host = operationHost{s}
 	s.edgeRules.Host = edgeRulesHost{s}
+	s.edgeRules.SettingCheck = s.edgeRuleSettingsProblem
 	s.profileCaptures.Host = profileCaptureHost{s}
 	s.queueLeases.Host = queueLeasesHost{s}
 	s.realtime.Host = realtimeHost{s}
@@ -1532,6 +1537,7 @@ func newServerWithDeps(
 		return s.platformFlagOr(flagKey, flagSubject(r, acct), legacy)
 	}
 	s.realtime.EndpointPreviews = s.realtimeEndpointPreviews
+	s.realtime.RealtimeReleased = s.realtimeReleased
 	// ADR-120: wire the package-level appsDomainFunc seam (declared at
 	// cmd/apid/dns_probes.go:125) to the server's apps base domain so
 	// checkPointsToGregale has the configured Gregale apex in
@@ -5269,7 +5275,7 @@ func (s *server) handler() http.Handler {
 	// keeps the code aligned to.
 	// The served spec publishes API monetization only while it is released
 	// (ADR-20261018090210).
-	openAPI := apid.OpenAPI{Monetization: s.apiMonetizationEnabled}
+	openAPI := apid.OpenAPI{Monetization: s.apiMonetizationEnabled, Hidden: s.openAPIHidden}
 	mux.HandleFunc("GET /v1/openapi.yaml", openAPI.ServeYAML)
 	mux.HandleFunc("GET /v1/openapi.json", openAPI.ServeJSON)
 	mux.HandleFunc("GET /docs", openAPI.ServeDocs)
@@ -5296,9 +5302,9 @@ func (s *server) handler() http.Handler {
 	return middleware.RequestID(httpsec.Static(httpsec.Nonce(
 		func(*http.Request) bool { return true },
 		s.observeWrap(s.hosting.HideDisabled(s.hideDisabledMonetization(operation.OperationCustomerCORS(s.productControl.SurfaceGate(ciapi.HideDisabledRoutes(
-			func() ci.Config { return s.ciConfig }, apiContractHandler(mux, func(r *http.Request) bool {
-				return s.durable.Hidden(r) || s.liveGate().Hidden(r)
-			}),
+			func() ci.Config { return s.ciConfig }, s.capabilityKillSwitch(mux, apiContractHandler(mux, func(r *http.Request) bool {
+				return s.durable.Hidden(r) || s.liveGate().Hidden(r) || s.capabilityPathHidden(r)
+			})),
 		)))))),
 	)))
 }

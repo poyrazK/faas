@@ -5,9 +5,9 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.storage import get_object_bucket_versioning, put_object_bucket_versioning
+from faas_sdk.preview.api.storage import get_object_bucket_versioning, put_object_bucket_versioning
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models import ObjectBucketVersioning, ObjectBucketVersioningRequest
+from faas_sdk.preview.models import ObjectBucketVersioning, ObjectBucketVersioningRequest
 
 
 def test_bucket_versioning_request_and_progress() -> None:

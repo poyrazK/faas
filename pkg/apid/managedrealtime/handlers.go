@@ -209,6 +209,13 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 			return fmt.Errorf("live routes for endpoint %s: %w", row.ID, err)
 		}
 	}
+	// ADR-20261023115741: realtimed has no flag source, so apid withdraws an
+	// endpoint whose account has realtime off; its connections end and new
+	// ones find no endpoint. Live routes keep it registered, since live
+	// queries are their own capability.
+	if len(liveRoutes) == 0 && s.RealtimeReleased != nil && !s.RealtimeReleased(ctx, row.AccountID, row.AppID) {
+		return s.Registrar.RemoveEndpoint(ctx, row.ID)
+	}
 	var previews *realtime.EndpointPreviews
 	if s.EndpointPreviews != nil {
 		if previews, err = s.EndpointPreviews(ctx, row.AccountID, row.AppID); err != nil {

@@ -415,6 +415,11 @@ func (l *Loop) triggerPlanResolver(ctx context.Context) func(string) api.Plan {
 // apps get their per-plan WakeBurstPerApp + TriggerRecordsPerSecondPerApp
 // caps rather than collapsing to Free.
 func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store storeLike, planFor func(string) api.Plan) error {
+	// ADR-20261023115741: a trigger whose capability is off for the account
+	// is not polled; its records stay in the broker until the flag is on.
+	if !l.engine.appIDCapabilityAllowed(ctx, t.AppID.String(), triggerCapability(t.Kind)) {
+		return nil
+	}
 	var exclusiveBinding *state.ExclusiveTriggerBinding
 	if bindings, ok := store.(state.ExclusiveTriggerBindingStore); ok {
 		binding, bindingErr := bindings.ExclusiveTriggerBinding(ctx, t.AccountID.String(), "broker", t.ID.String())

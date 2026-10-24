@@ -1,0 +1,823 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { AccountReleaseWebhookResponse } from '../models/AccountReleaseWebhookResponse.js';
+import type { AppWebhookDeliveryAttemptListResponse } from '../models/AppWebhookDeliveryAttemptListResponse.js';
+import type { AppWebhookDeliveryHealthResponse } from '../models/AppWebhookDeliveryHealthResponse.js';
+import type { AppWebhookDeliveryListResponse } from '../models/AppWebhookDeliveryListResponse.js';
+import type { AppWebhookResponse } from '../models/AppWebhookResponse.js';
+import type { AppWebhookRetryDeliveryResponse } from '../models/AppWebhookRetryDeliveryResponse.js';
+import type { CreateAccountReleaseWebhookRequest } from '../models/CreateAccountReleaseWebhookRequest.js';
+import type { CreateAppWebhookRequest } from '../models/CreateAppWebhookRequest.js';
+import type { RotateAppWebhookSecretRequest } from '../models/RotateAppWebhookSecretRequest.js';
+import type { RotateAppWebhookSecretResponse } from '../models/RotateAppWebhookSecretResponse.js';
+import type { UpdateAccountReleaseWebhookRequest } from '../models/UpdateAccountReleaseWebhookRequest.js';
+import type { UpdateAppWebhookRequest } from '../models/UpdateAppWebhookRequest.js';
+import type { CancelablePromise } from '../../generated/core/CancelablePromise.js';
+import { OpenAPI } from '../../generated/core/OpenAPI.js';
+import { request as __request } from '../../generated/core/request.js';
+export class WebhooksService {
+  /**
+   * List outbound webhook subscriptions for this app.
+   * @returns AppWebhookResponse The webhooks.
+   * @throws ApiError
+   */
+  public static listAppWebhooks({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Array<AppWebhookResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/webhooks',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Create a new outbound webhook subscription.
+   * target_url is SSRF-guarded at write time (loopback / RFC1918
+   * / link-local / metadata IPs are rejected unless
+   * FAAS_EGRESS_ALLOW_LOOPBACK=1). webhook_secret arrives in
+   * the body, is sealed with secretbox.SealBytes under the
+   * APP_WEBHOOK namespace, and is NEVER returned in plaintext
+   * — the response shape carries the masked constant. event_filter
+   * is an optional allowlist; empty subscribes to every currently
+   * supported producer-backed event. delivery_format defaults to
+   * `json`; selecting `cloudevents` emits CloudEvents 1.0 structured
+   * mode (`application/cloudevents+json`) while retaining the existing
+   * signed webhook headers.
+   *
+   * @returns AppWebhookResponse Webhook created.
+   * @throws ApiError
+   */
+  public static createAppWebhook({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateAppWebhookRequest,
+  }): CancelablePromise<AppWebhookResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/webhooks',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: app_webhook_invalid — malformed webhook body (missing target_url, invalid retry_policy, out-of-vocabulary event, oversize secret, etc.) or invalid state transition (e.g. retry on a non-dead row).`,
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        403: `code: plan_webhook_quota — per-app or per-account webhook limit reached.`,
+        404: `code: not_found`,
+        409: `code: app_webhook_invalid — malformed webhook body (missing target_url, invalid retry_policy, out-of-vocabulary event, oversize secret, etc.) or invalid state transition (e.g. retry on a non-dead row).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Fetch one webhook subscription by id.
+   * @returns AppWebhookResponse The webhook.
+   * @throws ApiError
+   */
+  public static getAppWebhook({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<AppWebhookResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/webhooks/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Partial-update a webhook subscription.
+   * Every field is optional. To rotate the secret in place, send
+   * `webhook_secret` (the handler seals it; the response carries
+   * the masked constant). To rotate via the dedicated endpoint,
+   * use POST /webhooks/{id}/rotate-secret.
+   *
+   * @returns AppWebhookResponse The updated webhook.
+   * @throws ApiError
+   */
+  public static updateAppWebhook({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: UpdateAppWebhookRequest,
+  }): CancelablePromise<AppWebhookResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/webhooks/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: app_webhook_invalid — malformed webhook body (missing target_url, invalid retry_policy, out-of-vocabulary event, oversize secret, etc.) or invalid state transition (e.g. retry on a non-dead row).`,
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a webhook subscription.
+   * Cascades into app_webhook_deliveries via FK CASCADE — the
+   * customer can no longer read the delivery history once the
+   * subscription is gone. Mirrors the alert-rule DELETE shape.
+   *
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAppWebhook({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/webhooks/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace a webhook HMAC secret.
+   * Seals the caller-supplied replacement and overwrites the row's
+   * ciphertext in place. Supply the same value to the receiver. The
+   * plaintext is never returned; the response carries the masked
+   * constant and rotated_at only.
+   *
+   * @returns RotateAppWebhookSecretResponse Webhook secret rotation succeeded.
+   * @throws ApiError
+   */
+  public static rotateAppWebhookSecret({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: RotateAppWebhookSecretRequest,
+  }): CancelablePromise<RotateAppWebhookSecretResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/webhooks/{id}/rotate-secret',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List recent deliveries for this webhook.
+   * Cursor-paginated; most-recent-first. The delivery status
+   * follows the closed vocabulary `pending | in_flight |
+   * succeeded | failed | dead`. Dead rows can be re-armed with
+   * POST /webhooks/{id}/deliveries/{did}/retry.
+   *
+   * @returns AppWebhookDeliveryListResponse The deliveries page.
+   * @throws ApiError
+   */
+  public static listAppWebhookDeliveries({
+    slug,
+    id,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Page size (1..100; default 50).
+     */
+    pageSize?: number,
+    /**
+     * Opaque cursor from the previous page's next_token.
+     */
+    pageToken?: string,
+  }): CancelablePromise<AppWebhookDeliveryListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/webhooks/{id}/deliveries',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Re-arm a dead delivery.
+   * Resets the row to `pending` with attempt=0 +
+   * next_attempt_at=now() so the dispatcher picks it up at the
+   * next tick. Only valid on rows with status='dead'; returns
+   * 400 app_webhook_invalid otherwise.
+   *
+   * @returns AppWebhookRetryDeliveryResponse The re-armed delivery.
+   * @throws ApiError
+   */
+  public static retryAppWebhookDelivery({
+    slug,
+    id,
+    did,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Delivery id (32-hex-char UUID).
+     */
+    did: string,
+  }): CancelablePromise<AppWebhookRetryDeliveryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/webhooks/{id}/deliveries/{did}/retry',
+      path: {
+        'slug': slug,
+        'id': id,
+        'did': did,
+      },
+      errors: {
+        400: `code: app_webhook_invalid — malformed webhook body (missing target_url, invalid retry_policy, out-of-vocabulary event, oversize secret, etc.) or invalid state transition (e.g. retry on a non-dead row).`,
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List completed delivery attempts, newest first.
+   * Manual retry creates a new replay generation and preserves older outcomes. No request or response body is retained in this history.
+   * @returns AppWebhookDeliveryAttemptListResponse The attempt history page.
+   * @throws ApiError
+   */
+  public static listAppWebhookDeliveryAttempts({
+    slug,
+    id,
+    did,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Delivery whose completed dispatch attempts are requested.
+     */
+    did: string,
+    /**
+     * Maximum attempt records per page (1..100; default 50).
+     */
+    pageSize?: number,
+    /**
+     * Cursor returned by the previous attempt history page.
+     */
+    pageToken?: string,
+  }): CancelablePromise<AppWebhookDeliveryAttemptListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/webhooks/{id}/deliveries/{did}/attempts',
+      path: {
+        'slug': slug,
+        'id': id,
+        'did': did,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read current delivery queue health for one webhook.
+   * @returns AppWebhookDeliveryHealthResponse Current webhook delivery health.
+   * @throws ApiError
+   */
+  public static getAppWebhookDeliveryHealth({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<AppWebhookDeliveryHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/webhooks/{id}/health',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List release receivers owned by the active account.
+   * @returns AccountReleaseWebhookResponse Account-owned release receivers.
+   * @throws ApiError
+   */
+  public static listAccountReleaseWebhooks(): CancelablePromise<Array<AccountReleaseWebhookResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/release-webhooks',
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Subscribe one receiver to release events from all current and future account apps.
+   * The target is SSRF-guarded and the signing secret is sealed at rest; the response never exposes plaintext.
+   * @returns AccountReleaseWebhookResponse Release receiver created.
+   * @throws ApiError
+   */
+  public static createAccountReleaseWebhook({
+    requestBody,
+  }: {
+    requestBody: CreateAccountReleaseWebhookRequest,
+  }): CancelablePromise<AccountReleaseWebhookResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/release-webhooks',
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: app_webhook_invalid — malformed webhook body (missing target_url, invalid retry_policy, out-of-vocabulary event, oversize secret, etc.) or invalid state transition (e.g. retry on a non-dead row).`,
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        403: `code: plan_webhook_quota — per-app or per-account webhook limit reached.`,
+        409: `code: app_webhook_invalid — malformed webhook body (missing target_url, invalid retry_policy, out-of-vocabulary event, oversize secret, etc.) or invalid state transition (e.g. retry on a non-dead row).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Fetch one account release receiver.
+   * @returns AccountReleaseWebhookResponse The receiver.
+   * @throws ApiError
+   */
+  public static getAccountReleaseWebhook({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<AccountReleaseWebhookResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/release-webhooks/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Update an account release receiver.
+   * @returns AccountReleaseWebhookResponse The updated receiver.
+   * @throws ApiError
+   */
+  public static updateAccountReleaseWebhook({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: UpdateAccountReleaseWebhookRequest,
+  }): CancelablePromise<AccountReleaseWebhookResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/account/release-webhooks/{id}',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: app_webhook_invalid — malformed webhook body (missing target_url, invalid retry_policy, out-of-vocabulary event, oversize secret, etc.) or invalid state transition (e.g. retry on a non-dead row).`,
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete an account release receiver and its delivery history.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAccountReleaseWebhook({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/account/release-webhooks/{id}',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Replace a release receiver's HMAC signing secret.
+   * @returns RotateAppWebhookSecretResponse Secret rotated; plaintext is never returned.
+   * @throws ApiError
+   */
+  public static rotateAccountReleaseWebhookSecret({
+    id,
+    requestBody,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: RotateAppWebhookSecretRequest,
+  }): CancelablePromise<RotateAppWebhookSecretResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/release-webhooks/{id}/rotate-secret',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List release deliveries across all source apps, newest first.
+   * @returns AppWebhookDeliveryListResponse Delivery page; each row includes its source app_id.
+   * @throws ApiError
+   */
+  public static listAccountReleaseWebhookDeliveries({
+    id,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Maximum number of deliveries returned in this page.
+     */
+    pageSize?: number,
+    /**
+     * Opaque cursor from the preceding response.
+     */
+    pageToken?: string,
+  }): CancelablePromise<AppWebhookDeliveryListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/release-webhooks/{id}/deliveries',
+      path: {
+        'id': id,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Re-arm one dead account release delivery.
+   * @returns AppWebhookRetryDeliveryResponse The re-armed account release delivery.
+   * @throws ApiError
+   */
+  public static retryAccountReleaseWebhookDelivery({
+    id,
+    did,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Delivery identifier to re-arm.
+     */
+    did: string,
+  }): CancelablePromise<AppWebhookRetryDeliveryResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/account/release-webhooks/{id}/deliveries/{did}/retry',
+      path: {
+        'id': id,
+        'did': did,
+      },
+      errors: {
+        400: `code: app_webhook_invalid — malformed webhook body (missing target_url, invalid retry_policy, out-of-vocabulary event, oversize secret, etc.) or invalid state transition (e.g. retry on a non-dead row).`,
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List completed attempts for one account release delivery.
+   * @returns AppWebhookDeliveryAttemptListResponse Release delivery attempt history, newest first.
+   * @throws ApiError
+   */
+  public static listAccountReleaseWebhookDeliveryAttempts({
+    id,
+    did,
+    pageSize = 50,
+    pageToken,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * Release delivery whose completed attempts are requested.
+     */
+    did: string,
+    /**
+     * Maximum release attempt records per page.
+     */
+    pageSize?: number,
+    /**
+     * Cursor returned by the previous release attempt page.
+     */
+    pageToken?: string,
+  }): CancelablePromise<AppWebhookDeliveryAttemptListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/release-webhooks/{id}/deliveries/{did}/attempts',
+      path: {
+        'id': id,
+        'did': did,
+      },
+      query: {
+        'page_size': pageSize,
+        'page_token': pageToken,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Read current delivery queue health for one account release webhook.
+   * @returns AppWebhookDeliveryHealthResponse Current account release webhook delivery health.
+   * @throws ApiError
+   */
+  public static getAccountReleaseWebhookDeliveryHealth({
+    id,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<AppWebhookDeliveryHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/account/release-webhooks/{id}/health',
+      path: {
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_webhooks_not_allowed — the plan does not include outbound webhooks (Free today).`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+}

@@ -12,10 +12,6 @@ AppWebhookResponseEventFilterItem = Literal[
     "automation.recovery_queue_blocked",
     "automation.recovery_review_finished",
     "automation.recovery_review_ready",
-    "consumer.closed",
-    "consumer.plan_changed",
-    "consumer.signed_up",
-    "consumer.usage_threshold",
     "debug.regression.detected",
     "debug.regression.resolved",
     "deployment.failed",
@@ -85,7 +81,6 @@ AppWebhookResponseEventFilterItem = Literal[
     "routes.requirements.changed",
     "routes.requirements.recovered",
     "routes.requirements.violated",
-    "usage_statement.finalized",
     "workflow.finished",
 ]
 
@@ -101,10 +96,6 @@ APP_WEBHOOK_RESPONSE_EVENT_FILTER_ITEM_VALUES: set[AppWebhookResponseEventFilter
     "automation.recovery_queue_blocked",
     "automation.recovery_review_finished",
     "automation.recovery_review_ready",
-    "consumer.closed",
-    "consumer.plan_changed",
-    "consumer.signed_up",
-    "consumer.usage_threshold",
     "debug.regression.detected",
     "debug.regression.resolved",
     "deployment.failed",
@@ -174,7 +165,6 @@ APP_WEBHOOK_RESPONSE_EVENT_FILTER_ITEM_VALUES: set[AppWebhookResponseEventFilter
     "routes.requirements.changed",
     "routes.requirements.recovered",
     "routes.requirements.violated",
-    "usage_statement.finalized",
     "workflow.finished",
 }
 

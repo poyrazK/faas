@@ -85,6 +85,9 @@ func TestMain(m *testing.M) {
 	resetNOColorCache()
 	on := true
 	testOnlyTTY = &on
+	// ADR-20261023115741: every command stays discoverable unless a test of
+	// capability hiding clears this (capability_visibility_test.go).
+	_ = os.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "1")
 	code := m.Run()
 	if owned {
 		_ = os.RemoveAll(sandbox)

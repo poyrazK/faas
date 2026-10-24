@@ -458,6 +458,12 @@ func (d *Drain) dispatchExclusiveOperation(ctx context.Context, owners state.Exc
 			d.ops.ObserveExclusiveOperationDispatch(dispatchOutcome)
 		}
 	}()
+	// ADR-20261023115741: exclusive operations switched off for the account
+	// stay queued; the next tick decides again.
+	if !d.engine.appIDCapabilityAllowed(ctx, op.AppID, "managed-exclusive-operations") {
+		dispatchOutcome = "capability_held"
+		return
+	}
 	if op.JobID != "" {
 		dispatchOutcome = d.dispatchExclusiveJobOperation(ctx, owners, op)
 		return
@@ -788,6 +794,14 @@ func (d *Drain) dispatchOne(ctx context.Context, inv state.Invocation) {
 		// Keep pending work and its attempt count intact. A held budget is
 		// an admission decision, not a failed customer execution.
 		d.log.Debug("drain: preview budget admission deferred", "inv", inv.ID, "app_id", app.ID)
+		return
+	}
+	// ADR-20261023115741: a capability switched off for the account holds
+	// its work. The row is deferred without spending its delivery budget, so
+	// it resumes intact when the flag is on again.
+	if capability := invocationCapability(inv.Source); !d.engine.appCapabilityAllowed(ctx, app, capability) {
+		_ = d.store.FailInvocation(ctx, inv.ID, "capability "+capability+" is not released", capabilityDeferral, 0)
+		d.log.Debug("drain: capability off; deferred", "inv", inv.ID, "app_id", app.ID, "capability", capability)
 		return
 	}
 	// /invoke is an HTTP/request primitive. Worker and job apps have no

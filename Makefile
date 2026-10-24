@@ -1462,6 +1462,22 @@ capabilities-check: ## Verify the product capability registry and generated matr
 	@cmp -s /tmp/faas-capabilities.md docs/capabilities.md || (echo "docs/capabilities.md is stale; run 'make capabilities-md'"; diff -u docs/capabilities.md /tmp/faas-capabilities.md || true; exit 1)
 	@echo "capabilities-check: OK"
 
+.PHONY: capability-coverage-check
+capability-coverage-check: ## CI gate: every customer entry point maps to a row of docs/ga-capability-inventory.md (ADR-20261023115741)
+	@python3 -I scripts/ga/capability_coverage_test.py
+	@python3 -I scripts/ga/capability_coverage.py
+
+.PHONY: sdk-spec
+sdk-spec: ## Regenerate sdk/openapi.yaml, the GA and beta spec the SDKs are generated from (ADR-20261023115741)
+	@$(GO) run ./cmd/sdk-spec > sdk/openapi.yaml
+	@echo "sdk-spec: sdk/openapi.yaml regenerated; run 'make sdk-gen-node sdk-gen-python'"
+
+.PHONY: sdk-spec-check
+sdk-spec-check: ## Verify sdk/openapi.yaml matches api/openapi.yaml and the product catalog
+	@$(GO) run ./cmd/sdk-spec > /tmp/faas-sdk-openapi.yaml
+	@cmp -s /tmp/faas-sdk-openapi.yaml sdk/openapi.yaml || (echo "sdk/openapi.yaml is stale; run 'make sdk-spec' and regenerate the SDKs"; exit 1)
+	@echo "sdk-spec-check: OK"
+
 .PHONY: standards-md
 standards-md: ## Regenerate the standards compatibility matrix from the standards registry
 	@$(GO) run ./cmd/standards-md > docs/standards.md
@@ -1661,6 +1677,10 @@ sdk-gen: ## (re)generate every generated SDK + assert clean diff vs HEAD
 pre-pr: ## Pre-PR drift check: every regenerate-and-diff gate that runs in CI
 	@echo "==> pre-pr: capabilities-check (product registry ↔ generated matrix)"
 	@$(MAKE) capabilities-check
+	@echo "==> pre-pr: capability-coverage-check (entry points ↔ capability inventory)"
+	@$(MAKE) capability-coverage-check
+	@echo "==> pre-pr: sdk-spec-check (sdk/openapi.yaml ↔ spec + catalog)"
+	@$(MAKE) sdk-spec-check
 	@echo "==> pre-pr: pricing-check (plan limits ↔ customer pricing)"
 	@$(MAKE) pricing-check
 	@echo "==> pre-pr: docs-links-check (docs URLs ↔ customer pages)"

@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from faas_sdk.trigger_batch import (
+from faas_sdk.preview.trigger_batch import (
     TriggerBatchError,
     handle_trigger_batch,
     handle_trigger_batch_async,

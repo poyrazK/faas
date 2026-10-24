@@ -9,7 +9,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import psycopg
-from faas_sdk import (
+from faas_sdk.preview import (
     customer_operation_request_from_headers,
     customer_operation_receipt_schema,
     operation_receipt_schema,
