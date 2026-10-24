@@ -117,3 +117,39 @@ large account aggregation, and root/child lock order. Projection changes commit
 or roll back with their authoritative writers; the API never claims or replays
 work. Existing claim fencing and atomic routing tests remain regression gates.
 Tenant predicates protect every result independently of opaque cursors.
+
+## Amendment (2026-10-25): refresh at commit, once per key
+
+Keeping the projection current cost eight refreshes per routed event, about
+2.9 ms of database time (V12 trigger profile, see
+`docs/ops/evidence/20261025-event-routing-backlog-refresh`). Adoption
+(initialize, insert recipients, settle) and completion (finish, settle,
+progress) each changed the same keys two or three times in one transaction,
+and settling a receipt that uses recipient claims refreshed every key, though
+none of them reads the outbox's state, availability or lease once its
+recipient row exists.
+
+- The projection triggers are deferred constraint triggers. They still run in
+  the writer's transaction, at its commit, so the projection commits or rolls
+  back with its authoritative writers as before. Nothing reads the projection
+  inside a writing transaction: every reader is an API inspection query.
+- Within one firing (the commit, or an earlier `SET CONSTRAINTS ...
+  IMMEDIATE`) a key refreshes once, and a receipt-wide refresh covers its
+  keys; every change it covers precedes the firing. Marks belong to the
+  statement that fires, so a change after an early firing refreshes again.
+  Past 16 KiB of marks a large statement refreshes every key, as before.
+- With recipient claims, an outbox change to state, availability or lease
+  refreshes only captured recipients that have no recipient row yet, plus any
+  changed progress keys. Without recipient claims it still refreshes the
+  receipt.
+- The recipient update trigger fires only when a column the view reads
+  changes (state, total attempts, capacity deferrals, availability, lease,
+  recipient, receipt position, keys). A recipient deleted with its receipt
+  skips the refresh: the receipt's projection rows cascade.
+
+The view and the refresh statement are unchanged; so are the readers, the
+lock order (refreshes read the root without locking it) and claim fencing.
+Tests: `TestPgEventRoutingBacklogMatchesSourceThroughRouting`,
+`TestPgEventRoutingBacklogRefreshesAgainAfterEarlyFiring`,
+`TestPgEventRoutingBacklogRecipientModeOutboxMoves` compare the projection
+with its source view after each step.
