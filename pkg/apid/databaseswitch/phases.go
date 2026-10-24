@@ -302,8 +302,9 @@ func (w *Worker) switchRelease(ctx context.Context, sw state.DatabaseSwitch) sta
 	return sw
 }
 
-// resume invalidates the app's snapshots and lifts the fence. Both steps
-// are idempotent, so a crash between them repeats them.
+// resume invalidates the app's snapshots and lifts the fence, then revokes
+// the source bindings' provider credentials while the app already serves.
+// Every step is idempotent, so a crash or a provider error repeats them.
 func (w *Worker) resume(ctx context.Context, sw state.DatabaseSwitch) state.DatabaseSwitch {
 	if w.InvalidateSnapshots != nil {
 		if err := w.InvalidateSnapshots(ctx, sw.AppID); err != nil {
@@ -313,8 +314,15 @@ func (w *Worker) resume(ctx context.Context, sw state.DatabaseSwitch) state.Data
 	if err := w.Cutovers.Resume(ctx, sw.AccountID, sw.CutoverID); err != nil {
 		return w.retry(sw, errorCode(err))
 	}
-	if w.AppChanged != nil {
+	if w.AppChanged != nil && sw.LastErrorCode == "" {
 		w.AppChanged(ctx, sw.AppID)
+	}
+	if err := w.Cutovers.RevokeRetiredSources(ctx, sw.AccountID, sw.CutoverID); err != nil {
+		// The app serves; only the old credentials wait. Keep retrying.
+		sw.AttemptCount++
+		sw.LastErrorCode = "source_revoke_" + errorCode(err)
+		sw.RetryAt = w.now().Add(min(api.DatabaseSwitchCheckInterval<<min(sw.AttemptCount, 4), transientBackoffCeiling))
+		return sw
 	}
 	sw.LastErrorCode = ""
 	return w.finish(sw, state.DatabaseSwitchCompleted)

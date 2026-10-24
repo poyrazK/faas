@@ -1642,6 +1642,7 @@ func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.
 // evidence the in-memory store lacks (ADR-20261023181931).
 func (e sourceRefTestEnv) SetDatabaseSwitchDrain(drain state.DatabaseSwitchDrainStore) {
 	e.srv.databaseSwitchDrainOverride = drain
+	e.srv.rollbackArtifactVerifier = stubRollbackArtifactVerifier{}
 }
 
 // DatabaseSwitchWorkerConfigured reports whether the server can run database

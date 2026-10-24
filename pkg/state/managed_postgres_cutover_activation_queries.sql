@@ -32,10 +32,11 @@ WHERE cutover_id=sqlc.arg(cutover_id)::text::uuid AND state='sealed';
 DELETE FROM app_secrets WHERE managed_postgres_binding_id=sqlc.arg(binding_id)::text::uuid;
 
 -- name: RetireManagedPostgresCutoverSourceBinding :execrows
--- The binding reconciler finishes the delete: it revokes the provider
--- credentials and marks the binding deleted.
-UPDATE managed_postgres_bindings SET state='deleting',lease_token=NULL,lease_until=NULL,attempt_count=0,
-last_error_code=NULL,retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)::timestamptz
+-- The copy's binding takes the same key at once, and only one binding per
+-- key may be undeleted, so the source binding is deleted here. Its provider
+-- identity stays on the row; the switch revokes it after the app resumes.
+UPDATE managed_postgres_bindings SET state='deleted',deleted_at=sqlc.arg(now)::timestamptz,lease_token=NULL,lease_until=NULL,
+attempt_count=0,last_error_code=NULL,retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)::timestamptz
 WHERE id=sqlc.arg(id)::text::uuid AND state='ready' AND cutover_id IS NULL;
 
 -- name: InsertActivatedManagedPostgresBinding :exec

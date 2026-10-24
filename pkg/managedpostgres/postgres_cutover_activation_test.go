@@ -114,7 +114,7 @@ func TestPostgresCutoverActivationMovesTheBindingsUnderTheRollbackBar(t *testing
 		if err := s.pool.QueryRow(ctx, `SELECT state,database_id::text,cutover_id::text FROM managed_postgres_bindings WHERE id=$1`, m.SourceBindingID).Scan(&state, &databaseID, &cutover); err != nil {
 			t.Fatal(err)
 		}
-		if state != "deleting" || databaseID != c.Source.ID || cutover != nil {
+		if state != "deleted" || databaseID != c.Source.ID || cutover != nil {
 			t.Fatalf("source binding %s is %s on %s pinned %v", m.SourceBindingID, state, databaseID, cutover)
 		}
 		var bindingID string

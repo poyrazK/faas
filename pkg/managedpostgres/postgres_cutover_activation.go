@@ -3,6 +3,7 @@ package managedpostgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"slices"
 	"time"
 
@@ -57,7 +58,7 @@ func (s *PostgresStore) ActivateCutover(ctx context.Context, a CutoverActivation
 	if err != nil {
 		return ActivatedCutover{}, err
 	}
-	return out, mapPostgresError(tx.Commit(ctx))
+	return out, activationStep("commit", tx.Commit(ctx))
 }
 
 func lockCutoverForActivation(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, a CutoverActivation, appID string) (Cutover, error) {
@@ -70,7 +71,7 @@ func lockCutoverForActivation(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, a
 		return Cutover{}, mapPostgresError(err)
 	}
 	if owner == "deleted_pending" || app.AccountID != a.AccountID || (app.Status != "active" && app.Status != "evicted_cold") {
-		return Cutover{}, ErrConflict
+		return Cutover{}, fmt.Errorf("activate cutover: app is %s, account is %s: %w", app.Status, owner, ErrConflict)
 	}
 	if !app.ManagedPostgresAdmissionCutoverID.Valid || cutoverUUID(app.ManagedPostgresAdmissionCutoverID) != a.CutoverID ||
 		!app.ManagedPostgresAdmissionFencedAt.Valid || !app.ManagedPostgresAdmissionFencedAt.Time.Equal(a.FencedAt) {
@@ -196,10 +197,19 @@ func checkActivationRelease(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, c C
 	return nil
 }
 
+// activationStep names a failed activation write and keeps the PostgreSQL
+// error beside its mapped sentinel.
+func activationStep(step string, err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("activate cutover: %s: %w", step, errors.Join(mapPostgresError(err), err))
+}
+
 func publishActivatedCutover(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, c Cutover, sources []sqlc.ManagedPostgresBinding, now time.Time) (ActivatedCutover, error) {
 	n, err := q.ActivateManagedPostgresCutover(ctx, tx, sqlc.ActivateManagedPostgresCutoverParams{Now: healthTimestamp(now), ID: c.ID, AccountID: c.AccountID})
 	if err != nil {
-		return ActivatedCutover{}, mapPostgresError(err)
+		return ActivatedCutover{}, activationStep("activate", err)
 	}
 	if n != 1 {
 		return ActivatedCutover{}, activationBlocked(ActivationNotVerified)
@@ -207,24 +217,24 @@ func publishActivatedCutover(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, c 
 	// The triggers let an activated cutover release its pins, like a
 	// cancelled one; the bindings below need both databases unpinned.
 	if err := q.UnpinManagedPostgresCutoverDatabases(ctx, tx, c.ID); err != nil {
-		return ActivatedCutover{}, mapPostgresError(err)
+		return ActivatedCutover{}, activationStep("unpin databases", err)
 	}
 	if err := q.UnpinManagedPostgresCutoverBindings(ctx, tx, c.ID); err != nil {
-		return ActivatedCutover{}, mapPostgresError(err)
+		return ActivatedCutover{}, activationStep("unpin bindings", err)
 	}
 	out := ActivatedCutover{SecretsPublished: true}
 	for i, m := range c.Credentials {
 		source := sources[i]
 		if err := q.LockManagedPostgresActivationSecretTarget(ctx, tx, sqlc.LockManagedPostgresActivationSecretTargetParams{
 			AppID: c.AppID, Scope: c.Scope, Key: m.EnvironmentKey}); err != nil {
-			return ActivatedCutover{}, mapPostgresError(err)
+			return ActivatedCutover{}, activationStep("lock secret target", err)
 		}
 		if _, err := q.DeleteManagedPostgresBindingSecrets(ctx, tx, cutoverUUID(source.ID)); err != nil {
-			return ActivatedCutover{}, mapPostgresError(err)
+			return ActivatedCutover{}, activationStep("delete source secrets", err)
 		}
 		retired, err := q.RetireManagedPostgresCutoverSourceBinding(ctx, tx, sqlc.RetireManagedPostgresCutoverSourceBindingParams{Now: healthTimestamp(now), ID: cutoverUUID(source.ID)})
 		if err != nil {
-			return ActivatedCutover{}, mapPostgresError(err)
+			return ActivatedCutover{}, activationStep("retire source binding", err)
 		}
 		if retired != 1 {
 			return ActivatedCutover{}, activationBlocked(ActivationBindingsChanged)
@@ -235,27 +245,27 @@ func publishActivatedCutover(ctx context.Context, tx pgx.Tx, q *sqlc.Queries, c 
 			ID: published.ID, AccountID: c.AccountID, DatabaseID: c.Target.ID, AppID: c.AppID, Scope: c.Scope,
 			EnvironmentKey: m.EnvironmentKey, Access: string(m.Access), ProviderIdentityID: m.Sealed.ProviderIdentityID,
 			CredentialRef: m.Sealed.Ref, Now: healthTimestamp(now)}); err != nil {
-			return ActivatedCutover{}, mapPostgresError(err)
+			return ActivatedCutover{}, activationStep("insert target binding", err)
 		}
 		if err := q.InsertActivatedManagedPostgresSecret(ctx, tx, sqlc.InsertActivatedManagedPostgresSecretParams{
 			AccountID: c.AccountID, AppID: c.AppID, Scope: c.Scope, Key: m.EnvironmentKey, Ciphertext: m.Sealed.Ciphertext,
 			Kid: m.Sealed.Kid, ValueHash: m.Sealed.ValueHash, BindingID: published.ID, CredentialRef: m.Sealed.Ref}); err != nil {
-			return ActivatedCutover{}, mapPostgresError(err)
+			return ActivatedCutover{}, activationStep("publish target secret", err)
 		}
 		out.RetiredSources = append(out.RetiredSources, Binding{ID: cutoverUUID(source.ID), AccountID: c.AccountID, AppID: c.AppID,
 			DatabaseID: c.Source.ID, Scope: c.Scope, EnvironmentKey: source.EnvironmentKey, Access: CredentialAccess(source.Access),
-			CredentialGeneration: source.CredentialGeneration, State: BindingStateDeleting})
+			CredentialGeneration: source.CredentialGeneration, State: BindingStateDeleted})
 		out.Published = append(out.Published, published)
 	}
 	published, err := q.PublishManagedPostgresCutoverCredentials(ctx, tx, c.ID)
 	if err != nil {
-		return ActivatedCutover{}, mapPostgresError(err)
+		return ActivatedCutover{}, activationStep("publish credentials", err)
 	}
 	if int(published) != len(c.Credentials) || slices.ContainsFunc(c.Credentials, func(m CutoverCredential) bool { return m.State != "sealed" }) {
 		return ActivatedCutover{}, activationBlocked(ActivationNotVerified)
 	}
 	if err := q.StampManagedPostgresActivationRuntimeConfig(ctx, tx, c.AppID); err != nil {
-		return ActivatedCutover{}, mapPostgresError(err)
+		return ActivatedCutover{}, activationStep("stamp runtime config", err)
 	}
 	return out, nil
 }

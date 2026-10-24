@@ -96,6 +96,11 @@ func (f *fakeCutovers) Activate(context.Context, managedpostgres.CutoverActivati
 	return managedpostgres.ActivatedCutover{SecretsPublished: true}, nil
 }
 
+func (f *fakeCutovers) RevokeRetiredSources(context.Context, string, string) error {
+	f.calls = append(f.calls, "revoke")
+	return nil
+}
+
 func (f *fakeCutovers) Resume(context.Context, string, string) error {
 	f.calls = append(f.calls, "resume")
 	f.resumed, f.fenced = true, false
@@ -270,7 +275,7 @@ func TestDatabaseSwitchRestoresFencesDrainsSwitchesAndResumes(t *testing.T) {
 	if !slices.Equal(h.events, want) {
 		t.Fatalf("events %v want %v", h.events, want)
 	}
-	if h.databases.restores != 1 || slices.Contains(h.cutovers.calls, "cancel") {
+	if h.databases.restores != 1 || slices.Contains(h.cutovers.calls, "cancel") || !slices.Contains(h.cutovers.calls, "revoke") {
 		t.Fatalf("calls %v restores %d", h.cutovers.calls, h.databases.restores)
 	}
 }

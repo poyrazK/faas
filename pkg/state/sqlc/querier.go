@@ -5674,8 +5674,9 @@ type Querier interface {
 	RetireCloneCheckpointPgTargetDatabase(ctx context.Context, db DBTX, arg RetireCloneCheckpointPgTargetDatabaseParams) (int64, error)
 	RetireEnvironmentQualificationExecution(ctx context.Context, db DBTX, arg RetireEnvironmentQualificationExecutionParams) (int64, error)
 	RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg RetireLiveDeploymentSiblingsParams) (int64, error)
-	// The binding reconciler finishes the delete: it revokes the provider
-	// credentials and marks the binding deleted.
+	// The copy's binding takes the same key at once, and only one binding per
+	// key may be undeleted, so the source binding is deleted here. Its provider
+	// identity stays on the row; the switch revokes it after the app resumes.
 	RetireManagedPostgresCutoverSourceBinding(ctx context.Context, db DBTX, arg RetireManagedPostgresCutoverSourceBindingParams) (int64, error)
 	RetireMigrationRecoveryDeployments(ctx context.Context, db DBTX, arg RetireMigrationRecoveryDeploymentsParams) (int64, error)
 	RetireProjectEnvironmentCloneNativeForkDatabase(ctx context.Context, db DBTX, arg RetireProjectEnvironmentCloneNativeForkDatabaseParams) (ManagedPostgresDatabase, error)

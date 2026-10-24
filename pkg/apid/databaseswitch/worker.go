@@ -37,6 +37,7 @@ type Cutovers interface {
 	Fence(ctx context.Context, account, id string) (managedpostgres.CutoverAdmissionFence, error)
 	Activate(ctx context.Context, a managedpostgres.CutoverActivation) (managedpostgres.ActivatedCutover, error)
 	Resume(ctx context.Context, account, id string) error
+	RevokeRetiredSources(ctx context.Context, account, id string) error
 }
 
 // Releases reads and moves the app's live release.

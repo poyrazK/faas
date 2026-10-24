@@ -297,8 +297,8 @@ func (q *Queries) ReleaseActivatedManagedPostgresCutoverAdmission(ctx context.Co
 }
 
 const retireManagedPostgresCutoverSourceBinding = `-- name: RetireManagedPostgresCutoverSourceBinding :execrows
-UPDATE managed_postgres_bindings SET state='deleting',lease_token=NULL,lease_until=NULL,attempt_count=0,
-last_error_code=NULL,retry_at=$1::timestamptz,updated_at=$1::timestamptz
+UPDATE managed_postgres_bindings SET state='deleted',deleted_at=$1::timestamptz,lease_token=NULL,lease_until=NULL,
+attempt_count=0,last_error_code=NULL,retry_at=$1::timestamptz,updated_at=$1::timestamptz
 WHERE id=$2::text::uuid AND state='ready' AND cutover_id IS NULL
 `
 
@@ -307,8 +307,9 @@ type RetireManagedPostgresCutoverSourceBindingParams struct {
 	ID  string
 }
 
-// The binding reconciler finishes the delete: it revokes the provider
-// credentials and marks the binding deleted.
+// The copy's binding takes the same key at once, and only one binding per
+// key may be undeleted, so the source binding is deleted here. Its provider
+// identity stays on the row; the switch revokes it after the app resumes.
 func (q *Queries) RetireManagedPostgresCutoverSourceBinding(ctx context.Context, db DBTX, arg RetireManagedPostgresCutoverSourceBindingParams) (int64, error) {
 	result, err := db.Exec(ctx, retireManagedPostgresCutoverSourceBinding, arg.Now, arg.ID)
 	if err != nil {

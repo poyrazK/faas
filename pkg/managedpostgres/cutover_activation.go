@@ -136,6 +136,32 @@ func (s *CutoverService) Resume(ctx context.Context, account, id string) error {
 	return store.ReleaseCutoverAdmission(ctx, account, id)
 }
 
+// RevokeRetiredSources revokes the provider credentials of the source
+// bindings an activation deleted. The bindings are already gone from the
+// app; revocation is idempotent, so a retry after a failure repeats it.
+func (s *CutoverService) RevokeRetiredSources(ctx context.Context, account, id string) error {
+	c, err := s.store.GetCutover(ctx, account, id)
+	if err != nil {
+		return err
+	}
+	if c.State != CutoverActivated {
+		return ErrConflict
+	}
+	for _, m := range c.Credentials {
+		binding, err := s.bindings.bindings.GetBinding(ctx, account, m.SourceBindingID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if err := s.bindings.revokeRetiredCredentials(ctx, binding); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // Fenced reports the cutover whose fence holds an app, for the in-memory
 // store only; the PostgreSQL fence lives on the app row.
 func (s *MemoryStore) Fenced(appID string) (CutoverAdmissionFence, bool) {
@@ -197,7 +223,8 @@ func (s *MemoryStore) ActivateCutover(_ context.Context, a CutoverActivation) (A
 	}
 	for i, m := range c.Credentials {
 		source := out.RetiredSources[i]
-		source.State, source.UpdatedAt, source.RetryAt = BindingStateDeleting, a.Now, a.Now
+		deletedAt := a.Now
+		source.State, source.DeletedAt, source.UpdatedAt, source.RetryAt = BindingStateDeleted, &deletedAt, a.Now, a.Now
 		s.bindings[source.ID] = source
 		published := cutoverBinding(c, m)
 		published.DatabaseAccountID = target.AccountID
