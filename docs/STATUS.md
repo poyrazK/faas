@@ -1904,6 +1904,11 @@ remain open; production admission is disabled.
   (2026-10-22): a built service's `entrypoint` joins its start command, and
   `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
   deployment and applied to the built image. Unit tests pass; no native run.
+- **Image runs read a Docker config.**
+  [ADR-20261025110000](adr/20261025110000-image-run-docker-config.md)
+  (2026-10-25): `gregale run --docker-config PATH` takes the image registry's
+  credentials from a Docker `config.json`, its inline `auths` or the configured
+  credential helper, instead of `--registry-username`. Unit tests pass.
 - **Build secrets resolve like the runtime.**
   [ADR-20261024140000](adr/20261024140000-build-secrets-resolve-like-the-runtime.md)
   (2026-10-24): a build secret named `NAME` gets the secret the app receives

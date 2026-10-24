@@ -12,7 +12,8 @@ The CLI prompts for the secret and sends it over the authenticated API; it never
 
 Image runs (`gregale run`) take the credential per run instead:
 `--registry-username USER` with the password from `--registry-password-stdin`,
-`GREGALE_REGISTRY_PASSWORD` or a prompt. It is stored sealed on the image's
+`GREGALE_REGISTRY_PASSWORD` or a prompt, or from a Docker config with
+`--docker-config ~/.docker` (ADR-20261025110000). It is stored sealed on the image's
 runner job, for the image's registry only, and refreshed by every run that
 passes it (ADR-1790). See [Jobs](jobs.md#image-runs).
 

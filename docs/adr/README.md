@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Image runs read registry credentials from a Docker config](20261025110000-image-run-docker-config.md)
 - [Every capability behind a platform flag](20261023115741-every-capability-behind-a-platform-flag.md)
 - [Per-account realtime preview rollout and realtime apps declared in gregale.yaml](20261019102657-realtime-preview-rollout-and-declared-apps.md)
 - [Gateway-metered object storage billing](20261024132844-gateway-metered-object-storage-billing.md) — gateway safety meters stored byte-hours from inventory; storage-only rate card bills ADR-1430's $0.03/GiB-month

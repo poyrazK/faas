@@ -4489,6 +4489,7 @@ var cliCommands = []cliCommand{
 			"gregale run -it --image alpine sh",
 			"gregale run -u nobody -w /data --env-file .env alpine env",
 			"printf '%s' \"$TOKEN\" | gregale run --registry-username ci --registry-password-stdin ghcr.io/acme/tool:1.4 --version",
+			"gregale run --docker-config ~/.docker ghcr.io/acme/tool:1.4 --version",
 		},
 		Flags: []cliFlag{
 			{Name: "image", Short: "run one command from this OCI image in a fresh microVM; arguments after the flags replace the image CMD; the image can also be the first positional argument", Value: "REF"},
@@ -4501,6 +4502,7 @@ var cliCommands = []cliCommand{
 			{Name: "workdir", Short: "with --image, absolute working directory instead of the image WORKDIR (-w)", Value: "DIR"},
 			{Name: "registry-username", Short: "with --image, username for a private registry; the password comes from --registry-password-stdin, $GREGALE_REGISTRY_PASSWORD or a prompt", Value: "USER"},
 			{Name: "registry-password-stdin", Short: "with --registry-username, read the registry password or token from stdin"},
+			{Name: "docker-config", Short: "with --image, use the credentials `docker login` stored for the image's registry, from this config.json or its directory, including credential helpers", Value: "PATH"},
 			{Name: "ram", Short: "with --image, memory in MB (default: Job default)", Value: "MB"},
 			{Name: "timeout", Short: "with --image, task deadline (default: the plan's Job ceiling)", Value: "D"},
 			{Name: "pull", Short: "with --image, re-pull a cached tag (always) or reuse it (missing)", Value: "P", ClosedSet: []string{"missing", "always"}},
