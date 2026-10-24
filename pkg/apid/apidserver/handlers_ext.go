@@ -1209,8 +1209,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// a previous PATCH doesn't reach a fresh request.
 	var publicAuthSealed []byte
 	if req.PublicAuth != nil && req.PublicAuth.Mode == api.AppPublicAuthModeBasic {
-		recipient := hostSecretRecipient()
-		if recipient == nil {
+		// ADR 20261022111812: sealed to the edge domain (and the fleet
+		// recipient until it is in domain mode); gatewayd-internal opens it.
+		recipients, recipientErr := edgeCredentialRecipients()
+		if recipientErr != nil {
 			api.WriteProblem(w, customerCapacityProblem(s.log, "update app public authentication", "App settings temporarily unavailable",
 				"Gregale could not securely update these app settings.",
 				"Retry in a few seconds; if it still fails, contact support.", nil))
@@ -1223,7 +1225,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// splits on the first newline and treats both
 		// halves as required.
 		plaintext := []byte(req.PublicAuth.BasicUser + "\n" + req.PublicAuth.BasicPass)
-		sealed, err := secretbox.SealBytes(recipient, api.AppPublicAuthBasicSealNamespace, plaintext, api.AppPublicAuthBasicMaxBytes)
+		sealed, err := secretbox.SealBytesTo(recipients, api.AppPublicAuthBasicSealNamespace, plaintext, api.AppPublicAuthBasicMaxBytes)
 		if err != nil {
 			if prob := api.AsProblem(err); prob != nil {
 				api.WriteProblem(w, prob)

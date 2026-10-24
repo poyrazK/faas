@@ -25,6 +25,10 @@
   ansible.builtin.include_tasks: build.yml
   when: faas_seal_domain_build_identity_src | length > 0 or faas_seal_domain_build_recipient_src | length > 0
 
+- name: seal_domains — edge domain
+  ansible.builtin.include_tasks: edge.yml
+  when: faas_seal_domain_edge_identity_src | length > 0 or faas_seal_domain_edge_recipient_src | length > 0
+
 - name: seal_domains — runtime domain
   ansible.builtin.include_tasks: runtime.yml
   when: faas_seal_domain_runtime_identity_src | length > 0 or faas_seal_domain_runtime_recipient_src | length > 0

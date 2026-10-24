@@ -105,7 +105,7 @@ sealing customer secrets but can no longer open them.
 | `outbound` | `domains/outbound.age` | outboundd | control plane | `outbound_integration_credentials`, `outbound_integration_credential_keys` |
 | `build` | `domains/build.age` | imaged | compute | `app_registry_credentials`, `job_registry_credentials` |
 | `source` | `domains/source.age` | githubd | control plane | `github_installations.sealed_install_token`, `github_webhook_secrets` (sealed by this ADR, see 5) |
-| `edge` | `domains/edge.age` | gatewayd-internal (gatewayd-public if its DNS-token unseal is enabled) | compute | `apps.public_auth_basic`, `app_log_drains`, `application_standard_log_destinations`, rehearsal object credentials |
+| `edge` | `domains/edge.age` | gatewayd-internal | compute | `apps.public_auth_basic`, `app_log_drains`, `application_standard_log_destinations`, rehearsal object credentials |
 | `alerting` | `domains/alerting.age` | meterd | control plane | `alert_rules`, `notification_channels`, `mcp_readiness_pagerduty_policies`, `mcp_readiness_fallback_policies` |
 | `storage` | `domains/storage.age` | s3-gatewayd | where s3-gatewayd runs | `object_storage_s3_credentials` |
 | `delivery` | `domains/delivery.age` | schedd | both | `execution_payloads`, `agent_execution_workflows.sealed_plan`, `app_webhooks`, trigger config envelopes, `commit_sources` |
@@ -376,6 +376,43 @@ identity opens none that is still valid.
   control-plane hosts. Until writes are `domain`, apid also seals to the
   fleet key, so the two converges can run in either order.
 
+## Implemented in the fifth slice: the edge domain
+
+- **gatewayd-internal** loads `domains/edge.age` (and its `.previous`)
+  through `FAAS_SEAL_DOMAIN_EDGE_IDENTITY_PATH`, a `LoadCredential` drop-in
+  from the `seal_domains` role on compute and single-box hosts. It exports
+  `faas_seal_domain_loaded{domain="edge"}`.
+- **One identity list** opens app basic-auth credentials and log drain
+  headers: the edge domain first, then the fleet and host identities. The
+  log drain manager no longer loads keys itself; it takes that list.
+- **apid seals both writers** to `FAAS_SEAL_DOMAIN_EDGE_RECIPIENT_PATH` under
+  `FAAS_SEAL_DOMAIN_EDGE_WRITES` (empty, `fleet`, `dual` or `domain`):
+  - the basic-auth credential set by `PATCH /v1/apps/{slug}`;
+  - log drain headers, for customer drains and application-standard log
+    destinations alike.
+- **gatewayd-public is not a reader.** The DNS-provider token it opens is
+  not stored in an edge column, so the registry lists gatewayd-internal
+  alone, and on compute only.
+- **Re-seal:** `gregalectl seal-domain migrate --domain edge
+  --readers-verified` re-seals basic-auth credentials and customer log drain
+  headers with compare-and-swap writes, on a compute host. A row a guard
+  holds for now (a project clone in progress, a pending standard review)
+  is counted as changed and left for the next run.
+- **Not re-sealed yet: application standards.** The migration counts these
+  as `skipped` and leaves them on the fleet key:
+  - `application_standard_log_destinations` rows are immutable versions;
+  - a drain a standard manages must carry its destination's exact
+    ciphertext, and its delivery binding hashes that ciphertext;
+  - the control backups a standard keeps hold drain headers in jsonb.
+
+  New versions are sealed to the domain under the write mode. Re-sealing
+  the existing ones needs the standards to allow a re-seal that keeps their
+  hashes, and is a later slice. Until then gatewayd-internal keeps the fleet
+  identity, which the contract step removes only after every edge row
+  opens with the domain.
+- **Rehearsal object credentials** (behind `FAAS_REHEARSAL_OBJECT_FIXTURES`,
+  stored in a jsonb document) stay on the fleet key in this slice.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:
@@ -385,7 +422,7 @@ Each domain's key pair is a pair of GitHub environment secrets:
   runner and points the `seal_domains` role at them:
   - control plane: the `outbound` and `source` identities and every
     recipient;
-  - compute: the `runtime` and `build` identities.
+  - compute: the `runtime`, `build` and `edge` identities.
 - The control-plane converges (the full one and the host-configuration
   lane) and the compute join run the role with those variables.
 - A join whose `seal-domain verify` fails leaves the node drained.
