@@ -51,7 +51,7 @@ apid runs one worker for all switches. A lease on the row keeps two apid process
 | `settling` | Waits for members the drain cannot retire to finish: undispatched wakes, running tasks, migrations. | None are left, or `DatabaseSwitchSettleTimeout` passes. |
 | `draining` | Asks schedd to capture the drain plan. schedd's capture loop reserves it and runs drain recovery at once. | Every member is retired or parked, or `DatabaseSwitchDrainTimeout` passes. |
 | `switching` | Re-verifies credentials if the evidence is older than five minutes. Checks that the live release is still the one recorded at request time, then makes the target live (`PrepareDeploymentRollback`, then `MarkDeploymentLive`). Then it runs the activation transaction. | The transaction commits. |
-| `resuming` | Invalidates the app's snapshots, lifts the fence and notifies the gateway and schedd. | The fence is gone; the switch is `completed`. |
+| `resuming` | Invalidates the app's snapshots, lifts the fence and notifies the gateway and schedd, then revokes the source bindings' provider credentials. | The credentials are revoked; the switch is `completed`. The app serves from the moment the fence lifts. |
 
 Before the activation transaction commits, any failure aborts the switch:
 1. If the target was already made live, the release that served before is made live again.
@@ -71,7 +71,7 @@ The transaction takes locks in the existing order: account, app, cutover, databa
 It then:
 - marks the cutover `activated`, and its credentials `published` (their staged envelopes are erased);
 - releases the cutover's pins on both databases and on the source bindings;
-- deletes the source bindings' app secrets and moves those bindings to `deleting`. The binding reconciler revokes their provider credentials as for any unbind;
+- deletes the source bindings and their app secrets. The copy's bindings take the same keys in the same transaction, and only one undeleted binding may hold a key, so the source bindings cannot wait in `deleting`. They keep their provider identities, and `resuming` revokes those credentials after the fence lifts, retrying until the provider confirms;
 - inserts the target bindings with the IDs reserved at staging, generation 1 and state `ready`, and publishes their sealed credentials to `app_secrets` under the same keys;
 - stamps the app's runtime configuration change.
 
