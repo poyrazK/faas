@@ -25,6 +25,30 @@ func TestDeployOfMultiServiceRepositoryPlansTheProject(t *testing.T) {
 		{"compose project", map[string]string{"compose.yaml": "services:\n  api:\n    build: ./api\n", "api/Dockerfile": "FROM scratch\n"}, true},
 		{"workspace of services", map[string]string{"services/api/package.json": "{}", "services/web/package.json": "{}"}, true},
 		{"root app with a compose file for local dev", map[string]string{"package.json": "{}", "compose.yaml": "services:\n  db:\n    image: postgres:17\n"}, false},
+		// A root package.json that only lists workspaces is no app.
+		{"npm workspaces with a root package.json", map[string]string{
+			"package.json":              `{"private":true,"workspaces":["packages/*"]}`,
+			"packages/api/package.json": `{"name":"api","scripts":{"start":"node index.js"}}`,
+			"packages/web/package.json": `{"name":"web","scripts":{"start":"node index.js"}}`,
+		}, true},
+		// A Go module with no main package at its root is no app either.
+		{"Go module with services below it", map[string]string{
+			"go.mod": "module example.com/shop\n", "lib.go": "package shop\n",
+			"services/api/Dockerfile": "FROM scratch\n", "services/web/Dockerfile": "FROM scratch\n",
+		}, true},
+		{"Go app at the root beside services", map[string]string{
+			"go.mod": "module example.com/shop\n", "main.go": "package main\n\nfunc main() {}\n",
+			"services/api/Dockerfile": "FROM scratch\n", "services/web/Dockerfile": "FROM scratch\n",
+		}, false},
+		{"Node app at the root beside packages", map[string]string{
+			"package.json":              `{"scripts":{"start":"node server.js"}}`,
+			"packages/api/package.json": `{"name":"api","scripts":{"start":"node index.js"}}`,
+			"packages/web/package.json": `{"name":"web","scripts":{"start":"node index.js"}}`,
+		}, false},
+		{"one service below a workspace root", map[string]string{
+			"package.json":              `{"private":true,"workspaces":["packages/*"]}`,
+			"packages/api/package.json": `{"name":"api","scripts":{"start":"node index.js"}}`,
+		}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			root := t.TempDir()
