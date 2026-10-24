@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 
 	"github.com/jackc/pgx/v5"
@@ -298,8 +299,14 @@ func prepareCloneDeploymentTx(ctx context.Context, tx pgx.Tx, input projectEnvir
 			if err != nil {
 				return Deployment{}, record, err
 			}
-			if record.TargetSettingsHash != input.TargetSettingsHash || d.AppID != input.AppID || d.Scope != op.TargetEnvironment ||
-				(d.Status != DeployPending && d.Status != DeployLive) {
+			if record.TargetSettingsHash != input.TargetSettingsHash || d.AppID != input.AppID || d.Scope != op.TargetEnvironment {
+				return Deployment{}, record, ErrConflict
+			}
+			switch d.Status {
+			case DeployPending, DeployLive:
+			case DeployFailed, DeployCancelled, DeploySuperseded:
+				return Deployment{}, record, fmt.Errorf("clone target deployment %s is %s: %w", d.ID, d.Status, ErrProjectEnvironmentCloneTargetDeploymentEnded)
+			default:
 				return Deployment{}, record, ErrConflict
 			}
 			raw, err := new(sqlc.Queries).ReadProjectEnvironmentCloneTargetArtifact(ctx, tx, mustPgUUID(d.ID))

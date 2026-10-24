@@ -14,7 +14,7 @@ import (
 // their prime remains; a stuck prime should not hold the target slug forever.
 const projectEnvironmentCloneDatalessDeadline = 30 * time.Minute
 
-var errCloneTargetDeploymentFailed = fmt.Errorf("clone target deployment did not become live: %w", state.ErrConflict)
+var errCloneTargetDeploymentFailed = state.ErrProjectEnvironmentCloneTargetDeploymentEnded
 
 // datalessCloneFailure names why a data-less clone in copying or publishing
 // cannot finish, or returns "" while it still can (ADR-20261024123122).

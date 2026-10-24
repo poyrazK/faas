@@ -12,6 +12,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
+// ErrProjectEnvironmentCloneTargetDeploymentEnded means a deployment the clone
+// created for its target failed or was retired, so the clone cannot publish.
+var ErrProjectEnvironmentCloneTargetDeploymentEnded = fmt.Errorf("clone target deployment ended: %w", ErrConflict)
+
 // ErrProjectEnvironmentCloneTargetsDraining means a data-less clone's cancelled
 // target deployments still have instances; compensation retries once schedd
 // has drained them.
