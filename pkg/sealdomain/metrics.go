@@ -19,3 +19,18 @@ func RegisterLoaded(reg prometheus.Registerer, d Domain, loaded bool) {
 	g.WithLabelValues(string(d)).Set(value)
 	reg.MustRegister(g)
 }
+
+// RegisterBindingRequired exports faas_runtime_secret_binding_required: 1
+// when this vmmd refuses runtime secrets that carry no account binding
+// (ADR-20261023173624, contract step). The switch is read at start, so the
+// gauge says which vmmds enforce it after a converge.
+func RegisterBindingRequired(reg prometheus.Registerer, required bool) {
+	g := prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "faas_runtime_secret_binding_required",
+		Help: "1 when this vmmd refuses runtime secrets with no account binding (ADR-20261023173624).",
+	})
+	if required {
+		g.Set(1)
+	}
+	reg.MustRegister(g)
+}

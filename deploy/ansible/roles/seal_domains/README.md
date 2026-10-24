@@ -40,6 +40,12 @@ vmmd opens at wake:
    window, set `faas_seal_domain_runtime_readers_verified: true` and
    `faas_seal_domain_runtime_writes: domain`, converge, and run
    `gregalectl seal-domain migrate --domain runtime --readers-verified`.
+4. Account binding (ADR-20261023173624): `faas_seal_domain_runtime_binding:
+   account` makes apid bind new runtime secrets; `seal-domain migrate
+   --domain runtime --readers-verified --bind-accounts` binds stored ones;
+   `faas_seal_domain_runtime_binding_required: true` then writes vmmd's
+   drop-in that refuses unbound secrets at vmmd's next start. Order and
+   checks: runbook seal-domains-rollout.md §4e–4f.
 
 The `source` domain covers GitHub install tokens and webhook secret copies,
 which githubd opens. Set `faas_seal_domain_source_identity_src` and

@@ -5745,7 +5745,7 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 
 	siblings := make([]siblingRow, 0)
 	for otherID, other := range m.deployments {
-		if other.AppID == d.AppID && other.Status == DeployLive && otherID != id {
+		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && otherID != id {
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
 		}
 	}
@@ -8718,22 +8718,30 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		return Deployment{}, 0, err
 	}
 	// Find the active deployment for this app: rollout_state ∈
-	// ('pending','rolling_out') and status='live'. There can be
-	// at most one active rollout per app at a time (canary
-	// progression auto-supersedes the prior live row).
+	// ('pending','rolling_out') and status='live'. Like Postgres, pick the
+	// newest in-flight row, and refuse an app-level recovery when rollouts
+	// are in flight in more than one environment.
 	var target *Deployment
+	scopes := map[string]bool{}
 	for id, d := range m.deployments {
-		if d.AppID != appID || d.Status != DeployLive || (deploymentID != "" && id != deploymentID) {
+		if d.AppID != appID || d.Status != DeployLive {
 			continue
 		}
 		d.RolloutState = NormalizeRolloutState(d.RolloutState)
 		if d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
 			continue
 		}
-		d := d
-		target = &d
-		_ = id
-		break
+		scopes[normalizedDeploymentScope(d.Scope)] = true
+		if deploymentID != "" && id != deploymentID {
+			continue
+		}
+		if target == nil || d.CreatedAt.After(target.CreatedAt) {
+			d := d
+			target = &d
+		}
+	}
+	if deploymentID == "" && len(scopes) > 1 {
+		return Deployment{}, 0, ErrRolloutAmbiguous
 	}
 	if target == nil {
 		return Deployment{}, 0, ErrNotFound
@@ -8884,7 +8892,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		// Redistribute residual across sibling live rows.
 		siblings := []siblingRow{}
 		for otherID, other := range m.deployments {
-			if other.AppID != appID || other.Status != DeployLive || otherID == target.ID {
+			if other.AppID != appID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) || other.Status != DeployLive || otherID == target.ID {
 				continue
 			}
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
@@ -8943,7 +8951,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 
 		// Zero sibling live rows so Σ = 100.
 		for otherID, other := range m.deployments {
-			if other.AppID != appID || other.Status != DeployLive || otherID == target.ID {
+			if other.AppID != appID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) || other.Status != DeployLive || otherID == target.ID {
 				continue
 			}
 			other.TrafficPercent = 0
@@ -9001,7 +9009,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		}
 		siblings := []siblingRow{}
 		for otherID, other := range m.deployments {
-			if other.AppID != appID || other.Status != DeployLive || otherID == target.ID {
+			if other.AppID != appID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) || other.Status != DeployLive || otherID == target.ID {
 				continue
 			}
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
@@ -9174,14 +9182,15 @@ func (m *MemStore) CountLiveInstancesByDeployment(_ context.Context, deploymentI
 	return n, nil
 }
 
-func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID string) (Deployment, error) {
+func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID, scope string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	scope = normalizedDeploymentScope(scope)
 	var latest Deployment
 	found := false
 	for _, d := range m.deployments {
 		rollbackEligible := !abortedCanaryCandidate(d) && (d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID))))
-		if d.AppID == appID && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
+		if d.AppID == appID && normalizedDeploymentScope(d.Scope) == scope && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
 			latest, found = d, true
 		}
 	}
@@ -9574,7 +9583,7 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 	// live rows carrying all traffic must not collapse their split (H10-11).
 	remaining := 0
 	for id, other := range m.deployments {
-		if id != d.ID && other.AppID == d.AppID && other.Status == DeployLive && other.DeletedAt == nil {
+		if id != d.ID && other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && other.DeletedAt == nil {
 			remaining += other.TrafficPercent
 		}
 	}
@@ -9584,7 +9593,8 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 	var fallbackID string
 	var fallback Deployment
 	for id, candidate := range m.deployments {
-		if id == d.ID || candidate.AppID != d.AppID || candidate.Status != DeployLive || !m.runtimeUpgradeTrafficAllowedLocked(candidate) {
+		if id == d.ID || candidate.AppID != d.AppID || normalizedDeploymentScope(candidate.Scope) != normalizedDeploymentScope(d.Scope) ||
+			candidate.Status != DeployLive || !m.runtimeUpgradeTrafficAllowedLocked(candidate) {
 			continue
 		}
 		if fallbackID == "" || candidate.TrafficPercent > fallback.TrafficPercent ||
@@ -9738,6 +9748,18 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
 		return err
+	}
+	if _, prepared := m.rollbackPrepared[id]; preparedRollbackPromotion(ctx) && d.Status != DeployLive && !prepared {
+		return ErrDeploymentSuperseded
+	}
+	if !fenceLatest && d.Status != DeployLive && m.rollbackOutpacedLocked(d) {
+		// Mirrors withdrawOutpacedRollbackTx.
+		d.Status = DeploySuperseded
+		d.ErrorCode = RollbackOutpacedCode
+		d.Error = rollbackOutpacedMessage
+		m.putDeploymentLocked(id, d)
+		delete(m.rollbackPrepared, id)
+		return ErrDeploymentSuperseded
 	}
 	if fenceLatest || recovery {
 		if fenceLatest && (!d.Kind.RequiresLatestRevision() || d.Revision <= 0) {
@@ -9922,7 +9944,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	// build time must not consume the customer's observation window.
 	siblings := make([]siblingRow, 0)
 	for otherID, other := range m.deployments {
-		if other.AppID == d.AppID && other.Status == DeployLive && otherID != id {
+		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && otherID != id {
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
 		}
 	}

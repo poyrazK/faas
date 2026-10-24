@@ -3,9 +3,11 @@ package builderd
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -126,6 +128,7 @@ func TestBuildRecipeCachePartitionsInputs(t *testing.T) {
 		"builder":    func(r *BuildCacheRecipe) { r.BuilderBaseIdentity = "builder-b" },
 		"platform":   func(r *BuildCacheRecipe) { r.TargetPlatform = "linux/arm64" },
 		"function":   func(r *BuildCacheRecipe) { r.Function = !r.Function },
+		"secrets":    func(r *BuildCacheRecipe) { r.BuildSecretScope = "account-app-scope" },
 	}
 	for name, change := range changes {
 		t.Run(name, func(t *testing.T) {
@@ -146,6 +149,46 @@ func TestBuildRecipeCachePartitionsInputs(t *testing.T) {
 	}
 	if _, ok := c.LookupBuild(recipe); ok {
 		t.Fatal("GC left expired recipe entry")
+	}
+}
+
+// A build that mounts secrets used a recipe naming no tenant, so another
+// account's byte-identical source with the same Dockerfile options and secret
+// names was served an image built with the first account's tokens.
+func TestBuildSecretScopePartitionsTenantsAndValues(t *testing.T) {
+	secrets := []SealedBuildSecret{{Key: "NPM_TOKEN", Ciphertext: []byte("sealed-a")}, {Key: "GIT_TOKEN", Ciphertext: []byte("sealed-b")}}
+	base := buildSecretScope("acct-1", "app-1", "default", secrets)
+	if base == "" || buildSecretScope("acct-1", "app-1", "default", nil) != "" {
+		t.Fatal("scope must be set exactly when secrets are mounted")
+	}
+	reversed := []SealedBuildSecret{secrets[1], secrets[0]}
+	if buildSecretScope("acct-1", "app-1", "default", reversed) != base {
+		t.Fatal("secret order changed the scope")
+	}
+	rotated := []SealedBuildSecret{{Key: "NPM_TOKEN", Ciphertext: []byte("sealed-c")}, secrets[1]}
+	for name, other := range map[string]string{
+		"account": buildSecretScope("acct-2", "app-1", "default", secrets),
+		"app":     buildSecretScope("acct-1", "app-2", "default", secrets),
+		"scope":   buildSecretScope("acct-1", "app-1", "staging", secrets),
+		"value":   buildSecretScope("acct-1", "app-1", "default", rotated),
+	} {
+		if other == base {
+			t.Errorf("a different %s shared the secret build scope", name)
+		}
+	}
+	// Builds without secrets keep their existing keys.
+	recipe := BuildCacheRecipe{SourceSHA256: "source-a", Framework: FrameworkNode, Plan: api.PlanPro,
+		RuntimeBaseRef: "base-a", BuilderBaseIdentity: "builder-a", TargetPlatform: "linux/amd64"}
+	plain, err := recipe.KeySHA256()
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(recipe)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), "build_secret_scope") || plain == "" {
+		t.Fatalf("recipe without secrets encodes the scope: %s", encoded)
 	}
 }
 

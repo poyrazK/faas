@@ -7709,12 +7709,13 @@ func (s *PgStore) CountLiveInstancesByDeployment(ctx context.Context, deployment
 	return n, err
 }
 
-func (s *PgStore) LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error) {
+func (s *PgStore) LatestSupersededDeployment(ctx context.Context, appID, scope string) (Deployment, error) {
 	app, err := operationUUID(appID)
 	if err != nil {
 		return Deployment{}, err
 	}
-	id, err := sqlc.New().LatestRetainedRollbackDeployment(ctx, s.pool, sqlc.LatestRetainedRollbackDeploymentParams{AppID: app})
+	id, err := sqlc.New().LatestRetainedRollbackDeployment(ctx, s.pool, sqlc.LatestRetainedRollbackDeploymentParams{
+		AppID: app, Scope: pgtype.Text{String: normalizedDeploymentScope(scope), Valid: true}})
 	if err != nil {
 		return Deployment{}, mapErr(err)
 	}
@@ -8320,9 +8321,9 @@ func (s *PgStore) AdvanceCanary(ctx context.Context, id string, params CanaryAdv
 	rows, err := tx.Query(ctx,
 		`select id, traffic_percent
 		   from deployments
-		  where app_id = $1 and status = 'live' and id != $2
+		  where app_id = $1 and scope = $3 and status = 'live' and id != $2
 		  order by id
-		  for update`, dep.AppID, dep.ID)
+		  for update`, dep.AppID, dep.ID, normalizedDeploymentScope(dep.Scope))
 	if err != nil {
 		return Deployment{}, 0, fmt.Errorf("state: advance canary lock siblings: %w", err)
 	}
@@ -9082,7 +9083,8 @@ func (s *PgStore) UpdateDeploymentStatus(ctx context.Context, id string, status 
 func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedID string) error {
 	var held bool
 	var failedTraffic int
-	if err := tx.QueryRow(ctx, `SELECT environment_workload_held, traffic_percent FROM deployments WHERE id=$1`, failedID).Scan(&held, &failedTraffic); err != nil && !errors.Is(err, pgx.ErrNoRows) {
+	scope := DefaultEnvScope
+	if err := tx.QueryRow(ctx, `SELECT environment_workload_held, traffic_percent, scope FROM deployments WHERE id=$1`, failedID).Scan(&held, &failedTraffic, &scope); err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return err
 	}
 	// A held GitOps candidate has never been allowed to serve traffic. Its
@@ -9094,18 +9096,20 @@ func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedI
 	// The remaining live rows already carry all traffic: the failed row was
 	// not serving (a rollback target being re-primed, a 0% candidate). Moving
 	// everything to one fallback collapsed a 50/50 split to 100/0 when a
-	// rollback target failed verification (H10-11).
+	// rollback target failed verification (H10-11). Weights are per
+	// environment: another environment's live rows are neither counted nor
+	// moved, or a staging build failure would zero production's traffic.
 	var remaining int
 	if err := tx.QueryRow(ctx, `
 		SELECT coalesce(sum(traffic_percent), 0) FROM deployments
-		 WHERE app_id=$1 AND id<>$2 AND status='live' AND deleted_at IS NULL`, appID, failedID).Scan(&remaining); err != nil {
+		 WHERE app_id=$1 AND scope=$3 AND id<>$2 AND status='live' AND deleted_at IS NULL`, appID, failedID, scope).Scan(&remaining); err != nil {
 		return err
 	}
 	if remaining == 100 {
 		return nil
 	}
 	fallback, err := sqlc.New().ReadRuntimeUpgradeEligibleFailureFallback(ctx, tx, sqlc.ReadRuntimeUpgradeEligibleFailureFallbackParams{
-		AppID: mustPgUUID(appID), FailedID: mustPgUUID(failedID),
+		AppID: mustPgUUID(appID), FailedID: mustPgUUID(failedID), Scope: scope,
 	})
 	fallbackID := pgUUIDString(fallback)
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -9116,7 +9120,7 @@ func rebalanceTrafficAfterFailure(ctx context.Context, tx pgx.Tx, appID, failedI
 	}
 	if _, err := tx.Exec(ctx, `
 		update deployments set traffic_percent=0
-		 where app_id=$1 and id<>$2 and status='live' and deleted_at is null`, appID, failedID); err != nil {
+		 where app_id=$1 and scope=$3 and id<>$2 and status='live' and deleted_at is null`, appID, failedID, scope); err != nil {
 		return err
 	}
 	if fallbackID != "" {
@@ -9255,6 +9259,21 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 				return Deployment{}, 0, ErrNotFound
 			}
 			return Deployment{}, 0, fmt.Errorf("state: recover_rollout lock app: %w", err)
+		}
+	}
+
+	// An app-level recovery names no deployment. With rollouts in flight in
+	// more than one environment, "the newest" is not necessarily the one the
+	// operator meant, so refuse rather than recover another environment.
+	if deploymentID == "" {
+		var scopes int
+		if err := tx.QueryRow(ctx, `select count(distinct scope) from deployments
+		  where app_id = $1 and status = 'live'
+		    and coalesce(nullif(rollout_state, ''), 'pending') in ('pending','rolling_out')`, appID).Scan(&scopes); err != nil {
+			return Deployment{}, 0, fmt.Errorf("state: recover_rollout count environments: %w", err)
+		}
+		if scopes > 1 {
+			return Deployment{}, 0, ErrRolloutAmbiguous
 		}
 	}
 
@@ -9490,9 +9509,9 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		siblingRows, err := tx.Query(ctx,
 			`select id, traffic_percent
 			   from deployments
-			  where app_id = $1 and status = 'live' and id != $2
+			  where app_id = $1 and scope = $3 and status = 'live' and id != $2
 			  order by id`,
-			appID, dep.ID)
+			appID, dep.ID, normalizedDeploymentScope(dep.Scope))
 		if err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: recover_rollout read siblings: %w", err)
 		}
@@ -9561,8 +9580,8 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 		}
 		if _, err := tx.Exec(ctx,
 			`update deployments set traffic_percent = 0
-			  where app_id = $1 and status = 'live' and id != $2`,
-			appID, dep.ID); err != nil {
+			  where app_id = $1 and scope = $3 and status = 'live' and id != $2`,
+			appID, dep.ID, normalizedDeploymentScope(dep.Scope)); err != nil {
 			return Deployment{}, 0, fmt.Errorf("state: recover_rollout zero siblings: %w", err)
 		}
 
@@ -9620,9 +9639,9 @@ func (s *PgStore) recoverRolloutTx(ctx context.Context, tx pgx.Tx, appID, deploy
 			siblingRows, err := tx.Query(ctx,
 				`select id, traffic_percent
 			   from deployments
-			  where app_id = $1 and status = 'live' and id != $2
+			  where app_id = $1 and scope = $3 and status = 'live' and id != $2
 			  order by id`,
-				appID, dep.ID)
+				appID, dep.ID, normalizedDeploymentScope(dep.Scope))
 			if err != nil {
 				return Deployment{}, 0, fmt.Errorf("state: recover_rollout read abort siblings: %w", err)
 			}
@@ -9893,6 +9912,27 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest
 	if err := requireDeploymentLayerArtifactsTx(ctx, tx, dep.ID); err != nil {
 		return err
 	}
+	if preparedRollbackPromotion(ctx) && dep.Status != DeployLive {
+		var prepared bool
+		if err := tx.QueryRow(ctx, `select rollback_prepared_at is not null from deployments where id = $1`, dep.ID).Scan(&prepared); err != nil {
+			return fmt.Errorf("state: read rollback marker: %w", err)
+		}
+		if !prepared {
+			return ErrDeploymentSuperseded
+		}
+	}
+	if !fenceLatest && dep.Status != DeployLive {
+		withdrawn, err := withdrawOutpacedRollbackTx(ctx, tx, dep.ID)
+		if err != nil {
+			return err
+		}
+		if withdrawn {
+			if err := tx.Commit(ctx); err != nil {
+				return fmt.Errorf("state: commit withdrawn rollback: %w", err)
+			}
+			return ErrDeploymentSuperseded
+		}
+	}
 	if fenceLatest || recovery {
 		if fenceLatest && (!dep.Kind.RequiresLatestRevision() || dep.Revision <= 0) {
 			return ErrInvalidStateTransition
@@ -10096,8 +10136,8 @@ func (s *PgStore) markDeploymentLive(ctx context.Context, id string, fenceLatest
 	rows, err := tx.Query(ctx,
 		`select id, traffic_percent
 		   from deployments
-		  where app_id = $1 and status = 'live'
-		  for update`, dep.AppID)
+		  where app_id = $1 and scope = $2 and status = 'live'
+		  for update`, dep.AppID, normalizedDeploymentScope(dep.Scope))
 	if err != nil {
 		return fmt.Errorf("state: mark canary live lock siblings: %w", err)
 	}
@@ -11261,6 +11301,35 @@ func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentD
 	return operationUUIDString(target), nil
 }
 
+// RollbackOutpacedCode is the error code on a prepared plain rollback target
+// that was withdrawn because another release of its environment cut over
+// after the rollback was requested.
+const RollbackOutpacedCode = "rollback_release_changed"
+
+const rollbackOutpacedMessage = "a newer release went live after the rollback was requested, so the rollback was not applied; request it again to replace that release"
+
+// withdrawOutpacedRollbackTx withdraws a prepared plain rollback (ADR-1446)
+// when a release of its scope stopped serving after the request: a deploy or
+// traffic change cut over while the target was getting ready. Activating the
+// target would silently replace that newer release, so it returns to
+// superseded with the reason recorded for the rollback receipt. A checked
+// rollback names the release it replaces and is fenced separately.
+func withdrawOutpacedRollbackTx(ctx context.Context, tx pgx.Tx, id string) (bool, error) {
+	tag, err := tx.Exec(ctx, `
+		update deployments d
+		   set status = 'superseded', rollback_prepared_at = null, error_code = $2, error = $3
+		 where d.id = $1 and d.rollback_prepared_at is not null and d.status <> 'live'
+		   and exists (
+		     select 1 from deployments other
+		      where other.app_id = d.app_id and other.scope = d.scope and other.id <> d.id
+		        and other.serving_ended_at > d.rollback_prepared_at)`,
+		id, RollbackOutpacedCode, rollbackOutpacedMessage)
+	if err != nil {
+		return false, fmt.Errorf("state: withdraw outpaced rollback: %w", err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
 // PrepareDeploymentRollback starts a readiness-gated manual rollback while
 // preserving the current serving release. Historical canary state is cleared:
 // rollback is an incident-recovery operation and its validated target must
@@ -11304,7 +11373,7 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 	prepared, err := scanDeploymentWithRootfs(tx.QueryRow(ctx, `
 		update deployments
 		   set status = 'snapshotting',
-		       rollback_prepared_at = $3,
+		       rollback_prepared_at = clock_timestamp(),
 		       error = '', error_code = '',
 		       traffic_percent = 0,
 		       traffic_percent_explicit = false,

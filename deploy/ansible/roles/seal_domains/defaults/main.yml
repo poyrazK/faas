@@ -47,6 +47,14 @@ faas_seal_domain_runtime_binding: "off"
 # window. Required for binding=account.
 faas_seal_domain_runtime_binding_readers_verified: false
 
+# ADR-20261023173624, contract step: true makes vmmd refuse runtime secrets
+# that carry no account binding. Needs binding=account. Set it only after
+# `gregalectl seal-domain migrate --domain runtime --bind-accounts` reports
+# 0 re-sealed, 0 bound to another account and 0 failed on a rerun, and every
+# schedd restarted after that pass (runbook seal-domains-rollout.md §4f).
+# vmmd reads it at start.
+faas_seal_domain_runtime_binding_required: false
+
 # Operator-local files from `gregalectl seal-domain init --domain source`.
 # Control-plane hosts stage both: githubd reads the identity, apid seals to
 # the recipient.

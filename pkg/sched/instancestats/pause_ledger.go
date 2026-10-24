@@ -133,8 +133,9 @@ func (l *PauseLedger) nodeLocked(ctx context.Context, nodeID string) *ledgerNode
 	for _, p := range open {
 		// The last report that saw it paused is unknown: closing it at its
 		// start bills all of it unless a report proves more.
-		if cur, ok := node.open[p.InstanceID]; !ok || p.StartedAt.After(cur.start) {
-			node.open[p.InstanceID] = openPause{start: p.StartedAt, lastSeen: p.StartedAt}
+		start := ledgerTime(p.StartedAt)
+		if cur, ok := node.open[p.InstanceID]; !ok || start.After(cur.start) {
+			node.open[p.InstanceID] = openPause{start: start, lastSeen: start}
 		}
 	}
 	node.loaded = true
@@ -147,6 +148,7 @@ func (n *ledgerNode) apply(report []InstanceStat, sampled time.Time) {
 	for _, row := range report {
 		seen[row.InstanceID] = struct{}{}
 		rec := row.QuietPause
+		rec.Since, rec.LastStarted, rec.LastEnded = ledgerTime(rec.Since), ledgerTime(rec.LastStarted), ledgerTime(rec.LastEnded)
 		closed := !rec.LastStarted.IsZero() && !rec.LastEnded.Before(rec.LastStarted)
 		if closed && !n.closed[row.InstanceID].Equal(rec.LastStarted) {
 			n.addPending(row.InstanceID, rec.LastStarted, rec.LastEnded)
@@ -184,6 +186,18 @@ func (n *ledgerNode) apply(report []InstanceStat, sampled time.Time) {
 			delete(n.closed, instance)
 		}
 	}
+}
+
+// ledgerTime is t at the ledger's precision. vmmd reports nanoseconds, but
+// a pause is keyed by (instance, started_at) and timestamptz keeps
+// microseconds (pgx truncates). Comparing a start read back from the ledger
+// with the same start reported again must find them equal, and two keys must
+// never collapse into one row inside a single write.
+func ledgerTime(t time.Time) time.Time {
+	if t.IsZero() {
+		return t
+	}
+	return t.Truncate(time.Microsecond)
 }
 
 // addPending queues a pause; a later end replaces an earlier one, and an

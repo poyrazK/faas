@@ -473,6 +473,11 @@ type Instance struct {
 	// freezing is non-nil while a Freeze decides and pauses, and closes once
 	// that freeze has settled either way. Guarded by Manager.mu.
 	freezing chan struct{}
+	// parking is non-nil while a terminal Park runs and closes once it ends;
+	// parkHeld counts the forwards waiting on it (park_hold.go). Both are
+	// guarded by Manager.mu.
+	parking  chan struct{}
+	parkHeld int64
 	// IsJob marks run-to-completion VMs whose expected Firecracker exit is
 	// settled by the lease-fenced job receipt, not the app liveness relay.
 	IsJob bool
@@ -1088,6 +1093,10 @@ type Manager struct {
 	// rejected with ErrNoHostKey rather than silently dropping
 	// plaintext. vmmd owns the on-disk files.
 	hostIdentities []*age.X25519Identity
+	// requireSecretBinding refuses runtime envelopes that carry no account
+	// binding (ADR-20261023173624, contract step). Off until every stored
+	// envelope is bound.
+	requireSecretBinding bool
 	// conntrackCap is the effective per-instance conntrack cap. Probed once
 	// at construction from api.ConntrackCapProbe(): DefaultConntrackCap when
 	// the kernel supports ct expressions in netns (CONFIG_NF_CONNTRACK_NET_NS),
@@ -1588,6 +1597,15 @@ func (m *Manager) SetHostIdentities(ids []*age.X25519Identity) {
 		return
 	}
 	m.hostIdentities = ids
+}
+
+// RequireSecretBinding makes every path that opens runtime secrets refuse
+// an envelope with no account binding (ADR-20261023173624, contract step).
+// Turn it on only once the binding pass bound every stored envelope and
+// every writer binds new ones. NOT safe to call concurrently with Wake;
+// production wires it before serving traffic.
+func (m *Manager) RequireSecretBinding(required bool) {
+	m.requireSecretBinding = required
 }
 
 // WithStorage wires the artifact backend the Manager uses to read
@@ -3511,13 +3529,19 @@ func (m *Manager) UnsealRuntimeSecrets(entries []SealedEnvEntry, accountID strin
 	return secrets, nil
 }
 
-// openBoundEntry opens one entry and enforces its account binding.
+// openBoundEntry opens one entry and enforces its account binding. With
+// RequireSecretBinding it also refuses an unbound envelope.
 func (m *Manager) openBoundEntry(entry SealedEnvEntry, accountID string) (secretbox.Envelope, error) {
 	inner, binding, err := secretbox.OpenMultiBound(m.hostIdentities, entry.Ciphertext)
 	if err != nil {
 		return nil, err
 	}
-	if err := binding.Check(accountID); err != nil {
+	check := binding.Check
+	if m.requireSecretBinding {
+		check = binding.Require
+	}
+	if err := check(accountID); err != nil {
+		clear(inner)
 		return nil, err
 	}
 	return inner, nil
@@ -5968,6 +5992,14 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	}
 	if m.isFrozen(inst) {
 		return SnapshotInfo{}, false, fmt.Errorf("park %s: %w", instance, ErrInstanceFrozen)
+	}
+	// Hold new forwards until teardown and let the ones already at the guest
+	// finish before the pause (park_hold.go). Released after cleanup, so a
+	// held forward finds the instance gone and is re-routed.
+	defer m.holdForwardsForPark(inst)()
+	if remaining := m.drainForwardsForPark(operationCtx, inst); remaining > 0 {
+		m.log.Warn("park: forwards still in flight at the drain deadline", "instance", instance,
+			"forwards", remaining, "drain_s", parkForwardDrainTimeout.Seconds())
 	}
 	m.mu.Lock()
 	flight.parking = true
