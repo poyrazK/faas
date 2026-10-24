@@ -23931,12 +23931,14 @@ func (s *PgStore) mutateCustomerAppSecret(ctx context.Context, appID, scope, key
 	if !ok {
 		return pgconn.CommandTag{}, ErrInvalidArgument
 	}
-	if _, err := sqlc.New().LockRuntimeSecretAppExclusive(ctx, tx, sqlc.LockRuntimeSecretAppExclusiveParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(appID)}); err != nil {
-		return pgconn.CommandTag{}, mapErr(err)
-	}
-
+	// Binding reservations and managed secret writes take the target lock
+	// before any apps row lock, so take it first here too. The app lock still
+	// precedes the write, whose release-snapshot trigger locks the app.
 	if err := lockAppSecretTarget(ctx, tx, appID, scope, key); err != nil {
 		return pgconn.CommandTag{}, err
+	}
+	if _, err := sqlc.New().LockRuntimeSecretAppExclusive(ctx, tx, sqlc.LockRuntimeSecretAppExclusiveParams{AccountID: mustPgUUID(account), AppID: mustPgUUID(appID)}); err != nil {
+		return pgconn.CommandTag{}, mapErr(err)
 	}
 	var claimed bool
 	if err := tx.QueryRow(ctx,
@@ -29415,21 +29417,26 @@ func (s *PgStore) PerAccountRateLimitAggregate(ctx context.Context, arg sqlc.Per
 // raw. A hex-decode on every webhook would be wasted CPU at the
 // gatewayd-internal proxy hot path.
 //
-// On conflict the existing row's secret_value + audit fields are
+// On conflict the existing row's copies + audit fields are
 // overwritten; the test at
 // migrations/00208_github_webhook_secrets_test.go pins the
-// round-trip.
+// round-trip. ADR 20261022111812: a write carries the sealed copy,
+// the plaintext Value, or both; an empty Value is stored as NULL,
+// which is what this release's apid writes.
 func (s *PgStore) UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret GithubWebhookSecret, upgradedBy string) (time.Time, string, error) {
 	if installationID == 0 {
 		return time.Time{}, "", fmt.Errorf("state: UpsertGithubWebhookSecret: installation_id must be non-zero")
 	}
-	if len(secret.Value) == 0 {
+	if len(secret.Value) == 0 && len(secret.Sealed) == 0 {
 		return time.Time{}, "", fmt.Errorf("state: UpsertGithubWebhookSecret: secret must be non-empty (use a 32-byte random value per GitHub's recommendation)")
 	}
 	if upgradedBy == "" {
 		upgradedBy = "platform"
 	}
-	var sealed []byte
+	var plain, sealed []byte
+	if len(secret.Value) > 0 {
+		plain = secret.Value
+	}
 	if len(secret.Sealed) > 0 {
 		sealed = secret.Sealed
 	}
@@ -29443,7 +29450,7 @@ func (s *PgStore) UpsertGithubWebhookSecret(ctx context.Context, installationID 
 		    upgraded_at   = now(),
 		    upgraded_by   = EXCLUDED.upgraded_by
 		RETURNING upgraded_at, upgraded_by
-	`, installationID, secret.Value, sealed, upgradedBy).Scan(&upgradedAt, &upgradedBy)
+	`, installationID, plain, sealed, upgradedBy).Scan(&upgradedAt, &upgradedBy)
 	if err != nil {
 		return time.Time{}, "", fmt.Errorf("state: UpsertGithubWebhookSecret: %w", err)
 	}
@@ -29458,7 +29465,8 @@ func (s *PgStore) UpsertGithubWebhookSecret(ctx context.Context, installationID 
 //
 // Sealed is the copy sealed for githubd (ADR 20261022111812);
 // githubd opens it in preference to the plaintext Value, which
-// is kept only for the release that reads nothing else.
+// rows written before the sealed copy existed still carry and new
+// writes leave empty.
 func (s *PgStore) GetGithubWebhookSecret(ctx context.Context, installationID int64) (GithubWebhookSecret, error) {
 	if installationID == 0 {
 		return GithubWebhookSecret{}, ErrNotFound

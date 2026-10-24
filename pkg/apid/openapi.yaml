@@ -76619,16 +76619,17 @@ components:
         until: {"type": "string", "format": "date-time"}
         window_clamped: {"type": "boolean"}
         idle_timeout_seconds: {"type": "integer", "description": "The app's effective idle timeout: how long it stays awake after its last successful request."}
+        wait_until_timeout_seconds: {"type": "integer", "description": "The plan's waitUntil task timeout when the plan enables waitUntil. An instance parks no earlier than the later of the idle timeout and its last waitUntil task, so a request keeps the app awake for the longer of the two (ADR-20261022184757)."}
         window_seconds: {"type": "integer", "format": "int64"}
         awake_seconds: {"type": "integer", "format": "int64"}
         awake_share: {"type": "number", "minimum": 0, "maximum": 1, "description": "Share of the window's minutes with at least one instance running."}
         mb_seconds: {"type": "integer", "format": "int64", "description": "Billed MB-seconds in the window."}
         gb_hours: {"type": "number"}
         wakes: {"type": "integer", "format": "int64", "description": "Cold boots in the window."}
-        unattributed_seconds: {"type": "integer", "format": "int64", "description": "Awake time no recorded request, probe or prewarm explains: minimum instances, queue, cron and waitUntil work, probes older than a day, or telemetry the plan's rate cap dropped."}
+        unattributed_seconds: {"type": "integer", "format": "int64", "description": "Awake time no recorded request, probe, prewarm or delivery explains: minimum instances, probes older than a day, deliveries already pruned by result retention, or telemetry the plan's rate cap dropped."}
         sources:
           type: array
-          description: "Awake time credited to causes other than customer requests, for minutes no request explains (ADR-1199)."
+          description: "Awake time credited to causes other than customer requests, for minutes no request explains: route probes and prewarms (ADR-1199), and cron, queue and other deliveries schedd made to the app, per cron job and per queue (ADR-20261022184757)."
           items: { $ref: '#/components/schemas/RouteAwakeSource' }
         min_instances: {"type": "integer", "description": "The app's current minimum instance count; above zero the app never parks, so unattributed time is expected."}
         other_routes_seconds: {"type": "integer", "format": "int64", "description": "Awake time attributed to routes outside the busiest routes_limit."}
@@ -76638,14 +76639,18 @@ components:
           items: { $ref: '#/components/schemas/RouteAwakeRoute' }
     RouteAwakeSource:
       type: object
-      description: "Awake time one non-request cause explains (ADR-1199)."
+      description: "Awake time one non-request cause explains (ADR-1199, ADR-20261022184757)."
       required: [source, events, awake_seconds, awake_share, gb_hours]
       properties:
-        source: {"type": "string", "enum": ["route_probe", "prewarm"], "description": "route_probe: synthetic canary probes the app answered (ADR-847; kept for a day). prewarm: instances a scheduled prewarm admitted."}
-        events: {"type": "integer", "format": "int64", "description": "Probe requests answered without a 5xx or an auth rejection, or prewarmed instances."}
+        source: {"type": "string", "enum": ["route_probe", "prewarm", "cron", "queue", "delayed_task", "async_invoke", "inbound_webhook", "replay", "esm"], "description": "route_probe: synthetic canary probes the app answered (ADR-847; kept for a day). prewarm: instances a scheduled prewarm admitted. The others are deliveries schedd made to the app, by invocation source; a delivery counts from when it reached the instance until it completed, at most 60 minutes."}
+        name: {"type": "string", "description": "One cron job (the path or command it runs and its schedule) or one queue; absent for other sources."}
+        events: {"type": "integer", "format": "int64", "description": "Probe requests answered without a 5xx or an auth rejection, prewarmed instances, or deliveries that started in the window."}
         awake_seconds: {"type": "integer", "format": "int64"}
         awake_share: {"type": "number", "minimum": 0, "maximum": 1}
         gb_hours: {"type": "number"}
+        pattern: {"type": "string", "enum": ["periodic", "irregular"], "description": "Set for cron jobs: periodic when the job fires at a steady interval."}
+        interval_seconds: {"type": "integer", "description": "Approximate interval between the cron job's firings when pattern is periodic."}
+        suggestion: { $ref: '#/components/schemas/RouteAwakeSuggestion' }
     RouteAwakeRoute:
       type: object
       description: "One route's share of the app's awake time and what removing its requests would change."
@@ -76675,7 +76680,7 @@ components:
       description: "A change that would let the app park."
       required: [kind, message]
       properties:
-        kind: {"type": "string", "enum": ["edge_cache", "call_less_often"]}
+        kind: {"type": "string", "enum": ["edge_cache", "call_less_often", "run_less_often"]}
         message: {"type": "string"}
     RouteInsightsResponse:
       type: object

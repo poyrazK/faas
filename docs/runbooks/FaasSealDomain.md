@@ -5,6 +5,8 @@ give each reading service its own age identity in
 `/etc/faas/secrets/domains/<domain>.age`. Two alerts cover them. Neither
 fires before an operator stages a domain.
 
+## Symptom
+
 - **FaasSealDomainUnverified:** `gregalectl seal-domain verify` failed on a
   host. The `seal_domains` role runs `verify` after it stages the identity,
   and writes `faas_seal_domain_ready{domain}` to the node's textfile
@@ -13,7 +15,8 @@ fires before an operator stages a domain.
   - it does not open the domain probe (a different key from the one
     writers seal to);
   - the database was unreachable.
-- **FaasSealDomainIdentityMissing:** a reader daemon (vmmd for `runtime`)
+- **FaasSealDomainIdentityMissing:** a reader daemon (outboundd for
+  `outbound`, vmmd for `runtime`, githubd for `source`, imaged for `build`)
   started without the domain identity while other readers of the same
   domain hold it. This is usually a node that joined or was rebuilt after
   the rollout, before the domain's `SEAL_DOMAIN_*` secrets were in CD, or a

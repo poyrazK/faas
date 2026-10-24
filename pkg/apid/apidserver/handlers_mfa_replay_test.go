@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -41,7 +42,15 @@ func TestMFAVerify_RefusesAReplayedCode(t *testing.T) {
 	if rec := verify(code); rec.Code != http.StatusOK {
 		t.Fatalf("first use: status %d: %s", rec.Code, rec.Body)
 	}
-	apidserver.AssertProblem(t, verify(code), http.StatusUnauthorized, api.CodeMFAInvalidCode)
+	replayed := verify(code)
+	apidserver.AssertProblem(t, replayed, http.StatusUnauthorized, api.CodeMFAInvalidCode)
+	var problem api.Problem
+	if err := json.Unmarshal(replayed.Body.Bytes(), &problem); err != nil || problem.Detail != api.MFACodeReusedDetail {
+		t.Fatalf("replay detail = %q (%v), want %q", problem.Detail, err, api.MFACodeReusedDetail)
+	}
+	if rec := verify("000000"); rec.Code == http.StatusUnauthorized && strings.Contains(rec.Body.String(), api.MFACodeReusedDetail) {
+		t.Fatalf("a wrong code was reported as reused: %s", rec.Body)
+	}
 	if next := codeAt(now.Add(30 * time.Second)); next != code {
 		if rec := verify(next); rec.Code != http.StatusOK {
 			t.Fatalf("the next step's code: status %d: %s", rec.Code, rec.Body)

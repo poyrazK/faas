@@ -10581,6 +10581,18 @@ func (l Limits) EffectiveIdleTimeoutS(appType string, configured int) int {
 	return min(max(configured, floor), ceiling)
 }
 
+// WaitUntilTimeoutS is how long a waitUntil task can hold an instance after
+// its response: TailTimeoutS when the plan enables waitUntil, else zero
+// (ADR-078). The reaper does not park an instance with tasks in flight, so
+// surfaces that explain awake time take the later of this and the idle
+// timeout (ADR-20261022184757).
+func (l Limits) WaitUntilTimeoutS() int {
+	if !l.TailEnabled {
+		return 0
+	}
+	return l.TailTimeoutS
+}
+
 // Obs admin pagination (issue #777 / ADR-091). The operator surface
 // differs from the customer surface (pkg/api/paging.go defaults to
 // 25/100) because the operator UI is fleet-wide and a single page
@@ -11923,6 +11935,10 @@ const (
 	// An edge-cache suggestion needs this share of anonymous 2xx GET/HEAD
 	// requests on the route.
 	RouteAwakeCacheMinAnonymousShare = 0.9
+	// RouteAwakeWorkMaxMinutes caps how long one cron, queue or other
+	// delivery counts as running (ADR-20261022184757), so a delivery that
+	// never completed cannot claim the rest of the window.
+	RouteAwakeWorkMaxMinutes = 60
 )
 
 // RouteContent bounds learned cacheability (ADR-1188). Each gateway

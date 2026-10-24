@@ -1,9 +1,18 @@
 from typing import Literal
 
-RouteAwakeSourceSource = Literal["prewarm", "route_probe"]
+RouteAwakeSourceSource = Literal[
+    "async_invoke", "cron", "delayed_task", "esm", "inbound_webhook", "prewarm", "queue", "replay", "route_probe"
+]
 
 ROUTE_AWAKE_SOURCE_SOURCE_VALUES: set[RouteAwakeSourceSource] = {
+    "async_invoke",
+    "cron",
+    "delayed_task",
+    "esm",
+    "inbound_webhook",
     "prewarm",
+    "queue",
+    "replay",
     "route_probe",
 }
 

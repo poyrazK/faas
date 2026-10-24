@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Compose profiles from COMPOSE_PROFILES in .env](20261022190000-compose-profiles-from-dotenv.md)
 - [Compose deploy resources and replicas set app settings](20261023120000-compose-deploy-resources.md)
 - [Compose service secrets as files in /run/secrets](20261023090000-compose-runtime-secret-files.md)
 - [ADR-20261023113721: Platform flags for edge rule features](20261023113721-edge-feature-platform-flags.md)
@@ -1851,3 +1852,5 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261018181846: Route priority in the cold-wake queue](20261018181846-route-priority-in-the-wake-queue.md)
 
 - [ADR-20261020161310: Route insight fixes, dashboard panel and alerts](20261020161310-route-insight-fixes-and-alerts.md)
+
+- [ADR-20261022184757: Background work and waitUntil in the awake report](20261022184757-route-awake-background-work.md)

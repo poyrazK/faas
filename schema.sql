@@ -38088,11 +38088,18 @@ CREATE TABLE public.github_webhook_deliveries (
 
 CREATE TABLE public.github_webhook_secrets (
     installation_id bigint NOT NULL,
-    secret_value bytea NOT NULL,
+    secret_value bytea,
     upgraded_at timestamp with time zone DEFAULT now() NOT NULL,
     upgraded_by text DEFAULT 'platform'::text NOT NULL,
     secret_sealed bytea
 );
+
+
+--
+-- Name: COLUMN github_webhook_secrets.secret_value; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.github_webhook_secrets.secret_value IS 'Plaintext webhook secret, no longer written (ADR 20261022111812). Read only as a fallback for rows without secret_sealed; dropped in a later release.';
 
 
 --
@@ -59454,6 +59461,14 @@ ALTER TABLE ONLY public.github_webhook_secrets
 
 
 --
+-- Name: github_webhook_secrets github_webhook_secrets_secret_present_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE public.github_webhook_secrets
+    ADD CONSTRAINT github_webhook_secrets_secret_present_chk CHECK (((secret_value IS NOT NULL) OR (secret_sealed IS NOT NULL))) NOT VALID;
+
+
+--
 -- Name: github_webhook_secrets github_webhook_secrets_secret_sealed_chk; Type: CHECK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -71192,6 +71207,13 @@ CREATE INDEX invocations_app_pending_idx ON public.invocations USING btree (app_
 --
 
 CREATE INDEX invocations_app_queue_pending_idx ON public.invocations USING btree (app_id, queue_name, source, state, due_at) WHERE (state = ANY (ARRAY['pending'::text, 'dispatching'::text]));
+
+
+--
+-- Name: invocations_app_received_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX invocations_app_received_idx ON public.invocations USING btree (app_id, received_at) WHERE (received_at IS NOT NULL);
 
 
 --
