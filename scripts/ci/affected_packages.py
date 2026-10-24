@@ -10,10 +10,10 @@ package lists derived from `go list`:
            test and external test imports): compile-checked by `go vet`
   test     changed packages that run in full with -race, optionally narrowed
            to one shard
-  selective  the large package pinned to a shard, when the change selects
-           it: the light tier runs only its related tests (without -race,
-           scripts/ci/select_package_tests.py); the mega tier runs it in full
-  pinned   the large package a shard owns, whether or not it changed
+  selective  the large packages pinned to a shard, when the change selects
+           them: the light tier runs only their related tests (without -race,
+           scripts/ci/select_package_tests.py); the mega tier runs them in full
+  pinned   the large packages a shard owns, whether or not they changed
 
 A global input (go.mod, go.sum, this selector or the light workflow) puts
 every package in the vet set; tests still cover changed packages only.
@@ -62,11 +62,14 @@ INVARIANT_PACKAGES = ("tests/property",)
 # Suites too large for the light tier's 10-minute budget (thousands of tests
 # each). A pull request runs only the tests related to its change, without
 # -race; the mega tier runs them in full with -race nightly (it does not gate
-# releases). Each is pinned to its own shard so their compiles never share a
-# runner: pkg/state and pkg/apid/apidserver also keep separate PostgreSQL
-# services (pkg/state uses the shard's second one).
+# releases). Every shard owns one, and pkg/state and pkg/apid/apidserver keep
+# separate PostgreSQL services (pkg/state uses the shard's second one).
+# pkg/sched's full -race run reached the 10-minute package deadline on its own
+# (#4153), so it joined them on the lightest shard, beside pkg/state; it uses
+# that shard's first PostgreSQL service.
 SELECTIVE_SHARD = {
     "cmd/gregale": 1,
+    "pkg/sched": 2,
     "pkg/state": 2,
     "pkg/apid/apidserver": 3,
 }
@@ -95,7 +98,6 @@ GO_STRING = re.compile(r'^"([^"\\*]*)"$')
 # Unlisted packages weigh 1. Measured from the mega tier's shard timings.
 WEIGHTS = {
     "pkg/e2etest": 6,
-    "pkg/sched": 5,
     "pkg/gateway": 5,
     "cmd/gregalectl": 4,
     "pkg/reconcile": 4,
@@ -251,8 +253,8 @@ def main():
         ap.error("--shard must be within 1..--shards")
 
     if args.kind == "pinned":
-        # The large package a shard owns, changed or not: main pushes warm its
-        # test build so pull requests restore it from the shard's cache.
+        # The large packages a shard owns, changed or not: main pushes warm
+        # their test builds so pull requests restore them from the shard's cache.
         print(" ".join("./" + d for d, s in SELECTIVE_SHARD.items() if s == args.shard))
         return
     everything, changed, vet, test = select(sys.stdin.read().splitlines(), go_packages())

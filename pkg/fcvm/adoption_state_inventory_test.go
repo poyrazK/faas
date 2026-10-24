@@ -83,7 +83,7 @@ var adoptionStateInventory = map[string]map[string]string{
 		"proc":                                     "rebuilt",
 		"recs":                                     "rebuilt",
 		"rings":                                    "rebuilt",
-		"runtimeDriveHandoffs":                     "reset",    // the handoff descriptors closed with the predecessor
+		"runtimeDriveHandoffs":                     "rebuilt",  // measured cold boots: reopened through Firecracker's descriptors (runtime_drive_handoff_adopt.go)
 		"consoleOpens":                             "reset",    // console files being pre-opened for a boot in flight
 		"guestVsockLeaseHandlers":                  "bootonly", // registered by daemon wiring; adoption prepares the guest's listeners
 		"instanceLogStops":                         "rebuilt",  // adoption registers the app ring, which starts the observer

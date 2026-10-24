@@ -2043,10 +2043,19 @@ const (
 	MaxObjectStorageReportAgeSeconds    int64 = 86400
 	ObjectStorageInventoryMaxAgeSeconds int64 = 900
 	ObjectStorageInventoryMaxPages            = 1000
-	ObjectCapacityReconciliationLease         = 2 * time.Minute
-	ObjectCapacityReconciliationTimeout       = time.Hour
-	ObjectCapacityReconciliationRetry         = 30 * time.Second
-	ObjectCapacityInventoryTimeout            = 45 * time.Second
+	// One apid's inventory sweep claims due buckets in batches and scans up to
+	// ObjectStorageInventorySweepConcurrency of them at once, starting new
+	// batches until none is due or ObjectStorageInventorySweepBudget has
+	// passed. Scans already running finish under their own timeout. At ~1 s a
+	// scan this refreshes thousands of buckets inside the 900 s window instead
+	// of the earlier ten buckets a minute (ADR-20261023223000).
+	ObjectStorageInventorySweepBatch       = 50
+	ObjectStorageInventorySweepConcurrency = 8
+	ObjectStorageInventorySweepBudget      = 40 * time.Second
+	ObjectCapacityReconciliationLease      = 2 * time.Minute
+	ObjectCapacityReconciliationTimeout    = time.Hour
+	ObjectCapacityReconciliationRetry      = 30 * time.Second
+	ObjectCapacityInventoryTimeout         = 45 * time.Second
 	// Read-only owned-node audits retain bounded diagnostics and publish cached
 	// metrics. These are operator work bounds, not customer allowances.
 	ObjectNodeInventoryInterval         = time.Minute
@@ -2377,6 +2386,11 @@ const (
 	OperationWorkflowDispatchBodyMaxBytes     int64 = 16 << 10
 	OperationWorkflowDispatchResponseMaxBytes int64 = 2*OperationSubmissionMaxBytes + OperationReportBodyMaxBytes
 )
+
+// ObjectUploadAccountSlotSharePercent caps one account's share of the
+// gateway's concurrent staged transfers (at least one), so a single tenant's
+// parallel uploads leave room for others (ADR-20261023223000).
+const ObjectUploadAccountSlotSharePercent = 50
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
 // Keep the first release deliberately small: it lets customers right-size
@@ -2741,6 +2755,23 @@ type ObjectStoragePlanLimits struct {
 	IncludedEgressBytes int64
 }
 
+// Anonymous reads of public bucket mounts (H9-S137, ADR-20261023223000).
+// They stop at PublicObjectReadCeilingPercent of the account's monthly
+// request, egress and authorization ceilings, and each gatewayd-public process
+// admits at most PublicObjectReadRatePerBucket reads per second per bucket
+// (burst PublicObjectReadBurstPerBucket), tracking at most
+// MaxPublicObjectReadLimiters buckets.
+const (
+	PublicObjectReadCeilingPercent = 75
+	PublicObjectReadRatePerBucket  = 100
+	PublicObjectReadBurstPerBucket = 200
+	MaxPublicObjectReadLimiters    = 10_000
+	// PublicObjectReadMaxAgeSeconds bounds how long a CDN or browser may keep
+	// a public object without revalidating, so a delete or overwrite takes
+	// effect within minutes rather than a year (H9-S144).
+	PublicObjectReadMaxAgeSeconds = 300
+)
+
 // ObjectStorageBillingHoursPerMonth is the conventional month used to price
 // stored byte-hours as GiB-months and to convert IncludedBytes.
 const ObjectStorageBillingHoursPerMonth int64 = 730
@@ -2754,7 +2785,24 @@ func (l ObjectStoragePlanLimits) Policy(p ObjectStoragePolicy) ObjectStoragePoli
 	p.MaxBucketBytes = tighterObjectStorageLimit(p.MaxBucketBytes, p.MaxAccountBytes)
 	p.MaxMonthlyRequests = tighterObjectStorageLimit(p.MaxMonthlyRequests, l.MaxMonthlyRequests)
 	p.MaxMonthlyEgressBytes = tighterObjectStorageLimit(p.MaxMonthlyEgressBytes, l.MaxMonthlyEgressBytes)
+	if p.AnonymousReads {
+		p.MaxMonthlyRequests = publicObjectReadShare(p.MaxMonthlyRequests)
+		p.MaxMonthlyEgressBytes = publicObjectReadShare(p.MaxMonthlyEgressBytes)
+		p.MaxMonthlyAuthorizations = publicObjectReadShare(p.MaxMonthlyAuthorizations)
+		p.MaxMonthlyCostMillicents = publicObjectReadShare(p.MaxMonthlyCostMillicents)
+		p.AnonymousReads = false // applied once
+	}
 	return p
+}
+
+// publicObjectReadShare is the part of a monthly ceiling anonymous reads may
+// reach. Usage is shared, so private access always keeps the remainder. A
+// zero ceiling (gateway safety has no cost ceiling) stays zero.
+func publicObjectReadShare(ceiling int64) int64 {
+	if ceiling <= 0 {
+		return ceiling
+	}
+	return max(ceiling/100*PublicObjectReadCeilingPercent+ceiling%100*PublicObjectReadCeilingPercent/100, 1)
 }
 
 // Allowance returns the plan's included usage in month-close billing units.
@@ -11754,9 +11802,17 @@ const (
 // Deletion fences survive lease expiry; only pre-dispatch cancellation,
 // definitive provider rejection or completion proof releases them.
 const (
-	ObjectDeletionLease                  = 2 * time.Minute
-	ObjectDeletionOperationTimeout       = time.Minute
-	ObjectDeletionRetry                  = 30 * time.Second
+	ObjectDeletionLease            = 2 * time.Minute
+	ObjectDeletionOperationTimeout = time.Minute
+	ObjectDeletionRetry            = 30 * time.Second
+	// A bucket admits one deletion at a time (ADR-547). A deletion refused only
+	// because other work is settling waits up to ObjectDeletionAdmissionWait,
+	// polling with backoff from ObjectDeletionAdmissionPoll to
+	// ObjectDeletionAdmissionMaxPoll, so concurrent deletes of different keys
+	// queue instead of failing (H9-S156, ADR-20261023223000).
+	ObjectDeletionAdmissionWait          = 15 * time.Second
+	ObjectDeletionAdmissionPoll          = 50 * time.Millisecond
+	ObjectDeletionAdmissionMaxPoll       = 250 * time.Millisecond
 	ObjectDeletionBatch            int32 = 20
 	ObjectDeletionHistoryPages           = 8
 	ObjectDeletionHistoryVersions        = 4096
