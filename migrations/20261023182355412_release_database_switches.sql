@@ -1,25 +1,19 @@
 -- migration-compat: contract
 -- filename: 20261023182355412_release_database_switches.sql
 --
--- ADR-20261023181931: rollbacks that restore the database. A rollback switch
--- activates its managed PostgreSQL cutover, so cutovers gain the one-way
--- `activated` state and their staged credentials a `published` state with no
--- envelope. `activated`, like `cancelled`, releases the admission fence and
--- the database and binding pins, and no longer counts as an open cutover for
--- the per-app uniqueness index or capacity qualification.
---
--- The two state CHECKs are replaced online: each widened copy is added NOT
--- VALID and validated, the old one is dropped, and the copy takes the old
--- name. The open-cutover index is rebuilt concurrently under a new name
--- before the old one is dropped. Every step commits on its own and is
--- guarded, so a rerun after a partial failure converges. The previous release
--- never writes the new states and survives every step, but RENAME CONSTRAINT
--- is a contract statement to migration-lint, so a full release applies this
--- migration.
+-- ADR-20261023181931: rollbacks that restore the database. Cutovers gain the
+-- one-way `activated` state and credentials a `published` state; `activated`,
+-- like `cancelled`, releases the fence and pins and no longer counts as open.
+-- CHECKs are replaced online (widened copy NOT VALID, validated, old dropped,
+-- copy renamed); the open-cutover index is rebuilt concurrently. Every step
+-- commits alone and is guarded, so a rerun converges. RENAME CONSTRAINT is a
+-- contract statement to migration-lint, so a full release applies this.
 -- +goose NO TRANSACTION
 
 -- +goose Up
 SET lock_timeout = '5s';
+
+-- The previous release never writes the new states and survives every step.
 
 -- +goose StatementBegin
 DO $$ BEGIN
