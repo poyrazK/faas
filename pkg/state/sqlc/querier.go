@@ -4249,6 +4249,16 @@ type Querier interface {
 	ObjectS3CredentialRotationStampStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampStageParams) (pgtype.Timestamptz, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
 	ObjectS3MultipartList(ctx context.Context, db DBTX, arg ObjectS3MultipartListParams) ([]ObjectStorageMultipartUpload, error)
+	// Accrues each open row of this or last month from accrued_through to now,
+	// the end of its month or the bucket's deletion, whichever is first, at the
+	// bucket's last inventoried bytes. Concurrent callers serialize on the row,
+	// and each starts from the committed accrued_through, so time is never
+	// counted twice.
+	ObjectStorageGatewayStorageAdvance(ctx context.Context, db DBTX) (int64, error)
+	// ADR-20261024132844: one row per live bucket for the current UTC month. A
+	// bucket metered last month continues from the start of this month; any other
+	// bucket starts now, so storage is never billed for time Gregale did not meter.
+	ObjectStorageGatewayStorageOpen(ctx context.Context, db DBTX) (int64, error)
 	ObjectStorageLockLegacyIdentity(ctx context.Context, db DBTX, id pgtype.UUID) error
 	ObjectStorageLockOwner(ctx context.Context, db DBTX, arg ObjectStorageLockOwnerParams) (ObjectStorageLockOwnerRow, error)
 	ObjectStorageLockReportingOwners(ctx context.Context, db DBTX, subject pgtype.UUID) ([]pgtype.UUID, error)

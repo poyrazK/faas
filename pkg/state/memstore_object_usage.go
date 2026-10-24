@@ -54,6 +54,9 @@ func (m *MemStore) objectUsageLockedForPeriod(account string, periodStart time.T
 			u.RequestCount = m.objectProviderRequests[objectProviderRequestKey(b.ID, periodStart)]
 			u.EgressBytes = m.objectProviderRequests[objectProviderRequestKey(b.ID, periodStart)+"\x00egress"]
 			u.GatewayMetricsKnown = true
+			if g := m.objectGatewayStorage[objectProviderRequestKey(b.ID, periodStart)]; g != nil {
+				u.StoredByteHours, u.StorageMeteredThrough = int64(g.byteHours), g.through
+			}
 			u.MultipartBytes = 0
 			for id, upload := range m.objectMultipartUploads {
 				if upload.BucketID == b.ID && upload.State != ObjectMultipartCompleted {

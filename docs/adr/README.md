@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Gateway-metered object storage billing](20261024132844-gateway-metered-object-storage-billing.md) — gateway safety meters stored byte-hours from inventory; storage-only rate card bills ADR-1430's $0.03/GiB-month
 - [Build secrets resolve like the runtime environment](20261024140000-build-secrets-resolve-like-the-runtime.md)
 - [ADR-20261024135625: Resource journal: durable commits only for reboot-surviving assets](20261024135625-resource-journal-volatile-commits.md)
 - [Dockerfile HEALTHCHECK gates readiness on source builds](20261024100000-dockerfile-healthcheck-enforced.md)

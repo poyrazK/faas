@@ -6245,6 +6245,11 @@ const (
 
 	// Metering (spec §1, §10).
 	OverageMillicentsPerGBHour = 1_000 // $0.01 per GB-RAM-hour (ADR-1430)
+	// ObjectStorageMillicentsPerGiBMonth is the published rate for average
+	// stored bytes beyond a plan's ObjectStorage.IncludedBytes: $0.03 per
+	// GiB-month (ADR-1430). Requests and egress are free. The operator's
+	// object-storage rate card applies it.
+	ObjectStorageMillicentsPerGiBMonth int64 = 3_000
 	// ADR-566: strict compute reserves startup, execution, and bounded teardown.
 	// Strict egress credits are conservative interface-byte bounds, not invoice usage.
 	FinancialEgressMinimumCreditBytes = int64(4096)
