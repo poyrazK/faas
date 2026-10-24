@@ -53,6 +53,10 @@ func (h *Handler) loadOrRunProducedBaseScan(ctx context.Context, be storage.Stor
 	in := state.BaseImageScanInput{ID: uuid.NewString(), BaseProducerID: base.ID, BaseInputHash: base.InputHash, Artifact: base.Input.Artifact, SourceReference: base.Input.SourceReference}
 	result, failure := h.readProducedArtifactScan(ctx, be, expected)
 	if failure != "" {
+		// The compatibility sidecar keeps its refusal, so vmmd refuses every
+		// boot of this base until a later scan succeeds. Say why.
+		h.log.Warn("imaged: shared-base scan failed; base stays fail-closed",
+			"key", base.Input.Artifact.StorageKey, "ref", base.Input.SourceReference, "failure", failure)
 		return h.publishBaseScanFailure(ctx, store, in, failure)
 	}
 	in.Status, in.ScannerName = "complete", result.ScannerName
