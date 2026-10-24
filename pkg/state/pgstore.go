@@ -14535,9 +14535,12 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 		return EdgeRule{}, fmt.Errorf("state: lock app %s: %w", in.AppID, err)
 	}
 
+	// The app's attack-mode rule (ADR-20261021220456) is outside every
+	// quota below, so an app at its cap can still switch attack mode on.
 	var appCount int
 	if err := tx.QueryRow(ctx,
-		`select count(*) from edge_rules where app_id = $1`, in.AppID,
+		`select count(*) from edge_rules where app_id = $1 and manifest_key is distinct from $2`,
+		in.AppID, EdgeRuleAttackModeKey,
 	).Scan(&appCount); err != nil {
 		return EdgeRule{}, fmt.Errorf("state: count edge_rules for app %s: %w", in.AppID, err)
 	}
@@ -14556,7 +14559,8 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 	if in.Kind == EdgeRuleKindGeo && limits.EdgeRulesGeoPerApp > 0 {
 		var geoPerApp int
 		if err := tx.QueryRow(ctx,
-			`select count(*) from edge_rules where app_id = $1 and kind = 'geo'`, in.AppID,
+			`select count(*) from edge_rules where app_id = $1 and kind = 'geo' and manifest_key is distinct from $2`,
+			in.AppID, EdgeRuleAttackModeKey,
 		).Scan(&geoPerApp); err != nil {
 			return EdgeRule{}, fmt.Errorf("state: count edge_rules by kind=geo for app %s: %w", in.AppID, err)
 		}
@@ -14579,7 +14583,8 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 	if in.Kind == EdgeRuleKindThrottle && limits.EdgeRulesThrottlePerApp > 0 {
 		var throttlePerApp int
 		if err := tx.QueryRow(ctx,
-			`select count(*) from edge_rules where app_id = $1 and kind = 'throttle'`, in.AppID,
+			`select count(*) from edge_rules where app_id = $1 and kind = 'throttle' and manifest_key is distinct from $2`,
+			in.AppID, EdgeRuleAttackModeKey,
 		).Scan(&throttlePerApp); err != nil {
 			return EdgeRule{}, fmt.Errorf("state: count edge_rules by kind=throttle for app %s: %w", in.AppID, err)
 		}
@@ -14603,8 +14608,8 @@ func (s *PgStore) CreateEdgeRuleIfUnderQuota(ctx context.Context, in CreateEdgeR
 	if _, governed := edgeRuleKindQuota(in.Kind, limits); governed {
 		var perApp int
 		if err := tx.QueryRow(ctx,
-			`select count(*) from edge_rules where app_id = $1 and kind = $2`,
-			in.AppID, string(in.Kind),
+			`select count(*) from edge_rules where app_id = $1 and kind = $2 and manifest_key is distinct from $3`,
+			in.AppID, string(in.Kind), EdgeRuleAttackModeKey,
 		).Scan(&perApp); err != nil {
 			return EdgeRule{}, fmt.Errorf("state: count edge_rules by kind=%s for app %s: %w", in.Kind, in.AppID, err)
 		}
@@ -15706,16 +15711,13 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 }
 
 func (s *PgStore) SetAlertRuleState(ctx context.Context, ruleID string, to AlertState, at time.Time) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
-		update alert_rules
-		   set state      = $2,
-		       updated_at = $3
-		 where id = $1 and state <> $2`,
-		ruleID, string(to), at.UTC())
+	var changed int
+	err := s.pool.QueryRow(ctx, setAlertRuleStateSQL,
+		ruleID, string(to), at.UTC(), uuid.NewString(), alertEpisodeKeep).Scan(&changed)
 	if err != nil {
 		return false, err
 	}
-	if tag.RowsAffected() == 0 {
+	if changed == 0 {
 		// Either the row is missing OR already in `to`. Distinguish
 		// via a follow-up SELECT — if the row is gone we MUST
 		// return ErrNotFound; if it's there with the desired

@@ -39,13 +39,14 @@ while apid is down or untrusted (ADR 20261022140000).
    ```
 
    Then revoke. Everyone, operators included, signs in again, and CI needs new
-   API keys:
+   API keys, deploy tokens and hosting automation credentials:
 
    ```bash
    sudo gregalectl break-glass revoke-credentials --db-env /etc/faas/compute-db.env --yes --reason "SEV1 <ticket>"
    ```
 
    `--kinds` narrows the revocation to some of `sessions`, `api_keys`,
+   `deploy_tokens`, `hosting_automation_credentials`,
    `outbound_ai_access_tokens` and `platform_tenant_access_tokens`.
 
 4. Isolate the entry point: drain the compute node, stop the daemon, or block

@@ -2,7 +2,12 @@
 // the authenticated principal with the account that currently pays for the app.
 package appaccess
 
-import "github.com/onebox-faas/faas/pkg/authz"
+import (
+	"net/http"
+	"strings"
+
+	"github.com/onebox-faas/faas/pkg/authz"
+)
 
 // Reviewed routes are explicit: adding a new app endpoint never implicitly
 // grants organization members access to a creator's other resources.
@@ -94,4 +99,24 @@ var routeActions = map[string]authz.OrgAction{
 	"POST /v1/workflows/runs/{id}/callbacks/{callback_id}":                   authz.OrgActionDeployApp,
 	"PUT /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding":    authz.OrgActionManageAppSecrets,
 	"DELETE /v1/workflows/runs/{id}/callbacks/{callback_id}/webhook-binding": authz.OrgActionManageAppSecrets,
+
+	// Session-only dashboard and GitHub install routes (Authorize, called
+	// from the dashboard session gate). Their reads take OrgActionReadApp
+	// (see dashboardRead); writes with a /v1 twin take the twin's action, and
+	// every other write keeps the creator-owner/admin fallback.
+	"GET /v1/apps/{slug}/install":                                authz.OrgActionReadApp,
+	"GET /v1/apps/{slug}/install/bind":                           authz.OrgActionReadApp,
+	"POST /dashboard/apps/{slug}/env":                            authz.OrgActionConfigureApp,
+	"POST /dashboard/apps/{slug}/env/{key}/delete":               authz.OrgActionConfigureApp,
+	"POST /dashboard/apps/{slug}/secrets":                        authz.OrgActionManageAppSecrets,
+	"POST /dashboard/apps/{slug}/secrets/{key}/delete":           authz.OrgActionManageAppSecrets,
+	"POST /dashboard/apps/{slug}/secrets/{key}/rotate":           authz.OrgActionManageAppSecrets,
+	"POST /dashboard/apps/{slug}/secret-references":              authz.OrgActionManageAppSecrets,
+	"POST /dashboard/apps/{slug}/secret-references/{key}/delete": authz.OrgActionManageAppSecrets,
+}
+
+// dashboardRead reports a read of a session-only dashboard app page, which
+// takes the same permission as GET /v1/apps/{slug}.
+func dashboardRead(r *http.Request) bool {
+	return (r.Method == http.MethodGet || r.Method == http.MethodHead) && strings.HasPrefix(r.URL.Path, "/dashboard/apps/")
 }

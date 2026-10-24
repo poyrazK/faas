@@ -805,9 +805,9 @@ const (
 	EventReplayPreviewReadTimeout          = 5 * time.Second
 )
 
-// Historical backfills pin only the bounded settled-receipt retention window.
+// Historical backfills pin only the bounded settled-receipt retention window;
+// a range is at most the owner's EventStorageLimits.SettledRetentionSeconds.
 const (
-	EventReplayBackfillMaxRange            = 30 * 24 * time.Hour
 	EventReplayBackfillPageSize            = 100
 	EventReplayBackfillInFlightMax         = 100
 	EventReplayBackfillActiveJobsMax       = 3
@@ -1244,6 +1244,11 @@ const NativeHostHelperCgroupEventsMaxBytes = 4096
 // logical size and digest are verified separately through the complete reader.
 const ExclusiveArtifactDecoderMaxMemoryBytes = 64 << 20
 const NativeSnapshotPublicationRecordMaxBytes = 2 << 20
+
+// NativeRuntimeCaptureMaxDuration caps the durable deadline of one native park
+// or warm capture (ADR 20261022184951). vmmd clamps the caller's deadline to it;
+// the scheduler's per-RAM snapshot budget is far shorter.
+const NativeRuntimeCaptureMaxDuration = 10 * time.Minute
 
 // NativeSnapshotPublicationRecoveryBatchMax bounds each periodic scan of
 // already-authorized artifact retirement records.
@@ -2732,11 +2737,29 @@ type EventDeliveryLimits struct{ PerConsumer, PerApp, PerAccount int }
 
 // EventStorageLimits bounds retained customer event envelopes and immutable
 // recipient snapshots per account, including settled receipts. ADR-615.
+// SettledRetentionSeconds is how long a settled receipt is kept: it bounds
+// duplicate acceptance, event recovery and replay ranges, and each budget
+// covers the window at the plan's sustained rate (ADR-20261023215834).
 const EventStorageRetryAfterSeconds = 60
 
 type EventStorageLimits struct {
-	RetainedEvents int64 `json:"retained_events"`
-	RetainedBytes  int64 `json:"retained_bytes"`
+	RetainedEvents          int64 `json:"retained_events"`
+	RetainedBytes           int64 `json:"retained_bytes"`
+	SettledRetentionSeconds int64 `json:"settled_retention_seconds,omitempty"`
+}
+
+// SettledRetention is the plan's settled-receipt window.
+func (l EventStorageLimits) SettledRetention() time.Duration {
+	return time.Duration(l.SettledRetentionSeconds) * time.Second
+}
+
+// EventSettledRetentionMax is the longest settled-receipt window of any plan.
+func EventSettledRetentionMax() time.Duration {
+	var longest time.Duration
+	for _, p := range Plans {
+		longest = max(longest, MustLimitsFor(p).EventStorage.SettledRetention())
+	}
+	return longest
 }
 
 // ObjectStoragePlanLimits are a plan's object-storage entitlements (ADR-1320).
@@ -4490,7 +4513,7 @@ var planLimits = map[Plan]Limits{
 		// Hobby so a customer mid-upgrade sees the cap before the
 		// plan flips. Deadline defaults to 5m, retention to 1d.
 		EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
-		EventStorage:                      EventStorageLimits{4096, 8 << 20},
+		EventStorage:                      EventStorageLimits{4096, 8 << 20, 86400},
 		MaxAsyncInvocationsPerAccount:     100,
 		MaxAsyncInvocationDeadlineSeconds: 300,
 		MaxAsyncResultRetentionSeconds:    86400,
@@ -4897,7 +4920,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-134 PR-B: Hobby 1k / 1h / 7d. Matches the doubling
 		// from Free's 100/5m/1d.
 		EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
-		EventStorage:                      EventStorageLimits{16384, 64 << 20},
+		EventStorage:                      EventStorageLimits{131072, 256 << 20, 259200},
 		MaxAsyncInvocationsPerAccount:     1000,
 		MaxAsyncInvocationDeadlineSeconds: 3600,
 		MaxAsyncResultRetentionSeconds:    604800,
@@ -5338,7 +5361,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-134 PR-B: Pro 10k / 6h / 30d. Decadal bumps from
 		// Hobby track the Doubling pattern (1k->10k, 1h->6h, 7d->30d).
 		EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
-		EventStorage:                      EventStorageLimits{131072, 512 << 20},
+		EventStorage:                      EventStorageLimits{1048576, 2 << 30, 604800},
 		MaxAsyncInvocationsPerAccount:     10000,
 		MaxAsyncInvocationDeadlineSeconds: 21600,
 		MaxAsyncResultRetentionSeconds:    2592000,
@@ -5744,7 +5767,7 @@ var planLimits = map[Plan]Limits{
 		// pattern); 90d retention matches the audit-grade trace
 		// retention target.
 		EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
-		EventStorage:                      EventStorageLimits{1048576, 4 << 30},
+		EventStorage:                      EventStorageLimits{8388608, 16 << 30, 1209600},
 		MaxAsyncInvocationsPerAccount:     100000,
 		MaxAsyncInvocationDeadlineSeconds: 86400,
 		MaxAsyncResultRetentionSeconds:    7776000,
@@ -6750,12 +6773,20 @@ const (
 	// the budget are not inspected (outcome "sampled_out").
 	EdgeWAFWorkerMsPerAppPerSecond = 400
 	EdgeWAFWorkerMsPerAppBurst     = 2000
-	// EdgeWAFInlineConcurrency bounds in-path header/URI checks for warn
-	// and block rules running at once on a node (ADR-831 amendment 4).
-	// A check that finds no free slot, or whose app has used its inline
-	// budget, is skipped and the request passes (fail open), so the WAF
-	// can never take the gateway down; skips are counted.
-	EdgeWAFInlineConcurrency = 2
+	// EdgeWAFInlineMinSlots and EdgeWAFInlineMaxSlots bound how many
+	// in-path header/URI checks for warn and block rules run at once on a
+	// node (ADR-831 amendments 4 and 12); EdgeWAFInlineSlots picks the
+	// count from the gateway's processors. A check that finds every slot
+	// busy waits up to EdgeWAFInlineSlotWait for one. One still without a
+	// slot, or whose app has used its inline budget, is skipped and the
+	// request passes (fail open), so the WAF can never take the gateway
+	// down; skips are counted by reason.
+	EdgeWAFInlineMinSlots = 2
+	EdgeWAFInlineMaxSlots = 16
+	// EdgeWAFInlineSlotWait is about one check: long enough for a
+	// momentary pile-up to clear, short enough that sustained overload
+	// still fails open quickly.
+	EdgeWAFInlineSlotWait = time.Millisecond
 	// EdgeWAFInlineMsPerAppPerSecond and EdgeWAFInlineMsPerAppBurst bound
 	// one app's in-path checks in worker milliseconds. A check costs about
 	// 1 ms, so 500 ms/s is roughly 500 checked requests per second.
@@ -6830,6 +6861,16 @@ const (
 	// soonest-ending entry.
 	EdgePenaltyBoxMaxPerApp  = 10000
 	EdgePenaltyBoxMaxEntries = 200000
+
+	// --- ADR-20261021220456: attack mode ------------------------------
+
+	// EdgeAttackModeDefaultSeconds is how long attack mode stays on when
+	// the request names no duration; Min/Max bound the choice. Attack mode
+	// always ends on its own, so a forgotten switch cannot keep
+	// challenging every visitor for days. Every plan may use it.
+	EdgeAttackModeDefaultSeconds = 3600
+	MinEdgeAttackModeSeconds     = 900
+	MaxEdgeAttackModeSeconds     = 86400
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
@@ -7109,6 +7150,13 @@ const (
 	// timeout — otherwise the watchdog would fire mid-task and the
 	// graceful-drain contract would be a lie.
 	ParkTailDrainTimeoutSeconds = 5
+
+	// ParkForwardDrainTimeoutSeconds bounds how long vmmd's terminal park
+	// waits for forwards that reached the guest before the park began
+	// (ADR-20261024090000). New forwards wait for the park and are
+	// re-routed to a fresh wake; a forward still running at the deadline
+	// is cut by the pause, as before.
+	ParkForwardDrainTimeoutSeconds = 5
 
 	// OCI puller (spec §17 G1, ADR-021). Per-pull HTTP timeout for the
 	// registry client. cmd/imaged passes this to oci.WithTimeout; the
@@ -8066,6 +8114,14 @@ const (
 	// (docs/adr/1736-zero-downtime-daemon-restarts.md).
 	InternalHopReplayableBodyBytes = 64 << 10 // 64 KiB
 )
+
+// EdgeWAFInlineSlots is the number of in-path WAF check slots for a
+// gatewayd-internal with procs processors (GOMAXPROCS): one per processor
+// but one, so checks never take the last processor from proxying, within
+// EdgeWAFInlineMinSlots..EdgeWAFInlineMaxSlots (ADR-831 amendment 12).
+func EdgeWAFInlineSlots(procs int) int {
+	return min(max(procs-1, EdgeWAFInlineMinSlots), EdgeWAFInlineMaxSlots)
+}
 
 // EffectiveRetryMaxAttempts resolves a requested durable-invocation attempt
 // count against the account plan. Zero means "inherit" on input, never
@@ -13668,6 +13724,90 @@ const (
 	ChangeTimelineDefaultWindow = 24 * time.Hour
 	ChangeTimelineMaxWindow     = 7 * 24 * time.Hour
 	ChangeTimelineMaxEvents     = 200
+)
+
+// Customer log search bounds (ADR-20261018083536). Searches are clamped to
+// the plan's ledger retention (LogArchiveRetentionDaysMax). Text matching and
+// facets are bounded by window so one query never scans more than a day
+// (text) or a week (facets) of one app's ledger, and every query runs under
+// LogSearchStatementTimeout.
+const (
+	LogSearchDefaultWindow    = time.Hour
+	LogSearchTextMaxWindow    = 24 * time.Hour
+	LogSearchFacetMaxWindow   = 7 * 24 * time.Hour
+	LogSearchPageMax          = 200
+	LogSearchQueryMinChars    = 2
+	LogSearchQueryMaxChars    = 256
+	LogSearchFacetRoutes      = 10
+	LogSearchStatementTimeout = 5 * time.Second
+	// LogSavedSearchesPerApp caps an app's saved searches (slice D).
+	LogSavedSearchesPerApp = 25
+)
+
+// Alert log context (ADR-20261022172052): a firing app alert reads the log
+// ledger over its window (capped at the text search bound) and the deploys
+// of the hour before it.
+const (
+	AlertLogContextMaxWindow      = 24 * time.Hour
+	AlertLogContextDeployLookback = time.Hour
+	AlertLogContextDeploysMax     = 3
+)
+
+// Custom dashboards (ADR-20261022173833).
+const (
+	DashboardsPerAccount   = 20
+	DashboardWidgetsMax    = 24
+	DashboardDefaultWindow = "1h"
+)
+
+// DashboardWindows are the windows a dashboard widget may read.
+var DashboardWindows = []string{"5m", "1h", "6h", "24h", "7d"}
+
+// Unified incidents (ADR-20261022193512). A rule keeps its newest episodes
+// so a flapping rule cannot grow alert_episodes without bound. The list
+// shows everything open plus what resolved inside the window, capped; each
+// source reads one row past the cap. An app incident's detail carries the
+// app's changes from IncidentChangeLookback before it opened. An account's
+// notes on one incident, acknowledgement included, are capped (slice 2); the
+// body bound is also incident_notes_body_check.
+const (
+	AlertEpisodesPerRule     = 200
+	IncidentsDefaultWindow   = 7 * 24 * time.Hour
+	IncidentsMaxWindow       = 30 * 24 * time.Hour
+	IncidentsMaxEntries      = 100
+	IncidentChangeLookback   = time.Hour
+	IncidentFiresMax         = 20
+	IncidentNotesPerIncident = 100
+	IncidentNoteMaxChars     = 2000
+)
+
+// Runtime log projection into the ledger (ADR-20261018083536 slice B). vmmd
+// forwards warn and error lines within a per-app, per-node minute budget and
+// reports the overflow as one system line per app and minute; apid caps each
+// account across nodes. The queue and batch bound vmmd's memory and each RPC
+// (BatchMax × MessageMaxBytes stays far below gRPC's 4 MiB message limit).
+const (
+	RuntimeLogEventsPerAppMinute     = 120
+	RuntimeLogEventsPerAccountMinute = 600
+	RuntimeLogEventsQueueMax         = 2048
+	RuntimeLogEventsBatchMax         = 100
+	RuntimeLogEventMessageMaxBytes   = 4096
+	RuntimeLogEventsFlushInterval    = time.Second
+	RuntimeLogEventsForwardTimeout   = 5 * time.Second
+	RuntimeLogEventsUnavailablePause = time.Minute
+)
+
+// Build and deploy projection into the ledger (ADR-20261018083536 slice C).
+// apid tails deployment_audit and finished builds every interval, trailing
+// commit order by CommitLag so a slower transaction never lands behind the
+// cursor; a restarted apid starts StartupLookback back. Each tick reads at
+// most TickRowsMax rows per source.
+const (
+	LogProjectionInterval        = 10 * time.Second
+	LogProjectionCommitLag       = 10 * time.Second
+	LogProjectionStartupLookback = 15 * time.Minute
+	LogProjectionTickRowsMax     = 2000
+	LogProjectionBuildErrorBytes = 1024
 )
 
 // Anomaly alert bounds (ADR-744). A baseline rule compares a request metric

@@ -66,7 +66,9 @@ func eventOutboxStoreError(ctx context.Context) error {
 // Commit business writes and this row together; on any error roll back the whole
 // transaction. The caller owns commit and uncertain-commit reconciliation. The
 // stable key and original retry deadline are preserved by repeated saves.
-// retryWindow defaults to seven days and accepts one second..seven days.
+// retryWindow defaults to one day and accepts one second..seven days. Producer
+// keys deduplicate only while the plan keeps the settled receipt (Free 1 day,
+// Hobby 3, Pro 7, Scale 14), so a longer window can publish a retry twice.
 func SaveEventOutbox(ctx context.Context, tx *sql.Tx, accountID, appID, slug string, request AppPublishEventRequest, retryWindow time.Duration) (EventOutboxStatus, error) {
 	var zero EventOutboxStatus
 	if ctx == nil || tx == nil {
@@ -77,7 +79,7 @@ func SaveEventOutbox(ctx context.Context, tx *sql.Tx, accountID, appID, slug str
 		return zero, err
 	}
 	if retryWindow == 0 {
-		retryWindow = 7 * 24 * time.Hour
+		retryWindow = 24 * time.Hour
 	}
 	if retryWindow < time.Second || retryWindow > 7*24*time.Hour || retryWindow%time.Millisecond != 0 || !eventOutboxSlug(slug) || len(request.Data) > 1048576 || request.Validate() != nil || strings.TrimSpace(request.Type) == "" || len(request.Type) > 256 || len(request.SchemaVersion) > 64 || request.ExpectedAppID != "" && request.ExpectedAppID != app {
 		return zero, ErrInvalidEventConsumerRequest

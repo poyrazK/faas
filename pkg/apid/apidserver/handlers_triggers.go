@@ -220,6 +220,10 @@ func (s *server) createTrigger(w http.ResponseWriter, r *http.Request, acct stat
 		s.notFound(w, "no such app")
 		return
 	}
+	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	enabled := true
 	if req.Enabled != nil {
 		enabled = *req.Enabled
@@ -1209,6 +1213,10 @@ func (s *server) batchCreateTrigger(w http.ResponseWriter, r *http.Request, acct
 	app, err := s.store.AppByID(r.Context(), req.AppID)
 	if err != nil || app.AccountID != acct.ID {
 		s.notFound(w, "no such app")
+		return
+	}
+	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	limits, ok := api.LimitsFor(acct.Plan)

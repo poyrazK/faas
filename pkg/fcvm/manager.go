@@ -473,6 +473,11 @@ type Instance struct {
 	// freezing is non-nil while a Freeze decides and pauses, and closes once
 	// that freeze has settled either way. Guarded by Manager.mu.
 	freezing chan struct{}
+	// parking is non-nil while a terminal Park runs and closes once it ends;
+	// parkHeld counts the forwards waiting on it (park_hold.go). Both are
+	// guarded by Manager.mu.
+	parking  chan struct{}
+	parkHeld int64
 	// IsJob marks run-to-completion VMs whose expected Firecracker exit is
 	// settled by the lease-fenced job receipt, not the app liveness relay.
 	IsJob bool
@@ -5988,6 +5993,14 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	if m.isFrozen(inst) {
 		return SnapshotInfo{}, false, fmt.Errorf("park %s: %w", instance, ErrInstanceFrozen)
 	}
+	// Hold new forwards until teardown and let the ones already at the guest
+	// finish before the pause (park_hold.go). Released after cleanup, so a
+	// held forward finds the instance gone and is re-routed.
+	defer m.holdForwardsForPark(inst)()
+	if remaining := m.drainForwardsForPark(operationCtx, inst); remaining > 0 {
+		m.log.Warn("park: forwards still in flight at the drain deadline", "instance", instance,
+			"forwards", remaining, "drain_s", parkForwardDrainTimeout.Seconds())
+	}
 	m.mu.Lock()
 	flight.parking = true
 	m.mu.Unlock()
@@ -6000,6 +6013,7 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	m.cancelReadinessLoop(instance)
 	m.cancelFrameworkReadyLoop(instance)
 
+	spec.nativeRuntime = m.nativeRuntimeCapture(inst, spec)
 	info, snapshotErr := m.vmm.Snapshot(operationCtx, inst.Lease, spec)
 	info, snapshotErr = checkedNativeSnapshotResult(operationCtx, spec, info, snapshotErr)
 	if snapshotErr != nil {
@@ -6017,7 +6031,10 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	if err := errors.Join(snapshotErr, cleanupErr); err != nil {
 		return SnapshotInfo{}, cleanupErr == nil, fmt.Errorf("park %s: %w", instance, err)
 	}
-	m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
+	if spec.nativeRuntime == nil {
+		// The native producer already published the backing object exclusively.
+		m.writeSnapshotBacking(context.WithoutCancel(ctx), instance, spec.StorageKey)
+	}
 	m.log.Info("parked", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, true, nil
 }
@@ -6078,16 +6095,20 @@ func (m *Manager) WarmSnapshot(ctx context.Context, instance string, spec Snapsh
 	if m.functionResourcesEnabled(inst) {
 		info, err, retire = m.warmFunctionSnapshot(ctx, inst, spec, flight)
 	} else {
+		spec.nativeRuntime = m.nativeRuntimeCapture(inst, spec)
 		info, err = m.warmSnapshotInstance(ctx, inst, spec)
 	}
 	if err != nil {
 		return SnapshotInfo{}, err
 	}
-	store := m.storage
-	if spec.Storage != nil {
-		store = spec.Storage
+	if spec.nativeRuntime == nil {
+		// The native producer already published the backing object exclusively.
+		store := m.storage
+		if spec.Storage != nil {
+			store = spec.Storage
+		}
+		m.writeSnapshotBackingTo(ctx, store, instance, spec.StorageKey)
 	}
-	m.writeSnapshotBackingTo(ctx, store, instance, spec.StorageKey)
 	m.log.Info("warm_snapshot", "instance", instance, "mem_bytes", info.MemBytes)
 	return info, nil
 }
@@ -6103,6 +6124,16 @@ func (m *Manager) warmSnapshotInstance(ctx context.Context, inst *Instance, spec
 	defer func() { restartProbes(resumed) }()
 	info, err := m.vmm.SnapshotKeepAlive(ctx, inst.Lease, spec)
 	info, err = checkedNativeSnapshotResult(ctx, spec, info, err)
+	if spec.nativeRuntime != nil {
+		// The native producer owns its one-shot resume and never replays an
+		// uncertain effect (ADR 20261022184951). A failed capture is not
+		// resumed here; the engine destroys a VM whose warm capture failed.
+		if err != nil {
+			return SnapshotInfo{}, fmt.Errorf("warm_snapshot %s: snapshot: %w", instance, err)
+		}
+		resumed = true
+		return info, ctx.Err()
+	}
 	if err != nil {
 		// A failure before the early resume may leave the VM paused;
 		// a publication failure occurs after it is already running.

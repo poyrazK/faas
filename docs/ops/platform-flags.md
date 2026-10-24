@@ -92,6 +92,8 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | `edge_waf_blocking` | Warn and block modes of WAF edge rules (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
 | `edge_challenge` | Challenge edge rules, with difficulty escalation (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
 | `edge_penalty_box` | Edge rule penalties (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
+| `edge_attack_mode` | Attack mode, an app-wide managed challenge rule (ADR-20261021220456); switching it on also needs `edge_challenge` | apid, gatewayd-internal | none (off until an operator writes it) |
+| `edge_ai_crawlers` | The `ai_crawler`, `ai_crawler_purpose` and `verified_ai_crawler` conditions and the `control-ai-crawlers` recipe (ADR-20261022083601) | apid, gatewayd-internal | none (off until an operator writes it) |
 
 The environment and TOML values seed the flag at boot. Once an operator has
 written the flag, they are ignored, including after a restart.

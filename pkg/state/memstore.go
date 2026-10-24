@@ -826,8 +826,12 @@ type MemStore struct {
 	edgeRules                 map[string]EdgeRule
 	edgeRuleSetVersions       map[string][]EdgeRuleSetVersion // app id -> versions, oldest first (ADR-961)
 	edgeRuleLists             map[string]EdgeRuleList         // list id -> list (ADR-963)
+	edgeCrawlerRanges         map[string]EdgeCrawlerRanges    // crawler -> published ranges (ADR-20261022083601)
 	edgeRuleEvents            []EdgeRuleEvent                 // sampled events (ADR-964)
 	edgeRuleEventSeq          int64
+	edgePenaltyBoxes          []EdgePenaltyBox // shared penalty boxes (ADR-20261022105846 amendment 1)
+	edgePenaltyBoxSeq         int64
+	edgePenaltyBoxClock       func() time.Time
 	edgeRuleHitCounts         map[edgeRuleHitKey]int64 // ADR-960 hourly hit buckets
 	routePolicyReceipts       map[string]routePolicyStoredReceipt
 	savedRouteRequirements    map[string]api.SavedRouteRequirements
@@ -1047,6 +1051,15 @@ type MemStore struct {
 	deploymentLogs map[string][]LogEntry
 	deploymentSeq  map[string]int64
 	logEvents      []LogEvent
+	// logSavedSearches mirrors log_saved_searches by id (ADR-20261018083536).
+	logSavedSearches map[string]LogSavedSearch
+	// dashboards mirrors the dashboards table by id (ADR-20261022173833).
+	dashboards map[string]Dashboard
+	// alertEpisodes mirrors alert_episodes by id (ADR-20261022193512); the
+	// rule columns are read from alertRules.
+	alertEpisodes map[string]AlertEpisode
+	// incidentNotes mirrors incident_notes in insertion order.
+	incidentNotes []IncidentNote
 	// Captured boot inputs belong to the instance wake and physical node.
 	runtimeInstanceConfigProofs map[string]runtimeInstanceConfigProof
 	// deploymentSidecarLayers (issue #463 / ADR-069 / PR-B)
@@ -24190,9 +24203,10 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	if !ok || app.Status == AppDeleted {
 		return EdgeRule{}, ErrNotFound
 	}
+	// The attack-mode rule is outside every quota, as in pgstore.
 	appCount := 0
 	for _, r := range m.edgeRules {
-		if r.AppID == in.AppID {
+		if r.AppID == in.AppID && !r.AttackMode() {
 			appCount++
 		}
 	}
@@ -24208,7 +24222,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	if in.Kind == EdgeRuleKindGeo && limits.EdgeRulesGeoPerApp > 0 {
 		kindCount := 0
 		for _, r := range m.edgeRules {
-			if r.AppID == in.AppID && r.Kind == EdgeRuleKindGeo {
+			if r.AppID == in.AppID && r.Kind == EdgeRuleKindGeo && !r.AttackMode() {
 				kindCount++
 			}
 		}
@@ -24229,7 +24243,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	if in.Kind == EdgeRuleKindThrottle && limits.EdgeRulesThrottlePerApp > 0 {
 		kindCount := 0
 		for _, r := range m.edgeRules {
-			if r.AppID == in.AppID && r.Kind == EdgeRuleKindThrottle {
+			if r.AppID == in.AppID && r.Kind == EdgeRuleKindThrottle && !r.AttackMode() {
 				kindCount++
 			}
 		}
@@ -24256,7 +24270,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	if _, governed := edgeRuleKindQuota(in.Kind, limits); governed {
 		perApp := 0
 		for _, r := range m.edgeRules {
-			if r.AppID == in.AppID && r.Kind == in.Kind {
+			if r.AppID == in.AppID && r.Kind == in.Kind && !r.AttackMode() {
 				perApp++
 			}
 		}
@@ -25078,6 +25092,7 @@ func (m *MemStore) SetAlertRuleState(_ context.Context, ruleID string, to AlertS
 	r.State = to
 	r.UpdatedAt = at.UTC()
 	m.alertRules[ruleID] = r
+	m.recordAlertEpisodeLocked(r, at.UTC())
 	return true, nil
 }
 

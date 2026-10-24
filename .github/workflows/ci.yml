@@ -266,6 +266,8 @@ jobs:
         run: make coverage-checker-test
       - name: CVE monitor parser and issue-payload tests
         run: scripts/ci/cve-monitor_test.sh
+      - name: base-image refresh tests (ADR 20261024132405)
+        run: python3 scripts/ci/images_lock_refresh_test.py
 
       # S4 PR-4a advisory: a useful regression pin should fail on the
       # merge-base. This report is intentionally non-blocking while the

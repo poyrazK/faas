@@ -53,7 +53,8 @@ on the request path.
      Counting fails open when full.
    - A gateway restart releases its boxes, and a client spread across
      nodes is boxed on each node separately. Sharing boxes across the fleet
-     is a later step.
+     is a later step. (Superseded by amendment 1: boxes are shared and
+     survive restarts; counting stays per gateway.)
 
 6. **Enforcement.**
    - The box is checked before every other edge gate, so a boxed client
@@ -91,9 +92,48 @@ on the request path.
 
 ## Not in this step
 
-- Sharing boxes across gateway nodes.
+- Sharing boxes across gateway nodes (done in amendment 1).
 - Recording boxes as security events (ADR-964): it needs an online
   `outcome` CHECK widening.
 - A list of boxed clients and a way to release one without editing the
   rule.
 - Dry-run counts for log-mode rules.
+
+## Amendment 1 (2026-10-23): boxes shared between gateways
+
+A box held on one node only lets a client that reaches several nodes keep
+going on the others, and a restart released every box. Boxes are now
+shared through Postgres, as gateways already share edge-rule hit counts and
+events (ADR-960, ADR-964).
+
+1. **A log of boxes.** Each `gatewayd-internal` appends the boxes it makes
+   to `edge_penalty_boxes` (app, rule, client, end). It batches them every
+   250 ms off the request path, then notifies `edge_penalty_box` in the
+   same statement. A box holds on the gateway that made it at once and on
+   the others after the next batch.
+2. **Every gateway reads it.** Each gateway reads the boxes created since
+   its last read on every notification and every 15 s (against notify
+   loss), and at start loads every unexpired box, so a box survives a
+   restart. Each read goes back 30 s before where the last one caught up,
+   so a row whose insert committed late is not missed; holding a box again
+   keeps the later end, so the re-read is harmless. Reads page by
+   (`created_at`, `id`).
+3. **Counting stays per gateway.** Only boxes are shared: a client spread
+   over N gateways reaches a rule's `after` refusals separately on each,
+   up to N times as many in total before the first box. Sharing every
+   refusal would cost a write per refused request.
+4. **The same limits and releases.** A shared box is held within the same
+   per-app and per-gateway caps, and applies only where its rule still has
+   an enforced penalty and the `edge_penalty_box` flag
+   (ADR-20261023113721) includes the account. Removing the penalty,
+   disabling the rule or log mode still releases its clients everywhere.
+5. **Fail-safe.** A failed write is logged and not retried: the boxes
+   still hold on the gateway that made them. More than 10,000 boxes
+   waiting for one batch are held but not shared. A failed read is retried
+   at the next notification or tick.
+6. **Retention.** Rows are deleted an hour after their box ends, by every
+   gateway every 10 minutes. Only the client's address (IPv4) or /64
+   (IPv6) is stored, beside the app and rule.
+
+Not in this amendment: sharing pending counts, and listing or releasing
+boxed clients without editing the rule.

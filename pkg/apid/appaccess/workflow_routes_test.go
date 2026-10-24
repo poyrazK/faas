@@ -58,7 +58,8 @@ func TestWorkflowRoutesFollowOrganizationRoles(t *testing.T) {
 	}
 }
 
-func TestWorkflowRunRoutesRefuseRemovedCreatorAndUnknownRuns(t *testing.T) {
+// An unknown run is left to its handler, which answers the same 404.
+func TestWorkflowRunRoutesRefuseRemovedCreator(t *testing.T) {
 	store, _, actor, org, app := fixture(t, state.OrgRoleDeveloper)
 	run := workflowRunFixture(t, store, app)
 	creator, err := store.AccountByID(t.Context(), app.AccountID)
@@ -77,7 +78,6 @@ func TestWorkflowRunRoutesRefuseRemovedCreatorAndUnknownRuns(t *testing.T) {
 		runID string
 	}{
 		{"removed creator", creator, run.ID},
-		{"unknown run", actor, "00000000-0000-0000-0000-000000000000"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			r := request(tc.actor, nil, "POST /v1/workflows/runs/{id}/events", "/v1/workflows/runs/"+tc.runID+"/events", "", tc.runID)

@@ -13,7 +13,9 @@
 # and surfaces a failure on a real production box.
 
 - name: detect systemd availability
-  listen: daemon-reload log_archive
+  listen:
+    - daemon-reload log_archive
+    - activate log archive configuration
   ansible.builtin.stat:
     path: /run/systemd/system
   register: systemd_available

@@ -59,6 +59,8 @@ type JailerVMM struct {
 	nativeRecovery                *nativeProcessRecoveryRuntime // opt-in, configured before admission
 	nativeImageStagingRoot        string                        // opt-in persistent disk claims; configure before native recovery
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
+	nativeRuntimeCapture          bool                          // ADR 20261022184951: native park/warm capture; requires native recovery
+	nativeRuntimeSnapshots        *storage.LocalStorageBackend  // ADR 20261022184951 amendment 1: the tree only vmmd writes
 	chrootBase                    string                        // /srv/fc/jail
 	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
 	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
@@ -82,6 +84,9 @@ type JailerVMM struct {
 	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
 	// nil keeps drive0 on virtio-blk.
 	pmemBase *pmemBaseStore
+	// restoreReseedThread boots app VMs with the thread-mode reseed barrier
+	// client (ADR-20261024105607).
+	restoreReseedThread bool
 	// preBoot tracks which pre-boot files each instance's drive and each
 	// captured drive already hold, so an unchanged restore skips the loop
 	// mount (see preboot_skip.go).
@@ -777,22 +782,66 @@ func (v *JailerVMM) WithSlowSubscriberCallback(cb func()) *JailerVMM {
 	return v
 }
 
-// WithLogCommitCallback observes newly received app log lines. App identity
-// comes from the scheduler's correlation envelope captured before guest startup.
+// WithLogCommitCallback adds an observer of newly received app log lines;
+// observers run in the order they were added, so independent consumers (MCP
+// protocol metrics, ADR-746 line counts) never displace each other. App
+// identity comes from the scheduler's correlation envelope captured before
+// guest startup.
 func (v *JailerVMM) WithLogCommitCallback(cb func(appID string, line logbuf.Line)) *JailerVMM {
+	if cb == nil {
+		return v
+	}
 	v.mu.Lock()
+	if prev := v.committedLine; prev != nil {
+		next := cb
+		cb = func(appID string, line logbuf.Line) {
+			prev(appID, line)
+			next(appID, line)
+		}
+	}
 	v.committedLine = cb
 	v.mu.Unlock()
 	return v
 }
 
-// WithInstanceLogObserver installs bounded, non-blocking lifecycle and log callbacks.
-// Identities come from host context. Stop must be idempotent.
+// WithInstanceLogObserver adds bounded, non-blocking lifecycle and log
+// callbacks; observers run in the order they were added. Identities come from
+// host context. Stop must be idempotent.
 func (v *JailerVMM) WithInstanceLogObserver(cb func(string, string, string) (func(logbuf.Line), func())) *JailerVMM {
+	if cb == nil {
+		return v
+	}
 	v.mu.Lock()
+	if prev := v.instanceLogObserver; prev != nil {
+		cb = chainInstanceLogObservers(prev, cb)
+	}
 	v.instanceLogObserver = cb
 	v.mu.Unlock()
 	return v
+}
+
+func chainInstanceLogObservers(first, second func(string, string, string) (func(logbuf.Line), func())) func(string, string, string) (func(logbuf.Line), func()) {
+	return func(appID, deploymentID, instance string) (func(logbuf.Line), func()) {
+		observeFirst, stopFirst := first(appID, deploymentID, instance)
+		observeSecond, stopSecond := second(appID, deploymentID, instance)
+		observe := func(line logbuf.Line) {
+			if observeFirst != nil {
+				observeFirst(line)
+			}
+			if observeSecond != nil {
+				observeSecond(line)
+			}
+		}
+		stop := func() {
+			if stopFirst != nil {
+				stopFirst()
+			}
+			if stopSecond != nil {
+				stopSecond()
+			}
+		}
+		return observe, stop
+	}
 }
 
 // WithInstancePauseObserver reports successful host pause/resume transitions.
@@ -1231,6 +1280,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 
 	cfg = v.withBalloon(cfg)
 	cfg = v.withPmemBase(l, cfg)
+	cfg = v.withRestoreReseedMode(l, cfg)
 	cfg = withBlockRateLimit(l, cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
@@ -3533,6 +3583,13 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		// This legacy path creates memory/state files before drive export.
 		// Native capture requires its original output/publication session;
 		// refuse before hooks, pause, file creation or failed-capture deletion.
+		// Ordinary protocol-1 park and warm captures may instead run the
+		// native producer (ADR 20261022184951); migration and admitted
+		// protocol-2 captures keep this refusal.
+		if v.nativeRuntimeCaptureEnabled() && spec.nativeRuntime != nil && spec.admittedParent.Binding.ProtocolVersion == 0 &&
+			spec.admittedGrant == nil && spec.functionMigration == nil && spec.functionMigrationGrant == nil && spec.Storage == nil {
+			return v.captureNativeRuntimeSnapshot(ctx, l, spec)
+		}
 		return SnapshotInfo{}, fmt.Errorf("native recovery: snapshot publication producer is unavailable: %w", state.ErrConflict)
 	}
 	capture, err := v.beginNativeSnapshot(ctx, l, spec)
@@ -4607,8 +4664,8 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 	// guest, so the mount is also nodev,nosuid,noexec: a device node the
 	// build created (the host's NVMe, /dev/zero) must not become a live
 	// device when vmmd, as root, reads the export.
-	if out, mountErr := exec.Command("mount", "-o", "loop,ro,noload,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); mountErr != nil {
-		if roOut, roErr := exec.Command("mount", "-o", "loop,ro,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); roErr != nil {
+	if out, mountErr := exec.Command("mount", guestDiskMountArgs("ro,noload", drive1, mp)...).CombinedOutput(); mountErr != nil {
+		if roOut, roErr := exec.Command("mount", guestDiskMountArgs("ro", drive1, mp)...).CombinedOutput(); roErr != nil {
 			return fmt.Errorf("mount loop: ro,noload=%w (%s); ro=%w (%s)", mountErr, bytes.TrimSpace(out), roErr, bytes.TrimSpace(roOut))
 		}
 	}
@@ -7955,8 +8012,9 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 		return key, nil // nil storage: key IS the direct host path (builderd path-through mode)
 	}
 	// A wake reads what it fetched from the page cache; the node cache
-	// makes the fill durable and installs it after the wake has it.
-	rc, err := v.storage.Get(storage.WithDeferredCacheDurability(ctx), key)
+	// makes the fill durable and installs it after the wake has it. A native
+	// runtime capture is read from the tree only vmmd writes.
+	rc, err := v.snapshotStore(key).Get(storage.WithDeferredCacheDurability(ctx), key)
 	if err != nil {
 		return "", fmt.Errorf("vmm: storage get %q: %w", key, err)
 	}
@@ -8097,11 +8155,12 @@ func (v *JailerVMM) probeRestoreLocalPath(key string) (string, string, bool, err
 	if key == "" || filepath.IsAbs(key) || v.storage == nil {
 		return "", "", false, nil
 	}
-	if resolver, ok := v.storage.(storage.LocalPathSourceResolver); ok {
+	store := v.snapshotStore(key)
+	if resolver, ok := store.(storage.LocalPathSourceResolver); ok {
 		path, source, local, err := resolver.LocalPathWithSource(key)
 		return path, string(source), local, err
 	}
-	if resolver, ok := v.storage.(storage.LocalPathResolver); ok {
+	if resolver, ok := store.(storage.LocalPathResolver); ok {
 		path, local, err := resolver.LocalPath(key)
 		if err != nil || !local {
 			return path, "", local, err

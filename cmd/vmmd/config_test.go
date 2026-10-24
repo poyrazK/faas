@@ -1043,6 +1043,44 @@ func TestLoadConfig_FreePageReportingSwitch(t *testing.T) {
 	}
 }
 
+// adr: 20261024105607 — the thread-mode reseed barrier client is off by
+// default; TOML can enable it and FAAS_RESTORE_RESEED_THREAD overrides TOML
+// in either direction.
+func TestLoadConfig_RestoreReseedThreadSwitch(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RestoreReseedThread {
+		t.Fatal("the thread-mode reseed client must default to off")
+	}
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("restore_reseed_thread = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		env     string
+		enabled bool
+	}{{"", true}, {"1", true}, {"0", false}, {"false", false}} {
+		t.Run("env="+tc.env, func(t *testing.T) {
+			if tc.env != "" {
+				t.Setenv("FAAS_RESTORE_RESEED_THREAD", tc.env)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.RestoreReseedThread != tc.enabled {
+				t.Fatalf("RestoreReseedThread = %v, want %v", cfg.RestoreReseedThread, tc.enabled)
+			}
+		})
+	}
+	t.Setenv("FAAS_RESTORE_RESEED_THREAD", "sometimes")
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "FAAS_RESTORE_RESEED_THREAD") {
+		t.Fatalf("invalid FAAS_RESTORE_RESEED_THREAD error = %v, want named validation error", err)
+	}
+}
+
 // adr: 908 — per-account pmem bases are on by default ("auto"); vmmd.toml
 // or the environment can name a directory or turn them off, and the
 // environment overrides TOML.

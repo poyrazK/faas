@@ -46,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
@@ -1435,6 +1436,9 @@ func (r testEnv) Do(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]s
 func (r testEnv) DoAdmin(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
 	return r.doAdmin(p0, p1, p2, p3, p4)
 }
+func (r testEnv) DoOperator(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
+	return r.doOperator(p0, p1, p2, p3, p4)
+}
 func (r testEnv) DoAs(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string, p5 string) *httptest.ResponseRecorder {
 	return r.doAs(p0, p1, p2, p3, p4, p5)
 }
@@ -1637,4 +1641,12 @@ func VerifyCandidateObjectStorageCredentialsForTest(ctx context.Context, intent 
 func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.EnvironmentQualificationObjectStorageCheck, identities []*age.X25519Identity,
 	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
 	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
+}
+
+// PrepareGitOpsWorkloadCandidatesForTest runs the GitOps backend's candidate
+// preparation against s's runtime configuration (ADR 20261022140000).
+func (s *server) PrepareGitOpsWorkloadCandidatesForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore,
+	lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
+	b := &environmentGitOpsBackend{server: s, intent: intent}
+	return b.prepareWorkloadCandidates(ctx, lease, plan)
 }

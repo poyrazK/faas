@@ -105,7 +105,8 @@ def sync_detailed(
     """Inspect receipt pruning eligibility, retention holds and account storage.
 
      Read-only account snapshot under apps:read/admin scopes and MFA.
-    Receipt retention is 30 days after routing settles; unsettled receipts
+    Receipt retention is the plan's settled-receipt window after routing
+    settles (Free 1 day, Hobby 3, Pro 7, Scale 14); unsettled receipts
     have no pruning deadline. Reports current eligible, upcoming expiring
     and held receipts using the pruning worker's shared hold predicate.
     Running backfills pin their acceptance ranges; retained completed
@@ -159,7 +160,8 @@ def sync(
     """Inspect receipt pruning eligibility, retention holds and account storage.
 
      Read-only account snapshot under apps:read/admin scopes and MFA.
-    Receipt retention is 30 days after routing settles; unsettled receipts
+    Receipt retention is the plan's settled-receipt window after routing
+    settles (Free 1 day, Hobby 3, Pro 7, Scale 14); unsettled receipts
     have no pruning deadline. Reports current eligible, upcoming expiring
     and held receipts using the pruning worker's shared hold predicate.
     Running backfills pin their acceptance ranges; retained completed
@@ -208,7 +210,8 @@ async def asyncio_detailed(
     """Inspect receipt pruning eligibility, retention holds and account storage.
 
      Read-only account snapshot under apps:read/admin scopes and MFA.
-    Receipt retention is 30 days after routing settles; unsettled receipts
+    Receipt retention is the plan's settled-receipt window after routing
+    settles (Free 1 day, Hobby 3, Pro 7, Scale 14); unsettled receipts
     have no pruning deadline. Reports current eligible, upcoming expiring
     and held receipts using the pruning worker's shared hold predicate.
     Running backfills pin their acceptance ranges; retained completed
@@ -260,7 +263,8 @@ async def asyncio(
     """Inspect receipt pruning eligibility, retention holds and account storage.
 
      Read-only account snapshot under apps:read/admin scopes and MFA.
-    Receipt retention is 30 days after routing settles; unsettled receipts
+    Receipt retention is the plan's settled-receipt window after routing
+    settles (Free 1 day, Hobby 3, Pro 7, Scale 14); unsettled receipts
     have no pruning deadline. Reports current eligible, upcoming expiring
     and held receipts using the pruning worker's shared hold predicate.
     Running backfills pin their acceptance ranges; retained completed

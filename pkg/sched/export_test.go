@@ -23,6 +23,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -714,3 +715,20 @@ func NewWarmResumeFakeVMM() *warmResumeFakeVMM { return &warmResumeFakeVMM{fakeV
 func (r *Engine) DrainRequestBound() *time.Duration { return &r.drainRequestBound }
 
 func (r *warmResumeFakeVMM) ResumeCalls() *int { return &r.resumeCalls }
+
+// ADR-20261024140000: build secrets resolve with state.ResolveRuntimeSecretSources;
+// RuntimeMainSecretEntries is the wake's own serving delivery to compare it with.
+func RuntimeMainSecretEntries(snapshot state.RuntimeAppValuesSnapshot, intent state.AppEnvironmentSecretIntent) ([]fcvm.SealedEnvEntry, error) {
+	refs, err := state.DeploymentSecretReferences(snapshot.SecretGrants.OverrideEnvSecrets)
+	if err != nil {
+		return nil, err
+	}
+	delivery, err := sealedEnvDeliveryFromRowsWithIntent(snapshot.Secrets, snapshot.AccountID, snapshot.AppID, snapshot.Scope, refs, false, intent, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(refs) == 0 {
+		return withInheritedProjectSecrets(snapshot.InheritedSecrets, delivery.Entries), nil
+	}
+	return delivery.Entries, nil
+}
