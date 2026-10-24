@@ -125,6 +125,11 @@ func (e *Engine) freezeRefusal(ctx context.Context, ins state.Instance, early bo
 	if e.ledger.FrozenCountForNode(ins.NodeID) >= api.FrozenMaxPerNode {
 		return "node_full", nil
 	}
+	// A frozen VM stays resident; on a draining node the reaper's park
+	// moves the instance off instead (ADR-20261024085817).
+	if e.nodeLeavingByID(ins.NodeID) {
+		return parkReasonNodeDraining, nil
+	}
 	return "", nil
 }
 

@@ -89,6 +89,11 @@ type Config struct {
 	// Off by default; schedd decides which instances are eligible.
 	// FAAS_QUIET_PAUSE overrides TOML.
 	QuietPause bool `toml:"quiet_pause"`
+	// RequireSecretBinding refuses runtime secret envelopes that carry no
+	// account binding (ADR-20261023173624, contract step). Off by default;
+	// the seal_domains role turns it on once every stored envelope is
+	// bound. FAAS_RUNTIME_SECRET_BINDING_REQUIRED overrides TOML.
+	RequireSecretBinding bool `toml:"require_secret_binding"`
 	// PmemBaseDir enables per-account pmem bases (ADR-908): app VMs map a
 	// reflinked per-account copy of their base with DAX instead of reading
 	// it over virtio-blk. "auto" (the default) keeps each copy on the mount
@@ -773,6 +778,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_QUIET_PAUSE must be a boolean (got %q)", v)
 		}
 		c.QuietPause = enabled
+	}
+	if v := os.Getenv("FAAS_RUNTIME_SECRET_BINDING_REQUIRED"); v != "" {
+		required, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_BINDING_REQUIRED must be a boolean (got %q)", v)
+		}
+		c.RequireSecretBinding = required
 	}
 	if v, ok := os.LookupEnv("FAAS_PMEM_BASE_DIR"); ok {
 		c.PmemBaseDir = v

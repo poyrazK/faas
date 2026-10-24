@@ -101,13 +101,13 @@ jobs:
           echo "run=true" >> "$GITHUB_OUTPUT"
           echo "sha=${source_sha}" >> "$GITHUB_OUTPUT"
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: steps.source.outputs.run == 'true'
         with:
           ref: ${{ steps.source.outputs.sha }}
           fetch-depth: 1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         if: steps.source.outputs.run == 'true'
         with:
           go-version: ${{ env.GO_VERSION }}
@@ -140,13 +140,13 @@ jobs:
       - id: auth
         name: Authenticate to GCP with GitHub OIDC
         if: steps.source.outputs.run == 'true'
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
         if: steps.source.outputs.run == 'true'
 
       - name: Start compute node 2 when CI owns its lifecycle
@@ -212,7 +212,7 @@ jobs:
 
       - name: Refresh GCP authentication for cleanup
         if: always() && steps.source.outputs.run == 'true'
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -236,7 +236,7 @@ jobs:
 
       - name: Upload acceptance log
         if: always() && steps.source.outputs.run == 'true'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: native-builder-acceptance-${{ steps.source.outputs.sha }}
           path: ${{ runner.temp }}/native-builder-acceptance.log
@@ -254,12 +254,12 @@ jobs:
     # 60 min: the whole pkg/fcvm metal package now runs here, not one boot.
     timeout-minutes: 60
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
@@ -280,13 +280,13 @@ jobs:
           tar -C "$bundle" -czf "$RUNNER_TEMP/native-metal-bundle.tar.gz" source go.tar.gz
 
       - name: Authenticate to GCP with GitHub OIDC
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       - name: Run native fcvm package on compute node 2
         env:
@@ -307,7 +307,7 @@ jobs:
 
       - name: Refresh GCP authentication for cleanup
         if: always()
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -331,7 +331,7 @@ jobs:
 
       - name: Upload metal smoke log
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: native-metal-smoke-${{ github.sha }}
           path: ${{ runner.temp }}/native-metal-smoke.log
@@ -348,13 +348,13 @@ jobs:
     timeout-minutes: 10
     steps:
       - name: Authenticate to GCP with GitHub OIDC
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       - name: Stop compute node 2
         run: |

@@ -2403,38 +2403,79 @@ func (s *server) zeroTrafficRollbackCandidates(ctx context.Context, appID string
 	return out
 }
 
-// trafficSplitEarlierRelease reports whether more than one deployment of a
+// plainRollbackScope picks the environment a plain rollback restores. The
+// request names no environment, so it is production whenever production
+// serves, otherwise the app's only serving environment. A rollback chosen
+// across environments rolled back staging while the bad production release
+// kept serving. ok is false when several non-production environments serve
+// and production does not: the caller must name the target.
+func (s *server) plainRollbackScope(ctx context.Context, appID string) (string, bool) {
+	rows, err := s.store.LiveDeployments(ctx, appID)
+	if err != nil {
+		return state.DefaultEnvScope, true
+	}
+	production := state.ProductionRoutingDeployments(rows)
+	for _, d := range production {
+		if d.TrafficPercent > 0 {
+			return d.Scope, true
+		}
+	}
+	others := map[string]bool{}
+	for _, d := range rows {
+		if d.TrafficPercent > 0 && !state.IsProductionScope(d.Scope) {
+			others[d.Scope] = true
+		}
+	}
+	switch {
+	case len(others) == 1:
+		for scope := range others {
+			return scope, true
+		}
+	case len(others) > 1:
+		return "", false
+	case len(production) > 0:
+		return production[0].Scope, true
+	}
+	return state.DefaultEnvScope, true
+}
+
+func rollbackEnvironmentAmbiguousProblem(appSlug string) *api.Problem {
+	return api.NewProblem(http.StatusConflict, api.CodeNoRollbackTarget,
+		"More than one environment serves this app",
+		fmt.Sprintf("the app serves in several environments and none is production, so a plain rollback cannot tell which one to restore. Name the release: gregale rollback %s --to <deployment|vN>", appSlug)).
+		WithDocs("https://gregale.dev/docs/deploys#rollback")
+}
+
+// trafficSplitEarlierRelease reports whether more than one deployment of the
 // scope serves a share of traffic, and the oldest of them as a retypeable
 // ref. A plain rollback then has no single previous release: the latest
 // superseded row is one nobody serves, so `rollback` re-activated a release
 // the customer had rolled away from while the split stayed in place (H10-10).
-func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID string) (string, bool) {
-	deployments, err := s.store.ListDeploymentsForApp(ctx, appID, 50, 0)
+// A split in another environment does not block this one's rollback.
+func (s *server) trafficSplitEarlierRelease(ctx context.Context, appID, scope string) (string, bool) {
+	deployments, err := s.store.LiveDeployments(ctx, appID)
 	if err != nil {
 		return "", false
 	}
-	serving := map[string][]state.Deployment{}
+	var rows []state.Deployment
 	for _, d := range deployments {
-		if d.Status == state.DeployLive && d.TrafficPercent > 0 && d.TrafficPercent < 100 {
-			serving[d.Scope] = append(serving[d.Scope], d)
+		if d.Status == state.DeployLive && d.TrafficPercent > 0 && d.TrafficPercent < 100 && recoveryScope(d.Scope) == recoveryScope(scope) {
+			rows = append(rows, d)
 		}
 	}
-	for _, rows := range serving {
-		if len(rows) < 2 {
-			continue
-		}
-		earliest := rows[0]
-		for _, d := range rows[1:] {
-			if d.CreatedAt.Before(earliest.CreatedAt) {
-				earliest = d
-			}
-		}
-		if earliest.Revision > 0 {
-			return fmt.Sprintf("v%d", earliest.Revision), true
-		}
-		return earliest.ID, true
+	if len(rows) < 2 {
+		return "", false
 	}
-	return "", false
+	earliest := rows[0]
+	for _, d := range rows[1:] {
+		if d.CreatedAt.Before(earliest.CreatedAt) {
+			earliest = d
+		}
+	}
+	if earliest.Revision > 0 {
+		return fmt.Sprintf("v%d", earliest.Revision), true
+	}
+	return earliest.ID, true
 }
 
 func rollbackDuringTrafficSplitProblem(appSlug, earlier string) *api.Problem {
@@ -2497,10 +2538,14 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 			}
 		}
 	} else {
-		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID); split {
+		scope, ok := s.plainRollbackScope(ctx, app.ID)
+		if !ok {
+			return state.Deployment{}, nil, rollbackEnvironmentAmbiguousProblem(app.Slug)
+		}
+		if earlier, split := s.trafficSplitEarlierRelease(ctx, app.ID, scope); split {
 			return state.Deployment{}, nil, rollbackDuringTrafficSplitProblem(app.Slug, earlier)
 		}
-		target, err = s.store.LatestSupersededDeployment(ctx, app.ID)
+		target, err = s.store.LatestSupersededDeployment(ctx, app.ID, scope)
 		if err != nil {
 			return state.Deployment{}, nil, api.ErrNoRollbackTargetWithCandidates(app.Slug, s.zeroTrafficRollbackCandidates(ctx, app.ID))
 		}

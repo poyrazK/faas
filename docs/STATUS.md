@@ -1809,6 +1809,12 @@ remain open; production admission is disabled.
   (2026-10-22): a built service's `entrypoint` joins its start command, and
   `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
   deployment and applied to the built image. Unit tests pass; no native run.
+- **Dockerfile HEALTHCHECK enforced on source builds.**
+  [ADR-20261024100000](adr/20261024100000-dockerfile-healthcheck-enforced.md)
+  (2026-10-24): imaged records the readiness verdict for every source build
+  whose image declares a command HEALTHCHECK, not only Compose overrides, and
+  the scheduler enforces it as for a pushed image. Existing deployments keep
+  their readiness until redeployed. Unit and store tests pass; no native run.
 - **Compose profiles.**
   [ADR-20261022190000](adr/20261022190000-compose-profiles-from-dotenv.md)
   (2026-10-22): `COMPOSE_PROFILES` in the source's `.env` activates Compose

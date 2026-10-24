@@ -2,6 +2,12 @@ package state
 
 import "context"
 
+// IsProductionScope reports whether a deployment scope is production: the
+// environment-graph "production" scope or the legacy default scope.
+func IsProductionScope(scope string) bool {
+	return scope == "" || scope == DefaultEnvScope || scope == "production"
+}
+
 // ProductionRoutingDeployments selects a single production routing lane.
 // Legacy default traffic remains active while named production is dark.
 // The result preserves the input order and includes zero-weight siblings for

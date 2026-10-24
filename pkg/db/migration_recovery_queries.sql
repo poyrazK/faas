@@ -15,17 +15,26 @@ SELECT coalesce(to_jsonb(pg_control_system())->>'system_identifier','')::text AS
 -- The migration role owns every object. The only other grants admitted are
 -- the faas_runtime group's (ADR-20261023104734): row DML on tables, USAGE on
 -- sequences and the schema, none grantable, so no other role can alter an
--- object or pass a privilege on.
+-- object or pass a privilege on. Objects an extension created are its own:
+-- a trusted extension such as citext installs them owned by the bootstrap
+-- superuser even when the migration role ran CREATE EXTENSION, and array
+-- types follow their element type.
 SELECT NOT EXISTS (SELECT 1 FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
- WHERE n.nspname=current_schema() AND (c.relowner<>to_regrole(quote_ident(current_user))::oid
+ WHERE n.nspname=current_schema()
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend x WHERE x.classid='pg_catalog.pg_class'::regclass AND x.objid=c.oid AND x.deptype='e')
+  AND (c.relowner<>to_regrole(quote_ident(current_user))::oid
   OR EXISTS (SELECT 1 FROM aclexplode(c.relacl) a WHERE a.grantee<>c.relowner
    AND (a.grantee IS DISTINCT FROM to_regrole('faas_runtime')::oid OR a.is_grantable
     OR a.privilege_type<>ALL(CASE WHEN c.relkind='S' THEN ARRAY['USAGE','SELECT','UPDATE']
      ELSE ARRAY['SELECT','INSERT','UPDATE','DELETE'] END)))))
  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_proc p JOIN pg_catalog.pg_namespace n ON n.oid=p.pronamespace
- WHERE n.nspname=current_schema() AND (p.proowner<>to_regrole(quote_ident(current_user))::oid OR p.proacl IS NOT NULL))
+ WHERE n.nspname=current_schema()
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend x WHERE x.classid='pg_catalog.pg_proc'::regclass AND x.objid=p.oid AND x.deptype='e')
+  AND (p.proowner<>to_regrole(quote_ident(current_user))::oid OR p.proacl IS NOT NULL))
  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_type t JOIN pg_catalog.pg_namespace n ON n.oid=t.typnamespace
- WHERE n.nspname=current_schema() AND (t.typowner<>to_regrole(quote_ident(current_user))::oid OR t.typacl IS NOT NULL))
+ WHERE n.nspname=current_schema()
+  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_depend x WHERE x.classid='pg_catalog.pg_type'::regclass AND x.objid IN (t.oid,t.typelem) AND x.deptype='e')
+  AND (t.typowner<>to_regrole(quote_ident(current_user))::oid OR t.typacl IS NOT NULL))
  AND NOT EXISTS (SELECT 1 FROM pg_catalog.pg_default_acl d LEFT JOIN pg_catalog.pg_namespace n ON n.oid=d.defaclnamespace
  WHERE (d.defaclnamespace=0 OR n.nspname=current_schema()) AND (d.defaclnamespace=0
   OR d.defaclrole<>to_regrole(quote_ident(current_user))::oid OR d.defaclobjtype NOT IN ('r','S')

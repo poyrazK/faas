@@ -28,6 +28,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"net/netip"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -395,6 +397,44 @@ func TestHandlePullRequest_PreviewInheritsInternalVisibility(t *testing.T) {
 	}
 	if stored.Visibility != api.AppVisibilityInternal {
 		t.Fatalf("preview visibility = %q, want internal", stored.Visibility)
+	}
+}
+
+// A PR preview answers on a guessable pr-<n>-<slug> host and runs the PR
+// head. GitHub previews dropped the parent's access and egress gates, so a
+// password-protected, IP-allowlisted or egress-restricted app got an open
+// preview.
+func TestHandlePullRequest_PreviewKeepsParentAccessGates(t *testing.T) {
+	ctx := context.Background()
+	rig := newPreviewRig(t)
+	ingress := []netip.Prefix{netip.MustParsePrefix("198.51.100.0/24")}
+	egress := []netip.Prefix{netip.MustParsePrefix("203.0.113.0/24")}
+	signed, authn, consumer := true, true, string(state.ConsumerAuthModeRequired)
+	if _, err := rig.mem.UpdateApp(ctx, rig.parentID, state.UpdateAppParams{
+		PublicAuth:            &state.AppPublicAuthUpdate{Mode: state.AppPublicAuthModeBasic, Sealed: []byte("sealed-basic")},
+		SetPublicAuth:         true,
+		PublicAuthIPAllowlist: &ingress, SetPublicAuthIPAllowlist: true,
+		EgressAllowlist: &egress, SetEgressAllowlist: true,
+		RequireSigned: &signed, SetRequireSigned: true, RequireAuthn: &authn, SetRequireAuthn: true,
+		ConsumerAuthMode: &consumer, SetConsumerAuthMode: true,
+	}); err != nil {
+		t.Fatalf("gate parent: %v", err)
+	}
+	svc, _ := newPreviewService(t, rig)
+	result, err := svc.handlePullRequest(ctx, pullRequestOpenedBody(42, "deadbeef00000000000000000000000000000000"))
+	if err != nil || len(result.Added) != 1 {
+		t.Fatalf("handlePullRequest = %+v, %v", result, err)
+	}
+	stored, err := rig.mem.AppByID(ctx, result.Added[0].ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.PublicAuthMode != state.AppPublicAuthModeBasic || string(stored.PublicAuthBasicSealed) != "sealed-basic" ||
+		!slices.Equal(stored.PublicAuthIPAllowlist, ingress) || !slices.Equal(stored.EgressAllowlist, egress) ||
+		!stored.RequireSigned || !stored.RequireAuthn || stored.ConsumerAuthMode != state.ConsumerAuthModeRequired {
+		t.Fatalf("preview gates = mode %q basic %q ingress %v egress %v signed %v authn %v consumer %q",
+			stored.PublicAuthMode, stored.PublicAuthBasicSealed, stored.PublicAuthIPAllowlist, stored.EgressAllowlist,
+			stored.RequireSigned, stored.RequireAuthn, stored.ConsumerAuthMode)
 	}
 }
 

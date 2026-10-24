@@ -49,11 +49,17 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO faas_runt
 GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO faas_runtime;
 -- The migration ledger is the owner's: a daemon that could write it could mark
 -- a migration applied without running it. Daemons only read it (db.MigrateUp).
--- Absent until the first migration creates it.
+-- The audit log is append-only for daemons: no code path updates or deletes
+-- its rows (it outlives accounts, SOC 2 P5.1), so a compromised daemon cannot
+-- rewrite or erase the record of what it did. Both are absent until the
+-- migrations that create them run.
 DO $$
 BEGIN
 	IF to_regclass('public.goose_db_version') IS NOT NULL THEN
 		REVOKE INSERT, UPDATE, DELETE ON public.goose_db_version FROM faas_runtime;
+	END IF;
+	IF to_regclass('public.audit_log') IS NOT NULL THEN
+		REVOKE UPDATE, DELETE ON public.audit_log FROM faas_runtime;
 	END IF;
 END
 $$;
