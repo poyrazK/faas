@@ -1,0 +1,112 @@
+---
+# Grype vulnerability database refresh. main.yml imports this file; the
+# node_join.yml preparation phase includes it on its own so a parallel
+# prepare can refresh the database without converging the whole role
+# (ADR-1360).
+# Grype 0.116 ships a database seed but validates its age on every scan. Keep
+# the refreshed database outside a daemon home directory: imaged runs with
+# ProtectHome and must be able to refresh the same DB after bootstrap.
+- name: supply_chain_scanners — create shared Grype database cache
+  ansible.builtin.file:
+    path: "{{ grype_db_cache_dir }}"
+    state: directory
+    owner: root
+    group: faas
+    mode: "0770"
+  when: arch == "amd64"
+
+- name: supply_chain_scanners — inspect the installed Grype database
+  ansible.builtin.command:
+    argv:
+      - "{{ install_root }}/bin/grype"
+      - db
+      - status
+      - --output
+      - json
+  environment:
+    GRYPE_DB_CACHE_DIR: "{{ grype_db_cache_dir }}"
+  register: faas_grype_db_status
+  changed_when: false
+  failed_when: false
+  when: arch == "amd64"
+
+- name: supply_chain_scanners — record Grype database validity
+  ansible.builtin.set_fact:
+    faas_grype_db_valid: >-
+      {{
+        faas_grype_db_status.rc == 0 and
+        ((faas_grype_db_status.stdout | from_json).valid | default(false) | bool)
+      }}
+  when: arch == "amd64"
+
+- name: supply_chain_scanners — check for a newer Grype database
+  ansible.builtin.command:
+    argv:
+      - "{{ install_root }}/bin/grype"
+      - db
+      - check
+      - --output
+      - json
+  environment:
+    GRYPE_DB_CACHE_DIR: "{{ grype_db_cache_dir }}"
+  register: faas_grype_db_check
+  changed_when: false
+  failed_when: false
+  when:
+    - arch == "amd64"
+    - faas_grype_db_valid | bool
+
+- name: supply_chain_scanners — update Grype vulnerability database when required
+  ansible.builtin.command:
+    argv:
+      - "{{ install_root }}/bin/grype"
+      - db
+      - update
+  environment:
+    GRYPE_DB_CACHE_DIR: "{{ grype_db_cache_dir }}"
+  changed_when: false
+  when:
+    - arch == "amd64"
+    - >-
+      not (faas_grype_db_valid | bool) or
+      (faas_grype_db_check.rc | default(1) | int) != 0 or
+      (((faas_grype_db_check.stdout | default('{}', true) | from_json).updateAvailable |
+      default(false)) | bool)
+
+# The database updater initially runs as root, and older bootstrap images left
+# the version shard root-only. imaged runs as faas-imaged:faas and must be able
+# to traverse/update every existing shard after an upgrade, not just the cache
+# root created above.
+- name: supply_chain_scanners — find Grype database directories
+  ansible.builtin.find:
+    paths: "{{ grype_db_cache_dir }}"
+    file_type: directory
+    recurse: true
+  register: grype_db_directories
+  when: arch == "amd64"
+
+- name: supply_chain_scanners — grant faas group traversal to Grype directories
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: root
+    group: faas
+    mode: "0770"
+  loop: "{{ grype_db_directories.files | default([]) }}"
+  when: arch == "amd64"
+
+- name: supply_chain_scanners — find Grype database files
+  ansible.builtin.find:
+    paths: "{{ grype_db_cache_dir }}"
+    file_type: file
+    recurse: true
+  register: grype_db_files
+  when: arch == "amd64"
+
+- name: supply_chain_scanners — grant faas group read/write access to Grype files
+  ansible.builtin.file:
+    path: "{{ item.path }}"
+    owner: root
+    group: faas
+    mode: "0660"
+  loop: "{{ grype_db_files.files | default([]) }}"
+  when: arch == "amd64"

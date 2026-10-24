@@ -1,0 +1,22 @@
+---
+# Read-only. Reports the managed-host bootstrap contract a compute node last
+# converged to, so `gregalectl deploy join-node --activate-prepared` can decide
+# whether activation must converge roles before the drain (ADR-1360).
+- name: Report the recorded managed-host bootstrap contract
+  hosts: compute_nodes
+  gather_facts: false
+  become: true
+  tasks:
+    - name: Read the recorded managed-host bootstrap contract
+      ansible.builtin.slurp:
+        src: /var/lib/faas/bootstrap/bootstrap-contract.sha256
+      register: faas_join_recorded_bootstrap_contract
+      failed_when: false
+
+    - name: Write the recorded contract for gregalectl
+      ansible.builtin.copy:
+        dest: "{{ faas_join_contract_probe_out }}"
+        content: "{{ faas_join_recorded_bootstrap_contract.content | default('') | b64decode | trim }}\n"
+        mode: "0600"
+      delegate_to: localhost
+      become: false

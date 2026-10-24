@@ -38,7 +38,11 @@
   pre_tasks:
     - name: End managed-host bootstrap discovery on the release-only fast path
       ansible.builtin.meta: end_host
-      when: faas_join_bootstrap_contract_current | default(false) | bool
+      # A node_join.yml prepare runs in parallel across serving nodes, so it
+      # never converges roles; activation does that before the drain (ADR-1360).
+      when: >-
+        (faas_join_bootstrap_contract_current | default(false) | bool) or
+        (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Gather facts for hosts requiring bootstrap convergence
       ansible.builtin.setup:
@@ -71,7 +75,11 @@
   pre_tasks:
     - name: End managed control-plane bootstrap on the release-only fast path
       ansible.builtin.meta: end_host
-      when: faas_join_bootstrap_contract_current | default(false) | bool
+      # A node_join.yml prepare runs in parallel across serving nodes, so it
+      # never converges roles; activation does that before the drain (ADR-1360).
+      when: >-
+        (faas_join_bootstrap_contract_current | default(false) | bool) or
+        (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Gather facts for control-plane bootstrap convergence
       ansible.builtin.setup:
@@ -193,7 +201,11 @@
   pre_tasks:
     - name: End managed compute bootstrap on the release-only fast path
       ansible.builtin.meta: end_host
-      when: faas_join_bootstrap_contract_current | default(false) | bool
+      # A node_join.yml prepare runs in parallel across serving nodes, so it
+      # never converges roles; activation does that before the drain (ADR-1360).
+      when: >-
+        (faas_join_bootstrap_contract_current | default(false) | bool) or
+        (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Gather facts for compute bootstrap convergence
       ansible.builtin.setup:
