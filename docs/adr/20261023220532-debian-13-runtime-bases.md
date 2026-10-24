@@ -136,6 +136,27 @@ move together.
 5. The next nightly cve-check shows zero criticals on all four images; close
    the Debian 12 part of #5206.
 
+### Rollout record
+
+- **Step 2 n2 boot (2026-10-24):** `TestMetalRestoreUserspaceRNGDiffers`
+  passed 4/4 on the published `runner-node24@c1fc7466` and
+  `runner-python312@aa3ae08a`. Both booted in Firecracker with guest-init on
+  Debian 13 (glibc 2.41), and two restores of one snapshot served different
+  userspace RNG values.
+- **Step 3 audit (2026-10-24/25):** production had 114 live deployments on
+  `base-minimal` (96 source, 12 Dockerfile, 6 image), all in two
+  platform-owned accounts; 78 belong to active or evicted-cold apps and 36 to
+  deleted apps. On `gregale-compute-1`, each layer was fetched from the
+  artifact bucket, mounted read-only (`ro,noload`), and every ELF binary's
+  `DT_NEEDED` list was compared with the 13 removed libraries, ignoring any
+  library the layer ships itself. All 78 active layers were scanned; none
+  needs a removed library. Of the deleted apps' layers, 21 were scanned
+  clean and 3 no longer exist in any store.
+- **Step 3 image:** on Debian 13, `base-minimal` declares
+  `libc6 2.41-12+deb13u4` and its scan shows no criticals. Its loader link
+  `/lib64/ld-linux-x86-64.so.2` is relative in Debian 13, so it resolves to
+  the copied `/lib/x86_64-linux-gnu` loader.
+
 ## Consequences
 
 - Closes the Debian 12 criticals and the `base-minimal` scanner blind spot.
