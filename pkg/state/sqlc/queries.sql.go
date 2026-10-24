@@ -92322,7 +92322,6 @@ SET inferred_profile = ($1::jsonb - 'image_command' - 'image_healthcheck') ||
          THEN jsonb_build_object('image_healthcheck', inferred_profile -> 'image_healthcheck')
          ELSE '{}'::jsonb END
 WHERE id = $2::uuid
-  AND (kind = 'image' OR inferred_profile ? 'image_healthcheck')
   AND status IN ('pending', 'building', 'imaging')
 `
 
@@ -92331,6 +92330,9 @@ type SetDeploymentRuntimeProfileParams struct {
 	DeploymentID pgtype.UUID
 }
 
+// imaged records a prebuilt image's runtime profile, and the HEALTHCHECK
+// verdict of any source build (ADR-20261024100000), while the deployment is
+// still being assembled. The accepted command and healthcheck are kept.
 func (q *Queries) SetDeploymentRuntimeProfile(ctx context.Context, db DBTX, arg SetDeploymentRuntimeProfileParams) (int64, error) {
 	result, err := db.Exec(ctx, setDeploymentRuntimeProfile, arg.Profile, arg.DeploymentID)
 	if err != nil {
