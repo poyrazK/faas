@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261024120000: Management MCP advisory plan applicability](20261024120000-management-mcp-plan-applicability.md)
 - [ADR-20261023184309: Management MCP saved-plan review](20261023184309-management-mcp-saved-plan-review.md)
 - [ADR-20261023130958: Management MCP route-budget action history](20261023130958-management-mcp-route-budget-action-history.md)
 - [ADR-20261022192200: Management MCP environment promotion and rollback history](20261022192200-management-mcp-environment-action-history.md)

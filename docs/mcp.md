@@ -1560,7 +1560,7 @@ service abort, route-budget and regression-triage plans. Use `gregale_get_action
 with the same selector and an exact `plan_id` to inspect its apply phase and, for request deploys,
 separate promotion phase.
 These tools are read-only and remain available when writes are disabled.
-The catalog contains 55 read/planning tools, or 64 with writes enabled.
+The catalog contains 57 read/planning tools, or 66 with writes enabled.
 
 Use `gregale_get_plan` with the same app/project/environment selector and
 `plan_id` to reopen the original unexpired proposal. Environment promotion and
@@ -1586,6 +1586,26 @@ regression plan reviews additionally require diagnostic consent. Expired plans
 return no private proposal. Reads never renew expiry or approval, refresh the
 proposal, persist state or perform a write. See
 [ADR-20261023184309](adr/20261023184309-management-mcp-saved-plan-review.md).
+
+Use `gregale_check_plan` or `gregale_check_environment_plan` with the same
+selectors as saved review to observe the original apply phase. Subsequent request
+traffic promotion retains its separate guards. Results
+include the original `expires_at`, `observed_at`, `baseline_check`, `blockers`
+and advisory `apply_eligibility`. `no_observed_blockers` is not a guarantee:
+native transaction gates still decide. Configuration/release, budget revisions
+and regression observation changes can return `blocked`. Failed native reads
+return `unknown`; required environment approval returns `approval_not_checked`
+and is never started, polled or granted. Rollback coverage is explicitly
+`partial_native_rollback_guard_required`.
+
+After an attempted operation, checks preserve `retry_original_plan` and skip
+baseline comparisons: the original request may already have committed. A saved
+receipt returns `receipt_recorded`, with `native_completion: not_observed`.
+Current write consent and enablement still apply; checks may report blockers on
+an original retry. Expired/inaccessible plans return structured tool errors.
+Checking never changes the saved proposal, expiry, replay payload or durable
+state, resolves a source branch, probes workloads or executes a mutation. See
+[ADR-20261024120000](adr/20261024120000-management-mcp-plan-applicability.md).
 
 For a lost apply response:
 

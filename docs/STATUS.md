@@ -7,6 +7,23 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP plan applicability — 2026-10-24 (branch, not released)
+
+Two read-only tools observe saved app/environment plan applicability under
+current consent. They compare first-attempt baselines, preserve original retries
+for ambiguous attempts and report approval/native uncertainty without renewing
+plans or starting approvals. Rollback coverage explicitly retains native guards.
+Catalog: 57 read/planning tools, 66 with writes enabled. Full MCP race tests and
+pinned real Codex 0.159.0-alpha.3 acceptance pass across ordinary and diagnostic
+denied/approved profiles, including original-plan checks after restart and OAuth
+refresh. Read-only fixtures made zero model requests and native writes. Targeted
+race tests cover changed configuration/policy/observations, unknown native reads,
+consent/expiry/storage guards and original retries after a committed lost response.
+CLI contracts, lint (both affected packages), fake-store/seal-domain guards and
+spec/documentation checks pass without generated drift. Native/provider deployment
+qualification remains separate.
+See [ADR-20261024120000](adr/20261024120000-management-mcp-plan-applicability.md).
+
 ## Management MCP saved-plan review — 2026-10-23 (branch, not released)
 
 Read-only app/environment plan retrieval reopens original proposed changes,

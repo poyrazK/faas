@@ -3118,6 +3118,22 @@ no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
 
 
+## Management MCP plan applicability (ADR-20261024120000)
+
+Read-only `gregale_check_plan` and `gregale_check_environment_plan` observe
+original unexpired plan applicability under current target/diagnostic consent.
+They report advisory coverage, blockers or unknown native state without creating
+plans, modifying expiry/state, resolving source refs, executing mutations or
+starting/polling approvals. First attempts compare pinned release/configuration,
+budget revisions or regression observations; environment rollback coverage remains
+partial and native transaction guards remain authoritative. Ambiguous attempts
+skip baseline comparisons and preserve the original request for guarded retry;
+receipts do not prove native completion. Current write consent/enablement and
+original expiry still apply. Final saved-review guards withhold output on changed
+identity, read consent, storage, plan presence or expiry. Catalog: 57 read/planning
+tools, 66 with writes enabled. See
+[ADR-20261024120000](adr/20261024120000-management-mcp-plan-applicability.md).
+
 ## Management MCP saved-plan review (ADR-20261023184309)
 
 Read-only app and environment plan retrieval reopens an original unexpired
