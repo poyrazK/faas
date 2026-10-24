@@ -82,11 +82,15 @@ func testDeploymentWatchdog(t *testing.T, store state.ContractTestStore) {
 			stalledRow = d
 		}
 	}
-	if err := store.MarkDeploymentLive(ctx, stalled.ID); err != nil {
+	// The deployment finishes on its own between the listing and the failure.
+	if _, err := store.SetDeploymentFailed(ctx, stalled.ID, "build_failed", "its own failure"); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok, err := s.FailStuckDeployment(ctx, stalledRow, future, future, api.CodeDeploymentStalled, "stalled"); err != nil || ok {
-		t.Fatalf("failed a deployment that went live: ok=%v err=%v", ok, err)
+	if moved, ok, err := s.FailStuckDeployment(ctx, stalledRow, future, future, api.CodeDeploymentStalled, "stalled"); err != nil || ok {
+		t.Fatalf("watchdog overwrote a deployment that had moved on: %+v ok=%v err=%v", moved, ok, err)
+	}
+	if kept, err := store.DeploymentByID(ctx, stalled.ID); err != nil || kept.ErrorCode != "build_failed" {
+		t.Fatalf("moved-on deployment = code %q (err=%v), want its own failure kept", kept.ErrorCode, err)
 	}
 
 	var queuedRow state.StuckDeployment
