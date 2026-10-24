@@ -3421,6 +3421,11 @@ type Querier interface {
 	ListScopedObservedRoutes(ctx context.Context, db DBTX, arg ListScopedObservedRoutesParams) ([]string, error)
 	ListScopedPendingRestarts(ctx context.Context, db DBTX, arg ListScopedPendingRestartsParams) ([]ListScopedPendingRestartsRow, error)
 	ListScopedPendingRollbacks(ctx context.Context, db DBTX, arg ListScopedPendingRollbacksParams) ([][]byte, error)
+	// Every rekey document with the account that owns it (ADR-20261023173624):
+	// the id prefix, or the deployment's app or the promotion for kinds whose id
+	// carries no account. The binding is sealed inside each envelope, so the
+	// binding pass reads every document; it is an operator command, not a hot path.
+	ListSecretBindingDocuments(ctx context.Context, db DBTX, arg ListSecretBindingDocumentsParams) ([]ListSecretBindingDocumentsRow, error)
 	ListSecretRekeyDocuments(ctx context.Context, db DBTX, arg ListSecretRekeyDocumentsParams) ([]ListSecretRekeyDocumentsRow, error)
 	// Durable lifecycle history is independent of request-telemetry retention.
 	// Payloads and arbitrary headers are not fetched; the canonical trace header
