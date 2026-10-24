@@ -11245,6 +11245,12 @@ const AttestationWarmRetryBackoff = 5 * time.Minute
 // caller that gives up, so the next wake finds the layer verified.
 const LayerVerifyTimeout = 2 * time.Minute
 
+// LayerAttestationRecordMaxAgeHours is how long schedd trusts a remembered
+// layer verification across restarts (ADR-038 amendment, 2026-10-24). A
+// record only stands for the exact node-cache file that was hashed; past
+// this age the layer is read and hashed again.
+const LayerAttestationRecordMaxAgeHours = 168
+
 // NodeSizing is the per-host RAM/vCPU shape derived from the machine a
 // compute node actually runs on, rather than the single-box constants.
 type NodeSizing struct {

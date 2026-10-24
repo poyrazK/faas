@@ -463,6 +463,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_ISSUE_SLACK_SIGNING_SECRET` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack request signing secret; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
 | `FAAS_JOB` | guest | `guest` |  |  | `` |  |
 | `FAAS_JOBS_DISPATCH` | schedd | `unit` |  |  | `` | public-beta unit enables queued job dispatch through the vmmd JobColdBoot RPC |
+| `FAAS_LAYER_ATTESTATION_RECORDS` | schedd | `default` |  |  | `` | optional path of the file where schedd remembers verified layers across restarts (ADR-038 amendment); default /var/lib/faas/schedd/layer-attestations.json |
 | `FAAS_LEADER_REDIRECT_TLS_CA` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_LEADER_REDIRECT_TLS_CERT` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_LEADER_REDIRECT_TLS_KEY` | gatewayd-internal | `default` |  |  | `` |  |

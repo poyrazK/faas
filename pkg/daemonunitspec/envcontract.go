@@ -542,6 +542,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_ISSUE_SLACK_SIGNING_SECRET", Owners: []string{"apid", "shared"}, Source: EnvSourceSecretsEnv, Note: "optional managed Issues Slack request signing secret; delivered by /etc/faas/sealed.env on apid (ADR-1497)"},
 	{Name: "FAAS_JOB", Owners: []string{"guest"}, Source: EnvSourceGuest},
 	{Name: "FAAS_JOBS_DISPATCH", Owners: []string{"schedd"}, Source: EnvSourceUnit, Note: "public-beta unit enables queued job dispatch through the vmmd JobColdBoot RPC"},
+	{Name: "FAAS_LAYER_ATTESTATION_RECORDS", Owners: []string{"schedd"}, Source: EnvSourceDefault, Note: "optional path of the file where schedd remembers verified layers across restarts (ADR-038 amendment); default /var/lib/faas/schedd/layer-attestations.json"},
 	{Name: "FAAS_LEADER_REDIRECT_TLS_CA", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LEADER_REDIRECT_TLS_CERT", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_LEADER_REDIRECT_TLS_KEY", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
