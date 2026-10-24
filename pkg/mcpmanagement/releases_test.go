@@ -18,18 +18,21 @@ import (
 var testImage = "registry.example/team/app@sha256:" + strings.Repeat("a", 64)
 
 type releaseFixture struct {
-	mu          sync.Mutex
-	account     string
-	app         api.AppResponse
-	current     string
-	latest      string
-	deployments map[string]api.DeploymentResponse
-	keys        map[string]api.DeploymentResponse
-	recoveries  map[string]api.RolloutTransitionResponse
-	writes      int
-	ambiguous   bool
-	waitReads   int
-	sourceHead  string
+	mu              sync.Mutex
+	account         string
+	app             api.AppResponse
+	current         string
+	latest          string
+	deployments     map[string]api.DeploymentResponse
+	keys            map[string]api.DeploymentResponse
+	recoveries      map[string]api.RolloutTransitionResponse
+	writes          int
+	ambiguous       bool
+	waitReads       int
+	sourceHead      string
+	submissions     map[string]api.DeploymentSubmissionReceipt
+	attempts        []string
+	submissionReads int
 }
 
 func newReleaseFixture(t *testing.T, writes bool) (*releaseFixture, *mcp.ClientSession, context.Context) {
@@ -73,6 +76,20 @@ func (f *releaseFixture) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		f.mutate(w, r)
+		return
+	}
+	if strings.HasPrefix(r.URL.Path, "/v1/apps/alpha/deployment-submissions/") {
+		f.submissionReads++
+		if r.Header.Get(api.DeploymentAttemptHeader) != "" || r.Header.Get("Idempotency-Key") != "" {
+			w.WriteHeader(400)
+			return
+		}
+		receipt, ok := f.submissions[strings.TrimPrefix(r.URL.Path, "/v1/apps/alpha/deployment-submissions/")]
+		if !ok {
+			w.WriteHeader(404)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(receipt)
 		return
 	}
 	switch r.URL.Path {
@@ -119,11 +136,25 @@ func (f *releaseFixture) mutate(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "missing idempotency key", 400)
 		return
 	}
+	attempt := ""
+	if r.URL.Path == "/v1/apps/alpha/deployments" || r.URL.Path == "/v1/apps/alpha/deployments/source-ref" {
+		attempt = r.Header.Get(api.DeploymentAttemptHeader)
+		f.attempts = append(f.attempts, attempt)
+		if attempt != "" && !api.ValidDeploymentAttemptID(attempt) {
+			w.WriteHeader(400)
+			return
+		}
+		if receipt, ok := f.submissions[attempt]; ok {
+			_ = json.NewEncoder(w).Encode(f.deployments[receipt.DeploymentID])
+			return
+		}
+	}
 	if old, ok := f.recoveries[key]; ok {
 		_ = json.NewEncoder(w).Encode(old)
 		return
 	}
 	if old, ok := f.keys[key]; ok {
+		f.rememberSubmission(attempt, old)
 		_ = json.NewEncoder(w).Encode(old)
 		return
 	}
@@ -211,6 +242,7 @@ func (f *releaseFixture) mutate(w http.ResponseWriter, r *http.Request) {
 	}
 	f.writes++
 	f.keys[key], f.deployments[d.ID] = d, d
+	f.rememberSubmission(attempt, d)
 	if f.ambiguous {
 		f.ambiguous = false
 		api.WriteProblem(w, api.NewProblem(503, "capacity", "Temporary failure", "Retry the same plan"))
@@ -421,4 +453,14 @@ func TestManagementRejectsBackgroundReleasePlanning(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (f *releaseFixture) rememberSubmission(id string, d api.DeploymentResponse) {
+	if id == "" {
+		return
+	}
+	if f.submissions == nil {
+		f.submissions = map[string]api.DeploymentSubmissionReceipt{}
+	}
+	f.submissions[id] = api.DeploymentSubmissionReceipt{AttemptID: id, AppID: d.AppID, DeploymentID: d.ID, AcceptedAt: time.Now().UTC()}
 }

@@ -7,6 +7,32 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP deployment acceptance outcomes — 2026-10-24 (branch, not released)
+
+New image/source deployment and service/worker rollout attempts atomically save
+and send a stable native deployment-attempt ID. A minimal encrypted reference
+survives plan expiry, shares bounded history retention and is removed on grant
+revocation. Legacy attempted plans never receive a replacement identity. The
+existing outcome reader verifies native submission receipts and immutable scoped
+artifact identity, returns original apply acceptance plus an exact observation
+call, and preserves recorded history, expiry and uncertainty. Acceptance remains
+separate from completion, health, promotion and worker queue acknowledgement.
+History/prompts/resources expose the same read-only recovery after expiry.
+Catalog stays 58 read/planning tools, 67 with writes, eight prompts and eleven
+templates; native APIs/SDKs/schema/quotas are unchanged.
+
+Full MCP race tests pass, including both protocols, image/source request/service/
+worker cases, persistence before writes, retry after HTTP-cache loss, encrypted
+expired restart, named immutable identities, mismatched/missing evidence, final
+read guards, legacy non-backfill, format validation, pruning and grant isolation.
+Pinned real Codex 0.159.0-alpha.3 follows synthetic expired source-acceptance
+receipts and explicitly observes a failed deployment across restart/refresh and
+revocation in all three read-only profiles. Fixtures make zero model requests
+and native writes; native/provider deployment qualification remains separate.
+Native HTTP submission regressions, changed-package lint, spec/docs and
+test-store/seal-domain/ADR gates pass. See
+[ADR-20261024234500](adr/20261024234500-management-mcp-deployment-submission-outcomes.md).
+
 ## Management MCP outcome recovery discovery — 2026-10-24 (branch, not released)
 
 Eligible route-budget action rows include `recovery.outcome` and the existing

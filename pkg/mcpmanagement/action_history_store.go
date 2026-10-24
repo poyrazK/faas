@@ -90,6 +90,13 @@ func (m *management) restoreActionHistory() error {
 	if err := m.restoreBudgetOutcomeLookups(); err != nil {
 		return err
 	}
+	if err := m.restoreDeploymentOutcomeLookups(); err != nil {
+		return err
+	}
+	deploymentBefore := make(map[string]deploymentOutcomeLookup, len(m.deploymentOutcomes))
+	for id, ref := range m.deploymentOutcomes {
+		deploymentBefore[id] = ref
+	}
 	lookupsBefore := make(map[string]budgetOutcomeLookup, len(m.budgetOutcomes))
 	for id, lookup := range m.budgetOutcomes {
 		lookupsBefore[id] = lookup
@@ -105,7 +112,7 @@ func (m *management) restoreActionHistory() error {
 	if err := m.syncActionHistory(time.Now().UTC()); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) {
+	if !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) {
 		// Import only still-live legacy plans. History cannot reconstruct plans
 		// already discarded by an older bridge, or mint new replay authority.
 		return m.persistPlans()
@@ -144,7 +151,10 @@ func (m *management) syncActionHistory(now time.Time) error {
 		return err
 	}
 	m.pruneActionHistories(now)
-	return m.syncBudgetOutcomeLookups(now)
+	if err := m.syncBudgetOutcomeLookups(now); err != nil {
+		return err
+	}
+	return m.syncDeploymentOutcomeLookups(now)
 }
 
 func recordAction(p *releasePlan) actionRecord {

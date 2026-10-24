@@ -318,6 +318,10 @@ func (m *management) applyDeploy(ctx context.Context, args applyArgs) (any, erro
 			return nil, err
 		}
 	}
+	writeCtx, err := m.prepareDeploymentSubmission(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	p.attempted = true // Ambiguous retries must reuse the same key and payload.
 	if err := m.persistPlans(); err != nil {
 		return nil, err
@@ -329,9 +333,9 @@ func (m *management) applyDeploy(ctx context.Context, args applyArgs) (any, erro
 	}
 	var d api.DeploymentResponse
 	if p.Source != nil {
-		d, err = m.stageSourcePlan(ctx, p)
+		d, err = m.stageSourcePlan(writeCtx, p)
 	} else {
-		d, err = m.client.Deploy(api.ContextWithIdempotencyKey(ctx, "mcp-deploy-"+p.ID), p.App, request)
+		d, err = m.client.Deploy(api.ContextWithIdempotencyKey(writeCtx, "mcp-deploy-"+p.ID), p.App, request)
 	}
 	if err != nil {
 		return nil, err

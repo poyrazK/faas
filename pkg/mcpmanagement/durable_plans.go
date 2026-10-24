@@ -105,6 +105,7 @@ func (m *management) persistPlans() error {
 		}
 	}
 	return m.opts.planStore.updateMany(map[string]any{
+		deploymentOutcomeNamespace + m.opts.planNamespace:  deploymentOutcomeSnapshot{Version: 1, Items: m.deploymentOutcomes},
 		budgetOutcomeNamespace + m.opts.planNamespace:      budgetOutcomeSnapshot{Version: 1, Items: m.budgetOutcomes},
 		"environment-plans/" + m.opts.planNamespace:        environments,
 		environmentActionsNamespace + m.opts.planNamespace: environmentActionSnapshot{Version: 1, Items: m.environmentActions},

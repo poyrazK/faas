@@ -1553,6 +1553,37 @@ only currently consented identities. These are independent reads, not an atomic
 snapshot. The tool and prompt add no probes, replay, collection, model requests
 or platform writes, and do not plan/apply configuration changes.
 
+## Resolve an ambiguous deployment submission
+
+`gregale_get_action_outcome` now supports the original apply phase of request
+deployments and native service/worker rollouts, for both image and exact-commit
+GitHub source submissions. It also continues to support route-budget attempts.
+Use the exact `recovery.outcome` call returned by action history or its recipe,
+including after the original mutation plan expires.
+
+New deployment attempts persist and send a stable native `Deployment-Attempt-ID`
+before any write. The encrypted companion reference retains only that ID, an
+artifact fingerprint and the immutable history binding. It shares existing
+history limits/retention and grant revocation; it cannot reconstruct an expired
+payload. Older already-attempted plans without a reference remain unresolved
+through this reader and are never assigned a replacement native identity.
+
+A `verified_receipt` returns `phase: apply`, `receipt.deployment_id`, an exact
+`observation` call and `native_completion: not_observed`. Follow the returned
+`gregale_get_deployment` or `gregale_get_rollout` call explicitly. Acceptance can
+remain verified after the deployment fails or is superseded. Build/rollout
+completion, health, traffic promotion, service recovery and worker queue
+acknowledgement require separate evidence. Missing/unavailable/mismatched
+receipts stay unresolved and never prove non-acceptance.
+
+History and recipes remain passive. An expired deployment recipe without a
+known deployment ID contains history/outcome calls only; follow the observation
+returned by the outcome rather than inventing a target. Current read consent,
+immutable identities, storage and the retained reference are checked again before
+release. No read replays a write, extends expiry or changes recorded uncertainty.
+Promotion, rollback and service-abort outcomes remain unsupported. See
+[ADR-20261024234500](adr/20261024234500-management-mcp-deployment-submission-outcomes.md).
+
 ## Resolve an ambiguous route-budget write
 
 `gregale_get_action_outcome` accepts the original `plan_id`, `app`, and,
@@ -1570,8 +1601,8 @@ never replays the write, changes recorded action history, restores an expired
 plan or extends its expiry. `native_completion` remains `not_observed`.
 
 Unavailable, missing or mismatched receipts return `unresolved`. This never
-proves that the original write did not commit. Other action kinds are currently
-unsupported. Older bridges/APIs and expired legacy actions without a saved
+proves that the original write did not commit. Deployment and service/worker rollout apply acceptance use the submission lookup
+described above; promotion, rollback and service-abort outcomes remain unsupported. Older bridges/APIs and expired legacy actions without a saved
 lookup reference also remain unresolved; do not create a replacement request
 to resolve ambiguity.
 
@@ -1677,13 +1708,13 @@ Two read-only prompts provide an original-plan recovery recipe:
   and original `plan_id`.
 
 Prompt retrieval verifies current read consent and an available unexpired plan
-from this connection, or a retained attempted route-budget action with a valid
+from this connection, or a retained attempted deployment, rollout or route-budget action with a valid
 outcome lookup. Environment prompts require both original environments and
 every current project workload; regression plans require diagnostic consent.
 The result contains fixed guidance and exact JSON calls to the matching history,
 saved-review and applicability tools. It includes no saved-plan prose, private
 execution material or configuration values. Unknown/inaccessible plans and
-expired plans without an eligible budget lookup return errors; retrieval does
+expired plans without an eligible outcome lookup return errors; retrieval does
 not fetch fresh baselines, receipts or native completion,
 renew expiry, poll approval, create a plan or execute a mutation.
 
@@ -1708,7 +1739,7 @@ pinned Codex app-server through `mcpServer/resource/read`:
 Fill the exact original plan ID and target selectors from consented history.
 Use canonical URIs without credentials, query/fragment suffixes or encoded path
 segments. Reads require an original unexpired plan in this connection (or a
-retained route-budget lookup for app resources), current read/diagnostic consent and immutable identities; environment plans require both
+retained outcome lookup for app resources), current read/diagnostic consent and immutable identities; environment plans require both
 original environments and every current project workload. Other grants cannot
 use a known URI to inherit a recipe.
 
@@ -1733,7 +1764,7 @@ approval authority. `recovery.check` concerns the original apply phase; inspect
 recorded promotion state separately for later traffic promotion.
 
 Expired, missing or mismatched plans omit saved review/check links. Eligible
-retained route-budget attempts keep read-only outcome recovery links, as described
+retained deployment/rollout/budget attempts keep read-only outcome recovery links, as described
 below; other unavailable plans omit recovery links. New links require selectors that the shared prompt/resource validator can render
 exactly. Final read guards
 also remove discovery/retry hints when availability changes during a history
@@ -1750,7 +1781,9 @@ The resource and prompt remain discoverable after original plan expiry. An
 expired recipe's `workflow` contains only `history`, `outcome` and `observation`;
 `review` and `check` are omitted. Live budget recipes retain their existing calls
 and can add the same outcome and observation calls. Unattempted actions, unsupported
-action kinds and expired legacy actions without a lookup receive no outcome hint.
+action kinds and expired legacy actions without a lookup receive no outcome hint. Deployment and
+service/worker rollout actions can also advertise the same outcome link; their
+lookup returns the exact observation once the deployment identity is verified.
 
 Follow the outcome call explicitly, then `workflow.observation` to inspect current
 policy. A verified historical receipt can report revision 1 while current policy

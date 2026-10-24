@@ -3118,6 +3118,21 @@ no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
 
 
+## Management MCP deployment submission outcomes (ADR-20261024234500)
+
+New MCP deployment and service/worker rollout apply attempts atomically persist
+an opaque native deployment-attempt ID before submitting image or exact-commit
+source writes. A bounded encrypted companion retains only that ID, artifact
+fingerprint and immutable history binding after expiry. Original HTTP keys and
+native guards remain; previously attempted legacy plans are never assigned new
+native identities. The existing outcome tool verifies native acceptance receipts
+and deployment scope/provenance, returns only original apply acceptance plus an
+exact observation call, and keeps completion/health/promotion/queue evidence
+separate. History and recovery recipes expose this read-only path after expiry;
+missing or mismatched evidence remains unresolved. No expiry renewal, replay,
+history upgrade, catalog/SDK/native API/schema/quota/migration changes.
+See [ADR-20261024234500](adr/20261024234500-management-mcp-deployment-submission-outcomes.md).
+
 ## Management MCP outcome recovery discovery (ADR-20261024223000)
 
 Eligible attempted route-budget history advertises an exact `recovery.outcome`

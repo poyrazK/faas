@@ -91,8 +91,21 @@ func (m *management) currentAppRecoveryLinks(view actionView, now time.Time) act
 // availability of the original mutation body or permission to replay it.
 func (m *management) outcomeRecoveryReference(entry actionRecord, now time.Time) *savedPlanReference {
 	current, ok := m.actions[entry.PlanID]
-	lookup, found := m.budgetOutcomes[entry.PlanID]
-	if !ok || !found || entry.Action != "route_budgets" || entry.Apply.State == "not_attempted" || !now.Before(entry.RetainedUntil) || !now.Before(current.RetainedUntil) || budgetOutcomeBinding(current) != budgetOutcomeBinding(entry) || !validBudgetOutcomeLookup(lookup) || lookup.Binding != budgetOutcomeBinding(entry) {
+	if !ok || entry.Apply.State == "not_attempted" || !now.Before(entry.RetainedUntil) || !now.Before(current.RetainedUntil) || actionOutcomeBinding(current) != actionOutcomeBinding(entry) {
+		return nil
+	}
+	switch {
+	case entry.Action == "route_budgets":
+		ref, found := m.budgetOutcomes[entry.PlanID]
+		if !found || !validBudgetOutcomeLookup(ref) || ref.Binding != budgetOutcomeBinding(entry) {
+			return nil
+		}
+	case deploymentOutcomeAction(entry.Action):
+		ref, found := m.deploymentOutcomes[entry.PlanID]
+		if !found || !validDeploymentOutcomeLookup(ref) || ref.Binding != deploymentOutcomeBinding(entry) {
+			return nil
+		}
+	default:
 		return nil
 	}
 	environment := entry.Scope
