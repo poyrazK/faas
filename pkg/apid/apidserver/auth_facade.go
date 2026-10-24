@@ -84,6 +84,10 @@ func (s *server) authorizeAppResource(next accountHandler) accountHandler {
 }
 
 func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account) {
+	if r.PathValue("slug") != "" && (strings.HasPrefix(r.URL.Path, "/dashboard/apps/") || strings.HasPrefix(r.URL.Path, "/v1/apps/")) {
+		s.authorizeDashboardApp(next, w, r, actor)
+		return
+	}
 	if !strings.HasPrefix(r.URL.Path, "/dashboard/projects/") || r.PathValue("slug") == "" {
 		next.ServeHTTP(w, r)
 		return
@@ -92,6 +96,29 @@ func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWri
 	projectaccess.Wrap(s.store, loadOrgAuditFrom(s.audit), func(w http.ResponseWriter, r *http.Request, _ state.Account) {
 		next.ServeHTTP(w, r)
 	})(w, r, actor)
+}
+
+// authorizeDashboardApp gates the session-only app routes
+// (/dashboard/apps/{slug}/*, /v1/apps/{slug}/install*) on the caller's
+// current organization access, the decision appaccess.Wrap makes for /v1.
+// Their handlers only check that the caller created the app, which a member
+// keeps after being removed from the company or demoted. The gate decides
+// and then serves the original request: the handlers keep their
+// creator-scoped behaviour, now only for a creator who still holds the
+// route's permission.
+func (s *server) authorizeDashboardApp(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account) {
+	app, err := s.store.AppBySlug(r.Context(), r.PathValue("slug"))
+	if err != nil {
+		// Missing and foreign apps keep the handlers' own not-found answer.
+		next.ServeHTTP(w, r)
+		return
+	}
+	gate := r.WithContext(middleware.WithPrincipal(r.Context(), actor, nil, nil))
+	if _, problem := appaccess.Authorize(gate, s.store, loadOrgAuditFrom(s.audit), actor, app); problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	next.ServeHTTP(w, r)
 }
 
 // sameOriginSessionWrites refuses a state-changing /v1 request that is
