@@ -79,7 +79,9 @@ def sync_detailed(
     One list of alert rule firing periods, route monitor incidents and
     platform incidents from the status page: everything open plus what
     resolved since `since`, open first, then newest first, at most 100.
-    A source that cannot be read is named in `unavailable_sources`.
+    Each entry says who in the account acknowledged it. A source that
+    cannot be read (including `acknowledgements`) is named in
+    `unavailable_sources`.
 
     Args:
         app (str | Unset):
@@ -120,7 +122,9 @@ def sync(
     One list of alert rule firing periods, route monitor incidents and
     platform incidents from the status page: everything open plus what
     resolved since `since`, open first, then newest first, at most 100.
-    A source that cannot be read is named in `unavailable_sources`.
+    Each entry says who in the account acknowledged it. A source that
+    cannot be read (including `acknowledgements`) is named in
+    `unavailable_sources`.
 
     Args:
         app (str | Unset):
@@ -156,7 +160,9 @@ async def asyncio_detailed(
     One list of alert rule firing periods, route monitor incidents and
     platform incidents from the status page: everything open plus what
     resolved since `since`, open first, then newest first, at most 100.
-    A source that cannot be read is named in `unavailable_sources`.
+    Each entry says who in the account acknowledged it. A source that
+    cannot be read (including `acknowledgements`) is named in
+    `unavailable_sources`.
 
     Args:
         app (str | Unset):
@@ -195,7 +201,9 @@ async def asyncio(
     One list of alert rule firing periods, route monitor incidents and
     platform incidents from the status page: everything open plus what
     resolved since `since`, open first, then newest first, at most 100.
-    A source that cannot be read is named in `unavailable_sources`.
+    Each entry says who in the account acknowledged it. A source that
+    cannot be read (including `acknowledgements`) is named in
+    `unavailable_sources`.
 
     Args:
         app (str | Unset):

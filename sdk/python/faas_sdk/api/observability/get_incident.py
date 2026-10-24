@@ -55,8 +55,9 @@ def sync_detailed(
 
      The incident with what the platform has for it: an alert's
     notifications and the log context its newest one carried, a platform
-    incident's status updates, and for an app incident the app's change
-    timeline from an hour before it opened until it resolved.
+    incident's status updates, for an app incident the app's change
+    timeline from an hour before it opened until it resolved, and the
+    account's acknowledgement and notes.
 
     Args:
         id (str):
@@ -89,8 +90,9 @@ def sync(
 
      The incident with what the platform has for it: an alert's
     notifications and the log context its newest one carried, a platform
-    incident's status updates, and for an app incident the app's change
-    timeline from an hour before it opened until it resolved.
+    incident's status updates, for an app incident the app's change
+    timeline from an hour before it opened until it resolved, and the
+    account's acknowledgement and notes.
 
     Args:
         id (str):
@@ -118,8 +120,9 @@ async def asyncio_detailed(
 
      The incident with what the platform has for it: an alert's
     notifications and the log context its newest one carried, a platform
-    incident's status updates, and for an app incident the app's change
-    timeline from an hour before it opened until it resolved.
+    incident's status updates, for an app incident the app's change
+    timeline from an hour before it opened until it resolved, and the
+    account's acknowledgement and notes.
 
     Args:
         id (str):
@@ -150,8 +153,9 @@ async def asyncio(
 
      The incident with what the platform has for it: an alert's
     notifications and the log context its newest one carried, a platform
-    incident's status updates, and for an app incident the app's change
-    timeline from an hour before it opened until it resolved.
+    incident's status updates, for an app incident the app's change
+    timeline from an hour before it opened until it resolved, and the
+    account's acknowledgement and notes.
 
     Args:
         id (str):

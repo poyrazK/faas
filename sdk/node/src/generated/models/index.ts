@@ -1060,6 +1060,8 @@ export type { Incident } from './Incident.js';
 export type { IncidentDetail } from './IncidentDetail.js';
 export type { IncidentFire } from './IncidentFire.js';
 export type { IncidentID } from './IncidentID.js';
+export type { IncidentNote } from './IncidentNote.js';
+export type { IncidentNoteRequest } from './IncidentNoteRequest.js';
 export type { IncidentUpdate } from './IncidentUpdate.js';
 export type { IncidentsResponse } from './IncidentsResponse.js';
 export type { InjectScenarioTestChaosRequest } from './InjectScenarioTestChaosRequest.js';

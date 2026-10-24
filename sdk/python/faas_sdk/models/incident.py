@@ -35,6 +35,10 @@ class Incident:
     """The deployment a route monitor incident watched."""
     impact: str | Unset = UNSET
     """A platform incident's status page impact."""
+    acknowledged_at: datetime.datetime | Unset = UNSET
+    """When someone in the account acknowledged the incident."""
+    acknowledged_by: str | Unset = UNSET
+    """Who acknowledged it, an email or api_key:<id>."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -66,6 +70,12 @@ class Incident:
 
         impact = self.impact
 
+        acknowledged_at: str | Unset = UNSET
+        if not isinstance(self.acknowledged_at, Unset):
+            acknowledged_at = self.acknowledged_at.isoformat()
+
+        acknowledged_by = self.acknowledged_by
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -89,6 +99,10 @@ class Incident:
             field_dict["deployment_id"] = deployment_id
         if impact is not UNSET:
             field_dict["impact"] = impact
+        if acknowledged_at is not UNSET:
+            field_dict["acknowledged_at"] = acknowledged_at
+        if acknowledged_by is not UNSET:
+            field_dict["acknowledged_by"] = acknowledged_by
 
         return field_dict
 
@@ -132,6 +146,15 @@ class Incident:
 
         impact = d.pop("impact", UNSET)
 
+        _acknowledged_at = d.pop("acknowledged_at", UNSET)
+        acknowledged_at: datetime.datetime | Unset
+        if isinstance(_acknowledged_at, Unset):
+            acknowledged_at = UNSET
+        else:
+            acknowledged_at = datetime.datetime.fromisoformat(_acknowledged_at)
+
+        acknowledged_by = d.pop("acknowledged_by", UNSET)
+
         incident = cls(
             id=id,
             source=source,
@@ -144,6 +167,8 @@ class Incident:
             metric=metric,
             deployment_id=deployment_id,
             impact=impact,
+            acknowledged_at=acknowledged_at,
+            acknowledged_by=acknowledged_by,
         )
 
         incident.additional_properties = d

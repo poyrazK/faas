@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.incident import Incident
     from ..models.incident_detail_log_context import IncidentDetailLogContext
     from ..models.incident_fire import IncidentFire
+    from ..models.incident_note import IncidentNote
     from ..models.incident_update import IncidentUpdate
 
 
@@ -23,6 +24,8 @@ T = TypeVar("T", bound="IncidentDetail")
 class IncidentDetail:
     incident: Incident
     """An alert rule's firing period, a route monitor incident, or a platform incident."""
+    notes: list[IncidentNote]
+    """The account's acknowledgement and notes, oldest first."""
     unavailable_sources: list[str]
     fires: list[IncidentFire] | Unset = UNSET
     log_context: IncidentDetailLogContext | Unset = UNSET
@@ -34,6 +37,11 @@ class IncidentDetail:
 
     def to_dict(self) -> dict[str, Any]:
         incident = self.incident.to_dict()
+
+        notes = []
+        for notes_item_data in self.notes:
+            notes_item = notes_item_data.to_dict()
+            notes.append(notes_item)
 
         unavailable_sources = self.unavailable_sources
 
@@ -69,6 +77,7 @@ class IncidentDetail:
         field_dict.update(
             {
                 "incident": incident,
+                "notes": notes,
                 "unavailable_sources": unavailable_sources,
             }
         )
@@ -91,10 +100,18 @@ class IncidentDetail:
         from ..models.incident import Incident
         from ..models.incident_detail_log_context import IncidentDetailLogContext
         from ..models.incident_fire import IncidentFire
+        from ..models.incident_note import IncidentNote
         from ..models.incident_update import IncidentUpdate
 
         d = dict(src_dict)
         incident = Incident.from_dict(d.pop("incident"))
+
+        notes = []
+        _notes = d.pop("notes")
+        for notes_item_data in _notes:
+            notes_item = IncidentNote.from_dict(notes_item_data)
+
+            notes.append(notes_item)
 
         unavailable_sources = cast(list[str], d.pop("unavailable_sources"))
 
@@ -136,6 +153,7 @@ class IncidentDetail:
 
         incident_detail = cls(
             incident=incident,
+            notes=notes,
             unavailable_sources=unavailable_sources,
             fires=fires,
             log_context=log_context,

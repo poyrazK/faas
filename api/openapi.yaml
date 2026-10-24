@@ -111190,7 +111190,7 @@ components:
         deployment_id: { type: string, format: uuid, description: The deployment a route monitor incident watched. }
         impact: { type: string, description: A platform incident's status page impact. }
         acknowledged_at: { type: string, format: date-time, description: When someone in the account acknowledged the incident. }
-        acknowledged_by: { type: string, description: Who acknowledged it, an email or api_key:<id>. }
+        acknowledged_by: { type: string, description: 'Who acknowledged it, an email or api_key:<id>.' }
     IncidentNote:
       type: object
       description: An account's acknowledgement (no body) or note on an incident.
@@ -111199,7 +111199,7 @@ components:
         id: { type: string, format: uuid }
         kind: { type: string, enum: [acknowledged, note] }
         body: { type: string, maxLength: 2000 }
-        author: { type: string, description: An email or api_key:<id>. }
+        author: { type: string, description: 'An email or api_key:<id>.' }
         created_at: { type: string, format: date-time }
     IncidentNoteRequest:
       type: object

@@ -1066,6 +1066,8 @@ export type { Incident } from './models/Incident.js';
 export type { IncidentDetail } from './models/IncidentDetail.js';
 export type { IncidentFire } from './models/IncidentFire.js';
 export type { IncidentID } from './models/IncidentID.js';
+export type { IncidentNote } from './models/IncidentNote.js';
+export type { IncidentNoteRequest } from './models/IncidentNoteRequest.js';
 export type { IncidentsResponse } from './models/IncidentsResponse.js';
 export type { IncidentUpdate } from './models/IncidentUpdate.js';
 export type { InjectScenarioTestChaosRequest } from './models/InjectScenarioTestChaosRequest.js';

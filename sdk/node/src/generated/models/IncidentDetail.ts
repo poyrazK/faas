@@ -5,6 +5,7 @@
 import type { AppChangeEvent } from './AppChangeEvent.js';
 import type { Incident } from './Incident.js';
 import type { IncidentFire } from './IncidentFire.js';
+import type { IncidentNote } from './IncidentNote.js';
 import type { IncidentUpdate } from './IncidentUpdate.js';
 export type IncidentDetail = {
   incident: Incident;
@@ -16,6 +17,10 @@ export type IncidentDetail = {
   updates?: Array<IncidentUpdate>;
   changes?: Array<AppChangeEvent>;
   changes_truncated?: boolean;
+  /**
+   * The account's acknowledgement and notes, oldest first.
+   */
+  notes: Array<IncidentNote>;
   unavailable_sources: Array<string>;
 };
 

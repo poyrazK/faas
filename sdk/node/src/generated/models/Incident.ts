@@ -32,5 +32,13 @@ export type Incident = {
    * A platform incident's status page impact.
    */
   impact?: string;
+  /**
+   * When someone in the account acknowledged the incident.
+   */
+  acknowledged_at?: string;
+  /**
+   * Who acknowledged it, an email or api_key:<id>.
+   */
+  acknowledged_by?: string;
 };
 

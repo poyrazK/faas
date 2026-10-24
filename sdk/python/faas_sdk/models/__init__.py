@@ -2147,6 +2147,9 @@ from .incident import Incident
 from .incident_detail import IncidentDetail
 from .incident_detail_log_context import IncidentDetailLogContext
 from .incident_fire import IncidentFire
+from .incident_note import IncidentNote
+from .incident_note_kind import IncidentNoteKind
+from .incident_note_request import IncidentNoteRequest
 from .incident_source import IncidentSource
 from .incident_status import IncidentStatus
 from .incident_update import IncidentUpdate
@@ -8124,6 +8127,9 @@ __all__ = (
     "IncidentDetail",
     "IncidentDetailLogContext",
     "IncidentFire",
+    "IncidentNote",
+    "IncidentNoteKind",
+    "IncidentNoteRequest",
     "IncidentSource",
     "IncidentsResponse",
     "IncidentStatus",

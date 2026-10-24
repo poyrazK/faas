@@ -11,6 +11,8 @@ import type { DashboardData } from '../models/DashboardData.js';
 import type { DashboardRequest } from '../models/DashboardRequest.js';
 import type { DashboardsResponse } from '../models/DashboardsResponse.js';
 import type { IncidentDetail } from '../models/IncidentDetail.js';
+import type { IncidentNote } from '../models/IncidentNote.js';
+import type { IncidentNoteRequest } from '../models/IncidentNoteRequest.js';
 import type { IncidentsResponse } from '../models/IncidentsResponse.js';
 import type { LogEventFacetsResponse } from '../models/LogEventFacetsResponse.js';
 import type { LogEventsResponse } from '../models/LogEventsResponse.js';
@@ -377,7 +379,9 @@ export class ObservabilityService {
    * One list of alert rule firing periods, route monitor incidents and
    * platform incidents from the status page: everything open plus what
    * resolved since `since`, open first, then newest first, at most 100.
-   * A source that cannot be read is named in `unavailable_sources`.
+   * Each entry says who in the account acknowledged it. A source that
+   * cannot be read (including `acknowledgements`) is named in
+   * `unavailable_sources`.
    *
    * @returns IncidentsResponse The incidents.
    * @returns Problem An invalid query, an unknown app, or the preview is disabled.
@@ -415,8 +419,9 @@ export class ObservabilityService {
    * Read an incident and its evidence.
    * The incident with what the platform has for it: an alert's
    * notifications and the log context its newest one carried, a platform
-   * incident's status updates, and for an app incident the app's change
-   * timeline from an hour before it opened until it resolved.
+   * incident's status updates, for an app incident the app's change
+   * timeline from an hour before it opened until it resolved, and the
+   * account's acknowledgement and notes.
    *
    * @returns IncidentDetail The incident.
    * @returns Problem No such incident (incident_not_found), or the preview is disabled.
@@ -436,6 +441,64 @@ export class ObservabilityService {
       path: {
         'id': id,
       },
+    });
+  }
+  /**
+   * Acknowledge an open incident.
+   * Records that someone in the account took the incident on. An
+   * account acknowledges an incident once; acknowledging again returns
+   * the first acknowledgement with 200. Acknowledging does not change
+   * what an alert rule sends.
+   *
+   * @returns IncidentNote The account's existing acknowledgement.
+   * @returns Problem No such incident (incident_not_found), a resolved incident (incident_resolved), the per-incident note limit (incident_notes_limit), or the preview is disabled.
+   * @throws ApiError
+   */
+  public static acknowledgeIncident({
+    id,
+  }: {
+    /**
+     * Incident id, prefixed with its source (`alert-`, `route-`, `platform-`).
+     */
+    id: string,
+  }): CancelablePromise<IncidentNote | Problem> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/incidents/{id}/acknowledge',
+      path: {
+        'id': id,
+      },
+    });
+  }
+  /**
+   * Add a note to an incident.
+   * Appends a note to an open or resolved incident. Notes cannot be
+   * edited or deleted. A note is at most 2000 characters, and an
+   * incident holds at most 100 notes from an account, its
+   * acknowledgement included.
+   *
+   * @returns Problem An empty or too long note, no such incident (incident_not_found), the per-incident note limit (incident_notes_limit), or the preview is disabled.
+   * @returns IncidentNote The note.
+   * @throws ApiError
+   */
+  public static addIncidentNote({
+    id,
+    requestBody,
+  }: {
+    /**
+     * Incident id, prefixed with its source (`alert-`, `route-`, `platform-`).
+     */
+    id: string,
+    requestBody: IncidentNoteRequest,
+  }): CancelablePromise<Problem | IncidentNote> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/incidents/{id}/notes',
+      path: {
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**
