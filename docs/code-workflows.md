@@ -13,6 +13,9 @@ and attempts appear in `gregale workflows list`, `steps` and `attempts`, and
 triggers (manual, schedule, event) work unchanged. Workflow execution remains a
 preview feature on Hobby and higher plans.
 
+The Node, Python and Go SDKs below are installed from the Gregale repository;
+see [Install the SDKs](sdks.md).
+
 ## Declare the entry handler
 
 ```yaml
