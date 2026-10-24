@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/platformflags"
@@ -28,7 +29,7 @@ func releaseEdgeFeatures(t *testing.T, pool *pgxpool.Pool) {
 	for _, flag := range platformflags.EdgeFeatures {
 		key := platformflags.ConfigKey(flag)
 		row, err := store.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: key, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: value,
-			ApplyMode: state.RuntimeConfigApplyHot, ActorID: "e2e", Reason: "edge feature e2e"})
+			ApplyMode: state.RuntimeConfigApplyHot, ActorID: uuid.NewString(), Reason: "edge feature e2e"})
 		if err != nil {
 			t.Fatalf("release %s: %v", flag, err)
 		}
