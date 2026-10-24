@@ -142,7 +142,7 @@
         "scale"
       ],
       "docs_url": "https://gregale.dev/docs/custom-domains",
-      "acceptance_test": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"
+      "acceptance_test": "cmd/gatewayd-internal/custom_domain_acceptance_test.go::TestCustomDomainAcceptance"
     },
     {
       "id": "custom-metric-history",
@@ -614,7 +614,7 @@
         "scale"
       ],
       "docs_url": "https://gregale.dev/docs/scale-to-zero",
-      "acceptance_test": "pkg/gateway/handler_test.go::TestColdWakeReturns200AndHeader"
+      "acceptance_test": "cmd/e2e/park_wake_cycle_e2e_test.go::TestE2E_ParkWakeCycle_RestoresTheSnapshotItJustWrote"
     },
     {
       "id": "selective-data-repair",
