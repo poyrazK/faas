@@ -4294,7 +4294,7 @@
       "rotated_from_id",
       "scopes",
       "status",
-      "token_digest"
+      "token_sha256"
     ],
     "kind": "account_identity"
   },
@@ -11121,6 +11121,17 @@
       "size_bytes",
       "state",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_storage_gateway_storage",
+    "columns": [
+      "accrued_from",
+      "accrued_through",
+      "bucket_id",
+      "period_start",
+      "stored_byte_hours"
     ],
     "kind": "operational"
   },

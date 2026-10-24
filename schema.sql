@@ -44688,6 +44688,22 @@ CREATE TABLE public.object_storage_customer_usage_reports_v2 (
 
 
 --
+-- Name: object_storage_gateway_storage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_gateway_storage (
+    bucket_id uuid NOT NULL,
+    period_start timestamp with time zone NOT NULL,
+    accrued_from timestamp with time zone NOT NULL,
+    accrued_through timestamp with time zone NOT NULL,
+    stored_byte_hours numeric DEFAULT 0 NOT NULL,
+    CONSTRAINT object_storage_gateway_storage_check CHECK (((accrued_from >= period_start) AND (accrued_through >= accrued_from) AND (accrued_through <= (((period_start AT TIME ZONE 'UTC'::text) + '1 mon'::interval) AT TIME ZONE 'UTC'::text)))),
+    CONSTRAINT object_storage_gateway_storage_period_start_check CHECK ((period_start = (date_trunc('month'::text, (period_start AT TIME ZONE 'UTC'::text)) AT TIME ZONE 'UTC'::text))),
+    CONSTRAINT object_storage_gateway_storage_stored_byte_hours_check CHECK (((stored_byte_hours >= (0)::numeric) AND (stored_byte_hours <= ('1152921504606846976'::bigint)::numeric)))
+);
+
+
+--
 -- Name: object_storage_inventory_samples; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -62246,6 +62262,14 @@ ALTER TABLE ONLY public.object_storage_customer_usage_reports_v2
 
 
 --
+-- Name: object_storage_gateway_storage object_storage_gateway_storage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_gateway_storage
+    ADD CONSTRAINT object_storage_gateway_storage_pkey PRIMARY KEY (bucket_id, period_start);
+
+
+--
 -- Name: object_storage_inventory_samples object_storage_inventory_samples_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -73087,6 +73111,13 @@ CREATE INDEX object_storage_billing_deliveries_account_period_idx ON public.obje
 --
 
 CREATE INDEX object_storage_billing_periods_account_period_idx ON public.object_storage_billing_periods USING btree (account_id, period_start DESC);
+
+
+--
+-- Name: object_storage_gateway_storage_period_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX object_storage_gateway_storage_period_idx ON public.object_storage_gateway_storage USING btree (period_start, bucket_id);
 
 
 --
@@ -92586,6 +92617,14 @@ ALTER TABLE ONLY public.object_storage_capacity_reconciliations
 
 ALTER TABLE ONLY public.object_storage_customer_usage_reports_v2
     ADD CONSTRAINT object_storage_customer_usage_reports_v2_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_storage_gateway_storage object_storage_gateway_storage_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_gateway_storage
+    ADD CONSTRAINT object_storage_gateway_storage_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --
