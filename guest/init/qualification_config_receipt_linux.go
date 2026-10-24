@@ -221,15 +221,22 @@ func emitQualificationRestoreReceipt(log *slog.Logger, token, encodedMACKey stri
 		return
 	}
 	frame := append([]byte{vsockQualificationConfigReceiptType}, payload...)
-	deadline := time.Now().Add(window)
-	for {
+	start := time.Now()
+	deadline := start.Add(window)
+	var lastLogged time.Time
+	for attempt := 1; ; attempt++ {
 		sendErr := send(frame, time.Second)
 		if sendErr == nil {
+			log.Info("qualification restore receipt sent", "attempts", attempt, "elapsed_ms", time.Since(start).Milliseconds())
 			return
 		}
 		if !time.Now().Before(deadline) {
-			log.Warn("qualification restore receipt could not reach host", "err", sendErr)
+			log.Warn("qualification restore receipt could not reach host", "attempts", attempt, "err", sendErr)
 			return
+		}
+		if time.Since(lastLogged) >= time.Second {
+			lastLogged = time.Now()
+			log.Info("qualification restore receipt waiting for host", "attempts", attempt, "err", sendErr)
 		}
 		time.Sleep(retry)
 	}
