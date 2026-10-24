@@ -4896,7 +4896,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	}, []string{"identity", "result"})
 	loopWork := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_loop_work_total",
-		Help: "Tasks schedd's notification loop handed to its bounded off-loop work pool (ADR-191), labelled by kind and outcome ∈ {queued, inline, dropped, coalesced, panicked}. `dropped` is benign in isolation (the durable table plus a safety ticker retries) but a sustained rate means the kind's slot budget is too small; any `panicked` is a bug.",
+		Help: "Tasks schedd's notification loop handed to its bounded off-loop work pool (ADR-191), labelled by kind and outcome ∈ {queued, inline, dropped, coalesced, rerun, panicked}. `dropped` is benign in isolation (the durable table plus a safety ticker retries) but a sustained rate means the kind's slot budget is too small; `rerun` counts the extra passes a kind such as event_fanout runs because a submit coalesced into a running one; any `panicked` is a bug.",
 	}, []string{"kind", "outcome"})
 	loopWorkDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name: prefix + "_loop_work_duration_seconds",

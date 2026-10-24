@@ -219,3 +219,27 @@ Tests: `TestHeartbeat_FailureThreshold`,
 `TestLostVMsAreDestroyedWhenTheNodeAnswers`, `TestLostVMDestroyFailureIsRetried`,
 `TestLiveVMReapDestroysVMsWhoseRowIsNotLive`, `TestLiveVMReapRetriesAFailedDestroy`,
 `TestManagerAppInstanceIDsListsOnlyOrdinaryAppVMs`.
+
+## Amendment (2026-10-25): event fanout reruns after a coalesced wake
+
+Event fanout is the `event_fanout` work kind: one slot, overflow drop, key
+`tick`, woken by `event_published` and a 5 s safety ticker. A wake that
+arrived while a sweep ran coalesced into it and was dropped, but the sweep
+had often read past the new event already: it prunes, runs recoveries and
+backfills before it claims events. The event then waited for the safety
+tick: in the V12 pipeline runs, one event per run took about 5 s from
+publish to handler.
+
+A kind may now set `rerunCoalesced`. A submit that coalesces into a running
+task of such a kind records itself, and the task runs one more pass when its
+current one ends, however many wakes arrived meanwhile. Only `event_fanout`
+sets it. Each extra pass counts as outcome `rerun` in
+`schedd_loop_work_total`.
+
+Ending a task also drops its key and frees its slot in one step under the
+pool lock. Before, the key went first and the slot after, so a submit landing
+between them found no task to coalesce into and no free slot, and was dropped
+as saturated. That holds for every kind.
+
+Tests: `TestWorkPoolRerunsEventFanoutAfterCoalescedWake`,
+`TestWorkPoolDoesNotRerunOtherKinds`, `TestWorkPoolEventFanoutNeverStrandsAWake`.
