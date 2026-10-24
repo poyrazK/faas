@@ -97,7 +97,7 @@ func TestBridgeFinishEndsSessionOnInstanceStop(t *testing.T) {
 	if err != nil {
 		t.Skip("sleep not available")
 	}
-	finishers := map[string]func(*exec.Cmd, <-chan error, *sync.WaitGroup, context.Context, string) error{
+	finishers := map[string]func(bridgeWaiter, <-chan error, *sync.WaitGroup, context.Context, func() string) error{
 		"raw": rawBridgeFinish,
 		"tcp": tcpBridgeFinish,
 	}
@@ -119,7 +119,7 @@ func TestBridgeFinishEndsSessionOnInstanceStop(t *testing.T) {
 
 			time.AfterFunc(50*time.Millisecond, func() { s.forgetForwarding(context.Background(), "inst-ws") })
 			done := make(chan error, 1)
-			go func() { done <- finish(cmd, make(chan error, 1), &bodyWG, ctx, "") }()
+			go func() { done <- finish(cmd, make(chan error, 1), &bodyWG, ctx, func() string { return "" }) }()
 			select {
 			case err := <-done:
 				if status.Code(err) != codes.Unavailable {

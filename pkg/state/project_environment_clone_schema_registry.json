@@ -4294,7 +4294,7 @@
       "rotated_from_id",
       "scopes",
       "status",
-      "token_digest"
+      "token_sha256"
     ],
     "kind": "account_identity"
   },
@@ -5017,6 +5017,18 @@
     "kind": "operational"
   },
   {
+    "table": "edge_penalty_boxes",
+    "columns": [
+      "app_id",
+      "boxed_until",
+      "client",
+      "created_at",
+      "id",
+      "rule_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "edge_rule_change_log",
     "columns": [
       "account_ids",
@@ -5074,6 +5086,17 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "edge_crawler_ip_ranges",
+    "columns": [
+      "crawler",
+      "fetched_at",
+      "prefixes",
+      "source_created_at",
+      "source_url"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "edge_rule_set_versions",

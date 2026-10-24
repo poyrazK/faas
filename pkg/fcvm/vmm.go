@@ -59,6 +59,8 @@ type JailerVMM struct {
 	nativeRecovery                *nativeProcessRecoveryRuntime // opt-in, configured before admission
 	nativeImageStagingRoot        string                        // opt-in persistent disk claims; configure before native recovery
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
+	nativeRuntimeCapture          bool                          // ADR 20261022184951: native park/warm capture; requires native recovery
+	nativeRuntimeSnapshots        *storage.LocalStorageBackend  // ADR 20261022184951 amendment 1: the tree only vmmd writes
 	chrootBase                    string                        // /srv/fc/jail
 	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
 	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
@@ -82,6 +84,9 @@ type JailerVMM struct {
 	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
 	// nil keeps drive0 on virtio-blk.
 	pmemBase *pmemBaseStore
+	// restoreReseedThread boots app VMs with the thread-mode reseed barrier
+	// client (ADR-20261024105607).
+	restoreReseedThread bool
 	// preBoot tracks which pre-boot files each instance's drive and each
 	// captured drive already hold, so an unchanged restore skips the loop
 	// mount (see preboot_skip.go).
@@ -1231,6 +1236,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 
 	cfg = v.withBalloon(cfg)
 	cfg = v.withPmemBase(l, cfg)
+	cfg = v.withRestoreReseedMode(l, cfg)
 	cfg = withBlockRateLimit(l, cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
@@ -3533,6 +3539,13 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		// This legacy path creates memory/state files before drive export.
 		// Native capture requires its original output/publication session;
 		// refuse before hooks, pause, file creation or failed-capture deletion.
+		// Ordinary protocol-1 park and warm captures may instead run the
+		// native producer (ADR 20261022184951); migration and admitted
+		// protocol-2 captures keep this refusal.
+		if v.nativeRuntimeCaptureEnabled() && spec.nativeRuntime != nil && spec.admittedParent.Binding.ProtocolVersion == 0 &&
+			spec.admittedGrant == nil && spec.functionMigration == nil && spec.functionMigrationGrant == nil && spec.Storage == nil {
+			return v.captureNativeRuntimeSnapshot(ctx, l, spec)
+		}
 		return SnapshotInfo{}, fmt.Errorf("native recovery: snapshot publication producer is unavailable: %w", state.ErrConflict)
 	}
 	capture, err := v.beginNativeSnapshot(ctx, l, spec)
@@ -7955,8 +7968,9 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 		return key, nil // nil storage: key IS the direct host path (builderd path-through mode)
 	}
 	// A wake reads what it fetched from the page cache; the node cache
-	// makes the fill durable and installs it after the wake has it.
-	rc, err := v.storage.Get(storage.WithDeferredCacheDurability(ctx), key)
+	// makes the fill durable and installs it after the wake has it. A native
+	// runtime capture is read from the tree only vmmd writes.
+	rc, err := v.snapshotStore(key).Get(storage.WithDeferredCacheDurability(ctx), key)
 	if err != nil {
 		return "", fmt.Errorf("vmm: storage get %q: %w", key, err)
 	}
@@ -8097,11 +8111,12 @@ func (v *JailerVMM) probeRestoreLocalPath(key string) (string, string, bool, err
 	if key == "" || filepath.IsAbs(key) || v.storage == nil {
 		return "", "", false, nil
 	}
-	if resolver, ok := v.storage.(storage.LocalPathSourceResolver); ok {
+	store := v.snapshotStore(key)
+	if resolver, ok := store.(storage.LocalPathSourceResolver); ok {
 		path, source, local, err := resolver.LocalPathWithSource(key)
 		return path, string(source), local, err
 	}
-	if resolver, ok := v.storage.(storage.LocalPathResolver); ok {
+	if resolver, ok := store.(storage.LocalPathResolver); ok {
 		path, local, err := resolver.LocalPath(key)
 		if err != nil || !local {
 			return path, "", local, err
