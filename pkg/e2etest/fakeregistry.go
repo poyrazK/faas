@@ -81,6 +81,12 @@ func HelloQueueWorkerImage(repo string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, "queue worker", false, 8080, []string{"/hello-server", "-queue-ack"})
 }
 
+// HelloPprofImage serves net/http/pprof on 127.0.0.1:pprofPort and runs no
+// Gregale collector, for profiling.pprof_port captures (ADR-1155).
+func HelloPprofImage(repo, helloBody string, pprofPort int) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, helloBody, false, 8080, []string{"/hello-server", fmt.Sprintf("-pprof-addr=127.0.0.1:%d", pprofPort)})
+}
+
 // HelloGitOpsRequestImage adds bounded slow requests for native cutover tests.
 func HelloGitOpsRequestImage(repo, body string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, body, false, 8080, []string{"/hello-server", "-gitops-resilience"})
@@ -182,6 +188,13 @@ func QueueConsumerImageAboveBase(repo string) (fakeImage, string) {
 
 func DurableCounterImageAboveBase(repo string) (fakeImage, string) {
 	return layeredHelloImageOnPortWithCmd(repo, "durable-counter", true, 8080, []string{"/hello-server", "-durable-counter"})
+}
+
+// CrashCaptureImageAboveBase is HelloImageAboveBase whose /boom route asks
+// for an ADR-733 crash capture of its own instance from inside the handler
+// (the SDK trigger) and /last-capture reports the answer.
+func CrashCaptureImageAboveBase(repo, helloBody string) (fakeImage, string) {
+	return layeredHelloImageOnPortWithCmd(repo, helloBody, true, 8080, []string{"/hello-server", "-crash-capture"})
 }
 
 // HelloImageOnPort returns the same scratch-style image as HelloImage, but

@@ -29,7 +29,7 @@ type Host interface {
 	EmitAudit(ctx context.Context, kind string, accountID *string, data map[string]any)
 	// Seal seals key's value, or returns the problem to answer with (sealing
 	// unavailable, value over maxBytes).
-	Seal(key, value string, maxBytes int) (Sealed, *api.Problem)
+	Seal(accountID, key, value string, maxBytes int) (Sealed, *api.Problem)
 }
 
 // Service is the project secrets surface.
@@ -90,7 +90,7 @@ func (s Service) write(w http.ResponseWriter, r *http.Request, acct state.Accoun
 		return
 	}
 	limits := api.MustLimitsFor(acct.Plan)
-	sealed, problem := s.Host.Seal(key, req.Value, limits.SecretValueMaxBytes)
+	sealed, problem := s.Host.Seal(acct.ID, key, req.Value, limits.SecretValueMaxBytes)
 	if problem != nil {
 		api.WriteProblem(w, problem)
 		return

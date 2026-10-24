@@ -755,7 +755,7 @@ func validateSourceProvenance(sourceURL, commitSHA string) *api.Problem {
 //
 //nolint:forbidigo // path is the tmp file apid just wrote via os.Create in validateAndSpool above with a fresh random id; apid OWNS the parent directory AND the inode, customer never touched them — symlink-attack impossible. Tarball-shape validation re-reads the bytes to enforce spec §9.
 func validateTarballShape(path string) *api.Problem {
-	err := tarball.ValidateShape(path, maxSourceFiles)
+	err := tarball.ValidateShape(path, maxSourceFiles, api.SourceArchiveMaxExpandedBytes)
 	if err == nil {
 		return nil
 	}

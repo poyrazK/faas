@@ -18,8 +18,11 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.compose_healthcheck import ComposeHealthcheck
     from ..models.compose_process import ComposeProcess
+    from ..models.compose_resources import ComposeResources
     from ..models.plan_detected_by import PlanDetectedBy
     from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
+    from ..models.plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
+    from ..models.secret_file import SecretFile
     from ..models.service_caller_scopes import ServiceCallerScopes
     from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
@@ -67,6 +70,11 @@ class PlanWorkload:
     the final stage."""
     build_args: list[str] | Unset = UNSET
     """Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."""
+    secret_files: list[SecretFile] | Unset = UNSET
+    """Compose secrets written to /run/secrets (ADR-20261023090000)."""
+    resources: ComposeResources | Unset = UNSET
+    """A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings
+    (ADR-20261023120000). Omitted fields are undeclared and keep the app's own settings."""
     depends_on: list[str] | Unset = UNSET
     """Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects
     GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies."""
@@ -99,6 +107,15 @@ class PlanWorkload:
     """KEYS only — never values; spec §11 forbids logging secrets"""
     required_env_keys: list[str] | Unset = UNSET
     """Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."""
+    unset_env_keys: list[str] | Unset = UNSET
+    """Names from env_keys and required_env_keys that will have no value in the selected environment: not
+    configured on the app and not provided by the platform. Names only, never values."""
+    unset_env_key_reasons: PlanWorkloadUnsetEnvKeyReasons | Unset = UNSET
+    """For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never
+    values."""
+    imported_env_keys: list[str] | Unset = UNSET
+    """Compose environment names whose plain values apply will write, because the project sets x-gregale-env-
+    import: true and they are unset (ADR-20261023085230). Names only."""
     source: str | Unset = UNSET
     """detector provenance, e.g. compose.yaml: api"""
     tier: PlanWorkloadTier | Unset = UNSET
@@ -155,6 +172,17 @@ class PlanWorkload:
         if not isinstance(self.build_args, Unset):
             build_args = self.build_args
 
+        secret_files: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.secret_files, Unset):
+            secret_files = []
+            for secret_files_item_data in self.secret_files:
+                secret_files_item = secret_files_item_data.to_dict()
+                secret_files.append(secret_files_item)
+
+        resources: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.resources, Unset):
+            resources = self.resources.to_dict()
+
         depends_on: list[str] | Unset = UNSET
         if not isinstance(self.depends_on, Unset):
             depends_on = self.depends_on
@@ -200,6 +228,18 @@ class PlanWorkload:
         required_env_keys: list[str] | Unset = UNSET
         if not isinstance(self.required_env_keys, Unset):
             required_env_keys = self.required_env_keys
+
+        unset_env_keys: list[str] | Unset = UNSET
+        if not isinstance(self.unset_env_keys, Unset):
+            unset_env_keys = self.unset_env_keys
+
+        unset_env_key_reasons: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.unset_env_key_reasons, Unset):
+            unset_env_key_reasons = self.unset_env_key_reasons.to_dict()
+
+        imported_env_keys: list[str] | Unset = UNSET
+        if not isinstance(self.imported_env_keys, Unset):
+            imported_env_keys = self.imported_env_keys
 
         source = self.source
 
@@ -247,6 +287,10 @@ class PlanWorkload:
             field_dict["build_target"] = build_target
         if build_args is not UNSET:
             field_dict["build_args"] = build_args
+        if secret_files is not UNSET:
+            field_dict["secret_files"] = secret_files
+        if resources is not UNSET:
+            field_dict["resources"] = resources
         if depends_on is not UNSET:
             field_dict["depends_on"] = depends_on
         if depends_on_conditions is not UNSET:
@@ -271,6 +315,12 @@ class PlanWorkload:
             field_dict["env_keys"] = env_keys
         if required_env_keys is not UNSET:
             field_dict["required_env_keys"] = required_env_keys
+        if unset_env_keys is not UNSET:
+            field_dict["unset_env_keys"] = unset_env_keys
+        if unset_env_key_reasons is not UNSET:
+            field_dict["unset_env_key_reasons"] = unset_env_key_reasons
+        if imported_env_keys is not UNSET:
+            field_dict["imported_env_keys"] = imported_env_keys
         if source is not UNSET:
             field_dict["source"] = source
         if tier is not UNSET:
@@ -288,8 +338,11 @@ class PlanWorkload:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.compose_healthcheck import ComposeHealthcheck
         from ..models.compose_process import ComposeProcess
+        from ..models.compose_resources import ComposeResources
         from ..models.plan_detected_by import PlanDetectedBy
         from ..models.plan_workload_depends_on_conditions import PlanWorkloadDependsOnConditions
+        from ..models.plan_workload_unset_env_key_reasons import PlanWorkloadUnsetEnvKeyReasons
+        from ..models.secret_file import SecretFile
         from ..models.service_caller_scopes import ServiceCallerScopes
         from ..models.service_reliability_policies import ServiceReliabilityPolicies
 
@@ -336,6 +389,22 @@ class PlanWorkload:
         build_target = d.pop("build_target", UNSET)
 
         build_args = cast(list[str], d.pop("build_args", UNSET))
+
+        _secret_files = d.pop("secret_files", UNSET)
+        secret_files: list[SecretFile] | Unset = UNSET
+        if _secret_files is not UNSET:
+            secret_files = []
+            for secret_files_item_data in _secret_files:
+                secret_files_item = SecretFile.from_dict(secret_files_item_data)
+
+                secret_files.append(secret_files_item)
+
+        _resources = d.pop("resources", UNSET)
+        resources: ComposeResources | Unset
+        if isinstance(_resources, Unset):
+            resources = UNSET
+        else:
+            resources = ComposeResources.from_dict(_resources)
 
         depends_on = cast(list[str], d.pop("depends_on", UNSET))
 
@@ -396,6 +465,17 @@ class PlanWorkload:
 
         required_env_keys = cast(list[str], d.pop("required_env_keys", UNSET))
 
+        unset_env_keys = cast(list[str], d.pop("unset_env_keys", UNSET))
+
+        _unset_env_key_reasons = d.pop("unset_env_key_reasons", UNSET)
+        unset_env_key_reasons: PlanWorkloadUnsetEnvKeyReasons | Unset
+        if isinstance(_unset_env_key_reasons, Unset):
+            unset_env_key_reasons = UNSET
+        else:
+            unset_env_key_reasons = PlanWorkloadUnsetEnvKeyReasons.from_dict(_unset_env_key_reasons)
+
+        imported_env_keys = cast(list[str], d.pop("imported_env_keys", UNSET))
+
         source = d.pop("source", UNSET)
 
         _tier = d.pop("tier", UNSET)
@@ -436,6 +516,8 @@ class PlanWorkload:
             image_process=image_process,
             build_target=build_target,
             build_args=build_args,
+            secret_files=secret_files,
+            resources=resources,
             depends_on=depends_on,
             depends_on_conditions=depends_on_conditions,
             service_binding_policy=service_binding_policy,
@@ -448,6 +530,9 @@ class PlanWorkload:
             schedule=schedule,
             env_keys=env_keys,
             required_env_keys=required_env_keys,
+            unset_env_keys=unset_env_keys,
+            unset_env_key_reasons=unset_env_key_reasons,
+            imported_env_keys=imported_env_keys,
             source=source,
             tier=tier,
             action=action,

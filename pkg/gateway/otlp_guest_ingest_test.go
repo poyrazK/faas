@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/google/uuid"
@@ -59,6 +61,38 @@ func TestAddOTLPTraceExportJSON(t *testing.T) {
 	accepted, rejected, err := NewSpansAccumulator().AddOTLPTraceExport(uuid.New(), "application/json", "", body, 4<<20)
 	if err != nil || accepted != 1 || rejected != 0 {
 		t.Fatalf("json: accepted=%d rejected=%d err=%v", accepted, rejected, err)
+	}
+}
+
+// adr: 958 — the Go SDK's tracing helper (sdk/go/tracing) writes OTLP JSON
+// without an OpenTelemetry dependency; its golden export must decode through
+// the guest ingest path with the IDs, kinds, status and attributes intact.
+func TestAddOTLPTraceExportGoSDKTracingHelper(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "sdk", "go", "tracing", "testdata", "otlp_export.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	accepted, rejected, err := NewSpansAccumulator().AddOTLPTraceExport(uuid.New(), "application/json", "", body, 4<<20)
+	if err != nil || accepted != 2 || rejected != 0 {
+		t.Fatalf("helper export: accepted=%d rejected=%d err=%v", accepted, rejected, err)
+	}
+	request, err := otlpTraceCodec{contentType: "application/json"}.decode(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	batches, err := extractTraceBatches(request)
+	if err != nil || len(batches) != 1 || len(batches[0].spans) != 2 {
+		t.Fatalf("batches = %+v err = %v", batches, err)
+	}
+	server, query := batches[0].spans[0], batches[0].spans[1]
+	if server.TraceID != formatTraceID([]byte{0x4b, 0xf9, 0x2f, 0x35, 0x77, 0xb3, 0x4d, 0xa6, 0xa3, 0xce, 0x92, 0x9d, 0x0e, 0x0e, 0x47, 0x36}) ||
+		server.Kind != "SPAN_KIND_SERVER" || server.Attributes["http.response.status_code"] != "200" {
+		t.Fatalf("server span = %+v", server)
+	}
+	if query.Kind != "SPAN_KIND_CLIENT" || query.ParentSpanID != server.SpanID || query.Status != "error" ||
+		query.Attributes["db.system.name"] != "postgresql" || query.DBStatement != "SELECT id FROM orders WHERE id = $1" ||
+		query.DurationNanos != 7_000_000 {
+		t.Fatalf("query span = %+v", query)
 	}
 }
 

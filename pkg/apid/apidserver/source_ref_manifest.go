@@ -425,6 +425,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				return staged, problem
 			}
 		}
+		if m.Routes != nil {
+			if problem := s.applySourceRefManifestPathRoutes(ctx, acct, app, m.Routes, &staged); problem != nil {
+				return staged, problem
+			}
+		}
 		return staged, nil
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
@@ -684,6 +689,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			return staged, problem
 		}
 	}
+	if m.Routes != nil {
+		if problem := s.applySourceRefManifestPathRoutes(ctx, acct, app, m.Routes, &staged); problem != nil {
+			return staged, problem
+		}
+	}
 	return staged, nil
 }
 
@@ -843,7 +853,8 @@ func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
 		left.ScaleOutCooldownS != right.ScaleOutCooldownS || left.ScaleInCooldownS != right.ScaleInCooldownS ||
 		left.ConcurrencyOverflow != right.ConcurrencyOverflow || left.MaxQueueWaitMS != right.MaxQueueWaitMS ||
 		left.MaxQueueDepth != right.MaxQueueDepth || left.WakeMaxQueueDepth != right.WakeMaxQueueDepth ||
-		left.WakeMaxQueueWaitSeconds != right.WakeMaxQueueWaitSeconds {
+		left.WakeMaxQueueWaitSeconds != right.WakeMaxQueueWaitSeconds ||
+		left.PerInstanceConcurrency != right.PerInstanceConcurrency {
 		return false
 	}
 	if left.Target == nil || right.Target == nil {

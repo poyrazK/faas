@@ -4,6 +4,8 @@ Generated from the CLI's command manifest by `gregale man --markdown`. Do not ed
 
 Local help: `gregale deploy --help` and `gregale app --help` show common tasks. Add `--all` to see every option grouped by purpose, or use `gregale help deploy --all`. This reference always lists every option.
 
+App target: a command that takes `--app` and no other arguments also accepts the app as its first argument (`gregale alerts list my-api` is `gregale alerts list --app my-api`), and slug-first commands such as `logs` and `ps` accept `--app`.
+
 Automation: put `--non-interactive` before the command to disable prompts and browser launches; use `--json` for structured output. Required confirmations must be supplied explicitly. Connection selection: `gregale --profile <name> <command>`. Put this option before the command; command-local `--profile` options retain their documented meaning. See [CLI configuration](cli-config.md) for connection profiles and environment precedence.
 
 | Command | What it does |
@@ -31,7 +33,7 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`approvals`](#approvals) | Make production releases wait in their canary for approval |
 | [`scheduled-releases`](#scheduled-releases) | Build production releases now and start them at a set time |
 | [`freeze`](#freeze) | Pause production releases for a window, weekly, or after rollbacks |
-| [`release-gates`](#release-gates) | Stop rollouts on SLO, error or metric regressions and roll back |
+| [`release-gates`](#release-gates) | Stop rollouts on SLO, error, metric or AI regressions and roll back |
 | [`canary`](#canary) | Advance canary stages, check their gates, or simulate a preset |
 | [`build`](#build) | Inspect builds, their provenance and SBOMs |
 | [`connect`](#connect) | Connect your GitHub account or start the repository wizard |
@@ -1303,7 +1305,7 @@ gregale mcp status --app my-mcp --watch --interval 15s --json
 
 Check discovery, Origin rejection, compatibility and streaming
 
-`gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--stack] [--hosting] [--path <DIR>] [--worker-app <SLUG>] [--observer-app <SLUG>] [--release-policy <PATH>]`
+`gregale mcp doctor [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [--stack] [--hosting] [--path <DIR>] [--worker-app <SLUG>] [--observer-app <SLUG>] [--release-policy <PATH>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1340,7 +1342,7 @@ The streaming check is optional.
 
 Discover tool schemas without invoking tools
 
-`gregale mcp tools [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp tools [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1368,7 +1370,7 @@ gregale mcp tools --app my-mcp
 
 Discover resource and template definitions without reading contents
 
-`gregale mcp resources [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp resources [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -1396,7 +1398,7 @@ gregale mcp resources --app my-mcp
 
 Read one explicitly selected resource URI
 
-`gregale mcp resource-read [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>]`
+`gregale mcp resource-read [--url <URL>] [--app <SLUG>] [--endpoint <PATH>] [--token-env <ENV>] [--legacy] [--tool <NAME>] [--uri <URI>] [--prompt <NAME>] [--stream-tool <NAME>] [--arguments <JSON>] [--arguments-file <PATH>] [--name <NAME>] [--timeout <DURATION>] [<app>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2799,6 +2801,12 @@ gregale ai logs <integration-id> --limit 20
 gregale ai tags <integration-id> --key feature
 gregale ai tags export <integration-id> --from 2026-10-01 --to 2026-10-31 --key customer > ai-tags.csv
 gregale ai tag-limits <integration-id> --set feature=search:20
+gregale ai traces <integration-id> --limit 20
+gregale ai traces <integration-id> <trace-id>
+gregale ai policy <integration-id> --trace-max-calls 50 --trace-max-cost 2 --trace-max-repeated-tool-calls 3
+gregale ai policy <integration-id> --request-log-content on --online-eval-percent 5 --online-eval-judge <openai-id> --online-eval-model gpt-5-mini --quality-alerts on
+gregale ai feedback <integration-id> <call-id> --bad --label wrong_answer
+gregale ai quality-alerts <integration-id>
 gregale ai logs show <integration-id> <request-id>
 gregale ai content-policy <integration-id> --email redact --secrets block --block-term 'Project Falcon'
 gregale ai content-policy <integration-id> --response-email redact --response-secrets block --response-terms block --response-moderation flag
@@ -2811,7 +2819,7 @@ gregale ai tokens create --app my-api --name laptop --expires-in-hours 24
 
 Set the AI provider and token or cost limits
 
-`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <USD>] [--monthly-cost <USD>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <USD>] [--log-export <on|off>] [--allow-unmetered <on|off>] [--prompt-cache <on|off>] <integration-id>`
+`gregale ai policy [--provider <PROVIDER>] [--daily-tokens <N>] [--daily-cost <USD>] [--monthly-cost <USD>] [--request-log <on|off>] [--request-log-content <on|off>] [--user-daily-tokens <N>] [--user-daily-cost <USD>] [--log-export <on|off>] [--allow-unmetered <on|off>] [--prompt-cache <on|off>] [--trace-max-calls <N>] [--trace-max-cost <USD>] [--trace-max-repeated-tool-calls <N>] [--online-eval-percent <N>] [--online-eval-judge <ID>] [--online-eval-model <MODEL>] [--online-eval-rubric <TEXT>] [--quality-alerts <on|off>] <integration-id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -2826,6 +2834,14 @@ Set the AI provider and token or cost limits
 | `--log-export <on|off>` | send each app call&#39;s metadata to the app&#39;s log drains | one of `on` · `off` |
 | `--allow-unmetered <on|off>` | let through calls the gateway cannot meter (realtime client secrets, vector stores, fine-tuning), outside the caps | one of `on` · `off` |
 | `--prompt-cache <on|off>` | add prompt-cache breakpoints to Claude requests that carry none: after a repeated system prompt or tools, and after a continuing conversation | one of `on` · `off` |
+| `--trace-max-calls <N>` | calls each AI trace (X-Gregale-AI-Trace or traceparent) may make, or none |  |
+| `--trace-max-cost <USD>` | cost each AI trace may reach in USD, or none |  |
+| `--trace-max-repeated-tool-calls <N>` | consecutive calls of a trace that may request the same tools with the same arguments, or none |  |
+| `--online-eval-percent <N>` | share of answered app calls a judge model scores from 1 to 5 (needs --request-log-content on), or none |  |
+| `--online-eval-judge <ID>` | the AI integration that runs the judge model |  |
+| `--online-eval-model <MODEL>` | the judge model |  |
+| `--online-eval-rubric <TEXT>` | what a good answer does for this app, up to 1,000 bytes, or none |  |
+| `--quality-alerts <on|off>` | alert bound apps when a model&#39;s quality drifts from its previous 7 days | one of `on` · `off` |
 
 Flags you omit keep their values.
 
@@ -2874,6 +2890,54 @@ Show one UTC day&#39;s AI usage by tag, or export a day range
 | `--format <FORMAT>` | export: csv (default) or ndjson | one of `csv` · `ndjson` |
 
 Tags come from the X-Gregale-AI-Tags header, each with its limit. Export with: tags export &lt;integration-id&gt;.
+
+### ai traces
+
+List an integration&#39;s AI traces, newest first, or show one trace
+
+`gregale ai traces [--app <ID>] [--user <ID>] [--limit <N>] <integration-id> [trace-id]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <ID>` | only traces whose first call came from this app (UUID) |  |
+| `--user <ID>` | only traces whose first call named this end user |  |
+| `--limit <N>` | traces to show, 1 to 200 |  |
+
+Pass a trace ID after the integration ID to show that trace&#39;s calls.
+
+### ai feedback
+
+Rate a logged AI call by its X-Gregale-AI-Call ID
+
+`gregale ai feedback [--good] [--bad] [--label <LABEL>] <integration-id> <call-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--good` | rate the call good |  |
+| `--bad` | rate the call bad |  |
+| `--label <LABEL>` | a short label such as wrong_answer |  |
+
+### ai quality-alerts
+
+List an integration&#39;s AI quality drift alerts, newest first
+
+`gregale ai quality-alerts [--limit <N>] <integration-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--limit <N>` | alerts to show, 1 to 100 |  |
+
+### ai deployments
+
+List an app&#39;s AI gateway calls, errors and cost per deployment
+
+`gregale ai deployments [--app <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project app) |  |
+
+Covers the last 14 days, including flagged answers and cost per call.
 
 ### ai tag-limits
 
@@ -3153,11 +3217,12 @@ Show an SLO&#39;s attainment, budget remaining and burn rate
 
 Delete one SLO
 
-`gregale slos rm --app <slug> <slo-id>`
+`gregale slos rm --app <slug> [--yes] <slo-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 
 ## synthetics
@@ -3226,11 +3291,12 @@ Resume a paused check
 
 Delete a check and its history
 
-`gregale synthetics rm --app <slug> <check-id>`
+`gregale synthetics rm --app <slug> [--yes] <check-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 
 ## alerts
@@ -3365,11 +3431,12 @@ gregale alerts update --app my-api --interactive
 
 Delete one alert rule
 
-`gregale alerts rm --app <slug> <alert-id>`
+`gregale alerts rm --app <slug> [--yes] <alert-id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 ### alerts rotate-secret
 
@@ -5836,7 +5903,7 @@ Show whether production releases of an app are frozen now
 
 ## release-gates
 
-Stop rollouts on SLO, error or metric regressions and roll back
+Stop rollouts on SLO, error, metric or AI regressions and roll back
 
 `gregale release-gates [<subcommand>]`
 
@@ -5846,6 +5913,7 @@ Examples:
 gregale release-gates add --app my-api --name checkout-slo --slo checkout --max-burn-rate 10
 gregale release-gates add --app my-api --name no-new-errors --new-errors --min-events 3
 gregale release-gates add --app my-api --name orders --metric orders_per_minute --below 5
+gregale release-gates add --app my-api --name ai-cost --ai cost_per_call --max-increase 30
 gregale release-gates list --app my-api
 ```
 
@@ -5863,7 +5931,7 @@ List an app&#39;s release gates
 
 Add a release gate
 
-`gregale release-gates add [--app <slug>] --name <NAME> [--slo <NAME>] [--max-burn-rate <N>] [--new-errors] [--max-new-groups <N>] [--min-events <N>] [--metric <NAME>] [--below <VALUE>] [--above <VALUE>] [--min-samples <N>]`
+`gregale release-gates add [--app <slug>] --name <NAME> [--slo <NAME>] [--max-burn-rate <N>] [--new-errors] [--max-new-groups <N>] [--min-events <N>] [--metric <NAME>] [--below <VALUE>] [--above <VALUE>] [--ai <METRIC>] [--max-increase <PCT>] [--min-samples <N>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -5877,17 +5945,20 @@ Add a release gate
 | `--metric <NAME>` | fail when this custom metric crosses a bound |  |
 | `--below <VALUE>` | fail when the metric averages below this |  |
 | `--above <VALUE>` | fail when the metric averages above this |  |
-| `--min-samples <N>` | requests or metric values before the gate is judged (default 20) |  |
+| `--ai <METRIC>` | fail when this AI gateway metric gets worse than the previous release&#39;s: error_rate, flagged_rate, cost_per_call or ttfb_ms |  |
+| `--max-increase <PCT>` | percent over the previous release that fails an --ai gate (default 50) |  |
+| `--min-samples <N>` | requests, metric values or AI calls before the gate is judged (default 20) |  |
 
 ### release-gates rm
 
 Remove a release gate
 
-`gregale release-gates rm [--app <slug>] <name>`
+`gregale release-gates rm [--app <slug>] [--yes] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug (defaults to linked project app) |  |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 
 ## canary
@@ -8349,7 +8420,7 @@ Wait for an exact or latest workflow run to succeed
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 | `--timeout <DURATION>` | maximum wait (default 5m; positive) |  |
 | `--poll-interval <DURATION>` | read interval (default 2s; 1s to 1h) |  |
 
@@ -8373,7 +8444,7 @@ Show details of a workflow run
 | `--check` | exit 0 only for a succeeded, non-cancelled run (explicit read only) |  |
 | `--interactive` | choose a run for inspection |  |
 | `--app <slug>` | app for latest or interactive selection (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8394,7 +8465,7 @@ Inspect queue reasons and preview recovery without changing the run
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app slug for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8414,7 +8485,7 @@ List steps for an exact or latest workflow run
 |---|---|---|
 | `--failed-only` | show only failed steps with inspection commands |  |
 | `--app <SLUG>` | app slug for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8433,7 +8504,7 @@ List a step&#39;s retry attempts and managed effect delivery
 |---|---|---|
 | `--failed-only` | show only failed attempts |  |
 | `--app <SLUG>` | app for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8493,7 +8564,7 @@ List continuation history for an exact or latest workflow run
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | app for latest (defaults to linked project app) |  |
-| `--workflow-name <NAME>` | exact workflow name required for latest |  |
+| `--workflow-name <NAME>` | exact workflow name for latest (inferred when the app&#39;s recent runs share one) |  |
 
 Examples:
 
@@ -8681,7 +8752,11 @@ Alias for get
 
 Cancel a delayed task
 
-`gregale delayed-task cancel <id>`
+`gregale delayed-task cancel [--app <SLUG>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | require the task to belong to this app |  |
 
 
 ## deployments
@@ -10652,7 +10727,7 @@ Covers budget, throttle, retry, circuit-breaker and async-route policy. --config
 
 Add an edge rule
 
-`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--template] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--challenge-difficulty <BITS>] [--challenge-pass-ttl <SECONDS>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--match <JSON|@FILE|->] [--mode <MODE>] [--cache-methods <METHOD>]... [--cache-vary-on <HEADER>]... [--cors-allow-header <HEADER>]... [--cors-allow-method <METHOD>]... [--cors-allow-origin <ORIGIN>]... [--cors-expose-header <HEADER>]... [--description <TEXT>] [--expires-at <RFC3339>] [--expires-in <DURATION>] [--headers-request-add <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-request-set <NAME:VALUE>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--headers-response-set <NAME:VALUE>]... [--jwt-algorithm <ALG>]... [--jwt-audience <AUDIENCE>]... [--jwt-require-exp] [--jwt-required-claim <NAME=VALUE>]... [--name <NAME>] [--redirect-header <NAME:VALUE>]...`
+`gregale edge-rules create --app <slug> --kind <KIND> --match-host <HOST> [--match-path <PATH>] [--match-method <METHOD>] [--match-header <Name=Value>] [--priority <N>] [--enabled[=true|false]] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--redirect-status <CODE>] [--redirect-to <URL>] [--template] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--route-target-slug <slug>] [--cache-max-age-seconds <N>] [--cache-stale-while-revalidate-seconds <N>] [--budget-ms <MS>] [--retry-max-attempts <N>] [--circuit-failure-threshold <RATIO>] [--circuit-open-seconds <N>] [--respond-status <CODE>] [--respond-body <JSON>] [--ip-allow <CIDR>] [--ip-deny <CIDR>] [--geo-allow <CC>] [--geo-deny <CC>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--challenge-difficulty <BITS>] [--challenge-pass-ttl <SECONDS>] [--challenge-max-difficulty <BITS>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-stale-if-error-seconds <SECONDS>] [--budget-allow-override-header <HEADER>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--match <JSON|@FILE|->] [--mode <MODE>] [--penalty-for <DURATION>] [--penalty-after <N>] [--penalty-within <DURATION>] [--cache-methods <METHOD>]... [--cache-vary-on <HEADER>]... [--cors-allow-header <HEADER>]... [--cors-allow-method <METHOD>]... [--cors-allow-origin <ORIGIN>]... [--cors-expose-header <HEADER>]... [--description <TEXT>] [--expires-at <RFC3339>] [--expires-in <DURATION>] [--headers-request-add <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-request-set <NAME:VALUE>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--headers-response-set <NAME:VALUE>]... [--jwt-algorithm <ALG>]... [--jwt-audience <AUDIENCE>]... [--jwt-require-exp] [--jwt-required-claim <NAME=VALUE>]... [--name <NAME>] [--redirect-header <NAME:VALUE>]...`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10701,6 +10776,7 @@ Add an edge rule
 | `--waf-inspect-body-bytes <BYTES>` | kind=waf: request body bytes to inspect, 1..65536 (default 8192) |  |
 | `--challenge-difficulty <BITS>` | kind=challenge: proof-of-work difficulty in leading zero bits, 10..22 (default 16) |  |
 | `--challenge-pass-ttl <SECONDS>` | kind=challenge: seconds a solved challenge lets the browser through, 300..86400 (default 3600) |  |
+| `--challenge-max-difficulty <BITS>` | kind=challenge: raise the difficulty up to this many bits, at most 22, while the rule serves far more challenge pages than usual (default: fixed) |  |
 | `--validate-schema <JSON|@FILE|->` | JSON Schema (inline JSON, @file, or - for stdin; max 64 KiB) |  |
 | `--validate-mode <MODE>` | invalid-request behavior (default block) | one of `block` · `observe` · `warn` |
 | `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
@@ -10735,6 +10811,9 @@ Add an edge rule
 | `--maintenance-message <TEXT>` | kind=maintenance: operator message |  |
 | `--match <JSON|@FILE|->` | match condition ANDed with the selectors (JSON, @file, or -) |  |
 | `--mode <MODE>` | enforce (default) or log: a log-mode rule only counts matches | one of `enforce` · `log` |
+| `--penalty-for <DURATION>` | kind=ip\|geo\|throttle\|waf (block): block a client this rule keeps refusing from the whole app for this long (1m to 24h) |  |
+| `--penalty-after <N>` | with --penalty-for: refusals that box the client (default 1) |  |
+| `--penalty-within <DURATION>` | with --penalty-for: window the refusals count in (default 1m) |  |
 | `--cache-methods <METHOD>` | kind=cache: cacheable method (repeatable) |  |
 | `--cache-vary-on <HEADER>` | kind=cache: header to vary on (repeatable) |  |
 | `--cors-allow-header <HEADER>` | kind=cors: allowed header (repeatable) |  |
@@ -10781,7 +10860,7 @@ Show one edge rule
 
 Update one edge rule
 
-`gregale edge-rules update [--match-host <HOST>] [--match-path <PATH>] [--match-method <METHOD>]... [--match-header <NAME=VALUE>]... [--clear-match-headers] [--priority <N>] [--enable] [--disable] [--kind <KIND>] [--route-target-slug <SLUG>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--redirect-status <CODE>] [--redirect-to <URL>] [--template] [--redirect-header <NAME:VALUE>]... [--headers-request-add <NAME:VALUE>]... [--headers-request-set <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-set <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--cors-allow-origin <ORIGIN>]... [--cors-allow-method <METHOD>]... [--cors-allow-header <HEADER>]... [--cors-expose-header <HEADER>]... [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-audience <AUDIENCE>]... [--jwt-algorithm <ALG>]... [--jwt-required-claim <NAME=VALUE>]... [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--ip-allow <CIDR>]... [--ip-deny <CIDR>]... [--geo-allow <CC>]... [--geo-deny <CC>]... [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-max-age-seconds <SECONDS>] [--cache-stale-while-revalidate-seconds <SECONDS>] [--cache-stale-if-error-seconds <SECONDS>] [--cache-vary-on <HEADER>]... [--cache-methods <METHOD>]... [--budget-ms <MS>] [--budget-allow-override-header <HEADER>] [--retry-max-attempts <N>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-failure-threshold <RATIO>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-open-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--respond-status <CODE>] [--respond-body <JSON>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--challenge-difficulty <BITS>] [--challenge-pass-ttl <SECONDS>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--match <JSON|@FILE|->] [--clear-match] [--mode <MODE>] [--clear-expiry] [--description <TEXT>] [--expires-at <RFC3339>] [--expires-in <DURATION>] [--jwt-require-exp] [--name <NAME>] <id>`
+`gregale edge-rules update [--match-host <HOST>] [--match-path <PATH>] [--match-method <METHOD>]... [--match-header <NAME=VALUE>]... [--clear-match-headers] [--priority <N>] [--enable] [--disable] [--kind <KIND>] [--route-target-slug <SLUG>] [--rewrite-from <PATH>] [--rewrite-to <PATH>] [--redirect-status <CODE>] [--redirect-to <URL>] [--template] [--redirect-header <NAME:VALUE>]... [--headers-request-add <NAME:VALUE>]... [--headers-request-set <NAME:VALUE>]... [--headers-request-remove <NAME>]... [--headers-response-add <NAME:VALUE>]... [--headers-response-set <NAME:VALUE>]... [--headers-response-remove <NAME>]... [--cors-allow-origin <ORIGIN>]... [--cors-allow-method <METHOD>]... [--cors-allow-header <HEADER>]... [--cors-expose-header <HEADER>]... [--cors-allow-credentials] [--cors-max-age-seconds <SECONDS>] [--jwt-issuer <ISSUER>] [--jwt-jwks-url <URL>] [--jwt-audience <AUDIENCE>]... [--jwt-algorithm <ALG>]... [--jwt-required-claim <NAME=VALUE>]... [--jwt-platform-tenant-external-ref-claim <CLAIM>] [--ip-allow <CIDR>]... [--ip-deny <CIDR>]... [--geo-allow <CC>]... [--geo-deny <CC>]... [--limit-max-body-bytes <BYTES>] [--limit-max-body-bytes-streaming <BYTES>] [--throttle-requests-per-second <RPS>] [--throttle-burst <N>] [--throttle-key-by <KEY>] [--throttle-jwt-claim <CLAIM>] [--throttle-max-keys-per-rule <N>] [--throttle-missing-key-policy <POLICY>] [--throttle-key-field <FIELD>] [--throttle-count-status <CODE>] [--cache-max-age-seconds <SECONDS>] [--cache-stale-while-revalidate-seconds <SECONDS>] [--cache-stale-if-error-seconds <SECONDS>] [--cache-vary-on <HEADER>]... [--cache-methods <METHOD>]... [--budget-ms <MS>] [--budget-allow-override-header <HEADER>] [--retry-max-attempts <N>] [--retry-allow-non-idempotent] [--retry-min-remaining-ms <MS>] [--retry-backoff-ms <MS>] [--retry-budget-percent <PERCENT>] [--retry-budget-min-retries <N>] [--circuit-failure-threshold <RATIO>] [--circuit-min-requests <N>] [--circuit-window-seconds <SECONDS>] [--circuit-open-seconds <SECONDS>] [--circuit-max-open-seconds <SECONDS>] [--maintenance-retry-after-seconds <SECONDS>] [--maintenance-message <TEXT>] [--respond-status <CODE>] [--respond-body <JSON>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--async-max-attempts <N>] [--async-retry-base-seconds <N>] [--async-retry-max-seconds <N>] [--async-retry-jitter-seconds <N>] [--async-max-age-seconds <N>] [--waf-mode <MODE>] [--waf-paranoia-level <N>] [--waf-anomaly-threshold <N>] [--waf-exclude-rules <IDS>] [--waf-inspect-body-bytes <BYTES>] [--challenge-difficulty <BITS>] [--challenge-pass-ttl <SECONDS>] [--challenge-max-difficulty <BITS>] [--validate-schema <JSON|@FILE|->] [--validate-mode <MODE>] [--validate-content-type <TYPE>] [--validate-max-body-bytes <N>] [--validate-apply-while-streaming] [--validate-reject-unknown-fields] [--validate-path-template <TEMPLATE>] [--validate-path-schema <JSON|@FILE|->] [--validate-query-schema <JSON|@FILE|->] [--validate-headers-schema <JSON|@FILE|->] [--match <JSON|@FILE|->] [--clear-match] [--mode <MODE>] [--penalty-for <DURATION>] [--penalty-after <N>] [--penalty-within <DURATION>] [--clear-penalty] [--clear-expiry] [--description <TEXT>] [--expires-at <RFC3339>] [--expires-in <DURATION>] [--jwt-require-exp] [--name <NAME>] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10869,6 +10948,7 @@ Update one edge rule
 | `--waf-inspect-body-bytes <BYTES>` | kind=waf: request body bytes to inspect, 1..65536 (default 8192) |  |
 | `--challenge-difficulty <BITS>` | kind=challenge: proof-of-work difficulty in leading zero bits, 10..22 (default 16) |  |
 | `--challenge-pass-ttl <SECONDS>` | kind=challenge: seconds a solved challenge lets the browser through, 300..86400 (default 3600) |  |
+| `--challenge-max-difficulty <BITS>` | kind=challenge: raise the difficulty up to this many bits, at most 22, while the rule serves far more challenge pages than usual (default: fixed) |  |
 | `--validate-schema <JSON|@FILE|->` | replacement body schema; an action update replaces the body schema and parameter schemas together (inline JSON, @file, or -; max 64 KiB) |  |
 | `--validate-mode <MODE>` | invalid-request behavior | one of `block` · `observe` · `warn` |
 | `--validate-content-type <TYPE>` | accepted application media type (repeat; e.g. application/json) |  |
@@ -10882,6 +10962,10 @@ Update one edge rule
 | `--match <JSON|@FILE|->` | replace the match condition (JSON, @file, or -) |  |
 | `--clear-match` | remove the match condition |  |
 | `--mode <MODE>` | enforce or log (log-mode rules only count matches) | one of `enforce` · `log` |
+| `--penalty-for <DURATION>` | kind=ip\|geo\|throttle\|waf (block): block a client this rule keeps refusing from the whole app for this long (1m to 24h) |  |
+| `--penalty-after <N>` | with --penalty-for: refusals that box the client (default 1) |  |
+| `--penalty-within <DURATION>` | with --penalty-for: window the refusals count in (default 1m) |  |
+| `--clear-penalty` | remove the rule&#39;s penalty box, releasing the clients it holds |  |
 | `--clear-expiry` | remove the rule&#39;s expiry |  |
 | `--description <TEXT>` | operator-facing description (&lt;=1000 chars) |  |
 | `--expires-at <RFC3339>` | stop applying the rule at this RFC 3339 time |  |
@@ -11003,12 +11087,13 @@ Also lists rules still collecting or quiet for 7 days, with the command for each
 
 Show sampled requests that rules matched, newest first
 
-`gregale edge-rules events --app <slug> [--rule <ID>] [--outcome <OUTCOME>] [--since <DURATION>] [--limit <N>] [--cursor <CURSOR>]`
+`gregale edge-rules events --app <slug> [--rule <ID>] [--request-id <ID>] [--outcome <OUTCOME>] [--since <DURATION>] [--limit <N>] [--cursor <CURSOR>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
 | `--rule <ID>` | only this rule id |  |
+| `--request-id <ID>` | only this request, e.g. the reference a visitor without JavaScript saw on the challenge page |  |
 | `--outcome <OUTCOME>` | outcome filter; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes | one of `matched` · `logged` · `detected` · `warned` · `blocked` · `challenged` · `rejected` · `solved` · `failed` |
 | `--since <DURATION>` | how far back, e.g. 1h, 24h, 7d (clamped to the plan window) |  |
 | `--limit <N>` | events per page (1..200) |  |
@@ -11019,6 +11104,7 @@ Examples:
 ```sh
 gregale edge-rules events --app my-api --outcome logged --since 7d
 gregale edge-rules events --app my-api --outcome blocked
+gregale edge-rules events --app my-site --request-id REQUEST_ID
 ```
 
 Includes kind=waf detections; up to 10 of each per rule per minute, kept 7 days.
@@ -12462,13 +12548,13 @@ gregale issues assign --app my-api --interactive
 
 Resolve in a deployment
 
-`gregale issues resolve --app <SLUG> [--interactive] [--deployment <UUID>] [<issue-id>]`
+`gregale issues resolve --app <SLUG> [--interactive] [--deployment <UUID|vN>] [<issue-id>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <SLUG>` | application slug | required |
 | `--interactive` | choose an open issue and fixing release, then confirm resolution |  |
-| `--deployment <UUID>` | fixing deployment UUID (required unless interactive) |  |
+| `--deployment <UUID|vN>` | fixing deployment UUID or vN revision (required unless interactive) |  |
 
 Examples:
 
@@ -13474,12 +13560,13 @@ Queue a request replay against a mirror target
 
 ### debug profiles
 
-Sampled CPU functions and deployment comparison
+Sampled CPU or heap functions and deployment comparison
 
-`gregale debug profiles [--deployment-id <UUID>] [--runtime <NAME>] [--start <RFC3339>] [--end <RFC3339>] [--baseline-id <UUID>] [--baseline-start <RFC3339>] [--baseline-end <RFC3339>] <slug>`
+`gregale debug profiles [--type <KIND>] [--deployment-id <UUID>] [--runtime <NAME>] [--start <RFC3339>] [--end <RFC3339>] [--baseline-id <UUID>] [--baseline-start <RFC3339>] [--baseline-end <RFC3339>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--type <KIND>` | cpu (default) or heap |  |
 | `--deployment-id <UUID>` | candidate deployment |  |
 | `--runtime <NAME>` | runtime name |  |
 | `--start <RFC3339>` | capture start |  |
@@ -13487,6 +13574,44 @@ Sampled CPU functions and deployment comparison
 | `--baseline-id <UUID>` | baseline deployment |  |
 | `--baseline-start <RFC3339>` | baseline capture start |  |
 | `--baseline-end <RFC3339>` | baseline capture end |  |
+
+### debug capture
+
+Capture CPU, heap, stack or lock profiles from a running instance
+
+`gregale debug capture [--type <KINDS>] [--duration <DURATION>] [--instance <UUID>] [--output <DIR>] [--top <N>] [--no-wait] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--type <KINDS>` | cpu, heap, stacks, block, mutex, comma-separated (default cpu) |  |
+| `--duration <DURATION>` | capture window, 1s..60s (default 10s) |  |
+| `--instance <UUID>` | running instance; default the earliest |  |
+| `--output <DIR>` | write merged .pb.gz pprof files |  |
+| `--top <N>` | functions to print per kind |  |
+| `--no-wait` | queue the capture and print its id |  |
+
+### debug captures
+
+List or show on-demand profile captures
+
+`gregale debug captures [--output <DIR>] [--top <N>] <slug> [<capture-id>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--output <DIR>` | write merged .pb.gz pprof files |  |
+| `--top <N>` | functions to print per kind |  |
+
+### debug capture-diff
+
+Compare a profile capture with an earlier one to see what grew
+
+`gregale debug capture-diff [--base <ID>] [--type <KIND>] [--top <N>] <slug> <capture-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--base <ID>` | baseline capture id of the same app |  |
+| `--type <KIND>` | cpu, heap, stacks, block or mutex (default: shared kind, heap first) |  |
+| `--top <N>` | functions to print |  |
 
 ### debug dependencies
 
@@ -17774,7 +17899,7 @@ Watch invocations finish across your account in real time
 
 See also: [`logs`](#logs).
 
-`gregale tail [--app <slug>] [--include-stateless]`
+`gregale tail [<slug>] [--app <slug>] [--include-stateless]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -18241,10 +18366,11 @@ Cache HEAD responses for a route
 
 Purge cached responses for one app
 
-`gregale cache purge [--path <GLOB>] [--tag <TAG>] <slug>`
+`gregale cache purge [--app <SLUG>] [--path <GLOB>] [--tag <TAG>] [<slug>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (defaults to linked project context) |  |
 | `--path <GLOB>` | optional normalized request path glob |  |
 | `--tag <TAG>` | optional cache tag |  |
 
@@ -18333,11 +18459,12 @@ Update one webhook
 
 Delete one webhook
 
-`gregale webhooks rm --app <slug> <id>`
+`gregale webhooks rm --app <slug> [--yes] <id>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--yes` | accepted for consistency; rm does not prompt |  |
 
 ### webhooks deliveries
 

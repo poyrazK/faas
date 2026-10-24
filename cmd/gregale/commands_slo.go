@@ -143,8 +143,8 @@ func renderAppSLO(w io.Writer, s api.AppSLOResponse) {
 	if s.Source != "" {
 		_, _ = fmt.Fprintf(w, "Source:      %s\n", s.Source)
 	}
-	_, _ = fmt.Fprintf(w, "Latency:     p50=%.1fms p95=%.1fms p99=%.1fms (2xx class)\n",
-		s.RequestDuration.P50MS, s.RequestDuration.P95MS, s.RequestDuration.P99MS)
+	_, _ = fmt.Fprintf(w, "Latency:     %s (2xx class)\n",
+		requestLatencyLine(s.RequestDuration.P50MS, s.RequestDuration.P95MS, s.RequestDuration.P99MS))
 	_, _ = fmt.Fprintf(w, "Error rate:  %.2f%%\n", s.ErrorRatePct)
 	_, _ = fmt.Fprintf(w, "Cold boot:   %.2f%%\n", s.ColdBootRatePct)
 	_, _ = fmt.Fprintf(w, "Requests:    %d (total in window)\n", s.RequestsTotal)
@@ -172,8 +172,8 @@ func renderAccountSLO(w io.Writer, s api.AccountSLOResponse) {
 	if s.Source != "" {
 		_, _ = fmt.Fprintf(w, "Source:      %s\n", s.Source)
 	}
-	_, _ = fmt.Fprintf(w, "Latency:     p50=%.1fms p95=%.1fms p99=%.1fms (2xx class, fleet-wide)\n",
-		s.RequestDuration.P50MS, s.RequestDuration.P95MS, s.RequestDuration.P99MS)
+	_, _ = fmt.Fprintf(w, "Latency:     %s (2xx class, fleet-wide)\n",
+		requestLatencyLine(s.RequestDuration.P50MS, s.RequestDuration.P95MS, s.RequestDuration.P99MS))
 	_, _ = fmt.Fprintf(w, "Error rate:  %.2f%%\n", s.ErrorRatePct)
 	_, _ = fmt.Fprintf(w, "Cold boot:   %.2f%%\n", s.ColdBootRatePct)
 	_, _ = fmt.Fprintf(w, "Requests:    %d (total in window)\n", s.RequestsTotal)

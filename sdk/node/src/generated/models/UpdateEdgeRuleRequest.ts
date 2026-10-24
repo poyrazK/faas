@@ -15,6 +15,7 @@ import type { EdgeRuleJWTAction } from './EdgeRuleJWTAction.js';
 import type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
 import type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
 import type { EdgeRuleMatchExpr } from './EdgeRuleMatchExpr.js';
+import type { EdgeRulePenalty } from './EdgeRulePenalty.js';
 import type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
 import type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
 import type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
@@ -71,5 +72,10 @@ export type UpdateEdgeRuleRequest = {
    * Switch the rule to enforce, or to log so it is matched and counted but never acts.
    */
   mode?: 'enforce' | 'log';
+  penalty?: EdgeRulePenalty;
+  /**
+   * Remove the rule's penalty box, releasing the clients it holds.
+   */
+  clear_penalty?: boolean;
 };
 

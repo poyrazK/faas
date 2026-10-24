@@ -441,6 +441,10 @@ func buildCapacityReport(
 				EgressFloodDropsLimitPerMin:      in.GetEgressFloodDropsLimitPerMin(),
 				QuietPaused:                      in.GetQuietPaused(),
 				Frozen:                           in.GetFrozen(),
+				QuietPausedSince:                 in.GetQuietPausedSince(),
+				QuietLastPauseStartedAt:          in.GetQuietLastPauseStartedAt(),
+				QuietLastPauseEndedAt:            in.GetQuietLastPauseEndedAt(),
+				QuietPausedNsTotal:               in.GetQuietPausedNsTotal(),
 			}
 			report.Instances = append(report.Instances, row)
 		}

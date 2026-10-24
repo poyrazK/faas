@@ -18,6 +18,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/guestmemproto"
+	"github.com/onebox-faas/faas/pkg/profileproto"
 	"github.com/onebox-faas/faas/pkg/resumetimingproto"
 	"github.com/onebox-faas/faas/pkg/runtimepolicyproto"
 	"golang.org/x/sys/unix"
@@ -284,6 +285,10 @@ func handleResumeConnWithExtension(f *os.File, log *slog.Logger, onResume func()
 	}
 	if msgType == guestmemproto.MessageType {
 		handleMemoryStatsConn(f, log, hdr[4:])
+		return
+	}
+	if msgType == profileproto.CaptureMessageType {
+		handleProfileCaptureConn(f, log, hdr[4:])
 		return
 	}
 	if msgType != VsockResumeMsgType {

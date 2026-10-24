@@ -147,6 +147,9 @@ type jobRegistryCredentialKey struct {
 }
 
 type MemStore struct {
+	// totpLastSteps is each account's last accepted TOTP step
+	// (AcceptTOTPStep), created on first use.
+	totpLastSteps                              map[string]int64
 	migrationContracts                         map[string]projectMigrationContract
 	projectCanaries                            map[string]projectCanaryRecord
 	workerReleasePins                          map[string]projectWorkerReleasePin
@@ -294,43 +297,52 @@ type MemStore struct {
 	instanceApplicationStandardPromotions      map[string]instanceStandardPromotion
 	instanceApplicationStandardPromotionTokens map[string]string
 	computeNodeRuntimeHistory                  map[string]runtimeadmission.Identity
-	computeNodeRuntimeIncarnations             map[string]string
-	computeNodeRuntimeProtocols                map[string]uint32
-	appEgressRevisions                         map[string]int64
-	applicationStandardVersions                map[string][]ApplicationStandardVersion
-	applicationStandardLogDestinations         map[string]ApplicationStandardLogDestination
-	applicationStandardPublishers              map[string]api.ApplicationStandardPublisher
-	applicationStandardAssignments             map[string]applicationStandardAssignmentRecord
-	applicationStandardEnrollments             map[string]ApplicationStandardEnrollment
-	applicationStandardExceptions              map[string]ApplicationStandardException
-	applicationStandardLogDeliveries           map[string]ApplicationStandardLogDeliveryObservation
-	applicationStandardLogConsumers            map[string]ApplicationStandardLogConsumerSession
-	applicationStandardLogConsumerSessions     map[string]ApplicationStandardLogConsumerSession
-	applicationStandardLogConsumerClosures     map[string]ApplicationStandardLogConsumerClosure
-	applicationStandardLogInventories          map[string]ApplicationStandardLogInventoryObservation
-	applicationStandardLogHealth               map[string]ApplicationStandardLogHealthObservation
-	applicationStandardEgressObservations      map[string]ApplicationStandardEgressObservation
-	applicationStandardReviewPlans             map[string]ApplicationStandardReviewPlan
-	applicationStandardOperations              map[string]ApplicationStandardOperation
-	applicationStandardWorkerClaims            map[string]ApplicationStandardWorkerClaim
-	applicationStandardEnrollmentClaims        map[string]ApplicationStandardEnrollmentClaim
-	standardObservationChecks                  map[string]standardAutomaticObservationCheck
-	standardRuntimeRefreshRequests             map[string]ApplicationStandardRuntimeRefreshRequest
-	applicationStandardControlBindings         map[string]standardControlBinding
-	applicationStandardControlBackups          map[string]standardControlBackup
-	financialBudgetEvaluations                 map[string]financialBudgetMemoryEvaluation
-	financialBudgetAlerts                      map[string]FinancialBudgetAlertDelivery
-	financialBudgetStops                       map[string]FinancialBudgetStop
-	financialBudgetChannels                    map[string][]string                            // policy id → channel ids (ADR-20261019193500)
-	financialBudgetChannelDeliveries           map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
-	financialBudgetProjections                 map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
-	financialObjectStorageEstimates            map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
-	financialPreviewCommands                   map[string]FinancialPreviewCommandRuntime
-	financialComputeBooks                      map[string]financialComputeBook
-	financialComputeLeases                     map[string]financialComputeLease
-	financialComputeHolds                      map[string][]financialComputeHold
-	financialComputeOwners                     map[string]financialComputeOwner
-	financialComputeJobAttempts                map[string]financialComputeJobAttempt
+	// computeNodeRuntimeOrder is each node incarnation's registration order,
+	// as application_standard_native_incarnations.registered_at orders them.
+	computeNodeRuntimeOrder map[string]uint64
+	computeNodeRuntimeSeq   uint64
+	// instanceApplicationStandardRebinds are each instance's admission
+	// re-binds, oldest first (ADR-595 extension).
+	instanceApplicationStandardRebinds     map[string][]ApplicationStandardRebind
+	computeNodeVMMDEpochs                  map[string]VMMDEpoch
+	computeNodeVMMDNotices                 map[string]time.Time
+	computeNodeRuntimeIncarnations         map[string]string
+	computeNodeRuntimeProtocols            map[string]uint32
+	appEgressRevisions                     map[string]int64
+	applicationStandardVersions            map[string][]ApplicationStandardVersion
+	applicationStandardLogDestinations     map[string]ApplicationStandardLogDestination
+	applicationStandardPublishers          map[string]api.ApplicationStandardPublisher
+	applicationStandardAssignments         map[string]applicationStandardAssignmentRecord
+	applicationStandardEnrollments         map[string]ApplicationStandardEnrollment
+	applicationStandardExceptions          map[string]ApplicationStandardException
+	applicationStandardLogDeliveries       map[string]ApplicationStandardLogDeliveryObservation
+	applicationStandardLogConsumers        map[string]ApplicationStandardLogConsumerSession
+	applicationStandardLogConsumerSessions map[string]ApplicationStandardLogConsumerSession
+	applicationStandardLogConsumerClosures map[string]ApplicationStandardLogConsumerClosure
+	applicationStandardLogInventories      map[string]ApplicationStandardLogInventoryObservation
+	applicationStandardLogHealth           map[string]ApplicationStandardLogHealthObservation
+	applicationStandardEgressObservations  map[string]ApplicationStandardEgressObservation
+	applicationStandardReviewPlans         map[string]ApplicationStandardReviewPlan
+	applicationStandardOperations          map[string]ApplicationStandardOperation
+	applicationStandardWorkerClaims        map[string]ApplicationStandardWorkerClaim
+	applicationStandardEnrollmentClaims    map[string]ApplicationStandardEnrollmentClaim
+	standardObservationChecks              map[string]standardAutomaticObservationCheck
+	standardRuntimeRefreshRequests         map[string]ApplicationStandardRuntimeRefreshRequest
+	applicationStandardControlBindings     map[string]standardControlBinding
+	applicationStandardControlBackups      map[string]standardControlBackup
+	financialBudgetEvaluations             map[string]financialBudgetMemoryEvaluation
+	financialBudgetAlerts                  map[string]FinancialBudgetAlertDelivery
+	financialBudgetStops                   map[string]FinancialBudgetStop
+	financialBudgetChannels                map[string][]string                            // policy id → channel ids (ADR-20261019193500)
+	financialBudgetChannelDeliveries       map[string]FinancialBudgetAlertChannelDelivery // alert id + "\n" + channel id
+	financialBudgetProjections             map[string]FinancialBudgetAlertDelivery        // projection alert id (ADR-20261019193500)
+	financialObjectStorageEstimates        map[string]FinancialObjectStorageEstimate      // account + "\n" + period (ADR-20261020160000)
+	financialPreviewCommands               map[string]FinancialPreviewCommandRuntime
+	financialComputeBooks                  map[string]financialComputeBook
+	financialComputeLeases                 map[string]financialComputeLease
+	financialComputeHolds                  map[string][]financialComputeHold
+	financialComputeOwners                 map[string]financialComputeOwner
+	financialComputeJobAttempts            map[string]financialComputeJobAttempt
 
 	eventCircuitBreakers              map[string]*eventCircuitRecord
 	eventSubscriptionControls         map[string]*memEventSubscriptionControl
@@ -449,6 +461,7 @@ type MemStore struct {
 	outboundAIAccessTokens      map[string]OutboundAIAccessToken
 	outboundCredentialKeys      map[string][]OutboundCredentialKey
 	outboundAIBudgetAlerts      map[string][]OutboundAIBudgetAlert
+	outboundAIDeploymentStats   map[string][]OutboundAIDeploymentStats
 	outboundAIRequestLog        map[string][]OutboundAIRequestLogEntry
 	outboundAIRequestContent    map[string]OutboundAIRequestContent
 	outboundAIReplays           map[string]OutboundAIReplay
@@ -456,6 +469,8 @@ type MemStore struct {
 	outboundAIUserUsage         map[string][]OutboundAIUserUsageItem
 	outboundAITagUsage          map[string][]OutboundAITagUsageItem
 	outboundAITagLimits         map[string][]api.OutboundAITagLimit
+	outboundAITraces            map[string][]OutboundAITrace
+	outboundAIQualityAlerts     map[string][]OutboundAIQualityAlert
 	outboundAppBindings         map[string]OutboundAppBinding
 	outboundCredentials         map[string][]byte
 	mu                          sync.Mutex
@@ -510,6 +525,8 @@ type MemStore struct {
 	// stable customer identity independent from rotatable credentials.
 	apiConsumers                         map[string]APIConsumer
 	apiConsumerTrials                    map[string]APIConsumerTrial               // ADR-1314
+	apiConsumerSignupSettings            map[string]APIConsumerSignupSettings      // ADR-20261021143000, by app ID
+	apiConsumerSignups                   map[string]APIConsumerSignup              // ADR-20261021143000
 	apiConsumerMeterUsage                map[string]APIConsumerMeterUsageBucket    // ADR-1318
 	platformTenantMeterUsage             map[string]PlatformTenantMeterUsageBucket // ADR-1319
 	platformTenantTrials                 map[string]PlatformTenantTrial            // ADR-1322, by tenant
@@ -813,6 +830,7 @@ type MemStore struct {
 	routePolicyReceipts       map[string]routePolicyStoredReceipt
 	savedRouteRequirements    map[string]api.SavedRouteRequirements
 	profileInvestigations     map[string]api.ProfileInvestigation
+	profileCaptures           map[string]*memProfileCapture
 	profileDeploymentPolicies map[string]api.ProfileDeploymentPolicy
 	profileDeploymentChecks   map[string]*memProfileDeploymentCheck
 	profileCanaryChecks       map[string]*memProfileCanaryCheck
@@ -970,6 +988,13 @@ type MemStore struct {
 	// appTasks are deployment-attached command intents (ADR-230). Unlike
 	// disposable executions they reference an app artifact and scope.
 	appTasks map[string]AppTask
+	// appForks are production fork intents (ADR-732), keyed by fork id.
+	appForks map[string]AppFork
+	// appForkExecs mirrors app_fork_execs (ADR-732 fork exec).
+	appForkExecs map[string]AppForkExec
+	// crashCaptures / crashSettings are ADR-733 crash snapshots.
+	crashCaptures map[string]CrashCapture
+	crashSettings map[string]CrashSnapshotSettings
 	// appTaskAttach holds ADR-1037 interactive-session records by task id.
 	appTaskAttach map[string]AppTaskAttach
 	// jobRunAttach holds ADR-1330 interactive image-run sessions by run id.
@@ -1094,6 +1119,11 @@ type MemStore struct {
 	// committed gRPC batch after a response loss.
 	apiConsumerUsage      map[string]APIConsumerUsageBucket
 	apiConsumerRouteUsage map[string]APIConsumerRouteUsageBucket
+	// apiConsumerUsageRecordedAt and platformTenantUsageRecordedAt are
+	// when usage was last recorded per consumer and per tenant, as the
+	// usage minutes' updated_at (ADR-20261020211500).
+	apiConsumerUsageRecordedAt    map[string]time.Time
+	platformTenantUsageRecordedAt map[string]time.Time
 	// serviceWakeAhead holds ADR-977 opt-ins keyed by app ID.
 	serviceWakeAhead map[string]memServiceWakeAhead
 	// routePriorities holds ADR-978 saved route priorities keyed by app ID.
@@ -1802,6 +1832,8 @@ func NewMemStore() *MemStore {
 		usage:                             []usageMinute{},
 		usageByMonth:                      []Usage{},
 		apiConsumerUsage:                  map[string]APIConsumerUsageBucket{},
+		apiConsumerUsageRecordedAt:        map[string]time.Time{},
+		platformTenantUsageRecordedAt:     map[string]time.Time{},
 		apiConsumerRouteUsage:             map[string]APIConsumerRouteUsageBucket{},
 		platformTenantUsage:               map[string]APIConsumerUsageBucket{},
 		apiConsumerPlans:                  map[string]APIConsumerPlan{},
@@ -4473,6 +4505,20 @@ func (m *MemStore) ApplyProjectPlan(
 	return project, insertedApps, insertedCrons, nil
 }
 
+// applyProjectReconcileResources mirrors the Postgres rule: each positive
+// declared value replaces the app's (ADR-20261023120000).
+func applyProjectReconcileResources(app *App, declared App) {
+	if declared.RAMMB > 0 {
+		app.RAMMB = declared.RAMMB
+	}
+	if declared.CPUMillicores > 0 {
+		app.CPUMillicores = declared.CPUMillicores
+	}
+	if declared.MaxConcurrency > 0 {
+		app.MaxConcurrency = declared.MaxConcurrency
+	}
+}
+
 // ApplyProjectReconcile applies an existing project's desired app and cron
 // membership under one MemStore critical section. The map snapshots make
 // the operation rollback-safe even when a validation or uniqueness error is
@@ -4648,6 +4694,9 @@ func (m *MemStore) ApplyProjectReconcile(
 				if mutation.SetPlatformTenantRequired {
 					tombstone.PlatformTenantRequired = app.PlatformTenantRequired
 				}
+				if mutation.SetResources {
+					applyProjectReconcileResources(&tombstone, app)
+				}
 				tombstone.Status = AppActive
 				tombstone.DeletedAt = nil
 				tombstone.DeleteGraceUntil = nil
@@ -4697,6 +4746,9 @@ func (m *MemStore) ApplyProjectReconcile(
 			app.Manifest = mutation.App.Manifest
 			if mutation.SetPlatformTenantRequired {
 				app.PlatformTenantRequired = mutation.App.PlatformTenantRequired
+			}
+			if mutation.SetResources {
+				applyProjectReconcileResources(&app, mutation.App)
 			}
 			m.apps[app.ID] = app
 			if routeCheckAppInputsChanged(before, app) {
@@ -7212,6 +7264,11 @@ func (m *MemStore) DeleteAppPermanently(_ context.Context, id string) error {
 			delete(m.appTasks, key)
 		}
 	}
+	for key, fork := range m.appForks {
+		if fork.AppID == id {
+			delete(m.appForks, key)
+		}
+	}
 	for key, v := range m.crons {
 		if v.AppID == id {
 			delete(m.crons, key)
@@ -7702,7 +7759,7 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 	if installationID == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: installation_id must be non-zero")
 	}
-	if len(secret.Value) == 0 {
+	if len(secret.Value) == 0 && len(secret.Sealed) == 0 {
 		return time.Time{}, "", fmt.Errorf("memstore: UpsertGithubWebhookSecret: secret must be non-empty")
 	}
 	if upgradedBy == "" {
@@ -7714,10 +7771,14 @@ func (m *MemStore) UpsertGithubWebhookSecret(_ context.Context, installationID i
 	if m.githubWebhookSecrets == nil {
 		m.githubWebhookSecrets = map[int64]GithubWebhookSecret{}
 	}
-	m.githubWebhookSecrets[installationID] = GithubWebhookSecret{
-		Value:  append([]byte(nil), secret.Value...),
-		Sealed: append([]byte(nil), secret.Sealed...),
+	stored := GithubWebhookSecret{}
+	if len(secret.Value) > 0 {
+		stored.Value = append([]byte(nil), secret.Value...)
 	}
+	if len(secret.Sealed) > 0 {
+		stored.Sealed = append([]byte(nil), secret.Sealed...)
+	}
+	m.githubWebhookSecrets[installationID] = stored
 	if m.githubWebhookSecretMeta == nil {
 		m.githubWebhookSecretMeta = map[int64]webhookSecretMeta{}
 	}
@@ -12545,16 +12606,17 @@ func (m *MemStore) DefaultCustomDomain(_ context.Context, appID string) (string,
 	return domain, nil
 }
 
-// WildcardDomainForHost returns the most-specific wildcard custom domain that
-// covers host. The strict suffix check keeps example.com from matching
+// WildcardDomainForHost returns the most-specific live wildcard custom domain
+// that covers host. The strict suffix check keeps example.com from matching
 // *.example.com and prevents look-alike domains such as badexample.com from
-// matching.
+// matching. An expired, unverified claim is skipped (CustomDomain.ClaimLive).
 func (m *MemStore) WildcardDomainForHost(_ context.Context, host string) (CustomDomain, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	now := time.Now()
 	var best CustomDomain
 	for _, d := range m.domains {
-		if !WildcardMatchesHost(d.Domain, host) {
+		if !WildcardMatchesHost(d.Domain, host) || !d.ClaimLive(now) {
 			continue
 		}
 		if best.Domain == "" || len(d.Domain) > len(best.Domain) {
@@ -14057,7 +14119,7 @@ func (m *MemStore) EnqueueInvocation(ctx context.Context, inv Invocation) (Invoc
 	if err := m.validateInvocationEnvironmentLocked(inv, info); err != nil {
 		return Invocation{}, err
 	}
-	if err := invocationAdmissionDepth(inv, m.pendingProductionInvocationsLocked(inv.AppID, inv.Source, nil)); err != nil {
+	if err := m.checkInvocationAdmissionLocked(inv, nil); err != nil {
 		return Invocation{}, err
 	}
 	return m.enqueueInvocationLocked(inv)
@@ -16478,7 +16540,7 @@ func (m *MemStore) RunningInstanceForApp(_ context.Context, appID string) (Insta
 	var newest Instance
 	found := false
 	for _, ins := range m.instances {
-		if ins.AppID != appID || ins.State != "running" {
+		if ins.AppID != appID || ins.State != "running" || IsFork(ins.Mode) {
 			continue
 		}
 		dep, ok := m.deployments[ins.DeploymentID]
@@ -17826,10 +17888,13 @@ func (m *MemStore) DeleteComputeNode(_ context.Context, id string) error {
 	}
 	delete(m.computeNodes, id)
 	delete(m.computeNodeRuntimeIncarnations, id)
+	delete(m.computeNodeVMMDEpochs, id)
+	delete(m.computeNodeVMMDNotices, id)
 	delete(m.computeNodeRuntimeProtocols, id)
 	m.eraseStandardLogConsumerNodeLocked(id)
 	m.eraseStandardEgressLocked("", id)
 	m.eraseNativeRuntimeHistoryLocked(id)
+	m.eraseStandardRebindsForNodeLocked(id)
 	// CP-1: cascade the heartbeat history. Mirrors the FK ON DELETE
 	// CASCADE on compute_node_heartbeats.node_id; the endpoint
 	// resolves the parent by name first, so a missing history rows
@@ -20668,15 +20733,27 @@ func (m *MemStore) GetIdempotent(_ context.Context, accountID, key string) (int,
 }
 
 // ReserveIdempotent mirrors PgStore.ReserveIdempotent.
-func (m *MemStore) ReserveIdempotent(_ context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+func (m *MemStore) ReserveIdempotent(ctx context.Context, accountID, key string, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	return m.ReserveIdempotentRequest(ctx, accountID, key, nil, abandonAfter)
+}
+
+// ReserveIdempotentRequest mirrors PgStore.ReserveIdempotentRequest.
+func (m *MemStore) ReserveIdempotentRequest(_ context.Context, accountID, key string, fingerprint []byte, abandonAfter time.Duration) (IdempotencyReservation, error) {
+	if fingerprint != nil && len(fingerprint) != IdempotencyFingerprintSize {
+		return IdempotencyReservation{}, errors.New("state: idempotency request fingerprint must be 32 bytes")
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	id := accountID + "\x00" + key
 	e, ok := m.idem[id]
 	age := time.Since(e.created)
-	if !ok || age > 24*time.Hour || (e.status == 0 && age >= abandonAfter) {
-		m.idem[id] = idemEntry{created: time.Now()}
+	conflict := idempotencyFingerprintsConflict(e.requestDigest, fingerprint)
+	if !ok || age > 24*time.Hour || (e.status == 0 && age >= abandonAfter && !conflict) {
+		m.idem[id] = idemEntry{created: time.Now(), requestDigest: append([]byte(nil), fingerprint...)}
 		return IdempotencyReservation{Reserved: true}, nil
+	}
+	if conflict {
+		return IdempotencyReservation{Conflict: true}, nil
 	}
 	if e.status == 0 {
 		return IdempotencyReservation{InFlight: true}, nil
@@ -27852,6 +27929,13 @@ func unifiedDeadLetterEventID(source, sourceID string) string {
 	return uuid.NewSHA1(uuid.Nil, []byte(source+":"+sourceID)).String()
 }
 
+// queueReceiptDeadLetterOrigin mirrors production_dead_letter_events
+// (ADR-20261022203653): a queue message's push receipt is audit evidence, and
+// its invocation is the message's one unified dead-letter entry.
+func queueReceiptDeadLetterOrigin(source, origin string) bool {
+	return source == "trigger_record" && origin == "queue"
+}
+
 func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 	out := make([]DeadLetterEvent, 0)
 	for _, inv := range m.invocations {
@@ -27896,7 +27980,7 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 			continue
 		}
 		trigger, ok := m.triggers[dl.TriggerID.String()]
-		if !ok || !sameMemUUID(trigger.AppID.String(), appID) {
+		if !ok || !sameMemUUID(trigger.AppID.String(), appID) || queueReceiptDeadLetterOrigin("trigger_record", trigger.Kind) {
 			continue
 		}
 		createdAt := time.Time{}
@@ -28023,7 +28107,7 @@ func (m *MemStore) deadLetterEventsLocked(appID string) []DeadLetterEvent {
 		seen[ev.ID] = struct{}{}
 	}
 	for id, ev := range m.deadLetterSnapshots {
-		if _, purged := m.deadLetterPurged[id]; purged {
+		if _, purged := m.deadLetterPurged[id]; purged || queueReceiptDeadLetterOrigin(ev.Source, ev.Origin) {
 			continue
 		}
 		if ev.Source == "invocation" {

@@ -193,3 +193,128 @@ func (s *PgStore) SealGithubWebhookSecret(ctx context.Context, installationID in
 	}
 	return tag.RowsAffected() == 1, nil
 }
+
+// ListGithubWebhookSecrets pages through every webhook secret with its
+// sealed copy, in installation order after afterID, for the source seal
+// domain re-seal (ADR 20261022111812).
+func (s *PgStore) ListGithubWebhookSecrets(ctx context.Context, afterID int64, limit int) ([]GithubWebhookSecretRow, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT installation_id, secret_value, secret_sealed
+		  FROM github_webhook_secrets
+		 WHERE installation_id > $1
+		 ORDER BY installation_id
+		 LIMIT $2
+	`, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list github webhook secrets: %w", err)
+	}
+	defer rows.Close()
+	var out []GithubWebhookSecretRow
+	for rows.Next() {
+		var r GithubWebhookSecretRow
+		if err := rows.Scan(&r.InstallationID, &r.Secret.Value, &r.Secret.Sealed); err != nil {
+			return nil, fmt.Errorf("state: scan github webhook secret: %w", err)
+		}
+		out = append(out, r)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list github webhook secrets: %w", err)
+	}
+	return out, nil
+}
+
+// ResealGithubWebhookSecret replaces a row's sealed copy only while it is
+// still previous, so a concurrent rotation wins. It reports whether the row
+// was updated.
+func (s *PgStore) ResealGithubWebhookSecret(ctx context.Context, installationID int64, previous, sealed []byte) (bool, error) {
+	if installationID == 0 || len(previous) == 0 || len(sealed) == 0 {
+		return false, errors.New("state: reseal github webhook secret needs an installation, its sealed copy and the replacement")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE github_webhook_secrets SET secret_sealed = $3
+		 WHERE installation_id = $1 AND secret_sealed = $2
+	`, installationID, previous, sealed)
+	if err != nil {
+		return false, fmt.Errorf("state: reseal github webhook secret %d: %w", installationID, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// Registry credential kinds: an app's and a job's private-registry password.
+const (
+	RegistrySealedCredentialApp = "app"
+	RegistrySealedCredentialJob = "job"
+)
+
+// RegistrySealedCredential is one sealed private-registry password, listed
+// for the build seal-domain re-seal (ADR 20261022111812). ID is the row's id.
+type RegistrySealedCredential struct {
+	Kind   string
+	ID     string
+	Sealed []byte
+}
+
+// ListRegistrySealedCredentials pages through every sealed registry
+// password in (kind, id) order, after the given cursor.
+func (s *PgStore) ListRegistrySealedCredentials(ctx context.Context, afterKind, afterID string, limit int) ([]RegistrySealedCredential, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT kind, id, sealed FROM (
+			SELECT 'app' AS kind, id::text AS id, password_encrypted AS sealed
+			  FROM app_registry_credentials
+			UNION ALL
+			SELECT 'job', id::text, password_encrypted
+			  FROM job_registry_credentials
+		) credential
+		 WHERE (kind, id) > ($1, $2)
+		 ORDER BY kind, id
+		 LIMIT $3
+	`, afterKind, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list registry sealed credentials: %w", err)
+	}
+	defer rows.Close()
+	var out []RegistrySealedCredential
+	for rows.Next() {
+		var c RegistrySealedCredential
+		if err := rows.Scan(&c.Kind, &c.ID, &c.Sealed); err != nil {
+			return nil, fmt.Errorf("state: scan registry sealed credential: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list registry sealed credentials: %w", err)
+	}
+	return out, nil
+}
+
+// ResealRegistryCredential replaces c's ciphertext only while it still
+// holds c.Sealed, so a customer rotation between the read and the write
+// wins. It reports whether the row was replaced; updated_at is left alone
+// because the password did not change.
+func (s *PgStore) ResealRegistryCredential(ctx context.Context, c RegistrySealedCredential, sealed []byte) (bool, error) {
+	if len(c.Sealed) == 0 || len(sealed) == 0 {
+		return false, errors.New("state: reseal registry credential needs the old and new ciphertext")
+	}
+	var query string
+	switch c.Kind {
+	case RegistrySealedCredentialApp:
+		query = `UPDATE app_registry_credentials SET password_encrypted = $3
+		          WHERE id = $1::uuid AND password_encrypted = $2`
+	case RegistrySealedCredentialJob:
+		query = `UPDATE job_registry_credentials SET password_encrypted = $3
+		          WHERE id = $1::uuid AND password_encrypted = $2`
+	default:
+		return false, fmt.Errorf("state: reseal registry credential: unknown kind %q", c.Kind)
+	}
+	tag, err := s.pool.Exec(ctx, query, c.ID, c.Sealed, sealed)
+	if err != nil {
+		return false, fmt.Errorf("state: reseal registry credential %s %s: %w", c.Kind, c.ID, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}

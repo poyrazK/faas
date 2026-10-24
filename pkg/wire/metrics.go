@@ -26,7 +26,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/billing/paddle"
 	"github.com/onebox-faas/faas/pkg/billing/polar"
-	"github.com/onebox-faas/faas/pkg/billing/stripe"
+	"github.com/onebox-faas/faas/pkg/billing/stripe/pushresult"
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/prometheus/client_golang/prometheus"
@@ -1682,6 +1682,12 @@ type OpsMetrics struct {
 	// base-stage time (pkg/imaged/base_stage.go) and re-read on
 	// every cold-boot by vmmd.
 	imageScanVulns *prometheus.CounterVec
+	// baseScanRefusals counts boots vmmd's scan gate refused, by base
+	// key and reason (BaseScanRefusalReasons). imageScanVulns only moves
+	// when a boot passes the gate, so before this counter a runtime base
+	// whose scan found a fixable CRITICAL refused every boot on it with
+	// no metric and no alert (Hunt 12 H12-1).
+	baseScanRefusals *prometheus.CounterVec
 	// liveMigrationDecisions: Tier A5 / ADR-066 cross-node
 	// live-instance migration observability. Counter labelled by
 	// outcome ∈ {migrated, conflict, no_headroom, no_eligibility,
@@ -2498,9 +2504,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// break the wake-latency panel that ships to day-1.
 	wakeRPCDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_wake_rpc_duration_seconds",
-		Help:    "Wall-clock seconds for each schedd-side wake RPC phase (ADR-097). phase ∈ {admit_to_rpc, rpc_call, rpc_to_running, resume}; app label is apps.id. admit_to_rpc covers the gRPC handler → vmmd RPC start window (lock + admitGate + ledger + placement). rpc_call covers the vmmd Create{FromSnapshot,ColdBoot} round trip. rpc_to_running covers the RPC return → WAKING/COLD_BOOTING → RUNNING transition. resume covers vmmd's in-place warm-pool resume. wake_id is attached as a prometheus.Exemplar on each observation so operators can join to gateway_wake_latency_seconds and to the events table. Bucket set reuses spec §6.3 verbatim with a 0.01 low-end bucket for admit_to_rpc.",
+		Help:    "Wall-clock seconds for each schedd-side wake RPC phase (ADR-097). phase ∈ {before_admission, lock_wait, reads, admit, post_admit, admit_to_rpc, rpc_call, rpc_to_running, resume}; app label is apps.id. before_admission .. post_admit split the work before the boot inputs exist: Wake's fast path, the admission gates and per-app lock, the app/deployment/runtime/snapshot reads, placement plus the instance admission insert, and the reads and writes after admission (they also ride wake.boot_started as pre_rpc_*_ms). admit_to_rpc covers the boot inputs → vmmd RPC start window. rpc_call covers the vmmd Create{FromSnapshot,ColdBoot} round trip. rpc_to_running covers the RPC return → WAKING/COLD_BOOTING → RUNNING transition. resume covers vmmd's in-place warm-pool resume. wake_id is attached as a prometheus.Exemplar on each observation so operators can join to gateway_wake_latency_seconds and to the events table. Bucket set reuses spec §6.3 verbatim with a 0.01 low-end bucket for admit_to_rpc.",
 		Buckets: []float64{0.01, 0.05, 0.1, 0.2, 0.35, 0.5, 0.8, 1, 1.5, 3, 5},
 	}, []string{"app", "phase"})
+	for _, phase := range []string{"before_admission", "lock_wait", "reads", "admit", "post_admit"} {
+		wakeRPCDuration.WithLabelValues("", phase)
+	}
 	wakeRPCDuration.WithLabelValues("", "admit_to_rpc")
 	wakeRPCDuration.WithLabelValues("", "rpc_call")
 	wakeRPCDuration.WithLabelValues("", "rpc_to_running")
@@ -4115,6 +4124,11 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Help: "Per-image Grype finding counts, labelled by image (the OCI ref of the staged base ext4) and severity ∈ {CRITICAL, HIGH, MEDIUM, LOW, UNKNOWN} (issue #299). The CRITICAL count is the vmmd admission gate's read side — a non-zero rate means vmmd refused to bring up an instance whose staged ext4 had a CRITICAL finding. The counter is incremented once per Grype scan at imaged base-stage time.",
 	}, []string{"image", "severity"})
 	commonCollectors = append(commonCollectors, imageScanVulns)
+	baseScanRefusals := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_base_scan_refusals_total",
+		Help: "Instance boots vmmd's base scan gate refused (issue #299), labelled by base (the storage key of the staged base ext4) and reason (critical, sidecar_missing, generation_mismatch, generation_unavailable, incomplete). Any increase means no instance on that base can start until the base is rebuilt or rescanned.",
+	}, []string{"base", "reason"})
+	commonCollectors = append(commonCollectors, baseScanRefusals)
 	// ADR-055: per-deploy grype scan metrics. Labelled by
 	// severity (the Grype closed set) — the same vocabulary
 	// imageScanVulns uses, so anyone familiar with the base-ext4
@@ -5242,9 +5256,9 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// HistogramVec series with zero observed label tuples, which would
 	// render the dashboard's stripe-push panel as "no data" until at
 	// least one push happened (a real ops hazard). The label set is
-	// the canonical closed list from stripe.PushResultLabels —
-	// adding a label there must also extend this loop. ADR-024.
-	for _, label := range stripe.PushResultLabels() {
+	// the canonical closed list from pushresult.Labels, which
+	// stripe.ClassifyPushError emits. ADR-024.
+	for _, label := range pushresult.Labels() {
 		stripePushDur.WithLabelValues(label)
 	}
 	// Pre-instantiate every label in the closed result set for the
@@ -5660,6 +5674,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		passwdEntries:                        passwdEntries,
 		provenanceWrites:                     provenanceWrites,
 		imageScanVulns:                       imageScanVulns,
+		baseScanRefusals:                     baseScanRefusals,
 		deployScanDuration:                   deployScanDuration,
 		deployStageDuration:                  deployStageDuration,
 		apiHostingPhaseTotal:                 apiHostingPhaseTotal,
@@ -6215,7 +6230,7 @@ func (m *OpsMetrics) WarmPoolResumeTotal(outcome string) prometheus.Counter {
 
 // Bounded label sets of the frozen-tier series (ADR-1151).
 var (
-	FrozenFreezeOutcomes = []string{"frozen", "busy", "error", "ineligible", "no_snapshot", "node_full"}
+	FrozenFreezeOutcomes = []string{"frozen", "frozen_early", "busy", "error", "ineligible", "no_snapshot", "node_full"}
 	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity", "fast", "fast_refused"}
 	// FrozenFastPathSkipReasons and FrozenThawTicketOutcomes are the closed
 	// label sets of the ADR-1740 fast path's series.
@@ -8464,6 +8479,19 @@ func (m *OpsMetrics) ObserveImageScanVuln(image, severity string, count int) {
 		return
 	}
 	m.imageScanVulns.WithLabelValues(image, severity).Add(float64(count))
+}
+
+// BaseScanRefusalReasons is the closed reason set of
+// <daemon>_base_scan_refusals_total.
+var BaseScanRefusalReasons = []string{"critical", "sidecar_missing", "generation_mismatch", "generation_unavailable", "incomplete"}
+
+// ObserveBaseScanRefusal counts one boot refused by vmmd's base scan gate.
+// Safe on a nil receiver.
+func (m *OpsMetrics) ObserveBaseScanRefusal(base, reason string) {
+	if m == nil {
+		return
+	}
+	m.baseScanRefusals.WithLabelValues(base, reason).Inc()
 }
 
 // ObserveDeployScanDuration records one per-deploy grype scan's

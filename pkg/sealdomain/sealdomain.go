@@ -101,23 +101,28 @@ var computeOnly = []string{RoleCompute}
 var bothRoles = []string{RoleControlPlane, RoleCompute}
 
 var registry = []Spec{
-	{Domain: Runtime, Readers: []string{"vmmd"}, Roles: computeOnly, Columns: join(
+	{Domain: Runtime, Readers: []string{"vmmd"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("app_secrets", "ciphertext"),
 		cols("project_environment_secrets", "ciphertext"),
 		cols("app_config_guard_secrets", "ciphertext"),
 		cols("managed_postgres_cutover_credentials", "ciphertext"),
 		cols("deployment_release_secret_snapshots", "values_json"),
 		cols("project_release_secret_bundles", "values_json"),
+		// ADR-733: a crash capture's per-capture age key. vmmd opens it to
+		// restore a sealed capture into a fork. imaged's at-rest pass for
+		// local captures also opens it today: a cross-domain read, to move
+		// behind vmmd like the reads in the ADR's section 3.
+		cols("crash_captures", "sealed_key"),
 	)},
 	{Domain: Outbound, Readers: []string{"outboundd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("outbound_integration_credentials", "authorization_sealed"),
 		cols("outbound_integration_credential_keys", "authorization_sealed"),
 	)},
-	{Domain: Build, Readers: []string{"imaged"}, Roles: computeOnly, Columns: join(
+	{Domain: Build, Readers: []string{"imaged"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("app_registry_credentials", "password_encrypted"),
 		cols("job_registry_credentials", "password_encrypted"),
 	)},
-	{Domain: Source, Readers: []string{"githubd"}, Roles: cpOnly, Columns: join(
+	{Domain: Source, Readers: []string{"githubd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("github_installations", "sealed_install_token"),
 		cols("github_webhook_secrets", "secret_sealed"),
 	)},

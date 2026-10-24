@@ -27,6 +27,7 @@ func recoverRestartResources(ctx context.Context, mgr *fcvm.Manager, jailRoot, j
 	}
 	log.Info("vmmd: restart resource quarantine", "slots", rep.Slots,
 		"instances", rep.Instances, "processes", rep.Processes,
+		"bridge_processes", rep.BridgeProcesses,
 		"journal_records", rep.JournalRecords, "journal_process_matches", rep.JournalProcessMatches,
 		"reclaimed_prepared_records", rep.ReclaimedPreparedRecords,
 		"reclaimed_dead_records", rep.ReclaimedDeadRecords,

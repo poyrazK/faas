@@ -22,6 +22,23 @@ func (l *Loop) freezeFromReaper(ctx context.Context, instanceID string, resident
 	return handled
 }
 
+// earlyFreezeFromReaper freezes quiet between_requests instances before
+// their idle timeout (ADR-20261021215353). An instance that is not frozen
+// stays running; the idle reaper handles it at its timeout as before.
+func (l *Loop) earlyFreezeFromReaper(ctx context.Context, snapshot []InstanceInfo, now time.Time, residentMB func(string) int) {
+	quiet := l.engine.earlyFreezeAfter()
+	if quiet <= 0 {
+		return
+	}
+	for _, id := range ReapEarlyFreeze(now, snapshot, quiet) {
+		freezeCtx, cancel := context.WithTimeout(ctx, reaperParkTimeout)
+		if _, err := l.engine.FreezeEarly(freezeCtx, id, residentMB(id)); err != nil {
+			l.log.Warn("reaper: early freeze", "instance", id, "err", err)
+		}
+		cancel()
+	}
+}
+
 // parkExpiredFrozen parks frozen instances that outlived FrozenTTL and
 // publishes how many stay frozen (ADR-1151).
 func (l *Loop) parkExpiredFrozen(ctx context.Context, snapshot []InstanceInfo, now time.Time) {

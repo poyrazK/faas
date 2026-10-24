@@ -1424,6 +1424,7 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 			if telemetryErr == nil {
 				item := debugTelemetryGetRowToItem(row)
 				item.RequestID = identifier
+				s.linkRequestProfileCapture(r.Context(), acct, app, &item)
 				writeJSON(w, http.StatusOK, item)
 				return
 			}
@@ -1440,6 +1441,7 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 			traceID := journal.TraceID
 			item.TraceID = &traceID
 		}
+		s.linkRequestProfileCapture(r.Context(), acct, app, &item)
 		writeJSON(w, http.StatusOK, item)
 		return
 	}
@@ -1457,7 +1459,17 @@ func (s *server) debugTelemetryGetHandler(w http.ResponseWriter, r *http.Request
 		api.WriteProblem(w, api.ErrCapacity("get request telemetry"))
 		return
 	}
-	writeJSON(w, http.StatusOK, debugTelemetryGetRowToItem(row))
+	item := debugTelemetryGetRowToItem(row)
+	s.linkRequestProfileCapture(r.Context(), acct, app, &item)
+	writeJSON(w, http.StatusOK, item)
+}
+
+// linkRequestProfileCapture names the stack snapshot taken while the request
+// was in flight (ADR-1155 slow_request capture), when one exists.
+func (s *server) linkRequestProfileCapture(ctx context.Context, acct state.Account, app state.App, item *api.DebugTelemetryRequestItem) {
+	if item.TraceID != nil {
+		item.ProfileCaptureID = s.requestProfileCaptureID(ctx, acct, app, *item.TraceID)
+	}
 }
 
 const debugEvidenceMaxSpans = api.DebugEvidenceMaxSpans
@@ -2020,7 +2032,13 @@ func buildDebugRequestCorrelation(request api.DebugTelemetryRequestItem, timelin
 	edge.DurationMS = int64(request.LatencyMS)
 	edge.EvidenceCount = countCorrelationKinds(timeline, "request.received", "request.completed")
 	edge.Approximate = true
-	edge.Reason = "estimated from collapsed request telemetry; linked wake markers anchor impossible ordering"
+	// The anchoring note applies only to a request with a wake: a warm
+	// request printed it beside "request did not record a wake" (Hunt 12
+	// H12-24).
+	edge.Reason = "estimated from collapsed request telemetry"
+	if request.WakeID != "" {
+		edge.Reason += "; request markers are kept in order around the linked wake"
+	}
 
 	if request.WakeID == "" {
 		stages[1] = api.DebugRequestCorrelationStage{

@@ -763,6 +763,103 @@ A plan can offer a free trial
   `product_control_plan_pricing_enabled` setting, because an earlier apid would
   charge the trial's runs and fee.
 
+### Self-serve signup and card on file
+
+A catalog can let new customers sign up through the portal
+([ADR-20261022100735](../adr/20261022100735-product-control-self-serve-signup.md)):
+
+```json
+"signup": {"plans": ["starter", "pro"], "provider": "stripe"}
+```
+
+- **Turning it on.** Signup needs the catalog's `signup` policy, an `auth_app`, and
+  the operator's `product_control_signup_enabled` runtime setting (off by
+  default). Turning the setting off hides every offer and refuses new signups at
+  once; existing workspaces keep working. `plans` are the plans offered at
+  signup. `provider` (`stripe`, `paddle` or omitted) is where each signup's
+  customer is created.
+- **Auth app.** Enable sign-up in the Auth app and allow
+  `https://<platform domain>/v1/product-control/portal?app=<product>` as a
+  redirect URL. The Auth app's own sign-up controls (domain rules, invitation or
+  waitlist mode, CAPTCHA) decide who can create an account; Gregale never creates
+  Auth users.
+- **Visitor flow.** The portal's "New here?" button shows the offered plans from
+  the public `GET /v1/product-control/customer/{product}/offer` and links to the
+  Auth app's sign-up page. After confirming their email the visitor signs in. A
+  user without a workspace then names one and picks a plan, and
+  `POST /v1/product-control/customer/{product}/signup` creates it:
+  1. the Auth organization, with the user's own session;
+  2. the provider customer: a Stripe customer, or the Paddle customer for the
+     user's email;
+  3. the guided onboarding, which creates the platform tenant with that customer
+     as its `external_ref`, links the organization, assigns the plan and starts
+     any trial.
+  A retry with the same request ID returns the same workspace. Signups are
+  audited as `product.customer.signed_up`.
+- **Limits.** A user owns at most 3 workspaces per product (409
+  `product_signup_limit`). The account's platform tenant quota applies as for
+  any onboarding. Paddle keeps one customer per email, so a second Paddle signup
+  with the same email is refused rather than taking over the first workspace's
+  customer.
+- **Card on file (Stripe).** A billing manager of a workspace billed through
+  Stripe sees "Payment method" in the portal. Adding a card requires ticking
+  consent to future charges by the product team. It opens Stripe Checkout in
+  setup mode on Stripe's own page. Returning to the portal makes the saved card
+  the customer's default for invoices; with Stripe collection `charge`
+  (ADR-1311), exported statements and fees are then charged to it. Gregale shows
+  only the brand, last four digits and expiry, and audits
+  `product.customer.payment_method_consented` and
+  `product.customer.payment_method_saved`. Paddle signups pay each emailed
+  invoice.
+- **Provider keys.** A Stripe restricted key needs write access to Customers and
+  Checkout Sessions and read access to SetupIntents and PaymentMethods. A Paddle
+  key needs customer read and write.
+
+### Trial to paid
+
+A plan with a trial can keep the customer after it only with a payment method on
+file ([ADR-20261022180921](../adr/20261022180921-product-control-trial-conversion.md)):
+
+```json
+"free": {"label": "Free", "features": {"export": {"unit_price_millicents": 20000, "monthly_starts": 10}}},
+"pro": {"label": "Pro", "monthly_fee_millicents": 2900000, "trial_days": 14, "requires_payment_method": true, "fallback_plan": "free", "features": {"export": {"included_starts": 100, "unit_price_millicents": 20000, "monthly_starts": 1000}}}
+```
+
+- **Offering.** `requires_payment_method` needs `trial_days` and a
+  `fallback_plan` naming another plan of the catalog. That plan has no monthly
+  fee, no trial and no payment method requirement. A Paddle signup cannot offer
+  such a plan, because Paddle keeps no card on file. The fields need the
+  `product_control_plan_pricing_enabled` setting, as trials do.
+- **Card on file.** The customer records `payment_method_at`, when a card was
+  last seen on file. Completing the portal's card Checkout records it. Each read
+  of the portal's payment method refreshes it: it is recorded when Stripe has a
+  default card and cleared when it has none. Gregale stores no card data.
+- **Trial end.** Every minute, apid resolves up to 100 ended trials, each once,
+  and records `trial_resolved_at`. A customer on such a plan, in their own
+  catalog revision, with no card on file moves to the fallback plan. The move is
+  recorded in the plan history effective at the trial's end, so the month's fee
+  never charges the paid plan after the trial. A customer whose plan changed
+  after the trial ended keeps it, as do customers with a card on file. Moves are
+  audited as `product.customer.trial_fell_back` and kept plans as
+  `product.customer.trial_converted`.
+- **Until resolved.** Between the trial's end and its resolution, a customer
+  without a card is refused new starts with 402
+  `product_payment_method_required`. Saving a card lifts it at once. Work
+  already admitted keeps running.
+- **Self-service.** A self-service change to such a plan is refused with 409
+  `product_payment_method_required` when the customer has no card on file and
+  would not be in a trial after it: neither one running nor one the change
+  starts. Owner assignments are not checked.
+- **Where it shows.** During the trial the portal says when it ends, that a card
+  keeps the plan and which plan follows. Billing managers get a link to the card
+  page, other members are told to ask one, and a workspace not billed through
+  Stripe is told to contact the product team. After the trial, a customer
+  awaiting a card sees why new runs wait. The plan comparison and the owner's
+  plan review name the requirement and the fallback. Customers show
+  `payment_method_at` and `trial_resolved_at`.
+- **Paddle and Lago.** No payment method is recorded for them, so a customer the
+  owner places on such a plan always falls back.
+
 ## Deployment bindings
 
 A feature selects exactly one binding form:

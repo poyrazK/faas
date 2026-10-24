@@ -44,7 +44,11 @@ loader pkg/apid/mailoutbox/verification_config.go 1
 loader pkg/datapipeline/config.go 2
 loader pkg/internalmail/keyring_config.go 2
 plain accounts.mfa_recovery_codes_hash
+plain api_consumer_signups.claim_hash
 plain api_keys.key_sha256
+plain app_fork_execs.stderr
+plain app_fork_execs.stdout
+plain app_forks.access_token_hash
 plain app_openapi_docs.doc_sha256
 plain app_task_attach_sessions.attach_token_sha256
 plain app_trusted_signers.cosign_public_key
@@ -123,12 +127,14 @@ plain outbound_ai_prompt_prefixes.prefix_hash
 plain outbound_ai_replay_results.response_body
 plain outbound_ai_request_content.request_body
 plain outbound_ai_request_content.response_body
+plain outbound_ai_traces.tool_signature
 plain outbound_integrations.token_hash
 plain password_reset_tokens.token_hash
 plain platform_mail_outbox_reconciliations.request_hash
 plain platform_mail_producer_outbox.verification_token_hash
 plain platform_tenant_access_tokens.token_hash
 plain product_control_email_deliveries.unsubscribe_hash
+plain profile_capture_data.profile
 plain route_removal_approvals.baseline_sha256
 plain route_removal_approvals.candidate_sha256
 plain runtime_upgrade_external_fence_authorities.public_key

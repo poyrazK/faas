@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // challengeSolverJS finds a decimal counter for which
@@ -76,10 +78,10 @@ if (typeof document !== "undefined") {
 }
 `
 
-// challengePageParts is the page around its values, every one of them a
-// double-quoted attribute value, where escaping &, <, >, " and ' is
-// complete. The solver script and the style are constants, so no request
-// data can become script.
+// challengePageParts is the page around its values, each one a
+// double-quoted attribute value or paragraph text, where escaping &, <, >,
+// " and ' is complete. The solver script and the style are constants, so no
+// request data can become script.
 //
 // Not html/template: executing a template reaches text/template's reflective
 // field lookup (reflect.Value.MethodByName), which makes the linker keep
@@ -99,7 +101,8 @@ main{max-width:28rem;padding:1.5rem;text-align:center}@media (prefers-color-sche
 </head><body><main>
 <h1>Checking your browser</h1>
 <p>This site asks your browser to do a short calculation before loading. It takes a moment and happens once.</p>
-<noscript><p>Turn on JavaScript to continue to this site.</p></noscript>
+<noscript><p>Turn on JavaScript to continue to this site.`, // reference
+	`</p></noscript>
 <form id="gregale-challenge" method="post" action="`, // action
 	`" data-token="`,      // token
 	`" data-difficulty="`, // difficulty
@@ -116,7 +119,7 @@ main{max-width:28rem;padding:1.5rem;text-align:center}@media (prefers-color-sche
 // renderChallengePage writes the page for d.
 func renderChallengePage(w io.Writer, d challengePageData) error {
 	p := challengePageParts
-	values := [...]string{d.Nonce, d.Action, d.Token, strconv.Itoa(d.Difficulty), d.Token, d.Return, d.Nonce}
+	values := [...]string{d.Nonce, d.Reference, d.Action, d.Token, strconv.Itoa(d.Difficulty), d.Token, d.Return, d.Nonce}
 	n := len(p[len(p)-1])
 	for i, v := range values {
 		n += len(p[i]) + len(v)
@@ -134,6 +137,10 @@ func renderChallengePage(w io.Writer, d challengePageData) error {
 type challengePageData struct {
 	Nonce, Action, Token, Return string
 	Difficulty                   int
+	// Reference is the sentence a visitor without JavaScript sees after
+	// the request to turn it on: the request ID to give the site's owner,
+	// who finds the matching challenged event (ADR-831 amendment 8).
+	Reference string
 }
 
 // writeChallengePage answers a browser navigation with the challenge page.
@@ -154,10 +161,14 @@ func writeChallengePage(w http.ResponseWriter, r *http.Request, token string, di
 	if r.Method == http.MethodHead {
 		return
 	}
-	_ = renderChallengePage(w, challengePageData{
+	d := challengePageData{
 		Nonce: nonce, Action: ChallengeSolvePath, Token: token, Difficulty: difficulty,
 		Return: safeReturnPath(r.URL.RequestURI()),
-	})
+	}
+	if id := r.Header.Get(api.RequestIDHeader); id != "" {
+		d.Reference = " If you can't, give the site's owner this reference: " + truncateBytes(id, 128) + "."
+	}
+	_ = renderChallengePage(w, d)
 }
 
 // challengeCookie is the pass cookie: host-only, not readable by scripts,

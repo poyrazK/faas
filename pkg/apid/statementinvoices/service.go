@@ -67,7 +67,14 @@ type Service struct {
 	// monetization is released by a runtime setting (ADR-20261018090210).
 	// Nil runs it.
 	Enabled func() bool
+	// Released reports whether API monetization is released to an account
+	// (ADR-20261020170649); the worker skips accounts it is not. Nil
+	// releases every account.
+	Released func(accountID string) bool
 }
+
+// released reports whether the worker serves an account's monetization.
+func (s *Service) released(accountID string) bool { return s.Released == nil || s.Released(accountID) }
 
 // tick runs one background tick unless Enabled pauses the worker; paused,
 // no provider reads and no overdue digests.
@@ -383,6 +390,13 @@ func (s *Service) exportStatementInvoice(ctx context.Context, acct state.Account
 	if export.Livemode != conn.livemode {
 		return state.StatementInvoiceExport{}, exportConflict("the export started with a " + p.title() + " key in the other mode; reconnect that key to finish it")
 	}
+	// Reserve the handoff before the provider sees anything, so an
+	// overlapping statement cannot be invoiced meanwhile (ADR-20261020211500).
+	if err := store.ReserveStatementHandoff(ctx, acct.ID, export.ID); errors.Is(err, state.ErrConflict) {
+		return state.StatementInvoiceExport{}, exportConflict(ErrHandoffOverlapDetail)
+	} else if err != nil {
+		return state.StatementInvoiceExport{}, api.ErrInternal("could not reserve the statement handoff")
+	}
 	record := func(invoiceID string) error {
 		if err := store.SetStatementInvoiceExportInvoice(ctx, export.AccountID, export.ID, invoiceID); err != nil {
 			return err
@@ -443,6 +457,17 @@ func (s *Service) openConnection(ctx context.Context, store state.StatementInvoi
 	}
 	return connection{key: key, apiURL: stored.APIURL, livemode: stored.Livemode, collection: stored.Collection,
 		daysUntilDue: stored.DaysUntilDue, automaticTax: stored.AutomaticTax}, nil
+}
+
+// StripeKey opens the account's Stripe connection for consumer sign-up
+// (ADR-20261021143000).
+func (s *Service) StripeKey(ctx context.Context, accountID string) (string, bool, *api.Problem) {
+	store, ok := s.Host.Store().(state.StatementInvoiceExportStore)
+	if !ok {
+		return "", false, api.ErrInternal("billing connections are unavailable")
+	}
+	conn, problem := s.openConnection(ctx, store, accountID, state.BillingProviderStripe, stripeProvider{client: s.stripeInvoiceClient()})
+	return conn.key, conn.livemode, problem
 }
 
 func (s *Service) openKey(accountID string, stored state.BillingConnection) (string, bool) {

@@ -46,8 +46,10 @@ func SealProjectReleaseSecrets(account string, apps []state.App, request api.Pro
 	return rows, hex.EncodeToString(mac.Sum(nil)), nil
 }
 
-func EncryptProjectReleaseSecret(recipient *age.X25519Recipient, limits api.Limits, hmacKey []byte, key, value string) ([]byte, string, string, error) {
-	cipher, err := secretbox.SealOne(recipient, key, value, limits.SecretValueMaxBytes)
+// EncryptProjectReleaseSecret seals one release secret, bound to binding's
+// account once runtime binding is on (ADR-20261023173624).
+func EncryptProjectReleaseSecret(recipient *age.X25519Recipient, binding secretbox.Binding, limits api.Limits, hmacKey []byte, key, value string) ([]byte, string, string, error) {
+	cipher, err := secretbox.SealOneBound(recipient, binding, key, value, limits.SecretValueMaxBytes)
 	if err != nil {
 		return nil, "", "", err
 	}

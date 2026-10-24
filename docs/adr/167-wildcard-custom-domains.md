@@ -33,3 +33,24 @@
   arbitrary labels. Routing wildcard rows before exact routes would let a
   broad suffix shadow a deliberate tenant surface. Proving the literal
   `_faas-verify.*.<suffix>` owner is not a valid DNS-01 challenge name.
+
+## Amendment (2026-10-20): unproved claims cannot take a verified wildcard's names
+
+Creating a custom domain needs no DNS proof, and an expired, unverified row
+was never deleted. Routing and the on-demand TLS check let any such row
+shadow a verified wildcard above it. So one request from any account could
+leave `api.example.com` dark for the account that had proved
+`*.example.com`.
+
+- A row that is unverified and past `verification_expires_at` reserves
+  nothing (`CustomDomain.ClaimLive`). Exact lookups in routing and on-demand
+  TLS ignore it, and `WildcardDomainForHost` skips it. The tenant-hostname
+  overlap check therefore ignores it too.
+- `POST /v1/domains` refuses, with `409`, an exact or wildcard name below a
+  verified wildcard owned by another account (`state.ForeignVerifiedWildcard`).
+  This is the same rule as the tenant-hostname conflict above. The wildcard's
+  own account may still add exact names below it, which take precedence once
+  verified.
+- A live pending row still shadows the broader wildcard, as before. A claim
+  made by another account before the wildcard verified can therefore darken
+  that name until its 7-day deadline. After that it cannot be renewed.

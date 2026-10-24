@@ -26,6 +26,9 @@ import (
 
 // memDispatched lists the methods Mem forwards to its override.
 var memDispatched = map[string]bool{
+	"DeleteAppPermanently":                   true,
+	"ListApplicationStandardRebinds":         true,
+	"RecordApplicationStandardRebind":        true,
 	"RestoreApp":                             true,
 	"RestoreAppWithActivity":                 true,
 	"AppTaskByID":                            true,
@@ -87,6 +90,7 @@ var memDispatched = map[string]bool{
 	"CreateProjectEnvironmentPromotion":                       true,
 	"CreateTCPListener":                                       true,
 	"DeadLetterEventByID":                                     true,
+	"DomainByName":                                            true,
 	"DeploymentByID":                                          true,
 	"DeploymentSnapshotBackoffActive":                         true,
 	"EdgeRuleHitStatsForApp":                                  true,
@@ -168,6 +172,7 @@ var memDispatched = map[string]bool{
 	"UpsertRouteInsight":                                      true,
 	"RouteAwakeRouteMinutes":                                  true,
 	"RouteAwakeSourceMinutes":                                 true,
+	"RouteAwakeWorkMinutes":                                   true,
 	"RuntimeAppValuesForDeployment":                           true,
 	"RuntimeScalingStateForDeployment":                        true,
 	"SafeReleaseWorkerLeaseHealth":                            true,
@@ -389,6 +394,15 @@ func (s *Mem) FinancialEvidenceCoverage(p0 context.Context) (time.Time, error) {
 	return s.MemStore.FinancialEvidenceCoverage(p0)
 }
 
+func (s *Mem) DeleteAppPermanently(p0 context.Context, p1 string) error {
+	if o, ok := s.over.(interface {
+		DeleteAppPermanently(context.Context, string) error
+	}); ok {
+		return o.DeleteAppPermanently(p0, p1)
+	}
+	return s.MemStore.DeleteAppPermanently(p0, p1)
+}
+
 func (s *Mem) AppByID(p0 context.Context, p1 string) (state.App, error) {
 	if o, ok := s.over.(interface {
 		AppByID(context.Context, string) (state.App, error)
@@ -522,6 +536,15 @@ func (s *Mem) DeadLetterEventByID(p0 context.Context, p1 string, p2 string) (sta
 		return o.DeadLetterEventByID(p0, p1, p2)
 	}
 	return s.MemStore.DeadLetterEventByID(p0, p1, p2)
+}
+
+func (s *Mem) DomainByName(p0 context.Context, p1 string) (state.CustomDomain, error) {
+	if o, ok := s.over.(interface {
+		DomainByName(context.Context, string) (state.CustomDomain, error)
+	}); ok {
+		return o.DomainByName(p0, p1)
+	}
+	return s.MemStore.DomainByName(p0, p1)
 }
 
 func (s *Mem) DeploymentByID(p0 context.Context, p1 string) (state.Deployment, error) {
@@ -1260,6 +1283,15 @@ func (s *Mem) RouteAwakeSourceMinutes(p0 context.Context, p1 sqlc.RouteAwakeSour
 	return s.MemStore.RouteAwakeSourceMinutes(p0, p1)
 }
 
+func (s *Mem) RouteAwakeWorkMinutes(p0 context.Context, p1 sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error) {
+	if o, ok := s.over.(interface {
+		RouteAwakeWorkMinutes(context.Context, sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error)
+	}); ok {
+		return o.RouteAwakeWorkMinutes(p0, p1)
+	}
+	return s.MemStore.RouteAwakeWorkMinutes(p0, p1)
+}
+
 func (s *Mem) RuntimeAppValuesForDeployment(p0 context.Context, p1 string, p2 string, p3 string) (state.RuntimeAppValuesSnapshot, error) {
 	if o, ok := s.over.(interface {
 		RuntimeAppValuesForDeployment(context.Context, string, string, string) (state.RuntimeAppValuesSnapshot, error)
@@ -1330,6 +1362,24 @@ func (s *Mem) WarmPoolReconciliationAppIDs(p0 context.Context, p1 string) ([]str
 		return o.WarmPoolReconciliationAppIDs(p0, p1)
 	}
 	return s.MemStore.WarmPoolReconciliationAppIDs(p0, p1)
+}
+
+func (s *Mem) ListApplicationStandardRebinds(p0 context.Context, p1 string) ([]state.ApplicationStandardRebind, error) {
+	if o, ok := s.over.(interface {
+		ListApplicationStandardRebinds(context.Context, string) ([]state.ApplicationStandardRebind, error)
+	}); ok {
+		return o.ListApplicationStandardRebinds(p0, p1)
+	}
+	return s.MemStore.ListApplicationStandardRebinds(p0, p1)
+}
+
+func (s *Mem) RecordApplicationStandardRebind(p0 context.Context, p1 state.ApplicationStandardRebind) error {
+	if o, ok := s.over.(interface {
+		RecordApplicationStandardRebind(context.Context, state.ApplicationStandardRebind) error
+	}); ok {
+		return o.RecordApplicationStandardRebind(p0, p1)
+	}
+	return s.MemStore.RecordApplicationStandardRebind(p0, p1)
 }
 
 func (s *Mem) DeploymentSidecarRAMs(p0 context.Context, p1 string) ([]int, error) {

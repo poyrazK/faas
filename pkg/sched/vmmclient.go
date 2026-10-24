@@ -394,7 +394,10 @@ type VMInstanceStat struct {
 	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused bool
 	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
-	Frozen        bool
+	Frozen bool
+	// QuietPause is the quiet pause record for the pause ledger
+	// (ADR-20261023171905).
+	QuietPause    QuietPauseRecord
 	LastRequestAt time.Time
 	// RequestCountTotal is vmmd's cumulative ForwardHTTP count for this
 	// instance. It is optional because older vmmds do not emit it and the
@@ -472,6 +475,10 @@ type AppSpec struct {
 	APIEnv          []fcvm.APIEnvEntry // issue #395 / ADR-045: plaintext per-app env
 	EgressAllowlist []string           // ADR-031 + ADR-032; v4 or v6 CIDRs; empty = no allowlist rule. The renderer partitions by family.
 	EgressPorts     []int              // ADR-361; the app's declared extra TCP egress ports on top of 80/443.
+	// Quarantine (ADR-732) asks vmmd for a production-fork network: no
+	// guest-originated flow, inbound only from the platform veth. Only
+	// the fork coordinator sets it.
+	Quarantine bool
 	// PrivateNetworkCIDRs are provider-verified VPC destinations. They are
 	// additive to EgressAllowlist and only reach vmmd when the attachment is
 	// ready; vmmd validates them again before programming the netns.
@@ -588,6 +595,11 @@ type SnapshotRef struct {
 	// MemBytes is the snapshot's recorded guest memory length; vmmd needs it
 	// to restore companion snapshots.
 	MemBytes int64
+	// CaptureID and SealedKey mark an ADR-733 crash capture vmmd sealed at
+	// the source; the restoring vmmd opens the key and decrypts it. The key
+	// is held as a string so SnapshotRef stays comparable.
+	CaptureID string
+	SealedKey string
 }
 
 // SnapshotBytes is the size accounting returned by PauseAndSnapshot; schedd
@@ -1132,6 +1144,8 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 			VmstateStorageKey: snap.VMStateStorageKey,
 			Networkless:       snap.Networkless,
 			MemBytes:          snap.MemBytes,
+			CaptureId:         snap.CaptureID,
+			SealedKey:         []byte(snap.SealedKey),
 		},
 		WakeId:     fields.WakeID,
 		KeepPaused: keepPaused,
@@ -1191,6 +1205,26 @@ func snapshotBytesFromProto(resp *vmmdpb.SnapshotResponse, instance, storageKey,
 		return SnapshotBytes{}, fmt.Errorf("vmmd returned invalid native snapshot evidence: %w", err)
 	}
 	return SnapshotBytes{MemBytes: resp.MemBytes, VMStateBytes: resp.VmstateBytes, StoredBytes: resp.StoredBytes, Capture: capture}, nil
+}
+
+// WarmSnapshotSealed is WarmSnapshot for an ADR-733 crash capture on a
+// remote backend: vmmd publishes only encrypted twins and returns the
+// capture key sealed to the fleet recipient.
+func (c *VMMClient) WarmSnapshotSealed(ctx context.Context, instance, storageKey, vmstateStorageKey, captureID string) (SnapshotBytes, []byte, error) {
+	resp, err := c.cli.WarmSnapshot(ctx, &vmmdpb.WarmSnapshotRequest{
+		Instance:          instance,
+		StorageKey:        storageKey,
+		VmstateStorageKey: vmstateStorageKey,
+		SealCaptureId:     captureID,
+	})
+	if err != nil {
+		return SnapshotBytes{}, nil, liftErr(err)
+	}
+	if len(resp.GetSealedKey()) == 0 {
+		// An older vmmd ignored seal_capture_id and published plaintext.
+		return SnapshotBytes{}, nil, errors.New("sched: vmmd did not seal the crash capture")
+	}
+	return SnapshotBytes{MemBytes: resp.GetMemBytes(), VMStateBytes: resp.GetVmstateBytes(), StoredBytes: resp.GetStoredBytes()}, resp.GetSealedKey(), nil
 }
 
 // ResumeWarmInstance wraps the additive vmmd RPC used when the scheduler
@@ -1755,6 +1789,8 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		InflightRequests: in.GetInflightRequests(),
 		QuietPaused:      in.GetQuietPaused(),
 		Frozen:           in.GetFrozen(),
+		QuietPause: QuietPauseRecordFromProto(in.GetQuietPausedSince(),
+			in.GetQuietLastPauseStartedAt(), in.GetQuietLastPauseEndedAt(), in.GetQuietPausedNsTotal()),
 	}
 	if v := in.GetResidentBytes(); v != nil {
 		b := v.GetValue()
@@ -1910,6 +1946,7 @@ func (a AppSpec) toProto() *vmmdpb.AppSpec {
 		MainDependsOn:   mainDependsOn,
 		EgressAllowlist: a.EgressAllowlist,
 		EgressPorts:     egressPortsToWire(a.EgressPorts),
+		Quarantine:      a.Quarantine,
 		Port:            uint32(a.Port),
 		// Per-deployment HTTP readiness path, paired with the gRPC
 		// mode/service fields above.

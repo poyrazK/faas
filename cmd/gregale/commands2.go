@@ -230,6 +230,11 @@ func cmdApp(args []string) int {
 	maxQueueWaitMS := fs.Int("max-queue-wait-ms", 0, "maximum queued concurrency wait in milliseconds (0 = plan default)")
 	wakeMaxQueueDepth := fs.Int("wake-max-queue-depth", 0, "per-app cold-wake waiter cap (0 = plan default)")
 	wakeMaxQueueWaitSeconds := fs.Int("wake-max-queue-wait-seconds", 0, "per-app cold-wake wait budget in seconds (0 = plan default, max 60)")
+	// ADR-20261022203523 dark launch: a hidden flag. It parses, but stays
+	// out of help, completions, man pages and the generated reference until
+	// FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS admits every account; apid
+	// answers an unlisted account as for an unknown field.
+	perInstanceConcurrency := fs.Int("per-instance-concurrency", 0, "requests one instance serves at once; the next request scales out (0 = plan's concurrency per VM)")
 	idle := fs.Int("idle", 0, "update idle timeout (seconds)")
 	revisionPinTTL := fs.Duration("revision-pin-ttl", 0, "revision pin lifetime (0 disables; whole seconds, maximum 168h)")
 	requestTimeout := fs.Int("request-timeout", 0, "per-app request timeout in seconds (0 = plan default, max 30)")
@@ -470,10 +475,16 @@ func cmdApp(args []string) int {
 		v := *conc
 		req.MaxConcurrency = &v
 	}
-	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] {
+	if explicit["concurrency-overflow"] || explicit["max-queue-depth"] || setQueueWait || explicit["wake-max-queue-depth"] || explicit["wake-max-queue-wait-seconds"] || explicit["per-instance-concurrency"] {
+		if explicit["per-instance-concurrency"] && *perInstanceConcurrency < 0 {
+			return printErr("Invalid concurrency policy", errNegativePerInstanceConcurrency(*perInstanceConcurrency))
+		}
 		policy, err := cliScalingPolicyPatchWithQueues(ctx, environmentAppClient{Client: client, environment: *environment, revision: &workloadRevision}, slug, *concurrencyOverflow, queueWaitMS, *maxQueueDepth, explicit["concurrency-overflow"], setQueueWait, explicit["max-queue-depth"], *wakeMaxQueueDepth, *wakeMaxQueueWaitSeconds, explicit["wake-max-queue-depth"], explicit["wake-max-queue-wait-seconds"])
 		if err != nil {
 			return printErr("Invalid concurrency policy", err)
+		}
+		if explicit["per-instance-concurrency"] {
+			policy.PerInstanceConcurrency = *perInstanceConcurrency
 		}
 		req.ScalingPolicy = policy
 	}
@@ -809,6 +820,11 @@ func cmdApp(args []string) int {
 			fmt.Printf("%-30s %s\n", "concurrency per vm:", "—")
 		} else {
 			fmt.Printf("%-30s %d\n", "concurrency per vm:", a.ConcurrencyPerVMBound)
+		}
+		// ADR-20261022203523: the app's own per-instance limit, which the
+		// gateway enforces and scales out past. Shown only when declared.
+		if a.ScalingPolicy != nil && a.ScalingPolicy.PerInstanceConcurrency > 0 {
+			fmt.Printf("%-30s %d\n", "requests per instance:", a.EffectiveLimits.ConcurrencyPerInstance)
 		}
 		// An unset idle timeout is stored as NULL and the type default
 		// applies (600 s for apps on Scale, 30 s for functions — ADR-974);
@@ -1331,6 +1347,12 @@ func incompatibleCreateOnlyFlags(explicit map[string]bool) []string {
 // already at its app cap. A missing app still falls through to CreateApp; a
 // 409 then retries the lookup once to cover a concurrent same-account create.
 func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved ...*api.AppResponse) error {
+	return createOrFetchAppWith(ctx, client, req, req, requireAuthnPtr, appProtocolPtr, publicAuthPtr, resolved...)
+}
+
+// createOrFetchAppWith creates the app from req, or configures an existing
+// one from existingReq, which leaves out defaults meant only for a new app.
+func createOrFetchAppWith(ctx context.Context, client *Client, req, existingReq api.CreateAppRequest, requireAuthnPtr *bool, appProtocolPtr *string, publicAuthPtr *api.PublicAuthBlock, resolved ...*api.AppResponse) error {
 	setResolved := func(app api.AppResponse) {
 		if len(resolved) > 0 && resolved[0] != nil {
 			*resolved[0] = app
@@ -1339,7 +1361,7 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 	existing, err := client.GetApp(ctx, req.Slug)
 	if err == nil {
 		setResolved(existing)
-		return configureExistingApp(ctx, client, existing, req, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+		return configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
 	}
 	var ae *APIError
 	if !errors.As(err, &ae) || ae.Problem.Status != http.StatusNotFound {
@@ -1361,7 +1383,7 @@ func createOrFetchApp(ctx context.Context, client *Client, req api.CreateAppRequ
 		return fmt.Errorf("slug %q is already in use; pick a different --name", req.Slug)
 	}
 	setResolved(existing)
-	return configureExistingApp(ctx, client, existing, req, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
+	return configureExistingApp(ctx, client, existing, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr)
 }
 
 // openPublicAuthAfterTokenRemoval is the public_auth change implied by
@@ -1557,6 +1579,13 @@ func cliScalingPolicyPatchWithQueues(ctx context.Context, client interface {
 	return policy, nil
 }
 
+// errNegativePerInstanceConcurrency rejects --per-instance-concurrency
+// below zero before any request (ADR-20261022203523). The upper bound is the
+// plan's concurrency per VM, which the API enforces.
+func errNegativePerInstanceConcurrency(value int) error {
+	return fmt.Errorf("--per-instance-concurrency must be >= 0 (0 uses the plan's concurrency per VM); got %d", value)
+}
+
 const manifestTriggerCleanupTimeout = 10 * time.Second
 
 func manifestCronKey(schedule, path string) string {
@@ -1671,6 +1700,11 @@ func validateSingleAppManifestTargets(cwd, slug string) error {
 	for i, route := range m.AsyncRoutes {
 		if route.App != slug {
 			return fmt.Errorf("async_routes entry %d targets app %q, but this single-app deploy targets %q; fix the app name or use --project", i+1, route.App, slug)
+		}
+	}
+	for i, route := range m.Routes {
+		if route.To != slug {
+			return fmt.Errorf("routes entry %d sends traffic to app %q, but this single-app deploy targets %q; fix `to` or use --project", i+1, route.To, slug)
 		}
 	}
 	printManifestWarnings(m)
@@ -2381,6 +2415,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			return printErr("Invalid flags", fmt.Errorf("--safe cannot be combined with --no-wait; safe deploys wait for the health-gated rollout to complete"))
 		}
 		*canaryPreset = api.DefaultReleaseCanaryPreset
+		if !explicit["timeout"] {
+			*waitTimeoutSeconds = safeDeployWaitTimeoutSeconds(*waitTimeoutSeconds)
+		}
 	}
 	if *safeDeploy && projectRequested {
 		return printErr("Invalid flags", errors.New("--safe currently supports single-app deploys only; use --canary-preset with a project deploy"))
@@ -2758,12 +2795,33 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if err := validateGitHubRef(*ref); err != nil {
 			return printErr("Invalid --ref", err)
 		}
-		// Phase 3 guard: --repo is the source-ref path; the
-		// one-key provision surface takes --tarball/--path, not
-		// --repo. Mixing them is almost always a mistake.
+		// --repo with --project deploys every service of the connected
+		// repository: the control plane fetches the ref, the plan is
+		// reviewed, and exactly that reviewed source is applied.
 		if projectRequested {
-			PrintFail(os.Stderr, "--repo cannot be combined with --project, --only, or --project-slug")
-			return 1
+			if err := validateRepoProjectFlags(explicit, *sourceBranch); err != nil {
+				return printErr("Invalid flags", err)
+			}
+			repoProjectSlug := *projectSlug
+			if repoProjectSlug == "" {
+				repoProjectSlug = defaultProjectSlug(filepath.Base(*repo) + ".tar.gz")
+				if *name != "" {
+					repoProjectSlug = sanitizeProjectSlug(*name)
+				}
+			}
+			scan := connectedRepoScanOptions{
+				repo: *repo, ref: *ref, projectSlug: repoProjectSlug,
+				bindingRepo: *bindingRepo, productionBranch: *productionBranch,
+				installID: *installID, environment: *environment,
+				only: *deployOnly, exclude: *deployExclude, showAffected: *deployShowAffected,
+			}
+			if *diff {
+				return executeConnectedRepoPreview(ctx, scan, *diffJSON, !*diffLenient, *noTriggers)
+			}
+			return deployConnectedRepoProject(ctx, connectedRepoProjectDeploy{
+				scan: scan, yes: *yes, wait: waitForDeploy,
+				waitTimeout: time.Duration(*waitTimeoutSeconds) * time.Second, noTriggers: *noTriggers,
+			})
 		}
 		if *diff {
 			if err := validateSourceRefPreviewFlags(explicit, *sourceBranch); err != nil {
@@ -3018,6 +3076,19 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				planOnly:   *dryRun || *diff || *serverDiff || *createOnly,
 				noTriggers: *noTriggers,
 			})
+		}
+	}
+	// A plain `gregale deploy` of a repository whose root is no single app
+	// but a Compose project or several service roots deploys the project.
+	// Nothing is created before the project plan is reviewed (or --yes).
+	if !projectRequested && !existingApp && len(executions) == 0 && developerSync == nil &&
+		!deployFunction && !deployApp && deployRuntime == "" && deployHandler == "" &&
+		*image == "" && *tarball == "" && *templateName == "" && *repo == "" && sourceDir != "" {
+		if reason := multiServiceSource(sourceDir); reason != "" {
+			if !jsonOutput {
+				PrintProgress(osStderr, "%s; deploying it as one project (use --app or --function to deploy a single app)", reason)
+			}
+			return cmdDeployTarballToExisting(ctx, append([]string{"--project"}, args...), false)
 		}
 	}
 	// --project is an explicit, safe opt-in to project apply. Keep the
@@ -3459,6 +3530,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		}
 	}
 
+	// gregale.yaml's worker: section (or lifecycle.execution_mode) decides how
+	// the first boot is judged, so it must reach the app before the build: a
+	// worker created in request mode never passes the HTTP readiness check,
+	// and the saved settings only apply after a live deploy (Hunt 12 H12-28).
+	if !projectRequested && resolvedShape == shapeApp && !explicit["execution-mode"] && sourceDir != "" {
+		if mode := manifestDeployExecutionMode(sourceDir); mode != "" {
+			*executionMode = mode
+		}
+	}
 	if !projectRequested && resolvedShape == shapeApp && *executionMode == "" && *restartPolicy == "" &&
 		*startupDeadlineS == 0 && *maxRetries == 0 {
 		sourceKind := simpleapp.SourceDirectory
@@ -3715,41 +3795,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			}
 		}
 
-		if !plan.CanApply {
-			if jsonOutput {
-				return jsonOut(writeJSONProblem(planProblem(plan)))
-			}
-			printPlanText(osStdout, plan, excludeList, *deployShowAffected)
-			return printErr("Project plan cannot be applied", planBlockedError(plan))
-		}
-		if !*yes {
-			if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
-				return code
-			}
-			// JSON output is intentionally non-interactive: prompting would
-			// corrupt the machine-readable stdout stream. Emit the complete
-			// plan first, then fail closed so an operator or CI job must make
-			// the approval explicit with --yes.
-			if jsonOutput {
-				if code := jsonOut(writeJSON(plan)); code != 0 {
-					return code
-				}
-				return printErr("Confirmation required", errors.New(
-					"project deploy requires --yes in JSON mode"))
-			}
-			if stdoutIsTTY() && stdinIsTTY() {
-				if !confirmPlan(osStdout, osStdin, plan, excludeList, *deployShowAffected) {
-					return printErr("Aborted by user", errors.New("user declined at the confirm prompt"))
-				}
-			} else {
-				// A redirected stream, CI runner, pipeline, or unsupported
-				// platform must never turn the absence of a prompt into an
-				// implicit approval. Render the same complete plan the TTY
-				// prompt would have shown so removals remain visible.
-				printPlanText(osStdout, plan, excludeList, true)
-				return printErr("Confirmation required", errors.New(
-					"project deploy requires --yes when stdin or stdout is not a TTY; review the plan and rerun with --yes"))
-			}
+		plan = withProvidedEnvKeys(plan, deploySecrets)
+		if code := confirmProjectPlan(plan, excludeList, *deployShowAffected, *yes); code != 0 {
+			return code
 		}
 		approvalToken := ""
 		if plan.EnvironmentProtected {
@@ -3874,7 +3922,14 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if execution.resolveApp != nil {
 			resolvedApp, err = execution.resolveApp(ctx, client, createReq)
 		} else {
-			err = createOrFetchApp(ctx, client, createReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
+			// The simple plan's request-mode default describes a new app; on a
+			// redeploy it converted worker, service and job apps back to
+			// request mode before the build (Hunt 12 H12-28).
+			existingReq := createReq
+			if resolvedSimplePlan != nil {
+				existingReq.ExecutionMode = ""
+			}
+			err = createOrFetchAppWith(ctx, client, createReq, existingReq, requireAuthnPtr, appProtocolPtr, publicAuthPtr, &resolvedApp)
 		}
 		if err != nil {
 			return printErr("Could not create or fetch app", err)
@@ -4187,6 +4242,15 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			followRollout:   !parkedDeploy && followRolloutByDefault(),
 			darkDeploy:      parkedDeploy,
 		})
+		// A source deploy that waited in human mode returned here without
+		// applying gregale.yaml's saved settings (worker, lifecycle, scaling,
+		// retry_policy); only JSON waits and image deploys applied them
+		// (Hunt 12 H12-30).
+		if code == 0 {
+			if err := applyManifestScaling(); err != nil {
+				return savedSession.failure("Saved deploy settings remain pending", "configuration", err)
+			}
+		}
 		return code
 	}
 	// Issue #977 / ADR-116: the image-deploy path uses the JSON wire
@@ -5850,10 +5914,16 @@ func cmdUsageList(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No usage recorded for %s.\n", *month)
 		return 0
 	}
+	// Largest consumers first, then a total: the rows came in app-id order,
+	// so 200+ lines (most of them deleted apps) had to be summed by eye
+	// (Hunt 12 H12-2).
+	sortUsageRows(rows)
 	// The included allowance is account-wide, so it is printed once rather
 	// than repeated on every app row (production-us hunt #4).
 	_, _ = fmt.Fprintf(osStdout, "App — requests · GB-hours · egress\n")
+	var totalMBSeconds int64
 	for _, u := range rows {
+		totalMBSeconds += u.MBSeconds
 		// ADR-046: tx_bytes (HTTP response bytes, gateway-side) and
 		// net_tx_bytes (root-side vethHost interface bytes, includes
 		// framing) are informational, NOT billed. Surfaced as a
@@ -5871,8 +5941,23 @@ func cmdUsageList(args []string) int {
 		}
 		_, _ = fmt.Fprintf(osStdout, "%s — %d · %.3f\n", appLabel(slugs, u.AppID), u.Requests, float64(u.MBSeconds)/3.6e6)
 	}
+	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", float64(totalMBSeconds)/3.6e6, len(rows))
 	_, _ = fmt.Fprintf(osStdout, "Plan allowance: included %d GB-h this month, shared by every app\n", rows[0].IncludedGBHours)
 	return 0
+}
+
+// sortUsageRows orders usage rows by GB-hours, then requests, descending,
+// with the app id as a stable tiebreak.
+func sortUsageRows(rows []api.UsageResponse) {
+	sort.SliceStable(rows, func(i, j int) bool {
+		if rows[i].MBSeconds != rows[j].MBSeconds {
+			return rows[i].MBSeconds > rows[j].MBSeconds
+		}
+		if rows[i].Requests != rows[j].Requests {
+			return rows[i].Requests > rows[j].Requests
+		}
+		return rows[i].AppID < rows[j].AppID
+	})
 }
 
 // cmdUsageSummary: GET /v1/usage/summary?month=YYYY-MM. Account-wide
@@ -6743,6 +6828,11 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	}
 	if logSource == logsSourceHTTP {
 		return runHTTPLogsQuery(context.Background(), slug, deploymentRef, strings.TrimSpace(*requestID), strings.TrimSpace(*traceID), *route, normalizedSince, *status, *limit, *all, now)
+	}
+	if archiveSelector != nil {
+		if code := expandArchiveInstance(slug, archiveSelector); code != 0 {
+			return code
+		}
 	}
 	return runLogs(context.Background(), slug, deploymentRef, api.LogFilter{
 		Grep:  *grep,
@@ -8072,7 +8162,23 @@ func cmdUsageDaily(args []string) int {
 		_, _ = fmt.Fprintf(osStdout, "No daily usage recorded for %s.\n", *day)
 		return 0
 	}
+	// Unlabelled, unsorted rows hid that the third column is requests;
+	// list the largest consumers first with a total, as `usage` does
+	// (Hunt 12 H12-41).
+	sort.SliceStable(resp.Items, func(i, j int) bool {
+		a, b := resp.Items[i], resp.Items[j]
+		if a.MBSeconds != b.MBSeconds {
+			return a.MBSeconds > b.MBSeconds
+		}
+		if a.Requests != b.Requests {
+			return a.Requests > b.Requests
+		}
+		return a.AppID < b.AppID
+	})
+	_, _ = fmt.Fprintf(osStdout, "%-36s %-10s %8s  %12s\n", "APP", "DAY", "REQUESTS", "MEMORY")
+	var totalMBSeconds int64
 	for _, u := range resp.Items {
+		totalMBSeconds += u.MBSeconds
 		gbh := float64(u.MBSeconds) / 3.6e6
 		if u.TXBytes > 0 || u.NetTxBytes > 0 {
 			txGB := float64(u.TXBytes) / (1024 * 1024 * 1024)
@@ -8083,6 +8189,7 @@ func cmdUsageDaily(args []string) int {
 		}
 		_, _ = fmt.Fprintf(osStdout, "%-36s %s %8d  %7.3f GB-h\n", appLabel(slugs, u.AppID), u.Day, u.Requests, gbh)
 	}
+	_, _ = fmt.Fprintf(osStdout, "Total: %.3f GB-hours across %d apps\n", float64(totalMBSeconds)/3.6e6, len(resp.Items))
 	return 0
 }
 

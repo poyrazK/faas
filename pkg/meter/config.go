@@ -84,6 +84,11 @@ type Config struct {
 	// SampleInterval is how often the sampler rolls one minute of usage.
 	// Zero means the production default (60 s).
 	SampleInterval time.Duration
+	// QuietPauseUnbilled (ADR-20261023171905) is off, shadow or on: whether
+	// billed residency subtracts the quiet-paused seconds schedd's pause
+	// ledger proves. Shadow only counts them. Empty is off;
+	// FAAS_QUIET_PAUSE_UNBILLED overrides it.
+	QuietPauseUnbilled string `toml:"quiet_pause_unbilled"`
 	// QuotaInterval is how often the quota loop walks every account.
 	// Zero means the production default (60 s).
 	QuotaInterval time.Duration

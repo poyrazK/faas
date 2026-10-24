@@ -99,6 +99,9 @@ type NodeTelemetry struct {
 	QuietPaused bool
 	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
 	Frozen bool
+	// QuietPause is the instance's quiet pause record for the pause ledger
+	// (ADR-20261023171905).
+	QuietPause QuietPauseRecord
 }
 
 // NodeTelemetryCache holds the most recent batched report from each node.

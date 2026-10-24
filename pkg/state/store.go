@@ -935,6 +935,10 @@ type ProjectReconcileMutation struct {
 	Op                        string
 	App                       App
 	SetPlatformTenantRequired bool
+	// SetResources writes App's positive RAMMB, CPUMillicores and
+	// MaxConcurrency on an update or a restored app, because the source
+	// declares Compose resources (ADR-20261023120000). A zero keeps the app's.
+	SetResources bool
 }
 
 // ProjectReconcileCron is the desired cron attached to a scanned workload.
@@ -3616,6 +3620,14 @@ type Store interface {
 	// This stays separate from ExecutionStore because app tasks inherit the
 	// app's artifact, scoped configuration, bindings, and network policy.
 	AppTaskStore
+
+	// Production fork intent (ADR-732): quarantined, non-serving restores of
+	// an app's newest capture. apid admits; schedd owns the lifecycle.
+	AppForkStore
+	AppForkLifecycleStore
+	AppForkExecStore
+	// ADR-733 crash snapshots: captures of running instances, opened as forks.
+	CrashCaptureStore
 
 	// Sanitized runtime snapshot catalog (ADR-171 follow-up). Publication is
 	// trusted and insert-only; scheduler reads may observe retired rows and
@@ -6943,11 +6955,13 @@ type CustomerEventLister interface {
 
 // IdempotencyReservation is the outcome of ReserveIdempotent. Exactly one of
 // Reserved (the caller owns the key and must complete it with
-// PutIdempotent), InFlight (another request holds the key), or a completed
-// response (Status/Body to replay) applies.
+// PutIdempotent), InFlight (another request holds the key), Conflict (the key
+// is bound to a different request fingerprint, ADR-20261022204036), or a
+// completed response (Status/Body to replay) applies.
 type IdempotencyReservation struct {
 	Reserved bool
 	InFlight bool
+	Conflict bool
 	Status   int
 	Body     []byte
 }

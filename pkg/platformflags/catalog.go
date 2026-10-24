@@ -42,17 +42,28 @@ const (
 	ChangeTimeline       = "change_timeline"
 	AnomalyAlerts        = "anomaly_alerts"
 	TriggerBatchDelivery = "trigger_batch_delivery"
-	OperationSchedules   = "operation_schedules"
-	OperationChildren    = "operation_children"
-	ServiceMap           = "service_map"
-	GuestTracing         = "guest_tracing"
-	StaticEgressIP       = "static_egress_ip"
-	RealtimeResume       = "realtime_resume"
-	RealtimeTickets      = "realtime_tickets"
-	RealtimeAccess       = "realtime_access"
-	RealtimeOccupancy    = "realtime_occupancy"
-	StrictBudgets        = "strict_budgets"
+	APIMonetization      = "api_monetization"
+
+	OperationSchedules = "operation_schedules"
+	OperationChildren  = "operation_children"
+	ServiceMap         = "service_map"
+	GuestTracing       = "guest_tracing"
+	StaticEgressIP     = "static_egress_ip"
+	RealtimeResume     = "realtime_resume"
+	RealtimeTickets    = "realtime_tickets"
+	RealtimeAccess     = "realtime_access"
+	RealtimeOccupancy  = "realtime_occupancy"
+	StrictBudgets      = "strict_budgets"
+
+	// Edge rule features released by platform flags (ADR-20261023113721).
+	EdgeWAFBlocking = "edge_waf_blocking"
+	EdgeChallenge   = "edge_challenge"
+	EdgePenaltyBox  = "edge_penalty_box"
 )
+
+// EdgeFeatures are the edge rule features apid refuses to configure and
+// gatewayd-internal stops enforcing while their flag is off for an account.
+var EdgeFeatures = []string{EdgeWAFBlocking, EdgeChallenge, EdgePenaltyBox}
 
 // RealtimePreviews are the flags apid decides per endpoint and sends to
 // realtimed with the endpoint's registration (ADR 20261021080640).
@@ -273,6 +284,15 @@ var catalog = []Spec{
 		HealthRoutes: []string{"GET /v1/apps/{slug}/realtime/endpoints/{id}/occupancy"},
 	},
 	{
+		Key:   APIMonetization,
+		Label: "API monetization",
+		Description: "Release API monetization (rate cards, plans, statements, credits, invoice exports, billing runs and their gateway enforcement) " +
+			"to accounts. The api_monetization_enabled runtime switch still releases it to every account. Unless every account is included, " +
+			"its routes answer an unregistered route to accounts outside the flag after authentication.",
+		ADR:       "ADR-20261020170649",
+		Consumers: []string{"apid", "gatewayd-internal"},
+	},
+	{
 		Key:         StrictBudgets,
 		Label:       "Strict budgets",
 		Description: "Release strict (suspend_workloads) compute and egress budgets to accounts. Off by default until native acceptance passes. Strict budgets that are already enabled keep enforcing and stay editable while it is off; only creating or enabling one is refused.",
@@ -280,6 +300,36 @@ var catalog = []Spec{
 		Consumers:   []string{"apid"},
 		Attributes:  []Attribute{AttributePlan},
 		RetireBy:    "2027-01-31",
+	},
+	{
+		Key:   EdgeWAFBlocking,
+		Label: "Edge WAF warn and block",
+		Description: "Release warn and block modes of WAF edge rules (kind=waf) to accounts. Off by default until launch; observe mode is not gated. " +
+			"While it is off apid refuses creating a warn or block rule or switching a rule to one, and gateways inspect existing warn and block rules in observe mode only.",
+		ADR:        "ADR-20261023113721",
+		Consumers:  []string{"apid", "gatewayd-internal"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-03-31",
+	},
+	{
+		Key:   EdgeChallenge,
+		Label: "Edge challenge rules",
+		Description: "Release challenge edge rules (kind=challenge, with difficulty escalation) to accounts. Off by default until launch. " +
+			"While it is off apid refuses creating a challenge rule or switching one on, and gateways serve no challenge pages, so existing rules are inert.",
+		ADR:        "ADR-20261023113721",
+		Consumers:  []string{"apid", "gatewayd-internal"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-03-31",
+	},
+	{
+		Key:   EdgePenaltyBox,
+		Label: "Edge penalty box",
+		Description: "Release edge rule penalties (penalty box) to accounts. Off by default until launch. " +
+			"While it is off apid refuses adding a penalty to a rule or switching on a rule that has one, and gateways neither box clients nor refuse boxed ones; the rules themselves keep enforcing.",
+		ADR:        "ADR-20261023113721",
+		Consumers:  []string{"apid", "gatewayd-internal"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-03-31",
 	},
 }
 
