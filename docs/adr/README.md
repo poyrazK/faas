@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261024140000: Every deployment reaches a terminal state](20261024140000-deployment-watchdog.md) — apid's watchdog fails a build queued over 6 h (`deployment_queue_timeout`) or an in-flight deployment with no build and no progress for 3 h (`deployment_stalled`)
 - [Dockerfile HEALTHCHECK gates readiness on source builds](20261024100000-dockerfile-healthcheck-enforced.md)
 - [ADR-20261024090000: Idle parks re-check activity, and a park holds new forwards](20261024090000-idle-park-recheck-and-forward-hold.md) — the reaper's park re-checks fresh activity before SNAPSHOTTING; vmmd holds new forwards for the park and drains in-flight ones up to 5 s (amends spec §6)
 - [ADR-20261024085817: A compute rollout never strands a node on a runtime base it cannot boot, and its drain finishes](20261024085817-rollout-base-generation-and-drain-completion.md) — proposed; a changed base generation pre-stages behind the drain barrier, the rescue never re-activates a node whose cache moved, a drain withdraws, drains and stops what it cannot hand off (2026-10-22 fsn-3)

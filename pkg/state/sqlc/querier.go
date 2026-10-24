@@ -258,6 +258,7 @@ type Querier interface {
 	CancelProfileDeploymentChecks(ctx context.Context, db DBTX, appID string) error
 	CancelProjectReleaseStage(ctx context.Context, db DBTX, arg CancelProjectReleaseStageParams) (int64, error)
 	CancelQueueCanary(ctx context.Context, db DBTX, arg CancelQueueCanaryParams) error
+	CancelQueuedBuildsForDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int64, error)
 	CancelQueuedCustomerOperationJobTask(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	CancelRuntimeUpgradeBuilds(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]pgtype.UUID, error)
 	CancelRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg CancelRuntimeUpgradeCandidateParams) error
@@ -3441,6 +3442,15 @@ type Querier interface {
 	// settled; a parent that started none qualifies at once.
 	ListSettledChildParents(ctx context.Context, db DBTX, arg ListSettledChildParentsParams) ([]ListSettledChildParentsRow, error)
 	ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]string, error)
+	// Deployment watchdog (ADR-20261024140000). An in-flight deployment that can
+	// no longer finish on its own: a build queued since before queued_before, or
+	// no queued or running build and no stage progress since stalled_before.
+	// Deployments that are in flight by design are never candidates: a prepared
+	// rollback target, a deployment under an MCP task promotion hold, a parked
+	// deployment, an environment workload runtime, or one waiting on a
+	// dependency, build-dependency or hosting-verification gate. A running build
+	// belongs to builderd's reaper.
+	ListStuckDeployments(ctx context.Context, db DBTX, arg ListStuckDeploymentsParams) ([]ListStuckDeploymentsRow, error)
 	ListSyntheticCheckRuns(ctx context.Context, db DBTX, arg ListSyntheticCheckRunsParams) ([]SyntheticCheckRun, error)
 	ListSyntheticChecks(ctx context.Context, db DBTX, appID pgtype.UUID) ([]SyntheticCheck, error)
 	ListTCPListenerTLSObservations(ctx context.Context, db DBTX, listenerID pgtype.UUID) ([]AppTcpListenerTlsObservation, error)
@@ -3606,6 +3616,7 @@ type Querier interface {
 	// rows before locking the projection, matching failure writers' lock order.
 	LockDeadLetterReplayLanes(ctx context.Context, db DBTX, eventIds []pgtype.UUID) error
 	LockDeploymentArtifactScan(ctx context.Context, db DBTX, arg LockDeploymentArtifactScanParams) ([]byte, error)
+	LockDeploymentForWatchdog(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	LockDeploymentHostingFailure(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockDeploymentHostingFailureRow, error)
 	LockDeploymentHostingVerification(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockDeploymentHostingVerificationRow, error)
 	LockDeploymentRegistryRootfs(ctx context.Context, db DBTX, verificationID pgtype.UUID) ([]byte, error)
