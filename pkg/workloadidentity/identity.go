@@ -96,7 +96,8 @@ func validEnvironment(environment string) bool {
 	}
 	for i, r := range environment {
 		edge := i == 0 || i == len(environment)-1
-		if !(r >= 'a' && r <= 'z' || r >= '0' && r <= '9' || r == '-' && !edge) {
+		alnum := r >= 'a' && r <= 'z' || r >= '0' && r <= '9'
+		if !alnum && (r != '-' || edge) {
 			return false
 		}
 	}
