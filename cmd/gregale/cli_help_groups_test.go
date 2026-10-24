@@ -85,6 +85,30 @@ func TestCliSubcommandSummariesArePlain(t *testing.T) {
 	}
 }
 
+// Shortening a summary moves its detail to Notes rather than dropping it:
+// attack mode's duration bounds and its effect on API clients stay in help.
+func TestEdgeRulesAttackModeHelpKeepsItsDetail(t *testing.T) {
+	enableEveryCLIFeature(t)
+	for _, command := range main.VisibleCliCommands() {
+		if command.Name != "edge-rules" {
+			continue
+		}
+		for _, sub := range command.Subcommands {
+			if sub.Name != "attack-mode" {
+				continue
+			}
+			notes := strings.Join(sub.Notes, " ")
+			for _, want := range []string{"15m to 24h", "verified API key or JWT"} {
+				if !strings.Contains(notes, want) {
+					t.Errorf("edge-rules attack-mode notes lack %q: %q", want, notes)
+				}
+			}
+			return
+		}
+	}
+	t.Fatal("edge-rules attack-mode not found")
+}
+
 // ADR numbers are for maintainers; customer help explains behavior instead.
 func TestCliHelpTextOmitsADRReferences(t *testing.T) {
 	enableEveryCLIFeature(t)
