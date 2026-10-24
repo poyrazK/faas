@@ -1,6 +1,6 @@
 # ADR 20261024132405 · Language runtimes are supported until upstream end of life; their CVEs are triaged, not migrated away
 
-- **Status:** proposed
+- **Status:** accepted (2026-10-24)
 - **Date:** 2026-10-24
 - **Related:** ADR 20261023220532 (Debian 13 runtime bases; this amends its
   decision 4 for Python 3.12), ADR-131 (CVE monitor), ADR-053 (Debian parent
