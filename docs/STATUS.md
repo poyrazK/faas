@@ -1836,6 +1836,12 @@ remain open; production admission is disabled.
   (2026-10-22): a built service's `entrypoint` joins its start command, and
   `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
   deployment and applied to the built image. Unit tests pass; no native run.
+- **Build secrets resolve like the runtime.**
+  [ADR-20261024140000](adr/20261024140000-build-secrets-resolve-like-the-runtime.md)
+  (2026-10-24): a build secret named `NAME` gets the secret the app receives
+  as `NAME`, including environment aliases and inherited project environment
+  secrets, through a resolver a scheduler test keeps equal to wake delivery.
+  Unit tests pass; no native run.
 - **Dockerfile HEALTHCHECK enforced on source builds.**
   [ADR-20261024100000](adr/20261024100000-dockerfile-healthcheck-enforced.md)
   (2026-10-24): imaged records the readiness verdict for every source build

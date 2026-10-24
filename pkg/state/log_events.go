@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"sort"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -78,7 +80,48 @@ type LogEventFilter struct {
 	Route   string
 	Status  int
 	Limit   int
+	// Levels, StatusClass and Query are the customer search filters
+	// (ADR-20261018083536). Levels matches any listed severity; StatusClass
+	// (1..5) matches a status hundred and excludes Status; Query is a
+	// case-insensitive literal substring of the message.
+	Levels      []string
+	StatusClass int
+	Query       string
+	// Timeout bounds the read with a statement timeout; zero means none.
+	// A tripped timeout returns ErrLogSearchTimeout.
+	Timeout time.Duration
 }
+
+// ErrLogSearchTimeout reports that a bounded log query hit its statement
+// timeout; callers ask the customer to narrow the window or filters.
+var ErrLogSearchTimeout = errors.New("state: log search timed out")
+
+// LogEventFacetCount is one facet value and the summed occurrences of the
+// events carrying it.
+type LogEventFacetCount struct {
+	Value string
+	Count int64
+}
+
+// LogEventFacets counts a filtered ledger window by source, level, status
+// class ("2xx".."5xx") and route. Routes holds at most the requested route
+// limit, busiest first; RoutesTruncated reports that more routes matched.
+type LogEventFacets struct {
+	Total           int64
+	Sources         []LogEventFacetCount
+	Levels          []LogEventFacetCount
+	StatusClasses   []LogEventFacetCount
+	Routes          []LogEventFacetCount
+	RoutesTruncated bool
+}
+
+// logEventLevels is log_events_level_check's closed vocabulary.
+var logEventLevels = map[string]bool{"trace": true, "debug": true, "info": true, "warn": true, "error": true, "fatal": true}
+
+const (
+	logEventQueryMinRunes = 2
+	logEventQueryMaxRunes = 256
+)
 
 // LogEventStore is the ADR-213 durable projection boundary. apid is the only
 // production writer; source daemons publish through authenticated internal
@@ -87,6 +130,9 @@ type LogEventStore interface {
 	InsertLogEvent(ctx context.Context, event LogEvent) (LogEvent, error)
 	ListLogEvents(ctx context.Context, filter LogEventFilter) (events []LogEvent, hasMore bool, err error)
 	ListAccountTraceLogEvents(ctx context.Context, filter AccountTraceLogFilter) (events []LogEvent, hasMore bool, err error)
+	// FacetLogEvents counts the events ListLogEvents would match (cursor and
+	// limit ignored), keeping the routeLimit busiest routes.
+	FacetLogEvents(ctx context.Context, filter LogEventFilter, routeLimit int) (LogEventFacets, error)
 }
 
 // AccountTraceLogFilter selects the newest events carrying one exact trace id
@@ -230,6 +276,25 @@ func normalizeLogEventFilter(filter LogEventFilter) (LogEventFilter, error) {
 	if filter.Status != 0 && (filter.Status < 100 || filter.Status > 599) {
 		return LogEventFilter{}, errors.New("state: log query status must be between 100 and 599")
 	}
+	if filter.StatusClass != 0 && (filter.StatusClass < 1 || filter.StatusClass > 5 || filter.Status != 0) {
+		return LogEventFilter{}, errors.New("state: log query status class must be 1..5 and excludes an exact status")
+	}
+	levels := make([]string, 0, len(filter.Levels))
+	for _, level := range filter.Levels {
+		level = strings.ToLower(strings.TrimSpace(level))
+		if !logEventLevels[level] {
+			return LogEventFilter{}, fmt.Errorf("state: invalid log query level %q", level)
+		}
+		levels = append(levels, level)
+	}
+	filter.Levels = levels
+	filter.Query = strings.TrimSpace(filter.Query)
+	if n := utf8.RuneCountInString(filter.Query); filter.Query != "" && (n < logEventQueryMinRunes || n > logEventQueryMaxRunes) {
+		return LogEventFilter{}, fmt.Errorf("state: log query text must be %d..%d characters", logEventQueryMinRunes, logEventQueryMaxRunes)
+	}
+	if filter.Timeout < 0 {
+		filter.Timeout = 0
+	}
 	if filter.Since.IsZero() || filter.Until.IsZero() || !filter.Since.Before(filter.Until) {
 		return LogEventFilter{}, errors.New("state: log query requires a valid since/until window")
 	}
@@ -297,4 +362,67 @@ func cloneLogEvent(event LogEvent) LogEvent {
 		event.LatencyMS = &latency
 	}
 	return event
+}
+
+func (f *LogEventFacets) add(dim, value string, count int64) {
+	c := LogEventFacetCount{Value: value, Count: count}
+	switch dim {
+	case "total":
+		f.Total = count
+	case "source":
+		f.Sources = append(f.Sources, c)
+	case "level":
+		f.Levels = append(f.Levels, c)
+	case "status":
+		f.StatusClasses = append(f.StatusClasses, c)
+	case "route":
+		f.Routes = append(f.Routes, c)
+	}
+}
+
+// finish orders status classes by class and every other facet busiest first
+// (ties by value), then keeps routeLimit routes.
+func (f *LogEventFacets) finish(routeLimit int) {
+	for _, list := range [][]LogEventFacetCount{f.Sources, f.Levels, f.Routes} {
+		sort.Slice(list, func(i, j int) bool {
+			if list[i].Count != list[j].Count {
+				return list[i].Count > list[j].Count
+			}
+			return list[i].Value < list[j].Value
+		})
+	}
+	sort.Slice(f.StatusClasses, func(i, j int) bool { return f.StatusClasses[i].Value < f.StatusClasses[j].Value })
+	if len(f.Routes) > routeLimit {
+		f.Routes = f.Routes[:routeLimit]
+		f.RoutesTruncated = true
+	}
+}
+
+// logEventMatches is the in-memory twin of logEventFilterSQL (cursor aside).
+func logEventMatches(event LogEvent, f LogEventFilter) bool {
+	switch {
+	case event.AccountID != f.AccountID || event.AppID != f.AppID:
+		return false
+	case event.OccurredAt.Before(f.Since) || !event.OccurredAt.Before(f.Until):
+		return false
+	case f.Source != "" && event.Source != f.Source:
+		return false
+	case f.DeploymentID != "" && event.DeploymentID != f.DeploymentID:
+		return false
+	case f.RequestID != "" && event.RequestID != f.RequestID && event.TraceID != f.RequestID:
+		return false
+	case f.TraceID != "" && event.TraceID != f.TraceID:
+		return false
+	case f.Route != "" && event.Route != f.Route:
+		return false
+	case f.Status != 0 && event.Status != f.Status:
+		return false
+	case f.StatusClass != 0 && (event.Status < f.StatusClass*100 || event.Status >= f.StatusClass*100+100):
+		return false
+	case len(f.Levels) > 0 && !slices.Contains(f.Levels, event.Level):
+		return false
+	case f.Query != "" && !strings.Contains(strings.ToLower(event.Message), strings.ToLower(f.Query)):
+		return false
+	}
+	return true
 }

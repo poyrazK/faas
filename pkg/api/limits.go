@@ -13726,6 +13726,90 @@ const (
 	ChangeTimelineMaxEvents     = 200
 )
 
+// Customer log search bounds (ADR-20261018083536). Searches are clamped to
+// the plan's ledger retention (LogArchiveRetentionDaysMax). Text matching and
+// facets are bounded by window so one query never scans more than a day
+// (text) or a week (facets) of one app's ledger, and every query runs under
+// LogSearchStatementTimeout.
+const (
+	LogSearchDefaultWindow    = time.Hour
+	LogSearchTextMaxWindow    = 24 * time.Hour
+	LogSearchFacetMaxWindow   = 7 * 24 * time.Hour
+	LogSearchPageMax          = 200
+	LogSearchQueryMinChars    = 2
+	LogSearchQueryMaxChars    = 256
+	LogSearchFacetRoutes      = 10
+	LogSearchStatementTimeout = 5 * time.Second
+	// LogSavedSearchesPerApp caps an app's saved searches (slice D).
+	LogSavedSearchesPerApp = 25
+)
+
+// Alert log context (ADR-20261022172052): a firing app alert reads the log
+// ledger over its window (capped at the text search bound) and the deploys
+// of the hour before it.
+const (
+	AlertLogContextMaxWindow      = 24 * time.Hour
+	AlertLogContextDeployLookback = time.Hour
+	AlertLogContextDeploysMax     = 3
+)
+
+// Custom dashboards (ADR-20261022173833).
+const (
+	DashboardsPerAccount   = 20
+	DashboardWidgetsMax    = 24
+	DashboardDefaultWindow = "1h"
+)
+
+// DashboardWindows are the windows a dashboard widget may read.
+var DashboardWindows = []string{"5m", "1h", "6h", "24h", "7d"}
+
+// Unified incidents (ADR-20261022193512). A rule keeps its newest episodes
+// so a flapping rule cannot grow alert_episodes without bound. The list
+// shows everything open plus what resolved inside the window, capped; each
+// source reads one row past the cap. An app incident's detail carries the
+// app's changes from IncidentChangeLookback before it opened. An account's
+// notes on one incident, acknowledgement included, are capped (slice 2); the
+// body bound is also incident_notes_body_check.
+const (
+	AlertEpisodesPerRule     = 200
+	IncidentsDefaultWindow   = 7 * 24 * time.Hour
+	IncidentsMaxWindow       = 30 * 24 * time.Hour
+	IncidentsMaxEntries      = 100
+	IncidentChangeLookback   = time.Hour
+	IncidentFiresMax         = 20
+	IncidentNotesPerIncident = 100
+	IncidentNoteMaxChars     = 2000
+)
+
+// Runtime log projection into the ledger (ADR-20261018083536 slice B). vmmd
+// forwards warn and error lines within a per-app, per-node minute budget and
+// reports the overflow as one system line per app and minute; apid caps each
+// account across nodes. The queue and batch bound vmmd's memory and each RPC
+// (BatchMax × MessageMaxBytes stays far below gRPC's 4 MiB message limit).
+const (
+	RuntimeLogEventsPerAppMinute     = 120
+	RuntimeLogEventsPerAccountMinute = 600
+	RuntimeLogEventsQueueMax         = 2048
+	RuntimeLogEventsBatchMax         = 100
+	RuntimeLogEventMessageMaxBytes   = 4096
+	RuntimeLogEventsFlushInterval    = time.Second
+	RuntimeLogEventsForwardTimeout   = 5 * time.Second
+	RuntimeLogEventsUnavailablePause = time.Minute
+)
+
+// Build and deploy projection into the ledger (ADR-20261018083536 slice C).
+// apid tails deployment_audit and finished builds every interval, trailing
+// commit order by CommitLag so a slower transaction never lands behind the
+// cursor; a restarted apid starts StartupLookback back. Each tick reads at
+// most TickRowsMax rows per source.
+const (
+	LogProjectionInterval        = 10 * time.Second
+	LogProjectionCommitLag       = 10 * time.Second
+	LogProjectionStartupLookback = 15 * time.Minute
+	LogProjectionTickRowsMax     = 2000
+	LogProjectionBuildErrorBytes = 1024
+)
+
 // Anomaly alert bounds (ADR-744). A baseline rule compares a request metric
 // with the median of its value at the same time of day over the previous
 // AnomalyBaselineDays days.
