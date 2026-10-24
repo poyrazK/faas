@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"slices"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -49,11 +50,17 @@ func TestCheckInlineFailsOpen(t *testing.T) {
 
 	t.Run("no free slot", func(t *testing.T) {
 		i := New(&recordingObserver{}, nil)
-		for range api.EdgeWAFInlineConcurrency {
+		for range i.InlineSlots() {
 			i.inlineSlots <- struct{}{}
 		}
-		if res := i.CheckInline(attack); res.Outcome != gateway.WAFInlineSkipped {
-			t.Fatalf("outcome = %s, want skipped", res.Outcome)
+		start := time.Now()
+		res := i.CheckInline(attack)
+		if res.Outcome != gateway.WAFInlineSkipped || res.SkipReason != gateway.WAFInlineSkipBusy {
+			t.Fatalf("outcome = %s (%s), want skipped (busy)", res.Outcome, res.SkipReason)
+		}
+		// It waited for a slot before giving up (amendment 12).
+		if waited := time.Since(start); waited < api.EdgeWAFInlineSlotWait {
+			t.Errorf("skipped after %v, want at least the %v slot wait", waited, api.EdgeWAFInlineSlotWait)
 		}
 		// The skipped check is refunded to the app's budget.
 		if b := i.inlineBudgets.m[attack.AppID].balance; b != api.EdgeWAFInlineMsPerAppBurst {
@@ -65,8 +72,8 @@ func TestCheckInlineFailsOpen(t *testing.T) {
 		i, _ := newClockedInspector(&recordingObserver{})
 		for i.admitInline(attack.AppID) {
 		}
-		if res := i.CheckInline(attack); res.Outcome != gateway.WAFInlineSkipped {
-			t.Fatalf("outcome = %s, want skipped", res.Outcome)
+		if res := i.CheckInline(attack); res.Outcome != gateway.WAFInlineSkipped || res.SkipReason != gateway.WAFInlineSkipBudget {
+			t.Fatalf("outcome = %s (%s), want skipped (budget)", res.Outcome, res.SkipReason)
 		}
 		other := attack
 		other.AppID = "app-2"
@@ -80,4 +87,44 @@ func withUA(s gateway.WAFSample, ua string) gateway.WAFSample {
 	s.Header = s.Header.Clone()
 	s.Header.Set("User-Agent", ua)
 	return s
+}
+
+// adr: 831 amendment 12 — a check that finds every slot busy waits for one
+// instead of failing open at once, and its seconds include the wait.
+func TestCheckInlineWaitsForASlot(t *testing.T) {
+	attack := withUA(sample(http.MethodGet, "/", nil, ""), "sqlmap/1.7.2")
+	i := New(&recordingObserver{}, nil)
+	if _, err := i.inlineWAF(); err != nil {
+		t.Fatal(err)
+	}
+	// A generous wait keeps the test independent of scheduler latency.
+	i.inlineWait = time.Second
+	for range i.InlineSlots() {
+		i.inlineSlots <- struct{}{}
+	}
+	const hold = 20 * time.Millisecond
+	go func() {
+		time.Sleep(hold)
+		<-i.inlineSlots
+	}()
+	res := i.CheckInline(attack)
+	if res.Outcome != gateway.WAFInlineDetected {
+		t.Fatalf("outcome = %s (%s), want detected once a slot freed", res.Outcome, res.SkipReason)
+	}
+	if res.Seconds < hold.Seconds() {
+		t.Errorf("seconds = %v, want the wait for the slot (%v) included", res.Seconds, hold)
+	}
+	// The app is charged the check, not the wait.
+	if spent := api.EdgeWAFInlineMsPerAppBurst - i.inlineBudgets.m[attack.AppID].balance; spent >= float64(hold/time.Millisecond) {
+		t.Errorf("budget charged %.1f ms, want the check's time without the %v wait", spent, hold)
+	}
+
+	i.inlineWait = 0
+	for len(i.inlineSlots) < i.InlineSlots() {
+		i.inlineSlots <- struct{}{}
+	}
+	start := time.Now()
+	if res := i.CheckInline(attack); res.SkipReason != gateway.WAFInlineSkipBusy || time.Since(start) > hold {
+		t.Errorf("no wait: %s (%s) after %v, want an immediate busy skip", res.Outcome, res.SkipReason, time.Since(start))
+	}
 }

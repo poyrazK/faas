@@ -2998,6 +2998,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler.WithWAFInspector(wafInspector)
 	if os.Getenv("FAAS_EDGE_WAF_INLINE_DISABLED") != "1" {
 		handler.WithWAFInlineChecker(wafInspector)
+		log.Info("edge waf in-path checks armed", "slots", wafInspector.InlineSlots(), "slot_wait", api.EdgeWAFInlineSlotWait)
 	} else {
 		log.Warn("edge waf in-path checks disabled by FAAS_EDGE_WAF_INLINE_DISABLED; warn and block rules only observe")
 	}
@@ -3030,9 +3031,27 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		handler.WithASNReader(deps.asnReader)
 	}
 	// ADR-973 — verified crawlers via forward-confirmed reverse DNS.
-	handler.WithBotVerifier(gateway.NewBotVerifier(nil))
-	// ADR-20261022105846 — rule penalty boxes, held in this node's memory.
-	handler.WithPenaltyBox(gateway.NewPenaltyBox())
+	// ADR-20261022083601 — plus operators' published IP ranges, which apid
+	// stores and this gateway rereads: search crawlers verify without DNS,
+	// and AI crawlers verify at all. Without the store the ranges stay
+	// empty.
+	botVerifier := gateway.NewBotVerifier(nil)
+	if rangeStore, ok := any(deps.pgStore).(state.EdgeCrawlerRangesReader); ok && deps.pgStore != nil {
+		crawlerRanges := gateway.NewCrawlerRanges()
+		botVerifier.WithCrawlerRanges(crawlerRanges)
+		go crawlerRanges.Run(ctx, rangeStore, 0, log)
+	}
+	handler.WithBotVerifier(botVerifier)
+	// ADR-20261022105846 — rule penalty boxes. Amendment 1: with a store
+	// that has the capability, boxes are shared with every gateway through
+	// Postgres and survive a restart; otherwise they stay in this node.
+	penaltyBox := gateway.NewPenaltyBox()
+	handler.WithPenaltyBox(penaltyBox)
+	if boxStore, ok := any(deps.pgStore).(state.EdgePenaltyBoxStore); ok && deps.pgStore != nil {
+		sharer := newPenaltyBoxSharer(penaltyBox, boxStore, log)
+		penaltyBox.OnBox(sharer.queue)
+		go sharer.run(ctx, penaltyBoxNotifications(ctx, deps.pool, log))
+	}
 	// ADR-960 — per-rule hit counts, flushed to Postgres once a minute. Only
 	// a store with the hit-count capability gets a recorder, so test and
 	// legacy wiring keep counting disabled.
