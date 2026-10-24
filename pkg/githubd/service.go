@@ -1503,7 +1503,7 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 		PreviewPrState:   previewState,
 		PreviewExpiresAt: &expiresAt,
 	}
-	previewApp = applyGitHubRootPolicy(previewApp, policy)
+	previewApp = withParentAccessGates(applyGitHubRootPolicy(previewApp, policy), parentApp)
 	// Resolve the account server-side so the separate, bounded PR-preview
 	// allowance comes from the plan table, including dependency previews.
 	account, err := s.Reconcile.Store.AccountByID(ctx, binding.AccountID)

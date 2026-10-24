@@ -151,6 +151,7 @@ func previewAppFromParent(parent state.App, slug string, prNumber int, expiresAt
 		RequireSigned:           parent.RequireSigned, StartCommand: parent.StartCommand, Manifest: manifest,
 		WarmSnapshotEnabled: parent.WarmSnapshotEnabled, RequireAuthn: parent.RequireAuthn,
 		PublicAuthMode: parent.PublicAuthMode, ConsumerAuthMode: parent.ConsumerAuthMode,
+		PublicAuthBasicSealed:   append([]byte(nil), parent.PublicAuthBasicSealed...),
 		WarmSnapshotMinRequests: parent.WarmSnapshotMinRequests, WarmSnapshotMinMs: parent.WarmSnapshotMinMs,
 		EvictionPriority: parent.EvictionPriority, Status: state.AppActive,
 		PreviewOfSlug: parent.Slug, PreviewPrNumber: prNumber, PreviewPrState: state.PreviewPrStateOpen,
