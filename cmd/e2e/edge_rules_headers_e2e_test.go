@@ -41,7 +41,7 @@ func TestEdgeRulesHeaders_E2E(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-headers.apps.test.example"
+	synthHost := "edgectl-headers.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
