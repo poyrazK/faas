@@ -995,7 +995,7 @@ jobs:
 
       - name: Upload e2e log
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-e2e-${{ github.sha }}-${{ matrix.group }}
           path: |
@@ -1065,21 +1065,21 @@ jobs:
           if [[ "$EVENT_NAME" == schedule ]]; then selected_lane=full; fi
           native_e2e_combined_verdict "$GITHUB_WORKSPACE" "$RUNNER_TEMP/native-evidence" "$GITHUB_SHA" "$JOB_RESULT" "$selected_lane" "${QUALIFY_SERVICE_GRAPH:-false}" "${QUALIFY_COORDINATED:-false}"
 
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && inputs.lane == 'project-environment-promotion-only'
         with:
           name: promotion-qualification-${{ github.sha }}
           path: ${{ runner.temp }}/native-evidence/promotion-qualification.json
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && inputs.lane == 'project-environment-promotion-only' && (inputs.qualify_service_graph || inputs.qualify_coordinated)
         with:
           name: service-graph-qualification-${{ github.sha }}
           path: ${{ runner.temp }}/native-evidence/service-graph-qualification.json
           if-no-files-found: error
 
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: always() && inputs.lane == 'project-environment-promotion-only' && inputs.qualify_coordinated
         with:
           name: coordinated-qualification-${{ github.sha }}
@@ -1182,7 +1182,7 @@ jobs:
           test -s "$RUNNER_TEMP/binding-evidence/summary.json"
       - name: Retain binding reports
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: binding-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/binding-evidence/*.json
@@ -1377,7 +1377,7 @@ jobs:
 
       - name: Upload financial evidence
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: native-financial-system-${{ github.sha }}
           path: |
