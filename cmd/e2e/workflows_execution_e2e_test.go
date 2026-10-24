@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -103,6 +104,16 @@ func runError(run api.WorkflowRunResponse) string {
 		return ""
 	}
 	return *run.LastError
+}
+
+// sameJSONValue compares decoded values: PostgreSQL jsonb reorders object
+// keys, so stored outputs differ byte-wise from what the guest returned.
+func sameJSONValue(got json.RawMessage, want string) bool {
+	var gotValue, wantValue any
+	if json.Unmarshal(got, &gotValue) != nil || json.Unmarshal([]byte(want), &wantValue) != nil {
+		return false
+	}
+	return reflect.DeepEqual(gotValue, wantValue)
 }
 
 func startWorkflowRun(t *testing.T, f *normalPathFixture, workflow string, input any) api.WorkflowRunResponse {
@@ -316,7 +327,7 @@ func TestE2E_Workflows_CodeFirstRunResumesAcrossSleepAndEvent(t *testing.T) {
 	final, steps := waitWorkflow(t, f, run.ID, 60*time.Second, func(r api.WorkflowRunResponse, _ map[string]string) bool {
 		return r.Status == state.WorkflowRunStatusSucceeded || r.Status == state.WorkflowRunStatusFailed || r.Status == state.WorkflowRunStatusDead
 	})
-	if final.Status != state.WorkflowRunStatusSucceeded || !normalPathJSONEqual(final.Output, []byte(`{"approval":{"ok":true},"charge":{"id":"ch_1"}}`)) {
+	if final.Status != state.WorkflowRunStatusSucceeded || !sameJSONValue(final.Output, `{"approval":{"ok":true},"charge":{"id":"ch_1"}}`) {
 		t.Fatalf("final run=%s output=%s steps=%v error=%q", final.Status, final.Output, steps, runError(final))
 	}
 
