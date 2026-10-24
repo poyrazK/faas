@@ -805,9 +805,9 @@ const (
 	EventReplayPreviewReadTimeout          = 5 * time.Second
 )
 
-// Historical backfills pin only the bounded settled-receipt retention window.
+// Historical backfills pin only the bounded settled-receipt retention window;
+// a range is at most the owner's EventStorageLimits.SettledRetentionSeconds.
 const (
-	EventReplayBackfillMaxRange            = 30 * 24 * time.Hour
 	EventReplayBackfillPageSize            = 100
 	EventReplayBackfillInFlightMax         = 100
 	EventReplayBackfillActiveJobsMax       = 3
@@ -2737,11 +2737,29 @@ type EventDeliveryLimits struct{ PerConsumer, PerApp, PerAccount int }
 
 // EventStorageLimits bounds retained customer event envelopes and immutable
 // recipient snapshots per account, including settled receipts. ADR-615.
+// SettledRetentionSeconds is how long a settled receipt is kept: it bounds
+// duplicate acceptance, event recovery and replay ranges, and each budget
+// covers the window at the plan's sustained rate (ADR-20261023215834).
 const EventStorageRetryAfterSeconds = 60
 
 type EventStorageLimits struct {
-	RetainedEvents int64 `json:"retained_events"`
-	RetainedBytes  int64 `json:"retained_bytes"`
+	RetainedEvents          int64 `json:"retained_events"`
+	RetainedBytes           int64 `json:"retained_bytes"`
+	SettledRetentionSeconds int64 `json:"settled_retention_seconds,omitempty"`
+}
+
+// SettledRetention is the plan's settled-receipt window.
+func (l EventStorageLimits) SettledRetention() time.Duration {
+	return time.Duration(l.SettledRetentionSeconds) * time.Second
+}
+
+// EventSettledRetentionMax is the longest settled-receipt window of any plan.
+func EventSettledRetentionMax() time.Duration {
+	var longest time.Duration
+	for _, p := range Plans {
+		longest = max(longest, MustLimitsFor(p).EventStorage.SettledRetention())
+	}
+	return longest
 }
 
 // ObjectStoragePlanLimits are a plan's object-storage entitlements (ADR-1320).
@@ -4495,7 +4513,7 @@ var planLimits = map[Plan]Limits{
 		// Hobby so a customer mid-upgrade sees the cap before the
 		// plan flips. Deadline defaults to 5m, retention to 1d.
 		EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
-		EventStorage:                      EventStorageLimits{4096, 8 << 20},
+		EventStorage:                      EventStorageLimits{4096, 8 << 20, 86400},
 		MaxAsyncInvocationsPerAccount:     100,
 		MaxAsyncInvocationDeadlineSeconds: 300,
 		MaxAsyncResultRetentionSeconds:    86400,
@@ -4902,7 +4920,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-134 PR-B: Hobby 1k / 1h / 7d. Matches the doubling
 		// from Free's 100/5m/1d.
 		EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
-		EventStorage:                      EventStorageLimits{16384, 64 << 20},
+		EventStorage:                      EventStorageLimits{131072, 256 << 20, 259200},
 		MaxAsyncInvocationsPerAccount:     1000,
 		MaxAsyncInvocationDeadlineSeconds: 3600,
 		MaxAsyncResultRetentionSeconds:    604800,
@@ -5343,7 +5361,7 @@ var planLimits = map[Plan]Limits{
 		// ADR-134 PR-B: Pro 10k / 6h / 30d. Decadal bumps from
 		// Hobby track the Doubling pattern (1k->10k, 1h->6h, 7d->30d).
 		EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
-		EventStorage:                      EventStorageLimits{131072, 512 << 20},
+		EventStorage:                      EventStorageLimits{1048576, 2 << 30, 604800},
 		MaxAsyncInvocationsPerAccount:     10000,
 		MaxAsyncInvocationDeadlineSeconds: 21600,
 		MaxAsyncResultRetentionSeconds:    2592000,
@@ -5749,7 +5767,7 @@ var planLimits = map[Plan]Limits{
 		// pattern); 90d retention matches the audit-grade trace
 		// retention target.
 		EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
-		EventStorage:                      EventStorageLimits{1048576, 4 << 30},
+		EventStorage:                      EventStorageLimits{8388608, 16 << 30, 1209600},
 		MaxAsyncInvocationsPerAccount:     100000,
 		MaxAsyncInvocationDeadlineSeconds: 86400,
 		MaxAsyncResultRetentionSeconds:    7776000,

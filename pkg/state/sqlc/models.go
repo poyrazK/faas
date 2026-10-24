@@ -5006,6 +5006,12 @@ type EventFanoutRecipient struct {
 	DeliveryDeadlineAt          pgtype.Timestamptz
 }
 
+type EventReceiptUsage struct {
+	AccountID      pgtype.UUID
+	RetainedEvents int64
+	RetainedBytes  int64
+}
+
 type EventRecoveryExecutionResult struct {
 	JobID              pgtype.UUID
 	Position           int64

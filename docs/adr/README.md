@@ -4,6 +4,7 @@
 - [Build secrets resolve like the runtime environment](20261024140000-build-secrets-resolve-like-the-runtime.md)
 - [ADR-20261024135625: Resource journal: durable commits only for reboot-surviving assets](20261024135625-resource-journal-volatile-commits.md)
 - [Dockerfile HEALTHCHECK gates readiness on source builds](20261024100000-dockerfile-healthcheck-enforced.md)
+- [ADR-20261024132405: Language runtimes are supported until upstream end of life; their CVEs are triaged, not migrated away](20261024132405-runtime-language-version-support-and-cves.md) — accepted; deprecation dates, weekly base-digest refresh, version-pinned scanner exceptions; amends ADR 20261023220532 decision 4 for Python 3.12
 - [ADR-20261024090000: Idle parks re-check activity, and a park holds new forwards](20261024090000-idle-park-recheck-and-forward-hold.md) — the reaper's park re-checks fresh activity before SNAPSHOTTING; vmmd holds new forwards for the park and drains in-flight ones up to 5 s (amends spec §6)
 - [ADR-20261022083601: AI crawler controls](20261022083601-edge-ai-crawler-controls.md)
 - [ADR-20261024085817: A compute rollout never strands a node on a runtime base it cannot boot, and its drain finishes](20261024085817-rollout-base-generation-and-drain-completion.md) — proposed; a changed base generation pre-stages behind the drain barrier, the rescue never re-activates a node whose cache moved, a drain withdraws, drains and stops what it cannot hand off (2026-10-22 fsn-3)

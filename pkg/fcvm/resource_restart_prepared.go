@@ -151,8 +151,8 @@ func restartUIDSlots(ctx context.Context, root string) (map[int]struct{}, error)
 		if err != nil || pid <= 0 || !entry.IsDir() {
 			continue
 		}
-		data, err := os.ReadFile(filepath.Join(root, entry.Name(), "status"))
-		if errors.Is(err, os.ErrNotExist) {
+		data, err := readProcFile(filepath.Join(root, entry.Name(), "status"))
+		if processExited(err) {
 			continue // Process exited during inventory.
 		}
 		if err != nil {

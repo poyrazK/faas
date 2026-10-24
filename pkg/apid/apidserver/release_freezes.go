@@ -283,8 +283,14 @@ func (s *server) freezeAfterAutomaticRollback(ctx context.Context, accountID str
 // release pause is on (ADR 20261022140000). Unlike a freeze it covers every
 // scope and nothing overrides it; rollbacks do not pass through here.
 func (s *server) platformReleasePauseProblem() *api.Problem {
-	if s.runtimeBool(runtimeConfigPlatformReleasePause, false) {
+	if s.platformReleasePaused() {
 		return api.ErrPlatformReleasePaused()
 	}
 	return nil
+}
+
+// platformReleasePaused reports whether the break-glass release pause is on,
+// for paths that hold work rather than answer a request.
+func (s *server) platformReleasePaused() bool {
+	return s.runtimeBool(runtimeConfigPlatformReleasePause, false)
 }

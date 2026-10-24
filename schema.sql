@@ -10949,6 +10949,51 @@ $$;
 
 
 --
+-- Name: event_receipt_usage_count(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_receipt_usage_count() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF TG_OP = 'UPDATE' THEN
+        INSERT INTO event_receipt_usage AS u (account_id, retained_bytes)
+        VALUES (NEW.account_id, NEW.customer_storage_bytes - OLD.customer_storage_bytes)
+        ON CONFLICT (account_id) DO UPDATE SET retained_bytes = u.retained_bytes + excluded.retained_bytes;
+    ELSIF NEW.customer_storage_bytes > 0 THEN
+        INSERT INTO event_receipt_usage AS u (account_id, retained_events, retained_bytes)
+        VALUES (NEW.account_id, 1, NEW.customer_storage_bytes)
+        ON CONFLICT (account_id)
+        DO UPDATE SET retained_events = u.retained_events + 1, retained_bytes = u.retained_bytes + excluded.retained_bytes;
+    ELSE
+        INSERT INTO event_receipt_usage (account_id) VALUES (NEW.account_id) ON CONFLICT DO NOTHING;
+    END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: event_receipt_usage_release(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_receipt_usage_release() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    UPDATE event_receipt_usage u
+    SET retained_events = u.retained_events - d.events, retained_bytes = u.retained_bytes - d.bytes
+    FROM (
+        SELECT account_id, count(*) AS events, sum(customer_storage_bytes) AS bytes
+        FROM released_receipts WHERE customer_storage_bytes > 0 GROUP BY account_id
+    ) d
+    WHERE u.account_id = d.account_id;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: event_recipient_delivery_deadline(jsonb, timestamp with time zone, jsonb); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -36450,6 +36495,17 @@ CREATE TABLE public.event_fanout_recipients (
 
 
 --
+-- Name: event_receipt_usage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.event_receipt_usage (
+    account_id uuid NOT NULL,
+    retained_events bigint DEFAULT 0 NOT NULL,
+    retained_bytes bigint DEFAULT 0 NOT NULL
+);
+
+
+--
 -- Name: event_recovery_execution_results; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -58940,6 +58996,14 @@ ALTER TABLE ONLY public.event_fanout_recipients
 
 
 --
+-- Name: event_receipt_usage event_receipt_usage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_receipt_usage
+    ADD CONSTRAINT event_receipt_usage_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: event_recovery_execution_results event_recovery_execution_results_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -79890,6 +79954,27 @@ CREATE TRIGGER event_fanout_workflow_code_guard AFTER INSERT OR UPDATE OF recipi
 
 
 --
+-- Name: event_fanout_outbox event_receipt_usage_charge; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_receipt_usage_charge AFTER UPDATE OF payload, event_data, recipient_snapshot ON public.event_fanout_outbox FOR EACH ROW WHEN ((old.customer_storage_bytes IS DISTINCT FROM new.customer_storage_bytes)) EXECUTE FUNCTION public.event_receipt_usage_count();
+
+
+--
+-- Name: event_fanout_outbox event_receipt_usage_delete; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_receipt_usage_delete AFTER DELETE ON public.event_fanout_outbox REFERENCING OLD TABLE AS released_receipts FOR EACH STATEMENT EXECUTE FUNCTION public.event_receipt_usage_release();
+
+
+--
+-- Name: event_fanout_outbox event_receipt_usage_insert; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_receipt_usage_insert AFTER INSERT ON public.event_fanout_outbox FOR EACH ROW EXECUTE FUNCTION public.event_receipt_usage_count();
+
+
+--
 -- Name: event_recovery_items event_recovery_admitted_result; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -89051,6 +89136,14 @@ ALTER TABLE ONLY public.event_fanout_recipients
 
 ALTER TABLE ONLY public.event_fanout_recipients
     ADD CONSTRAINT event_fanout_recipients_outbox_id_fkey FOREIGN KEY (outbox_id) REFERENCES public.event_fanout_outbox(id) ON DELETE CASCADE;
+
+
+--
+-- Name: event_receipt_usage event_receipt_usage_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.event_receipt_usage
+    ADD CONSTRAINT event_receipt_usage_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --
