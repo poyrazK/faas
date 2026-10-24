@@ -1,7 +1,8 @@
-"""Request-scoped Gregale release propagation for managed service calls."""
+"""Request-scoped Gregale release and deadline propagation for managed calls."""
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -11,8 +12,32 @@ import httpx
 
 GREGALE_REVISION_HEADER = "X-Gregale-Revision"
 GREGALE_RELEASE_HEADER = "X-Gregale-Release"
+GREGALE_REQUEST_DEADLINE_HEADER = "X-Gregale-Request-Deadline"
 
 _release_context: ContextVar[str | None] = ContextVar("faas_sdk_gregale_release", default=None)
+_deadline_context: ContextVar[str | None] = ContextVar("faas_sdk_gregale_deadline", default=None)
+
+
+def _clean_deadline(value: str | None) -> str | None:
+    return value if value and len(value) <= 2048 and re.fullmatch(r"[A-Za-z0-9._-]+", value) else None
+
+
+def current_gregale_request_deadline() -> str | None:
+    """Return this request's opaque platform deadline; never edit its bytes."""
+    return _deadline_context.get()
+
+
+@contextmanager
+def with_gregale_request_context(headers):
+    """Capture Gregale release and deadline headers for a synchronous handler."""
+    inbound = httpx.Headers(headers)
+    values = inbound.get_list(GREGALE_REQUEST_DEADLINE_HEADER)
+    token = _deadline_context.set(_clean_deadline(values[0]) if len(values) == 1 else None)
+    try:
+        with with_gregale_release(inbound.get(GREGALE_RELEASE_HEADER)):
+            yield
+    finally:
+        _deadline_context.reset(token)
 
 
 def _clean_release(release: str | None) -> str | None:
@@ -43,16 +68,16 @@ def with_gregale_release(release: str | None):
         _release_context.reset(token)
 
 
-def _release_from_asgi_headers(headers: Iterable[tuple[bytes, bytes]]) -> str | None:
-    target = GREGALE_RELEASE_HEADER.lower().encode()
+def _value_from_asgi_headers(headers: Iterable[tuple[bytes, bytes]], header: str) -> str | None:
+    target = header.lower().encode()
     values = [value.decode("latin-1") for name, value in headers if name.lower() == target]
     if len(values) != 1:
         return None
-    return _clean_release(values[0])
+    return values[0]
 
 
 class GregaleReleaseMiddleware:
-    """ASGI middleware that captures Gregale's selected release per request."""
+    """Capture Gregale release context and ordinary HTTP deadline context."""
 
     def __init__(self, app: Any) -> None:
         self.app = app
@@ -62,19 +87,27 @@ class GregaleReleaseMiddleware:
             await self.app(scope, receive, send)
             return
 
-        token = _release_context.set(_release_from_asgi_headers(scope.get("headers", ())))
+        headers = scope.get("headers", ())
+        token = _release_context.set(_clean_release(_value_from_asgi_headers(headers, GREGALE_RELEASE_HEADER)))
+        deadline_token = _deadline_context.set(
+            _clean_deadline(_value_from_asgi_headers(headers, GREGALE_REQUEST_DEADLINE_HEADER))
+            if scope.get("type") == "http"
+            else None
+        )
         try:
             await self.app(scope, receive, send)
         finally:
             _release_context.reset(token)
+            _deadline_context.reset(deadline_token)
 
 
 def _is_managed_service(request: httpx.Request) -> bool:
-    return request.url.host.lower().rstrip(".").endswith(".svc.gregale")
+    return request.url.host.lower().rstrip(".").endswith((".svc.gregale", ".internal"))
 
 
 def _apply_release_context(request: httpx.Request) -> None:
     if not _is_managed_service(request):
+        request.headers.pop(GREGALE_REQUEST_DEADLINE_HEADER, None)
         return
 
     # A revision ID belongs to the caller app; only project graph context is
@@ -85,6 +118,14 @@ def _apply_release_context(request: httpx.Request) -> None:
         request.headers.pop(GREGALE_RELEASE_HEADER, None)
     else:
         request.headers[GREGALE_RELEASE_HEADER] = release
+
+    deadline = current_gregale_request_deadline() or _clean_deadline(
+        request.headers.get(GREGALE_REQUEST_DEADLINE_HEADER)
+    )
+    if deadline is None:
+        request.headers.pop(GREGALE_REQUEST_DEADLINE_HEADER, None)
+    else:
+        request.headers[GREGALE_REQUEST_DEADLINE_HEADER] = deadline
 
 
 class GregaleReleaseTransport(httpx.BaseTransport):
@@ -118,9 +159,12 @@ class AsyncGregaleReleaseTransport(httpx.AsyncBaseTransport):
 __all__ = [
     "GREGALE_RELEASE_HEADER",
     "GREGALE_REVISION_HEADER",
+    "GREGALE_REQUEST_DEADLINE_HEADER",
     "AsyncGregaleReleaseTransport",
     "GregaleReleaseMiddleware",
     "GregaleReleaseTransport",
     "current_gregale_release",
+    "current_gregale_request_deadline",
+    "with_gregale_request_context",
     "with_gregale_release",
 ]

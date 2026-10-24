@@ -12,7 +12,7 @@ import (
 )
 
 // resolveAppQuotaTx locks the persisted tenant's admission pool. Account locks
-// still protect the legacy storage reference; the organization advisory lock
+// still protect the legacy storage reference; the organization fence row
 // serializes different creators. The org SHARE lock precedes its quota lock,
 // matching the existing app-scope insert guard and serializing plan changes.
 func resolveAppQuotaTx(ctx context.Context, tx pgx.Tx, app *App, limits api.Limits) (api.Limits, bool, error) {

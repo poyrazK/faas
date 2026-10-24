@@ -110,8 +110,7 @@ func internalMCPInstanceProtocolProbeHandler(
 			guestRequest.Header.Set("Authorization", "Bearer "+token)
 		}
 		guestResponse := &boundedMCPProbeResponseWriter{header: make(http.Header), cancel: cancel, maxBytes: api.MCPProbeMaxResponseBytes}
-		forward(target).ServeHTTP(guestResponse, guestRequest)
-		if guestResponse.status == 0 {
+		if serveBoundedProbe(forward(target), guestResponse, guestRequest) || guestResponse.status == 0 {
 			guestResponse.status = http.StatusBadGateway
 		}
 		protocolVersion := boundedMCPResponseHeader(guestResponse.header.Get("MCP-Protocol-Version"), 64)

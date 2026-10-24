@@ -17,7 +17,32 @@ func (m *MemStore) ApplyPlatformTenant(ctx context.Context, in ApplyPlatformTena
 	return m.applyPlatformTenantLocked(ctx, in)
 }
 
-func (m *MemStore) applyPlatformTenantLocked(_ context.Context, in ApplyPlatformTenantParams) (ApplyPlatformTenantResult, error) {
+func (m *MemStore) applyPlatformTenantLocked(ctx context.Context, in ApplyPlatformTenantParams) (ApplyPlatformTenantResult, error) {
+	result, err := m.planPlatformTenantApplyLocked(ctx, in)
+	if err != nil {
+		return ApplyPlatformTenantResult{}, err
+	}
+	if in.DryRun {
+		if err := m.checkMemTrafficTenantBindingLocked(ctx, in.AccountID, trafficTenantApplyHosts(in), trafficTenantApplyProposal(in, result)); err != nil {
+			return ApplyPlatformTenantResult{}, err
+		}
+		return result, nil
+	}
+	now := time.Now().UTC()
+	prepareMemPlatformTenantApply(&result, now)
+	// UUIDs are staged before checking the exact proposal. No maps, webhooks,
+	// or receipts have been published when analysis or cancellation refuses.
+	if err := m.checkMemTrafficTenantBindingLocked(ctx, in.AccountID, trafficTenantApplyHosts(in), trafficTenantApplyProposal(in, result)); err != nil {
+		return ApplyPlatformTenantResult{}, err
+	}
+	m.publishPlatformTenantApplyLocked(result, now)
+	return result, nil
+}
+
+func (m *MemStore) planPlatformTenantApplyLocked(ctx context.Context, in ApplyPlatformTenantParams) (ApplyPlatformTenantResult, error) {
+	if err := ctx.Err(); err != nil {
+		return ApplyPlatformTenantResult{}, err
+	}
 	if _, ok := m.accounts[in.AccountID]; !ok {
 		return ApplyPlatformTenantResult{}, ErrNotFound
 	}
@@ -97,14 +122,13 @@ func (m *MemStore) applyPlatformTenantLocked(_ context.Context, in ApplyPlatform
 	if err := m.planPlatformTenantSurfaces(in, &result); err != nil {
 		return ApplyPlatformTenantResult{}, err
 	}
-	if in.DryRun {
-		return result, nil
-	}
-	now := time.Now().UTC()
+	return result, nil
+}
+
+func prepareMemPlatformTenantApply(result *ApplyPlatformTenantResult, now time.Time) {
 	if result.Action == "create" {
 		result.Tenant.ID = uuid.NewString()
 		result.Tenant.CreatedAt, result.Tenant.UpdatedAt = now, now
-		m.platformTenants[result.Tenant.ID] = result.Tenant
 	}
 	for i := range result.Consumers {
 		item := &result.Consumers[i]
@@ -114,11 +138,6 @@ func (m *MemStore) applyPlatformTenantLocked(_ context.Context, in ApplyPlatform
 		}
 		if item.Action != "unchanged" {
 			item.Consumer.PlatformTenantID = result.Tenant.ID
-			m.apiConsumers[item.Consumer.ID] = item.Consumer
-			m.platformTenantByConsumer[item.Consumer.ID] = result.Tenant.ID
-			if item.Consumer.Active() {
-				m.enqueuePlatformTenantCustomerLifecycleWebhookLocked(item.Consumer, PlatformTenantCustomerLinkedEvent, now)
-			}
 		}
 	}
 	for i := range result.Surfaces {
@@ -126,23 +145,45 @@ func (m *MemStore) applyPlatformTenantLocked(_ context.Context, in ApplyPlatform
 		if item.Action == "create" {
 			item.Surface.ID = uuid.NewString()
 			item.Surface.CreatedAt, item.Surface.UpdatedAt = now, now
+		}
+		for j := range item.Hostnames {
+			host := &item.Hostnames[j]
+			if host.Action == "create" {
+				host.Hostname.ID = uuid.NewString()
+				host.Hostname.SurfaceID = item.Surface.ID
+				host.Hostname.CreatedAt = now
+			}
+		}
+	}
+}
+
+func (m *MemStore) publishPlatformTenantApplyLocked(result ApplyPlatformTenantResult, now time.Time) {
+	if result.Action == "create" {
+		m.platformTenants[result.Tenant.ID] = result.Tenant
+	}
+	for _, item := range result.Consumers {
+		if item.Action != "unchanged" {
+			m.apiConsumers[item.Consumer.ID] = item.Consumer
+			m.platformTenantByConsumer[item.Consumer.ID] = result.Tenant.ID
+			if item.Consumer.Active() {
+				m.enqueuePlatformTenantCustomerLifecycleWebhookLocked(item.Consumer, PlatformTenantCustomerLinkedEvent, now)
+			}
+		}
+	}
+	for _, item := range result.Surfaces {
+		if item.Action == "create" {
 			m.tenantSurfaces[item.Surface.ID] = item.Surface
 		}
 		if item.Action == "link" || item.Action == "create" {
 			m.platformTenantBySurface[item.Surface.ID] = result.Tenant.ID
 		}
-		for j := range item.Hostnames {
-			host := &item.Hostnames[j]
-			if host.Action != "create" {
-				continue
+		for _, host := range item.Hostnames {
+			if host.Action == "create" {
+				m.tenantHostnames[host.Hostname.Hostname] = host.Hostname
+				m.tenantHostnames[strings.ToLower(host.Hostname.Hostname)] = host.Hostname
 			}
-			host.Hostname.ID = uuid.NewString()
-			host.Hostname.SurfaceID = item.Surface.ID
-			host.Hostname.CreatedAt = now
-			m.tenantHostnames[host.Hostname.Hostname] = host.Hostname
 		}
 	}
-	return result, nil
 }
 
 func (m *MemStore) planPlatformTenantSurfaces(in ApplyPlatformTenantParams, result *ApplyPlatformTenantResult) error {

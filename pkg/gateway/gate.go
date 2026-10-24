@@ -77,6 +77,7 @@ func newWakeWaiter(ctx context.Context) *wakeWaiter {
 func (g *WakeGate) SetMetrics(m *Metrics) { g.metrics = m }
 
 type wakeCall struct {
+	target    string
 	done      chan struct{}
 	err       error
 	waiters   int
@@ -94,6 +95,12 @@ type wakeCall struct {
 
 // ErrQueueFull is returned when the per-app waiter cap is exceeded (→ 503).
 var ErrQueueFull = errors.New("gateway: wake queue full")
+
+// A caller queued behind another cohort must retry its own admission, rather
+// than treating that cohort's success or failure as its own result.
+var errWakeTargetChanged = errors.New("gateway: another deployment wake completed")
+
+type wakeTargetKey struct{}
 
 // ErrBootstrapAborted (ADR-098 C7) is returned when the detached-leader
 // goroutine aborts under the bootstrap cap (queue empty AND no live
@@ -196,6 +203,10 @@ func (g *WakeGate) WaitWithPolicy(
 
 	w := newWakeWaiter(ctx)
 	g.mu.Lock()
+	target, _ := ctx.Value(wakeTargetKey{}).(string)
+	if call, ok := g.inflight[appID]; ok && call.completed && call.target != target {
+		delete(g.inflight, appID)
+	}
 	if call, ok := g.inflight[appID]; ok {
 		if call.waiters >= policy.MaxWaiters && !g.displaceFor(ctx, appID, call, w, policy) {
 			depth := call.waiters
@@ -226,11 +237,15 @@ func (g *WakeGate) WaitWithPolicy(
 		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 			observed = false
 		}
+		var waitTimeout *WakeQueueWaitTimeoutError
+		if target != "" && call.target != target && ctx.Err() == nil && !errors.As(err, &waitTimeout) {
+			return errWakeTargetChanged
+		}
 		return err
 	}
 
 	w.leader = true
-	call := &wakeCall{done: make(chan struct{}), waiters: 1, accountID: accountID, plan: policy.Plan, queue: []*wakeWaiter{w}}
+	call := &wakeCall{done: make(chan struct{}), waiters: 1, accountID: accountID, plan: policy.Plan, target: target, queue: []*wakeWaiter{w}}
 	g.inflight[appID] = call
 	g.mu.Unlock()
 	g.notifyChange(appID, accountID, policy.Plan, 1)
@@ -556,7 +571,7 @@ func (g *WakeGate) release(appID string, call *wakeCall, w *wakeWaiter) {
 	}
 	call.queue = slices.DeleteFunc(call.queue, func(q *wakeWaiter) bool { return q == w })
 	call.waiters--
-	if call.completed && call.waiters == 0 {
+	if call.completed && call.waiters == 0 && g.inflight[appID] == call {
 		delete(g.inflight, appID)
 	}
 	depth := 0

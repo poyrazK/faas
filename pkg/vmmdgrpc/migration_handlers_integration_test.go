@@ -17,6 +17,7 @@ import (
 )
 
 type migrationHandlerVMM struct {
+	wakeCorrelation wire.CorrelationFields
 	vmmStubBase
 	snapshots                        int
 	resumes                          int
@@ -52,6 +53,7 @@ func (f *migrationHandlerVMM) ResumeVM(_ context.Context, _ string) error {
 
 func (f *migrationHandlerVMM) Wake(ctx context.Context, req fcvm.WakeRequest) (*fcvm.Instance, error) {
 	f.wakeReq = req
+	f.wakeCorrelation, _ = wire.FromContext(ctx)
 	f.wakeFields, _ = wire.FromContext(ctx)
 	return &fcvm.Instance{
 		Method: f.wakeMethod,
@@ -157,7 +159,7 @@ func TestMigrationHandlers_RestoreAndSourceLifecycle(t *testing.T) {
 	if err := store.MarkInstanceMigrating(ctx, instanceID, "source", prepared.GetLeaseToken()); err != nil {
 		t.Fatalf("MarkInstanceMigrating: %v", err)
 	}
-	adopted, err := s.AdoptMigratedInstance(ctx, &vmmdpb.AdoptMigratedInstanceRequest{
+	adopted, err := s.AdoptMigratedInstance(wire.WithContext(ctx, wire.CorrelationFields{WakeID: "source-wake", AppID: "app-id"}), &vmmdpb.AdoptMigratedInstanceRequest{
 		InstanceId:        instanceID,
 		AppSpec:           &vmmdpb.AppSpec{BaseKey: "base/node22", LayerKey: "layer/app", VcpuCount: 2, MemSizeMib: 128, AppId: "app-id"},
 		MemStorageKey:     prepared.GetMemStorageKey(),
@@ -178,6 +180,11 @@ func TestMigrationHandlers_RestoreAndSourceLifecycle(t *testing.T) {
 		vmm.wakeReq.Snapshot.VMStateStorageKey != prepared.GetVmstateStorageKey() ||
 		vmm.wakeReq.Snapshot.FCVersion != prepared.GetFcVersion() {
 		t.Fatalf("wake snapshot = %+v, want prepared snapshot metadata", vmm.wakeReq.Snapshot)
+	}
+	// A node ID with an admission store selects durable adoption, covered in
+	// TestIncomingMigrationAdoptionCarriesDestinationNodeAndCorrelation.
+	if vmm.wakeCorrelation.WakeID != "source-wake" {
+		t.Fatalf("adopted routing lifetime: correlation=%+v", vmm.wakeCorrelation)
 	}
 	if vmm.wakeReq.Plan != api.PlanHobby || vmm.wakeReq.AccountID != "acct-id" ||
 		vmm.wakeReq.DeploymentID != "deployment-id" || vmm.wakeReq.AppID != "app-id" {
