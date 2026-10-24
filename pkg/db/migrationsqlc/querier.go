@@ -16,7 +16,10 @@ type Querier interface {
 	// The migration role owns every object. The only other grants admitted are
 	// the faas_runtime group's (ADR-20261023104734): row DML on tables, USAGE on
 	// sequences and the schema, none grantable, so no other role can alter an
-	// object or pass a privilege on.
+	// object or pass a privilege on. Objects an extension created are its own:
+	// a trusted extension such as citext installs them owned by the bootstrap
+	// superuser even when the migration role ran CREATE EXTENSION, and array
+	// types follow their element type.
 	CheckMigrationRecoveryWriters(ctx context.Context, db DBTX) (pgtype.Bool, error)
 	ExportMigrationRecoverySnapshot(ctx context.Context, db DBTX) (string, error)
 	GetMigrationRecoveryReceipt(ctx context.Context, db DBTX, approvalHash string) (ApplicationStandardLedgerRecovery, error)
