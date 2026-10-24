@@ -123,12 +123,14 @@ func publishedBaseGeneration(ctx context.Context, be storage.StorageBackend, bas
 		var scan struct {
 			Image string `json:"image"`
 		}
-		decodeErr := json.NewDecoder(io.LimitReader(rc, 1<<20)).Decode(&scan)
-		_ = rc.Close()
-		if decodeErr != nil {
-			return "", true, nil
+		// A torn sidecar is a publication vmmd cannot adopt, not a read
+		// failure: it names no generation.
+		image := ""
+		if json.NewDecoder(io.LimitReader(rc, 1<<20)).Decode(&scan) == nil {
+			image = scan.Image
 		}
-		return scan.Image, true, nil
+		_ = rc.Close()
+		return image, true, nil
 	}
 	if !errors.Is(err, storage.ErrNotFound) {
 		return "", false, fmt.Errorf("imaged: read shared scan sidecar %q: %w", scanKey, err)
