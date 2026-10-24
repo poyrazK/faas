@@ -1,4 +1,4 @@
--- filename: 20261023200616196_account_managed_postgres_guard_live_count.sql
+-- filename: 20261024092659388_account_managed_postgres_guard_live_count.sql
 -- migration-compat: expand
 --
 -- The account deletion guard now reports how many live managed PostgreSQL
