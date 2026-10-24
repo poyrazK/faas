@@ -23,6 +23,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -80,6 +81,10 @@ type Params struct {
 type Grace struct {
 	p       Params
 	metrics *metrics
+	// mu guards blocked: the tombstones whose last purge was refused. It is
+	// in memory, so a restart retries every one at once.
+	mu      sync.Mutex
+	blocked map[string]purgeBlock
 }
 
 // New returns a Grace ready to Run. Defaults: Interval 60s, Now
@@ -106,7 +111,7 @@ func New(p Params) *Grace {
 	if p.Audit == nil {
 		p.Audit = noopAuditor{}
 	}
-	return &Grace{p: p, metrics: newMetrics(p.Registry)}
+	return &Grace{p: p, metrics: newMetrics(p.Registry), blocked: map[string]purgeBlock{}}
 }
 
 // noopAuditor discards every emit. Default for tests.
@@ -245,8 +250,15 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 	now := g.p.Now()
 	missingDeadlines := 0
 	var retainedArtifactBytes int64
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	listed := make(map[string]struct{}, len(rows))
 	for _, app := range rows {
+		listed[app.ID] = struct{}{}
 		if app.DeleteGraceUntil != nil && app.DeleteGraceUntil.After(now) {
+			continue
+		}
+		if g.backingOff(app.ID, now) {
 			continue
 		}
 		if app.DeleteGraceUntil != nil {
@@ -303,22 +315,10 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 			continue
 		}
 		if err := g.p.Store.DeleteAppPermanently(ctx, app.ID); err != nil {
-			if errors.Is(err, state.ErrNotFound) {
-				continue
-			}
-			if errors.Is(err, state.ErrConflict) {
-				// A live bucket, managed PostgreSQL binding or unsettled
-				// multipart write still holds the app. That is a wait, not a
-				// failure; logging it as one every minute buried real purge
-				// errors (Hunt 11 H11-21).
-				g.metrics.failure("retained_resources")
-				g.p.Log.Debug("grace: app hard delete waits for retained resources", "app", app.ID)
-				continue
-			}
-			g.metrics.failure("delete_database")
-			g.p.Log.Warn("grace: app hard delete failed", "app", app.ID, "err", err)
+			g.purgeRefused(ctx, app, err, now)
 			continue
 		}
+		delete(g.blocked, app.ID)
 		g.metrics.deleted.Inc()
 		// Reuse the existing lifecycle channel so schedd's cleanup path
 		// gets a durable redelivery signal. The app row has already been
@@ -333,6 +333,7 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 		})
 		g.p.Log.Info("grace: app hard-deleted", "app", app.ID, "slug", app.Slug)
 	}
+	g.recordBlocked(listed)
 	g.metrics.missingDeadlines.Set(float64(missingDeadlines))
 	g.metrics.expiredArtifactBytes.Set(float64(retainedArtifactBytes))
 	g.metrics.lastSuccess.SetToCurrentTime()

@@ -4796,13 +4796,13 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 		return fmt.Errorf("state: begin app purge: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	var activeBuckets int
+	var activeBuckets int64
 	if err := tx.QueryRow(ctx,
 		`select count(*) from object_buckets where app_id = $1 and state <> 'deleted'`, id).Scan(&activeBuckets); err != nil {
 		return fmt.Errorf("state: count app buckets: %w", err)
 	}
 	if activeBuckets != 0 {
-		return ErrConflict
+		return &AppPurgeBlockedError{Reason: AppPurgeBlockedObjectBucket, Count: activeBuckets}
 	}
 	// A live managed PostgreSQL binding still owns provider credentials, and
 	// a dispatched, unsettled multipart part writer is an uncertain backend
@@ -4810,15 +4810,18 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	// rows (deleted bindings, settled writers) are removed below. Without
 	// that, the RESTRICT keys failed every purge and the grace sweep retried
 	// the same apps every minute forever (Hunt 11 H11-21).
-	var retained int
+	var liveBindings, uncertainWrites int64
 	if err := tx.QueryRow(ctx,
-		`select (select count(*) from managed_postgres_bindings where app_id = $1 and state <> 'deleted')
-		      + (select count(*) from object_multipart_part_writers w join object_buckets b on b.id = w.bucket_id
-		          where b.app_id = $1 and w.dispatched and not w.settled)`, id).Scan(&retained); err != nil {
+		`select (select count(*) from managed_postgres_bindings where app_id = $1 and state <> 'deleted'),
+		        (select count(*) from object_multipart_part_writers w join object_buckets b on b.id = w.bucket_id
+		          where b.app_id = $1 and w.dispatched and not w.settled)`, id).Scan(&liveBindings, &uncertainWrites); err != nil {
 		return fmt.Errorf("state: count app retained resources: %w", err)
 	}
-	if retained != 0 {
-		return ErrConflict
+	if liveBindings != 0 {
+		return &AppPurgeBlockedError{Reason: AppPurgeBlockedManagedPostgresBinding, Count: liveBindings}
+	}
+	if uncertainWrites != 0 {
+		return &AppPurgeBlockedError{Reason: AppPurgeBlockedMultipartWrite, Count: uncertainWrites}
 	}
 	var exists int
 	if err := tx.QueryRow(ctx,
@@ -4880,7 +4883,7 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	}
 	for _, step := range steps {
 		if _, err := tx.Exec(ctx, step.sql, id); err != nil {
-			return fmt.Errorf("state: purge %s for app %s: %w", step.name, id, err)
+			return fmt.Errorf("state: purge %s for app %s: %w", step.name, id, appPurgeForeignKeyError(err))
 		}
 	}
 	// Most app-owned tables use ON DELETE CASCADE (alerts, mirrors,
@@ -4893,13 +4896,19 @@ func (s *PgStore) DeleteAppPermanently(ctx context.Context, id string) error {
 	tag, err := tx.Exec(ctx,
 		`delete from apps where id = $1 and status = 'deleted' and delete_grace_until <= now() and purge_claimed_at is not null`, id)
 	if err != nil {
-		return fmt.Errorf("state: purge app %s: %w", id, err)
+		// A key the steps above do not clear (Hunt 11 H11-21's binding
+		// tombstones were one) fails here after the steps and the cascades
+		// have locked their rows. The typed error makes the grace sweep back
+		// off instead of retaking those locks every minute: on 2026-10-24 that
+		// retry deadlocked a migration adding a foreign key to apps.
+		return fmt.Errorf("state: purge app %s: %w", id, appPurgeForeignKeyError(err))
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
 	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("state: commit app purge %s: %w", id, err)
+		// A deferred key is checked here.
+		return fmt.Errorf("state: commit app purge %s: %w", id, appPurgeForeignKeyError(err))
 	}
 	return nil
 }

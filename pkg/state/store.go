@@ -2442,6 +2442,7 @@ type Store interface {
 	// state so a failed storage operation remains durably retryable.
 	ListAppDeletionArtifacts(ctx context.Context, appID string) ([]AppDeletionArtifact, error)
 	// DeleteAppPermanently removes a claimed, expired app and its dependent state.
+	// A refusal may be an *AppPurgeBlockedError naming the reason.
 	DeleteAppPermanently(ctx context.Context, id string) error
 
 	// Projects (ADR-050, Phase 1).
