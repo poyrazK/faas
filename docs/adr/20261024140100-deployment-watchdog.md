@@ -1,4 +1,4 @@
-# ADR-20261024140000: Every deployment reaches a terminal state
+# ADR-20261024140100: Every deployment reaches a terminal state
 
 Date: 2026-10-24
 Status: Accepted
