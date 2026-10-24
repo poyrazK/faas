@@ -215,6 +215,11 @@ Combine (d) with (a) as a backstop, and make the drain bounded.
 
   It loses its warm in-memory state and its next wake restores from the
   deployment's snapshot.
+- The recovery runner sweeps nodes one after another, and a node's sweep
+  waits for its dispatched jobs. A draining node's park rounds (up to about
+  40 s each) therefore delay the sweep of another node that is unavailable or
+  recovering. Live migrations already cause the same delay, up to their 180 s
+  lease.
 - Instance events record the drain park as kind `node_drain`
   (`routes_withdrawn`, then `drain_park_point`).
 - New metric labels: `schedd_frozen_parks_total{reason="node_draining"}`,
