@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261024132844326_object_storage_gateway_storage.sql
+-- filename: 20261024200407737_object_storage_gateway_storage.sql
 
 -- ADR-20261024132844: under gateway-safety accounting Gregale meters stored
 -- bytes itself. apid accrues each bucket's last inventoried bytes into
