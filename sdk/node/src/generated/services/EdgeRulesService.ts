@@ -12,6 +12,8 @@ import type { EdgeRuleRecipeSuggestionsResponse } from '../models/EdgeRuleRecipe
 import type { EdgeRuleResponse } from '../models/EdgeRuleResponse.js';
 import type { EdgeRuleSetVersionResponse } from '../models/EdgeRuleSetVersionResponse.js';
 import type { EdgeRuleStatsResponse } from '../models/EdgeRuleStatsResponse.js';
+import type { EdgeWAFExclusionsRequest } from '../models/EdgeWAFExclusionsRequest.js';
+import type { EdgeWAFReviewResponse } from '../models/EdgeWAFReviewResponse.js';
 import type { EnableEdgeAttackModeRequest } from '../models/EnableEdgeAttackModeRequest.js';
 import type { ListEdgeRuleListsResponse } from '../models/ListEdgeRuleListsResponse.js';
 import type { RollbackEdgeRulesRequest } from '../models/RollbackEdgeRulesRequest.js';
@@ -549,6 +551,57 @@ export class EdgeRulesService {
     });
   }
   /**
+   * Add or remove CRS rule IDs on a kind=waf rule's exclusions.
+   * ADR-831 amendment 13. Changes exclude_rule_ids and keeps the rest of
+   * the rule's action and its penalty, so silencing a false positive does
+   * not mean restating the whole action. Recorded as a new rule-set
+   * version like any PATCH.
+   *
+   * @returns EdgeRuleResponse The updated rule.
+   * @throws ApiError
+   */
+  public static updateEdgeWafExclusions({
+    id,
+    requestBody,
+    ifMatch,
+  }: {
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: EdgeWAFExclusionsRequest,
+    /**
+     * Optional edge-rule set version (the ETag of the app's rule listing). The mutation is refused with 412 when it is no longer the app's latest version.
+     */
+    ifMatch?: string,
+  }): CancelablePromise<EdgeRuleResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/edge-rules/{id}/waf-exclusions',
+      path: {
+        'id': id,
+      },
+      headers: {
+        'If-Match': ifMatch,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        409: `code: edge_rule_conflict — duplicate or overlapping rule state rejected.`,
+        412: `If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.`,
+        422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
    * List recorded versions of an app's edge-rule set, newest first.
    * Every committed change to an app's edge rules records the whole rule
    * set as a new version (ADR-961). Up to the 50 newest versions are
@@ -682,6 +735,63 @@ export class EdgeRulesService {
         'since': since,
         'limit': limit,
         'cursor': cursor,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * The app's WAF detections grouped for a false-positive review.
+   * ADR-831 amendment 13. Reads the app's sampled kind=waf detections
+   * (detected, warned and blocked events, ADR-831 amendment 5) and groups
+   * them by edge rule, CRS rule and path, with id-like path segments read
+   * as {id}. Each group is assessed: likely_false_positive (a documented
+   * false positive, or at least 3 clients flagged on the path with none
+   * sending most of the detections), likely_attack (most detections from
+   * clients flagged on 5 or more paths), excluded (the rule already
+   * excludes the CRS rule) or review. The newest 5,000 detections of each
+   * outcome are read and at most 50 groups returned, largest first.
+   * Detections are sampled, so counts are lower bounds. The window
+   * defaults to 7 days and is clamped to the plan's event window.
+   *
+   * @returns EdgeWAFReviewResponse The review.
+   * @throws ApiError
+   */
+  public static getEdgeWafReview({
+    slug,
+    rule,
+    since = '7d',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Only detections of this kind=waf edge rule id.
+     */
+    rule?: string,
+    /**
+     * Duration such as 24h or 7d.
+     */
+    since?: string,
+  }): CancelablePromise<EdgeWAFReviewResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/edge-rules/waf-review',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'rule': rule,
+        'since': since,
       },
       errors: {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,

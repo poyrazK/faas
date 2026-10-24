@@ -23,6 +23,11 @@ func (h incidentsHost) LoadApp(w http.ResponseWriter, r *http.Request, acct stat
 
 func (h incidentsHost) Store() incidents.Store { return h.s.store }
 
+// AppVisible applies the account inventories' rule to an incident's app.
+func (h incidentsHost) AppVisible(ctx context.Context, acct state.Account, app state.App) bool {
+	return accountViewAppVisible(ctx, h.s.store, h.s.log, acct, app)
+}
+
 // Changes reads the ADR-751 change timeline under its own flag, decided for
 // the app's organization.
 func (h incidentsHost) Changes(ctx context.Context, acct state.Account, app state.App, since, until time.Time) (api.AppChangeTimelineResponse, bool) {

@@ -24,6 +24,8 @@ type fakeHost struct {
 	store   *state.MemStore
 	changes bool
 	window  *[2]time.Time
+	// hidden names apps the caller may no longer read.
+	hidden map[string]bool
 }
 
 func (h fakeHost) LoadApp(w http.ResponseWriter, _ *http.Request, acct state.Account, slug string) (state.App, bool) {
@@ -37,6 +39,9 @@ func (h fakeHost) LoadApp(w http.ResponseWriter, _ *http.Request, acct state.Acc
 func (h fakeHost) Store() Store                                  { return h.store }
 func (h fakeHost) Actor(r *http.Request, _ state.Account) string { return r.Header.Get("X-Test-Actor") }
 func (h fakeHost) Logger() *slog.Logger                          { return slog.New(slog.NewTextHandler(io.Discard, nil)) }
+func (h fakeHost) AppVisible(_ context.Context, _ state.Account, app state.App) bool {
+	return !h.hidden[app.ID]
+}
 func (h fakeHost) Changes(_ context.Context, _ state.Account, app state.App, since, until time.Time) (api.AppChangeTimelineResponse, bool) {
 	*h.window = [2]time.Time{since, until}
 	return api.AppChangeTimelineResponse{AppID: app.ID, Events: []api.AppChangeEvent{

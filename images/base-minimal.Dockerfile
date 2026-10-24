@@ -13,11 +13,12 @@
 FROM mirror.gcr.io/library/busybox:1.37.0-musl@sha256:5cec3fc171c87218698e85a52af7087de727372aae264a787b8112901a5b0092 AS busybox
 
 FROM mirror.gcr.io/library/debian:13-slim@sha256:4876fdea29cac1a33a3195f1eb1952feb1fca7dd6dd00be3e2f1879cf20d34d2 AS build
-# Issue #197 B3.5 (extension): base-minimal shares the `debian:13-slim`
-# digest of base-debian-parent (ADR 20261023220532). The `scratch` FROM
-# below is the empty canonical image (no upstream repo) and is exempt
-# from the lock. Debian 13's /lib64 loader link is relative, so it resolves
-# to the /lib/x86_64-linux-gnu copy below.
+# Issue #197 B3.5 (extension): pinned via images/Dockerfile.lock, at the same
+# `debian:13-slim` digest as base-debian-parent (ADR 20261023220532 step 4).
+# Debian 13 drops 13 libraries Debian 12 shipped here; `gregalectl audit
+# base-libraries` lists the live app layers that need one. The `scratch` FROM
+# below is the empty canonical image (no upstream repo) and is exempt from the
+# lock.
 # The final stage copies libraries out of this stage, so upgrade first: a
 # security update published after the pinned image must still reach drive0.
 RUN apt-get update && DEBIAN_FRONTEND=noninteractive \
