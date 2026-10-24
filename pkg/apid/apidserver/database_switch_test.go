@@ -126,10 +126,10 @@ func TestDatabaseSwitchRollbackRecordsTheSwitchWithoutTouchingTheRelease(t *test
 	}
 	store := *f.env.Store()
 	ctx := context.Background()
-	for _, d := range []state.Deployment{f.v1, f.v3} {
-		got, err := store.DeploymentByID(ctx, d.ID)
-		if err != nil || got.Status != d.Status {
-			t.Fatalf("the request changed %s: %s -> %s (%v)", d.ID, d.Status, got.Status, err)
+	for id, want := range map[string]state.DeploymentStatus{f.v1.ID: state.DeploySuperseded, f.v3.ID: state.DeployLive} {
+		got, err := store.DeploymentByID(ctx, id)
+		if err != nil || got.Status != want {
+			t.Fatalf("the request changed %s to %s, want %s (%v)", id, got.Status, want, err)
 		}
 	}
 
