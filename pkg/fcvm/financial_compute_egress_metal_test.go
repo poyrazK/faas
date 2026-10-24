@@ -354,45 +354,43 @@ func TestMetalFinancialEgressGuestStreamAfterSegmentation(t *testing.T) {
 	run("ip", "netns", "exec", nc.Netns, "ip", "addr", "add", "10.0.0.1/30", "dev", nc.Tap)
 	run("ip", "netns", "exec", nc.Netns, "ip", "link", "set", nc.Tap, "up")
 	run("ip", "netns", "exec", nc.Netns, "sysctl", "-w", "net.ipv4.ip_forward=1")
-	run("ip", "netns", "exec", nc.Netns, "nft", "add", "table", "ip", "fixture_nat")
-	run("ip", "netns", "exec", nc.Netns, "nft", "add", "chain", "ip", "fixture_nat", "post", "{", "type", "nat", "hook", "postrouting", "priority", "100", ";", "}")
-	run("ip", "netns", "exec", nc.Netns, "nft", "add", "rule", "ip", "fixture_nat", "post", "oifname", nc.VethPeer, "masquerade")
 	run("ip", "netns", "exec", guest, "ip", "addr", "add", "10.0.0.2/30", "dev", "g0")
 	run("ip", "netns", "exec", guest, "ip", "link", "set", "g0", "up")
 	run("ip", "netns", "exec", guest, "ip", "route", "add", "default", "via", "10.0.0.1")
-	listener, err := net.Listen("tcp4", "198.18.238.1:0")
-	if err != nil {
+	// The host opens the connection, as the gateway does; host policy may
+	// refuse connections a tenant namespace opens. The route dies with VethHost.
+	run("ip", "route", "add", "10.0.0.2/32", "via", "198.18.238.2", "dev", nc.VethHost)
+	server := exec.CommandContext(ctx, "ip", "netns", "exec", guest, "python3", "-I", "-c", financialGuestTCPServer)
+	if err := server.Start(); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = listener.Close() })
-	received := make(chan int64, 1)
-	go func() {
-		conn, err := listener.Accept()
-		if err != nil {
-			received <- -1
-			return
+	t.Cleanup(func() { _ = server.Process.Kill(); _ = server.Wait() })
+	var conn net.Conn
+	for deadline := time.Now().Add(5 * time.Second); ; time.Sleep(50 * time.Millisecond) {
+		var err error
+		if conn, err = net.DialTimeout("tcp4", "10.0.0.2:8080", time.Second); err == nil {
+			break
 		}
-		defer func() { _ = conn.Close() }()
-		var total int64
-		buffer := make([]byte, 64*1024)
-		for {
-			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
-			n, err := conn.Read(buffer)
-			total += int64(n)
-			if err != nil {
-				received <- total
-				return
-			}
+		if time.Now().After(deadline) {
+			t.Fatalf("guest stream server unreachable: %v", err)
 		}
-	}()
+	}
+	defer func() { _ = conn.Close() }()
 	before, err := netns.ReadVethRXBytes(nc.VethHost)
 	if err != nil {
 		t.Fatal(err)
 	}
-	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
-	// The guest's send blocks once the gate drops its segments; the timeout ends it.
-	_ = exec.CommandContext(ctx, "ip", "netns", "exec", guest, "python3", "-I", "-c", financialGuestTCPStream, "198.18.238.1", port).Run()
-	got := <-received
+	// Once the gate drops the guest's segments the read times out.
+	var got int64
+	buffer := make([]byte, 64*1024)
+	for {
+		_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+		n, err := conn.Read(buffer)
+		got += int64(n)
+		if err != nil {
+			break
+		}
+	}
 	after, err := netns.ReadVethRXBytes(nc.VethHost)
 	if err != nil {
 		t.Fatal(err)
@@ -403,13 +401,14 @@ func TestMetalFinancialEgressGuestStreamAfterSegmentation(t *testing.T) {
 	t.Logf("guest stream bounds: received=%d interface_delta=%d funded=%d", got, after-before, nc.EgressBudgetBytes)
 }
 
-const financialGuestTCPStream = `
-import socket,sys
-s=socket.create_connection((sys.argv[1],int(sys.argv[2])),timeout=3)
-s.settimeout(3)
-try: s.sendall(b'x'*(2<<20))
+// Accepts one connection and streams 2 MiB, far past the 64 KiB credit.
+const financialGuestTCPServer = `
+import socket
+s=socket.socket(); s.setsockopt(socket.SOL_SOCKET,socket.SO_REUSEADDR,1); s.bind(("10.0.0.2",8080)); s.listen(1)
+c,_=s.accept(); c.settimeout(5)
+try: c.sendall(b'x'*(2<<20))
 except OSError: pass
-s.close()
+c.close()
 `
 
 const financialUDPSegmentedBurst = `
