@@ -25231,6 +25231,40 @@ paths:
         '409': { $ref: '#/components/responses/Conflict' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/apps/{slug}/route-budgets/receipts/{request_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: request_id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+        description: Exact original nonzero request UUID.
+      - name: scope
+        in: query
+        schema: { type: string, enum: [default] }
+        description: Select scope=default or one registered environment; exactly one selector is required.
+      - name: environment
+        in: query
+        schema: { type: string }
+        description: Current named environment containing the original receipt; mutually exclusive with scope=default.
+    get:
+      tags: [apps]
+      operationId: getEnvironmentRouteBudgetReceipt
+      summary: Read an original durable environment budget receipt.
+      description: Requires current app read access and completed MFA. Matches account, app and current immutable project/environment identities. Returns historical committed policy revisions and the exact original request fingerprint, excluding configuration values. Later policy edits do not replace this receipt. A missing, inaccessible or unavailable receipt never proves non-commit. This endpoint performs no mutation, replay, approval or expiry renewal and does not establish runtime health.
+      responses:
+        '200':
+          description: Historical policy-intent receipt, not current configuration or runtime completion.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EnvironmentRouteBudgetReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/apps/{slug}/route-monitor:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -75288,6 +75322,20 @@ components:
         revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         app_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
         config: { $ref: '#/components/schemas/RouteMonitorConfig' }
+    EnvironmentRouteBudgetReceipt:
+      description: Original durable policy-intent receipt. Request fingerprints bind exact bodies but grant no write authority. No configuration values are exposed.
+      type: object
+      required: [request_id, request_hash, app_id, scope, revision, app_revision, budget_source]
+      properties:
+        request_id: { type: string, format: uuid }
+        request_hash: { type: string, pattern: '^[0-9a-f]{64}$' }
+        app_id: { type: string, format: uuid }
+        scope: { type: string }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        revision: { type: integer, format: int64, minimum: 1, maximum: 9007199254740991 }
+        app_revision: { type: integer, format: int64, minimum: 0, maximum: 9007199254740991 }
+        budget_source: { type: string, enum: [app_policy, environment_policy] }
     SetEnvironmentRouteBudgetsRequest:
       description: Compare-and-swap update of the selected environment route-budget override.
       type: object

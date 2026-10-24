@@ -69,6 +69,7 @@ type management struct {
 	environmentPlans   map[string]*environmentPlan
 	actions            map[string]actionRecord
 	environmentActions map[string]environmentActionRecord
+	budgetOutcomes     map[string]budgetOutcomeLookup
 }
 
 // NewServer constructs a management server without making API calls.
@@ -162,6 +163,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerRouteBudgets(s, m)
 	registerSavedPlans(s, m)
 	registerActionHistory(s, m)
+	registerActionOutcomes(s, m)
 	registerEnvironmentActionHistory(s, m)
 	registerRegressionActions(s, m)
 	registerInspection(s, m)

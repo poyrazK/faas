@@ -7,6 +7,30 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP route-budget outcomes — 2026-10-24 (branch, not released)
+
+Read-only `gregale_get_action_outcome` verifies historical native policy receipts
+for retained route-budget attempts, including after original plan expiry. An
+atomic encrypted companion keeps only the request UUID, original fingerprint
+and history binding; no expired payload or write authority is reconstructed.
+Missing/mismatched evidence remains unresolved and cannot prove non-commit.
+Receipt reads preserve history, expiry, current revisions and native-completion
+uncertainty. Catalog: 58 read/planning tools, 67 with writes enabled, eight
+prompts and eleven resource templates. Go/Node/Python clients expose the new
+account/app/environment-scoped native receipt GET; no migration is needed.
+
+Full MCP race tests pass, including both protocols, encrypted expired-plan
+restart with writes disabled, later-policy edits, missing/mismatched receipts,
+legacy compatibility, retention pruning and final storage/identity/consent
+checks. Pinned real Codex 0.159.0-alpha.3 checks unattempted outcomes across
+restart/refresh in all three read-only profiles with zero model requests and
+native writes; positive receipt recovery uses native store and MCP fixtures.
+MemStore/PostgreSQL, native HTTP read-only/ownership, CLI and Go SDK tests pass;
+Node build/unit/smoke/generator tests and 70 Python tests pass. SQLC
+regeneration and SDK replay are clean.
+Native/provider deployment qualification remains separate. See
+[ADR-20261024210000](adr/20261024210000-management-mcp-budget-outcomes.md).
+
 ## Management MCP history recovery discovery — 2026-10-24 (branch, not released)
 
 Action list/detail rows advertise original-plan recovery resource, prompt and

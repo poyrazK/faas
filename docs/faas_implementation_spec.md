@@ -3118,6 +3118,20 @@ no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
 
 
+## Management MCP route-budget outcome lookup (ADR-20261024210000)
+
+Read-only `gregale_get_action_outcome` verifies the original native route-budget
+receipt against an encrypted minimal request UUID/fingerprint/history binding.
+It remains available after original plan expiry while action history is retained.
+The native scoped receipt GET returns immutable identities and original revision
+metadata without policy configuration. Receipt absence, unavailability or mismatch
+remains unresolved and cannot prove non-commit. No read replays writes, renews
+expiry or upgrades recorded history; historical intent is separate from current
+configuration and runtime completion. Current consent/ownership and identities
+are rechecked before release. Catalog: 58 read/planning tools, 67 with writes,
+eight prompts and eleven resource templates. No new migration or quota.
+See [ADR-20261024210000](adr/20261024210000-management-mcp-budget-outcomes.md).
+
 ## Management MCP history recovery discovery (ADR-20261024180000)
 
 Available original app/environment action rows add exact recovery resource,

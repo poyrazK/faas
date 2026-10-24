@@ -777,6 +777,7 @@ export type { EnvironmentPolicy } from './EnvironmentPolicy.js';
 export type { EnvironmentQueueBinding } from './EnvironmentQueueBinding.js';
 export type { EnvironmentQueueSmoke } from './EnvironmentQueueSmoke.js';
 export type { EnvironmentRecoveryRetention } from './EnvironmentRecoveryRetention.js';
+export type { EnvironmentRouteBudgetReceipt } from './EnvironmentRouteBudgetReceipt.js';
 export type { EnvironmentRouteBudgets } from './EnvironmentRouteBudgets.js';
 export type { EnvironmentRouteContract } from './EnvironmentRouteContract.js';
 export type { EnvironmentServiceBinding } from './EnvironmentServiceBinding.js';

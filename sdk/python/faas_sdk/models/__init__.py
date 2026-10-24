@@ -1510,6 +1510,8 @@ from .environment_queue_binding_mode import EnvironmentQueueBindingMode
 from .environment_queue_smoke import EnvironmentQueueSmoke
 from .environment_queue_smoke_payload_type_0 import EnvironmentQueueSmokePayloadType0
 from .environment_recovery_retention import EnvironmentRecoveryRetention
+from .environment_route_budget_receipt import EnvironmentRouteBudgetReceipt
+from .environment_route_budget_receipt_budget_source import EnvironmentRouteBudgetReceiptBudgetSource
 from .environment_route_budgets import EnvironmentRouteBudgets
 from .environment_route_budgets_budget_source import EnvironmentRouteBudgetsBudgetSource
 from .environment_route_contract import EnvironmentRouteContract
@@ -2057,6 +2059,7 @@ from .get_custom_metric_series_range import GetCustomMetricSeriesRange
 from .get_deployment_open_api_doc_response_200 import GetDeploymentOpenAPIDocResponse200
 from .get_durable_entity_readiness_response_200 import GetDurableEntityReadinessResponse200
 from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
+from .get_environment_route_budget_receipt_scope import GetEnvironmentRouteBudgetReceiptScope
 from .get_environment_route_budgets_scope import GetEnvironmentRouteBudgetsScope
 from .get_event_backlog_capacity_scope import GetEventBacklogCapacityScope
 from .get_event_backlog_consumer_kind import GetEventBacklogConsumerKind
@@ -7511,6 +7514,8 @@ __all__ = (
     "EnvironmentQueueSmoke",
     "EnvironmentQueueSmokePayloadType0",
     "EnvironmentRecoveryRetention",
+    "EnvironmentRouteBudgetReceipt",
+    "EnvironmentRouteBudgetReceiptBudgetSource",
     "EnvironmentRouteBudgets",
     "EnvironmentRouteBudgetsBudgetSource",
     "EnvironmentRouteContract",
@@ -8024,6 +8029,7 @@ __all__ = (
     "GetDeploymentOpenAPIDocResponse200",
     "GetDurableEntityReadinessResponse200",
     "GetEdgeRuleStatsWindow",
+    "GetEnvironmentRouteBudgetReceiptScope",
     "GetEnvironmentRouteBudgetsScope",
     "GetEventBacklogCapacityScope",
     "GetEventBacklogConsumerKind",

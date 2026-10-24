@@ -782,6 +782,7 @@ export type { EnvironmentPolicy } from './models/EnvironmentPolicy.js';
 export type { EnvironmentQueueBinding } from './models/EnvironmentQueueBinding.js';
 export type { EnvironmentQueueSmoke } from './models/EnvironmentQueueSmoke.js';
 export type { EnvironmentRecoveryRetention } from './models/EnvironmentRecoveryRetention.js';
+export type { EnvironmentRouteBudgetReceipt } from './models/EnvironmentRouteBudgetReceipt.js';
 export type { EnvironmentRouteBudgets } from './models/EnvironmentRouteBudgets.js';
 export type { EnvironmentRouteContract } from './models/EnvironmentRouteContract.js';
 export type { EnvironmentServiceBinding } from './models/EnvironmentServiceBinding.js';

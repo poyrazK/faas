@@ -101,3 +101,8 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND request_id=sqlc.arg(request_id):
 -- name: WriteEnvironmentBudgetReceipt :exec
 INSERT INTO environment_route_budget_receipts(account_id,request_id,app_id,request_hash,response)
 VALUES(sqlc.arg(account_id)::uuid,sqlc.arg(request_id)::uuid,sqlc.arg(app_id)::uuid,sqlc.arg(request_hash)::text,sqlc.arg(response)::jsonb);
+
+-- name: ReadEnvironmentBudgetReceiptForApp :one
+SELECT request_hash,response FROM environment_route_budget_receipts
+WHERE account_id=sqlc.arg(account_id)::uuid AND app_id=sqlc.arg(app_id)::uuid
+AND request_id=sqlc.arg(request_id)::uuid;

@@ -84,6 +84,7 @@ failures are returned as MCP tool errors; the server never starts a login flow.
 | `gregale_list_instances` | Instance pages with optional history; host addresses are excluded. |
 | `gregale_get_health` | Current health, readiness checks, freshness, and serving releases. |
 | `gregale_get_routes` | Observed routes and telemetry coverage, including unavailable sources. |
+| `gregale_get_action_outcome` | Read the native durable receipt for a retained route-budget attempt, including after plan expiry; missing evidence stays unresolved. |
 | `gregale_get_route_budgets` | Effective advisory budgets, inheritance source and policy revisions for the selected environment. |
 | `gregale_plan_route_budgets` | Review an environment override or return to app-budget inheritance without saving intent. |
 | `gregale_apply_route_budgets` | Opt-in write: apply the reviewed budget plan with native revision guards and durable replay. |
@@ -1552,6 +1553,43 @@ only currently consented identities. These are independent reads, not an atomic
 snapshot. The tool and prompt add no probes, replay, collection, model requests
 or platform writes, and do not plan/apply configuration changes.
 
+## Resolve an ambiguous route-budget write
+
+`gregale_get_action_outcome` accepts the original `plan_id`, `app`, and,
+for a named environment, `project` and `environment`. It works with read-only
+connections and retained history after the original 15-minute plan expires:
+
+```json
+{"app":"orders","project":"shop","environment":"staging","plan_id":"<original plan ID>"}
+```
+
+A `verified_receipt` includes only the original budget revision, app-policy
+revision and policy source. It confirms historical policy intent; current
+configuration and runtime health must still be inspected separately. The tool
+never replays the write, changes recorded action history, restores an expired
+plan or extends its expiry. `native_completion` remains `not_observed`.
+
+Unavailable, missing or mismatched receipts return `unresolved`. This never
+proves that the original write did not commit. Other action kinds are currently
+unsupported. Older bridges/APIs and expired legacy actions without a saved
+lookup reference also remain unresolved; do not create a replacement request
+to resolve ambiguity.
+
+The bridge saves only the original request UUID, exact request fingerprint and
+immutable history binding in its encrypted `budget-outcome-lookups/` companion
+namespace, atomically with the attempt before sending the write. It retains no
+mutation payload in that reference. References share action history's existing
+retention and capacity, are grant-local, and are purged on OAuth revocation.
+Current storage, account/app/environment identities, API scope/MFA and read
+consent are checked again before releasing the result.
+
+The native read is `GET /v1/apps/{slug}/route-budgets/receipts/{request_id}` with
+exactly one selector: `scope=default` or `environment=<slug>`. Native clients
+receive the request UUID/fingerprint for verification, immutable target IDs and
+original revision/source metadata; policy configuration and routes are omitted.
+Go, Node and Python clients expose this read. No schema migration is needed.
+See [ADR-20261024210000](adr/20261024210000-management-mcp-budget-outcomes.md).
+
 ## Recover reviewed actions
 
 Use `gregale_list_actions` with `app` and optional `project`/`environment` to find
@@ -1560,7 +1598,7 @@ service abort, route-budget and regression-triage plans. Use `gregale_get_action
 with the same selector and an exact `plan_id` to inspect its apply phase and, for request deploys,
 separate promotion phase.
 These tools are read-only and remain available when writes are disabled.
-The catalog contains 57 read/planning tools, or 66 with writes enabled.
+The catalog contains 58 read/planning tools, or 67 with writes enabled.
 
 Use `gregale_get_plan` with the same app/project/environment selector and
 `plan_id` to reopen the original unexpired proposal. Environment promotion and
@@ -1680,8 +1718,8 @@ Retrieval does not fetch fresh baselines, receipts or native completion, create
 plans, perform writes, poll approval or renew expiry. Cached recipes grant no
 authority: reread after reconnecting and use the existing guarded tools. Recipes
 are snapshots and do not support subscriptions; plan-ID completion never enumerates
-IDs. Catalog now has eleven resource templates, with 57 read/planning tools,
-66 with writes enabled and eight prompts. See
+IDs. Catalog now has eleven resource templates, with 58 read/planning tools,
+67 with writes enabled and eight prompts. See
 [ADR-20261024160000](adr/20261024160000-management-mcp-saved-plan-recovery-resources.md).
 
 Available original plans in app/environment action list and detail rows now

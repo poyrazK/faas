@@ -6,6 +6,7 @@ import (
 	"github.com/google/uuid"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
@@ -14,14 +15,17 @@ import (
 )
 
 type budgetFixture struct {
-	mu        sync.Mutex
-	store     *state.MemStore
-	account   state.Account
-	app       state.App
-	project   state.Project
-	env       state.ProjectEnvironment
-	ambiguous bool
-	writes    int
+	mu               sync.Mutex
+	store            *state.MemStore
+	account          state.Account
+	app              state.App
+	project          state.Project
+	env              state.ProjectEnvironment
+	ambiguous        bool
+	writes           int
+	receiptReads     int
+	receiptStatus    int
+	receiptTransform func(*api.EnvironmentRouteBudgetReceipt)
 }
 
 func newBudgetFixture(t *testing.T) (*budgetFixture, *httptest.Server, Options) {
@@ -54,6 +58,27 @@ func (f *budgetFixture) serve(w http.ResponseWriter, r *http.Request) {
 	defer f.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
 	encode := func(v any) { _ = json.NewEncoder(w).Encode(v) }
+	if strings.HasPrefix(r.URL.Path, "/v1/apps/alpha/route-budgets/receipts/") && r.Method == http.MethodGet {
+		f.receiptReads++
+		if f.receiptStatus != 0 {
+			w.WriteHeader(f.receiptStatus)
+			return
+		}
+		scope := r.URL.Query().Get("environment")
+		if scope == "" && r.URL.Query().Get("scope") == "default" {
+			scope = "default"
+		}
+		out, err := f.store.GetEnvironmentRouteBudgetReceipt(r.Context(), f.account.ID, f.app.ID, scope, strings.TrimPrefix(r.URL.Path, "/v1/apps/alpha/route-budgets/receipts/"))
+		if err != nil {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		if f.receiptTransform != nil {
+			f.receiptTransform(&out)
+		}
+		encode(out)
+		return
+	}
 	switch r.URL.Path {
 	case "/v1/account":
 		encode(api.AccountResponse{ID: f.account.ID})
