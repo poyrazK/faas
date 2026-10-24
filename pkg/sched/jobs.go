@@ -1289,6 +1289,13 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		if err != nil {
 			return fmt.Errorf("sched: dispatchJobsTick resolve account: %w", err)
 		}
+		// ADR-20261023115741: jobs switched off for the account stay queued.
+		if !e.accountCapabilityAllowed(account, "jobs") {
+			if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(capabilityDeferral)); err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("sched: defer capability-held job task: %w", err)
+			}
+			continue
+		}
 		plan := account.Plan
 		if plan == api.PlanFree {
 			// Free plans are 404 at apid; if a row sneaks through

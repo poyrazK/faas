@@ -269,8 +269,17 @@ func (l *Loop) WithWorkflowsDispatched(enabled bool) *Loop {
 
 // WithWorkflowOrchestrator sets the orchestrator instance for workflow dispatch.
 func (l *Loop) WithWorkflowOrchestrator(o *WorkflowOrchestrator) *Loop {
+	if o != nil {
+		o.capabilityAllowed = l.workflowCapabilityAllowed
+	}
 	l.workflowOrch = o
 	return l
+}
+
+// workflowCapabilityAllowed decides the workflows capability for an app's
+// account (ADR-20261023115741).
+func (l *Loop) workflowCapabilityAllowed(ctx context.Context, appID string) bool {
+	return l.engine.appIDCapabilityAllowed(ctx, appID, "workflows")
 }
 
 // WithWorkflowRetention attaches the workflow retention cleaner.
@@ -4185,6 +4194,7 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 			orch := l.workflowOrch
 			if orch == nil {
 				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
+				orch.capabilityAllowed = l.workflowCapabilityAllowed
 			}
 			if err := orch.DispatchBatch(ctx); err != nil && l.log != nil {
 				l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
@@ -4843,6 +4853,12 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		// don't want to surface suspended-account crons in the
 		// per-account audit list (and §5.1's 4xx-invariant covers
 		// the "we didn't fire" semantic too).
+		return CronRun{}, false
+	}
+	// ADR-20261023115741: crons switched off for the account do not fire,
+	// the same no-fire, no-audit outcome as a suspended account.
+	if !l.engine.appCapabilityAllowed(ctx, app, "crons") {
+		l.log.Debug("cron: capability off; skipped", "cron_id", c.ID, "app_id", app.ID)
 		return CronRun{}, false
 	}
 	acct = acctRec

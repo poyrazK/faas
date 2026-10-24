@@ -226,6 +226,9 @@ type Service struct {
 	// behaviour; tests that don't care about source staging
 	// keep working unchanged).
 	WorkDir string
+	// CapabilityAllowed decides a product capability's platform flag for an
+	// account (ADR-20261023115741). nil releases every capability.
+	CapabilityAllowed func(capability, accountID string) bool
 }
 
 // NewService builds a Service. Tests inject fakes for the seams;
@@ -458,6 +461,13 @@ func (s *Service) HandlePushRequest(ctx context.Context, body []byte) (reconcile
 		return reconcile.Result{}, ErrNoBinding
 	}
 	if policy.ProductionTrigger == state.ProductionTriggerActions {
+		return reconcile.Result{WasIgnored: true}, ErrIgnored
+	}
+	if !s.capabilityAllowed(CapabilityGitHubDeploys, binding.AccountID) {
+		s.Ops.ObserveGithubdPushSkipped(wire.PushSkippedReasonCapability)
+		s.Log.Info("githubd: push ignored; capability off",
+			"capability", CapabilityGitHubDeploys, "account_id", binding.AccountID,
+			"repo", ev.Repository.FullName)
 		return reconcile.Result{WasIgnored: true}, ErrIgnored
 	}
 
@@ -1421,7 +1431,8 @@ func (s *Service) handlePullRequest(ctx context.Context, body []byte) (reconcile
 	if err != nil {
 		return reconcile.Result{}, fmt.Errorf("githubd: resolve PR preview policy: %w", err)
 	}
-	if !policy.PreviewEnabled && ev.Action != PullRequestActionClosed {
+	// A closed PR still tears its preview down when previews are off.
+	if (!policy.PreviewEnabled || !s.previewsAllowed(binding.AccountID)) && ev.Action != PullRequestActionClosed {
 		result := reconcile.Result{WasIgnored: true}
 		return result, ErrIgnored
 	}

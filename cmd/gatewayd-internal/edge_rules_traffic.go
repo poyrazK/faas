@@ -163,6 +163,7 @@ func (g *gatewaydEdgeRules) MatchRetry(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Retry
 	}
+	rules = capabilityRules(g.capabilityAllowed, capabilityRequestRetry, rules, func(r *gateway.EdgeRuleRetryResolved) string { return r.AccountID })
 	enforced := gateway.PickFirstRetryMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRetryResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 	logged := gateway.PickFirstRetryMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleRetryResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
@@ -185,6 +186,7 @@ func (g *gatewaydEdgeRules) MatchCircuitBreaker(ctx context.Context, host, reque
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.CircuitBreaker
 	}
+	rules = capabilityRules(g.capabilityAllowed, capabilityCircuitBreaking, rules, func(r *gateway.EdgeRuleCircuitBreakerResolved) string { return r.AccountID })
 	enforced := gateway.PickFirstCircuitBreakerMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCircuitBreakerResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 	logged := gateway.PickFirstCircuitBreakerMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCircuitBreakerResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)

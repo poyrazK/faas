@@ -964,7 +964,10 @@ type Handler struct {
 	// apiMonetizationFlags is the api_monetization platform flag: it
 	// releases monetization to the accounts it admits (ADR-20261020170649).
 	apiMonetizationFlags *platformflags.Set
-	gate                 *WakeGate
+	// capabilityAllowed decides a product capability flag for an app's
+	// account (ADR-20261023115741); nil releases every capability.
+	capabilityAllowed func(capability, accountID string) bool
+	gate              *WakeGate
 	// admissionQueue protects the control plane from a simultaneous cold
 	// burst across many apps. It is intentionally separate from gate:
 	// gate coalesces waiters for one app, while admissionQueue orders the
@@ -6873,7 +6876,7 @@ haveApp:
 	// not change. A failed warm probe still enters the existing single-flight
 	// wake path; the gate re-checks HealthyCount under its lock.
 	preferredInstanceID := ""
-	if app.SessionAffinity {
+	if h.sessionAffinity(app) {
 		preferredInstanceID = h.affinityTargetFromRequest(r, app.ID)
 	}
 	exactDeploymentID := smokeDeploymentID
@@ -7023,7 +7026,7 @@ haveApp:
 		// (ADR-1151): its in-memory state is why the app keeps affinity.
 		wakeCtx = sched.WithPreferredInstance(wakeCtx, preferredInstanceID)
 		var cancelWakePage context.CancelFunc
-		showWakePage := acceptsWakePage(r)
+		showWakePage := acceptsWakePage(r) && h.capabilityOn(CapabilityWakePage, app)
 		if showWakePage {
 			wakeCtx, cancelWakePage = context.WithTimeout(wakeCtx, time.Duration(api.WakePageAfterMs)*time.Millisecond)
 			defer cancelWakePage()
@@ -7274,7 +7277,7 @@ haveApp:
 	if !deploymentSmoke && app.RevisionPinTTLSeconds > 0 && target.DeploymentID != "" {
 		w.Header().Set(api.RevisionHeader, target.DeploymentID)
 	}
-	if app.SessionAffinity {
+	if h.sessionAffinity(app) {
 		if _, ok := h.backend.(affinityPicker); ok {
 			h.setSessionAffinityCookie(w, app.ID, target.InstanceID)
 		}
@@ -7359,7 +7362,7 @@ haveApp:
 	//     unbuffered).
 	//   - r.Body is restored to a fresh bytes.Reader so the proxy
 	//     downstream sees the full body unchanged.
-	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok && !hasDevBridgeScope(r.Context()) { //nolint:contextcheck // request ctx at handler boundary.
+	if rules, ok := h.backend.LookupMirrorRules(r.Context(), app.ID); ok && !hasDevBridgeScope(r.Context()) && h.capabilityOn(CapabilityTrafficMirroring, app) { //nolint:contextcheck // request ctx at handler boundary.
 		requestBody, requestBodyTruncated, restoreBody := snapshotSourceBodyWithTruncation(r)
 		// snapshotSourceBody consumes the captured prefix from r.Body. Restore
 		// it before the source proxy runs; deferring this until ServeHTTP exits
