@@ -1245,6 +1245,11 @@ const NativeHostHelperCgroupEventsMaxBytes = 4096
 const ExclusiveArtifactDecoderMaxMemoryBytes = 64 << 20
 const NativeSnapshotPublicationRecordMaxBytes = 2 << 20
 
+// NativeRuntimeCaptureMaxDuration caps the durable deadline of one native park
+// or warm capture (ADR 20261022184951). vmmd clamps the caller's deadline to it;
+// the scheduler's per-RAM snapshot budget is far shorter.
+const NativeRuntimeCaptureMaxDuration = 10 * time.Minute
+
 // NativeSnapshotPublicationRecoveryBatchMax bounds each periodic scan of
 // already-authorized artifact retirement records.
 const NativeSnapshotPublicationRecoveryBatchMax = 64

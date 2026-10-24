@@ -1866,7 +1866,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// /srv/fc/snap. The byte-comparison path stays in
 			// place for the local backend; a remote backend (OCI)
 			// degrades to a presence check.
-			WithStorage(storageBackend)).
+			WithStorage(storageBackend).
+			// ADR 20261022184951 amendment 1: native runtime snapshots
+			// sit in vmmd's private tree under the same snap/ keys.
+			WithNativeRuntimeSnapshots(nativeRuntimeSnapshotLister(log))).
 		// Audit seam (lifted from cmd/apid/audit.go into pkg/audit
 		// for cross-daemon reuse). schedd uses actor="schedd" so the
 		// cron-fire path can emit a `cron.fired` events row after
