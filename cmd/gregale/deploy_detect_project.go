@@ -66,7 +66,7 @@ func goMainPackageAt(dir string) bool {
 		if entry.IsDir() || !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
 			continue
 		}
-		file, err := os.Open(filepath.Join(dir, name))
+		file, err := openCustomerFile(filepath.Join(dir, name))
 		if err != nil {
 			continue
 		}
