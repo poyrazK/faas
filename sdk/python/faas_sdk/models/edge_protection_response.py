@@ -10,6 +10,7 @@ from attrs import field as _attrs_field
 from ..models.edge_protection_response_range import EdgeProtectionResponseRange, check_edge_protection_response_range
 
 if TYPE_CHECKING:
+    from ..models.edge_protection_ai_crawler import EdgeProtectionAICrawler
     from ..models.edge_protection_response_challenge import EdgeProtectionResponseChallenge
     from ..models.edge_protection_response_penalty import EdgeProtectionResponsePenalty
     from ..models.edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
@@ -43,6 +44,9 @@ class EdgeProtectionResponse:
     """kind=challenge decisions (ADR-831 amendment 7); its 403s also appear in rejections under gate challenge."""
     penalty: EdgeProtectionResponsePenalty
     """Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty."""
+    ai_crawlers: list[EdgeProtectionAICrawler]
+    """Requests whose User-Agent names an AI crawler (ADR-20261022083601), largest first, counted before any edge
+    rule acted on them."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -72,6 +76,11 @@ class EdgeProtectionResponse:
 
         penalty = self.penalty.to_dict()
 
+        ai_crawlers = []
+        for ai_crawlers_item_data in self.ai_crawlers:
+            ai_crawlers_item = ai_crawlers_item_data.to_dict()
+            ai_crawlers.append(ai_crawlers_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -86,6 +95,7 @@ class EdgeProtectionResponse:
                 "waf": waf,
                 "challenge": challenge,
                 "penalty": penalty,
+                "ai_crawlers": ai_crawlers,
             }
         )
 
@@ -93,6 +103,7 @@ class EdgeProtectionResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.edge_protection_ai_crawler import EdgeProtectionAICrawler
         from ..models.edge_protection_response_challenge import EdgeProtectionResponseChallenge
         from ..models.edge_protection_response_penalty import EdgeProtectionResponsePenalty
         from ..models.edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
@@ -135,6 +146,13 @@ class EdgeProtectionResponse:
 
         penalty = EdgeProtectionResponsePenalty.from_dict(d.pop("penalty"))
 
+        ai_crawlers = []
+        _ai_crawlers = d.pop("ai_crawlers")
+        for ai_crawlers_item_data in _ai_crawlers:
+            ai_crawlers_item = EdgeProtectionAICrawler.from_dict(ai_crawlers_item_data)
+
+            ai_crawlers.append(ai_crawlers_item)
+
         edge_protection_response = cls(
             app_id=app_id,
             range_=range_,
@@ -146,6 +164,7 @@ class EdgeProtectionResponse:
             waf=waf,
             challenge=challenge,
             penalty=penalty,
+            ai_crawlers=ai_crawlers,
         )
 
         edge_protection_response.additional_properties = d
