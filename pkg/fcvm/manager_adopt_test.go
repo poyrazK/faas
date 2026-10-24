@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 )
 
 // adoptingVMM records what adoption asked of the VMM.
@@ -28,6 +29,20 @@ type adoptingVMM struct {
 	files     int
 	owners    []adoptedOwner
 	adoptErr  error
+	// handoffs records adoptRuntimeDriveHandoff calls; handoffErr fails them.
+	handoffs   []adoptedDriveHandoff
+	handoffErr error
+}
+
+type adoptedDriveHandoff struct {
+	lease Lease
+	pid   int
+	pins  []resourceAdoptionDrivePin
+}
+
+func (v *adoptingVMM) adoptRuntimeDriveHandoff(_ context.Context, l Lease, pid int, _ runtimeadmission.Receipt, pins []resourceAdoptionDrivePin) error {
+	v.handoffs = append(v.handoffs, adoptedDriveHandoff{lease: l, pid: pid, pins: pins})
+	return v.handoffErr
 }
 
 func (v *adoptingVMM) adoptGuestProcess(l Lease, _ resourceProcessIdentity, owner adoptedOwner, jails, binds, files []resourceAsset) error {

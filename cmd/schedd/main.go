@@ -1669,6 +1669,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("measured admission enabled (ADR-909)",
 			"max_overcommit_percent", api.MeasuredAdmissionMaxOvercommitPercent)
 	}
+	if cfg.QuietPauseLedger {
+		ledger := instancestats.NewPauseLedger(store,
+			time.Duration(api.QuietPauseLedgerFlushSeconds)*time.Second, log,
+			instancestats.NewPauseLedgerMetrics(ops.Registry()))
+		statsPoller.WithPauseLedger(ledger)
+		log.Info("quiet pause ledger enabled (ADR-20261023171905)",
+			"flush_seconds", api.QuietPauseLedgerFlushSeconds)
+	}
 	if cfg.QuietPauseAdmission {
 		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
 			return reader.QuietPaused(nodeID, time.Now())
