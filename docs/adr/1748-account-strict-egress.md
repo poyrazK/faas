@@ -1,6 +1,6 @@
 # ADR-1748: shared account compute and egress funding
 
-- **Status:** local implementation candidate; native acceptance required.
+- **Status:** local implementation candidate; native acceptance required. Amendment 1 (2026-10-24): guest IP is gated at inet postrouting.
 - **Extends:** ADR-1746, ADR-1747 and ADR-046.
 - **Decision:** support account `strict`, `net_usage`, `suspend_workloads`
   budgets with meters `[compute, egress]`, zero drain and no alert thresholds.
@@ -107,3 +107,37 @@ revisions remain immutable and cannot authorize USD funding. The forward-only
 currency migration refuses pre-release funding books and enabled non-USD
 policies instead of converting retained balances. Incompatible historical
 contracts in the same UTC period keep strict readiness unavailable.
+
+## Amendment 1 (2026-10-24): guest IP is gated at inet postrouting
+
+The single netdev egress quota never applied to guest traffic. Every guest
+packet passes the TAP's tc ingress redirect to the segmentation IFB, and the
+kernel marks a redirected packet to skip the netdev egress hook. When the IFB
+re-injects it into TAP ingress, classification is skipped and the mark is
+never cleared. So the packet leaves the public peer without reaching this
+table. On n2 (Linux 7.0, nft 1.1.3) a 4 MiB quota passed 8.79 MB of a
+guest TCP stream and counted 7 packets. Lane B's DaemonRecovery
+`remote_exhaustion` showed the same overrun.
+
+Guest IP is now counted at an `inet faas_budget` postrouting chain that
+matches `oifname` of the public peer. IP hooks do not depend on tc state, and
+the IFB has already segmented the packets by then. That chain counts network
+bytes, as the framing factor assumed, and it also covers IP the namespace
+sends itself. The netdev egress chain keeps the deadline, length and protocol
+rules, and its quota now bounds what still reaches it: ARP and other traffic
+the namespace originates. It counts those whole frames, exactly as root veth
+RX does.
+
+A credit of B financed bytes is split: the netdev share is B/4 and the inet
+share is (B - B/4)/2. Root veth RX stays within netdev + 2 * inet <= B. The
+netdev share equals the existing refill low-water mark (a quarter of the
+credit, observed on veth RX), so ARP alone cannot exhaust its gate before
+vmmd asks for a refill. A refill flushes and reissues both quotas, a time-only
+renewal reissues both expiries, and the postrouting hook rule is installed
+once, at setup. IP the namespace originates is counted by both gates, which
+only errs toward stopping early. A future kernel that stopped skipping the
+netdev hook would count guest IP twice as well, which is safe.
+
+Native packet acceptance adds a guest TCP stream through the IFB
+(`TestMetalFinancialEgressGuestStreamAfterSegmentation`), which the raw-frame
+and UDP tests did not exercise.

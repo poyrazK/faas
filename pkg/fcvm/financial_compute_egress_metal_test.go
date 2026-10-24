@@ -303,6 +303,115 @@ func TestMetalFinancialEgressOffloadCredits(t *testing.T) {
 	}
 }
 
+// adr: 1748 amendment 1 — a guest TCP stream crosses the segmentation IFB,
+// after which the kernel skips the peer's netdev egress hook for every packet.
+// Before the inet postrouting gate this stream ran unmetered past its quota.
+func TestMetalFinancialEgressGuestStreamAfterSegmentation(t *testing.T) {
+	if os.Getenv("FAAS_FINANCIAL_COMPUTE_ACCEPTANCE") != "1" {
+		t.Skip("opt-in financial native acceptance")
+	}
+	if os.Geteuid() != 0 {
+		t.Fatal("financial stream acceptance requires root")
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	suffix := uuid.NewString()[:8]
+	guest := "fc-egst-g-" + suffix
+	nc := netns.Config{Netns: "fc-egst-" + suffix, Tap: "tap0", VethHost: "vht" + suffix, VethPeer: "vpt" + suffix, EgressBudgetBytes: 64 * 1024, EgressBudgetUntil: time.Now().Add(20 * time.Second)}
+	run := func(argv ...string) {
+		t.Helper()
+		if out, err := exec.CommandContext(ctx, argv[0], argv[1:]...).CombinedOutput(); err != nil {
+			t.Fatalf("stream fixture %v: %v: %s", argv, err, out)
+		}
+	}
+	run("ip", "netns", "add", nc.Netns)
+	run("ip", "netns", "add", guest)
+	t.Cleanup(func() {
+		for _, name := range []string{guest, nc.Netns} {
+			if out, err := exec.Command("ip", "netns", "del", name).CombinedOutput(); err != nil {
+				t.Errorf("stream namespace cleanup: %v %s", err, out)
+			}
+		}
+		if out, err := exec.Command("ip", "link", "show", nc.VethHost).CombinedOutput(); err == nil {
+			t.Errorf("stream public veth leaked: %s", out)
+		}
+	})
+	run("ip", "link", "add", nc.VethHost, "type", "veth", "peer", "name", nc.VethPeer)
+	run("ip", "link", "set", nc.VethPeer, "netns", nc.Netns)
+	for _, argv := range nc.EgressBudgetSetupCommands() {
+		run(argv...)
+	}
+	run("ip", "addr", "add", "198.18.238.1/30", "dev", nc.VethHost)
+	run("ip", "link", "set", nc.VethHost, "up")
+	run("ip", "netns", "exec", nc.Netns, "ip", "addr", "add", "198.18.238.2/30", "dev", nc.VethPeer)
+	run("ip", "netns", "exec", nc.Netns, "ip", "link", "set", nc.VethPeer, "up")
+	// A TSO-capable stand-in for the guest TAP, so the stream arrives as GSO.
+	run("ip", "netns", "exec", nc.Netns, "ip", "link", "add", nc.Tap, "type", "veth", "peer", "name", "g0")
+	run("ip", "netns", "exec", nc.Netns, "ip", "link", "set", "g0", "netns", guest)
+	for _, argv := range nc.EgressBudgetSegmentationCommands() {
+		run(argv...)
+	}
+	run("ip", "netns", "exec", nc.Netns, "ip", "addr", "add", "10.0.0.1/30", "dev", nc.Tap)
+	run("ip", "netns", "exec", nc.Netns, "ip", "link", "set", nc.Tap, "up")
+	run("ip", "netns", "exec", nc.Netns, "sysctl", "-w", "net.ipv4.ip_forward=1")
+	run("ip", "netns", "exec", nc.Netns, "nft", "add", "table", "ip", "fixture_nat")
+	run("ip", "netns", "exec", nc.Netns, "nft", "add", "chain", "ip", "fixture_nat", "post", "{", "type", "nat", "hook", "postrouting", "priority", "100", ";", "}")
+	run("ip", "netns", "exec", nc.Netns, "nft", "add", "rule", "ip", "fixture_nat", "post", "oifname", nc.VethPeer, "masquerade")
+	run("ip", "netns", "exec", guest, "ip", "addr", "add", "10.0.0.2/30", "dev", "g0")
+	run("ip", "netns", "exec", guest, "ip", "link", "set", "g0", "up")
+	run("ip", "netns", "exec", guest, "ip", "route", "add", "default", "via", "10.0.0.1")
+	listener, err := net.Listen("tcp4", "198.18.238.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	received := make(chan int64, 1)
+	go func() {
+		conn, err := listener.Accept()
+		if err != nil {
+			received <- -1
+			return
+		}
+		defer func() { _ = conn.Close() }()
+		var total int64
+		buffer := make([]byte, 64*1024)
+		for {
+			_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+			n, err := conn.Read(buffer)
+			total += int64(n)
+			if err != nil {
+				received <- total
+				return
+			}
+		}
+	}()
+	before, err := netns.ReadVethRXBytes(nc.VethHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
+	// The guest's send blocks once the gate drops its segments; the timeout ends it.
+	_ = exec.CommandContext(ctx, "ip", "netns", "exec", guest, "python3", "-I", "-c", financialGuestTCPStream, "198.18.238.1", port).Run()
+	got := <-received
+	after, err := netns.ReadVethRXBytes(nc.VethHost)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got <= 0 || after <= before || after-before > uint64(nc.EgressBudgetBytes) || got >= 2<<20 {
+		t.Fatalf("guest stream escaped its gate: received=%d interface=%d -> %d funded=%d", got, before, after, nc.EgressBudgetBytes)
+	}
+	t.Logf("guest stream bounds: received=%d interface_delta=%d funded=%d", got, after-before, nc.EgressBudgetBytes)
+}
+
+const financialGuestTCPStream = `
+import socket,sys
+s=socket.create_connection((sys.argv[1],int(sys.argv[2])),timeout=3)
+s.settimeout(3)
+try: s.sendall(b'x'*(2<<20))
+except OSError: pass
+s.close()
+`
+
 const financialUDPSegmentedBurst = `
 import socket,struct,sys
 s=socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
