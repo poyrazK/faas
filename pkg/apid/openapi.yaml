@@ -10568,7 +10568,8 @@ paths:
         not change duplicate identity. Fanout uses normal account subscriptions
         matching the generated source; the publishing app is not the only consumer.
         Deduplication lasts while the normal receipt is retained: settled receipts
-        become eligible for pruning after 30 days; holds can extend this window.
+        become eligible for pruning after the plan's settled-receipt window (Free
+        1 day, Hobby 3, Pro 7, Scale 14); holds can extend this window.
         After pruning the same key may be accepted again. App renames preserve
         identity; replacement apps have a new UUID and a new key namespace.
         Optional expected_app_id must match the resolved canonical app UUID;
@@ -10658,7 +10659,8 @@ paths:
       summary: Inspect receipt pruning eligibility, retention holds and account storage.
       description: |
         Read-only account snapshot under apps:read/admin scopes and MFA.
-        Receipt retention is 30 days after routing settles; unsettled receipts
+        Receipt retention is the plan's settled-receipt window after routing
+        settles (Free 1 day, Hobby 3, Pro 7, Scale 14); unsettled receipts
         have no pruning deadline. Reports current eligible, upcoming expiring
         and held receipts using the pruning worker's shared hold predicate.
         Running backfills pin their acceptance ranges; retained completed
@@ -46559,7 +46561,8 @@ paths:
         replay eligibility. No deliveries, replay jobs or retention pins are created.
         Retention can remove rows between pages. This is a live retained view, not a
         frozen export or a complete archive; late commits can change visible rows.
-        Settled receipts retain 30 days from routing settlement; pending receipts may
+        Settled receipts are kept for the plan's settled-receipt window from routing
+        settlement (Free 1 day, Hobby 3, Pro 7, Scale 14); pending receipts may
         survive longer. Earliest retained acceptance is account-wide and does not
         establish coverage of a requested range. Responses use Cache-Control: no-store
         and require the existing read scopes and MFA rules.
@@ -46738,8 +46741,8 @@ paths:
         Creates a durable job for one currently eligible event-triggered workflow
         in the app's preferred live default deployment. The selected workflow
         definition and trigger are snapshotted at creation. The half-open range
-        uses platform acceptance time with a fixed exclusive cutoff and a
-        maximum 30-day range. Only retained events with a known immutable
+        uses platform acceptance time with a fixed exclusive cutoff and spans
+        at most the plan's settled-receipt window. Only retained events with a known immutable
         recipient snapshot, a settled delivered receipt, and no captured
         membership for this app workflow are considered. Legacy events with an
         unknown snapshot, events that already captured this workflow, unsettled
@@ -99622,7 +99625,7 @@ components:
 
     EventStorageUsageResponse:
       description: Retained customer event counts, logical JSON bytes, pending age and current account budgets.
-      example: { retained_events: 0, retained_bytes: 0, pending_events: 0, oldest_pending_at: null, limits: { retained_events: 16384, retained_bytes: 67108864 } }
+      example: { retained_events: 0, retained_bytes: 0, pending_events: 0, oldest_pending_at: null, limits: { retained_events: 131072, retained_bytes: 268435456, settled_retention_seconds: 259200 } }
       type: object
       additionalProperties: false
       required: [retained_events, retained_bytes, pending_events, oldest_pending_at, limits]
@@ -99632,13 +99635,14 @@ components:
         pending_events: { type: integer, format: int64, minimum: 0 }
         oldest_pending_at: { type: [string, 'null'], format: date-time }
         limits:
-          example: { retained_events: 16384, retained_bytes: 67108864 }
+          example: { retained_events: 131072, retained_bytes: 268435456, settled_retention_seconds: 259200 }
           type: object
           additionalProperties: false
           required: [retained_events, retained_bytes]
           properties:
             retained_events: { type: integer, format: int64, minimum: 0 }
             retained_bytes: { type: integer, format: int64, minimum: 0 }
+            settled_retention_seconds: { type: integer, format: int64, minimum: 0, description: "How long a settled receipt is kept on the plan (ADR-20261023215834); it bounds duplicate acceptance, recovery and replay ranges. Absent from servers that predate per-plan windows." }
 
     RegisterEventSchemaRequest:
       description: Immutable event schema registration request.
@@ -99821,7 +99825,7 @@ components:
         settled_retention_seconds:
           type: integer
           format: int64
-          description: Retention duration after routing settlement (2592000 seconds); unresolved receipts may survive longer.
+          description: The plan's retention duration after routing settlement (86400, 259200, 604800 or 1209600 seconds on Free, Hobby, Pro and Scale); unresolved receipts may survive longer.
         earliest_retained_at:
           type: string
           format: date-time
@@ -99917,7 +99921,7 @@ components:
       properties:
         allow_expired: { type: boolean, default: false, description: 'Explicitly override delivery age for this replay generation or historical backfill job. Preserves deterministic invocation identity and manual controls.' }
         from: { type: string, format: date-time, description: Inclusive platform acceptance-time lower bound. }
-        until: { type: string, format: date-time, description: Exclusive upper bound; future values are capped at creation time. The range may not exceed 30 days. }
+        until: { type: string, format: date-time, description: Exclusive upper bound; future values are capped at creation time. The range may not exceed the plan's settled-receipt window. }
     WorkflowEventReplayBackfillRequest:
       description: Current event-triggered workflow and acceptance-time range for a durable historical run-admission job.
       type: object
@@ -99926,7 +99930,7 @@ components:
       properties:
         workflow_name: { type: string, minLength: 1, maxLength: 256, description: Workflow in the app's preferred live default deployment; its definition is pinned when the job is created. }
         from: { type: string, format: date-time, description: Inclusive lower bound on platform event acceptance. }
-        until: { type: string, format: date-time, description: Exclusive acceptance upper bound; future values stop at job creation. At most 30 days are allowed. }
+        until: { type: string, format: date-time, description: Exclusive acceptance upper bound; future values stop at job creation. The range may not exceed the plan's settled-receipt window. }
     EventReplayBackfillRetryRequest:
       description: Bound for the number of failed routing recipients requeued in this call.
       type: object
@@ -100232,7 +100236,7 @@ components:
         schema_version: { type: string }
         accepted_at: { type: string, format: date-time, description: "First durable acceptance time, preserved on identical retries." }
         routing_settled_at: { type: string, format: date-time, description: "All routing candidates settled, including filtered and failed outcomes; absent while routing is active." }
-        retain_until: { type: string, format: date-time, description: 'Settled receipt retention boundary, 30 days after routing settled. Absent for active routing.' }
+        retain_until: { type: string, format: date-time, description: 'Settled receipt retention boundary: the settled-receipt window of the plan after routing settled. Absent for active routing.' }
         snapshot_captured: { type: boolean, description: "False means legacy recipient membership is unknown, rather than an empty matching set." }
         routing_mode: { type: string, enum: [event, recipient], description: Whole-event legacy routing or independent recipient leases. }
         recipient_count: { type: integer, minimum: 0, description: Total captured candidates across all pages; unknown when snapshot_captured=false. }

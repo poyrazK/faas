@@ -41,8 +41,8 @@ func (s *PgStore) CreateWorkflowEventReplayBackfill(ctx context.Context, account
 	if !from.Before(cutoff) {
 		return api.EventReplayBackfillJobResponse{}, fmt.Errorf("%w: from must precede the acceptance cutoff", ErrEventReplayBackfillQuery)
 	}
-	if cutoff.Sub(from) > api.EventReplayBackfillMaxRange {
-		return api.EventReplayBackfillJobResponse{}, ErrEventReplayBackfillRange
+	if err := s.checkEventReplayBackfillRange(ctx, accountID, from, cutoff); err != nil {
+		return api.EventReplayBackfillJobResponse{}, err
 	}
 
 	tx, err := s.pool.Begin(ctx)

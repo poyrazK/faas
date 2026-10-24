@@ -106,7 +106,7 @@ Gregale acknowledged durable acceptance, not that every consumer completed.
 
 ## Retention, identity and ordering
 
-A retry window defaults to seven days and accepts one second–seven days, measured
+A retry window defaults to one day and accepts one second–seven days, measured
 from the database time when the row was first staged, not commit or first send.
 It never extends on saves, claims or retries. Expired work becomes `blocked` with
 `retry_window_expired` when recovery next visits it, without publishing again.
@@ -115,8 +115,12 @@ within the original deadline; there is no deadline extension or replacement-key 
 
 Gregale's producer-key deduplication lasts only while the original acceptance
 receipt remains retained. Normal settled receipts become eligible for pruning
-after 30 days. The shorter fixed outbox window bounds retries for fresh keys
-under that policy; it is not an indefinite exactly-once guarantee. Never extend
+after the plan's settled-receipt window: Free 1 day, Hobby 3 days, Pro 7 days,
+Scale 14 days ([ADR-20261023215834](adr/20261023215834-event-plan-caps.md)).
+The default one-day outbox window fits every plan's window; a longer window
+must not exceed your plan's, or a retry after the original receipt is pruned
+publishes a second event. The window bounds retries for fresh keys under that
+policy; it is not an indefinite exactly-once guarantee. Never extend
 the deadline, manually prune acceptance evidence early, recycle a historical key,
 or replace an uncertain key simply to bypass a conflict. After the window expires,
 use retained publication verification/status and business evidence to decide what

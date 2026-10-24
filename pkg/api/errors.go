@@ -6016,6 +6016,18 @@ func ErrValidation(detail string) *Problem {
 		"Validation failed", detail)
 }
 
+// ErrEventReplayBackfillRange is the 400 for a backfill acceptance range
+// longer than the plan's settled-receipt window (ADR-20261023215834):
+// receipts older than the window are already pruned. Limit and observed
+// values are seconds.
+func ErrEventReplayBackfillRange(limitSeconds, observedSeconds int64) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeValidation, "Validation failed",
+		fmt.Sprintf("A backfill range can span at most %s on this plan, its settled-receipt retention window; the requested range spans %s.",
+			time.Duration(limitSeconds)*time.Second, time.Duration(observedSeconds)*time.Second)).
+		WithLimit(limitSeconds, observedSeconds).
+		WithDocs(docsBase + "/event-driven#settled-receipt-retention")
+}
+
 // ErrEdgeRulesVersionMismatch (ADR-961) is the 412 for an edge-rule mutation
 // whose If-Match no longer names the app's latest rule-set version.
 func ErrEdgeRulesVersionMismatch(expected string, current int) *Problem {

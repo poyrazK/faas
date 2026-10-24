@@ -26,6 +26,11 @@ func (s *server) enqueueRetry(ctx context.Context, app state.App, dep state.Depl
 	if app.Status != state.AppActive {
 		return state.Deployment{}, api.ErrSourceInvalid("Retry requires an active app.")
 	}
+	// A retry is a new release: an image retry needs no builder, so only
+	// this check holds it during the break-glass pause (ADR 20261022140000).
+	if p := s.platformReleasePauseProblem(); p != nil {
+		return state.Deployment{}, p
+	}
 	acct, err := state.AppResourceAccount(ctx, s.store, app)
 	if err != nil {
 		return state.Deployment{}, err

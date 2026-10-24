@@ -18,7 +18,8 @@ class EventReplayBackfillRequest:
     from_: datetime.datetime
     """Inclusive platform acceptance-time lower bound."""
     until: datetime.datetime
-    """Exclusive upper bound; future values are capped at creation time. The range may not exceed 30 days."""
+    """Exclusive upper bound; future values are capped at creation time. The range may not exceed the plan's
+    settled-receipt window."""
     allow_expired: bool | Unset = False
     """Explicitly override delivery age for this replay generation or historical backfill job. Preserves
     deterministic invocation identity and manual controls."""
