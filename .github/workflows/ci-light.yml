@@ -412,6 +412,8 @@ jobs:
         run: make runbook-sql-check
       - name: forbid committed executables
         run: make committed-binaries-check
+      - name: require GitHub Actions pinned to a commit SHA
+        run: make action-pin-check
       - name: post-mortem artifact check
         run: make test-postmortems
       - name: restore-drill evidence freshness (M8 claim)
