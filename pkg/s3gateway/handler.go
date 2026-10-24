@@ -276,6 +276,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		err = errSignature
 	}
+	if errors.Is(err, errHeadersNotSigned) {
+		writeS3Error(w, http.StatusForbidden, "AccessDenied", "There were headers present in the request which were not signed.", r.URL.Path, requestID)
+		return
+	}
 	if err != nil {
 		writeS3Error(w, http.StatusForbidden, "SignatureDoesNotMatch", "The request signature we calculated does not match the signature you provided.", r.URL.Path, requestID)
 		return
