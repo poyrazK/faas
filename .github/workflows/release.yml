@@ -118,7 +118,7 @@ jobs:
             --mtime "@$(git log -1 --format=%ct)"
 
       - name: Upload target
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gregale-cli-target-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.sha }}
           path: /tmp/gregale-build/
@@ -193,7 +193,7 @@ jobs:
       # these exact archives rather than rebuilding the CLI. One build per
       # release, consumed by every channel.
       - name: Upload CLI archives for the npm channel
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gregale-cli-archives-${{ github.sha }}
           path: /tmp/gregale-build/archives/
@@ -921,7 +921,7 @@ jobs:
           (cd "$OUT_DIR" && sha256sum release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml runtime-bases.env > SHA256SUMS)
 
       - name: Upload canonical release artifacts
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: gregale-daemon-release-${{ github.sha }}
           path: ${{ runner.temp }}/gregale-release/

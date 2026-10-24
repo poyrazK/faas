@@ -1011,7 +1011,7 @@ jobs:
 
       - name: Upload control-plane rollout probe evidence
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: control-plane-rollout-probes-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
@@ -1573,7 +1573,7 @@ jobs:
 
       - name: Upload host-config rollout probe evidence
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: control-plane-host-config-probes-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
@@ -1819,7 +1819,7 @@ jobs:
 
       - name: Upload unit rollout probe evidence
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: control-plane-unit-rollout-probes-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.units_lane }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
