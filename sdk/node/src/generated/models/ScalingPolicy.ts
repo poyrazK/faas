@@ -53,6 +53,10 @@ export type ScalingPolicy = {
    */
   wake_max_queue_wait_seconds?: number;
   /**
+   * Requests one instance serves at once (ADR-20261022203523). The gateway admits at most this many to an instance and scales out on the next request; requests over every instance's limit wait in the warm queue (30 s unless max_queue_wait_ms is set). 0 uses the plan's concurrency_per_vm, which is also the upper bound.
+   */
+  per_instance_concurrency?: number;
+  /**
    * IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app rather than one per schedule: a business has a working day, not a working day per rule.
    */
   timezone?: string;

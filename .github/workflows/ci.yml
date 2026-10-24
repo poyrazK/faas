@@ -878,16 +878,17 @@ jobs:
   unit-tests-state:
     name: unit tests (state shard ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    # Six shards keep each near 10-15 min of tests: with four, shard 3 alone
+    # Eight shards keep each near 10-15 min of tests: with four, shard 3 alone
     # needed ~20 min and hit the 20m go test timeout (runs 39174391154 and
-    # 39181126528). The race+coverage compile of pkg/state adds 3-4 min, and a
+    # 39181126528); with six, shard 5 took 1185 s and then timed out (runs
+    # 40045127593 and 40057341878) as the suite grew. The race+coverage compile of pkg/state adds 3-4 min, and a
     # slow shared runner has taken 26 min for it alone, so leave room for one
     # without hiding a hung test: the go test -timeout bounds the tests.
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
-        shard: [1, 2, 3, 4, 5, 6]
+        shard: [1, 2, 3, 4, 5, 6, 7, 8]
     permissions:
       contents: read
       id-token: write
@@ -941,7 +942,7 @@ jobs:
         run: |
           mkdir -p coverage
           go test -race -coverpkg=./pkg/state -covermode=atomic -list . ./pkg/state > coverage/state-inventory.txt
-          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=6 -check -list-file=coverage/state-inventory.txt
+          go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=8 -check -list-file=coverage/state-inventory.txt
       - name: install PostgreSQL 16 recovery runtime
         run: |
           scripts/ci/use-https-ubuntu-mirrors.sh
@@ -951,7 +952,7 @@ jobs:
         run: |
           # Recovery with an actual serving receipt requires local database authority.
           scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'STATE_TESTS'
-          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=6 -shard=${{ matrix.shard }})
+          STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=8 -shard=${{ matrix.shard }})
           go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
           STATE_TESTS
       - name: upload state coverage
@@ -1267,7 +1268,7 @@ jobs:
           merge-multiple: true
       - name: exact pkg/state coverage gate
         run: |
-          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard-state-5.out coverage/cover-shard-state-6.out coverage/cover-shard2a.out coverage/cover-shard1.out coverage/cover-shard1-pgclone-1.out coverage/cover-shard1-pgclone-2.out coverage/cover-shard1-pgclone-3.out coverage/cover-shard1-pgclone-4.out
+          python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard-state-5.out coverage/cover-shard-state-6.out coverage/cover-shard-state-7.out coverage/cover-shard-state-8.out coverage/cover-shard2a.out coverage/cover-shard1.out coverage/cover-shard1-pgclone-1.out coverage/cover-shard1-pgclone-2.out coverage/cover-shard1-pgclone-3.out coverage/cover-shard1-pgclone-4.out
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
 
@@ -1580,7 +1581,8 @@ jobs:
     # final watchdog rule check. Retain time for every contract and safety
     # gate after bounded APID compilation, SQLC, vulnerability and Ansible.
     # A cold run on 2026-10-13 spent 18 minutes in the standards gates and
-    # 11 in promtool, and was cancelled at 45 during the last gate.
+    # 11 in promtool, and was cancelled at 45 during the last gate. The
+    # promtool rule fixtures have since moved to the promtool-fixtures job.
     timeout-minutes: 70
     permissions:
       contents: read
@@ -1905,14 +1907,7 @@ jobs:
             examples/event-acknowledgment-monitoring/prometheus-recovery-go-worker.yml \
             examples/event-acknowledgment-monitoring/prometheus-recovery-node-worker.yml
           python3 -m json.tool examples/event-acknowledgment-monitoring/recovery-dashboard.json >/dev/null
-          # Every rule fixture, not a hand-picked list: an unlisted
-          # fixture (slo_low_traffic) broke unnoticed when an alert changed.
-          # Fixtures are independent and several take minutes each; serially
-          # they ran past 40 minutes and the job hit its 70-minute budget (run
-          # 39181126528). Run them on every core and print each fixture's
-          # output as one block; xargs fails the step if any fixture fails.
-          printf '%s\n' deploy/ansible/roles/prometheus/files/*.test.yml pkg/promqlrules/testdata/*.test.yml |
-            xargs -P "$(nproc)" -I{} sh -c 'out=$(promtool test rules "$1" 2>&1); status=$?; printf "promtool test rules %s\n%s\n" "$1" "$out"; exit $status' _ {}
+          # The rule fixtures run in the promtool-fixtures job.
           go test -count=1 -tags=integration ./pkg/promqlrules -run '^TestComputeMetricsDiscoveryScrapeLabels$'
 
       - name: Prometheus alert metadata check
@@ -2100,6 +2095,46 @@ jobs:
       # page / warn / FaasWatchdog reach the receivers the role promises.
       - name: Alertmanager config check
         run: make alertmanager-config-check
+
+  # Every promtool rule fixture, not a hand-picked list: an unlisted fixture
+  # (slo_low_traffic) broke unnoticed when an alert changed. Each fixture
+  # evaluates the full rule set, so they slow as rules grow: in the checks
+  # job they took 11 minutes on 2026-10-13 and 34 on 2026-10-24, when the job
+  # was cancelled at its 70-minute budget (run 40051087761). They run here in
+  # two shards on every core instead. Each fixture's output prints as one
+  # block, and xargs fails the step if any fixture fails.
+  promtool-fixtures:
+    name: promtool rule fixtures (shard ${{ matrix.shard }}/2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2]
+    steps:
+      - uses: actions/checkout@v7
+      - name: install promtool
+        run: |
+          set -euo pipefail
+          PROM_TARBALL="prometheus-${PROM_VERSION}.linux-amd64.tar.gz"
+          curl --fail --silent --show-error --location --retry 3 --retry-delay 2 \
+            -o "/tmp/${PROM_TARBALL}" \
+            "https://github.com/prometheus/prometheus/releases/download/v${PROM_VERSION}/${PROM_TARBALL}"
+          echo "${PROM_TARBALL_SHA256_LINUX_AMD64}  /tmp/${PROM_TARBALL}" | sha256sum --check --strict
+          tar -xzf "/tmp/${PROM_TARBALL}" -C /tmp "prometheus-${PROM_VERSION}.linux-amd64/promtool"
+          sudo mv "/tmp/prometheus-${PROM_VERSION}.linux-amd64/promtool" /usr/local/bin/promtool
+      - name: promtool test rules
+        env:
+          SHARD: ${{ matrix.shard }}
+        run: |
+          set -euo pipefail
+          printf '%s\n' deploy/ansible/roles/prometheus/files/*.test.yml pkg/promqlrules/testdata/*.test.yml |
+            awk -v shards=2 -v shard="$SHARD" '(NR - 1) % shards == shard - 1' > "$RUNNER_TEMP/fixtures"
+          test -s "$RUNNER_TEMP/fixtures"
+          echo "shard ${SHARD}/2: $(wc -l < "$RUNNER_TEMP/fixtures") fixtures"
+          xargs -P "$(nproc)" -I{} sh -c 'out=$(promtool test rules "$1" 2>&1); status=$?; printf "promtool test rules %s\n%s\n" "$1" "$out"; exit $status' _ {} < "$RUNNER_TEMP/fixtures"
 
   # fakeapid fixture (issue #266, PR 4). The cross-language smoke
   # fixture for the public SDKs — a stdlib-only Go binary that

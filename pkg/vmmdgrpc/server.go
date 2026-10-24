@@ -280,6 +280,10 @@ type Server struct {
 	// diverged (ADR-740) lists instances that were served a developer live
 	// patch; their snapshot captures are refused. nil disables the guard.
 	diverged *DivergedInstances
+	// adoptionReportOn and adoptionReport serve AdoptionReport (vmmd
+	// restart adoption ADR §3); see WithAdoptionReport.
+	adoptionReportOn bool
+	adoptionReport   *AdoptionReport
 	// events (issue #517 / PR-C / ADR-064) is the wake-timeline
 	// fan-out. vmmd is the corroborating-observation source for
 	// wake.boot_observed at the gRPC server boundary and
@@ -703,11 +707,11 @@ func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest,
 		s.streamBridges = newStreamBridgeManager(s.log)
 	}
 	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) {
-		s.streamBridges.prewarm(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
+		s.prewarmStreamBridge(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
 			Instance:    ready.Instance,
 			Port:        uint32(wr.Port),
 			AppProtocol: appProtocol,
-		}, ready.Netns)
+		}, ready)
 	})
 	if err != nil {
 		s.forgetForwarding(ctx, wr.Instance)

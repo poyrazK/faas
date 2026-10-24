@@ -127,7 +127,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	state, err := lockAdmissionState(ctx, tx, admissionLock{
 		integrationID: integrationID, now: now, burst: spec.Burst, bindingAppID: bindingAppID,
 		today: today, minuteWindow: utcNow.Truncate(time.Minute), endUser: spec.AIEndUser, userLimited: userLimited,
-		tags: spec.AITags,
+		tags: spec.AITags, traceID: tracedForLimits(spec.AITraceID, policy.traceLimits),
 	})
 	if err != nil {
 		return Decision{}, err
@@ -179,6 +179,10 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 		bindingRequestsPerMinute: positiveLimit(policy.bindingRequestsPerMinute),
 		bindingTokensPerMinute:   positiveLimit(policy.bindingTokensPerMinute),
 	}, userLimited, policy, reserve, bindingAppID != uuid.Nil)
+	if reason == "" && spec.AITraceID != "" {
+		// ADR 20261020202035: the trace's limits; a trace never resets.
+		reason = aiTraceRejection(state.trace, policy.traceLimits, reserve)
+	}
 	write := admissionWrite{integrationID: integrationID, today: today, thisMonth: thisMonth, state: state}
 	if reason != "" {
 		// Persist refill progress even when the request is rejected. This
@@ -195,7 +199,7 @@ func (b *PostgresBackend) Admit(ctx context.Context, spec AdmissionSpec) (Decisi
 	write.state.tokens--
 	write.state.dailyRequestCount++
 	write.lease = &admissionLease{id: uuid.New(), expiresAt: now.Add(ttl), bindingAppID: bindingAppID,
-		reserve: reserve, endUser: spec.AIEndUser, tags: spec.AITags}
+		reserve: reserve, endUser: spec.AIEndUser, tags: spec.AITags, traceID: spec.AITraceID}
 	if err := writeAdmission(ctx, tx, write); err != nil {
 		return Decision{}, err
 	}
@@ -232,6 +236,9 @@ type admissionPolicy struct {
 	dailyAITokenLimit, dailyAICostLimit, monthlyAICostLimit int64
 	userTokenLimit, userCostLimit                           int64
 	requestPolicy                                           api.OutboundRequestPolicy
+	// traceLimits are the integration's stored per-trace limits
+	// (ADR 20261020202035).
+	traceLimits aiTraceLimits
 }
 
 // readAdmissionPolicy reads the policy in one round trip. It locks the
@@ -260,7 +267,9 @@ func readAdmissionPolicy(ctx context.Context, tx pgx.Tx, integrationID, bindingA
 		       circuit_breaker_failure_threshold, circuit_breaker_open_seconds, retry_budget_per_minute, owner_kind,
 		       COALESCE(ai_daily_token_limit, 0),
 		       COALESCE(ai_daily_cost_limit_millicents, 0), COALESCE(ai_monthly_cost_limit_millicents, 0),
-		       COALESCE(ai_user_daily_token_limit, 0), COALESCE(ai_user_daily_cost_limit_millicents, 0)
+		       COALESCE(ai_user_daily_token_limit, 0), COALESCE(ai_user_daily_cost_limit_millicents, 0),
+		       COALESCE(ai_trace_max_calls, 0), COALESCE(ai_trace_max_cost_millicents, 0),
+		       COALESCE(ai_trace_max_repeated_tool_calls, 0)
 		  FROM outbound_integrations
 		 WHERE id = $1
 		 FOR SHARE`, integrationID)
@@ -298,7 +307,8 @@ func scanAdmissionPolicy(results pgx.BatchResults, bindingAppID uuid.UUID) (admi
 		&request.ResponseCacheTTLSeconds, &request.CircuitBreakerFailureThreshold,
 		&request.CircuitBreakerOpenSeconds, &request.RetryBudgetPerMinute, &ownerKind,
 		&policy.dailyAITokenLimit, &policy.dailyAICostLimit, &policy.monthlyAICostLimit,
-		&policy.userTokenLimit, &policy.userCostLimit); err != nil {
+		&policy.userTokenLimit, &policy.userCostLimit,
+		&policy.traceLimits.calls, &policy.traceLimits.cost, &policy.traceLimits.repeats); err != nil {
 		return policy, err
 	}
 	if ownerKind != policy.ownerKind {
@@ -320,6 +330,9 @@ type admissionLock struct {
 	// tags are the call's usage tags, whose limits admission reads
 	// (ADR-1436).
 	tags []string
+	// traceID is the call's trace when the integration limits traces
+	// (ADR 20261020202035).
+	traceID string
 }
 
 // lockedAdmission is the integration's admission state as admission holds
@@ -347,6 +360,7 @@ type lockedAdmission struct {
 	probeLeaseLive                                      bool
 	user                                                aiBudgetState
 	tags                                                []aiTagState
+	trace                                               aiTraceState
 }
 
 // lockAdmissionState creates the state row on first use, locks it, and reads
@@ -420,6 +434,9 @@ func lockAdmissionState(ctx context.Context, tx pgx.Tx, lock admissionLock) (loc
 	if len(lock.tags) > 0 {
 		queueAITagState(batch, lock.integrationID, lock.today, lock.now, lock.tags)
 	}
+	if lock.traceID != "" {
+		queueAITraceState(batch, lock.integrationID, lock.today, lock.now, lock.traceID)
+	}
 	results := tx.SendBatch(ctx, batch)
 	state, err := scanLockedAdmission(results, lock)
 	if closeErr := results.Close(); err == nil {
@@ -465,6 +482,13 @@ func scanLockedAdmission(results pgx.BatchResults, lock admissionLock) (lockedAd
 			return state, err
 		}
 		state.tags = tags
+	}
+	if lock.traceID != "" {
+		trace, err := scanAITraceState(results)
+		if err != nil {
+			return state, err
+		}
+		state.trace = trace
 	}
 	return state, nil
 }
@@ -532,6 +556,7 @@ type admissionLease struct {
 	reserve      aiReservation
 	endUser      string
 	tags         []string
+	traceID      string
 }
 
 // admissionWrite is the state an admission persists, and the lease it
@@ -569,9 +594,9 @@ func writeAdmission(ctx context.Context, tx pgx.Tx, write admissionWrite) error 
 		batch.Queue(`
 			INSERT INTO outbound_admission_leases
 			    (lease_id, integration_id, expires_at, binding_app_id, ai_reserved_tokens, ai_reserved_cost_millicents, ai_end_user,
-			     ai_tags)
-			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8)`, lease.id, write.integrationID, lease.expiresAt, leaseBindingApp,
-			lease.reserve.tokens, lease.reserve.cost, lease.endUser, nilIfEmpty(lease.tags))
+			     ai_tags, ai_trace_id)
+			VALUES ($1, $2, $3, $4, $5, $6, NULLIF($7, ''), $8, NULLIF($9, ''))`, lease.id, write.integrationID, lease.expiresAt,
+			leaseBindingApp, lease.reserve.tokens, lease.reserve.cost, lease.endUser, nilIfEmpty(lease.tags), lease.traceID)
 		if lease.bindingAppID != uuid.Nil {
 			batch.Queue(`UPDATE outbound_app_binding_usage
 				SET daily_request_count = daily_request_count + 1, minute_request_count = minute_request_count + 1

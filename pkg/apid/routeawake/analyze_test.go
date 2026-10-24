@@ -1,6 +1,6 @@
 package routeawake_test
 
-// adr: 1187, 1199
+// adr: 1187, 1199, 20261022184757
 
 import (
 	"testing"
@@ -199,5 +199,76 @@ func TestProbesAndPrewarmExplainAwakeTime(t *testing.T) {
 	in.Sources = []routeawake.SourceMinute{{At: at(5), Source: api.RouteAwakeSourcePrewarm, Events: 1}}
 	if saved := find(t, routeawake.Analyze(in), "GET", "/feed").IfRemoved.AwakeSecondsSaved; saved != 9*60 {
 		t.Fatalf("the prewarm keeps minutes 5..7 awake without the route: saved %d", saved)
+	}
+}
+
+// adr: 20261022184757 — deliveries schedd made to the app explain minutes no
+// request does, for as long as they run plus the idle timeout. Each cron job
+// and each queue is its own source; events count the deliveries that started.
+func TestBackgroundWorkExplainsAwakeTime(t *testing.T) {
+	in := newScenario(60).awakeRange(0, 60).inputs()
+	for m := 10; m < 20; m++ {
+		started := int64(0)
+		if m == 10 {
+			started = 1
+		}
+		in.Sources = append(in.Sources, routeawake.SourceMinute{At: at(m), Source: api.RouteAwakeSourceQueue, Detail: "emails", Name: "emails", Events: started, Running: 1})
+	}
+	in.Sources = append(in.Sources,
+		routeawake.SourceMinute{At: at(30), Source: api.RouteAwakeSourceQueue, Detail: "reports", Name: "reports", Events: 2, Running: 2},
+		routeawake.SourceMinute{At: at(40), Source: api.RouteAwakeSourceCron, Detail: "cron-1", Name: "/sync (*/30 * * * *)", Events: 1, Running: 1},
+		routeawake.SourceMinute{At: at(41), Source: api.RouteAwakeSourceCron, Detail: "cron-1", Name: "/sync (*/30 * * * *)", Running: 1},
+	)
+	out := routeawake.Analyze(in)
+	got := map[string]api.RouteAwakeSource{}
+	for _, src := range out.Sources {
+		got[src.Source+"/"+src.Name] = src
+	}
+	// emails runs 10..19 and keeps the app awake through 21; reports runs in
+	// minute 30 (through 32); the cron job runs 40..41 (through 43).
+	emails, reports, cron := got["queue/emails"], got["queue/reports"], got["cron//sync (*/30 * * * *)"]
+	if emails.Events != 1 || emails.AwakeSeconds != 12*60 || reports.Events != 2 || reports.AwakeSeconds != 3*60 ||
+		cron.Events != 1 || cron.AwakeSeconds != 4*60 || cron.Pattern != api.RouteAwakePatternIrregular || cron.Suggestion != nil {
+		t.Fatalf("sources = %+v", out.Sources)
+	}
+	if out.UnattributedSeconds != (60-12-3-4)*60 {
+		t.Fatalf("unattributed = %d", out.UnattributedSeconds)
+	}
+}
+
+// adr: 20261022184757 — a cron job that fires inside the idle timeout keeps
+// the app from ever parking, and the report says to run it less often.
+func TestFrequentCronJobSuggestsRunningLessOften(t *testing.T) {
+	in := newScenario(180).awakeRange(0, 180).inputs()
+	for m := 0; m < 180; m++ {
+		in.Sources = append(in.Sources, routeawake.SourceMinute{At: at(m), Source: api.RouteAwakeSourceCron, Detail: "cron-1", Name: "/sync (* * * * *)", Events: 1, Running: 1})
+	}
+	out := routeawake.Analyze(in)
+	if len(out.Sources) != 1 {
+		t.Fatalf("sources = %+v", out.Sources)
+	}
+	cron := out.Sources[0]
+	if cron.Pattern != api.RouteAwakePatternPeriodic || cron.IntervalSeconds != 60 || cron.Suggestion == nil ||
+		cron.Suggestion.Kind != api.RouteAwakeSuggestRunLessOften || out.UnattributedSeconds != 0 {
+		t.Fatalf("cron = %+v unattributed = %d", cron, out.UnattributedSeconds)
+	}
+}
+
+// adr: 20261022184757 — a waitUntil task can hold the instance past the idle
+// timeout, so a request keeps the app awake for the longer of the two. At
+// today's limits (at most 60 s) the minute-resolution window already covers
+// it; a longer tail widens the window.
+func TestWaitUntilTimeoutWidensTheKeepWindow(t *testing.T) {
+	s := newScenario(10).awakeRange(0, 6)
+	s.call("POST", "/signup", 0, 1, 0)
+	in := s.inputs()
+	in.IdleTimeoutS = 30
+	if out := routeawake.Analyze(in); out.UnattributedSeconds != 3*60 || out.WaitUntilTimeoutSeconds != 0 {
+		t.Fatalf("idle only: unattributed = %d wait_until = %d", out.UnattributedSeconds, out.WaitUntilTimeoutSeconds)
+	}
+	in.TailTimeoutS = 180
+	out := routeawake.Analyze(in)
+	if out.UnattributedSeconds != 1*60 || out.WaitUntilTimeoutSeconds != 180 || find(t, out, "POST", "/signup").AwakeSeconds != 5*60 {
+		t.Fatalf("with waitUntil: unattributed = %d wait_until = %d routes = %+v", out.UnattributedSeconds, out.WaitUntilTimeoutSeconds, out.Routes)
 	}
 }

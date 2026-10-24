@@ -175,6 +175,10 @@ type Harness struct {
 	// nativeRuntimeSnapshotRoot is vmmd's private tree for native runtime
 	// snapshots when the run enables them (ADR 20261022184951 amendment 1).
 	nativeRuntimeSnapshotRoot string
+
+	// retired are daemons PlannedRestartVMMD replaced; DumpLogs still
+	// prints them.
+	retired []*exec.Cmd
 	// apidEnv/listen/socket retain the launch recipe for restart durability
 	// tests that exercise persistent control-plane state across apid lifetimes.
 	apidEnv              []string
@@ -369,6 +373,7 @@ failure_report_dir = %q
 		if ca := os.Getenv("FAAS_E2E_SERVICE_HTTPS_CA"); ca != "" {
 			cfg += fmt.Sprintf("service_proxy_ca_path = %q\n", ca)
 		}
+		cfg += os.Getenv(vmmdExtraConfigEnv)
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
@@ -1521,6 +1526,7 @@ func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 	// (prepared networks, restore concurrency/prefetch, a private resource
 	// journal on a shared host). Unset keeps vmmd's own defaults.
 	for _, name := range []string{
+		"FAAS_BRIDGE_UNPRIVILEGED",
 		"FAAS_PREPARED_NETWORKS",
 		"FAAS_RESTORE_CONCURRENCY",
 		"FAAS_RESTORE_PREFETCH",
@@ -1920,6 +1926,63 @@ func (h *Harness) RestartSchedd() error {
 	return nil
 }
 
+// vmmdExtraConfigEnv carries extra vmmd.toml lines from OverrideVMMDConfig.
+const vmmdExtraConfigEnv = "FAAS_E2E_VMMD_EXTRA_TOML"
+
+// OverrideVMMDConfig appends lines to the harness's vmmd.toml for one test,
+// e.g. the vmmd restart adoption switches.
+func OverrideVMMDConfig(t *testing.T, lines string) {
+	t.Helper()
+	t.Setenv(vmmdExtraConfigEnv, lines)
+}
+
+// PlannedRestartVMMD stops vmmd as its service manager does on a release
+// (SIGTERM, a planned stop) and starts a fresh one with the retained config
+// and env. With adoption configured, the guests outlive the first process
+// and the second adopts them (vmmd restart adoption ADR). RestartVMMD is the
+// crash form.
+func (h *Harness) PlannedRestartVMMD(stopTimeout time.Duration) error {
+	if h == nil || h.T == nil || h.VMMDSock == "" || len(h.vmmdLaunchEnv) == 0 {
+		return fmt.Errorf("e2etest: vmmd launch recipe unavailable")
+	}
+	var old *exec.Cmd
+	for _, proc := range h.procs {
+		if proc != nil && proc.Process != nil && filepath.Base(proc.Path) == "vmmd" && proc.ProcessState == nil {
+			old = proc
+		}
+	}
+	if old == nil {
+		return fmt.Errorf("e2etest: vmmd process not found")
+	}
+	if err := old.Process.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("e2etest: stop vmmd: %w", err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- old.Wait() }()
+	select {
+	case err := <-exited:
+		var exitErr *exec.ExitError
+		if err != nil && !errors.As(err, &exitErr) {
+			return fmt.Errorf("e2etest: reap vmmd: %w", err)
+		}
+	case <-time.After(stopTimeout):
+		return fmt.Errorf("e2etest: vmmd did not stop within %s", stopTimeout)
+	}
+	procs := h.procs[:0]
+	for _, candidate := range h.procs {
+		if candidate != old {
+			procs = append(procs, candidate)
+		}
+	}
+	h.procs = procs
+	h.retired = append(h.retired, old)
+	_ = os.Remove(h.VMMDSock)
+	h.procs = append(h.procs, startProc(h.T, h.BinDir, "vmmd", append([]string(nil), h.vmmdLaunchEnv...)))
+	waitUnix(h.T, h.VMMDSock, 30*time.Second)
+	h.requireDaemonsAlive(h.T)
+	return nil
+}
+
 // SetAPIDEnv updates the retained apid launch recipe without exposing private
 // runtime settings to other daemons or guests. RestartAPID applies the change.
 func (h *Harness) SetAPIDEnv(key, value string) error {
@@ -2104,6 +2167,13 @@ func EnsureSharedBinaries() (string, error) {
 			dir, err = os.MkdirTemp("", "faas-e2e-bin-*")
 			if err != nil {
 				sharedBinErr = fmt.Errorf("e2etest: mkdir shared bin dir: %w", err)
+				return
+			}
+			// MkdirTemp makes the directory 0700. Unprivileged bridges
+			// (FAAS_BRIDGE_UNPRIVILEGED=1) exec their binary from here as a
+			// bridge uid, as production bridges do from /opt/faas.
+			if err = os.Chmod(dir, 0o755); err != nil {
+				sharedBinErr = fmt.Errorf("e2etest: open shared bin dir to bridge uids: %w", err)
 				return
 			}
 		}
@@ -2330,6 +2400,11 @@ func firstDeadDaemon(procs []*exec.Cmd) (name, output string, dead bool) {
 // Intended for debugging — production tests don't call this.
 func (h *Harness) DumpLogs(t *testing.T) {
 	t.Helper()
+	for _, p := range h.retired {
+		if buf, ok := p.Stdout.(*safeBuffer); ok && buf.String() != "" {
+			t.Logf("e2etest: replaced %s captured output:\n%s", filepath.Base(p.Path), buf.String())
+		}
+	}
 	for _, p := range h.procs {
 		if buf, ok := p.Stdout.(*safeBuffer); ok {
 			s := buf.String()

@@ -534,6 +534,98 @@ const (
 	ProfileLocalEndpoint            = "http://127.0.0.1:9191"
 	ProfileHealthListen             = "127.0.0.1:9160"
 	ProfileDefaultSocket            = "/run/faas/profiled.sock"
+
+	// On-demand captures (ADR-1155).
+	ProfileCaptureMinDuration     = time.Second
+	ProfileCaptureMaxDuration     = 60 * time.Second
+	ProfileCaptureDefaultDuration = 10 * time.Second
+	// ProfileCaptureGrace covers the collectors' final flush after the window.
+	ProfileCaptureGrace = 3 * time.Second
+	// ProfileCaptureMaxProfiles bounds one reply; profiles are per process and kind.
+	ProfileCaptureMaxProfiles = 8
+	// ProfileCaptureMaxProfileBytes bounds the summed compressed profiles so each
+	// host hop stays under gRPC's default 4 MiB message limit.
+	ProfileCaptureMaxProfileBytes = 3 << 20
+	// ProfileCaptureMaxPerAccountHour bounds captures started per account.
+	ProfileCaptureMaxPerAccountHour = 60
+	// net/http/pprof collection by guest-init (profiling.pprof_port). A heap
+	// or goroutine fetch, and a CPU fetch beyond its window, must answer
+	// within ProfilePprofFetchTimeout. An endpoint that has not answered yet
+	// is probed every ProfilePprofProbeInterval; until it answers guest-init
+	// does not register a collector, so captures and memory-pressure reports
+	// behave as for an uninstrumented process.
+	ProfilePprofFetchTimeout  = 5 * time.Second
+	ProfilePprofProbeInterval = 2 * time.Second
+	// Node stack snapshots through the inspector (ADR-1155). guest-init
+	// remembers a Node process's reported inspector for
+	// ProfileNodeInspectorRememberFor, so a main thread stuck longer than the
+	// collector's poll interval is still reachable. An event loop that does
+	// not run a setImmediate within ProfileNodeLivenessTimeout counts as
+	// stuck; its main thread is then paused, waiting at most
+	// ProfileNodePauseTimeout, and resumed at once.
+	ProfileNodeInspectorRememberFor = 10 * time.Minute
+	ProfileNodeInspectorConnect     = 2 * time.Second
+	ProfileNodeLivenessTimeout      = 200 * time.Millisecond
+	ProfileNodePauseTimeout         = time.Second
+	// Automatic heap captures on memory pressure (ADR-1155). guest-init reports
+	// pressure when MemAvailable falls to the threshold share of MemTotal and
+	// re-arms once it recovers above the re-arm share.
+	ProfileMemoryPressureAvailablePercent      = 15
+	ProfileMemoryPressureRearmAvailablePercent = 30
+	ProfileMemoryPressurePollInterval          = 2 * time.Second
+	ProfileCaptureAutomaticDuration            = 10 * time.Second
+	// ProfileCaptureAutomaticMinInterval bounds automatic captures per app.
+	ProfileCaptureAutomaticMinInterval = time.Hour
+	// ProfileCaptureCheckpointInterval paces interim heap profiles during an
+	// automatic capture, so an OOM kill mid-window still leaves the last
+	// heap before the kill.
+	ProfileCaptureCheckpointInterval = 2 * time.Second
+	// ProfileCaptureInterruptGrace replaces the final-flush grace when a
+	// capture ends early because the workload was OOM-killed.
+	ProfileCaptureInterruptGrace = 500 * time.Millisecond
+	// ProfileCaptureOOMFlushTimeout bounds how long guest-init holds an OOM
+	// report while an interrupted capture returns its profiles.
+	ProfileCaptureOOMFlushTimeout = 3 * time.Second
+	// ProfileCaptureOOMLinkWindow is how recent a heap capture on the killed
+	// instance must be for the OOM kill to be linked to it.
+	ProfileCaptureOOMLinkWindow = 15 * time.Minute
+	// Automatic stack snapshots of slow requests (ADR-1155). The gateway
+	// reports a request in flight for ProfileCaptureSlowRequestAfter at most
+	// once per app per ProfileCaptureSlowRequestReportEvery; schedd queues a
+	// stacks+CPU capture of that instance at most once per app per
+	// ProfileCaptureSlowRequestMinInterval.
+	ProfileCaptureSlowRequestAfter       = 10 * time.Second
+	ProfileCaptureSlowRequestReportEvery = time.Minute
+	ProfileCaptureSlowRequestMinInterval = 15 * time.Minute
+	ProfileCaptureSlowRequestDuration    = 5 * time.Second
+	// Automatic CPU captures on CPU saturation (ADR-1155). schedd's stats
+	// poller counts an instance saturated while its host CPU use is at least
+	// ProfileCPUSaturationPercent of its sustained cgroup quota; a dip shorter
+	// than ProfileCPUSaturationGrace does not end the episode. An episode
+	// lasting ProfileCPUSaturationAfter queues one CPU capture of
+	// ProfileCaptureCPUSaturationDuration, at most once per app per
+	// ProfileCaptureCPUSaturationMinInterval.
+	ProfileCPUSaturationPercent            = 90
+	ProfileCPUSaturationAfter              = 30 * time.Second
+	ProfileCPUSaturationGrace              = 5 * time.Second
+	ProfileCaptureCPUSaturationMinInterval = 15 * time.Minute
+	ProfileCaptureCPUSaturationDuration    = 10 * time.Second
+	// ProfileCaptureMaxKinds bounds the kinds one capture collects: every kind.
+	ProfileCaptureMaxKinds = 5
+	// Go contention sampling while a capture asks for block or mutex
+	// profiles: the Go SDK samples one blocking event per
+	// ProfileBlockRateNanos spent blocked and one in ProfileMutexFraction
+	// mutex contention events, for the window only.
+	ProfileBlockRateNanos = 10_000
+	ProfileMutexFraction  = 10
+	// ProfileCaptureDiffMaxNodes bounds a differential flamegraph.
+	ProfileCaptureDiffMaxNodes = 2 * ProfileMaxViewNodes
+	// ProfileCaptureMaxConcurrentPerScheduler bounds captures one schedd runs at once.
+	ProfileCaptureMaxConcurrentPerScheduler = 4
+	// ProfileCaptureMaxListed bounds GET /profiles/captures.
+	ProfileCaptureMaxListed = 50
+	// ProfileCaptureRetention is how long stored capture results remain.
+	ProfileCaptureRetention = 7 * 24 * time.Hour
 )
 
 // Billing runs (ADR-1503).
@@ -616,6 +708,14 @@ const (
 	ConsumerSpendCapCheckInterval = time.Minute
 	ConsumerSpendCapCheckLease    = 2 * time.Minute
 	ConsumerSpendCapBatchSize     = 500
+	// A check reuses the last price of the month when no usage was
+	// recorded since, but reprices at least this often, so changes that
+	// are not usage (a card, a trial, credit expiring or applied) apply
+	// within it (ADR-20261020211500).
+	ConsumerSpendCapRepriceInterval = 15 * time.Minute
+	// Usage minutes this far before the last check are not looked at for
+	// changes; a later write to an older minute waits for the reprice.
+	ConsumerSpendCapUsageLookback = time.Hour
 )
 
 // Consumer self-service sign-up (ADR-20261021143000).
@@ -673,6 +773,14 @@ const (
 	ProductOverdueBlockMaxDays     = ConsumerOverdueBlockMaxDays
 	ProductOverdueCheckInterval    = ConsumerOverdueCheckInterval
 	ProductOverdueHeldSyncInterval = ConsumerOverdueHeldSyncInterval
+)
+
+// Product Control trial resolution (ADR-20261022180921): every interval, at
+// most a batch of ended trials is resolved; a customer awaiting a payment
+// method is refused new starts until then.
+const (
+	ProductControlTrialResolutionInterval = time.Minute
+	ProductControlTrialResolutionBatch    = 100
 )
 
 // PlatformTenantPlansMax bounds the tenant plans one account keeps
@@ -865,6 +973,14 @@ const ReleaseGateDefaultMaxNewGroups = 0
 const ReleaseGateDefaultMinEvents = 3
 const ReleaseGateDefaultMinSamples = 20
 const ReleaseGateErrorClassesMax = 5
+
+// AI release gates (ADR 20261022153155) fail when a release's AI metric is
+// more than a threshold percent above its baseline's: between
+// ReleaseGateAIMaxIncreaseMin and ReleaseGateAIMaxIncreaseMax percent,
+// ReleaseGateAIDefaultMaxIncrease by default. Plan-independent.
+const ReleaseGateAIMaxIncreaseMin = 1
+const ReleaseGateAIMaxIncreaseMax = 1000
+const ReleaseGateAIDefaultMaxIncrease = 50
 
 // Release approvals (ADR-20261020085706). A policy requires 1 to
 // ReleaseApprovalsRequiredMax approvals, waits in canary stage 1 to
@@ -1596,6 +1712,53 @@ const (
 	OutboundAITagsPerDay       = 1_000
 	OutboundAITagLimitsMax     = 20
 	OutboundAITagUsagePageMax  = 1_000
+	// AI traces (ADR 20261020202035): the new traces one integration
+	// records per UTC day (with trace limits set, later new traces are
+	// refused), the distinct models a trace lists, the tool names kept per
+	// response, the longest tool name, the page size of a trace listing,
+	// the logged calls one trace read returns, and the largest per-trace
+	// call and repeated-tool-call limits. Traces follow
+	// OutboundAIRequestLogRetentionDays.
+	OutboundAITracesPerDay                    = 100_000
+	OutboundAITraceModelsMax                  = 8
+	OutboundAIToolCallsPerResponseMax         = 16
+	OutboundAIToolNameMaxBytes                = 64
+	OutboundAITracePageMax                    = 200
+	OutboundAITraceCallsMax                   = 500
+	MaxOutboundAITraceCalls             int64 = 1_000_000
+	MaxOutboundAITraceRepeatedToolCalls int64 = 1_000
+	// Quality signals (ADR 20261021171712): the answer text and the tool
+	// arguments the invalid_json check reads, the longest feedback label,
+	// the online evaluations one integration runs per UTC day and the
+	// longest rubric, and the drift check: how often it runs, the baseline
+	// days, the calls (or rated calls) a day and its baseline need, the
+	// percentage points a rate must rise by, and the evaluations each side
+	// needs for a score drop of at least the given tenths of a point.
+	// Quality alerts are kept for OutboundAIQualityAlertRetentionDays.
+	OutboundAIQualityTextMaxBytes            = 64 << 10
+	OutboundAIQualityToolArgumentsMaxBytes   = 16 << 10
+	OutboundAIFeedbackLabelMaxBytes          = 32
+	OutboundAIOnlineEvaluationsPerDay        = 1_000
+	OutboundAIOnlineEvaluationRubricMaxBytes = 1_000
+	OutboundAIOnlineEvaluationClaimMinutes   = 10
+	OutboundAIQualityDriftCheckMinutes       = 10
+	OutboundAIQualityDriftBaselineDays       = 7
+	OutboundAIQualityDriftMinCalls           = 100
+	OutboundAIQualityDriftMinBaselineCalls   = 500
+	OutboundAIQualityDriftPoints             = 5
+	OutboundAIQualityDriftMinEvaluations     = 20
+	OutboundAIQualityDriftScoreDropTenths    = 5
+	OutboundAIQualityAlertRetentionDays      = 31
+	OutboundAIQualityAlertsPageMax           = 100
+	// Dashboard latency (ADR 20261022145950): the latest logged calls of an
+	// integration, from the last hours given, that per-model latency and
+	// error rate are taken over.
+	OutboundAICallStatsCallsMax    = 5_000
+	OutboundAICallStatsWindowHours = 24
+	// AI calls per deployment (ADR 20261022153155): the days a deployment's
+	// minute rows are kept, and the deployments one listing returns.
+	OutboundAIDeploymentStatsRetentionDays = 14
+	OutboundAIDeploymentsListMax           = 50
 	// Automatic prompt caching (ADR-1437): the estimated prompt or prefix
 	// tokens below which no breakpoint is added, and the cache lifetime a
 	// repeated prefix must recur within.
@@ -2993,6 +3156,15 @@ type Limits struct {
 	MaxDelayedTasksPerApp       int
 	MaxSourceBytesPerInvocation int
 	AsyncInvokeAllowed          bool
+
+	// MaxQueueBacklogBytesPerAccount (ADR-20261022105723) caps the payload
+	// bytes of an account's pending queue messages across its apps, which
+	// bounds what a backlog costs the control-plane database.
+	// QueueMessageRetentionSeconds is how long a pending queue message
+	// waits for a worker before schedd moves it to the dead letter,
+	// counted from its enqueue. A message a worker holds does not expire.
+	MaxQueueBacklogBytesPerAccount int64
+	QueueMessageRetentionSeconds   int
 
 	// MaxQueueAttempts (issue #394 / Move 1 dead-letter) is the shared
 	// per-plan total-attempt budget for durable invocations that hit a
@@ -4666,12 +4838,15 @@ var planLimits = map[Plan]Limits{
 		RegistryCredentialMax: 2,
 		// 64 KB envelope = 0.25 % of Hobby's 25 MB tarball budget — small
 		// enough to keep the drain tick bounded, large enough for typical
-		// JSON event payloads.
-		MaxQueueDepth:               5,
-		MaxDelayedTasksPerApp:       5,
-		MaxSourceBytesPerInvocation: 64 * 1024,
-		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256, DeadlineSecondsMax: 86400, AttemptsMax: 3, ExecutionSecondsMax: 3600, SchedulesPerAccount: 10, ScheduleMinIntervalSeconds: 300, ChildrenPerOperation: 10, ConcurrencyPoliciesPerApp: 10, ApprovalFormsPerApp: 10},
+		// JSON event payloads. ADR-20261022105723: 10,000 pending messages
+		// per app, 100 MiB of them per account, kept 1 day.
+		MaxQueueDepth:                  10_000,
+		MaxQueueBacklogBytesPerAccount: 100 << 20,
+		QueueMessageRetentionSeconds:   86_400,
+		MaxDelayedTasksPerApp:          5,
+		MaxSourceBytesPerInvocation:    64 * 1024,
+		AsyncInvokeAllowed:             true,
+		Operations:                     OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 604800, EventRetentionSeconds: 86400, IdempotencyRetentionSeconds: 2592000, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256, DeadlineSecondsMax: 86400, AttemptsMax: 3, ExecutionSecondsMax: 3600, SchedulesPerAccount: 10, ScheduleMinIntervalSeconds: 300, ChildrenPerOperation: 10, ConcurrencyPoliciesPerApp: 10, ApprovalFormsPerApp: 10},
 		// Hobby: 3 attempts. Tight on the cheap tier — a worker that
 		// keeps re-trying a bad payload would otherwise burn the
 		// per-app rps budget and starve the rest of the queue.
@@ -5101,12 +5276,16 @@ var planLimits = map[Plan]Limits{
 		// matrix (5-8 publishers). Enough for "every dev has their own
 		// key" workflows without letting the table grow unbounded.
 		TrustedSignerCountMax: 8,
-		// 256 KB = 0.1 % of Pro's 250 MB tarball.
-		MaxQueueDepth:               25,
-		MaxDelayedTasksPerApp:       50,
-		MaxSourceBytesPerInvocation: 256 * 1024,
-		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024, DeadlineSecondsMax: 604800, AttemptsMax: 10, ExecutionSecondsMax: 86400, SchedulesPerAccount: 100, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 100, ConcurrencyPoliciesPerApp: 100, ApprovalFormsPerApp: 100},
+		// 256 KB = 0.1 % of Pro's 250 MB tarball. ADR-20261022105723:
+		// 100,000 pending messages per app, 1 GiB of them per account,
+		// kept 4 days.
+		MaxQueueDepth:                  100_000,
+		MaxQueueBacklogBytesPerAccount: 1 << 30,
+		QueueMessageRetentionSeconds:   4 * 86_400,
+		MaxDelayedTasksPerApp:          50,
+		MaxSourceBytesPerInvocation:    256 * 1024,
+		AsyncInvokeAllowed:             true,
+		Operations:                     OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 2592000, EventRetentionSeconds: 604800, IdempotencyRetentionSeconds: 7776000, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024, DeadlineSecondsMax: 604800, AttemptsMax: 10, ExecutionSecondsMax: 86400, SchedulesPerAccount: 100, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 100, ConcurrencyPoliciesPerApp: 100, ApprovalFormsPerApp: 100},
 		// Pro: 10 attempts. Trades tolerance against "a poisoned row
 		// churns indefinitely". At 10 retries a transient downstream
 		// flap has plenty of room, while a permanently-bad payload
@@ -5155,7 +5334,9 @@ var planLimits = map[Plan]Limits{
 		// scale to a meaningful production fan-out (3 workers,
 		// 5 service replicas, 30 min job runtimes).
 		DefaultStopGracePeriodS: 60,
-		DefaultStartupDeadlineS: 60,
+		// ADR-138 amendment (2026-10-22): capped at the cold-boot
+		// window, ColdBootReadyWindowS.
+		DefaultStartupDeadlineS: ColdBootReadyWindowS,
 		DefaultMaxRetries:       10,
 		WorkerReplicasMax:       3,
 		ServiceReplicasMax:      5,
@@ -5500,13 +5681,15 @@ var planLimits = map[Plan]Limits{
 		// key (1024 bytes per migration 00083 CHECK) keeps the
 		// table on-disk under ~16 KiB regardless.
 		TrustedSignerCountMax: 16,
-		// Soft ceiling: the binding constraint on Scale is the per-payload
-		// byte cap (1 MiB), not the row count.
-		MaxQueueDepth:               100,
-		MaxDelayedTasksPerApp:       1_000_000,
-		MaxSourceBytesPerInvocation: 1024 * 1024,
-		AsyncInvokeAllowed:          true,
-		Operations:                  OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096, DeadlineSecondsMax: 2592000, AttemptsMax: 25, ExecutionSecondsMax: 604800, SchedulesPerAccount: 1000, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 1000, ConcurrencyPoliciesPerApp: 1000, ApprovalFormsPerApp: 1000},
+		// ADR-20261022105723: 1,000,000 pending messages per app, 10 GiB
+		// of them per account, kept 14 days.
+		MaxQueueDepth:                  1_000_000,
+		MaxQueueBacklogBytesPerAccount: 10 << 30,
+		QueueMessageRetentionSeconds:   14 * 86_400,
+		MaxDelayedTasksPerApp:          1_000_000,
+		MaxSourceBytesPerInvocation:    1024 * 1024,
+		AsyncInvokeAllowed:             true,
+		Operations:                     OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7776000, EventRetentionSeconds: 2592000, IdempotencyRetentionSeconds: 15552000, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096, DeadlineSecondsMax: 2592000, AttemptsMax: 25, ExecutionSecondsMax: 604800, SchedulesPerAccount: 1000, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 1000, ConcurrencyPoliciesPerApp: 1000, ApprovalFormsPerApp: 1000},
 		// Scale: 25 attempts. The highest tier gets the most
 		// tolerance so an upstream outage lasting a few minutes
 		// doesn't dump the queue into dead_letter on a single bad
@@ -5557,7 +5740,9 @@ var planLimits = map[Plan]Limits{
 		// a single Scale customer can host a small SaaS
 		// (10 workers, 20 service replicas, 1 h jobs).
 		DefaultStopGracePeriodS: 120,
-		DefaultStartupDeadlineS: 120,
+		// ADR-138 amendment (2026-10-22): capped at the cold-boot
+		// window, ColdBootReadyWindowS.
+		DefaultStartupDeadlineS: ColdBootReadyWindowS,
 		DefaultMaxRetries:       20,
 		WorkerReplicasMax:       10,
 		ServiceReplicasMax:      20,
@@ -6028,12 +6213,16 @@ const (
 	// Fork exec (ADR-732): commands run inside a running fork. At most
 	// AppForkExecMaxPending are queued or running per fork; each runs for at
 	// most AppForkExecMaxTimeout and keeps at most AppForkExecMaxOutputBytes
-	// of combined stdout/stderr (the tail beyond that is dropped).
+	// of combined stdout/stderr (the tail beyond that is dropped). The output
+	// comes from inside a copy of production memory, so it is cleared
+	// AppForkExecOutputRetention after the fork ends; the command record
+	// stays.
 	AppForkExecMaxPending         = 4
 	AppForkExecDefaultTimeout     = time.Minute
 	AppForkExecMaxTimeout         = 10 * time.Minute
 	AppForkExecDefaultOutputBytes = 64 << 10
 	AppForkExecMaxOutputBytes     = 1 << 20
+	AppForkExecOutputRetention    = 24 * time.Hour
 
 	// Crash snapshots (ADR-733). A capture is kept for CrashCaptureRetention
 	// and then deleted. An app gets at most one capture in flight and no
@@ -6236,6 +6425,17 @@ const (
 	MaxConcurrencyQueueWaitMS = 120_000
 	ConcurrencyOverflowQueue  = "queue"
 	ConcurrencyOverflowDrop   = "drop"
+
+	// PerInstanceConcurrencyQueueDefaultWait is the warm-queue wait for an
+	// app that declares scaling_policy.per_instance_concurrency and leaves
+	// max_queue_wait_ms at zero (ADR-20261022203523). Such an app is full at
+	// a few requests by its own declaration, so a full instance is its
+	// normal operation, not the saturation the short defaults above are for.
+	// It is the gateway's 30 s request hold (WakeQueueTTLSeconds, spec §4.1)
+	// and never longer; the waiter count stays the plan's warm-queue depth.
+	// The request budget is stamped after the capacity wait, so a request
+	// may wait this long and then still use its whole budget.
+	PerInstanceConcurrencyQueueDefaultWait = WakeQueueTTLSeconds * time.Second
 
 	// MirrorMaxLifetimeSeconds (issue #72 / ADR-125) is the hard
 	// upper bound on how long a single mirror goroutine can run.
@@ -6540,6 +6740,43 @@ const (
 	// EdgeChallengeTokenTTLSeconds is how long a served challenge may be
 	// solved and submitted.
 	EdgeChallengeTokenTTLSeconds = 300
+	// Raising the difficulty under attack (ADR-831 amendment 8). A rule
+	// with max_difficulty above its difficulty steps up by
+	// EdgeChallengeRaiseStepBits (4x the work) after a minute in which one
+	// gateway served more than EdgeChallengeRaiseFactor times the rule's
+	// usual challenge pages per minute, and never fewer than
+	// EdgeChallengeRaiseFloorPerMinute. It steps back down after each
+	// minute below half that. The usual rate is an average over about
+	// EdgeChallengeBaselineMinutes, and it does not move while the
+	// difficulty is raised, so a long attack does not become the norm.
+	// While a rule is newer than EdgeChallengeBaselineMinutes the
+	// threshold is EdgeChallengeRaiseFactor x
+	// EdgeChallengeRaiseFloorPerMinute pages per minute.
+	EdgeChallengeRaiseStepBits       = 2
+	EdgeChallengeRaiseFactor         = 4
+	EdgeChallengeRaiseFloorPerMinute = 60
+	EdgeChallengeBaselineMinutes     = 15
+
+	// --- ADR-20261022105846: penalty box -----------------------------
+
+	// MinEdgePenaltySeconds and MaxEdgePenaltySeconds bound how long a
+	// boxed client is refused.
+	MinEdgePenaltySeconds = 60
+	MaxEdgePenaltySeconds = 86400
+	// EdgePenaltyDefaultAfter boxes on the first rejection;
+	// MaxEdgePenaltyAfter bounds the threshold.
+	EdgePenaltyDefaultAfter = 1
+	MaxEdgePenaltyAfter     = 1000
+	// EdgePenaltyDefaultWithinSeconds is the window rejections count in.
+	EdgePenaltyDefaultWithinSeconds = 60
+	MaxEdgePenaltyWithinSeconds     = 3600
+	// EdgePenaltyBoxMaxPerApp and EdgePenaltyBoxMaxEntries bound one
+	// gateway's boxes (and its pending rejection counts) per app and in
+	// total, so a flood from rotating addresses costs bounded memory and
+	// one app cannot push out another's boxes. A full app box drops its
+	// soonest-ending entry.
+	EdgePenaltyBoxMaxPerApp  = 10000
+	EdgePenaltyBoxMaxEntries = 200000
 
 	// --- ADR-201 §2: kind=circuit_breaker bounds ----------------------
 
@@ -6663,11 +6900,19 @@ const (
 	// point of use.
 	MaxAppManifestStopGracePeriod = 5 * time.Minute
 
+	// ColdBootReadyWindowS is how long an app may take to become ready
+	// on any cold boot: the spec §6.1 COLD_BOOTING budget the scheduler's
+	// watchdog enforces on every wake (sched.ColdBootSweepBudget).
+	ColdBootReadyWindowS = 30
+
 	// MaxAppManifestStartupDeadlineS is the gross upper bound on
 	// AppManifest.StartupDeadlineS (issue #1186 §D.2, ADR-137/138).
-	// Per-plan tightening replaces this in commit 10 of M-2 with
-	// per-plan tiers on the Limits struct.
-	MaxAppManifestStartupDeadlineS = 300
+	// ADR-138 amendment (2026-10-22, Hunt 12 H12-10): no app may take
+	// longer to start than a cold boot allows. A deploy prime accepted up
+	// to 120 s on Scale while every later cold boot (after a release, a
+	// secret change, a fresh restart or a snapshot miss) was killed at
+	// 30 s, so such an app deployed fine and then never came back.
+	MaxAppManifestStartupDeadlineS = ColdBootReadyWindowS
 
 	// MaxAppManifestMaxRetries is the gross upper bound on
 	// AppManifest.MaxRetries (issue #1186 §D.3, ADR-137/138). Per-plan
@@ -7258,6 +7503,28 @@ const (
 	// once is an event to surface, not to repair in one transaction
 	// storm.
 	InstanceDivergenceTickLimit = 50
+
+	// AdoptionReportIntervalSeconds is how often schedd checks its nodes'
+	// vmmd ownership epochs for a restart whose adoption report it has not
+	// applied (vmmd restart adoption ADR §3). Guests the new vmmd refused
+	// keep their RUNNING rows until then, so this bounds how long requests
+	// can reach them after a restart.
+	AdoptionReportIntervalSeconds = 5
+
+	// VMMDRestartNoticeSeconds is how long a vmmd stopping for a planned,
+	// adopting restart tells schedd it is restarting (vmmd restart adoption
+	// ADR §3): wakes on the node are retried instead of failed and its
+	// failed heartbeats are not counted. The successor clears it once it
+	// serves, normally within seconds; a vmmd that never comes back loses
+	// the notice after this long and is treated as before.
+	VMMDRestartNoticeSeconds = 60
+
+	// GatewayVMMDRestartHoldSeconds bounds how long a gateway forward waits
+	// for a node's vmmd to come back under its planned-restart notice
+	// instead of answering 503 (vmmd restart adoption ADR, "Boundaries").
+	// The successor normally serves within a second; this matches the wake
+	// queue's hold (WakeQueueTTLSeconds).
+	GatewayVMMDRestartHoldSeconds = WakeQueueTTLSeconds
 
 	// Tier A9 (capacity-pressure-triggered cross-node app rebalance,
 	// ADR-087 — sibling to the dead-node rebalancer of ADR-064).
@@ -8177,6 +8444,18 @@ func ConcurrencyQueueDefaultsForPlan(p Plan) (maxDepth int, maxWait time.Duratio
 	default:
 		return 1, ConcurrencyQueueFreeDefaultWait, false
 	}
+}
+
+// ConcurrencyQueueDefaultWaitFor is the warm-queue wait an app gets when its
+// max_queue_wait_ms is zero. An app that declares per_instance_concurrency
+// waits PerInstanceConcurrencyQueueDefaultWait (ADR-20261022203523); every
+// other app keeps the plan's short saturation default.
+func ConcurrencyQueueDefaultWaitFor(p Plan, perInstanceConcurrency int) time.Duration {
+	if perInstanceConcurrency > 0 {
+		return PerInstanceConcurrencyQueueDefaultWait
+	}
+	_, wait, _ := ConcurrencyQueueDefaultsForPlan(p)
+	return wait
 }
 
 // ConcurrencyQueueMaxDepthForPlan is the largest customer-configurable warm
@@ -9969,6 +10248,20 @@ func (p Plan) ConcurrencyPerVMBound() int {
 	return l.ConcurrencyPerVMBound
 }
 
+// PerInstanceConcurrency resolves an app's declared
+// scaling_policy.per_instance_concurrency against the plan's
+// ConcurrencyPerVMBound (ADR-20261022203523). It is the one resolver the
+// gateway's per-VM gate and burst admission, schedd's wake fan-out and
+// in-flight scale-in floor, and apid's effective limits all use. Zero (the
+// default) and any value above the bound, which a plan downgrade can leave
+// behind, resolve to the bound: exactly the pre-ADR behaviour.
+func (l Limits) PerInstanceConcurrency(requested int) int {
+	if requested <= 0 || requested > l.ConcurrencyPerVMBound {
+		return l.ConcurrencyPerVMBound
+	}
+	return requested
+}
+
 // LogDeploymentFilterMax returns the per-plan cap on the
 // `?deployment=` filter the customer may scope their app-logs
 // stream to (issue #517 / PR-B, AC3). Free returns 0 so the
@@ -10273,6 +10566,18 @@ func (l Limits) EffectiveIdleTimeoutS(appType string, configured int) int {
 	}
 	floor, ceiling := l.IdleTimeoutBounds()
 	return min(max(configured, floor), ceiling)
+}
+
+// WaitUntilTimeoutS is how long a waitUntil task can hold an instance after
+// its response: TailTimeoutS when the plan enables waitUntil, else zero
+// (ADR-078). The reaper does not park an instance with tasks in flight, so
+// surfaces that explain awake time take the later of this and the idle
+// timeout (ADR-20261022184757).
+func (l Limits) WaitUntilTimeoutS() int {
+	if !l.TailEnabled {
+		return 0
+	}
+	return l.TailTimeoutS
 }
 
 // Obs admin pagination (issue #777 / ADR-091). The operator surface
@@ -11617,6 +11922,10 @@ const (
 	// An edge-cache suggestion needs this share of anonymous 2xx GET/HEAD
 	// requests on the route.
 	RouteAwakeCacheMinAnonymousShare = 0.9
+	// RouteAwakeWorkMaxMinutes caps how long one cron, queue or other
+	// delivery counts as running (ADR-20261022184757), so a delivery that
+	// never completed cannot claim the rest of the window.
+	RouteAwakeWorkMaxMinutes = 60
 )
 
 // RouteContent bounds learned cacheability (ADR-1188). Each gateway
@@ -12598,7 +12907,7 @@ const (
 	EventPublishBatchTimeout            = 30 * time.Second
 )
 
-// Retention observations are bounded read-only snapshots (ADR-912).
+// Retention observations are bounded read-only snapshots (ADR-1155).
 const (
 	EventRetentionDefaultWindow  = 24 * time.Hour
 	EventRetentionMaxWindow      = 30 * 24 * time.Hour
@@ -14176,6 +14485,11 @@ const (
 	// mounts (ADR-20261022185329); each one is an app secret vmmd opens.
 	DockerfileBuildSecretsMax = 16
 )
+
+// SecretFilesMax caps the Compose secrets one service writes to
+// /run/secrets (ADR-20261023090000). guest-init sizes the tmpfs it mounts
+// there from it and the largest plan's SecretValueMaxBytes.
+const SecretFilesMax = 16
 
 // Public build configuration is intentionally limited to reviewed URL values.
 const (

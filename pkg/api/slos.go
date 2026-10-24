@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"slices"
+	"time"
 )
 
 // CodeSLOInvalid and CodeSLOLimit are the stable problem codes for the
@@ -56,6 +57,22 @@ type SLOStatus struct {
 	BurnRate1h         *float64 `json:"burn_rate_1h"`
 	BurnRate6h         *float64 `json:"burn_rate_6h"`
 	Source             string   `json:"source"`
+}
+
+// SLOWindowPending describes a window none of whose hours has closed yet.
+// meterd records each hour after it ends, so until the creation hour closes
+// the window totals are zero although the app may be serving traffic and the
+// live burn rates are already set; "no traffic" would misread that (Hunt 12
+// H12-22).
+func SLOWindowPending(st SLOStatus) (string, bool) {
+	if st.HoursExpected > 0 || st.HoursRecorded > 0 {
+		return "", false
+	}
+	start, err := time.Parse(time.RFC3339, st.WindowStart)
+	if err != nil {
+		return "", false
+	}
+	return "pending: first hour closes " + start.UTC().Add(time.Hour).Format("15:04") + " UTC", true
 }
 
 // SLOObjectivePct renders basis points (9990) as a percentage (99.9).

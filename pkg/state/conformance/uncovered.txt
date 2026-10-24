@@ -61,6 +61,7 @@ ClaimNextAppForkExec
 ClaimNextCrashCapture
 ClaimNextPendingRun
 ClearDeployment
+ClearExpiredAppForkExecOutput
 ClearInstanceFrameworkReadyAt
 ClearMFA
 ClearObsoleteDeployments
@@ -159,8 +160,6 @@ DeleteCorsPreset
 DeleteCron
 DeleteCustomDomain
 DeleteDataUpstreamByID
-DeleteDeadLetterEvent
-DeleteDeadLetterEvents
 DeleteDeploymentOpenAPIDoc
 DeleteDeploymentScopeExclusion
 DeleteEdgeRule
@@ -508,7 +507,6 @@ RenameApp
 RenewAppForkLease
 ReorderDeployment
 ReplaceProvisionedStaticEgressIPs
-ReplayDeadLetterEvents
 RequestAppForkCancellation
 RequestHTTPCrashCapture
 RequestManualCrashCapture

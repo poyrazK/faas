@@ -138,9 +138,12 @@
     render(view) {
       const $ = this.host.$, card = view.payment_method;
       $('payment-section').hidden = !view.available; $('payment-add').disabled = false;
-      if (!card) { $('payment-card').textContent = 'No card on file. Your product team emails invoices for payment.'; $('payment-add').textContent = 'Add a card'; return; }
-      $('payment-card').textContent = `${card.brand ? card.brand[0].toUpperCase() + card.brand.slice(1) : 'Card'} ending ${card.last4} · expires ${String(card.exp_month).padStart(2, '0')}/${card.exp_year}. Your product team can charge this workspace's invoices to this card.`;
-      $('payment-add').textContent = 'Replace card';
+      if (!card) { $('payment-card').textContent = 'No card on file. Your product team emails invoices for payment.'; $('payment-add').textContent = 'Add a card'; }
+      else {
+        $('payment-card').textContent = `${card.brand ? card.brand[0].toUpperCase() + card.brand.slice(1) : 'Card'} ending ${card.last4} · expires ${String(card.exp_month).padStart(2, '0')}/${card.exp_year}. Your product team can charge this workspace's invoices to this card.`;
+        $('payment-add').textContent = 'Replace card';
+      }
+      return this.host.rendered?.(Boolean(card));
     }
     valid(view) {
       const card = view?.payment_method;
@@ -150,7 +153,7 @@
     async load() {
       const at = this.host.epoch(), request = ++this.request;
       const view = this.valid(await this.host.api(`${this.host.base()}/payment-method`)); this.host.current(at);
-      if (request === this.request) this.render(view);
+      if (request === this.request) await this.render(view);
     }
     async complete(session) {
       if (!/^cs_[A-Za-z0-9_]{1,250}$/.test(session)) throw new Error('The card page returned an unexpected reference. Add your card again.');
@@ -159,7 +162,7 @@
       try { view = this.valid(await this.host.api(`${this.host.base()}/payment-method/complete`, { method: 'POST', body: JSON.stringify({ session_id: session }) })); this.host.current(at); }
       finally { if (at === this.host.epoch()) this.busy = false; }
       if (request !== this.request) return;
-      this.render(view); this.host.$('payment-status').textContent = 'Your card is saved for this workspace\'s invoices.';
+      this.host.$('payment-status').textContent = 'Your card is saved for this workspace\'s invoices.'; await this.render(view);
     }
     async checkout() {
       const $ = this.host.$, at = this.host.epoch();

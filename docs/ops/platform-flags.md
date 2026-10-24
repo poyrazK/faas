@@ -89,6 +89,9 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | `realtime_access` | Realtime principal access revocation (ADR-1113) | apid → realtimed | `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED` |
 | `realtime_occupancy` | Realtime channel occupancy (ADR-1324) | apid → realtimed | `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` |
 | `strict_budgets` | Strict compute and egress budgets (ADR-1750) | apid | none (off until an operator writes it) |
+| `edge_waf_blocking` | Warn and block modes of WAF edge rules (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
+| `edge_challenge` | Challenge edge rules, with difficulty escalation (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
+| `edge_penalty_box` | Edge rule penalties (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
 
 The environment and TOML values seed the flag at boot. Once an operator has
 written the flag, they are ignored, including after a restart.
@@ -135,6 +138,28 @@ Strict budgets that are already enabled keep enforcing and stay editable, and
 disabling or deleting one always works. Monitored budgets and alerts are not
 gated. To release it to one account, run `flags enable` (the kill switch, with
 the default still off) and then `flags allow` for that account.
+
+`edge_waf_blocking`, `edge_challenge` and `edge_penalty_box` are off until an
+operator writes them, and unlike `strict_budgets` they are kill switches at
+the edge too. While one is off for an account:
+
+- apid refuses creating a rule that uses the feature (any challenge rule, a
+  WAF rule in warn or block mode, a rule with a penalty), and an update that
+  switches the feature on for a rule that did not already enforce it
+  (enabling the rule, leaving log mode, moving WAF to warn or block, adding a
+  penalty), with 422 `edge_feature_unavailable`. Other edits, disabling and
+  deleting always work.
+- gatewayd-internal stops enforcing rules that already exist: challenge rules
+  serve no page and the solve path goes to the app, warn and block WAF rules
+  are inspected as observe, and penalties neither box nor refuse anyone. The
+  rest of each rule keeps working (an `ip` rule with a penalty still refuses).
+
+The gateway decides per request, so turning a flag on or off takes effect as
+soon as the runtime-config watcher applies it (within its five-second repair
+interval if a notification is missed), without an edge-rule cache reset.
+Turning one on for an account that has inert rules makes them enforce at
+once. Release them the same way: `flags enable`, then `flags allow` per
+account, or `default` for everyone at launch.
 
 ## Day-to-day commands
 

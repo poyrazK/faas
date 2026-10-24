@@ -759,6 +759,14 @@ jobs:
         if: ${{ !inputs.hosted_runner }}
         env:
           CP_ANSIBLE_VARS_B64: ${{ secrets.CP_ANSIBLE_VARS_B64 }}
+          SEAL_DOMAIN_OUTBOUND_AGE_KEY: ${{ secrets.SEAL_DOMAIN_OUTBOUND_AGE_KEY }}
+          SEAL_DOMAIN_OUTBOUND_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_OUTBOUND_AGE_RECIPIENT }}
+          SEAL_DOMAIN_SOURCE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_SOURCE_AGE_KEY }}
+          SEAL_DOMAIN_SOURCE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_SOURCE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_RUNTIME_AGE_KEY: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_KEY }}
+          SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT }}
+          SEAL_DOMAIN_BUILD_AGE_KEY: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_KEY }}
+          SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
@@ -779,6 +787,9 @@ jobs:
           install -d -m 0700 "$work"
           trap 'rm -rf -- "$work"' EXIT
           printf '%s' "$CP_ANSIBLE_VARS_B64" | base64 --decode > "$work/vars.yml"
+          # ADR 20261022111812: the seal_domains role stages the domain keys
+          # held as SEAL_DOMAIN_* secrets; the write modes stay in the vars.
+          scripts/ci/seal_domain_vars.sh control-plane "$work/seal-domains" "$work/vars.yml"
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"
           chmod 0600 "$work/vars.yml" "$work/ssh-key" "$work/known_hosts"
@@ -1438,6 +1449,14 @@ jobs:
         if: steps.plan.outputs.action == 'converge'
         env:
           CP_ANSIBLE_VARS_B64: ${{ secrets.CP_ANSIBLE_VARS_B64 }}
+          SEAL_DOMAIN_OUTBOUND_AGE_KEY: ${{ secrets.SEAL_DOMAIN_OUTBOUND_AGE_KEY }}
+          SEAL_DOMAIN_OUTBOUND_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_OUTBOUND_AGE_RECIPIENT }}
+          SEAL_DOMAIN_SOURCE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_SOURCE_AGE_KEY }}
+          SEAL_DOMAIN_SOURCE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_SOURCE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_RUNTIME_AGE_KEY: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_KEY }}
+          SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT }}
+          SEAL_DOMAIN_BUILD_AGE_KEY: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_KEY }}
+          SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
@@ -1460,6 +1479,9 @@ jobs:
           done
           work="$HOST_CONFIG_WORK"
           printf '%s' "$CP_ANSIBLE_VARS_B64" | base64 --decode > "$work/vars.yml"
+          # ADR 20261022111812: the seal_domains role stages the domain keys
+          # held as SEAL_DOMAIN_* secrets; the write modes stay in the vars.
+          scripts/ci/seal_domain_vars.sh control-plane "$work/seal-domains" "$work/vars.yml"
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"
           chmod 0600 "$work/vars.yml" "$work/ssh-key" "$work/known_hosts"

@@ -55,6 +55,21 @@ account during the preview; contact support to have it turned on for yours.
 - **Visibility.** Usage and cost by app, model and end user, budget alerts at
   80% and 100%, an opt-in request log, opt-in capture of request and response
   bodies, and replay of a captured call against other models.
+- **Deploys.** See each deployment's AI calls, errors, flagged answers and
+  cost per call with `gregale ai deployments`, and roll back a release whose
+  AI calls get worse with an `ai` release gate.
+- **Dashboard.** See each integration's cost by model, app, tag and end user,
+  its latency, error rate, quality and drift alerts, and every agent trace
+  as a timeline of its calls, at `/dashboard/ai`.
+- **Quality signals.** Every call returns its ID in `X-Gregale-AI-Call` and is
+  marked when its answer stopped at the token limit, was refused or filtered,
+  was empty, or broke the JSON it was asked for. Apps rate calls by ID, a judge
+  model can score a sample of them, and you can be alerted when a model's
+  quality drifts from its last week.
+- **AI traces.** Group an agent's calls into one task with
+  `X-Gregale-AI-Trace` or your existing `traceparent`, see each task's calls,
+  cost and requested tools in order, and stop a task that makes too many
+  calls, costs too much or asks for the same tool call again and again.
 - **Usage tags.** Name up to five `key=value` tags per call, such as
   `feature=search` or `tier=free`, to see and export cost by your own
   dimensions, and cap one tag's daily cost with alerts at 80% and 100%.
@@ -132,6 +147,35 @@ gregale ai tag-limits <id> --set feature=search:20     # USD per UTC day
 gregale ai tags export <id> --from 2026-10-01 --to 2026-10-31 > ai-tags.csv
 ```
 
+Send `X-Gregale-AI-Trace: <task-id>` on every call of one agent task (or just
+your usual `traceparent`) to see the task as one trace, and limit each task:
+
+```sh
+gregale ai traces <id>
+gregale ai traces <id> <trace-id>
+gregale ai policy <id> --trace-max-calls 50 --trace-max-cost 2 --trace-max-repeated-tool-calls 3
+```
+
+Each response carries `X-Gregale-AI-Call: <call-id>`. With the request log on,
+your app can rate the call through the gateway, the same way it calls the
+model:
+
+```sh
+curl -X POST "$GATEWAY/i/$INTEGRATION_ID/_gregale/feedback" \
+  -H 'Content-Type: application/json' \
+  -d '{"call_id": "<call-id>", "rating": "bad", "label": "wrong_answer"}'
+```
+
+Score a sample of calls with a judge model of your choice, and get
+`outbound.ai_quality.drift` webhooks when a model's quality drifts:
+
+```sh
+gregale ai policy <id> --request-log-content on --online-eval-percent 5 \
+  --online-eval-judge <openai-id> --online-eval-model gpt-5-mini --quality-alerts on
+gregale ai usage <id>            # QUALITY and SCORE columns
+gregale ai quality-alerts <id>
+```
+
 ### Outside Gregale
 
 To call the gateway from your laptop, CI or a notebook as one of your apps,
@@ -155,11 +199,49 @@ This replays up to 50 of your latest captured calls (turn on
 `--request-log-content` for the route's first integration) and starts the
 canary only if the new model does not do worse.
 
+### By deployment
+
+Each call from one of your app's instances counts toward the deployment that
+instance runs (ADR 20261022153155). List the last 14 days by deployment:
+
+```bash
+gregale ai deployments --app my-api
+```
+
+```
+DEPLOYMENT                            LAST CALL             CALLS  ERRORS  FLAGGED  COST           PER CALL       MEAN TTFB
+6f1c0e1e-6c1b-4c7a-9c8e-2f0b7c1d9a10  2026-10-22T15:41:00Z  4210   0.40%   1.10%    USD 4.21000    USD 0.00100    380
+2b9d4c55-1f0e-4a3b-8d6e-5a7c9e0b1f22  2026-10-21T09:12:00Z  9877   0.35%   1.05%    USD 7.90160    USD 0.00080    365
+```
+
+Calls through an access token, a Run, a replay or the response cache have no
+deployment and are not counted. An `ai` release gate stops a canary, or rolls
+back a release, whose error rate, flagged rate, cost per call or time to first
+byte rises past a bound over the previous release's:
+
+```bash
+gregale release-gates add --app my-api --name ai-cost --ai cost_per_call --max-increase 30
+```
+
+### In the dashboard
+
+`/dashboard/ai` lists your AI integrations with today's calls, cost, error
+rate and quality. Open one to see a UTC day by model and app, the most
+expensive tags and end users, latency and errors by model, drift alerts and
+recent traces. Its **Traces** page lists agent tasks, newest first; open one
+to see its calls on a timeline with their models, tokens, cost, requested
+tools, quality flags, ratings and scores.
+
+Latency and the trace timeline come from the request log, so turn it on with
+`gregale ai policy <id> --request-log on`.
+
 ## Limits and errors
 
 | Response | Meaning |
 | --- | --- |
-| `429` with `X-Gregale-Outbound-Rejection` | A cap or rate limit was reached; `Retry-After` says when it resets. |
+| `429` with `X-Gregale-Outbound-Rejection` | A cap or rate limit was reached; `Retry-After` says when it resets. Trace limits (`trace_call_limit`, `trace_cost_limit`, `trace_tool_loop`) never reset: start a new trace. |
+| `404 outbound_ai_call_not_found` | Feedback named a call that is not in the integration's request log, or that another app made. |
+| `400 outbound_ai_trace_invalid` | `X-Gregale-AI-Trace` is empty, longer than 64 characters or has a character outside `A-Z a-z 0-9 . _ : @ + = / \| -`. |
 | `400 outbound_ai_content_blocked` | The content policy blocked the request. The problem names the detector, never the content. |
 | `402 plan_feature_gated` | Your plan does not include the AI gateway. |
 | `403 outbound_ai_gateway_unavailable` | The AI gateway is not enabled for your account yet. |

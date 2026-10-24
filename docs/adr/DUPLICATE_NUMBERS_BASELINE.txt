@@ -223,3 +223,7 @@
 # observed app health and scoped health diagnostics.
 732
 733
+# Refreshed 2026-10-24 for independently duplicated merged main @ 1d0748e45c:
+# ADR-20261017 (#5209 vmmd restart adoption, #5220 connection survival) collides
+# with #4879's node event acknowledgment worker.
+20261017

@@ -34,11 +34,14 @@ class CreateReleaseGateRequest:
     min_events: int | Unset = UNSET
     """new_errors gates: default 3."""
     metric: str | Unset = UNSET
-    """custom_metric gates: the custom metric's name."""
+    """custom_metric gates: the custom metric's name. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms."""
     comparison: CreateReleaseGateRequestComparison | Unset = UNSET
     """custom_metric gates: fail when the average is below or above the threshold."""
     threshold: float | Unset = UNSET
     """custom_metric gates: the bound."""
+    max_increase_percent: int | Unset = UNSET
+    """ai gates: fail when the release's metric is this many percent above its baseline's, and above a floor (1
+    percentage point, 50 ms or 1 millicent). Default 50."""
     min_samples: int | Unset = UNSET
     """Default 20."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -64,6 +67,8 @@ class CreateReleaseGateRequest:
 
         threshold = self.threshold
 
+        max_increase_percent = self.max_increase_percent
+
         min_samples = self.min_samples
 
         field_dict: dict[str, Any] = {}
@@ -88,6 +93,8 @@ class CreateReleaseGateRequest:
             field_dict["comparison"] = comparison
         if threshold is not UNSET:
             field_dict["threshold"] = threshold
+        if max_increase_percent is not UNSET:
+            field_dict["max_increase_percent"] = max_increase_percent
         if min_samples is not UNSET:
             field_dict["min_samples"] = min_samples
 
@@ -119,6 +126,8 @@ class CreateReleaseGateRequest:
 
         threshold = d.pop("threshold", UNSET)
 
+        max_increase_percent = d.pop("max_increase_percent", UNSET)
+
         min_samples = d.pop("min_samples", UNSET)
 
         create_release_gate_request = cls(
@@ -131,6 +140,7 @@ class CreateReleaseGateRequest:
             metric=metric,
             comparison=comparison,
             threshold=threshold,
+            max_increase_percent=max_increase_percent,
             min_samples=min_samples,
         )
 

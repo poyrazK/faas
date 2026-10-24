@@ -259,11 +259,154 @@ This ADR ships with:
 
 Rollout checklist: [Seal domains rollout](../runbooks/seal-domains-rollout.md).
 
-Later slices: the other domains in the order above; the contract steps;
-moving the runtime re-seal out of apid's rekey runner; meterd sending test
-alerts; role-scoped staging in node join; an alert on
-`faas_seal_domain_ready`; and dropping `github_webhook_secrets.secret_value`
-once no release reads it.
+## Implemented in the second slice: the runtime domain
+
+- **vmmd** loads `domains/runtime.age` (and its `.previous`) next to
+  `host.age` when it is staged, ahead of the fleet and host identities. It
+  reads the file directly as root, so there is no credential to add. It
+  exports `faas_seal_domain_loaded{domain="runtime"}` from its start.
+- **apid** seals every runtime secret through `runtimeSecretRecipient()`:
+  - app and project secrets (set and rotate);
+  - the clone worker's `DATABASE_URL`;
+  - object storage binding values (a new `RuntimeSecretRecipient` on the
+    object host);
+  - project release secret bundles;
+  - managed PostgreSQL credential delivery;
+  - sidecar env.
+
+  The recipient comes from `FAAS_SEAL_DOMAIN_RUNTIME_RECIPIENT_PATH` and
+  `FAAS_SEAL_DOMAIN_RUNTIME_WRITES`, delivered by an apid drop-in from the
+  `seal_domains` role.
+- **Runtime goes straight from `fleet` to `domain`, with no `dual` mode.**
+  apid refuses `dual` for runtime. Its writers span several packages that
+  each take one recipient, and dual sealing would protect nothing while the
+  fleet identity still opens every row. The switch to `domain` waits until
+  every vmmd reports the identity loaded and the previous release has left
+  the rollback window.
+- **No rows go back to the fleet key.** In domain mode, apid's rekey runner
+  no longer re-seals runtime secrets (it would undo the domain, and apid
+  cannot open domain rows). `gregalectl fleet-seal migrate` skips rows whose
+  `kid` names a recipient it holds no identity for.
+- **Re-seal:** `gregalectl seal-domain migrate --domain runtime
+  --readers-verified` re-seals every stored runtime secret through the
+  release-secret rekey documents (ADR-1139): app and project environment
+  secrets, staged release bundles, deployment snapshots, and release and
+  promotion captures. Each document is written back with a compare-and-swap
+  that changes only `kid` and ciphertext, so no runtime-change trigger fires
+  and value fingerprints and versions stay as they were. The store lists only
+  documents with an envelope labelled for another key, so a complete
+  migration lists nothing.
+- **Alerts:** `FaasSealDomainUnverified` (`faas_seal_domain_ready == 0`)
+  and `FaasSealDomainIdentityMissing` (a reader without the identity while
+  another reader of the domain holds it); runbook `FaasSealDomain`.
+- **Staging:** the `seal_domains` role stages the identity on compute and
+  single-box hosts and verifies the runtime probe there. It stages the
+  recipient and the apid drop-in on control-plane hosts. bootstrap runs the
+  role ahead of `vmmd_service` on compute nodes.
+
+## Implemented in the third slice: the source domain
+
+- **githubd** loads `domains/source.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_SOURCE_IDENTITY_PATH`, a `LoadCredential` drop-in from
+  the `seal_domains` role. It opens install tokens and webhook secret copies
+  with it ahead of the fleet and host identities, and exports
+  `faas_seal_domain_loaded{domain="source"}`.
+- **Writers follow `FAAS_SEAL_DOMAIN_SOURCE_WRITES`** (empty, `fleet`,
+  `dual` or `domain`, as for outbound):
+  - githubd seals each install token it mints or refreshes;
+  - apid seals webhook secret copies to `FAAS_SEAL_DOMAIN_SOURCE_RECIPIENT_PATH`
+    and holds only that public recipient.
+- **Install tokens are not migrated.** A GitHub installation token expires
+  within the hour, and githubd seals its successor under the write mode, so
+  the column moves to the domain on its own.
+- **Re-seal:** `gregalectl seal-domain migrate --domain source
+  --readers-verified` moves every webhook secret copy to the domain:
+  - a copy a legacy identity opens is re-sealed from what it opens to;
+  - a row without a copy gets one;
+  - a copy only the domain opens is current.
+
+  Writes are compare-and-swap on the stored copy. Without
+  `--readers-verified`, the command still backfills missing copies to the
+  fleet recipient.
+- **Staging:** the role stages the identity, the recipient and both
+  drop-ins on control-plane and single-box hosts. It restarts githubd and
+  proves the probe before apid seals anything to the domain.
+- `secretbox.SealTo` seals an env-map envelope to several recipients, as
+  `SealBytesTo` does for byte blobs. `sealdomain.RegisterLoaded` is the
+  shared `faas_seal_domain_loaded` gauge.
+
+The webhook secret's plaintext column `secret_value` still exists, so
+sealing its copy protects little until that column is gone. Retiring it
+takes two releases:
+
+1. Migration `20261023201337575_github_webhook_secret_plaintext_optional`
+   makes the column nullable and adds a `NOT VALID` check that a row keeps
+   at least one copy. apid stops writing the plaintext, and stores only the
+   sealed copy. githubd has preferred the sealed copy since the release that
+   added it, which is already the previous release, and still falls back to
+   the plaintext for older rows.
+2. The next release drops `secret_value`. Before it ships, every
+   environment must have run `gregalectl seal-domain migrate --domain
+   source`, so that no row depends on the plaintext.
+The install tokens are the gain now: they grant read access to customer
+repositories, and once writes are domain-only, within the hour the fleet
+identity opens none that is still valid.
+
+## Implemented in the fourth slice: the build domain
+
+- **imaged** loads `domains/build.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_BUILD_IDENTITY_PATH`, a `LoadCredential` drop-in from
+  the `seal_domains` role on compute and single-box hosts. It exports
+  `faas_seal_domain_loaded{domain="build"}`.
+- **imaged keeps two identity lists.** App and job private-registry
+  passwords open with a registry-only list: the build domain first, then
+  the fleet and host identities. Crash captures, a `runtime` column imaged
+  still reads (section 3), keep the fleet and host identities and never see
+  the build identity.
+- **apid seals both registry password writers** (app and job credentials)
+  to `FAAS_SEAL_DOMAIN_BUILD_RECIPIENT_PATH` under
+  `FAAS_SEAL_DOMAIN_BUILD_WRITES` (empty, `fleet`, `dual` or `domain`, as for
+  outbound). It holds only the public recipient.
+- **Re-seal:** `gregalectl seal-domain migrate --domain build
+  --readers-verified` re-seals both tables with compare-and-swap writes. It
+  shares one byte-envelope re-seal with the outbound migration. Like the
+  runtime one, it runs on a compute host, the only place `build.age` lives.
+- **Staging:** the role stages the identity, restarts imaged and proves the
+  probe on compute hosts. It stages the recipient and apid's drop-in on
+  control-plane hosts. Until writes are `domain`, apid also seals to the
+  fleet key, so the two converges can run in either order.
+
+## CD and node join stage the domain keys
+
+Each domain's key pair is a pair of GitHub environment secrets:
+`SEAL_DOMAIN_<DOMAIN>_AGE_KEY` and `SEAL_DOMAIN_<DOMAIN>_AGE_RECIPIENT`.
+
+- `scripts/ci/seal_domain_vars.sh` writes the files a host role needs on the
+  runner and points the `seal_domains` role at them:
+  - control plane: the `outbound` and `source` identities and every
+    recipient;
+  - compute: the `runtime` and `build` identities.
+- The control-plane converges (the full one and the host-configuration
+  lane) and the compute join run the role with those variables.
+- A join whose `seal-domain verify` fails leaves the node drained.
+- Each domain's public recipient is written as a comment, so a rotated key
+  changes the converge contract hash.
+- Write modes and `readers_verified` stay in the environment's Ansible
+  variables. CD refuses a variables file that sets the key variables itself.
+- `gregalectl seal-domain verify --recipient-only` checks that a staged
+  recipient is the one readers published the probe with. The role runs it
+  before apid's writer drop-in, so a recipient from another pair stops the
+  converge instead of making apid seal to a key no reader holds.
+
+Later slices:
+- the other domains, in the order above;
+- re-sealing the short-lived copies in `app_config_guard_secrets` and
+  `managed_postgres_cutover_credentials`, which the rekey documents do not
+  cover;
+- the contract steps;
+- meterd sending test alerts;
+- dropping `github_webhook_secrets.secret_value` (step 2 above), after the
+  source backfill has run everywhere.
 
 ## Consequences
 

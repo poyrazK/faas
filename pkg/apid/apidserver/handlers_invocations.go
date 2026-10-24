@@ -457,6 +457,10 @@ func (s *server) enqueueAppMessage(ctx context.Context, requestHeaders http.Head
 		// The store counts and inserts under one app lock, so concurrent
 		// senders cannot overshoot; keep_latest replacement is net zero.
 		AdmissionMaxPending: limits.MaxQueueDepth,
+		// ADR-20261022105723: the account's pending queue bytes. Apps of
+		// one account do not share a lock, so concurrent senders to
+		// different apps may pass the cap by their own messages.
+		AdmissionMaxBacklogBytes: limits.MaxQueueBacklogBytesPerAccount,
 	}, "enqueue application message", work)
 	if versionProblem != nil {
 		return state.Invocation{}, "", versionProblem

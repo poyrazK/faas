@@ -21,7 +21,9 @@ of production memory, secrets included. Every create and cancel is recorded
 in your audit log.
 
 The response includes `access_token`. It is shown once and never again; keep
-it if you want to reach the fork.
+it if you want to reach the fork. A retry with the same `Idempotency-Key`
+does not repeat the token: it runs the request again, so expect the
+one-fork-per-app limit if the first fork was created.
 
 The fork starts `queued`, moves to `restoring`, then `running`. It ends as
 `expired` at `expires_at`, `cancelled` when you delete it, or `failed` with a
@@ -93,6 +95,9 @@ It returns `exit_code` and the tail of `stdout` and `stderr`.
 - Creating a command and reading its output need both `deploy:write` and
   `secrets:read`, like creating the fork. Every command is recorded in your
   audit log (without its arguments).
+- Output is kept for 24 hours after the fork ends, then `stdout` and
+  `stderr` are emptied: they come from inside a copy of production. The
+  command, its status and exit code stay.
 
 ## Send requests to a fork {#access}
 

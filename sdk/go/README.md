@@ -79,6 +79,26 @@ func main() {
 }
 ```
 
+## Request tracing
+
+The `tracing` package sends request, HTTP client and `database/sql` spans to
+the Gregale debugger when the app sets `tracing.enabled`, using only the
+standard library:
+
+```go
+import "github.com/poyrazK/faas/sdk/go/tracing"
+
+shutdown := tracing.Start() // does nothing unless tracing is enabled
+defer shutdown(context.Background())
+
+http.DefaultTransport = tracing.Transport(http.DefaultTransport)
+db, err := tracing.Open("pgx", os.Getenv("DATABASE_URL"), "postgresql")
+log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), tracing.Handler(mux)))
+```
+
+Pass the request's context to outgoing calls so they appear under the
+request. See [`docs/tracing.md`](../../docs/tracing.md#go).
+
 ## Gregale Issues exception reporting
 
 Create a deployment-bound issue ingest token with `gregale issues create-token`

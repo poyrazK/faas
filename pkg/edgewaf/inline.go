@@ -5,7 +5,6 @@ import (
 	"strings"
 	"time"
 
-	coreruleset "github.com/corazawaf/coraza-coreruleset/v4"
 	"github.com/corazawaf/coraza/v3"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -38,7 +37,7 @@ SecAction "id:900000,phase:1,pass,t:none,nolog,setvar:tx.blocking_paranoia_level
 SecAuditEngine Off
 SecRequestBodyAccess Off
 SecResponseBodyAccess Off`, opts.directive(), rules.String())
-	waf, err := coraza.NewWAF(coraza.NewWAFConfig().WithRootFS(coreruleset.FS).WithDirectives(directives))
+	waf, err := coraza.NewWAF(coraza.NewWAFConfig().WithRootFS(opts.rootFS()).WithDirectives(directives))
 	if err != nil {
 		return nil, fmt.Errorf("compile in-path OWASP CRS rule set: %w", err)
 	}

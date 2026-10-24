@@ -134,7 +134,8 @@ func (s *Service) applyActions(
 				app = ApplyScannedWorkloadToApp(app, action.Workload, availableServices)
 			}
 			mutations = append(mutations, state.ProjectReconcileMutation{Op: action.Op, App: app,
-				SetPlatformTenantRequired: action.Workload.PlatformTenantRequired != nil})
+				SetPlatformTenantRequired: action.Workload.PlatformTenantRequired != nil,
+				SetResources:              !action.Workload.Resources.IsZero()})
 		}
 		var desiredCrons []state.ProjectReconcileCron
 		if cronSpecs != nil {
@@ -327,6 +328,10 @@ func (s *Service) applyUpdate(
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	manifest.DockerfileBuild = a.Workload.DockerfileBuild.Clone()
 	applyProjectImage(&manifest, a.Workload)
+	resourced := a.App
+	resourced.Manifest = manifest
+	declared := applyComposeResources(&resourced, a.Workload)
+	manifest = resourced.Manifest
 	workloadClass := workloadClassFromScan(a.Workload)
 	params := state.UpdateAppParams{
 		RootDir:                   &rootDir,
@@ -336,6 +341,9 @@ func (s *Service) applyUpdate(
 		Manifest:                  &manifest,
 		PlatformTenantRequired:    a.Workload.PlatformTenantRequired,
 		SetPlatformTenantRequired: a.Workload.PlatformTenantRequired != nil,
+	}
+	if declared {
+		params.RAMMB, params.CPUMillicores, params.MaxConcurrency = &resourced.RAMMB, &resourced.CPUMillicores, &resourced.MaxConcurrency
 	}
 	updated, err := s.Store.UpdateApp(ctx, a.App.ID, params)
 	if err != nil {
@@ -416,6 +424,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 		Visibility: reposcan.NewWorkloadVisibility(w),
 	}
 	applyProjectImage(&app.Manifest, w)
+	applyComposeResources(&app, w)
 	return app
 }
 
@@ -445,6 +454,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.Manifest.BuildDockerfile = w.Dockerfile
 	app.Manifest.DockerfileBuild = w.DockerfileBuild.Clone()
 	applyProjectImage(&app.Manifest, w)
+	applyComposeResources(&app, w)
 	return app
 }
 
@@ -461,6 +471,9 @@ func applyProjectImage(manifest *state.AppManifest, w reposcan.Workload) {
 	// folds into a built service's command (ADR-20261022160000).
 	manifest.ProjectImageHealthcheck = w.ImageHealthcheck.Clone()
 	manifest.ProjectImageProcess = w.ImageProcess.Clone()
+	// Compose secrets become files for built and prebuilt images alike
+	// (ADR-20261023090000).
+	manifest.ProjectSecretFiles = api.CloneSecretFiles(w.SecretFiles)
 	if w.Image == "" {
 		return
 	}

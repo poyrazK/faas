@@ -44,7 +44,7 @@ gregale synthetics status --app shop CHECK_ID
 ```
 health — GET https://shop.gregale.dev/healthz every 5 minutes, expecting 2xx
   Uptime:   99.65% (24h, 288 runs) · 99.90% (7d)
-  Latency:  p95 840 ms over 24h, including wakes
+  Latency:  p95 840 ms over 24h of successful runs, including wakes
   Recent runs:
     2026-10-10T12:05:00Z  ok              200  92 ms
     2026-10-10T12:00:00Z  FAIL status     503  31 ms
@@ -53,7 +53,7 @@ health — GET https://shop.gregale.dev/healthz every 5 minutes, expecting 2xx
 A run fails with one of: `status` (a response with an unexpected code),
 `timeout`, `dns`, `connect`, `tls`, or `other`. Runs are kept for 7 days.
 Latency is measured end to end, so a run that woke a parked app includes the
-wake. `GET /v1/apps/{slug}/synthetics/{id}` returns the same figures in
+wake. The p95 covers successful runs; a check with none in 24 hours shows `—`. `GET /v1/apps/{slug}/synthetics/{id}` returns the same figures in
 `results`.
 
 Checks run from Gregale's control plane. Requests carry the user agent

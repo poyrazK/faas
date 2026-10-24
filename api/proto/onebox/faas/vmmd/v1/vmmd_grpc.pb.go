@@ -66,6 +66,8 @@ const (
 	Vmmd_GetOperatorRestartGeneration_FullMethodName            = "/onebox.faas.vmmd.v1.Vmmd/GetOperatorRestartGeneration"
 	Vmmd_ExecuteOperatorRestartDestroy_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/ExecuteOperatorRestartDestroy"
 	Vmmd_ExecuteOperatorPark_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/ExecuteOperatorPark"
+	Vmmd_AdoptionReport_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/AdoptionReport"
+	Vmmd_AdoptionInventory_FullMethodName                       = "/onebox.faas.vmmd.v1.Vmmd/AdoptionInventory"
 	Vmmd_StopInstance_FullMethodName                            = "/onebox.faas.vmmd.v1.Vmmd/StopInstance"
 	Vmmd_Stats_FullMethodName                                   = "/onebox.faas.vmmd.v1.Vmmd/Stats"
 	Vmmd_InflightRequestTrace_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/InflightRequestTrace"
@@ -76,6 +78,7 @@ const (
 	Vmmd_UpdateAdmittedAppEgressPolicy_FullMethodName           = "/onebox.faas.vmmd.v1.Vmmd/UpdateAdmittedAppEgressPolicy"
 	Vmmd_AllowResolvedEgress_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/AllowResolvedEgress"
 	Vmmd_UpdateAppCPULimit_FullMethodName                       = "/onebox.faas.vmmd.v1.Vmmd/UpdateAppCPULimit"
+	Vmmd_CaptureProfile_FullMethodName                          = "/onebox.faas.vmmd.v1.Vmmd/CaptureProfile"
 	Vmmd_UpdateStaticEgressIP_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/UpdateStaticEgressIP"
 	Vmmd_UpdateEgressCircuit_FullMethodName                     = "/onebox.faas.vmmd.v1.Vmmd/UpdateEgressCircuit"
 	Vmmd_UpdatePrivateNetwork_FullMethodName                    = "/onebox.faas.vmmd.v1.Vmmd/UpdatePrivateNetwork"
@@ -302,6 +305,16 @@ type VmmdClient interface {
 	ExecuteOperatorRestartDestroy(ctx context.Context, in *ExecuteOperatorRestartDestroyRequest, opts ...grpc.CallOption) (*ExecuteOperatorRestartDestroyResponse, error)
 	// ADR-1525: one journal-authorized capture/stop of the original VM generation.
 	ExecuteOperatorPark(ctx context.Context, in *ExecuteOperatorParkRequest, opts ...grpc.CallOption) (*ExecuteOperatorParkResponse, error)
+	// AdoptionReport is the node inventory this vmmd took over at startup
+	// (vmmd restart adoption ADR §3). UNIMPLEMENTED when adopt_running_vms is
+	// off; UNAVAILABLE when this start claimed no ownership epoch.
+	AdoptionReport(ctx context.Context, in *AdoptionReportRequest, opts ...grpc.CallOption) (*AdoptionReportResponse, error)
+	// AdoptionInventory hands a candidate vmmd binary this vmmd's journal
+	// records and the live adoption proof for each, so the candidate can say
+	// before a release restarts vmmd whether it would adopt every guest (vmmd
+	// restart adoption ADR §4). Served on vmmd's root-only admin socket;
+	// PERMISSION_DENIED elsewhere.
+	AdoptionInventory(ctx context.Context, in *AdoptionInventoryRequest, opts ...grpc.CallOption) (*AdoptionInventoryResponse, error)
 	// StopInstance is the M-2 / ADR-138 graceful stop sequence: send
 	// `signal` to the guest's PID 1, wait up to `grace_period_s`
 	// seconds for it to exit cleanly, then SIGKILL on deadline.
@@ -379,6 +392,12 @@ type VmmdClient interface {
 	// without rebooting the guest or creating a deployment. RAM/vCPU topology
 	// remain boot-time settings.
 	UpdateAppCPULimit(ctx context.Context, in *UpdateAppCPULimitRequest, opts ...grpc.CallOption) (*UpdateAppCPULimitAck, error)
+	// CaptureProfile (ADR-1155) arms one live instance's dormant guest profile
+	// collectors for a bounded window and returns the pprof profiles they
+	// report. vmmd bounds the reply and never parses the profiles. The call
+	// counts as in-flight activity so the idle reaper does not park the
+	// instance mid-capture. Additive per ADR-016.
+	CaptureProfile(ctx context.Context, in *CaptureProfileRequest, opts ...grpc.CallOption) (*CaptureProfileResponse, error)
 	// UpdateStaticEgressIP (ADR-119) lets schedd push a fresh
 	// per-app static egress IP into every live netns the vmmd
 	// owns without tearing the netns down. The caller passes
@@ -1118,6 +1137,26 @@ func (c *vmmdClient) ExecuteOperatorPark(ctx context.Context, in *ExecuteOperato
 	return out, nil
 }
 
+func (c *vmmdClient) AdoptionReport(ctx context.Context, in *AdoptionReportRequest, opts ...grpc.CallOption) (*AdoptionReportResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdoptionReportResponse)
+	err := c.cc.Invoke(ctx, Vmmd_AdoptionReport_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) AdoptionInventory(ctx context.Context, in *AdoptionInventoryRequest, opts ...grpc.CallOption) (*AdoptionInventoryResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(AdoptionInventoryResponse)
+	err := c.cc.Invoke(ctx, Vmmd_AdoptionInventory_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *vmmdClient) StopInstance(ctx context.Context, in *StopInstanceRequest, opts ...grpc.CallOption) (*StopInstanceResponse, error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(StopInstanceResponse)
@@ -1212,6 +1251,16 @@ func (c *vmmdClient) UpdateAppCPULimit(ctx context.Context, in *UpdateAppCPULimi
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	out := new(UpdateAppCPULimitAck)
 	err := c.cc.Invoke(ctx, Vmmd_UpdateAppCPULimit_FullMethodName, in, out, cOpts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *vmmdClient) CaptureProfile(ctx context.Context, in *CaptureProfileRequest, opts ...grpc.CallOption) (*CaptureProfileResponse, error) {
+	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
+	out := new(CaptureProfileResponse)
+	err := c.cc.Invoke(ctx, Vmmd_CaptureProfile_FullMethodName, in, out, cOpts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1697,6 +1746,16 @@ type VmmdServer interface {
 	ExecuteOperatorRestartDestroy(context.Context, *ExecuteOperatorRestartDestroyRequest) (*ExecuteOperatorRestartDestroyResponse, error)
 	// ADR-1525: one journal-authorized capture/stop of the original VM generation.
 	ExecuteOperatorPark(context.Context, *ExecuteOperatorParkRequest) (*ExecuteOperatorParkResponse, error)
+	// AdoptionReport is the node inventory this vmmd took over at startup
+	// (vmmd restart adoption ADR §3). UNIMPLEMENTED when adopt_running_vms is
+	// off; UNAVAILABLE when this start claimed no ownership epoch.
+	AdoptionReport(context.Context, *AdoptionReportRequest) (*AdoptionReportResponse, error)
+	// AdoptionInventory hands a candidate vmmd binary this vmmd's journal
+	// records and the live adoption proof for each, so the candidate can say
+	// before a release restarts vmmd whether it would adopt every guest (vmmd
+	// restart adoption ADR §4). Served on vmmd's root-only admin socket;
+	// PERMISSION_DENIED elsewhere.
+	AdoptionInventory(context.Context, *AdoptionInventoryRequest) (*AdoptionInventoryResponse, error)
 	// StopInstance is the M-2 / ADR-138 graceful stop sequence: send
 	// `signal` to the guest's PID 1, wait up to `grace_period_s`
 	// seconds for it to exit cleanly, then SIGKILL on deadline.
@@ -1774,6 +1833,12 @@ type VmmdServer interface {
 	// without rebooting the guest or creating a deployment. RAM/vCPU topology
 	// remain boot-time settings.
 	UpdateAppCPULimit(context.Context, *UpdateAppCPULimitRequest) (*UpdateAppCPULimitAck, error)
+	// CaptureProfile (ADR-1155) arms one live instance's dormant guest profile
+	// collectors for a bounded window and returns the pprof profiles they
+	// report. vmmd bounds the reply and never parses the profiles. The call
+	// counts as in-flight activity so the idle reaper does not park the
+	// instance mid-capture. Additive per ADR-016.
+	CaptureProfile(context.Context, *CaptureProfileRequest) (*CaptureProfileResponse, error)
 	// UpdateStaticEgressIP (ADR-119) lets schedd push a fresh
 	// per-app static egress IP into every live netns the vmmd
 	// owns without tearing the netns down. The caller passes
@@ -2178,6 +2243,12 @@ func (UnimplementedVmmdServer) ExecuteOperatorRestartDestroy(context.Context, *E
 func (UnimplementedVmmdServer) ExecuteOperatorPark(context.Context, *ExecuteOperatorParkRequest) (*ExecuteOperatorParkResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method ExecuteOperatorPark not implemented")
 }
+func (UnimplementedVmmdServer) AdoptionReport(context.Context, *AdoptionReportRequest) (*AdoptionReportResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AdoptionReport not implemented")
+}
+func (UnimplementedVmmdServer) AdoptionInventory(context.Context, *AdoptionInventoryRequest) (*AdoptionInventoryResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method AdoptionInventory not implemented")
+}
 func (UnimplementedVmmdServer) StopInstance(context.Context, *StopInstanceRequest) (*StopInstanceResponse, error) {
 	return nil, status.Error(codes.Unimplemented, "method StopInstance not implemented")
 }
@@ -2207,6 +2278,9 @@ func (UnimplementedVmmdServer) AllowResolvedEgress(context.Context, *AllowResolv
 }
 func (UnimplementedVmmdServer) UpdateAppCPULimit(context.Context, *UpdateAppCPULimitRequest) (*UpdateAppCPULimitAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateAppCPULimit not implemented")
+}
+func (UnimplementedVmmdServer) CaptureProfile(context.Context, *CaptureProfileRequest) (*CaptureProfileResponse, error) {
+	return nil, status.Error(codes.Unimplemented, "method CaptureProfile not implemented")
 }
 func (UnimplementedVmmdServer) UpdateStaticEgressIP(context.Context, *UpdateStaticEgressIPRequest) (*UpdateStaticEgressIPAck, error) {
 	return nil, status.Error(codes.Unimplemented, "method UpdateStaticEgressIP not implemented")
@@ -3052,6 +3126,42 @@ func _Vmmd_ExecuteOperatorPark_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Vmmd_AdoptionReport_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdoptionReportRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).AdoptionReport(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_AdoptionReport_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).AdoptionReport(ctx, req.(*AdoptionReportRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_AdoptionInventory_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(AdoptionInventoryRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).AdoptionInventory(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_AdoptionInventory_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).AdoptionInventory(ctx, req.(*AdoptionInventoryRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Vmmd_StopInstance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(StopInstanceRequest)
 	if err := dec(in); err != nil {
@@ -3228,6 +3338,24 @@ func _Vmmd_UpdateAppCPULimit_Handler(srv interface{}, ctx context.Context, dec f
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(VmmdServer).UpdateAppCPULimit(ctx, req.(*UpdateAppCPULimitRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Vmmd_CaptureProfile_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(CaptureProfileRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(VmmdServer).CaptureProfile(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Vmmd_CaptureProfile_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(VmmdServer).CaptureProfile(ctx, req.(*CaptureProfileRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -3813,6 +3941,14 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Vmmd_ExecuteOperatorPark_Handler,
 		},
 		{
+			MethodName: "AdoptionReport",
+			Handler:    _Vmmd_AdoptionReport_Handler,
+		},
+		{
+			MethodName: "AdoptionInventory",
+			Handler:    _Vmmd_AdoptionInventory_Handler,
+		},
+		{
 			MethodName: "StopInstance",
 			Handler:    _Vmmd_StopInstance_Handler,
 		},
@@ -3851,6 +3987,10 @@ var Vmmd_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "UpdateAppCPULimit",
 			Handler:    _Vmmd_UpdateAppCPULimit_Handler,
+		},
+		{
+			MethodName: "CaptureProfile",
+			Handler:    _Vmmd_CaptureProfile_Handler,
 		},
 		{
 			MethodName: "UpdateStaticEgressIP",

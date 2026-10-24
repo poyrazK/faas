@@ -53,6 +53,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/bridgeproc"
 	"github.com/onebox-faas/faas/pkg/netns"
 )
 
@@ -69,6 +70,7 @@ const dialTimeout = 30 * time.Second
 const readHeaderTimeout = 30 * time.Second
 
 func main() {
+	bridgeproc.MustHarden()
 	if len(os.Args) != 3 {
 		fmt.Fprintf(os.Stderr, "usage: vmmd-raw-bridge <guest-ip> <port>\n")
 		os.Exit(2)

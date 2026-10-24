@@ -79,6 +79,7 @@ require (
 	google.golang.org/grpc v1.83.2
 	google.golang.org/protobuf v1.36.12
 	gopkg.in/yaml.v3 v3.0.1
+	rsc.io/binaryregexp v0.2.0
 )
 
 require (
@@ -151,7 +152,6 @@ require (
 	go.yaml.in/yaml/v3 v3.0.5 // indirect
 	golang.org/x/time v0.15.0 // indirect
 	google.golang.org/genproto v0.0.0-20260715232425-e75dac1f907d // indirect
-	rsc.io/binaryregexp v0.2.0 // indirect
 )
 
 require (

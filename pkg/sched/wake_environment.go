@@ -106,6 +106,9 @@ func (e *Engine) resolveWakeEnvironmentForDeployment(ctx context.Context, appID 
 		selected.deployment, err = e.store.LiveDeploymentForScope(ctx, appID, ScopeFrom(ctx))
 	}
 	if err != nil {
+		if errors.Is(err, state.ErrNotFound) && deploymentID == "" && ScopeFrom(ctx) == "" {
+			return selected, noProductionDeploymentErr(ctx, e.store, appID)
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			return selected, errors.Join(ErrPermanentWake, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "No live deployment", "the app has no live deployment to wake"))
 		}
@@ -140,7 +143,7 @@ func wakeEnvironmentChanged() error {
 }
 
 func (e *Engine) wakeFanoutForEnvironment(selected wakeEnvironment) WakeFanout {
-	fanout := WakeFanout{MaxInFlight: effectiveMaxConcurrency(selected.app, selected.limits), PerVM: selected.limits.ConcurrencyPerVMBound}
+	fanout := WakeFanout{MaxInFlight: effectiveMaxConcurrency(selected.app, selected.limits), PerVM: effectivePerInstanceConcurrency(selected.app, selected.limits)}
 	if e.ledger != nil {
 		fanout.Existing = selected.concurrency(e.ledger)
 	}
