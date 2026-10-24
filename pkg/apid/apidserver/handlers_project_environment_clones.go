@@ -25,7 +25,86 @@ func (s *server) createFullProjectEnvironmentClone(w http.ResponseWriter, r *htt
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid full clone", "from_environment is required and share_resources must be false"))
 		return
 	}
-	api.WriteProblem(w, s.fullProjectEnvironmentCloneProblem(r, acct, project))
+	if !s.fullProjectEnvironmentCloneAdmitted() {
+		api.WriteProblem(w, s.fullProjectEnvironmentCloneProblem(r, acct, project))
+		return
+	}
+	if req.Protected != nil && *req.Protected {
+		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid full clone", "a full clone creates an unprotected stage; protect it once it is ready"))
+		return
+	}
+	s.admitFullProjectEnvironmentClone(w, r, acct, project, req)
+}
+
+// Admission needs the clone machinery switched on fleet-wide and admission
+// itself opened, so no gateway serves a stage before its clone publishes
+// (ADR-20261024123122).
+func (s *server) fullProjectEnvironmentCloneAdmitted() bool {
+	return s.runtimeBool(runtimeConfigFullEnvironmentClones, false) && s.runtimeBool(runtimeConfigFullEnvironmentCloneAdmission, false)
+}
+
+// admitFullProjectEnvironmentClone captures the source and creates the
+// operation in one transaction; the coordinator copies and publishes it. A
+// source that uses a table without an isolated strategy, or holds managed data,
+// is refused with each such table named.
+func (s *server) admitFullProjectEnvironmentClone(w http.ResponseWriter, r *http.Request, acct state.Account, project state.Project, req api.CreateProjectEnvironmentRequest) {
+	store, ok := s.store.(state.ProjectEnvironmentCloneConfigurationCaptureStore)
+	if !ok {
+		api.WriteProblem(w, fullProjectEnvironmentCloneUnavailable())
+		return
+	}
+	key := strings.TrimSpace(r.Header.Get("Idempotency-Key"))
+	if key == "" {
+		key = uuid.NewString()
+	}
+	op, err := store.CreateCapturedProjectEnvironmentCloneOperation(r.Context(), state.ProjectEnvironmentCloneCaptureRequest{AccountID: acct.ID, ProjectID: project.ID,
+		SourceEnvironment: req.FromEnvironment, TargetEnvironment: req.Slug, IdempotencyKey: key, RequireCompleteInventory: true})
+	if err != nil {
+		api.WriteProblem(w, fullProjectEnvironmentCloneAdmissionProblem(project.Slug, req.FromEnvironment, err))
+		return
+	}
+	s.audit.Emit(r.Context(), "project.environment.clone_admitted", &acct.ID, map[string]any{
+		"project_id": project.ID, "project_slug": project.Slug, "operation_id": op.ID,
+		"source_environment": op.SourceEnvironment, "target_environment": op.TargetEnvironment,
+	})
+	// The target environment does not exist until the coordinator materializes
+	// it; the response carries the durable operation to wait on.
+	response := projectEnvironmentCloneOperationResponse(project.Slug, op)
+	w.Header().Set("Location", "/v1/projects/"+project.Slug+"/environment-clones/"+op.ID)
+	writeJSON(w, http.StatusAccepted, api.ProjectEnvironmentResponse{ProjectID: project.ID, Slug: op.TargetEnvironment, ClonedFrom: op.SourceEnvironment,
+		CreatedAt: response.CreatedAt, UpdatedAt: response.UpdatedAt, CloneOperation: &response})
+}
+
+func fullProjectEnvironmentCloneAdmissionProblem(projectSlug, source string, err error) *api.Problem {
+	var inventory *state.ProjectEnvironmentCloneInventoryError
+	var coverage *state.ProjectEnvironmentCloneSchemaCoverageError
+	switch {
+	case errors.As(err, &inventory):
+		problem := api.NewProblem(http.StatusConflict, api.CodeFullEnvironmentCloneUnavailable, "Full environment clone unavailable",
+			"the source uses resources a full clone cannot copy into an isolated stage yet")
+		for _, blocker := range inventory.Blockers {
+			problem.Errors = append(problem.Errors, api.FieldError{Field: "resource_coverage." + blocker.Table, Expected: "an isolated stage strategy", Got: blocker.Code})
+		}
+		return problem
+	case errors.As(err, &coverage):
+		problem := fullProjectEnvironmentCloneUnavailable()
+		problem.Errors = nil
+		for _, blocker := range coverage.Blockers {
+			field := "resource_coverage." + blocker.Table
+			if blocker.Column != "" {
+				field += "." + blocker.Column
+			}
+			problem.Errors = append(problem.Errors, api.FieldError{Field: field, Expected: "registered schema", Got: blocker.Code})
+		}
+		return problem
+	case errors.Is(err, state.ErrNotFound):
+		return projectEnvironmentNotFound(projectSlug, source)
+	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrInvalidArgument):
+		return api.NewProblem(http.StatusConflict, api.CodeConflict, "Full environment clone conflict",
+			"the target environment already exists, the idempotency key names another clone, or the source changed while it was captured")
+	default:
+		return api.ErrCapacity("could not capture the source environment")
+	}
 }
 
 func (s *server) fullProjectEnvironmentCloneProblem(r *http.Request, acct state.Account, project state.Project) *api.Problem {

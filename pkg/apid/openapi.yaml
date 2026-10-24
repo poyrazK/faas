@@ -36306,15 +36306,27 @@ paths:
       operationId: createFullProjectEnvironmentClone
       summary: Request a complete isolated environment clone.
       description: |
-        This dedicated route never falls back to partial cloning. Full admission
-        currently returns environment_full_clone_unavailable with named blockers
-        until complete coverage and coordinated data-copy proofs are available.
+        This dedicated route never falls back to partial cloning. While full
+        admission is closed it returns environment_full_clone_unavailable with
+        named blockers. When open (ADR-20261024123122), a source without managed
+        data whose every used resource has an isolated strategy is captured and
+        a durable clone operation is returned; any other source is refused with
+        each uncopyable resource named under resource_coverage.
       requestBody:
         required: true
         content:
           application/json:
             schema: { $ref: '#/components/schemas/CreateProjectEnvironmentRequest' }
       responses:
+        '202':
+          description: The source was captured; poll the clone operation until it is ready or compensated.
+          headers:
+            Location:
+              description: The clone operation status URL.
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentResponse' }
         '400': { $ref: '#/components/responses/BadRequest' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }

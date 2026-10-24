@@ -6470,6 +6470,41 @@ FROM project_environment_clone_inventory_present(
     sqlc.arg(project_id)::uuid, sqlc.arg(environment_id)::uuid, sqlc.arg(environment_slugs)::text[],
     sqlc.arg(app_ids)::uuid[], sqlc.arg(deployment_ids)::uuid[], sqlc.arg(probes)::jsonb) AS present;
 
+-- name: CancelProjectEnvironmentCloneTargetDeployments :execrows
+-- A data-less clone that will not publish cancels the deployments it created
+-- for its target; schedd drains their instances on the notification.
+WITH cancelled AS (
+    UPDATE deployments d SET status = 'cancelled'
+    FROM project_environment_clone_workloads w
+    WHERE w.operation_id = sqlc.arg(operation_id)::uuid AND d.id = w.target_deployment_id
+      AND d.app_id = w.app_id AND d.scope = sqlc.arg(environment)::text
+      AND d.status NOT IN ('failed', 'superseded', 'cancelled')
+    RETURNING d.id, d.app_id
+)
+SELECT pg_notify('deployment_changed', json_build_object('kind', 'cancelled', 'app_id', app_id, 'deployment_id', id,
+    'to', id, 'status', 'cancelled')::text)
+FROM cancelled;
+
+-- name: ReadProjectEnvironmentCloneTargetRetirement :one
+SELECT count(*) FILTER (WHERE d.status NOT IN ('failed', 'superseded', 'cancelled'))::bigint AS unretired,
+       (SELECT count(*) FROM instances i
+         WHERE i.deployment_id IN (SELECT target_deployment_id FROM project_environment_clone_workloads WHERE operation_id = sqlc.arg(operation_id)::uuid)
+           AND i.state NOT IN ('parked', 'stopped', 'failed'))::bigint AS active_instances
+FROM project_environment_clone_workloads w
+JOIN deployments d ON d.id = w.target_deployment_id
+WHERE w.operation_id = sqlc.arg(operation_id)::uuid;
+
+-- name: DeleteProjectEnvironmentCloneTargetPolicies :exec
+WITH routes AS (
+    DELETE FROM project_environment_route_policies
+    WHERE project_id = sqlc.arg(project_id)::uuid AND environment_slug = sqlc.arg(environment)::text
+)
+DELETE FROM project_environment_edge_policies
+WHERE project_id = sqlc.arg(project_id)::uuid AND environment_slug = sqlc.arg(environment)::text;
+
+-- name: ReadProjectEnvironmentCloneProjectSlug :one
+SELECT slug FROM projects WHERE id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
+
 -- name: ReadProjectEnvironmentCloneSourceEnvironmentID :one
 SELECT id FROM project_environments
 WHERE project_id = sqlc.arg(project_id)::uuid AND slug = sqlc.arg(slug)::text;

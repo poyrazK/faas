@@ -5505,11 +5505,25 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 			return ProjectEnvironmentCleanupJob{}, mapErr(err)
 		}
 	}
+	if err := deleteProjectEnvironmentRowsTx(ctx, tx, accountID, projectID, projectSlug, slug); err != nil {
+		return ProjectEnvironmentCleanupJob{}, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: commit project environment delete: %w", err)
+	}
+	return job, nil
+}
+
+// deleteProjectEnvironmentRowsTx removes an environment's scoped values,
+// configuration and approvals, then the environment row, whose foreign keys
+// cascade to its workload specifications and flags. Deployments stay as
+// history; callers first make sure none is live.
+func deleteProjectEnvironmentRowsTx(ctx context.Context, tx pgx.Tx, accountID, projectID, projectSlug, slug string) error {
 	if _, err := tx.Exec(ctx, `
 		delete from app_envs e using apps a
 		 where e.app_id = a.id and a.account_id = $1 and a.project_id = $2 and e.scope = $3
 	`, accountID, projectID, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return mapErr(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		delete from app_secrets s using apps a
@@ -5517,35 +5531,32 @@ func (s *PgStore) deleteProjectEnvironmentWithCleanup(
 		   and s.managed_postgres_binding_id is null
 		   and s.managed_object_storage_credential_id is null
 	`, accountID, projectID, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return mapErr(err)
 	}
 
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_config_versions
 		 where project_id = $1 and environment_slug = $2
 	`, projectID, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return mapErr(err)
 	}
 	if _, err := tx.Exec(ctx, `
 		delete from project_environment_approvals
 		 where account_id = $1 and project_slug = $2 and environment_slug = $3
 	`, accountID, projectSlug, slug); err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(err)
+		return mapErr(err)
 	}
 	tag, err := tx.Exec(ctx, `
 		delete from project_environments
 		 where project_id = $1 and slug = $2
 	`, projectID, slug)
 	if err != nil {
-		return ProjectEnvironmentCleanupJob{}, mapErr(hostingParentDeleteError(err))
+		return mapErr(hostingParentDeleteError(err))
 	}
 	if tag.RowsAffected() == 0 {
-		return ProjectEnvironmentCleanupJob{}, ErrNotFound
+		return ErrNotFound
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return ProjectEnvironmentCleanupJob{}, fmt.Errorf("state: commit project environment delete: %w", err)
-	}
-	return job, nil
+	return nil
 }
 
 // ApplyProjectPlan persists a project + its member apps + crons in

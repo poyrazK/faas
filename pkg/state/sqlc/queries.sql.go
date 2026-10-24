@@ -3491,6 +3491,35 @@ func (q *Queries) CancelManagedPostgresCutover(ctx context.Context, db DBTX, arg
 	return i, err
 }
 
+const cancelProjectEnvironmentCloneTargetDeployments = `-- name: CancelProjectEnvironmentCloneTargetDeployments :execrows
+WITH cancelled AS (
+    UPDATE deployments d SET status = 'cancelled'
+    FROM project_environment_clone_workloads w
+    WHERE w.operation_id = $1::uuid AND d.id = w.target_deployment_id
+      AND d.app_id = w.app_id AND d.scope = $2::text
+      AND d.status NOT IN ('failed', 'superseded', 'cancelled')
+    RETURNING d.id, d.app_id
+)
+SELECT pg_notify('deployment_changed', json_build_object('kind', 'cancelled', 'app_id', app_id, 'deployment_id', id,
+    'to', id, 'status', 'cancelled')::text)
+FROM cancelled
+`
+
+type CancelProjectEnvironmentCloneTargetDeploymentsParams struct {
+	OperationID pgtype.UUID
+	Environment string
+}
+
+// A data-less clone that will not publish cancels the deployments it created
+// for its target; schedd drains their instances on the notification.
+func (q *Queries) CancelProjectEnvironmentCloneTargetDeployments(ctx context.Context, db DBTX, arg CancelProjectEnvironmentCloneTargetDeploymentsParams) (int64, error) {
+	result, err := db.Exec(ctx, cancelProjectEnvironmentCloneTargetDeployments, arg.OperationID, arg.Environment)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const cancelQueuedCustomerOperationJobTask = `-- name: CancelQueuedCustomerOperationJobTask :exec
 UPDATE job_tasks SET status='cancelled',finished_at=clock_timestamp() WHERE run_id=$1::uuid AND task_index=0 AND status='queued'
 `
@@ -14080,6 +14109,25 @@ func (q *Queries) DeleteProductionDeadLetterEvents(ctx context.Context, db DBTX,
 		return 0, err
 	}
 	return result.RowsAffected(), nil
+}
+
+const deleteProjectEnvironmentCloneTargetPolicies = `-- name: DeleteProjectEnvironmentCloneTargetPolicies :exec
+WITH routes AS (
+    DELETE FROM project_environment_route_policies
+    WHERE project_id = $1::uuid AND environment_slug = $2::text
+)
+DELETE FROM project_environment_edge_policies
+WHERE project_id = $1::uuid AND environment_slug = $2::text
+`
+
+type DeleteProjectEnvironmentCloneTargetPoliciesParams struct {
+	ProjectID   pgtype.UUID
+	Environment string
+}
+
+func (q *Queries) DeleteProjectEnvironmentCloneTargetPolicies(ctx context.Context, db DBTX, arg DeleteProjectEnvironmentCloneTargetPoliciesParams) error {
+	_, err := db.Exec(ctx, deleteProjectEnvironmentCloneTargetPolicies, arg.ProjectID, arg.Environment)
+	return err
 }
 
 const deleteReadinessSubscription = `-- name: DeleteReadinessSubscription :execrows
@@ -79062,6 +79110,22 @@ func (q *Queries) ReadProjectEnvironmentCloneProjectConfiguration(ctx context.Co
 	return i, err
 }
 
+const readProjectEnvironmentCloneProjectSlug = `-- name: ReadProjectEnvironmentCloneProjectSlug :one
+SELECT slug FROM projects WHERE id = $1::uuid AND account_id = $2::uuid
+`
+
+type ReadProjectEnvironmentCloneProjectSlugParams struct {
+	ProjectID pgtype.UUID
+	AccountID pgtype.UUID
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneProjectSlug(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneProjectSlugParams) (string, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneProjectSlug, arg.ProjectID, arg.AccountID)
+	var slug string
+	err := row.Scan(&slug)
+	return slug, err
+}
+
 const readProjectEnvironmentCloneScopedEdgePolicy = `-- name: ReadProjectEnvironmentCloneScopedEdgePolicy :one
 SELECT jsonb_build_object('edge_present', p.app_id IS NOT NULL, 'edge_rules', coalesce(p.rules, '[]'::jsonb)) AS definition
 FROM apps a LEFT JOIN project_environment_edge_policies p ON p.app_id = a.id
@@ -79327,6 +79391,28 @@ func (q *Queries) ReadProjectEnvironmentCloneTargetOperationID(ctx context.Conte
 	var id string
 	err := row.Scan(&id)
 	return id, err
+}
+
+const readProjectEnvironmentCloneTargetRetirement = `-- name: ReadProjectEnvironmentCloneTargetRetirement :one
+SELECT count(*) FILTER (WHERE d.status NOT IN ('failed', 'superseded', 'cancelled'))::bigint AS unretired,
+       (SELECT count(*) FROM instances i
+         WHERE i.deployment_id IN (SELECT target_deployment_id FROM project_environment_clone_workloads WHERE operation_id = $1::uuid)
+           AND i.state NOT IN ('parked', 'stopped', 'failed'))::bigint AS active_instances
+FROM project_environment_clone_workloads w
+JOIN deployments d ON d.id = w.target_deployment_id
+WHERE w.operation_id = $1::uuid
+`
+
+type ReadProjectEnvironmentCloneTargetRetirementRow struct {
+	Unretired       int64
+	ActiveInstances int64
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneTargetRetirement(ctx context.Context, db DBTX, operationID pgtype.UUID) (ReadProjectEnvironmentCloneTargetRetirementRow, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneTargetRetirement, operationID)
+	var i ReadProjectEnvironmentCloneTargetRetirementRow
+	err := row.Scan(&i.Unretired, &i.ActiveInstances)
+	return i, err
 }
 
 const readProjectEnvironmentCloneTargetSettings = `-- name: ReadProjectEnvironmentCloneTargetSettings :one

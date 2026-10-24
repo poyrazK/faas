@@ -129,6 +129,13 @@ func TestCloneQueueCatalogueRejectsBrokenIdentityAndPublication(t *testing.T) {
 			t.Fatalf("catalogue equality proved a consumer: %v", err)
 		}
 	}
+	empty := ProjectEnvironmentCloneQueueDefinitions{Version: 1, AppID: queues.AppID, SourceScope: "production"}
+	policies := projectCloneScopedPolicies{Queues: &empty}
+	record := projectCloneWorkloadRecord{snapshot: projectCloneWorkloadSnapshot{Policies: &policies, Settings: ProjectEnvironmentWorkloadSettings{QueueBindings: &ProjectEnvironmentQueueSettings{Revision: 1}}}}
+	record.SourcePoliciesHash, _ = cloneScopedPoliciesHash(policies)
+	if err := validateCloneScopedPolicyPublication(record, policies, true); err != nil {
+		t.Fatalf("an empty queue catalogue must publish (ADR-20261024123122): %v", err)
+	}
 	queues.Bindings[0].SourceID = ""
 	if _, err := normalizeCloneQueues(queues); !errors.Is(err, ErrConflict) {
 		t.Fatalf("legacy remapping identity omitted: %v", err)

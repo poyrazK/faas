@@ -75,20 +75,41 @@ func validateCloneScopedPolicyPublication(record projectCloneWorkloadRecord, act
 		return ErrProjectEnvironmentClonePolicyCaptureUnavailable
 	}
 	// A matching policy list alone cannot prove scoped admission, independent
-	// producer identities or runtime lanes. Keep this guard until those durable
-	// proofs exist, including for an explicitly empty captured collection.
-	if record.snapshot.Policies.Work != nil || record.snapshot.Settings.WorkPolicies != nil {
+	// producer identities or runtime lanes, so a captured policy, producer
+	// binding or queue binding still blocks publication. An explicitly empty
+	// catalogue publishes (ADR-20261024123122): production producers (events,
+	// crons, triggers, queues, webhooks, workflows, replay and API invoke)
+	// resolve only to the production lane, and stage-origin work never reads
+	// application work policies, so a later production policy cannot reach the
+	// stage.
+	if !emptyCloneWorkPolicies(record.snapshot) {
 		return fmt.Errorf("clone workload %q work policies: %w", record.WorkloadSlug, ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable)
 	}
-	if record.snapshot.Policies.Queues != nil || record.snapshot.Settings.QueueBindings != nil {
+	if !emptyCloneQueues(record.snapshot) {
 		return fmt.Errorf("clone workload %q queues: %w", record.WorkloadSlug, ErrProjectEnvironmentQueueActivationUnavailable)
 	}
+	// Empty catalogues leave nothing on the target to compare; routes and edge
+	// rules carry the proof.
+	actual.Work, actual.Queues = record.snapshot.Policies.Work, record.snapshot.Policies.Queues
 
 	actualHash, err := cloneScopedPoliciesHash(actual)
 	if err != nil || !routePresent || actualHash != record.SourcePoliciesHash {
 		return fmt.Errorf("clone workload %q scoped policies differ from its capture: %w", record.WorkloadSlug, ErrConflict)
 	}
 	return nil
+}
+
+// A snapshot without a catalogue predates it; the PostgreSQL capture always
+// records both, empty or not.
+func emptyCloneWorkPolicies(snapshot projectCloneWorkloadSnapshot) bool {
+	work, settings := snapshot.Policies.Work, snapshot.Settings.WorkPolicies
+	return (work == nil || len(work.Policies) == 0 && len(work.EventBindings) == 0 && len(work.TriggerBindings) == 0) &&
+		(settings == nil || len(settings.Policies) == 0)
+}
+
+func emptyCloneQueues(snapshot projectCloneWorkloadSnapshot) bool {
+	queues, settings := snapshot.Policies.Queues, snapshot.Settings.QueueBindings
+	return (queues == nil || len(queues.Bindings) == 0) && (settings == nil || len(settings.Bindings) == 0)
 }
 
 func (m *MemStore) capturedScopedPoliciesLocked(appID, environment string, settings ProjectEnvironmentWorkloadSettings) projectCloneScopedPolicies {

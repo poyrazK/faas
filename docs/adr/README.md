@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261024123122: Full environment clones, slice 1 — data-less clones end to end](20261024123122-full-clone-slice-1-dataless.md) — admission counts only tables the source uses; empty work catalogues publish; failed data-less clones compensate
 - [ADR-20261023091049: Full environment clones, slice 0 — a measurable gap and a dormant switch](20261023091049-full-clone-slice-0.md)
 - [ADR-20261024085817: A compute rollout never strands a node on a runtime base it cannot boot, and its drain finishes](20261024085817-rollout-base-generation-and-drain-completion.md) — proposed; a changed base generation pre-stages behind the drain barrier, the rescue never re-activates a node whose cache moved, a drain withdraws, drains and stops what it cannot hand off (2026-10-22 fsn-3)
 - [Bucket-scoped object storage availability](20261023223000-object-storage-bucket-scoped-availability.md) — per-bucket inventory freshness, maintenance listings off the customer meter, no fence on a never-versioned baseline, busy deletions wait, public-read share and revalidation

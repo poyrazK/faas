@@ -490,6 +490,7 @@ var NewAuditor = newAuditor
 var NewAuthedDashboardServer = newAuthedDashboardServer
 var NewAuthedDashboardServerFull = newAuthedDashboardServerFull
 var NewCloneCoordinatorFixture = newCloneCoordinatorFixture
+var NewCloneSourceFixture = newCloneSourceFixture
 var NewForceHarness = newForceHarness
 var NewGithubdClient = newGithubdClient
 var NewGoogleIDTokenVerifier = newGoogleIDTokenVerifier
@@ -777,9 +778,11 @@ func (r *cloneCheckpointClosureProvider) Roles() *int { return &r.roles }
 func (r *cloneCoordinatorFailureStore) LoseCaptureAck() *bool { return &r.loseCaptureAck }
 
 // Members of cloneCoordinatorFixture
+func (r *cloneCoordinatorFixture) Account() *state.Account                    { return &r.account }
 func (r *cloneCoordinatorFixture) Apps() *[]state.App                         { return &r.apps }
 func (r *cloneCoordinatorFixture) Lease() *state.ProjectEnvironmentCloneLease { return &r.lease }
 func (r *cloneCoordinatorFixture) Pool() **pgxpool.Pool                       { return &r.pool }
+func (r *cloneCoordinatorFixture) Project() *state.Project                    { return &r.project }
 func (r *cloneCoordinatorFixture) Srv() **server                              { return &r.srv }
 func (r *cloneCoordinatorFixture) Store() **cloneCoordinatorFailureStore      { return &r.store }
 func (r cloneCoordinatorFixture) Targets(p0 *testing.T) []state.ProjectEnvironmentCloneWorkload {

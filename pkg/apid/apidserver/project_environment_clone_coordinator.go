@@ -128,6 +128,10 @@ func cloneCoordinatorErrorCode(err error) string {
 		return "work_policy_activation_unavailable"
 	case errors.Is(err, state.ErrProjectEnvironmentQueueActivationUnavailable):
 		return "queue_activation_unavailable"
+	case errors.Is(err, errCloneTargetDeploymentFailed):
+		return "target_deployment_failed"
+	case errors.Is(err, state.ErrProjectEnvironmentCloneTargetsDraining):
+		return "clone_targets_draining"
 	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrInvalidArgument):
 		return "clone_fence_rejected"
 	default:
@@ -183,8 +187,14 @@ func (s *server) processProjectEnvironmentCloneLease(ctx context.Context, store 
 		if err != nil {
 			return lease, err
 		}
+		if state.ProjectEnvironmentCloneIsDataless(lease.Operation) {
+			return s.compensateDatalessProjectEnvironmentClone(ctx, lease)
+		}
 		return lease, errCloneCompensationUnavailable
 	case state.CloneOperationCopying, state.CloneOperationPublishing:
+		if code := datalessCloneFailure(lease.Operation, nil, time.Now()); code != "" {
+			return failDatalessProjectEnvironmentClone(ctx, store, lease, code)
+		}
 	default:
 		return lease, state.ErrConflict
 	}
@@ -204,6 +214,9 @@ func (s *server) processProjectEnvironmentCloneLease(ctx context.Context, store 
 			return lease, fmt.Errorf("validate clone data inventory: %w", err)
 		}
 		lease, err = s.copyProjectEnvironmentClone(ctx, store, lease)
+		if code := datalessCloneFailure(lease.Operation, err, time.Now()); err != nil && code != "" {
+			return failDatalessProjectEnvironmentClone(ctx, store, lease, code)
+		}
 		if err != nil || lease.Operation.Status != state.CloneOperationPublishing {
 			return lease, err
 		}

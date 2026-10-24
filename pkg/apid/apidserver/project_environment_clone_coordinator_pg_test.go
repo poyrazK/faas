@@ -57,9 +57,77 @@ type cloneCoordinatorFixture struct {
 	database *cloneDatabaseDeadlineProvider
 	objects  *capturedObjectWorkerProvider
 	apps     []state.App
+	account  state.Account
+	project  state.Project
+	point    time.Time
 }
 
 func newCloneCoordinatorFixture(t *testing.T, withData bool) cloneCoordinatorFixture {
+	t.Helper()
+	f := newCloneSourceFixture(t, withData, true)
+	ctx, srv, store, account, project, point := t.Context(), f.srv, f.store, f.account, f.project, f.point
+	op, err := store.CreateCapturedProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneCaptureRequest{AccountID: account.ID, ProjectID: project.ID,
+		SourceEnvironment: "production", TargetEnvironment: "stage", IdempotencyKey: "coordinator"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	views, err := store.ProjectEnvironmentCloneWorkloads(ctx, account.ID, project.ID, op.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resources := []state.ProjectEnvironmentCloneResource{{Kind: "source_revision", Name: "production", SourceVersion: op.SourceRevisionHash, Status: "ready"},
+		{Kind: "project_config", Name: "production", SourceVersion: views[0].SourceProjectConfigHash, Status: "captured"}}
+	for _, view := range views {
+		resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: "workload", Name: view.WorkloadSlug, SourceID: view.SourceDeploymentID, SourceVersion: view.SourceHash, Status: "captured"})
+		for _, kind := range []string{"variables", "secrets"} {
+			resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: kind, Name: view.WorkloadSlug, SourceID: view.AppID, TargetID: view.AppID, SourceVersion: view.SourceValuesHash, Status: "captured"})
+		}
+	}
+	if withData {
+		plans, err := srv.capturedProjectEnvironmentDatabasePlans(ctx, op)
+		if err != nil {
+			t.Fatal(err)
+		}
+		dbResources, err := capturedProjectEnvironmentDatabaseResources(plans, point)
+		if err != nil {
+			t.Fatal(err)
+		}
+		objectPlans, err := srv.capturedProjectEnvironmentObjectPlans(ctx, op)
+		if err != nil {
+			t.Fatal(err)
+		}
+		objectResources, err := capturedProjectEnvironmentObjectResources(objectPlans, point)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resources = append(resources, dbResources...)
+		resources = append(resources, objectResources...)
+	}
+	lease.Operation, err = store.AdvanceProjectEnvironmentCloneOperation(ctx, account.ID, project.ID, op.ID, op.Status, state.CloneOperationCapturing, lease.Operation.Revision, resources, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withData {
+		lease, err = srv.captureProjectEnvironmentCloneObjects(ctx, lease)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	lease.Operation, err = store.AdvanceProjectEnvironmentCloneOperation(ctx, account.ID, project.ID, op.ID, state.CloneOperationCapturing, state.CloneOperationCopying, lease.Operation.Revision, lease.Operation.Resources, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.lease = lease
+	return f
+}
+
+// newCloneSourceFixture builds a project with two live production workloads,
+// and optionally managed data, without creating a clone operation.
+func newCloneSourceFixture(t *testing.T, withData, fences bool) cloneCoordinatorFixture {
 	t.Helper()
 	ctx := t.Context()
 	_, cleanup := withTestIdentities(t)
@@ -68,10 +136,13 @@ func newCloneCoordinatorFixture(t *testing.T, withData bool) cloneCoordinatorFix
 	if err := db.MigrateUp(ctx, pool); err != nil {
 		t.Fatal(err)
 	}
-	// Full clones run with the configuration write fence on; migrations leave
-	// it off until admission opens (ADR-20261023091049).
-	if _, err := pool.Exec(ctx, `SELECT set_full_clone_configuration_fences(true)`); err != nil {
-		t.Fatal(err)
+	// Data-bearing clones run with the configuration write fence on; migrations
+	// leave it off, and data-less clones never take it (ADR-20261023091049,
+	// ADR-20261024123122).
+	if fences {
+		if _, err := pool.Exec(ctx, `SELECT set_full_clone_configuration_fences(true)`); err != nil {
+			t.Fatal(err)
+		}
 	}
 	store := &cloneCoordinatorFailureStore{PgStore: state.NewPgStore(pool)}
 	account, err := store.CreateAccount(ctx, uuid.NewString()+"@coordinator.test", api.PlanPro)
@@ -176,62 +247,7 @@ func newCloneCoordinatorFixture(t *testing.T, withData bool) cloneCoordinatorFix
 		}
 		capturedCloneObjectWorkerSourceCredentials(t, srv, store, account, f.apps[0], []state.ObjectBucket{bucket})
 	}
-	op, err := store.CreateCapturedProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneCaptureRequest{AccountID: account.ID, ProjectID: project.ID,
-		SourceEnvironment: "production", TargetEnvironment: "stage", IdempotencyKey: "coordinator"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	lease, err := store.ClaimNextProjectEnvironmentClone(ctx, uuid.NewString(), time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	views, err := store.ProjectEnvironmentCloneWorkloads(ctx, account.ID, project.ID, op.ID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	resources := []state.ProjectEnvironmentCloneResource{{Kind: "source_revision", Name: "production", SourceVersion: op.SourceRevisionHash, Status: "ready"},
-		{Kind: "project_config", Name: "production", SourceVersion: views[0].SourceProjectConfigHash, Status: "captured"}}
-	for _, view := range views {
-		resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: "workload", Name: view.WorkloadSlug, SourceID: view.SourceDeploymentID, SourceVersion: view.SourceHash, Status: "captured"})
-		for _, kind := range []string{"variables", "secrets"} {
-			resources = append(resources, state.ProjectEnvironmentCloneResource{Kind: kind, Name: view.WorkloadSlug, SourceID: view.AppID, TargetID: view.AppID, SourceVersion: view.SourceValuesHash, Status: "captured"})
-		}
-	}
-	if withData {
-		plans, err := srv.capturedProjectEnvironmentDatabasePlans(ctx, op)
-		if err != nil {
-			t.Fatal(err)
-		}
-		dbResources, err := capturedProjectEnvironmentDatabaseResources(plans, point)
-		if err != nil {
-			t.Fatal(err)
-		}
-		objectPlans, err := srv.capturedProjectEnvironmentObjectPlans(ctx, op)
-		if err != nil {
-			t.Fatal(err)
-		}
-		objectResources, err := capturedProjectEnvironmentObjectResources(objectPlans, point)
-		if err != nil {
-			t.Fatal(err)
-		}
-		resources = append(resources, dbResources...)
-		resources = append(resources, objectResources...)
-	}
-	lease.Operation, err = store.AdvanceProjectEnvironmentCloneOperation(ctx, account.ID, project.ID, op.ID, op.Status, state.CloneOperationCapturing, lease.Operation.Revision, resources, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if withData {
-		lease, err = srv.captureProjectEnvironmentCloneObjects(ctx, lease)
-		if err != nil {
-			t.Fatal(err)
-		}
-	}
-	lease.Operation, err = store.AdvanceProjectEnvironmentCloneOperation(ctx, account.ID, project.ID, op.ID, state.CloneOperationCapturing, state.CloneOperationCopying, lease.Operation.Revision, lease.Operation.Resources, "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	f.lease = lease
+	f.account, f.project, f.point = account, project, point
 	return f
 }
 
@@ -369,7 +385,10 @@ func TestPGCloneCredentialPreparationRequiresDurableRestoreReceipt(t *testing.T)
 	}
 }
 
-func TestPGCloneCoordinatorWaitsForEveryWorkloadAndPolicyActivation(t *testing.T) {
+// The source has no work policies, producer bindings or queue bindings; its
+// explicitly empty catalogues publish once every workload is live
+// (ADR-20261024123122).
+func TestPGCloneCoordinatorWaitsForEveryWorkloadThenPublishesEmptyWorkCatalogues(t *testing.T) {
 	f := newCloneCoordinatorFixture(t, false)
 	f.makeRunnable(t)
 	if err := f.srv.processNextProjectEnvironmentClone(t.Context(), f.store); err != nil {
@@ -391,13 +410,17 @@ func TestPGCloneCoordinatorWaitsForEveryWorkloadAndPolicyActivation(t *testing.T
 	if err := f.store.MarkDeploymentLiveDark(t.Context(), views[1].TargetDeploymentID); err != nil {
 		t.Fatal(err)
 	}
-	f.retryNow(t)
-	if err := f.srv.processNextProjectEnvironmentClone(t.Context(), f.store); !errors.Is(err, state.ErrProjectEnvironmentCloneWorkPolicyIsolationUnavailable) {
-		t.Fatalf("missing independent policy activation guard: %v", err)
+	for range 3 {
+		f.retryNow(t)
+		if err := f.srv.processNextProjectEnvironmentClone(t.Context(), f.store); err != nil {
+			t.Fatal(err)
+		}
+		if current, err = f.store.ProjectEnvironmentCloneOperationByID(t.Context(), op.AccountID, op.ProjectID, op.ID); err != nil || current.Status == state.CloneOperationReady {
+			break
+		}
 	}
-	current, err = f.store.ProjectEnvironmentCloneOperationByID(t.Context(), op.AccountID, op.ProjectID, op.ID)
-	if err != nil || current.Status != state.CloneOperationCopying || current.TargetReleaseSetID != "" {
-		t.Fatalf("unproved policies published release graph: %+v, %v", current, err)
+	if err != nil || current.Status != state.CloneOperationReady || current.TargetReleaseSetID == "" {
+		t.Fatalf("an empty work catalogue must publish: %+v, %v", current, err)
 	}
 }
 
