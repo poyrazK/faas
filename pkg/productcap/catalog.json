@@ -706,8 +706,8 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/faas_openapi_spec",
-      "acceptance_test": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle"
+      "docs_url": "/docs/jobs",
+      "acceptance_test": "cmd/e2e/workflows_execution_e2e_test.go::TestE2E_Workflows_CodeFirstRunResumesAcrossSleepAndEvent"
     }
   ]
 }

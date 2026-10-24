@@ -40,7 +40,7 @@ This customer capability matrix is generated from [`pkg/productcap/catalog.json`
 | [Streaming and gRPC](https://gregale.dev/docs/runtime-node) | edge | `beta` | `hobby`, `pro`, `scale` | Serve streaming HTTP responses, SSE, and gRPC APIs. | `pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode` |
 | [Synthetic checks](../docs/synthetic-checks) | observability | `preview` | `hobby`, `pro`, `scale` | Request a path on your app every 5, 15 or 60 minutes through the public edge and track uptime, latency and failures, even when no users are calling it. | `pkg/synthetics/runner_test.go::TestRunOnceRecordsOutcomes` |
 | [Worker pools](../docs/cli/deploy) | async | `preview` | `hobby`, `pro`, `scale` | Run long-lived non-HTTP OCI workers with queue bindings and queue-depth scaling. | `cmd/e2e/worker_pool_e2e_test.go::TestE2E_WorkerPool_ScalesWithQueueDepthAndStabilizesScaleIn` |
-| [Jobs and workflows](../docs/faas_openapi_spec) | async | `preview` | `hobby`, `pro`, `scale` | Run asynchronous jobs and durable workflows alongside an API. | `cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle` |
+| [Jobs and workflows](../docs/jobs) | async | `preview` | `hobby`, `pro`, `scale` | Run asynchronous jobs and durable workflows alongside an API. | `cmd/e2e/workflows_execution_e2e_test.go::TestE2E_Workflows_CodeFirstRunResumesAcrossSleepAndEvent` |
 
 ## Promotion rule
 
