@@ -15419,6 +15419,15 @@
     "kind": "operational"
   },
   {
+    "table": "route_insight_evaluations",
+    "columns": [
+      "account_id",
+      "app_id",
+      "evaluated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "route_insights",
     "columns": [
       "account_id",

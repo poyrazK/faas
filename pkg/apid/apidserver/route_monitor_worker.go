@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/routejobs"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -14,6 +15,7 @@ func (s *server) runRouteMonitorWorker(ctx context.Context) {
 	for {
 		if _, err := s.drainRouteMonitors(ctx); err != nil && ctx.Err() == nil {
 			s.log.Warn("production route monitor queue unavailable")
+			s.routeJobMetrics.QueueUnavailable(routejobs.WorkerMonitor)
 		}
 		select {
 		case <-ctx.Done():
@@ -22,40 +24,13 @@ func (s *server) runRouteMonitorWorker(ctx context.Context) {
 		}
 	}
 }
+
 func (s *server) drainRouteMonitors(ctx context.Context) (int, error) {
 	worker, ok := s.store.(state.RouteMonitorWorkerStore)
 	if !ok {
 		return 0, nil
 	}
-	listCtx, cancel := context.WithTimeout(ctx, api.RouteCheckTimeout)
-	targets, err := worker.ListDueRouteMonitors(listCtx)
-	cancel()
-	if err != nil {
-		return 0, err
-	}
-	completed := 0
-	for _, target := range targets {
-		if ctx.Err() != nil {
-			return completed, ctx.Err()
-		}
-		checkCtx, cancel := context.WithTimeout(ctx, api.RouteCheckTimeout)
-		done, err := worker.EvaluateRouteMonitor(checkCtx, target.AccountID, target.AppID)
-		cancel()
-		if err != nil && ctx.Err() == nil {
-			s.log.Warn("production route monitor evaluation will retry", "app_id", target.AppID)
-			retryCtx, retryCancel := context.WithTimeout(ctx, api.RouteCheckTimeout)
-			_ = worker.DeferRouteMonitor(retryCtx, target)
-			retryCancel()
-		}
-		if done {
-			completed++
-			// Evaluation has committed any new incident; rollback runs
-			// outside its transaction because monitors never write
-			// deployments (ADR-845).
-			rollbackCtx, rollbackCancel := context.WithTimeout(ctx, api.RouteCheckTimeout)
-			s.applyRouteMonitorRollback(rollbackCtx, target)
-			rollbackCancel()
-		}
-	}
-	return completed, nil
+	return routejobs.MonitorDrain{
+		Queue: worker, AfterEvaluate: s.applyRouteMonitorRollback, Metrics: s.routeJobMetrics, Log: s.log,
+	}.Run(ctx)
 }
