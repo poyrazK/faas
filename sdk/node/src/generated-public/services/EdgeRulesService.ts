@@ -4,12 +4,14 @@
 /* eslint-disable */
 import type { CreateEdgeRuleListRequest } from '../models/CreateEdgeRuleListRequest.js';
 import type { CreateEdgeRuleRequest } from '../models/CreateEdgeRuleRequest.js';
+import type { EdgeAttackModeStatus } from '../models/EdgeAttackModeStatus.js';
 import type { EdgeRuleEventsResponse } from '../models/EdgeRuleEventsResponse.js';
 import type { EdgeRuleListResponse } from '../models/EdgeRuleListResponse.js';
 import type { EdgeRuleRecipeSuggestionsResponse } from '../models/EdgeRuleRecipeSuggestionsResponse.js';
 import type { EdgeRuleResponse } from '../models/EdgeRuleResponse.js';
 import type { EdgeRuleSetVersionResponse } from '../models/EdgeRuleSetVersionResponse.js';
 import type { EdgeRuleStatsResponse } from '../models/EdgeRuleStatsResponse.js';
+import type { EnableEdgeAttackModeRequest } from '../models/EnableEdgeAttackModeRequest.js';
 import type { ListEdgeRuleListsResponse } from '../models/ListEdgeRuleListsResponse.js';
 import type { RollbackEdgeRulesRequest } from '../models/RollbackEdgeRulesRequest.js';
 import type { UpdateEdgeRuleListRequest } from '../models/UpdateEdgeRuleListRequest.js';
@@ -18,6 +20,109 @@ import type { CancelablePromise } from '../../generated/core/CancelablePromise.j
 import { OpenAPI } from '../../generated/core/OpenAPI.js';
 import { request as __request } from '../../generated/core/request.js';
 export class EdgeRulesService {
+  /**
+   * Read an app's attack mode.
+   * @returns EdgeAttackModeStatus The app's attack mode.
+   * @throws ApiError
+   */
+  public static getAppEdgeAttackMode({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<EdgeAttackModeStatus> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/edge-protection/attack-mode',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Switch attack mode on, or extend it.
+   * Challenges every request to every host of the app until it ends
+   * (ADR-20261021220456). Available on every plan, outside the plan's
+   * edge-rule quotas. The response returns once the serving gateways
+   * have applied it; `X-Faas-Edge-Rules-State: converging` with 503 means it
+   * was saved but not yet acknowledged. An empty body applies the
+   * default duration of one hour.
+   *
+   * @returns EdgeAttackModeStatus Attack mode is on.
+   * @throws ApiError
+   */
+  public static enableAppEdgeAttackMode({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody?: EnableEdgeAttackModeRequest,
+  }): CancelablePromise<EdgeAttackModeStatus> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/edge-protection/attack-mode',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Switch attack mode off.
+   * Removes the attack-mode rule. Succeeds when attack mode is already off.
+   * @returns EdgeAttackModeStatus Attack mode is off.
+   * @throws ApiError
+   */
+  public static disableAppEdgeAttackMode({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<EdgeAttackModeStatus> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/edge-protection/attack-mode',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
   /**
    * List every edge rule owned by the caller.
    * Account-wide listing. The dashboard overview pane uses this;
@@ -318,7 +423,9 @@ export class EdgeRulesService {
    * Every field is optional. `kind` is NOT patchable — rotating
    * kind mid-life would break the action union. To change kind,
    * delete and recreate. `action` replaces the jsonb column
-   * whole (no partial-update shape).
+   * whole (no partial-update shape). The app's attack-mode rule
+   * (`managed_by: attack_mode`) is refused with 409; change it through
+   * `/v1/apps/{slug}/edge-protection/attack-mode`.
    *
    * @returns EdgeRuleResponse Updated rule.
    * @throws ApiError
@@ -353,6 +460,7 @@ export class EdgeRulesService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        409: `code: edge_rule_conflict — duplicate or overlapping rule state rejected.`,
         412: `If-Match no longer names the app's latest edge-rule set version (edge_rules_version_mismatch). The response ETag carries the current version.`,
         422: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         429: `429 application/problem+json response. Authentication throttling uses

@@ -261,6 +261,8 @@ export type { DiffRequest } from './models/DiffRequest.js';
 export type { DiffResponse } from './models/DiffResponse.js';
 export type { DNSRecordInstruction } from './models/DNSRecordInstruction.js';
 export type { DurableEntityValidatorDeploymentInfo } from './models/DurableEntityValidatorDeploymentInfo.js';
+export type { EdgeAttackModeStatus } from './models/EdgeAttackModeStatus.js';
+export type { EdgeProtectionAICrawler } from './models/EdgeProtectionAICrawler.js';
 export type { EdgeProtectionResponse } from './models/EdgeProtectionResponse.js';
 export type { EdgeRuleAsyncAction } from './models/EdgeRuleAsyncAction.js';
 export type { EdgeRuleBudgetAction } from './models/EdgeRuleBudgetAction.js';
@@ -298,6 +300,7 @@ export type { EdgeRuleValidateAction } from './models/EdgeRuleValidateAction.js'
 export type { EdgeRuleValidateParameters } from './models/EdgeRuleValidateParameters.js';
 export type { EdgeRuleWAFAction } from './models/EdgeRuleWAFAction.js';
 export type { EnableAlertPresetRequest } from './models/EnableAlertPresetRequest.js';
+export type { EnableEdgeAttackModeRequest } from './models/EnableEdgeAttackModeRequest.js';
 export type { EnvDiffCell } from './models/EnvDiffCell.js';
 export type { EnvDiffKind } from './models/EnvDiffKind.js';
 export type { EnvDiffResponse } from './models/EnvDiffResponse.js';

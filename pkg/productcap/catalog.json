@@ -1680,6 +1680,65 @@
       ]
     },
     {
+      "id": "edge-ai-crawler-controls",
+      "name": "AI crawler controls",
+      "category": "edge",
+      "description": "Block or challenge AI crawlers by name or purpose (training, AI search, assistant) with edge-rule conditions that read the User-Agent claim and, for operators that publish them, verify it against their IP ranges; the edge-protection summary counts each crawler's requests.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/security#ai-crawlers",
+      "acceptance_test": "pkg/api/edge_ai_crawlers_test.go::TestEdgeRuleMatchAICrawlerFields"
+    },
+    {
+      "id": "edge-attack-mode",
+      "name": "Attack mode",
+      "category": "edge",
+      "description": "One switch that challenges every visitor to every host of an app for 15 minutes to 24 hours during a flood: browsers solve a short check once, verified crawlers and credentials pass, and it ends on its own.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/security#attack-mode",
+      "acceptance_test": "pkg/apid/edgerules/attack_mode_test.go::TestAttackModeOnExtendOff"
+    },
+    {
+      "id": "edge-browser-challenge",
+      "name": "Browser challenge",
+      "category": "edge",
+      "description": "Keep scripts and scrapers off browser pages with a challenge edge rule: a page load solves a short proof of work and earns a pass, API clients with a verified credential and verified crawlers pass, and the difficulty rises while a rule is under attack.",
+      "maturity": "ga",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/security#browser-challenge-preview",
+      "acceptance_test": "cmd/e2e/edge_rules_challenge_e2e_test.go::TestEdgeRulesChallenge_E2E"
+    },
+    {
+      "id": "edge-penalty-box",
+      "name": "Edge penalty box",
+      "category": "edge",
+      "description": "Keep refusing a client after an IP, country, throttle or WAF block rule has caught it: once the rule has refused the same client a set number of times, every request from that client to the app is refused for the penalty, whatever path it asks for.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/security#penalty-box",
+      "acceptance_test": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxRefusesBoxedClientAcrossPaths"
+    },
+    {
       "id": "edge-protection",
       "name": "Edge protection",
       "category": "edge",
@@ -1842,6 +1901,19 @@
       ]
     },
     {
+      "id": "edge-waf-blocking",
+      "name": "WAF warn and block",
+      "category": "edge",
+      "description": "Check every matched request's headers and URL against the OWASP Core Rule Set in-path and block a detection with 403 before the app wakes, or tag the response in warn mode, at paranoia level 1; paranoia level 2 stays observe-only preview.",
+      "maturity": "ga",
+      "plans": [
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/security#web-application-firewall",
+      "acceptance_test": "pkg/gateway/edge_rules_waf_test.go::TestApplyEdgeRuleWAFInline"
+    },
+    {
       "id": "egress-allowlist",
       "name": "Egress allowlist",
       "category": "edge",
@@ -1865,78 +1937,6 @@
         "app egress-allowlist",
         "app egress-ports"
       ]
-    },
-    {
-      "id": "edge-ai-crawler-controls",
-      "name": "AI crawler controls",
-      "category": "edge",
-      "description": "Block or challenge AI crawlers by name or purpose (training, AI search, assistant) with edge-rule conditions that read the User-Agent claim and, for operators that publish them, verify it against their IP ranges; the edge-protection summary counts each crawler's requests.",
-      "maturity": "preview",
-      "plans": [
-        "free",
-        "hobby",
-        "pro",
-        "scale"
-      ],
-      "docs_url": "/docs/security#ai-crawlers",
-      "acceptance_test": "pkg/api/edge_ai_crawlers_test.go::TestEdgeRuleMatchAICrawlerFields"
-    },
-    {
-      "id": "edge-attack-mode",
-      "name": "Attack mode",
-      "category": "edge",
-      "description": "One switch that challenges every visitor to every host of an app for 15 minutes to 24 hours during a flood: browsers solve a short check once, verified crawlers and credentials pass, and it ends on its own.",
-      "maturity": "preview",
-      "plans": [
-        "free",
-        "hobby",
-        "pro",
-        "scale"
-      ],
-      "docs_url": "/docs/security#attack-mode",
-      "acceptance_test": "pkg/apid/edgerules/attack_mode_test.go::TestAttackModeOnExtendOff"
-    },
-    {
-      "id": "edge-browser-challenge",
-      "name": "Browser challenge",
-      "category": "edge",
-      "description": "Keep scripts and scrapers off browser pages with a challenge edge rule: a page load solves a short proof of work and earns a pass, API clients with a verified credential and verified crawlers pass, and the difficulty rises while a rule is under attack.",
-      "maturity": "ga",
-      "plans": [
-        "hobby",
-        "pro",
-        "scale"
-      ],
-      "docs_url": "/docs/security#browser-challenge-preview",
-      "acceptance_test": "cmd/e2e/edge_rules_challenge_e2e_test.go::TestEdgeRulesChallenge_E2E"
-    },
-    {
-      "id": "edge-penalty-box",
-      "name": "Edge penalty box",
-      "category": "edge",
-      "description": "Keep refusing a client after an IP, country, throttle or WAF block rule has caught it: once the rule has refused the same client a set number of times, every request from that client to the app is refused for the penalty, whatever path it asks for.",
-      "maturity": "preview",
-      "plans": [
-        "free",
-        "hobby",
-        "pro",
-        "scale"
-      ],
-      "docs_url": "/docs/security#penalty-box",
-      "acceptance_test": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxRefusesBoxedClientAcrossPaths"
-    },
-    {
-      "id": "edge-waf-blocking",
-      "name": "WAF warn and block",
-      "category": "edge",
-      "description": "Check every matched request's headers and URL against the OWASP Core Rule Set in-path and block a detection with 403 before the app wakes, or tag the response in warn mode, at paranoia level 1; paranoia level 2 stays observe-only preview.",
-      "maturity": "ga",
-      "plans": [
-        "pro",
-        "scale"
-      ],
-      "docs_url": "/docs/security#web-application-firewall",
-      "acceptance_test": "pkg/gateway/edge_rules_waf_test.go::TestApplyEdgeRuleWAFInline"
     },
     {
       "id": "egress-circuit-breaking",
