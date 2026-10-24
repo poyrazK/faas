@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -16,7 +15,7 @@ import (
 func cmdObsSummary(args []string) int {
 	fs := flag.NewFlagSet(subObsSummary, flag.ContinueOnError)
 	fs.SetOutput(osStderr)
-	token := fs.String("admin-token", "", "admin bearer (default: $FAAS_ADMIN_TOKEN)")
+	token := fs.String("admin-token", "", obsAdminTokenUsage)
 	timeout := fs.Duration("timeout", 10*time.Second, "HTTP timeout")
 	jsonOut := fs.Bool("json", false, "emit structured JSON")
 	if err := fs.Parse(args); err != nil {
@@ -26,15 +25,12 @@ func cmdObsSummary(args []string) int {
 		_, _ = fmt.Fprintln(osStderr, "gregalectl obs summary: no positional arguments and a positive --timeout required")
 		return 2
 	}
-	if *token == "" {
-		*token = os.Getenv("FAAS_ADMIN_TOKEN")
-	}
-	if *token == "" {
-		_, _ = fmt.Fprintln(osStderr, "gregalectl obs summary: --admin-token (or $FAAS_ADMIN_TOKEN) required")
+	cred, ok := resolveObsCredential("obs summary", *token)
+	if !ok {
 		return 2
 	}
 	var out api.ObsAlertWorkloadSummary
-	if err := fetchObsBundleSection(context.Background(), &http.Client{Timeout: *timeout}, apidBase()+operatorobs.AlertWorkloadSummaryPath, *token, "summary", &out); err != nil {
+	if err := fetchObsBundleSection(context.Background(), &http.Client{Timeout: *timeout}, apidBase()+operatorobs.AlertWorkloadSummaryPath, cred, "summary", &out); err != nil {
 		_, _ = fmt.Fprintf(osStderr, "gregalectl obs %v\n", err)
 		return 1
 	}

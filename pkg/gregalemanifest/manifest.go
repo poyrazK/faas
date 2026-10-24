@@ -47,10 +47,10 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/exclusivework"
 	"github.com/onebox-faas/faas/pkg/hostingconfig"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
@@ -2646,7 +2646,7 @@ func (t Trigger) validateKindConfig(idx int) error {
 	}
 	switch t.Kind {
 	case TriggerKindCron:
-		if _, err := sched.ParseSchedule(t.Schedule); err != nil {
+		if _, err := cronexpr.Parse(t.Schedule, cronexpr.DefaultTimezone); err != nil {
 			return fmt.Errorf("trigger[%d]: bad schedule %q: %w", idx, t.Schedule, err)
 		}
 		if !strings.HasPrefix(t.Path, "/") {

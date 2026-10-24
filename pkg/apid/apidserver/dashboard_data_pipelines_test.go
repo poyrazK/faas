@@ -702,7 +702,7 @@ func TestDashboardPipelinesRequiresNamedCSRFAndScopesMetadata(t *testing.T) {
 
 func TestDashboardPipelinesConfiguresReadOnlyAppThroughExistingAppService(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
-	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: e.Acct().ID, Slug: "pipeline-api", Type: state.AppTypeApp, RequireAuthn: true})
+	app, err := (*e.Store()).CreateApp(t.Context(), state.App{AccountID: e.Acct().ID, Slug: "pipeline-api", Type: state.AppTypeApp, RequireAuthn: true, MaxConcurrency: 1})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -423,6 +423,12 @@ read from the root `.env` only, so an include's `project_directory` and
 `env_file` options, and a `.env` beside an included file, warn. At most 32 files
 are linked in one scan.
 
+A service with `profiles:` is deployed only when one of its profiles is active
+([ADR-20261022190000](adr/20261022190000-compose-profiles-from-dotenv.md)).
+Activate profiles with `COMPOSE_PROFILES` in the source's `.env`, as Compose
+reads it there: comma-separated names, or `*` for every profile. Other services
+are skipped with a warning naming their profiles.
+
 The scan reports every other Compose key instead of dropping it silently:
 
 | Keys | Result |

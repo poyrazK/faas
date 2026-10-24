@@ -22,6 +22,17 @@ type ObjectStoragePolicy struct {
 	MaxMonthlyEgressBytes    int64      `json:"max_monthly_egress_bytes"`
 	MaxMonthlyAuthorizations int64      `json:"max_monthly_authorizations"`
 	MaxReportAgeSeconds      int64      `json:"max_report_age_seconds"`
+	// AnonymousReads marks a policy evaluated for an anonymous public-mount
+	// read. Plan ceilings then scale the monthly request, egress,
+	// authorization and cost ceilings to PublicObjectReadCeilingPercent, so
+	// strangers can never spend the share private access keeps (H9-S137).
+	AnonymousReads bool `json:"-"`
+}
+
+// AnonymousReadPolicy is p evaluated for anonymous public-mount reads.
+func (p ObjectStoragePolicy) AnonymousReadPolicy() ObjectStoragePolicy {
+	p.AnonymousReads = true
+	return p
 }
 
 func (p ObjectStoragePolicy) Valid() bool {

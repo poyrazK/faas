@@ -68,10 +68,13 @@ run the control-plane CD.
 
 ## 1. Seal the GitHub webhook secrets
 
-apid already writes a sealed copy whenever a webhook secret is set. This
-stage backfills the copy for older rows. The copy is sealed to the fleet
-recipient, which githubd already holds as `fleet.age`. The plaintext column
-stays for the previous release.
+apid writes only a sealed copy whenever a webhook secret is set. This stage
+backfills the copy for older rows, which have only the plaintext. The copy is
+sealed to the fleet recipient, which githubd already holds as `fleet.age`.
+
+Every environment must run this stage before the release that drops the
+plaintext column (ADR 20261022111812): after that, a row without a sealed
+copy has no secret left.
 
 ```bash
 sudo gregalectl seal-domain migrate --domain source --db-env /etc/faas/compute-db.env
@@ -86,8 +89,8 @@ build starts. githubd logs
 `githubd: sealed webhook secret but no identity loaded` only if its unit lost
 `fleet.age`.
 
-Rollback: none needed. The previous release reads the plaintext column and
-ignores the copy.
+Rollback: none needed. The backfill only adds copies; the plaintext stays
+until the column is dropped.
 
 ## 2. Outbound seal domain
 

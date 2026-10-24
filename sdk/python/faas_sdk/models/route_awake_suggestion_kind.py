@@ -1,10 +1,11 @@
 from typing import Literal
 
-RouteAwakeSuggestionKind = Literal["call_less_often", "edge_cache"]
+RouteAwakeSuggestionKind = Literal["call_less_often", "edge_cache", "run_less_often"]
 
 ROUTE_AWAKE_SUGGESTION_KIND_VALUES: set[RouteAwakeSuggestionKind] = {
     "call_less_often",
     "edge_cache",
+    "run_less_often",
 }
 
 
