@@ -23,9 +23,10 @@ func (h incidentsHost) LoadApp(w http.ResponseWriter, r *http.Request, acct stat
 
 func (h incidentsHost) Store() incidents.Store { return h.s.store }
 
-// Changes reads the ADR-751 change timeline under its own flag.
+// Changes reads the ADR-751 change timeline under its own flag, decided for
+// the app's organization.
 func (h incidentsHost) Changes(ctx context.Context, acct state.Account, app state.App, since, until time.Time) (api.AppChangeTimelineResponse, bool) {
-	if !h.s.changeTimelineFor(acct) {
+	if !h.s.changeTimelineFor(appFlagSubject(acct, app)) {
 		return api.AppChangeTimelineResponse{}, false
 	}
 	return h.s.appChangeTimeline(ctx, acct, app, since, until, time.Now().UTC()), true
