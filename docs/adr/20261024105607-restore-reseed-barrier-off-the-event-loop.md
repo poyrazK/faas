@@ -89,10 +89,10 @@ With the switch on, vmmd adds `faas.reseed=thread`
    for it, and the worker adopts each restore from the same generation on
    first use. If the main thread's client could not start, a worker
    registers through the event-loop client as before.
-4. **Python: minimal answer.** The listener thread reads with `recv` instead
-   of `socket.makefile`'s Python-level reader. It seeds `random` with an
-   integer (no SHA-512 of a bytes seed) and reseeds OpenSSL with
-   `_ssl.RAND_add` (no `import ssl`). The guarantee is unchanged.
+4. **Python is unchanged.** Its client already runs on its own thread, and
+   its reply must run Python code to reseed `random`. A minimal reply
+   (raw `recv`, an integer seed, `_ssl.RAND_add`, no `import ssl`) was
+   measured and dropped: it showed no reliable gain (see Consequences).
 5. **Unchanged:** the socket protocol, the 2 s budget, fail-closed NACK 15,
    the capability byte, the opt-out and the coverage list. A thread-mode
    client that gets a malformed nonce answers `err bad_nonce`. A
@@ -170,6 +170,13 @@ schedd publication, gateway routing), which takes ~60–150 ms in production.
   faults cost ~1–2 ms at nested-fault prices. The rest of the ~16–23 ms is
   guest kernel work (thread wakeup, the socket round trip, `getrandom`) and
   vCPU scheduling on a loaded host, which this bench cannot separate.
+- Python is left as it is. On the same host, with `python:3.12-slim`, 2 vCPUs
+  and no request delay, the barrier stage was 52 / 72 ms (p50 / p90) for
+  today's listener thread and 44 / 85 ms for the minimal reply, with
+  `resume_hook` 200 / 326 against 238 / 351 ms. Python's cost is therefore
+  not in the reply's few lines but in the interpreter waking. Taking it
+  off the critical path would need a native extension per Python ABI, or
+  lazy adoption wrappers around `random`. Each needs its own ADR.
 - The barrier stops waiting for event loops: Node's share of `resume_hook`
   becomes the thread's wake plus `RAND_poll()`. Worker isolates no longer join
   the barrier.
@@ -193,10 +200,14 @@ schedd publication, gateway routing), which takes ~60–150 ms in production.
   while the event loop is blocked. `Math.random` adopts the restore inside
   the first call after it. The wake pipe adopts it on an idle loop. A worker
   adopts on first use and does not register. A short nonce is refused. With
-  no addon the preload fails closed. Python's minimal path reseeds the
-  parent and forked children and refuses a short nonce.
+  no addon the preload fails closed. A Python process booted in thread mode
+  keeps its client, reseeds the parent and forked children, and refuses a
+  short nonce. These ran in `node:22-alpine` (musl), `node:24-bookworm-slim`
+  (glibc 2.36) and `python:3.12-slim`.
 - Metal: `TestMetalRestoreUserspaceRNGDiffers` gains `reseed-thread` arms
-  for Node and Python. `TestMetalRestoreReseedTimingBench` gains the
+  for Node and Python. All six arms passed: in thread mode Node's uuid,
+  randomInt, randomBytes and Math.random and Python's random and ssl differ
+  across two restores of one snapshot, and both reseed-off controls replay. `TestMetalRestoreReseedTimingBench` gains the
   `reseed-thread` arm, a request delay for the platform interval, and vCPU
   selection.
 - Rollout gate: enable on one compute node, compare `resume_hook`,

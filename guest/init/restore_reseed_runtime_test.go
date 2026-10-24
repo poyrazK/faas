@@ -500,8 +500,9 @@ func TestRestoreReseedPythonPreload(t *testing.T) {
 	testRestoreReseedPythonPreload(t, "")
 }
 
-// ADR-20261024105607: thread mode answers with the minimal reply path and
-// keeps every guarantee of the default client, forked children included.
+// ADR-20261024105607: thread mode changes only Node's client. A Python
+// process booted in thread mode keeps its listener thread and every
+// guarantee, forked children included.
 func TestRestoreReseedPythonPreloadThreadMode(t *testing.T) {
 	testRestoreReseedPythonPreload(t, restoreReseedThreadMode)
 }

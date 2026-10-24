@@ -21,8 +21,6 @@ def _gregale_restore_reseed():
     import socket
     import threading
 
-    thread_mode = os.environ.get("GREGALE_RESEED_MODE", "").lower() == "thread"
-
     def reseed(nonce_hex):
         nonce = bytes.fromhex(nonce_hex)
         if len(nonce) < 16:
@@ -42,64 +40,11 @@ def _gregale_restore_reseed():
                 legacy_seed()
         return "ok"
 
-    # Thread mode (ADR-20261024105607) answers with the least interpreter
-    # work: raw recv instead of socket.makefile's Python-level reader, an
-    # integer seed (random.seed hashes bytes and str with SHA-512) and
-    # _ssl.RAND_add, which needs no import. Every line it runs faults pages
-    # back in on a restore before the instance may serve.
-    def reseed_minimal(nonce_hex):
-        if len(nonce_hex) < 32:
-            return b"err bad_nonce\n"
-        try:
-            nonce = int(nonce_hex, 16)
-        except ValueError:
-            return b"err bad_nonce\n"
-        fresh = nonce ^ int.from_bytes(os.urandom(32), "little")
-        modules = sys.modules
-        rand = modules.get("random")
-        if rand is not None:
-            rand.seed(fresh)
-        ssl = modules.get("_ssl")
-        if ssl is not None:
-            ssl.RAND_add(fresh.to_bytes(64, "little"), 32.0)
-        numpy = modules.get("numpy")
-        if numpy is not None:
-            legacy_seed = getattr(getattr(numpy, "random", None), "seed", None)
-            if callable(legacy_seed):
-                legacy_seed()
-        return b"ok\n"
-
-    def serve_minimal(conn):
-        pending = b""
-        while True:
-            try:
-                chunk = conn.recv(256)
-            except OSError:
-                return
-            if not chunk:
-                return
-            pending += chunk
-            while b"\n" in pending:
-                line, _, pending = pending.partition(b"\n")
-                line = line.strip()
-                if not line.startswith(b"reseed "):
-                    continue
-                try:
-                    reply = reseed_minimal(line[7:].strip().decode("ascii"))
-                except Exception as err:  # noqa: BLE001 - any failure must fail the barrier
-                    reply = ("err " + type(err).__name__ + "\n").encode()
-                try:
-                    conn.sendall(reply)
-                except OSError:
-                    return
-
     def serve():
         try:
             conn = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
             conn.connect(path)
             conn.sendall(("hello python %d\n" % os.getpid()).encode())
-            if thread_mode:
-                return serve_minimal(conn)
             stream = conn.makefile("rb")
         except OSError:
             return
