@@ -10,6 +10,7 @@ from attrs import field as _attrs_field
 from ..models.edge_protection_response_range import EdgeProtectionResponseRange, check_edge_protection_response_range
 
 if TYPE_CHECKING:
+    from ..models.edge_attack_mode_status import EdgeAttackModeStatus
     from ..models.edge_protection_response_challenge import EdgeProtectionResponseChallenge
     from ..models.edge_protection_response_penalty import EdgeProtectionResponsePenalty
     from ..models.edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
@@ -43,6 +44,15 @@ class EdgeProtectionResponse:
     """kind=challenge decisions (ADR-831 amendment 7); its 403s also appear in rejections under gate challenge."""
     penalty: EdgeProtectionResponsePenalty
     """Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty."""
+    attack_mode: EdgeAttackModeStatus
+    """An app's attack mode (ADR-20261021220456). While it is on, every
+    request without a challenge pass is challenged: browsers solve a
+    short proof of work once and continue, verified search crawlers and
+    requests with a verified API key, consumer key or JWT pass straight
+    through, and other clients get 403 `challenge_required`. It always
+    ends on its own at `expires_at`. Read from the rules, so it is
+    current even when the edge-protection counts are degraded.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -72,6 +82,8 @@ class EdgeProtectionResponse:
 
         penalty = self.penalty.to_dict()
 
+        attack_mode = self.attack_mode.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -86,6 +98,7 @@ class EdgeProtectionResponse:
                 "waf": waf,
                 "challenge": challenge,
                 "penalty": penalty,
+                "attack_mode": attack_mode,
             }
         )
 
@@ -93,6 +106,7 @@ class EdgeProtectionResponse:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.edge_attack_mode_status import EdgeAttackModeStatus
         from ..models.edge_protection_response_challenge import EdgeProtectionResponseChallenge
         from ..models.edge_protection_response_penalty import EdgeProtectionResponsePenalty
         from ..models.edge_protection_response_pre_auth import EdgeProtectionResponsePreAuth
@@ -135,6 +149,8 @@ class EdgeProtectionResponse:
 
         penalty = EdgeProtectionResponsePenalty.from_dict(d.pop("penalty"))
 
+        attack_mode = EdgeAttackModeStatus.from_dict(d.pop("attack_mode"))
+
         edge_protection_response = cls(
             app_id=app_id,
             range_=range_,
@@ -146,6 +162,7 @@ class EdgeProtectionResponse:
             waf=waf,
             challenge=challenge,
             penalty=penalty,
+            attack_mode=attack_mode,
         )
 
         edge_protection_response.additional_properties = d

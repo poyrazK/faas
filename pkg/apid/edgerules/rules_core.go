@@ -106,12 +106,17 @@ func planKindProblem(acct state.Account, kind string) *api.Problem {
 }
 
 // ruleForUpdate loads one of the account's rules for an update; respond
-// rules stay on preview applications.
+// rules stay on preview applications, and the attack-mode rule changes only
+// through its switch (ADR-20261021220456).
 func (s *Service) ruleForUpdate(ctx context.Context, acct state.Account, id string) (state.EdgeRule, *api.Problem) {
 	notFound := api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such edge rule")
 	row, err := s.Host.Store().GetEdgeRuleByID(ctx, id)
 	if err != nil || row.AccountID != acct.ID {
 		return state.EdgeRule{}, notFound
+	}
+	if row.AttackMode() {
+		return state.EdgeRule{}, api.ErrEdgeRuleConflict("this is the app's attack-mode rule; extend it or switch it off with " +
+			"PUT or DELETE /v1/apps/{slug}/edge-protection/attack-mode (gregale edge-rules attack-mode)")
 	}
 	if row.Kind == state.EdgeRuleKindRespond {
 		app, appErr := s.Host.Store().AppByID(ctx, row.AppID)

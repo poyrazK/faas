@@ -53,6 +53,11 @@ func cmdEdgeRulesSummary(args []string) int {
 // rejection first, and says so explicitly when nothing was rejected.
 func renderEdgeProtection(w io.Writer, slug string, s api.EdgeProtectionResponse) {
 	_, _ = fmt.Fprintf(w, "Edge protection for %s over %s\n", slug, s.Range)
+	// Attack mode is read from the rules, so it shows even when the counts
+	// are unavailable.
+	if a := s.AttackMode; a.Active && a.ExpiresAt != nil {
+		_, _ = fmt.Fprintf(w, "  %-28s ON until %s (every visitor is challenged)\n", "attack mode:", a.ExpiresAt.Local().Format(attackModeTimeLayout))
+	}
 	if s.Source != appmetrics.SourcePrometheus {
 		_, _ = fmt.Fprintf(w, "Note: source=%s (counts below are unavailable, not zero)\n", s.Source)
 		return

@@ -24,6 +24,10 @@ type EdgeProtectionResponse struct {
 	// Challenge counts kind=challenge decisions (ADR-831 amendment 7). Its
 	// 403s also appear in Rejections under gate "challenge".
 	Challenge EdgeProtectionChallenge `json:"challenge"`
+	// AttackMode is the app's attack-mode switch (ADR-20261021220456). It is
+	// read from the rules, not Prometheus, so it is current even when the
+	// counts are degraded. Its challenges count in Challenge.
+	AttackMode EdgeAttackModeStatus `json:"attack_mode"`
 	// Penalty counts penalty boxes (ADR-20261022105846): Boxed clients a
 	// rule's penalty boxed, Rejected requests refused from boxed clients.
 	// The refusals also appear in Rejections under gate "penalty".

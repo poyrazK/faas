@@ -79,7 +79,7 @@ func isEdgeRuleKind(k string) bool {
 func cmdEdgeRules(args []string) int {
 	parent, _ := lookupCliCommand("edge-rules")
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|summary|trace|recipes|recipe|suggest|create|get|update|rm|history|rollback|stats|review|events> [args]", "edge-rules")
+		PrintUsage(os.Stderr, "usage: gregale edge-rules <list|summary|attack-mode|trace|recipes|recipe|suggest|create|get|update|rm|history|rollback|stats|review|events> [args]", "edge-rules")
 		return 1
 	}
 	switch args[0] {
@@ -87,6 +87,8 @@ func cmdEdgeRules(args []string) int {
 		return cmdEdgeRulesList(args[1:])
 	case "summary":
 		return cmdEdgeRulesSummary(args[1:])
+	case "attack-mode":
+		return cmdEdgeRulesAttackMode(args[1:])
 	case "history":
 		return cmdEdgeRulesHistory(args[1:])
 	case "rollback":

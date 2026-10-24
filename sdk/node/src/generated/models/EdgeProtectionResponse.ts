@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EdgeAttackModeStatus } from './EdgeAttackModeStatus.js';
 /**
  * Edge rejection counts for one app over a range.
  */
@@ -130,5 +131,6 @@ export type EdgeProtectionResponse = {
      */
     rejected: number;
   };
+  attack_mode: EdgeAttackModeStatus;
 };
 

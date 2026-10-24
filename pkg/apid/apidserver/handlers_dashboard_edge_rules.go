@@ -60,6 +60,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		Action: dashboardEdgeRulesActionFlash(r),
 	}
 	data.Protection = s.edgeRules.AppEdgeProtection(ctx, app, edgerules.EdgeProtectionDefaultRange)
+	data.AttackModeAvailable = s.edgeRules.AttackModeReleased(acct)
 	data.Trace = dashboard.EdgeRuleTraceFormData{Host: app.Slug, Path: "/", Method: http.MethodGet}
 	if appURL, parseErr := url.Parse(data.App.URL); parseErr == nil && appURL.Hostname() != "" {
 		data.Trace.Host = appURL.Hostname()
@@ -279,7 +280,8 @@ func projectDashboardEdgeRules(rows []state.EdgeRule, unreleased func(state.Edge
 			CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt),
 			SecurityPreset: isSecurityHeadersRule(row),
 			Name:           row.Name, Mode: edgeRuleModeOrDefault(row.Mode),
-			AppWide: api.IsEdgeRuleAppHosts(row.MatchHost),
+			AppWide:    api.IsEdgeRuleAppHosts(row.MatchHost),
+			AttackMode: row.AttackMode(),
 		}
 		for _, feature := range unreleased(row) {
 			item.Unreleased = append(item.Unreleased, dashboardEdgeFeatureLabel(feature))
@@ -346,7 +348,7 @@ func edgeRuleActionSummary(rule state.EdgeRule) string {
 func dashboardEdgeRulesActionFlash(r *http.Request) string {
 	switch r.URL.Query().Get("action") {
 	case "created", "updated", "deleted", "security_headers_enabled", "mode_enforce", "mode_log", "recipe_log", "recipe_enforce",
-		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed":
+		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed", "attack_mode_on", "attack_mode_off":
 		return r.URL.Query().Get("action")
 	case "error":
 		return "error"

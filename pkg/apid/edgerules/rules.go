@@ -69,10 +69,19 @@ func EdgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 		Expired:      r.EdgeRuleExpired(time.Now()),
 		Match:        r.Match,
 		Mode:         edgeRuleResponseMode(r.Mode),
+		ManagedBy:    edgeRuleManagedBy(r),
 		Penalty:      apiEdgeRulePenalty(r.Action.Penalty),
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}
+}
+
+// edgeRuleManagedBy names the switch that owns r, or "".
+func edgeRuleManagedBy(r state.EdgeRule) string {
+	if r.AttackMode() {
+		return api.EdgeRuleManagedByAttackMode
+	}
+	return ""
 }
 
 // apiEdgeRulePenalty and stateEdgeRulePenalty convert the penalty box

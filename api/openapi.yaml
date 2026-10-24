@@ -21174,6 +21174,62 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/edge-protection/attack-mode:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: getAppEdgeAttackMode
+      summary: Read an app's attack mode.
+      responses:
+        '200':
+          description: The app's attack mode.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeAttackModeStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [edge_rules]
+      operationId: enableAppEdgeAttackMode
+      summary: Switch attack mode on, or extend it.
+      description: |
+        Challenges every request to every host of the app until it ends
+        (ADR-20261021220456). Available on every plan, outside the plan's
+        edge-rule quotas. The response returns once the serving gateways
+        have applied it; `X-Faas-Edge-Rules-State: converging` with 503 means it
+        was saved but not yet acknowledged. An empty body applies the
+        default duration of one hour.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnableEdgeAttackModeRequest' }
+      responses:
+        '200':
+          description: Attack mode is on.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeAttackModeStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [edge_rules]
+      operationId: disableAppEdgeAttackMode
+      summary: Switch attack mode off.
+      description: Removes the attack-mode rule. Succeeds when attack mode is already off.
+      responses:
+        '200':
+          description: Attack mode is off.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeAttackModeStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/apps/{slug}/release-review:
     get:
       operationId: getAppReleaseReview
@@ -39626,7 +39682,9 @@ paths:
         Every field is optional. `kind` is NOT patchable — rotating
         kind mid-life would break the action union. To change kind,
         delete and recreate. `action` replaces the jsonb column
-        whole (no partial-update shape).
+        whole (no partial-update shape). The app's attack-mode rule
+        (`managed_by: attack_mode`) is refused with 409; change it through
+        `/v1/apps/{slug}/edge-protection/attack-mode`.
       requestBody:
         required: true
         content:
@@ -39641,6 +39699,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/EdgeRuleConflict' }
         '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -87784,7 +87843,7 @@ components:
     EdgeProtectionResponse:
       description: Edge rejection counts for one app over a range.
       type: object
-      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge, penalty]
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge, penalty, attack_mode]
       properties:
         app_id: { type: string }
         range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
@@ -87864,6 +87923,39 @@ components:
           properties:
             boxed: { type: integer, format: int64, minimum: 0, description: "Clients a rule's penalty boxed." }
             rejected: { type: integer, format: int64, minimum: 0, description: "Requests refused from boxed clients." }
+        attack_mode:
+          $ref: '#/components/schemas/EdgeAttackModeStatus'
+
+    EdgeAttackModeStatus:
+      type: object
+      description: |
+        An app's attack mode (ADR-20261021220456). While it is on, every
+        request without a challenge pass is challenged: browsers solve a
+        short proof of work once and continue, verified search crawlers and
+        requests with a verified API key, consumer key or JWT pass straight
+        through, and other clients get 403 `challenge_required`. It always
+        ends on its own at `expires_at`. Read from the rules, so it is
+        current even when the edge-protection counts are degraded.
+      required: [active]
+      properties:
+        active: { type: boolean, description: Attack mode is on now. }
+        rule_id: { type: string, description: "The app-wide challenge rule that carries attack mode (managed_by attack_mode). Still set after attack mode ran out, until it is switched on again or off." }
+        started_at: { type: string, format: date-time, description: When attack mode was switched on; extending it keeps this time. }
+        expires_at: { type: string, format: date-time, description: When attack mode ends, or ended. }
+        difficulty: { type: integer, description: Leading zero bits the browser's proof of work must find. }
+        pass_ttl_seconds: { type: integer, description: Seconds a browser that solved the attack-mode challenge is let through. }
+
+    EnableEdgeAttackModeRequest:
+      type: object
+      description: Switches attack mode on for a duration, or moves the end of an active one.
+      additionalProperties: false
+      properties:
+        duration_seconds:
+          type: integer
+          minimum: 900
+          maximum: 86400
+          default: 3600
+          description: How long attack mode stays on from now. Switching it on while it is on restarts the clock with this duration.
 
     EdgeRulePenalty:
       type: object
@@ -106223,6 +106315,7 @@ components:
         expired: { type: boolean, description: True once expires_at has passed and the rule no longer applies. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
+        managed_by: { type: string, enum: [attack_mode], description: "Set on the app's attack-mode rule (ADR-20261021220456), which changes only through /v1/apps/{slug}/edge-protection/attack-mode; PATCH refuses it. Absent on every other rule." }
         penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
         unreleased_features:
           type: array

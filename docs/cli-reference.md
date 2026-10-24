@@ -10693,6 +10693,25 @@ Show what the edge rejected for an app
 
 Includes pre-auth blocks, validation failures and gate rejections by status.
 
+### edge-rules attack-mode
+
+Switch attack mode on, off, or show it: challenge every visitor to the app for a while (15m to 24h); clients that are not browsers need a verified API key or JWT
+
+`gregale edge-rules attack-mode [--app <slug>] [--for <DURATION>] [on|off|status]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project context) |  |
+| `--for <DURATION>` | with on: how long attack mode stays on (default 1h, 15m to 24h) |  |
+
+Examples:
+
+```sh
+gregale edge-rules attack-mode on --app my-api --for 1h
+gregale edge-rules attack-mode --app my-api
+gregale edge-rules attack-mode off --app my-api
+```
+
 ### edge-rules trace
 
 Simulate composed edge-rule outcomes and request policies

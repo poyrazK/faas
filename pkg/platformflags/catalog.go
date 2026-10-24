@@ -59,11 +59,12 @@ const (
 	EdgeWAFBlocking = "edge_waf_blocking"
 	EdgeChallenge   = "edge_challenge"
 	EdgePenaltyBox  = "edge_penalty_box"
+	EdgeAttackMode  = "edge_attack_mode"
 )
 
 // EdgeFeatures are the edge rule features apid refuses to configure and
 // gatewayd-internal stops enforcing while their flag is off for an account.
-var EdgeFeatures = []string{EdgeWAFBlocking, EdgeChallenge, EdgePenaltyBox}
+var EdgeFeatures = []string{EdgeWAFBlocking, EdgeChallenge, EdgePenaltyBox, EdgeAttackMode}
 
 // RealtimePreviews are the flags apid decides per endpoint and sends to
 // realtimed with the endpoint's registration (ADR 20261021080640).
@@ -327,6 +328,17 @@ var catalog = []Spec{
 		Description: "Release edge rule penalties (penalty box) to accounts. Off by default until launch. " +
 			"While it is off apid refuses adding a penalty to a rule or switching on a rule that has one, and gateways neither box clients nor refuse boxed ones; the rules themselves keep enforcing.",
 		ADR:        "ADR-20261023113721",
+		Consumers:  []string{"apid", "gatewayd-internal"},
+		Attributes: []Attribute{AttributePlan},
+		RetireBy:   "2027-03-31",
+	},
+	{
+		Key:   EdgeAttackMode,
+		Label: "Edge attack mode",
+		Description: "Release attack mode (an app-wide managed challenge rule) to accounts. Off by default until launch. Attack mode is a challenge rule, " +
+			"so switching it on also needs edge_challenge. While it is off apid refuses switching attack mode on (switching it off always works), " +
+			"and gateways leave an active attack-mode rule inert; other challenge rules are unaffected.",
+		ADR:        "ADR-20261021220456",
 		Consumers:  []string{"apid", "gatewayd-internal"},
 		Attributes: []Attribute{AttributePlan},
 		RetireBy:   "2027-03-31",

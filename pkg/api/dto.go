@@ -10454,6 +10454,10 @@ type EdgeRuleResponse struct {
 	Mode string `json:"mode"`
 	// Penalty is the rule's penalty box (ADR-20261022105846), if any.
 	Penalty *EdgeRulePenalty `json:"penalty,omitempty"`
+	// ManagedBy names the switch that owns the rule: "attack_mode" for
+	// the app's attack-mode rule (ADR-20261021220456), which PATCH refuses.
+	// Empty for every other rule.
+	ManagedBy string `json:"managed_by,omitempty"`
 	// UnreleasedFeatures names the gated features the rule uses that are
 	// not yet released to the account (EdgeFeature*, ADR-20261023113721);
 	// the gateway does not enforce them.

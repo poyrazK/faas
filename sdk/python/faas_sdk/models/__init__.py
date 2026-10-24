@@ -1408,6 +1408,7 @@ from .durable_entity_state_export_format import DurableEntityStateExportFormat
 from .durable_entity_validator_deployment_info import DurableEntityValidatorDeploymentInfo
 from .durable_entity_validator_deployment_info_source import DurableEntityValidatorDeploymentInfoSource
 from .durable_entity_validator_deployment_info_status import DurableEntityValidatorDeploymentInfoStatus
+from .edge_attack_mode_status import EdgeAttackModeStatus
 from .edge_protection_response import EdgeProtectionResponse
 from .edge_protection_response_challenge import EdgeProtectionResponseChallenge
 from .edge_protection_response_penalty import EdgeProtectionResponsePenalty
@@ -1459,6 +1460,7 @@ from .edge_rule_redirect_action_status_code import EdgeRuleRedirectActionStatusC
 from .edge_rule_respond_action import EdgeRuleRespondAction
 from .edge_rule_response import EdgeRuleResponse
 from .edge_rule_response_kind import EdgeRuleResponseKind
+from .edge_rule_response_managed_by import EdgeRuleResponseManagedBy
 from .edge_rule_response_match_headers import EdgeRuleResponseMatchHeaders
 from .edge_rule_response_mode import EdgeRuleResponseMode
 from .edge_rule_response_unreleased_features_item import EdgeRuleResponseUnreleasedFeaturesItem
@@ -1493,6 +1495,7 @@ from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .enable_durable_entity_registry_body import EnableDurableEntityRegistryBody
 from .enable_durable_entity_registry_response_200 import EnableDurableEntityRegistryResponse200
+from .enable_edge_attack_mode_request import EnableEdgeAttackModeRequest
 from .env_diff_cell import EnvDiffCell
 from .env_diff_kind import EnvDiffKind
 from .env_diff_response import EnvDiffResponse
@@ -7506,6 +7509,7 @@ __all__ = (
     "DurableEntityValidatorDeploymentInfo",
     "DurableEntityValidatorDeploymentInfoSource",
     "DurableEntityValidatorDeploymentInfoStatus",
+    "EdgeAttackModeStatus",
     "EdgeProtectionResponse",
     "EdgeProtectionResponseChallenge",
     "EdgeProtectionResponsePenalty",
@@ -7557,6 +7561,7 @@ __all__ = (
     "EdgeRuleRespondAction",
     "EdgeRuleResponse",
     "EdgeRuleResponseKind",
+    "EdgeRuleResponseManagedBy",
     "EdgeRuleResponseMatchHeaders",
     "EdgeRuleResponseMode",
     "EdgeRuleResponseUnreleasedFeaturesItem",
@@ -7591,6 +7596,7 @@ __all__ = (
     "EnableAlertPresetRequestAction",
     "EnableDurableEntityRegistryBody",
     "EnableDurableEntityRegistryResponse200",
+    "EnableEdgeAttackModeRequest",
     "EnvDiffCell",
     "EnvDiffKind",
     "EnvDiffResponse",
