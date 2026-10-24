@@ -201,9 +201,13 @@ or revoked org key.
 The filtered app, deployment, build, domain, cron, instance, secret, invocation
 and app-metrics inventories hide company resources after departure. Pagination
 keeps older personal resources reachable and does not expose hidden company
-resource IDs or secret names in its cursors. Domain, cron, edge-rule and
-invocation ID URLs also enforce current membership, while their legacy
-operations still require the creator to be owner/admin.
+resource IDs or secret names in its cursors. Domain, cron, edge-rule,
+invocation, delayed-task, trigger, workflow-run, release-freeze, managed
+operation, commit-source, preview-status and deleted-app ID URLs also enforce
+current membership, while their legacy operations still require the creator to
+be owner/admin. So do routes that name a company app in the request body or
+query string, such as creating a cron, trigger, custom domain, release freeze,
+CORS preset, dev bridge or managed PostgreSQL cutover.
 
 Account-owned jobs, object storage, queues, GitHub/GitOps bindings and unreviewed
 project integrations still need separate organization coverage. Offboarding

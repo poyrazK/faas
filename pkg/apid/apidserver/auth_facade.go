@@ -391,13 +391,42 @@ func (s *server) requireBearer(next accountHandler) accountHandler {
 
 // loadApp delegates to pkg/auth.Middleware.LoadApp (IDOR-safe
 // slug→App with the ownership predicate app.AccountID == acct.ID).
-// Behaviour matches cmd/apid/server.go:1611-1617.
+// Behaviour matches cmd/apid/server.go:1611-1617. A slug from the body or
+// query string has not passed appaccess.Wrap, so it gets the same
+// organization check through authorizeNamedApp.
 func (s *server) loadApp(w http.ResponseWriter, r *http.Request, acct state.Account, slug string) (state.App, bool) {
-	if grant, ok := appaccess.From(r); ok && (grant.App.Slug != slug || grant.Owner.ID != acct.ID) {
+	grant, granted := appaccess.From(r)
+	if granted && (grant.App.Slug != slug || grant.Owner.ID != acct.ID) {
 		s.notFound(w, "no such app")
 		return state.App{}, false
 	}
-	return s.authMw.LoadApp(w, r, acct, slug)
+	app, ok := s.authMw.LoadApp(w, r, acct, slug)
+	if !ok || granted {
+		return app, ok
+	}
+	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		api.WriteProblem(w, prob)
+		return state.App{}, false
+	}
+	return app, true
+}
+
+// authorizeNamedApp applies the organization access check that the /v1/apps
+// routes get from appaccess.Wrap to an app a request names in its body, its
+// query string or a stored session. Wrap cannot see those, and a company
+// app's rows stay under its creator's account, so a creator removed from,
+// demoted in or suspended with the app's organization could otherwise keep
+// acting on the app through such a route. Browser dashboard pages carry no
+// API principal and keep their creator check.
+func (s *server) authorizeNamedApp(r *http.Request, acct state.Account, app state.App) *api.Problem {
+	if grant, ok := appaccess.From(r); ok && grant.App.ID == app.ID {
+		return nil
+	}
+	if _, _, _, ok := middleware.PrincipalFrom(r); !ok {
+		return nil
+	}
+	_, prob := appaccess.Authorize(r, s.store, loadOrgAuditFrom(s.audit), actorAccount(r, acct), app)
+	return prob
 }
 
 // loadOrg wraps an accountHandler with pkg/authz.LoadOrg — the
