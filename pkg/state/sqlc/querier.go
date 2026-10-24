@@ -258,6 +258,7 @@ type Querier interface {
 	CancelProfileDeploymentChecks(ctx context.Context, db DBTX, appID string) error
 	CancelProjectReleaseStage(ctx context.Context, db DBTX, arg CancelProjectReleaseStageParams) (int64, error)
 	CancelQueueCanary(ctx context.Context, db DBTX, arg CancelQueueCanaryParams) error
+	CancelQueuedBuildsForDeployment(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int64, error)
 	CancelQueuedCustomerOperationJobTask(ctx context.Context, db DBTX, runID pgtype.UUID) error
 	CancelRuntimeUpgradeBuilds(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]pgtype.UUID, error)
 	CancelRuntimeUpgradeCandidate(ctx context.Context, db DBTX, arg CancelRuntimeUpgradeCandidateParams) error
@@ -547,8 +548,14 @@ type Querier interface {
 	CountActiveProjectBindingVerificationRuns(ctx context.Context, db DBTX, arg CountActiveProjectBindingVerificationRunsParams) (int64, error)
 	CountActiveProjectReleaseSecretBundles(ctx context.Context, db DBTX, arg CountActiveProjectReleaseSecretBundlesParams) (int64, error)
 	CountActiveTenantWorkflowRunsForAdmission(ctx context.Context, db DBTX, arg CountActiveTenantWorkflowRunsForAdmissionParams) (int64, error)
+	// ADR-20261023215834: the app-wide count (no workflow name) counts runs
+	// parked on an event only beyond the plan's parked allowance. A named count
+	// decides schedule overlap, where a parked run is still in progress, so it
+	// counts every unfinished run of that workflow.
 	CountActiveWorkflowRunsForAdmission(ctx context.Context, db DBTX, arg CountActiveWorkflowRunsForAdmissionParams) (int64, error)
-	CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, appID string) (int64, error)
+	// ADR-20261023215834: runs parked on an event count only beyond the plan's
+	// parked allowance.
+	CountActiveWorkflowRunsForRetry(ctx context.Context, db DBTX, arg CountActiveWorkflowRunsForRetryParams) (int64, error)
 	// Bindings, references and plaintext variables share the app's environment-key quota.
 	CountAppEnvironmentIntent(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentParams) (int64, error)
 	CountAppEnvironmentIntentInScope(ctx context.Context, db DBTX, arg CountAppEnvironmentIntentInScopeParams) (int64, error)
@@ -1242,7 +1249,11 @@ type Querier interface {
 	EventReplayBackfillMarkScanned(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillMaterializeSnapshot(ctx context.Context, db DBTX, id int64) error
 	EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFlightMax int64) (EventReplayJob, error)
-	EventReplayBackfillPruneAccounts(ctx context.Context, db DBTX, arg EventReplayBackfillPruneAccountsParams) ([]pgtype.UUID, error)
+	// ADR-20261023215834: owners with an unheld settled receipt past their
+	// plan's window, oldest first, each with its cutoff. Every owner with a
+	// receipt has a usage row, and its retention index bounds each probe. An
+	// owner without a known plan keeps the longest window.
+	EventReplayBackfillPruneAccounts(ctx context.Context, db DBTX, arg EventReplayBackfillPruneAccountsParams) ([]EventReplayBackfillPruneAccountsRow, error)
 	// Caller holds the account range lock acquired in a previous SQL statement.
 	// This statement's READ COMMITTED snapshot sees every hold committed before it.
 	EventReplayBackfillPruneEnvelopes(ctx context.Context, db DBTX, arg EventReplayBackfillPruneEnvelopesParams) (int64, error)
@@ -1294,7 +1305,11 @@ type Querier interface {
 	EventStorageAppend(ctx context.Context, db DBTX, arg EventStorageAppendParams) error
 	EventStorageIdentity(ctx context.Context, db DBTX, arg EventStorageIdentityParams) (bool, error)
 	EventStorageLockAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	// Pending receipts are read through the pending and lease indexes, so the
+	// account's settled history is not scanned.
 	EventStoragePublicUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStoragePublicUsageRow, error)
+	// ADR-20261023215834: the trigger-kept counts, not a scan of every
+	// retained receipt under the account's admission lock.
 	EventStorageUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStorageUsageRow, error)
 	EventSubscriptionCapacityAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	EventSubscriptionCapacityCommandBudget(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandBudgetParams) (EventSubscriptionCapacityCommandBudgetRow, error)
@@ -3441,6 +3456,15 @@ type Querier interface {
 	// settled; a parent that started none qualifies at once.
 	ListSettledChildParents(ctx context.Context, db DBTX, arg ListSettledChildParentsParams) ([]ListSettledChildParentsRow, error)
 	ListSnapshotDeploymentIDs(ctx context.Context, db DBTX) ([]string, error)
+	// Deployment watchdog (ADR-20261024140100). An in-flight deployment that can
+	// no longer finish on its own: a build queued since before queued_before, or
+	// no queued or running build and no stage progress since stalled_before.
+	// Deployments that are in flight by design are never candidates: a prepared
+	// rollback target, a deployment under an MCP task promotion hold, a parked
+	// deployment, an environment workload runtime, or one waiting on a
+	// dependency, build-dependency or hosting-verification gate. A running build
+	// belongs to builderd's reaper.
+	ListStuckDeployments(ctx context.Context, db DBTX, arg ListStuckDeploymentsParams) ([]ListStuckDeploymentsRow, error)
 	ListSyntheticCheckRuns(ctx context.Context, db DBTX, arg ListSyntheticCheckRunsParams) ([]SyntheticCheckRun, error)
 	ListSyntheticChecks(ctx context.Context, db DBTX, appID pgtype.UUID) ([]SyntheticCheck, error)
 	ListTCPListenerTLSObservations(ctx context.Context, db DBTX, listenerID pgtype.UUID) ([]AppTcpListenerTlsObservation, error)
@@ -3606,6 +3630,7 @@ type Querier interface {
 	// rows before locking the projection, matching failure writers' lock order.
 	LockDeadLetterReplayLanes(ctx context.Context, db DBTX, eventIds []pgtype.UUID) error
 	LockDeploymentArtifactScan(ctx context.Context, db DBTX, arg LockDeploymentArtifactScanParams) ([]byte, error)
+	LockDeploymentForWatchdog(ctx context.Context, db DBTX, id pgtype.UUID) (string, error)
 	LockDeploymentHostingFailure(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockDeploymentHostingFailureRow, error)
 	LockDeploymentHostingVerification(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (LockDeploymentHostingVerificationRow, error)
 	LockDeploymentRegistryRootfs(ctx context.Context, db DBTX, verificationID pgtype.UUID) ([]byte, error)
@@ -4241,6 +4266,16 @@ type Querier interface {
 	ObjectS3CredentialRotationStampStage(ctx context.Context, db DBTX, arg ObjectS3CredentialRotationStampStageParams) (pgtype.Timestamptz, error)
 	ObjectS3CredentialTouch(ctx context.Context, db DBTX, arg ObjectS3CredentialTouchParams) (int64, error)
 	ObjectS3MultipartList(ctx context.Context, db DBTX, arg ObjectS3MultipartListParams) ([]ObjectStorageMultipartUpload, error)
+	// Accrues each open row of this or last month from accrued_through to now,
+	// the end of its month or the bucket's deletion, whichever is first, at the
+	// bucket's last inventoried bytes. Concurrent callers serialize on the row,
+	// and each starts from the committed accrued_through, so time is never
+	// counted twice.
+	ObjectStorageGatewayStorageAdvance(ctx context.Context, db DBTX) (int64, error)
+	// ADR-20261024132844: one row per live bucket for the current UTC month. A
+	// bucket metered last month continues from the start of this month; any other
+	// bucket starts now, so storage is never billed for time Gregale did not meter.
+	ObjectStorageGatewayStorageOpen(ctx context.Context, db DBTX) (int64, error)
 	ObjectStorageLockLegacyIdentity(ctx context.Context, db DBTX, id pgtype.UUID) error
 	ObjectStorageLockOwner(ctx context.Context, db DBTX, arg ObjectStorageLockOwnerParams) (ObjectStorageLockOwnerRow, error)
 	ObjectStorageLockReportingOwners(ctx context.Context, db DBTX, subject pgtype.UUID) ([]pgtype.UUID, error)

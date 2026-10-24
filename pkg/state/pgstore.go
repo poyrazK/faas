@@ -15711,16 +15711,13 @@ func (s *PgStore) ClaimAlertFire(ctx context.Context, ruleID, idempotencyKey str
 }
 
 func (s *PgStore) SetAlertRuleState(ctx context.Context, ruleID string, to AlertState, at time.Time) (bool, error) {
-	tag, err := s.pool.Exec(ctx, `
-		update alert_rules
-		   set state      = $2,
-		       updated_at = $3
-		 where id = $1 and state <> $2`,
-		ruleID, string(to), at.UTC())
+	var changed int
+	err := s.pool.QueryRow(ctx, setAlertRuleStateSQL,
+		ruleID, string(to), at.UTC(), uuid.NewString(), alertEpisodeKeep).Scan(&changed)
 	if err != nil {
 		return false, err
 	}
-	if tag.RowsAffected() == 0 {
+	if changed == 0 {
 		// Either the row is missing OR already in `to`. Distinguish
 		// via a follow-up SELECT — if the row is gone we MUST
 		// return ErrNotFound; if it's there with the desired
@@ -26136,6 +26133,8 @@ func mapErr(err error) error {
 			return ErrLayerArtifactRetired
 		case "account_shared_app_ownership_pending":
 			return ErrOrgAppOwnershipPending
+		case accountManagedPostgresDatabasesConstraint:
+			return accountManagedPostgresDatabasesError(admission.Detail)
 		case "migration_admission_current", "migration_source_current", "function_migration_node_pending":
 			return ErrConflict
 		case "migration_admission_capacity":
@@ -27860,7 +27859,7 @@ func (s *PgStore) MarkDunningStep(ctx context.Context, id string, from, to Accou
 		  where id = $1 and status = $4`,
 		id, string(to), stamp, string(from))
 	if err != nil {
-		return err
+		return mapErr(err)
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound

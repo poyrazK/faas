@@ -171,18 +171,19 @@ func TestAccountNodeShareLimit(t *testing.T) {
 }
 
 // adr: 1323 — without FairUse an account limit is carried and counts are
-// synced, but nothing is refused, and the node keeps its earlier connection
-// default.
+// synced, but the plan allowance is not enforced, and the node keeps its
+// earlier connection default. The per-node account share holds either way
+// (amendment 2026-10-24).
 func TestFairUseOff(t *testing.T) {
 	account := uuid.NewString()
 	syncer := &fakeConnectionSyncer{remote: []state.RealtimeAccountConnections{{AccountID: account, Connections: 50}}}
-	m := NewManager(Config{MaxConnections: 2, ConnectionSync: syncer, ConnectionSyncInterval: time.Hour}, NopHooks{})
+	m := NewManager(Config{MaxConnections: 4, ConnectionSync: syncer, ConnectionSyncInterval: time.Hour}, NopHooks{})
 	server := httptest.NewServer(m.Handler())
 	t.Cleanup(func() { _ = m.Close(); server.Close() })
 	node := &fairUseNode{m: m, server: server}
 	ep := node.endpoint(t, account, 1)
 	m.syncConnections(t.Context())
-	for range 2 { // past the account limit, the remote count and the node share
+	for range 2 { // past the account limit and the remote count, up to the node share
 		if _, status, _ := node.dial(t, ep); status != http.StatusSwitchingProtocols {
 			t.Fatalf("connection past an unenforced account limit refused with %d", status)
 		}
@@ -194,6 +195,14 @@ func TestFairUseOff(t *testing.T) {
 	syncer.mu.Unlock()
 	if len(last) != 1 || last[0].Connections != 2 || m.Stats().AccountLimitRefusals+m.Stats().AccountNodeLimitRefusals != 0 {
 		t.Fatalf("reported %+v with stats %+v, want 2 synced and no refusals", last, m.Stats())
+	}
+	// The node share (half of 4) still holds without FairUse: one account
+	// cannot take every slot on the node.
+	if _, status, problem := node.dial(t, ep); status != http.StatusTooManyRequests || problem.Code != api.CodeRealtimeConnectionLimit {
+		t.Fatalf("connection past the node share = %d %+v, want 429 %s", status, problem, api.CodeRealtimeConnectionLimit)
+	}
+	if m.Stats().AccountNodeLimitRefusals != 1 || m.Stats().AccountLimitRefusals != 0 {
+		t.Fatalf("stats %+v, want one node-share refusal", m.Stats())
 	}
 	for fairUse, want := range map[bool]int{false: api.RealtimeNodeConnectionsWithoutFairUse, true: api.RealtimeNodeConnectionsDefault} {
 		if got := (Config{FairUse: fairUse}).withDefaults().MaxConnections; got != want {

@@ -60,7 +60,7 @@ func TestEventStoragePublishBackpressureAndDuplicate(t *testing.T) {
 	if err := (*e.Store()).FinishPublishedEvent(ctx, work.ID, work.ClaimToken, nil); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (*e.Store()).PruneDeliveredPublishedEvents(ctx, time.Now().Add(31*24*time.Hour), 1); err != nil {
+	if _, err := (*e.Store()).PruneSettledPublishedEvents(ctx, time.Now().Add(31*24*time.Hour), 1); err != nil {
 		t.Fatal(err)
 	}
 	request.ID = "rejected"

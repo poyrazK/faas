@@ -138,6 +138,25 @@ and no channel stops notifying. The app dashboard's Alerts panel shows where
 each rule delivers ("Delivers to") and lists every channel with its last
 delivery or error, so a rule delivering nowhere or a revoked Slack webhook is
 visible before an incident.
+
+### What the logs show
+
+Where log search is enabled (preview), an app alert that fires also says what
+the app's logs show over the alert window (up to 24 hours), so you can tell at
+a glance whether something is erroring and whether something just shipped:
+
+```text
+Logs in the window: 132 errors, 18 warnings, 87 HTTP 5xx (most errors on /checkout: 91)
+deploy traffic changed from 10% to 100% at 14:02 UTC
+Search the logs: https://…/dashboard/apps/shop/log-search?since=…&until=…&level=error%2Cfatal
+```
+
+Slack, PagerDuty and email show these lines on the fire; webhooks receive the
+same data as `log_context` (`errors`, `warnings`, `http_5xx`,
+`busiest_error_route`, `recent_deploys` from the window and the hour before
+it, and `search_path`). Resolve messages and account-wide rules carry none,
+and if the logs cannot be read in time the alert is delivered without them.
+
 ## Alert on unusual values
 
 A fixed threshold has to be chosen in advance: 1% errors is an emergency for
@@ -193,6 +212,31 @@ or `[warn]` in the first 512 bytes. This is the same classification as
 counted. A line that only mentions "error" in prose is not counted. Build
 logs are never counted. Log alerts support every alert action, including
 rollback, and every window.
+
+### Log search alerts
+
+Where log search is enabled (preview), `log_search_matches` counts the log
+events matching a set of [log search](log-search.md) filters during the
+window: 5xx responses on one route, runtime errors mentioning the database,
+failed builds. Pass the filters as `log_query`, or name a saved search and the
+CLI copies its filters into the rule:
+
+```bash
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "checkout 5xx" \
+  --metric log_search_matches --saved-search checkout-5xx --comparison gt --threshold 20 \
+  --window-spec 15m --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+
+printf '%s\n' "$ALERT_SECRET" | gregale alerts add --app shop --name "database errors" \
+  --metric log_search_matches --log-query 'source=runtime&level=error&q=database' \
+  --comparison gt --threshold 0 --window-spec 1h \
+  --webhook-url https://example.com/hooks/gregale --webhook-secret-stdin
+```
+
+The rule keeps its own copy of the filters, so editing or deleting the saved
+search later does not change it. Counts include every occurrence of a
+deduplicated event. These rules are webhook-only and support windows up to
+`24h`. If the search cannot finish in time, the rule is `unknown` for that
+evaluation rather than firing or clearing.
 ## SLO alerts
 
 `slo_budget_burn` and `slo_budget_remaining_pct` watch one of the app's own

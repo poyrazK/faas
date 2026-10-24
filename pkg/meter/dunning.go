@@ -28,6 +28,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 // DunningSender is the slice of mail.Sender the dunning timer needs
@@ -54,12 +55,16 @@ type DunningParams struct {
 	Interval                    time.Duration // default 1h
 	Now                         func() time.Time
 	Log                         *slog.Logger
+	// Registerer receives meterd_dunning_deletion_blocked_accounts; nil
+	// leaves the gauge unregistered (tests).
+	Registerer prometheus.Registerer
 }
 
 // Dunning is the 7-day / 21-day dunning timer. Owns the ticker + the
 // sweep loop; Run exits cleanly when ctx is cancelled.
 type Dunning struct {
-	p DunningParams
+	p       DunningParams
+	blocked *prometheus.GaugeVec
 }
 
 // NewDunning returns a Dunning ready to Run. Defaults: Interval 1h,
@@ -83,8 +88,18 @@ func NewDunning(p DunningParams) *Dunning {
 	if p.Notif == nil {
 		p.Notif = noopDunningNotifier{}
 	}
-	return &Dunning{p: p}
+	d := &Dunning{p: p, blocked: prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "meterd_dunning_deletion_blocked_accounts",
+		Help: "Suspended accounts past the non-payment deletion deadline whose move to deleted_pending a deletion guard refused in the last dunning sweep, by guard (managed_postgres_databases, shared_app_ownership).",
+	}, []string{"reason"})}
+	if p.Registerer != nil {
+		p.Registerer.MustRegister(d.blocked)
+	}
+	return d
 }
+
+// BlockedGauge exposes meterd_dunning_deletion_blocked_accounts for tests.
+func (d *Dunning) BlockedGauge() *prometheus.GaugeVec { return d.blocked }
 
 // noopDunningNotifier swallows every notify call. Default for tests.
 type noopDunningNotifier struct{}
@@ -158,6 +173,8 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 		return err
 	}
 	now := d.p.Now()
+	blocked := newDeletionBlockTally()
+	defer blocked.publish(d.blocked)
 	for _, acct := range rows {
 		switch acct.Status {
 		case state.AccountPastDue:
@@ -208,13 +225,13 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 				continue // still inside the 21-day window
 			}
 			if handled, err := d.scheduleNonpaymentDeletion(ctx, acct); handled {
-				if err != nil {
+				if err != nil && !d.deletionBlocked(acct, err, blocked) {
 					d.p.Log.Warn("meter: durable non-payment deletion unavailable", "account", acct.ID)
 				}
 				continue
 			}
 			if err := d.p.Store.MarkDunningStep(ctx, acct.ID, state.AccountSuspended, state.AccountDeletedPending); err != nil {
-				if errors.Is(err, state.ErrNotFound) {
+				if errors.Is(err, state.ErrNotFound) || d.deletionBlocked(acct, err, blocked) {
 					continue
 				}
 				d.p.Log.Warn("meter: dunning delete_pending", "account", acct.ID, "err", err)

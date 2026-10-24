@@ -218,6 +218,14 @@ func Run(t *testing.T, open Open) {
 		{"retained_layers_and_deletion_artifacts_match", testRetainedLayersAndDeletionArtifacts},
 		{"snapshot_delete_intent_is_durable", testSnapshotDeleteIntent},
 		{"log_event_insert_is_idempotent_and_queries_are_tenant_scoped", testLogEventInsertAndList},
+		{"log_event_search_filters_and_facets", testLogEventSearchAndFacets},
+		{"log_event_projection_sources", testLogProjectionSources},
+		{"log_saved_searches", testLogSavedSearches},
+		{"log_search_alert_rule_round_trips", testLogSearchAlertRuleRoundTrips},
+		{"dashboards_are_account_scoped", testDashboards},
+		{"alert_episodes_follow_rule_state", testAlertEpisodesFollowRuleState},
+		{"route_monitor_incident_summaries_are_account_scoped", testRouteMonitorIncidentSummariesAreAccountScoped},
+		{"incident_notes_follow_their_incident", testIncidentNotesFollowTheirIncident},
 		{"app_deletion_claim_closes_restore_window", testAppDeletionClaim},
 		{"preview_lifecycle_is_scoped_and_reclaimable", testPreviewLifecycle},
 		{"scenario_test_namespace_is_scoped_and_reaped", testScenarioTestNamespace},
@@ -2172,7 +2180,7 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 		AppID: fx.App.ID, WorkflowName: "conformance", Status: state.WorkflowRunStatusRunning,
 		Input: []byte(`{"input":true}`), DefinitionSnapshot: []byte(`{"steps":["first","second"]}`),
 	}
-	active, err := fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, run, 1)
+	active, err := fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, run, 1, 0)
 	if err != nil || active != 1 {
 		t.Fatalf("CreateWorkflowRunAdmitted = (%d, %v), want (1, nil)", active, err)
 	}
@@ -2180,7 +2188,7 @@ func testWorkflowAdmissionRecoveryAndCancel(t *testing.T, fx *Fixture) {
 		AppID: fx.App.ID, WorkflowName: "over-quota",
 		Input: []byte(`{}`), DefinitionSnapshot: []byte(`{"steps":[]}`),
 	}
-	active, err = fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, overQuota, 1)
+	active, err = fx.Store.CreateWorkflowRunAdmitted(fx.Ctx, overQuota, 1, 0)
 	if !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) || active != 1 {
 		t.Fatalf("CreateWorkflowRunAdmitted(over quota) = (%d, %v), want (1, ErrWorkflowRunQuotaExceeded)", active, err)
 	}
@@ -2300,7 +2308,7 @@ func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
 				AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
 				Input: json.RawMessage(`{"order_id":"same"}`), DefinitionSnapshot: json.RawMessage(`{"name":"idempotent-create","steps":[]}`),
 			}
-			active, replayed, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, run, 1, key, fingerprint)
+			active, replayed, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, run, 1, 0, key, fingerprint)
 			results <- result{run: run, active: active, replayed: replayed, err: err}
 		}()
 	}
@@ -2334,7 +2342,7 @@ func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
 		AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
 		Input: json.RawMessage(`{"order_id":"same"}`), DefinitionSnapshot: json.RawMessage(`{"name":"new-published-definition","steps":[]}`),
 	}
-	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, changedDefinition, 1, key, fingerprint); err != nil || !isReplay {
+	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, changedDefinition, 1, 0, key, fingerprint); err != nil || !isReplay {
 		t.Fatalf("replay after definition update = (replayed:%t, err:%v), want original run", isReplay, err)
 	}
 	var replayedSnapshot, expectedSnapshot any
@@ -2354,12 +2362,12 @@ func testWorkflowRunCreateIdempotency(t *testing.T, fx *Fixture) {
 		AppID: fx.App.ID, WorkflowName: "idempotent-create", Status: state.WorkflowRunStatusPending,
 		Input: json.RawMessage(`{"order_id":"different"}`), DefinitionSnapshot: json.RawMessage(`{"name":"idempotent-create","steps":[]}`),
 	}
-	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, conflict, 1, key, changedInputFingerprint); !errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) || isReplay {
+	if _, isReplay, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, conflict, 1, 0, key, changedInputFingerprint); !errors.Is(err, state.ErrWorkflowRunIdempotencyConflict) || isReplay {
 		t.Fatalf("changed-input retry = (replayed:%t, err:%v), want idempotency conflict", isReplay, err)
 	}
 
 	other := &state.WorkflowRun{AppID: fx.App.ID, WorkflowName: "idempotent-create", Input: json.RawMessage(`{}`), DefinitionSnapshot: json.RawMessage(`{}`)}
-	if _, _, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, other, 1, "other-"+uuid.NewString(), fingerprint); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
+	if _, _, err := fx.Store.CreateWorkflowRunAdmittedWithIdempotencyKey(fx.Ctx, other, 1, 0, "other-"+uuid.NewString(), fingerprint); !errors.Is(err, state.ErrWorkflowRunQuotaExceeded) {
 		t.Fatalf("new key after quota consumed = %v, want ErrWorkflowRunQuotaExceeded", err)
 	}
 }

@@ -815,6 +815,22 @@ without changing the safety policy:
 }
 ```
 
+The published rate card is ADR-1430's: storage at $0.03 per GiB-month
+(`storage_millicents_per_gib_month: 3000`, `api.ObjectStorageMillicentsPerGiBMonth`)
+beyond each plan's included storage, with request and egress prices at zero.
+[`docs/plans.md`](plans.md) lists the included storage per plan.
+
+`gateway_safety_v1` has no provider usage reports, so Gregale meters stored
+bytes itself: every minute apid accrues each bucket's last inventoried bytes
+into stored byte-hours per UTC month
+([ADR 20261024132844](adr/20261024132844-gateway-metered-object-storage-billing.md)).
+This mode accepts only a storage-only rate card (request and egress prices
+zero), because it does not meter provider-side requests or egress. Month close
+bills a metered month once every metered bucket is accrued to the end of the
+month or to its deletion. Storage is never billed for time Gregale did not
+meter: a bucket starts accruing at its first accrual, and a month cannot mix
+metered rows with provider reports.
+
 `GET /v1/account/object-storage-usage` then includes `charges` with the
 storage, request, egress and total estimate for the current UTC month, plus
 `billing_mode` (`off`, `shadow`, or `live`) and the optional UTC-month

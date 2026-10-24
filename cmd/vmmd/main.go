@@ -79,24 +79,16 @@ func configuredRuntimeBaseGenerations(envLookup func(string) string) (map[string
 	if envLookup == nil {
 		envLookup = os.Getenv
 	}
-	rows := []struct {
-		runtime string
-	}{
-		{""},
-		{imaged.RuntimeNode22},
-		{imaged.RuntimePython312},
-		{imaged.RuntimeGo124},
-		{imaged.RuntimeGo124Alpine},
-		{imaged.RuntimeNode24},
-		{imaged.RuntimePython313},
-	}
-	out := make(map[string]string, len(rows))
-	for _, row := range rows {
-		ref, err := imaged.ResolveDeployBaseRef(row.runtime, envLookup)
+	// The rollout pre-stage publishes, and base-adoption-check gates on,
+	// this same list (ADR-20261024191249).
+	gated := imaged.GatedRuntimeBases()
+	out := make(map[string]string, len(gated))
+	for _, base := range gated {
+		ref, err := imaged.ResolveDeployBaseRef(base, envLookup)
 		if err != nil {
-			return nil, fmt.Errorf("vmmd: resolve runtime base generation %q: %w", row.runtime, err)
+			return nil, fmt.Errorf("vmmd: resolve runtime base generation %q: %w", base, err)
 		}
-		out[storagekey.BaseForArch(row.runtime, runtime.GOARCH)] = ref
+		out[storagekey.BaseForArch(base, runtime.GOARCH)] = ref
 	}
 	return out, nil
 }
@@ -937,6 +929,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRestorePrefetch(!cfg.DisableRestorePrefetch).
 		WithFreePageReporting(freePageReporting).
 		WithPmemBase(pmemBaseDir).
+		WithRestoreReseedThread(cfg.RestoreReseedThread).
 		// Issue #309 / tier-2 DX: install the per-VMM
 		// slow-subscriber callback that every ring
 		// registerRing creates will fire on a full
@@ -967,6 +960,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-746: count error and warn guest log lines per app for log alerts.
 	jailer.WithLogCommitCallback(newAppLogLineCounter(ops.Registry()).Observe)
+	// ADR-20261018083536 slice B: project warn and error lines into the
+	// customer log ledger, before any ring is registered.
+	closeRuntimeLogEvents, err := startRuntimeLogEvents(ctx, log, os.Getenv, ops.Registry(), jailer)
+	if err != nil {
+		return fmt.Errorf("vmmd: %w", err)
+	}
+	defer closeRuntimeLogEvents()
 	// Activity tracker (PR-B, issue #462): per-instance in-flight
 	// ForwardHTTP request counter. It is shared by the gRPC server's
 	// stats surface and the liveness loop so load-correlated probe misses

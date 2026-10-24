@@ -40,7 +40,7 @@ func (s *Service) RecordObjectStorageEstimates(ctx context.Context, now time.Tim
 			continue
 		}
 		summary := state.SummarizeObjectUsage(snapshot, registry.Accounting, now)
-		if len(summary.UnavailableMeters) != 0 {
+		if !summary.Chargeable() {
 			continue
 		}
 		e := state.FinancialObjectStorageEstimate{AccountID: acct.ID, PeriodStart: period, ObservedAt: now, UsageThrough: objectUsageThrough(snapshot, period, now), Fresh: summary.Fresh, Usage: summary, Pricing: *registry.Pricing, Allowance: api.MustLimitsFor(acct.Plan).ObjectStorage.Allowance()}
@@ -50,10 +50,19 @@ func (s *Service) RecordObjectStorageEstimates(ctx context.Context, now time.Tim
 }
 
 // objectUsageThrough is the oldest provider report the month's usage
-// includes. With no report yet the usage is known only through the period
-// start, which never supports a run-rate forecast.
+// includes, or under gateway metering the oldest live bucket's metered
+// instant. With neither, the usage is known only through the period start,
+// which never supports a run-rate forecast.
 func objectUsageThrough(s state.ObjectUsageSnapshot, period, now time.Time) time.Time {
 	through := time.Time{}
+	for _, b := range s.Buckets {
+		if b.Bucket.State == "deleted" || b.StorageMeteredThrough.IsZero() || b.StorageMeteredThrough.After(now) {
+			continue
+		}
+		if through.IsZero() || b.StorageMeteredThrough.Before(through) {
+			through = b.StorageMeteredThrough.UTC()
+		}
+	}
 	for _, r := range s.Reports {
 		if !r.PeriodStart.Equal(period) || r.ObservedAt.After(now) {
 			continue

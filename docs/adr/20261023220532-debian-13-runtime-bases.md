@@ -98,7 +98,9 @@ move together.
    told (image deploys) before that release.
 4. **Not decided here:** Python 3.12's own CVEs (only a move to 3.13 fixes
    them), and moving the Debian lanes to the all-critical image gate that
-   `runner-python313` uses. Both are separate decisions.
+   `runner-python313` uses. Both are separate decisions. ADR 20261024132405
+   decides the Python 3.12 part and corrects the claim: 3.13 fixes three of
+   the six, and no release fixes the other three.
 
 ## Effect on running workloads
 

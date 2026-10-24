@@ -123,7 +123,7 @@ func readBackfillReceipt(t *testing.T, f backfillDeliveryFixture, id string) sta
 func TestEventBackfillDeliveryInspectionAndHandlerRecovery(t *testing.T) {
 	f := seedBackfillDeliveries(t, "evt/?+&")
 	ctx := context.Background()
-	if n, err := f.store.PruneDeliveredPublishedEvents(ctx, time.Now().Add(time.Hour), 100); err != nil || n != 0 {
+	if n, err := f.store.PruneSettledPublishedEvents(ctx, time.Now().Add(api.EventSettledRetentionMax()+time.Hour), 100); err != nil || n != 0 {
 		t.Fatalf("active job retention=%d %v", n, err)
 	}
 	scanDeliveryBackfill(t, f)
@@ -414,7 +414,7 @@ func TestEventBackfillItemsDoNotLinkReusedIdentity(t *testing.T) {
 	ctx := context.Background()
 	scanDeliveryBackfill(t, f)
 	admitDeliveryBackfill(t, f)
-	if n, err := f.store.PruneDeliveredPublishedEvents(ctx, time.Now().Add(time.Hour), 100); err != nil || n != 1 {
+	if n, err := f.store.PruneSettledPublishedEvents(ctx, time.Now().Add(api.EventSettledRetentionMax()+time.Hour), 100); err != nil || n != 1 {
 		t.Fatalf("source pruning=%d %v", n, err)
 	}
 	publishBackfillDeliveryEvent(t, f.store, f.account, "reused")

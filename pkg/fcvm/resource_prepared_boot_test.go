@@ -36,9 +36,9 @@ func preparedBootRecord(t *testing.T, source, boot, phase string) resourceJourna
 
 func TestResourcePreparedBootCommittedBeforeSetup(t *testing.T) {
 	m, p, j, f := preparedJournalFixture(t)
-	syncDir := j.directorySync
+	syncDir := j.commitSync
 	committed := false
-	j.directorySync = func() error {
+	j.commitSync = func(durable bool) error {
 		for _, r := range j.records {
 			if len(r.Assets) == 0 {
 				body, err := j.dir.ReadFile(resourceRecordName(r.Prepared.Source))
@@ -49,7 +49,7 @@ func TestResourcePreparedBootCommittedBeforeSetup(t *testing.T) {
 				committed = true
 			}
 		}
-		return syncDir()
+		return syncDir(durable)
 	}
 	f.before = func(argv []string) {
 		if len(argv) > 2 && argv[2] == "add" && !committed {
@@ -192,15 +192,15 @@ func TestResourceRestartPreparedBootPartialRetirement(t *testing.T) {
 				if err := m.WithResourceJournal(j); err != nil {
 					t.Fatal(err)
 				}
-				syncDir := j.directorySync
-				j.directorySync = func() error {
+				syncDir := j.commitSync
+				j.commitSync = func(durable bool) error {
 					if !m.alloc.pristine() || m.restartInventoryDone {
 						t.Fatal("admission preceded retirement fsync")
 					}
 					if state == "fsync" {
 						return errors.New("retirement sync unavailable")
 					}
-					return syncDir()
+					return syncDir(durable)
 				}
 				if state == "collision" {
 					restartProcessFixture(t, opts, 101, 0, "unrelated")
@@ -211,7 +211,7 @@ func TestResourceRestartPreparedBootPartialRetirement(t *testing.T) {
 					if err == nil || !m.alloc.pristine() || m.restartInventoryDone || readErr != nil || len(items) != 1 {
 						t.Fatal("uncertain retirement opened admission or lost reservation")
 					}
-					j.directorySync = syncDir
+					j.commitSync = syncDir
 					rep, err = m.recoverRestartQuarantine(t.Context(), opts)
 				}
 				want := 0

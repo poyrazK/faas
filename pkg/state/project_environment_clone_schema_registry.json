@@ -415,6 +415,17 @@
     "kind": "operational"
   },
   {
+    "table": "alert_episodes",
+    "columns": [
+      "account_id",
+      "id",
+      "opened_at",
+      "resolved_at",
+      "rule_id"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_historical_rollback_claims",
     "columns": [
       "deployment_id",
@@ -478,6 +489,7 @@
       "id",
       "last_evaluated_at",
       "last_fired_at",
+      "log_query",
       "mcp_for_minutes",
       "mcp_min_calls",
       "mcp_readiness_scope",
@@ -3977,6 +3989,18 @@
     "kind": "operational"
   },
   {
+    "table": "dashboards",
+    "columns": [
+      "account_id",
+      "created_at",
+      "id",
+      "name",
+      "updated_at",
+      "widgets"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "data_api_runtime_connection_observations",
     "columns": [
       "account_id",
@@ -4294,7 +4318,7 @@
       "rotated_from_id",
       "scopes",
       "status",
-      "token_digest"
+      "token_sha256"
     ],
     "kind": "account_identity"
   },
@@ -6049,6 +6073,15 @@
     "kind": "operational"
   },
   {
+    "table": "event_receipt_usage",
+    "columns": [
+      "account_id",
+      "retained_bytes",
+      "retained_events"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "event_recovery_execution_results",
     "columns": [
       "attempts",
@@ -7128,6 +7161,22 @@
       "updated_at"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "incident_notes",
+    "columns": [
+      "account_id",
+      "alert_episode_id",
+      "author",
+      "body",
+      "created_at",
+      "id",
+      "incident_id",
+      "kind",
+      "route_incident_id",
+      "status_incident_id"
+    ],
+    "kind": "operational"
   },
   {
     "table": "instance_application_standard_admissions",
@@ -8785,6 +8834,19 @@
       "trace_id"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "log_saved_searches",
+    "columns": [
+      "account_id",
+      "app_id",
+      "created_at",
+      "id",
+      "name",
+      "query",
+      "updated_at"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "login_tokens",
@@ -11144,6 +11206,17 @@
       "size_bytes",
       "state",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "object_storage_gateway_storage",
+    "columns": [
+      "accrued_from",
+      "accrued_through",
+      "bucket_id",
+      "period_start",
+      "stored_byte_hours"
     ],
     "kind": "operational"
   },
