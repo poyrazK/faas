@@ -59,7 +59,7 @@ func cmdConnectRepo(args []string) int {
 	}
 	fmt.Printf("Opening %s\n  to bind this repo to a Gregale app…\n", target)
 	fmt.Fprintf(os.Stderr, "  (you'll be asked to authorize GitHub if you haven't already)\n")
-	fmt.Fprintf(os.Stderr, "Next:\n  gregale deploy --repo %s --ref main\n", repo)
+	fmt.Fprintf(os.Stderr, "Next:\n  gregale deploy --repo %s --ref main             # one app\n  gregale deploy --repo %s --ref main --project   # every service in the repository\n", repo, repo)
 	if err := openBrowser(target); err != nil {
 		// Mirror cmdConnect github: a soft failure — the URL is
 		// the value the customer came for, missing the launch is

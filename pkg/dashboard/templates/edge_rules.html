@@ -85,10 +85,10 @@
     {{if .Data.Hosts}}
     <section class="card" id="host-coverage" aria-labelledby="host-coverage-heading">
       <h2 id="host-coverage-heading">Hosts</h2>
-      <p class="muted">Every hostname this app serves and how many enabled edge rules apply to it. Rules for "every app host" (match host <code>@app</code>) cover custom domains too, including ones added later.</p>
+      <p class="muted">Every hostname this app serves and how many enabled edge rules apply to it. Rules for "every app host" (match host <code>@app</code>) cover custom domains too, including ones added later. A companion that declares a port, and each public listener, is reachable from the internet at its own <code>&lt;app&gt;--&lt;name&gt;</code> hostname; a rule that names only the app's main hostname does not cover it.</p>
       <ul>
         {{range .Data.Hosts}}
-          <li><code>{{.Host}}</code>{{if .Custom}} <span class="muted">custom domain</span>{{end}} — {{if .Rules}}{{.Rules}} rule{{if ne .Rules 1}}s{{end}} apply{{else}}<strong>no edge rules apply</strong>{{end}}</li>
+          <li><code>{{.Host}}</code>{{if .Custom}} <span class="muted">custom domain</span>{{end}}{{if .PublicPort}} <span class="muted">public listener {{.Selector}}</span>{{else if .Selector}} <span class="muted">companion {{.Selector}}</span>{{end}} — {{if .Rules}}{{.Rules}} rule{{if ne .Rules 1}}s{{end}} apply{{else}}<strong>no edge rules apply</strong>{{end}}</li>
         {{end}}
       </ul>
     </section>
@@ -246,13 +246,14 @@
         {{else}}
           <p>Under attack? Attack mode challenges every visitor to every host of this app for a while, then ends on its own. Browsers solve a short check once and continue; verified search crawlers and requests with a verified API key or JWT pass straight through; other clients (scripts, webhooks, uptime checks) get 403 until it ends.</p>
         {{end}}{{end}}
+        {{if not .Data.AttackModeAvailable}}<p class="muted">Attack mode is not yet available to this account.</p>{{else}}
         <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-protection/attack-mode" class="inline">
           <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
           <input type="hidden" name="attack_mode" value="on">
           <label>{{if .Data.Protection.AttackMode.Active}}Extend to{{else}}Turn on for{{end}}
             <select name="duration_seconds"><option value="3600">1 hour</option><option value="21600">6 hours</option><option value="86400">24 hours</option></select></label>
           <button type="submit">{{if .Data.Protection.AttackMode.Active}}Extend attack mode{{else}}Turn on attack mode{{end}}</button>
-        </form>
+        </form>{{end}}
         {{if .Data.Protection.AttackMode.Active}}
         <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/edge-protection/attack-mode" class="inline">
           <input type="hidden" name="csrf_token" value="{{$.Data.ActionCSRF}}">
@@ -285,8 +286,11 @@
             {{if .Categories}}<p>Detections by category: {{range $i, $c := .Categories}}{{if $i}}, {{end}}{{$c.Name}} <strong>{{$c.Count}}</strong>{{end}}.</p>{{end}}
             {{if .TopRules}}<p>Top CRS rules: {{range $i, $c := .TopRules}}{{if $i}}, {{end}}<code>{{$c.Name}}</code> <strong>{{$c.Count}}</strong>{{end}}. Exclude a false positive with <code>exclude_rule_ids</code>.</p>{{end}}
           {{end}}{{end}}
+          {{with .Penalty}}{{if or .Boxed .Rejected}}
+            <p>Penalty box: <strong>{{.Boxed}}</strong> clients boxed, <strong>{{.Rejected}}</strong> requests refused while boxed.</p>
+          {{end}}{{end}}
           {{with .Challenge}}{{if or .Issued .Solved .Rejected .Passed .Bypassed .Invalid}}
-            <p>Challenges: <strong>{{.Issued}}</strong> pages served, <strong>{{.Solved}}</strong> solved, <strong>{{.Rejected}}</strong> non-browser requests refused, <strong>{{.Passed}}</strong> let through on an earlier solve, <strong>{{.Bypassed}}</strong> verified API clients, <strong>{{.Invalid}}</strong> invalid solutions.</p>
+            <p>Challenges: <strong>{{.Issued}}</strong> pages served, <strong>{{.Solved}}</strong> solved, <strong>{{.Rejected}}</strong> non-browser requests refused, <strong>{{.Passed}}</strong> let through on an earlier solve, <strong>{{.Bypassed}}</strong> verified API clients, <strong>{{.Invalid}}</strong> invalid solutions.{{if .Raised}} <strong>{{.Raised}}</strong> pages were served at a difficulty raised under attack.{{end}}</p>
           {{end}}{{end}}
           <p class="muted">Get alerted on bursts with the <code>pre_auth_pressure</code>, <code>edge_validation_failures</code>, <code>edge_rejection_pressure</code>, and <code>edge_waf_detections</code> alert presets. CLI: <code>gregale edge-rules summary --app {{$.Data.App.Slug}} --range 24h</code>.</p>
         {{end}}

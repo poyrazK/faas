@@ -144,6 +144,7 @@ type Loop struct {
 	migratingWatchdog           *MigratingWatchdog                      // Tier A6 / ADR-067 wedged-migration self-healer; nil opts out
 	deadNodeReconciler          *DeadNodeReconciler                     // dead-node billing-leak self-healer; nil opts out (no ticker arm)
 	instanceDivergence          *DeadNodeReconciler                     // ADR-191 vmmd-vs-row divergence sweep; nil opts out (no ticker arm)
+	adoptionReports             *DeadNodeReconciler                     // vmmd restart adoption reports (adoption ADR §3); nil opts out
 	instStats                   InstanceStatsPoller                     // issue #170 / PR-A per-{app,node} metrics poller; nil opts out
 	instanceActivity            InstanceActivityReader                  // fresh per-instance request activity used by scale-in; nil opts out
 	scaleup                     *scaleup.Trigger                        // issue #169 / #172 reactive scale-up trigger; nil opts out
@@ -211,6 +212,10 @@ type Loop struct {
 	// default), both tickers are skipped and queued job_tasks
 	// stay in the DB (Mega-1 cluster-wide gate).
 	jobsDispatched bool
+
+	// profileCaptureSlots bounds concurrent on-demand profile captures
+	// (ADR-1155); allocated on first drain by the loop goroutine.
+	profileCaptureSlots chan struct{}
 
 	// workflowsDispatched is the FAAS_WORKFLOWS_ENABLED opt-in for the
 	// workflow dispatch tick (ADR-081).
@@ -776,6 +781,14 @@ func (l *Loop) WithInstanceDivergence(r *DeadNodeReconciler) *Loop {
 	return l
 }
 
+// WithAdoptionReports attaches the pass that applies restarted vmmds'
+// adoption reports (vmmd restart adoption ADR §3). nil opts out. Each tick
+// runs off the loop: a pass may wait on vmmd cleanup calls.
+func (l *Loop) WithAdoptionReports(r *DeadNodeReconciler) *Loop {
+	l.adoptionReports = r
+	return l
+}
+
 // Run blocks until ctx is cancelled. It owns three event sources: the LISTEN
 // subscriber, the reaper tick, and the cron tick.
 func (l *Loop) Run(ctx context.Context) error {
@@ -808,6 +821,7 @@ func (l *Loop) Run(ctx context.Context) error {
 		// handler arm, one extra safety ticker. No additional
 		// pool subscriber.
 		db.NotifyOperatorIntent,
+		db.NotifyProfileCapture,         // ADR-1155: on-demand profile capture queued by apid.
 		db.NotifyInstanceFailureRelayed, // issue #3359: vmmd reports relayed by the hosting schedd to the app's owner.
 	}, l.log)
 	if err != nil {
@@ -830,6 +844,9 @@ func (l *Loop) Run(ctx context.Context) error {
 	// sensitive (the on-call is paged) so bounding post-restart
 	// latency at ~1 round-trip matters.
 	l.drainPendingOperatorIntents(ctx)
+	// ADR-1155: fail captures interrupted by a schedd bounce and start any
+	// queued while it was down.
+	l.drainProfileCaptures(ctx)
 
 	// PR-#TBD / C5: run the completeness tick once at startup so
 	// the gauge surfaces a real value at t=0 instead of the
@@ -863,6 +880,8 @@ func (l *Loop) Run(ctx context.Context) error {
 	// operatorIntentSafetyTick.
 	operatorIntentT := time.NewTicker(operatorIntentSafetyTick)
 	defer operatorIntentT.Stop()
+	profileCaptureT := time.NewTicker(profileCaptureSafetyTick)
+	defer profileCaptureT.Stop()
 	// Operator-intent completeness ticker (PR-#TBD / C5). 60s
 	// cadence — drives the gauge
 	// operatorActionTraceCompletenessRatio and the counter
@@ -1103,6 +1122,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		instanceDivergenceT = time.NewTicker(l.instanceDivergence.interval)
 		defer instanceDivergenceT.Stop()
 	}
+	var adoptionReportsT *time.Ticker
+	if l.adoptionReports != nil {
+		adoptionReportsT = time.NewTicker(l.adoptionReports.interval)
+		defer adoptionReportsT.Stop()
+	}
 	// Jobs dispatch + stuck-job reaper tickers (Mega-1, issue
 	// #1184 Workstream A). Both gated on jobsDispatched so a
 	// FAAS_JOBS_DISPATCH=0 cluster never ticks. 1s matches the
@@ -1251,6 +1275,8 @@ func (l *Loop) Run(ctx context.Context) error {
 			l.runDeadNodeReconcile(ctx)
 		case <-deadNodeTick(instanceDivergenceT):
 			l.runInstanceDivergence(ctx)
+		case <-deadNodeTick(adoptionReportsT):
+			l.submitWork(workAdoptionReport, "tick", func() { l.runAdoptionReports(ctx) })
 		case <-jobsTick(jobsDispatchT):
 			l.runJobsDispatchTick(ctx)
 		case <-jobsTick(jobsReaperT):
@@ -1294,6 +1320,10 @@ func (l *Loop) Run(ctx context.Context) error {
 			// cadence (vs fire-now's 60s) matches the operator-
 			// action SLA.
 			l.drainPendingOperatorIntents(ctx)
+		case <-profileCaptureT.C:
+			// ADR-1155 safety sweep: expiry plus queued rows whose
+			// NotifyProfileCapture was lost.
+			l.drainProfileCaptures(ctx)
 		case <-operatorIntentCompletenessT.C:
 			// PR-#TBD / C5: 60s observability sweep. Reads
 			// events + operator_intents to drive
@@ -1775,6 +1805,17 @@ func (l *Loop) runInstanceDivergence(ctx context.Context) {
 	}
 	if _, err := l.instanceDivergence.handle(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		l.log.Warn("instance divergence: tick failed", "err", err)
+	}
+}
+
+// runAdoptionReports applies any new adoption report. Same swallow-on-cancel
+// rule as runInstanceDivergence.
+func (l *Loop) runAdoptionReports(ctx context.Context) {
+	if l.adoptionReports == nil {
+		return
+	}
+	if _, err := l.adoptionReports.handle(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		l.log.Warn("adoption reports: tick failed", "err", err)
 	}
 }
 
@@ -2366,6 +2407,8 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 		// carried. Same defense-in-depth pattern as
 		// NotifyCronRunNow's handler arm above.
 		l.drainPendingOperatorIntents(ctx)
+	case db.NotifyProfileCapture:
+		l.drainProfileCaptures(ctx)
 	case db.NotifyEventPublished:
 		l.dispatchEventFanoutSweep(ctx)
 	}
@@ -2689,6 +2732,9 @@ func (l *Loop) runReaper(ctx context.Context) {
 	idleParkByApp := map[string]struct{}{}
 	idleParkByEnvironment := map[string]InstanceInfo{}
 	cooldownHeldByApp := map[string]struct{}{}
+	// ADR-20261021215353: quiet between_requests instances freeze before
+	// their idle timeout; ReapIdle only selects instances past it.
+	l.earlyFreezeFromReaper(ctx, snapshot, now, func(id string) int { return activityByInstance[id].ResidentMB })
 	for _, id := range ReapIdle(now, snapshot, l.ops, cooldownHeldByApp) {
 		// ADR-1151: an eligible instance freezes in place instead of
 		// parking; anything else parks as before.
@@ -3050,7 +3096,7 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 		if !observed {
 			continue
 		}
-		if demand := l.inflightDemandReplicas(a.ID, planByApp[a.ID], vmmdInflightByApp[a.ID], now); demand > desired {
+		if demand := l.inflightDemandReplicas(a, planByApp[a.ID], vmmdInflightByApp[a.ID], now); demand > desired {
 			desired = demand
 		}
 		// H4-70: the local gateway and vmmd see only this node's share.
@@ -3198,7 +3244,8 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 }
 
 // inflightDemandReplicas returns how many instances the app's in-flight
-// requests need at the plan's per-instance concurrency bound. Scale-in takes
+// requests need at its per-instance concurrency (the declared
+// per_instance_concurrency, else the plan bound; ADR-20261022203523). Scale-in takes
 // the larger of this and the rate-derived count. The rates are completions
 // (gateway) and request starts (vmmd), and both fall toward zero when an
 // overloaded or stalled app stops making progress while its clients wait. On
@@ -3207,9 +3254,9 @@ func (l *Loop) runReaperAggressive(ctx context.Context, apps []state.App, snapsh
 // high in that state. The gateway's count covers only the local gateway and
 // vmmd's covers only forwarded requests, so the larger of the two is still a
 // lower bound on demand.
-func (l *Loop) inflightDemandReplicas(appID string, plan api.Plan, vmmdInflight int64, now time.Time) int {
+func (l *Loop) inflightDemandReplicas(app state.App, plan api.Plan, vmmdInflight int64, now time.Time) int {
 	inflight := vmmdInflight
-	if gateway, ok := l.recentLoad.RecentInflight(appID, now); ok && gateway > inflight {
+	if gateway, ok := l.recentLoad.RecentInflight(app.ID, now); ok && gateway > inflight {
 		inflight = gateway
 	}
 	if inflight <= 0 {
@@ -3217,7 +3264,7 @@ func (l *Loop) inflightDemandReplicas(appID string, plan api.Plan, vmmdInflight 
 	}
 	perVM := 1
 	if limits, ok := api.LimitsFor(plan); ok && limits.ConcurrencyPerVMBound > 0 {
-		perVM = limits.ConcurrencyPerVMBound
+		perVM = effectivePerInstanceConcurrency(app, limits)
 	}
 	return int((inflight + int64(perVM) - 1) / int64(perVM))
 }

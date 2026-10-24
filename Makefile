@@ -1,5 +1,5 @@
 # Gregale FaaS — build & ops entrypoints (spec §Commands).
-# Go 1.26 with the patched 1.26.9 toolchain, pinned in go.mod and CI. One binary per cmd/ dir.
+# Go 1.26 with the patched 1.26.10 toolchain, pinned in go.mod and CI. One binary per cmd/ dir.
 
 GO      ?= go
 GOOS    ?= $(shell $(GO) env GOOS)
@@ -319,6 +319,10 @@ test: grafana-mirror-check ## Unit tests — must pass on any machine, no KVM ne
 .PHONY: test-apid
 test-apid: ## apidserver tests with bounded compiler memory (ADR-982); RUN='^TestX' narrows, RACE=1 adds -race
 	$(GO_TEST) -count=1 $(if $(RACE),-race) $(if $(RUN),-run '$(RUN)') ./pkg/apid/apidserver/
+
+.PHONY: monetization-sandbox
+monetization-sandbox: ## API monetization end to end against real Stripe/Paddle/Lago sandboxes; keys in GREGALE_SANDBOX_* (docs/ops/api-monetization-release.md)
+	$(GO_TEST) -count=1 -tags monetization_sandbox -timeout=20m -v -run '^TestMonetizationSandbox' ./pkg/apid/apidserver/
 
 .PHONY: product-control-provider-qualification
 product-control-provider-qualification: ## Qualify Product Control exports against real Stripe test mode, Paddle sandbox and a Lago test org; set FAAS_QUALIFY_* (docs/ops/product-control.md)
@@ -898,17 +902,22 @@ ha-write-redirect-drill: ## Tier A9 / ADR-089: standby write-redirect drill on t
 	  exit 0'
 
 .PHONY: lint-changed
-lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck; BASE=<ref>, DRY_RUN=1
+lint-changed: ## golangci-lint only what your change touches (ci-light's selection vs origin/main) + teststorecheck + sealdomaincheck; BASE=<ref>, DRY_RUN=1
 	@GO=$(GO) bash scripts/lint-changed.sh
 
 .PHONY: lint
-lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
+lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check seal-domain-scope-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check check-durable-entity-sdk-contract check-binding-runner-sync ## golangci-lint via go tool (matches CI version v2.14.0) + repository policy gates
 	@python3 scripts/ci/check_gosec_baseline.py
 	@GO="$(GO)" python3 scripts/ci/lint_go_shard.py --shard 1 --shards 1 -- $(GO) tool golangci-lint
 
 .PHONY: runbook-sql-check
 runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
 	@python3 scripts/ci/check_runbook_mutating_sql.py
+
+.PHONY: committed-binaries-check
+committed-binaries-check: ## Reject committed ELF/Mach-O/PE executables outside the justified allowlist (ADR-131)
+	@python3 scripts/ci/check_committed_binaries_test.py
+	@python3 scripts/ci/check_committed_binaries.py
 
 .PHONY: postmortem
 postmortem: ## Create docs/postmortems/YYYY-MM-DD-NAME.md from the post-mortem template (NAME required)
@@ -995,6 +1004,10 @@ otlp-unit-check: ## Verify every instrumented daemon loads the operator-owned OT
 .PHONY: sealed-env-scope-check
 sealed-env-scope-check: ## Static gate: /etc/faas/sealed.env is loaded only by faas-apid.service (issue #585, ADR-127)
 	@bash scripts/ci/check_sealed_env_scope.sh $(CURDIR)
+
+.PHONY: seal-domain-scope-check
+seal-domain-scope-check: ## Static gate: private age identities, direct identity loaders and unsealed bytea columns only shrink (ADR 20261022111812)
+	@$(GO) run ./scripts/ci/sealdomaincheck -root $(CURDIR)
 
 .PHONY: text-encoding-check
 text-encoding-check: ## Static gate: no JSON built with fmt %q, no free text truncated with a byte slice

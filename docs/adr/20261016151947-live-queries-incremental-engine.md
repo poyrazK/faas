@@ -348,6 +348,19 @@ is a later step.
   database's key, and the key ring refuses a payload that names another
   database. Rotation keeps the previous key until a retirement time (default
   overlap 24 hours). Removing a key revokes its outstanding seals at once.
+- **At-rest binding (amendment, 2026-10-23).** A live key and a live login
+  are sealed to livequeryd's recipient under a fixed namespace (`livequery`,
+  `livequery-login`), which binds neither to its database: a blob copied onto
+  another database's row would open there, and livequeryd would serve one
+  database's login or key under another's ID. The namespace is bound to the
+  database ID (`livequery:<database>`, `livequery-login:<database>`) over
+  three releases, as N±1 requires:
+  1. livequeryd opens the legacy and the bound form, and refuses a blob
+     bound to another database (`livekeys.KeyNamespaceOpens`,
+     `livekeys.LoginNamespaceOpens`).
+  2. apid seals the bound form, and existing rows are re-sealed (keys
+     rotated, logins re-issued).
+  3. livequeryd stops opening the legacy form.
 - Limits (`pkg/api/limits.go`):
   - SQL up to 32 KiB, 256 parameters of 16 KiB each (as Neon);
   - a sealed payload up to 48 KiB;
@@ -1069,6 +1082,84 @@ Phase 0 did not cover:
     - The Ansible role takes `faas_livequeryd_databases`, with one credential
       per connection string. A deploy fails unless every database is served.
     - The flags for one database remain for development.
+  - **Alerts and dashboard** (2026-10-20). The `live_queries` alert family
+    warns, without paging, while live queries are a preview:
+    - the hub is down, or a database is not served or keeps restarting;
+    - a released hub cannot reconnect;
+    - slot lag passes 1 GiB, or a slot is lost;
+    - live keys cannot be read;
+    - commit-to-delta p95 exceeds 1 s;
+    - a slow connection is cut off;
+    - realtimed's hub connections keep dropping.
+
+    Each alert has a promtool fixture showing it firing and staying quiet,
+    and triage is in `docs/runbooks/FaasLiveQueries.md`. The live-queries
+    Grafana dashboard shows each database's state, latency, slot lag,
+    resumes and keys, and realtimed's side.
+  - **First-result latency** (2026-10-20). `TestBenchFirstResult` times each
+    step from a subscription to its first result. The cold start measured in
+    tests at 8–12 s came from two causes, and neither was the engine's
+    round:
+    - **The SQL parser.** `go-pgquery` is libpg_query compiled to
+      WebAssembly. The first parse in a process compiles it to native code:
+      6–8 s, against under 1 ms for each later parse. livequeryd now starts
+      that compile when it starts (`livequery.WarmParser`), so a subscriber
+      who arrives later does not wait. A checkpoint restore still waits,
+      because it compiles every query.
+
+      wazero's on-disk compilation cache would cut a restart's compile to
+      about 1.3 s. go-pgquery does not expose its runtime configuration, so
+      using the cache means carrying a patched copy of it. That is left as
+      a decision.
+    - **Slot creation.** Creating a slot waits for every transaction running
+      on the server to finish. It took 40 ms on an idle server, and as long
+      as the longest open transaction otherwise. It happens once per
+      database; reopening an existing slot took 90 ms.
+
+    The rest of the path:
+    - compiling a further query: 16–80 ms;
+    - the first round, which includes the initial read: 85–250 ms.
+
+    The round's marker was also slow on a database with `synchronous_commit
+    = off`: its commit did not flush, so every round waited for the WAL
+    writer (287 ms against 1.2 ms). The marker statement now sets
+    `synchronous_commit` on for its own transaction
+    (`TestRoundsDoNotWaitForTheWALWriter`).
+  - **Discovered databases and live logins** (2026-10-21). livequeryd learns
+    the databases it serves from the control plane, instead of an operator
+    listing each one.
+    - **Live login.** When live queries are enabled, apid asks the database's
+      provider (`managedpostgres.LiveLoginIssuer`) to prepare it and issue a
+      login. As the owner, the provider:
+      - installs the schema-change log and creates the publication;
+      - creates `gregale_live_<scope>`: `LOGIN NOINHERIT REPLICATION`, reading
+        the `public`, `api` and `gregale_live` schemas and writing nothing;
+      - grants it `SET` without inheritance on the database's read-only,
+        read-write and Data API binding logins, and on ones created later,
+        so a live query reads as its app.
+    - **Storage.** apid seals the login's connection string to livequeryd's
+      recipient (namespace `livequery-login`) and stores it in
+      `managed_postgres_live_logins`. The row also holds the slot
+      (`gregale_live_<database id>`) and how to wake-check the database
+      (`neon:<project>/<endpoint>`). Issuing runs while the database row is
+      locked and only when live queries are off, because issuing gives the
+      login a new password.
+    - **Disable.** apid revokes the login first: `NOLOGIN`, its sessions
+      ended, the slot dropped, then the role. If revoking fails, nothing is
+      removed.
+    - **Discovery.** `-discover-backends` reads the live databases of those
+      backends that have a login, every 15 s by default:
+      - new ones start, ones whose login changed restart, and ones gone stop,
+        with their series and checkpoint removed;
+      - a failed read keeps the current set;
+      - `-discover-release-after` lets discovered Neon databases scale to
+        zero.
+    - **Without a live-login provider**, live queries still turn on, and an
+      operator lists the database (`-databases-file`).
+    - **Unverified on Neon.** It is not yet known whether the owner login may
+      grant `REPLICATION`, create event triggers and a publication `FOR ALL
+      TABLES`, and end the live login's sessions. Stock PostgreSQL needs a
+      superuser for each; the production test settles them.
   - **Fleet-PKI leaves** (2026-10-19). Hub and realtimed authenticate with
     leaves of the internal CA:
     - livequeryd's server leaf is `livequeryd.faas`;

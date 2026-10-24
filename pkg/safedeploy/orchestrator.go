@@ -45,6 +45,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -162,6 +163,10 @@ type Stats struct {
 	AuditEmitFailed            int // per-row audit emit errors (warn-logged, never propagated)
 	AutoAborted                int // stuck rollouts recovered through APID
 	AutoAbortFailed            int // stuck rollouts whose automatic recovery failed
+	// AwaitingApproval counts rollouts past the stuck window that are
+	// waiting for people (ADR-20261020085706); apid aborts them at the
+	// policy's timeout, so the stuck detector leaves them alone.
+	AwaitingApproval int
 }
 
 // ErrOrchestratorNilStore is returned when the orchestrator is
@@ -301,6 +306,10 @@ func (o *Orchestrator) walkRow(ctx context.Context, d state.Deployment, now time
 		// operator CLI is still the manual escape hatch).
 		if d.CanaryStepStartedAt != nil {
 			elapsed := now.Sub(*d.CanaryStepStartedAt)
+			if elapsed > StuckAfterDuration && o.awaitingApproval(ctx, d, now) {
+				stats.AwaitingApproval++
+				return
+			}
 			if elapsed > StuckAfterDuration {
 				o.Log.Warn("safedeploy: rollout stuck",
 					"deployment_id", d.ID, "app_id", d.AppID,
@@ -504,4 +513,35 @@ func (o *Orchestrator) actorOrDefault() string {
 		return "meterd:safedeploy"
 	}
 	return o.Actor
+}
+
+// rolloutHoldReader is optional. The production store reports the newest
+// hold recorded for a rollout's current step.
+type rolloutHoldReader interface {
+	LatestRolloutHold(ctx context.Context, deploymentID string) (json.RawMessage, error)
+}
+
+// awaitingApproval reports whether the rollout's newest hold says it waits
+// for approval (ADR-20261020085706) and was recorded within the stuck
+// window, which proves the canary worker and apid still visit it. apid aborts
+// such a release at its approval timeout; a stale hold falls back to the
+// stuck detector.
+func (o *Orchestrator) awaitingApproval(ctx context.Context, d state.Deployment, now time.Time) bool {
+	reader, ok := o.Store.(rolloutHoldReader)
+	if !ok {
+		return false
+	}
+	raw, err := reader.LatestRolloutHold(ctx, d.ID)
+	if err != nil || len(raw) == 0 {
+		return false
+	}
+	var hold struct {
+		Rule      string `json:"rule"`
+		DecidedAt string `json:"decided_at"`
+	}
+	if json.Unmarshal(raw, &hold) != nil || hold.Rule != api.RolloutRuleHoldAwaitingApproval {
+		return false
+	}
+	at, err := time.Parse(time.RFC3339Nano, hold.DecidedAt)
+	return err == nil && now.Sub(at) < StuckAfterDuration
 }

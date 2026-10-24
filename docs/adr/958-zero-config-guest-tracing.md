@@ -76,8 +76,8 @@ SDK default; the debugger keys spans by trace, not service name.
 Runner images for Node 22/24 and Python 3.12/3.13 contain pinned OTel SDKs and
 auto-instrumentation under `/opt/gregale/tracing`, installed from lockfiles
 like the ADR-819 profiling collectors (Node: `@opentelemetry/sdk-node`
-0.222.0 with `auto-instrumentations-node` 0.80.0; Python: SDK 1.44.0 with
-0.65b0 instrumentations for WSGI/ASGI frameworks, PostgreSQL drivers,
+0.222.0 with `auto-instrumentations-node` 0.80.0; Python: SDK 1.45.1 with
+0.66b1 instrumentations for WSGI/ASGI frameworks, PostgreSQL drivers,
 SQLAlchemy, Redis, MongoDB and HTTP clients). Instrumentation loads before the
 init snapshot, so restored instances pay no startup cost; only cold boots do.
 Custom images, Dockerfile builds and Go apps still benefit from §2: any OTel
@@ -283,3 +283,65 @@ shared read-only runner base; per-app layers are unaffected.
 Still pending: the same checks on a dedicated native host, the Python
 preload inside a VM (validated outside a VM only), and the split-box mTLS
 path on a two-node layout.
+
+## Amendment (2026-10-22): a tracing package for Go apps
+
+### Context
+
+§3 instruments Node and Python by preloading OpenTelemetry before the app
+starts. A Go app is a static binary: nothing can be loaded into it, so a Go
+app reached the debugger only if it shipped and configured an OpenTelemetry
+SDK itself, although Gregale offers Go runner images. The Go SDK
+(`github.com/poyrazK/faas/sdk/go`) is deliberately standard-library only, and
+the full OpenTelemetry Go SDK would add a large dependency tree to every app
+that wants request evidence.
+
+### Decision
+
+The Go SDK gains `github.com/poyrazK/faas/sdk/go/tracing`, standard library
+only:
+
+- `Start()` is a no-op unless guest-init stamped `FAAS_TRACING_ENABLED=1`
+  (§2). It honours the stamped `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT`,
+  `OTEL_TRACES_SAMPLER`/`_ARG` (the `TraceIDRatioBased` decision on the trace
+  ID, ignoring the parent's sampled flag as §2 requires) and
+  `OTEL_SERVICE_NAME`.
+- `Handler` records a server span that continues the gateway's
+  `traceparent`, named after the matched `ServeMux` pattern. `Transport`
+  records an HTTP client span (`http.request.method`, `server.address`,
+  `url.full` without query string or credentials) and injects `traceparent`.
+  `Open`/`WrapConnector`/`WrapDriver` wrap any `database/sql` driver and
+  record a client span per query (`db.system.name`, `db.operation.name`,
+  `db.query.text` bounded to 1 KiB). These are the §5 attributes, so the
+  spans classify as `app_dependency` with no debugger change.
+- Spans are exported as standard OTLP/HTTP JSON to the bridge, which already
+  accepts JSON (§2); apid decodes it with the public endpoint's codec. A
+  batch goes out after 256 spans or one second; a full queue (2048) drops
+  spans rather than blocking the app. Span and trace IDs come from
+  `crypto/rand`, so instances restored from one snapshot do not repeat them.
+- Spans are linked through `context.Context`; calls made without the
+  request's context start their own trace.
+
+### Consequences
+
+- Go apps get request, HTTP and database evidence with one `Start` call and
+  three wrappers, and the same binary runs unchanged outside Gregale.
+- The package covers HTTP and `database/sql` only. Redis, gRPC and messaging
+  clients still need an OpenTelemetry SDK (§2), or `StartSpan` with the §5
+  attributes.
+- Log correlation (ADR-213 runtime adapter) is not part of this package.
+- The encoding is pinned by `sdk/go/tracing/testdata/otlp_export.json`, which
+  `pkg/gateway`'s guest-ingest test decodes with the real codec.
+
+### Validation
+
+Unit: `sdk/go/tracing` (no-op without the stamp, gateway trace continuation,
+client span and header, panics as 500s, sampler, `database/sql` context,
+skip and legacy paths, argument checking kept, golden export) with `-race`;
+`pkg/gateway` decodes the golden export. Metal (2026-10-23,
+`gregale-internal-test-1`, nested KVM): `TestGuestTracingGoHelperMetal`
+passed. A scratch image built only on the package, deployed with
+`tracing.enabled` and woken from its init snapshot by one request with an
+unsampled `traceparent`, put its `SELECT orders` (`postgresql`) and loopback
+`http` client spans on the request evidence as `app_dependency`. The run left
+no VM resources behind.

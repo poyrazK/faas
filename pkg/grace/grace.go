@@ -306,6 +306,15 @@ func (g *Grace) RunAppsOnce(ctx context.Context) error {
 			if errors.Is(err, state.ErrNotFound) {
 				continue
 			}
+			if errors.Is(err, state.ErrConflict) {
+				// A live bucket, managed PostgreSQL binding or unsettled
+				// multipart write still holds the app. That is a wait, not a
+				// failure; logging it as one every minute buried real purge
+				// errors (Hunt 11 H11-21).
+				g.metrics.failure("retained_resources")
+				g.p.Log.Debug("grace: app hard delete waits for retained resources", "app", app.ID)
+				continue
+			}
 			g.metrics.failure("delete_database")
 			g.p.Log.Warn("grace: app hard delete failed", "app", app.ID, "err", err)
 			continue

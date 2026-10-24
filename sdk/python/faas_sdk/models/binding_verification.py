@@ -37,7 +37,7 @@ class BindingVerification:
     deployment_id: UUID
     scope: str
     managed_service: ManagedServiceProbeSpec | Unset = UNSET
-    """Server-selected frozen context for a managed HTTPS route probe. Contains no credentials or application
+    """Server-selected frozen context for a managed service route probe. Contains no credentials or application
     request. Changing context or policy invalidates the receipt."""
     task_id: UUID | Unset = UNSET
     """Original probe task identity for pending observation and durable receipts."""

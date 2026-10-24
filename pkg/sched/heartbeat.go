@@ -97,6 +97,9 @@ type Heartbeat struct {
 	// unavailable.
 	takeoverGuard TakeoverGuard
 	store         state.Store
+	// notices: a node whose vmmd is restarting under a planned notice
+	// (vmmd restart adoption ADR §3) has its failed pings ignored.
+	notices *RestartNotices
 	// dialer is the per-tick fresh-dial path (issue #120). The
 	// heartbeat dials a fresh *VMMClient per node per tick instead
 	// of reusing the VMMRouter's cached conn, matching the
@@ -189,6 +192,13 @@ type Heartbeat struct {
 // staleness gate (MarkComputeNodeInactive on a stale node) still
 // applies — a dead vmmd on this schedd's own node gets flipped
 // inactive and the chooser skips it on the next wake.
+// WithRestartNotices ignores failed pings to a node restarting under a
+// planned notice.
+func (h *Heartbeat) WithRestartNotices(n *RestartNotices) *Heartbeat {
+	h.notices = n
+	return h
+}
+
 func (h *Heartbeat) WithOwnerNodeID(nodeID string) *Heartbeat {
 	if h == nil {
 		return h
@@ -591,6 +601,11 @@ func (h *Heartbeat) probeNode(ctx context.Context, n state.ComputeNode, tickNow 
 	// rejecting customer wakes during the recovery cycle.
 	wasUnavailable := n.Lifecycle == state.NodeLifecycleUnavailable
 	if _, err := h.heartbeatPing(ctx, n); err != nil {
+		if !wasUnavailable && h.notices.Active(ctx, n.ID) {
+			h.log.Info("heartbeat: ping failed while vmmd restarts under a notice; not counted",
+				"node_id", n.ID, "node_name", n.Name, "err", err)
+			return
+		}
 		if failures, threshold := h.noteProbeFailure(n.ID), h.failureThreshold(); !wasUnavailable && failures < threshold {
 			h.log.Warn("heartbeat: ping failed; node stays in rotation below the failure threshold",
 				"node_id", n.ID, "node_name", n.Name, "failures", failures, "threshold", threshold, "err", err)

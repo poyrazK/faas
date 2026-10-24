@@ -635,6 +635,7 @@ export class EdgeRulesService {
     slug,
     rule,
     outcome,
+    requestId,
     since = '24h',
     limit = 50,
     cursor,
@@ -651,6 +652,10 @@ export class EdgeRulesService {
      * Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
      */
     outcome?: 'matched' | 'logged' | 'detected' | 'warned' | 'blocked' | 'challenged' | 'rejected' | 'solved' | 'failed',
+    /**
+     * Only events for this request ID, such as the reference a visitor without JavaScript sees on the challenge page (ADR-831 amendment 8).
+     */
+    requestId?: string,
     /**
      * Duration such as 1h, 24h or 7d.
      */
@@ -673,6 +678,7 @@ export class EdgeRulesService {
       query: {
         'rule': rule,
         'outcome': outcome,
+        'request_id': requestId,
         'since': since,
         'limit': limit,
         'cursor': cursor,

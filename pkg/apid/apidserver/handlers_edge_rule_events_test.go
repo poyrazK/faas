@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,8 +81,16 @@ func TestEdgeRuleEventsAPI(t *testing.T) {
 	if err := store.RecordEdgeRuleEvents(context.Background(), []state.EdgeRuleEvent{{
 		RuleID: rule.ID, AppID: rule.AppID, OccurredAt: now, Outcome: state.EdgeRuleEventRejected, Method: "GET", Path: "/api/cart",
 		ClientIP: "198.51.100.23", UserAgent: "python-requests/2.32",
+	}, {
+		RuleID: rule.ID, AppID: rule.AppID, OccurredAt: now, Outcome: state.EdgeRuleEventChallenged, Method: "GET", Path: "/shop",
+		RequestID: "req-no-js-7f3a", ClientIP: "198.51.100.77",
 	}}); err != nil {
 		t.Fatal(err)
+	}
+	// ADR-831 amendment 8: the owner finds the reference a visitor without
+	// JavaScript was shown.
+	if ref := read("?request_id=req-no-js-7f3a"); len(ref.Events) != 1 || ref.Events[0].ClientIP != "198.51.100.77" || ref.Events[0].Outcome != state.EdgeRuleEventChallenged {
+		t.Fatalf("request_id = %+v", ref.Events)
 	}
 	if rejected := read("?outcome=rejected"); len(rejected.Events) != 1 || rejected.Events[0].Path != "/api/cart" || rejected.Events[0].UserAgent != "python-requests/2.32" {
 		t.Fatalf("rejected = %+v", rejected.Events)
@@ -89,7 +98,7 @@ func TestEdgeRuleEventsAPI(t *testing.T) {
 	if solved := read("?outcome=solved"); len(solved.Events) != 0 {
 		t.Fatalf("solved = %+v, want none", solved.Events)
 	}
-	for _, bad := range []string{"?since=-1h", "?since=soon", "?limit=500", "?outcome=denied", "?rule=nope", "?cursor=x"} {
+	for _, bad := range []string{"?since=-1h", "?since=soon", "?limit=500", "?outcome=denied", "?rule=nope", "?cursor=x", "?request_id=" + strings.Repeat("r", 129)} {
 		if rec := e.Do(t, "GET", "/v1/apps/"+slug+"/edge-rules/events"+bad, nil, nil); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d, want 400", bad, rec.Code)
 		}

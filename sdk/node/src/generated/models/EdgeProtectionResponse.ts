@@ -35,7 +35,7 @@ export type EdgeProtectionResponse = {
    * Requests answered by an edge gate, largest count first; zero counts are omitted.
    */
   rejections: Array<{
-    gate: 'jwt' | 'ip_allowlist' | 'internal_only' | 'ip' | 'geo' | 'limit' | 'body_limit' | 'throttle' | 'waf' | 'challenge';
+    gate: 'jwt' | 'ip_allowlist' | 'internal_only' | 'ip' | 'geo' | 'limit' | 'body_limit' | 'throttle' | 'waf' | 'challenge' | 'penalty';
     status: '401' | '403' | '413' | '429' | '503' | 'other';
     count: number;
   }>;
@@ -113,6 +113,23 @@ export type EdgeProtectionResponse = {
      * Solutions refused: wrong work or an expired token.
      */
     invalid: number;
+    /**
+     * The part of issued served at a difficulty raised under attack (ADR-831 amendment 8).
+     */
+    raised?: number;
+  };
+  /**
+   * Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty.
+   */
+  penalty: {
+    /**
+     * Clients a rule's penalty boxed.
+     */
+    boxed: number;
+    /**
+     * Requests refused from boxed clients.
+     */
+    rejected: number;
   };
   attack_mode: EdgeAttackModeStatus;
 };

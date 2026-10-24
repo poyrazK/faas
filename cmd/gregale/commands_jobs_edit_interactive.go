@@ -175,7 +175,7 @@ func cmdJobsUpdateInteractive() int {
 	defer cancel()
 	updated, err := client.UpdateJob(writeCtx, job.Name, req)
 	if err != nil {
-		return printErr("Update failed", err)
+		return printErr("Could not update job", err)
 	}
 	if updated.ID != job.ID || updated.AccountID != job.AccountID || updated.Name != job.Name {
 		return printErr("Invalid update receipt", errors.New("server returned a different Job"))

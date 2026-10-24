@@ -144,6 +144,9 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if prob := ValidateEdgeRuleBody(&req, acct.Plan); prob != nil {
 		return m, prob
 	}
+	if prob := s.createReleaseProblem(acct, req); prob != nil {
+		return m, prob
+	}
 	if prob := s.validateEdgeRuleMatchLists(ctx, acct.ID, req.Match); prob != nil {
 		return m, prob
 	}
@@ -189,7 +192,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		Priority:     priority,
 		Enabled:      enabled,
 		Kind:         state.EdgeRuleKind(req.Kind),
-		Action:       ActionFromBody(req.Kind, req.Action),
+		Action:       withPenalty(ActionFromBody(req.Kind, req.Action), req.Penalty),
 		// ValidateMode (ADR-128 D1): the top-level wire
 		// field is the source of truth for kind=validate.
 		// If the wire field is empty (client didn't send
@@ -295,6 +298,12 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 			return m, prob
 		}
 	}
+	if prob := validatePenaltyUpdate(row, req); prob != nil {
+		return m, prob
+	}
+	if prob := s.updateReleaseProblem(acct, row, req); prob != nil {
+		return m, prob
+	}
 	matchPath := row.MatchPath
 	if req.MatchPath != nil {
 		matchPath = *req.MatchPath
@@ -394,7 +403,7 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 			return m, checkProb
 		}
 	}
-	updated, err := s.Host.Store().UpdateEdgeRule(ctx, row.ID, edgeRuleUpdateParamsFrom(req, row.Kind))
+	updated, err := s.Host.Store().UpdateEdgeRule(ctx, row.ID, penaltyUpdateParams(row, req, edgeRuleUpdateParamsFrom(req, row.Kind)))
 	if err != nil {
 		convergence.Abort(ctx)
 		if errors.Is(err, state.ErrNotFound) {
@@ -422,4 +431,62 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		return m, api.ErrCapacity("edge rule was saved but the serving fleet has not acknowledged it; read the current rule state before retrying this mutation")
 	}
 	return m, nil
+}
+
+// withPenalty sets a stored action's penalty box (ADR-20261022105846).
+func withPenalty(action state.EdgeRuleAction, p *api.EdgeRulePenalty) state.EdgeRuleAction {
+	action.Penalty = stateEdgeRulePenalty(p)
+	return action
+}
+
+// validatePenaltyUpdate checks a PATCH against the penalty box: a new
+// penalty must be valid for the rule's kind, and a waf rule that keeps a
+// penalty must stay in block mode.
+func validatePenaltyUpdate(row state.EdgeRule, req api.UpdateEdgeRuleRequest) *api.Problem {
+	if req.Penalty != nil && req.ClearPenalty {
+		return api.ErrValidation("penalty and clear_penalty are mutually exclusive")
+	}
+	keeps := req.Penalty != nil || (row.Action.Penalty != nil && !req.ClearPenalty)
+	if !keeps {
+		return nil
+	}
+	wafMode := ""
+	if row.Kind == state.EdgeRuleKindWAF {
+		if row.Action.WAF != nil {
+			wafMode = row.Action.WAF.Mode
+		}
+		if req.Action != nil {
+			wafMode = wafModeFromAction(string(row.Kind), *req.Action)
+		}
+	}
+	if prob := api.ValidateEdgeRulePenaltyKind(string(row.Kind), wafMode); prob != nil {
+		return prob
+	}
+	if req.Penalty != nil {
+		return req.Penalty.Validate()
+	}
+	return nil
+}
+
+// penaltyUpdateParams carries the penalty box through a PATCH: an action
+// replacement keeps the stored penalty, penalty replaces it, clear_penalty
+// removes it.
+func penaltyUpdateParams(row state.EdgeRule, req api.UpdateEdgeRuleRequest, params state.UpdateEdgeRuleParams) state.UpdateEdgeRuleParams {
+	if params.Action == nil && req.Penalty == nil && !req.ClearPenalty {
+		return params
+	}
+	action := row.Action
+	if params.Action != nil {
+		action = *params.Action
+	}
+	switch {
+	case req.ClearPenalty:
+		action.Penalty = nil
+	case req.Penalty != nil:
+		action.Penalty = stateEdgeRulePenalty(req.Penalty)
+	default:
+		action.Penalty = row.Action.Penalty
+	}
+	params.Action = &action
+	return params
 }

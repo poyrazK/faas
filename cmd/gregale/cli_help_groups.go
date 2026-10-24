@@ -18,7 +18,7 @@ var cliHelpGroups = []struct {
 		"deploy", "dev", "apps", "app", "build", "deploys", "deployment", "deployments", "rollback",
 		"preview", "projects", "diff", "invoke", "test", "chaos", "scan", "registry", "github", "connect",
 		"mcp", "openapi", "routes", "flags", "canary", "traffic", "mirror", "freeze", "release-gates",
-		"upload-cache",
+		"approvals", "scheduled-releases", "upload-cache",
 	}},
 	{"Operate & observe", []string{
 		"logs", "tail", "inspect", "debug", "trace", "metrics", "analytics", "status", "ps", "wake",
@@ -36,7 +36,7 @@ var cliHelpGroups = []struct {
 	}},
 	{"Account & billing", []string{
 		"whoami", "account", "orgs", "invitations", "mfa", "profile", "logout", "plan", "billing",
-		"usage", "invoices", "overage-cap", "capabilities",
+		"usage", "invoices", "overage-cap", "capabilities", "previews",
 	}},
 }
 
@@ -89,6 +89,7 @@ var cliRelatedCommands = [][]string{
 	{"env", "secrets"},
 	{"connect", "github"},
 	{"plan", "billing", "usage", "invoices", "overage-cap"},
+	{"preview", "previews"},
 }
 
 // cliSeeAlso returns the members of commands related to name, in set order.

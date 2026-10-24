@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "version": 1,
   "comment": "Tier 3 (issue #197 B3.5 + B3.6). The FROM line in each Dockerfile below this lock is digest-pinned; this lock is the source of truth. `make images-lock-update` resolves the current registry digest and updates BOTH the lock and the FROM line. CI runs `make images-lock-check` to fail any PR that drifts (either a Dockerfile with a non-digest-pinned FROM, or a Dockerfile whose FROM line doesn't match the lock's `pinned_in_dockerfile` field). The PLACEHOLDER digests below fail the check by design \u2014 the operator runs `make images-lock-update` once at PR-merge time, before this file is squashed into main. `scratch` is the canonical empty image and is exempt from the lock (audit_dockerfile_froms.py whitelists it).",
-  "generated_at": "2026-10-09T05:32:54Z",
+  "generated_at": "2026-10-23T22:16:43Z",
   "generated_by": "make images-lock-update",
   "pinned": [
     {
@@ -19,35 +19,35 @@
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/golang:1.26.9",
+      "alias": "mirror.gcr.io/library/golang:1.26.10",
       "resolved_repo": "mirror.gcr.io/library/golang",
-      "resolved_tag": "1.26.9",
+      "resolved_tag": "1.26.10",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS guest-init-build"
+      "digest": "sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS guest-init-build"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/golang:1.26.9",
+      "alias": "mirror.gcr.io/library/golang:1.26.10",
       "resolved_repo": "mirror.gcr.io/library/golang",
-      "resolved_tag": "1.26.9",
+      "resolved_tag": "1.26.10",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS buildkit-client-build"
+      "digest": "sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS buildkit-client-build"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/golang:1.26.9",
+      "alias": "mirror.gcr.io/library/golang:1.26.10",
       "resolved_repo": "mirror.gcr.io/library/golang",
-      "resolved_tag": "1.26.9",
+      "resolved_tag": "1.26.10",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM mirror.gcr.io/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS runc-build"
+      "digest": "sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82",
+      "pinned_in_dockerfile": "FROM --platform=$TARGETPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS runc-build"
     },
     {
       "dockerfile": "images/base-debian-parent.Dockerfile",
@@ -56,8 +56,8 @@
       "resolved_repo": "mirror.gcr.io/library/debian",
       "resolved_tag": "12-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91"
+      "digest": "sha256:ec31d744f83f4a73447ba045aaab9409997efe5cc706eca4890c1be36cc1606a",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/debian:12-slim@sha256:ec31d744f83f4a73447ba045aaab9409997efe5cc706eca4890c1be36cc1606a"
     },
     {
       "dockerfile": "images/base-minimal.Dockerfile",
@@ -77,8 +77,8 @@
       "resolved_repo": "mirror.gcr.io/library/debian",
       "resolved_tag": "12-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/debian:12-slim@sha256:a4672c0cb26fbdde88e38fa2dfb6c681942306680e41e4378b28770b6e79ee91 AS build"
+      "digest": "sha256:ec31d744f83f4a73447ba045aaab9409997efe5cc706eca4890c1be36cc1606a",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/debian:12-slim@sha256:ec31d744f83f4a73447ba045aaab9409997efe5cc706eca4890c1be36cc1606a AS build"
     },
     {
       "dockerfile": "images/runner-node22.Dockerfile",
@@ -97,8 +97,8 @@
       "resolved_repo": "mirror.gcr.io/library/python",
       "resolved_tag": "3.12-slim-bookworm",
       "platform": "linux/amd64",
-      "digest": "sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/python:3.12-slim-bookworm@sha256:2ed6491b93cd49272ee6de2b5a38440c3448360322c089fc23e370722d74179d"
+      "digest": "sha256:57d96f71de145a98e7ceca18ee4ade77bba4103a33a72dfaea026b23625c6bf0",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/python:3.12-slim-bookworm@sha256:57d96f71de145a98e7ceca18ee4ade77bba4103a33a72dfaea026b23625c6bf0"
     },
     {
       "dockerfile": "images/runner-go124.Dockerfile",
@@ -107,8 +107,8 @@
       "resolved_repo": "cgr.dev/chainguard/bash",
       "resolved_tag": "latest",
       "platform": "linux/amd64",
-      "digest": "sha256:9fde61d989c1778f12d4f69c58fc35d7a8d154222d9b1f56b6bdadcf0a1b38fb",
-      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/bash:latest@sha256:9fde61d989c1778f12d4f69c58fc35d7a8d154222d9b1f56b6bdadcf0a1b38fb"
+      "digest": "sha256:bd6cad19b532e508d50e9103aa0f04b2cbf66aae4270cc06235e32b618f24652",
+      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/bash:latest@sha256:bd6cad19b532e508d50e9103aa0f04b2cbf66aae4270cc06235e32b618f24652"
     },
     {
       "dockerfile": "images/runner-go124-alpine.Dockerfile",
@@ -127,8 +127,8 @@
       "resolved_repo": "mirror.gcr.io/library/node",
       "resolved_tag": "24-bookworm-slim",
       "platform": "linux/amd64",
-      "digest": "sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd",
-      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/node:24-bookworm-slim@sha256:51b1100cc2a83d370c6a60952e3f2989c8a43159d0e38586e090f3b3326efefd"
+      "digest": "sha256:2dd9a4f758e173b65fee15388f7706af6fb01ef50cf7a2c0538711d67a6981ae",
+      "pinned_in_dockerfile": "FROM mirror.gcr.io/library/node:24-bookworm-slim@sha256:2dd9a4f758e173b65fee15388f7706af6fb01ef50cf7a2c0538711d67a6981ae"
     },
     {
       "dockerfile": "images/runner-python313.Dockerfile",
@@ -137,8 +137,8 @@
       "resolved_repo": "cgr.dev/chainguard/wolfi-base",
       "resolved_tag": "latest",
       "platform": "linux/amd64",
-      "digest": "sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042",
-      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042"
+      "digest": "sha256:340abe305ba813e2b6198a6d455e2063a53311f2e249d396e14c007caa5f53ac",
+      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:340abe305ba813e2b6198a6d455e2063a53311f2e249d396e14c007caa5f53ac"
     },
     {
       "dockerfile": "images/execution-python-data-v1.Dockerfile",
@@ -147,29 +147,29 @@
       "resolved_repo": "cgr.dev/chainguard/wolfi-base",
       "resolved_tag": "latest",
       "platform": "linux/amd64",
-      "digest": "sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042",
-      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042"
+      "digest": "sha256:340abe305ba813e2b6198a6d455e2063a53311f2e249d396e14c007caa5f53ac",
+      "pinned_in_dockerfile": "FROM cgr.dev/chainguard/wolfi-base:latest@sha256:340abe305ba813e2b6198a6d455e2063a53311f2e249d396e14c007caa5f53ac"
     },
     {
       "dockerfile": "images/builder-base.Dockerfile",
       "instruction": "FROM",
-      "alias": "mirror.gcr.io/library/golang:1.26.9",
+      "alias": "mirror.gcr.io/library/golang:1.26.10",
       "resolved_repo": "mirror.gcr.io/library/golang",
-      "resolved_tag": "1.26.9",
+      "resolved_tag": "1.26.10",
       "platform": "linux/amd64",
       "multi_arch": true,
-      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS railpack-build"
+      "digest": "sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM mirror.gcr.io/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS railpack-build"
     },
     {
       "dockerfile": "images/ci-runner.Dockerfile",
       "instruction": "FROM",
-      "alias": "public.ecr.aws/docker/library/golang:1.26.9",
+      "alias": "public.ecr.aws/docker/library/golang:1.26.10",
       "resolved_repo": "public.ecr.aws/docker/library/golang",
-      "resolved_tag": "1.26.9",
+      "resolved_tag": "1.26.10",
       "platform": "linux/amd64",
-      "digest": "sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b",
-      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26.9@sha256:f1f0bcc2c524a3ced375fcb4d1ecb7aa371aa7070e112599aaca45cc02d0101b AS build",
+      "digest": "sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82",
+      "pinned_in_dockerfile": "FROM --platform=$BUILDPLATFORM public.ecr.aws/docker/library/golang:1.26.10@sha256:672c944cfd07599b5f1bb179869270cdc94c6254e41db4d431259693cb286b82 AS build",
       "multi_arch": true
     },
     {

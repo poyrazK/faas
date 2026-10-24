@@ -58,3 +58,18 @@ SELECT COUNT(*)::bigint AS samples, COALESCE(AVG(value), 0)::double precision AS
    AND name = sqlc.arg(name)::text
    AND observed_at >= sqlc.arg(since)::timestamptz
    AND observed_at < sqlc.arg(until)::timestamptz;
+
+-- name: ReleaseGateDeploymentAI :one
+-- ADR 20261022153155: a deployment's AI calls in the UTC minutes of
+-- [since, until).
+SELECT COALESCE(SUM(calls), 0)::bigint AS calls,
+       COALESCE(SUM(error_calls), 0)::bigint AS error_calls,
+       COALESCE(SUM(flagged_calls), 0)::bigint AS flagged_calls,
+       COALESCE(SUM(cost_millicents), 0)::bigint AS cost_millicents,
+       COALESCE(SUM(ttfb_calls), 0)::bigint AS ttfb_calls,
+       COALESCE(SUM(ttfb_ms_total), 0)::bigint AS ttfb_ms_total
+  FROM outbound_ai_deployment_minutes
+ WHERE deployment_id = sqlc.arg(deployment_id)::uuid
+   AND app_id = sqlc.arg(app_id)::uuid
+   AND minute >= date_trunc('minute', sqlc.arg(since)::timestamptz)
+   AND minute < sqlc.arg(until)::timestamptz;

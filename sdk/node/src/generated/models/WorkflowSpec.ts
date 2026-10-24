@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { WorkflowCodeSpec } from './WorkflowCodeSpec.js';
 import type { WorkflowStepSpec } from './WorkflowStepSpec.js';
 import type { WorkflowTriggerSpec } from './WorkflowTriggerSpec.js';
 /**
@@ -19,5 +20,6 @@ export type WorkflowSpec = {
    */
   max_concurrent_actions?: number;
   steps: Array<WorkflowStepSpec>;
+  code?: WorkflowCodeSpec;
 };
 

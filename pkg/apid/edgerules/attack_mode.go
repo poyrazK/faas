@@ -16,6 +16,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -153,6 +154,10 @@ func attackModeRuleParams(acct state.Account, app state.App, until time.Time) st
 // starts a fresh one. The API and the dashboard share it.
 func (s *Service) EnableAttackMode(ctx context.Context, acct state.Account, app state.App, d time.Duration) (ruleMutation, *api.Problem) {
 	var m ruleMutation
+	if !s.AttackModeReleased(acct) {
+		return m, api.NewProblem(http.StatusUnprocessableEntity, api.CodeEdgeFeatureUnavailable, "Edge feature not released",
+			"Attack mode is not yet available to this account. Switching it off always works.")
+	}
 	convergence, err := s.PrepareEdgeRuleMutation(ctx, app.ID, "", "updated", api.EdgeRuleAppHosts)
 	if err != nil {
 		return m, api.ErrCapacity("edge-rule fleet convergence is unavailable; attack mode was not switched on")
@@ -200,6 +205,13 @@ func (s *Service) EnableAttackMode(ctx context.Context, acct state.Account, app 
 		return m, api.ErrCapacity("attack mode was saved but the serving fleet has not acknowledged it; read attack mode before retrying")
 	}
 	return m, nil
+}
+
+// AttackModeReleased reports whether acct may switch attack mode on: it is a
+// managed challenge rule, so both the edge_attack_mode and edge_challenge
+// platform flags must include the account (ADR-20261021220456 amendment 1).
+func (s *Service) AttackModeReleased(acct state.Account) bool {
+	return s.Host.PlatformFlagEnabled(platformflags.EdgeAttackMode, acct) && s.Host.PlatformFlagEnabled(platformflags.EdgeChallenge, acct)
 }
 
 // DisableAttackMode switches attack mode off by removing the rule. It

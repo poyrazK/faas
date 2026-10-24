@@ -28,6 +28,17 @@ type EdgeProtectionResponse struct {
 	// read from the rules, not Prometheus, so it is current even when the
 	// counts are degraded. Its challenges count in Challenge.
 	AttackMode EdgeAttackModeStatus `json:"attack_mode"`
+	// Penalty counts penalty boxes (ADR-20261022105846): Boxed clients a
+	// rule's penalty boxed, Rejected requests refused from boxed clients.
+	// The refusals also appear in Rejections under gate "penalty".
+	Penalty EdgeProtectionPenalty `json:"penalty"`
+}
+
+// EdgeProtectionPenalty is the penalty-box part of an
+// EdgeProtectionResponse.
+type EdgeProtectionPenalty struct {
+	Boxed    int64 `json:"boxed"`
+	Rejected int64 `json:"rejected"`
 }
 
 // EdgeProtectionChallenge is the kind=challenge part of an
@@ -35,7 +46,9 @@ type EdgeProtectionResponse struct {
 // passes earned, Rejected non-browser requests answered 403
 // challenge_required, Passed requests let through on an earlier pass,
 // Bypassed requests let through on a verified API key, consumer key or JWT,
-// and Invalid solutions refused (bad work or an expired token).
+// Invalid solutions refused (bad work or an expired token), and Raised the
+// part of Issued served at a difficulty raised under attack (ADR-831
+// amendment 8).
 type EdgeProtectionChallenge struct {
 	Issued   int64 `json:"issued"`
 	Solved   int64 `json:"solved"`
@@ -43,6 +56,7 @@ type EdgeProtectionChallenge struct {
 	Passed   int64 `json:"passed"`
 	Bypassed int64 `json:"bypassed"`
 	Invalid  int64 `json:"invalid"`
+	Raised   int64 `json:"raised"`
 }
 
 // EdgeProtectionWAF is the kind=waf part of an EdgeProtectionResponse.

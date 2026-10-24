@@ -150,6 +150,45 @@ func setFlagOutput(fs *flag.FlagSet, human io.Writer) {
 		return
 	}
 	fs.SetOutput(&humanFlagErrorWriter{name: fs.Name(), dst: human, flags: fs})
+	if jsonUsageHelp {
+		fs.Usage = func() { printFlagSetHelp(osStdout, fs) }
+	}
+}
+
+// flagHelpPrinted records that a verb the help manifest does not describe
+// answered --help from its own parser. The parse "error" that carried the
+// request is then silent, and run reports success.
+var flagHelpPrinted bool
+
+// helpRequestPath is the command the user typed before its first flag, for
+// naming a verb whose FlagSet name is internal.
+var helpRequestPath string
+
+func printFlagSetHelp(w io.Writer, fs *flag.FlagSet) {
+	if flagHelpPrinted {
+		return
+	}
+	flagHelpPrinted = true
+	path := helpRequestPath
+	if path == "" {
+		path = flagSetCommandName(fs.Name())
+	}
+	_, _ = fmt.Fprintf(w, "Flags for gregale %s:\n", path)
+	fs.VisitAll(func(f *flag.Flag) {
+		label := "--" + f.Name
+		value, usage := flag.UnquoteUsage(f)
+		switch value {
+		case "":
+		case "string":
+			label += " <VALUE>"
+		case "int", "int64", "uint", "uint64", "float":
+			label += " <N>"
+		default:
+			label += " <" + strings.ToUpper(value) + ">"
+		}
+		printHelpEntry(w, label, usage)
+	})
+	_, _ = fmt.Fprintf(w, "\nDocs: %s\n", cliDocsURL)
 }
 
 // invokedCommandPath is the public command path of the current run(), for
@@ -234,6 +273,9 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 		if guidance := flagValueGuidance(diagnostic, w.flags, path); guidance != "" {
 			diagnostic += "\n  " + guidance
 		}
+		if hint := globalFlagPlacementHint(diagnostic, path); hint != "" {
+			diagnostic += "\n  " + hint
+		}
 		_, err := fmt.Fprintf(w.dst, "Invalid command flags\n  %s\n  run 'gregale %s --help' for usage\n",
 			diagnostic, path)
 		return len(p), err
@@ -243,6 +285,21 @@ func (w *humanFlagErrorWriter) Write(p []byte) (int, error) {
 	}
 	_, err := io.WriteString(w.dst, text)
 	return len(p), err
+}
+
+// globalFlagPlacementHint explains a prefix-only global flag given after the
+// command: `gregale deploy --non-interactive` failed with a bare "unknown
+// flag" (Hunt 12 H12-27).
+func globalFlagPlacementHint(diagnostic, path string) string {
+	for _, global := range []struct{ name, example string }{
+		{"non-interactive", "--non-interactive"},
+		{"profile", "--profile NAME"},
+	} {
+		if diagnostic == "unknown flag --"+global.name || strings.HasPrefix(diagnostic, "unknown flag --"+global.name+"=") {
+			return fmt.Sprintf("--%s is a global flag: put it before the command, as in 'gregale %s %s'", global.name, global.example, path)
+		}
+	}
+	return ""
 }
 
 type jsonFlagErrorWriter struct {

@@ -77,6 +77,9 @@ native_e2e_phase_files() {
       direct_oci_port_metal_test.go \
       function_concurrency_metal_test.go \
       guest_tracing_metal_test.go \
+      profile_capture_metal_test.go \
+      profile_capture_pprof_metal_test.go \
+      profile_capture_pressure_metal_test.go \
       image_process_identity_metal_test.go \
       workload_identity_metal_test.go \
       image_process_identity_metal_test.go \
@@ -116,6 +119,11 @@ native_e2e_phase_files() {
       private_tcp_wake_ahead_metal_test.go \
       service_stale_endpoint_metal_test.go \
       wake_platform_bench_metal_test.go \
+      fork_metal_test.go \
+      live_fork_metal_test.go \
+      crash_snapshot_metal_test.go \
+      crash_snapshot_sdk_metal_test.go \
+      vmmd_restart_metal_test.go \
       cpu_fairness_test.go ;;
     # Response streaming and the h2c/gRPC inner leg (G19.3).
     streaming) printf '%s\n' streaming_metal_test.go bridge_h2c_terminator_metal_test.go function_streaming_metal_test.go ;;

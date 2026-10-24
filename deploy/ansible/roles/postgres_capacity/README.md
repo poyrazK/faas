@@ -69,3 +69,9 @@ instead, which keeps the larger pre-hub sizing because every subscriber then
 parks its own connection. A fleet running any daemon with the hub disabled
 therefore needs more connections than the figures above; re-derive the
 ceiling before enabling that mode on more than one node.
+
+`pkg/db.DaemonMinConnections` keeps a small warm floor of each listed
+daemon's connections open while idle (schedd: 4 per process), so wakes reuse
+backends that have already compiled the instance triggers. A floor never
+exceeds the daemon's maximum: it raises the idle session count, not the
+ceiling this role derives.

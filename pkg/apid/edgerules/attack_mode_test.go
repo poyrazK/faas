@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/promql"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -23,6 +24,8 @@ type attackModeHost struct {
 	app    state.App
 	audits *[]string
 	notif  *recordingNotifier
+	// unreleased lists the platform flags left off; every other flag is on.
+	unreleased map[string]bool
 }
 
 func (h attackModeHost) LoadApp(w http.ResponseWriter, _ *http.Request, _ state.Account, slug string) (state.App, bool) {
@@ -36,6 +39,9 @@ func (h attackModeHost) Store() state.Store     { return h.store }
 func (h attackModeHost) Logger() *slog.Logger   { return slog.New(slog.DiscardHandler) }
 func (h attackModeHost) Notifier() Notifier     { return h.notif }
 func (h attackModeHost) PromQL() *promql.Client { return nil }
+func (h attackModeHost) PlatformFlagEnabled(flag string, _ state.Account) bool {
+	return !h.unreleased[flag]
+}
 func (h attackModeHost) EmitAudit(_ context.Context, kind string, _ *string, _ map[string]any) {
 	*h.audits = append(*h.audits, kind)
 }
@@ -214,5 +220,27 @@ func TestAttackModeAfterExpiryStartsFresh(t *testing.T) {
 	}
 	if rules := f.rules(); len(rules) != 1 || rules[0].ID != on.RuleID {
 		t.Fatalf("rules after restart = %+v, want only the new rule", rules)
+	}
+}
+
+// adr: 20261021220456 — amendment 1: attack mode is switched on only while
+// both the edge_attack_mode and edge_challenge flags include the account;
+// switching it off always works.
+func TestAttackModeNeedsItsFlags(t *testing.T) {
+	for _, off := range []string{platformflags.EdgeAttackMode, platformflags.EdgeChallenge} {
+		f := newAttackModeFixture(t)
+		host := f.svc.Host.(attackModeHost)
+		host.unreleased = map[string]bool{off: true}
+		f.svc.Host = host
+		rec, _ := f.call(http.MethodPut, `{"duration_seconds":3600}`)
+		if rec.Code != http.StatusUnprocessableEntity || !strings.Contains(rec.Body.String(), api.CodeEdgeFeatureUnavailable) {
+			t.Fatalf("%s off: on = %d %s, want 422 %s", off, rec.Code, rec.Body, api.CodeEdgeFeatureUnavailable)
+		}
+		if rules := f.rules(); len(rules) != 0 {
+			t.Fatalf("%s off: refused switch left %d rules", off, len(rules))
+		}
+		if rec, _ := f.call(http.MethodDelete, ""); rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
+			t.Fatalf("%s off: off = %d %s", off, rec.Code, rec.Body)
+		}
 	}
 }

@@ -9,6 +9,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -17,7 +18,9 @@ import (
 // plan too; the rules table marks the managed rule and offers no edit forms
 // for it.
 func TestDashboardEdgeAttackMode(t *testing.T) {
-	h, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
+	_, cookie, store, sessions := apidserver.NewAuthedDashboardServerFull(t)
+	srv := apidserver.NewServerWithDeps(store, apidserver.DiscardLogger(), "gregale.dev", apidserver.NoopNotifier{}, "", apidserver.NoopMailer{}, apidserver.StubGithubdClient{}, sessions, nil, 15*time.Minute, "")
+	h := srv.Handler()
 	acct, err := store.AccountByEmail(t.Context(), "alice@example.com")
 	if err != nil {
 		t.Fatalf("AccountByEmail: %v", err)
@@ -46,6 +49,21 @@ func TestDashboardEdgeAttackMode(t *testing.T) {
 			t.Fatalf("page status = %d", rec.Code)
 		}
 		return rec.Body.String()
+	}
+
+	// adr: 20261021220456 — amendment 1: until attack mode is released the
+	// card offers no switch, and the form is refused.
+	if body := page(); !strings.Contains(body, "Attack mode is not yet available") || strings.Contains(body, "Turn on attack mode") {
+		t.Fatal("unreleased page offers to turn attack mode on")
+	}
+	if rec := post(map[string]string{"attack_mode": "on", "duration_seconds": "3600"}); rec.Code != http.StatusSeeOther || strings.Contains(rec.Header().Get("Location"), "action=attack_mode_on") {
+		t.Fatalf("unreleased on: %d %s", rec.Code, rec.Header().Get("Location"))
+	}
+	if rules, _ := store.ListEdgeRulesForApp(t.Context(), app.ID); len(rules) != 0 {
+		t.Fatalf("unreleased on created %d rules", len(rules))
+	}
+	for _, flag := range []string{platformflags.EdgeAttackMode, platformflags.EdgeChallenge} {
+		srv.SeedPlatformFlag(flag, platformflags.Definition{Enabled: true, Default: true})
 	}
 
 	if body := page(); !strings.Contains(body, "Turn on attack mode") || strings.Contains(body, "Turn off attack mode") {

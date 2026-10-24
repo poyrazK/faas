@@ -78,6 +78,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/middleware"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -1045,6 +1046,10 @@ type runDeps struct {
 	// (ADR-20261018090210), following the api_monetization_enabled runtime
 	// setting. Nil keeps monetization off.
 	apiMonetization func() bool
+	// platformFlags is every platform flag gatewayd-internal decides (the
+	// api_monetization flag, ADR-20261020170649, and the edge feature flags,
+	// ADR-20261023113721), kept current by the runtime-config watcher.
+	platformFlags *platformflags.Set
 	// Private identity is built only with the process-wide drain tracker.
 	runtimeIngressIdentity http.Handler
 	listen                 func(network, addr string) (net.Listener, error)
@@ -1437,6 +1442,8 @@ func runThenClosePool(ctx context.Context, log *slog.Logger, closePool func(), b
 
 // runOnPool is run's body; runThenClosePool owns the pool's lifetime.
 func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error {
+	// ADR-733 5xx capture requests; registered with gatewayOps below.
+	crashCaptureRequests := newCrashCaptureRequestCounter()
 	cfg, err := LoadConfig(configPath)
 	if err != nil {
 		return err
@@ -1533,6 +1540,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
 	apiMonetizationFlag := runtimeconfig.NewBoolFlag(api.APIMonetizationEnabled())
 	deps.apiMonetization = apiMonetizationFlag.Load
+	deps.platformFlags = platformflags.NewSet(nil)
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	router := pgRouter{
@@ -1654,7 +1662,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 			targets := make([]gateway.Target, 0, len(instances))
 			readinessInstanceIDs := make([]string, 0, len(instances))
 			for _, instance := range instances {
-				if instance.State != string(state.StateRunning) || instance.ID == "" || instance.NodeID == "" {
+				if !gatewayRoutable(instance) {
 					continue
 				}
 				port, ok := live[instance.DeploymentID]
@@ -1732,8 +1740,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 				return gateway.Target{}, false, err
 			}
 			for _, instance := range instances {
-				if instance.DeploymentID != deploymentID || instance.State != string(state.StateRunning) ||
-					instance.ID == "" || instance.NodeID == "" {
+				if instance.DeploymentID != deploymentID || !gatewayRoutable(instance) {
 					continue
 				}
 				return gateway.Target{
@@ -1743,6 +1750,33 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 				}, true, nil
 			}
 			return gateway.Target{}, false, nil
+		}).
+		// ADR-733: a 5xx asks for a crash capture; the store applies opt-in,
+		// one-in-flight and cooldown. Off unless FAAS_CRASH_SNAPSHOTS=1.
+		WithCrashCaptureRequester(crashCaptureRequester(pgStore, os.Getenv("FAAS_CRASH_SNAPSHOTS"), crashCaptureRequests)).
+		// ADR-732: route a fork request only when the fork, its token and
+		// its instance all check out (gateway.ForkTargetFromState).
+		WithForkTargetLoader(func(ctx context.Context, appID, forkID, token string) (gateway.Target, bool, error) {
+			fork, err := pgStore.AppForkForApp(ctx, appID, forkID)
+			if errors.Is(err, state.ErrNotFound) || (err == nil && fork.InstanceID == nil) {
+				return gateway.Target{}, false, nil
+			}
+			if err != nil {
+				return gateway.Target{}, false, err
+			}
+			instance, err := pgStore.InstanceByID(ctx, *fork.InstanceID)
+			if errors.Is(err, state.ErrNotFound) {
+				return gateway.Target{}, false, nil
+			}
+			if err != nil {
+				return gateway.Target{}, false, err
+			}
+			dep, err := pgStore.DeploymentByID(ctx, instance.DeploymentID)
+			if err != nil {
+				return gateway.Target{}, false, err
+			}
+			target, ok := gateway.ForkTargetFromState(fork, instance, schedpkg.DeploymentRuntimePort(dep), token, time.Now())
+			return target, ok, nil
 		}).
 		WithClientForApp(func(ctx context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
 			cli, err := deps.scheddRouter.ScheddForApp(ctx, state.App{ID: app.ID, NodeID: app.NodeID})
@@ -2148,7 +2182,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	if pool != nil {
 		runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 		defer runtimeCancel()
-		watcher := runtimeconfig.New(pgStore, pool,
+		keys, apply := runtimeconfig.WithPlatformFlags(
 			[]string{runtimeconfig.KeyTenantSurfaces, runtimeconfig.KeyHSTS, runtimeconfig.KeyAPIMonetization},
 			func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 				enabled, err := runtimeconfig.Bool(value)
@@ -2165,7 +2199,8 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 					httpsec.SetHSTSEnabled(enabled)
 				}
 				return nil
-			}, log)
+			}, deps.platformFlags)
+		watcher := runtimeconfig.New(pgStore, pool, keys, apply, log)
 		watcher.Daemon = "gatewayd-internal" // ADR-1700 apply receipts
 		if err := watcher.Reconcile(runtimeCtx); err != nil {
 			log.Warn("gatewayd: initial runtime config reconcile failed", "err", err)
@@ -2214,6 +2249,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	gatewayOps := wire.NewOpsMetrics("gatewayd")
 	wire.BootStamps(ctx, "gatewayd-internal", gatewayOps)
 	wire.RegisterDefaultOps(gatewayOps)
+	gatewayOps.Registry().MustRegister(crashCaptureRequests)
 	// ADR-190 follow-up: export this pool's live statistics so the
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(gatewayOps, pool)
@@ -2723,12 +2759,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	retryBudget.WithObserver(deps.metrics)
 	defer func() { _ = retryBudget.Close() }()
-	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget)
+	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).
+		WithSelectorSuffixes(appsSuffix(deps.appsDomain), wire.DeployWildcardSuffix)
 	if deps.pgStore != nil {
 		handler.WithFinancialBudgetAdmission(newFinancialBudgetAdmission(deps.pgStore))
 	}
 	if err := configureOperationRoutes(handler, deps); err != nil {
 		return fmt.Errorf("gatewayd-internal: %w", err)
+	}
+	if osGetenv("FAAS_PROFILING_ON_DEMAND") == "1" && deps.scheddRouter != nil {
+		// ADR-1155: report requests in flight too long so the owning schedd
+		// can snapshot the serving instance's stacks while they are stuck.
+		watcher := gateway.NewSlowRequestWatcher(slowRequestReporter(deps.scheddRouter), log)
+		go watcher.Run(ctx)
+		handler.WithSlowRequestWatcher(watcher)
 	}
 	if osGetenv("FAAS_DEV_BRIDGE_ENABLED") == "1" && deps.pgStore != nil {
 		bridgeTarget := deps.apidLoopback
@@ -2851,6 +2895,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler.WithConsumerAuth(newConsumerAuthStore(deps.pgStore))
 	handler.WithTenantRequestBudgetStore(newTenantRequestBudgetStore(deps.pgStore))
 	handler.WithAPIMonetization(deps.apiMonetization)
+	handler.WithAPIMonetizationFlags(deps.platformFlags)
+	handler.WithEdgeFeatureFlags(deps.platformFlags)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are
 	// read only for requests that have to queue, through a 30 s cache.
 	if pgStore := deps.pgStore; pgStore != nil {
@@ -2985,6 +3031,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-973 — verified crawlers via forward-confirmed reverse DNS.
 	handler.WithBotVerifier(gateway.NewBotVerifier(nil))
+	// ADR-20261022105846 — rule penalty boxes, held in this node's memory.
+	handler.WithPenaltyBox(gateway.NewPenaltyBox())
 	// ADR-960 — per-rule hit counts, flushed to Postgres once a minute. Only
 	// a store with the hit-count capability gets a recorder, so test and
 	// legacy wiring keep counting disabled.
@@ -3876,9 +3924,12 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// nil pgStore (tests / single-box dev without a DB) renders
 	// the lookup_unavailable problem so the dashboard can
 	// distinguish "DB missing" from "unknown slug".
+	// appsControl is also served on the compute node's private control
+	// listener (ADR-20261022004500), so apid on the control plane reaches it.
+	var appsControl http.HandlerFunc
 	if deps.pgStore != nil {
 		pgStore := deps.pgStore
-		controlMux.HandleFunc("/v1/internal/apps/", func(w http.ResponseWriter, r *http.Request) {
+		appsControl = func(w http.ResponseWriter, r *http.Request) {
 			// Path-keyed: ServeMux's HandleFunc uses prefix
 			// match, so /v1/internal/apps/foo/routes,
 			// /v1/internal/apps/foo/service-endpoints,
@@ -3946,7 +3997,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				return
 			}
 			internalRoutesHandler(handler, resolve, log).ServeHTTP(w, r)
-		})
+		}
+		controlMux.HandleFunc("/v1/internal/apps/", appsControl)
 	}
 	// ADR-168/169: expose the node-local service proxy on the trusted control
 	// listener and, when configured, on the tenant bridge. Both listeners use
@@ -3990,6 +4042,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		serviceProxyConfig := gateway.ServiceProxyConfig{
 			AdmitRuntime:              financialBudgetServiceAdmission(pgStore),
 			APIMonetization:           deps.apiMonetization,
+			APIMonetizationFor:        handler.APIMonetizationEnabledFor,
 			AdmitManagedAsync:         gateway.NewRehearsalAsyncAdmitter(pgStore),
 			Provider:                  serviceEndpointProvider,
 			Resolve:                   newServiceProxyResolver(pgStore),
@@ -4407,6 +4460,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			errc <- err
 		}
 	}()
+	if addr := privateControlAddr(cfg.Role, os.Getenv); addr != "" {
+		var apps http.Handler
+		if appsControl != nil {
+			apps = appsControl
+		}
+		privateMux := newPrivateControlMux(apps, http.HandlerFunc(responseChecker.Capabilities))
+		go func() {
+			log.Info("gatewayd private control listening", "addr", addr)
+			if err := gateway.RunControlServer(handoffCtx, addr, privateMux); err != nil {
+				errc <- err
+			}
+		}()
+	}
 
 	// Internal unix-socket RPC for schedd's cron dispatch (spec §4.4,
 	// M7). Best-effort: if the socket can't bind (e.g. /run/faas

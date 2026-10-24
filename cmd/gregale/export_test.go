@@ -574,6 +574,7 @@ var ApplyTestOutageCycles = applyTestOutageCycles
 var ApplyTestPoolExhaustion = applyTestPoolExhaustion
 var ApplyTestRecoveryDeadlineOverrides = applyTestRecoveryDeadlineOverrides
 var ApplyTestSweepBaseline = applyTestSweepBaseline
+var ApprovalPolicyRequest = approvalPolicyRequest
 var AssertOneProblem = assertOneProblem
 var AssessTestPreflight = assessTestPreflight
 var AttachDataAPIConnectionBudget = attachDataAPIConnectionBudget
@@ -669,6 +670,7 @@ var CliPreAuthPatch = cliPreAuthPatch
 var CliRevisionPinTTLSeconds = cliRevisionPinTTLSeconds
 var CliSessionMetadataPath = cliSessionMetadataPath
 var CmdAI = cmdAI
+var CmdReleaseGates = cmdReleaseGates
 var CmdAITokens = cmdAITokens
 var CmdAccount = cmdAccount
 var CmdAccountDelete = cmdAccountDelete
@@ -702,6 +704,7 @@ var CmdAppScalePlan = cmdAppScalePlan
 var CmdAppSecurity = cmdAppSecurity
 var CmdAppStaticEgressIP = cmdAppStaticEgressIP
 var CmdAppStaticEgressIPClear = cmdAppStaticEgressIPClear
+var CmdApps = cmdApps
 var CmdAppsRm = cmdAppsRm
 var CmdAppsRoutes = cmdAppsRoutes
 var CmdAppsTCP = cmdAppsTCP
@@ -762,6 +765,7 @@ var CmdCommit = cmdCommit
 var CmdCompletionBash = cmdCompletionBash
 var CmdCompletionFish = cmdCompletionFish
 var CmdCompletionPowershell = cmdCompletionPowershell
+var PSLiteral = psLiteral
 var CmdCompletionZsh = cmdCompletionZsh
 var CmdConfig = cmdConfig
 var CmdConnect = cmdConnect
@@ -784,6 +788,7 @@ var CmdCronsUpdate = cmdCronsUpdate
 var CmdDLQPurge = cmdDLQPurge
 var CmdDashboard = cmdDashboard
 var CmdDataAPI = cmdDataAPI
+var CmdDataAPIConfigure = cmdDataAPIConfigure
 var CmdDataAPICreate = cmdDataAPICreate
 var CmdDataAPIDev = cmdDataAPIDev
 var CmdDataAPIExplain = cmdDataAPIExplain
@@ -1028,6 +1033,7 @@ var CmdRuns = cmdRuns
 var CmdSLO = cmdSLO
 var CmdSLOs = cmdSLOs
 var CmdScan = cmdScan
+var CmdScheduledReleases = cmdScheduledReleases
 var CmdSecretReferences = cmdSecretReferences
 var CmdSecrets = cmdSecrets
 var CmdSend = cmdSend
@@ -1088,6 +1094,13 @@ var CmdWorkflowsRun = cmdWorkflowsRun
 var CmdWorkflowsStatus = cmdWorkflowsStatus
 var CmdWorkflowsSteps = cmdWorkflowsSteps
 var CollectEventDeliveryPages = collectEventDeliveryPages
+
+// ReleaseGateRequest builds a release-gates add request from its flags.
+func ReleaseGateRequest(name, slo string, maxBurn int, newErrors bool, maxGroups, minEvents int, metric, below, above, aiMetric string,
+	maxIncrease, minSamples int) (api.CreateReleaseGateRequest, error) {
+	return releaseGateRequest(releaseGateFlags{name: name, slo: slo, maxBurn: maxBurn, newErrors: newErrors, maxGroups: maxGroups,
+		minEvents: minEvents, metric: metric, below: below, above: above, aiMetric: aiMetric, maxIncrease: maxIncrease, minSamples: minSamples})
+}
 
 func CollectListPages[T any](p0 context.Context, p1 string, p2 bool, p3 func(context.Context, string) ([]T, string, error)) ([]T, string, error) {
 	return collectListPages[T](p0, p1, p2, p3)
@@ -1453,6 +1466,7 @@ var ParseInterspersed = parseInterspersed
 var ParseMCPServeOptions = parseMCPServeOptions
 var ParsePortForwardSpec = parsePortForwardSpec
 var ParseProductCommand = parseProductCommand
+var ParseReleaseAtFlag = parseReleaseAtFlag
 var ParseRevisionRef = parseRevisionRef
 var ParseRouteMonitorCLI = parseRouteMonitorCLI
 var ParseRouteMonitorCodeowners = parseRouteMonitorCodeowners
@@ -1612,7 +1626,7 @@ var RedactErrorText = redactErrorText
 var RedactTestDiagnosticText = redactTestDiagnosticText
 var RehearsalTestRepo = rehearsalTestRepo
 var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
-var ReleaseGateRequest = releaseGateRequest
+var ReleaseDiffLines = releaseDiffLines
 var ReleaseSummaryLine = releaseSummaryLine
 var ReleasedUsage = releasedUsage
 var RemoveTestFaultRules = removeTestFaultRules
@@ -1700,6 +1714,7 @@ var ResetJSONOut = resetJSONOut
 var ResetJSONOutput = resetJSONOutput
 var ResetNOColorCache = resetNOColorCache
 var ResetStdoutTTYCache = resetStdoutTTYCache
+var ResolveDeployReleaseAt = resolveDeployReleaseAt
 var ResolveDeployRollbackOn5xx = resolveDeployRollbackOn5xx
 var ResolveDeployShape = resolveDeployShape
 var ResolveDeploySourceDir = resolveDeploySourceDir
@@ -1813,6 +1828,7 @@ var ScaffoldTestHTTPRequests = scaffoldTestHTTPRequests
 var ScanEnvRefs = scanEnvRefs
 var ScanSource = scanSource
 var ScenarioInternalServiceURLs = scenarioInternalServiceURLs
+var ScheduledReleaseLines = scheduledReleaseLines
 var SecondsOrDurationFlag = secondsOrDurationFlag
 var SecretAckProgress = secretAckProgress
 var SecretAckProgressWithRestart = secretAckProgressWithRestart
@@ -2356,3 +2372,41 @@ func (r validateParamFlags) Resolve(p0 map[string]bool) (*api.EdgeRuleValidatePa
 // Members of zeroConfigStubServer
 func (r *zeroConfigStubServer) GotCalls() *map[string]int { return &r.gotCalls }
 func (r *zeroConfigStubServer) Srv() **httptest.Server    { return &r.srv }
+
+var PrintEdgeRuleEvents = printEdgeRuleEvents
+var ResolveArchiveInstance = resolveArchiveInstance
+var RequestLatencyMS = requestLatencyMS
+var SafeDeployWaitTimeoutSeconds = safeDeployWaitTimeoutSeconds
+var InferLatestWorkflowName = inferLatestWorkflowName
+var CompactUsage = compactUsage
+
+const UsageSynopsisLimit = usageSynopsisLimit
+
+var InvokedCommandPath = &invokedCommandPath
+
+var AppArgumentEnabled = &appArgumentEnabled
+
+// AppArgumentPaths lists every visible command path whose leaf takes the
+// app as its first argument.
+func AppArgumentPaths() [][]string {
+	var paths [][]string
+	var walk func(path []string, flags []cliFlag, positionals []string, children []cliSub)
+	walk = func(path []string, flags []cliFlag, positionals []string, children []cliSub) {
+		if takesAppArgument(flags, positionals, children) {
+			paths = append(paths, append([]string{}, path...))
+		}
+		for _, child := range children {
+			if child.SubcommandsAfterPositionals {
+				continue
+			}
+			walk(append(append([]string{}, path...), child.Name), child.Flags, child.Positionals, child.Subcommands)
+		}
+	}
+	for _, command := range visibleCliCommands() {
+		if command.SubcommandsAfterPositionals {
+			continue
+		}
+		walk([]string{command.Name}, command.Flags, command.Positionals, command.Subcommands)
+	}
+	return paths
+}

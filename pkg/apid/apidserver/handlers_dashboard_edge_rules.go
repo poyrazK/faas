@@ -60,6 +60,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		Action: dashboardEdgeRulesActionFlash(r),
 	}
 	data.Protection = s.edgeRules.AppEdgeProtection(ctx, app, edgerules.EdgeProtectionDefaultRange)
+	data.AttackModeAvailable = s.edgeRules.AttackModeReleased(acct)
 	data.Trace = dashboard.EdgeRuleTraceFormData{Host: app.Slug, Path: "/", Method: http.MethodGet}
 	if appURL, parseErr := url.Parse(data.App.URL); parseErr == nil && appURL.Hostname() != "" {
 		data.Trace.Host = appURL.Hostname()
@@ -650,14 +651,31 @@ func dashboardEdgeRuleRecipes(rules []state.EdgeRule, plan api.Plan) []dashboard
 	return out
 }
 
+// dashboardSelectorHostCoverage lists the <app>--<name> hostnames the edge
+// routes to the app's companions and public listeners, so the page shows that
+// they are public and which rules cover them.
+func (s *server) dashboardSelectorHostCoverage(ctx context.Context, log *slog.Logger, app state.App, platformHost string) []dashboard.EdgeRuleHostCoverage {
+	live, err := s.store.LiveDeployments(ctx, app.ID)
+	if err != nil {
+		log.Warn("dashboard edge rules: list live deployments", "app_id", app.ID, "err", err)
+	}
+	var hosts []dashboard.EdgeRuleHostCoverage
+	for _, selector := range edgerules.SelectorHosts(platformHost, live, app.Manifest.Ports) {
+		hosts = append(hosts, dashboard.EdgeRuleHostCoverage{Host: selector.Host, Selector: selector.Name, PublicPort: selector.PublicPort})
+	}
+	return hosts
+}
+
 // dashboardEdgeRuleHostCoverage counts, for each hostname the app serves
-// (its platform host and verified custom domains), the enabled rules that
+// (its platform host, its companion and public-listener selector hosts, and
+// verified custom domains), the enabled rules that
 // apply to it: host-specific, pattern ("*", "*.example.com") and app-wide
 // ("@app", ADR-1191) rules alike.
 func (s *server) dashboardEdgeRuleHostCoverage(ctx context.Context, log *slog.Logger, app state.App, rules []state.EdgeRule) []dashboard.EdgeRuleHostCoverage {
 	hosts := []dashboard.EdgeRuleHostCoverage{}
 	if parsed, err := url.Parse(appURLForDomain(app.Slug, s.domain)); err == nil && parsed.Hostname() != "" {
 		hosts = append(hosts, dashboard.EdgeRuleHostCoverage{Host: parsed.Hostname()})
+		hosts = append(hosts, s.dashboardSelectorHostCoverage(ctx, log, app, parsed.Hostname())...)
 	}
 	domains, err := s.store.ListDomainsForApp(ctx, app.ID)
 	if err != nil {

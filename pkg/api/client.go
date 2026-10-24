@@ -3729,7 +3729,7 @@ func (c *Client) GetEdgeRuleStatsWithSeries(ctx context.Context, slug, window st
 // first (ADR-964). Pass the response's NextCursor to continue.
 func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRuleEventsQuery) (EdgeRuleEventsResponse, error) {
 	v := url.Values{}
-	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "since": q.Since, "cursor": q.Cursor} {
+	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "request_id": q.RequestID, "since": q.Since, "cursor": q.Cursor} {
 		if val != "" {
 			v.Set(k, val)
 		}

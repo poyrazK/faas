@@ -1288,6 +1288,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-049 §B.4: 13-month retention DELETE cron. The pool
 	// satisfies the retentionExecer contract.
 	go meter.RetentionLoop(ctx, poolAdapter{pool}, mc.RetentionInterval, log)
+	// ADR-20261023171905: the quiet pause ledger keeps
+	// api.QuietPauseLedgerRetentionDays.
+	go meter.QuietPauseRetentionLoop(ctx, store, mc.RetentionInterval, log)
 	// ADR-371: egress flow log rows are kept api.EgressFlowLogRetentionDays.
 	go meter.RetentionLoopEgressFlowLog(ctx, poolAdapter{pool}, time.Hour, log)
 
@@ -1725,6 +1728,16 @@ func (a *safedeployStoreAdapter) SafedeployStampRollout(ctx context.Context, id 
 
 func (a *safedeployStoreAdapter) AppendDeploymentAudit(ctx context.Context, entry state.DeploymentAudit) (int64, error) {
 	return a.store.AppendDeploymentAudit(ctx, entry)
+}
+
+// LatestRolloutHold lets the orchestrator tell a release waiting for
+// approval from a stuck one (ADR-20261020085706).
+func (a *safedeployStoreAdapter) LatestRolloutHold(ctx context.Context, deploymentID string) (json.RawMessage, error) {
+	holds, ok := a.store.(state.RolloutDecisionStore)
+	if !ok {
+		return nil, nil
+	}
+	return holds.LatestRolloutHold(ctx, deploymentID)
 }
 
 // func(ctx context.Context) signature so Loop.WithPartitionCreate

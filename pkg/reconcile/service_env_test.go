@@ -162,6 +162,37 @@ func TestDiffFieldsChangedPreservesLegacyServiceBindingPolicy(t *testing.T) {
 	}
 }
 
+func TestServiceBindingPolicyProjectIsKeptAndPolicyFromNewerReleaseSurvivesReapply(t *testing.T) {
+	workload := reposcan.Workload{Name: "api"}
+	app := state.App{WorkloadName: "api", WorkloadClass: state.WorkloadClassHTTP,
+		Manifest: state.AppManifest{ServiceBindingPolicy: api.ServiceBindingPolicyProject}}
+	if got := diffFieldsChanged(app, workload, ""); len(got) != 0 {
+		t.Fatalf("project reapply changed fields = %v, want none", got)
+	}
+	if got := serviceBindingPolicyForExistingWorkload(workload, app.Manifest.ServiceBindingPolicy); got != api.ServiceBindingPolicyProject {
+		t.Fatalf("existing project policy = %q, want project", got)
+	}
+
+	// A rolled-back control plane must not rewrite a newer release's policy
+	// as declared: the narrowing would outlive the rollback.
+	app.Manifest.ServiceBindingPolicy = "future-policy"
+	if got := serviceBindingPolicyForExistingWorkload(workload, app.Manifest.ServiceBindingPolicy); got != "future-policy" {
+		t.Fatalf("unknown stored policy = %q, want it kept", got)
+	}
+	if got := diffFieldsChanged(app, workload, ""); len(got) != 0 {
+		t.Fatalf("unknown stored policy changed fields = %v, want none", got)
+	}
+
+	workload.ServiceBindingPolicy = reposcan.ServiceBindingPolicyProject
+	if got := serviceBindingPolicyForNewWorkload(workload); got != api.ServiceBindingPolicyProject {
+		t.Fatalf("new workload opting into project = %q", got)
+	}
+	app.Manifest.ServiceBindingPolicy = api.ServiceBindingPolicyDeclared
+	if got := diffFieldsChanged(app, workload, ""); !reflect.DeepEqual(got, []string{"service_binding_policy"}) {
+		t.Fatalf("declared to project changed fields = %v", got)
+	}
+}
+
 func TestDiffFieldsChangedDetectsHTTPSFirstTransportAndPreservesOmittedMode(t *testing.T) {
 	workload := reposcan.Workload{
 		Name:                    "api",

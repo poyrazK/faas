@@ -91,6 +91,9 @@ const (
 	configRevisionsFile              = "config_revisions.go"     // ADR-1451 guarded, reversible config changes
 	releaseFreezesFile               = "release_freezes.go"      // ADR-20261019071733 deploy freezes
 	releaseGatesFile                 = "release_gates.go"        // ADR-20261019071734 release gates
+	releaseApprovalsFile             = "release_approvals.go"    // ADR-20261020085706 release approvals
+	releaseDiffFile                  = "release_diff.go"         // ADR-20261021101117 release diff
+	scheduledReleasesFile            = "scheduled_releases.go"   // ADR-20261021152201 scheduled releases
 	changeTimelineFile               = "change_timeline.go"      // ADR-751 app change timeline DTOs
 	customMetricSeriesFile           = "custom_metric_series.go" // ADR-745 custom metric history DTOs
 	operatorPlatformFlagsFile        = "operator_platform_flags.go"
@@ -216,6 +219,10 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
 	"POST /dashboard/mcp/retirements/{id}":                             true,
 
+	"POST /dashboard/apps/{slug}/profiles/captures":                          true, // ADR-1155 session + CSRF adapter for the profile capture API
+	"GET /dashboard/apps/{slug}/profiles/captures/{id}":                      true, // ADR-1155 HTML capture page over the profile capture API
+	"GET /dashboard/apps/{slug}/profiles/captures/{id}/pprof":                true, // ADR-1155 session-authenticated download adapter
+	"GET /dashboard/apps/{slug}/profiles/captures/{id}/diff":                 true, // ADR-1155 HTML comparison page over the capture diff API
 	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                    true, // scoped HTML/CSRF frequency alert policy adapter
 	"POST /dashboard/apps/{slug}/issues/bulk-actions":                        true, // session/CSRF HTML adapter for the corresponding public Issues API
 	"POST /dashboard/apps/{slug}/issues/saved-views":                         true, // session/CSRF HTML adapter for the corresponding public Issues API
@@ -296,6 +303,12 @@ var routeExclude = map[string]bool{
 	"GET /v1/apps/{slug}/product/billing/overdue-holds":                      true,
 	"GET /v1/product-control/customer/{slug}/billing-details":                true,
 	"PUT /v1/product-control/customer/{slug}/billing-details":                true,
+	"GET /v1/product-control/customer/{slug}/offer":                          true,
+	"POST /v1/product-control/customer/{slug}/signup":                        true,
+	"GET /v1/product-control/customer/{slug}/payment-method":                 true,
+	"POST /v1/product-control/customer/{slug}/payment-method/checkout":       true,
+	"POST /v1/product-control/customer/{slug}/payment-method/complete":       true,
+	"GET /v1/product-control/portal-signup.js":                               true,
 	"POST /v1/apps/{slug}/product/billing/documents/{document}/invoice":      true,
 	// ADR-1701: internal Product Control pilot; absent from the public SDK contract.
 	"POST /v1/platform-tenant-self/product/start":                                  true,
@@ -311,6 +324,9 @@ var routeExclude = map[string]bool{
 	"GET /v1/product-control/portal":                                               true,
 	"GET /v1/product-control/portal.js":                                            true,
 	"GET /v1/product-control/portal.css":                                           true,
+	"GET /v1/consumer-signup/{slug}/page":                                          true, // hosted HTML sign-up page over the public sign-up API (ADR-20261021143000)
+	"GET /v1/consumer-signup/{slug}/signup.js":                                     true,
+	"GET /v1/consumer-signup/{slug}/signup.css":                                    true,
 	"POST /v1/platform-tenant-self/product/submissions/lookup":                     true,
 	"POST /v1/product-control/customer/{slug}/session":                             true,
 	"GET /v1/product-control/customer/{slug}/account-recovery":                     true,
@@ -518,6 +534,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/deployments/{id}/retry":            true, // HTML form, per-stage retry (ADR-117 §Production-ready follow-on C4); CSRF sealed envelope, no SDK twin
 	"POST /dashboard/apps/{slug}/alert-presets/{name}/enable":       true, // ADR-123 — dashboard form post; programatic enable is /v1 with SDK wrapper EnableAlertPreset
 	"GET /dashboard/apps/{slug}/changes":                            true, // ADR-751 HTML view of GET /v1/apps/{slug}/changes
+	"GET /dashboard/releases/{id}/approval":                         true, // ADR-20261020085706 HTML page over GET/POST /v1/deployments/{id}/approvals
 	"GET /dashboard/apps/{slug}/custom-metrics":                     true, // ADR-745 HTML view of custom metric history
 	"GET /dashboard/apps/{slug}/automations":                        true, // ADR-1285 HTML authoring console
 	"POST /dashboard/apps/{slug}/automations/{action}":              true, // ADR-1285 app-bound CSRF forms
@@ -643,10 +660,14 @@ var dtoExclude = map[string]bool{
 	"BindingVerificationRunListOptions":      true, // Client query builder; filters are declared on the list routes.
 	// ADR-964: client-only filter/paging options; the wire parameters are declared on the route.
 	"EdgeRuleEventsQuery": true,
+	// ADR-732: a fork's and a fork command's failure is an inline object
+	// of their responses in the spec, not a named schema.
+	"AppForkFailure": true,
 	// Edge-protection summary parts are inline objects of
 	// EdgeProtectionResponse in the spec, not named schemas.
 	"EdgeProtectionChallenge": true,
 	"EdgeProtectionCount":     true,
+	"EdgeProtectionPenalty":   true,
 	"EdgeProtectionPreAuth":   true,
 	"EdgeProtectionRejection": true,
 	"EdgeProtectionWAF":       true,
@@ -1480,7 +1501,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
 		filepath.Join(root, "pkg", "api", "data_api_access.go"),              // ADR-20261016151947 access settings for live reads without a token.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
-		filepath.Join(root, "pkg", "api", "compose_process.go"), // ADR-1337 Compose process overrides for prebuilt images.
+		filepath.Join(root, "pkg", "api", "compose_process.go"),   // ADR-1337 Compose process overrides for prebuilt images.
+		filepath.Join(root, "pkg", "api", "compose_resources.go"), // ADR-20261023120000 Compose deploy resources and replicas.
+		filepath.Join(root, "pkg", "api", "secret_files.go"),      // ADR-20261023090000 Compose secrets written to /run/secrets.
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops_explanation.go"),
 		filepath.Join(root, "pkg", "api", "environment_workload_retirement.go"), // ADR-1331 retained workload retirement and recovery DTO
@@ -1558,6 +1581,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "event_subscription_deadlines.go"),
 		filepath.Join(root, "pkg", "api", "workflow_event_replay_preview.go"),
 		filepath.Join(root, "pkg", "api", "app_operational_summary.go"),
+		filepath.Join(root, "pkg", "api", "app_forks.go"),       // ADR-732 production forks
+		filepath.Join(root, "pkg", "api", "app_fork_execs.go"),  // ADR-732 fork exec
+		filepath.Join(root, "pkg", "api", "crash_snapshots.go"), // ADR-733 crash snapshots
 		filepath.Join(root, "pkg", "api", "worker_recovery.go"),
 		filepath.Join(root, "pkg", "api", "commit.go"),
 		filepath.Join(root, "pkg", "api", "issues.go"),
@@ -1622,6 +1648,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_capacity_reconciliation.go"),
 		filepath.Join(root, "pkg", "api", "object_storage_usage.go"),
 		filepath.Join(root, "pkg", "api", workflowFile),
+		filepath.Join(root, "pkg", "api", "workflow_code.go"), // ADR-20261021204307 code-first workflow spec
 		filepath.Join(root, "pkg", "api", "workflow_schedules.go"),
 		filepath.Join(root, "pkg", "api", "workflow_queued_cancel.go"),
 		filepath.Join(root, "pkg", "api", "automations.go"),
@@ -1658,6 +1685,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", manifestFile),
 		filepath.Join(root, "pkg", "api", "profiles.go"), // ADR-819
 		filepath.Join(root, "pkg", "api", "profile_investigations.go"),
+		filepath.Join(root, "pkg", "api", "profile_captures.go"), // ADR-1155
 		filepath.Join(root, "pkg", "api", "profile_regressions.go"),
 		filepath.Join(root, "pkg", "api", "profile_deployment_checks.go"),
 		filepath.Join(root, "pkg", "api", "profile_attribution.go"),
@@ -1674,6 +1702,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_rule_recipe_suggestion_dto.go"), // suggested protections (ADR-20261020105000)
 		filepath.Join(root, "pkg", "api", "edge_rule_challenge.go"),             // kind=challenge action (ADR-831)
 		filepath.Join(root, "pkg", "api", "edge_attack_mode.go"),                // attack mode (ADR-20261021220456)
+		filepath.Join(root, "pkg", "api", "edge_rule_penalty.go"),               // rule penalty box (ADR-20261022105846)
 		filepath.Join(root, "pkg", "api", cliauthFile),
 		filepath.Join(root, "pkg", "api", "browser_approvals.go"),
 		filepath.Join(root, "pkg", "api", "source_review.go"),
@@ -1714,6 +1743,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", envDiffFile),
 		filepath.Join(root, "pkg", "api", operatorConfigFile),
 		filepath.Join(root, "pkg", "api", operatorPlatformFlagsFile), // ADR-1700 — platform flags
+		filepath.Join(root, "pkg", "api", "previews.go"),             // ADR 20261021080640 — self-serve previews
 		filepath.Join(root, "pkg", "api", obsFile),
 		filepath.Join(root, "pkg", "api", "obs_triage.go"),
 		filepath.Join(root, "pkg", "api", "obs_triage_history.go"),
@@ -1784,13 +1814,19 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "outbound_ai_moderation.go"), // ADR-1340 moderation checks
 		filepath.Join(root, "pkg", "api", "outbound_ai_evaluations.go"),
 		filepath.Join(root, "pkg", "api", "outbound_ai_access_tokens.go"),
-		filepath.Join(root, "pkg", "api", "outbound_ai_tags.go"), // ADR-1436 usage tags and tag limits
+		filepath.Join(root, "pkg", "api", "outbound_ai_tags.go"),        // ADR-1436 usage tags and tag limits
+		filepath.Join(root, "pkg", "api", "outbound_ai_traces.go"),      // ADR 20261020202035 AI traces
+		filepath.Join(root, "pkg", "api", "outbound_ai_quality.go"),     // ADR 20261021171712 quality signals
+		filepath.Join(root, "pkg", "api", "outbound_ai_deployments.go"), // ADR 20261022153155 AI calls by deployment
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
 		filepath.Join(root, "pkg", "api", releaseRollbackFile),
 		filepath.Join(root, "pkg", "api", configRevisionsFile),
 		filepath.Join(root, "pkg", "api", releaseFreezesFile),
 		filepath.Join(root, "pkg", "api", releaseGatesFile),
+		filepath.Join(root, "pkg", "api", releaseApprovalsFile),
+		filepath.Join(root, "pkg", "api", releaseDiffFile),
+		filepath.Join(root, "pkg", "api", scheduledReleasesFile),
 		filepath.Join(root, "pkg", "api", platformTenantsFile),
 		filepath.Join(root, "pkg", "api", platformTenantCredentialsFile),
 		filepath.Join(root, "pkg", "api", runtimePolicyFile),
@@ -1808,6 +1844,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "statement_invoices.go"),    // ADR-1502, ADR-1507 statement invoice exports
 		filepath.Join(root, "pkg", "api", "billing_runs.go"),          // ADR-1503 month-end billing runs
 		filepath.Join(root, "pkg", "api", "consumer_billing.go"),      // ADR-1506 consumer billing self-service
+		filepath.Join(root, "pkg", "api", "consumer_signup.go"),       // ADR-20261021143000 consumer self-service sign-up
 		filepath.Join(root, "pkg", "api", "consumer_credits.go"),      // ADR-1306 prepaid credit and spend caps
 		filepath.Join(root, "pkg", "api", "platform_tenant_plans.go"), // ADR-1307 tenant plans
 		filepath.Join(root, "pkg", "api", "platform_tenant_invocations.go"),

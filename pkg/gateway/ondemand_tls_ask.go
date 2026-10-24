@@ -128,11 +128,15 @@ func (p *OnDemandTLSPolicy) Decide(ctx context.Context, rawHost string) (bool, s
 	if decision, ok := p.admitLookup(host); !ok {
 		return false, decision
 	}
-	// An exact row wins over any wildcard, verified or not: an unverified
-	// exact reservation shadows the broader wildcard in routing too.
+	// A live exact row wins over any wildcard, verified or not: an unverified
+	// exact reservation shadows the broader wildcard in routing too. An
+	// expired claim reserves nothing and falls through, as it does in routing.
 	lookupCtx, cancel := context.WithTimeout(ctx, onDemandTLSLookupTimeout)
 	exact, err := p.store.DomainByName(lookupCtx, host)
 	cancel()
+	if err == nil && !exact.ClaimLive(p.now()) {
+		err = state.ErrNotFound
+	}
 	switch {
 	case err == nil && exact.Verified():
 		return true, OnDemandTLSAllowExact

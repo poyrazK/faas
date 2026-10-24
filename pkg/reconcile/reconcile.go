@@ -242,7 +242,10 @@ func (s *Service) Plan(
 		}
 		accountApps = visible
 	}
-	scan.Workloads = PreserveAppSlugs(scan.Workloads, accountApps, project.ID)
+	scan.Workloads, err = AllocateAppSlugs(ctx, s.Store.AppBySlugIncludingDeleted, scan.Workloads, accountApps, project.AccountID, project.ID, project.Slug)
+	if err != nil {
+		return Result{}, err
+	}
 	if err := validateWorkloadAdmissionWithManaged(scan.Workloads, scan.Managed, accountApps, project.ID, scan.DependencyReferences); err != nil {
 		return Result{}, err
 	}

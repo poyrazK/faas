@@ -425,6 +425,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				return staged, problem
 			}
 		}
+		if m.Routes != nil {
+			if problem := s.applySourceRefManifestPathRoutes(ctx, acct, app, m.Routes, &staged); problem != nil {
+				return staged, problem
+			}
+		}
 		return staged, nil
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
@@ -528,7 +533,7 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if problem := applyTriggerRetryPolicy(&createReq); problem != nil {
 			return staged, problem
 		}
-		delivery, deliveryProblem := s.requestedTriggerDelivery(acct, kind, nonEmptyStringPointer(declaration.Delivery))
+		delivery, deliveryProblem := s.requestedTriggerDelivery(appFlagSubject(acct, app), kind, nonEmptyStringPointer(declaration.Delivery))
 		if deliveryProblem != nil {
 			return staged, deliveryProblem
 		}
@@ -681,6 +686,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	}
 	if m.AsyncRoutes != nil {
 		if problem := s.applySourceRefManifestAsyncRoutes(ctx, acct, app, m.AsyncRoutes, &staged); problem != nil {
+			return staged, problem
+		}
+	}
+	if m.Routes != nil {
+		if problem := s.applySourceRefManifestPathRoutes(ctx, acct, app, m.Routes, &staged); problem != nil {
 			return staged, problem
 		}
 	}
@@ -843,7 +853,8 @@ func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
 		left.ScaleOutCooldownS != right.ScaleOutCooldownS || left.ScaleInCooldownS != right.ScaleInCooldownS ||
 		left.ConcurrencyOverflow != right.ConcurrencyOverflow || left.MaxQueueWaitMS != right.MaxQueueWaitMS ||
 		left.MaxQueueDepth != right.MaxQueueDepth || left.WakeMaxQueueDepth != right.WakeMaxQueueDepth ||
-		left.WakeMaxQueueWaitSeconds != right.WakeMaxQueueWaitSeconds {
+		left.WakeMaxQueueWaitSeconds != right.WakeMaxQueueWaitSeconds ||
+		left.PerInstanceConcurrency != right.PerInstanceConcurrency {
 		return false
 	}
 	if left.Target == nil || right.Target == nil {

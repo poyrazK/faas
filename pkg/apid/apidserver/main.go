@@ -251,6 +251,12 @@ func appTaskAPIEnabledFromEnv(getenv func(string) string) bool {
 	return strings.TrimSpace(getenv("FAAS_APP_TASK_API_ENABLED")) == "1"
 }
 
+// appForksEnabledFromEnv is the fail-closed operator gate for production
+// forks (ADR-732). It stays off until schedd can restore quarantined forks.
+func appForksEnabledFromEnv(getenv func(string) string) bool {
+	return strings.TrimSpace(getenv("FAAS_APP_FORKS")) == "1"
+}
+
 func githubDeploysAvailabilityProbe(getenv func(string) string, bridgeSock string) func(context.Context) bool {
 	// production-us hunt #8: push-to-deploy needs githubd to reach this
 	// apid's build-enqueue bridge. With no bridge socket configured githubd
@@ -787,6 +793,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runRollbackOn5xxWorker(ctx)
 		go srv.runConfigGuardWorker(ctx)
 		go srv.runPostReleaseWatchWorker(ctx)
+		go srv.runScheduledReleaseWorker(ctx)
 		go srv.plainRollbacks().Run(ctx)
 		go srv.operation.RunOperationArtifactCleanup(ctx)
 		go srv.operation.RunScheduleFirer(ctx)
@@ -881,18 +888,24 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// that the apid gRPC receiver (Stage 4) already honors.
 		startDebugRegressionCron(ctx, srv, log, deps.getenv)
 		startProfileDeploymentChecks(ctx, srv, log)
-		// API monetization workers pause while its runtime setting is off
-		// (ADR-20261018090210).
-		srv.billingRuns.Enabled = srv.apiMonetizationEnabled
-		srv.statementInvoices.Enabled = srv.apiMonetizationEnabled
-		srv.consumerCredits.Enabled = srv.apiMonetizationEnabled
-		srv.consumerControls.Enabled = srv.apiMonetizationEnabled
-		srv.billingRuns.Start(ctx, log)                // ADR-1503
-		srv.statementInvoices.Start(ctx, log)          // ADR-1504
-		srv.consumerCredits.Start(ctx, log)            // ADR-1306
-		srv.consumerControls.Start(ctx, log)           // ADR-1315
-		srv.productControl.StartOverdueHolds(ctx, log) // ADR-20261018212918
+		// API monetization workers pause while no account has it
+		// (ADR-20261018090210) and skip accounts it is not released to
+		// (ADR-20261020170649).
+		monetizationOn := func() bool { return !srv.apiMonetizationOff() }
+		srv.billingRuns.Enabled, srv.billingRuns.Released = monetizationOn, srv.apiMonetizationFor
+		srv.statementInvoices.Enabled, srv.statementInvoices.Released = monetizationOn, srv.apiMonetizationFor
+		srv.consumerCredits.Enabled, srv.consumerCredits.Released = monetizationOn, srv.apiMonetizationFor
+		srv.consumerControls.Enabled, srv.consumerControls.Released = monetizationOn, srv.apiMonetizationFor
+		srv.consumerSignup.Enabled = monetizationOn
+		srv.billingRuns.Start(ctx, log)                   // ADR-1503
+		srv.statementInvoices.Start(ctx, log)             // ADR-1504
+		srv.consumerCredits.Start(ctx, log)               // ADR-1306
+		srv.consumerControls.Start(ctx, log)              // ADR-1315
+		srv.consumerSignup.Start(ctx, log)                // ADR-20261021143000
+		srv.productControl.StartOverdueHolds(ctx, log)    // ADR-20261018212918
+		srv.productControl.StartTrialResolution(ctx, log) // ADR-20261022180921
 		startFeatureFlagAutoAdvancer(ctx, srv, log)
+		startPlatformFlagRamps(ctx, srv, log) // ADR 20261021080640
 		srv.startIssuesMaintenance(ctx)
 		srv.startIssueTrackerAutoSync(ctx)
 		srv.startIssueTrackerReminders(ctx)
@@ -1527,6 +1540,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
 		WithAppTaskAPIEnabled(appTaskAPIEnabledFromEnv(deps.getenv)).
+		WithAppForksEnabled(appForksEnabledFromEnv(deps.getenv)).
+		WithCrashSnapshotsEnabled(strings.TrimSpace(deps.getenv("FAAS_CRASH_SNAPSHOTS")) == "1").
 		WithAtomicWorkerReleaseEnabled(deps.getenv("FAAS_ATOMIC_WORKER_RELEASES_ENABLED") == "1").
 		WithProjectCanariesEnabled(deps.getenv("FAAS_PROJECT_CANARIES_ENABLED") == "1").
 		WithPromotionHealthEnabled(deps.getenv("FAAS_PROMOTION_HEALTH_ENABLED") == "1").
@@ -1610,6 +1625,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	srv.changeTimelineEnabled = deps.getenv("FAAS_CHANGE_TIMELINE_ENABLED") == "1"
 	srv.anomalyAlertsEnabled = deps.getenv("FAAS_ANOMALY_ALERTS_ENABLED") == "1"
 	srv.seedEnvPlatformFlags(deps.getenv) // ADR-1700 boot fallbacks for the gates above
+	registerPlatformFlagRetireBy(ops.Registry())
 
 	srv.customMetricHistoryEnabled = deps.getenv("FAAS_CUSTOM_METRIC_HISTORY_ENABLED") == "1"
 	if srv.customMetricHistoryEnabled {
@@ -1855,6 +1871,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// same-box install doesn't brick the per-route surface just
 	// because the operator never exported the env var.
 	srv.WithGatewaydControlURL(resolveGatewaydControlURL(deps.getenv))
+	srv.WithGatewaydControlFromRegistry(deps.getenv(gatewayControlFromRegistryEnv) == "1")
 	// ADR-156: same-box installs mirror durable realtime endpoint writes onto
 	// the local realtimed owner. Fleet installs replace it with the leased
 	// cross-node registrar below; the background reconciler repairs missed
@@ -1965,6 +1982,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Info("fleet age recipient loaded", "path", recipientPath)
 	} else {
 		log.Warn("FAAS_FLEET_AGE_RECIPIENT_PATH unset — secrets PUT will return 503")
+	}
+	if err := loadSealDomains(deps.getenv, log); err != nil {
+		return err
 	}
 
 	// MFA (IAM-2, issue #186): load the host age identity so
@@ -2167,7 +2187,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// missing identity path.
 		srv.MarkRekeyRunnerOptedIn()
 		identities := mfaIdentities()
-		if len(identities) == 0 {
+		if blocked := runtimeSealDomainBlocksRekey(); blocked != nil {
+			log.Warn("FAAS_REKEY_ENABLED=true ignored: background re-seal disabled", "reason", blocked.Error())
+		} else if len(identities) == 0 {
 			log.Warn("FAAS_REKEY_ENABLED=true but no host age identities loaded — background re-seal disabled")
 		} else {
 			rekeyAudit := audit.New(store, log, nil, "rekey")

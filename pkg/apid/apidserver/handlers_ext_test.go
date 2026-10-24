@@ -15,7 +15,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"sort"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -269,6 +268,10 @@ func mustSeedApp(t *testing.T, e testEnv, slug string) string {
 		Status:         state.AppActive,
 		RequireAuthn:   plan.RequireAuthnDefault(),
 		PublicAuthMode: plan.PublicAuthModeDefault(),
+		// buildApp maps an omitted max_concurrency to 1, and apps has
+		// CHECK (max_concurrency >= 1); PATCH validates the stored value
+		// when a request leaves it out (Hunt 11 H11-41).
+		MaxConcurrency: 1,
 	})
 	if err != nil {
 		t.Fatalf("seed app %s: %v", slug, err)
@@ -282,10 +285,11 @@ func mustSeedApp(t *testing.T, e testEnv, slug string) string {
 func mustSeedAppFor(t *testing.T, store *state.MemStore, accountID, slug string) string {
 	t.Helper()
 	app, err := store.CreateApp(context.Background(), state.App{
-		AccountID: accountID,
-		Slug:      slug,
-		Type:      state.AppTypeApp,
-		Status:    state.AppActive,
+		AccountID:      accountID,
+		Slug:           slug,
+		Type:           state.AppTypeApp,
+		Status:         state.AppActive,
+		MaxConcurrency: 1,
 	})
 	if err != nil {
 		t.Fatalf("seed app %s on foreign store: %v", slug, err)
@@ -4512,23 +4516,26 @@ func TestAsyncInvoke_FreeRejected(t *testing.T) {
 }
 
 // TestQueueSend_RejectsAtLimit confirms the plan's MaxQueueDepth cap is
-// enforced on the way in. Hobby's cap is 5; the 6th send is a 403 with
-// the plan_queue_depth code.
+// enforced on the way in: the send that fills the queue is accepted and the
+// next is a 403 with the plan_queue_depth code. The cap comes from
+// pkg/api/limits.go (ADR-20261022105723 raised Hobby to 10,000), so all but
+// the last slot are queued through the store.
 func TestQueueSend_RejectsAtLimit(t *testing.T) {
 	e := setup(t, api.PlanHobby)
-	mustSeedApp(t, e, "myapp")
-
-	// 5 successful sends.
-	for i := 0; i < 5; i++ {
-		rec := e.do(t, "POST", "/v1/apps/myapp/queues/send", api.QueueSendRequest{
-			Payload: json.RawMessage(`{"i":` + strconv.Itoa(i) + `}`),
-		}, nil)
-		if rec.Code != http.StatusCreated {
-			t.Fatalf("send %d: status = %d, want 201; body=%s", i, rec.Code, rec.Body.String())
+	appID := mustSeedApp(t, e, "myapp")
+	for range api.MustLimitsFor(api.PlanHobby).MaxQueueDepth - 1 {
+		if _, err := e.store.EnqueueInvocation(context.Background(), state.Invocation{AppID: appID, AccountID: e.acct.ID, Source: state.InvocationQueue, Payload: json.RawMessage(`{}`), DueAt: time.Now()}); err != nil {
+			t.Fatal(err)
 		}
 	}
-	// 6th send is rejected.
-	rec := e.do(t, "POST", "/v1/apps/myapp/queues/send", api.QueueSendRequest{}, nil)
+	rec := e.do(t, "POST", "/v1/apps/myapp/queues/send", api.QueueSendRequest{
+		Payload: json.RawMessage(`{"i":0}`),
+	}, nil)
+	if rec.Code != http.StatusCreated {
+		t.Fatalf("filling send: status = %d, want 201; body=%s", rec.Code, rec.Body.String())
+	}
+	// The next send is rejected.
+	rec = e.do(t, "POST", "/v1/apps/myapp/queues/send", api.QueueSendRequest{}, nil)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403; body=%s", rec.Code, rec.Body.String())
 	}
@@ -4539,8 +4546,8 @@ func TestQueueSend_RejectsAtLimit(t *testing.T) {
 	if prob.Code != "plan_queue_depth" {
 		t.Errorf("code = %q, want plan_queue_depth", prob.Code)
 	}
-	if prob.Limit != nil && *prob.Limit != 5 {
-		t.Errorf("limit = %v, want 5", prob.Limit)
+	if want := int64(api.MustLimitsFor(api.PlanHobby).MaxQueueDepth); prob.Limit != nil && *prob.Limit != want {
+		t.Errorf("limit = %d, want %d", *prob.Limit, want)
 	}
 }
 
@@ -4818,11 +4825,12 @@ func TestGetInvocation_NotFoundAcrossAccount(t *testing.T) {
 func mustSeedAppWithWorkloadClass(t *testing.T, e testEnv, slug string, class state.WorkloadClass) string {
 	t.Helper()
 	app, err := e.store.CreateApp(context.Background(), state.App{
-		AccountID:     e.acct.ID,
-		Slug:          slug,
-		Type:          state.AppTypeApp,
-		Status:        state.AppActive,
-		WorkloadClass: class,
+		AccountID:      e.acct.ID,
+		Slug:           slug,
+		Type:           state.AppTypeApp,
+		Status:         state.AppActive,
+		WorkloadClass:  class,
+		MaxConcurrency: 1,
 	})
 	if err != nil {
 		t.Fatalf("seed app %s with WorkloadClass=%s: %v", slug, class, err)
