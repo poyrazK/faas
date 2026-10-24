@@ -937,6 +937,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRestorePrefetch(!cfg.DisableRestorePrefetch).
 		WithFreePageReporting(freePageReporting).
 		WithPmemBase(pmemBaseDir).
+		WithRestoreReseedThread(cfg.RestoreReseedThread).
 		// Issue #309 / tier-2 DX: install the per-VMM
 		// slow-subscriber callback that every ring
 		// registerRing creates will fire on a full

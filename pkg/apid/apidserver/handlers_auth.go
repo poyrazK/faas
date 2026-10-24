@@ -144,7 +144,7 @@ func magicLinkHash(token string) ([]byte, bool) {
 }
 
 func (a *authHandlers) finishMagicLink(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	mfaPending := mfaSessionPending(acct)
+	mfaPending := a.srv.sessionMFAPending(acct)
 	// IAM-3 (ADR-039): the magic-link verify path now mints a sid
 	// + creates the sessions row + emits auth.session.created
 	// through the unified helper. The route never reaches the
