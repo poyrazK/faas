@@ -16,8 +16,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-const publicImmutableCacheControl = "public, max-age=31536000, immutable"
-
 var publicReadPathRE = regexp.MustCompile(`^/[A-Za-z0-9][A-Za-z0-9._~/-]*$`)
 
 // PublicReadStore is the read-only state needed by the public asset edge.
@@ -54,6 +52,7 @@ type publicReadHandler struct {
 	now            func() time.Time
 	log            *slog.Logger
 	mounts         *publicMountCache
+	limiters       *publicReadLimiters
 }
 
 // NewPublicReadHandler mounts ready public buckets on app hostnames. A route
@@ -99,7 +98,7 @@ func NewPublicReadHandler(c PublicReadConfig) (http.Handler, error) {
 		accounting: c.Accounting, enabled: c.Enabled,
 		appsDomain: appsDomain, next: c.Next,
 		client: c.HTTPClient, now: c.Now, log: c.Log,
-		mounts: newPublicMountCache(),
+		mounts: newPublicMountCache(), limiters: newPublicReadLimiters(),
 	}, nil
 }
 
@@ -156,8 +155,15 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "object storage usage is temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	if err := h.accounting.AdmitObjectURL(r.Context(), bucket.AccountID, bucket.ID, key, 0, false, h.registry.Accounting); err != nil {
-		http.Error(w, "object storage usage is temporarily unavailable", http.StatusServiceUnavailable)
+	if !h.limiters.allow(bucket.ID) {
+		w.Header().Set("Retry-After", "1")
+		http.Error(w, "too many requests for this public bucket", http.StatusTooManyRequests)
+		return
+	}
+	// Strangers spend at most a share of the account's monthly budget.
+	policy := h.registry.Accounting.AnonymousReadPolicy()
+	if err := h.accounting.AdmitObjectURL(r.Context(), bucket.AccountID, bucket.ID, key, 0, false, policy); err != nil {
+		writePublicReadRefusal(w, err)
 		return
 	}
 	backend, err := h.registry.Resolve(bucket.BackendID, bucket.BackendFingerprint)
@@ -184,8 +190,8 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if h.requestMetrics != nil {
-		if err := RecordGatewayProviderRequest(r.Context(), h.requestMetrics, bucket.ID, h.now(), h.registry.Accounting); err != nil {
-			http.Error(w, "object storage usage is temporarily unavailable", http.StatusServiceUnavailable)
+		if err := RecordGatewayProviderRequest(r.Context(), h.requestMetrics, bucket.ID, h.now(), policy); err != nil {
+			writePublicReadRefusal(w, err)
 			return
 		}
 	}
@@ -197,7 +203,7 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer func() { _ = response.Body.Close() }() // best effort; the provider response is already accounted
 	if response.StatusCode == http.StatusNotModified {
 		copyPublicObjectHeaders(w.Header(), response.Header)
-		w.Header().Set("Cache-Control", publicImmutableCacheControl)
+		w.Header().Set("Cache-Control", publicCacheControl)
 		w.Header().Del("Content-Disposition")
 		w.WriteHeader(response.StatusCode)
 		return
@@ -217,14 +223,14 @@ func (h *publicReadHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if r.Method == http.MethodGet && h.registry.Accounting.GatewaySafety() {
-		if err := ReserveGatewayRead(r.Context(), h.requestMetrics, bucket.ID, response, h.registry.Accounting, h.now()); err != nil {
+		if err := ReserveGatewayRead(r.Context(), h.requestMetrics, bucket.ID, response, policy, h.now()); err != nil {
 			w.Header().Del("Content-Length")
-			http.Error(w, "object storage egress budget is unavailable or exhausted", http.StatusServiceUnavailable)
+			writePublicReadRefusal(w, err)
 			return
 		}
 	}
 	copyPublicObjectHeaders(w.Header(), response.Header)
-	w.Header().Set("Cache-Control", publicImmutableCacheControl)
+	w.Header().Set("Cache-Control", publicCacheControl)
 	w.Header().Del("Content-Disposition")
 	w.WriteHeader(response.StatusCode)
 	if r.Method != http.MethodGet {

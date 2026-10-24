@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Bucket-scoped object storage availability](20261023223000-object-storage-bucket-scoped-availability.md) — per-bucket inventory freshness, maintenance listings off the customer meter, no fence on a never-versioned baseline, busy deletions wait, public-read share and revalidation
 - [Compose deploy resources and replicas set app settings](20261023120000-compose-deploy-resources.md)
 - [Compose service secrets as files in /run/secrets](20261023090000-compose-runtime-secret-files.md)
 - [ADR-20261023113721: Platform flags for edge rule features](20261023113721-edge-feature-platform-flags.md)
