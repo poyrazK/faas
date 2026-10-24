@@ -114,6 +114,8 @@ var adoptionInstanceInventory = map[string]string{
 	"Frozen":                          "rebuilt",
 	"FrozenSince":                     "rebuilt",
 	"freezing":                        "reset",   // no freeze is in flight at startup
+	"parking":                         "reset",   // no park is in flight at startup
+	"parkHeld":                        "reset",   // nor a forward held on one
 	"IsJob":                           "rebuilt", // job kind
 	"JobStartGateEnabled":             "rebuilt",
 	"JobInteractive":                  "rebuilt",

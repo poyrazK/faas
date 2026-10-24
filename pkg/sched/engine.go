@@ -6842,9 +6842,30 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 // we re-read under the lock and skip anything no longer parkable (a concurrent
 // wake/park already moved it).
 func (e *Engine) Park(ctx context.Context, instanceID string) error {
+	return e.park(ctx, instanceID, nil)
+}
+
+// ParkIdle is Park for an instance a reaper chose from its tick snapshot.
+// That view can be minutes old by the time a later park of the same tick
+// runs, so the choice is re-checked against the fresh row and fresh guest
+// activity under the app lock, before the row leaves RUNNING: SNAPSHOTTING
+// has no way back. ErrParkActivity reports an instance left running.
+func (e *Engine) ParkIdle(ctx context.Context, instanceID string, check IdleParkCheck) error {
+	return e.park(ctx, instanceID, &check)
+}
+
+func (e *Engine) park(ctx context.Context, instanceID string, check *IdleParkCheck) error {
 	ins, err := e.lockedParkable(ctx, instanceID)
 	if err != nil || ins == nil {
 		return err
+	}
+	if check != nil && state.State(ins.State) == state.StateRunning {
+		if reason := check.activity(ctx, *ins); reason != "" {
+			e.unlockApp(ins.AppID)
+			e.log.Info("sched: park: fresh activity kept the instance running",
+				"instance", ins.ID, "app", ins.AppID, "reason", reason)
+			return fmt.Errorf("%w: %s", ErrParkActivity, reason)
+		}
 	}
 	if state.State(ins.State) == state.StateFrozen {
 		defer e.unlockApp(ins.AppID)

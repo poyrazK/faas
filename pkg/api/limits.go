@@ -7110,6 +7110,13 @@ const (
 	// graceful-drain contract would be a lie.
 	ParkTailDrainTimeoutSeconds = 5
 
+	// ParkForwardDrainTimeoutSeconds bounds how long vmmd's terminal park
+	// waits for forwards that reached the guest before the park began
+	// (ADR-20261024090000). New forwards wait for the park and are
+	// re-routed to a fresh wake; a forward still running at the deadline
+	// is cut by the pause, as before.
+	ParkForwardDrainTimeoutSeconds = 5
+
 	// OCI puller (spec §17 G1, ADR-021). Per-pull HTTP timeout for the
 	// registry client. cmd/imaged passes this to oci.WithTimeout; the
 	// daemon may override at boot via FAAS_OCI_PULL_TIMEOUT_SECONDS but
