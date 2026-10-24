@@ -47,7 +47,7 @@ func TestMetalFinancialEgressPacketCredits(t *testing.T) {
 		if err != nil {
 			t.Errorf("packet namespace cleanup: %v %s", err, out)
 		}
-		if out, err := exec.Command("ip", "link", "show", nc.VethHost).CombinedOutput(); err == nil {
+		if out, leaked := financialEgressVethRetained(nc.VethHost); leaked {
 			t.Errorf("packet veth leaked: %s", out)
 		}
 	})
@@ -105,8 +105,22 @@ func TestMetalFinancialEgressPacketCredits(t *testing.T) {
 	t.Logf("kernel interface bounds: first=%s total=%s financed=%d", strconv.FormatUint(first, 10), strconv.FormatUint(second, 10), 2*nc.EgressBudgetBytes)
 }
 
+// financialEgressVethRetained reports a root veth that outlives its deleted
+// namespace. The kernel tears a namespace down asynchronously, so the peer's
+// removal of the root end is polled for a few seconds.
+func financialEgressVethRetained(name string) ([]byte, bool) {
+	var out []byte
+	for deadline := time.Now().Add(5 * time.Second); time.Now().Before(deadline); time.Sleep(50 * time.Millisecond) {
+		var err error
+		if out, err = exec.Command("ip", "link", "show", name).CombinedOutput(); err != nil {
+			return nil, false
+		}
+	}
+	return out, true
+}
+
 const financialRawEgressBurst = `
-import socket,struct,threading,sys
+import errno,socket,struct,threading,sys
 peer=sys.argv[1]
 def send(index):
     s=socket.socket(socket.AF_PACKET,socket.SOCK_RAW,socket.htons(3));s.bind((peer,0))
@@ -117,7 +131,9 @@ def send(index):
              eth+struct.pack('!H',0x0800)+bytes.fromhex('450005dc0000000040110000c6120002c6120001')+bytes(1480),
              eth+struct.pack('!H',0x88b5)+bytes(40), eth+struct.pack('!H',0x0800)]
     for i in range(600):
-        s.send(packets[(i+index)%len(packets)])
+        try: s.send(packets[(i+index)%len(packets)])
+        except OSError as error:
+            if error.errno != errno.ENOBUFS: raise
     s.close()
 errors=[]
 def checked_send(index):
@@ -249,7 +265,7 @@ func TestMetalFinancialEgressOffloadCredits(t *testing.T) {
 				t.Errorf("offload namespace cleanup: %v %s", err, out)
 			}
 		}
-		if out, err := exec.Command("ip", "link", "show", nc.VethHost).CombinedOutput(); err == nil {
+		if out, leaked := financialEgressVethRetained(nc.VethHost); leaked {
 			t.Errorf("offload public veth leaked: %s", out)
 		}
 	})
@@ -332,7 +348,7 @@ func TestMetalFinancialEgressGuestStreamAfterSegmentation(t *testing.T) {
 				t.Errorf("stream namespace cleanup: %v %s", err, out)
 			}
 		}
-		if out, err := exec.Command("ip", "link", "show", nc.VethHost).CombinedOutput(); err == nil {
+		if out, leaked := financialEgressVethRetained(nc.VethHost); leaked {
 			t.Errorf("stream public veth leaked: %s", out)
 		}
 	})
@@ -360,6 +376,10 @@ func TestMetalFinancialEgressGuestStreamAfterSegmentation(t *testing.T) {
 	// The host opens the connection, as the gateway does; host policy may
 	// refuse connections a tenant namespace opens. The route dies with VethHost.
 	run("ip", "route", "add", "10.0.0.2/32", "via", "198.18.238.2", "dev", nc.VethHost)
+	before, err := netns.ReadVethRXBytes(nc.VethHost)
+	if err != nil {
+		t.Fatal(err)
+	}
 	server := exec.CommandContext(ctx, "ip", "netns", "exec", guest, "python3", "-I", "-c", financialGuestTCPServer)
 	if err := server.Start(); err != nil {
 		t.Fatal(err)
@@ -376,10 +396,6 @@ func TestMetalFinancialEgressGuestStreamAfterSegmentation(t *testing.T) {
 		}
 	}
 	defer func() { _ = conn.Close() }()
-	before, err := netns.ReadVethRXBytes(nc.VethHost)
-	if err != nil {
-		t.Fatal(err)
-	}
 	// Once the gate drops the guest's segments the read times out.
 	var got int64
 	buffer := make([]byte, 64*1024)
