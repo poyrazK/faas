@@ -120,7 +120,7 @@ RULES = [
     (r"atomic-service-additions", "Projects:"),
     # --- merged from main 2026-10-24
     (r"^multi-service-apps$", "Projects:"),
-    (r"penalty-box", "Edge protection"),
+    (r"penalty-box|attack-mode|ai-crawler|crawler-ip-ranges|crawler-ranges", "Edge protection"),
     (r"^quiet-pause-watermarks$", "Instances:"),
     (r"^(honeytokens|bridgeproc)$", "INFRA"),
     (r"auth-rpc|rekey|standby-warmup|service-capacity-policy|service-recovery|worker-recovery|production-lifecycle-review|app-service-address-cursor|warm-hint|capdecl|renderer|role-templating|safetext|cursor|^data$|dispatch|hostsize|authcode|cosign|daemonenv|daemonunit|cpstate|drills|grafana|pki|guestmemproto|resumetimingproto|loglevel|logsanitize|lruutil|jsonschemautil|httpjson|middleware|nodeclaim|nodejoin|nodereport|promql|redact|crashcrypt|crashcapturewire|markers-internal", "INFRA"),

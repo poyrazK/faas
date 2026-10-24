@@ -6209,6 +6209,19 @@ haveApp:
 	// table — a customer who flipped the whole app should never see
 	// a per-route 503 from a different Problem.code, because that
 	// would leak the existence of the fine-grained rule.
+	//
+	// ADR-20261022083601: AI crawler traffic is counted before any gate,
+	// so the edge-protection summary shows it whether or not a rule then
+	// blocks it.
+	if crawler, ok := api.ClaimedAICrawler(r.Header.Get("User-Agent")); ok {
+		h.metrics.ObserveAICrawlerRequest(app.ID, crawler.Name)
+	}
+	// ADR-20261022083601 amendment 1: the AI crawler condition fields read
+	// as absent for an account the edge_ai_crawlers flag leaves out. Set
+	// here, once the app is known and before the first edge gate.
+	if m := edgeRuleMatchContextFrom(r.Context()); m != nil {
+		m.aiCrawlersUnreleased = !h.edgeFeatureReleased(platformflags.EdgeAICrawlers, app)
+	}
 	// ADR-20261022105846: a client a rule's penalty box holds is refused
 	// before any other gate.
 	if h.applyEdgePenaltyBox(w, r, app, deploymentSmoke) {

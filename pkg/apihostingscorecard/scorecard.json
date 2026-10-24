@@ -396,6 +396,93 @@
       "evidence": [{"kind": "test", "locator": "pkg/apid/apidserver/handlers_inbound_webhooks_test.go::TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries"}]
     },
     {
+      "id": "edge-ai-crawler-controls-preview",
+      "name": "AI crawler controls release qualification",
+      "category": "security",
+      "description": "AI crawler conditions match the User-Agent claim and purpose and, for operators that publish ranges, verify it; the published ranges refresh and expire; the recipe blocks or challenges by purpose; the summary counts each crawler; and the edge_ai_crawlers platform flag makes the conditions absent and unconfigurable for accounts it leaves out (ADR-20261022083601, ADR-20261024082000).",
+      "capabilities": ["edge-ai-crawler-controls"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/api/edge_ai_crawlers_test.go::TestEdgeRuleMatchAICrawlerFields"},
+        {"kind": "test", "locator": "pkg/api/edge_ai_crawlers_release_test.go::TestEdgeRuleMatchAICrawlerFieldsUnreleased"},
+        {"kind": "test", "locator": "pkg/apid/edgerules/release_ai_crawlers_test.go::TestAICrawlerConditionsNeedTheirFlag"},
+        {"kind": "test", "locator": "pkg/gateway/edge_ai_crawlers_flag_test.go::TestEdgeRuleMatchInputAICrawlersUnreleased"},
+        {"kind": "test", "locator": "pkg/apid/crawlerranges/refresh_test.go::TestRefresherKeepsPreviousRangesOnBadFeeds"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
+    },
+    {
+      "id": "edge-attack-mode-preview",
+      "name": "Attack mode release qualification",
+      "category": "security",
+      "description": "Attack mode switches on for a bounded time, extends and ends on its own, stays outside quotas and rollbacks, refuses PATCH, and is switched on only while both edge_attack_mode and edge_challenge include the account; withdrawing edge_attack_mode leaves an active attack mode inert (ADR-20261021220456, ADR-20261024082000).",
+      "capabilities": ["edge-attack-mode"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/apid/edgerules/attack_mode_test.go::TestAttackModeOnExtendOff"},
+        {"kind": "test", "locator": "pkg/apid/edgerules/attack_mode_test.go::TestAttackModeNeedsItsFlags"},
+        {"kind": "test", "locator": "pkg/gateway/edge_attack_mode_flag_test.go::TestEdgeAttackModeFlag"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_edge_attack_mode_test.go::TestDashboardEdgeAttackMode"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
+    },
+    {
+      "id": "edge-browser-challenge-ga",
+      "name": "Browser challenge (generally available)",
+      "category": "security",
+      "description": "A browser navigation on a challenged route solves the page and passes on its pass while a script is refused with 403 challenge_required, verified credentials and crawlers pass, the browser's solver agrees with the gateway, raised difficulty is capped and falls back, and the edge_challenge platform flag makes rules inert for accounts it leaves out (ADR-831 amendments 7-8, ADR-20261023113721, ADR-20261024082000).",
+      "capabilities": ["edge-browser-challenge"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}, {"metric": "p95", "operator": "lte", "value": 2000, "unit": "milliseconds"}, {"metric": "ratio", "operator": "gte", "value": 90, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/e2e/edge_rules_challenge_e2e_test.go::TestEdgeRulesChallenge_E2E"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_test.go::TestApplyEdgeRuleChallenge"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_test.go::TestChallengeSolveRoundTrip"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_solver_test.go::TestChallengeSolverJS"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_challenge_load_test.go::TestChallengeLoadRaisesAndLowers"},
+        {"kind": "test", "locator": "pkg/gateway/edge_feature_flags_test.go::TestEdgeChallengeFlag"},
+        {"kind": "test", "locator": "pkg/edgeruletrace/unreleased_test.go::TestSimulateUnreleasedChallengeRule"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
+    },
+    {
+      "id": "edge-penalty-box-preview",
+      "name": "Edge penalty box release qualification",
+      "category": "security",
+      "description": "A rule with a penalty boxes a client after its threshold of policy refusals and refuses it on every path with 403 penalty_box and Retry-After, lets it go when the rule loses its penalty, stays within its per-app and per-gateway caps, and the edge_penalty_box platform flag stops boxing for accounts it leaves out (ADR-20261022105846, ADR-20261023113721, ADR-20261024082000).",
+      "capabilities": ["edge-penalty-box"],
+      "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}, {"metric": "p95", "operator": "lte", "value": 1000, "unit": "milliseconds"}],
+      "evidence": [
+        {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxRefusesBoxedClientAcrossPaths"},
+        {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxThresholdWindowAndExpiry"},
+        {"kind": "test", "locator": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxPerAppCap"},
+        {"kind": "test", "locator": "pkg/apid/edgerules/penalty_test.go::TestCreateValidatesAndStoresPenalty"},
+        {"kind": "test", "locator": "pkg/gateway/edge_feature_flags_test.go::TestEdgePenaltyBoxFlag"},
+        {"kind": "test", "locator": "cmd/gatewayd-internal/penalty_box_share_test.go::TestPenaltyBoxSharedAcrossGateways"},
+        {"kind": "test", "locator": "pkg/state/edge_penalty_boxes_test.go::TestPgStore_EdgePenaltyBoxes"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
+    },
+    {
+      "id": "edge-waf-blocking-ga",
+      "name": "WAF warn and block (generally available)",
+      "category": "security",
+      "description": "On the reference compute node the in-path check stays within 2 ms at p95 and skips at most 0.1% of checks at 100-500 req/s, detects the CRS regression corpus with no benign request flagged beyond the documented ones, fails open, and the edge_waf_blocking platform flag inspects warn and block rules as observe for accounts it leaves out (ADR-831 amendments 4-12, ADR-20261023113721, ADR-20261024082000).",
+      "capabilities": ["edge-waf-blocking"],
+      "targets": [{"metric": "p95", "operator": "lte", "value": 2, "unit": "milliseconds"}, {"metric": "ratio", "operator": "lte", "value": 0.1, "unit": "percent"}, {"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
+      "evidence": [
+        {"kind": "test", "locator": "cmd/e2e/edge_rules_waf_load_e2e_test.go::TestEdgeWAFInlineLoad_E2E"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_waf_test.go::TestApplyEdgeRuleWAFInline"},
+        {"kind": "test", "locator": "pkg/edgewaf/inline_test.go::TestCheckInline"},
+        {"kind": "test", "locator": "pkg/edgewaf/ftw_test.go::TestCRSRegressionCorpus"},
+        {"kind": "test", "locator": "pkg/edgewaf/benign_test.go::TestBenignCorpus"},
+        {"kind": "test", "locator": "pkg/gateway/edge_feature_flags_test.go::TestEdgeWAFBlockingFlag"},
+        {"kind": "test", "locator": "pkg/edgewaf/slot_model_test.go::TestInlineSlotModel"},
+        {"kind": "test", "locator": "pkg/edgewaf/inline_test.go::TestCheckInlineWaitsForASlot"},
+        {"kind": "test", "locator": "pkg/gateway/edge_rules_waf_test.go::TestApplyEdgeRuleWAFInlineCountsSkipReasons"},
+        {"kind": "runbook", "locator": "docs/security.md"}
+      ]
+    },
+    {
       "id": "first-healthy-api",
       "name": "Time to first healthy API",
       "category": "activation",

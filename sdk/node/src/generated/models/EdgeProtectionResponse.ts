@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EdgeAttackModeStatus } from './EdgeAttackModeStatus.js';
+import type { EdgeProtectionAICrawler } from './EdgeProtectionAICrawler.js';
 /**
  * Edge rejection counts for one app over a range.
  */
@@ -130,5 +132,10 @@ export type EdgeProtectionResponse = {
      */
     rejected: number;
   };
+  attack_mode: EdgeAttackModeStatus;
+  /**
+   * Requests whose User-Agent names an AI crawler (ADR-20261022083601), largest first, counted before any edge rule acted on them.
+   */
+  ai_crawlers: Array<EdgeProtectionAICrawler>;
 };
 

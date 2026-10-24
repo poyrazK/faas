@@ -69,10 +69,19 @@ func EdgeRuleResponse(r state.EdgeRule) api.EdgeRuleResponse {
 		Expired:      r.EdgeRuleExpired(time.Now()),
 		Match:        r.Match,
 		Mode:         edgeRuleResponseMode(r.Mode),
+		ManagedBy:    edgeRuleManagedBy(r),
 		Penalty:      apiEdgeRulePenalty(r.Action.Penalty),
 		CreatedAt:    r.CreatedAt,
 		UpdatedAt:    r.UpdatedAt,
 	}
+}
+
+// edgeRuleManagedBy names the switch that owns r, or "".
+func edgeRuleManagedBy(r state.EdgeRule) string {
+	if r.AttackMode() {
+		return api.EdgeRuleManagedByAttackMode
+	}
+	return ""
 }
 
 // apiEdgeRulePenalty and stateEdgeRulePenalty convert the penalty box
@@ -373,7 +382,7 @@ func (s *Service) ListEdgeRulesForApp(w http.ResponseWriter, r *http.Request, ac
 	}
 	out := make([]api.EdgeRuleResponse, 0, len(rules))
 	for _, rule := range rules {
-		out = append(out, EdgeRuleResponse(rule))
+		out = append(out, s.RuleResponse(acct, rule))
 	}
 	s.setEdgeRuleSetETag(r.Context(), w, app.ID)
 	httpkit.WriteJSON(w, http.StatusOK, out)
@@ -390,7 +399,7 @@ func (s *Service) ListEdgeRules(w http.ResponseWriter, r *http.Request, acct sta
 	}
 	out := make([]api.EdgeRuleResponse, 0, len(rules))
 	for _, rule := range rules {
-		out = append(out, EdgeRuleResponse(rule))
+		out = append(out, s.RuleResponse(acct, rule))
 	}
 	httpkit.WriteJSON(w, http.StatusOK, out)
 }
@@ -439,7 +448,7 @@ func (s *Service) CreateEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 	m, prob := s.createRule(r.Context(), acct, app, req, func(ctx context.Context) (string, *api.Problem) {
 		return s.ifMatchProblem(ctx, r, app.ID)
 	})
-	s.writeRuleMutation(r.Context(), w, m, prob, http.StatusCreated)
+	s.writeRuleMutation(r.Context(), w, acct, m, prob, http.StatusCreated)
 }
 
 // ValidateEdgeRuleBody checks the non-action fields (match_host /
@@ -793,7 +802,7 @@ func (s *Service) GetEdgeRule(w http.ResponseWriter, r *http.Request, acct state
 		httpkit.NotFound(w, "no such edge rule")
 		return
 	}
-	httpkit.WriteJSON(w, http.StatusOK, EdgeRuleResponse(row))
+	httpkit.WriteJSON(w, http.StatusOK, s.RuleResponse(acct, row))
 }
 
 // --- update ----------------------------------------------------------------
@@ -817,7 +826,7 @@ func (s *Service) UpdateEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 	m, prob := s.updateRule(r.Context(), acct, row, req, func(ctx context.Context) (string, *api.Problem) {
 		return s.ifMatchProblem(ctx, r, row.AppID)
 	})
-	s.writeRuleMutation(r.Context(), w, m, prob, http.StatusOK)
+	s.writeRuleMutation(r.Context(), w, acct, m, prob, http.StatusOK)
 }
 
 // edgeRuleUpdateParamsFrom adapts the wire UpdateEdgeRuleRequest
