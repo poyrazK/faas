@@ -338,8 +338,9 @@ func (s *Service) RouteTargetProblem(ctx context.Context, accountID, kind string
 		return nil
 	}
 	var action api.EdgeRuleRouteAction
-	if err := json.Unmarshal(raw, &action); err != nil || action.TargetAppSlug == "" {
-		return nil // ValidateEdgeRuleAction reports a malformed action.
+	// A malformed action is ValidateEdgeRuleAction's to report.
+	if json.Unmarshal(raw, &action) != nil || action.TargetAppSlug == "" {
+		return nil
 	}
 	target, err := s.Host.Store().AppBySlug(ctx, action.TargetAppSlug)
 	if errors.Is(err, state.ErrNotFound) {
