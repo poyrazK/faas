@@ -1,6 +1,10 @@
 package mcpmanagement
 
-import "time"
+import (
+	"time"
+
+	"github.com/onebox-faas/faas/pkg/api"
+)
 
 type savedPromptReference struct {
 	Name      string `json:"name"`
@@ -11,7 +15,8 @@ type savedPromptReference struct {
 type actionRecoveryLinks struct {
 	ResourceURI string               `json:"resource_uri"`
 	Prompt      savedPromptReference `json:"prompt"`
-	Check       savedPlanReference   `json:"check"`
+	Check       savedPlanReference   `json:"check,omitzero"`
+	Outcome     *savedPlanReference  `json:"outcome,omitempty"`
 }
 
 func (m *management) recoveryLinks(args getActionArgs, environment bool) *actionRecoveryLinks {
@@ -65,9 +70,52 @@ func (m *management) refreshHistoryRecoveryLinks(read *guardedRead) error {
 }
 
 func (m *management) currentAppRecoveryLinks(view actionView, now time.Time) actionView {
+	hadOutcome := view.Recovery != nil && view.Recovery.Outcome != nil
 	if view.PlanAvailable && !m.actionPlanAvailable(view.actionRecord, now) {
-		return m.actionView(view.actionRecord, now)
+		view = m.actionView(view.actionRecord, now)
 	}
+	if view.Recovery != nil {
+		links := *view.Recovery
+		if !hadOutcome || m.outcomeRecoveryReference(view.actionRecord, now) == nil {
+			links.Outcome = nil
+		}
+		view.Recovery = &links
+		if !view.PlanAvailable && links.Outcome == nil {
+			view.Recovery = nil
+		}
+	}
+	return view
+}
+
+// Called under m.mu. Eligibility concerns a retained read-only reference, never
+// availability of the original mutation body or permission to replay it.
+func (m *management) outcomeRecoveryReference(entry actionRecord, now time.Time) *savedPlanReference {
+	current, ok := m.actions[entry.PlanID]
+	lookup, found := m.budgetOutcomes[entry.PlanID]
+	if !ok || !found || entry.Action != "route_budgets" || entry.Apply.State == "not_attempted" || !now.Before(entry.RetainedUntil) || !now.Before(current.RetainedUntil) || budgetOutcomeBinding(current) != budgetOutcomeBinding(entry) || !validBudgetOutcomeLookup(lookup) || lookup.Binding != budgetOutcomeBinding(entry) {
+		return nil
+	}
+	environment := entry.Scope
+	if environment == api.DefaultEnvScope {
+		environment = ""
+	}
+	args := getActionArgs{App: entry.App, Project: entry.Project, Environment: environment, PlanID: entry.PlanID}
+	if m.validateSavedRecoveryTarget(args, false) != nil {
+		return nil
+	}
+	return &savedPlanReference{Tool: "gregale_get_action_outcome", Arguments: args}
+}
+
+func (m *management) addOutcomeRecoveryLinks(view actionView, now time.Time) actionView {
+	call := m.outcomeRecoveryReference(view.actionRecord, now)
+	if call == nil {
+		return view
+	}
+	if view.Recovery == nil {
+		args := call.Arguments.(getActionArgs)
+		view.Recovery = &actionRecoveryLinks{ResourceURI: savedPlanRecoveryURI(args, false), Prompt: savedPromptReference{Name: "gregale_saved_plan_review", Arguments: args}}
+	}
+	view.Recovery.Outcome = call
 	return view
 }
 

@@ -3118,6 +3118,20 @@ no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
 
 
+## Management MCP outcome recovery discovery (ADR-20261024223000)
+
+Eligible attempted route-budget history advertises an exact `recovery.outcome`
+call and the existing prompt/resource links after original plan expiry. Live
+recipes retain review/check calls and can add outcome/current-policy observation;
+expired recipes contain only history/outcome/observation. Current consent,
+immutable targets, retained history, storage and lookup bindings are checked
+again before release. Discovery fetches no receipts or fresh baselines, never
+upgrades an initially unavailable hint, and preserves recorded uncertainty and
+original expiry. Verified receipts describe historical intent; current policy
+can differ and missing evidence never proves non-commit. Catalog, native APIs,
+SDKs, encrypted formats, retention, quotas and migrations remain unchanged.
+See [ADR-20261024223000](adr/20261024223000-management-mcp-outcome-recovery-discovery.md).
+
 ## Management MCP route-budget outcome lookup (ADR-20261024210000)
 
 Read-only `gregale_get_action_outcome` verifies the original native route-budget

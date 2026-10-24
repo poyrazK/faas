@@ -1677,12 +1677,14 @@ Two read-only prompts provide an original-plan recovery recipe:
   and original `plan_id`.
 
 Prompt retrieval verifies current read consent and an available unexpired plan
-from this connection. Environment prompts require both original environments and
+from this connection, or a retained attempted route-budget action with a valid
+outcome lookup. Environment prompts require both original environments and
 every current project workload; regression plans require diagnostic consent.
 The result contains fixed guidance and exact JSON calls to the matching history,
 saved-review and applicability tools. It includes no saved-plan prose, private
-execution material or configuration values. Unknown/expired/inaccessible plans
-return errors; retrieval does not fetch fresh baselines or native completion,
+execution material or configuration values. Unknown/inaccessible plans and
+expired plans without an eligible budget lookup return errors; retrieval does
+not fetch fresh baselines, receipts or native completion,
 renew expiry, poll approval, create a plan or execute a mutation.
 
 Follow the recipe as a read-only review. Explain stale unattempted intent before
@@ -1705,8 +1707,8 @@ pinned Codex app-server through `mcpServer/resource/read`:
 
 Fill the exact original plan ID and target selectors from consented history.
 Use canonical URIs without credentials, query/fragment suffixes or encoded path
-segments. Reads require an original unexpired plan in this connection, current
-read/diagnostic consent and immutable identities; environment plans require both
+segments. Reads require an original unexpired plan in this connection (or a
+retained route-budget lookup for app resources), current read/diagnostic consent and immutable identities; environment plans require both
 original environments and every current project workload. Other grants cannot
 use a known URI to inherit a recipe.
 
@@ -1730,8 +1732,9 @@ These links are read-only discovery metadata: they grant no write, retry or
 approval authority. `recovery.check` concerns the original apply phase; inspect
 recorded promotion state separately for later traffic promotion.
 
-Expired, missing or mismatched plans omit review/recovery links. New recovery
-links also require selectors that the shared prompt/resource validator can render
+Expired, missing or mismatched plans omit saved review/check links. Eligible
+retained route-budget attempts keep read-only outcome recovery links, as described
+below; other unavailable plans omit recovery links. New links require selectors that the shared prompt/resource validator can render
 exactly. Final read guards
 also remove discovery/retry hints when availability changes during a history
 read, retaining recorded phases/receipts and native-inspection guidance. An
@@ -1740,6 +1743,22 @@ Consent/storage failure still withholds output. Discovery performs no native
 freshness checks, approval polling, persistence, replanning or expiry renewal.
 Every followed resource, prompt and tool enforces current access independently.
 See [ADR-20261024180000](adr/20261024180000-management-mcp-history-recovery-discovery.md).
+
+For an attempted route-budget action, `recovery.outcome` supplies the exact
+`gregale_get_action_outcome` call when its retained encrypted lookup is available.
+The resource and prompt remain discoverable after original plan expiry. An
+expired recipe's `workflow` contains only `history`, `outcome` and `observation`;
+`review` and `check` are omitted. Live budget recipes retain their existing calls
+and can add the same outcome and observation calls. Unattempted actions, unsupported
+action kinds and expired legacy actions without a lookup receive no outcome hint.
+
+Follow the outcome call explicitly, then `workflow.observation` to inspect current
+policy. A verified historical receipt can report revision 1 while current policy
+has advanced to revision 2. Missing evidence stays unresolved and never proves
+non-commit. Recipe retrieval does not fetch either receipt or policy data, renew
+expiry or grant replay authority. Current consent, identities, retention, storage
+and lookup bindings are rechecked before release. See
+[ADR-20261024223000](adr/20261024223000-management-mcp-outcome-recovery-discovery.md).
 
 For a lost apply response:
 
@@ -1751,8 +1770,9 @@ For a lost apply response:
    If the original plan is available and writes are enabled, retry the indicated
    existing apply/promotion tool with that **same plan ID**. Normal expiry,
    current authority, consent and immutable identity checks still run.
-4. If the plan expired, inspect the relevant native state before planning
-   anything new. Historical metadata cannot recreate a replay payload or extend
+4. If an expired route-budget action provides `recovery.outcome`, follow that
+   read-only call and its recipe's current-policy observation. Otherwise inspect
+   the relevant native state before planning anything new. Historical metadata cannot recreate a replay payload or extend
    expiry. A missing record is not proof that no write occurred.
 
 `not_attempted` records no native attempt; review the original full plan before

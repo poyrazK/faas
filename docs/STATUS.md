@@ -7,6 +7,30 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP outcome recovery discovery — 2026-10-24 (branch, not released)
+
+Eligible route-budget action rows include `recovery.outcome` and the existing
+resource/prompt links after plan expiry. Live recipes retain saved review/check
+calls and can add outcome/current-policy observation; unavailable-plan recipes
+contain only history/outcome/observation. Exact selectors, retained bindings and
+current consent are checked again before release. Discovery preserves history,
+expiry, uncertainty and replay boundaries, and performs no receipt/baseline reads.
+Catalog remains 58 read/planning tools, 67 with writes enabled, eight prompts and
+eleven templates.
+
+Full MCP race tests pass. Focused protocol/default/named tests follow discovered
+links after encrypted restart with writes disabled, distinguish historical receipt
+revision 1 from current policy revision 2, and verify no state writes or native
+replays. Guards cover reference/history/storage/consent/identity loss and no
+snapshot upgrades; missing or mismatched original plans still permit independent
+retained receipt recovery. Pinned real Codex 0.159.0-alpha.3 follows expired
+history/resource/outcome/observation links across restart/refresh in all three
+read-only profiles; revocation removes access. Those controls seed synthetic
+bridge history and native GET metadata with zero model requests/native writes;
+native/provider deployment qualification remains separate. MCP lint, spec/docs,
+test-store/seal-domain and ADR integrity gates pass.
+See [ADR-20261024223000](adr/20261024223000-management-mcp-outcome-recovery-discovery.md).
+
 ## Management MCP route-budget outcomes — 2026-10-24 (branch, not released)
 
 Read-only `gregale_get_action_outcome` verifies historical native policy receipts

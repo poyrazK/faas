@@ -62,6 +62,8 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	var replaced atomic.Bool
 	var performanceEmpty, tracePartial atomic.Bool
 	var historyWorker, planDrifted atomic.Bool
+	var outcomeReceipt atomic.Pointer[api.EnvironmentRouteBudgetReceipt]
+	var outcomeReads atomic.Int32
 	var residencyEmpty atomic.Bool
 	if requestMode != "" {
 		f.mu.Lock()
@@ -362,12 +364,27 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 		// Route-budget requests require UUIDs; retain the older alpha fixture's
 		// identities and give budget planning its own consented app.
 		const budgetAppID = "22222222-2222-4222-8222-222222222222"
+		if req.Method == http.MethodGet && strings.HasPrefix(req.URL.Path, "/v1/apps/budget-history/route-budgets/receipts/") {
+			receipt := outcomeReceipt.Load()
+			if receipt == nil || req.URL.Path != "/v1/apps/budget-history/route-budgets/receipts/"+receipt.RequestID || req.URL.Query().Get("scope") != "default" {
+				w.WriteHeader(404)
+				return true
+			}
+			outcomeReads.Add(1)
+			_ = json.NewEncoder(w).Encode(receipt)
+			return true
+		}
+
 		if req.Method == http.MethodGet && req.URL.Path == "/v1/apps/budget-history" {
 			_ = json.NewEncoder(w).Encode(api.AppResponse{ID: budgetAppID, Slug: "budget-history", Type: "app"})
 			return true
 		}
 		if req.Method == http.MethodGet && req.URL.Path == "/v1/apps/budget-history/route-budgets" && req.URL.Query().Get("scope") == "default" {
-			_ = json.NewEncoder(w).Encode(api.EnvironmentRouteBudgets{AppID: budgetAppID, Scope: "default", BudgetSource: "app_policy", Config: api.RouteMonitorConfig{AppID: budgetAppID, Routes: []api.RouteMonitorRoute{}}})
+			var revision int64
+			if outcomeReceipt.Load() != nil {
+				revision = 2
+			} // Synthetic later policy, separate from receipt revision 1.
+			_ = json.NewEncoder(w).Encode(api.EnvironmentRouteBudgets{AppID: budgetAppID, Scope: "default", Revision: revision, BudgetSource: "app_policy", Config: api.RouteMonitorConfig{AppID: budgetAppID, Routes: []api.RouteMonitorRoute{}}})
 			return true
 		}
 		if req.Method == http.MethodGet && req.URL.Path == "/v1/projects/shop/environments/production/promotion-preview" {
@@ -391,11 +408,14 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	var mu sync.Mutex
 	var latest tokenResponse
 	refreshes := 0
+	var currentRemote *remoteServer
 	install := func() {
-		h, err := NewHTTPHandler(f.opts)
+		service, err := NewHTTPService(f.opts)
 		if err != nil {
 			t.Fatal(err)
 		}
+		currentRemote = service.remote
+		h := service.Handler()
 		f.setHandler(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
 			if req.URL.Path != "/oauth/token" {
 				h.ServeHTTP(w, req)
@@ -439,6 +459,16 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 			return
 		}
 		switch req.URL.Path {
+		case "/outcome-history":
+			receipt, err := seedCodexOutcomeHistory(currentRemote)
+			if err != nil {
+				t.Error(err)
+				w.WriteHeader(500)
+				return
+			}
+			outcomeReceipt.Store(&receipt)
+			writeOAuthJSON(w, 200, map[string]string{"plan_id": strings.Repeat("e", 64)})
+			return
 		case "/plan-drift-on":
 			planDrifted.Store(true)
 		case "/plan-drift-off":
@@ -559,7 +589,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 		case "/evidence":
 			mu.Lock()
 			defer mu.Unlock()
-			writeOAuthJSON(w, 200, map[string]int{"profile_reads": int(profileReads.Load()), "refreshes": refreshes, "wake_history_reads": int(wakeHistoryReads.Load()), "wake_history_page_reads": int(historyPageReads.Load()), "wake_timeline_reads": int(wakeTimelineReads.Load()), "wake_page_reads": int(wakePageReads.Load()), "request_reads": int(requestReads.Load()), "analytics_reads": int(analyticsReads.Load()), "timeseries_reads": int(timeseriesReads.Load()), "error_groups_reads": int(errorGroupsReads.Load()), "error_requests_reads": int(errorRequestsReads.Load()), "performance_reads": int(performanceReads.Load()), "critical_path_reads": int(criticalPathReads.Load()), "comparison_reads": int(comparisonReads.Load()), "regression_reads": int(regressionReads.Load()), "residency_reads": int(residencyReads.Load()), "trace_reads": int(traceReads.Load()), "native_writes": int(nativeWrites.Load())})
+			writeOAuthJSON(w, 200, map[string]int{"outcome_reads": int(outcomeReads.Load()), "profile_reads": int(profileReads.Load()), "refreshes": refreshes, "wake_history_reads": int(wakeHistoryReads.Load()), "wake_history_page_reads": int(historyPageReads.Load()), "wake_timeline_reads": int(wakeTimelineReads.Load()), "wake_page_reads": int(wakePageReads.Load()), "request_reads": int(requestReads.Load()), "analytics_reads": int(analyticsReads.Load()), "timeseries_reads": int(timeseriesReads.Load()), "error_groups_reads": int(errorGroupsReads.Load()), "error_requests_reads": int(errorRequestsReads.Load()), "performance_reads": int(performanceReads.Load()), "critical_path_reads": int(criticalPathReads.Load()), "comparison_reads": int(comparisonReads.Load()), "regression_reads": int(regressionReads.Load()), "residency_reads": int(residencyReads.Load()), "trace_reads": int(traceReads.Load()), "native_writes": int(nativeWrites.Load())})
 			return
 		default:
 			w.WriteHeader(404)
@@ -592,7 +622,7 @@ func runCodexRemoteOAuthAcceptance(t *testing.T, requestMode string) {
 	if json.Unmarshal(output, &report) != nil || report["revocation"] != "passed" || report["refresh"] != "passed" || report["restart"] != "passed" {
 		t.Fatal("incomplete real-client evidence")
 	}
-	if report["action_outcomes"] != "passed" || report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" || report["budget_action_history"] != "passed" || report["saved_plan_review"] != "passed" || report["plan_applicability"] != "passed" || report["plan_drift"] != "passed" || report["recovery_resources"] != "passed" || report["recovery_discovery"] != "passed" {
+	if report["outcome_discovery"] != "passed" || outcomeReads.Load() == 0 || report["action_outcomes"] != "passed" || report["action_history"] != "passed" || report["workload_action_history"] != "passed" || report["environment_action_history"] != "passed" || report["budget_action_history"] != "passed" || report["saved_plan_review"] != "passed" || report["plan_applicability"] != "passed" || report["plan_drift"] != "passed" || report["recovery_resources"] != "passed" || report["recovery_discovery"] != "passed" {
 		t.Fatal("incomplete real-client action history restart/refresh evidence")
 	}
 	if requestMode != "" && (report["request_diagnostics"] != requestMode || report["request_discovery"] != "passed" || nativeWrites.Load() != 0 || requestReads.Load() != map[string]int32{"denied": 0, "approved": 32}[requestMode]) {

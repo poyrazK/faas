@@ -17,7 +17,11 @@ const savedEnvironmentReviewGuidance = "Both original immutable environments and
 
 func registerSavedPlanResources(s *mcp.Server, m *management) {
 	for _, entry := range []struct{ uri, name string }{{savedDefaultPlanTemplate, "gregale_default_saved_plan_review"}, {savedNamedPlanTemplate, "gregale_named_saved_plan_review"}, {savedEnvironmentPlanTemplate, "gregale_environment_saved_plan_review"}} {
-		s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: entry.uri, Name: entry.name, MIMEType: "application/json", Description: "Read-only original-plan recovery recipe with exact history/review/check calls. Requires current consent and an unexpired connection-local plan. No fresh baselines, approvals or writes. Cached recipes grant no authority; reread and use guarded tools."}, m.readSavedPlanResource)
+		description := "Read-only original-plan recovery recipe with exact history/review/check calls. Requires current consent and an unexpired connection-local plan. No fresh baselines, approvals or writes. Cached recipes grant no authority; reread and use guarded tools."
+		if entry.uri != savedEnvironmentPlanTemplate {
+			description += " Retained route-budget attempts can provide outcome/observation calls after expiry, without review/check calls."
+		}
+		s.AddResourceTemplate(&mcp.ResourceTemplate{URITemplate: entry.uri, Name: entry.name, MIMEType: "application/json", Description: description}, m.readSavedPlanResource)
 	}
 }
 
@@ -86,7 +90,7 @@ func (m *management) savedPlanRecoveryResource(ctx context.Context, args getActi
 	if err != nil {
 		return nil, err
 	}
-	guidance := savedPlanReviewGuidance
+	guidance := savedRecoveryGuidance(calls)
 	if environment {
 		guidance += " " + savedEnvironmentReviewGuidance
 	}

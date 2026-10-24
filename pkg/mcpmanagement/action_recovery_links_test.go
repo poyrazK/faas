@@ -234,8 +234,16 @@ func TestActionRecoveryLinksExpireDuringHistoryRead(t *testing.T) {
 					if json.Unmarshal(row, &actual) != nil || actual.PlanAvailable || actual.RetryTool != "" || actual.Apply.State != "outcome_unknown" || actual.NextStep != "inspect_native_state_before_replanning" {
 						t.Fatalf("expired discovery retained retry authority or lost uncertainty: %s", row)
 					}
-					if bytes.Contains(row, []byte(`"recovery"`)) || bytes.Contains(row, []byte(`"review"`)) {
-						t.Fatal("unavailable plan advertised discovery links")
+					if bytes.Contains(row, []byte(`"review"`)) {
+						t.Fatal("unavailable plan advertised saved review")
+					}
+					if family == "app" {
+						var retained actionView
+						if json.Unmarshal(row, &retained) != nil || retained.Recovery == nil || retained.Recovery.Outcome == nil || retained.Recovery.Check.Tool != "" {
+							t.Fatal("retained outcome lookup missing or expired check advertised")
+						}
+					} else if bytes.Contains(row, []byte(`"recovery"`)) {
+						t.Fatal("unavailable environment plan advertised discovery")
 					}
 					after, err := os.ReadFile(statePath)
 					if err != nil || !bytes.Equal(before, after) {
@@ -299,7 +307,7 @@ func TestActionRecoveryDiscoveryRestartAndUnavailableSnapshot(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot := guard.value.(actionHistoryDetail).Action
-	if snapshot.PlanAvailable || snapshot.Recovery != nil || snapshot.Review != nil {
+	if snapshot.PlanAvailable || snapshot.Recovery == nil || snapshot.Recovery.Outcome == nil || snapshot.Recovery.Check.Tool != "" || snapshot.Review != nil {
 		t.Fatal("unavailable snapshot silently acquired new discovery links")
 	}
 	f.mu.Lock()

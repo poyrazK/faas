@@ -182,8 +182,10 @@ func TestSavedPlanPromptRestartExpiryAndUnknownAttempt(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(original, prompt) {
-		t.Fatal("restart or ambiguity replaced original workflow")
+	beforeCalls := savedPromptCalls(t, original, budgetHistorySelector(id), false)
+	afterCalls := savedPromptCalls(t, prompt, budgetHistorySelector(id), false)
+	if !reflect.DeepEqual(beforeCalls.History, afterCalls.History) || !reflect.DeepEqual(beforeCalls.Review, afterCalls.Review) || !reflect.DeepEqual(beforeCalls.Check, afterCalls.Check) || beforeCalls.Outcome != nil || afterCalls.Outcome == nil || afterCalls.Observation == nil {
+		t.Fatal("restart changed original calls or lost the new outcome lookup")
 	}
 	savedPromptCalls(t, prompt, budgetHistorySelector(id), false)
 	after, err := os.ReadFile(path)
@@ -191,8 +193,8 @@ func TestSavedPlanPromptRestartExpiryAndUnknownAttempt(t *testing.T) {
 		t.Fatal("retrieving prompt rewrote saved state")
 	}
 	restored.plans[id].ExpiresAt = time.Now().Add(-time.Second)
-	if _, err := restored.getSavedPlanPrompt(t.Context(), req); err == nil {
-		t.Fatal("expired plan produced recovery prompt")
+	if prompt, err := restored.getSavedPlanPrompt(t.Context(), req); err != nil || !strings.Contains(prompt.Messages[0].Content.(*mcp.TextContent).Text, "gregale_get_action_outcome") {
+		t.Fatal("expired attempted plan lost read-only outcome prompt")
 	}
 	if restored.plans[id] == nil {
 		t.Fatal("prompt pruned expired plan")

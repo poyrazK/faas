@@ -208,8 +208,10 @@ func TestSavedRecoveryResourceRestartAmbiguityAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reflect.DeepEqual(before, after) {
-		t.Fatal("ambiguity/restart replaced recovery recipe")
+	oldRecipe := recoveryResourceView(t, before, uri)
+	newRecipe := recoveryResourceView(t, after, uri)
+	if !reflect.DeepEqual(oldRecipe.Workflow.History, newRecipe.Workflow.History) || !reflect.DeepEqual(oldRecipe.Workflow.Review, newRecipe.Workflow.Review) || !reflect.DeepEqual(oldRecipe.Workflow.Check, newRecipe.Workflow.Check) || oldRecipe.Workflow.Outcome != nil || newRecipe.Workflow.Outcome == nil || newRecipe.Workflow.Observation == nil {
+		t.Fatal("restart changed original calls or lost outcome lookup")
 	}
 	recoveryResourceView(t, after, uri)
 	unchanged, err := os.ReadFile(path)
@@ -217,8 +219,13 @@ func TestSavedRecoveryResourceRestartAmbiguityAndExpiry(t *testing.T) {
 		t.Fatal("resource persisted state")
 	}
 	restored.plans[id].ExpiresAt = time.Now().Add(-time.Second)
-	if _, err := restored.readSavedPlanResource(t.Context(), req); err == nil {
-		t.Fatal("expired recipe remained available")
+	expired, err := restored.readSavedPlanResource(t.Context(), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredRecipe := recoveryResourceView(t, expired, uri)
+	if expiredRecipe.Workflow.Outcome == nil || expiredRecipe.Workflow.Review.Tool != "" || expiredRecipe.Workflow.Check.Tool != "" {
+		t.Fatal("expired recipe advertised mutation-plan recovery")
 	}
 	if restored.plans[id] == nil {
 		t.Fatal("read pruned original plan")

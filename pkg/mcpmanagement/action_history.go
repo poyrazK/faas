@@ -227,7 +227,7 @@ func (m *management) actionView(entry actionRecord, now time.Time) actionView {
 			view.NextStep, view.RetryTool = "retry_same_plan_with_current_authorization", tool
 		}
 	}
-	return view
+	return m.addOutcomeRecoveryLinks(view, now)
 }
 
 func (m *management) actionCursorBinding(target actionRecord) string {
