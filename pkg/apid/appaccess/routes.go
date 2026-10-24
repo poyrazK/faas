@@ -10,7 +10,10 @@ var routeActions = map[string]authz.OrgAction{
 	// The resumable upload routes name their app in the request body or the
 	// stored session, so the handlers call Authorize once they resolve it.
 	"POST /v1/uploads":                                authz.OrgActionDeployApp,
+	"GET /v1/uploads/{id}":                            authz.OrgActionDeployApp,
+	"PATCH /v1/uploads/{id}":                          authz.OrgActionDeployApp,
 	"POST /v1/uploads/{id}/commit":                    authz.OrgActionDeployApp,
+	"DELETE /v1/uploads/{id}":                         authz.OrgActionDeployApp,
 	"GET /v1/apps/{slug}":                             authz.OrgActionReadApp,
 	"PATCH /v1/apps/{slug}":                           authz.OrgActionConfigureApp,
 	"DELETE /v1/apps/{slug}":                          authz.OrgActionDeleteApp,
