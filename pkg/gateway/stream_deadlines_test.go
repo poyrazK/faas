@@ -14,6 +14,45 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
+// The public edge can send gRPC to gatewayd-public over h2c. A gRPC call
+// through InternalReverseProxy on an h2c front must keep its request body,
+// response body and grpc-status trailer.
+func TestInternalProxyServesGRPCOverH2CFront(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, _ := io.ReadAll(r.Body)
+		w.Header().Set("Content-Type", "application/grpc")
+		w.Header().Set("Trailer", "Grpc-Status")
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "echo:"+string(body))
+		w.Header().Set("Grpc-Status", "0")
+	}))
+	defer upstream.Close()
+	proxy := NewInternalReverseProxy(&stubDialer{server: upstream}, &url.URL{Scheme: "http", Host: "internal"}, slog.Default(), false)
+	front := httptest.NewUnstartedServer(proxy)
+	front.Config.Protocols = new(http.Protocols)
+	front.Config.Protocols.SetHTTP1(true)
+	front.Config.Protocols.SetUnencryptedHTTP2(true)
+	front.Start()
+	defer front.Close()
+
+	h2c := &http.Transport{Protocols: new(http.Protocols)}
+	h2c.Protocols.SetUnencryptedHTTP2(true)
+	request, err := http.NewRequest(http.MethodPost, front.URL+"/pkg.Service/Method", strings.NewReader("ping"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header.Set("Content-Type", "application/grpc")
+	response, err := (&http.Client{Transport: h2c}).Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(response.Body)
+	_ = response.Body.Close()
+	if err != nil || response.ProtoMajor != 2 || string(body) != "echo:ping" || response.Trailer.Get("Grpc-Status") != "0" {
+		t.Fatalf("gRPC over h2c = HTTP/%d %q trailers %v (%v)", response.ProtoMajor, body, response.Trailer, err)
+	}
+}
+
 // The public listener's ReadTimeout and WriteTimeout are the customer request
 // envelope. InternalReverseProxy lifted the request budget for a long-lived
 // response but never moved the listener's own deadlines, so every SSE or gRPC

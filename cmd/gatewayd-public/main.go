@@ -890,6 +890,14 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    api.DefaultMaxHeaderBytes,
 	}
+	// The public edge sends gRPC over HTTP/2 with prior knowledge (h2c)
+	// once it opts in (faas_public_edge_grpc_h2c), so bidirectional streams
+	// work end to end; every other request keeps HTTP/1.1 on the same
+	// loopback listener. Accepting h2c first lets that opt-in follow this
+	// release without an older edge ever sending a preface we cannot read.
+	publicSrv.Protocols = new(http.Protocols)
+	publicSrv.Protocols.SetHTTP1(true)
+	publicSrv.Protocols.SetUnencryptedHTTP2(true)
 	controlSrv := &http.Server{
 		Addr:              controlAddr,
 		Handler:           trace.HTTPHandler("gatewayd-public-control", controlMux),
