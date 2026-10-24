@@ -128,7 +128,7 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 	// activation switches the release set. The sync stays unconverged and
 	// continues once the pause is lifted. Gateways route an already
 	// activated graph from the release set, so no switch is left halfway.
-	if b.server.platformReleasePauseProblem() != nil {
+	if b.server.platformReleasePaused() {
 		return false, nil
 	}
 	preparer, ok := b.intent.(state.EnvironmentGitOpsPreparationStore)
