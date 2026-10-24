@@ -130,6 +130,7 @@ func (h *Handler) serveStaleWhileWaking(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 	w.Header().Set("x-faas-cache", "stale-while-waking")
+	recordTrafficCache(r.Context(), "stale_while_waking")
 	w.Header().Set("Age", strconv.FormatInt(h.responseCache.ageSeconds(entry), 10))
 	w.Header().Add("Warning", `110 - "Response is Stale"`)
 	w.Header().Set("X-From-Cache", "stale")
@@ -168,14 +169,21 @@ func (h *Handler) startCacheRefresh(r *http.Request, app App, rule *EdgeRuleCach
 	if h.authorizedDeploymentSmoke(r, app) {
 		return
 	}
-	detached := context.WithoutCancel(r.Context())
+	detached := withoutTrafficDecision(context.WithoutCancel(r.Context()))
 	request := r.Clone(detached)
 	request.Body = http.NoBody
 	go func(ctx context.Context) {
 		_, _, _ = h.cacheRefresh.Do(key.String(), func() (any, error) {
 			ctx, cancel := context.WithTimeout(ctx, time.Duration(api.WakeQueueTTLSeconds)*time.Second)
 			defer cancel()
-			if h.backend.HealthyCount(app.ID) == 0 {
+			if routing, pinned := publicRoutingSnapshot(ctx); pinned {
+				if !pickPublicDeployment(h.backend, app.ID, routing.SelectedDeploymentID, "").OK {
+					maximum := h.publicRoutingWakeMaximum(app, routing)
+					if _, _, _, err := h.wakeDeployment(ctx, app, routing.SelectedDeploymentID, routing.Scope, sched.TriggerGateway, maximum); err != nil {
+						return nil, err
+					}
+				}
+			} else if h.backend.HealthyCount(app.ID) == 0 {
 				limits, _ := api.LimitsFor(app.Plan)
 				if _, _, _, err := h.ensureCapacity(ctx, app.ID, app.AccountID, app.Scope, limits.MaxConcurrency, app.Plan, app.AutoscaleTargetRPS, sched.TriggerGateway, concurrencyConfigForApp(app)); err != nil {
 					return nil, err
@@ -192,19 +200,22 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 		return
 	}
 	var pick PickResult
-	if key.DeploymentID != "" {
+	if routing, pinned := publicRoutingSnapshot(ctx); pinned {
+		pick = pickPublicDeployment(h.backend, app.ID, routing.SelectedDeploymentID, "")
+	} else if key.DeploymentID != "" {
 		picker, ok := h.backend.(deploymentTargetPicker)
 		if !ok {
 			return
 		}
 		pick = picker.PickForDeployment(app.ID, key.DeploymentID)
-	} else {
-		pick = h.backend.Pick(app.ID)
-	}
-	if versionKey, outcome := versionAffinityKeyFromRequest(r); key.DeploymentID == "" && outcome == versionAffinityKeyValid {
+	} else if versionKey, outcome := versionAffinityKeyFromRequest(r); outcome == versionAffinityKeyValid {
 		if picker, ok := h.backend.(versionAffinityPicker); ok {
 			pick = picker.PickForVersionKey(app.ID, versionKey, "")
+		} else {
+			pick = h.backend.Pick(app.ID)
 		}
+	} else {
+		pick = h.backend.Pick(app.ID)
 	}
 	// Never cache a sibling deployment's fallback response under the selected
 	// cohort. The foreground path can wake the exact cold bucket; a detached
@@ -219,7 +230,7 @@ func (h *Handler) refreshCacheFromWarmTarget(ctx context.Context, r *http.Reques
 		return
 	}
 	target := pick.Target
-	if key.DeploymentID != "" && target.DeploymentID != key.DeploymentID {
+	if key.DeploymentID != "" && key.DeploymentID != target.DeploymentID {
 		return
 	}
 	base := httptest.NewRecorder()
@@ -360,6 +371,7 @@ func (h *Handler) tryServeStaleOnWakeError(w http.ResponseWriter, r *http.Reques
 	// when their cache is being relied on as a fallback
 	// rather than as a primary serve path.
 	h.metricsIncCacheOutcome(app.ID, "stale_if_error_served")
+	recordTrafficCache(r.Context(), "stale_if_error_served")
 	h.observe(r, entry.statusCode, app.ID, string(app.Plan), false, Target{})
 	return true, "stale_if_error_served"
 }

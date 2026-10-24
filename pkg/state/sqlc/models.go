@@ -823,6 +823,13 @@ type AppDefaultDomain struct {
 	UpdatedAt pgtype.Timestamptz
 }
 
+type AppEgressCircuit struct {
+	AppID     pgtype.UUID
+	Revision  int64
+	Targets   []byte
+	UpdatedAt pgtype.Timestamptz
+}
+
 type AppEgressPolicyNodeStatus struct {
 	AppID             pgtype.UUID
 	NodeID            pgtype.UUID
@@ -2527,6 +2534,11 @@ type CliAuthCode struct {
 	ExpiresAt  pgtype.Timestamptz
 	ConsumedAt pgtype.Timestamptz
 	CreatedAt  pgtype.Timestamptz
+}
+
+type CloneCheckpointAdmissionGuard struct {
+	ID         int16
+	Generation int64
 }
 
 type ClusterSigningKey struct {
@@ -5800,6 +5812,31 @@ type GatewayResponseCachePurgeWatermark struct {
 	NodeName     string
 	LastChangeID int64
 	ObservedAt   pgtype.Timestamptz
+}
+
+type GatewayTrafficPolicyObservation struct {
+	NodeName     string
+	PolicyKind   string
+	Generation   int64
+	BootID       pgtype.UUID
+	LastChangeID int64
+	ObservedAt   pgtype.Timestamptz
+}
+
+type GatewayTrafficRuntimeObservation struct {
+	NodeName           string
+	Generation         int64
+	BootID             pgtype.UUID
+	ReportedAt         pgtype.Timestamptz
+	RetryEnabled       bool
+	RateCounterMode    string
+	RetryCounterMode   string
+	RetryBackendID     string
+	DeadlineSigning    bool
+	PolicySnapshot     bool
+	SecurityRevocation bool
+	ManagedHttp        bool
+	ManagedCircuit     bool
 }
 
 type GdprRequest struct {
@@ -9923,6 +9960,11 @@ type OrgActivityOutbox struct {
 	DeliveredAt pgtype.Timestamptz
 	LastError   pgtype.Text
 	CreatedAt   pgtype.Timestamptz
+}
+
+type OrgAppQuotaFence struct {
+	OrgID      pgtype.UUID
+	Generation int64
 }
 
 type OrgInvitation struct {
@@ -14281,6 +14323,22 @@ type TenantSurface struct {
 	PlatformTenantManaged bool
 }
 
+type TrafficRetryCounter struct {
+	AppID     pgtype.UUID
+	Originals int64
+	Retries   int64
+	ExpiresAt pgtype.Timestamptz
+}
+
+type TrafficSecurityEpoch struct {
+	ScopeKind string
+	ScopeID   pgtype.UUID
+	Revision  int64
+	Revoked   bool
+	Reason    string
+	UpdatedAt pgtype.Timestamptz
+}
+
 type Trigger struct {
 	ID                        pgtype.UUID
 	AccountID                 pgtype.UUID
@@ -14663,6 +14721,11 @@ type WorkflowCallbackWebhookBinding struct {
 	EventType  string
 	ObjectID   string
 	CreatedAt  pgtype.Timestamptz
+}
+
+type WorkflowCodeAdmissionGuard struct {
+	AppID      pgtype.UUID
+	Generation int64
 }
 
 type WorkflowCodePin struct {

@@ -30,6 +30,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/orgbilling"
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/apid/trafficguard"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/billing/stripe"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
@@ -1568,22 +1569,21 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		updated, err = s.store.UpdateApp(r.Context(), app.ID, params)
 	}
 	if err != nil {
+		fallback := api.ErrCapacity("could not update app")
 		if problem := deploySettingsUpdateProblem(err); problem != nil {
-			api.WriteProblem(w, problem)
+			fallback = problem
 		} else if errors.Is(err, state.ErrServiceBindingPlanConflict) {
-			api.WriteProblem(w, serviceBindingPlanConflictProblem())
+			fallback = serviceBindingPlanConflictProblem()
 		} else if problem := state.ServiceCapacityProblem(err); problem != nil {
-			api.WriteProblem(w, problem)
-		} else {
+			fallback = problem
+		} else if s.log != nil {
 			// The caller only sees a generic 503; keep the cause. Under load,
 			// h4-edge's no-op idle updates and one deploy's app update failed
 			// intermittently here with nothing logged (production-us hunt #5,
 			// H5-42).
-			if s.log != nil {
-				s.log.Error("app update failed", "app", app.ID, "slug", logsanitize.Field(app.Slug), "err", err)
-			}
-			api.WriteProblem(w, api.ErrCapacity("could not update app"))
+			s.log.Error("app update failed", "app", app.ID, "slug", logsanitize.Field(app.Slug), "err", err)
 		}
+		api.WriteProblem(w, trafficproblem.Policy(err, fallback))
 		return
 	}
 	if req.BeforeCheckpoint != nil || req.Profiling != nil || req.Tracing != nil {
@@ -1971,7 +1971,7 @@ func (s *server) deleteApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		if writeEnvironmentGitOpsOwnershipProblem(w, err) {
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not delete app"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not delete app")))
 		return
 	}
 	for _, inv := range pending {
@@ -3107,39 +3107,10 @@ func (s *server) renameApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	}
 	updated, err := s.store.RenameApp(r.Context(), acct.ID, oldSlug, req.NewSlug)
 	if err != nil {
-		if errors.Is(err, state.ErrConflict) {
-			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeAppRenameFailed,
-				"Slug taken",
-				fmt.Sprintf("another app already uses slug %q", req.NewSlug)))
-			return
-		}
-		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, api.NewProblem(http.StatusNotFound, api.CodeNotFound,
-				"App not found", "no app with the given slug exists"))
-			return
-		}
-		api.WriteProblem(w, api.ErrCapacity("could not rename app"))
+		api.WriteProblem(w, appRenameWriteProblem(err, req.NewSlug))
 		return
 	}
-	// F-04: renamed emit now carries app_id. The old appsRoot/<oldSlug>/
-	// directory becomes orphan (renamed app is the new slug); the cleanup
-	// is left to imaged's GC, which removes stale snapshot rows and their
-	// files. We do NOT scrub the old slug directory on rename — that
-	// race-conditions with concurrent deploys that still reference the
-	// old slug in their deployment.app_id-to-slug lookup.
-	_ = s.notif.Notify(r.Context(), db.NotifyAppChanged,
-		string(safetext.JSONObject(struct {
-			Kind  string `json:"kind"`
-			AppID string `json:"app_id"`
-			From  string `json:"from"`
-			To    string `json:"to"`
-		}{Kind: "renamed", AppID: app.ID, From: oldSlug, To: req.NewSlug})))
-	// CodeQL go/log-injection (CWE-117): oldSlug came from the
-	// apps.slug column (regex-validated at create) and req.NewSlug
-	// passed the same validSlug check on this request's body. Wrap
-	// both so a future relax of validSlug (or a hostile migration)
-	// cannot smuggle CR/LF into the audit line.
-	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(req.NewSlug), "account", acct.ID)
+	s.notifyAppRenamed(r.Context(), acct, updated, oldSlug, req.NewSlug)
 	// A rename moves the app's public hostname and frees the old one for any
 	// tenant; it belongs in the account's audit trail, not only the daemon
 	// log (production-us hunt #9: four renames left no audit event).
@@ -3356,7 +3327,7 @@ func (s *server) createDomain(w http.ResponseWriter, r *http.Request, acct state
 			api.WriteProblem(w, problem)
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not create domain"))
+		api.WriteProblem(w, domainPublicationWriteProblem(err))
 		return
 	}
 	if activityOutboxID > 0 {
@@ -3481,19 +3452,13 @@ func (s *server) deleteDomain(w http.ResponseWriter, r *http.Request, acct state
 		ResourceLabel: d.Domain, SourceType: "domain.removed", SourceID: activitySourceID(r, d.Domain),
 		Data: activityData(map[string]any{"app_id": d.AppID}),
 	}
-	var activityOutboxID int64
-	if mutationStore, ok := s.store.(state.OrgActivityDomainMutationStore); ok {
-		prepared, prepareErr := s.prepareAppActivity(r.Context(), r, acct, app, activity)
-		if prepareErr == nil {
-			activityOutboxID, err = mutationStore.DeleteCustomDomainWithActivity(r.Context(), domain, prepared)
-		} else {
-			err = s.store.DeleteCustomDomain(r.Context(), domain)
-		}
-	} else {
-		err = s.store.DeleteCustomDomain(r.Context(), domain)
-	}
+	activityOutboxID, err := s.deleteDomainIntent(r, acct, app, domain, activity)
 	if err != nil {
-		api.WriteProblem(w, api.ErrCapacity("could not delete domain"))
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such domain")
+		} else {
+			api.WriteProblem(w, trafficproblem.DomainRemoval(err))
+		}
 		return
 	}
 	if activityOutboxID > 0 {
@@ -7818,4 +7783,36 @@ func derefIntSlice(p *[]int) []int {
 		return nil
 	}
 	return *p
+}
+
+func appRenameWriteProblem(err error, newSlug string) *api.Problem {
+	if errors.Is(err, state.ErrConflict) {
+		return api.NewProblem(http.StatusConflict, api.CodeAppRenameFailed, "Slug taken", fmt.Sprintf("another app already uses slug %q", newSlug))
+	}
+	if errors.Is(err, state.ErrNotFound) {
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "App not found", "no app with the given slug exists")
+	}
+	return trafficproblem.Policy(err, api.ErrCapacity("could not rename app"))
+}
+
+func (s *server) notifyAppRenamed(ctx context.Context, acct state.Account, updated state.App, oldSlug, newSlug string) {
+	// F-04: renamed emit now carries app_id. The old appsRoot/<oldSlug>/
+	// directory becomes orphan (renamed app is the new slug); the cleanup
+	// is left to imaged's GC, which removes stale snapshot rows and their
+	// files. We do NOT scrub the old slug directory on rename — that
+	// race-conditions with concurrent deploys that still reference the
+	// old slug in their deployment.app_id-to-slug lookup.
+	_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+		string(safetext.JSONObject(struct {
+			Kind  string `json:"kind"`
+			AppID string `json:"app_id"`
+			From  string `json:"from"`
+			To    string `json:"to"`
+		}{Kind: "renamed", AppID: updated.ID, From: oldSlug, To: newSlug})))
+	// CodeQL go/log-injection (CWE-117): oldSlug came from the
+	// apps.slug column (regex-validated at create) and newSlug
+	// passed the same validSlug check on this request's body. Wrap
+	// both so a future relax of validSlug (or a hostile migration)
+	// cannot smuggle CR/LF into the audit line.
+	s.log.Info("app renamed", "app", updated.ID, "from", logsanitize.Field(oldSlug), "to", logsanitize.Field(newSlug), "account", acct.ID)
 }

@@ -256,6 +256,9 @@ func (r *DeploymentCounterWatcher) Resync(p0 context.Context) error { return r.r
 // Members of DiskDrift
 func (r *DiskDrift) Timeout() *time.Duration { return &r.timeout }
 
+// Members of EgressCircuitBreaker
+func (r *EgressCircuitBreaker) Resolve() *EgressResolver { return &r.resolve }
+
 // Members of Drain
 func (r *Drain) Engine() **Engine       { return &r.engine }
 func (r *Drain) Now() *func() time.Time { return &r.now }

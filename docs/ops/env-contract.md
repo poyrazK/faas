@@ -58,7 +58,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APPLICATION_AUTH_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs application Auth (ADR-1190) is available to while FAAS_APPLICATION_AUTH_ENABLED is off; unset admits none; boot fallback for the application_auth platform flag (ADR-1700), ignored once an operator writes platform_flag.application_auth |
 | `FAAS_APPLICATION_AUTH_ENABLED` | apid, shared | `default` |  |  | `` | dark-launch switch for application Auth (ADR-1190) for every account; off by default; boot fallback for the application_auth platform flag (ADR-1700), ignored once an operator writes platform_flag.application_auth |
 | `FAAS_APPLICATION_STANDARD_MUTATIONS_ENABLED` | apid | `default` |  | 0 | `` | ADR-435 release gate; keep disabled until consumer convergence, controlled rollout/recovery and dedicated Linux amd64 root/KVM acceptance pass |
-| `FAAS_APPS_DOMAIN` | apid, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, shared | `envfile` |  |  | `` |  |
+| `FAAS_APPS_DOMAIN` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, schedd, shared | `envfile` |  |  | `` |  |
 | `FAAS_APPS_ROOT` | imaged, shared | `default` |  |  | `` |  |
 | `FAAS_APP_ERRORS_ENABLED` | apid, gatewayd-internal | `runtime-config` |  |  | `` |  |
 | `FAAS_APP_FORKS` | apid, schedd | `default` |  |  | `` | exact opt-in for ADR-732 production forks; apid admits fork intent and schedd restores quarantined forks only when both are 1; default off until the quarantine metal test is qualified |
@@ -237,7 +237,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_EDGE_CRAWLER_RANGES_REFRESH` | apid | `default` |  |  | `` | ADR-20261022083601: "0" turns off the refresh of crawler operators' published IP ranges on installs without outbound internet; gateways then verify search crawlers by DNS only and never verify AI crawlers |
 | `FAAS_EDGE_WAF_INLINE_DISABLED` | gatewayd-internal | `default` |  |  | `` | ADR-831 amendment 4 operator kill switch; "1" turns off in-path kind=waf checks so warn and block rules only observe |
 | `FAAS_EGRESS_ALLOW_LOOPBACK` | shared | `dev-only` |  |  | `` | must never be set on a production host |
-| `FAAS_EGRESS_CIRCUIT_BREAKER` | schedd | `default` |  |  | `` | ADR-201 §3; off by default — an open circuit rejects a tenant's connections to their own upstream |
+| `FAAS_EGRESS_CIRCUIT_BREAKER` | schedd, vmmd | `default` |  |  | `` | ADR-201 §3 / ADR-570; off by default; enable on schedd and each vmmd to reject new tenant connections to an unhealthy declared upstream |
 | `FAAS_EGRESS_DNS_GATING` | vmmd | `default` |  |  | `` | ADR-373 per-node escape hatch; "off" disables DNS-gated tenant egress, any other value keeps it on |
 | `FAAS_EGRESS_SOCKET` | shared | `dropin` |  |  | `` |  |
 | `FAAS_ENVIRONMENT` | shared, apid | `default` |  |  | `` | optional deployment environment label; managed PostgreSQL provisioning and data pipeline workers require the explicit staging value |
@@ -826,6 +826,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_TRACE_OBSERVER_TOKEN` | shared | `default` |  |  | `` |  |
 | `FAAS_TRACE_RING_CAP` | shared | `default` |  |  | `` |  |
 | `FAAS_TRACING_ENABLED` | guest, shared | `guest` |  |  | `` | stamped by guest-init when the local OTLP bridge is the trace exporter; gates the runtime bootstraps (ADR-958) |
+| `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY` | gatewayd-internal | `default` |  |  | `` | ADR-570; off by default; true reads host ownership and the compiled edge policy in a Postgres snapshot on every public request instead of the route and edge-rule caches |
 | `FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED` | apid, shared | `default` |  | 0 | `` | admit `delivery: batch` on triggers (ADR-1321); off, apid refuses it with 422; boot fallback for the trigger_batch_delivery platform flag (ADR-1700), ignored once an operator writes platform_flag.trigger_batch_delivery |
 | `FAAS_TRIGGER_LEDGER_RETENTION_ENABLED` | schedd | `default` |  | 0 | `` | exact opt-in (`1`) for the trigger_records reaper: terminal rows past their explicit retention or the default ages (7 days, 30 for dead letters) |
 | `FAAS_TRUSTED_INGRESS_CIDRS` | gatewayd-public | `unit` |  |  | `` | upstream TLS edge CIDRs allowed to provide canonical forwarding context |

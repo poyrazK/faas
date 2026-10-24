@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/release"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -245,8 +246,8 @@ func (s *server) createAppInOrg(w http.ResponseWriter, r *http.Request, acct sta
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation,
 				"Slug taken", fmt.Sprintf("app slug %q is already in use", req.Slug)))
 		default:
-			api.WriteProblem(w, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
-				"Capacity", "could not create app"))
+			api.WriteProblem(w, trafficproblem.Policy(err, api.NewProblem(http.StatusInternalServerError, api.CodeCapacity,
+				"Capacity", "could not create app")))
 		}
 		return
 	}

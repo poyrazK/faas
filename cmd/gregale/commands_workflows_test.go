@@ -257,7 +257,7 @@ func TestCmdWorkflowsRetry_ValidationAndAPIJourney(t *testing.T) {
 	}
 }
 
-func TestCmdWorkflowsEvents_MissingArgs(t *testing.T) {
+func TestCmdWorkflowsEvents_DocumentedUsage(t *testing.T) {
 	code, captured := main.RunWithStderr(t, func() int {
 		return main.CmdWorkflowsEvents([]string{"send", "not-enough-args"})
 	})
@@ -326,5 +326,17 @@ func TestCmdWorkflowsSuggestsTheClosestSubcommand(t *testing.T) {
 	_, captured := main.RunWithStderr(t, func() int { return main.CmdWorkflows([]string{"statsu"}) })
 	if !strings.Contains(captured, "status") || !strings.Contains(strings.ToLower(captured), "did you mean") {
 		t.Fatalf("typo got no suggestion: %q", captured)
+	}
+}
+
+func TestCmdWorkflowsEvents_MissingArgs(t *testing.T) {
+	code, captured := main.RunWithStderr(t, func() int {
+		return main.CmdWorkflowsEvents([]string{"send", "not-enough-args"})
+	})
+	if code != 1 {
+		t.Errorf("cmdWorkflowsEvents(not enough args) = %d, want 1", code)
+	}
+	if !strings.Contains(captured, "gregale workflows events send") {
+		t.Errorf("usage must mention 'events send'; got: %s", captured)
 	}
 }
