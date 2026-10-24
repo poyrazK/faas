@@ -56,6 +56,9 @@ const (
 	CloneBlockerDataStrategyUnavailable   = "isolated_data_strategy_unavailable"
 	CloneBlockerDataCheckpointUnavailable = "data_checkpoint_unavailable"
 	CloneBlockerWorkActivationUnavailable = "work_activation_unavailable"
+	// A bound managed database without a restore window cannot be copied at
+	// the clone's point in time (ADR-20261024224230).
+	CloneBlockerPointInTimeRestoreUnavailable = "point_in_time_restore_unavailable"
 )
 
 var cloneInventoryIdentifier = regexp.MustCompile(`^[a-z_][a-z0-9_]{0,62}$`)

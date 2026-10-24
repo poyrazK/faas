@@ -111,6 +111,10 @@ func (s *PgStore) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Con
 		return op, mapErr(err)
 	}
 	records, err := captureCloneConfigurationWorkloadsTx(ctx, tx, op)
+	if request.RequireCompleteInventory && errors.Is(err, ErrProjectEnvironmentCloneRestoreWindowUnavailable) {
+		return ProjectEnvironmentCloneOperation{}, &ProjectEnvironmentCloneInventoryError{Blockers: []ProjectEnvironmentCloneCoverageBlocker{
+			{Table: "managed_postgres_bindings", Code: CloneBlockerPointInTimeRestoreUnavailable}}}
+	}
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, mapProjectCloneSnapshotErr(err)
 	}
@@ -321,7 +325,7 @@ func (s *PgStore) ValidateProjectEnvironmentCloneSourceConfigurationForLease(ctx
 		return zero, err
 	}
 	if live != capture {
-		return zero, ErrConflict
+		return zero, ErrProjectEnvironmentCloneSourceChanged
 	}
 	if err := authorizeCloneObjectMutationTx(ctx, tx, op, &lease); err != nil {
 		return zero, err

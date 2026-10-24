@@ -18,21 +18,23 @@ import (
 
 const fullCloneAdmissionKey = "full_environment_clone_admission_enabled"
 
-type datalessCloneFixture struct {
+type fullCloneFixture struct {
 	t       *testing.T
 	f       apidserver.CloneCoordinatorFixture
 	acct    state.Account
 	project state.Project
 }
 
-// The source has two live HTTP workloads with environment values and no
-// managed data; the configuration write fence stays off, as in production.
-func newDatalessCloneFixture(t *testing.T) datalessCloneFixture {
-	f := apidserver.NewCloneSourceFixture(t, false, false)
-	return datalessCloneFixture{t: t, f: f, acct: *f.Account(), project: *f.Project()}
+// The source has two live HTTP workloads with environment values and, with
+// postgres, a point-in-time-restorable managed database bound to both. The
+// configuration write fence stays off, as in production.
+func newFullCloneFixture(t *testing.T, postgres bool) fullCloneFixture {
+	f := apidserver.NewCloneSourceFixture(t, postgres)
+	*(*f.Srv()).CloneDataPointSettle() = 0
+	return fullCloneFixture{t: t, f: f, acct: *f.Account(), project: *f.Project()}
 }
 
-func (d datalessCloneFixture) open(keys ...string) {
+func (d fullCloneFixture) open(keys ...string) {
 	d.t.Helper()
 	for _, key := range keys {
 		if err := (*(*d.f.Srv()).RuntimeConfig()).Apply(key, json.RawMessage("true")); err != nil {
@@ -41,7 +43,7 @@ func (d datalessCloneFixture) open(keys ...string) {
 	}
 }
 
-func (d datalessCloneFixture) admit(target, key string) *httptest.ResponseRecorder {
+func (d fullCloneFixture) admit(target, key string) *httptest.ResponseRecorder {
 	d.t.Helper()
 	req, rec := apidserver.ProjectRequest(http.MethodPost, "/v1/projects/"+d.project.Slug+"/environment-clones", d.project.Slug,
 		[]byte(`{"slug":"`+target+`","from_environment":"production","full":true}`))
@@ -50,7 +52,7 @@ func (d datalessCloneFixture) admit(target, key string) *httptest.ResponseRecord
 	return rec
 }
 
-func (d datalessCloneFixture) admitted(target, key string) api.ProjectEnvironmentCloneOperationResponse {
+func (d fullCloneFixture) admitted(target, key string) api.ProjectEnvironmentCloneOperationResponse {
 	d.t.Helper()
 	rec := d.admit(target, key)
 	var env api.ProjectEnvironmentResponse
@@ -63,13 +65,15 @@ func (d datalessCloneFixture) admitted(target, key string) api.ProjectEnvironmen
 }
 
 // step runs one coordinator pass for the operation, ignoring retryable errors.
-func (d datalessCloneFixture) step(operationID string) state.ProjectEnvironmentCloneOperation {
+func (d fullCloneFixture) step(operationID string) state.ProjectEnvironmentCloneOperation {
 	d.t.Helper()
 	ctx := d.t.Context()
 	if _, err := (*d.f.Pool()).Exec(ctx, "update project_environment_clone_operations set next_attempt_at=clock_timestamp() where id=$1 and lease_token is null", operationID); err != nil {
 		d.t.Fatal(err)
 	}
-	_ = (*d.f.Srv()).ProcessNextProjectEnvironmentClone(ctx, *d.f.Store())
+	if err := (*d.f.Srv()).ProcessNextProjectEnvironmentClone(ctx, *d.f.Store()); err != nil {
+		d.t.Logf("clone step: %v", err)
+	}
 	op, err := (*d.f.Store()).ProjectEnvironmentCloneOperationByID(ctx, d.acct.ID, d.project.ID, operationID)
 	if err != nil {
 		d.t.Fatal(err)
@@ -77,7 +81,7 @@ func (d datalessCloneFixture) step(operationID string) state.ProjectEnvironmentC
 	return op
 }
 
-func (d datalessCloneFixture) targets(operationID string) []state.ProjectEnvironmentCloneWorkload {
+func (d fullCloneFixture) targets(operationID string) []state.ProjectEnvironmentCloneWorkload {
 	d.t.Helper()
 	views, err := (*d.f.Store()).ProjectEnvironmentCloneWorkloads(d.t.Context(), d.acct.ID, d.project.ID, operationID)
 	if err != nil {
@@ -91,7 +95,7 @@ func (d datalessCloneFixture) targets(operationID string) []state.ProjectEnviron
 // source's artifacts with its own copy of the values, and production keeps
 // its own (ADR-20261024123122).
 func TestPGDatalessFullCloneAdmitsCopiesAndPublishes(t *testing.T) {
-	d := newDatalessCloneFixture(t)
+	d := newFullCloneFixture(t, false)
 	ctx := t.Context()
 	store := *d.f.Store()
 	for _, keys := range [][]string{nil, {runtimeconfig.KeyFullEnvironmentClones}} {
@@ -154,7 +158,7 @@ func TestPGDatalessFullCloneAdmitsCopiesAndPublishes(t *testing.T) {
 // A source that uses a table the clone cannot copy is refused with that table
 // named, and nothing is created.
 func TestPGDatalessFullCloneRefusesUncopyableSource(t *testing.T) {
-	d := newDatalessCloneFixture(t)
+	d := newFullCloneFixture(t, false)
 	d.open(runtimeconfig.KeyFullEnvironmentClones, fullCloneAdmissionKey)
 	app := (*d.f.Apps())[0]
 	if _, err := (*d.f.Store()).CreateCron(d.t.Context(), app.ID, "*/5 * * * *", "/tick", true); err != nil {
@@ -174,7 +178,7 @@ func TestPGDatalessFullCloneRefusesUncopyableSource(t *testing.T) {
 // A target deployment that fails ends the clone: its deployments are
 // cancelled, the target environment is removed and the slug is free again.
 func TestPGDatalessFullCloneCompensatesFailedTarget(t *testing.T) {
-	d := newDatalessCloneFixture(t)
+	d := newFullCloneFixture(t, false)
 	ctx := t.Context()
 	store := *d.f.Store()
 	d.open(runtimeconfig.KeyFullEnvironmentClones, fullCloneAdmissionKey)

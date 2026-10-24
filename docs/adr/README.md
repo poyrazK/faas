@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261024224230: Full environment clones, slice 2 — managed databases at one point in time](20261024224230-full-clone-slice-2-managed-databases.md) — capture freezes one data point; databases restore through point-in-time restore; publication requires restore proofs; compensation deletes the copies
 - [ADR-20261024123122: Full environment clones, slice 1 — data-less clones end to end](20261024123122-full-clone-slice-1-dataless.md) — admission counts only tables the source uses; empty work catalogues publish; failed data-less clones compensate
 - [ADR-20261023091049: Full environment clones, slice 0 — a measurable gap and a dormant switch](20261023091049-full-clone-slice-0.md)
 - [ADR-20261024085817: A compute rollout never strands a node on a runtime base it cannot boot, and its drain finishes](20261024085817-rollout-base-generation-and-drain-completion.md) — proposed; a changed base generation pre-stages behind the drain barrier, the rescue never re-activates a node whose cache moved, a drain withdraws, drains and stops what it cannot hand off (2026-10-22 fsn-3)

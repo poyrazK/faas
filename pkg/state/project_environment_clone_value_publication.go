@@ -3,6 +3,7 @@ package state
 import (
 	"encoding/hex"
 	"fmt"
+	"time"
 )
 
 // Fresh managed credentials need a proof of their independent resource and
@@ -12,6 +13,15 @@ var ErrProjectEnvironmentCloneManagedValueProof = fmt.Errorf("managed credential
 type projectCloneManagedValuePreparations struct {
 	Postgres map[string]ProjectEnvironmentClonePostgresBindingPreparation
 	Objects  map[string]ProjectEnvironmentCloneObjectCredentialPreparation
+	// Restored holds, by target database ID, each database this clone
+	// restored that carries a matching provider restore proof. A store that
+	// cannot read those proofs leaves it nil and publishes no database.
+	Restored map[string]projectCloneRestoredDatabase
+}
+
+type projectCloneRestoredDatabase struct {
+	SourceID string
+	Point    time.Time
 }
 
 func validateCloneValuePublication(op ProjectEnvironmentCloneOperation, resources []ProjectEnvironmentCloneResource, records []projectCloneWorkloadRecord, targets map[string]projectCloneWorkloadValues, preparations projectCloneManagedValuePreparations) error {
@@ -49,12 +59,44 @@ func validateCloneValuePublication(op ProjectEnvironmentCloneOperation, resource
 		}
 		// Standalone buckets are part of the capture even without managed
 		// application secrets. A workload/value proof cannot prove their copy.
-		if definitions := record.snapshot.Bindings; definitions != nil && (len(definitions.Postgres) > 0 || len(definitions.Buckets) > 0) {
+		definitions := record.snapshot.Bindings
+		if definitions != nil && len(definitions.Buckets) > 0 {
 			resourceProofWorkload = record.WorkloadSlug
+		}
+		if definitions != nil && len(definitions.Postgres) > 0 {
+			if err := validateCloneDatabasePublication(resources, record, preparations); err != nil {
+				return err
+			}
 		}
 	}
 	if resourceProofWorkload != "" {
 		return fmt.Errorf("clone workload %q: %w", resourceProofWorkload, ErrProjectEnvironmentCloneResourcePublicationProof)
+	}
+	return nil
+}
+
+// validateCloneDatabasePublication proves each managed database a workload
+// binds was copied for the stage (ADR-20261024224230). The clone's resource
+// for that source names a ready target with a provider restore proof from the
+// same source at the captured point, and the workload's prepared target
+// binding uses that target, never the source.
+func validateCloneDatabasePublication(resources []ProjectEnvironmentCloneResource, record projectCloneWorkloadRecord, preparations projectCloneManagedValuePreparations) error {
+	targets := map[string]ProjectEnvironmentCloneResource{}
+	for _, resource := range resources {
+		if resource.Kind == "managed_postgres" {
+			targets[resource.SourceID] = resource
+		}
+	}
+	for _, binding := range record.snapshot.Bindings.Postgres {
+		resource, ok := targets[binding.DatabaseID]
+		point, err := time.Parse(time.RFC3339Nano, resource.CapturePoint)
+		restored, proven := preparations.Restored[resource.TargetID]
+		prepared, preparedOK := preparations.Postgres[binding.ID]
+		if !ok || err != nil || resource.Status != "ready" || resource.TargetID == "" || resource.TargetID == binding.DatabaseID ||
+			!proven || restored.SourceID != binding.DatabaseID || !restored.Point.Equal(point) ||
+			!preparedOK || prepared.Binding.DatabaseID != resource.TargetID {
+			return fmt.Errorf("clone workload %q database %q lacks a restore proof: %w", record.WorkloadSlug, binding.DatabaseID, ErrProjectEnvironmentCloneResourcePublicationProof)
+		}
 	}
 	return nil
 }

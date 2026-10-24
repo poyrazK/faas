@@ -6502,6 +6502,53 @@ WITH routes AS (
 DELETE FROM project_environment_edge_policies
 WHERE project_id = sqlc.arg(project_id)::uuid AND environment_slug = sqlc.arg(environment)::text;
 
+-- name: ReadProjectEnvironmentCloneClock :one
+SELECT clock_timestamp()::timestamptz AS now;
+
+-- name: ReadProjectEnvironmentCloneRestoredDatabases :many
+-- Each ready target database this clone restored, with a provider restore
+-- proof that still matches the row (the same checks as
+-- ReadManagedPostgresCloneRestoreProof).
+SELECT d.id::text AS database_id, p.source_database_id::text AS source_database_id, p.point_in_time
+FROM managed_postgres_databases d
+JOIN managed_postgres_restore_proofs p ON p.database_id = d.id
+WHERE d.environment_clone_operation_id = sqlc.arg(operation_id)::uuid AND d.account_id = sqlc.arg(account_id)::uuid
+    AND d.clone_resource_role = 'target' AND d.state = 'ready' AND d.deleted_at IS NULL AND d.lease_token IS NULL
+    AND p.account_id = d.account_id AND p.operation_id = d.environment_clone_operation_id
+    AND p.backend_id = d.backend_id AND p.backend_fingerprint = d.backend_fingerprint
+    AND p.provider_resource_id = d.provider_resource_id AND p.data_resource_id = d.data_resource_id
+    AND p.source_database_id = d.restore_source_database_id AND p.source_resource_id = d.restore_source_resource_id
+    AND p.point_in_time = d.restore_point_in_time
+    AND p.generation = d.desired_generation AND p.generation = d.observed_generation
+    AND p.spec = jsonb_build_object('Region',d.region,'PostgresMajor',d.postgres_major,
+        'Class',d.service_class,'Availability',d.availability,'ScaleToZero',d.scale_to_zero,
+        'StorageLimitBytes',d.storage_limit_bytes,'RestoreWindowSeconds',d.restore_window_seconds)
+ORDER BY d.id
+FOR SHARE OF d, p;
+
+-- name: ReadProjectEnvironmentCloneLiveTargetDatabases :many
+SELECT id::text AS database_id FROM managed_postgres_databases
+WHERE environment_clone_operation_id = sqlc.arg(operation_id)::uuid AND account_id = sqlc.arg(account_id)::uuid
+    AND clone_resource_role = 'target' AND state <> 'deleted'
+ORDER BY id;
+
+-- name: WithdrawProjectEnvironmentCloneTargetBindingSecrets :exec
+-- Compensation withdraws the target bindings a clone prepared. Their provider
+-- credentials live in the clone's own target database, which is deleted next.
+DELETE FROM app_secrets s
+USING project_environment_clone_postgres_bindings c
+WHERE c.operation_id = sqlc.arg(operation_id)::uuid AND s.managed_postgres_binding_id = c.target_binding_id
+    AND s.scope = sqlc.arg(environment)::text;
+
+-- name: WithdrawProjectEnvironmentCloneTargetBindings :exec
+UPDATE managed_postgres_bindings b SET state = 'deleted', last_error_code = NULL, lease_token = NULL, lease_until = NULL,
+    rotation_previous_generation = NULL, rotation_wake_id = NULL, rotation_cleanup_ready = false,
+    attempt_count = 0, retry_at = clock_timestamp(), updated_at = clock_timestamp(), deleted_at = clock_timestamp()
+FROM project_environment_clone_postgres_bindings c
+WHERE c.operation_id = sqlc.arg(operation_id)::uuid AND b.id = c.target_binding_id
+    AND b.scope = sqlc.arg(environment)::text AND b.state <> 'deleted'
+    AND NOT EXISTS (SELECT 1 FROM app_secrets s WHERE s.managed_postgres_binding_id = b.id);
+
 -- name: ReadProjectEnvironmentCloneProjectSlug :one
 SELECT slug FROM projects WHERE id = sqlc.arg(project_id)::uuid AND account_id = sqlc.arg(account_id)::uuid;
 

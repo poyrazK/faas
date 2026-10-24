@@ -132,6 +132,12 @@ func cloneCoordinatorErrorCode(err error) string {
 		return "target_deployment_failed"
 	case errors.Is(err, state.ErrProjectEnvironmentCloneTargetsDraining):
 		return "clone_targets_draining"
+	case errors.Is(err, errCloneTargetDatabaseFailed):
+		return "target_database_failed"
+	case errors.Is(err, state.ErrProjectEnvironmentCloneTargetDatabasesRemaining):
+		return "clone_target_databases_deleting"
+	case errors.Is(err, state.ErrProjectEnvironmentCloneSourceChanged):
+		return "source_changed_during_capture"
 	case errors.Is(err, state.ErrConflict), errors.Is(err, state.ErrInvalidArgument):
 		return "clone_fence_rejected"
 	default:
@@ -147,13 +153,30 @@ func (s *server) processProjectEnvironmentCloneLease(ctx context.Context, store 
 	lease = renewed
 	switch lease.Operation.Status {
 	case state.CloneOperationPending, state.CloneOperationCapturing:
+		if code := directCloneFailure(lease.Operation, nil, time.Now()); code != "" {
+			return failDirectProjectEnvironmentClone(ctx, store, lease, code)
+		}
 		lease, err = captureProjectEnvironmentClone(ctx, store, lease)
+		if code := directCloneFailure(lease.Operation, err, time.Now()); err != nil && code != "" {
+			return failDirectProjectEnvironmentClone(ctx, store, lease, code)
+		}
 		if err != nil {
 			return lease, err
+		}
+		// Databases are restored at their data point only once the provider
+		// has passed it; a later pass copies them.
+		if state.ProjectEnvironmentCloneHasManagedDatabases(lease.Operation) {
+			return lease, nil
 		}
 	case state.CloneOperationCompensating:
 		if cloneCoordinatorHasCommonCheckpoint(lease.Operation) {
 			return s.completeProjectEnvironmentCloneCompensation(ctx, lease)
+		}
+		// A clone that recorded no database or bucket holds no fence, snapshot,
+		// copy target or restore; the capture may have failed before its data
+		// point. Removing its target is all that is left.
+		if state.ProjectEnvironmentCloneIsDirectlyCompensable(lease.Operation) && !state.ProjectEnvironmentCloneHasManagedDatabases(lease.Operation) {
+			return s.compensateDirectProjectEnvironmentClone(ctx, lease)
 		}
 		lease, err = s.abandonProjectEnvironmentCloneConfigurationFence(ctx, lease)
 		if err != nil {
@@ -187,13 +210,13 @@ func (s *server) processProjectEnvironmentCloneLease(ctx context.Context, store 
 		if err != nil {
 			return lease, err
 		}
-		if state.ProjectEnvironmentCloneIsDataless(lease.Operation) {
-			return s.compensateDatalessProjectEnvironmentClone(ctx, lease)
+		if state.ProjectEnvironmentCloneIsDirectlyCompensable(lease.Operation) {
+			return s.compensateDirectProjectEnvironmentClone(ctx, lease)
 		}
 		return lease, errCloneCompensationUnavailable
 	case state.CloneOperationCopying, state.CloneOperationPublishing:
-		if code := datalessCloneFailure(lease.Operation, nil, time.Now()); code != "" {
-			return failDatalessProjectEnvironmentClone(ctx, store, lease, code)
+		if code := directCloneFailure(lease.Operation, nil, time.Now()); code != "" {
+			return failDirectProjectEnvironmentClone(ctx, store, lease, code)
 		}
 	default:
 		return lease, state.ErrConflict
@@ -214,8 +237,8 @@ func (s *server) processProjectEnvironmentCloneLease(ctx context.Context, store 
 			return lease, fmt.Errorf("validate clone data inventory: %w", err)
 		}
 		lease, err = s.copyProjectEnvironmentClone(ctx, store, lease)
-		if code := datalessCloneFailure(lease.Operation, err, time.Now()); err != nil && code != "" {
-			return failDatalessProjectEnvironmentClone(ctx, store, lease, code)
+		if code := directCloneFailure(lease.Operation, err, time.Now()); err != nil && code != "" {
+			return failDirectProjectEnvironmentClone(ctx, store, lease, code)
 		}
 		if err != nil || lease.Operation.Status != state.CloneOperationPublishing {
 			return lease, err

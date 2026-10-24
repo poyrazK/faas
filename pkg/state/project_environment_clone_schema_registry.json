@@ -9449,8 +9449,7 @@
       "materialize"
     ],
     "clone": {
-      "owner": "app",
-      "unavailable": "data_checkpoint_unavailable"
+      "owner": "app"
     }
   },
   {

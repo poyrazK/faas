@@ -2,14 +2,17 @@ package apidserver
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Captures without PostgreSQL or bucket data use the typed state capture as
-// their immutable source. Captures with those datasets must first secure a
-// coordinated checkpoint and are deferred before any mutation.
+// Captures use the typed state capture as their immutable source. Managed
+// databases are copied at one frozen data point (ADR-20261024224230); bucket
+// data still needs a coordinated checkpoint and is deferred before any
+// mutation.
 func captureProjectEnvironmentClone(ctx context.Context, store projectEnvironmentCloneCoordinatorStore, lease state.ProjectEnvironmentCloneLease) (state.ProjectEnvironmentCloneLease, error) {
 	op := lease.Operation
 	if op.Status != state.CloneOperationPending && op.Status != state.CloneOperationCapturing {
@@ -35,28 +38,76 @@ func captureProjectEnvironmentClone(ctx context.Context, store projectEnvironmen
 	if err != nil {
 		return lease, err
 	}
-	if len(databases) != 0 || len(objects) != 0 {
+	if len(objects) != 0 {
 		return lease, errCloneCheckpointUnavailable
 	}
 	resources, err := capturedCloneConfigurationResources(op, capture, views)
 	if err != nil {
 		return lease, err
 	}
-	if len(op.Resources) != 0 && !cloneCoordinatorResourcesEqual(op.Resources, resources) {
-		return lease, state.ErrConflict
-	}
+	configured := len(resources)
 	if op.Status == state.CloneOperationPending {
+		if len(op.Resources) != 0 && !cloneCoordinatorResourcesEqual(op.Resources, resources) {
+			return lease, state.ErrConflict
+		}
 		updated, err := store.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCapturing, op.Revision, resources, "")
 		if err != nil {
 			return lease, err
 		}
 		lease.Operation, op = updated, updated
 	}
+	if len(databases) != 0 {
+		point, err := captureCloneDataPoint(ctx, store, lease)
+		if err != nil {
+			return lease, err
+		}
+		captured, err := capturedProjectEnvironmentDatabaseResources(databases, point)
+		if err != nil {
+			return lease, err
+		}
+		resources = append(resources, captured...)
+	}
+	if !cloneCoordinatorResourcesEqual(op.Resources, resources) && !cloneCoordinatorResourcesEqual(op.Resources, resources[:configured]) {
+		return lease, state.ErrConflict
+	}
 	updated, err := store.AdvanceProjectEnvironmentCloneOperation(ctx, op.AccountID, op.ProjectID, op.ID, op.Status, state.CloneOperationCopying, op.Revision, resources, "")
 	if err == nil {
 		lease.Operation = updated
 	}
 	return lease, err
+}
+
+// captureCloneDataPoint freezes the instant the clone restores its managed
+// databases at (ADR-20261024224230): a point recorded by an earlier attempt,
+// or the control-plane clock now. A new point is kept only when the live
+// source still matches the frozen capture after it, so the data and the
+// captured workloads belong to one source revision. No writer barrier is
+// taken: each database is restored as it was at that instant, as a
+// point-in-time restore would give.
+func captureCloneDataPoint(ctx context.Context, store projectEnvironmentCloneCoordinatorStore, lease state.ProjectEnvironmentCloneLease) (time.Time, error) {
+	for _, resource := range lease.Operation.Resources {
+		if resource.Kind != "managed_postgres" {
+			continue
+		}
+		point, err := time.Parse(time.RFC3339Nano, resource.CapturePoint)
+		if err != nil {
+			return time.Time{}, state.ErrConflict
+		}
+		return point.UTC(), nil
+	}
+	clock, ok := store.(state.ProjectEnvironmentCloneDataPointStore)
+	validation, validationOK := store.(state.ProjectEnvironmentCloneConfigurationValidationStore)
+	if !ok || !validationOK {
+		return time.Time{}, errCloneCheckpointUnavailable
+	}
+	point, err := clock.ProjectEnvironmentCloneDataPointForLease(ctx, lease)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("read clone data point: %w", err)
+	}
+	if _, err := validation.ValidateProjectEnvironmentCloneSourceConfigurationForLease(ctx, lease); err != nil {
+		return time.Time{}, fmt.Errorf("revalidate clone source after its data point: %w", err)
+	}
+	return point, nil
 }
 
 func capturedCloneConfigurationResources(op state.ProjectEnvironmentCloneOperation, capture state.ProjectEnvironmentCloneConfigurationCapture, views []state.ProjectEnvironmentCloneWorkload) ([]state.ProjectEnvironmentCloneResource, error) {

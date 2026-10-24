@@ -57,6 +57,7 @@ type cloneCoordinatorFixture struct {
 	database *cloneDatabaseDeadlineProvider
 	objects  *capturedObjectWorkerProvider
 	apps     []state.App
+	postgres *managedpostgres.Service
 	account  state.Account
 	project  state.Project
 	point    time.Time
@@ -64,7 +65,7 @@ type cloneCoordinatorFixture struct {
 
 func newCloneCoordinatorFixture(t *testing.T, withData bool) cloneCoordinatorFixture {
 	t.Helper()
-	f := newCloneSourceFixture(t, withData, true)
+	f := newCloneSourceFixture(t, cloneSourceData{postgres: withData, objects: withData}, true)
 	ctx, srv, store, account, project, point := t.Context(), f.srv, f.store, f.account, f.project, f.point
 	op, err := store.CreateCapturedProjectEnvironmentCloneOperation(ctx, state.ProjectEnvironmentCloneCaptureRequest{AccountID: account.ID, ProjectID: project.ID,
 		SourceEnvironment: "production", TargetEnvironment: "stage", IdempotencyKey: "coordinator"})
@@ -125,9 +126,14 @@ func newCloneCoordinatorFixture(t *testing.T, withData bool) cloneCoordinatorFix
 	return f
 }
 
+// cloneSourceData selects the managed data a clone source fixture binds: a
+// point-in-time-restorable database bound to every workload, and a bucket
+// bound to the first.
+type cloneSourceData struct{ postgres, objects bool }
+
 // newCloneSourceFixture builds a project with two live production workloads,
 // and optionally managed data, without creating a clone operation.
-func newCloneSourceFixture(t *testing.T, withData, fences bool) cloneCoordinatorFixture {
+func newCloneSourceFixture(t *testing.T, data cloneSourceData, fences bool) cloneCoordinatorFixture {
 	t.Helper()
 	ctx := t.Context()
 	_, cleanup := withTestIdentities(t)
@@ -178,7 +184,7 @@ func newCloneSourceFixture(t *testing.T, withData, fences bool) cloneCoordinator
 			t.Fatal(err)
 		}
 	}
-	if withData {
+	if data.postgres {
 		f.database = &cloneDatabaseDeadlineProvider{}
 		registry, err := managedpostgres.NewRegistry(managedpostgres.Config{DefaultRegion: "eu", Defaults: map[string]string{"eu": "test"}, MaxDatabasesPerAccount: 3,
 			Backends: []managedpostgres.BackendConfig{{ID: "test", Driver: "test", Region: "eu", Namespace: "coordinator"}}}, func(string) string { return "" },
@@ -215,6 +221,9 @@ func newCloneSourceFixture(t *testing.T, withData, fences bool) cloneCoordinator
 				t.Fatal(err)
 			}
 		}
+		f.postgres = service
+	}
+	if data.objects {
 		f.objects = &capturedObjectWorkerProvider{environmentSnapshotProvider: &environmentSnapshotProvider{
 			versions: []objectstorage.ObjectVersion{{Key: "data.json", VersionID: "v1", Size: 3, LastModified: point.Add(-time.Second)}, {Key: "data.json", VersionID: "v2", Size: 3, LastModified: point.Add(time.Second)}},
 			bodies:   map[string]string{"v1": "old", "v2": "new"}}}

@@ -195,6 +195,9 @@ type server struct {
 	liveRollout                   livequeries.Rollout
 	clonePostgresContentsReadPool *copycontents.ReadPool
 	cloneWorkerAdmission          func(context.Context) error
+	// cloneDataPointSettle is how old a clone's data point must be before its
+	// managed databases are restored (ADR-20261024224230).
+	cloneDataPointSettle time.Duration
 	// Installed only by private wiring for an independently qualified owner.
 	cloneWorkloadRetirementDriver    cloneCheckpointWorkloadRetirementDriver
 	managedPostgresReconciler        *managedpostgres.Reconciler
@@ -1371,6 +1374,7 @@ func newServerWithDeps(
 		mailer:                 mailer,
 		githubd:                githubd,
 		githubDeploysAvailable: func(context.Context) bool { return false },
+		cloneDataPointSettle:   projectEnvironmentCloneDataPointSettle,
 		events:                 bcaster,
 		bindingKeyFn:           func() []byte { return sessions.BindingKey() },
 		sessions:               sessions,
