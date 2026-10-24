@@ -263,6 +263,9 @@ net.createServer((socket) => {
 }).listen(port, '0.0.0.0', () => console.log('node fixture TCP listening on :' + port));
 `
 	files := map[string]string{
+		// Multipart deploys take no request overrides (ADR-053); a source
+		// tree declares its port in gregale.yaml.
+		"gregale.yaml":     "hosting:\n  port: 5432\n",
 		"package.json":     pkgJSON,
 		"index.js":         indexJS,
 		".faas-fixture":    "node22\n",
