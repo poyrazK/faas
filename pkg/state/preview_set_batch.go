@@ -33,6 +33,83 @@ var (
 	_ PRPreviewSetBatchStore = (*MemStore)(nil)
 )
 
+// PreviewTombstoneStore frees a preview slug that a deleted row of the same
+// preview still holds. Teardown soft-deletes a preview, and the tombstone
+// keeps its globally unique slug for the seven-day restore window, so a push
+// to an expired PR's branch, or a PR reopened after its close grace, could
+// not re-create its preview at the same pr-<n>-<slug> host until the purge.
+type PreviewTombstoneStore interface {
+	ReleaseDeletedPreviewSlug(ctx context.Context, desired App) (bool, error)
+}
+
+var (
+	_ PreviewTombstoneStore = (*PgStore)(nil)
+	_ PreviewTombstoneStore = (*MemStore)(nil)
+)
+
+// releasesPreviewTombstone reports whether existing is a deleted row of the
+// preview desired re-creates: same account, organization, project, parent and
+// pull request. Any other holder keeps the slug.
+func releasesPreviewTombstone(existing, desired App) bool {
+	return existing.Status == AppDeleted && existing.PreviewOfSlug != "" && samePRPreview(existing, desired)
+}
+
+// previewTombstoneSlug is the ID-derived slug a released tombstone moves to,
+// the one retired PR set members already use.
+func previewTombstoneSlug(id string) string {
+	return "retired-pr-" + strings.ReplaceAll(id, "-", "")
+}
+
+func releasePreviewTombstoneTx(ctx context.Context, tx pgx.Tx, id string) error {
+	tag, err := tx.Exec(ctx, `update apps set slug = 'retired-pr-' || replace(id::text, '-', '')
+		where id = $1 and status = 'deleted'`, id)
+	if err != nil {
+		return fmt.Errorf("state: release deleted preview slug: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PgStore) ReleaseDeletedPreviewSlug(ctx context.Context, desired App) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("state: begin preview slug release: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	existing, err := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where slug = $1 for update`, desired.Slug))
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !releasesPreviewTombstone(existing, desired) {
+		return false, nil
+	}
+	if err := releasePreviewTombstoneTx(ctx, tx, existing.ID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("state: commit preview slug release: %w", err)
+	}
+	return true, nil
+}
+
+func (m *MemStore) ReleaseDeletedPreviewSlug(_ context.Context, desired App) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, existing := range m.apps {
+		if existing.Slug == desired.Slug && releasesPreviewTombstone(existing, desired) {
+			existing.Slug = previewTombstoneSlug(id)
+			m.apps[id] = existing
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func validatePRPreviewHead(head PRPreviewHead, apps []App) error {
 	if err := validatePRPreviewBatch(apps); err != nil {
 		return err
@@ -102,7 +179,13 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 		// A deleted row still owns its globally unique slug. Detect it before
 		// INSERT; a uniqueness error would abort the whole PostgreSQL transaction.
 		app, lookupErr := scanApp(tx.QueryRow(ctx,
-			`select `+appsSelectColumns+` from apps where slug = $1`, desired.Slug))
+			`select `+appsSelectColumns+` from apps where slug = $1 for update`, desired.Slug))
+		if lookupErr == nil && releasesPreviewTombstone(app, desired) {
+			if err := releasePreviewTombstoneTx(ctx, tx, app.ID); err != nil {
+				return nil, err
+			}
+			lookupErr = ErrNotFound
+		}
 		switch {
 		case lookupErr == nil:
 			if app.Status == AppDeleted || !samePRPreview(app, desired) ||
@@ -320,8 +403,14 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 	for _, desired := range apps {
 		var row App
 		found := false
-		for _, existing := range m.apps {
+		for id, existing := range m.apps {
 			if existing.Slug != desired.Slug {
+				continue
+			}
+			if releasesPreviewTombstone(existing, desired) {
+				original[id] = existing
+				existing.Slug = previewTombstoneSlug(id)
+				m.apps[id] = existing
 				continue
 			}
 			if existing.Status == AppDeleted || !samePRPreview(existing, desired) ||
