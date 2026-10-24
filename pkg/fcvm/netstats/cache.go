@@ -11,9 +11,9 @@
 // root-side `vethHost` this is **RX**. Reading vethHost.tx_bytes
 // would count gateway → guest (ingress), not customer egress. The
 // kernel-counter file is
-// `/sys/class/net/<vethHost>/statistics/rx_bytes` and it is the
-// same counter the per-plan `tc tbf` qdisc reads, so the cap and
-// the meter are consistent.
+// `/sys/class/net/<vethHost>/statistics/rx_bytes`. The per-plan
+// `tc tbf` qdisc on vethPeer shapes these same packets, so the cap
+// and the meter cover the same traffic.
 //
 // # Design
 //
