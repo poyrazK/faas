@@ -643,6 +643,11 @@ from .edge_rule_validate_parameters_path import EdgeRuleValidateParametersPath
 from .edge_rule_validate_parameters_query import EdgeRuleValidateParametersQuery
 from .edge_rule_waf_action import EdgeRuleWAFAction
 from .edge_rule_waf_action_mode import EdgeRuleWAFActionMode
+from .edge_waf_exclusions_request import EdgeWAFExclusionsRequest
+from .edge_waf_review_group import EdgeWAFReviewGroup
+from .edge_waf_review_group_assessment import EdgeWAFReviewGroupAssessment
+from .edge_waf_review_group_rule_mode import EdgeWAFReviewGroupRuleMode
+from .edge_waf_review_response import EdgeWAFReviewResponse
 from .enable_alert_preset_request import EnableAlertPresetRequest
 from .enable_alert_preset_request_action import EnableAlertPresetRequestAction
 from .enable_edge_attack_mode_request import EnableEdgeAttackModeRequest
@@ -3079,6 +3084,11 @@ __all__ = (
     "EdgeRuleValidateParametersQuery",
     "EdgeRuleWAFAction",
     "EdgeRuleWAFActionMode",
+    "EdgeWAFExclusionsRequest",
+    "EdgeWAFReviewGroup",
+    "EdgeWAFReviewGroupAssessment",
+    "EdgeWAFReviewGroupRuleMode",
+    "EdgeWAFReviewResponse",
     "EnableAlertPresetRequest",
     "EnableAlertPresetRequestAction",
     "EnableEdgeAttackModeRequest",
