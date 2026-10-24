@@ -204,7 +204,7 @@ func (s *PgStore) DrainingDatabaseSwitches(ctx context.Context, limit int) ([]Da
 }
 
 func (s *PgStore) ReleasesUndoneByDatabaseSwitches(ctx context.Context, appID, scope string) ([]string, error) {
-	if _, err := uuid.Parse(appID); err != nil {
+	if !qualificationRecoveryUUIDValid(appID) {
 		return nil, nil
 	}
 	ids, err := sqlc.New().ListReleasesUndoneByDatabaseSwitches(ctx, s.pool, sqlc.ListReleasesUndoneByDatabaseSwitchesParams{
