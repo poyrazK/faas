@@ -360,7 +360,7 @@
       "description": "Background workflows preserve plan policy and complete their lifecycle without leaking platform state.",
       "capabilities": ["workflows-and-jobs"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
-      "evidence": [{"kind": "test", "locator": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle"}]
+      "evidence": [{"kind": "test", "locator": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle"}, {"kind": "test", "locator": "cmd/e2e/workflows_execution_e2e_test.go::TestE2E_Workflows_DeclarativeStepsRunThroughTheGateway"}, {"kind": "test", "locator": "cmd/e2e/workflows_execution_e2e_test.go::TestE2E_Workflows_CodeFirstRunResumesAcrossSleepAndEvent"}]
     }
   ]
 }
