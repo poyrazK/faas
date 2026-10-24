@@ -7,6 +7,25 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP saved-plan recovery resources — 2026-10-24 (branch, not released)
+
+Three canonical JSON resource templates expose the same fixed guarded recovery
+recipes as saved-plan prompts. No private proposal/replay/approval values, fresh
+baselines, mutations or expiry renewals are introduced. Current consent and
+original plan availability remain mandatory, including after restart. Catalog:
+57 read/planning tools, 66 with writes enabled, eight prompts and eleven resource
+templates. Full MCP race tests pass. Pinned real Codex 0.159.0-alpha.3 reads
+source, worker, budget and environment-promotion recipes and follows their saved
+review calls across restart/OAuth refresh in all three read-only profiles;
+post-revocation reads expose no contents. Fixtures make zero model requests and
+native writes. SDK tests cover all URI forms/both protocols, canonical parsing,
+non-enumerating completion, passive retrieval, encrypted restart, ambiguity,
+expiry, diagnostic/whole-project consent, final guards and HTTP grant isolation.
+CLI contracts, affected-package lint, fake-store/seal-domain guards and spec/docs
+gates pass without generated drift. Native/provider qualification remains
+separate.
+See [ADR-20261024160000](adr/20261024160000-management-mcp-saved-plan-recovery-resources.md).
+
 ## Management MCP saved-plan recovery prompts — 2026-10-24 (branch, not released)
 
 Two prompts bind a read-only recovery recipe to original saved app/environment

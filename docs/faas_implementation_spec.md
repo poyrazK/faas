@@ -3118,6 +3118,21 @@ no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
 
 
+## Management MCP saved-plan recovery resources (ADR-20261024160000)
+
+Default/named app and environment-plan resource templates expose the existing
+read-only recovery recipe as bounded JSON. Strict canonical URI/selector checks
+and final saved-plan identity, consent, diagnostic, storage, presence and expiry
+guards remain mandatory. Reuse fixed prompt guidance and structured calls;
+exclude saved prose, native/private configuration/approval material and replay
+keys. Availability does not check freshness or native completion, and reads do
+not plan, mutate, poll approval, persist or renew expiry. Cached recipes grant no
+authority. Completion never enumerates plan IDs; recipes have no subscriptions.
+Catalog: 57 read/planning tools, 66 with writes enabled, eight prompts and eleven
+resource templates. Pinned Codex uses resource-read for recipe retrieval and
+existing tools for subsequent guarded reads. See
+[ADR-20261024160000](adr/20261024160000-management-mcp-saved-plan-recovery-resources.md).
+
 ## Management MCP saved-plan recovery prompts (ADR-20261024140000)
 
 `gregale_saved_plan_review` and `gregale_environment_plan_review` return fixed

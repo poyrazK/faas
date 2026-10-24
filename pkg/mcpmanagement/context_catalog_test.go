@@ -1,5 +1,6 @@
 // adr: 1618
 // adr: 20261024140000
+// adr: 20261024160000
 package mcpmanagement
 
 import (
@@ -17,7 +18,7 @@ func TestContextCatalogReadOnlyResourcesAndPrompts(t *testing.T) {
 		t.Fatalf("resources=%+v %v", resources, err)
 	}
 	templates, err := cs.ListResourceTemplates(ctx, nil)
-	if err != nil || len(templates.ResourceTemplates) != 8 {
+	if err != nil || len(templates.ResourceTemplates) != 11 {
 		t.Fatalf("templates=%+v %v", templates, err)
 	}
 	prompts, err := cs.ListPrompts(ctx, nil)

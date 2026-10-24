@@ -133,6 +133,9 @@ func completionFields(ref *mcp.CompleteReference) (map[string]bool, error) {
 		return fields, nil
 	}
 	if ref != nil && ref.Type == "ref/resource" {
+		if fields := savedPlanResourceCompletionFields(ref.URI); fields != nil {
+			return fields, nil
+		}
 		if ref.URI == regressionResourceTemplate {
 			return map[string]bool{"app": true}, nil
 		}

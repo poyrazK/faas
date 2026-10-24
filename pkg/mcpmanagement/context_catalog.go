@@ -13,6 +13,7 @@ import (
 
 func registerContextCatalog(s *mcp.Server, m *management) {
 	registerSavedPlanPrompts(s, m)
+	registerSavedPlanResources(s, m)
 	for _, r := range []*mcp.Resource{
 		{URI: "gregale://context", Name: "gregale_connection", Description: "Consented connection metadata; no credentials.", MIMEType: "application/json"},
 		{URI: "gregale://default/inventory", Name: "gregale_default_inventory", Description: "Bounded default-scope app inventory; requires default read consent.", MIMEType: "application/json"},

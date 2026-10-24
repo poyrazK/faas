@@ -1658,6 +1658,32 @@ prompt retrieval is covered by native MCP SDK clients on both supported protocol
 while Codex acceptance verifies tool/resource compatibility. See
 [ADR-20261024140000](adr/20261024140000-management-mcp-saved-plan-recovery-prompts.md).
 
+The same recovery recipe is available as a JSON resource, including to the
+pinned Codex app-server through `mcpServer/resource/read`:
+
+- `gregale://default/apps/{app}/plans/{plan_id}/review`
+- `gregale://projects/{project}/environments/{environment}/apps/{app}/plans/{plan_id}/review`
+- `gregale://projects/{project}/environments/{environment}/plans/{plan_id}/review`
+
+Fill the exact original plan ID and target selectors from consented history.
+Use canonical URIs without credentials, query/fragment suffixes or encoded path
+segments. Reads require an original unexpired plan in this connection, current
+read/diagnostic consent and immutable identities; environment plans require both
+original environments and every current project workload. Other grants cannot
+use a known URI to inherit a recipe.
+
+Resources return `review_kind: saved_plan_recovery_recipe`, `freshness:
+not_checked`, `native_completion: not_observed`, fixed `guidance` and a
+`workflow` containing the same history/review/check calls as the prompts. No saved
+proposal prose, configuration values, approval material or retry keys are included.
+Retrieval does not fetch fresh baselines, receipts or native completion, create
+plans, perform writes, poll approval or renew expiry. Cached recipes grant no
+authority: reread after reconnecting and use the existing guarded tools. Recipes
+are snapshots and do not support subscriptions; plan-ID completion never enumerates
+IDs. Catalog now has eleven resource templates, with 57 read/planning tools,
+66 with writes enabled and eight prompts. See
+[ADR-20261024160000](adr/20261024160000-management-mcp-saved-plan-recovery-resources.md).
+
 For a lost apply response:
 
 1. Read `gregale_list_actions` with `{"app":"demo","limit":20}`.

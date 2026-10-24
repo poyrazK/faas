@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261024160000: Management MCP saved-plan recovery resources](20261024160000-management-mcp-saved-plan-recovery-resources.md)
 - [ADR-20261024140000: Management MCP saved-plan recovery prompts](20261024140000-management-mcp-saved-plan-recovery-prompts.md)
 - [ADR-20261024123000: Management MCP plan drift details](20261024123000-management-mcp-plan-drift-details.md)
 - [ADR-20261024120000: Management MCP advisory plan applicability](20261024120000-management-mcp-plan-applicability.md)
