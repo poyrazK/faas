@@ -6464,6 +6464,16 @@ SELECT EXISTS(SELECT 1 FROM project_environments
               WHERE project_id = sqlc.arg(project_id)::uuid
                 AND slug = sqlc.arg(target_environment)::text)::boolean AS target_exists;
 
+-- name: ReadProjectEnvironmentCloneInventoryPresent :many
+SELECT present::text AS table_name
+FROM project_environment_clone_inventory_present(
+    sqlc.arg(project_id)::uuid, sqlc.arg(environment_id)::uuid, sqlc.arg(environment_slugs)::text[],
+    sqlc.arg(app_ids)::uuid[], sqlc.arg(deployment_ids)::uuid[], sqlc.arg(probes)::jsonb) AS present;
+
+-- name: ReadProjectEnvironmentCloneSourceEnvironmentID :one
+SELECT id FROM project_environments
+WHERE project_id = sqlc.arg(project_id)::uuid AND slug = sqlc.arg(slug)::text;
+
 -- name: LockProjectEnvironmentCloneTargetReservation :one
 SELECT id::text, revision, status, source_environment,
        (lease_token IS NULL OR lease_until > clock_timestamp())::boolean AS lease_live

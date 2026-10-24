@@ -110,7 +110,11 @@
       "policy_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "financial_budget_evaluations",
@@ -461,7 +465,17 @@
       "rule_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "rule_id",
+          "alert_rules",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "alert_rules",
@@ -497,7 +511,10 @@
       "window_spec"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_consumer_billing_policies",
@@ -509,7 +526,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_consumer_credit_applications",
@@ -588,7 +608,10 @@
       "plan_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_consumer_plans",
@@ -604,7 +627,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_consumer_rate_cards",
@@ -627,7 +653,10 @@
       "unit"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_consumer_route_usage_minutes",
@@ -693,7 +722,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_consumer_signups",
@@ -825,7 +857,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "api_keys",
@@ -889,7 +924,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "strategy": "shared"
+    }
   },
   {
     "table": "app_binding_promotion_revisions",
@@ -916,7 +955,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_binding_release_policy_history",
@@ -928,7 +970,10 @@
       "scope"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_config_guard_secrets",
@@ -1012,7 +1057,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "strategy": "target_identity"
+    }
   },
   {
     "table": "app_egress_policy_node_status",
@@ -1041,7 +1090,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "app_environment_secret_ref_suppressions",
@@ -1057,7 +1110,11 @@
     "kind": "configuration",
     "capabilities": [
       "materialize"
-    ]
+    ],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "app_environment_secret_refs",
@@ -1074,7 +1131,11 @@
     "kind": "configuration",
     "capabilities": [
       "materialize"
-    ]
+    ],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "app_environment_workload_intents",
@@ -1093,7 +1154,11 @@
       "variables"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "app_envs",
@@ -1114,7 +1179,10 @@
       "diff",
       "promote",
       "rollback"
-    ]
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_error_requests",
@@ -1260,7 +1328,10 @@
       "rules"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_issue_frequency_alert_policies",
@@ -1270,7 +1341,10 @@
       "rules"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_issue_impact_alert_policies",
@@ -1280,7 +1354,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_issue_lifecycle_alert_policies",
@@ -1291,7 +1368,10 @@
       "revision"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_issue_ownership_rules",
@@ -1307,7 +1387,10 @@
       "tag_filter"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_issue_saved_views",
@@ -1428,7 +1511,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_mcp_readiness_policies",
@@ -1438,7 +1524,10 @@
       "scope"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_mcp_readiness_policy_history",
@@ -1450,7 +1539,10 @@
       "scope"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_mcp_task_compatibility",
@@ -1477,7 +1569,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_park_transitions",
@@ -1521,7 +1616,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_registry_credentials",
@@ -1537,7 +1635,10 @@
       "username"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_release_gates",
@@ -1559,7 +1660,10 @@
       "threshold"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_route_priorities",
@@ -1570,7 +1674,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_route_removal_policies",
@@ -1586,7 +1693,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_runtime_config_changes",
@@ -1725,7 +1835,10 @@
       "materialize",
       "diff",
       "qualify"
-    ]
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_service_address_cursors",
@@ -1744,7 +1857,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_slo_hourly",
@@ -1771,7 +1887,10 @@
       "window_days"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_task_attach_sessions",
@@ -1862,7 +1981,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_trusted_signers",
@@ -1875,7 +1997,10 @@
       "signer_name"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_udp_listeners",
@@ -1892,7 +2017,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_wake_transitions",
@@ -1979,7 +2107,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "app_work_policies",
@@ -2000,7 +2131,11 @@
     "capabilities": [
       "capture",
       "materialize"
-    ]
+    ],
+    "clone": {
+      "owner": "app",
+      "unavailable": "work_activation_unavailable"
+    }
   },
   {
     "table": "application_standard_assignments",
@@ -2018,7 +2153,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "org",
+      "strategy": "shared"
+    }
   },
   {
     "table": "application_standard_control_backups",
@@ -2030,7 +2169,10 @@
       "logical_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "application_standard_control_bindings",
@@ -2041,7 +2183,10 @@
       "resource_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "application_standard_egress_observations",
@@ -2073,7 +2218,10 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "application_standard_ledger_recoveries",
@@ -2142,7 +2290,11 @@
       "target_url"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "org",
+      "strategy": "shared"
+    }
   },
   {
     "table": "application_standard_log_health",
@@ -2233,7 +2385,11 @@
       "public_key_der"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "org",
+      "strategy": "shared"
+    }
   },
   {
     "table": "application_standard_review_plans",
@@ -2285,7 +2441,11 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "org",
+      "strategy": "shared"
+    }
   },
   {
     "table": "application_standards",
@@ -2297,7 +2457,11 @@
       "slug"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "org",
+      "strategy": "shared"
+    }
   },
   {
     "table": "apps",
@@ -2396,7 +2560,14 @@
       "workload_name"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [
+      "capture",
+      "materialize"
+    ],
+    "clone": {
+      "owner": "app",
+      "column": "id"
+    }
   },
   {
     "table": "audit_event_outbox",
@@ -2832,7 +3003,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "ci_automation_branches",
@@ -2921,7 +3095,11 @@
       "push_branches"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "ci_automation_pull_requests",
@@ -2998,7 +3176,11 @@
       "templates"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "ci_executions",
@@ -3041,7 +3223,11 @@
       "revision_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "ci_github_checks",
@@ -3157,7 +3343,11 @@
       "name"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "ci_run_events",
@@ -3319,7 +3509,10 @@
       "sealed_connection"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "compute_node_heartbeat_hourly",
@@ -3423,7 +3616,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "container_host_port_leases",
@@ -3479,7 +3675,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "crash_captures",
@@ -3520,7 +3719,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "credit_ledger",
@@ -3579,7 +3781,10 @@
       "timezone"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "custom_domain_tls_hosts",
@@ -3613,7 +3818,11 @@
     "kind": "configuration",
     "capabilities": [
       "diff"
-    ]
+    ],
+    "clone": {
+      "owner": "app",
+      "strategy": "target_identity"
+    }
   },
   {
     "table": "customer_operation_approval_forms",
@@ -3693,7 +3902,10 @@
       "workflow_snapshot"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "customer_operation_delivery_retries",
@@ -3888,7 +4100,10 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "customer_operation_webhook_receipts",
@@ -4173,7 +4388,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "data_pipeline_connections",
@@ -4259,7 +4478,11 @@
       "verify_requested"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "data_repair_rehearsals",
@@ -4315,7 +4538,10 @@
       "source"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "dead_letter_events",
@@ -4379,7 +4605,7 @@
       "rotated_from_id",
       "scopes",
       "status",
-      "token_digest"
+      "token_sha256"
     ],
     "kind": "account_identity"
   },
@@ -4393,7 +4619,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "deployment_artifact_scan_current",
@@ -4592,7 +4821,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "deployment_openapi_snapshots",
@@ -4606,7 +4838,11 @@
       "snapshot"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment",
+      "strategy": "derived"
+    }
   },
   {
     "table": "deployment_project_release_workers",
@@ -4625,7 +4861,10 @@
       "urls"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "deployment_recovery_lineage",
@@ -4685,7 +4924,10 @@
     "capabilities": [
       "promote",
       "rollback"
-    ]
+    ],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "deployment_release_secret_snapshots",
@@ -4698,7 +4940,10 @@
     "capabilities": [
       "promote",
       "rollback"
-    ]
+    ],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "deployment_revision_pins",
@@ -4756,7 +5001,11 @@
       "snapshot"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment",
+      "strategy": "derived"
+    }
   },
   {
     "table": "deployment_runtime_environment_owners",
@@ -4859,7 +5108,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "deployment_sidecar_layers",
@@ -4877,7 +5129,10 @@
       "capture",
       "materialize",
       "promote"
-    ]
+    ],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "deployment_sidecar_secret_reload_signals",
@@ -5018,7 +5273,10 @@
       "diff",
       "promote",
       "rollback"
-    ]
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "dev_bridge_sessions",
@@ -5185,7 +5443,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "edge_rule_set_versions",
@@ -5199,7 +5461,10 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "edge_rules",
@@ -5227,7 +5492,10 @@
       "validate_mode"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "egress_flow_log",
@@ -5327,7 +5595,17 @@
       "source_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "project",
+      "via": [
+        [
+          "source_id",
+          "environment_git_sources",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "environment_external_field_owners",
@@ -5338,7 +5616,11 @@
       "resource"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "environment_git_revision_approvals",
@@ -5396,7 +5678,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "project"
+    }
   },
   {
     "table": "environment_gitops_effects",
@@ -5452,7 +5737,17 @@
       "source_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "binding_id",
+          "queue_bindings",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "environment_gitops_resources",
@@ -5464,7 +5759,10 @@
       "source_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "environment_gitops_runs",
@@ -5516,7 +5814,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "environment_management_overrides",
@@ -5531,7 +5833,11 @@
       "resource"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "environment_qualification_config_receipts",
@@ -5736,7 +6042,11 @@
       "source_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "environment_workload_qualification_requests",
@@ -5759,7 +6069,10 @@
       "worker_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "environment_workload_retirements",
@@ -6346,7 +6659,11 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "event_storage_admission",
@@ -6433,7 +6750,10 @@
     "kind": "configuration",
     "capabilities": [
       "capture"
-    ]
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "event_subscriptions",
@@ -6452,7 +6772,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "events",
@@ -6544,7 +6867,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "exclusive_work_submissions",
@@ -6572,7 +6899,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "execution_artifact_grants",
@@ -6703,7 +7033,11 @@
       "qualify",
       "promote",
       "rollback"
-    ]
+    ],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "financial_budget_policies",
@@ -6717,7 +7051,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "financial_budget_revisions",
@@ -6731,7 +7069,11 @@
       "spec"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "financial_evidence_coverage",
@@ -6926,7 +7268,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "project"
+    }
   },
   {
     "table": "github_deploy_policies",
@@ -6942,7 +7287,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "project"
+    }
   },
   {
     "table": "github_deployments",
@@ -7101,7 +7449,11 @@
       "state"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "hosting_oidc_trusts",
@@ -7172,7 +7524,17 @@
       "state"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "project",
+      "via": [
+        [
+          "site_id",
+          "hosting_sites",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "hosting_retention_policies",
@@ -7185,7 +7547,17 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "project",
+      "via": [
+        [
+          "site_id",
+          "hosting_sites",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "hosting_route_publications",
@@ -7220,7 +7592,10 @@
       "suspended"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "project"
+    }
   },
   {
     "table": "idempotency_keys",
@@ -7250,7 +7625,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "instance_application_standard_admissions",
@@ -8081,7 +8459,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_application_reminder_policies",
@@ -8094,7 +8475,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_application_reminders",
@@ -8125,7 +8509,10 @@
       "unrouted_alerts"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_application_triage",
@@ -8230,7 +8617,10 @@
       "token_hash"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "issue_lifecycle_alert_receipts",
@@ -8305,7 +8695,10 @@
       "workspace_name"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_slack_interaction_policies",
@@ -8318,7 +8711,10 @@
       "workspace_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_slack_link_challenges",
@@ -8357,7 +8753,10 @@
       "rules"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_source_map_artifacts",
@@ -8445,7 +8844,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_team_slack_threads",
@@ -8487,7 +8889,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_tracker_callback_diagnostics",
@@ -8556,7 +8961,10 @@
       "workspace_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_tracker_linear_oauth_flows",
@@ -8608,7 +9016,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_tracker_sync_history",
@@ -8662,7 +9073,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_tracker_sync_notifications",
@@ -8695,7 +9109,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "issue_tracker_sync_triage",
@@ -8739,7 +9156,11 @@
       "username"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "job_run_attach_sessions",
@@ -8885,7 +9306,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "layer_artifact_retention",
@@ -9022,7 +9447,11 @@
     "capabilities": [
       "capture",
       "materialize"
-    ]
+    ],
+    "clone": {
+      "owner": "app",
+      "unavailable": "data_checkpoint_unavailable"
+    }
   },
   {
     "table": "managed_postgres_checkpoint_maintenance",
@@ -9289,7 +9718,11 @@
     "capabilities": [
       "capture",
       "materialize"
-    ]
+    ],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "managed_postgres_health",
@@ -9456,7 +9889,17 @@
       "payload_hash"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_channel_heads",
@@ -9467,7 +9910,17 @@
       "oldest_sequence"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_channel_messages",
@@ -9486,7 +9939,17 @@
       "version"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_channel_reducers",
@@ -9501,7 +9964,17 @@
       "updated_at"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_channel_route_generation",
@@ -9552,7 +10025,17 @@
       "node_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_channel_snapshots",
@@ -9566,7 +10049,17 @@
       "updated_at"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_channel_webhook_filters",
@@ -9577,7 +10070,17 @@
       "webhook_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_commit_receipts",
@@ -9622,7 +10125,22 @@
       "unassigned_threshold"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "group_id",
+          "managed_realtime_consumer_groups",
+          "id"
+        ],
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_consumer_group_messages",
@@ -9651,7 +10169,22 @@
       "worker"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "group_id",
+          "managed_realtime_consumer_groups",
+          "id"
+        ],
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_consumer_groups",
@@ -9701,7 +10234,17 @@
       "trigger_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_direct_message_deliveries",
@@ -9777,7 +10320,17 @@
       "updated_at"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_endpoints",
@@ -9808,7 +10361,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "managed_realtime_event_schemas",
@@ -9821,7 +10377,17 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_group_delivery_history",
@@ -9885,7 +10451,17 @@
       "updated_at"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_inbox_fallbacks",
@@ -9904,7 +10480,17 @@
       "sequence"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_inbox_heads",
@@ -9915,7 +10501,17 @@
       "oldest_sequence"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_inbox_message_expirations",
@@ -9927,7 +10523,17 @@
       "ttl_seconds"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_inbox_messages",
@@ -9954,7 +10560,17 @@
       "version"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_message_expirations",
@@ -9966,7 +10582,17 @@
       "ttl_seconds"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_notification_timeline",
@@ -10028,7 +10654,17 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_publisher_credentials",
@@ -10055,7 +10691,17 @@
       "token_hash"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_publisher_receipts",
@@ -10103,7 +10749,17 @@
       "version"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_push_devices",
@@ -10119,7 +10775,17 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_push_preferences",
@@ -10130,7 +10796,17 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_push_providers",
@@ -10142,7 +10818,17 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_push_rate_reservations",
@@ -10165,7 +10851,17 @@
       "updated_at"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_replay_jobs",
@@ -10247,7 +10943,17 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_subscription_tickets",
@@ -10279,7 +10985,22 @@
       "use_count"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "group_id",
+          "managed_realtime_consumer_groups",
+          "id"
+        ],
+        [
+          "endpoint_id",
+          "managed_realtime_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "managed_realtime_worker_heartbeats",
@@ -10348,7 +11069,17 @@
       "webhook_url"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "rule_id",
+          "alert_rules",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "mcp_readiness_incident_attention",
@@ -10430,7 +11161,10 @@
       "starts_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "mcp_readiness_notification_actions",
@@ -10478,7 +11212,17 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "rule_id",
+          "alert_rules",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "mcp_readiness_pagerduty_policies",
@@ -10491,7 +11235,17 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "rule_id",
+          "alert_rules",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "mcp_readiness_reminder_defaults",
@@ -10502,7 +11256,17 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "rule_id",
+          "alert_rules",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "meter_gateway_usage_events",
@@ -10718,7 +11482,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "mirror_slot_leases",
@@ -10816,7 +11583,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "notification_outbox",
@@ -10865,7 +11636,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "object_bucket_lifecycle",
@@ -10877,7 +11651,17 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "bucket_id",
+          "object_buckets",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "object_bucket_mutations",
@@ -10904,7 +11688,17 @@
       "rules"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "bucket_id",
+          "object_buckets",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "object_bucket_object_lock",
@@ -10927,7 +11721,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "object_bucket_versioning",
@@ -10948,7 +11745,17 @@
       "versions_required"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "bucket_id",
+          "object_buckets",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "object_bucket_write_fences",
@@ -10993,7 +11800,11 @@
     "capabilities": [
       "capture",
       "materialize"
-    ]
+    ],
+    "clone": {
+      "owner": "app",
+      "unavailable": "data_checkpoint_unavailable"
+    }
   },
   {
     "table": "object_deletions",
@@ -11107,7 +11918,11 @@
       "id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "object_s3_copy_source_grants",
@@ -11122,7 +11937,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "object_storage_access_grants",
@@ -11138,7 +11957,11 @@
     "capabilities": [
       "capture",
       "materialize"
-    ]
+    ],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "object_storage_authorizations",
@@ -11276,7 +12099,17 @@
       "reclaimable"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "bucket_id",
+          "object_buckets",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "object_storage_multipart_part_grants",
@@ -11386,7 +12219,11 @@
     "capabilities": [
       "capture",
       "materialize"
-    ]
+    ],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "object_storage_upload_grants",
@@ -11529,7 +12366,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "object_version_protection",
@@ -11553,7 +12393,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "object_version_references",
@@ -11566,7 +12409,17 @@
       "versions_observed"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "bucket_id",
+          "object_buckets",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "oidc_exchanged_tokens",
@@ -12052,7 +12905,11 @@
       "price_list_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_ai_price_lists",
@@ -12063,7 +12920,11 @@
       "integration_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_ai_prompt_prefixes",
@@ -12261,7 +13122,11 @@
       "weight"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_ai_routes",
@@ -12276,7 +13141,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_ai_settlements",
@@ -12296,7 +13165,11 @@
       "tag"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_ai_tag_usage_daily",
@@ -12400,7 +13273,10 @@
       "integration_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "outbound_integration_apps",
@@ -12410,7 +13286,10 @@
       "integration_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "outbound_integration_credential_keys",
@@ -12423,7 +13302,11 @@
       "label"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_integration_credentials",
@@ -12434,7 +13317,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_integration_probe_policies",
@@ -12446,7 +13333,11 @@
       "path"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "outbound_integrations",
@@ -12513,7 +13404,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "paddle_overage_dedupe",
@@ -12686,7 +13581,11 @@
       "token_hash"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_billing_policies",
@@ -12697,7 +13596,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_consumer_provisioning_policies",
@@ -12709,7 +13612,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_credential_policies",
@@ -12721,7 +13628,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_credit_applications",
@@ -12760,7 +13671,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_meter_usage_minutes",
@@ -12812,7 +13727,11 @@
       "tenant_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_plans",
@@ -12836,7 +13755,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_rate_cards",
@@ -12858,7 +13781,11 @@
       "unit"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_reconciliation_receipts",
@@ -12886,7 +13813,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "platform_tenant_source_route_usage_minutes",
@@ -12951,7 +13882,10 @@
       "statement_id"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "platform_tenant_statement_surfaces",
@@ -13045,7 +13979,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "postgres_capacity_reservations",
@@ -13151,7 +14089,11 @@
       "owner_type"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "private_network_peerings",
@@ -13167,7 +14109,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "private_networks",
@@ -13185,7 +14131,11 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "product_control_billing_documents",
@@ -13235,7 +14185,10 @@
       "trial_starts_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "product_control_email_deliveries",
@@ -13347,7 +14300,10 @@
       "revision"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "product_control_help_requests",
@@ -13369,7 +14325,10 @@
       "version"
     ],
     "kind": "customer_data",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "product_control_invoice_handoffs",
@@ -13438,7 +14397,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "product_control_plan_changes",
@@ -13497,7 +14459,10 @@
       "spec"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "product_control_waivers",
@@ -13574,7 +14539,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "profile_investigations",
@@ -14732,7 +15700,11 @@
       "qualify",
       "promote",
       "rollback"
-    ]
+    ],
+    "clone": {
+      "owner": "environment",
+      "slug_column": "environment_slug"
+    }
   },
   {
     "table": "project_environment_secrets",
@@ -14752,7 +15724,11 @@
     "capabilities": [
       "materialize",
       "qualify"
-    ]
+    ],
+    "clone": {
+      "owner": "environment",
+      "slug_column": "environment_slug"
+    }
   },
   {
     "table": "project_environment_edge_policies",
@@ -14770,7 +15746,10 @@
       "capture",
       "materialize",
       "diff"
-    ]
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "project_environment_promotion_controls",
@@ -14991,7 +15970,10 @@
       "diff",
       "qualify",
       "promote"
-    ]
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "project_environment_workload_deployment_specs",
@@ -15007,7 +15989,10 @@
       "qualify",
       "promote",
       "rollback"
-    ]
+    ],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "project_environment_workload_heads",
@@ -15023,7 +16008,12 @@
       "qualify",
       "promote",
       "rollback"
-    ]
+    ],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id",
+      "strategy": "derived"
+    }
   },
   {
     "table": "project_environment_workload_specs",
@@ -15044,7 +16034,11 @@
       "qualify",
       "promote",
       "rollback"
-    ]
+    ],
+    "clone": {
+      "owner": "environment",
+      "column": "environment_id"
+    }
   },
   {
     "table": "project_environments",
@@ -15061,7 +16055,12 @@
     "capabilities": [
       "materialize",
       "diff"
-    ]
+    ],
+    "clone": {
+      "owner": "environment",
+      "column": "id",
+      "strategy": "derived"
+    }
   },
   {
     "table": "project_migration_contracts",
@@ -15169,7 +16168,10 @@
       "qualify",
       "promote",
       "rollback"
-    ]
+    ],
+    "clone": {
+      "owner": "deployment"
+    }
   },
   {
     "table": "project_release_secret_bundles",
@@ -15207,7 +16209,11 @@
       "qualify",
       "promote",
       "rollback"
-    ]
+    ],
+    "clone": {
+      "owner": "environment",
+      "slug_column": "environment_slug"
+    }
   },
   {
     "table": "project_release_stages",
@@ -15287,7 +16293,12 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "project",
+      "column": "id",
+      "strategy": "shared"
+    }
   },
   {
     "table": "provisioned_static_egress_ips",
@@ -15297,7 +16308,11 @@
       "customer_ip"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "account",
+      "strategy": "shared"
+    }
   },
   {
     "table": "queue_binding_canaries",
@@ -15342,7 +16357,11 @@
     "capabilities": [
       "capture",
       "materialize"
-    ]
+    ],
+    "clone": {
+      "owner": "app",
+      "unavailable": "work_activation_unavailable"
+    }
   },
   {
     "table": "realtime_node_connection_syncs",
@@ -15564,7 +16583,17 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "lease_id",
+          "reserved_ip_leases",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "reserved_ip_leases",
@@ -15582,7 +16611,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "resource_namespaces",
@@ -15627,7 +16659,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "route_health_history",
@@ -15727,7 +16762,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "route_policy_receipts",
@@ -15842,7 +16880,11 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "platform",
+      "strategy": "shared"
+    }
   },
   {
     "table": "runtime_config_operations",
@@ -16239,7 +17281,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "scenario_captured_events",
@@ -16815,7 +17860,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "tenant_hostnames",
@@ -16831,7 +17879,17 @@
       "verified_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "surface_id",
+          "tenant_surfaces",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "tenant_surfaces",
@@ -16851,7 +17909,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "trigger_consumer_health",
@@ -16922,7 +17983,10 @@
     "kind": "configuration",
     "capabilities": [
       "capture"
-    ]
+    ],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "triggers",
@@ -16950,7 +18014,10 @@
       "updated_at"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "upload_commit_outcomes",
@@ -17139,7 +18206,10 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "workflow_automation_failure_guards",
@@ -17181,7 +18251,10 @@
       "window_seconds"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "workflow_automation_live_baseline_promotions",
@@ -17251,7 +18324,10 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "workflow_automation_publish_receipts",
@@ -17281,7 +18357,10 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "workflow_callback_webhook_bindings",
@@ -17295,7 +18374,17 @@
       "step_name"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "inbound_webhook_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "workflow_code_pins",
@@ -17466,7 +18555,10 @@
       "version"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "workflow_recovery_policy_controls",
@@ -17674,7 +18766,17 @@
       "workflow_name"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app",
+      "via": [
+        [
+          "endpoint_id",
+          "inbound_webhook_endpoints",
+          "id"
+        ]
+      ]
+    }
   },
   {
     "table": "workflow_webhook_receipts",
@@ -17708,7 +18810,10 @@
       "updated_by"
     ],
     "kind": "configuration",
-    "capabilities": []
+    "capabilities": [],
+    "clone": {
+      "owner": "app"
+    }
   },
   {
     "table": "deployment_release_approvals",

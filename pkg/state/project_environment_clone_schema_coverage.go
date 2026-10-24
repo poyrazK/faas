@@ -17,10 +17,11 @@ import (
 // a blocker until it has every capability its kind requires. Capabilities are
 // registry facts only: they never enter the schema hash or an observed table.
 type ProjectEnvironmentCloneSchemaPolicy struct {
-	TableName    string    `json:"table"`
-	Kind         string    `json:"kind"`
-	Columns      []string  `json:"columns"`
-	Capabilities *[]string `json:"capabilities,omitempty"`
+	TableName    string                `json:"table"`
+	Kind         string                `json:"kind"`
+	Columns      []string              `json:"columns"`
+	Capabilities *[]string             `json:"capabilities,omitempty"`
+	Clone        *CloneInventoryPolicy `json:"clone,omitempty"`
 }
 
 const (
@@ -149,7 +150,7 @@ func ProjectEnvironmentCloneSchemaPolicies() ([]ProjectEnvironmentCloneSchemaPol
 	for _, policy := range policies {
 		if policy.TableName == "" || seen[policy.TableName] || len(policy.Columns) == 0 ||
 			(policy.Kind != CloneSchemaConfiguration && policy.Kind != CloneSchemaData && policy.Kind != CloneSchemaOperational && policy.Kind != CloneSchemaIdentity && policy.Kind != CloneSchemaPlatform) ||
-			!validCloneCapabilities(policy) {
+			!validCloneCapabilities(policy) || !validCloneInventory(policy) {
 			return nil, ErrConflict
 		}
 		seen[policy.TableName] = true
@@ -209,8 +210,8 @@ func cloneSchemaCoverage(tables []ProjectEnvironmentCloneSchemaPolicy) (ProjectE
 			}
 		}
 		policy, registered := expected[table.TableName]
-		table.Kind = policy.Kind // only the registry can classify an observed table
-		table.Capabilities = nil // registry facts, outside the schema hash
+		table.Kind = policy.Kind                   // only the registry can classify an observed table
+		table.Capabilities, table.Clone = nil, nil // registry facts, outside the schema hash
 		report.Tables = append(report.Tables, table)
 		if !registered {
 			report.Known = false

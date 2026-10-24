@@ -114,6 +114,11 @@ func (s *PgStore) CreateCapturedProjectEnvironmentCloneOperation(ctx context.Con
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, mapProjectCloneSnapshotErr(err)
 	}
+	if request.RequireCompleteInventory {
+		if err := requireCloneSourceInventoryTx(ctx, tx, op, records); err != nil {
+			return ProjectEnvironmentCloneOperation{}, err
+		}
+	}
 	capture, raw, err := cloneConfigurationRoot(op, records)
 	if err != nil {
 		return ProjectEnvironmentCloneOperation{}, err

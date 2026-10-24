@@ -77708,6 +77708,49 @@ func (q *Queries) ReadProjectEnvironmentCloneFlagScope(ctx context.Context, db D
 	return id, err
 }
 
+const readProjectEnvironmentCloneInventoryPresent = `-- name: ReadProjectEnvironmentCloneInventoryPresent :many
+SELECT present::text AS table_name
+FROM project_environment_clone_inventory_present(
+    $1::uuid, $2::uuid, $3::text[],
+    $4::uuid[], $5::uuid[], $6::jsonb) AS present
+`
+
+type ReadProjectEnvironmentCloneInventoryPresentParams struct {
+	ProjectID        pgtype.UUID
+	EnvironmentID    pgtype.UUID
+	EnvironmentSlugs []string
+	AppIds           []pgtype.UUID
+	DeploymentIds    []pgtype.UUID
+	Probes           []byte
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneInventoryPresent(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneInventoryPresentParams) ([]string, error) {
+	rows, err := db.Query(ctx, readProjectEnvironmentCloneInventoryPresent,
+		arg.ProjectID,
+		arg.EnvironmentID,
+		arg.EnvironmentSlugs,
+		arg.AppIds,
+		arg.DeploymentIds,
+		arg.Probes,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []string{}
+	for rows.Next() {
+		var table_name string
+		if err := rows.Scan(&table_name); err != nil {
+			return nil, err
+		}
+		items = append(items, table_name)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const readProjectEnvironmentCloneLegacySettings = `-- name: ReadProjectEnvironmentCloneLegacySettings :one
 SELECT (to_jsonb(a) || jsonb_build_object('public_auth_basic_sealed', encode(a.public_auth_basic, 'base64'),
        'only_allow_declared_routes', a.only_declared_routes, 'retry_policy_json', a.retry_policy))::jsonb AS app, coalesce(to_jsonb(r), '{}'::jsonb)::jsonb AS route
@@ -79218,6 +79261,23 @@ func (q *Queries) ReadProjectEnvironmentCloneSourceAppIDs(ctx context.Context, d
 		return nil, err
 	}
 	return items, nil
+}
+
+const readProjectEnvironmentCloneSourceEnvironmentID = `-- name: ReadProjectEnvironmentCloneSourceEnvironmentID :one
+SELECT id FROM project_environments
+WHERE project_id = $1::uuid AND slug = $2::text
+`
+
+type ReadProjectEnvironmentCloneSourceEnvironmentIDParams struct {
+	ProjectID pgtype.UUID
+	Slug      string
+}
+
+func (q *Queries) ReadProjectEnvironmentCloneSourceEnvironmentID(ctx context.Context, db DBTX, arg ReadProjectEnvironmentCloneSourceEnvironmentIDParams) (pgtype.UUID, error) {
+	row := db.QueryRow(ctx, readProjectEnvironmentCloneSourceEnvironmentID, arg.ProjectID, arg.Slug)
+	var id pgtype.UUID
+	err := row.Scan(&id)
+	return id, err
 }
 
 const readProjectEnvironmentCloneSourceRelease = `-- name: ReadProjectEnvironmentCloneSourceRelease :one
