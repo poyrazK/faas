@@ -11771,6 +11771,12 @@ const (
 	// the local vmmd to name the trace of the one request a calling instance
 	// is serving (ADR-1138); past it the call starts its own trace.
 	ServiceTraceInferenceTimeout = 25 * time.Millisecond
+	// Private guest DNS reads the scenario DNS chaos policy for every
+	// *.svc.gregale question, rehearsing or not (ADR-20261024230731). A read
+	// gets ServiceDNSChaosLookupTimeout; after a failed read the node answers
+	// without chaos for ServiceDNSChaosBackoff instead of retrying per question.
+	ServiceDNSChaosLookupTimeout = 250 * time.Millisecond
+	ServiceDNSChaosBackoff       = 5 * time.Second
 	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
 	ScenarioTCPChaosMaxRoutesPerNode    = 256
 	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
