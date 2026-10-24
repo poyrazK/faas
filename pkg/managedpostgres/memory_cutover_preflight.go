@@ -39,7 +39,7 @@ func (s *MemoryStore) RequestCutoverPreflight(_ context.Context, account, id str
 	if !ok || c.AccountID != account {
 		return CutoverPreflight{}, ErrNotFound
 	}
-	if c.State == CutoverCancelling || c.State == CutoverCancelled {
+	if c.State == CutoverCancelling || c.State.Closed() {
 		return CutoverPreflight{}, ErrConflict
 	}
 	p, ok := s.preflights[id]

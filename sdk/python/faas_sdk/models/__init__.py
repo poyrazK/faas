@@ -1133,6 +1133,10 @@ from .data_upstream_list_response import DataUpstreamListResponse
 from .data_upstream_response import DataUpstreamResponse
 from .data_upstream_response_kind import DataUpstreamResponseKind
 from .data_upstream_response_source import DataUpstreamResponseSource
+from .database_switch import DatabaseSwitch
+from .database_switch_drain import DatabaseSwitchDrain
+from .database_switch_list import DatabaseSwitchList
+from .database_switch_phase import DatabaseSwitchPhase
 from .dead_letter_event import DeadLetterEvent
 from .dead_letter_event_error_detail import DeadLetterEventErrorDetail
 from .dead_letter_event_headers import DeadLetterEventHeaders
@@ -7233,6 +7237,10 @@ __all__ = (
     "DataAPIUsageReportResponse",
     "DataAPIUsageReportVersion",
     "DataAPIUserAuth",
+    "DatabaseSwitch",
+    "DatabaseSwitchDrain",
+    "DatabaseSwitchList",
+    "DatabaseSwitchPhase",
     "DataConnection",
     "DataConnectionCheck",
     "DataConnectionCheckState",

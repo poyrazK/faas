@@ -26,5 +26,9 @@ export type RollbackRequest = {
    * Roll back although release commands ran after the target last served (ADR-1448). Rollback does not undo them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks never set it.
    */
   acknowledge_releases?: boolean;
+  /**
+   * Also restore the managed PostgreSQL database the crossed release commands migrated to just before the earliest of them, and switch the app to that copy (ADR-20261023181931). Requires acknowledge_releases and the postgres:manage scope; cannot be combined with expected_current_deployment_id. The response carries database_switch; the code rollback happens inside it while the app is fenced.
+   */
+  restore_databases?: boolean;
 };
 

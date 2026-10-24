@@ -4355,7 +4355,7 @@ func validateDeploymentReason(reason string) error {
 	return nil
 }
 
-const rollbackUsage = "usage: gregale rollback <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--acknowledge-releases] [--wait|--no-wait] [--timeout 10m] [--poll-interval 2s] [--json]"
+const rollbackUsage = "usage: gregale rollback <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason TEXT] [--acknowledge-releases] [--restore-databases] [--wait|--no-wait] [--timeout 10m] [--poll-interval 2s] [--json]"
 
 // cmdRollback, cmdPark, cmdWake implement their eponymous routes.
 //
@@ -4369,6 +4369,12 @@ const rollbackUsage = "usage: gregale rollback <slug> [--interactive] [--to <dep
 func cmdRollback(args []string) int {
 	if len(args) > 0 && args[0] == "status" {
 		return cmdRollbackStatus(args[1:])
+	}
+	if len(args) > 0 && args[0] == "switches" {
+		return cmdRollbackSwitches(args[1:])
+	}
+	if len(args) > 0 && args[0] == "switch" {
+		return cmdRollbackSwitch(args[1:])
 	}
 
 	if hasHelpFlag(args) {
@@ -4384,6 +4390,8 @@ func cmdRollback(args []string) int {
 	interactive := false
 	checked := false
 	acknowledgeReleases := false
+	restoreDatabases := false
+	timeoutSet := false
 	var err error
 	wait, noWait := false, false
 	timeout, interval := 10*time.Minute, 2*time.Second
@@ -4395,6 +4403,8 @@ func cmdRollback(args []string) int {
 			interactive = true
 		case a == "--acknowledge-releases":
 			acknowledgeReleases = true
+		case a == "--restore-databases":
+			restoreDatabases = true
 		case a == "--to":
 			i++
 			if i >= len(rest) {
@@ -4420,6 +4430,7 @@ func cmdRollback(args []string) int {
 			case "--reason":
 				reason = value
 			case "--timeout":
+				timeoutSet = true
 				timeout, err = time.ParseDuration(value)
 			case "--poll-interval":
 				interval, err = time.ParseDuration(value)
@@ -4435,6 +4446,7 @@ func cmdRollback(args []string) int {
 		case strings.HasPrefix(a, "--timeout=") || strings.HasPrefix(a, "--poll-interval="):
 			key, value, _ := strings.Cut(a, "=")
 			if key == "--timeout" {
+				timeoutSet = true
 				timeout, err = time.ParseDuration(value)
 			} else {
 				interval, err = time.ParseDuration(value)
@@ -4476,6 +4488,15 @@ func cmdRollback(args []string) int {
 	}
 	if err := validateRollbackFlags(checked, to, current, reason, wait, timeout, interval); err != nil {
 		return printErr("Invalid rollback", err)
+	}
+	if restoreDatabases {
+		if current != "" {
+			return printErr("Invalid rollback", errors.New("--restore-databases cannot be combined with --expected-current; the switch checks the live release itself"))
+		}
+		if !timeoutSet {
+			timeout = databaseSwitchDefaultTimeout
+		}
+		return cmdRollbackRestoreDatabases(slug, to, acknowledgeReleases, noWait, timeout, interval)
 	}
 	if current != "" {
 		return cmdCheckedRollback(slug, to, current, reason, acknowledgeReleases, wait, timeout, interval)

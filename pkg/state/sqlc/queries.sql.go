@@ -3451,7 +3451,7 @@ func (q *Queries) CancelExpiredAppTasksForClaim(ctx context.Context, db DBTX, cl
 const cancelManagedPostgresCutover = `-- name: CancelManagedPostgresCutover :one
 UPDATE managed_postgres_cutovers SET state=CASE WHEN state='cancelled' THEN state ELSE 'cancelling' END,verified_at=NULL,
 retry_at=$1::timestamptz,updated_at=$1
-WHERE id=$2::text::uuid AND account_id=$3::text::uuid RETURNING id, account_id, app_id, scope, source_database_id, target_database_id, source_backend_id, source_backend_fingerprint, source_resource_id, source_generation, target_backend_id, target_backend_fingerprint, target_resource_id, target_generation, state, last_error_code, lease_token, lease_until, attempt_count, retry_at, created_at, updated_at, verified_at
+WHERE id=$2::text::uuid AND account_id=$3::text::uuid AND state<>'activated' RETURNING id, account_id, app_id, scope, source_database_id, target_database_id, source_backend_id, source_backend_fingerprint, source_resource_id, source_generation, target_backend_id, target_backend_fingerprint, target_resource_id, target_generation, state, last_error_code, lease_token, lease_until, attempt_count, retry_at, created_at, updated_at, verified_at
 `
 
 type CancelManagedPostgresCutoverParams struct {
@@ -3460,6 +3460,7 @@ type CancelManagedPostgresCutoverParams struct {
 	AccountID string
 }
 
+// An activated cutover is final (ADR-20261023181931); cancelling it matches no row.
 func (q *Queries) CancelManagedPostgresCutover(ctx context.Context, db DBTX, arg CancelManagedPostgresCutoverParams) (ManagedPostgresCutover, error) {
 	row := db.QueryRow(ctx, cancelManagedPostgresCutover, arg.Now, arg.ID, arg.AccountID)
 	var i ManagedPostgresCutover
@@ -22342,7 +22343,7 @@ func (q *Queries) FrozenThawBasis(ctx context.Context, db DBTX, arg FrozenThawBa
 
 const getActiveManagedPostgresCutover = `-- name: GetActiveManagedPostgresCutover :one
 SELECT id, account_id, app_id, scope, source_database_id, target_database_id, source_backend_id, source_backend_fingerprint, source_resource_id, source_generation, target_backend_id, target_backend_fingerprint, target_resource_id, target_generation, state, last_error_code, lease_token, lease_until, attempt_count, retry_at, created_at, updated_at, verified_at FROM managed_postgres_cutovers WHERE account_id=$1::text::uuid
-AND app_id=$2::text::uuid AND scope=$3::text AND state<>'cancelled'
+AND app_id=$2::text::uuid AND scope=$3::text AND state NOT IN ('cancelled','activated')
 `
 
 type GetActiveManagedPostgresCutoverParams struct {
