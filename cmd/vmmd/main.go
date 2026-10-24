@@ -1217,6 +1217,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			jailer.VsockUDSSocketPath(instance), func() (bool, uint64) { return mgr.QuietGate(instance) })
 	})
 	mgr.SetHostIdentities(hostIdentities)
+	mgr.RequireSecretBinding(cfg.RequireSecretBinding)
+	sealdomain.RegisterBindingRequired(ops.Registry(), cfg.RequireSecretBinding)
+	if cfg.RequireSecretBinding {
+		log.Info("vmmd: runtime secrets must be bound to their account (ADR-20261023173624)")
+	}
 	// ADR-1151 quiet pause: pause eligible instances between requests. schedd
 	// marks which instances are eligible; this flag lets an operator keep
 	// the whole node out of it.
