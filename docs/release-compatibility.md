@@ -35,6 +35,21 @@ Three consequences:
   no live snapshot carries a guest-init that reads it. Record that check in
   the allowlist entry (below).
 
+## Runtime base generations during a compute rollout
+
+A runtime base (`base/base-<arch>.ext4`, `base/runner-<runtime>-<arch>.ext4`)
+is one logical key in shared storage, and each node's cache commits one
+generation of it. A release-N-1 vmmd refuses every guest on a base whose
+cached generation is not the one in its environment. So a node must not
+adopt release N's generation while it still serves on N-1. `node_join.yml`
+runs `vmmd base-generation-check` and, when a release changes a generation,
+pre-stages it only behind the drain barrier and never re-activates a node
+whose cache has moved
+([ADR 20261024085817](adr/20261024085817-rollout-base-generation-and-drain-completion.md)).
+An N-1 node still fetches a base it has not cached from the shared key, and
+a compute rollback across a generation change is not covered yet: both wait
+for generation-addressed base keys.
+
 ## No downtime, no exceptions
 
 **No migration and no release may require stopping writers or a

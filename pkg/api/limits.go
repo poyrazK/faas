@@ -7453,6 +7453,28 @@ const (
 	// unresolved database operation keeps the lease and VMs for later recovery.
 	MigrateLiveCommitRecoveryTimeout = 5 * time.Second
 
+	// DrainLiveMigrationWindowSeconds bounds how long after a graceful
+	// drain began (compute_nodes.drain_initiated_at) the recovery arbiter
+	// still starts live migrations of the node's RUNNING instances.
+	// DrainParkAfterSeconds is when it moves what is still RUNNING off the
+	// node instead (withdrawn from routing, in-flight requests drained, then
+	// stopped): one migration lease after the window closes plus a
+	// clock-skew margin, so no handoff a schedd started inside the window
+	// is still in flight when any schedd begins a park. A handoff that
+	// keeps failing (rc.290, 2026-10-22: one busy instance held fsn-3's
+	// drain for the whole rollout window) then delays a drain by minutes,
+	// not forever (ADR-20261024085817). The window plus the parks fit
+	// inside node_join.yml's 10-minute drain wait.
+	DrainLiveMigrationWindowSeconds = 120
+	DrainParkAfterSeconds           = DrainLiveMigrationWindowSeconds + MigrateLiveLeaseSeconds + 30
+	// DrainParkConcurrency bounds the drain parks one recovery tick runs at
+	// once for a node. A RUNNING instance is withdrawn from routing, given
+	// ServiceReplicaDrainTimeoutSeconds for its in-flight requests and then
+	// destroyed; no snapshot is written, so these run wider than handoffs.
+	// A node at its admission ceiling of 1 GiB instances (46) finishes in
+	// three rounds.
+	DrainParkConcurrency = 16
+
 	// Tier A6 (migrating-instance watchdog, ADR-067 follow-up to
 	// ADR-070): self-heal stuck state='migrating' rows that
 	// never committed (the new owner vmmd died mid-handoff, the
