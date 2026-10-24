@@ -122,3 +122,77 @@ VALUES($1,$2,$3,'eu',17,'development','single_zone','test',$4,$5::text,CASE WHEN
 		}
 	}
 }
+
+// ADR-20261024150500: a deletion that includes the databases enters
+// deleted_pending despite them; any other status forgets the choice, so a
+// later deletion without it is guarded again.
+func TestPgStoreAccountDeletionIncludingManagedPostgres(t *testing.T) {
+	st, pool, ctx := pgStoreWithPool(t) // one schema; every case owns its account
+	flag := func(t *testing.T, id string) bool {
+		t.Helper()
+		var included bool
+		if err := pool.QueryRow(ctx, `SELECT deletion_includes_managed_postgres FROM accounts WHERE id=$1`, id).Scan(&included); err != nil {
+			t.Fatal(err)
+		}
+		return included
+	}
+	tests := []struct {
+		name    string
+		from    state.AccountStatus
+		move    func(id string, opts ...state.AccountDeletionOption) error
+		restore func(id string) error
+	}{
+		{name: "self-service", from: state.AccountActive,
+			move: func(id string, opts ...state.AccountDeletionOption) error {
+				return st.MarkAccountDeletionPending(ctx, id, opts...)
+			},
+			restore: func(id string) error { return st.RestoreAccount(ctx, id) }},
+		{name: "dunning", from: state.AccountSuspended,
+			move: func(id string, opts ...state.AccountDeletionOption) error {
+				return st.MarkDunningStep(ctx, id, state.AccountSuspended, state.AccountDeletedPending, opts...)
+			},
+			restore: func(id string) error { return st.UpdateAccountStatus(ctx, id, state.AccountSuspended) }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			acct, err := st.CreateAccount(ctx, strings.ReplaceAll(uuid.NewString(), "-", "")+"@example.com", api.PlanHobby)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if tt.from != state.AccountActive {
+				if err := st.UpdateAccountStatus(ctx, acct.ID, tt.from); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_databases(id,account_id,name,region,postgres_major,service_class,availability,backend_id,backend_fingerprint)
+VALUES($1,$2,'orders','eu',17,'development','single_zone','test',$3)`, uuid.NewString(), acct.ID, strings.Repeat("a", 64)); err != nil {
+				t.Fatal(err)
+			}
+			// The flag alone cannot be set outside a deletion.
+			if _, err := pool.Exec(ctx, `UPDATE accounts SET deletion_includes_managed_postgres=true WHERE id=$1`, acct.ID); err != nil || flag(t, acct.ID) {
+				t.Fatalf("flag set outside a deletion: %v", err)
+			}
+			if err := tt.move(acct.ID, state.IncludingManagedPostgres(false)); !errors.Is(err, state.ErrAccountManagedPostgresDatabases) {
+				t.Fatalf("deletion without the databases: %v", err)
+			}
+			if err := tt.move(acct.ID, state.IncludingManagedPostgres(true)); err != nil || !flag(t, acct.ID) {
+				t.Fatalf("deletion including the databases: %v", err)
+			}
+			if got, err := st.AccountByID(ctx, acct.ID); err != nil || got.Status != state.AccountDeletedPending {
+				t.Fatalf("status %s: %v", got.Status, err)
+			}
+			if tt.name == "self-service" {
+				// A repeat request never withdraws the recorded inclusion.
+				if err := st.MarkAccountDeletionPending(ctx, acct.ID); err != nil || !flag(t, acct.ID) {
+					t.Fatalf("repeat withdrew the inclusion: %v", err)
+				}
+			}
+			if err := tt.restore(acct.ID); err != nil || flag(t, acct.ID) {
+				t.Fatalf("leaving deleted_pending kept the inclusion: %v", err)
+			}
+			if err := tt.move(acct.ID); !errors.Is(err, state.ErrAccountManagedPostgresDatabases) {
+				t.Fatalf("a later deletion inherited the earlier choice: %v", err)
+			}
+		})
+	}
+}

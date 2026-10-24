@@ -922,7 +922,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// count on the one box.
 		graceLoop := grace.New(grace.Params{
 			Store:               srv.store,
-			BeforeAccountDelete: srv.object.CleanupExpiredAccountObjectBuckets,
+			BeforeAccountDelete: srv.beforeAccountDelete,
 			Mailer:              graceSenderAdapter{m: srv.mailer},
 			Log:                 log,
 			Interval:            graceIntervalFromEnv(log),

@@ -15,9 +15,12 @@ SELECT id FROM accounts WHERE id = $1 FOR UPDATE;
 SELECT status FROM accounts WHERE id = $1;
 
 -- name: MarkDeletion :execrows
+-- A repeat request never withdraws an inclusion already recorded for this
+-- pending deletion (ADR-20261024150500).
 UPDATE accounts SET status = 'deleted_pending',
-       deletion_requested_at = coalesce(deletion_requested_at, now())
-WHERE id = $1 AND status IN ('active', 'deleted_pending');
+       deletion_requested_at = coalesce(deletion_requested_at, now()),
+       deletion_includes_managed_postgres = deletion_includes_managed_postgres OR sqlc.arg(include_managed_postgres)::boolean
+WHERE id = sqlc.arg(id) AND status IN ('active', 'deleted_pending');
 
 -- name: CountApps :one
 SELECT count(*) FROM apps

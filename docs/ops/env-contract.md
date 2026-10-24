@@ -22,6 +22,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 
 | Variable | Owners | Source | Required | Default | Validate | Note |
 |---|---|---|---|---|---|---|
+| `FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs, or *, that may delete their account together with its managed PostgreSQL databases (ADR-20261024150500); unset admits none and the option stays hidden |
 | `FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL` | meterd | `default` |  |  | `` |  |
 | `FAAS_ADMIN_EMAILS` | apid | `secrets-env` |  |  | `` | delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`) |
 | `FAAS_AI_GATEWAY_ACCOUNTS` | apid, outboundd, shared | `default` |  |  | `` | boot fallback for the ai_gateway platform flag (ADR-1700): optional override for ai_gateway_accounts TOML; comma-separated account UUIDs the AI gateway preview is limited to (ADR-998), * or unset admits every entitled account; ignored once an operator writes platform_flag.ai_gateway |
@@ -518,6 +519,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_NODE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_NODE_NAME` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, realtimed, schedd, vmmd, shared | `dropin` |  |  | `` |  |
 | `FAAS_NODE_PUBLIC_IP` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES` | apid, meterd, shared | `default` |  | on | `` | operator kill switch (ADR-20261024150500): off keeps non-payment deletion from including the account's managed PostgreSQL databases, so such accounts stay suspended and count in meterd_dunning_deletion_blocked_accounts; any other value or unset includes them |
 | `FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL` | apid, meterd, shared | `default` |  |  | `` |  |
 | `FAAS_OBJECT_NODE_ACCESS_KEY_ID` | shared | `dev-only` |  |  | `` | private development node credential; supplied only by the operator or disposable qualifier, never to customers or production units |
 | `FAAS_OBJECT_NODE_BACKENDS_ENABLED` | shared | `dev-only` |  | 0 | `` | ADR-1570 private backend-loading gate; also requires the master gate and explicit backend configuration; restart required |

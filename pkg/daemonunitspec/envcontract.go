@@ -101,6 +101,7 @@ const (
 
 // EnvContract is sorted by Name; TestEnvContract_Sorted pins it.
 var EnvContract = []EnvVar{
+	{Name: "FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS", Owners: []string{"apid", "shared"}, Source: EnvSourceDefault, Note: "comma-separated account UUIDs, or *, that may delete their account together with its managed PostgreSQL databases (ADR-20261024150500); unset admits none and the option stays hidden"},
 	{Name: "FAAS_ACCOUNT_SPEND_AGGREGATOR_INTERVAL", Owners: []string{"meterd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_ADMIN_EMAILS", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/sealed.env (apid, operator-provisioned via `gregalectl secrets init`)"},
 	{Name: "FAAS_AI_GATEWAY_ACCOUNTS", Owners: []string{"apid", "outboundd", "shared"}, Source: EnvSourceDefault, Note: "boot fallback for the ai_gateway platform flag (ADR-1700): optional override for ai_gateway_accounts TOML; comma-separated account UUIDs the AI gateway preview is limited to (ADR-998), * or unset admits every entitled account; ignored once an operator writes platform_flag.ai_gateway"},
@@ -597,6 +598,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_NODE_ID", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
 	{Name: "FAAS_NODE_NAME", Owners: []string{"apid", "builderd", "gatewayd-internal", "gatewayd-public", "githubd", "imaged", "meterd", "realtimed", "schedd", "vmmd", "shared"}, Source: EnvSourceDropin},
 	{Name: "FAAS_NODE_PUBLIC_IP", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
+	{Name: "FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES", Owners: []string{"apid", "meterd", "shared"}, Source: EnvSourceDefault, Default: "on", Note: "operator kill switch (ADR-20261024150500): off keeps non-payment deletion from including the account's managed PostgreSQL databases, so such accounts stay suspended and count in meterd_dunning_deletion_blocked_accounts; any other value or unset includes them"},
 	{Name: "FAAS_NOTIFICATIONS_UNSUBSCRIBE_URL", Owners: []string{"apid", "meterd", "shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_OBJECT_NODE_ACCESS_KEY_ID", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Note: "private development node credential; supplied only by the operator or disposable qualifier, never to customers or production units"},
 	{Name: "FAAS_OBJECT_NODE_BACKENDS_ENABLED", Owners: []string{"shared"}, Source: EnvSourceDevOnly, Default: "0", Note: "ADR-1570 private backend-loading gate; also requires the master gate and explicit backend configuration; restart required"},

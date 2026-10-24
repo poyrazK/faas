@@ -3404,6 +3404,12 @@ type AccountData struct {
 	ShowRestore         bool
 	RestoreUntil        string
 	RestoreConfirmToken string
+
+	// ShowDeleteManagedPostgres offers the checkbox that makes the deletion
+	// include the account's managed PostgreSQL databases
+	// (ADR-20261024150500); only for accounts in
+	// FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS until launch.
+	ShowDeleteManagedPostgres bool
 	// ConnectGithubConfirmToken (issue #961 / Mega-B PR-3) backs the
 	// dashboard's "Connect GitHub" button. The form posts to
 	// /dashboard/install/connect with this token + the matching named

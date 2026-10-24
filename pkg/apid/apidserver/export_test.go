@@ -905,6 +905,9 @@ func (r *server) Log() **slog.Logger                                 { return &r
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
+func (r *server) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
+	return r.beforeAccountDelete(ctx, acct)
+}
 func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 	return &r.managedPostgresBindings
 }

@@ -47307,6 +47307,70 @@ func (q *Queries) ListMCPQueuedReminders(ctx context.Context, db DBTX, arg ListM
 	return items, nil
 }
 
+const listManagedPostgresAccountErasureDatabases = `-- name: ListManagedPostgresAccountErasureDatabases :many
+SELECT id, account_id, name, region, postgres_major, service_class, availability, scale_to_zero, storage_limit_bytes, restore_window_seconds, backend_id, backend_fingerprint, provider_resource_id, state, desired_generation, observed_generation, last_error_code, lease_token, lease_until, created_at, updated_at, deleted_at, attempt_count, retry_at, restore_source_database_id, restore_source_resource_id, restore_point_in_time, cutover_id, environment_clone_operation_id, data_resource_id, clone_resource_role, accounting_required, org_id FROM managed_postgres_databases d
+WHERE d.account_id=$1 AND d.state<>'deleted'
+  AND EXISTS (SELECT 1 FROM orgs o WHERE o.id=d.org_id AND (o.personal_org OR NOT o.resource_ownership_enabled))
+ORDER BY d.created_at DESC, d.id
+`
+
+// ADR-20261024150500: the live databases an account deletion must remove,
+// exactly the ones guard_account_managed_postgres_databases counts. Newest
+// first, so restore descendants are deleted before their sources.
+func (q *Queries) ListManagedPostgresAccountErasureDatabases(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]ManagedPostgresDatabase, error) {
+	rows, err := db.Query(ctx, listManagedPostgresAccountErasureDatabases, accountID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ManagedPostgresDatabase{}
+	for rows.Next() {
+		var i ManagedPostgresDatabase
+		if err := rows.Scan(
+			&i.ID,
+			&i.AccountID,
+			&i.Name,
+			&i.Region,
+			&i.PostgresMajor,
+			&i.ServiceClass,
+			&i.Availability,
+			&i.ScaleToZero,
+			&i.StorageLimitBytes,
+			&i.RestoreWindowSeconds,
+			&i.BackendID,
+			&i.BackendFingerprint,
+			&i.ProviderResourceID,
+			&i.State,
+			&i.DesiredGeneration,
+			&i.ObservedGeneration,
+			&i.LastErrorCode,
+			&i.LeaseToken,
+			&i.LeaseUntil,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.DeletedAt,
+			&i.AttemptCount,
+			&i.RetryAt,
+			&i.RestoreSourceDatabaseID,
+			&i.RestoreSourceResourceID,
+			&i.RestorePointInTime,
+			&i.CutoverID,
+			&i.EnvironmentCloneOperationID,
+			&i.DataResourceID,
+			&i.CloneResourceRole,
+			&i.AccountingRequired,
+			&i.OrgID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listManagedPostgresAccountingCoverage = `-- name: ListManagedPostgresAccountingCoverage :many
 SELECT d.id AS database_id, d.name, d.state, d.accounting_required,
 (NULLIF(d.provider_resource_id, '') IS NOT NULL)::boolean AS identity_known, d.lease_until,
@@ -57726,6 +57790,17 @@ func (q *Queries) LookupCustomerOperationSubmission(ctx context.Context, db DBTX
 	var i LookupCustomerOperationSubmissionRow
 	err := row.Scan(&i.ExpiresAt, &i.Record)
 	return i, err
+}
+
+const managedPostgresAccountDeletionIncluded = `-- name: ManagedPostgresAccountDeletionIncluded :one
+SELECT (status='deleted_pending' AND deletion_includes_managed_postgres)::boolean AS included FROM accounts WHERE id=$1
+`
+
+func (q *Queries) ManagedPostgresAccountDeletionIncluded(ctx context.Context, db DBTX, id pgtype.UUID) (bool, error) {
+	row := db.QueryRow(ctx, managedPostgresAccountDeletionIncluded, id)
+	var included bool
+	err := row.Scan(&included)
+	return included, err
 }
 
 const managedPostgresAdmissionFenced = `-- name: ManagedPostgresAdmissionFenced :one

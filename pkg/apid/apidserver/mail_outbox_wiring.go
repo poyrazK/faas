@@ -106,13 +106,13 @@ func (s *server) queueEmailVerification(ctx context.Context, account state.Accou
 	return true
 }
 
-func (s *server) markDeletionPendingWithMail(ctx context.Context, id string) (bool, error) {
+func (s *server) markDeletionPendingWithMail(ctx context.Context, id string, opts ...state.AccountDeletionOption) (bool, error) {
 	if s.deletionMailOutbox == nil || !s.deletionMailOutbox.Requested() {
-		return false, s.store.MarkAccountDeletionPending(ctx, id)
+		return false, s.store.MarkAccountDeletionPending(ctx, id, opts...)
 	}
 	// The outbox writes accounts in its own transaction; map the deletion
 	// guards to the errors MarkAccountDeletionPending returns for them.
-	err := state.AccountDeletionGuardError(s.deletionMailOutbox.ScheduleDeletion(ctx, id))
+	err := state.AccountDeletionGuardError(s.deletionMailOutbox.ScheduleDeletion(ctx, id, opts...))
 	if errors.Is(err, mailoutbox.ErrAccountUnavailable) {
 		err = state.ErrNotFound
 	}

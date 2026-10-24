@@ -27475,8 +27475,8 @@ func (s *PgStore) UsageByAccount(ctx context.Context, accountID string, since ti
 // ('active', 'deleted_pending'). A row in past_due or any other
 // suspended state must not be re-armed into deletion by a stale
 // session cookie.
-func (s *PgStore) MarkAccountDeletionPending(ctx context.Context, id string) error {
-	return s.markAccountDeletionPending(ctx, id)
+func (s *PgStore) MarkAccountDeletionPending(ctx context.Context, id string, opts ...AccountDeletionOption) error {
+	return s.markAccountDeletionPending(ctx, id, accountDeletionOptions(opts))
 }
 
 // RestoreAccount flips status back to active and clears
@@ -27832,7 +27832,7 @@ func (s *PgStore) ClearQuotaWarning(ctx context.Context, id string) error {
 // backfill-stamp path used by pkg/meter.Dunning to plant a stamp on
 // a legacy row that entered past_due before the migration column
 // existed (audit finding #2 data-integrity guard).
-func (s *PgStore) MarkDunningStep(ctx context.Context, id string, from, to AccountStatus) error {
+func (s *PgStore) MarkDunningStep(ctx context.Context, id string, from, to AccountStatus, opts ...AccountDeletionOption) error {
 	if shared, err := s.isOrgBillingSubject(ctx, id); err != nil {
 		return err
 	} else if shared {
@@ -27855,9 +27855,10 @@ func (s *PgStore) MarkDunningStep(ctx context.Context, id string, from, to Accou
 		    set status = $2,
 		        past_due_at = case when $2 = 'past_due' then coalesce(past_due_at, $3) else past_due_at end,
 		        deletion_requested_at = case when $2 = 'deleted_pending' then coalesce(deletion_requested_at, now()) else deletion_requested_at end,
+		        deletion_includes_managed_postgres = case when $2 = 'deleted_pending' then deletion_includes_managed_postgres or $5::boolean else false end,
 		        suspended_reason = null
 		  where id = $1 and status = $4`,
-		id, string(to), stamp, string(from))
+		id, string(to), stamp, string(from), accountDeletionOptions(opts).managedPostgres)
 	if err != nil {
 		return mapErr(err)
 	}
