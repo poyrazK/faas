@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261024132405: Language runtimes are supported until upstream end of life; their CVEs are triaged, not migrated away](20261024132405-runtime-language-version-support-and-cves.md) — proposed; deprecation dates, weekly base-digest refresh, version-pinned scanner exceptions; amends ADR 20261023220532 decision 4 for Python 3.12
 - [Dockerfile HEALTHCHECK gates readiness on source builds](20261024100000-dockerfile-healthcheck-enforced.md)
 - [ADR-20261024085817: A compute rollout never strands a node on a runtime base it cannot boot, and its drain finishes](20261024085817-rollout-base-generation-and-drain-completion.md) — proposed; a changed base generation pre-stages behind the drain barrier, the rescue never re-activates a node whose cache moved, a drain withdraws, drains and stops what it cannot hand off (2026-10-22 fsn-3)
 - [Bucket-scoped object storage availability](20261023223000-object-storage-bucket-scoped-availability.md) — per-bucket inventory freshness, maintenance listings off the customer meter, no fence on a never-versioned baseline, busy deletions wait, public-read share and revalidation
