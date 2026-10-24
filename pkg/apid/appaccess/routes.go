@@ -7,6 +7,10 @@ import "github.com/onebox-faas/faas/pkg/authz"
 // Reviewed routes are explicit: adding a new app endpoint never implicitly
 // grants organization members access to a creator's other resources.
 var routeActions = map[string]authz.OrgAction{
+	// The resumable upload routes name their app in the request body or the
+	// stored session, so the handlers call Authorize once they resolve it.
+	"POST /v1/uploads":                                authz.OrgActionDeployApp,
+	"POST /v1/uploads/{id}/commit":                    authz.OrgActionDeployApp,
 	"GET /v1/apps/{slug}":                             authz.OrgActionReadApp,
 	"PATCH /v1/apps/{slug}":                           authz.OrgActionConfigureApp,
 	"DELETE /v1/apps/{slug}":                          authz.OrgActionDeleteApp,

@@ -228,6 +228,38 @@ func (j *ResourceJournal) checkpointAsset(instance, path string, file resourceFi
 	return errors.New("resource checkpoint requires asset intent")
 }
 
+// reanchorNamespace records that an adopting vmmd re-created a network
+// namespace binding in its own mount namespace (adoption ADR §2). The
+// namespace itself must be the recorded one; its creator context and mount
+// checkpoint become this vmmd's.
+func (j *ResourceJournal) reanchorNamespace(instance string, anchored resourceAsset) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed {
+		return errResourceJournalClosed
+	}
+	r, ok := j.recordForInstance(instance)
+	if !ok {
+		return errors.New("namespace re-anchor requires a recorded guest")
+	}
+	r.Assets = cloneResourceAssets(r.Assets)
+	for i := range r.Assets {
+		a := &r.Assets[i]
+		if a.Kind != "netns" || a.Path != anchored.Path {
+			continue
+		}
+		if a.File == nil || anchored.File == nil || *a.File != *anchored.File {
+			return errors.New("re-anchored namespace differs from the recorded one")
+		}
+		a.Namespace, a.Mount = anchored.Namespace, anchored.Mount
+		if err := r.validate(); err != nil {
+			return err
+		}
+		return j.persist(r)
+	}
+	return errors.New("namespace re-anchor requires a recorded namespace")
+}
+
 func (j *ResourceJournal) retireAsset(instance, path string) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 )
 
 // challengeSolveMaxBody bounds the solve form: a token, a counter and a
@@ -14,7 +15,8 @@ const challengeSolveMaxBody = 8 << 10
 
 // WithEdgeChallengeKey arms kind=challenge (ADR-831 amendment 7) with the
 // key from DeriveEdgeChallengeKey. Without it challenge rules are not
-// enforced.
+// enforced; neither are they for an account the edge_challenge platform
+// flag leaves out (ADR-20261023113721).
 func (h *Handler) WithEdgeChallengeKey(key []byte) *Handler {
 	h.challengeKey = append([]byte(nil), key...)
 	return h
@@ -41,7 +43,7 @@ func (h *Handler) challengeMatcher() ChallengeEdgeRuleMatcher {
 // challenge_required for anything else.
 func (h *Handler) applyEdgeRuleChallenge(w http.ResponseWriter, r *http.Request, app App, deploymentSmoke bool) bool {
 	m := h.challengeMatcher()
-	if m == nil || deploymentSmoke {
+	if m == nil || deploymentSmoke || !h.edgeFeatureReleased(platformflags.EdgeChallenge, app) {
 		return false
 	}
 	rule := m.MatchChallenge(r.Context(), hostname(r.Host), r.URL.Path, r.Method)
@@ -111,7 +113,7 @@ func (h *Handler) handleChallengeSolve(w http.ResponseWriter, r *http.Request, a
 		return false
 	}
 	m := h.challengeMatcher()
-	if m == nil {
+	if m == nil || !h.edgeFeatureReleased(platformflags.EdgeChallenge, app) {
 		return false
 	}
 	rule := m.HostChallengeRule(r.Context(), hostname(r.Host))

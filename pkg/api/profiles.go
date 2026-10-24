@@ -2,14 +2,82 @@ package api
 
 import (
 	"fmt"
+	"net"
+	"slices"
+	"strconv"
+	"strings"
 	"time"
 )
 
+// Profile kinds. CPU samples on-CPU time; heap samples live allocations
+// (ADR-1155). Continuous collection defaults to CPU only. Stacks is an
+// instant snapshot of where every goroutine or thread is waiting; block and
+// mutex are Go's contention profiles, the time goroutines spent blocked on
+// channels and locks and waiting for mutexes during the window. Stacks, block
+// and mutex exist only for captures.
+const (
+	ProfileKindCPU    = "cpu"
+	ProfileKindHeap   = "heap"
+	ProfileKindStacks = "stacks"
+	ProfileKindBlock  = "block"
+	ProfileKindMutex  = "mutex"
+)
+
+// ValidProfileKind reports a kind continuous collection supports.
+func ValidProfileKind(kind string) bool { return kind == ProfileKindCPU || kind == ProfileKindHeap }
+
+// ValidCaptureProfileKind reports a kind an on-demand capture supports.
+func ValidCaptureProfileKind(kind string) bool {
+	return ValidProfileKind(kind) || kind == ProfileKindStacks || ProfileContentionKind(kind)
+}
+
+// ProfileContentionKind reports Go's block and mutex kinds, which collectors
+// read as the difference over the window rather than a snapshot.
+func ProfileContentionKind(kind string) bool {
+	return kind == ProfileKindBlock || kind == ProfileKindMutex
+}
+
 // ProfilingConfig enables sampled CPU profiles (ADR-819). Settings are baked
-// into the deployment; changing them requires a redeploy.
+// into the deployment; changing them requires a redeploy. Kinds adds
+// continuous heap profiles (ADR-1155); empty means CPU only. PprofPort names
+// the guest-local port where a Go application serves net/http/pprof;
+// guest-init then collects from it, so the application needs no Gregale SDK.
 type ProfilingConfig struct {
-	Enabled       bool `json:"enabled" yaml:"enabled" toml:"enabled"`
-	WindowSeconds int  `json:"window_seconds,omitempty" yaml:"window_seconds,omitempty" toml:"window_seconds"`
+	Enabled       bool     `json:"enabled" yaml:"enabled" toml:"enabled"`
+	WindowSeconds int      `json:"window_seconds,omitempty" yaml:"window_seconds,omitempty" toml:"window_seconds"`
+	Kinds         []string `json:"kinds,omitempty" yaml:"kinds,omitempty" toml:"kinds"`
+	PprofPort     int      `json:"pprof_port,omitempty" yaml:"pprof_port,omitempty" toml:"pprof_port"`
+}
+
+// Equal compares two configurations by their effective settings.
+func (c *ProfilingConfig) Equal(o *ProfilingConfig) bool {
+	if c == nil || o == nil {
+		return c == o
+	}
+	return c.Enabled == o.Enabled && c.WindowSeconds == o.WindowSeconds && slices.Equal(c.EffectiveKinds(), o.EffectiveKinds()) &&
+		c.PprofPort == o.PprofPort
+}
+
+// ProfilePprofReservedPorts are guest-init's own loopback listeners. A pprof
+// port naming one would make guest-init profile itself.
+func ProfilePprofReservedPorts() []int {
+	var ports []int
+	for _, addr := range []string{strings.TrimPrefix(ProfileLocalEndpoint, "http://"), TraceLocalListen} {
+		if _, port, err := net.SplitHostPort(addr); err == nil {
+			if n, err := strconv.Atoi(port); err == nil {
+				ports = append(ports, n)
+			}
+		}
+	}
+	return ports
+}
+
+// EffectiveKinds returns the continuous profile kinds, defaulting to CPU.
+func (c *ProfilingConfig) EffectiveKinds() []string {
+	if c == nil || len(c.Kinds) == 0 {
+		return []string{ProfileKindCPU}
+	}
+	return append([]string(nil), c.Kinds...)
 }
 
 func (c *ProfilingConfig) EffectiveWindowSeconds() int {
@@ -28,6 +96,19 @@ func (c *ProfilingConfig) Validate(plan Plan) error {
 	}
 	if n := c.EffectiveWindowSeconds(); n < ProfileMinWindowSeconds || n > ProfileMaxWindowSeconds {
 		return fmt.Errorf("profiling.window_seconds must be between %d and %d", ProfileMinWindowSeconds, ProfileMaxWindowSeconds)
+	}
+	seen := map[string]bool{}
+	for _, kind := range c.Kinds {
+		if !ValidProfileKind(kind) || seen[kind] {
+			return fmt.Errorf("profiling.kinds must list distinct values of cpu or heap")
+		}
+		seen[kind] = true
+	}
+	if c.PprofPort != 0 && (c.PprofPort < 1 || c.PprofPort > 65535) {
+		return fmt.Errorf("profiling.pprof_port must be between 1 and 65535")
+	}
+	if slices.Contains(ProfilePprofReservedPorts(), c.PprofPort) {
+		return fmt.Errorf("profiling.pprof_port %d is reserved for the platform's profiling and tracing bridges", c.PprofPort)
 	}
 	return nil
 }

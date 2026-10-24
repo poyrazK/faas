@@ -200,6 +200,12 @@ service Vmmd {
   // warm capture. Missing objects are treated as an idempotent success.
   rpc DeleteWarmSnapshot(DeleteWarmSnapshotRequest) returns (DeleteWarmSnapshotResponse);
 
+  // RetireNativeRuntimeSnapshotObject removes one object of a native runtime
+  // capture from the tree only vmmd writes (ADR 20261022184951 amendment 1).
+  // imaged decides what to collect; vmmd accepts only a v2 capture object key
+  // and treats a missing object as success, like storage Delete.
+  rpc RetireNativeRuntimeSnapshotObject(RetireNativeRuntimeSnapshotObjectRequest) returns (RetireNativeRuntimeSnapshotObjectResponse);
+
   // FrameworkReady is the vmmd-side receipt of the guest-init
   // "framework ready" vsock DGRAM (port 1027, msg=4) signal
   // (issue #470, PR #470-FU-B). vmmd's host-side DGRAM listener
@@ -226,6 +232,17 @@ service Vmmd {
   rpc ExecuteOperatorRestartDestroy(ExecuteOperatorRestartDestroyRequest) returns (ExecuteOperatorRestartDestroyResponse);
   // ADR-1525: one journal-authorized capture/stop of the original VM generation.
   rpc ExecuteOperatorPark(ExecuteOperatorParkRequest) returns (ExecuteOperatorParkResponse);
+
+  // AdoptionReport is the node inventory this vmmd took over at startup
+  // (vmmd restart adoption ADR §3). UNIMPLEMENTED when adopt_running_vms is
+  // off; UNAVAILABLE when this start claimed no ownership epoch.
+  rpc AdoptionReport(AdoptionReportRequest) returns (AdoptionReportResponse);
+  // AdoptionInventory hands a candidate vmmd binary this vmmd's journal
+  // records and the live adoption proof for each, so the candidate can say
+  // before a release restarts vmmd whether it would adopt every guest (vmmd
+  // restart adoption ADR §4). Served on vmmd's root-only admin socket;
+  // PERMISSION_DENIED elsewhere.
+  rpc AdoptionInventory(AdoptionInventoryRequest) returns (AdoptionInventoryResponse);
 
   // StopInstance is the M-2 / ADR-138 graceful stop sequence: send
   // `signal` to the guest's PID 1, wait up to `grace_period_s`
@@ -324,6 +341,13 @@ service Vmmd {
   // without rebooting the guest or creating a deployment. RAM/vCPU topology
   // remain boot-time settings.
   rpc UpdateAppCPULimit(UpdateAppCPULimitRequest) returns (UpdateAppCPULimitAck);
+
+  // CaptureProfile (ADR-1155) arms one live instance's dormant guest profile
+  // collectors for a bounded window and returns the pprof profiles they
+  // report. vmmd bounds the reply and never parses the profiles. The call
+  // counts as in-flight activity so the idle reaper does not park the
+  // instance mid-capture. Additive per ADR-016.
+  rpc CaptureProfile(CaptureProfileRequest) returns (CaptureProfileResponse);
 
   // UpdateStaticEgressIP (ADR-119) lets schedd push a fresh
   // per-app static egress IP into every live netns the vmmd
@@ -1700,6 +1724,17 @@ message InstanceStats {
   bool frozen = 23;
   // ADR-1151: when the current freeze took effect; absent unless frozen.
   google.protobuf.Timestamp frozen_since = 24;
+  // ADR-20261023171905: this incarnation's most recent completed quiet
+  // pause, from the moment the VM stopped to the moment it ran again.
+  // Absent until the first resume. schedd records it in the pause ledger
+  // that meterd subtracts from billed seconds; a pause that ends and is
+  // replaced before schedd reads it is billed.
+  google.protobuf.Timestamp quiet_last_pause_started_at = 25;
+  google.protobuf.Timestamp quiet_last_pause_ended_at = 26;
+  // ADR-20261023171905: total time this incarnation spent in completed
+  // quiet pauses, measured on vmmd's monotonic clock. It restarts at zero
+  // with each new VM. It cross-checks the ledger; billing reads the ledger.
+  google.protobuf.Int64Value quiet_paused_ns_total = 27;
 }
 
 // PingRequest is intentionally empty. Ping is a liveness probe; the
@@ -1796,6 +1831,46 @@ message UpdateAppCPULimitRequest {
 }
 
 message UpdateAppCPULimitAck {}
+
+// CaptureProfileRequest names one live instance and the capture window.
+// capture_id is 32 lowercase hex characters; kinds are "cpu" and/or "heap";
+// duration_ms is bounded by pkg/api ProfileCaptureMin/MaxDuration.
+message CaptureProfileRequest {
+  string instance = 1;
+  string capture_id = 2;
+  repeated string kinds = 3;
+  int64 duration_ms = 4;
+  // checkpoint_ms asks heap collectors for interim profiles so an OOM kill
+  // mid-window still returns the last heap before it; zero disables them.
+  int64 checkpoint_ms = 5;
+}
+
+// CapturedProfile is one guest collector's contribution: an unparsed gzip
+// or raw pprof protobuf for one process and kind.
+message CapturedProfile {
+  string kind = 1;
+  string process_id = 2;
+  bytes profile = 3;
+  int64 from_unix_nano = 4;
+  int64 until_unix_nano = 5;
+}
+
+// CaptureProfileResponse reports what the guest observed. processes counts
+// collectors that polled during the window; zero means nothing in the VM is
+// instrumented. dropped counts profiles discarded by the reply bounds.
+message CaptureProfileResponse {
+  repeated CapturedProfile profiles = 1;
+  int32 processes = 2;
+  int32 dropped = 3;
+  string reason = 4;
+  // partial marks a window that ended early (the workload was OOM-killed);
+  // heap profiles from processes that could not flush are checkpoints.
+  bool partial = 5;
+  // oom_killed reports that the workload was OOM-killed during the window;
+  // oom_peak_mb is the memory in use at the kill.
+  bool oom_killed = 6;
+  int32 oom_peak_mb = 7;
+}
 
 // UpdateEgressCircuitRequest (ADR-201 §3) is the input to
 // UpdateEgressCircuit. app_id is the apps.id UUID whose live instances need
@@ -2489,6 +2564,13 @@ message DeleteWarmSnapshotResponse {
   bool deleted = 1;
 }
 
+message RetireNativeRuntimeSnapshotObjectRequest {
+  // One of a v2 capture's memory, device state, drive or backing keys.
+  string storage_key = 1;
+}
+
+message RetireNativeRuntimeSnapshotObjectResponse {}
+
 // ExecuteExecution is the post-restore host/guest execution envelope. The
 // request is validated again at vmmd even though apid/schedd already admitted
 // it: vmmd is the last trust boundary before untrusted bytes enter a guest.
@@ -2903,6 +2985,72 @@ message UpdateAppEgressPolicyRequest {
 }
 
 message UpdateAppEgressPolicyAck { int64 revision = 1; }
+
+message AdoptionReportRequest {}
+message AdoptionReportResponse {
+  string node_id = 1;
+  // epoch is the ownership epoch this vmmd claimed; schedd ignores a report
+  // below the compute_nodes row's epoch.
+  uint64 epoch = 2;
+  string incarnation = 3;
+  string predecessor_incarnation = 4;
+  // fenced: the epoch was advanced outside this node's claims, so nothing
+  // was adopted and every survivor stayed quarantined.
+  bool fenced = 5;
+  repeated AdoptionReportInstance adopted = 6;
+  repeated AdoptionReportInstance refused = 7;
+  // leased_since_start is every instance this vmmd gave a slot after
+  // startup. A live row on this node in neither it nor adopted ran under the
+  // predecessor and is gone.
+  repeated string leased_since_start = 8;
+  // complete is false once leased_since_start overflowed; schedd then acts
+  // on nothing in the report.
+  bool complete = 9;
+}
+message AdoptionInventoryRequest {}
+message AdoptionInventoryResponse {
+  repeated AdoptionInventoryRecord records = 1;
+}
+message AdoptionInventoryRecord {
+  // record is the journal record's JSON, as the running vmmd holds it.
+  bytes record = 1;
+  // proof_ok reports that proof steps 2-6 (boot, process, cgroup, network,
+  // Firecracker API) hold for the live guest; otherwise reason and detail
+  // name the first failure.
+  bool proof_ok = 2;
+  string proof_reason = 3;
+  string proof_detail = 4;
+}
+message AdoptionReportInstance {
+  string instance = 1;
+  string app_id = 2;
+  // reason and detail name the first failed proof step of a refused guest.
+  string reason = 3;
+  string detail = 4;
+  // resolved is the outcome of the operation in flight at the restart,
+  // settled before the report. "thawed" (adopted): a freeze or thaw was cut
+  // short and the guest now runs. "resumed" (adopted): a migration prepare
+  // was cut short before it answered, so the source runs again. "stopped" (in
+  // refused, with no reason): a stop, destroy, park or warm snapshot was cut
+  // short and the successor finished the teardown.
+  string resolved = 5;
+  // admission is set for an adopted guest booted under an ADR-595 receipt:
+  // what the successor holds, for schedd's re-bind of that admission.
+  AdoptionReportAdmission admission = 6;
+}
+
+// AdoptionReportAdmission is the serving receipt an adopted guest carries
+// and the residency the successor observed (ADR-595 extension). It must
+// equal the instance's stored receipt for schedd's re-bind to be accepted.
+message AdoptionReportAdmission {
+  string token = 1;
+  string issuing_incarnation = 2;
+  int64 completed_at_unix_nano = 3;
+  string netns = 4;
+  string host_ip = 5;
+  int32 lease_uid = 6;
+  bool paused = 7;
+}
 
 // Process identity is produced by the native manager, not echoed from callers.
 message RuntimeAdmissionIdentityRequest {}

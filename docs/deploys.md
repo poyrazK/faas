@@ -112,9 +112,14 @@ artifact instead of rebuilding it. Without `--to`, rollback (and automatic
 rollback) returns to the deployment that most recently stopped serving
 traffic, not the most recently created one, so a rollback after an earlier
 rollback or a completed canary restores the release that was just replaced.
-A rollback that fails its readiness or hosting check leaves the current
+It rolls back production; an app that serves only in one other environment
+rolls back that environment, and a release of any other environment needs
+`--to`. A rollback that fails its readiness or hosting check leaves the current
 release serving. The target returns to `superseded` with the error recorded,
-so it remains available for another rollback.
+so it remains available for another rollback. If another release goes live in
+that environment while the target is getting ready, the rollback is not
+applied (`rollback_release_changed`), and a rollback whose receipt already
+reported a failure such as `rollback_timeout` never cuts over later.
 
 `gregale rollback APP` waits until the previous release actually serves
 again and reports how long it took:
@@ -189,6 +194,8 @@ gregale release-gates add --name checkout-slo --slo checkout --max-burn-rate 10
 gregale release-gates add --name no-new-errors --new-errors --min-events 3
 # ...when orders per minute average below 5.
 gregale release-gates add --name orders --metric orders_per_minute --below 5
+# ...when its AI gateway calls cost 30% more each than the previous release's.
+gregale release-gates add --name ai-cost --ai cost_per_call --max-increase 30
 
 gregale release-gates list
 gregale release-gates rm orders
@@ -210,6 +217,15 @@ How each gate judges:
 - **`custom_metric` gates** bound the metric's average. Custom metrics are
   reported per app, not per revision, so these gates are most useful after
   the release takes all the traffic.
+- **`ai` gates** compare the release's AI gateway calls with the previous
+  release's ([ADR 20261022153155](adr/20261022153155-ai-signals-per-deployment-and-release-gates.md)):
+  `error_rate` (provider errors), `flagged_rate` (answers truncated, refused,
+  empty, invalid JSON or with a failed tool call), `cost_per_call` or
+  `ttfb_ms` (time to first byte). The gate fails when the release is more
+  than `--max-increase` percent worse (default 50), and worse by more than a
+  floor: 1 percentage point, 1 millicent per call or 50 ms. Both releases need
+  `--min-samples` calls. Only calls from the app's instances count;
+  `gregale ai deployments` lists them by deployment.
 
 A gate that has too few requests or values (`--min-samples`, default 20) is
 not judged. A gate never holds a rollout on missing evidence.
@@ -435,6 +451,11 @@ Every deploy creates an immutable revision, numbered per app and shown as
 `v41`, `v42`, `v43`. A revision is never rewritten — a redeploy supersedes it
 and creates the next one — so it is a stable handle you can keep in a runbook
 or an incident channel.
+
+Deploys of one environment go live in the order you start them, not the order
+they finish. If you start another deploy before an earlier one goes live, the
+earlier one never goes live: it is superseded when it reaches the cutover,
+whether or not the newer deploy succeeds.
 
 Use a revision anywhere a deployment ID is accepted:
 

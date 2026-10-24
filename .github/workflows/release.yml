@@ -52,7 +52,7 @@ jobs:
     outputs:
       sha: ${{ steps.resolve.outputs.sha }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
       - id: resolve
         name: Resolve current v0 commit
         run: |
@@ -76,9 +76,9 @@ jobs:
           - goos: darwin
             goarch: arm64
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
@@ -86,7 +86,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: Restore main-branch Go build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -118,7 +118,7 @@ jobs:
             --mtime "@$(git log -1 --format=%ct)"
 
       - name: Upload target
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-cli-target-${{ matrix.goos }}-${{ matrix.goarch }}-${{ github.sha }}
           path: /tmp/gregale-build/
@@ -129,7 +129,7 @@ jobs:
     needs: [cli-targets]
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           # The fan-in job only creates the release branch and moving tag.
           # One commit is enough; target builds already captured the source
@@ -193,7 +193,7 @@ jobs:
       # these exact archives rather than rebuilding the CLI. One build per
       # release, consumed by every channel.
       - name: Upload CLI archives for the npm channel
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-cli-archives-${{ github.sha }}
           path: /tmp/gregale-build/archives/
@@ -439,9 +439,9 @@ jobs:
       group: gregale-npm-publish
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -503,9 +503,9 @@ jobs:
       group: gregale-npm-publish-data-sdk
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "22"
           registry-url: "https://registry.npmjs.org"
@@ -552,11 +552,11 @@ jobs:
     # for that hand-off plus bundle creation and signing.
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
@@ -564,7 +564,7 @@ jobs:
       - id: cache-date
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: Restore main-branch Go build cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -921,7 +921,7 @@ jobs:
           (cd "$OUT_DIR" && sha256sum release.tar.gz release.cosign.bundle release.sbom.json production-manifest.yaml runtime-bases.env > SHA256SUMS)
 
       - name: Upload canonical release artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-daemon-release-${{ github.sha }}
           path: ${{ runner.temp }}/gregale-release/
@@ -935,7 +935,7 @@ jobs:
     timeout-minutes: 20
     steps:
       - name: Check out release upload helper
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
 

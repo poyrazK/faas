@@ -147,6 +147,63 @@ type triggerDispatchResponse struct {
 }
 
 // triggerDispatchResult mirrors one batch record's outcome.
+// queueRetryGroup is a set of retried queue items that share a last_error.
+type queueRetryGroup struct {
+	reason string
+	items  []string
+}
+
+// queueRetryMaxLastErrorBytes bounds the gateway text a retried invocation
+// keeps as its last_error.
+const queueRetryMaxLastErrorBytes = 512
+
+// queueRetryGroups groups retried queue items by what failed. The queue
+// poller stores the Nack reason as the invocation's last_error, and every
+// retry said broker_error, even when the customer's handler threw
+// (Hunt 12 H12-34).
+func queueRetryGroups(items []string, statusByID map[string]triggerDispatchResult) []queueRetryGroup {
+	var groups []queueRetryGroup
+	index := map[string]int{}
+	for _, item := range items {
+		result, found := statusByID[item]
+		reason := queueRetryLastError(result, found)
+		i, ok := index[reason]
+		if !ok {
+			i = len(groups)
+			index[reason] = i
+			groups = append(groups, queueRetryGroup{reason: reason})
+		}
+		groups[i].items = append(groups[i].items, item)
+	}
+	return groups
+}
+
+// queueRetryLastError is the gateway's code and error for one retried item.
+// It never equals a terminal reason, which would dead-letter the item.
+func queueRetryLastError(result triggerDispatchResult, found bool) string {
+	if !found {
+		return "missing dispatch result"
+	}
+	code, msg := strings.TrimSpace(result.Code), strings.TrimSpace(result.Error)
+	out := code
+	switch {
+	case code != "" && msg != "":
+		out = code + ": " + msg
+	case msg != "":
+		out = msg
+	case code == "":
+		return triggerReasonBrokerError
+	}
+	switch out {
+	case triggerReasonPoisonRecord, triggerReasonMaxAttempts, triggerReasonPayloadTooLarge, triggerReasonRateLimited:
+		return triggerReasonBrokerError
+	}
+	if len(out) > queueRetryMaxLastErrorBytes {
+		out = strings.ToValidUTF8(out[:queueRetryMaxLastErrorBytes], "")
+	}
+	return out
+}
+
 type triggerDispatchResult struct {
 	ItemIdentifier string `json:"item_identifier"`
 	Status         string `json:"status"`
@@ -1042,9 +1099,15 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			)
 		}
 		if len(brokerNackItems) > 0 {
-			if err := poller.Nack(ctx, t, brokerNackItems, triggerReasonBrokerError); err != nil {
-				l.log.Warn("sched trigger tick: poller nack",
-					"trigger_id", t.ID.String(), "err", err)
+			nacks := []queueRetryGroup{{reason: triggerReasonBrokerError, items: brokerNackItems}}
+			if isQueuePoller {
+				nacks = queueRetryGroups(brokerNackItems, statusByID)
+			}
+			for _, nack := range nacks {
+				if err := poller.Nack(ctx, t, nack.items, nack.reason); err != nil {
+					l.log.Warn("sched trigger tick: poller nack",
+						"trigger_id", t.ID.String(), "err", err)
+				}
 			}
 		}
 	}
@@ -1053,71 +1116,9 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			attribute.String("gregale.trigger.kind", t.Kind),
 			attribute.Int("gregale.trigger.records", len(dlqIDs)))
 		defer dlqSpan.End()
-		finalizedItems := make(map[string]bool, len(dlqItems))
-		for i, id := range dlqIDs {
-			reason := dlqReasons[i]
-			lastErr := dlqErrors[i]
-			attempts := dlqAttempts[i]
-			if isQueuePoller {
-				if err := store.InsertTriggerDeadLetter(ctx, id, t.ID.String(), reason, "drop", []byte(lastErr)); err != nil {
-					l.log.Warn("sched trigger tick: insert dlq", "id", id, "err", err)
-					continue
-				}
-			} else if err := routeTriggerClaimToDLQ(ctx, store, claimedByID[id], t.ID.String(), reason, []byte(lastErr)); err != nil {
-				l.log.Warn("sched trigger tick: route claimed dlq", "id", id, "err", err)
-				continue
-			}
-			finalizedItems[dlqItems[i]] = true
-			// Audit: trigger.dlq, dual-emitted as
-			// esm.drain.dlq for the operator alias.
-			l.emitAuditDual(
-				ctx,
-				events.TriggerDLQEvent{
-					TriggerID: t.ID.String(),
-					RecordID:  id,
-					AppID:     t.AppID.String(),
-					Reason:    reason,
-					Attempts:  int(attempts),
-					LastError: lastErr,
-				},
-				events.ESMDrainDLQEvent{
-					TriggerID: t.ID.String(),
-					RecordID:  id,
-					AppID:     t.AppID.String(),
-					Reason:    reason,
-					EmitAt:    time.Now(),
-				},
-				t.ID.String(), t.AppID.String(), t.Kind,
-			)
-		}
-		// Retry exhaustion is terminal but differs from a poison record:
-		// Kafka must commit it even when the trigger's poison strategy is
-		// seek-to-offset. Keep the broker disposition aligned with the
-		// durable DLQ reason, including when one batch contains both.
-		poisonItems := make([]string, 0, len(dlqItems))
-		maxAttemptItems := make([]string, 0, len(dlqItems))
-		for i, item := range dlqItems {
-			if !finalizedItems[item] {
-				continue
-			}
-			if dlqReasons[i] == triggerReasonMaxAttempts {
-				maxAttemptItems = append(maxAttemptItems, item)
-			} else {
-				poisonItems = append(poisonItems, item)
-			}
-		}
-		if len(poisonItems) > 0 {
-			if err := poller.Nack(ctx, t, poisonItems, triggerReasonPoisonRecord); err != nil {
-				l.log.Warn("sched trigger tick: poller nack (dlq)",
-					"trigger_id", t.ID.String(), "err", err)
-			}
-		}
-		if len(maxAttemptItems) > 0 {
-			if err := poller.Nack(ctx, t, maxAttemptItems, triggerReasonMaxAttempts); err != nil {
-				l.log.Warn("sched trigger tick: poller nack (max attempts)",
-					"trigger_id", t.ID.String(), "err", err)
-			}
-		}
+		l.settleTriggerDeadLetters(ctx, t, poller, store, isQueuePoller, claimedByID, terminalTriggerResults{
+			recordIDs: dlqIDs, items: dlqItems, reasons: dlqReasons, errors: dlqErrors, attempts: dlqAttempts,
+		})
 	}
 	// Audit: trigger.fired.batch — aggregated counts. No ESM
 	// alias: the per-batch aggregate is a trigger.*-only
@@ -1162,6 +1163,99 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 // A future PR can batch-encode and short-circuit Invoke() if a
 // target VM is already RUNNING; that change is out of scope
 // here.
+// terminalTriggerResults holds a batch's dead-lettered records as parallel
+// slices: trigger_records ids, item identifiers, DLQ reasons, last errors and
+// attempt numbers.
+type terminalTriggerResults struct {
+	recordIDs, items, reasons, errors []string
+	attempts                          []int32
+}
+
+// settleTriggerDeadLetters writes each terminal record's DLQ row and tells the
+// poller. A broker writes the receipt first and Nacks only what was written:
+// the receipt is its durable record. A queue poller Nacks first, as the batch
+// failure paths do: QueueFinishDeliveryClaims dead-letters the invocation and
+// its receipt together, and only then is the receipt's audit row written. A
+// failed Nack leaves both to the lease reaper, so a receipt never dead-letters
+// without its invocation, the message's one unified DLQ entry
+// (ADR-20261022203653).
+func (l *Loop) settleTriggerDeadLetters(ctx context.Context, t sqlc.Trigger, poller triggerSource, store storeLike,
+	queue bool, claimedByID map[string]sqlc.TriggerRecord, dead terminalTriggerResults) {
+	var nacked map[string]bool
+	if queue {
+		nacked = l.nackTerminalItems(ctx, t, poller, dead.items, dead.reasons, nil)
+	}
+	written := make(map[string]bool, len(dead.items))
+	for i, id := range dead.recordIDs {
+		reason, lastErr := dead.reasons[i], dead.errors[i]
+		if queue {
+			if !nacked[dead.items[i]] {
+				continue
+			}
+			if err := store.InsertTriggerDeadLetter(ctx, id, t.ID.String(), reason, "drop", []byte(lastErr)); err != nil {
+				l.log.Warn("sched trigger tick: insert dlq", "id", id, "err", err)
+				continue
+			}
+		} else if err := routeTriggerClaimToDLQ(ctx, store, claimedByID[id], t.ID.String(), reason, []byte(lastErr)); err != nil {
+			l.log.Warn("sched trigger tick: route claimed dlq", "id", id, "err", err)
+			continue
+		}
+		written[dead.items[i]] = true
+		// Audit: trigger.dlq, dual-emitted as esm.drain.dlq for the
+		// operator alias.
+		l.emitAuditDual(ctx,
+			events.TriggerDLQEvent{TriggerID: t.ID.String(), RecordID: id, AppID: t.AppID.String(),
+				Reason: reason, Attempts: int(dead.attempts[i]), LastError: lastErr},
+			events.ESMDrainDLQEvent{TriggerID: t.ID.String(), RecordID: id, AppID: t.AppID.String(),
+				Reason: reason, EmitAt: time.Now()},
+			t.ID.String(), t.AppID.String(), t.Kind,
+		)
+	}
+	if !queue {
+		l.nackTerminalItems(ctx, t, poller, dead.items, dead.reasons, written)
+	}
+}
+
+// nackTerminalItems Nacks terminal items and returns those whose Nack
+// succeeded; a non-nil only limits it to those items. Retry exhaustion is
+// terminal but differs from a poison record: Kafka must commit it even when the
+// trigger's poison strategy is seek-to-offset. Keep the broker disposition
+// aligned with the durable DLQ reason, including when one batch contains both.
+func (l *Loop) nackTerminalItems(ctx context.Context, t sqlc.Trigger, poller triggerSource, items, reasons []string, only map[string]bool) map[string]bool {
+	poisonItems := make([]string, 0, len(items))
+	maxAttemptItems := make([]string, 0, len(items))
+	for i, item := range items {
+		if only != nil && !only[item] {
+			continue
+		}
+		if reasons[i] == triggerReasonMaxAttempts {
+			maxAttemptItems = append(maxAttemptItems, item)
+		} else {
+			poisonItems = append(poisonItems, item)
+		}
+	}
+	nacked := make(map[string]bool, len(items))
+	for _, group := range []struct {
+		items       []string
+		reason, msg string
+	}{
+		{poisonItems, triggerReasonPoisonRecord, "sched trigger tick: poller nack (dlq)"},
+		{maxAttemptItems, triggerReasonMaxAttempts, "sched trigger tick: poller nack (max attempts)"},
+	} {
+		if len(group.items) == 0 {
+			continue
+		}
+		if err := poller.Nack(ctx, t, group.items, group.reason); err != nil {
+			l.log.Warn(group.msg, "trigger_id", t.ID.String(), "err", err)
+			continue
+		}
+		for _, item := range group.items {
+			nacked[item] = true
+		}
+	}
+	return nacked
+}
+
 func closeBatch(records []SourceRecord, sizeMax, byteCap int) []SourceRecord {
 	if sizeMax <= 0 {
 		sizeMax = len(records)

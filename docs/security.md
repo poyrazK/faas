@@ -288,8 +288,12 @@ policy keep it until it expires (up to a year after their last visit).
 A `kind=waf` edge rule (Pro and above) checks matched requests against the
 OWASP Core Rule Set for SQL injection, cross-site scripting, path traversal,
 command injection, scanners, and header injection. It works the same on
-`*.gregale.dev` and on your custom domains. `observe` at paranoia level 1 is
-generally available; `warn`, `block` and paranoia level 2 are in preview.
+`*.gregale.dev` and on your custom domains. `observe`, `warn` and `block` at
+paranoia level 1 are generally available; paranoia level 2 is in preview and
+runs in `observe` only. Warn and block reach accounts one by one as they
+launch: until they reach yours, creating a rule in either mode, or switching
+one to it, returns `422` with code `edge_feature_unavailable`, and existing
+warn and block rules only observe.
 The rule's `mode` decides what happens to a detection:
 
 | Mode | Headers and URL | Request body |
@@ -350,10 +354,14 @@ produces more false positives; it is available in `observe` only. The
 `edge_waf_detections` alert preset notifies you of bursts, and blocked
 requests also count toward `edge_rejection_pressure`.
 
-## Browser challenge (preview)
+## Browser challenge
 
 A `kind=challenge` edge rule keeps scripts and scrapers off browser pages.
-An app can have 3 on Hobby, 10 on Pro and 25 on Scale; Free has none. A matched request without a valid pass never reaches your app:
+An app can have 3 on Hobby, 10 on Pro and 25 on Scale; Free has none.
+Challenge rules reach accounts one by one as they launch: until they reach
+yours, creating one or switching one on returns `422` with code
+`edge_feature_unavailable`, and existing challenge rules challenge nobody.
+A matched request without a valid pass never reaches your app:
 
 - A page load gets a short page that does a small calculation in the
   browser (a proof of work, tens to a few hundred milliseconds by default),
@@ -413,6 +421,49 @@ In log mode the rule's matches appear as `logged` events instead.
 ```sh
 gregale edge-rules events --app my-site --outcome rejected
 ```
+
+## Penalty box
+
+An edge rule judges each request on its own: a scanner refused at
+`/wp-login.php` simply tries `/.env` next. A **penalty** makes a rule keep
+refusing a client after it has caught it. Once the rule has refused the
+same client a number of times, every request from that client to your app
+is refused for a while, whatever path it asks for.
+
+Penalties work on rules that refuse clients: `ip` and `geo` rules,
+`throttle` rules (a client that keeps hitting the limit) and `waf` rules in
+block mode. They are released account by account: until your account is
+included, adding a penalty, or switching on a rule that has one, returns
+`422` with code `edge_feature_unavailable`, and existing penalties box
+nobody while the rules themselves keep refusing.
+
+```sh
+# Block anyone who probes a scanner path from the whole app for 30 minutes.
+gregale edge-rules recipe block-scanner-paths --app my-site --set penalty_minutes=30 --enforce
+
+# A sign-in throttle that boxes a client for 15 minutes after 5 refusals in a minute.
+gregale edge-rules update <rule-id> --penalty-for 15m --penalty-after 5 --penalty-within 1m
+
+# Remove the penalty; clients it holds are let go on their next request.
+gregale edge-rules update <rule-id> --clear-penalty
+```
+
+A boxed client gets `403` with code `penalty_box`, naming the rule, and a
+`Retry-After` header saying when it ends. Penalties last from 1 minute to
+24 hours.
+
+Some details to know:
+
+- The client is its IP address. For IPv6 it is the whole /64, which one
+  machine can rotate through.
+- Many people can share one address (offices, mobile carriers). A threshold
+  above 1 and a short penalty keep one of them from locking out the rest.
+- Each edge node keeps its own boxes in memory, so a client that reaches
+  several nodes is boxed on each one separately. A restart releases them.
+- Removing the penalty, disabling the rule, or switching it to log mode lets
+  its clients go. A log-mode rule never boxes anyone.
+- The edge protection summary shows how many clients were boxed and how many
+  of their requests were refused.
 
 ## Outbound connections and DNS
 

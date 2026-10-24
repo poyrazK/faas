@@ -914,6 +914,16 @@ lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check 
 runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
 	@python3 scripts/ci/check_runbook_mutating_sql.py
 
+.PHONY: committed-binaries-check
+committed-binaries-check: ## Reject committed ELF/Mach-O/PE executables outside the justified allowlist (ADR-131)
+	@python3 scripts/ci/check_committed_binaries_test.py
+	@python3 scripts/ci/check_committed_binaries.py
+
+.PHONY: action-pin-check
+action-pin-check: ## Require third-party GitHub Actions pinned to a commit SHA (`owner/repo@<sha> # vN`)
+	@python3 scripts/ci/check_action_pins_test.py
+	@python3 scripts/ci/check_action_pins.py
+
 .PHONY: postmortem
 postmortem: ## Create docs/postmortems/YYYY-MM-DD-NAME.md from the post-mortem template (NAME required)
 	@test -n "$(NAME)" || (echo "NAME is required, e.g. make postmortem NAME=api-outage" >&2; exit 2)

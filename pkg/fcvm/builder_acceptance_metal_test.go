@@ -9,6 +9,7 @@ import (
 	"compress/gzip"
 	"context"
 	"crypto/sha256"
+	"debug/buildinfo"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -86,21 +87,25 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 		buildTimeoutSeconds = value
 	}
 	for _, tc := range []struct {
-		name                           string
-		framework                      builderd.Framework
-		root                           string
-		cancel, fail, node, sourceMaps bool
+		name                                       string
+		framework                                  builderd.Framework
+		root                                       string
+		cancel, fail, node, sourceMaps, goFunction bool
 	}{
 		{name: "dockerfile-executable", framework: builderd.FrameworkDocker},
 		{name: "railpack-workspace", framework: builderd.FrameworkUnknown, root: "apps/api"},
 		{name: "railpack-node-workspace", framework: builderd.FrameworkNode, root: "apps/api", node: true},
 		{name: "railpack-node-source-maps", framework: builderd.FrameworkNode, root: "apps/api", node: true, sourceMaps: true},
+		{name: "railpack-go-function", framework: builderd.FrameworkGo, goFunction: true},
 		{name: "failed-build", framework: builderd.FrameworkDocker, fail: true},
 		{name: "cancel-running-build", framework: builderd.FrameworkDocker, cancel: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.node && os.Getenv("FAAS_METAL_NODE_ACCEPTANCE") != "1" {
 				t.Skip("set FAAS_METAL_NODE_ACCEPTANCE=1 for the full cold Node toolchain gate")
+			}
+			if tc.goFunction && os.Getenv("FAAS_METAL_GO_ACCEPTANCE") != "1" {
+				t.Skip("set FAAS_METAL_GO_ACCEPTANCE=1 for the full cold Go toolchain gate")
 			}
 			m := fcvm.NewAcceptanceManager(t)
 			tmp := t.TempDir()
@@ -116,12 +121,15 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 			t.Cleanup(func() { _ = driver.Close() })
 			ctx, cancel := context.WithTimeout(context.Background(), time.Duration(buildTimeoutSeconds+600)*time.Second)
 			defer cancel()
-			source := acceptanceSource(t, tmp, tc.root, acceptanceSourceOptions{node: tc.node, cancel: tc.cancel, fail: tc.fail, sourceMaps: tc.sourceMaps})
+			source := acceptanceSource(t, tmp, tc.root, acceptanceSourceOptions{node: tc.node, cancel: tc.cancel, fail: tc.fail, sourceMaps: tc.sourceMaps, goFunction: tc.goFunction})
 			runtimeBaseRef := ""
-			if tc.root != "" {
+			if tc.root != "" || tc.goFunction {
 				runtimeBaseRef = acceptanceRuntimeBase(tc.node)
 			}
 			request := builderd.VMRequest{BuildID: tc.name, TenantID: "metal", DeploymentID: tc.name, SourcePath: source, SourceRoot: tc.root, Framework: tc.framework, RuntimeBaseRef: runtimeBaseRef, Plan: string(api.PlanPro), TimeoutSec: buildTimeoutSeconds}
+			if tc.goFunction {
+				request.Runtime, request.Function = "go124", true
+			}
 			if tc.sourceMaps {
 				request.SourceSHA256 = acceptanceSHA256(t, source)
 				request.IssueSourceMaps = &api.IssueSourceMapBuildConfig{Version: 1, Directory: "/app/dist"}
@@ -199,6 +207,9 @@ func TestMetalBuilderAcceptance(t *testing.T) {
 					}
 					if tc.sourceMaps {
 						acceptanceBuildSourceMaps(t, result, request)
+					}
+					if tc.goFunction {
+						acceptanceGoToolchain(t, tmp, result.OCIImage)
 					}
 					acceptanceImageBoot(t, ctx, m, tmp, result.OCIImage, tc.name)
 				}
@@ -572,12 +583,67 @@ func acceptanceBuildSourceMaps(t *testing.T, result builderd.BuildOutcome, reque
 	}
 }
 
-type acceptanceSourceOptions struct{ node, cancel, fail, sourceMaps bool }
+// acceptanceGoToolchain checks the compiler of a go124 function build. Its
+// go.mod names Go 1.24, which Railpack would otherwise install; the builder
+// must compile with the patched release instead (issue #2641). The scan in
+// acceptanceImageBoot then rejects any fixed HIGH or CRITICAL finding.
+func acceptanceGoToolchain(t *testing.T, tmp, archive string) {
+	t.Helper()
+	binary := filepath.Join(tmp, "go-function-out")
+	f, err := os.Open(archive)
+	mustAcceptance(t, err)
+	defer f.Close()
+	found := false
+	blobs := tar.NewReader(f)
+	for !found {
+		blob, err := blobs.Next()
+		if err == io.EOF {
+			break
+		}
+		mustAcceptance(t, err)
+		if !strings.HasPrefix(blob.Name, "blobs/") {
+			continue
+		}
+		layer := tar.NewReader(blobs)
+		for {
+			entry, err := layer.Next()
+			if err != nil {
+				break // config, manifest and index blobs are JSON, not tars
+			}
+			if strings.TrimPrefix(entry.Name, "./") != "app/out" {
+				continue
+			}
+			out, err := os.Create(binary)
+			mustAcceptance(t, err)
+			_, err = io.Copy(out, layer)
+			mustAcceptance(t, err)
+			mustAcceptance(t, out.Close())
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatal("Go function image has no /app/out binary")
+	}
+	info, err := buildinfo.ReadFile(binary)
+	mustAcceptance(t, err)
+	if want := "go" + api.GoBuildToolchain; info.GoVersion != want {
+		t.Fatalf("Go function compiled with %s, want %s", info.GoVersion, want)
+	}
+	t.Logf("Go function compiled with %s", info.GoVersion)
+}
+
+type acceptanceSourceOptions struct{ node, cancel, fail, sourceMaps, goFunction bool }
 
 func acceptanceSource(t *testing.T, tmp, workspace string, opts acceptanceSourceOptions) string {
 	t.Helper()
 	files := map[string][]byte{}
-	if workspace != "" {
+	if opts.goFunction {
+		// A customer go.mod commonly names an older Go than the platform
+		// builds with; the builder's pin, not this directive, chooses it.
+		files["go.mod"] = []byte("module acceptance\n\ngo 1.24\n")
+		files["main.go"] = []byte("package main\n\nimport \"net/http\"\n\nfunc main() {\n\thttp.HandleFunc(\"/\", func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte(\"acceptance-ok\")) })\n\t_ = http.ListenAndServe(\"0.0.0.0:8080\", nil)\n}\n")
+	} else if workspace != "" {
 		files["package.json"] = []byte(`{"name":"wrong-root","scripts":{"build":"exit 91"}}`)
 		if opts.node {
 			files[workspace+"/package.json"] = []byte(`{"name":"acceptance-api","version":"1.0.0","engines":{"node":"24"},"scripts":{"start":"node server.js"}}`)
@@ -646,7 +712,7 @@ func (a acceptanceSignalAdapter) SignalAndKill(ctx context.Context, id string, s
 // fixture needs Bash because Railpack's frontend emits a /bin/bash entrypoint.
 func acceptanceRuntimeBase(node bool) string {
 	if node {
-		return "node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e"
+		return "node:24-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea"
 	}
 	return "debian:12-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171"
 }

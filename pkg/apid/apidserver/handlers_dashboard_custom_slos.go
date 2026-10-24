@@ -44,6 +44,9 @@ func customSLOView(def state.SLO, st *api.SLOStatus) views.CustomSLOView {
 		BurnRate:        "—",
 		History:         fmt.Sprintf("%d / %d h", st.HoursRecorded, st.HoursExpected),
 	}
+	if pending, ok := api.SLOWindowPending(*st); ok {
+		v.Attained = pending
+	}
 	if st.AttainmentPct != nil {
 		v.Attained = fmt.Sprintf("%.3f%%", *st.AttainmentPct)
 	}

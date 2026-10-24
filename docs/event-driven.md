@@ -545,6 +545,45 @@ lookups only show work inside the window. Duplicate detection that relies on
 a stored invocation, such as inbound webhook receipts and async route
 idempotency keys, lasts as long as that invocation is kept.
 
+A failed queue or delayed-task message is one entry in `gregale dlq <app>`: its
+invocation. When a push binding delivered it, the binding's receipt failure
+stays in `gregale triggers dlq`, and replaying the entry re-arms that receipt.
+See [ADR-20261022203653](adr/20261022203653-one-dead-letter-entry-per-queue-message.md).
+
+## Queue limits
+
+Queues are available on paid plans. These limits apply per plan:
+
+| Limit | Hobby | Pro | Scale |
+|---|---|---|---|
+| Pending messages per app, across all its queues | 10,000 | 100,000 | 1,000,000 |
+| Pending message bytes per account | 100 MiB | 1 GiB | 10 GiB |
+| How long a message waits for a worker | 1 day | 4 days | 14 days |
+| Message size | 64 KiB | 256 KiB | 1 MiB |
+| Delivery attempts before the dead letter | 3 | 10 | 25 |
+
+Messages count as pending from the send until a worker settles them. A message a
+worker holds under a lease still counts.
+
+### Queue depth
+
+A send to an app whose pending messages are at its plan's limit fails with
+`403 plan_queue_depth`, carrying the limit and the observed count.
+
+### Queue backlog
+
+A send while the account's pending messages hold its plan's byte limit fails
+with `403 plan_queue_backlog_bytes`, carrying the limit and the observed bytes.
+The limit counts every app of the account. Two sends to different apps at the
+same moment may pass it by their own sizes.
+
+### Message expiry
+
+A message that waits longer than its plan allows, counted from its send, moves to
+the dead-letter queue with outcome code `queue_message_expired`. Replay it from
+there (`gregale dlq <app>`) once a worker can take it. A message a worker holds
+under a lease does not expire.
+
 ## Application inbox
 
 For straightforward application-to-application work, send directly to the

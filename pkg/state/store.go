@@ -356,6 +356,12 @@ var ErrRolloutNotStuck = errors.New("state: rollout is not stuck; use promote in
 // post-condition check is loud.
 var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit recovery")
 
+// ErrRolloutAmbiguous is returned by an app-level RecoverRollout when rollouts
+// are in flight in more than one environment of the app. Recovery without a
+// deployment selector would otherwise act on whichever environment's rollout
+// is newest, which may not be the one the operator meant.
+var ErrRolloutAmbiguous = errors.New("state: rollouts are in progress in more than one environment")
+
 // CanaryAdvanceParams is the state-owned portion of one canary stage
 // transition. The API layer resolves the preset stage and supplies the audit
 // envelope; worker calls may also require the durable lease and stage dwell.
@@ -935,6 +941,10 @@ type ProjectReconcileMutation struct {
 	Op                        string
 	App                       App
 	SetPlatformTenantRequired bool
+	// SetResources writes App's positive RAMMB, CPUMillicores and
+	// MaxConcurrency on an update or a restored app, because the source
+	// declares Compose resources (ADR-20261023120000). A zero keeps the app's.
+	SetResources bool
 }
 
 // ProjectReconcileCron is the desired cron attached to a scanned workload.
@@ -2816,7 +2826,11 @@ type Store interface {
 	// deployment_id returns (0, nil) — the SQL planner cannot fail
 	// a count(*) on a WHERE clause with no matching rows.
 	CountLiveInstancesByDeployment(ctx context.Context, deploymentID string) (int, error)
-	LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error)
+	// LatestSupersededDeployment returns the implicit rollback target of one
+	// environment: the deployment in scope that most recently stopped serving.
+	// Weights, live rows and rollbacks are per environment, so a target from
+	// another scope is never returned.
+	LatestSupersededDeployment(ctx context.Context, appID, scope string) (Deployment, error)
 	// GetDeploymentByIDScopedToSuperseded keeps its historical name but also
 	// accepts a live revision with zero traffic: it is not the current serving
 	// release and is eligible for readiness-gated rollback. A serving live
@@ -6951,11 +6965,13 @@ type CustomerEventLister interface {
 
 // IdempotencyReservation is the outcome of ReserveIdempotent. Exactly one of
 // Reserved (the caller owns the key and must complete it with
-// PutIdempotent), InFlight (another request holds the key), or a completed
-// response (Status/Body to replay) applies.
+// PutIdempotent), InFlight (another request holds the key), Conflict (the key
+// is bound to a different request fingerprint, ADR-20261022204036), or a
+// completed response (Status/Body to replay) applies.
 type IdempotencyReservation struct {
 	Reserved bool
 	InFlight bool
+	Conflict bool
 	Status   int
 	Body     []byte
 }

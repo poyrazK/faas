@@ -40,6 +40,13 @@ type composeCandidate struct {
 	Healthcheck any      `yaml:"healthcheck"`
 	Image       string   `yaml:"image"`
 	Profiles    []string `yaml:"profiles"`
+	Secrets     any      `yaml:"secrets"` // names or {source, target, mode}; written to /run/secrets
+	// Resources and replicas (ADR-20261023120000); deploy wins over the
+	// service-level keys.
+	Deploy   any `yaml:"deploy"`
+	Scale    any `yaml:"scale"`
+	MemLimit any `yaml:"mem_limit"`
+	CPUs     any `yaml:"cpus"`
 
 	// Process overrides for prebuilt images (ADR-1337).
 	Entrypoint      any    `yaml:"entrypoint"` // string OR []string; empty clears
@@ -120,6 +127,9 @@ func rawComposeDoc(body []byte) (map[string]any, error) {
 
 type composeDoc struct {
 	Services map[string]composeCandidate `yaml:"services"`
+	// ServiceBindingPolicy is the project-wide x-gregale-service-policy: the
+	// policy of every deployable service that sets none (ADR-20261022111119).
+	ServiceBindingPolicy string `yaml:"x-gregale-service-policy"`
 }
 type composeRoot struct {
 	Compose composeDoc `yaml:"compose"`
@@ -201,10 +211,20 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		return nil, nil, nil, envErr
 	}
 	topSecrets, _ := rawDoc["secrets"].(map[string]any)
+	projectPolicy, err := interpolateComposeString(c.ServiceBindingPolicy, composeEnv, src, "(top level)", "x-gregale-service-policy")
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	projectServiceBindingPolicy, err := normalizeServiceBindingPolicy(projectPolicy)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("reposcan: %s: %w", src, err)
+	}
+	activeProfiles := composeActiveProfiles(composeEnv)
 	for _, name := range svcNames {
 		s := c.Services[name]
-		if len(s.Profiles) > 0 {
-			warnings = append(warnings, fmt.Sprintf("reposcan: %s: %s skipped because profiles %s are not active", src, name, strings.Join(s.Profiles, ",")))
+		if !activeProfiles.enables(s.Profiles) {
+			warnings = append(warnings, fmt.Sprintf("reposcan: %s: %s skipped because profiles %s are not active; list one in COMPOSE_PROFILES in .env to deploy it",
+				src, name, strings.Join(s.Profiles, ",")))
 			continue
 		}
 		if err := interpolateComposeCandidate(&s, composeEnv, src, name); err != nil {
@@ -233,6 +253,9 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		}
 		if !hasWorkload && serviceBindingPolicy != "" {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s x-gregale-service-policy requires a deployable workload", src, name)
+		}
+		if serviceBindingPolicy == "" && hasWorkload {
+			serviceBindingPolicy = projectServiceBindingPolicy
 		}
 		serviceBindingTransport, transportErr := normalizeServiceBindingTransport(s.ServiceBindingTransport)
 		if transportErr != nil {
@@ -338,6 +361,20 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 				warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
 			}
 		}
+		secretFiles, secretWarnings, err := composeSecretFiles(s.Secrets, topSecrets)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+		}
+		for _, warning := range secretWarnings {
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
+		}
+		resources, resourceWarnings, err := composeResources(s)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
+		}
+		for _, warning := range resourceWarnings {
+			warnings = append(warnings, "reposcan: "+src+": "+name+": "+warning)
+		}
 		fileEnvKeys, envFileWarnings, envFileErr := composeEnvFileKeys(fsys, s.EnvFile)
 		if envFileErr != nil {
 			return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, envFileErr)
@@ -366,6 +403,8 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			imageSet:            true,
 			healthcheck:         healthcheck,
 			imageProcess:        process,
+			secretFiles:         secretFiles,
+			resources:           resources,
 			command:             command,
 			commandShell:        commandShell,
 			dependsOn:           dependencyNames(s.DependsOn),

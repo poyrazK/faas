@@ -2202,6 +2202,7 @@
       "memory_key",
       "node_id",
       "parent_token",
+      "producer_incarnation",
       "received_at",
       "token"
     ],
@@ -3321,7 +3322,11 @@
       "target_url",
       "vcpu_budget",
       "vmmd_admission_protocol",
+      "vmmd_epoch",
+      "vmmd_epoch_incarnation",
       "vmmd_incarnation",
+      "vmmd_predecessor_incarnation",
+      "vmmd_restart_notice_until",
       "vpcpus",
       "zone"
     ],
@@ -4289,7 +4294,7 @@
       "rotated_from_id",
       "scopes",
       "status",
-      "token_sha256"
+      "token_digest"
     ],
     "kind": "account_identity"
   },
@@ -5804,6 +5809,7 @@
       "account_id",
       "app_id",
       "invocation_id",
+      "live",
       "subscription_id"
     ],
     "kind": "operational"
@@ -6880,6 +6886,18 @@
     "kind": "operational"
   },
   {
+    "table": "honeytokens",
+    "columns": [
+      "id",
+      "kind",
+      "token_digest",
+      "label",
+      "planted_at",
+      "retired_at"
+    ],
+    "kind": "platform_configuration"
+  },
+  {
     "table": "hosting_automation_credentials",
     "columns": [
       "account_id",
@@ -7102,6 +7120,19 @@
     "kind": "operational"
   },
   {
+    "table": "instance_application_standard_rebinds",
+    "columns": [
+      "created_at",
+      "from_incarnation",
+      "instance_id",
+      "node_id",
+      "observed",
+      "to_incarnation",
+      "vmmd_epoch"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "instance_application_standard_boots",
     "columns": [
       "binding",
@@ -7134,6 +7165,26 @@
       "id",
       "instance_id",
       "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "instance_quiet_pauses",
+    "columns": [
+      "ended_at",
+      "instance_id",
+      "node_id",
+      "recorded_at",
+      "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "quiet_pause_watermarks",
+    "columns": [
+      "covered_until",
+      "node_id",
+      "updated_at"
     ],
     "kind": "operational"
   },
@@ -7620,6 +7671,18 @@
       "root_created_at",
       "root_invocation_id",
       "started_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "invocation_backlog_counters",
+    "columns": [
+      "account_id",
+      "app_id",
+      "bytes",
+      "pending",
+      "slot",
+      "source"
     ],
     "kind": "operational"
   },
@@ -11563,6 +11626,7 @@
       "ai_reserved_cost_millicents",
       "ai_reserved_tokens",
       "ai_tags",
+      "ai_trace_id",
       "binding_app_id",
       "created_at",
       "expires_at",
@@ -11655,6 +11719,23 @@
       "tag",
       "threshold_percent",
       "used_value"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_deployment_minutes",
+    "columns": [
+      "app_id",
+      "calls",
+      "cost_millicents",
+      "deployment_id",
+      "error_calls",
+      "flagged_calls",
+      "input_tokens",
+      "minute",
+      "output_tokens",
+      "ttfb_calls",
+      "ttfb_ms_total"
     ],
     "kind": "operational"
   },
@@ -11766,6 +11847,63 @@
     "kind": "operational"
   },
   {
+    "table": "outbound_ai_traces",
+    "columns": [
+      "caller",
+      "calls",
+      "cost_millicents",
+      "end_user",
+      "error_calls",
+      "first_at",
+      "input_tokens",
+      "integration_id",
+      "last_at",
+      "models",
+      "output_tokens",
+      "repeated_tool_calls",
+      "tool_calls",
+      "tool_signature",
+      "trace_id",
+      "usage_unknown_calls"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_trace_days",
+    "columns": [
+      "integration_id",
+      "traces",
+      "usage_date"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_online_evaluation_days",
+    "columns": [
+      "evaluations",
+      "integration_id",
+      "usage_date"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "outbound_ai_quality_alerts",
+    "columns": [
+      "account_id",
+      "baseline_count",
+      "baseline_value",
+      "current_count",
+      "current_value",
+      "detected_at",
+      "id",
+      "integration_id",
+      "metric",
+      "model",
+      "usage_date"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "outbound_ai_replay_results",
     "columns": [
       "cost_millicents",
@@ -11831,15 +11969,24 @@
       "created_at",
       "duration_ms",
       "end_user",
+      "evaluation_claimed_at",
+      "evaluation_score",
+      "evaluation_state",
+      "feedback",
+      "feedback_at",
+      "feedback_label",
       "id",
       "input_tokens",
       "integration_id",
       "model",
       "outcome",
       "output_tokens",
+      "quality_flags",
       "route_id",
       "status",
       "tags",
+      "tool_calls",
+      "trace_id",
       "ttfb_ms"
     ],
     "kind": "operational"
@@ -11938,6 +12085,7 @@
     "table": "outbound_ai_usage_daily",
     "columns": [
       "audio_seconds",
+      "bad_feedback",
       "cache_saved_millicents",
       "cache_write_tokens",
       "cached_input_tokens",
@@ -11946,17 +12094,26 @@
       "characters",
       "code_session_gb",
       "cost_millicents",
+      "empty_requests",
       "error_requests",
+      "evaluated_requests",
+      "evaluation_errors",
+      "evaluation_score_sum",
       "file_searches",
+      "good_feedback",
       "images",
       "input_audio_tokens",
       "input_tokens",
       "integration_id",
+      "invalid_json_requests",
       "model",
       "output_audio_tokens",
       "output_tokens",
       "prompt_cache_saved_millicents",
+      "refused_requests",
       "requests",
+      "tool_error_requests",
+      "truncated_requests",
       "updated_at",
       "usage_date",
       "usage_unknown_requests",
@@ -12075,7 +12232,12 @@
       "ai_moderation_model",
       "ai_moderation_on_error",
       "ai_monthly_cost_limit_millicents",
+      "ai_online_eval_judge_integration_id",
+      "ai_online_eval_model",
+      "ai_online_eval_percent",
+      "ai_online_eval_rubric",
       "ai_provider",
+      "ai_quality_alerts",
       "ai_request_log_content",
       "ai_request_log_enabled",
       "ai_response_blocked_terms",
@@ -12084,6 +12246,9 @@
       "ai_response_moderation",
       "ai_response_payment_card",
       "ai_response_secret",
+      "ai_trace_max_calls",
+      "ai_trace_max_cost_millicents",
+      "ai_trace_max_repeated_tool_calls",
       "ai_user_daily_cost_limit_millicents",
       "ai_user_daily_token_limit",
       "allowed_methods",
@@ -12808,11 +12973,13 @@
       "account_id",
       "app_id",
       "auth_organization_id",
+      "payment_method_at",
       "plan",
       "revision",
       "suspended",
       "tenant_id",
       "trial_ends_at",
+      "trial_resolved_at",
       "trial_starts_at"
     ],
     "kind": "configuration"
@@ -17245,6 +17412,32 @@
       "started_at",
       "state",
       "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_capture_data",
+    "columns": [
+      "capture_id",
+      "kind",
+      "process_id",
+      "profile",
+      "seq"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "profile_captures",
+    "columns": [
+      "account_id",
+      "app_id",
+      "capture",
+      "claimed_at",
+      "completed_at",
+      "created_at",
+      "expires_at",
+      "id",
+      "status"
     ],
     "kind": "operational"
   }

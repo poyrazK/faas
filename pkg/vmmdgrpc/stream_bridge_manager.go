@@ -18,6 +18,7 @@ import (
 	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"golang.org/x/net/http2"
 )
@@ -29,7 +30,7 @@ const (
 	streamBridgePersistentValue = "1"
 )
 
-type streamBridgeSpawnFunc func(context.Context, string, string, string, string, uint32, string, []string) (*exec.Cmd, *bytes.Buffer, error)
+type streamBridgeSpawnFunc func(context.Context, string, string, bridgeIdentity, string, string, uint32, string, []string) (*exec.Cmd, *bytes.Buffer, error)
 
 type streamBridgeEntry struct {
 	key       string
@@ -38,6 +39,7 @@ type streamBridgeEntry struct {
 	netns     string
 	port      uint32
 	protocol  string
+	identity  bridgeIdentity
 	socket    string
 	cmd       *exec.Cmd
 	stderr    *bytes.Buffer
@@ -65,6 +67,7 @@ func (e *streamBridgeEntry) mapKey() string {
 // streamBridgeStart is what prewarm needs to start an instance's bridge.
 type streamBridgeStart struct {
 	target      *netns.PublicForwardTarget
+	identity    bridgeIdentity
 	instance    string
 	netns       string
 	port        uint32
@@ -76,7 +79,7 @@ func (m *streamBridgeManager) rememberLocked(entry *streamBridgeEntry, appProtoc
 	if m.started == nil {
 		m.started = make(map[string]streamBridgeStart)
 	}
-	m.started[entry.mapKey()] = streamBridgeStart{target: entry.target, instance: entry.instance, netns: entry.netns,
+	m.started[entry.mapKey()] = streamBridgeStart{target: entry.target, identity: entry.identity, instance: entry.instance, netns: entry.netns,
 		port: entry.port, appProtocol: appProtocol}
 }
 
@@ -107,7 +110,7 @@ type streamBridgeManager struct {
 	now          func() time.Time
 	spawn        streamBridgeSpawnFunc
 	waitSocket   func(string, time.Duration) error
-	newTransport func(string) *http2.Transport
+	newTransport func(string, bridgeIdentity) *http2.Transport
 	stop         func(context.Context, *exec.Cmd, *bytes.Buffer) error
 
 	reaperOnce sync.Once
@@ -135,7 +138,7 @@ func newStreamBridgeManager(log *slog.Logger) *streamBridgeManager {
 	}
 }
 
-func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHTTPRequestInit, netnsName string) (*streamBridgeLease, error) {
+func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHTTPRequestInit, netnsName string, id bridgeIdentity) (*streamBridgeLease, error) {
 	if m == nil {
 		return nil, errors.New("stream bridge manager is nil")
 	}
@@ -171,7 +174,8 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 				netns:    netnsName,
 				port:     port,
 				protocol: streamBridgeProtocol(req),
-				socket:   streamBridgeSockPath(key),
+				identity: id,
+				socket:   streamBridgeSockPath(key, id),
 				ready:    make(chan struct{}),
 				starting: true,
 				lastUsed: m.now(),
@@ -209,10 +213,11 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 		if port == 0 {
 			port = netns.AppPort
 		}
-		if entry.netns != netnsName || entry.port != port || entry.protocol != streamBridgeProtocol(req) || !samePublicTarget(entry.target, publicTarget(ctx)) {
+		if entry.netns != netnsName || entry.port != port || entry.protocol != streamBridgeProtocol(req) || entry.identity != id || !samePublicTarget(entry.target, publicTarget(ctx)) {
 			// An instance ID can be reused after park/destroy and wake. Never
 			// send a new request through a bridge that is attached to the old
-			// network namespace, even if its child has not exited yet.
+			// network namespace or runs as the old lease's bridge uid, even if
+			// its child has not exited yet.
 			delete(m.entries, entry.mapKey())
 			entry.closed = true
 			m.mu.Unlock()
@@ -238,7 +243,7 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 // joins the same ready channel in acquire instead of spawning a second bridge.
 //
 //nolint:contextcheck // Startup uses the stored manager context derived by startReaper; it outlives RPC cancellation and manager.close cancels it.
-func (m *streamBridgeManager) prewarm(ctx context.Context, req *vmmdpb.ForwardHTTPRequestInit, netnsName string) {
+func (m *streamBridgeManager) prewarm(ctx context.Context, req *vmmdpb.ForwardHTTPRequestInit, netnsName string, id bridgeIdentity) {
 	if m == nil || req == nil || req.GetInstance() == "" || netnsName == "" {
 		return
 	}
@@ -266,7 +271,8 @@ func (m *streamBridgeManager) prewarm(ctx context.Context, req *vmmdpb.ForwardHT
 		netns:    netnsName,
 		port:     port,
 		protocol: protocol,
-		socket:   streamBridgeSockPath(key),
+		identity: id,
+		socket:   streamBridgeSockPath(key, id),
 		ready:    make(chan struct{}),
 		starting: true,
 		lastUsed: m.now(),
@@ -316,7 +322,7 @@ func (m *streamBridgeManager) resume(ctx context.Context, instance string) int {
 	for _, start := range starts {
 		m.prewarm(withPublicTarget(ctx, start.target), &vmmdpb.ForwardHTTPRequestInit{
 			Instance: start.instance, Port: start.port, AppProtocol: start.appProtocol,
-		}, start.netns)
+		}, start.netns, start.identity)
 	}
 	return len(starts)
 }
@@ -381,13 +387,17 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 	if port == 0 {
 		port = netns.AppPort
 	}
-	if err := os.Remove(entry.socket); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if entry.identity.unprivileged() {
+		if err := entry.identity.prepareSocketDir(entry.socket); err != nil {
+			return fmt.Errorf("stream bridge socket: %w", err)
+		}
+	} else if err := os.Remove(entry.socket); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove stale stream bridge socket: %w", err)
 	}
 	deadline := m.now().Add(streamBridgeSessionDeadline).UTC().Format(time.RFC3339)
 	spawnNetns, guestIP := streamBridgeTarget(withPublicTarget(ctx, entry.target), entry.netns)
 	env := netns.PublicForwardEnv(streamBridgeStaticEnv(req), entry.target)
-	cmd, stderr, err := m.spawn(ctx, bridgePath, spawnNetns, entry.socket, guestIP, port, deadline, env)
+	cmd, stderr, err := m.spawn(ctx, bridgePath, spawnNetns, entry.identity, entry.socket, guestIP, port, deadline, env)
 	if err != nil {
 		return fmt.Errorf("stream bridge start: %w", err)
 	}
@@ -403,7 +413,7 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 		return fmt.Errorf("stream bridge exited before becoming ready: %w", entry.waitError())
 	default:
 	}
-	transport := m.newTransport(entry.socket)
+	transport := m.newTransport(entry.socket, entry.identity)
 	m.mu.Lock()
 	if entry.closed {
 		m.mu.Unlock()
@@ -442,7 +452,7 @@ func (m *streamBridgeManager) watchEntry(entry *streamBridgeEntry, cmd *exec.Cmd
 	if transport != nil {
 		transport.CloseIdleConnections()
 	}
-	_ = os.Remove(socket)
+	entry.identity.removeSocket(socket)
 	if unexpected && err != nil {
 		m.log.Warn("vmmd: persistent stream bridge exited", "instance", entry.instance, "err", err)
 	}
@@ -497,7 +507,7 @@ func (m *streamBridgeManager) closeEntry(ctx context.Context, entry *streamBridg
 			m.log.Warn("vmmd: persistent stream bridge cleanup failed", "instance", entry.instance, "err", err)
 		}
 	}
-	_ = os.Remove(entry.socket)
+	entry.identity.removeSocket(entry.socket)
 }
 
 func (m *streamBridgeManager) stopWatchedEntry(ctx context.Context, entry *streamBridgeEntry) error {
@@ -619,4 +629,22 @@ func streamBridgeProcessAlive(cmd *exec.Cmd) bool {
 		return false
 	}
 	return cmd.Process.Signal(syscall.Signal(0)) == nil
+}
+
+// prewarmStreamBridge starts an instance's persistent bridge while it is
+// still waking. The instance is not live yet, so its bridge identity comes
+// from the lease's jail uid in the network-ready event. A failure only skips
+// the prewarm: the first request starts the bridge instead.
+func (s *Server) prewarmStreamBridge(ctx context.Context, req *vmmdpb.ForwardHTTPRequestInit, ready fcvm.WakeNetworkReady) {
+	// A public-target bridge keeps the root identity (forwardBridgeIdentity).
+	var id bridgeIdentity
+	var err error
+	if publicTarget(ctx) == nil {
+		id, err = bridgeIdentityForJailUID(ready.JailUID)
+	}
+	if err != nil {
+		s.log.Warn("vmmd: stream bridge prewarm skipped", "instance", ready.Instance, "err", err)
+		return
+	}
+	s.streamBridges.prewarm(ctx, req, ready.Netns, id)
 }

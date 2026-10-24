@@ -156,12 +156,17 @@ func cmdTriggersList(args []string) int {
 	}
 	ctx := context.Background()
 	appID := ""
+	// The APP column printed a UUID; name the app (Hunt 12 H12-47).
+	var slugs map[string]string
 	if *appSlug != "" {
 		app, err := client.GetApp(ctx, *appSlug)
 		if err != nil {
 			return printErr("Could not load app", err)
 		}
 		appID = app.ID
+		slugs = map[string]string{app.ID: app.Slug}
+	} else if !jsonOutput {
+		slugs = appSlugsByID(client)
 	}
 	triggers, err := client.GetTriggers(ctx, appID, api.TriggerKind(*kind))
 	if err != nil {
@@ -176,7 +181,7 @@ func cmdTriggersList(args []string) int {
 	}
 	_, _ = fmt.Fprintln(osStdout, "ID                                   KIND           SLUG                       STATE      APP")
 	for _, trigger := range triggers {
-		renderTriggerListRow(osStdout, trigger)
+		renderTriggerListRow(osStdout, trigger, slugs)
 	}
 	return 0
 }
@@ -645,7 +650,7 @@ func validateTriggerOptionalFlags(explicit map[string]bool, enabled, disabled bo
 	return nil
 }
 
-func renderTriggerListRow(w io.Writer, trigger api.Trigger) {
+func renderTriggerListRow(w io.Writer, trigger api.Trigger, slugs map[string]string) {
 	slug := trigger.Slug
 	if slug == "" {
 		slug = GlyphEmDash
@@ -654,7 +659,7 @@ func renderTriggerListRow(w io.Writer, trigger api.Trigger) {
 	if trigger.Enabled {
 		state = "enabled"
 	}
-	_, _ = fmt.Fprintf(w, "%-36s %-14s %-26s %-10s %s\n", trigger.ID, trigger.Kind, slug, state, trigger.AppID)
+	_, _ = fmt.Fprintf(w, "%-36s %-14s %-26s %-10s %s\n", trigger.ID, trigger.Kind, slug, state, appLabel(slugs, trigger.AppID))
 }
 
 func renderTriggerHuman(w io.Writer, trigger api.Trigger) {

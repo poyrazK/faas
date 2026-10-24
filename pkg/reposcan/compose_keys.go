@@ -15,9 +15,10 @@ import (
 // top-level include are not resolved; their warnings name exactly what was
 // not loaded so the user can inline it.
 var composeAppliedServiceKeys = map[string]bool{
-	"build": true, "command": true, "depends_on": true, "entrypoint": true, "env_file": true,
-	"environment": true, "expose": true, "healthcheck": true, "image": true, "ports": true,
-	"profiles": true, "stop_grace_period": true, "stop_signal": true, "user": true, "working_dir": true,
+	"build": true, "command": true, "cpus": true, "depends_on": true, "deploy": true, "entrypoint": true,
+	"env_file": true, "environment": true, "expose": true, "healthcheck": true, "image": true,
+	"mem_limit": true, "ports": true, "profiles": true, "scale": true, "secrets": true,
+	"stop_grace_period": true, "stop_signal": true, "user": true, "working_dir": true,
 }
 
 var composeHarmlessServiceKeys = map[string]bool{
@@ -27,7 +28,7 @@ var composeHarmlessServiceKeys = map[string]bool{
 const (
 	composeVolumesReason   = "persistent volumes and bind mounts are not supported; each start gets a fresh filesystem (docs/container-qualification.md)"
 	composeNetworkReason   = "services reach each other through depends_on service bindings, not Compose networks"
-	composeResourcesReason = "CPU, memory and replicas come from the plan and app scaling settings"
+	composeResourcesReason = "only deploy.resources.limits (or mem_limit and cpus) and deploy.replicas set an app's memory, CPU and replicas"
 	composeKernelReason    = "each service runs in its own microVM; kernel, device and namespace controls are not configurable"
 	composeGuestNetReason  = "guest networking and DNS are managed by the platform"
 )
@@ -35,17 +36,12 @@ const (
 var composeServiceKeyReasons = map[string]string{
 	"volumes":         composeVolumesReason,
 	"tmpfs":           "tmpfs mounts are not supported; write scratch data under /tmp",
-	"deploy":          composeResourcesReason,
-	"scale":           composeResourcesReason,
-	"cpus":            composeResourcesReason,
 	"cpu_shares":      composeResourcesReason,
 	"cpu_quota":       composeResourcesReason,
 	"cpuset":          composeResourcesReason,
-	"mem_limit":       composeResourcesReason,
 	"mem_reservation": composeResourcesReason,
 	"memswap_limit":   composeResourcesReason,
 	"restart":         "the platform starts, parks and restarts services itself",
-	"secrets":         "Compose secrets are not mounted; set them with `gregale secrets set`",
 	"configs":         "Compose configs are not mounted; build the file into the image or use environment variables",
 	"networks":        composeNetworkReason,
 	"network_mode":    composeNetworkReason,

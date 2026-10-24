@@ -280,6 +280,10 @@ type Server struct {
 	// diverged (ADR-740) lists instances that were served a developer live
 	// patch; their snapshot captures are refused. nil disables the guard.
 	diverged *DivergedInstances
+	// adoptionReportOn and adoptionReport serve AdoptionReport (vmmd
+	// restart adoption ADR §3); see WithAdoptionReport.
+	adoptionReportOn bool
+	adoptionReport   *AdoptionReport
 	// events (issue #517 / PR-C / ADR-064) is the wake-timeline
 	// fan-out. vmmd is the corroborating-observation source for
 	// wake.boot_observed at the gRPC server boundary and
@@ -703,11 +707,11 @@ func (s *Server) wakeWithBridgePrewarm(ctx context.Context, wr fcvm.WakeRequest,
 		s.streamBridges = newStreamBridgeManager(s.log)
 	}
 	inst, err := fastVMM.WakeWithNetworkReady(ctx, wr, func(ready fcvm.WakeNetworkReady) {
-		s.streamBridges.prewarm(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
+		s.prewarmStreamBridge(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{
 			Instance:    ready.Instance,
 			Port:        uint32(wr.Port),
 			AppProtocol: appProtocol,
-		}, ready.Netns)
+		}, ready)
 	})
 	if err != nil {
 		s.forgetForwarding(ctx, wr.Instance)
@@ -1261,6 +1265,38 @@ func (s *Server) DeleteWarmSnapshot(ctx context.Context, req *vmmdpb.DeleteWarmS
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
 	return &vmmdpb.DeleteWarmSnapshotResponse{Deleted: true}, nil
+}
+
+// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
+// capture on imaged's behalf (ADR 20261022184951 amendment 1). imaged owns
+// the collection decision; vmmd, the tree's only writer, does the removal.
+func (s *Server) RetireNativeRuntimeSnapshotObject(ctx context.Context, req *vmmdpb.RetireNativeRuntimeSnapshotObjectRequest) (*vmmdpb.RetireNativeRuntimeSnapshotObjectResponse, error) {
+	const op = "RetireNativeRuntimeSnapshotObject"
+	start := time.Now()
+	retirer, ok := s.vmm.(interface {
+		RetireNativeRuntimeSnapshotObject(context.Context, string) error
+	})
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Native runtime snapshot retirement unavailable", "vmmd does not expose native runtime snapshot retirement")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	err := retirer.RetireNativeRuntimeSnapshotObject(ctx, req.GetStorageKey())
+	s.ops.Observe(op, time.Since(start), err)
+	switch {
+	case err == nil:
+		return &vmmdpb.RetireNativeRuntimeSnapshotObjectResponse{}, nil
+	case errors.Is(err, storage.ErrInvalidKey):
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Not a native runtime snapshot object", err.Error()))
+	case errors.Is(err, fcvm.ErrNativeRuntimeSnapshotRootUnset):
+		// To imaged this vmmd is one without the RPC: keep the row, retry.
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Native runtime snapshot root unavailable", err.Error()))
+	default:
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
 }
 
 // FrameworkReady is the vmmd-side receipt of the guest-init "framework

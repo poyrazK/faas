@@ -288,8 +288,11 @@ func (s *server) mfaVerify(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if reason != "" {
 		s.totp.fail(acct.ID, time.Now())
 		s.audit.Emit(r.Context(), "account.mfa_verify_failed", &acct.ID, map[string]any{"reason": reason})
-		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode,
-			"Invalid code", "the TOTP code did not match"))
+		detail := "the TOTP code did not match"
+		if reason == totpCodeReplayed {
+			detail = api.MFACodeReusedDetail
+		}
+		api.WriteProblem(w, api.NewProblem(http.StatusUnauthorized, api.CodeMFAInvalidCode, "Invalid code", detail))
 		return
 	}
 	s.totp.reset(acct.ID)
@@ -807,15 +810,24 @@ func (s *server) disableByRecoveryCode(w http.ResponseWriter, r *http.Request, a
 //
 // (The helper shape mirrors readAppSecret in handlers_secrets.go
 // — same idea, separate seal key/value.)
+// TOTP failure reasons, as acceptTOTP returns them and the audit row
+// records them.
+const (
+	totpCodeMismatch = "code_mismatch"
+	totpCodeReplayed = "code_replayed"
+)
+
 // acceptTOTP verifies code against secret and spends its time step, so a
 // code that granted a session cannot grant another within its validity
 // window (RFC 6238 §5.2). It returns "" on success, or the failure reason
-// for the audit row: "code_mismatch" or "code_replayed". The caller answers
-// both the same way.
+// for the audit row: totpCodeMismatch or totpCodeReplayed. Both answer
+// 401 and count against the account's guesses; a replay also tells the
+// caller to wait for the next code. That reveals nothing a guesser can
+// use: a replay is reached only with the right code for a spent step.
 func (s *server) acceptTOTP(ctx context.Context, accountID, secret, code string) (string, error) {
 	step, ok := auth.VerifyCodeStep(secret, code, time.Now())
 	if !ok {
-		return "code_mismatch", nil
+		return totpCodeMismatch, nil
 	}
 	recorder, ok := s.store.(state.TOTPStepRecorder)
 	if !ok {
@@ -826,7 +838,7 @@ func (s *server) acceptTOTP(ctx context.Context, accountID, secret, code string)
 		return "", err
 	}
 	if !accepted {
-		return "code_replayed", nil
+		return totpCodeReplayed, nil
 	}
 	return "", nil
 }

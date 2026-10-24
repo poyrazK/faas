@@ -123,6 +123,14 @@ type Poller struct {
 	EgressAbuseHandler EgressAbuseHandler
 	egressAbuseMu      sync.Mutex
 	egressAbuseActed   map[string]struct{}
+	// CPUSaturationHandler queues automatic CPU captures of instances held
+	// at their CPU quota (ADR-1155). Nil keeps the poller observation-only.
+	CPUSaturationHandler CPUSaturationHandler
+	cpuSaturationMu      sync.Mutex
+	cpuSaturation        map[string]*cpuSaturationEpisode
+	// PauseLedger records the quiet pauses each node reports for billing
+	// (ADR-20261023171905). Nil leaves the ledger untouched.
+	PauseLedger *PauseLedger
 	// sidecarMBs caches each live deployment's sidecar RAM slice (nil means
 	// no sidecars). A deployment's sidecars are written once at creation and
 	// never updated, so an entry stays valid until the deployment leaves the
@@ -174,6 +182,13 @@ func (p *Poller) WithFleetStats(router StatsRouter, ownerNodeID string) *Poller 
 		p.FleetStats = router
 		p.OwnerNodeID = ownerNodeID
 	}
+	return p
+}
+
+// WithPauseLedger records every node report's quiet pauses in ledger
+// (ADR-20261023171905).
+func (p *Poller) WithPauseLedger(ledger *PauseLedger) *Poller {
+	p.PauseLedger = ledger
 	return p
 }
 
@@ -305,6 +320,7 @@ func (p *Poller) Tick(ctx context.Context) error {
 		p.Reader.Replace(rows)
 		p.publishMemoryShadow(instances, rows, started)
 		p.publishQuietPaused(rows, started)
+		p.PauseLedger.Observe(ctx, rows, p.now())
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -327,8 +343,10 @@ func (p *Poller) Tick(ctx context.Context) error {
 		p.Reader.Replace(rows)
 		p.publishMemoryShadow(instances, rows, started)
 		p.publishQuietPaused(rows, started)
+		p.PauseLedger.Observe(ctx, rows, p.now())
 		p.enforceDiskPressure(ctx, rows)
 		p.enforceEgressAbuse(ctx, rows)
+		p.watchCPUSaturation(ctx, rows)
 		if p.Metrics != nil {
 			p.Metrics.ReplaceInstanceStats(rolled, p.now().Sub(started))
 		}
@@ -346,8 +364,10 @@ func (p *Poller) Tick(ctx context.Context) error {
 	p.Reader.Replace(rows)
 	p.publishMemoryShadow(instances, rows, started)
 	p.publishQuietPaused(rows, started)
+	p.PauseLedger.Observe(ctx, rows, p.now())
 	p.enforceDiskPressure(ctx, rows)
 	p.enforceEgressAbuse(ctx, rows)
+	p.watchCPUSaturation(ctx, rows)
 	// Metrics rollup: max CPU / sum RSS / sum inflight per
 	// (app, node). The wire side collapses NaN for absent
 	// values; instancestats passes NaN through so the rollup
@@ -503,6 +523,7 @@ func (p *Poller) decodeTelemetrySnapshot(
 			InflightRequests: in.InflightRequests,
 			QuietPaused:      in.QuietPaused,
 			Frozen:           in.Frozen,
+			QuietPause:       in.QuietPause,
 			CPU:              Unknown,
 			RSS:              Unknown,
 			// Preserve the vmmd report timestamp. Using the local
@@ -774,6 +795,7 @@ func (p *Poller) decodeStatsSnapshot(
 			InflightRequests: in.InflightRequests,
 			QuietPaused:      in.QuietPaused,
 			Frozen:           in.Frozen,
+			QuietPause:       in.QuietPause,
 			CPU:              Unknown,
 			RSS:              Unknown,
 			SampledAt:        now,

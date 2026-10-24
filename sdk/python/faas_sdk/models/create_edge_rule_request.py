@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     from ..models.edge_rule_limit_action import EdgeRuleLimitAction
     from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
     from ..models.edge_rule_match_expr import EdgeRuleMatchExpr
+    from ..models.edge_rule_penalty import EdgeRulePenalty
     from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
     from ..models.edge_rule_respond_action import EdgeRuleRespondAction
     from ..models.edge_rule_retry_action import EdgeRuleRetryAction
@@ -109,6 +110,16 @@ class CreateEdgeRuleRequest:
     """
     mode: CreateEdgeRuleRequestMode | Unset = UNSET
     """Start the rule enforced (default) or in log mode, where it is only matched and counted."""
+    penalty: EdgeRulePenalty | Unset = UNSET
+    """A rule's penalty box (ADR-20261022105846). Once the rule has refused
+    the same client `after` times within `within_seconds`, every request
+    from that client to the app is refused with 403 `penalty_box` and
+    Retry-After for `seconds`, whichever rule or path it targets. The
+    client is its IP address (an IPv6 client is its /64). Boxes are held
+    in each gateway node's memory. Allowed on ip, geo, throttle and waf
+    (block mode) rules; editing the rule's penalty away, disabling it or
+    putting it in log mode releases its clients.
+    """
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -212,6 +223,10 @@ class CreateEdgeRuleRequest:
         if not isinstance(self.mode, Unset):
             mode = self.mode
 
+        penalty: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.penalty, Unset):
+            penalty = self.penalty.to_dict()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -243,6 +258,8 @@ class CreateEdgeRuleRequest:
             field_dict["match"] = match
         if mode is not UNSET:
             field_dict["mode"] = mode
+        if penalty is not UNSET:
+            field_dict["penalty"] = penalty
 
         return field_dict
 
@@ -262,6 +279,7 @@ class CreateEdgeRuleRequest:
         from ..models.edge_rule_limit_action import EdgeRuleLimitAction
         from ..models.edge_rule_maintenance_action import EdgeRuleMaintenanceAction
         from ..models.edge_rule_match_expr import EdgeRuleMatchExpr
+        from ..models.edge_rule_penalty import EdgeRulePenalty
         from ..models.edge_rule_redirect_action import EdgeRuleRedirectAction
         from ..models.edge_rule_respond_action import EdgeRuleRespondAction
         from ..models.edge_rule_retry_action import EdgeRuleRetryAction
@@ -507,6 +525,13 @@ class CreateEdgeRuleRequest:
         else:
             mode = check_create_edge_rule_request_mode(_mode)
 
+        _penalty = d.pop("penalty", UNSET)
+        penalty: EdgeRulePenalty | Unset
+        if isinstance(_penalty, Unset):
+            penalty = UNSET
+        else:
+            penalty = EdgeRulePenalty.from_dict(_penalty)
+
         create_edge_rule_request = cls(
             match_host=match_host,
             kind=kind,
@@ -522,6 +547,7 @@ class CreateEdgeRuleRequest:
             expires_at=expires_at,
             match=match,
             mode=mode,
+            penalty=penalty,
         )
 
         create_edge_rule_request.additional_properties = d

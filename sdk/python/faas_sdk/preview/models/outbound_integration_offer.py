@@ -23,6 +23,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.outbound_ai_content_policy import OutboundAIContentPolicy
+    from ..models.outbound_ai_online_evaluation import OutboundAIOnlineEvaluation
     from ..models.outbound_request_policy import OutboundRequestPolicy
 
 
@@ -76,10 +77,22 @@ class OutboundIntegrationOffer:
     """Whether writes the gateway can neither meter nor knows to be free go through, outside the caps (ADR-1432)."""
     ai_auto_prompt_cache: bool | Unset = UNSET
     """Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1437)."""
+    ai_trace_max_calls: int | Unset = UNSET
+    """Calls each AI trace may make, settled and in flight (ADR 20261020202035). Absent when unlimited."""
+    ai_trace_max_cost_millicents: int | Unset = UNSET
+    """Cost each AI trace may reach, with live reservations (ADR 20261020202035). Absent when unlimited."""
+    ai_trace_max_repeated_tool_calls: int | Unset = UNSET
+    """Consecutive calls of a trace whose responses may request the same tools with the same arguments (ADR
+    20261020202035). Absent when unlimited."""
     ai_user_daily_token_limit: int | None | Unset = UNSET
     """UTC-day input plus output token limit for each end user named by X-Gregale-AI-User (ADR-994)."""
     ai_user_daily_cost_limit_millicents: int | None | Unset = UNSET
     """UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994)."""
+    ai_online_evaluation: OutboundAIOnlineEvaluation | Unset = UNSET
+    """Score sample_percent of answered app calls from 1 to 5 with judge_model through judge_integration_id, one of
+    the account's AI integrations, metered under the caller evaluation (ADR 20261021171712)."""
+    ai_quality_alerts: bool | Unset = UNSET
+    """Drift alerts on the integration's quality signals are on (ADR 20261021171712)."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -144,6 +157,12 @@ class OutboundIntegrationOffer:
 
         ai_auto_prompt_cache = self.ai_auto_prompt_cache
 
+        ai_trace_max_calls = self.ai_trace_max_calls
+
+        ai_trace_max_cost_millicents = self.ai_trace_max_cost_millicents
+
+        ai_trace_max_repeated_tool_calls = self.ai_trace_max_repeated_tool_calls
+
         ai_user_daily_token_limit: int | None | Unset
         if isinstance(self.ai_user_daily_token_limit, Unset):
             ai_user_daily_token_limit = UNSET
@@ -155,6 +174,12 @@ class OutboundIntegrationOffer:
             ai_user_daily_cost_limit_millicents = UNSET
         else:
             ai_user_daily_cost_limit_millicents = self.ai_user_daily_cost_limit_millicents
+
+        ai_online_evaluation: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.ai_online_evaluation, Unset):
+            ai_online_evaluation = self.ai_online_evaluation.to_dict()
+
+        ai_quality_alerts = self.ai_quality_alerts
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
@@ -194,16 +219,27 @@ class OutboundIntegrationOffer:
             field_dict["ai_allow_unmetered"] = ai_allow_unmetered
         if ai_auto_prompt_cache is not UNSET:
             field_dict["ai_auto_prompt_cache"] = ai_auto_prompt_cache
+        if ai_trace_max_calls is not UNSET:
+            field_dict["ai_trace_max_calls"] = ai_trace_max_calls
+        if ai_trace_max_cost_millicents is not UNSET:
+            field_dict["ai_trace_max_cost_millicents"] = ai_trace_max_cost_millicents
+        if ai_trace_max_repeated_tool_calls is not UNSET:
+            field_dict["ai_trace_max_repeated_tool_calls"] = ai_trace_max_repeated_tool_calls
         if ai_user_daily_token_limit is not UNSET:
             field_dict["ai_user_daily_token_limit"] = ai_user_daily_token_limit
         if ai_user_daily_cost_limit_millicents is not UNSET:
             field_dict["ai_user_daily_cost_limit_millicents"] = ai_user_daily_cost_limit_millicents
+        if ai_online_evaluation is not UNSET:
+            field_dict["ai_online_evaluation"] = ai_online_evaluation
+        if ai_quality_alerts is not UNSET:
+            field_dict["ai_quality_alerts"] = ai_quality_alerts
 
         return field_dict
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.outbound_ai_content_policy import OutboundAIContentPolicy
+        from ..models.outbound_ai_online_evaluation import OutboundAIOnlineEvaluation
         from ..models.outbound_request_policy import OutboundRequestPolicy
 
         d = dict(src_dict)
@@ -291,6 +327,12 @@ class OutboundIntegrationOffer:
 
         ai_auto_prompt_cache = d.pop("ai_auto_prompt_cache", UNSET)
 
+        ai_trace_max_calls = d.pop("ai_trace_max_calls", UNSET)
+
+        ai_trace_max_cost_millicents = d.pop("ai_trace_max_cost_millicents", UNSET)
+
+        ai_trace_max_repeated_tool_calls = d.pop("ai_trace_max_repeated_tool_calls", UNSET)
+
         def _parse_ai_user_daily_token_limit(data: object) -> int | None | Unset:
             if data is None:
                 return data
@@ -310,6 +352,15 @@ class OutboundIntegrationOffer:
         ai_user_daily_cost_limit_millicents = _parse_ai_user_daily_cost_limit_millicents(
             d.pop("ai_user_daily_cost_limit_millicents", UNSET)
         )
+
+        _ai_online_evaluation = d.pop("ai_online_evaluation", UNSET)
+        ai_online_evaluation: OutboundAIOnlineEvaluation | Unset
+        if isinstance(_ai_online_evaluation, Unset):
+            ai_online_evaluation = UNSET
+        else:
+            ai_online_evaluation = OutboundAIOnlineEvaluation.from_dict(_ai_online_evaluation)
+
+        ai_quality_alerts = d.pop("ai_quality_alerts", UNSET)
 
         outbound_integration_offer = cls(
             id=id,
@@ -334,8 +385,13 @@ class OutboundIntegrationOffer:
             ai_log_export=ai_log_export,
             ai_allow_unmetered=ai_allow_unmetered,
             ai_auto_prompt_cache=ai_auto_prompt_cache,
+            ai_trace_max_calls=ai_trace_max_calls,
+            ai_trace_max_cost_millicents=ai_trace_max_cost_millicents,
+            ai_trace_max_repeated_tool_calls=ai_trace_max_repeated_tool_calls,
             ai_user_daily_token_limit=ai_user_daily_token_limit,
             ai_user_daily_cost_limit_millicents=ai_user_daily_cost_limit_millicents,
+            ai_online_evaluation=ai_online_evaluation,
+            ai_quality_alerts=ai_quality_alerts,
         )
 
         outbound_integration_offer.additional_properties = d

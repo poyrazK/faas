@@ -17,6 +17,47 @@
 # Default: "" (disabled)
 # native_snapshot_publication_root = "/var/lib/faas/vmmd-publications"
 
+# native_runtime_capture: EXPERIMENTAL. Run ordinary park and warm captures
+# through the native producer instead of refusing them (ADR 20261022184951).
+# Requires native_process_recovery = true, native_snapshot_publication_root,
+# native_image_staging_root and native_runtime_snapshot_root. Leave off until
+# native capture acceptance passes.
+# Default: false
+# native_runtime_capture = true
+
+# native_runtime_snapshot_root: the tree native runtime captures publish to.
+# vmmd must be its only writer: a directory owned by vmmd's uid with no group
+# write and no access for others, on ext4/XFS/Btrfs. The compute role creates
+# /srv/fc/native-snap as 2750 root:faas so imaged and schedd can read it.
+# Keep it set after turning native_runtime_capture off; restores and imaged's
+# collection still need the snapshots it holds.
+# Default: "" (disabled)
+# native_runtime_snapshot_root = "/srv/fc/native-snap"
+
+# adoption_record: write version-7 adoption blocks into the resource journal
+# (vmmd restart adoption ADR, slice 1). Shadow only: nothing adopts yet, and
+# startup classifies records in a dry run either way. vmmd binaries without a
+# version-7 reader refuse the journal, so enable this only once every compute
+# node and any rollback target can read it. Ignored with
+# native_process_recovery.
+# Default: false
+# adoption_record = true
+
+# adopt_running_vms: EXPERIMENTAL. At startup, adopt running guests whose
+# adoption records prove ownership instead of quarantining them, so a vmmd
+# restart keeps them (vmmd restart adoption ADR, slice 2). Anything not
+# proven, or outside what this release rebuilds, stays quarantined as
+# before. Requires adoption_record = true; not with native_process_recovery.
+# Default: false
+# adopt_running_vms = true
+
+# adopt_admitted_runtimes: EXPERIMENTAL. Also adopt guests booted under an
+# application standard's runtime-admission receipt; schedd re-binds their
+# admission to the new vmmd (ADR-595 extension). Off, they are refused at
+# adoption and re-admitted fresh. Requires adopt_running_vms = true.
+# Default: false
+# adopt_admitted_runtimes = true
+
 # socket_path: unix-domain socket path. Mode 0660, group 'faas' (ADR-015).
 # Default: /run/faas/vmmd.sock
 # socket_path = "/run/faas/vmmd.sock"

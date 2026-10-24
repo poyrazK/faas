@@ -38,6 +38,7 @@ func requestBudgetExpired(ctx context.Context) bool {
 // reached the app (production-us hunt #4, H4-66: a warm app that was simply
 // slow used to be told "while capacity was becoming ready").
 func writeRequestBudgetExceededForRequest(w http.ResponseWriter, r *http.Request) {
+	markAppBudgetExpired(r)
 	writeRequestBudgetExceeded(w, r, requestBudgetForwardDetail(r))
 }
 

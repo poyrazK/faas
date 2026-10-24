@@ -1,8 +1,9 @@
 from typing import Literal
 
-CreateReleaseGateRequestKind = Literal["custom_metric", "new_errors", "slo"]
+CreateReleaseGateRequestKind = Literal["ai", "custom_metric", "new_errors", "slo"]
 
 CREATE_RELEASE_GATE_REQUEST_KIND_VALUES: set[CreateReleaseGateRequestKind] = {
+    "ai",
     "custom_metric",
     "new_errors",
     "slo",

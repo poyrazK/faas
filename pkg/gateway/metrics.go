@@ -243,6 +243,7 @@ type Metrics struct {
 	wafInline             *prometheus.CounterVec
 	wafInlineSeconds      prometheus.Histogram
 	edgeChallenge         *prometheus.CounterVec
+	edgePenalty           *prometheus.CounterVec
 	edgeChallengeRaised   *prometheus.CounterVec
 	wafInspectionSeconds  prometheus.Histogram
 	preAuthPolicyShadow   *prometheus.CounterVec
@@ -1391,6 +1392,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_waf_inline_checks_total",
 			Help: "In-path header/URI checks for kind=waf warn and block rules (ADR-831 amendment 4), by app and outcome (clean|warned|blocked|skipped|error). skipped means the app's inline budget or the node's check slots were exhausted and the request passed unchecked.",
 		}, []string{"app", "outcome"}),
+		edgePenalty: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_penalty_total",
+			Help: "Penalty box decisions (ADR-20261022105846), by app and outcome: boxed (a rule's threshold boxed a client), rejected (a boxed client's request refused).",
+		}, []string{"app", "outcome"}),
 		edgeChallenge: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_challenge_total",
 			Help: "kind=challenge decisions (ADR-831 amendment 7), by app and outcome: passed (valid pass), bypassed (verified credential), issued (challenge page served), rejected (403 challenge_required), solved (pass set), invalid (bad solution), expired (solution after the token expired).",
@@ -1498,14 +1503,14 @@ func NewMetrics() *Metrics {
 			Name: "gateway_request_duration_seconds",
 			Help: "Per-app full request duration (request received to handler return), labelled by HTTP status class (2xx/3xx/4xx/5xx). Issue #273 / ADR-042.",
 			Buckets: []float64{
-				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10,
+				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, api.RequestDurationTopBucketSeconds,
 			},
 		}, []string{"app", "class"}),
 		requestDurationByDeployment: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name: "gateway_request_duration_by_deployment_seconds",
 			Help: "Per-deployment request duration drill-down with bounded deployment admission (ADR-127).",
 			Buckets: []float64{
-				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10,
+				0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, api.RequestDurationTopBucketSeconds,
 			},
 		}, []string{"app", "class", "deployment"}),
 		// Issue #273 / ADR-042. Renamed outright from gateway_cold_wake_total.
@@ -2093,7 +2098,7 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
-	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised)
+	reg.MustRegister(m.wafInspections, m.wafDetections, m.wafRuleMatches, m.wafInspectionSeconds, m.wafInline, m.wafInlineSeconds, m.edgeChallenge, m.edgeChallengeRaised, m.edgePenalty)
 	reg.MustRegister(m.servicePreviewToProduction, m.servicePreviewToPreview)
 	reg.MustRegister(m.serviceDependencyEdges, m.serviceDependencyDuration, m.serviceDependencyEdgeWakes)
 	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
@@ -2701,6 +2706,14 @@ func (m *Metrics) ObserveWAFInline(appID, outcome string, seconds float64) {
 	if seconds > 0 {
 		m.wafInlineSeconds.Observe(seconds)
 	}
+}
+
+// ObserveEdgePenalty counts one penalty box decision.
+func (m *Metrics) ObserveEdgePenalty(appID, outcome string) {
+	if m == nil || m.edgePenalty == nil {
+		return
+	}
+	m.edgePenalty.WithLabelValues(appID, outcome).Inc()
 }
 
 // ObserveEdgeChallenge counts one kind=challenge decision.

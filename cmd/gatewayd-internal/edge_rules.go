@@ -345,6 +345,7 @@ func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (
 		Challenge:      challenge,
 		Retry:          retry,
 		CircuitBreaker: circuitBreaker,
+		Penalties:      compileEdgeRulePenalties(storeRules),
 	}
 	parseErrs := append(routeErrs, rewriteErrs...)
 	parseErrs = append(parseErrs, redirectErrs...)
@@ -983,6 +984,43 @@ func (g *gatewaydEdgeRules) MatchWAF(ctx context.Context, host, requestPath, met
 	enforced := gateway.PickFirstWAFMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleWAFResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 	logged := gateway.PickFirstWAFMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleWAFResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
+}
+
+// compileEdgeRulePenalties maps each enforced rule with a penalty box to it
+// (ADR-20261022105846). A log-mode rule never refuses, so it never boxes.
+func compileEdgeRulePenalties(rules []state.EdgeRule) map[string]api.EdgeRulePenalty {
+	var out map[string]api.EdgeRulePenalty
+	for _, r := range rules {
+		p := r.Action.Penalty
+		if p == nil || r.Mode == state.EdgeRuleModeLog || p.Seconds <= 0 {
+			continue
+		}
+		if out == nil {
+			out = map[string]api.EdgeRulePenalty{}
+		}
+		out[r.ID] = api.EdgeRulePenalty{Seconds: p.Seconds, After: p.After, WithinSeconds: p.WithinSeconds}
+	}
+	return out
+}
+
+// RulePenalty returns ruleID's enforced penalty box as it applies to host
+// (ADR-20261022105846).
+func (g *gatewaydEdgeRules) RulePenalty(ctx context.Context, host, ruleID string) (api.EdgeRulePenalty, bool) {
+	if g == nil || g.cache == nil {
+		return api.EdgeRulePenalty{}, false
+	}
+	if p, found, hit := g.cache.GetPenalty(gateway.EdgeRuleCacheKey(host, gateway.EdgeRuleApp(ctx)), ruleID); hit {
+		return p, found
+	}
+	entry, err := g.loadHost(ctx, host)
+	if err != nil {
+		if g.log != nil {
+			g.log.Warn("edge rule loader failed; treating penalty as absent", "host", host, "err", err)
+		}
+		return api.EdgeRulePenalty{}, false
+	}
+	p, found := entry.Penalties[ruleID]
+	return p, found
 }
 
 // challengeRules returns the host's compiled kind=challenge rules through

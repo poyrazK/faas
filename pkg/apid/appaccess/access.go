@@ -167,6 +167,14 @@ func addressedApp(r *http.Request, store Store) (state.App, bool, error) {
 	return app, true, err
 }
 
+// Authorize applies Wrap's decision to an app the URL does not address, for a
+// handler that resolves it from the request body or a stored session (the
+// resumable upload routes). The route's action comes from routeActions; it
+// returns the account that owns the app's resources.
+func Authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, app state.App) (state.Account, *api.Problem) {
+	return authorize(r, store, audit, actor, app)
+}
+
 func authorize(r *http.Request, store Store, audit authz.AuditEmitter, actor state.Account, app state.App) (state.Account, *api.Problem) {
 	_, key, _, ok := authmw.PrincipalFrom(r)
 	if !ok {

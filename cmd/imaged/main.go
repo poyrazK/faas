@@ -33,6 +33,7 @@ import (
 	"strings"
 	"time"
 
+	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -50,6 +51,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/rootfs"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/secretscan"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -481,6 +483,8 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	h := imaged.New(store, notifier, puller, builder, guestInitPath, appsRoot, log).
 		WithValidatorArtifactCheck(validatorArtifacts.Check).
 		WithNodeName(getenv("FAAS_NODE_NAME")).
+		WithProfilingOnDemand(getenv("FAAS_PROFILING_ON_DEMAND") == "1").
+		WithContinuousProfiling(getenv("FAAS_PROFILING_ENABLED") == "1").
 		WithStorage(storageBackend).
 		WithGitHubSourceRefVerifier(githubdClient).
 		WithRuntimeBaseStaging().
@@ -518,7 +522,12 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 		// matches /run/faas/vmmd.sock (ADR-015); operators can
 		// override with FAAS_VMM_SOCK for dev (e.g. a bufconn
 		// test on a Mac).
-		WithVMMClient(imaged.NewVMMClientWithTLS(vmmTarget, vmmTLS, log))
+		WithVMMClient(imaged.NewVMMClientWithTLS(vmmTarget, vmmTLS, log)).
+		// ADR 20261022184951 amendment 1: native runtime snapshots live in
+		// vmmd's private tree, which imaged only reads; vmmd removes them.
+		// An absent tree (every node without native runtime capture) leaves
+		// collection exactly as before.
+		WithNativeRuntimeSnapshotRoot(envOr("FAAS_NATIVE_RUNTIME_SNAPSHOT_ROOT", "/srv/fc/native-snap"))
 	releasePhaseEnabled, err := parseBoolEnv("FAAS_RELEASE_PHASE_ENABLED", getenv("FAAS_RELEASE_PHASE_ENABLED"))
 	if err != nil {
 		return err
@@ -588,17 +597,31 @@ func (d runDeps) run(ctx context.Context, log *slog.Logger) error {
 	// identity wired, the registry credential lookup is skipped
 	// and pulls stay anonymous (matches Free plan + no-cred
 	// Hobby paths).
+	var legacyIdentities []*age.X25519Identity
 	if identityPath := envOr("FAAS_HOST_AGE_IDENTITY_PATH", ""); identityPath != "" {
 		identities, err := secretbox.LoadFleetAndHostKeys(filepath.Dir(identityPath))
 		if err != nil {
 			return fmt.Errorf("imaged: load host age identity %q: %w", identityPath, err)
 		}
 		h.WithSecretboxIdentities(identities)
+		legacyIdentities = identities
 		log.Info("host age identity loaded for registry credential unseal",
 			"path", identityPath)
 	} else {
 		log.Warn("FAAS_HOST_AGE_IDENTITY_PATH unset — registry credential unseal disabled (Free plan + anonymous-only deployments)")
 	}
+	// ADR 20261022111812: once the seal_domains role stages the build
+	// domain, its identity opens private-registry passwords ahead of the
+	// fleet and host identities. Crash captures keep those two.
+	buildIdentities, err := loadBuildSealDomain(os.Getenv)
+	if err != nil {
+		return err
+	}
+	if len(buildIdentities) > 0 {
+		h.WithRegistryIdentities(registryReaders(buildIdentities, legacyIdentities))
+	}
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Build, len(buildIdentities) > 0)
+	log.Info("build seal domain", "domain_identity", len(buildIdentities) > 0)
 
 	// F3: function runner wiring. cmd/imaged refuses to come up if either
 	// env var is set but the path doesn't exist on disk — silent omission

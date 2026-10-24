@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — onebox faas</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; }
+    body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 1100px; margin-inline: auto; }
+    header { display: flex; justify-content: space-between; align-items: center; padding: 1rem 0; border-bottom: 1px solid #ddd; }
+    nav a { margin-right: 1rem; text-decoration: none; }
+    main { padding: 1rem 0; }
+    table { width: 100%; border-collapse: collapse; margin: 0.75rem 0 1.5rem; }
+    th, td { text-align: right; padding: 0.4rem 0.5rem; border-bottom: 1px solid #eee; vertical-align: top; }
+    th:first-child, td:first-child { text-align: left; }
+    .summary { display: flex; gap: 2rem; flex-wrap: wrap; margin: 1rem 0; }
+    .summary div { display: grid; gap: 0.2rem; }
+    .summary small, .muted { color: #6b7280; }
+    .notice { padding: 0.7rem; background: #fff8c5; border: 1px solid #e2cf6e; }
+    .timeline { width: 100%; height: auto; margin: 0.5rem 0 1.5rem; }
+    .call { fill: #3b82f6; }
+    .call.error { fill: #dc2626; }
+    .call.flagged { fill: #d97706; }
+    .ttfb { stroke: #111827; stroke-width: 2; }
+    .axis { stroke: #d1d5db; }
+    .tick, .row-label { font-size: 11px; fill: #6b7280; }
+    tr.error td { color: #b91c1c; }
+    @media (max-width: 750px) { table { font-size: 0.8rem; } th, td { padding: 0.3rem 0.2rem; } }
+  </style>
+</head>
+<body>
+  <header>
+    <strong>onebox faas</strong>
+    <nav>
+      <a href="/dashboard/">Overview</a>
+      <a href="/dashboard/apps">Apps</a>
+      <a href="/dashboard/ai">AI gateway</a>
+      <a href="/dashboard/usage">Usage</a>
+      <a href="/dashboard/billing">Billing</a>
+      <a href="/dashboard/account">Account</a>
+    </nav>
+  </header>
+  <main>
+    {{template "email-verification-banner" .}}
+    <p><a href="/dashboard/ai">AI gateway</a> / <a href="{{.Data.IntegrationHref}}">{{.Data.IntegrationName}}</a> / <a href="{{.Data.TracesHref}}">Traces</a> /</p>
+    {{if .Data.Unavailable}}
+      <p class="notice" role="status">{{.Data.Unavailable}}</p>
+    {{else}}
+      <h1>Trace <code>{{.Data.Trace.ID}}</code></h1>
+      <section class="summary" aria-label="Trace summary">
+        <div><small>Calls</small><strong>{{.Data.Trace.Calls}}</strong></div>
+        <div><small>Errors</small><strong>{{.Data.Trace.Errors}}</strong></div>
+        <div><small>Cost</small><strong>{{.Data.Trace.Cost}}</strong></div>
+        <div><small>Tool calls</small><strong>{{.Data.Trace.ToolCalls}}</strong></div>
+        <div><small>Repeated tool calls</small><strong>{{.Data.Trace.Repeated}}</strong></div>
+        <div><small>First call</small><strong>{{.Data.FirstCall}}</strong></div>
+        <div><small>Span</small><strong>{{.Data.Span}}</strong></div>
+        <div><small>Models</small><strong>{{.Data.Trace.Models}}</strong></div>
+      </section>
+      {{if .Data.Timeline.Bars}}
+        <h2>Timeline</h2>
+        <p class="muted">Each bar is one call from its start to its end; the dark mark is its first byte. Red bars failed, amber bars carry a quality flag.</p>
+        <svg class="timeline" viewBox="0 0 {{.Data.Timeline.Width}} {{.Data.Timeline.Height}}" role="img" aria-label="The trace's calls on a timeline">
+          {{range .Data.Timeline.Ticks}}
+            <line class="axis" x1="{{.X}}" y1="0" x2="{{.X}}" y2="{{$.Data.Timeline.Height}}"/>
+            <text class="tick" x="{{.X}}" y="{{$.Data.Timeline.Height}}" dy="-2">{{.Label}}</text>
+          {{end}}
+          {{range .Data.Timeline.Bars}}
+            <rect class="call{{if .Error}} error{{else if .Flagged}} flagged{{end}}" x="{{.X}}" y="{{.Y}}" width="{{.W}}" height="{{.H}}"><title>{{.Label}}</title></rect>
+            {{if .HasTTFB}}<line class="ttfb" x1="{{.TTFBX}}" y1="{{.Y}}" x2="{{.TTFBX}}" y2="{{.LabelY}}"/>{{end}}
+          {{end}}
+        </svg>
+      {{end}}
+      {{if .Data.Calls}}
+        <h2>Calls</h2>
+        <div style="overflow-x:auto">
+          <table>
+            <thead><tr><th>#</th><th>Started</th><th>Model</th><th>Status</th><th>Tokens in/out</th><th>Cost</th><th>Duration</th><th>First byte</th><th>Requested tools</th><th>Quality flags</th><th>Rating</th><th>Score</th></tr></thead>
+            <tbody>
+              {{range .Data.Calls}}
+                <tr{{if .Error}} class="error"{{end}}><td>{{.Number}}</td><td>{{.Started}}</td><td>{{.Model}}</td><td>{{.Status}}</td><td>{{.Tokens}}</td><td>{{.Cost}}</td><td>{{.Duration}}</td><td>{{.TTFB}}</td><td>{{.Tools}}</td><td>{{.Flags}}</td><td>{{.Feedback}}</td><td>{{.Score}}</td></tr>
+              {{end}}
+            </tbody>
+          </table>
+        </div>
+      {{end}}
+      {{if .Data.Note}}<p class="muted">{{.Data.Note}}</p>{{end}}
+    {{end}}
+  </main>
+</body>
+</html>

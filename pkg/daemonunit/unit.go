@@ -106,7 +106,10 @@ type Unit struct {
 	// not just a dead process — triggers the restart. Empty omits
 	// the directive (Type=simple units, and units that opt out).
 	WatchdogSec string
-	Slice       string
+	// FileDescriptorStoreMax lets the daemon keep listening sockets in
+	// systemd's fd store across restarts (daemonunit.FDStore). Empty omits it.
+	FileDescriptorStoreMax string
+	Slice                  string
 	// MemoryHigh is the soft limit: systemd applies reclaim pressure and
 	// throttles the cgroup past this point instead of killing it. Set it
 	// below MemoryMax so a slow leak degrades the daemon rather than
@@ -153,8 +156,11 @@ type Unit struct {
 	ReadWritePaths       []string
 	StateDirectory       string
 	StateDirectoryMode   string
-	RuntimeDirectory     string // legacy generic field; vmmd uses host tmpfiles instead
+	RuntimeDirectory     string // legacy generic field; vmmd uses host tmpfiles for /run/faas
 	RuntimeDirectoryMode string
+	// RuntimeDirectoryPreserve keeps RuntimeDirectory across stops ("yes")
+	// or restarts ("restart"). Empty omits it.
+	RuntimeDirectoryPreserve string
 
 	// [Install]
 	WantedBy string
@@ -169,7 +175,7 @@ func BoolPtr(b bool) *bool { return &b }
 // Inside [Service], field ordering is fixed (Type → NotifyAccess → User →
 // Group → ExecStartPre → ExecStart → ExecStartPost → ExecReload → Restart →
 // RestartSec →
-// TimeoutStartSec → WatchdogSec → Slice → MemoryHigh → MemoryMax → OOMPolicy → CPUQuota → TasksMax → Delegate →
+// TimeoutStartSec → WatchdogSec → FileDescriptorStoreMax → Slice → MemoryHigh → MemoryMax → OOMPolicy → CPUQuota → TasksMax → Delegate →
 // CapabilityBoundingSet → AmbientCapabilities → EnvironmentFile →
 // Environment entries → LoadCredential entries → NoNewPrivileges →
 // ProtectSystem → ProtectHome → PrivateTmp → PrivateDevices →\n →
@@ -177,7 +183,8 @@ func BoolPtr(b bool) *bool { return &b }
 // SystemCallArchitectures → LockPersonality → RestrictNamespaces →\n →
 // RestrictRealtime → RestrictSUIDSGID → RestrictAddressFamilies →\n →
 // ProtectHostname → ProtectClock → ProtectProc →\n → ReadOnlyPaths →\n →
-// ReadWritePaths →\n → RuntimeDirectory → RuntimeDirectoryMode → [Install]).
+// ReadWritePaths →\n → RuntimeDirectory → RuntimeDirectoryMode →
+// RuntimeDirectoryPreserve → [Install]).
 //
 // Render() never comments. The wiped rationale moves to godoc on
 // UnitXxx() in pkg/daemonunitspec + ADR-078.
@@ -222,6 +229,7 @@ func (u Unit) Render() []byte {
 	writeStringKV(&buf, "RestartSec", u.RestartSec)
 	writeStringKV(&buf, "TimeoutStartSec", u.TimeoutStartSec)
 	writeStringKV(&buf, "WatchdogSec", u.WatchdogSec)
+	writeStringKV(&buf, "FileDescriptorStoreMax", u.FileDescriptorStoreMax)
 	writeStringKV(&buf, "Slice", u.Slice)
 	writeStringKV(&buf, "MemoryHigh", u.MemoryHigh)
 	writeStringKV(&buf, "MemoryMax", u.MemoryMax)
@@ -355,6 +363,7 @@ func (u Unit) Render() []byte {
 			buf.WriteString(u.RuntimeDirectoryMode)
 			buf.WriteByte('\n')
 		}
+		writeStringKV(&buf, "RuntimeDirectoryPreserve", u.RuntimeDirectoryPreserve)
 	}
 
 	buf.WriteByte('\n')

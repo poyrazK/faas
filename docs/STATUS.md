@@ -47,7 +47,7 @@ ci-light's `make capability-coverage-check` fails any new customer entry point
 inventory row. Open: a production usage check of preview capabilities before
 rollout.
 
-## Event substrate benchmark (V12) — 2026-10-22
+## Event substrate benchmark (V12) — 2026-10-23
 
 `make bench-event-substrate` measures event publish, fanout routing, the
 invocation drain and webhook delivery on disposable PostgreSQL, on
@@ -55,14 +55,25 @@ invocation drain and webhook delivery on disposable PostgreSQL, on
 ([report](ops/evidence/20261020-event-substrate-bench/REPORT.md)) sustained
 5 events/s end to end. Skipping the ordering scan for recipients without a
 work policy (#5090) and the webhook backlog drain (#5091) raised that to 20
-events/s and webhook delivery to about 150/s. Batched fanout claims
-(`perf/event-fanout-batch-claim`,
+events/s and webhook delivery to about 150/s. Batched fanout claims (#5161,
 [report](ops/evidence/20261022-event-fanout-batch-claims/REPORT.md)) bring
-fanout to 74 events/s over a 2,000-event backlog and the pipeline to
-**48.5 events/s at 50 offered** (p95 830 ms), and ordered work-policy lanes
-from under 1 to 21.7 events/s. Fanout is still the first stage to fall
-behind, at 200 events/s offered. Event caps stay where they are until the
-benchmark is re-run on the reference node.
+fanout to 74 events/s over a 2,000-event backlog and ordered work-policy
+lanes from under 1 to 21.7 events/s.
+
+A provisional V12 run of main on the same host
+([report](ops/evidence/20261022-v12-provisional/REPORT.md)), chosen by the
+owner until launch hardware is available, **sustains 20 events/s in every
+run**. 50/s holds only when the host is otherwise quiet: 49.9/s, p95 232 ms,
+against 27–33/s under other load. 75/s never holds. That bounds the aggregate
+event rate the caps may admit on one control plane at 10 events/s, far above
+today's per-account caps. Fanout no longer dominates database time. Publish
+(9.2 ms per event) and the invocation lifecycle (21.4 ms per invocation) now
+do. Removing their no-op reads, writes and re-plans (#5182,
+[report](ops/evidence/20261022-event-path-planning-waste/REPORT.md)) cut
+database time per delivered event from 37.8 to 26.3 ms. The pipeline then
+held 48.7/s at 50 offered (p95 437 ms) and 30.1/s at 150 offered, against
+18.0/s on main. Event caps stay where they are until the benchmark runs on
+the reference node.
 
 ## Tenant egress denies NAT64 — 2026-10-18 (branch, not released)
 
@@ -1814,11 +1825,34 @@ remain open; production admission is disabled.
   `runtime` domain's reader, opens it into the builder VM; guest-init hands it
   to buildctl and deletes it. Builds with secrets skip warm builders. Unit tests
   pass; a native private-dependency build has not run.
+- **Compose service secrets as files.**
+  [ADR-20261023090000](adr/20261023090000-compose-runtime-secret-files.md)
+  (2026-10-23): a service's `secrets` naming `environment:` secrets become
+  files in a tmpfs `/run/secrets` of its main workload, written by guest-init
+  from the secrets vmmd delivers and rewritten on live reload. Unit tests pass;
+  no native run.
+- **Compose deploy resources and replicas.**
+  [ADR-20261023120000](adr/20261023120000-compose-deploy-resources.md)
+  (2026-10-23): `deploy.resources.limits` (or `mem_limit`/`cpus`) and
+  `deploy.replicas` (or `scale`) set the app's `ram_mb`, CPU share and
+  `max_concurrency` or worker/service replicas within plan limits, written by
+  the project apply. Unit and store tests pass; no native run.
 - **Compose process overrides on built services.**
   [ADR-20261022160000](adr/20261022160000-compose-process-on-built-services.md)
   (2026-10-22): a built service's `entrypoint` joins its start command, and
   `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
   deployment and applied to the built image. Unit tests pass; no native run.
+- **Dockerfile HEALTHCHECK enforced on source builds.**
+  [ADR-20261024100000](adr/20261024100000-dockerfile-healthcheck-enforced.md)
+  (2026-10-24): imaged records the readiness verdict for every source build
+  whose image declares a command HEALTHCHECK, not only Compose overrides, and
+  the scheduler enforces it as for a pushed image. Existing deployments keep
+  their readiness until redeployed. Unit and store tests pass; no native run.
+- **Compose profiles.**
+  [ADR-20261022190000](adr/20261022190000-compose-profiles-from-dotenv.md)
+  (2026-10-22): `COMPOSE_PROFILES` in the source's `.env` activates Compose
+  profiles (`*` for all); services in inactive profiles are skipped with a
+  warning. Unit tests pass.
 - **No native run recorded.** The `containers` native lane has no recorded
   passing run; [container qualification](container-qualification.md) remains
   the coverage plan.

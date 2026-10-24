@@ -219,6 +219,10 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
 	"POST /dashboard/mcp/retirements/{id}":                             true,
 
+	"POST /dashboard/apps/{slug}/profiles/captures":                          true, // ADR-1155 session + CSRF adapter for the profile capture API
+	"GET /dashboard/apps/{slug}/profiles/captures/{id}":                      true, // ADR-1155 HTML capture page over the profile capture API
+	"GET /dashboard/apps/{slug}/profiles/captures/{id}/pprof":                true, // ADR-1155 session-authenticated download adapter
+	"GET /dashboard/apps/{slug}/profiles/captures/{id}/diff":                 true, // ADR-1155 HTML comparison page over the capture diff API
 	"POST /dashboard/apps/{slug}/issues/frequency-alerts":                    true, // scoped HTML/CSRF frequency alert policy adapter
 	"POST /dashboard/apps/{slug}/issues/bulk-actions":                        true, // session/CSRF HTML adapter for the corresponding public Issues API
 	"POST /dashboard/apps/{slug}/issues/saved-views":                         true, // session/CSRF HTML adapter for the corresponding public Issues API
@@ -571,6 +575,8 @@ var routeExclude = map[string]bool{
 	"POST /cli-auth":                                                             true, // dashboard claim form submit
 	"GET /docs":                                                                  true, // anonymous Swagger UI metadata page; no SDK method
 	"GET /docs/":                                                                 true, // slash alias of the documented /docs route
+	"GET /docs/assets/{file}":                                                    true, // vendored Swagger UI for /docs; static files, no SDK method
+	"GET /dashboard/assets/{file}":                                               true, // vendored htmx for the dashboard; static files, no SDK method
 	"GET /status":                                                                true, // public HTML status page
 	"GET /status/slo.json":                                                       true, // public status JSON
 	"GET /healthz":                                                               true, // loopback infra probe
@@ -662,6 +668,7 @@ var dtoExclude = map[string]bool{
 	// EdgeProtectionResponse in the spec, not named schemas.
 	"EdgeProtectionChallenge": true,
 	"EdgeProtectionCount":     true,
+	"EdgeProtectionPenalty":   true,
 	"EdgeProtectionPreAuth":   true,
 	"EdgeProtectionRejection": true,
 	"EdgeProtectionWAF":       true,
@@ -1495,7 +1502,9 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "data_api_usage.go"),               // ADR-20261019102108 runtime usage reports and owner views.
 		filepath.Join(root, "pkg", "api", "data_api_access.go"),              // ADR-20261016151947 access settings for live reads without a token.
 		filepath.Join(root, "pkg", "api", "compose_healthcheck.go"),
-		filepath.Join(root, "pkg", "api", "compose_process.go"), // ADR-1337 Compose process overrides for prebuilt images.
+		filepath.Join(root, "pkg", "api", "compose_process.go"),   // ADR-1337 Compose process overrides for prebuilt images.
+		filepath.Join(root, "pkg", "api", "compose_resources.go"), // ADR-20261023120000 Compose deploy resources and replicas.
+		filepath.Join(root, "pkg", "api", "secret_files.go"),      // ADR-20261023090000 Compose secrets written to /run/secrets.
 		filepath.Join(root, "pkg", "api", "environment_gitops.go"),
 		filepath.Join(root, "pkg", "api", "environment_gitops_explanation.go"),
 		filepath.Join(root, "pkg", "api", "environment_workload_retirement.go"), // ADR-1331 retained workload retirement and recovery DTO
@@ -1677,6 +1686,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", manifestFile),
 		filepath.Join(root, "pkg", "api", "profiles.go"), // ADR-819
 		filepath.Join(root, "pkg", "api", "profile_investigations.go"),
+		filepath.Join(root, "pkg", "api", "profile_captures.go"), // ADR-1155
 		filepath.Join(root, "pkg", "api", "profile_regressions.go"),
 		filepath.Join(root, "pkg", "api", "profile_deployment_checks.go"),
 		filepath.Join(root, "pkg", "api", "profile_attribution.go"),
@@ -1692,6 +1702,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "edge_rule_waf.go"),                   // kind=waf action (ADR-831)
 		filepath.Join(root, "pkg", "api", "edge_rule_recipe_suggestion_dto.go"), // suggested protections (ADR-20261020105000)
 		filepath.Join(root, "pkg", "api", "edge_rule_challenge.go"),             // kind=challenge action (ADR-831)
+		filepath.Join(root, "pkg", "api", "edge_rule_penalty.go"),               // rule penalty box (ADR-20261022105846)
 		filepath.Join(root, "pkg", "api", cliauthFile),
 		filepath.Join(root, "pkg", "api", "browser_approvals.go"),
 		filepath.Join(root, "pkg", "api", "source_review.go"),
@@ -1803,7 +1814,10 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "outbound_ai_moderation.go"), // ADR-1340 moderation checks
 		filepath.Join(root, "pkg", "api", "outbound_ai_evaluations.go"),
 		filepath.Join(root, "pkg", "api", "outbound_ai_access_tokens.go"),
-		filepath.Join(root, "pkg", "api", "outbound_ai_tags.go"), // ADR-1436 usage tags and tag limits
+		filepath.Join(root, "pkg", "api", "outbound_ai_tags.go"),        // ADR-1436 usage tags and tag limits
+		filepath.Join(root, "pkg", "api", "outbound_ai_traces.go"),      // ADR 20261020202035 AI traces
+		filepath.Join(root, "pkg", "api", "outbound_ai_quality.go"),     // ADR 20261021171712 quality signals
+		filepath.Join(root, "pkg", "api", "outbound_ai_deployments.go"), // ADR 20261022153155 AI calls by deployment
 		filepath.Join(root, "pkg", "api", runtimeReleasesFile),
 		filepath.Join(root, "pkg", "api", rolloutDecisionFile),
 		filepath.Join(root, "pkg", "api", releaseRollbackFile),

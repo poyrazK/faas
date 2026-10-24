@@ -246,15 +246,29 @@ bindings <app>` reports the effective transport.
 
 The same declared edges are exposed as service bindings by the app API and by
 `gregale bindings public-api`, alongside database, object-storage, queue,
-and outbound integration bindings. New project workloads use the `declared` caller policy: the gateway
-returns 403 for calls to services not listed in `depends_on`. Existing apps
-retain their persisted policy on reapply. To let a workload call every service
-in its own project without listing each one, set
-`x-gregale-service-policy: project` on the caller
-([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)).
-Calls to services outside the project still need `depends_on`, and a target's
-`x-gregale-allow-callers` list still applies. An undeclared sibling has no
-injected URL or `.internal` alias; call it at
+and outbound integration bindings. New project workloads use the `project`
+caller policy
+([ADR-20261022111119](adr/20261022111119-project-service-binding-policy.md)):
+they may call every service in their own project without listing it, while
+calls to services outside the project need `depends_on` and get 403 without
+it. A target's `x-gregale-allow-callers` list still applies. Existing apps
+retain their persisted policy on reapply; set `x-gregale-service-policy:
+project` on a service to move it over, or `declared` to require `depends_on`
+for every call. A top-level `x-gregale-service-policy` sets the policy of
+every service that sets none, which moves a whole project over in one change:
+
+```yaml
+x-gregale-service-policy: project
+services:
+  web:
+    build: ./web
+  billing:
+    build: ./billing
+```
+
+An undeclared sibling has no injected URL; call it at
+`http://<name>.internal:10081`
+([ADR-20261022160248](adr/20261022160248-project-internal-aliases.md)) or
 `http://<app-slug>.svc.gregale:10081`. For an intentional same-account escape
 hatch, set `x-gregale-service-policy: account` on the caller. Under the
 `declared` policy the CLI reports service bindings as `enforced`; under
@@ -580,7 +594,12 @@ The target can independently restrict who calls it with
 not other same-account apps, even if they declare a dependency on `billing`.
 An omitted list preserves legacy same-account reachability; `[]` denies every
 internal caller. The list accepts at most 100 logical app slugs, not generated
-PR preview names. This target check runs before routing or waking `billing`. Preview callers
+PR preview names. In a project, a name in the list (or in
+`x-gregale-allow-call-scopes`) is a Compose service of the target's project,
+even when that service has a project-prefixed slug
+([ADR-20261022120205](adr/20261022120205-project-prefixed-app-slugs.md)). An
+app outside the project matches by its slug only when no service of the
+target's project has that name. This target check runs before routing or waking `billing`. Preview callers
 must also pass the existing project and target preview policies.
 
 For least-privilege access, a target can grant each caller only specific HTTP

@@ -24,6 +24,31 @@ const SealNamespace = "livequery"
 // connection string, so it never opens as a key.
 const LoginSealNamespace = "livequery-login"
 
+// KeySealNamespaceFor and LoginSealNamespaceFor bind a sealed live key or
+// login to its database, so a blob copied onto another database's row does
+// not open there. Releases roll out N±1 (docs/release-compatibility.md):
+// this release's livequeryd opens the bound form and the legacy unbound
+// SealNamespace and LoginSealNamespace that apid still writes. Release 2
+// seals the bound form and re-seals existing rows; a later release stops
+// opening the legacy form.
+func KeySealNamespaceFor(databaseID string) string { return SealNamespace + ":" + databaseID }
+
+// LoginSealNamespaceFor binds a sealed live login to its database; see
+// KeySealNamespaceFor.
+func LoginSealNamespaceFor(databaseID string) string { return LoginSealNamespace + ":" + databaseID }
+
+// KeyNamespaceOpens reports whether a live key whose seal names namespace may
+// serve databaseID: the legacy namespace, or the one bound to databaseID.
+func KeyNamespaceOpens(namespace, databaseID string) bool {
+	return namespace == SealNamespace || (databaseID != "" && namespace == KeySealNamespaceFor(databaseID))
+}
+
+// LoginNamespaceOpens reports whether a live login whose seal names namespace
+// may serve databaseID: the legacy namespace, or the one bound to databaseID.
+func LoginNamespaceOpens(namespace, databaseID string) bool {
+	return namespace == LoginSealNamespace || (databaseID != "" && namespace == LoginSealNamespaceFor(databaseID))
+}
+
 var (
 	// ErrNotFound means the account has no such live database.
 	ErrNotFound = errors.New("livekeys: database not found")

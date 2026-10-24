@@ -4945,6 +4945,29 @@ func (q *Queries) ClaimClonePostgresMaintenanceDispatch(ctx context.Context, db 
 	return i, err
 }
 
+const claimComputeNodeVMMDEpoch = `-- name: ClaimComputeNodeVMMDEpoch :one
+UPDATE compute_nodes SET vmmd_epoch=vmmd_epoch+1,
+vmmd_predecessor_incarnation=vmmd_epoch_incarnation,
+vmmd_epoch_incarnation=$1::uuid
+WHERE id=$2::uuid AND vmmd_epoch=$3::bigint
+RETURNING vmmd_epoch
+`
+
+type ClaimComputeNodeVMMDEpochParams struct {
+	Incarnation   pgtype.UUID
+	NodeID        pgtype.UUID
+	ExpectedEpoch int64
+}
+
+// Compare-and-swap: the claim succeeds only from the epoch the claimant read,
+// so two vmmd processes can never both hold the node's next epoch.
+func (q *Queries) ClaimComputeNodeVMMDEpoch(ctx context.Context, db DBTX, arg ClaimComputeNodeVMMDEpochParams) (int64, error) {
+	row := db.QueryRow(ctx, claimComputeNodeVMMDEpoch, arg.Incarnation, arg.NodeID, arg.ExpectedEpoch)
+	var vmmd_epoch int64
+	err := row.Scan(&vmmd_epoch)
+	return vmmd_epoch, err
+}
+
 const claimCustomerOperationBlobCleanup = `-- name: ClaimCustomerOperationBlobCleanup :one
 WITH candidate AS (
  SELECT b.id FROM customer_operation_result_blobs b
@@ -7318,6 +7341,54 @@ func (q *Queries) ClearApplicationStandardControlBindings(ctx context.Context, d
 	return err
 }
 
+const clearComputeNodeVMMDRestartNotice = `-- name: ClearComputeNodeVMMDRestartNotice :execrows
+UPDATE compute_nodes SET vmmd_restart_notice_until=NULL
+WHERE id=$1::uuid AND vmmd_restart_notice_until IS NOT NULL
+`
+
+func (q *Queries) ClearComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, nodeID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, clearComputeNodeVMMDRestartNotice, nodeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const clearExpiredAppForkExecOutput = `-- name: ClearExpiredAppForkExecOutput :execrows
+UPDATE app_fork_execs e
+SET stdout = ''::bytea,
+    stderr = ''::bytea,
+    updated_at = greatest(e.updated_at, $1::timestamptz)
+WHERE e.id IN (
+    SELECT x.id FROM app_fork_execs x
+    JOIN app_forks f ON f.id = x.fork_id
+    WHERE x.finished_at IS NOT NULL
+      AND f.finished_at IS NOT NULL
+      AND f.finished_at <= $2::timestamptz
+      AND (octet_length(x.stdout) > 0 OR octet_length(x.stderr) > 0)
+    ORDER BY f.finished_at, x.id
+    LIMIT $3::integer
+    FOR UPDATE OF x SKIP LOCKED
+)
+`
+
+type ClearExpiredAppForkExecOutputParams struct {
+	Now        pgtype.Timestamptz
+	Cutoff     pgtype.Timestamptz
+	BatchLimit int32
+}
+
+// schedd: a fork command's output comes from inside a copy of production
+// memory, so it is emptied once the fork has been over for the retention
+// window (api.AppForkExecOutputRetention). The command record stays.
+func (q *Queries) ClearExpiredAppForkExecOutput(ctx context.Context, db DBTX, arg ClearExpiredAppForkExecOutputParams) (int64, error) {
+	result, err := db.Exec(ctx, clearExpiredAppForkExecOutput, arg.Now, arg.Cutoff, arg.BatchLimit)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const clearInstanceRuntimeConfigReceipt = `-- name: ClearInstanceRuntimeConfigReceipt :exec
 DELETE FROM instance_runtime_config_receipts WHERE instance_id = $1::uuid
 `
@@ -9465,6 +9536,25 @@ func (q *Queries) CompleteWorkflowJoin(ctx context.Context, db DBTX, arg Complet
 		arg.StepName,
 	)
 	return err
+}
+
+const computeNodeVMMDEpoch = `-- name: ComputeNodeVMMDEpoch :one
+SELECT vmmd_epoch, vmmd_epoch_incarnation, vmmd_predecessor_incarnation
+FROM compute_nodes WHERE id=$1::uuid
+`
+
+type ComputeNodeVMMDEpochRow struct {
+	VmmdEpoch                  int64
+	VmmdEpochIncarnation       pgtype.UUID
+	VmmdPredecessorIncarnation pgtype.UUID
+}
+
+// vmmd restart adoption ADR §3: the node's current ownership epoch.
+func (q *Queries) ComputeNodeVMMDEpoch(ctx context.Context, db DBTX, nodeID pgtype.UUID) (ComputeNodeVMMDEpochRow, error) {
+	row := db.QueryRow(ctx, computeNodeVMMDEpoch, nodeID)
+	var i ComputeNodeVMMDEpochRow
+	err := row.Scan(&i.VmmdEpoch, &i.VmmdEpochIncarnation, &i.VmmdPredecessorIncarnation)
+	return i, err
 }
 
 const consumeCustomerOperationWorkflowGuest = `-- name: ConsumeCustomerOperationWorkflowGuest :execrows
@@ -19327,6 +19417,73 @@ func (q *Queries) ExpireOrgInvitations(ctx context.Context, db DBTX, expiresAt p
 	return result.RowsAffected(), nil
 }
 
+const expirePendingQueueMessages = `-- name: ExpirePendingQueueMessages :many
+WITH plan_retention AS (
+    SELECT unnest($1::text[]) AS plan, unnest($2::bigint[]) AS seconds
+), batch AS (
+    SELECT i.id
+    FROM invocations i
+    LEFT JOIN accounts a ON a.id = i.account_id
+    LEFT JOIN orgs o ON o.id = i.account_id AND NOT o.personal_org AND o.resource_ownership_enabled
+    JOIN plan_retention r ON r.plan = coalesce(a.plan, o.plan)
+    WHERE i.source = 'queue' AND i.state = 'pending' AND r.seconds > 0
+      AND i.created_at < $3::timestamptz - make_interval(secs => $4::bigint)
+      AND i.created_at < $3::timestamptz - make_interval(secs => r.seconds)
+    ORDER BY i.created_at
+    LIMIT $5::integer
+    FOR UPDATE OF i SKIP LOCKED
+)
+UPDATE invocations i
+SET state = 'dead_letter', outcome = 'dead_letter', completed_at = now(),
+    last_error = 'queue message expired: it waited longer than the plan retention',
+    outcome_code = 'queue_message_expired'
+FROM batch
+WHERE i.id = batch.id AND i.state = 'pending'
+RETURNING i.id::text AS id, i.app_id::text AS app_id
+`
+
+type ExpirePendingQueueMessagesParams struct {
+	Plans               []string
+	RetentionSeconds    []int64
+	NowAt               pgtype.Timestamptz
+	MinRetentionSeconds int64
+	BatchLimit          int32
+}
+
+type ExpirePendingQueueMessagesRow struct {
+	ID    string
+	AppID string
+}
+
+// ADR-20261022105723: a pending queue message past its plan's retention
+// moves to the dead letter. A message a worker holds (dispatching) is not
+// touched. The plan resolves as StampDefaultInvocationRetention's does.
+func (q *Queries) ExpirePendingQueueMessages(ctx context.Context, db DBTX, arg ExpirePendingQueueMessagesParams) ([]ExpirePendingQueueMessagesRow, error) {
+	rows, err := db.Query(ctx, expirePendingQueueMessages,
+		arg.Plans,
+		arg.RetentionSeconds,
+		arg.NowAt,
+		arg.MinRetentionSeconds,
+		arg.BatchLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ExpirePendingQueueMessagesRow{}
+	for rows.Next() {
+		var i ExpirePendingQueueMessagesRow
+		if err := rows.Scan(&i.ID, &i.AppID); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const expireRetainedDeploymentRevisionPins = `-- name: ExpireRetainedDeploymentRevisionPins :execrows
 
 WITH locked_deployments AS MATERIALIZED (
@@ -22804,7 +22961,8 @@ func (q *Queries) GetApplicationStandardRuntimeRefresh(ctx context.Context, db D
 }
 
 const getApplicationStandardSnapshotCapture = `-- name: GetApplicationStandardSnapshotCapture :one
-SELECT expected_state,grant_data,acknowledgment,created_at,received_at FROM application_standard_snapshot_captures
+SELECT expected_state,grant_data,acknowledgment,created_at,received_at,
+ coalesce(producer_incarnation::text,'')::text AS producer_incarnation FROM application_standard_snapshot_captures
 WHERE token=$1::uuid AND account_id=$2::uuid
  AND app_id=$3::uuid AND deployment_id=$4::uuid
 `
@@ -22817,11 +22975,12 @@ type GetApplicationStandardSnapshotCaptureParams struct {
 }
 
 type GetApplicationStandardSnapshotCaptureRow struct {
-	ExpectedState  string
-	GrantData      []byte
-	Acknowledgment []byte
-	CreatedAt      pgtype.Timestamptz
-	ReceivedAt     pgtype.Timestamptz
+	ExpectedState       string
+	GrantData           []byte
+	Acknowledgment      []byte
+	CreatedAt           pgtype.Timestamptz
+	ReceivedAt          pgtype.Timestamptz
+	ProducerIncarnation string
 }
 
 func (q *Queries) GetApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg GetApplicationStandardSnapshotCaptureParams) (GetApplicationStandardSnapshotCaptureRow, error) {
@@ -22838,6 +22997,7 @@ func (q *Queries) GetApplicationStandardSnapshotCapture(ctx context.Context, db 
 		&i.Acknowledgment,
 		&i.CreatedAt,
 		&i.ReceivedAt,
+		&i.ProducerIncarnation,
 	)
 	return i, err
 }
@@ -23215,7 +23375,7 @@ SELECT r.receipt::jsonb AS receipt,coalesce(i.state IN ('running','snapshotting'
  AND r.receipt->'binding'->>'deployment_id'=i.deployment_id::text
  AND r.receipt->'binding'->>'account_id'=a.input_snapshot->>'account_id'
  AND r.receipt->'binding'->>'node_id'=i.node_id::text
- AND r.receipt->'binding'->>'incarnation'=n.vmmd_incarnation::text
+ AND application_standard_effective_incarnation(i.id,r.receipt->'binding'->>'incarnation')=n.vmmd_incarnation::text
  AND (r.receipt->'binding'->>'protocol_version')::integer<=n.vmmd_admission_protocol
  AND r.receipt->'binding'->>'captured_input_hash'=application_standard_native_input_hash(a.input_snapshot,i.node_id)
  AND r.receipt->>'netns'=i.netns AND r.receipt->>'host_ip'=host(i.host_ip)
@@ -27499,6 +27659,30 @@ func (q *Queries) HoldProjectEnvironmentCloneConfiguration(ctx context.Context, 
 	return i, err
 }
 
+const idempotencyReceipt = `-- name: IdempotencyReceipt :one
+SELECT response_status, response_body, request_digest
+FROM idempotency_keys
+WHERE account_id = $1::text::uuid AND key = $2::text
+`
+
+type IdempotencyReceiptParams struct {
+	AccountID string
+	Key       string
+}
+
+type IdempotencyReceiptRow struct {
+	ResponseStatus int32
+	ResponseBody   []byte
+	RequestDigest  []byte
+}
+
+func (q *Queries) IdempotencyReceipt(ctx context.Context, db DBTX, arg IdempotencyReceiptParams) (IdempotencyReceiptRow, error) {
+	row := db.QueryRow(ctx, idempotencyReceipt, arg.AccountID, arg.Key)
+	var i IdempotencyReceiptRow
+	err := row.Scan(&i.ResponseStatus, &i.ResponseBody, &i.RequestDigest)
+	return i, err
+}
+
 const incrementAppError = `-- name: IncrementAppError :one
 
 INSERT INTO app_errors (
@@ -28193,6 +28377,37 @@ func (q *Queries) InsertApplicationStandardOperationTarget(ctx context.Context, 
 		arg.Position,
 		arg.ApprovedApp,
 		arg.Now,
+	)
+	return err
+}
+
+const insertApplicationStandardRebind = `-- name: InsertApplicationStandardRebind :exec
+INSERT INTO instance_application_standard_rebinds (instance_id, node_id, from_incarnation, to_incarnation, vmmd_epoch, observed)
+VALUES ($1::uuid, $2::uuid, $3::uuid, $4::uuid,
+ $5::bigint, $6::jsonb)
+`
+
+type InsertApplicationStandardRebindParams struct {
+	InstanceID      pgtype.UUID
+	NodeID          pgtype.UUID
+	FromIncarnation pgtype.UUID
+	ToIncarnation   pgtype.UUID
+	VmmdEpoch       int64
+	Observed        []byte
+}
+
+// ADR-595 extension: an admitted runtime survives a vmmd restart. The
+// trigger admits only the node's current holder, extending the
+// admission's current one, for an instance whose residency equals its
+// receipt.
+func (q *Queries) InsertApplicationStandardRebind(ctx context.Context, db DBTX, arg InsertApplicationStandardRebindParams) error {
+	_, err := db.Exec(ctx, insertApplicationStandardRebind,
+		arg.InstanceID,
+		arg.NodeID,
+		arg.FromIncarnation,
+		arg.ToIncarnation,
+		arg.VmmdEpoch,
+		arg.Observed,
 	)
 	return err
 }
@@ -39667,6 +39882,58 @@ func (q *Queries) ListActiveTCPListeners(ctx context.Context, db DBTX) ([]AppTcp
 	return items, nil
 }
 
+const listAdoptionReportInstancesOnNode = `-- name: ListAdoptionReportInstancesOnNode :many
+SELECT id, coalesce(app_id::text, '')::text AS app_id, coalesce(deployment_id::text, '')::text AS deployment_id,
+state, wake_id, started_at, mode
+FROM instances WHERE node_id=$1::uuid AND state IN ('running', 'frozen')
+ORDER BY id LIMIT $2::int
+`
+
+type ListAdoptionReportInstancesOnNodeParams struct {
+	NodeID   pgtype.UUID
+	RowLimit int32
+}
+
+type ListAdoptionReportInstancesOnNodeRow struct {
+	ID           pgtype.UUID
+	AppID        string
+	DeploymentID string
+	State        string
+	WakeID       pgtype.UUID
+	StartedAt    pgtype.Timestamptz
+	Mode         string
+}
+
+// The rows a vmmd adoption report settles: RUNNING and FROZEN on the node.
+// Read only after the node's epoch moves, so a scan of the live set is fine.
+func (q *Queries) ListAdoptionReportInstancesOnNode(ctx context.Context, db DBTX, arg ListAdoptionReportInstancesOnNodeParams) ([]ListAdoptionReportInstancesOnNodeRow, error) {
+	rows, err := db.Query(ctx, listAdoptionReportInstancesOnNode, arg.NodeID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAdoptionReportInstancesOnNodeRow{}
+	for rows.Next() {
+		var i ListAdoptionReportInstancesOnNodeRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.AppID,
+			&i.DeploymentID,
+			&i.State,
+			&i.WakeID,
+			&i.StartedAt,
+			&i.Mode,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listAlertRollbacks = `-- name: ListAlertRollbacks :many
 SELECT r.receipt FROM alert_rollback_actions r JOIN apps a ON a.id=r.app_id
  WHERE a.id=$1 AND a.account_id=$2 AND r.receipt->>'account_id'=a.account_id::text AND a.status<>'deleted'
@@ -41533,6 +41800,7 @@ func (q *Queries) ListApplicationStandardObservationArtifacts(ctx context.Contex
 
 const listApplicationStandardObservationSnapshots = `-- name: ListApplicationStandardObservationSnapshots :many
 SELECT s.id,c.input_snapshot,c.grant_data,c.acknowledgment,c.expected_state,c.created_at,c.received_at,
+ coalesce(c.producer_incarnation::text,'')::text AS producer_incarnation,
  coalesce(application_standard_snapshot_catalog_matches(s,c),false)::boolean AS catalog_matches,
  (n.last_heartbeat_at+make_interval(secs=>$1::double precision))::timestamptz AS heartbeat_until
  FROM snapshots s LEFT JOIN application_standard_snapshot_captures c ON c.token=s.application_standard_capture_token
@@ -41546,15 +41814,16 @@ type ListApplicationStandardObservationSnapshotsParams struct {
 }
 
 type ListApplicationStandardObservationSnapshotsRow struct {
-	ID             pgtype.UUID
-	InputSnapshot  []byte
-	GrantData      []byte
-	Acknowledgment []byte
-	ExpectedState  pgtype.Text
-	CreatedAt      pgtype.Timestamptz
-	ReceivedAt     pgtype.Timestamptz
-	CatalogMatches bool
-	HeartbeatUntil pgtype.Timestamptz
+	ID                  pgtype.UUID
+	InputSnapshot       []byte
+	GrantData           []byte
+	Acknowledgment      []byte
+	ExpectedState       pgtype.Text
+	CreatedAt           pgtype.Timestamptz
+	ReceivedAt          pgtype.Timestamptz
+	ProducerIncarnation string
+	CatalogMatches      bool
+	HeartbeatUntil      pgtype.Timestamptz
 }
 
 func (q *Queries) ListApplicationStandardObservationSnapshots(ctx context.Context, db DBTX, arg ListApplicationStandardObservationSnapshotsParams) ([]ListApplicationStandardObservationSnapshotsRow, error) {
@@ -41574,6 +41843,7 @@ func (q *Queries) ListApplicationStandardObservationSnapshots(ctx context.Contex
 			&i.ExpectedState,
 			&i.CreatedAt,
 			&i.ReceivedAt,
+			&i.ProducerIncarnation,
 			&i.CatalogMatches,
 			&i.HeartbeatUntil,
 		); err != nil {
@@ -41615,6 +41885,41 @@ func (q *Queries) ListApplicationStandardPublishers(ctx context.Context, db DBTX
 			&i.PublicKeyDer,
 			&i.Fingerprint,
 			&i.CreatedBy,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listApplicationStandardRebinds = `-- name: ListApplicationStandardRebinds :many
+SELECT instance_id, node_id, from_incarnation, to_incarnation, vmmd_epoch, observed, created_at
+FROM instance_application_standard_rebinds
+WHERE instance_id = $1::uuid
+ORDER BY created_at, from_incarnation
+`
+
+func (q *Queries) ListApplicationStandardRebinds(ctx context.Context, db DBTX, instanceID pgtype.UUID) ([]InstanceApplicationStandardRebind, error) {
+	rows, err := db.Query(ctx, listApplicationStandardRebinds, instanceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []InstanceApplicationStandardRebind{}
+	for rows.Next() {
+		var i InstanceApplicationStandardRebind
+		if err := rows.Scan(
+			&i.InstanceID,
+			&i.NodeID,
+			&i.FromIncarnation,
+			&i.ToIncarnation,
+			&i.VmmdEpoch,
+			&i.Observed,
 			&i.CreatedAt,
 		); err != nil {
 			return nil, err
@@ -42362,6 +42667,36 @@ func (q *Queries) ListComputeNodeHeartbeats(ctx context.Context, db DBTX, arg Li
 			&i.LastHeartbeatAt,
 			&i.Source,
 		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listComputeNodeVMMDRestartNotices = `-- name: ListComputeNodeVMMDRestartNotices :many
+SELECT id, vmmd_restart_notice_until FROM compute_nodes
+WHERE vmmd_restart_notice_until > clock_timestamp()
+`
+
+type ListComputeNodeVMMDRestartNoticesRow struct {
+	ID                     pgtype.UUID
+	VmmdRestartNoticeUntil pgtype.Timestamptz
+}
+
+func (q *Queries) ListComputeNodeVMMDRestartNotices(ctx context.Context, db DBTX) ([]ListComputeNodeVMMDRestartNoticesRow, error) {
+	rows, err := db.Query(ctx, listComputeNodeVMMDRestartNotices)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListComputeNodeVMMDRestartNoticesRow{}
+	for rows.Next() {
+		var i ListComputeNodeVMMDRestartNoticesRow
+		if err := rows.Scan(&i.ID, &i.VmmdRestartNoticeUntil); err != nil {
 			return nil, err
 		}
 		items = append(items, i)
@@ -73655,6 +73990,7 @@ SELECT jsonb_build_object(
  'mirror_invocation_results.mirror_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE mirror_deployment_id=$1::uuid),
  'mirror_invocation_results.source_deployment_id', (SELECT count(*) FROM mirror_invocation_results WHERE source_deployment_id=$1::uuid),
  'org_activity.deployment_id', (SELECT count(*) FROM org_activity WHERE deployment_id=$1::uuid),
+ 'outbound_ai_deployment_minutes.deployment_id', (SELECT count(*) FROM outbound_ai_deployment_minutes WHERE deployment_id=$1::uuid),
  'project_environment_clone_workloads.source_deployment_id', (SELECT count(*) FROM project_environment_clone_workloads WHERE source_deployment_id=$1::uuid),
  'project_environment_clone_workloads.target_deployment_id', (SELECT count(*) FROM project_environment_clone_workloads WHERE target_deployment_id=$1::uuid AND (operation_id<>$2::uuid)),
  'project_environment_promotion_workloads.previous_target_deployment_id', (SELECT count(*) FROM project_environment_promotion_workloads WHERE previous_target_deployment_id=$1::uuid::text),
@@ -79973,6 +80309,9 @@ func (q *Queries) ReadRoutePolicyRules(ctx context.Context, db DBTX, appID strin
 const readRuntimeAppEnvForDeployment = `-- name: ReadRuntimeAppEnvForDeployment :one
 WITH owner AS (
     SELECT d.id, a.id AS app_id, a.account_id, a.project_id,
+        -- A PR preview runs unreviewed code: it never inherits the project
+        -- environment its scope maps to (the default scope maps to production).
+        (a.project_id IS NOT NULL AND COALESCE(a.preview_of_slug,'')='')::boolean AS inherits_project_environment,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id
     FROM deployments d
@@ -80002,7 +80341,7 @@ SELECT owner.scope, owner.environment_id,
     -- ADR-1136: the project environment configuration the deployment inherits.
     COALESCE((SELECT jsonb_build_object('values',c.config_json,'created_at',c.created_at)
         FROM project_environment_config_versions c
-        WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
+        WHERE owner.inherits_project_environment AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
         ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config
 FROM owner
@@ -80036,6 +80375,9 @@ func (q *Queries) ReadRuntimeAppEnvForDeployment(ctx context.Context, db DBTX, a
 const readRuntimeAppValuesForDeployment = `-- name: ReadRuntimeAppValuesForDeployment :one
 WITH owner AS (
     SELECT d.id, a.id AS app_id, a.account_id, a.project_id,
+        -- A PR preview runs unreviewed code: it never inherits the project
+        -- environment its scope maps to (the default scope maps to production).
+        (a.project_id IS NOT NULL AND COALESCE(a.preview_of_slug,'')='')::boolean AS inherits_project_environment,
         COALESCE(NULLIF(d.scope,''),'default')::text AS scope,
         COALESCE(bound.id::text,legacy.id::text,'')::text AS environment_id,
         d.environment_workload_runtime,d.override_env_secrets,d.sidecars,COALESCE(d.secret_reload_signal,'')::text AS reload_signal,
@@ -80083,7 +80425,7 @@ SELECT (SELECT values_json FROM deployment_release_secret_snapshots WHERE deploy
     -- ADR-1136: the project environment configuration the deployment inherits.
     COALESCE((SELECT jsonb_build_object('values',c.config_json,'created_at',c.created_at)
         FROM project_environment_config_versions c
-        WHERE owner.project_id IS NOT NULL AND c.account_id=owner.account_id AND c.project_id=owner.project_id
+        WHERE owner.inherits_project_environment AND c.account_id=owner.account_id AND c.project_id=owner.project_id
             AND c.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END
         ORDER BY c.version DESC LIMIT 1),'{}'::jsonb)::jsonb AS project_config,
     owner.project_id,
@@ -80091,7 +80433,7 @@ SELECT (SELECT values_json FROM deployment_release_secret_snapshots WHERE deploy
     COALESCE((SELECT jsonb_agg(jsonb_build_object('key',p.key,'ciphertext',encode(p.ciphertext,'base64'),'kid',p.kid,
         'value_hash',p.value_hash,'secret_version',p.secret_version,'created_at',p.created_at,'updated_at',p.updated_at) ORDER BY p.key)
         FROM project_environment_secrets p
-        WHERE owner.project_id IS NOT NULL AND p.account_id=owner.account_id AND p.project_id=owner.project_id
+        WHERE owner.inherits_project_environment AND p.account_id=owner.account_id AND p.project_id=owner.project_id
             AND p.environment_slug=CASE WHEN owner.scope='default' THEN 'production' ELSE owner.scope END),'[]'::jsonb)::jsonb AS project_secrets
 FROM owner
 `
@@ -80440,7 +80782,7 @@ func (q *Queries) ReadRuntimeUpgradeDrainDeployments(ctx context.Context, db DBT
 
 const readRuntimeUpgradeEligibleFailureFallback = `-- name: ReadRuntimeUpgradeEligibleFailureFallback :one
 SELECT d.id FROM deployments d WHERE d.app_id=$1::uuid AND d.id<>$2::uuid
- AND d.status='live' AND d.deleted_at IS NULL
+ AND d.scope=$3::text AND d.status='live' AND d.deleted_at IS NULL
  AND (NOT EXISTS(SELECT 1 FROM deployment_runtime_upgrade_targets t WHERE t.deployment_id=d.id)
   OR EXISTS(SELECT 1 FROM deployment_runtime_upgrade_cutovers c JOIN deployment_runtime_upgrade_acceptances a ON a.deployment_id=c.deployment_id
    JOIN deployment_runtime_upgrade_targets t ON t.deployment_id=c.deployment_id
@@ -80452,10 +80794,11 @@ ORDER BY d.traffic_percent DESC,d.created_at DESC,d.id DESC LIMIT 1 FOR UPDATE O
 type ReadRuntimeUpgradeEligibleFailureFallbackParams struct {
 	AppID    pgtype.UUID
 	FailedID pgtype.UUID
+	Scope    string
 }
 
 func (q *Queries) ReadRuntimeUpgradeEligibleFailureFallback(ctx context.Context, db DBTX, arg ReadRuntimeUpgradeEligibleFailureFallbackParams) (pgtype.UUID, error) {
-	row := db.QueryRow(ctx, readRuntimeUpgradeEligibleFailureFallback, arg.AppID, arg.FailedID)
+	row := db.QueryRow(ctx, readRuntimeUpgradeEligibleFailureFallback, arg.AppID, arg.FailedID, arg.Scope)
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
@@ -87578,6 +87921,45 @@ func (q *Queries) ReserveExclusiveWorkQuota(ctx context.Context, db DBTX, accoun
 	return current_inflight, err
 }
 
+const reserveIdempotentRequest = `-- name: ReserveIdempotentRequest :one
+INSERT INTO idempotency_keys (key, account_id, response_status, response_body, request_digest)
+VALUES ($1::text, $2::text::uuid, 0, ''::bytea, $3::bytea)
+ON CONFLICT (account_id, key) DO UPDATE
+   SET response_status = 0, response_body = ''::bytea, request_digest = excluded.request_digest, created_at = now()
+ WHERE idempotency_keys.created_at <= now() - interval '24 hours'
+    OR (idempotency_keys.response_status = 0
+        AND idempotency_keys.created_at <= now() - make_interval(secs => $4::double precision)
+        AND (idempotency_keys.request_digest IS NULL OR excluded.request_digest IS NULL
+             OR substring(idempotency_keys.request_digest, 1, 4) <> substring(excluded.request_digest, 1, 4)
+             OR idempotency_keys.request_digest = excluded.request_digest))
+RETURNING true::boolean AS reserved
+`
+
+type ReserveIdempotentRequestParams struct {
+	Key                 string
+	AccountID           string
+	RequestDigest       []byte
+	AbandonAfterSeconds float64
+}
+
+// Claims an Idempotency-Key bound to its request fingerprint
+// (ADR-20261022204036). A new key, a key past its 24 h replay window, or an
+// in-flight reservation older than abandon_after_seconds is reserved. An
+// abandoned reservation bound to another fingerprint under the same key id
+// (its first 4 bytes) is not taken over: the key stays bound to its first
+// request for the whole window.
+func (q *Queries) ReserveIdempotentRequest(ctx context.Context, db DBTX, arg ReserveIdempotentRequestParams) (bool, error) {
+	row := db.QueryRow(ctx, reserveIdempotentRequest,
+		arg.Key,
+		arg.AccountID,
+		arg.RequestDigest,
+		arg.AbandonAfterSeconds,
+	)
+	var reserved bool
+	err := row.Scan(&reserved)
+	return reserved, err
+}
+
 const reserveProjectSubmission = `-- name: ReserveProjectSubmission :execrows
 INSERT INTO project_submissions(account_id,attempt_id,fingerprint,payload,status)
 VALUES($1::text::uuid,$2,$3,$4,'processing')
@@ -91742,6 +92124,26 @@ func (q *Queries) SetCommitSourceEnabled(ctx context.Context, db DBTX, arg SetCo
 	return err
 }
 
+const setComputeNodeVMMDRestartNotice = `-- name: SetComputeNodeVMMDRestartNotice :execrows
+UPDATE compute_nodes SET vmmd_restart_notice_until=clock_timestamp()+make_interval(secs=>$1::int)
+WHERE id=$2::uuid
+`
+
+type SetComputeNodeVMMDRestartNoticeParams struct {
+	Seconds int32
+	NodeID  pgtype.UUID
+}
+
+// vmmd restart adoption ADR §3: a vmmd stopping for a planned restart tells
+// schedd so it retries wakes and counts no heartbeat failures meanwhile.
+func (q *Queries) SetComputeNodeVMMDRestartNotice(ctx context.Context, db DBTX, arg SetComputeNodeVMMDRestartNoticeParams) (int64, error) {
+	result, err := db.Exec(ctx, setComputeNodeVMMDRestartNotice, arg.Seconds, arg.NodeID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const setCrashSnapshotSettings = `-- name: SetCrashSnapshotSettings :one
 
 INSERT INTO crash_snapshot_settings (app_id, account_id, enabled, updated_at)
@@ -91921,7 +92323,6 @@ SET inferred_profile = ($1::jsonb - 'image_command' - 'image_healthcheck') ||
          THEN jsonb_build_object('image_healthcheck', inferred_profile -> 'image_healthcheck')
          ELSE '{}'::jsonb END
 WHERE id = $2::uuid
-  AND (kind = 'image' OR inferred_profile ? 'image_healthcheck')
   AND status IN ('pending', 'building', 'imaging')
 `
 
@@ -91930,6 +92331,9 @@ type SetDeploymentRuntimeProfileParams struct {
 	DeploymentID pgtype.UUID
 }
 
+// imaged records a prebuilt image's runtime profile, and the HEALTHCHECK
+// verdict of any source build (ADR-20261024100000), while the deployment is
+// still being assembled. The accepted command and healthcheck are kept.
 func (q *Queries) SetDeploymentRuntimeProfile(ctx context.Context, db DBTX, arg SetDeploymentRuntimeProfileParams) (int64, error) {
 	result, err := db.Exec(ctx, setDeploymentRuntimeProfile, arg.Profile, arg.DeploymentID)
 	if err != nil {
@@ -93008,6 +93412,38 @@ func (q *Queries) SumAccountCreditRefundReversal(ctx context.Context, db DBTX, a
 	var reversed_cents int64
 	err := row.Scan(&reversed_cents)
 	return reversed_cents, err
+}
+
+const sumAccountQueueBacklogBytes = `-- name: SumAccountQueueBacklogBytes :one
+SELECT coalesce(sum(bytes), 0)::bigint FROM invocation_backlog_counters
+WHERE account_id=$1::uuid AND source='queue'
+`
+
+func (q *Queries) SumAccountQueueBacklogBytes(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	row := db.QueryRow(ctx, sumAccountQueueBacklogBytes, accountID)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const sumInvocationBacklogPending = `-- name: SumInvocationBacklogPending :one
+SELECT coalesce(sum(pending), 0)::bigint FROM invocation_backlog_counters
+WHERE app_id=$1::uuid AND source=$2::text
+`
+
+type SumInvocationBacklogPendingParams struct {
+	AppID  pgtype.UUID
+	Source string
+}
+
+// ADR-20261022105723: every pending and dispatching row of the app and
+// source, production or not, so the sum bounds the production backlog from
+// above.
+func (q *Queries) SumInvocationBacklogPending(ctx context.Context, db DBTX, arg SumInvocationBacklogPendingParams) (int64, error) {
+	row := db.QueryRow(ctx, sumInvocationBacklogPending, arg.AppID, arg.Source)
+	var column_1 int64
+	err := row.Scan(&column_1)
+	return column_1, err
 }
 
 const sumOpenUploadSessionBytesByAccount = `-- name: SumOpenUploadSessionBytesByAccount :one

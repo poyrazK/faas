@@ -61,6 +61,10 @@ const ProfileUnattributedRoute = "[unattributed]"
 
 type ProfileRouteAlertPayload = api.ProfileRouteAlertPayload
 
+// ProfileCaptureWebhookPayload is the profile.capture_ready and
+// profile.capture_oom_linked webhook body.
+type ProfileCaptureWebhookPayload = api.ProfileCaptureWebhookPayload
+
 type PeriodicProfilePolicy = api.PeriodicProfilePolicy
 type ProfilePeriodicMonitor = api.ProfilePeriodicMonitor
 type ProfilePeriodicObservation = api.ProfilePeriodicObservation

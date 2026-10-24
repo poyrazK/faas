@@ -666,6 +666,15 @@ type Engine struct {
 	// VM from the ticket recorded when it froze; thawTickets holds them.
 	frozenFastPath atomic.Bool
 	thawTickets    frozenTickets
+	// leavingNodes holds the IDs of nodes that no longer admit work
+	// (draining, maintenance, ...), from the recovery runner's node list
+	// (ADR-20261024085817). Thaw, warm-pool resume and freeze consult it
+	// so a draining node does not take resident work back.
+	leavingNodes atomic.Pointer[map[string]struct{}]
+	// drainRequestBound bounds how long a drain park waits for a withdrawn
+	// instance's in-flight requests; zero is
+	// api.ServiceReplicaDrainTimeoutSeconds.
+	drainRequestBound time.Duration
 	// ownerCacheEnabled (ADR-1741, schedd `owner_cache`) serves production
 	// admissions from owners, the per-app owner cache.
 	ownerCacheEnabled atomic.Bool
@@ -780,6 +789,9 @@ type Engine struct {
 	// placement and fleet observers. It is seeded at startup and updated by
 	// compute_node_changed; nil keeps older unit fixtures on the store path.
 	nodeRegistry *NodeRegistry
+	// restartNotices are the nodes whose vmmd is restarting under a planned
+	// notice (vmmd restart adoption ADR §3); placement tries others first.
+	restartNotices *RestartNotices
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller
@@ -948,6 +960,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		log = slog.Default()
 	}
 	e := &Engine{
+		restartNotices:           NewRestartNotices(store),
 		store:                    store,
 		ledger:                   ledger,
 		vmm:                      vmm,
@@ -4897,9 +4910,17 @@ type placementSnapshot struct {
 	usedMB            map[string]int64
 	usedVCPU          map[string]int64
 	usedCPUMillicores map[string]int64
+	// preferred is nodes less those whose vmmd is restarting under a
+	// notice, when that leaves any (vmmd restart adoption ADR §3).
+	preferred []state.ComputeNode
 }
 
 func (s placementSnapshot) choose(r Request) (Placement, error) {
+	if len(s.preferred) > 0 {
+		if p, err := choosePlacementWithCPU(s.preferred, s.usedMB, s.usedVCPU, s.usedCPUMillicores, r); err == nil {
+			return p, nil
+		}
+	}
 	return choosePlacementWithCPU(s.nodes, s.usedMB, s.usedVCPU, s.usedCPUMillicores, r)
 }
 
@@ -4987,10 +5008,14 @@ func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (pla
 		// active instances, as Admit does; without it these are bookings.
 		usedCPUMillicores[n.ID] = e.ledger.EffectiveCPUMillicoresForNode(n.ID, usedCPUMillicores[n.ID], cpuBudgetMillicores(n))
 	}
-	return placementSnapshot{
+	snapshot := placementSnapshot{
 		nodes: nodes, usedMB: usedMB, usedVCPU: usedVCPU,
 		usedCPUMillicores: usedCPUMillicores,
-	}, nil
+	}
+	if preferred, ok := preferUnnoticed(ctx, e.restartNotices, nodes); ok {
+		snapshot.preferred = preferred
+	}
+	return snapshot, nil
 }
 
 func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placement, error) {
@@ -6831,9 +6856,30 @@ func (e *Engine) markPrimeFailed(ctx context.Context, deploymentID string, cause
 // we re-read under the lock and skip anything no longer parkable (a concurrent
 // wake/park already moved it).
 func (e *Engine) Park(ctx context.Context, instanceID string) error {
+	return e.park(ctx, instanceID, nil)
+}
+
+// ParkIdle is Park for an instance a reaper chose from its tick snapshot.
+// That view can be minutes old by the time a later park of the same tick
+// runs, so the choice is re-checked against the fresh row and fresh guest
+// activity under the app lock, before the row leaves RUNNING: SNAPSHOTTING
+// has no way back. ErrParkActivity reports an instance left running.
+func (e *Engine) ParkIdle(ctx context.Context, instanceID string, check IdleParkCheck) error {
+	return e.park(ctx, instanceID, &check)
+}
+
+func (e *Engine) park(ctx context.Context, instanceID string, check *IdleParkCheck) error {
 	ins, err := e.lockedParkable(ctx, instanceID)
 	if err != nil || ins == nil {
 		return err
+	}
+	if check != nil && state.State(ins.State) == state.StateRunning {
+		if reason := check.activity(ctx, *ins); reason != "" {
+			e.unlockApp(ins.AppID)
+			e.log.Info("sched: park: fresh activity kept the instance running",
+				"instance", ins.ID, "app", ins.AppID, "reason", reason)
+			return fmt.Errorf("%w: %s", ErrParkActivity, reason)
+		}
 	}
 	if state.State(ins.State) == state.StateFrozen {
 		defer e.unlockApp(ins.AppID)
@@ -7076,6 +7122,12 @@ func (e *Engine) ParkApp(ctx context.Context, appID string) (int, error) {
 				errs = append(errs, fmt.Errorf("instance %s: snapshot and park: %w", fresh.ID, err))
 				continue
 			}
+			acted++
+		case state.StateFrozen:
+			// A frozen VM is still resident. ParkApp skipped it, so
+			// `gregale park`, account suspension and the parked-app sweep
+			// left it frozen while the park waited (Hunt 12 H12-53).
+			e.parkFrozenLocked(ctx, fresh, "park")
 			acted++
 		case state.StateWaking, state.StateColdBooting:
 			// A wake drops appMu during the vmmd RPC. If the park
@@ -8361,49 +8413,16 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 		return SnapshotBytes{}, nil
 	}
 
-	// Gate 3 + 4: framework-ready stamp + time-since-first-ready
-	// floor. A nil FrameworkReadyAt means the runner never sent
-	// its DGRAM (it crashed, never woke, or the warmup timed out).
-	// WarmSnapshotMinMs is bounded [100, 60000] by apid's edit
-	// validator (handlers_ext.go:249-257), so denormalising to a
-	// duration is safe.
-	if ins.FrameworkReadyAt == nil {
-		return SnapshotBytes{}, nil
-	}
-	if app.WarmSnapshotMinMs > 0 {
-		minAge := time.Duration(app.WarmSnapshotMinMs) * time.Millisecond
-		if time.Since(*ins.FrameworkReadyAt) < minAge {
-			return SnapshotBytes{}, nil
-		}
-	}
-
-	// Gate 5 (ADR-098 C10, supersedes ADR-071 PR-C): per-instance
-	// request-count floor. The plan is the load-bearing knob: with
-	// min > 0 the promotion only fires once the instance has served
-	// at least `min` requests. min == 0 is the "disabled" label
-	// case (Free/Hobby default) — the gate never opens, AND the
-	// engine does NOT spin a warm snapshot, so a Free app with
-	// min=0 never sees a warm tier (per ADR-071 §Plan gate, the
-	// plan forbids it anyway, but the explicit zero guard is
-	// belt-and-braces against a Free app that somehow reaches
-	// here).
-	//
-	// The comparison is `count < min` not `count % min == 0`. The
-	// latter is the multiple-of-5 regression (issue #675 review
-	// finding): a cold app requests_count=3 with min=5 would
-	// never promote (3 % 5 = 3, not 0), and the warm tier would
-	// stay cold indefinitely. The threshold is a "have we
-	// crossed the threshold?" comparison, not a "is this a
-	// multiple?" one.
-	//
-	// Why mirror on the instance row (not an engine cache):
-	//   The column is the authoritative counter; the engine
-	//   reads ins.RequestCount (mirror on the Instance struct)
-	//   on every park site. The batched writer flushes
-	//   gateway-side per-instance counts every 1–2s (C9), and
-	//   the engine reads the latest value at gate time. There
-	//   is no in-process cache to drift.
-	if app.WarmSnapshotMinRequests > 0 && ins.RequestCount < int64(app.WarmSnapshotMinRequests) {
+	// Gates 3-5: framework-ready stamp, time-since-first-ready floor and
+	// per-instance request-count floor (ADR-098 C10; `count < min`, not
+	// the multiple-of-5 regression of issue #675). A nil FrameworkReadyAt
+	// means the runner never sent its DGRAM; WarmSnapshotMinMs is bounded
+	// [100, 60000] by apid's edit validator; min_requests == 0 skips the
+	// count check (the plan gate keeps Free/Hobby off the warm tier). They
+	// live in warmCaptureInstanceGatesOpen,
+	// shared with the freeze decision's warmCapturePending so the two
+	// cannot drift (Hunt 12 H12-52).
+	if !warmCaptureInstanceGatesOpen(app, ins, time.Now()) {
 		return SnapshotBytes{}, nil
 	}
 
@@ -8509,12 +8528,16 @@ func (e *Engine) resolveApp(ctx context.Context, appID string) (state.App, state
 func (e *Engine) resolveLiveDeployment(ctx context.Context, appID string) (state.Deployment, error) {
 	var dep state.Deployment
 	var err error
-	if scope := ScopeFrom(ctx); scope == "" {
+	scope := ScopeFrom(ctx)
+	if scope == "" {
 		dep, err = state.ResolveProductionDeployment(ctx, e.store, appID)
 	} else {
 		dep, err = e.store.LiveDeploymentForScope(ctx, appID, scope)
 	}
 	if err != nil {
+		if errors.Is(err, state.ErrNotFound) && scope == "" {
+			return state.Deployment{}, noProductionDeploymentErr(ctx, e.store, appID)
+		}
 		if errors.Is(err, state.ErrNotFound) {
 			return state.Deployment{}, errors.Join(
 				ErrPermanentWake,
@@ -9770,6 +9793,7 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 			PlanMB:       planMB,
 		})
 	}
+	e.linkOOMProfileCapture(ctx, appID, instanceID, now, peakMB, planMB)
 
 	// RUNNING → STOPPED — state transition without a
 	// second audit row. UpdateInstanceStateToTerminal
@@ -10283,6 +10307,18 @@ func effectiveMaxConcurrency(app state.App, limits api.Limits) int {
 	return app.MaxConcurrency
 }
 
+// effectivePerInstanceConcurrency is how many requests one instance of app
+// absorbs: its declared scaling_policy.per_instance_concurrency, or the
+// plan's concurrency_per_vm (ADR-20261022203523). Wake fan-out and the
+// in-flight scale-in floor divide demand by it, matching the gateway's gate.
+func effectivePerInstanceConcurrency(app state.App, limits api.Limits) int {
+	requested := 0
+	if app.ScalingPolicy != nil {
+		requested = app.ScalingPolicy.PerInstanceConcurrency
+	}
+	return limits.PerInstanceConcurrency(requested)
+}
+
 // rolloutGrantAppliesForEnvironment permits a new revision alongside serving
 // replicas of the same original environment. Sibling stages cannot grant it.
 // Legacy unpinned production participates in its pinned production rollout.
@@ -10501,6 +10537,10 @@ func (e *Engine) Store() state.Store { return e.store }
 // schedd owns, or "" for the legacy single-box posture. The
 // Loop uses this to scope its per-tick reads (reaper, cron,
 // scale-up) to apps this schedd is responsible for.
+// RestartNotices are the planned vmmd restart notices this engine's
+// placement reads, for the router and heartbeat to share.
+func (e *Engine) RestartNotices() *RestartNotices { return e.restartNotices }
+
 func (e *Engine) OwnerNodeID() string {
 	if e == nil {
 		return ""
