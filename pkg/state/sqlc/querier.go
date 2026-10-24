@@ -1248,7 +1248,11 @@ type Querier interface {
 	EventReplayBackfillMarkScanned(ctx context.Context, db DBTX, id pgtype.UUID) error
 	EventReplayBackfillMaterializeSnapshot(ctx context.Context, db DBTX, id int64) error
 	EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFlightMax int64) (EventReplayJob, error)
-	EventReplayBackfillPruneAccounts(ctx context.Context, db DBTX, arg EventReplayBackfillPruneAccountsParams) ([]pgtype.UUID, error)
+	// ADR-20261023215834: owners with an unheld settled receipt past their
+	// plan's window, oldest first, each with its cutoff. Every owner with a
+	// receipt has a usage row, and its retention index bounds each probe. An
+	// owner without a known plan keeps the longest window.
+	EventReplayBackfillPruneAccounts(ctx context.Context, db DBTX, arg EventReplayBackfillPruneAccountsParams) ([]EventReplayBackfillPruneAccountsRow, error)
 	// Caller holds the account range lock acquired in a previous SQL statement.
 	// This statement's READ COMMITTED snapshot sees every hold committed before it.
 	EventReplayBackfillPruneEnvelopes(ctx context.Context, db DBTX, arg EventReplayBackfillPruneEnvelopesParams) (int64, error)
@@ -1300,7 +1304,11 @@ type Querier interface {
 	EventStorageAppend(ctx context.Context, db DBTX, arg EventStorageAppendParams) error
 	EventStorageIdentity(ctx context.Context, db DBTX, arg EventStorageIdentityParams) (bool, error)
 	EventStorageLockAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) error
+	// Pending receipts are read through the pending and lease indexes, so the
+	// account's settled history is not scanned.
 	EventStoragePublicUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStoragePublicUsageRow, error)
+	// ADR-20261023215834: the trigger-kept counts, not a scan of every
+	// retained receipt under the account's admission lock.
 	EventStorageUsage(ctx context.Context, db DBTX, accountID pgtype.UUID) (EventStorageUsageRow, error)
 	EventSubscriptionCapacityAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (string, error)
 	EventSubscriptionCapacityCommandBudget(ctx context.Context, db DBTX, arg EventSubscriptionCapacityCommandBudgetParams) (EventSubscriptionCapacityCommandBudgetRow, error)
@@ -3427,6 +3435,11 @@ type Querier interface {
 	ListScopedObservedRoutes(ctx context.Context, db DBTX, arg ListScopedObservedRoutesParams) ([]string, error)
 	ListScopedPendingRestarts(ctx context.Context, db DBTX, arg ListScopedPendingRestartsParams) ([]ListScopedPendingRestartsRow, error)
 	ListScopedPendingRollbacks(ctx context.Context, db DBTX, arg ListScopedPendingRollbacksParams) ([][]byte, error)
+	// Every rekey document with the account that owns it (ADR-20261023173624):
+	// the id prefix, or the deployment's app or the promotion for kinds whose id
+	// carries no account. The binding is sealed inside each envelope, so the
+	// binding pass reads every document; it is an operator command, not a hot path.
+	ListSecretBindingDocuments(ctx context.Context, db DBTX, arg ListSecretBindingDocumentsParams) ([]ListSecretBindingDocumentsRow, error)
 	ListSecretRekeyDocuments(ctx context.Context, db DBTX, arg ListSecretRekeyDocumentsParams) ([]ListSecretRekeyDocumentsRow, error)
 	// Durable lifecycle history is independent of request-telemetry retention.
 	// Payloads and arbitrary headers are not fetched; the canonical trace header
@@ -5980,6 +5993,9 @@ type Querier interface {
 	// "no code mapped"; null in the column means "not yet stamped" —
 	// both render as "" on the Go side via the coalesce in the SELECT).
 	SetDeploymentFailed(ctx context.Context, db DBTX, arg SetDeploymentFailedParams) (SetDeploymentFailedRow, error)
+	// imaged records a prebuilt image's runtime profile, and the HEALTHCHECK
+	// verdict of any source build (ADR-20261024100000), while the deployment is
+	// still being assembled. The accepted command and healthcheck are kept.
 	SetDeploymentRuntimeProfile(ctx context.Context, db DBTX, arg SetDeploymentRuntimeProfileParams) (int64, error)
 	// imaged persists the validated image opt-in on each newly built deployment;
 	// the state query keeps legacy NULL rows distinct from explicit opt-outs.

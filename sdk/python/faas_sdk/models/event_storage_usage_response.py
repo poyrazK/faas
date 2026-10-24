@@ -19,7 +19,7 @@ class EventStorageUsageResponse:
 
     Example:
         {'retained_events': 0, 'retained_bytes': 0, 'pending_events': 0, 'oldest_pending_at': None, 'limits':
-            {'retained_events': 16384, 'retained_bytes': 67108864}}
+            {'retained_events': 131072, 'retained_bytes': 268435456, 'settled_retention_seconds': 259200}}
 
     """
 

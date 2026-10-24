@@ -31,12 +31,16 @@ func nativeSnapshotIntentKeys(incoming nativeQualificationRecord) nativeSnapshot
 	return nativeSnapshotPublicationObjectKeys{Memory: keys.StorageKey, VMState: keys.VMStateStorageKey, Drive: keys.DriveStorageKey, Backing: keys.BackingStorageKey}
 }
 
+// Version 1 carries a qualification incoming record. Version 2 carries a
+// runtime park/warm authority instead (ADR 20261022184951); qualification
+// restore and artifact retirement never accept it.
 type nativeSnapshotPublicationIntent struct {
 	Version   int                                 `json:"version"`
 	Directory nativeLoopIdentity                  `json:"directory"`
 	File      nativeLoopIdentity                  `json:"file"`
 	JailBase  string                              `json:"jail_base"`
-	Incoming  nativeQualificationRecord           `json:"incoming"`
+	Incoming  nativeQualificationRecord           `json:"incoming,omitzero"`
+	Runtime   nativeRuntimeCaptureAuthority       `json:"runtime,omitzero"`
 	Capture   nativeQualificationCaptureRecord    `json:"capture"`
 	Physical  nativeLaunchRecord                  `json:"physical"`
 	Keys      nativeSnapshotPublicationObjectKeys `json:"keys"`
@@ -44,12 +48,22 @@ type nativeSnapshotPublicationIntent struct {
 
 func (r nativeSnapshotPublicationIntent) Equal(other nativeSnapshotPublicationIntent) bool {
 	return r.Version == other.Version && r.Directory == other.Directory && r.File == other.File &&
-		r.JailBase == other.JailBase && r.Incoming == other.Incoming && r.Capture.Equal(other.Capture) &&
+		r.JailBase == other.JailBase && r.Incoming == other.Incoming && r.Runtime == other.Runtime && r.Capture.Equal(other.Capture) &&
 		r.Physical == other.Physical && r.Keys == other.Keys
 }
 
 func (r *nativeSnapshotPublicationIntent) UnmarshalJSON(data []byte) error {
-	fields, err := nativeJournalObjectFields(data, []string{"version", "directory", "file", "jail_base", "incoming", "capture", "physical", "keys"})
+	var header struct {
+		Version int `json:"version"`
+	}
+	if err := json.Unmarshal(data, &header); err != nil {
+		return err
+	}
+	authority := "incoming"
+	if header.Version == 2 {
+		authority = "runtime"
+	}
+	fields, err := nativeJournalObjectFields(data, []string{"version", "directory", "file", "jail_base", authority, "capture", "physical", "keys"})
 	if err != nil {
 		return err
 	}
@@ -68,14 +82,22 @@ func (r *nativeSnapshotPublicationIntent) UnmarshalJSON(data []byte) error {
 	return decoder.Decode((*plain)(r))
 }
 
+func (r nativeSnapshotPublicationIntent) permit() nativeSnapshotCapturePermit {
+	return nativeSnapshotCapturePermit{Incoming: r.Incoming, Runtime: r.Runtime, Capture: r.Capture, Physical: r.Physical}
+}
+
 func (r nativeSnapshotPublicationIntent) validate() error {
-	if err := errors.Join(r.Incoming.validate(r.Incoming.Execution.NodeID), r.Capture.validate(r.Incoming), r.Physical.validate(r.Incoming.Execution.InstanceID)); err != nil {
+	p := r.permit()
+	if r.Version != 1 && r.Version != 2 || r.Version == 2 != p.runtime() || r.Version == 1 && r.Runtime != (nativeRuntimeCaptureAuthority{}) {
+		return errors.New("native snapshot publication: intent version differs from its authority")
+	}
+	if err := errors.Join(p.validateStarted(), r.Physical.validate(p.instanceID())); err != nil {
 		return err
 	}
-	if r.Version != 1 || r.Directory.Device == 0 || r.Directory.Inode == 0 || r.File.Device != r.Directory.Device || r.File.Inode == 0 || r.File.Inode == r.Directory.Inode || !filepath.IsAbs(r.JailBase) || filepath.Clean(r.JailBase) != r.JailBase || r.JailBase == "/" ||
-		!r.Incoming.CreateStarted || r.Incoming.Revoked || !r.Capture.CompletedAt.IsZero() || !liveNativeSnapshotOwner(r.Physical) ||
-		r.Physical.Generation != r.Incoming.NativeGeneration || r.Physical.KernelBootID != r.Incoming.KernelBootID || !sameNativePhysicalLease(r.Physical.Lease, r.Incoming.NativeLease) ||
-		r.Keys != nativeSnapshotIntentKeys(r.Incoming) {
+	if r.Directory.Device == 0 || r.Directory.Inode == 0 || r.File.Device != r.Directory.Device || r.File.Inode == 0 || r.File.Inode == r.Directory.Inode || !filepath.IsAbs(r.JailBase) || filepath.Clean(r.JailBase) != r.JailBase || r.JailBase == "/" ||
+		!liveNativeSnapshotOwner(r.Physical) ||
+		r.Physical.Generation != p.nativeGeneration() || r.Physical.KernelBootID != p.kernelBootID() || !sameNativePhysicalLease(r.Physical.Lease, p.nativeLease()) ||
+		r.Keys != p.keys() {
 		return errors.New("native snapshot publication: persistent intent differs from its original capture")
 	}
 	return nil
@@ -115,7 +137,10 @@ func (v *JailerVMM) beginNativeSnapshotPublication(ctx context.Context, lease Le
 	if r == nil || r.publications == nil {
 		return ctx, errors.New("native snapshot publication: persistent intent adapter is unavailable")
 	}
-	backend := v.storage
+	backend, err := v.nativeSnapshotPublicationBackend(ctx)
+	if err != nil {
+		return ctx, err
+	}
 	if _, ok := r.publications.(nativeSnapshotPublicationReceiptJournal); !ok {
 		return ctx, errors.New("native snapshot publication: original receipt journal is unavailable")
 	}
@@ -135,14 +160,18 @@ func (v *JailerVMM) beginNativeSnapshotPublication(ctx context.Context, lease Le
 	if err == nil {
 		err = images.captureOutputAuthority(ctx, permit.Physical, owner, permit)
 	}
-	intent := nativeSnapshotPublicationIntent{Version: 1, JailBase: v.chrootBase, Incoming: permit.Incoming, Capture: permit.Capture, Physical: permit.Physical, Keys: nativeSnapshotIntentKeys(permit.Incoming)}
-	intent.Incoming.NativeLease.processGeneration, intent.Physical.Lease.processGeneration = 0, 0
+	version := 1
+	if permit.runtime() {
+		version = 2
+	}
+	intent := nativeSnapshotPublicationIntent{Version: version, JailBase: v.chrootBase, Incoming: permit.Incoming, Runtime: permit.Runtime, Capture: permit.Capture, Physical: permit.Physical, Keys: permit.keys()}
+	intent.Incoming.NativeLease.processGeneration, intent.Runtime.NativeLease.processGeneration, intent.Physical.Lease.processGeneration = 0, 0, 0
 	if err == nil {
 		intent, err = r.publications.Begin(ctx, intent)
 	}
 	if err == nil {
 		err = errors.Join(r.checkDaemonOwnership(), images.captureOutputAuthority(ctx, permit.Physical, owner, permit))
-		if r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
+		if r.generation(lease.Instance) != permit.nativeGeneration() {
 			err = errors.Join(err, state.ErrConflict)
 		}
 	}
@@ -161,8 +190,8 @@ func (v *JailerVMM) requireNativeSnapshotPublication(ctx context.Context, lease 
 	if err != nil {
 		return p, err
 	}
-	capture.Incoming.NativeLease.processGeneration = 0
-	if !p.intent.Capture.Equal(capture.Capture) || p.intent.Incoming != capture.Incoming || !sameNativeSnapshotProcess(p.intent.Physical, capture.Physical) {
+	capture.Incoming.NativeLease.processGeneration, capture.Runtime.NativeLease.processGeneration = 0, 0
+	if !p.intent.permit().sameAuthority(capture) || !sameNativeSnapshotProcess(p.intent.Physical, capture.Physical) {
 		return p, state.ErrConflict
 	}
 	return p, p.journal.Require(ctx, p.intent)

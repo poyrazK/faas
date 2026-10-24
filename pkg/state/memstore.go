@@ -826,8 +826,12 @@ type MemStore struct {
 	edgeRules                 map[string]EdgeRule
 	edgeRuleSetVersions       map[string][]EdgeRuleSetVersion // app id -> versions, oldest first (ADR-961)
 	edgeRuleLists             map[string]EdgeRuleList         // list id -> list (ADR-963)
+	edgeCrawlerRanges         map[string]EdgeCrawlerRanges    // crawler -> published ranges (ADR-20261022083601)
 	edgeRuleEvents            []EdgeRuleEvent                 // sampled events (ADR-964)
 	edgeRuleEventSeq          int64
+	edgePenaltyBoxes          []EdgePenaltyBox // shared penalty boxes (ADR-20261022105846 amendment 1)
+	edgePenaltyBoxSeq         int64
+	edgePenaltyBoxClock       func() time.Time
 	edgeRuleHitCounts         map[edgeRuleHitKey]int64 // ADR-960 hourly hit buckets
 	routePolicyReceipts       map[string]routePolicyStoredReceipt
 	savedRouteRequirements    map[string]api.SavedRouteRequirements
@@ -1047,6 +1051,15 @@ type MemStore struct {
 	deploymentLogs map[string][]LogEntry
 	deploymentSeq  map[string]int64
 	logEvents      []LogEvent
+	// logSavedSearches mirrors log_saved_searches by id (ADR-20261018083536).
+	logSavedSearches map[string]LogSavedSearch
+	// dashboards mirrors the dashboards table by id (ADR-20261022173833).
+	dashboards map[string]Dashboard
+	// alertEpisodes mirrors alert_episodes by id (ADR-20261022193512); the
+	// rule columns are read from alertRules.
+	alertEpisodes map[string]AlertEpisode
+	// incidentNotes mirrors incident_notes in insertion order.
+	incidentNotes []IncidentNote
 	// Captured boot inputs belong to the instance wake and physical node.
 	runtimeInstanceConfigProofs map[string]runtimeInstanceConfigProof
 	// deploymentSidecarLayers (issue #463 / ADR-069 / PR-B)
@@ -5741,7 +5754,7 @@ func (m *MemStore) AdvanceCanary(ctx context.Context, id string, params CanaryAd
 
 	siblings := make([]siblingRow, 0)
 	for otherID, other := range m.deployments {
-		if other.AppID == d.AppID && other.Status == DeployLive && otherID != id {
+		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && otherID != id {
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
 		}
 	}
@@ -8714,22 +8727,30 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		return Deployment{}, 0, err
 	}
 	// Find the active deployment for this app: rollout_state ∈
-	// ('pending','rolling_out') and status='live'. There can be
-	// at most one active rollout per app at a time (canary
-	// progression auto-supersedes the prior live row).
+	// ('pending','rolling_out') and status='live'. Like Postgres, pick the
+	// newest in-flight row, and refuse an app-level recovery when rollouts
+	// are in flight in more than one environment.
 	var target *Deployment
+	scopes := map[string]bool{}
 	for id, d := range m.deployments {
-		if d.AppID != appID || d.Status != DeployLive || (deploymentID != "" && id != deploymentID) {
+		if d.AppID != appID || d.Status != DeployLive {
 			continue
 		}
 		d.RolloutState = NormalizeRolloutState(d.RolloutState)
 		if d.RolloutState != "pending" && d.RolloutState != "rolling_out" {
 			continue
 		}
-		d := d
-		target = &d
-		_ = id
-		break
+		scopes[normalizedDeploymentScope(d.Scope)] = true
+		if deploymentID != "" && id != deploymentID {
+			continue
+		}
+		if target == nil || d.CreatedAt.After(target.CreatedAt) {
+			d := d
+			target = &d
+		}
+	}
+	if deploymentID == "" && len(scopes) > 1 {
+		return Deployment{}, 0, ErrRolloutAmbiguous
 	}
 	if target == nil {
 		return Deployment{}, 0, ErrNotFound
@@ -8880,7 +8901,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		// Redistribute residual across sibling live rows.
 		siblings := []siblingRow{}
 		for otherID, other := range m.deployments {
-			if other.AppID != appID || other.Status != DeployLive || otherID == target.ID {
+			if other.AppID != appID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) || other.Status != DeployLive || otherID == target.ID {
 				continue
 			}
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
@@ -8939,7 +8960,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 
 		// Zero sibling live rows so Σ = 100.
 		for otherID, other := range m.deployments {
-			if other.AppID != appID || other.Status != DeployLive || otherID == target.ID {
+			if other.AppID != appID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) || other.Status != DeployLive || otherID == target.ID {
 				continue
 			}
 			other.TrafficPercent = 0
@@ -8997,7 +9018,7 @@ func (m *MemStore) recoverRolloutLocked(ctx context.Context, appID, deploymentID
 		}
 		siblings := []siblingRow{}
 		for otherID, other := range m.deployments {
-			if other.AppID != appID || other.Status != DeployLive || otherID == target.ID {
+			if other.AppID != appID || normalizedDeploymentScope(other.Scope) != normalizedDeploymentScope(target.Scope) || other.Status != DeployLive || otherID == target.ID {
 				continue
 			}
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
@@ -9170,14 +9191,15 @@ func (m *MemStore) CountLiveInstancesByDeployment(_ context.Context, deploymentI
 	return n, nil
 }
 
-func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID string) (Deployment, error) {
+func (m *MemStore) LatestSupersededDeployment(_ context.Context, appID, scope string) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	scope = normalizedDeploymentScope(scope)
 	var latest Deployment
 	found := false
 	for _, d := range m.deployments {
 		rollbackEligible := !abortedCanaryCandidate(d) && (d.Status == DeploySuperseded || (d.Status == DeployLive && d.TrafficPercent == 0 && (m.deploymentServedLocked(d.ID) || m.deploymentRevisionRetainedLocked(d.ID))))
-		if d.AppID == appID && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
+		if d.AppID == appID && normalizedDeploymentScope(d.Scope) == scope && rollbackEligible && (!found || m.rollbackMoreRecentLocked(d, latest)) {
 			latest, found = d, true
 		}
 	}
@@ -9570,7 +9592,7 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 	// live rows carrying all traffic must not collapse their split (H10-11).
 	remaining := 0
 	for id, other := range m.deployments {
-		if id != d.ID && other.AppID == d.AppID && other.Status == DeployLive && other.DeletedAt == nil {
+		if id != d.ID && other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && other.DeletedAt == nil {
 			remaining += other.TrafficPercent
 		}
 	}
@@ -9580,7 +9602,8 @@ func (m *MemStore) failDeploymentLocked(d Deployment, message string) {
 	var fallbackID string
 	var fallback Deployment
 	for id, candidate := range m.deployments {
-		if id == d.ID || candidate.AppID != d.AppID || candidate.Status != DeployLive || !m.runtimeUpgradeTrafficAllowedLocked(candidate) {
+		if id == d.ID || candidate.AppID != d.AppID || normalizedDeploymentScope(candidate.Scope) != normalizedDeploymentScope(d.Scope) ||
+			candidate.Status != DeployLive || !m.runtimeUpgradeTrafficAllowedLocked(candidate) {
 			continue
 		}
 		if fallbackID == "" || candidate.TrafficPercent > fallback.TrafficPercent ||
@@ -9734,6 +9757,18 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(d)); err != nil {
 		return err
+	}
+	if _, prepared := m.rollbackPrepared[id]; preparedRollbackPromotion(ctx) && d.Status != DeployLive && !prepared {
+		return ErrDeploymentSuperseded
+	}
+	if !fenceLatest && d.Status != DeployLive && m.rollbackOutpacedLocked(d) {
+		// Mirrors withdrawOutpacedRollbackTx.
+		d.Status = DeploySuperseded
+		d.ErrorCode = RollbackOutpacedCode
+		d.Error = rollbackOutpacedMessage
+		m.putDeploymentLocked(id, d)
+		delete(m.rollbackPrepared, id)
+		return ErrDeploymentSuperseded
 	}
 	if fenceLatest || recovery {
 		if fenceLatest && (!d.Kind.RequiresLatestRevision() || d.Revision <= 0) {
@@ -9918,7 +9953,7 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 	// build time must not consume the customer's observation window.
 	siblings := make([]siblingRow, 0)
 	for otherID, other := range m.deployments {
-		if other.AppID == d.AppID && other.Status == DeployLive && otherID != id {
+		if other.AppID == d.AppID && normalizedDeploymentScope(other.Scope) == normalizedDeploymentScope(d.Scope) && other.Status == DeployLive && otherID != id {
 			siblings = append(siblings, siblingRow{ID: otherID, Prior: other.TrafficPercent})
 		}
 	}
@@ -10790,10 +10825,9 @@ func (m *MemStore) SetDeploymentRuntimeProfile(_ context.Context, id string, pro
 	if !ok {
 		return ErrNotFound
 	}
-	// A built service that froze a Compose healthcheck records imaged's verdict
-	// here too (ADR-20261019195000); other source deployments cannot.
-	if (d.Kind != DeploymentKindImage && !profileFreezesImageHealthcheck(d.InferredProfile)) ||
-		(d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging) {
+	// Source builds record imaged's HEALTHCHECK verdict here too
+	// (ADR-20261024100000), while the deployment is still being assembled.
+	if d.Status != DeployPending && d.Status != DeployBuilding && d.Status != DeployImaging {
 		return ErrInvalidStateTransition
 	}
 	updated, err := frameworkprofile.PreserveImageRuntime(d.InferredProfile, profile)
@@ -24169,9 +24203,10 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	if !ok || app.Status == AppDeleted {
 		return EdgeRule{}, ErrNotFound
 	}
+	// The attack-mode rule is outside every quota, as in pgstore.
 	appCount := 0
 	for _, r := range m.edgeRules {
-		if r.AppID == in.AppID {
+		if r.AppID == in.AppID && !r.AttackMode() {
 			appCount++
 		}
 	}
@@ -24187,7 +24222,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	if in.Kind == EdgeRuleKindGeo && limits.EdgeRulesGeoPerApp > 0 {
 		kindCount := 0
 		for _, r := range m.edgeRules {
-			if r.AppID == in.AppID && r.Kind == EdgeRuleKindGeo {
+			if r.AppID == in.AppID && r.Kind == EdgeRuleKindGeo && !r.AttackMode() {
 				kindCount++
 			}
 		}
@@ -24208,7 +24243,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	if in.Kind == EdgeRuleKindThrottle && limits.EdgeRulesThrottlePerApp > 0 {
 		kindCount := 0
 		for _, r := range m.edgeRules {
-			if r.AppID == in.AppID && r.Kind == EdgeRuleKindThrottle {
+			if r.AppID == in.AppID && r.Kind == EdgeRuleKindThrottle && !r.AttackMode() {
 				kindCount++
 			}
 		}
@@ -24235,7 +24270,7 @@ func (m *MemStore) CreateEdgeRuleIfUnderQuota(_ context.Context, in CreateEdgeRu
 	if _, governed := edgeRuleKindQuota(in.Kind, limits); governed {
 		perApp := 0
 		for _, r := range m.edgeRules {
-			if r.AppID == in.AppID && r.Kind == in.Kind {
+			if r.AppID == in.AppID && r.Kind == in.Kind && !r.AttackMode() {
 				perApp++
 			}
 		}
@@ -25057,6 +25092,7 @@ func (m *MemStore) SetAlertRuleState(_ context.Context, ruleID string, to AlertS
 	r.State = to
 	r.UpdatedAt = at.UTC()
 	m.alertRules[ruleID] = r
+	m.recordAlertEpisodeLocked(r, at.UTC())
 	return true, nil
 }
 
@@ -28889,15 +28925,4 @@ func requireAPIKeyScopes(scopes []string) error {
 		return fmt.Errorf("%w: api key scopes must not be empty", ErrInvalidArgument)
 	}
 	return nil
-}
-
-// profileFreezesImageHealthcheck mirrors the SQL `inferred_profile ?
-// 'image_healthcheck'` guard on SetDeploymentRuntimeProfile.
-func profileFreezesImageHealthcheck(profile json.RawMessage) bool {
-	var fields map[string]json.RawMessage
-	if len(profile) == 0 || json.Unmarshal(profile, &fields) != nil {
-		return false
-	}
-	_, frozen := fields["image_healthcheck"]
-	return frozen
 }

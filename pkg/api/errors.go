@@ -6013,6 +6013,18 @@ func ErrValidation(detail string) *Problem {
 		"Validation failed", detail)
 }
 
+// ErrEventReplayBackfillRange is the 400 for a backfill acceptance range
+// longer than the plan's settled-receipt window (ADR-20261023215834):
+// receipts older than the window are already pruned. Limit and observed
+// values are seconds.
+func ErrEventReplayBackfillRange(limitSeconds, observedSeconds int64) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeValidation, "Validation failed",
+		fmt.Sprintf("A backfill range can span at most %s on this plan, its settled-receipt retention window; the requested range spans %s.",
+			time.Duration(limitSeconds)*time.Second, time.Duration(observedSeconds)*time.Second)).
+		WithLimit(limitSeconds, observedSeconds).
+		WithDocs(docsBase + "/event-driven#settled-receipt-retention")
+}
+
 // ErrEdgeRulesVersionMismatch (ADR-961) is the 412 for an edge-rule mutation
 // whose If-Match no longer names the app's latest rule-set version.
 func ErrEdgeRulesVersionMismatch(expected string, current int) *Problem {
@@ -6758,6 +6770,15 @@ func ErrRolloutStateInvalid(state string) *Problem {
 	return NewProblem(http.StatusConflict, CodeRolloutStateInvalid,
 		"Rollout state does not permit recovery",
 		fmt.Sprintf("rollout_state=%q; recovery requires rollout_state in {pending, rolling_out}.", state)).
+		WithDocs(docsBase + "/deploys#recover-rollout")
+}
+
+// ErrRolloutAmbiguous is the 409 for an app-level rollout recovery while
+// rollouts are in flight in more than one environment of the app.
+func ErrRolloutAmbiguous() *Problem {
+	return NewProblem(http.StatusConflict, CodeRolloutStateInvalid,
+		"Rollouts are in progress in more than one environment",
+		"More than one environment of this app has a rollout in progress, so an app-level recovery cannot tell which one to change. Wait for one rollout to finish, or abort a specific rollout with deployment_id and expected_predecessor_deployment_id.").
 		WithDocs(docsBase + "/deploys#recover-rollout")
 }
 

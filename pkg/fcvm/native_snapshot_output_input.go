@@ -19,13 +19,13 @@ type nativeSnapshotOutputInputBackend interface {
 func (v *JailerVMM) withNativeSnapshotOutput(ctx context.Context, lease Lease, kind string, consume func(*os.File) error) error {
 	r := v.nativeRecovery
 	permit, ok := ctx.Value(nativeSnapshotCaptureContextKey{}).(nativeSnapshotCapturePermit)
-	if r == nil || r.journal == nil || !ok || consume == nil || permit.Incoming.Execution.InstanceID != lease.Instance || !sameNativePhysicalLease(permit.Incoming.NativeLease, lease) {
+	if r == nil || r.journal == nil || !ok || consume == nil || permit.instanceID() != lease.Instance || !sameNativePhysicalLease(permit.nativeLease(), lease) {
 		return errors.New("native snapshot output input: original capture capability is required")
 	}
 	r.mu.Lock()
 	generation, daemonLock := r.owned[lease.Instance], r.daemonLock
 	r.mu.Unlock()
-	if generation == "" || generation != permit.Incoming.NativeGeneration || daemonLock == nil {
+	if generation == "" || generation != permit.nativeGeneration() || daemonLock == nil {
 		return errors.New("native snapshot output input: original daemon producer is required")
 	}
 	if err := r.checkDaemonOwnership(); err != nil {

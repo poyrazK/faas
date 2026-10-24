@@ -189,9 +189,15 @@ reassembly or redeployment to gain this gate. Native boot/restore qualification
 remains pending. Compose dependency release gates are described above. A Compose
 healthcheck on a source-built service is merged onto the built image's
 HEALTHCHECK and enforced the same way
-([ADR-20261019195000](adr/20261019195000-compose-healthcheck-on-built-services.md));
-a source build without one keeps ordinary readiness, even when its Dockerfile
-declares a HEALTHCHECK.
+([ADR-20261019195000](adr/20261019195000-compose-healthcheck-on-built-services.md)).
+A Dockerfile `HEALTHCHECK` on its own is enforced too
+([ADR-20261024100000](adr/20261024100000-dockerfile-healthcheck-enforced.md)):
+a source build's next deployment waits for its command check to pass, and
+recovers from repeated failures, like a pushed image. The check runs inside the
+built image, so the tools it calls (`curl`, `wget`) must be installed there. To
+keep ordinary readiness, use `HEALTHCHECK NONE`, drop the instruction, or set
+`healthcheck: {disable: true}` on the Compose service. Deployments built before
+this change keep their readiness until they are redeployed.
 See [ADR-682](adr/682-compose-image-healthchecks.md) and
 [ADR-683](adr/683-image-healthcheck-readiness.md).
 
@@ -334,8 +340,13 @@ secrets:
 ```
 
 Each entry names a top-level secret declared with `environment: NAME`; the
-build mounts the app secret `NAME` from the deployment's scope, under the id
-the entry gives (`{source, target}` sets the id to `target`). `file:` and
+build mounts the secret the app receives as `NAME` at runtime, under the id the
+entry gives (`{source, target}` sets the id to `target`). That is the app's own
+secret in the deployment's scope, an environment reference that points `NAME`
+at another secret, or a project environment secret the app inherits
+([ADR-20261024140000](adr/20261024140000-build-secrets-resolve-like-the-runtime.md)).
+A deployment with an explicit secret selection inherits no project secrets, at
+build or at runtime. `file:` and
 external secrets are not uploaded and are left out with a warning. The value is
 opened only inside the builder VM, mounted with BuildKit's secret mount, and
 never stored in the image, its cache or Gregale's records; a build whose

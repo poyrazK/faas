@@ -20,6 +20,8 @@ Automation: put `--non-interactive` before the command to disable prompts and br
 | [`capabilities`](#capabilities) | Show feature maturity and plan availability |
 | [`ai`](#ai) | Configure the AI gateway: providers, cost caps, guardrails and usage |
 | [`channels`](#channels) | Manage where alerts are sent: Slack, PagerDuty or email |
+| [`dashboards`](#dashboards) | Save dashboards that combine metrics, log counts and SLOs across apps |
+| [`incidents`](#incidents) | List open and recent incidents: alerts, route monitors, status page |
 | [`slos`](#slos) | Define SLOs and track their error budgets |
 | [`synthetics`](#synthetics) | Schedule HTTP checks against an app |
 | [`alerts`](#alerts) | Manage an app&#39;s alert rules |
@@ -3170,6 +3172,138 @@ Delete a channel
 `gregale channels rm <channel-id>`
 
 
+## dashboards
+
+Save dashboards that combine metrics, log counts and SLOs across apps
+
+`gregale dashboards [<subcommand>]`
+
+### dashboards list
+
+List the account&#39;s dashboards
+
+Examples:
+
+```sh
+gregale dashboards list
+```
+
+### dashboards show
+
+Show every widget&#39;s current value
+
+`gregale dashboards show <dashboard-id>`
+
+Examples:
+
+```sh
+gregale dashboards show DASHBOARD_ID
+```
+
+### dashboards get
+
+Show a dashboard&#39;s widgets
+
+`gregale dashboards get <dashboard-id>`
+
+### dashboards create
+
+Create a dashboard from a widgets JSON file
+
+`gregale dashboards create --file <PATH> <name>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--file <PATH>` | JSON file with the widgets array (- for stdin) | required |
+
+Examples:
+
+```sh
+gregale dashboards create checkout --file checkout.json
+```
+
+### dashboards replace
+
+Replace a dashboard&#39;s name and widgets
+
+`gregale dashboards replace --name <NAME> --file <PATH> <dashboard-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--name <NAME>` | dashboard name | required |
+| `--file <PATH>` | JSON file with the widgets array (- for stdin) | required |
+
+### dashboards rm
+
+Delete a dashboard
+
+`gregale dashboards rm <dashboard-id>`
+
+
+## incidents
+
+List open and recent incidents: alerts, route monitors, status page
+
+`gregale incidents [<subcommand>]`
+
+### incidents list
+
+List open incidents and those resolved in the window
+
+`gregale incidents list [--app <SLUG>] [--open] [--since <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | keep one app&#39;s incidents |  |
+| `--open` | open incidents only |  |
+| `--since <DURATION>` | resolved incidents from this long ago (default 7d, at most 30d) |  |
+
+Examples:
+
+```sh
+gregale incidents list
+gregale incidents list --app shop --open
+```
+
+### incidents show
+
+Show an incident with its evidence and notes
+
+`gregale incidents show <incident-id>`
+
+Examples:
+
+```sh
+gregale incidents show INCIDENT_ID
+```
+
+Evidence is what the platform has for the incident: an alert&#39;s notifications and the log context its newest one carried, a platform incident&#39;s status updates, and an app incident&#39;s changes from an hour before it opened.
+
+### incidents ack
+
+Acknowledge an open incident so the account sees someone is on it
+
+`gregale incidents ack <incident-id>`
+
+Examples:
+
+```sh
+gregale incidents ack INCIDENT_ID
+```
+
+### incidents note
+
+Add a note to an incident; notes cannot be edited
+
+`gregale incidents note <incident-id> <text>`
+
+Examples:
+
+```sh
+gregale incidents note INCIDENT_ID "rolled back to v41"
+```
+
+
 ## slos
 
 Define SLOs and track their error budgets
@@ -3346,7 +3480,7 @@ List alert rules
 
 Add an alert rule
 
-`gregale alerts add --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>]`
+`gregale alerts add --app <slug> --name <NAME> [--metric <METRIC>] [--comparison <OP>] [--threshold <N>] [--window-spec <WINDOW>] [--event-subscription-id <UUID>] [--edge-rule-id <ID>] [--mcp-readiness-scope <SCOPE>] [--failure-source <SOURCE>] [--channel <CHANNEL_ID>]... [--custom-metric <NAME>] [--log-query <FILTERS>] [--saved-search <NAME>] [--slo <SLO_ID>] [--synthetic-check <CHECK_ID>] [--webhook-url <URL>] [--action <ACTION>] [--post-deploy-rollback-window <duration>] [--webhook-secret-stdin] [--webhook-secret <VALUE>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -3362,6 +3496,8 @@ Add an alert rule
 | `--failure-source <SOURCE>` | any\|cron\|queue\|delayed_task\|async_invoke\|inbound_webhook |  |
 | `--channel <CHANNEL_ID>` | notification channel id (repeatable); with one, the webhook is optional |  |
 | `--custom-metric <NAME>` | Pushed custom metric to watch; required with --metric custom_metric |  |
+| `--log-query <FILTERS>` | Log search filters to count, e.g. level=error&amp;q=timeout; with --metric log_search_matches |  |
+| `--saved-search <NAME>` | Copy a saved log search&#39;s filters; with --metric log_search_matches |  |
 | `--slo <SLO_ID>` | SLO id for slo_budget_burn or slo_budget_remaining_pct |  |
 | `--synthetic-check <CHECK_ID>` | synthetic check id for synthetic_check_* metrics |  |
 | `--webhook-url <URL>` | http(s) webhook URL (https recommended: deliveries are signed, not encrypted); required unless --channel |  |
@@ -10693,11 +10829,32 @@ Show what the edge rejected for an app
 
 Includes pre-auth blocks, validation failures and gate rejections by status.
 
+### edge-rules attack-mode
+
+Switch attack mode on, off, or show it
+
+`gregale edge-rules attack-mode [--app <slug>] [--for <DURATION>] [on|off|status]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project context) |  |
+| `--for <DURATION>` | with on: how long attack mode stays on (default 1h, 15m to 24h) |  |
+
+Examples:
+
+```sh
+gregale edge-rules attack-mode on --app my-api --for 1h
+gregale edge-rules attack-mode --app my-api
+gregale edge-rules attack-mode off --app my-api
+```
+
+Attack mode challenges every visitor to the app for a while (15m to 24h); clients that are not browsers need a verified API key or JWT.
+
 ### edge-rules trace
 
 Simulate composed edge-rule outcomes and request policies
 
-`gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--verified-bot] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
+`gregale edge-rules trace [--config <file|->] [--app <slug>] [--url <URL>] [--method <method>] [--client-ip <IP>] [--country <CC>] [--asn <AS>] [--verified-bot] [--verified-ai-crawler] [--header <Name:Value>] [--body-file <path|->] [--proposal <file|->] [--add-rule <JSON|@FILE>] [--remove-rule <ID>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -10709,6 +10866,7 @@ Simulate composed edge-rule outcomes and request policies
 | `--country <CC>` | simulated ISO alpha-2 country for kind=geo rules |  |
 | `--asn <AS>` | simulated client autonomous system for asn conditions (e.g. AS13335) |  |
 | `--verified-bot` | simulate a client IP that passes crawler verification (verified_bot = the crawler the User-Agent claims) |  |
+| `--verified-ai-crawler` | simulate a client IP inside the published ranges of the AI crawler the User-Agent claims (verified_ai_crawler) |  |
 | `--header <Name:Value>` | simulated request header; repeat for multiple values |  |
 | `--body-file <path|->` | request body file or - for stdin (max 1 MiB; contents are withheld) |  |
 | `--proposal <file|->` | compare against a proposed change: JSON {add,update,remove} file or - for stdin |  |
@@ -14188,6 +14346,131 @@ gregale logs my-api --follow
 gregale logs my-api --since 1h --level error
 gregale logs views save runtime-errors --since 1h --level error
 gregale logs my-api --view runtime-errors
+```
+
+### logs search
+
+Search the app&#39;s log events by text, level, route and more
+
+`gregale logs search [--app <SLUG>] [--q <TEXT>] [--since <15m|6h|3d|RFC3339>] [--until <RFC3339>] [--source <SOURCE>] [--level <LEVELS>] [--route <ROUTE>] [--status <502|5xx>] [--deployment <ID>] [--request <ID>] [--trace <TRACE_ID>] [--limit <N>] [--saved <NAME>] [--cursor <CURSOR>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
+| `--q <TEXT>` | case-insensitive text the message contains (2..256 characters; windows up to 24h) |  |
+| `--since <15m|6h|3d|RFC3339>` | window start: lookback or RFC3339 (default 1h) |  |
+| `--until <RFC3339>` | window end (default now) |  |
+| `--source <SOURCE>` | ledger source | one of `runtime` · `build` · `deploy` · `http` · `network` · `dns` |
+| `--level <LEVELS>` | comma list of levels (trace, debug, info, warn, error, fatal) |  |
+| `--route <ROUTE>` | exact route template, e.g. /checkout/{id} |  |
+| `--status <502|5xx>` | HTTP status or class |  |
+| `--deployment <ID>` | deployment id |  |
+| `--request <ID>` | request id or trace id |  |
+| `--trace <TRACE_ID>` | W3C trace id |  |
+| `--limit <N>` | events per page (1..200) |  |
+| `--saved <NAME>` | apply a saved search&#39;s filters; other flags override them |  |
+| `--cursor <CURSOR>` | next_cursor from the previous page |  |
+
+Examples:
+
+```sh
+gregale logs search my-api --level error --since 6h
+gregale logs search my-api --q timeout --status 5xx --since 2h --json
+```
+
+Filters combine: text, level, route, HTTP status, release, request ID and trace ID.
+
+### logs facets
+
+Count matching log events by source, level, status class and route
+
+`gregale logs facets [--app <SLUG>] [--q <TEXT>] [--since <15m|6h|3d|RFC3339>] [--until <RFC3339>] [--source <SOURCE>] [--level <LEVELS>] [--route <ROUTE>] [--status <502|5xx>] [--deployment <ID>] [--request <ID>] [--trace <TRACE_ID>] [--saved <NAME>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
+| `--q <TEXT>` | case-insensitive text the message contains (2..256 characters; windows up to 24h) |  |
+| `--since <15m|6h|3d|RFC3339>` | window start: lookback or RFC3339 (default 1h) |  |
+| `--until <RFC3339>` | window end (default now) |  |
+| `--source <SOURCE>` | ledger source | one of `runtime` · `build` · `deploy` · `http` · `network` · `dns` |
+| `--level <LEVELS>` | comma list of levels (trace, debug, info, warn, error, fatal) |  |
+| `--route <ROUTE>` | exact route template, e.g. /checkout/{id} |  |
+| `--status <502|5xx>` | HTTP status or class |  |
+| `--deployment <ID>` | deployment id |  |
+| `--request <ID>` | request id or trace id |  |
+| `--trace <TRACE_ID>` | W3C trace id |  |
+| `--saved <NAME>` | apply a saved search&#39;s filters; other flags override them |  |
+
+Examples:
+
+```sh
+gregale logs facets my-api --since 24h
+gregale logs facets my-api --source http --status 5xx --since 7d
+```
+
+### logs saved
+
+List, save or delete the app&#39;s server-side saved log searches
+
+`gregale logs saved <list|save|delete> [--app <SLUG>] [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
+
+Examples:
+
+```sh
+gregale logs saved my-api
+gregale logs saved save checkout-5xx my-api --route /checkout --status 5xx
+gregale logs saved delete checkout-5xx my-api
+```
+
+#### logs saved list
+
+List the app&#39;s saved searches and their filters
+
+`gregale logs saved list [<slug>]`
+
+Examples:
+
+```sh
+gregale logs saved list my-api
+```
+
+#### logs saved save
+
+Create a saved search or replace its filters (windows are not stored)
+
+`gregale logs saved save [--q <TEXT>] [--source <SOURCE>] [--level <LEVELS>] [--route <ROUTE>] [--status <502|5xx>] [--deployment <ID>] [--request <ID>] [--trace <TRACE_ID>] <name> [<slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--q <TEXT>` | case-insensitive text the message contains (2..256 characters) |  |
+| `--source <SOURCE>` | ledger source | one of `runtime` · `build` · `deploy` · `http` · `network` · `dns` |
+| `--level <LEVELS>` | comma list of levels (trace, debug, info, warn, error, fatal) |  |
+| `--route <ROUTE>` | exact route template, e.g. /checkout/{id} |  |
+| `--status <502|5xx>` | HTTP status or class |  |
+| `--deployment <ID>` | deployment id |  |
+| `--request <ID>` | request id or trace id |  |
+| `--trace <TRACE_ID>` | W3C trace id |  |
+
+Examples:
+
+```sh
+gregale logs saved save db-errors my-api --source runtime --level error --q database
+```
+
+#### logs saved delete
+
+Delete a saved search
+
+`gregale logs saved delete <name> [<slug>]`
+
+Examples:
+
+```sh
+gregale logs saved delete db-errors my-api
 ```
 
 ### logs defaults

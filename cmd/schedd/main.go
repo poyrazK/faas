@@ -884,6 +884,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load sign pub %q: %w (run `faas sign-keys init` on imaged's host if missing)", signPubPath, err)
 	}
 	log.Info("schedd: build attestation verifier ready", "pub", signPubPath)
+	// ADR-038 amendment (2026-10-24): remember verified layers across
+	// restarts, so the first wakes after a restart do not wait for whole
+	// layers to be read and hashed again.
+	recordsPath := envOr("FAAS_LAYER_ATTESTATION_RECORDS", cosign.DefaultAttestationRecordsPath)
+	if err := verifier.RememberVerifications(recordsPath, time.Duration(api.LayerAttestationRecordMaxAgeHours)*time.Hour); err != nil {
+		log.Warn("schedd: layer verifications stay in memory only", "path", recordsPath, "err", err)
+	}
 	engine.WithVerifier(verifier)
 	attestationWarmCtx, cancelAttestationWarm := context.WithCancel(ctx)
 	defer cancelAttestationWarm()
@@ -1859,7 +1866,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// /srv/fc/snap. The byte-comparison path stays in
 			// place for the local backend; a remote backend (OCI)
 			// degrades to a presence check.
-			WithStorage(storageBackend)).
+			WithStorage(storageBackend).
+			// ADR 20261022184951 amendment 1: native runtime snapshots
+			// sit in vmmd's private tree under the same snap/ keys.
+			WithNativeRuntimeSnapshots(nativeRuntimeSnapshotLister(log))).
 		// Audit seam (lifted from cmd/apid/audit.go into pkg/audit
 		// for cross-daemon reuse). schedd uses actor="schedd" so the
 		// cron-fire path can emit a `cron.fired` events row after

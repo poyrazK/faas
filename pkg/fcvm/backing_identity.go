@@ -299,6 +299,13 @@ func (m *Manager) verifySnapshotBacking(ctx context.Context, snap *Snapshot, bas
 	store := m.storage
 	if snap.Storage != nil {
 		store = snap.Storage
+	} else if native, ok := m.vmm.(interface {
+		nativeRuntimeSnapshotStore(string) storage.StorageBackend
+	}); ok {
+		// A native runtime capture's sidecar lives in the tree only vmmd writes.
+		if b := native.nativeRuntimeSnapshotStore(key); b != nil {
+			store = b
+		}
 	}
 	rc, err := store.Get(ctx, key)
 	if err != nil {

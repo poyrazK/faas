@@ -133,7 +133,8 @@ def sync_detailed(
     replay eligibility. No deliveries, replay jobs or retention pins are created.
     Retention can remove rows between pages. This is a live retained view, not a
     frozen export or a complete archive; late commits can change visible rows.
-    Settled receipts retain 30 days from routing settlement; pending receipts may
+    Settled receipts are kept for the plan's settled-receipt window from routing
+    settlement (Free 1 day, Hobby 3, Pro 7, Scale 14); pending receipts may
     survive longer. Earliest retained acceptance is account-wide and does not
     establish coverage of a requested range. Responses use Cache-Control: no-store
     and require the existing read scopes and MFA rules.
@@ -194,7 +195,8 @@ def sync(
     replay eligibility. No deliveries, replay jobs or retention pins are created.
     Retention can remove rows between pages. This is a live retained view, not a
     frozen export or a complete archive; late commits can change visible rows.
-    Settled receipts retain 30 days from routing settlement; pending receipts may
+    Settled receipts are kept for the plan's settled-receipt window from routing
+    settlement (Free 1 day, Hobby 3, Pro 7, Scale 14); pending receipts may
     survive longer. Earliest retained acceptance is account-wide and does not
     establish coverage of a requested range. Responses use Cache-Control: no-store
     and require the existing read scopes and MFA rules.
@@ -250,7 +252,8 @@ async def asyncio_detailed(
     replay eligibility. No deliveries, replay jobs or retention pins are created.
     Retention can remove rows between pages. This is a live retained view, not a
     frozen export or a complete archive; late commits can change visible rows.
-    Settled receipts retain 30 days from routing settlement; pending receipts may
+    Settled receipts are kept for the plan's settled-receipt window from routing
+    settlement (Free 1 day, Hobby 3, Pro 7, Scale 14); pending receipts may
     survive longer. Earliest retained acceptance is account-wide and does not
     establish coverage of a requested range. Responses use Cache-Control: no-store
     and require the existing read scopes and MFA rules.
@@ -309,7 +312,8 @@ async def asyncio(
     replay eligibility. No deliveries, replay jobs or retention pins are created.
     Retention can remove rows between pages. This is a live retained view, not a
     frozen export or a complete archive; late commits can change visible rows.
-    Settled receipts retain 30 days from routing settlement; pending receipts may
+    Settled receipts are kept for the plan's settled-receipt window from routing
+    settlement (Free 1 day, Hobby 3, Pro 7, Scale 14); pending receipts may
     survive longer. Earliest retained acceptance is account-wide and does not
     establish coverage of a requested range. Responses use Cache-Control: no-store
     and require the existing read scopes and MFA rules.

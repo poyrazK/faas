@@ -3645,6 +3645,9 @@ const (
 	// AlertMetricCustomMetric watches one ADR-202 pushed metric, named by
 	// AlertRule.CustomMetricName (ADR-745).
 	AlertMetricCustomMetric AlertMetric = "custom_metric"
+	// AlertMetricLogSearchMatches counts an app's log events matching
+	// AlertRule.LogQuery within the window (ADR-20261018083536).
+	AlertMetricLogSearchMatches AlertMetric = "log_search_matches"
 	// ADR-747: rules on one customer SLO, named by AlertRule.SLOID.
 	AlertMetricSLOBudgetBurn      AlertMetric = "slo_budget_burn"
 	AlertMetricSLOBudgetRemaining AlertMetric = "slo_budget_remaining_pct"
@@ -3861,6 +3864,7 @@ type AlertRule struct {
 	WindowSpec                      AlertWindowSpec
 	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
 	CustomMetricName                string             // empty unless Metric == custom_metric (ADR-745)
+	LogQuery                        string             // canonical log search filters; set only for log_search_matches
 	SLOID                           string             // set only for the ADR-747 SLO metrics
 	SyntheticCheckID                string             // set only for the ADR-748 synthetic check metrics
 	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
@@ -8588,7 +8592,8 @@ type EdgeRule struct {
 	AccountID string
 	AppID     string
 	// ManifestKey is a private stable ownership key for edge rules applied
-	// from deployment manifests. It is empty for manually managed rules.
+	// from deployment manifests, or EdgeRuleAttackModeKey for the app's
+	// attack-mode rule. It is empty for manually managed rules.
 	ManifestKey  string
 	MatchHost    string
 	MatchPath    string
@@ -8644,6 +8649,18 @@ const (
 // EdgeRuleExpired reports whether the rule's expiry has passed at now.
 func (r EdgeRule) EdgeRuleExpired(now time.Time) bool {
 	return r.ExpiresAt != nil && !now.Before(*r.ExpiresAt)
+}
+
+// EdgeRuleAttackModeKey is the ownership key (manifest_key) of an app's
+// attack-mode rule (ADR-20261021220456): one app-wide challenge rule the
+// attack-mode switch creates, extends and removes. The unique (app_id,
+// manifest_key) index keeps it to one per app. It is outside the plan's
+// rule quotas and a rule-set rollback leaves it as it is.
+const EdgeRuleAttackModeKey = "attack-mode"
+
+// AttackMode reports whether r is its app's attack-mode rule.
+func (r EdgeRule) AttackMode() bool {
+	return r.ManifestKey == EdgeRuleAttackModeKey
 }
 
 // CorsPreset is the in-memory row mirrored from cors_presets (issue

@@ -937,6 +937,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRestorePrefetch(!cfg.DisableRestorePrefetch).
 		WithFreePageReporting(freePageReporting).
 		WithPmemBase(pmemBaseDir).
+		WithRestoreReseedThread(cfg.RestoreReseedThread).
 		// Issue #309 / tier-2 DX: install the per-VMM
 		// slow-subscriber callback that every ring
 		// registerRing creates will fire on a full
@@ -967,6 +968,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-746: count error and warn guest log lines per app for log alerts.
 	jailer.WithLogCommitCallback(newAppLogLineCounter(ops.Registry()).Observe)
+	// ADR-20261018083536 slice B: project warn and error lines into the
+	// customer log ledger, before any ring is registered.
+	closeRuntimeLogEvents, err := startRuntimeLogEvents(ctx, log, os.Getenv, ops.Registry(), jailer)
+	if err != nil {
+		return fmt.Errorf("vmmd: %w", err)
+	}
+	defer closeRuntimeLogEvents()
 	// Activity tracker (PR-B, issue #462): per-instance in-flight
 	// ForwardHTTP request counter. It is shared by the gRPC server's
 	// stats surface and the liveness loop so load-correlated probe misses
@@ -980,6 +988,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	if cfg.NativeProcessRecovery {
 		jailer.WithNativeProcessRecovery()
+	}
+	if cfg.NativeRuntimeSnapshotRoot != "" {
+		if err := jailer.UseNativeRuntimeSnapshotRoot(cfg.NativeRuntimeSnapshotRoot); err != nil {
+			return err
+		}
+	}
+	if cfg.NativeRuntimeCapture {
+		jailer.WithNativeRuntimeCapture()
 	}
 	// Adoption ADR §2: only guests whose console is a file survive a vmmd
 	// restart in an adoptable state (V-A3). Records imply file consoles.
@@ -1217,6 +1233,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			jailer.VsockUDSSocketPath(instance), func() (bool, uint64) { return mgr.QuietGate(instance) })
 	})
 	mgr.SetHostIdentities(hostIdentities)
+	mgr.RequireSecretBinding(cfg.RequireSecretBinding)
+	sealdomain.RegisterBindingRequired(ops.Registry(), cfg.RequireSecretBinding)
+	if cfg.RequireSecretBinding {
+		log.Info("vmmd: runtime secrets must be bound to their account (ADR-20261023173624)")
+	}
 	// ADR-1151 quiet pause: pause eligible instances between requests. schedd
 	// marks which instances are eligible; this flag lets an operator keep
 	// the whole node out of it.

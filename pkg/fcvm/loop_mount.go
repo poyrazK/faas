@@ -28,6 +28,22 @@ type preBootStageTimings struct {
 	FilesWritten int // successfully completed writers
 }
 
+// guestDiskMountOptions harden every host mount of an ext4 image a guest
+// may have written (drive1 captured with a snapshot, a job or builder disk).
+// The guest controls that image's superblock: errors=remount-ro overrides
+// its error behaviour, so a guest that ran `tune2fs -e panic` and corrupted
+// metadata cannot panic the host kernel on the next host-side mount.
+// nodev, nosuid and noexec keep guest-written inodes inert on the host.
+const guestDiskMountOptions = "nodev,nosuid,noexec,errors=remount-ro"
+
+// guestDiskMountArgs is the mount(8) argv for loop-mounting a guest-written
+// image with mode ("rw", "ro" or "ro,noload"). The filesystem type is
+// explicit: autodetection would let a guest that reformatted its disk make
+// the host kernel parse a filesystem of the guest's choosing.
+func guestDiskMountArgs(mode, image, mountpoint string) []string {
+	return []string{"-t", "ext4", "-o", "loop," + mode + "," + guestDiskMountOptions, image, mountpoint}
+}
+
 // loopMountSession loop-mounts an ext4 drive image read-write, runs fn
 // against the mountpoint, then unmounts and removes the mountpoint. vmmd is
 // the only root component, so the loopback mount is permitted by the §11
@@ -40,7 +56,7 @@ var loopMountSession = func(drive, prefix string, fn func(mountRoot string) erro
 	}
 	return runLoopMountSession(drive, prefix, fn, timings, loopMountCommands{
 		mount: func(drive, mp string) ([]byte, error) {
-			return exec.Command("mount", "-o", "loop,rw", drive, mp).CombinedOutput()
+			return exec.Command("mount", guestDiskMountArgs("rw", drive, mp)...).CombinedOutput()
 		},
 		unmount:     umountRetryBusy,
 		lazyUnmount: func(mp string) error { return exec.Command("umount", "-l", mp).Run() },

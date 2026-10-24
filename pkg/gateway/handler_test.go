@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -4670,23 +4671,26 @@ func (m routeRuleMatcher) MatchRoute(context.Context, string, string, string) *E
 // kind=route substitution checked only that the rule's target app belonged
 // to the rule's account. match_host is free-form, so any account could
 // route another tenant's hostname (or "*") to an app it controls and serve
-// that tenant's traffic. The inbound host must now belong to the rule's
-// account too.
+// that tenant's traffic. The inbound host must now resolve to an app of the
+// rule's account. A host no app resolves (the platform API host, a reserved
+// or unclaimed slug, an internal or deleted app's domain) has no owner and
+// is never substituted: any account's rule used to serve it.
 func TestRouteRuleCannotClaimAnotherAccountsHost(t *testing.T) {
 	for _, tc := range []struct {
 		name        string
 		host        string
 		ruleAccount string
 		wantAudit   string
+		wantStatus  int
 	}{
-		{"foreign account", "jane-api.apps.dom", "acct-attacker", "edge_rule.route_blocked"},
-		{"owner account", "jane-api.apps.dom", "acct-1", "edge_rule.route_matched"},
-		// ADR-091: a host no app claims is routed by whichever account's
-		// rule names it; only a host another account owns is protected.
-		{"unclaimed host", "synthetic.example", "acct-attacker", "edge_rule.route_matched"},
+		{"foreign account", "jane-api.apps.dom", "acct-attacker", "", 0},
+		{"owner account", "jane-api.apps.dom", "acct-1", "edge_rule.route_matched", 0},
+		{"unclaimed host", "synthetic.example", "acct-attacker", "", http.StatusNotFound},
+		{"platform API host", "api.apps.dom", "acct-attacker", "", http.StatusNotFound},
+		{"unresolved host, rule owner's target", "synthetic.example", "acct-1", "", http.StatusNotFound},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			h, _, _ := newTestHandler(t)
+			h, b, _ := newTestHandler(t)
 			audit := &captureAuditor{}
 			target := App{ID: "app-target", AccountID: tc.ruleAccount, Slug: "target", Plan: api.PlanPro}
 			h.WithEdgeRules(routeRuleMatcher{route: &EdgeRuleResolved{
@@ -4694,7 +4698,11 @@ func TestRouteRuleCannotClaimAnotherAccountsHost(t *testing.T) {
 			}}, func(context.Context, string) (App, bool) { return target, true }, audit)
 			req := httptest.NewRequest(http.MethodGet, "http://"+tc.host+"/", nil)
 			req.Header.Set("X-Forwarded-For", "192.0.2.1")
-			h.ServeHTTP(httptest.NewRecorder(), req)
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, req)
+			if tc.wantStatus != 0 && rec.Code != tc.wantStatus {
+				t.Fatalf("status = %d, want %d", rec.Code, tc.wantStatus)
+			}
 			audit.mu.Lock()
 			defer audit.mu.Unlock()
 			var kinds []string
@@ -4703,8 +4711,17 @@ func TestRouteRuleCannotClaimAnotherAccountsHost(t *testing.T) {
 					kinds = append(kinds, c.kind)
 				}
 			}
-			if len(kinds) != 1 || kinds[0] != tc.wantAudit {
-				t.Fatalf("route audit = %v, want [%s]", kinds, tc.wantAudit)
+			var want []string
+			if tc.wantAudit != "" {
+				want = []string{tc.wantAudit}
+			}
+			if !slices.Equal(kinds, want) {
+				t.Fatalf("route audit = %v, want %v", kinds, want)
+			}
+			b.mu.Lock()
+			defer b.mu.Unlock()
+			if substituted := len(b.preparedRouteTargets) > 0; substituted != (tc.wantAudit != "") {
+				t.Fatalf("prepared route targets = %v, substituted=%v", b.preparedRouteTargets, substituted)
 			}
 		})
 	}

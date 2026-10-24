@@ -6489,6 +6489,15 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	if len(args) > 0 && args[0] == "views" {
 		return cmdLogViews(args[1:])
 	}
+	if len(args) > 0 && args[0] == subLogsSearch {
+		return cmdLogsSearch(args[1:])
+	}
+	if len(args) > 0 && args[0] == subLogsFacets {
+		return cmdLogsFacets(args[1:])
+	}
+	if len(args) > 0 && args[0] == subLogsSaved {
+		return cmdLogsSaved(args[1:])
+	}
 	if len(args) > 0 && args[0] == subLogsTail {
 		return cmdLogsTail(args[1:])
 	}

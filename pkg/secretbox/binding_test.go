@@ -88,6 +88,26 @@ func TestPreBindingReaderRefusesBoundEnvelope(t *testing.T) {
 	}
 }
 
+func TestRequireRefusesUnboundEnvelopes(t *testing.T) {
+	owner := "0b6a6a1e-6f3c-4c8e-9d2a-5d1f7a3e9c10"
+	for _, tc := range []struct {
+		name    string
+		binding Binding
+		account string
+		want    error
+	}{
+		{"bound to the account", Binding{AccountID: owner}, owner, nil},
+		{"bound to another account", Binding{AccountID: owner}, "c2f1d0a4-0000-4000-8000-000000000001", ErrBindingMismatch},
+		{"bound, no account", Binding{AccountID: owner}, "", ErrBindingMismatch},
+		{"unbound", Binding{}, owner, ErrUnbound},
+		{"unbound, no account", Binding{}, "", ErrUnbound},
+	} {
+		if err := tc.binding.Require(tc.account); !errors.Is(err, tc.want) || (tc.want == nil && err != nil) {
+			t.Errorf("%s: Require(%q) = %v, want %v", tc.name, tc.account, err, tc.want)
+		}
+	}
+}
+
 func TestBoundEnvelopeRejectsMalformedPlaintext(t *testing.T) {
 	id, err := age.GenerateX25519Identity()
 	if err != nil {

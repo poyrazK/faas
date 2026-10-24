@@ -1267,6 +1267,38 @@ func (s *Server) DeleteWarmSnapshot(ctx context.Context, req *vmmdpb.DeleteWarmS
 	return &vmmdpb.DeleteWarmSnapshotResponse{Deleted: true}, nil
 }
 
+// RetireNativeRuntimeSnapshotObject removes one object of a native runtime
+// capture on imaged's behalf (ADR 20261022184951 amendment 1). imaged owns
+// the collection decision; vmmd, the tree's only writer, does the removal.
+func (s *Server) RetireNativeRuntimeSnapshotObject(ctx context.Context, req *vmmdpb.RetireNativeRuntimeSnapshotObjectRequest) (*vmmdpb.RetireNativeRuntimeSnapshotObjectResponse, error) {
+	const op = "RetireNativeRuntimeSnapshotObject"
+	start := time.Now()
+	retirer, ok := s.vmm.(interface {
+		RetireNativeRuntimeSnapshotObject(context.Context, string) error
+	})
+	if !ok {
+		err := api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Native runtime snapshot retirement unavailable", "vmmd does not expose native runtime snapshot retirement")
+		s.ops.Observe(op, time.Since(start), err)
+		return nil, grpcerr.ToStatus(err)
+	}
+	err := retirer.RetireNativeRuntimeSnapshotObject(ctx, req.GetStorageKey())
+	s.ops.Observe(op, time.Since(start), err)
+	switch {
+	case err == nil:
+		return &vmmdpb.RetireNativeRuntimeSnapshotObjectResponse{}, nil
+	case errors.Is(err, storage.ErrInvalidKey):
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.InvalidArgument), api.CodeValidation,
+			"Not a native runtime snapshot object", err.Error()))
+	case errors.Is(err, fcvm.ErrNativeRuntimeSnapshotRootUnset):
+		// To imaged this vmmd is one without the RPC: keep the row, retry.
+		return nil, grpcerr.ToStatus(api.NewProblem(int(codes.Unimplemented), api.CodeNotImplemented,
+			"Native runtime snapshot root unavailable", err.Error()))
+	default:
+		return nil, grpcerr.ToStatus(toProblem(err))
+	}
+}
+
 // FrameworkReady is the vmmd-side receipt of the guest-init "framework
 // ready" vsock DGRAM (port 1027, msg=4) signal (issue #470, PR
 // #470-FU-B). The handler:

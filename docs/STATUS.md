@@ -7,6 +7,33 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Edge security release gate — 2026-10-24
+
+All five edge features sit behind platform flags that are off for every
+account, each a catalog capability with a scorecard gate
+([ADR-20261024082000](adr/20261024082000-edge-security-ga-gate.md)). WAF
+warn and block and the browser challenge are `ga` (the product owner's
+decision, ADR-831 amendment 11) and go live by turning `edge_waf_blocking`
+and `edge_challenge` on once the release carrying the `@grx` engine is
+deployed. Penalties, attack mode and AI crawler controls are `preview`.
+
+Met: the kill switches; rules the edge does not enforce say so
+(`unreleased_features`); WAF latency at 100-500 req/s on the reference node
+(p95 1.49-2.00 ms); corpus detection; fail-open; the challenge journey,
+solver and escalation; penalty correctness, caps and sharing across
+gateways (in tests); attack mode and its two-flag gate; AI crawler matching,
+range refresh and gating.
+
+Open:
+- WAF skips under load: 2.5-8% measured before ADR-831 amendment 12's slot
+  sizing, which models 0.003-0.013%; needs a `FAAS_E2E_WAF_LOAD_GATE=1` run
+  of `TestEdgeWAFInlineLoad_E2E` on the reference node.
+- Challenge solve time on a low-end phone (no measurement yet).
+- Runbooks for the five features' failure modes.
+- The 14-day reviews at the internal and design-partner stages (penalties,
+  attack mode, AI crawler controls), and the WAF production false-positive
+  review.
+
 ## Event substrate benchmark (V12) — 2026-10-23
 
 `make bench-event-substrate` measures event publish, fanout routing, the
@@ -32,8 +59,15 @@ do. Removing their no-op reads, writes and re-plans (#5182,
 [report](ops/evidence/20261022-event-path-planning-waste/REPORT.md)) cut
 database time per delivered event from 37.8 to 26.3 ms. The pipeline then
 held 48.7/s at 50 offered (p95 437 ms) and 30.1/s at 150 offered, against
-18.0/s on main. Event caps stay where they are until the benchmark runs on
-the reference node.
+18.0/s on main. The owner raised the event caps on this provisional bound
+rather than wait for the reference node
+([ADR-20261023215834](adr/20261023215834-event-plan-caps.md)): settled
+receipts are kept 1/3/7/14 days by plan instead of 30, and the retained
+budgets sustain at most 6.9 events/s per Scale account. Publish admission
+now reads trigger-kept counts instead of counting the account's retained
+receipts, which took 0.7–1.4 s per publish at a million
+([report](ops/evidence/20261024-event-plan-caps/REPORT.md)). The caps are
+revisited when the benchmark runs on the reference node.
 
 ## Tenant egress denies NAT64 — 2026-10-18 (branch, not released)
 
@@ -1802,6 +1836,18 @@ remain open; production admission is disabled.
   (2026-10-22): a built service's `entrypoint` joins its start command, and
   `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
   deployment and applied to the built image. Unit tests pass; no native run.
+- **Build secrets resolve like the runtime.**
+  [ADR-20261024140000](adr/20261024140000-build-secrets-resolve-like-the-runtime.md)
+  (2026-10-24): a build secret named `NAME` gets the secret the app receives
+  as `NAME`, including environment aliases and inherited project environment
+  secrets, through a resolver a scheduler test keeps equal to wake delivery.
+  Unit tests pass; no native run.
+- **Dockerfile HEALTHCHECK enforced on source builds.**
+  [ADR-20261024100000](adr/20261024100000-dockerfile-healthcheck-enforced.md)
+  (2026-10-24): imaged records the readiness verdict for every source build
+  whose image declares a command HEALTHCHECK, not only Compose overrides, and
+  the scheduler enforces it as for a pushed image. Existing deployments keep
+  their readiness until redeployed. Unit and store tests pass; no native run.
 - **Compose profiles.**
   [ADR-20261022190000](adr/20261022190000-compose-profiles-from-dotenv.md)
   (2026-10-22): `COMPOSE_PROFILES` in the source's `.env` activates Compose

@@ -112,6 +112,9 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/mcp/apps/{slug}/notifications/actions":            true,
 	"POST /dashboard/mcp/apps/{slug}/oauth":                            true,
 	"POST /dashboard/mcp/retirements/{id}":                             true,
+	// Browser session and named-CSRF adapters for the incident API (ADR-20261022193512).
+	"POST /dashboard/incidents/{id}/acknowledge": true,
+	"POST /dashboard/incidents/{id}/notes":       true,
 
 	"GET /v1/apps/{slug}/entities/connect":                                   true, // WebSocket frames require the durable-session transport, not Client.do.
 	"GET /v1/apps/{slug}/entities/session-connect":                           true, // Browser grant subprotocol and Origin authentication, not Bearer HTTP.
@@ -761,6 +764,28 @@ var methodRouteMap = map[string]string{
 
 	// ADR-751: the change timeline reads as one noun, not "apps slug changes".
 	"GET /v1/apps/{slug}/changes": "GetAppChangeTimeline",
+	// ADR-20261018083536: hyphenated log-events segment; search reads as a verb.
+	"GET /v1/apps/{slug}/log-events":        "SearchAppLogEvents",
+	"GET /v1/apps/{slug}/log-events/facets": "GetAppLogEventFacets",
+
+	// ADR-20261018083536 slice D saved log searches.
+	"GET /v1/apps/{slug}/log-searches":           "ListAppLogSavedSearches",
+	"PUT /v1/apps/{slug}/log-searches/{name}":    "PutAppLogSavedSearch",
+	"DELETE /v1/apps/{slug}/log-searches/{name}": "DeleteAppLogSavedSearch",
+
+	// ADR-20261022173833 custom dashboards.
+	"GET /v1/dashboards":           "ListDashboards",
+	"POST /v1/dashboards":          "CreateDashboard",
+	"GET /v1/dashboards/{id}":      "GetDashboard",
+	"PUT /v1/dashboards/{id}":      "ReplaceDashboard",
+	"DELETE /v1/dashboards/{id}":   "DeleteDashboard",
+	"GET /v1/dashboards/{id}/data": "GetDashboardData",
+
+	// ADR-20261022193512 unified incidents.
+	"GET /v1/incidents":                   "ListIncidents",
+	"GET /v1/incidents/{id}":              "GetIncident",
+	"POST /v1/incidents/{id}/acknowledge": "AcknowledgeIncident",
+	"POST /v1/incidents/{id}/notes":       "AddIncidentNote",
 	// ADR-745: hyphenated custom-metrics segment.
 	"GET /v1/apps/{slug}/custom-metrics/{name}/series": "GetCustomMetricSeries",
 	// ADR-1131: the hyphenated path segment has no derivable Go identifier.
@@ -2650,6 +2675,12 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":             "GetIssueTrackerAutoSync",
 	"PUT /v1/apps/{slug}/issues/{issue_id}/tracker-links/{link_id}/auto-sync":             "UpdateIssueTrackerAutoSync",
 	"POST /v1/apps/{slug}/issues/{issue_id}/native-tickets":                               "CreateNativeIssueTicket",
+
+	// ADR-20261021220456: attack mode; literal hyphens, so the names follow
+	// the spec operationIds.
+	"GET /v1/apps/{slug}/edge-protection/attack-mode":    "GetAppEdgeAttackMode",
+	"PUT /v1/apps/{slug}/edge-protection/attack-mode":    "EnableAppEdgeAttackMode",
+	"DELETE /v1/apps/{slug}/edge-protection/attack-mode": "DisableAppEdgeAttackMode",
 }
 
 func main() {

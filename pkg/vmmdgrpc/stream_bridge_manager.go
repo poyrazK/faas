@@ -109,6 +109,7 @@ type streamBridgeManager struct {
 	reapInterval time.Duration
 	now          func() time.Time
 	spawn        streamBridgeSpawnFunc
+	socketPath   func(string, bridgeIdentity) string
 	waitSocket   func(string, time.Duration) error
 	newTransport func(string, bridgeIdentity) *http2.Transport
 	stop         func(context.Context, *exec.Cmd, *bytes.Buffer) error
@@ -132,6 +133,7 @@ func newStreamBridgeManager(log *slog.Logger) *streamBridgeManager {
 		reapInterval: streamBridgeReapInterval,
 		now:          time.Now,
 		spawn:        streamBridgeSpawn,
+		socketPath:   streamBridgeSockPath,
 		waitSocket:   waitForUnixSock,
 		newTransport: newStreamBridgeH2CTransport,
 		stop:         stopStreamBridge,
@@ -175,7 +177,7 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 				port:     port,
 				protocol: streamBridgeProtocol(req),
 				identity: id,
-				socket:   streamBridgeSockPath(key, id),
+				socket:   m.socketPath(key, id),
 				ready:    make(chan struct{}),
 				starting: true,
 				lastUsed: m.now(),
@@ -238,6 +240,34 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 	}
 }
 
+// acquireSession leases the instance's bridge for a raw, TCP or UDP
+// session. A session names its own port, so any live bridge of the
+// instance in the same namespace, identity and target serves it. With
+// none, it starts the bridge as the instance's HTTP traffic would (what its
+// prewarm recorded), so a later HTTP request does not replace it, or, for
+// an instance with no HTTP bridge, on the session's port.
+func (m *streamBridgeManager) acquireSession(ctx context.Context, instance, netnsName string, id bridgeIdentity, port uint32) (*streamBridgeLease, error) {
+	if m == nil {
+		return nil, errors.New("stream bridge manager is nil")
+	}
+	target := publicTarget(ctx)
+	key := streamBridgeEntryKey(instance, target)
+	m.mu.Lock()
+	if entry := m.entries[key]; entry != nil && !entry.starting && !entry.closed && entry.netns == netnsName && entry.identity == id &&
+		samePublicTarget(entry.target, target) && streamBridgeProcessAlive(entry.cmd) {
+		entry.active++
+		entry.lastUsed = m.now()
+		m.mu.Unlock()
+		return &streamBridgeLease{manager: m, entry: entry}, nil
+	}
+	req := &vmmdpb.ForwardHTTPRequestInit{Instance: instance, Port: port}
+	if start, ok := m.started[key]; ok && start.netns == netnsName && start.identity == id && samePublicTarget(start.target, target) {
+		req.Port, req.AppProtocol = start.port, start.appProtocol
+	}
+	m.mu.Unlock()
+	return m.acquire(ctx, req, netnsName, id)
+}
+
 // prewarm publishes a starting entry before returning, then performs the
 // process/socket startup in the background. A first request racing the startup
 // joins the same ready channel in acquire instead of spawning a second bridge.
@@ -272,7 +302,7 @@ func (m *streamBridgeManager) prewarm(ctx context.Context, req *vmmdpb.ForwardHT
 		port:     port,
 		protocol: protocol,
 		identity: id,
-		socket:   streamBridgeSockPath(key, id),
+		socket:   m.socketPath(key, id),
 		ready:    make(chan struct{}),
 		starting: true,
 		lastUsed: m.now(),

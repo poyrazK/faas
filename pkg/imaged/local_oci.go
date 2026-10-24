@@ -568,10 +568,10 @@ func (h *Handler) buildLocalOCIAppLayer(ctx context.Context, app state.App, dep 
 	if err := manifest.Validate(); err != nil {
 		return fmt.Errorf("imaged: built OCI manifest invalid: %w", err)
 	}
-	if healthcheck != nil {
-		if err := h.recordSourceHealthcheck(ctx, dep, manifest); err != nil {
-			return err
-		}
+	// The built image's command HEALTHCHECK gates readiness whether it came
+	// from the Dockerfile or a Compose override (ADR-20261024100000).
+	if err := h.recordSourceHealthcheck(ctx, dep, manifest); err != nil {
+		return err
 	}
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		return fmt.Errorf("imaged: persist local OCI secret reload support: %w", err)
