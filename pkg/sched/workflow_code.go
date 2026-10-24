@@ -105,7 +105,7 @@ func (o *WorkflowOrchestrator) resolveCodeWaits(ctx context.Context, store state
 				})
 			}
 		case workflowcode.KindEvent:
-			event, timedOut, _, err := store.ParkWorkflowCodeEvent(ctx, run.ID, entry.Name, item.Descriptor.Event, item.Descriptor.Occurrence, item.Descriptor.Timeout())
+			event, timedOut, _, err := store.ParkWorkflowCodeEvent(ctx, run.ID, entry.Name, item.Descriptor.Event, item.Descriptor.Timeout())
 			if err != nil {
 				return false, err
 			}

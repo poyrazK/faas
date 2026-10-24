@@ -68,13 +68,15 @@ var (
 
 // Descriptor is stored in a step row's input under api.WorkflowCodeOpKey.
 type Descriptor struct {
-	Seq        int                    `json:"seq"`
-	Kind       Kind                   `json:"kind"`
-	DurationMS int64                  `json:"duration_ms,omitempty"`
-	Event      string                 `json:"event,omitempty"`
-	TimeoutMS  int64                  `json:"timeout_ms,omitempty"`
-	Occurrence int                    `json:"occurrence,omitempty"`
-	Retry      *api.WorkflowRetrySpec `json:"retry,omitempty"`
+	Seq        int    `json:"seq"`
+	Kind       Kind   `json:"kind"`
+	DurationMS int64  `json:"duration_ms,omitempty"`
+	Event      string `json:"event,omitempty"`
+	TimeoutMS  int64  `json:"timeout_ms,omitempty"`
+	// EventID is the event a resolved wait consumed; a timed-out wait has
+	// none, so it never takes an event a later wait is owed.
+	EventID string                 `json:"event_id,omitempty"`
+	Retry   *api.WorkflowRetrySpec `json:"retry,omitempty"`
 	// Failures counts consecutive failed entry calls on the $driver row.
 	Failures int `json:"failures,omitempty"`
 	// Seen is how many operations were resolved when the $driver row's
@@ -304,12 +306,6 @@ func Validate(journal Journal, response Response, limits Limits) (Plan, error) {
 	next := len(journal.Entries)
 	seen := map[int]bool{}
 	names := map[string]bool{}
-	events := map[string]int{}
-	for _, entry := range journal.Entries {
-		if entry.Kind == KindEvent {
-			events[entry.Event]++
-		}
-	}
 	bytes := journal.Bytes
 	for _, op := range response.Ops {
 		planned, err := validateOp(journal, op, limits, next, seen, names)
@@ -318,10 +314,6 @@ func Validate(journal Journal, response Response, limits Limits) (Plan, error) {
 		}
 		if planned.New {
 			next++
-			if op.Kind == KindEvent {
-				planned.Descriptor.Occurrence = events[op.Event]
-				events[op.Event]++
-			}
 		}
 		bytes += int64(len(op.Output) + len(planned.Error))
 		plan.Ops = append(plan.Ops, planned)

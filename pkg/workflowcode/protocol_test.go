@@ -97,11 +97,11 @@ func TestValidateNewOperations(t *testing.T) {
 	if plan.Ops[1].Descriptor.Duration() != 72*time.Hour || plan.Ops[1].Attempt != 0 {
 		t.Fatalf("sleep descriptor %+v", plan.Ops[1])
 	}
-	if plan.Ops[2].Descriptor.Timeout() != 30*24*time.Hour || plan.Ops[2].Descriptor.Occurrence != 0 {
-		t.Fatalf("event default timeout/occurrence %+v", plan.Ops[2].Descriptor)
+	if plan.Ops[2].Descriptor.Timeout() != 30*24*time.Hour || plan.Ops[2].Descriptor.Event != "approved" || plan.Ops[2].Descriptor.EventID != "" {
+		t.Fatalf("event default timeout %+v", plan.Ops[2].Descriptor)
 	}
-	if plan.Ops[3].Descriptor.Occurrence != 1 || plan.Ops[3].Descriptor.Timeout() != time.Minute {
-		t.Fatalf("second wait for the same event must take the next occurrence: %+v", plan.Ops[3].Descriptor)
+	if plan.Ops[3].Descriptor.Timeout() != time.Minute || plan.Ops[3].Descriptor.EventID != "" {
+		t.Fatalf("a new wait has consumed no event yet: %+v", plan.Ops[3].Descriptor)
 	}
 }
 

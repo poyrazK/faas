@@ -134,7 +134,8 @@ once. `faas.RunWorkflowLocally` is the local test runner.
 - **Loops.** Repeating a name records `poll`, `poll#2`, `poll#3`, …, so a step
   or wait can sit in a loop. Each wait for an event name consumes one event of
   that name, in arrival order, and an event sent before its wait starts is kept
-  for it.
+  for it. A wait that times out consumes nothing, so the next wait for that
+  name receives the next event.
 - **Idempotency.** Steps receive `idempotencyKey` (`idempotency_key` in Python),
   `workflow/<run-id>/<step-name>`, unchanged across attempts. Delivery is at
   least once, as for declarative steps; pass the key to external APIs.
