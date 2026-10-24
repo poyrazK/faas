@@ -712,7 +712,7 @@ func (a acceptanceSignalAdapter) SignalAndKill(ctx context.Context, id string, s
 // fixture needs Bash because Railpack's frontend emits a /bin/bash entrypoint.
 func acceptanceRuntimeBase(node bool) string {
 	if node {
-		return "node:24-bookworm-slim@sha256:ba849c60be29959425b8734d57b8b4b7d56f98edd9504c9af091d5281095a71e"
+		return "node:24-trixie-slim@sha256:43b9ba1142b8dcf33fa8f922ca1be85714adc444e0586c7cf7726daaeabc1bea"
 	}
 	return "debian:12-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171"
 }

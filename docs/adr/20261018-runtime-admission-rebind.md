@@ -361,12 +361,50 @@ capture, publication.
      app's next wake cold-boots its measured drives (ADR-005);
    - promoting an adopted measured warm spare is refused the same way, and
      the warm pool replaces it.
-   The cost is one lost snapshot per adopted measured guest per restart,
+   The cost was one lost snapshot per adopted measured guest per restart,
    counted in `schedd_warm_snapshot_errors_total{reason="vmm_call"}` on its
-   next park.
+   next park. Cold boots no longer pay it (below).
    Carrying the pins across the restart (passing the drive descriptors
    through the systemd fd store with the guest's other handoffs) is the
    follow-up that removes it; it needs its own design.
+   **Resolved for cold boots (2026-10-24).** A successor rebuilds the
+   handoff instead of inheriting descriptors
+   (`pkg/fcvm/runtime_drive_handoff_adopt.go`):
+   - The adoption block's admission carries `drives`: for each drive, in the
+     receipt's order, its drive ID, jail path and the device and inode the
+     predecessor pinned. The writer records them only for a protocol-2 cold
+     boot whose handoff has been observed, and only when they name the
+     receipt's drives.
+   - The adopted Firecracker still holds every drive it booted from, so
+     those inodes cannot have been freed and their numbers reused. The
+     successor finds each recorded inode among the adopted process's
+     descriptors and reopens it through `/proc/<pid>/fd/<n>`. That reaches
+     the inode from any mount namespace; the jail paths do not, because the
+     image binds exist only in the old vmmd's namespace and Firecracker's.
+   - The measurements come from the receipt. The rebuilt handoff starts with
+     the receipt's process PID and start time, then must pass the same live
+     observation a booted handoff passes (`observeApprovedRuntimeDrives`:
+     every inode held, read-only or writable as approved, by that exact
+     process and jail uid), and its consumption must equal the receipt's.
+     Capture re-measures the read-only drives as it always does.
+   - A pin that does not check out, a restored guest (its handoff also owns
+     the restore load and memory blobs, which are not recorded) and any
+     other refusal leave the guest adopted without a handoff, as before:
+     it serves, and its next capture is refused.
+   - The systemd fd store was the first idea and is not used. It holds
+     descriptors only across `systemctl restart` (a stop discards it), only
+     where vmmd runs under systemd, and adds up to one descriptor per drive
+     per guest to a store shared with the job-exit listeners. Firecracker's
+     own descriptors are already the proof ADR-435 requires; the fd store
+     would add a second, weaker one.
+   - Skew: the field is new in the version-7 block, which is decoded
+     strictly. No release has written version-7 blocks yet; once one has,
+     `adoption_record` stays off until every node and rollback target reads
+     this field, as for the block itself.
+   Still refused: capture of an adopted guest restored from a measured
+   snapshot, and promotion of an adopted measured warm spare (promotion is
+   paused-restore only). Both need the restore load recorded, which is the
+   protocol-2 resume re-bind still owed below.
 2. **`migrating` rows.** An adopted live-migration source keeps its pause
    (`migration_paused`). Should a re-bind be allowed in `migrating`, or should
    the migration be cancelled and re-tried after the re-bind? This design

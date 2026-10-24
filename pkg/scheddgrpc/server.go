@@ -1492,6 +1492,8 @@ func nodeTelemetryFromProto(in []*scheddpb.InstanceTelemetry) []sched.NodeTeleme
 		if value := row.GetLastRequestAt(); value != nil {
 			item.LastRequestAt = value.AsTime()
 		}
+		item.QuietPause = sched.QuietPauseRecordFromProto(row.GetQuietPausedSince(),
+			row.GetQuietLastPauseStartedAt(), row.GetQuietLastPauseEndedAt(), row.GetQuietPausedNsTotal())
 		if value := row.GetNetTxBytes(); value != nil {
 			v := value.GetValue()
 			item.NetTxBytes = &v

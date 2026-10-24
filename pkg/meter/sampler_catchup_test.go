@@ -21,11 +21,43 @@ type ledgerStore struct {
 	failMinute time.Time
 	appends    map[time.Time]int64 // minute -> mb_seconds appended
 	calls      map[time.Time]int   // minute -> AppendUsage calls
+	// paused is the quiet pause ledger by minute (ADR-20261023171905);
+	// pausedErr fails its reads and pausedReads counts them.
+	paused      map[time.Time]map[string]state.QuietPausedSeconds
+	pausedErr   error
+	pausedReads int
 }
 
 func newLedgerStore() *ledgerStore {
 	return &ledgerStore{MemStore: state.NewMemStore(), resident: map[time.Time]map[string]int64{},
-		appends: map[time.Time]int64{}, calls: map[time.Time]int{}}
+		appends: map[time.Time]int64{}, calls: map[time.Time]int{},
+		paused: map[time.Time]map[string]state.QuietPausedSeconds{}}
+}
+
+func (s *ledgerStore) QuietPausedSeconds(_ context.Context, start, _ time.Time) (map[string]state.QuietPausedSeconds, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.pausedReads++
+	if s.pausedErr != nil {
+		return nil, s.pausedErr
+	}
+	out := map[string]state.QuietPausedSeconds{}
+	for id, p := range s.paused[start] {
+		out[id] = p
+	}
+	return out, nil
+}
+
+func (s *ledgerStore) RecordQuietPauses(context.Context, string, time.Time, []state.QuietPause) error {
+	return nil
+}
+
+func (s *ledgerStore) OpenQuietPauses(context.Context, string) ([]state.QuietPause, error) {
+	return nil, nil
+}
+
+func (s *ledgerStore) DeleteQuietPausesBefore(context.Context, time.Time, int) (int64, error) {
+	return 0, nil
 }
 
 func (s *ledgerStore) InstanceBillingSeconds(_ context.Context, start, _ time.Time) (map[string]int64, error) {

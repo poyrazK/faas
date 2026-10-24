@@ -394,7 +394,10 @@ type VMInstanceStat struct {
 	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused bool
 	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
-	Frozen        bool
+	Frozen bool
+	// QuietPause is the quiet pause record for the pause ledger
+	// (ADR-20261023171905).
+	QuietPause    QuietPauseRecord
 	LastRequestAt time.Time
 	// RequestCountTotal is vmmd's cumulative ForwardHTTP count for this
 	// instance. It is optional because older vmmds do not emit it and the
@@ -1786,6 +1789,8 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		InflightRequests: in.GetInflightRequests(),
 		QuietPaused:      in.GetQuietPaused(),
 		Frozen:           in.GetFrozen(),
+		QuietPause: QuietPauseRecordFromProto(in.GetQuietPausedSince(),
+			in.GetQuietLastPauseStartedAt(), in.GetQuietLastPauseEndedAt(), in.GetQuietPausedNsTotal()),
 	}
 	if v := in.GetResidentBytes(); v != nil {
 		b := v.GetValue()

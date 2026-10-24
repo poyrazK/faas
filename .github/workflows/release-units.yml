@@ -82,7 +82,7 @@ jobs:
       base_sha: ${{ steps.base.outputs.sha }}
       build_cache_hit: ${{ steps.build-cache.outputs.cache-hit }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Unit versions walk first-parent history back to the base tag:
           # main's history and the release tags, not every branch. Files
@@ -93,7 +93,7 @@ jobs:
       - name: Fetch main's history and release tags
         run: scripts/ci/fetch_release_history.sh
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
@@ -120,7 +120,7 @@ jobs:
       # base starts from the newest entry.
       - name: Restore the release build cache
         id: build-cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -137,7 +137,7 @@ jobs:
         run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
       - name: Restore main-branch Go module cache
         if: steps.build-cache.outputs.cache-matched-key == ''
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -151,7 +151,7 @@ jobs:
       # --code-cache): the same for every unit release over one base. Each
       # run that built more of them saves a new entry; the newest is used.
       - name: Restore the base release's code digests
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/unit-base-code.json
           key: unit-base-code-${{ steps.base.outputs.sha }}-${{ github.run_id }}
@@ -213,7 +213,7 @@ jobs:
 
       - name: Save the base release's code digests
         if: steps.detect.outputs.code_cache_new == 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ${{ runner.temp }}/unit-base-code.json
           key: unit-base-code-${{ steps.base.outputs.sha }}-${{ github.run_id }}
@@ -260,7 +260,7 @@ jobs:
 
       - name: Upload unit release
         if: steps.detect.outputs.eligible == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: gregale-unit-release
           path: ${{ runner.temp }}/gregale-units/release/
@@ -286,18 +286,18 @@ jobs:
     permissions:
       contents: read
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           filter: blob:none
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           cache: false
 
       - name: Restore the release build cache
         id: cache
-        uses: actions/cache/restore@v4
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -312,7 +312,7 @@ jobs:
 
       - name: Save the release build cache
         if: steps.cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@v4
+        uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: |
             ~/.cache/go-build
@@ -350,7 +350,7 @@ jobs:
       # A directory of its own: a sparse checkout in the default workspace
       # of this self-hosted runner leaves core.sparseCheckout set, and the
       # next job's full checkout there keeps only scripts/ci.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: preflight-src
           sparse-checkout: scripts/ci

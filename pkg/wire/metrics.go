@@ -6230,18 +6230,18 @@ func (m *OpsMetrics) WarmPoolResumeTotal(outcome string) prometheus.Counter {
 
 // Bounded label sets of the frozen-tier series (ADR-1151).
 var (
-	FrozenFreezeOutcomes = []string{"frozen", "frozen_early", "busy", "error", "ineligible", "no_snapshot", "node_full"}
+	FrozenFreezeOutcomes = []string{"frozen", "frozen_early", "busy", "error", "ineligible", "no_snapshot", "node_full", "node_draining"}
 	FrozenThawOutcomes   = []string{"success", "failed", "no_capacity", "fast", "fast_refused"}
 	// FrozenFastPathSkipReasons and FrozenThawTicketOutcomes are the closed
 	// label sets of the ADR-1740 fast path's series.
-	FrozenFastPathSkipReasons = []string{"deployment", "scope", "selection", "no_ticket", "admission", "capacity"}
+	FrozenFastPathSkipReasons = []string{"deployment", "scope", "selection", "no_ticket", "admission", "capacity", "node_draining"}
 	FrozenThawTicketOutcomes  = []string{"issued", "error", "mode", "not_selected", "operator_cold_boot",
 		"app_inactive", "managed_standards", "account", "organization", "shape", "config"}
 	// OwnerCacheOutcomes are schedd_owner_cache_total's closed label set
 	// (ADR-1741).
 	OwnerCacheOutcomes = []string{"hit", "miss", "invalidated", "resync", "refused", "guarded_publish", "guarded_publish_moved", "selection", "organization"}
 	FrozenParkReasons  = []string{"ttl", "memory_pressure", "superseded", "config_changed", "stale",
-		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park"}
+		"ineligible", "no_capacity", "thaw_failed", "publish_failed", "node_restart", "park", "node_draining"}
 	// FrozenCompressOutcomes: compressed keeps the VM frozen; insufficient,
 	// unavailable (no memory-only swap) and error park it.
 	FrozenCompressOutcomes = []string{"compressed", "insufficient", "unavailable", "error"}

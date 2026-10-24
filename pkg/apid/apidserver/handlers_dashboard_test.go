@@ -127,7 +127,7 @@ func TestDashboardHandler_RendersIndex(t *testing.T) {
 	body := rec.Body.String()
 	for _, want := range []string{
 		"<!doctype html>",
-		"htmx.org@2.0.4",
+		"/dashboard/assets/htmx-2.0.4.min.js",
 		"/dashboard/",
 		"Signed in as",
 	} {
