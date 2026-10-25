@@ -28183,6 +28183,38 @@ END)::double precision)) OR ((metric <> ALL (ARRAY['mcp_protocol_error_rate_pct'
 
 
 --
+-- Name: alert_test_sends; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_test_sends (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    subject_id uuid NOT NULL,
+    event jsonb DEFAULT '{}'::jsonb NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    claim_token uuid,
+    claimed_until timestamp with time zone,
+    result jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT alert_test_sends_check CHECK (((state = 'claimed'::text) = ((claim_token IS NOT NULL) AND (claimed_until IS NOT NULL)))),
+    CONSTRAINT alert_test_sends_check1 CHECK (((state = 'done'::text) = ((result IS NOT NULL) AND (completed_at IS NOT NULL)))),
+    CONSTRAINT alert_test_sends_event_check CHECK ((pg_column_size(event) <= 65536)),
+    CONSTRAINT alert_test_sends_kind_check CHECK ((kind = ANY (ARRAY['notification_channel'::text, 'alert_rule_webhook'::text]))),
+    CONSTRAINT alert_test_sends_result_check CHECK (((result IS NULL) OR (pg_column_size(result) <= 8192))),
+    CONSTRAINT alert_test_sends_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'claimed'::text, 'done'::text])))
+);
+
+
+--
+-- Name: TABLE alert_test_sends; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.alert_test_sends IS 'Test sends apid relays to meterd, which holds the alerting seal-domain key (ADR 20261022111812). Short-lived: apid deletes a row once it reads the result, meterd prunes abandoned ones.';
+
+
+--
 -- Name: api_consumer_billing_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55426,6 +55458,14 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: alert_test_sends alert_test_sends_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_test_sends
+    ADD CONSTRAINT alert_test_sends_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: api_consumer_billing_policies api_consumer_billing_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -67666,6 +67706,13 @@ CREATE INDEX alert_rules_slo_id_idx ON public.alert_rules USING btree (slo_id) W
 --
 
 CREATE INDEX alert_rules_synthetic_check_id_idx ON public.alert_rules USING btree (synthetic_check_id) WHERE (synthetic_check_id IS NOT NULL);
+
+
+--
+-- Name: alert_test_sends_open; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_test_sends_open ON public.alert_test_sends USING btree (created_at) WHERE (state <> 'done'::text);
 
 
 --
@@ -84442,6 +84489,14 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_rules
     ADD CONSTRAINT alert_rules_synthetic_check_id_fkey FOREIGN KEY (synthetic_check_id) REFERENCES public.synthetic_checks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_test_sends alert_test_sends_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_test_sends
+    ADD CONSTRAINT alert_test_sends_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
