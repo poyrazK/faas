@@ -1,5 +1,6 @@
-// adr: 20261024225612
-package sched
+// adr: 20261024225612 — CPU-compatible snapshot restore and per-platform
+// snapshot slots (amendment 1).
+package sched_test
 
 import (
 	"context"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -16,12 +18,14 @@ const (
 	cascadeSig = "cascadelake/GenuineIntel-6-85-7/aaaaaaaaaaaa"
 	iceSig     = "icelake/GenuineIntel-6-106-6/bbbbbbbbbbbb"
 	rocketSig  = "unknown/GenuineIntel-6-167-1/cccccccccccc"
+	milanSig   = "milan/AuthenticAMD-25-1-1/dddddddddddd"
 )
 
+func cpuNode(template, model string) state.ComputeNode {
+	return state.ComputeNode{CPUTemplate: template, CPUModel: model}
+}
+
 func TestSnapshotRestorableOnRules(t *testing.T) {
-	node := func(template, model string) state.ComputeNode {
-		return state.ComputeNode{CPUTemplate: template, CPUModel: model}
-	}
 	snap := func(template, model string) state.Snapshot {
 		return state.Snapshot{CPUTemplate: template, CPUModel: model}
 	}
@@ -32,46 +36,44 @@ func TestSnapshotRestorableOnRules(t *testing.T) {
 		legacyOK bool
 		want     bool
 	}{
-		{"T2CL capture on a T2CL Cascade Lake node", snap("T2CL", iceSig), node("T2CL", cascadeSig), true, true},
-		{"T2CL capture on a template-less Ice Lake node", snap("T2CL", cascadeSig), node("", iceSig), true, true},
-		{"T2CL capture on Rocket Lake", snap("T2CL", cascadeSig), node("", rocketSig), true, false},
-		{"T2CL capture on a node that reports nothing", snap("T2CL", cascadeSig), node("", ""), true, false},
-		{"template-less capture on the identical host", snap("", iceSig), node("T2CL", iceSig), true, true},
-		{"template-less Ice Lake capture on Cascade Lake", snap("", iceSig), node("", cascadeSig), true, false},
-		{"legacy row on a template-less node", snap("", ""), node("", cascadeSig), true, true},
-		{"legacy row on an unreported node", snap("", ""), node("", ""), true, true},
-		{"legacy row on a templated node", snap("", ""), node("T2CL", cascadeSig), true, false},
-		{"legacy row in a mixed template-less fleet", snap("", ""), node("", cascadeSig), false, false},
+		{"T2CL capture on a T2CL Cascade Lake node", snap("T2CL", iceSig), cpuNode("T2CL", cascadeSig), true, true},
+		{"T2CL capture on a template-less Ice Lake node", snap("T2CL", cascadeSig), cpuNode("", iceSig), true, true},
+		{"T2CL capture on Rocket Lake", snap("T2CL", cascadeSig), cpuNode("", rocketSig), true, false},
+		{"T2CL capture on AMD Milan", snap("T2CL", cascadeSig), cpuNode("", milanSig), true, false},
+		{"T2CL capture on a node that reports nothing", snap("T2CL", cascadeSig), cpuNode("", ""), true, false},
+		{"template-less capture on the identical host", snap("", iceSig), cpuNode("T2CL", iceSig), true, true},
+		{"template-less Ice Lake capture on Cascade Lake", snap("", iceSig), cpuNode("", cascadeSig), true, false},
+		{"legacy row on a template-less node", snap("", ""), cpuNode("", cascadeSig), true, true},
+		{"legacy row on an unreported node", snap("", ""), cpuNode("", ""), true, true},
+		{"legacy row on a templated node", snap("", ""), cpuNode("T2CL", cascadeSig), true, false},
+		{"legacy row in a mixed template-less fleet", snap("", ""), cpuNode("", cascadeSig), false, false},
 	}
 	for _, tc := range cases {
-		if got := snapshotRestorableOn(tc.snap, tc.node, tc.legacyOK); got != tc.want {
+		if got := sched.SnapshotRestorableOn(tc.snap, tc.node, tc.legacyOK); got != tc.want {
 			t.Errorf("%s: got %v, want %v", tc.name, got, tc.want)
 		}
 	}
-	if !legacySnapshotsRestorable([]state.ComputeNode{node("", cascadeSig), node("", cascadeSig), node("", ""), node("T2CL", iceSig)}) {
+	if !sched.LegacySnapshotsRestorable([]state.ComputeNode{cpuNode("", cascadeSig), cpuNode("", cascadeSig), cpuNode("", ""), cpuNode("T2CL", iceSig)}) {
 		t.Error("one template-less model plus unreported and templated nodes must keep legacy rows restorable")
 	}
-	if legacySnapshotsRestorable([]state.ComputeNode{node("", cascadeSig), node("", iceSig)}) {
+	if sched.LegacySnapshotsRestorable([]state.ComputeNode{cpuNode("", cascadeSig), cpuNode("", iceSig)}) {
 		t.Error("two template-less models must retire legacy restores")
 	}
 }
 
 func TestCPUIdentityWarning(t *testing.T) {
-	n := func(template, model string) state.ComputeNode {
-		return state.ComputeNode{CPUTemplate: template, CPUModel: model}
-	}
 	for _, tc := range []struct {
 		name  string
 		nodes []state.ComputeNode
 		warn  bool
 	}{
-		{"one T2CL cell across Cascade and Ice Lake", []state.ComputeNode{n("T2CL", cascadeSig), n("T2CL", iceSig)}, false},
-		{"identical template-less nodes", []state.ComputeNode{n("", cascadeSig), n("", cascadeSig)}, false},
-		{"unreported nodes are not counted", []state.ComputeNode{n("", ""), n("", cascadeSig)}, false},
-		{"mixed templates", []state.ComputeNode{n("T2CL", cascadeSig), n("", cascadeSig)}, true},
-		{"template-less nodes on different CPUs", []state.ComputeNode{n("", cascadeSig), n("", iceSig)}, true},
+		{"one T2CL cell across Cascade and Ice Lake", []state.ComputeNode{cpuNode("T2CL", cascadeSig), cpuNode("T2CL", iceSig)}, false},
+		{"identical template-less nodes", []state.ComputeNode{cpuNode("", cascadeSig), cpuNode("", cascadeSig)}, false},
+		{"unreported nodes are not counted", []state.ComputeNode{cpuNode("", ""), cpuNode("", cascadeSig)}, false},
+		{"mixed templates", []state.ComputeNode{cpuNode("T2CL", cascadeSig), cpuNode("", cascadeSig)}, true},
+		{"template-less nodes on different CPUs", []state.ComputeNode{cpuNode("", cascadeSig), cpuNode("", iceSig)}, true},
 	} {
-		if _, warning := CPUIdentityWarning(tc.nodes); (warning != "") != tc.warn {
+		if _, warning := sched.CPUIdentityWarning(tc.nodes); (warning != "") != tc.warn {
 			t.Errorf("%s: warning = %q", tc.name, warning)
 		}
 	}
@@ -90,6 +92,19 @@ func setNodeCPU(t *testing.T, store state.Store, nodeID, template, model string,
 		node.AdmissionCeilingMB = ceilingMB
 	}
 	if _, err := store.UpsertComputeNode(ctx, node); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// createCPUSnapshot stores a live init-tier capture of dep from a node with
+// the given CPU identity.
+func createCPUSnapshot(t *testing.T, store *state.MemStore, depID, name, template, model string, at time.Time) {
+	t.Helper()
+	if _, err := store.CreateSnapshot(context.Background(), state.Snapshot{
+		DeploymentID: depID, FCVersion: "1.10.0", Tier: state.SnapshotTierInit, CreatedAt: at,
+		StorageKey:  state.SnapshotCaptureMemKey(depID, state.SnapshotTierInit, name),
+		CPUTemplate: template, CPUModel: model,
+	}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -123,13 +138,13 @@ func TestWakeRestoresOnlyOnCPUCompatibleNodes(t *testing.T) {
 		{
 			name:         "no compatible node cold boots",
 			snapTemplate: "T2CL", snapModel: cascadeSig,
-			a: nodeCPU{"", rocketSig, 0, false}, b: nodeCPU{"", rocketSig, 0, false},
+			a: nodeCPU{"", rocketSig, 0, false}, b: nodeCPU{"", milanSig, 0, false},
 			wantRestore: false,
 		},
 		{
 			name:         "compatible node full cold boots on the other",
 			snapTemplate: "T2CL", snapModel: cascadeSig,
-			a: nodeCPU{"T2CL", iceSig, 1024, true}, b: nodeCPU{"", rocketSig, 0, false},
+			a: nodeCPU{"T2CL", iceSig, 1024, true}, b: nodeCPU{"", milanSig, 0, false},
 			wantRestore: false, wantNode: "b",
 		},
 		{
@@ -148,31 +163,26 @@ func TestWakeRestoresOnlyOnCPUCompatibleNodes(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx := context.Background()
 			store := state.NewMemStore()
-			a, b := seedTwoNodes(t, store)
+			a, b := sched.SeedTwoNodes(t, store)
 			setNodeCPU(t, store, a, tc.a.template, tc.a.model, tc.a.ceilingMB)
 			setNodeCPU(t, store, b, tc.b.template, tc.b.model, tc.b.ceilingMB)
-			_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
-			if _, err := store.CreateSnapshot(ctx, state.Snapshot{
-				DeploymentID: dep.ID, FCVersion: "1.10.0",
-				StorageKey:  state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, "cpu"),
-				CPUTemplate: tc.snapTemplate, CPUModel: tc.snapModel,
-			}); err != nil {
-				t.Fatal(err)
-			}
-			vmm := &fakeVMM{}
-			e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+			_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 5)
+			createCPUSnapshot(t, store, dep.ID, "cpu", tc.snapTemplate, tc.snapModel, time.Time{})
+			vmm := &sched.FakeVMM{}
+			e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
 			if tc.a.full {
-				e.capacityTable.Replace(CapacityReport{NodeID: a, UsedMB: int32(tc.a.ceilingMB)})
+				(*e.XCapacityTable()).Replace(sched.CapacityReport{NodeID: a, UsedMB: int32(tc.a.ceilingMB)})
 			}
 			got, err := e.Wake(ctx, app.ID, "", "", "gateway")
 			if err != nil {
 				t.Fatal(err)
 			}
-			if tc.wantRestore && (vmm.restores != 1 || vmm.coldBoots != 0) {
-				t.Fatalf("restores=%d cold boots=%d, want one restore", vmm.restores, vmm.coldBoots)
+			restores, coldBoots := *vmm.Restores(), *vmm.ColdBoots()
+			if tc.wantRestore && (restores != 1 || coldBoots != 0) {
+				t.Fatalf("restores=%d cold boots=%d, want one restore", restores, coldBoots)
 			}
-			if !tc.wantRestore && (vmm.restores != 0 || vmm.coldBoots != 1) {
-				t.Fatalf("restores=%d cold boots=%d, want one cold boot", vmm.restores, vmm.coldBoots)
+			if !tc.wantRestore && (restores != 0 || coldBoots != 1) {
+				t.Fatalf("restores=%d cold boots=%d, want one cold boot", restores, coldBoots)
 			}
 			if want := map[string]string{"a": a, "b": b}[tc.wantNode]; want != "" && got.NodeID != want {
 				t.Fatalf("wake node = %s, want %s", got.NodeID, want)
@@ -181,74 +191,54 @@ func TestWakeRestoresOnlyOnCPUCompatibleNodes(t *testing.T) {
 	}
 }
 
-// lastSnapshotWritten decodes the most recent snapshot_written payload.
-func lastSnapshotWritten(t *testing.T, n *fakeNotifier) map[string]any {
-	t.Helper()
-	n.mu.Lock()
-	defer n.mu.Unlock()
-	for i := len(n.events) - 1; i >= 0; i-- {
-		if n.events[i].channel == db.NotifySnapshotWritten {
-			var out map[string]any
-			if err := json.Unmarshal([]byte(n.events[i].payload), &out); err != nil {
-				t.Fatal(err)
-			}
-			return out
-		}
-	}
-	t.Fatal("no snapshot_written notification")
-	return nil
-}
-
 func TestSnapshotWrittenCarriesCapturingNodeCPU(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	a, _ := seedTwoNodes(t, store)
+	a, _ := sched.SeedTwoNodes(t, store)
 	setNodeCPU(t, store, a, "T2CL", cascadeSig, 0)
-	notif := &fakeNotifier{}
-	e := newEngine(t, store, &fakeVMM{}, notif, "1.10.0")
-	e.emitSnapshotWritten(ctx, "ins", time.Time{}, "dep", a, "", "key", SnapshotBytes{}, state.SnapshotTierInit, nil)
-	payload := lastSnapshotWritten(t, notif)
-	if payload["cpu_template"] != "T2CL" || payload["cpu_model"] != cascadeSig {
+	notif := &sched.FakeNotifier{}
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, notif, "1.10.0")
+	decode := func() map[string]any {
+		t.Helper()
+		raw, ok := notif.LastPayload(db.NotifySnapshotWritten)
+		if !ok {
+			t.Fatal("no snapshot_written notification")
+		}
+		var out map[string]any
+		if err := json.Unmarshal([]byte(raw), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+	e.XEmitSnapshotWritten(ctx, a)
+	if payload := decode(); payload["cpu_template"] != "T2CL" || payload["cpu_model"] != cascadeSig {
 		t.Fatalf("snapshot_written cpu identity = %v / %v", payload["cpu_template"], payload["cpu_model"])
 	}
-	e.emitSnapshotWritten(ctx, "ins", time.Time{}, "dep", "unregistered", "", "key", SnapshotBytes{}, state.SnapshotTierInit, nil)
-	payload = lastSnapshotWritten(t, notif)
-	if _, ok := payload["cpu_template"]; ok {
+	e.XEmitSnapshotWritten(ctx, "unregistered")
+	if payload := decode(); payload["cpu_template"] != nil {
 		t.Fatalf("an unknown node must leave a legacy row, got %v", payload)
 	}
 }
-
-const milanSig = "milan/AuthenticAMD-25-1-1/dddddddddddd"
 
 // Amendment 1: a park reuses a live row only when it restores on the node the
 // instance runs on, so a new CPU platform captures its own snapshot.
 func TestParkReuseIsPerNodePlatform(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	intelNode, amdNode := seedTwoNodes(t, store)
+	intelNode, amdNode := sched.SeedTwoNodes(t, store)
 	setNodeCPU(t, store, intelNode, "T2CL", cascadeSig, 0)
 	setNodeCPU(t, store, amdNode, "", milanSig, 0)
-	_, _, dep := seedApp(t, store, api.PlanPro, 256, 5)
-	create := func(name, template, model string) {
-		t.Helper()
-		if _, err := store.CreateSnapshot(ctx, state.Snapshot{
-			DeploymentID: dep.ID, FCVersion: "1.10.0", Tier: state.SnapshotTierInit,
-			StorageKey:  state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, name),
-			CPUTemplate: template, CPUModel: model,
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	create("intel", "T2CL", iceSig)
-	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
-	if _, ok := e.reusableSnapshotOn(ctx, dep.ID, state.SnapshotTierInit, intelNode); !ok {
+	_, _, dep := sched.SeedApp(t, store, api.PlanPro, 256, 5)
+	createCPUSnapshot(t, store, dep.ID, "intel", "T2CL", iceSig, time.Time{})
+	e := sched.XNewEngine(t, store, &sched.FakeVMM{}, &sched.FakeNotifier{}, "1.10.0")
+	if _, ok := e.XReusableSnapshotOn(ctx, dep.ID, state.SnapshotTierInit, intelNode); !ok {
 		t.Fatal("a T2CL row must be reusable on a T2CL Cascade Lake node")
 	}
-	if _, ok := e.reusableSnapshotOn(ctx, dep.ID, state.SnapshotTierInit, amdNode); ok {
+	if _, ok := e.XReusableSnapshotOn(ctx, dep.ID, state.SnapshotTierInit, amdNode); ok {
 		t.Fatal("the AMD node must capture its own snapshot, not reuse the Intel one")
 	}
-	create("amd", "", milanSig)
-	snap, ok := e.reusableSnapshotOn(ctx, dep.ID, state.SnapshotTierInit, amdNode)
+	createCPUSnapshot(t, store, dep.ID, "amd", "", milanSig, time.Time{})
+	snap, ok := e.XReusableSnapshotOn(ctx, dep.ID, state.SnapshotTierInit, amdNode)
 	if !ok || snap.CPUModel != milanSig {
 		t.Fatalf("after its capture the AMD node reuses its own row, got %+v %v", snap, ok)
 	}
@@ -263,32 +253,22 @@ func TestParkReuseIsPerNodePlatform(t *testing.T) {
 func TestWakeRestoresAnotherPlatformsSnapshotWhenTheFirstIsFull(t *testing.T) {
 	ctx := context.Background()
 	store := state.NewMemStore()
-	intelNode, amdNode := seedTwoNodes(t, store)
+	intelNode, amdNode := sched.SeedTwoNodes(t, store)
 	setNodeCPU(t, store, intelNode, "T2CL", iceSig, 1024)
 	setNodeCPU(t, store, amdNode, "", milanSig, 0)
-	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+	_, app, dep := sched.SeedApp(t, store, api.PlanPro, 256, 5)
 	base := time.Now().Add(-time.Hour)
-	for _, row := range []struct {
-		name, template, model string
-		at                    time.Time
-	}{{"amd", "", milanSig, base}, {"intel", "T2CL", cascadeSig, base.Add(time.Minute)}} {
-		if _, err := store.CreateSnapshot(ctx, state.Snapshot{
-			DeploymentID: dep.ID, FCVersion: "1.10.0", Tier: state.SnapshotTierInit, CreatedAt: row.at,
-			StorageKey:  state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, row.name),
-			CPUTemplate: row.template, CPUModel: row.model,
-		}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	vmm := &fakeVMM{}
-	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
-	e.capacityTable.Replace(CapacityReport{NodeID: intelNode, UsedMB: 1024})
+	createCPUSnapshot(t, store, dep.ID, "amd", "", milanSig, base)
+	createCPUSnapshot(t, store, dep.ID, "intel", "T2CL", cascadeSig, base.Add(time.Minute))
+	vmm := &sched.FakeVMM{}
+	e := sched.XNewEngine(t, store, vmm, &sched.FakeNotifier{}, "1.10.0")
+	(*e.XCapacityTable()).Replace(sched.CapacityReport{NodeID: intelNode, UsedMB: 1024})
 	got, err := e.Wake(ctx, app.ID, "", "", "gateway")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.NodeID != amdNode || vmm.restores != 1 || vmm.coldBoots != 0 {
+	if got.NodeID != amdNode || *vmm.Restores() != 1 || *vmm.ColdBoots() != 0 {
 		t.Fatalf("wake node=%s restores=%d cold boots=%d; want a restore of the AMD row on the AMD node",
-			got.NodeID, vmm.restores, vmm.coldBoots)
+			got.NodeID, *vmm.Restores(), *vmm.ColdBoots())
 	}
 }

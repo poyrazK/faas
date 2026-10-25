@@ -1,3 +1,5 @@
+// adr: 20261024225612 — CPU templates: host classification, template safety
+// and the restore-compatibility rule.
 package fcvm
 
 import (
