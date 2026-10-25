@@ -7,16 +7,12 @@ import (
 
 var appSlugRE = regexp.MustCompile(`^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$`)
 
-// reservedAppSlugs is mirrored in
-// deploy/cloudflare/public-timeout-worker/app-hosts.json, which tells the
-// public-timeout Worker which hosts are apps (ADR-1343); a test keeps the two
-// equal. "origin" and "app-edge" are the Worker's origin hostnames.
 var reservedAppSlugs = map[string]struct{}{
-	"account": {}, "admin": {}, "api": {}, "app-edge": {}, "assets": {},
-	"billing": {}, "cdn": {}, "console": {}, "dashboard": {}, "docs": {},
-	"help": {}, "login": {}, "logout": {}, "mail": {}, "ns": {},
-	"operations": {}, "origin": {}, "security": {}, "signup": {}, "static": {},
-	"status": {}, "support": {}, "www": {},
+	"account": {}, "admin": {}, "api": {}, "assets": {}, "billing": {},
+	"cdn": {}, "console": {}, "dashboard": {}, "docs": {}, "help": {},
+	"login": {}, "logout": {}, "mail": {}, "ns": {}, "operations": {},
+	"security": {}, "signup": {}, "static": {}, "status": {}, "support": {},
+	"www": {},
 }
 
 // ValidAppSlug is the canonical public app-name contract shared by direct

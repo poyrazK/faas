@@ -73,10 +73,11 @@ func TestWorkerAppHostsMatchAppSlugRules(t *testing.T) {
 		}
 	}
 
-	// Platform labels must never be allocatable as apps.
+	// Platform labels are kept off the app edge by the Worker alone; listing
+	// a reserved slug there too would hide a drift between the two lists.
 	for _, label := range hosts.PlatformLabels {
-		if ValidAppSlug(label) && !IsReservedAppSlug(label) {
-			t.Errorf("platform label %q is a valid, unreserved app slug; reserve it", label)
+		if IsReservedAppSlug(label) {
+			t.Errorf("platform label %q is already a reserved slug; list it only in reserved_slugs", label)
 		}
 	}
 }
