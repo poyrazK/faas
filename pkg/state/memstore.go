@@ -17439,6 +17439,32 @@ func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs
 	return used, nil
 }
 
+// SetComputeNodeReadiness mirrors PgStore.SetComputeNodeReadiness.
+func (m *MemStore) SetComputeNodeReadiness(_ context.Context, nodeID string, readiness NodeReadiness, reason string) (bool, error) {
+	if !readiness.Valid() {
+		return false, fmt.Errorf("state: set compute_node %s readiness: invalid value %q", nodeID, readiness)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok {
+		return false, nil
+	}
+	current := ""
+	if n.ReadinessReason != nil {
+		current = *n.ReadinessReason
+	}
+	if n.Readiness == readiness && current == reason {
+		return false, nil
+	}
+	n.Readiness, n.ReadinessReason = readiness, nil
+	if reason != "" {
+		n.ReadinessReason = &reason
+	}
+	m.computeNodes[nodeID] = n
+	return true, nil
+}
+
 func (m *MemStore) HeartbeatComputeNode(_ context.Context, nodeID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

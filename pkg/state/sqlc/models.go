@@ -2672,6 +2672,8 @@ type ComputeNode struct {
 	VmmdEpochIncarnation       pgtype.UUID
 	VmmdPredecessorIncarnation pgtype.UUID
 	VmmdRestartNoticeUntil     pgtype.Timestamptz
+	Readiness                  string
+	ReadinessReason            pgtype.Text
 }
 
 type ComputeNodeHeartbeat struct {
