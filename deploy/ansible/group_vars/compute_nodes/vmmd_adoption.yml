@@ -1,0 +1,11 @@
+# vmmd restart adoption (docs/adr/20261017-vmmd-restart-adoption.md), canary
+# step 1: every present and future compute node writes version-7 adoption
+# blocks. Every release since rc.294 reads them, so a rollback target still
+# adopts or quarantines as before.
+#
+# Rollouts keep draining: adoption stays off, so `vmmd adoption-check` answers
+# drain, and each vmmd start classifies the records in a dry run instead
+# (vmmd_adoption_instances_total{dry_run="true"}, vmmd_adoption_refused_total).
+# After one release with a clean dry run, step 2 turns vmmd_adopt_running_vms
+# on for one canary host; its next rollout restarts vmmd without a drain.
+vmmd_adoption_record: true
