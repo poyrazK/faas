@@ -4713,7 +4713,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 
 	lease, preparedNetwork, err := m.acquireWakeNetwork(req, computeLease.egressFunded()) //nolint:contextcheck // Failed cache claims use bounded daemon-owned cleanup, independent of a canceled Wake RPC.
 	if err != nil {
-		return nil, fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err)
+		return nil, wakeNotStarted(fmt.Errorf("wake %s: acquire lease: %w", req.Instance, err))
 	}
 	phases.mark("lease_acquire")
 	// Stamp the Plan onto the Lease (issue #301, ADR-044) so the
@@ -5065,7 +5065,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			if m.wakeFailureMetrics != nil {
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
 			}
-			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, netErr)
+			return nil, wakeNotStarted(fmt.Errorf("wake %s: network setup: %w", req.Instance, netErr))
 		}
 		timings.netnsTapMs = network.duration.Milliseconds()
 		if m.preparedNetworks != nil {
@@ -5105,7 +5105,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 			if m.wakeFailureMetrics != nil {
 				m.wakeFailureMetrics.WakeFailure("", req.AppID, WakeReasonNetnsFail).Inc()
 			}
-			return nil, fmt.Errorf("wake %s: network setup: %w", req.Instance, err)
+			return nil, wakeNotStarted(fmt.Errorf("wake %s: network setup: %w", req.Instance, err))
 		}
 		timings.netnsTapMs = time.Since(netnsStart).Milliseconds()
 		if !req.ExecutionOnly {
