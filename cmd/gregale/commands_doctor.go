@@ -388,6 +388,13 @@ func doctorCheckEnvRequired(path string) doctorCheck {
 		if _, ok := platformInjectedEnvVars[r]; ok {
 			continue
 		}
+		// FAAS_ is the platform's reserved namespace: guest-init stamps the
+		// identity and runtime variables (FAAS_APP_ID, FAAS_INSTANCE_ID, …)
+		// and overrides customer values. Fresh mcp-go and customer-operation
+		// templates failed doctor on them (Hunt 14 H14-52).
+		if strings.HasPrefix(r, "FAAS_") {
+			continue
+		}
 		if _, ok := declared[r]; !ok {
 			if optional[r] {
 				continue
