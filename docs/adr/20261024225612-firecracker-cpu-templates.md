@@ -103,6 +103,18 @@ only changes what its *new* captures carry.
 - Firecracker does not promise cross-host restore even with a template; the
   check in rollout step 4 is the evidence, not this ADR.
 
+## Evidence
+
+- 2026-10-25, `gregale-internal-test-1` (n2, nested KVM, Intel Cascade Lake
+  6/85/7, Firecracker v1.17.0): `TestMetalCPUTemplateBootAndRestore` passed.
+  vmmd classified the host `cascadelake/GenuineIntel-6-85-7/7402428c5915`, a
+  guest cold-booted with T2CL, `GET /machine-config` reported `T2CL`, and the
+  VM parked and restored under the template. The template-less control
+  `TestMetalFreePageReportingBalloon` passed in the same run; leakcheck was
+  clean before and after. Log: `/mnt/e2e-scratch/cputpl-20261025/logs/fcvm.log`.
+- Cross-host restore between Cascade Lake and Ice Lake is not yet shown; it
+  needs the two real machines (rollout step 4).
+
 ## Not covered
 
 - Restore paths outside the app wake: crash-capture forks, function
