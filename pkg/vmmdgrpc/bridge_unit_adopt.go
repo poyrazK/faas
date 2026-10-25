@@ -96,14 +96,27 @@ func (m *streamBridgeManager) releaseForHandoff(entry *streamBridgeEntry) {
 	entry.unit.proc.close()
 }
 
+// transientUnitDir is where systemd keeps the files of transient units.
+var transientUnitDir = "/run/systemd/transient"
+
 // ReconcileInstanceBridgeUnits keeps the bridge units of adopted instances
 // that pass the proof and stops every other faas-ibridge unit. Call it once,
-// after adoption and before serving. A no-op unless units are switched on.
+// after adoption and before serving. With units switched off it stops every
+// faas-ibridge unit: a predecessor that ran them may have left them for a
+// hand-off, and no instance may keep a bridge past its life (invariant 4).
 func (s *Server) ReconcileInstanceBridgeUnits(ctx context.Context) {
-	if s == nil || s.streamBridges == nil || !InstanceBridgeUnitsEnabled() {
+	if s == nil || s.streamBridges == nil {
 		return
 	}
-	adopted, stopped, err := s.streamBridges.reconcileUnits(ctx, s.adoptBridgeUnit)
+	adopt := bridgeAdopter(s.adoptBridgeUnit)
+	if !InstanceBridgeUnitsEnabled() {
+		// Most nodes never ran a unit; skip the D-Bus connection for them.
+		if left, _ := filepath.Glob(filepath.Join(transientUnitDir, instanceBridgeUnitPattern)); len(left) == 0 {
+			return
+		}
+		adopt = nil
+	}
+	adopted, stopped, err := s.streamBridges.reconcileUnits(ctx, adopt)
 	if err != nil {
 		s.log.Warn("vmmd: instance bridge unit reconcile failed", "err", err)
 		return

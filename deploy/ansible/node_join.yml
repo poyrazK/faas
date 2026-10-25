@@ -918,6 +918,34 @@
           Environment=FAAS_VMMD_ADOPT_RUNNING_VMS={{ 'true' if (vmmd_adopt_running_vms | default(false) | bool) else '' }}
           Environment=FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES={{ 'true' if (vmmd_adopt_admitted_runtimes | default(false) | bool) else '' }}
 
+    # Connection survival: the instance bridge switches, rendered the same way.
+    # An off switch sets nothing: vmmd's default (off) decides.
+    - name: Validate the instance bridge switches
+      ansible.builtin.assert:
+        that:
+          - not (vmmd_instance_bridge_unit | default(false) | bool) or (vmmd_bridge_unprivileged | default(false) | bool)
+        fail_msg: >-
+          vmmd_instance_bridge_unit needs vmmd_bridge_unprivileged
+          (roles/vmmd_service/defaults/main.yml).
+
+    - name: Install the instance bridge switches
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-vmmd.service.d/zz-faas-bridge.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          {% if vmmd_bridge_unprivileged | default(false) | bool %}
+          Environment=FAAS_BRIDGE_UNPRIVILEGED=1
+          {% endif %}
+          {% if vmmd_instance_bridge_sessions | default(false) | bool %}
+          Environment=FAAS_INSTANCE_BRIDGE_SESSIONS=1
+          {% endif %}
+          {% if vmmd_instance_bridge_unit | default(false) | bool %}
+          Environment=FAAS_INSTANCE_BRIDGE_UNIT=1
+          {% endif %}
+
     # A fresh host has no /opt/faas/current yet, but release-bound base
     # preparation needs vmmd. Register the row as unavailable before the
     # temporary candidate vmmd starts so self-registration cannot make the
