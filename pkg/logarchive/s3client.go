@@ -304,12 +304,19 @@ func (c *S3Client) sign(req *http.Request, payloadHash string) error {
 	}
 
 	host := req.URL.Host
-	contentType := req.Header.Get("Content-Type")
-	canonicalHeaders := "content-type:" + contentType + "\n" +
-		"host:" + host + "\n" +
+	// Sign only headers the request carries: a store recomputes the
+	// signature from the request's own headers, and some (MinIO, Ceph RGW)
+	// refuse a request that lacks a signed header. Bodyless GET, LIST and
+	// DELETE requests have no Content-Type.
+	canonicalHeaders, signedHeaders := "", ""
+	if contentType := req.Header.Get("Content-Type"); contentType != "" {
+		canonicalHeaders = "content-type:" + contentType + "\n"
+		signedHeaders = "content-type;"
+	}
+	canonicalHeaders += "host:" + host + "\n" +
 		"x-amz-content-sha256:" + payloadHash + "\n" +
 		"x-amz-date:" + amzDate + "\n"
-	signedHeaders := "content-type;host;x-amz-content-sha256;x-amz-date"
+	signedHeaders += "host;x-amz-content-sha256;x-amz-date"
 
 	canonicalURI := req.URL.EscapedPath()
 	if canonicalURI == "" {
