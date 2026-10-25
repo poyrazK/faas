@@ -10,6 +10,10 @@ import (
 // external apidserver_test package.
 var AttachTestManagedPostgres = attachTestManagedPostgres
 
+// ComposePostgresMajor exposes composePostgresMajor to the external
+// apidserver_test package.
+var ComposePostgresMajor = composePostgresMajor
+
 // attachTestManagedPostgres gives srv a provisioning-enabled managed
 // PostgreSQL service and binding service backed by the source-ref test
 // provider, and returns their store so tests can inspect what apply created.

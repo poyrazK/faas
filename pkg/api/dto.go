@@ -7488,9 +7488,12 @@ type PlanManaged struct {
 
 // PlanManagedProvision is a managed database a project apply provides.
 type PlanManagedProvision struct {
-	Database string               `json:"database"`
-	Existing bool                 `json:"existing,omitempty"`
-	Bindings []PlanManagedBinding `json:"bindings"`
+	Database string `json:"database"`
+	Existing bool   `json:"existing,omitempty"`
+	// PostgresMajor is the database's PostgreSQL major: the Compose image's,
+	// or the nearest newer one the platform offers.
+	PostgresMajor int                  `json:"postgres_major,omitempty"`
+	Bindings      []PlanManagedBinding `json:"bindings"`
 }
 
 // PlanManagedBinding is one service key bound to a provided database.

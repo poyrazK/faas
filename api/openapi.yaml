@@ -105920,6 +105920,10 @@ components:
         existing:
           type: boolean
           description: "True when a database with this name already exists and is reused."
+        postgres_major:
+          type: integer
+          example: 17
+          description: "The database's PostgreSQL major: the Compose image's, or the nearest newer one the platform offers."
         bindings:
           type: array
           items:

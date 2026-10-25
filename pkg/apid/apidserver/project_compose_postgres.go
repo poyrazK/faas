@@ -32,8 +32,48 @@ const (
 type composePostgresProvision struct {
 	service  string
 	database string
+	spec     managedpostgres.Spec // what apply creates; an existing database keeps its own
 	existing *managedpostgres.Database
 	bindings []projectsetup.ManagedConsumer
+}
+
+// composePostgresMajor picks the managed PostgreSQL major for a Compose
+// postgres image: the image's own major when offered, else the nearest newer
+// one, because a newer server keeps the app's clients and SQL working and an
+// older one may not. An image without a numeric tag (`postgres`,
+// `postgres:latest`) takes the newest offered major, as it does locally.
+func composePostgresMajor(image string, offered []int) (int, bool) {
+	want := imageTagMajor(image)
+	best := 0
+	for _, major := range offered {
+		switch {
+		case want == 0 && major > best:
+			best = major
+		case want != 0 && major >= want && (best == 0 || major < best):
+			best = major
+		}
+	}
+	return best, best != 0
+}
+
+// imageTagMajor reads the leading major version of an image tag:
+// postgres:17, postgres:16.4-alpine, bitnami/postgresql:15.6.0 and
+// pgvector/pgvector:pg16 all name one; an untagged or named tag returns 0.
+func imageTagMajor(image string) int {
+	image, _, _ = strings.Cut(image, "@")
+	colon := strings.LastIndexByte(image, ':')
+	if colon < 0 || colon < strings.LastIndexByte(image, '/') {
+		return 0
+	}
+	tag := strings.TrimPrefix(image[colon+1:], "pg")
+	major := 0
+	for _, ch := range tag {
+		if ch < '0' || ch > '9' || major > 1000 {
+			break
+		}
+		major = major*10 + int(ch-'0')
+	}
+	return major
 }
 
 // composePostgresPlan decides, for each Compose datastore the plan lists,
@@ -100,7 +140,17 @@ func (s *server) composePostgresPlan(ctx context.Context, acct state.Account, pr
 	}
 	for _, m := range candidates {
 		name := projectSlug + "-" + m.Name
-		if !managedpostgres.ValidName(name) {
+		major, offered := composePostgresMajor(m.Image, discovery.Capabilities.PostgresMajors)
+		if !managedpostgres.ValidName(name) || !offered {
+			reasons[m.Name] = composePostgresUnsupported
+			continue
+		}
+		spec, err := managedPostgresSpecFromRequest(api.CreateManagedPostgresDatabaseRequest{Region: discovery.Region, PostgresMajor: major}, limits)
+		if errors.Is(err, managedpostgres.ErrNotInPlan) || errors.Is(err, managedpostgres.ErrQuotaExceeded) {
+			reasons[m.Name] = composePostgresPlan
+			continue
+		}
+		if err != nil || discovery.Capabilities.Supports(spec) != nil {
 			reasons[m.Name] = composePostgresUnsupported
 			continue
 		}
@@ -128,7 +178,7 @@ func (s *server) composePostgresPlan(ctx context.Context, acct state.Account, pr
 			reasons[m.Name] = composePostgresConfigured
 			continue
 		}
-		provision := composePostgresProvision{service: m.Name, database: name, bindings: unset}
+		provision := composePostgresProvision{service: m.Name, database: name, spec: spec, bindings: unset}
 		if i := slices.IndexFunc(databases, func(d managedpostgres.Database) bool { return d.Name == name }); i >= 0 {
 			existing := databases[i]
 			provision.existing = &existing
@@ -170,10 +220,6 @@ func (s *server) applyComposePostgres(ctx context.Context, acct state.Account, s
 	if err != nil {
 		return api.ErrCapacity("could not resolve database ownership")
 	}
-	limits, ok := api.ManagedPostgresLimitsFor(api.Plan(acct.Plan))
-	if !ok {
-		return managedPostgresManifestProblem(managedpostgres.ErrNotInPlan, "managed PostgreSQL is not in this plan")
-	}
 	byWorkload := make(map[string]state.App, len(apps))
 	for _, app := range apps {
 		if app.PreviewOfSlug == "" && app.Status != state.AppDeleted {
@@ -187,12 +233,9 @@ func (s *server) applyComposePostgres(ctx context.Context, acct state.Account, s
 	slices.Sort(services)
 	for _, service := range services {
 		provision := provisions[service]
-		spec, err := managedPostgresSpecFromRequest(api.CreateManagedPostgresDatabaseRequest{Region: s.managedPostgres.DefaultRegion()}, limits)
+		spec := provision.spec
 		if provision.existing != nil {
-			spec, err = provision.existing.Spec, nil
-		}
-		if err != nil {
-			return managedPostgresManifestProblem(err, fmt.Sprintf("Compose service %q: database configuration", service))
+			spec = provision.existing.Spec
 		}
 		database, err := s.managedPostgres.Create(ctx, managedpostgres.CreateRequest{AccountID: acct.ID, Name: provision.database, Spec: spec})
 		if err != nil {
@@ -221,7 +264,10 @@ func (s *server) applyComposePostgres(ctx context.Context, acct state.Account, s
 // planManagedProvision is the plan view of a provision.
 func planManagedProvision(provision composePostgresProvision) *api.PlanManagedProvision {
 	out := &api.PlanManagedProvision{Database: provision.database, Existing: provision.existing != nil,
-		Bindings: make([]api.PlanManagedBinding, 0, len(provision.bindings))}
+		PostgresMajor: provision.spec.PostgresMajor, Bindings: make([]api.PlanManagedBinding, 0, len(provision.bindings))}
+	if provision.existing != nil {
+		out.PostgresMajor = provision.existing.Spec.PostgresMajor
+	}
 	for _, binding := range provision.bindings {
 		out.Bindings = append(out.Bindings, api.PlanManagedBinding{Workload: binding.Workload, EnvKey: binding.EnvKey})
 	}

@@ -641,7 +641,11 @@ func printManagedServices(w io.Writer, managed []api.PlanManaged) {
 			for _, b := range m.Provision.Bindings {
 				bindings = append(bindings, b.Workload+"."+b.EnvKey)
 			}
-			fmt.Fprintf(w, "  - %-20s %s %s, bound to %s\n", m.Name, verb, m.Provision.Database, strings.Join(bindings, ", "))
+			version := ""
+			if m.Provision.PostgresMajor != 0 {
+				version = fmt.Sprintf(" (PostgreSQL %d)", m.Provision.PostgresMajor)
+			}
+			fmt.Fprintf(w, "  - %-20s %s %s%s, bound to %s\n", m.Name, verb, m.Provision.Database, version, strings.Join(bindings, ", "))
 		}
 	}
 	if len(listed) > 0 {
@@ -661,7 +665,7 @@ var managedNotProvidedText = map[string]string{
 	"unavailable":    "managed PostgreSQL is not available to this account",
 	"plan":           "the plan does not include a managed database",
 	"quota":          "the plan's database limit is reached",
-	"unsupported":    "not supported as a managed database",
+	"unsupported":    "not supported as a managed database, or its PostgreSQL version is not offered",
 	"configured":     "every service already has its database configured",
 	"not_referenced": "no service uses it",
 }

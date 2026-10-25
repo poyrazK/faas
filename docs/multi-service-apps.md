@@ -54,8 +54,11 @@ Where [managed PostgreSQL](managed-postgres.md) is available to your account, a
 ([ADR-20261025111824](adr/20261025111824-compose-postgres-as-managed-database.md)).
 Each service whose Compose variable points at it, such as
 `DATABASE_URL: postgres://app:secret@db:5432/app`, gets that variable bound;
-a service that only lists it in `depends_on` gets `DATABASE_URL`. The plan shows
-the database under **Managed PostgreSQL (provided by this deploy)**. A variable
+a service that only lists it in `depends_on` gets `DATABASE_URL`. The database
+runs the PostgreSQL major of the service's image (`postgres:17` gets 17), or the
+nearest newer one Gregale offers; an untagged image gets the newest. The plan
+shows the database and its version under **Managed PostgreSQL (provided by this
+deploy)**. A variable
 you already set on the app keeps its value, and a later deploy reuses the same
 database. Removing the service never deletes the database.
 

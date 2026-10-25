@@ -57,8 +57,8 @@ func TestProjectComposePostgresBecomesAManagedDatabase(t *testing.T) {
 	}
 	provision := plan.Managed[0].Provision
 	wantBindings := []api.PlanManagedBinding{{Workload: "api", EnvKey: "DATABASE_URL"}, {Workload: "worker", EnvKey: "DATABASE_URL"}}
-	if provision.Database != "shop-db" || provision.Existing || !slices.Equal(provision.Bindings, wantBindings) {
-		t.Fatalf("provision = %+v, want shop-db bound to api and worker", provision)
+	if provision.Database != "shop-db" || provision.Existing || provision.PostgresMajor != 17 || !slices.Equal(provision.Bindings, wantBindings) {
+		t.Fatalf("provision = %+v, want shop-db (PostgreSQL 17) bound to api and worker", provision)
 	}
 	for _, w := range plan.Workloads {
 		if slices.Contains(w.UnsetEnvKeys, "DATABASE_URL") {
@@ -100,11 +100,45 @@ func TestProjectComposePostgresBecomesAManagedDatabase(t *testing.T) {
 		t.Fatalf("bound services = %v", bound)
 	}
 
+	if database.Spec.PostgresMajor != 17 {
+		t.Fatalf("shop-db runs PostgreSQL %d, want the image's 17", database.Spec.PostgresMajor)
+	}
+
 	// A second apply reuses the database instead of creating another.
 	post("/v1/projects")
 	all, err := databases.List(context.Background(), (*e.Acct()).ID)
 	if err != nil || len(all) != 1 {
 		t.Fatalf("databases after reapply = %d, %v", len(all), err)
+	}
+}
+
+// The managed database runs the Compose image's major, or the nearest newer
+// one offered; never an older one.
+func TestComposePostgresMajor(t *testing.T) {
+	offered := []int{15, 16, 17}
+	for _, tc := range []struct {
+		image string
+		want  int
+		ok    bool
+	}{
+		{"postgres:17", 17, true},
+		{"postgres:16.4-alpine", 16, true},
+		{"docker.io/library/postgres:15@sha256:abc", 15, true},
+		{"bitnami/postgresql:15.6.0", 15, true},
+		{"pgvector/pgvector:pg16", 16, true},
+		{"postgres:14", 15, true},
+		{"postgres", 17, true},
+		{"postgres:latest", 17, true},
+		{"localhost:5000/postgres", 17, true},
+		{"postgres:18", 0, false},
+	} {
+		got, ok := apidserver.ComposePostgresMajor(tc.image, offered)
+		if got != tc.want || ok != tc.ok {
+			t.Errorf("%s: major = %d, %v; want %d, %v", tc.image, got, ok, tc.want, tc.ok)
+		}
+	}
+	if _, ok := apidserver.ComposePostgresMajor("postgres:16", nil); ok {
+		t.Error("a major was picked with none offered")
 	}
 }
 
