@@ -4018,7 +4018,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "rule", Short: "only this rule id", Value: "ID"},
 				{Name: "request-id", Short: "only this request, e.g. the reference a visitor without JavaScript saw on the challenge page", Value: "ID"},
-				{Name: "outcome", Short: "outcome filter; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes", Value: "OUTCOME", ClosedSet: []string{"matched", "logged", "detected", "warned", "blocked", "challenged", "rejected", "solved", "failed"}},
+				{Name: "outcome", Short: "outcome filter; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes; boxed is a client put in a penalty box", Value: "OUTCOME", ClosedSet: []string{"matched", "logged", "detected", "warned", "blocked", "challenged", "rejected", "solved", "failed", "boxed"}},
 				{Name: "since", Short: "how far back, e.g. 1h, 24h, 7d (clamped to the plan window)", Value: "DURATION"},
 				{Name: "limit", Short: "events per page (1..200)", Value: "N"},
 				{Name: "cursor", Short: "continue from a previous page's next cursor", Value: "CURSOR"},

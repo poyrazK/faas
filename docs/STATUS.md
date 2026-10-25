@@ -98,7 +98,11 @@ Open:
 - The 14-day reviews at the internal and design-partner stages (penalties,
   attack mode, AI crawler controls), and the WAF production false-positive
   review (the review tool and procedure exist: ADR-831 amendment 13,
-  `docs/runbooks/edge-waf-false-positive-review.md`).
+  `docs/runbooks/edge-waf-false-positive-review.md`). The penalty box,
+  challenge solve-rate and AI crawler catalog reviews have their
+  procedures too (ADR-20261024082000 amendment 4): `edge-penalty-box-review.md`,
+  `edge-challenge-solve-rate-review.md` and `edge-ai-crawler-catalog-review.md`
+  under `docs/runbooks/`.
 
 Alerts and runbooks for the five features' failure modes (criterion C3) are
 in the `faas_edge_security` group (ADR-20261024082000 amendment 1).

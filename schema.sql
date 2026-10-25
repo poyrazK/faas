@@ -35065,7 +35065,7 @@ CREATE TABLE public.edge_rule_events (
     CONSTRAINT edge_rule_events_country_check CHECK ((length(country) <= 8)),
     CONSTRAINT edge_rule_events_host_check CHECK ((length(host) <= 253)),
     CONSTRAINT edge_rule_events_method_check CHECK ((length(method) <= 16)),
-    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text, 'detected'::text, 'warned'::text, 'blocked'::text, 'challenged'::text, 'rejected'::text, 'solved'::text, 'failed'::text]))),
+    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text, 'detected'::text, 'warned'::text, 'blocked'::text, 'challenged'::text, 'rejected'::text, 'solved'::text, 'failed'::text, 'boxed'::text]))),
     CONSTRAINT edge_rule_events_path_check CHECK ((octet_length(path) <= 1024)),
     CONSTRAINT edge_rule_events_request_id_check CHECK ((length(request_id) <= 128)),
     CONSTRAINT edge_rule_events_user_agent_check CHECK ((octet_length(user_agent) <= 256)),
