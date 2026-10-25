@@ -653,6 +653,11 @@ func firecrackerControlLine(line []byte) bool {
 		// It reached every job task's customer log on production-us
 		// (Hunt 12).
 		"spurious event received",
+		// Firecracker's API thread waking the VMM loop with nothing queued:
+		// "Got a spurious notification from api thread". It reached a
+		// queue worker's customer log on production-us rc.294 (Hunt 14
+		// H14-5).
+		"spurious notification from api thread",
 	} {
 		if strings.Contains(body, marker) {
 			return true
