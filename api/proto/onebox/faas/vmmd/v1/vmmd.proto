@@ -1616,6 +1616,11 @@ message StatsResponse {
   // Optional so unset != 0 (Int64Value = 0 vs absent differs in prom metrics).
   google.protobuf.Int64Value total_resident_bytes = 3;
   repeated InstanceStats instances = 4;
+  // Memory of faas-tenant-ibridge.slice: every instance bridge unit on the
+  // node (connection-survival ADR §2, ADR-909 amendment). Absent when bridge
+  // units are off or on an older vmmd. Measured admission adds it to the
+  // node's charge; it is platform overhead and never billed.
+  google.protobuf.Int64Value instance_bridge_resident_bytes = 5;
 }
 
 message InstanceStats {

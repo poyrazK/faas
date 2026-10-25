@@ -1560,6 +1560,11 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 		resp.Instances = append(resp.Instances, row)
 	}
 	resp.TotalResidentBytes = wrapperspb.Int64(total)
+	if InstanceBridgeUnitsEnabled() {
+		if b, ok := instanceBridgeResidentBytes(); ok {
+			resp.InstanceBridgeResidentBytes = wrapperspb.Int64(b)
+		}
+	}
 	return resp, nil
 }
 
