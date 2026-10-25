@@ -258,11 +258,11 @@ func validateAndDeriveEnablePresetOpts(req api.EnableAlertPresetRequest, default
 // The 1 KiB plaintext ceiling is enforced by the secretbox layer
 // (api.AlertRuleWebhookSecretMaxBytes).
 func sealPresetWebhookSecret(ctx context.Context, plaintext string) (sealed []byte, prob *api.Problem) {
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		return nil, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret")
+	recipients, err := alertingCredentialRecipients()
+	if err != nil {
+		return nil, api.ErrCapacity("alerting recipient not loaded — refusing to seal webhook secret")
 	}
-	out, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(plaintext), api.AlertRuleWebhookSecretMaxBytes)
+	out, err := secretbox.SealBytesTo(recipients, alertRuleSecretSealLabel, []byte(plaintext), api.AlertRuleWebhookSecretMaxBytes)
 	if err != nil {
 		if p := api.AsProblem(err); p != nil {
 			return nil, p

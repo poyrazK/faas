@@ -134,7 +134,7 @@ var registry = []Spec{
 		cols("app_log_drains", "auth_header_sealed"),
 		cols("application_standard_log_destinations", "auth_header_sealed"),
 	)},
-	{Domain: Alerting, Readers: []string{"meterd"}, Roles: cpOnly, Columns: join(
+	{Domain: Alerting, Readers: []string{"meterd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("alert_rules", "webhook_secret_sealed"),
 		cols("notification_channels", "target_sealed"),
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
