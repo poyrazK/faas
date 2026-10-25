@@ -7177,6 +7177,11 @@ const (
 	// point of use.
 	MaxAppManifestStopGracePeriod = 5 * time.Minute
 
+	// MaxDockerHubMirrors bounds the operator's Docker Hub mirror list
+	// (DockerHubMirrorsEnv, ADR-20261025114554): every miss costs a round
+	// trip before the next mirror or Docker Hub itself is tried.
+	MaxDockerHubMirrors = 4
+
 	// ColdBootReadyWindowS is how long an app may take to become ready
 	// on any cold boot: the spec §6.1 COLD_BOOTING budget the scheduler's
 	// watchdog enforces on every wake (sched.ColdBootSweepBudget).

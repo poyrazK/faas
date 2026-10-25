@@ -77,6 +77,16 @@ type VMMDriver struct {
 	// atomic publication. The immutable hard links remain valid after unlock,
 	// so source staging and mke2fs do not serialize the two builder slots.
 	dependencyCacheMu sync.Mutex
+
+	// dockerHubMirrors go into every build manifest; the builder's BuildKit
+	// daemon tries them before Docker Hub (ADR-20261025114554).
+	dockerHubMirrors []string
+}
+
+// WithDockerHubMirrors sets the Docker Hub mirrors every builder VM uses.
+func (d *VMMDriver) WithDockerHubMirrors(mirrors []string) *VMMDriver {
+	d.dockerHubMirrors = append([]string(nil), mirrors...)
+	return d
 }
 
 // NewVMMDriver opens a lazy gRPC connection to vmmd's socket.
@@ -270,6 +280,7 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		os.Remove(drive1Path)
 		return BuildHandle{}, err
 	}
+	bManifest.DockerHubMirrors = d.dockerHubMirrors
 	cachePath := ""
 	if req.DependencyCacheKey != "" {
 		var cachePathErr error
@@ -394,6 +405,7 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 	if err != nil {
 		return BuildHandle{}, err
 	}
+	manifest.DockerHubMirrors = d.dockerHubMirrors
 	if err := refreshWarmBuilderDrive(ctx, snapshot.LayerPath, manifest, req.SourcePath); err != nil {
 		return BuildHandle{}, fmt.Errorf("builderd: refresh warm drive: %w", err)
 	}

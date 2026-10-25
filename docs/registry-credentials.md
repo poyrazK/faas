@@ -17,4 +17,11 @@ Image runs (`gregale run`) take the credential per run instead:
 runner job, for the image's registry only, and refreshed by every run that
 passes it (ADR-1790). See [Jobs](jobs.md#image-runs).
 
+Docker Hub limits pulls without a credential per IP address. Operators can set
+`faas_docker_hub_mirrors` (for example `mirror.gcr.io`) so that deploys and
+Dockerfile builds read public Docker Hub images through those mirrors first
+([ADR-20261025114554](adr/20261025114554-docker-hub-mirrors.md)). A pull that
+uses a stored credential always goes to Docker Hub itself; the credential is
+never sent to a mirror.
+
 Prefer short-lived, read-only registry tokens. Pin production images by digest and use `gregale deploy --dry-run` to confirm the image can be resolved before changing an app.

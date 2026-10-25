@@ -258,6 +258,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_DNS_PROVIDER", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceDefault},
 	{Name: "FAAS_DNS_PROVIDER_SEALED", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
 	{Name: "FAAS_DNS_ZONE", Owners: []string{"gatewayd-public"}, Source: EnvSourceDefault},
+	{Name: "FAAS_DOCKER_HUB_MIRRORS", Owners: []string{"builderd", "imaged", "shared"}, Source: EnvSourceDropin, Note: "ADR-20261025114554 comma-separated Docker Hub mirror hosts (for example mirror.gcr.io) tried before Docker Hub for anonymous pulls; set faas_docker_hub_mirrors in the inventory. Empty pulls from Docker Hub directly; an invalid list fails startup"},
 	{Name: "FAAS_DOMAIN_DOCTOR_ENABLED", Owners: []string{"apid", "shared"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_DOMAIN_DOCTOR_TTL_SECONDS", Owners: []string{"apid"}, Source: EnvSourceRuntimeConfig},
 	{Name: "FAAS_DPA_PATH", Owners: []string{"apid"}, Source: EnvSourceUnit},
