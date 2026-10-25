@@ -126,6 +126,10 @@ type BuildManifest struct {
 	DevWatchHost string `json:"dev_watch_host,omitempty"`
 	TimeoutSec   int    `json:"timeout_sec"`
 	LogTailBytes int    `json:"log_tail_bytes"` // default 64 KiB
+	// DockerHubMirrors are the operator's Docker Hub mirrors, which the
+	// builder's BuildKit daemon tries before Docker Hub
+	// (ADR-20261025114554). Empty pulls from Docker Hub directly.
+	DockerHubMirrors []string `json:"docker_hub_mirrors,omitempty"`
 }
 
 // BuildDone is the /etc/faas/build-done.json contract — what guest-init
