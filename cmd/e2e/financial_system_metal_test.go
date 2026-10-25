@@ -57,7 +57,10 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 	image, _ := e2etest.HelloImageAboveBase("library/financial-system", body)
 	ref := registry.AddImage("library/financial-system", image)
 	provider := financialfixture.NewProvider(t, 2000)
-	env := append(provider.Env(financial.ComputeMonth(time.Now())), "DATABASE_URL="+proxyDSN)
+	// vmmd reads FAAS_VMMD_DBURL, not DATABASE_URL. Without it vmmd kept its
+	// direct pool through the outage below and went on buying egress credits
+	// (lane B eaedb-20261025T054949: both byte gates freshly reset).
+	env := append(provider.Env(financial.ComputeMonth(time.Now())), "DATABASE_URL="+proxyDSN, "FAAS_VMMD_DBURL="+proxyDSN)
 	h := e2etest.Start(t, pool, e2etest.DeployWake|e2etest.GatewaydPublic|e2etest.Meterd, env...)
 	// Restore database access before Harness.Stop; the latter drains schedd
 	// while VMMD is still present. Cleanup order is LIFO.
