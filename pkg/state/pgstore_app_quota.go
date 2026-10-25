@@ -12,7 +12,7 @@ import (
 )
 
 // resolveAppQuotaTx locks the persisted tenant's admission pool. Account locks
-// still protect the legacy storage reference; the organization advisory lock
+// still protect the legacy storage reference; the organization fence row
 // serializes different creators. The org SHARE lock precedes its quota lock,
 // matching the existing app-scope insert guard and serializing plan changes.
 func resolveAppQuotaTx(ctx context.Context, tx pgx.Tx, app *App, limits api.Limits) (api.Limits, bool, error) {
@@ -131,7 +131,7 @@ func guardLegacySharedAppAccountTx(ctx context.Context, tx pgx.Tx, accountID str
 	return nil
 }
 
-func (s *PgStore) markAccountDeletionPending(ctx context.Context, accountID string) error {
+func (s *PgStore) markAccountDeletionPending(ctx context.Context, accountID string, deletion accountDeletion) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return err
@@ -140,7 +140,7 @@ func (s *PgStore) markAccountDeletionPending(ctx context.Context, accountID stri
 	if err := guardLegacySharedAppAccountTx(ctx, tx, accountID); err != nil {
 		return err
 	}
-	changed, err := quotasql.New().MarkDeletion(ctx, tx, mustPgUUID(accountID))
+	changed, err := quotasql.New().MarkDeletion(ctx, tx, quotasql.MarkDeletionParams{ID: mustPgUUID(accountID), IncludeManagedPostgres: deletion.managedPostgres})
 	if err != nil {
 		return mapErr(err)
 	}

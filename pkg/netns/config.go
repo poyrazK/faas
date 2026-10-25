@@ -843,6 +843,9 @@ func (c Config) NftCommands() [][]string {
 	// Accept reply traffic first (mirrors the v4 chain above) so a published
 	// request's IPv6 reply isn't dropped by the lateral-movement deny.
 	add("add", "rule", "ip6", "faas", "forward", "ct", "state", "established,related", "accept")
+	// Circuit updates replace both families in one transaction; declare the
+	// IPv6 set and rule as well, after accepting established connections.
+	cmds = append(cmds, c.egressCircuitRules(nft, "ip6")...)
 	// §7 cap mirrored on the v6 chain: spec mandates one per-instance budget
 	// without distinguishing v4 vs v6 entries. Without this sibling a guest
 	// could flood only IPv6 to exhaust the conntrack table separately. Placed
@@ -1479,12 +1482,21 @@ func (c Config) NftResetCommands() [][]string {
 	}
 }
 
-// TcCommands returns the argv list that applies the per-plan egress
-// bandwidth cap on the host-side veth (spec §7: per-instance egress cap
-// 10 / 25 / 100 / 250 Mbit via tc). VethHost is the host-side end of the
-// pair (root-ns, enslaved to br-tenants); the qdisc lives there so it
-// caps bytes regardless of which direction the kernel attributes them.
-// No ip netns exec prefix — tc runs in the root namespace.
+// TcCommands returns the argv list that applies the per-plan bandwidth
+// cap (spec §7: per-instance egress cap 10 / 25 / 100 / 250 Mbit via
+// tc). A root qdisc shapes only the packets its device transmits, so
+// each direction needs its own:
+//
+//   - VethPeer, the instance namespace's end, transmits what the guest
+//     sends toward the host and the internet. That is guest egress, the
+//     cap the spec and the abuse desk rely on, and the same bytes ADR-046
+//     meters as VethHost rx_bytes (#4382: the cap used to sit only on
+//     VethHost, leaving egress unshaped). It runs inside the namespace,
+//     which teardown deletes with the qdisc. The private side-link
+//     carries only the account's own network and stays unshaped.
+//   - VethHost, the root-namespace end, transmits traffic toward the
+//     guest. That qdisc predates the egress one and keeps inbound
+//     throughput as it was.
 //
 // tbf is the simplest single-rate shaper; an htb class hierarchy is
 // unnecessary for a per-veth root cap where every instance gets its own
@@ -1497,10 +1509,12 @@ func (c Config) NftResetCommands() [][]string {
 // empty slice here would silently swallow a misconfigured cap; refusing
 // to run the argv when zero is the clearer behaviour.
 func (c Config) TcCommands() [][]string {
+	rate := fmt.Sprintf("%dmbit", c.EgressMbit)
 	return [][]string{
 		{"tc", "qdisc", "add", "dev", c.VethHost, "root", "tbf",
-			"rate", fmt.Sprintf("%dmbit", c.EgressMbit),
-			"burst", "32kbit", "latency", "400ms"},
+			"rate", rate, "burst", "32kbit", "latency", "400ms"},
+		{"ip", "netns", "exec", c.Netns, "tc", "qdisc", "add", "dev", c.VethPeer, "root", "tbf",
+			"rate", rate, "burst", "32kbit", "latency", "400ms"},
 	}
 }
 
@@ -1514,9 +1528,11 @@ func (c Config) TcCommands() [][]string {
 // win. Mirrors the NftResetCommands pattern (PR #36).
 //
 // No teardown is needed: ip link del VethHost in TeardownCommands
-// drops the qdisc when it drops the link.
+// drops the host qdisc when it drops the link, and ip netns del drops
+// the egress qdisc with VethPeer.
 func (c Config) TcResetCommands() [][]string {
 	return [][]string{
 		{"tc", "qdisc", "del", "dev", c.VethHost, "root"},
+		{"ip", "netns", "exec", c.Netns, "tc", "qdisc", "del", "dev", c.VethPeer, "root"},
 	}
 }

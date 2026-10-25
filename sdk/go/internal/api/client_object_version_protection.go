@@ -30,7 +30,7 @@ func (c *Client) PutObjectVersionLegalHold(ctx context.Context, slug, bucket, ke
 	err := c.do(ctx, http.MethodPut, versionProtectionPath(slug, bucket, key, version, "legal-hold"), in, &out)
 	return out, err
 }
-func (c *Client) GetObjectVersionProtection(ctx context.Context, slug, bucket, id string) (ObjectVersionProtection, error) {
+func (c *PreviewClient) GetObjectVersionProtection(ctx context.Context, slug, bucket, id string) (ObjectVersionProtection, error) {
 	var out ObjectVersionProtection
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/protection-operations/"+url.PathEscape(id), nil, &out)
 	return out, err

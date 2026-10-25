@@ -1,5 +1,5 @@
 // Pure schema-aware computation. Uses the same private guest route as counter.ts.
-import { decodeDurableEntitySchemaCall, encodeDurableEntityRestoreValidation, type DurableEntityStateSchema } from '@gregale/sdk-node';
+import { decodeDurableEntitySchemaCall, encodeDurableEntityRestoreValidation, type DurableEntityStateSchema } from '@gregale/sdk-node/preview';
 
 type Counter = { count: number };
 const schema: DurableEntityStateSchema<Counter> = {

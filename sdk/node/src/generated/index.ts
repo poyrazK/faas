@@ -579,6 +579,9 @@ export type { DataAPIUsageMonthToDate } from './models/DataAPIUsageMonthToDate.j
 export type { DataAPIUsageReport } from './models/DataAPIUsageReport.js';
 export type { DataAPIUsageReportResponse } from './models/DataAPIUsageReportResponse.js';
 export type { DataAPIUserAuth } from './models/DataAPIUserAuth.js';
+export type { DatabaseSwitch } from './models/DatabaseSwitch.js';
+export type { DatabaseSwitchDrain } from './models/DatabaseSwitchDrain.js';
+export type { DatabaseSwitchList } from './models/DatabaseSwitchList.js';
 export type { DataConnection } from './models/DataConnection.js';
 export type { DataConnectionCheck } from './models/DataConnectionCheck.js';
 export type { DataConnectionIssue } from './models/DataConnectionIssue.js';
@@ -2504,6 +2507,7 @@ export type { QueueWorkloadProfileResponse } from './models/QueueWorkloadProfile
 export type { QuotaBlock } from './models/QuotaBlock.js';
 export type { RaiseOverageCapRequest } from './models/RaiseOverageCapRequest.js';
 export type { RealtimeAcknowledgement } from './models/RealtimeAcknowledgement.js';
+export type { RealtimeChannelRule } from './models/RealtimeChannelRule.js';
 export type { RealtimeChannelWebhookFilter } from './models/RealtimeChannelWebhookFilter.js';
 export type { RealtimeConsumerGroup } from './models/RealtimeConsumerGroup.js';
 export type { RealtimeConsumerGroupBatch } from './models/RealtimeConsumerGroupBatch.js';
@@ -2988,6 +2992,8 @@ export type { ThrottleSuggestionsResponse } from './models/ThrottleSuggestionsRe
 export type { Trace } from './models/Trace.js';
 export type { TraceSpan } from './models/TraceSpan.js';
 export type { TracingConfig } from './models/TracingConfig.js';
+export type { TrafficRuntimeFeatureStatus } from './models/TrafficRuntimeFeatureStatus.js';
+export type { TrafficRuntimeStatus } from './models/TrafficRuntimeStatus.js';
 export type { TransferOwnershipRequest } from './models/TransferOwnershipRequest.js';
 export type { Trigger } from './models/Trigger.js';
 export type { TriggerDeadLetter } from './models/TriggerDeadLetter.js';

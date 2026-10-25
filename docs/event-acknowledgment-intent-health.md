@@ -26,8 +26,8 @@ thirteen metadata gauges and the same evidence/missing-data rules with a common
 alert/dashboard pack. Polling and listener lifetime remain application-owned.
 
 ```go
-health, err := faas.GetEventAcknowledgmentIntentHealth(ctx, db, accountID, appID,
-    faas.EventAcknowledgmentIntentHealthOptions{
+health, err := preview.GetEventAcknowledgmentIntentHealth(ctx, db, accountID, appID,
+    preview.EventAcknowledgmentIntentHealthOptions{
         ScanLimit: 1000,
         StallAfter: 5 * time.Minute,
     })
@@ -37,13 +37,13 @@ if err != nil {
 // Export health.Complete alongside counts and ages.
 _ = health
 
-return faas.WatchEventAcknowledgmentIntentHealth(ctx, db, accountID, appID,
-    faas.EventAcknowledgmentIntentWatchOptions{
+return preview.WatchEventAcknowledgmentIntentHealth(ctx, db, accountID, appID,
+    preview.EventAcknowledgmentIntentWatchOptions{
         DueThreshold: 100,
         StalledThreshold: 1,
         ParkedThreshold: 1,
         Sustain: 30 * time.Second,
-    }, func(alert faas.EventAcknowledgmentIntentAlert) {
+    }, func(alert preview.EventAcknowledgmentIntentAlert) {
         // Record locally or hand off promptly to your application's alert system.
         // This callback must return promptly and avoid logging capabilities.
     })
@@ -52,7 +52,7 @@ return faas.WatchEventAcknowledgmentIntentHealth(ctx, db, accountID, appID,
 ## Node summary
 
 ```js
-import { getEventAcknowledgmentIntentHealth } from '@gregale/sdk-node';
+import { getEventAcknowledgmentIntentHealth } from '@gregale/sdk-node/preview';
 
 const health = await getEventAcknowledgmentIntentHealth(pool, accountId, appId, {
   scanLimit: 1000,
@@ -107,7 +107,7 @@ sustained alerts, use the [Node watch](#node-watch). See the
 
 ```python
 from dataclasses import asdict
-from faas_sdk import (
+from faas_sdk.preview import (
     EventAcknowledgmentIntentHealthOptions,
     aget_event_acknowledgment_intent_health,
 )
@@ -238,7 +238,7 @@ application-persisted state, use the opt-in checkpointed watches below.
 import {
   watchEventAcknowledgmentIntentHealth,
   EventAcknowledgmentIntentWatchCallbackError,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const controller = new AbortController();
 // The host calls controller.abort() on shutdown.
@@ -338,7 +338,7 @@ cancellation and notification behavior require hosted acceptance before release.
 
 ```python
 from dataclasses import asdict
-from faas_sdk import (
+from faas_sdk.preview import (
     EventAcknowledgmentIntentWatchOptions,
     awatch_event_acknowledgment_intent_health,
 )

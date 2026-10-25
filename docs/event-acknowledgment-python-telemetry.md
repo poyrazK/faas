@@ -9,7 +9,7 @@ diagnostic enters an event.
 
 ```python
 from dataclasses import asdict
-from faas_sdk import EventAcknowledgmentPreparedOptions
+from faas_sdk.preview import EventAcknowledgmentPreparedOptions
 
 def observe(event):
     # Application-owned bounded queue. Never block or await in this callback.

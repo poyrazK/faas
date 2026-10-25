@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
-import { FaaSClient, WorkflowsService, type WorkflowSpec } from '../src/index.js';
+import { FaaSClient, WorkflowsService, type WorkflowSpec } from '../src/preview.js';
 
 test('iteration preserves action mappings, ordered output and zero inspection indexes', async (t) => {
   const definition: WorkflowSpec = {

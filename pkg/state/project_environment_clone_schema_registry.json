@@ -339,6 +339,7 @@
       "billing_mail_revision",
       "business_name",
       "created_at",
+      "deletion_includes_managed_postgres",
       "deletion_requested_at",
       "deployment_mail_revision",
       "egress_allowlist_extra",
@@ -1009,6 +1010,16 @@
     "columns": [
       "app_id",
       "domain",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
+    "table": "app_egress_circuits",
+    "columns": [
+      "app_id",
+      "revision",
+      "targets",
       "updated_at"
     ],
     "kind": "configuration"
@@ -3176,6 +3187,14 @@
       "token_hash"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "clone_checkpoint_admission_guard",
+    "columns": [
+      "generation",
+      "id"
+    ],
+    "kind": "platform_configuration"
   },
   {
     "table": "cluster_signing_keys",
@@ -6795,6 +6814,37 @@
     "kind": "operational"
   },
   {
+    "table": "gateway_traffic_policy_observations",
+    "columns": [
+      "boot_id",
+      "generation",
+      "last_change_id",
+      "node_name",
+      "observed_at",
+      "policy_kind"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "gateway_traffic_runtime_observations",
+    "columns": [
+      "boot_id",
+      "deadline_signing",
+      "generation",
+      "managed_circuit",
+      "managed_http",
+      "node_name",
+      "policy_snapshot",
+      "rate_counter_mode",
+      "reported_at",
+      "retry_backend_id",
+      "retry_counter_mode",
+      "retry_enabled",
+      "security_revocation"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "gdpr_requests",
     "columns": [
       "account_email",
@@ -9701,6 +9751,7 @@
       "auth_token_sealed",
       "callback_auth_token_sealed",
       "callback_url",
+      "channel_rules",
       "connect_path",
       "created_at",
       "disconnect_path",
@@ -9710,6 +9761,7 @@
       "max_connections",
       "max_message_bytes",
       "message_path",
+      "slug",
       "updated_at"
     ],
     "kind": "configuration"
@@ -11654,6 +11706,14 @@
       "state"
     ],
     "kind": "operational"
+  },
+  {
+    "table": "org_app_quota_fences",
+    "columns": [
+      "generation",
+      "org_id"
+    ],
+    "kind": "account_identity"
   },
   {
     "table": "org_invitations",
@@ -16619,6 +16679,28 @@
     "kind": "configuration"
   },
   {
+    "table": "traffic_retry_counters",
+    "columns": [
+      "app_id",
+      "expires_at",
+      "originals",
+      "retries"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "traffic_security_epochs",
+    "columns": [
+      "reason",
+      "revision",
+      "revoked",
+      "scope_id",
+      "scope_kind",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "trigger_consumer_health",
     "columns": [
       "lag_age_seconds",
@@ -17052,6 +17134,14 @@
       "step_name"
     ],
     "kind": "configuration"
+  },
+  {
+    "table": "workflow_code_admission_guard",
+    "columns": [
+      "app_id",
+      "generation"
+    ],
+    "kind": "operational"
   },
   {
     "table": "workflow_code_pins",
@@ -17516,6 +17606,46 @@
       "scheduled_by",
       "started_at",
       "state",
+      "updated_at"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "release_database_switches",
+    "columns": [
+      "account_id",
+      "activated_at",
+      "app_id",
+      "attempt_count",
+      "cancel_requested_at",
+      "created_at",
+      "cutover_id",
+      "drain_blocked",
+      "drain_parked",
+      "drain_pending",
+      "drain_requested_at",
+      "drain_retired",
+      "failure_code",
+      "failure_detail",
+      "fenced_at",
+      "finished_at",
+      "from_deployment_id",
+      "id",
+      "last_error_code",
+      "lease_token",
+      "lease_until",
+      "phase",
+      "phase_started_at",
+      "release_switched_at",
+      "requested_by",
+      "restore_point",
+      "retry_at",
+      "scope",
+      "source_database_id",
+      "target_database_id",
+      "target_deployment_id",
+      "target_name",
+      "undone_deployment_ids",
       "updated_at"
     ],
     "kind": "operational"

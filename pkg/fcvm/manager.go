@@ -522,6 +522,8 @@ type Instance struct {
 	// stays allocator-owned and the Instance carries the
 	// schedd-owned app identity.
 	AppID string
+	// WakeID and NodeID bind traffic-readiness observations to this live VM.
+	WakeID, NodeID string
 
 	// AccountID is the apps.account_id the instance was woken
 	// for (mirrors AppID). Captured from WakeRequest.AccountID
@@ -576,7 +578,8 @@ type Instance struct {
 	// needing to thread the plan through the vmm-side Lease type.
 	// The Lease stays allocator-owned and instance-id-keyed; the Plan
 	// is schedd-owned and recorded at Wake time.
-	Plan api.Plan
+	Plan                  api.Plan
+	httpForwardGeneration string
 
 	// Port (issue #460 / ADR-053, PR-C) is the per-deployment
 	// override port copied from WakeRequest.Port. The vmmdgrpc
@@ -851,6 +854,9 @@ type Manager struct {
 
 	mu   sync.Mutex
 	live map[string]*Instance
+	// Forwarding permits belong to the live instance generation, not a gateway
+	// process. Cleanup drains them before recycling its network or lease.
+	httpForwards map[string]*httpForwardGeneration
 	// qualificationInstances owns isolated qualification targets without
 	// making them discoverable through serving lookups, CID routing, health
 	// loops, or app policy fan-out. Guarded by mu.
@@ -865,6 +871,14 @@ type Manager struct {
 	// egress_resolved set: a restored snapshot may reconnect to addresses
 	// its guest resolved before the snapshot.
 	appResolved map[string]map[netip.Addr]time.Time
+	// ADR-570: serialize circuit updates and pending-network registration so
+	// a wake cannot miss a policy change before it enters the live map.
+	egressCircuitMu           sync.Mutex
+	egressCircuitEnabled      bool
+	appEgressCircuits         map[string][]netns.EgressCircuitTarget
+	appEgressCircuitRevisions map[string]int64
+	egressCircuitSource       func(context.Context, string) (netns.EgressCircuitSnapshot, error)
+	egressCircuitNetworks     map[string]egressCircuitNetwork
 	// dnsGatingOff is the operator's emergency switch for ADR-373 DNS-gated
 	// egress on this node (FAAS_EGRESS_DNS_GATING=off). Gating is on by
 	// default; turning it off keeps every other egress control.
@@ -1948,6 +1962,7 @@ func (m *Manager) processExited(instance string, exitCode int, generation *uint6
 		// receipts remain owned by WaitJobExit and the stuck-task reaper.
 		return
 	}
+	m.retireHTTPForwards(inst.Lease)
 
 	m.failRehearsalRecorder(instance)
 	// Stop the health loop before notifying schedd. Otherwise the
@@ -2987,6 +3002,18 @@ func (m *Manager) WorkloadTokenIdentity(ctx context.Context, instance string) (s
 	return booting.appID, booting.accountID, nil
 }
 
+// WorkloadTokenDeployment is the deployment a live or booting instance runs,
+// whose scope names the environment in its workload-identity tokens. Empty
+// when the instance is unknown or its wake carried no deployment.
+func (m *Manager) WorkloadTokenDeployment(instance string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst := m.live[instance]; inst != nil {
+		return inst.DeploymentID
+	}
+	return m.waking[instance].deploymentID
+}
+
 // workerProven reports whether a declared worker's deployment already
 // passed the full characterization window on this node, so its next cold
 // boot only has to show that the process started (ADR-20261018101500).
@@ -3654,6 +3681,8 @@ func (m *Manager) preparesWakeStateBeforeBoot() bool {
 // *Path fields used, so single-box behaviour is preserved. Field
 // names changed from *Path → *Key to match the new semantics.
 type WakeRequest struct {
+	// NodeID is supplied by the serving vmmd, never by a guest frame.
+	NodeID         string
 	dataRepairOnly bool
 	RehearsalRunID string // exact durable containment run; ordinary legacy callers may omit it
 	Instance       string
@@ -4613,10 +4642,13 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if err != nil {
 		return nil, err
 	}
-	var wakeID string
-	if fields, ok := wire.FromContext(ctx); ok {
-		wakeID = fields.WakeID
+	fields, _ := wire.FromContext(ctx)
+	wakeID := fields.WakeID
+	fields.AppID = req.AppID
+	if req.NodeID != "" {
+		fields.NodeID = req.NodeID
 	}
+	ctx = wire.WithContext(ctx, fields)
 	// Phase timing (see wakePhases). Reported on EVERY failure and on
 	// successes slower than SlowWakeLogThreshold. The named `err`
 	// return is what lets this defer distinguish the two.
@@ -4783,6 +4815,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if !req.ExecutionOnly {
 		applyTenantEgressPolicy(&nc, req.Plan, req.EgressPorts)
 		nc.DNSGated = nc.DNSGated && !m.dnsGatingOff
+		nc.EgressCircuitEnabled = m.egressCircuitEnabled && req.AppID != ""
 	}
 	// ADR-031 + ADR-032 — translate the wire-level CIDR strings into
 	// netip.Prefix once, here, so the nft renderer never touches
@@ -4974,7 +5007,10 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 	if _, joins := m.vmm.(wakeNetworkJoiner); joins && !req.ExecutionOnly && m.nativeVMM() == nil {
 		// See wake_network.go: build the namespace while bringUp stages the
 		// jail; the VMM joins it before startJailer.
-		network := m.startWakeNetwork(ctx, nc, preparedNetwork, func() {
+		network := m.startWakeNetwork(ctx, nc, preparedNetwork, func() error {
+			// Circuit policy must be installed before the guest can boot.
+			return m.registerEgressCircuitNetwork(ctx, req.AppID, nc)
+		}, func() {
 			if networkReady != nil {
 				networkReady(WakeNetworkReady{Instance: req.Instance, Netns: nc.Netns, JailUID: lease.UID})
 			}
@@ -5008,6 +5044,9 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		var networkErr error
 		if !req.ExecutionOnly {
 			preparedHit, networkErr = m.setupWakeNetwork(ctx, nc, preparedNetwork)
+			if networkErr == nil {
+				networkErr = m.registerEgressCircuitNetwork(ctx, req.AppID, nc)
+			}
 		}
 		err = networkErr
 		if err != nil {
@@ -5282,6 +5321,7 @@ func (m *Manager) wake(ctx context.Context, req WakeRequest, networkReady WakeNe
 		ExecutionLeaseToken:             req.ExecutionLeaseToken,
 		ExecutionOutboundIntegrationIDs: append([]string(nil), req.ExecutionOutboundIntegrationIDs...),
 		AppID:                           req.AppID, AccountID: req.AccountID, DeploymentID: req.DeploymentID,
+		WakeID: wakeID, NodeID: fields.NodeID,
 		Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath, HealthcheckGRPC: req.HealthcheckGRPC,
 		ImageHealthcheckRequired: req.ImageHealthcheckRequired,
 		LivenessProbe:            append(json.RawMessage(nil), req.LivenessProbe...),
@@ -6005,6 +6045,13 @@ func (m *Manager) parkWithCleanupResult(ctx context.Context, instance string, sp
 	flight.parking = true
 	m.mu.Unlock()
 	defer m.beginAdoptionOp(instance, adoptionOpPark, spec.StorageKey, spec.VMStateStorageKey)()
+	forwards := m.retireHTTPForwards(inst.Lease)
+	// Snapshot only after the old bridges have stopped forwarding. Cleanup
+	// remains owed even if the caller expires while waiting for that drain.
+	if err := m.waitHTTPForwards(ctx, forwards); err != nil {
+		destroyErr := m.Destroy(context.WithoutCancel(ctx), instance)
+		return SnapshotInfo{}, destroyErr == nil, fmt.Errorf("park %s: drain forwarding: %w", instance, err)
+	}
 	// Stop liveness before pausing/snapshotting. A parked VM is expected to
 	// stop answering probes; leaving the loop active through Snapshot lets it
 	// race this teardown and report a second failure for the same instance.
@@ -6221,6 +6268,11 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if m.vmm == nil {
 		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: nil vmm", instance)
 	}
+	forwards := m.retireHTTPForwards(inst.Lease)
+	if err := m.waitHTTPForwards(ctx, forwards); err != nil {
+		m.reopenHTTPForwards(inst)
+		return SnapshotInfo{}, fmt.Errorf("snapshot_keep_alive %s: drain forwarding: %w", instance, err)
+	}
 	m.DeleteLivenessConsecutiveFailures(instance)
 	m.cancelLivenessLoop(instance)
 	m.cancelReadinessLoop(instance)
@@ -6255,6 +6307,7 @@ func (m *Manager) SnapshotKeepAlive(ctx context.Context, instance string, spec S
 	if cancelled := resumeCtx.Err(); cancelled != nil {
 		return SnapshotInfo{}, errors.Join(err, cancelled)
 	}
+	m.reopenHTTPForwards(inst)
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
 	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
 	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
@@ -6354,6 +6407,7 @@ func (m *Manager) resumeAndProbe(ctx context.Context, op string, inst *Instance,
 	if err := ctx.Err(); err != nil {
 		return fmt.Errorf("%s %s: %w", op, instance, err)
 	}
+	m.reopenHTTPForwards(inst)
 	m.startLivenessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.LivenessProbe)
 	m.startReadinessLoop(context.WithoutCancel(ctx), instance, inst.Lease.Slot, inst.ReadinessProbe)
 	m.startFrameworkReadyLoop(context.WithoutCancel(ctx), instance)
@@ -6406,6 +6460,7 @@ func (m *Manager) SignalAndKill(ctx context.Context, instance string, signal sys
 		}
 		return m.vmm.SignalAndKill(ctx, Lease{Instance: instance}, signal, grace)
 	}
+	m.retireHTTPForwards(inst.Lease)
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
 	// A completed teardown retires the record; a failed one keeps this
 	// intent so a successor resumes it (adoption ADR §3).
@@ -6470,6 +6525,7 @@ func (m *Manager) destroyWithReservation(ctx, cleanupCtx context.Context, instan
 		}
 		return m.vmm.DestroyWithExport(ctx, Lease{Instance: instance}, exportDir)
 	}
+	m.retireHTTPForwards(inst.Lease)
 	m.retainCleanup(inst.Lease, inst.Net, inst.WorkloadNames)
 	// A completed teardown retires the record; a failed one keeps this
 	// intent so a successor resumes it (adoption ADR §3).

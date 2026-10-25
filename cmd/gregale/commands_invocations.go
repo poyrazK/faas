@@ -66,7 +66,7 @@ func cmdInvocations(args []string) int {
 		return cmdInvocationsWait(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown invocations subcommand %q\n", args[0])
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "invocations", nestedCliCommand("invocations"), args[0])
 }
 
 // cmdInvocationsWait polls the durable status endpoint until the invocation

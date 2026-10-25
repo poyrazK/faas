@@ -304,6 +304,27 @@ func TestRouteTargetResolverRefusesInternalApps(t *testing.T) {
 	}
 }
 
+// The production route-target path (the policy loader) keeps internal apps
+// off public route targets too.
+func TestResolvePublicAppSlugRefusesInternalApps(t *testing.T) {
+	store := state.NewMemStore()
+	seedApp(t, store, "public-api", api.PlanPro)
+	private := seedApp(t, store, "private-api", api.PlanPro)
+	internal := api.AppVisibilityInternal
+	if _, err := store.UpdateApp(context.Background(), private.ID, state.UpdateAppParams{
+		Visibility: &internal, SetVisibility: true,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	r := pgRouter{store: store}
+	if got, ok, err := r.resolvePublicAppSlug(context.Background(), "public-api"); err != nil || !ok || got.Slug != "public-api" {
+		t.Fatalf("public target = %+v, ok=%v, err=%v; want it resolved", got, ok, err)
+	}
+	if got, ok, err := r.resolvePublicAppSlug(context.Background(), "private-api"); err != nil || ok {
+		t.Fatalf("internal target resolved for a public route: %+v, err=%v", got, err)
+	}
+}
+
 func TestPgRouter_UnknownSlugIsNotFound(t *testing.T) {
 	r := pgRouter{store: state.NewMemStore(), appsSuffix: ".apps.gregale.dev"}
 	if _, ok, err := r.ResolveHost(context.Background(), "ghost.apps.gregale.dev"); ok || err != nil {

@@ -19,7 +19,7 @@ test('packed PostgreSQL runtime imports and typechecks without pg or control-pla
   await writeFile(consumer, `
     import assert from 'node:assert/strict';
     import {EventEmitter} from 'node:events';
-    import {createPostgresPool, type PostgresDriverPool} from '@gregale/sdk-node/postgres/runtime';
+    import {createPostgresPool, type PostgresDriverPool} from '@gregale/sdk-node/preview/postgres/runtime';
     let ended = 0;
     const database = createPostgresPool((): PostgresDriverPool => Object.assign(new EventEmitter(), {
       async connect() { return Object.assign(new EventEmitter(), {

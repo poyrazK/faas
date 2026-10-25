@@ -90,7 +90,7 @@ func validateAdditionDrafts(accountID, projectID string, safe *api.ProjectSafeRe
 	return nil
 }
 
-func (m *MemStore) StageProjectReleaseAdditions(_ context.Context, accountID, attemptID, projectID string, safe *api.ProjectSafeRelease, drafts []App) ([]App, error) {
+func (m *MemStore) StageProjectReleaseAdditions(ctx context.Context, accountID, attemptID, projectID string, safe *api.ProjectSafeRelease, drafts []App) ([]App, error) {
 	if err := validateAdditionDrafts(accountID, projectID, safe, drafts); err != nil {
 		return nil, err
 	}
@@ -144,7 +144,7 @@ func (m *MemStore) StageProjectReleaseAdditions(_ context.Context, accountID, at
 		app := draft
 		if draft.ID == "" {
 			var err error
-			app, err = m.createAppIfUnderQuotaLocked(draft, limits)
+			app, err = m.createAppIfUnderQuotaLocked(ctx, draft, limits)
 			if err != nil {
 				for _, id := range inserted {
 					delete(m.apps, id)

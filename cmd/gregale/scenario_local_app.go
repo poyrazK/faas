@@ -372,6 +372,9 @@ func (app *managedLocalApp) stop(timeout time.Duration, evidence *testLocalAppEv
 		}
 	}
 	app.recordExitCode(evidence)
+	if app.failure() != nil && evidence.Shutdown == "graceful" {
+		evidence.Shutdown = "exited"
+	}
 	if signalErr != nil {
 		return fmt.Errorf("terminate local app gracefully: %w", signalErr)
 	}

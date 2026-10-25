@@ -2,10 +2,10 @@ from uuid import UUID
 
 
 def test_destination_queue_models_and_targeted_request():
-    from faas_sdk.api.mcp import act_mcp_readiness_notification
-    from faas_sdk.models.mcp_readiness_notification_action import MCPReadinessNotificationAction
-    from faas_sdk.models.mcp_readiness_notification_queues import MCPReadinessNotificationQueues
-    from faas_sdk.models.mcp_readiness_notification_receipt import MCPReadinessNotificationReceipt
+    from faas_sdk.preview.api.mcp import act_mcp_readiness_notification
+    from faas_sdk.preview.models.mcp_readiness_notification_action import MCPReadinessNotificationAction
+    from faas_sdk.preview.models.mcp_readiness_notification_queues import MCPReadinessNotificationQueues
+    from faas_sdk.preview.models.mcp_readiness_notification_receipt import MCPReadinessNotificationReceipt
 
     event_id = "00000000-0000-0000-0000-000000000001"
     at = "2026-10-17T12:00:00Z"

@@ -65,7 +65,7 @@ func TestRealtimeUsageRecordedEndToEnd(t *testing.T) {
 
 	manager := realtime.NewManager(realtime.Config{UsageReporter: client, UsageSampleInterval: 10 * time.Millisecond, UsageReportInterval: 50 * time.Millisecond}, realtime.NopHooks{})
 	t.Cleanup(func() { _ = manager.Close() })
-	if err := manager.RegisterEndpoint(realtime.Endpoint{ID: endpoint.ID, AppID: app.ID, AccountID: account.ID,
+	if err := manager.RegisterEndpoint(realtime.Endpoint{Preview: true, ID: endpoint.ID, AppID: app.ID, AccountID: account.ID,
 		Authorize: func(context.Context, *http.Request) (string, error) { return "", nil }}); err != nil {
 		t.Fatal(err)
 	}

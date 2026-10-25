@@ -640,10 +640,22 @@ func (c *Client) StreamAccountExport(ctx context.Context, includeSecrets bool, r
 // idempotent under Idempotency-Key; callers may pass an explicit
 // stable key (CI retries) or "" to auto-mint a UUIDv4 per call.
 func (c *Client) DeleteAccount(ctx context.Context, idempotencyKey string) (AccountDeletionResponse, error) {
+	return c.deleteAccount(ctx, idempotencyKey, "/v1/account")
+}
+
+// DeleteAccountIncludingManagedPostgres schedules the deletion and asks it to
+// include the account's managed PostgreSQL databases, which are deleted when
+// the 30-day grace ends (ADR-20261024150500). Dark until launch: apid ignores
+// the request for accounts outside FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS.
+func (c *Client) DeleteAccountIncludingManagedPostgres(ctx context.Context, idempotencyKey string) (AccountDeletionResponse, error) {
+	return c.deleteAccount(ctx, idempotencyKey, "/v1/account?include_managed_postgres_databases=true")
+}
+
+func (c *Client) deleteAccount(ctx context.Context, idempotencyKey, path string) (AccountDeletionResponse, error) {
 	if idempotencyKey == "" {
 		idempotencyKey = newUUIDv4()
 	}
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/v1/account", nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+path, nil)
 	if err != nil {
 		return AccountDeletionResponse{}, err
 	}
@@ -1626,7 +1638,8 @@ func (c *Client) GetApp(ctx context.Context, slug string) (AppResponse, error) {
 // traffic weights, and edge-rule changes. Edge rules have their own revision
 // sequence in the response. wait may be zero for a snapshot or up to 10
 // seconds for a bounded server-side wait; a pending result remains possible
-// on timeout.
+// on timeout. TrafficRuntime reports fresh compute gateway wiring separately
+// from convergence; it does not attest request enforcement or backend health.
 func (c *Client) GetAppsSlugPolicyStatus(ctx context.Context, slug string, wait time.Duration) (RuntimePolicyStatusResponse, error) {
 	var out RuntimePolicyStatusResponse
 	if wait < 0 || wait > 10*time.Second {

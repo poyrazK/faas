@@ -22,7 +22,7 @@ func (c *Client) CreateAccountWorkflowReadinessSubscription(ctx context.Context,
 	err := c.doOperation(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/subscriptions", req, &out)
 	return out, err
 }
-func (c *Client) CreatePlatformTenantSelfWorkflowReadinessSubscription(ctx context.Context, req OperationWorkflowReadinessSubscriptionRequest) (OperationWorkflowReadinessSubscription, error) {
+func (c *PreviewClient) CreatePlatformTenantSelfWorkflowReadinessSubscription(ctx context.Context, req OperationWorkflowReadinessSubscriptionRequest) (OperationWorkflowReadinessSubscription, error) {
 	var out OperationWorkflowReadinessSubscription
 	err := c.doOperation(ctx, http.MethodPost, "/v1/platform-tenant-self/workflow-readiness/subscriptions", req, &out)
 	return out, err
@@ -32,7 +32,7 @@ func (c *Client) ListAccountWorkflowReadinessSubscriptions(ctx context.Context, 
 	err := c.doOperation(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/subscriptions?"+readinessSubscriptionQuery("", scope, tenant).Encode(), nil, &out)
 	return out, err
 }
-func (c *Client) ListPlatformTenantSelfWorkflowReadinessSubscriptions(ctx context.Context, app, scope string) (OperationWorkflowReadinessSubscriptionsResponse, error) {
+func (c *PreviewClient) ListPlatformTenantSelfWorkflowReadinessSubscriptions(ctx context.Context, app, scope string) (OperationWorkflowReadinessSubscriptionsResponse, error) {
 	var out OperationWorkflowReadinessSubscriptionsResponse
 	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/subscriptions?"+readinessSubscriptionQuery(app, scope, "").Encode(), nil, &out)
 	return out, err
@@ -40,7 +40,7 @@ func (c *Client) ListPlatformTenantSelfWorkflowReadinessSubscriptions(ctx contex
 func (c *Client) DeleteAccountWorkflowReadinessSubscription(ctx context.Context, slug, scope, tenant, id string) error {
 	return c.doOperation(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/subscriptions/"+url.PathEscape(id)+"?"+readinessSubscriptionQuery("", scope, tenant).Encode(), nil, nil)
 }
-func (c *Client) DeletePlatformTenantSelfWorkflowReadinessSubscription(ctx context.Context, app, scope, id string) error {
+func (c *PreviewClient) DeletePlatformTenantSelfWorkflowReadinessSubscription(ctx context.Context, app, scope, id string) error {
 	return c.doOperation(ctx, http.MethodDelete, "/v1/platform-tenant-self/workflow-readiness/subscriptions/"+url.PathEscape(id)+"?"+readinessSubscriptionQuery(app, scope, "").Encode(), nil, nil)
 }
 func (c *Client) GetAccountWorkflowReadinessInbox(ctx context.Context, slug, scope, tenant, id string, after int64, limit int) (OperationWorkflowReadinessInboxResponse, error) {
@@ -53,7 +53,7 @@ func (c *Client) GetAccountWorkflowReadinessInbox(ctx context.Context, slug, sco
 	err := c.doOperation(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/subscriptions/"+url.PathEscape(id)+"/notifications?"+q.Encode(), nil, &out)
 	return out, err
 }
-func (c *Client) GetPlatformTenantSelfWorkflowReadinessInbox(ctx context.Context, app, scope, id string, after int64, limit int) (OperationWorkflowReadinessInboxResponse, error) {
+func (c *PreviewClient) GetPlatformTenantSelfWorkflowReadinessInbox(ctx context.Context, app, scope, id string, after int64, limit int) (OperationWorkflowReadinessInboxResponse, error) {
 	var out OperationWorkflowReadinessInboxResponse
 	q := readinessSubscriptionQuery(app, scope, "")
 	q.Set("after_sequence", strconv.FormatInt(after, 10))
@@ -76,13 +76,13 @@ func (c *Client) CheckAccountWorkflowReadinessNotification(ctx context.Context, 
 	return out, err
 }
 
-func (c *Client) UpdatePlatformTenantSelfWorkflowReadinessNotification(ctx context.Context, app, scope, id string, sequence int64, req OperationWorkflowReadinessCoordinationRequest) (OperationWorkflowReadinessNotification, error) {
+func (c *PreviewClient) UpdatePlatformTenantSelfWorkflowReadinessNotification(ctx context.Context, app, scope, id string, sequence int64, req OperationWorkflowReadinessCoordinationRequest) (OperationWorkflowReadinessNotification, error) {
 	var out OperationWorkflowReadinessNotification
 	err := c.doOperation(ctx, http.MethodPatch, "/v1/platform-tenant-self/workflow-readiness/subscriptions/"+url.PathEscape(id)+"/notifications/"+strconv.FormatInt(sequence, 10)+"?"+readinessSubscriptionQuery(app, scope, "").Encode(), req, &out)
 	return out, err
 }
 
-func (c *Client) CheckPlatformTenantSelfWorkflowReadinessNotification(ctx context.Context, app, scope, id string, sequence int64) (OperationWorkflowReadinessNotificationCheck, error) {
+func (c *PreviewClient) CheckPlatformTenantSelfWorkflowReadinessNotification(ctx context.Context, app, scope, id string, sequence int64) (OperationWorkflowReadinessNotificationCheck, error) {
 	var out OperationWorkflowReadinessNotificationCheck
 	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/subscriptions/"+url.PathEscape(id)+"/notifications/"+strconv.FormatInt(sequence, 10)+"?"+readinessSubscriptionQuery(app, scope, "").Encode(), nil, &out)
 	return out, err
@@ -137,7 +137,7 @@ func (c *Client) ListAccountWorkflowReadinessFollowUps(ctx context.Context, slug
 	err := c.doOperation(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/follow-ups?"+readinessFollowUpQuery(opts).Encode(), nil, &out)
 	return out, err
 }
-func (c *Client) ListPlatformTenantSelfWorkflowReadinessFollowUps(ctx context.Context, opts OperationWorkflowReadinessFollowUpOptions) (OperationWorkflowReadinessFollowUpsResponse, error) {
+func (c *PreviewClient) ListPlatformTenantSelfWorkflowReadinessFollowUps(ctx context.Context, opts OperationWorkflowReadinessFollowUpOptions) (OperationWorkflowReadinessFollowUpsResponse, error) {
 	var out OperationWorkflowReadinessFollowUpsResponse
 	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/follow-ups?"+readinessFollowUpQuery(opts).Encode(), nil, &out)
 	return out, err
@@ -163,7 +163,7 @@ func (c *Client) GetAccountWorkflowCoordinationTimeline(ctx context.Context, slu
 	err := c.doOperation(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/timeline?"+workflowCoordinationTimelineQuery(opts).Encode(), nil, &out)
 	return out, err
 }
-func (c *Client) GetPlatformTenantSelfWorkflowCoordinationTimeline(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions) (OperationWorkflowCoordinationTimeline, error) {
+func (c *PreviewClient) GetPlatformTenantSelfWorkflowCoordinationTimeline(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions) (OperationWorkflowCoordinationTimeline, error) {
 	var out OperationWorkflowCoordinationTimeline
 	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/timeline?"+workflowCoordinationTimelineQuery(opts).Encode(), nil, &out)
 	return out, err
@@ -175,7 +175,7 @@ func (c *Client) GetAccountWorkflowCase(ctx context.Context, slug string, opts O
 	err := c.doOperation(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/workflow-readiness/case?"+workflowCoordinationTimelineQuery(opts).Encode(), nil, &out)
 	return out, err
 }
-func (c *Client) GetPlatformTenantSelfWorkflowCase(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions) (OperationWorkflowCase, error) {
+func (c *PreviewClient) GetPlatformTenantSelfWorkflowCase(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions) (OperationWorkflowCase, error) {
 	var out OperationWorkflowCase
 	err := c.doOperation(ctx, http.MethodGet, "/v1/platform-tenant-self/workflow-readiness/case?"+workflowCoordinationTimelineQuery(opts).Encode(), nil, &out)
 	return out, err
@@ -199,7 +199,7 @@ func (c *Client) UpdateAccountWorkflowPlaybookProgress(ctx context.Context, slug
 	return out, err
 }
 
-func (c *Client) StartPlatformTenantSelfWorkflowPlaybookProgress(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, req OperationWorkflowPlaybookProgressStartRequest) (OperationWorkflowPlaybookProgress, error) {
+func (c *PreviewClient) StartPlatformTenantSelfWorkflowPlaybookProgress(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, req OperationWorkflowPlaybookProgressStartRequest) (OperationWorkflowPlaybookProgress, error) {
 	var out OperationWorkflowPlaybookProgress
 	opts.Offset = 0
 	opts.Limit = 0
@@ -207,7 +207,7 @@ func (c *Client) StartPlatformTenantSelfWorkflowPlaybookProgress(ctx context.Con
 	return out, err
 }
 
-func (c *Client) UpdatePlatformTenantSelfWorkflowPlaybookProgress(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookProgressUpdateRequest) (OperationWorkflowPlaybookProgress, error) {
+func (c *PreviewClient) UpdatePlatformTenantSelfWorkflowPlaybookProgress(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookProgressUpdateRequest) (OperationWorkflowPlaybookProgress, error) {
 	var out OperationWorkflowPlaybookProgress
 	opts.Offset = 0
 	opts.Limit = 0
@@ -224,7 +224,7 @@ func (c *Client) ReviewAccountWorkflowPlaybookProgress(ctx context.Context, slug
 	return out, err
 }
 
-func (c *Client) ReviewPlatformTenantSelfWorkflowPlaybookProgress(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookReviewRequest) (OperationWorkflowPlaybookProgress, error) {
+func (c *PreviewClient) ReviewPlatformTenantSelfWorkflowPlaybookProgress(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookReviewRequest) (OperationWorkflowPlaybookProgress, error) {
 	var out OperationWorkflowPlaybookProgress
 	opts.Offset = 0
 	opts.Limit = 0
@@ -242,7 +242,7 @@ func (c *Client) ConfigureAccountWorkflowPlaybookEvidenceWatch(ctx context.Conte
 	return out, err
 }
 
-func (c *Client) ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookEvidenceWatchRequest) (OperationWorkflowPlaybookEvidenceWatch, error) {
+func (c *PreviewClient) ConfigurePlatformTenantSelfWorkflowPlaybookEvidenceWatch(ctx context.Context, opts OperationWorkflowCoordinationTimelineOptions, id string, req OperationWorkflowPlaybookEvidenceWatchRequest) (OperationWorkflowPlaybookEvidenceWatch, error) {
 	var out OperationWorkflowPlaybookEvidenceWatch
 	opts.Offset = 0
 	opts.Limit = 0

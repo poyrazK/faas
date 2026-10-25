@@ -437,6 +437,9 @@ type customerConsoleWriter struct {
 	mu      sync.Mutex
 	ring    *logbuf.Ring
 	pending []byte
+	// initPanic is set while the kernel prints its "Attempted to kill init"
+	// panic dump, which ends with "Rebooting in N seconds..".
+	initPanic bool
 }
 
 func (w *customerConsoleWriter) Write(p []byte) (int, error) {
@@ -479,7 +482,7 @@ func (w *customerConsoleWriter) Flush() error {
 
 // commitLocked filters one complete line and writes it to the ring.
 func (w *customerConsoleWriter) commitLocked(line []byte) error {
-	if firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) {
+	if w.dropInitPanicLocked(line) || firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) || functionRunnerStartupLine(line) {
 		return nil
 	}
 	// The guest serial console's tty turns every '\n' into "\r\n"
@@ -491,6 +494,73 @@ func (w *customerConsoleWriter) commitLocked(line []byte) error {
 	}
 	_, err := w.ring.Write("stdout", line)
 	return err
+}
+
+// functionRunnerStartupLine matches the function runner shim's two startup
+// lines, e.g. "2026/10/25 02:29:10 go124 runner: serving on :8080 (handler=
+// /app/handler, ...)" and "... h2c-listener: listening on :8080 (H2C-capable)".
+// They opened every function cold boot's customer log on production-us rc.294
+// (Hunt 14 H14-28). The runner's handler errors stay customer-visible.
+func functionRunnerStartupLine(line []byte) bool {
+	text := strings.TrimSpace(string(line))
+	const stamp = len("2006/01/02 15:04:05 ")
+	if len(text) <= stamp || text[4] != '/' || text[7] != '/' || text[10] != ' ' || text[13] != ':' || text[16] != ':' || text[19] != ' ' {
+		return false
+	}
+	msg := text[stamp:]
+	if strings.HasPrefix(msg, "h2c-listener: listening on ") {
+		return true
+	}
+	runtime, rest, ok := strings.Cut(msg, " runner: serving on ")
+	return ok && rest != "" && runtime != "" && !strings.ContainsAny(runtime, " \t")
+}
+
+// dropInitPanicLocked drops the kernel's panic dump after guest-init (PID 1)
+// exits: "Kernel panic - not syncing: Attempted to kill init!", a register
+// and call-trace dump, then "Rebooting in 1 seconds..". On production-us
+// rc.294 a crash-looping app put 25 such lines in its customer log (Hunt 14
+// H14-26). guest-init's own reason line, e.g. "guest-init: app crash-looped
+// after 3 restart(s)", comes first and stays; the unfiltered console file
+// keeps the dump for operators.
+func (w *customerConsoleWriter) dropInitPanicLocked(line []byte) bool {
+	message, ok := kernelConsoleMessage(line)
+	if !ok {
+		return false
+	}
+	if strings.HasPrefix(message, "Kernel panic - not syncing: Attempted to kill init!") {
+		w.initPanic = true
+		return true
+	}
+	if !w.initPanic {
+		return false
+	}
+	if strings.HasPrefix(message, "Rebooting in ") {
+		w.initPanic = false
+	}
+	return true
+}
+
+// kernelConsoleMessage returns the message of a dmesg-formatted console line
+// such as "[ 6744.209731] Kernel panic - not syncing: ...".
+func kernelConsoleMessage(line []byte) (string, bool) {
+	text := strings.TrimSpace(string(line))
+	if !strings.HasPrefix(text, "[") {
+		return "", false
+	}
+	end := strings.IndexByte(text, ']')
+	if end < 0 {
+		return "", false
+	}
+	stamp := strings.TrimSpace(text[1:end])
+	if stamp == "" {
+		return "", false
+	}
+	for _, r := range stamp {
+		if (r < '0' || r > '9') && r != '.' {
+			return "", false
+		}
+	}
+	return strings.TrimSpace(text[end+1:]), true
 }
 
 // guestInitStageLine matches guest-init's internal boot-progress markers
@@ -519,6 +589,10 @@ var guestInitPlatformMessages = []string{
 	// ended every job task log, its attempt being the vsock retry rather than
 	// the task attempt the log header names (hunt #10).
 	"job-exit ", "job cancel ",
+	// App-task exec listener: "INFO fork exec listener started
+	// vsock_port=1034" opened every cold boot's customer log on
+	// production-us rc.294 (Hunt 14 H14-27).
+	"fork exec listener ",
 }
 
 // guestInitPlatformLine matches a default-slog line ("2006/01/02 15:04:05
@@ -653,6 +727,11 @@ func firecrackerControlLine(line []byte) bool {
 		// It reached every job task's customer log on production-us
 		// (Hunt 12).
 		"spurious event received",
+		// Firecracker's API thread waking the VMM loop with nothing queued:
+		// "Got a spurious notification from api thread". It reached a
+		// queue worker's customer log on production-us rc.294 (Hunt 14
+		// H14-5).
+		"spurious notification from api thread",
 	} {
 		if strings.Contains(body, marker) {
 			return true
@@ -1312,7 +1391,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return err
 	}
 	if !l.IsBuilder && cfg.VsockDevice != nil {
-		if err = v.prepareRegisteredGuestVsockListeners(l); err != nil {
+		if err = v.prepareRegisteredGuestVsockListenersForWake(ctx, l); err != nil {
 			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
 		}
 	}
@@ -2300,7 +2379,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return err
 	}
 	if !l.IsBuilder {
-		if err = v.prepareRegisteredGuestVsockListeners(l); err != nil {
+		if err = v.prepareRegisteredGuestVsockListenersForWake(ctx, l); err != nil {
 			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
 		}
 	}
@@ -2627,7 +2706,34 @@ func (v *JailerVMM) notifyGuestVsockTransport(port uint32, failureKind string, e
 // instance. A preparation failure aborts boot/restore and marks the daemon
 // unhealthy; serving a VM without its platform channels would make lifecycle
 // and identity behavior silently incomplete.
-func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
+// GuestVsockStreamOrigin is fixed when a VM listener is prepared. It is never
+// read from a guest frame or looked up through a replacement Manager entry.
+type GuestVsockStreamOrigin struct{ AppID, WakeID, NodeID string }
+type guestVsockOriginConn struct {
+	net.Conn
+	origin GuestVsockStreamOrigin
+}
+
+func GuestVsockOrigin(conn net.Conn) (GuestVsockStreamOrigin, bool) {
+	identified, ok := conn.(*guestVsockOriginConn)
+	if !ok {
+		return GuestVsockStreamOrigin{}, false
+	}
+	return identified.origin, true
+}
+
+// GuestVsockOriginConnForTest binds origin to conn as a prepared listener
+// does, for receivers tested without a VM.
+func GuestVsockOriginConnForTest(conn net.Conn, origin GuestVsockStreamOrigin) net.Conn {
+	return &guestVsockOriginConn{Conn: conn, origin: origin}
+}
+
+func (v *JailerVMM) prepareRegisteredGuestVsockListenersForWake(ctx context.Context, l Lease) error {
+	fields, _ := wire.FromContext(ctx)
+	return v.prepareRegisteredGuestVsockListeners(l, GuestVsockStreamOrigin{AppID: fields.AppID, WakeID: fields.WakeID, NodeID: fields.NodeID})
+}
+
+func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease, origins ...GuestVsockStreamOrigin) error {
 	if v.nativeRecovery != nil {
 		path, err := v.nativeRecovery.journal.qualifications("").restores().path(l.Instance)
 		if err == nil {
@@ -2657,6 +2763,12 @@ func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
 			return fmt.Errorf("prepare guest vsock receiver port %d: %w", port, err)
 		}
 		v.notifyGuestVsockTransport(port, "", nil)
+		if len(origins) > 0 {
+			origin, original := origins[0], handler
+			handler = func(instance string, conn net.Conn) (string, error) {
+				return original(instance, &guestVsockOriginConn{Conn: conn, origin: origin})
+			}
+		}
 		go v.serveGuestVsockStreams(l.Instance, port, ln, handler)
 	}
 	return nil

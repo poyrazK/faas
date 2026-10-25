@@ -132,6 +132,7 @@ type triggerDispatchRecord struct {
 type triggerDispatchRequest struct {
 	InvocationID string                  `json:"invocation_id"`
 	AppID        string                  `json:"app_id"`
+	AccountID    string                  `json:"account_id,omitempty"`
 	Source       string                  `json:"source"`
 	TriggerID    string                  `json:"trigger_id"`
 	Records      []triggerDispatchRecord `json:"records"`
@@ -415,6 +416,11 @@ func (l *Loop) triggerPlanResolver(ctx context.Context) func(string) api.Plan {
 // apps get their per-plan WakeBurstPerApp + TriggerRecordsPerSecondPerApp
 // caps rather than collapsing to Free.
 func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store storeLike, planFor func(string) api.Plan) error {
+	// ADR-20261023115741: a trigger whose capability is off for the account
+	// is not polled; its records stay in the broker until the flag is on.
+	if !l.engine.appIDCapabilityAllowed(ctx, t.AppID.String(), triggerCapability(t.Kind)) {
+		return nil
+	}
 	var exclusiveBinding *state.ExclusiveTriggerBinding
 	if bindings, ok := store.(state.ExclusiveTriggerBindingStore); ok {
 		binding, bindingErr := bindings.ExclusiveTriggerBinding(ctx, t.AccountID.String(), "broker", t.ID.String())
@@ -1178,7 +1184,7 @@ func (l *Loop) settleTriggerDeadLetters(ctx context.Context, t sqlc.Trigger, pol
 	queue bool, claimedByID map[string]sqlc.TriggerRecord, dead terminalTriggerResults) {
 	var nacked map[string]bool
 	if queue {
-		nacked = l.nackTerminalItems(ctx, t, poller, dead.items, dead.reasons, nil)
+		nacked = l.nackTerminalQueueItems(ctx, t, poller, dead)
 	}
 	written := make(map[string]bool, len(dead.items))
 	for i, id := range dead.recordIDs {
@@ -1209,6 +1215,65 @@ func (l *Loop) settleTriggerDeadLetters(ctx context.Context, t sqlc.Trigger, pol
 	if !queue {
 		l.nackTerminalItems(ctx, t, poller, dead.items, dead.reasons, written)
 	}
+}
+
+// queueDeadLetterError is the last_error a dead-lettered queue invocation
+// keeps: its terminal reason and, when known, what the last attempt failed
+// with. The reason alone ("max_attempts") hid the handler's error from the
+// DLQ entry (Hunt 14 H14-6).
+func queueDeadLetterError(reason, lastError string) string {
+	lastError = strings.TrimSpace(lastError)
+	if lastError == "" || lastError == reason {
+		return reason
+	}
+	out := reason + ": " + lastError
+	if len(out) > queueRetryMaxLastErrorBytes {
+		out = strings.ToValidUTF8(out[:queueRetryMaxLastErrorBytes], "")
+	}
+	return out
+}
+
+// terminalErrorNacker dead-letters queue items with their last error; the
+// queue poller implements it.
+type terminalErrorNacker interface {
+	NackTerminalWithError(ctx context.Context, t sqlc.Trigger, ids []string, reason, lastError string) error
+}
+
+// nackTerminalQueueItems is nackTerminalItems for a queue poller: it groups
+// the items by reason and last error so each dead-lettered invocation keeps
+// what its last attempt failed with.
+func (l *Loop) nackTerminalQueueItems(ctx context.Context, t sqlc.Trigger, poller triggerSource, dead terminalTriggerResults) map[string]bool {
+	nacker, ok := poller.(terminalErrorNacker)
+	if !ok {
+		return l.nackTerminalItems(ctx, t, poller, dead.items, dead.reasons, nil)
+	}
+	type group struct {
+		reason, lastError string
+		items             []string
+	}
+	var groups []*group
+	index := map[[2]string]*group{}
+	for i, item := range dead.items {
+		key := [2]string{dead.reasons[i], dead.errors[i]}
+		g, found := index[key]
+		if !found {
+			g = &group{reason: key[0], lastError: key[1]}
+			index[key] = g
+			groups = append(groups, g)
+		}
+		g.items = append(g.items, item)
+	}
+	nacked := make(map[string]bool, len(dead.items))
+	for _, g := range groups {
+		if err := nacker.NackTerminalWithError(ctx, t, g.items, g.reason, g.lastError); err != nil {
+			l.log.Warn("sched trigger tick: poller nack (dlq)", "trigger_id", t.ID.String(), "reason", g.reason, "err", err)
+			continue
+		}
+		for _, item := range g.items {
+			nacked[item] = true
+		}
+	}
+	return nacked
 }
 
 // nackTerminalItems Nacks terminal items and returns those whose Nack
@@ -1287,6 +1352,7 @@ func buildDispatchEnvelope(t sqlc.Trigger, batch []SourceRecord) triggerDispatch
 	env := triggerDispatchRequest{
 		InvocationID: "trigger-" + t.ID.String(),
 		AppID:        t.AppID.String(),
+		AccountID:    t.AccountID.String(),
 		Source:       "esm",
 		TriggerID:    t.ID.String(),
 		Records:      recs,

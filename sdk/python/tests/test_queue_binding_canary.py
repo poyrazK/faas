@@ -1,8 +1,8 @@
 from uuid import UUID
 
-from faas_sdk.api.apps import cancel_queue_binding_canary, create_queue_binding_canary
-from faas_sdk.models.create_queue_binding_canary_request import CreateQueueBindingCanaryRequest
-from faas_sdk.models.queue_binding_canary import QueueBindingCanary
+from faas_sdk.preview.api.apps import cancel_queue_binding_canary, create_queue_binding_canary
+from faas_sdk.preview.models.create_queue_binding_canary_request import CreateQueueBindingCanaryRequest
+from faas_sdk.preview.models.queue_binding_canary import QueueBindingCanary
 
 
 def test_queue_canary_preserves_exact_publication_and_completion_identity():

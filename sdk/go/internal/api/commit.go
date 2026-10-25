@@ -49,7 +49,7 @@ type CreateCommitSourceRequest struct {
 	AllowTenantSelection bool   `json:"allow_tenant_selection,omitempty"`
 }
 
-func (c *Client) GetCommitSource(ctx context.Context, source string) (CommitSourceResponse, error) {
+func (c *PreviewClient) GetCommitSource(ctx context.Context, source string) (CommitSourceResponse, error) {
 	var out CommitSourceResponse
 	err := c.do(ctx, "GET", "/v1/commit-sources/"+url.PathEscape(source), nil, &out)
 	return out, err
@@ -78,7 +78,7 @@ type CommitOperationResponse struct {
 	CompletedAt *time.Time              `json:"completed_at,omitempty"`
 }
 
-func (c *Client) GetCommitOperation(ctx context.Context, id string) (CommitOperationResponse, error) {
+func (c *PreviewClient) GetCommitOperation(ctx context.Context, id string) (CommitOperationResponse, error) {
 	var out CommitOperationResponse
 	err := c.do(ctx, "GET", "/v1/operations/"+url.PathEscape(id), nil, &out)
 	return out, err
@@ -105,38 +105,38 @@ type CommitBlockedEventsResponse struct {
 	Observation string                       `json:"observation"`
 }
 
-func (c *Client) ListCommitBlockedEvents(ctx context.Context, source string) (CommitBlockedEventsResponse, error) {
+func (c *PreviewClient) ListCommitBlockedEvents(ctx context.Context, source string) (CommitBlockedEventsResponse, error) {
 	var out CommitBlockedEventsResponse
 	err := c.do(ctx, "GET", "/v1/commit-sources/"+url.PathEscape(source)+"/blocked-events", nil, &out)
 	return out, err
 }
-func (c *Client) ReplayCommitBlockedEvent(ctx context.Context, source, event string) error {
+func (c *PreviewClient) ReplayCommitBlockedEvent(ctx context.Context, source, event string) error {
 	return c.do(ctx, "POST", "/v1/commit-sources/"+url.PathEscape(source)+"/events/"+url.PathEscape(event)+"/replay", nil, nil)
 }
 
-func (c *Client) CreateCommitSource(ctx context.Context, slug, name, operationPolicy string) (CommitSourceResponse, error) {
+func (c *PreviewClient) CreateCommitSource(ctx context.Context, slug, name, operationPolicy string) (CommitSourceResponse, error) {
 	return c.CreateCommitSourceWithOptions(ctx, slug, CreateCommitSourceRequest{Name: name, OperationPolicy: operationPolicy})
 }
 
-func (c *Client) CreateCommitSourceWithOptions(ctx context.Context, slug string, request CreateCommitSourceRequest) (CommitSourceResponse, error) {
+func (c *PreviewClient) CreateCommitSourceWithOptions(ctx context.Context, slug string, request CreateCommitSourceRequest) (CommitSourceResponse, error) {
 	var out CommitSourceResponse
 	err := c.do(ctx, "POST", "/v1/apps/"+url.PathEscape(slug)+"/commit-sources", request, &out)
 	return out, err
 }
-func (c *Client) SetCommitSourceEnabled(ctx context.Context, source string, enabled bool) (CommitSourceResponse, error) {
+func (c *PreviewClient) SetCommitSourceEnabled(ctx context.Context, source string, enabled bool) (CommitSourceResponse, error) {
 	var out CommitSourceResponse
 	err := c.do(ctx, "PATCH", "/v1/commit-sources/"+url.PathEscape(source), map[string]bool{"enabled": enabled}, &out)
 	return out, err
 }
-func (c *Client) PutCommitSourceConnection(ctx context.Context, source, connection string) error {
+func (c *PreviewClient) PutCommitSourceConnection(ctx context.Context, source, connection string) error {
 	return c.do(ctx, "PUT", "/v1/commit-sources/"+url.PathEscape(source)+"/connection", map[string]string{"connection_url": connection}, nil)
 }
-func (c *Client) AcceptCommitEvent(ctx context.Context, source string, event CommitEventRequest) (CommitReceiptResponse, error) {
+func (c *PreviewClient) AcceptCommitEvent(ctx context.Context, source string, event CommitEventRequest) (CommitReceiptResponse, error) {
 	var out CommitReceiptResponse
 	err := c.do(ctx, "POST", "/v1/commit-sources/"+url.PathEscape(source)+"/events", event, &out)
 	return out, err
 }
-func (c *Client) GetCommitReceipt(ctx context.Context, source, event string) (CommitReceiptResponse, error) {
+func (c *PreviewClient) GetCommitReceipt(ctx context.Context, source, event string) (CommitReceiptResponse, error) {
 	var out CommitReceiptResponse
 	err := c.do(ctx, "GET", "/v1/commit-sources/"+url.PathEscape(source)+"/events/"+url.PathEscape(event), nil, &out)
 	return out, err
@@ -144,7 +144,7 @@ func (c *Client) GetCommitReceipt(ctx context.Context, source, event string) (Co
 
 // GetCommitPublicationReceipt reads a page of the retained subscriber evidence.
 // The acceptance-time guard prevents attributing a replacement to this receipt.
-func (c *Client) GetCommitPublicationReceipt(ctx context.Context, publication CommitEventPublication, after string, limit int) (AppEventPublishStatusEvidence, error) {
+func (c *PreviewClient) GetCommitPublicationReceipt(ctx context.Context, publication CommitEventPublication, after string, limit int) (AppEventPublishStatusEvidence, error) {
 	var out AppEventPublishStatusEvidence
 	if publication.Source == "" || publication.ID == "" || publication.AcceptedAt.IsZero() || limit < 0 || limit > AppEventPublishStatusRecipientsMax {
 		return out, ErrValidation("invalid publication receipt query")
@@ -171,7 +171,7 @@ type CommitPublicationHistoryResponse struct {
 }
 
 // ListCommitPublications reads newest-first acceptance history, not delivery completion.
-func (c *Client) ListCommitPublications(ctx context.Context, source, before string, limit int) (CommitPublicationHistoryResponse, error) {
+func (c *PreviewClient) ListCommitPublications(ctx context.Context, source, before string, limit int) (CommitPublicationHistoryResponse, error) {
 	var out CommitPublicationHistoryResponse
 	if limit < 0 || limit > CommitPublicationHistoryPageMax {
 		return out, ErrValidation("invalid publication history limit")

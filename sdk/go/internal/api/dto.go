@@ -770,6 +770,9 @@ type CapabilitiesResponse struct {
 	RegistryVersion    int                `json:"registry_version"`
 	Plan               string             `json:"plan"`
 	Capabilities       []CapabilityStatus `json:"capabilities"`
+	// HiddenCapabilities are the capabilities whose platform flag is off for
+	// this account; omitted when nothing is hidden and by older servers.
+	HiddenCapabilities []string `json:"hidden_capabilities,omitempty"`
 }
 
 // AccountLimits is the read-only copy of api.Limits that survives

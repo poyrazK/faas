@@ -5,9 +5,9 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.storage import create_object_upload_route, get_object_write_receipt
+from faas_sdk.preview.api.storage import create_object_upload_route, get_object_write_receipt
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models import CreateObjectUploadRouteRequest, ObjectEncryption, ObjectUploadRoute, ObjectWriteReceipt
+from faas_sdk.preview.models import CreateObjectUploadRouteRequest, ObjectEncryption, ObjectUploadRoute, ObjectWriteReceipt
 
 
 def test_upload_route_encryption() -> None:

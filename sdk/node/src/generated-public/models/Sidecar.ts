@@ -1,0 +1,141 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { SidecarProbe } from './SidecarProbe.js';
+import type { WorkloadDependency } from './WorkloadDependency.js';
+/**
+ * One entry in the deploy request's preferred `companions` array
+ * (legacy name: `sidecars`). Up to 5 helpers per app (1 init
+ * + up to 4 long-running sidecars; total cardinality is capped
+ * at the API, runtime, and database layers).
+ * Stateless only — stateful base images (Postgres, Redis,
+ * MySQL, MongoDB, etc.) are rejected at the API gate
+ * with 403 `sidecar_stateful_denied` and again at imaged
+ * (PR-B). Image references must be digest-pinned
+ * (`repo@sha256:...`); tag references are rejected with
+ * 400 `sidecar_invalid_image`. Env values are
+ * envelope-sealed at rest via secretbox (namespace
+ * `"sidecar_env"`); the wire shape is plaintext, the
+ * column is sealed ciphertext.
+ * `env_secrets` grants this workload only the same-named
+ * app secrets selected by explicit `secret:KEY` references.
+ * References resolve in the deployment's scope at each wake;
+ * sidecars do not inherit main-workload secrets. Secret rotation
+ * reaches sidecars through a restart by default; a long-running
+ * sidecar image may opt into runtime projection and signal delivery.
+ *
+ * - `name` matches RFC 1123 label (lowercase alphanumeric
+ * + dash, 1..63 chars, starts with [a-z0-9]). Unique
+ * within a single request.
+ * - `preset` selects a platform-managed helper. A preset may omit
+ * `image`; apid resolves an operator-pinned immutable digest.
+ * - `image` is required for a custom helper and must be a
+ * digest-pinned OCI reference. Tag references are rejected.
+ * - `type` ∈ {`init`, `sidecar`}. At most one init helper and
+ * up to four long-running sidecars per deployment.
+ * - `cmd` is the argv (image's ENTRYPOINT unchanged; CMD
+ * overridden). Every element non-empty.
+ * - `env` is plaintext on the wire, sealed at rest. Keys
+ * per `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan
+ * `EnvValueMaxBytes`. Plaintext values NEVER appear in
+ * any log, audit, or error.
+ * - `env_secrets` is a per-sidecar positive allowlist, for example
+ * `{DATABASE_URL: "secret:DATABASE_URL"}`. The environment key
+ * and referenced app-secret name must match. Missing secrets fail
+ * the wake; an empty/omitted map grants no app secrets to this
+ * sidecar. Values refresh on cold boot or restart by default;
+ * long-running sidecars can also opt into runtime projection and
+ * signal delivery through their image metadata.
+ * - `port` ∈ {0, 1..65535}. 0 = absent.
+ * - `primary_ingress` routes the application's normal hostname and
+ * custom domains through this long-running helper. It requires port.
+ * - `ram_mb` ∈ {0, 32..512}. 0 = inherit plan RAM.
+ * - `scratch_mb` ∈ {0, 16..512}. 0 = platform default; explicit values cap the sidecar's writable `/tmp` tmpfs.
+ * - `cpu_millicores` ∈ {0, 250, 500, 1000}. 0 = inherit app CPU quota.
+ * - `disk_io_profile` ∈ {`low`, `standard`, `high`}. Omit to inherit the guest default; profiles map to per-workload cgroup I/O weights.
+ * - `essential` defaults to true. If true and the workload
+ * exits non-zero, the dependency set fails
+ * (`failure_class=user_error`) and essential long-running
+ * sidecars restart-loop. If false, the failure is logged
+ * and the other workloads continue.
+ * - `startup_probe` gates healthy dependency state and supports exec,
+ * HTTP GET, and TCP probes. Omit it to use the image OCI `HEALTHCHECK`.
+ * - `liveness_probe` independently monitors a running sidecar; when
+ * omitted, the effective startup probe is reused for compatibility.
+ * - `readiness_probe` is valid only on the `primary_ingress` sidecar. It
+ * gates initial traffic and temporarily withdraws/resumes routing
+ * without restarting the companion.
+ * - `depends_on` optionally gates this workload on `main` or
+ * another sidecar. Conditions are `started`, `healthy`, and
+ * `completed_successfully`; omitted condition means `started`.
+ * Init workloads are implicit prerequisites of main and long-running
+ * sidecars. Cycles and unknown workload names are rejected.
+ *
+ */
+export type Sidecar = {
+  /**
+   * RFC 1123 label (lowercase alphanumeric + dash, 1..63 chars, starts with [a-z0-9]).
+   */
+  name: string;
+  /**
+   * Digest-pinned OCI reference (repo@sha256:...). Tag references rejected with 400 `sidecar_invalid_image`.
+   */
+  image?: string;
+  /**
+   * Platform-managed companion preset. The installation must configure an immutable image digest.
+   */
+  preset?: 'opentelemetry' | 'sentry' | 'datadog-dogstatsd';
+  /**
+   * `init` runs once before the main workload (DB migrator shape). `sidecar` runs alongside (metrics scraper shape).
+   */
+  type: 'init' | 'sidecar';
+  /**
+   * Argv. Image's ENTRYPOINT unchanged; CMD overridden. Every element non-empty.
+   */
+  cmd?: Array<string>;
+  /**
+   * Plaintext env map (sealed at rest). Keys `^[A-Z][A-Z0-9_]*$`; per-value byte cap = plan EnvValueMaxBytes.
+   */
+  env?: Record<string, string>;
+  /**
+   * Per-sidecar positive allowlist of same-named app secrets, resolved in the deployment scope. Values refresh on restart by default; long-running sidecars can additionally opt into runtime projection and signal delivery through their image metadata. Sidecars never inherit main secrets.
+   */
+  env_secrets?: Record<string, string>;
+  /**
+   * Listen port. 0 = absent / fall back to image default.
+   */
+  port?: number;
+  /**
+   * Route the app's primary public hostname through this long-running companion. Requires an explicit port.
+   */
+  primary_ingress?: boolean;
+  /**
+   * Cgroup memory ceiling for this sidecar. 0 = inherit plan RAM; 32..512 enforced at the API.
+   */
+  ram_mb?: number;
+  /**
+   * Writable /tmp tmpfs ceiling for this sidecar in MB. 0 = platform default; explicit values must be 16..512.
+   */
+  scratch_mb?: number;
+  /**
+   * Sustained cgroup CPU allowance in millicores. 0 = inherit app CPU quota.
+   */
+  cpu_millicores?: 0 | 250 | 500 | 1000;
+  /**
+   * Per-workload guest cgroup I/O scheduling policy. Omit to inherit the guest default.
+   */
+  disk_io_profile?: 'low' | 'standard' | 'high';
+  /**
+   * Defaults to true. Essential workload failure fails the set; non-essential failure is logged and contained.
+   */
+  essential?: boolean;
+  startup_probe?: SidecarProbe;
+  liveness_probe?: SidecarProbe;
+  readiness_probe?: SidecarProbe;
+  /**
+   * Optional workload lifecycle dependencies. Init workloads are implicit prerequisites of main and long-running sidecars.
+   */
+  depends_on?: Array<WorkloadDependency>;
+};
+

@@ -69,11 +69,11 @@ func TracingImage(repo string) (fakeImage, string) {
 }
 
 // GoTracingHelperImage is a scratch-style OCI image of an HTTP server
-// instrumented only with the Go SDK's tracing package (sdk/go/tracing), which
+// instrumented only with the Go SDK's tracing package (sdk/go/preview/tracing), which
 // lives in the SDK module, so the fixture builds there (ADR-958 amendment).
 func GoTracingHelperImage(repo string) (fakeImage, string) {
 	binary, err := goTracingHelperServer.build("FAAS_E2E_GO_TRACING_HELPER_BINARY", "go-tracing-helper",
-		"..", "..", "sdk", "go", "tracing", "testdata", "server")
+		"..", "..", "sdk", "go", "preview", "tracing", "testdata", "server")
 	if err != nil {
 		panic(err)
 	}

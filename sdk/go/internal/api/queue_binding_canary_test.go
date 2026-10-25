@@ -29,11 +29,11 @@ func TestQueueCanaryClientNeverPublishesWithoutConsent(t *testing.T) {
 	defer server.Close()
 	client := NewClient(server.URL, "test")
 	req := CreateQueueBindingCanaryRequest{Binding: "orders", DeploymentID: "selected", TTLSeconds: 60}
-	if _, err := client.CreateQueueBindingCanary(context.Background(), "api", req); err == nil || calls != 0 {
+	if _, err := NewPreviewClient(client).CreateQueueBindingCanary(context.Background(), "api", req); err == nil || calls != 0 {
 		t.Fatalf("consent: %d %v", calls, err)
 	}
 	req.PublishConsent = true
-	r, err := client.CreateQueueBindingCanary(context.Background(), "api", req)
+	r, err := NewPreviewClient(client).CreateQueueBindingCanary(context.Background(), "api", req)
 	if err != nil || r.DeploymentID != "selected" || r.Status != "published" || calls != 1 {
 		t.Fatalf("response: %+v %v", r, err)
 	}

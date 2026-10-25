@@ -98,8 +98,8 @@ import (
     faas "github.com/poyrazK/faas/sdk/go"
 )
 
-client := &http.Client{Transport: faas.DevBridgePropagationTransport{}}
-handler := faas.DevBridgePropagationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+client := &http.Client{Transport: preview.DevBridgePropagationTransport{}}
+handler := preview.DevBridgePropagationMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
     request, err := http.NewRequestWithContext(r.Context(), "GET", "http://payments.svc.gregale/charge", nil)
     if err != nil { http.Error(w, "request failed", 500); return }
     response, err := client.Do(request)

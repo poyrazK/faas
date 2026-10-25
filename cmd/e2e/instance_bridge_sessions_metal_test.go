@@ -22,6 +22,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"os/exec"
 	"strconv"
 	"strings"
 	"testing"
@@ -167,6 +169,88 @@ func TestInstanceBridgeSessionsMetal(t *testing.T) {
 		udpMetalRoundTrip(t, addr, []byte{0, 255, 128, 1, 0, 10}, 90*time.Second)
 		udpMetalRoundTrip(t, addr, bytes.Repeat([]byte{0, 255}, api.UDPDatagramMaxBytes/2+1)[:api.UDPDatagramMaxBytes], 10*time.Second)
 	})
+
+	// P1c: with FAAS_INSTANCE_BRIDGE_UNIT=1 the traffic above went through a
+	// bridge systemd owns. It runs in the instance bridge slice as a bridge
+	// uid, and park leaves no unit behind (invariant 4).
+	t.Run("bridge unit", func(t *testing.T) {
+		if os.Getenv("FAAS_INSTANCE_BRIDGE_UNIT") != "1" {
+			t.Skip("FAAS_INSTANCE_BRIDGE_UNIT is off")
+		}
+		running, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateRunning, 30*time.Second)
+		if err != nil {
+			t.Fatalf("no running instance: %v", err)
+		}
+		units := bridgeUnits(t, running[0].ID)
+		if len(units) != 1 {
+			t.Fatalf("instance %s has bridge units %v, want one", running[0].ID, units)
+		}
+		show := systemctlShow(t, units[0], "Slice", "ActiveState", "MainPID")
+		if show["Slice"] != "faas-tenant-ibridge.slice" || show["ActiveState"] != "active" || show["MainPID"] == "0" {
+			t.Fatalf("bridge unit %s: %v", units[0], show)
+		}
+		// The unit starts the bridge as root (User= refuses a uid with no
+		// account); the bridge drops itself. Every uid must be a bridge uid
+		// and the bridge must hold no capability.
+		status, err := os.ReadFile("/proc/" + show["MainPID"] + "/status")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var uids []string
+		for _, line := range strings.Split(string(status), "\n") {
+			if ids, ok := strings.CutPrefix(line, "Uid:"); ok {
+				uids = strings.Fields(ids)
+			}
+		}
+		if len(uids) != 4 || !strings.Contains(string(status), "CapEff:\t0000000000000000") {
+			t.Fatalf("bridge unit %s main process:\n%s", units[0], status)
+		}
+		for _, u := range uids {
+			if uid, err := strconv.Atoi(u); err != nil || uid < 30000 || uid > 39999 || u != uids[0] {
+				t.Fatalf("bridge unit %s runs as uids %v, want one bridge uid", units[0], uids)
+			}
+		}
+		if body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/hello/park", nil); status != http.StatusNoContent {
+			t.Fatalf("park: status=%d body=%s", status, body)
+		}
+		if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, time.Minute); err != nil {
+			t.Fatalf("no parked instance: %v", err)
+		}
+		if left := bridgeUnits(t, running[0].ID); len(left) != 0 {
+			t.Fatalf("parked instance kept bridge units %v", left)
+		}
+	})
+}
+
+// bridgeUnits lists the instance's bridge units systemd has loaded.
+func bridgeUnits(t *testing.T, instance string) []string {
+	t.Helper()
+	out, err := exec.Command("systemctl", "list-units", "--all", "--plain", "--no-legend", "faas-ibridge-"+instance+"-*.service").CombinedOutput()
+	if err != nil {
+		t.Fatalf("systemctl list-units: %v: %s", err, out)
+	}
+	var units []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if fields := strings.Fields(line); len(fields) > 0 {
+			units = append(units, fields[0])
+		}
+	}
+	return units
+}
+
+func systemctlShow(t *testing.T, unit string, props ...string) map[string]string {
+	t.Helper()
+	out, err := exec.Command("systemctl", "show", "-p", strings.Join(props, ","), unit).CombinedOutput()
+	if err != nil {
+		t.Fatalf("systemctl show %s: %v: %s", unit, err, out)
+	}
+	show := map[string]string{}
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if k, v, ok := strings.Cut(line, "="); ok {
+			show[k] = v
+		}
+	}
+	return show
 }
 
 // upgradeEchoConn opens a connection through the gateway and upgrades it on

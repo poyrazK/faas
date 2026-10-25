@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, WorkflowsService } from '../src/index.js';
+import { FaaSClient, WorkflowsService } from '../src/preview.js';
 
 test('saved test APIs preserve null assertions, safe failure fields, and suite removal', async t => {
   const suite = { sample: { input: null }, cases: [{ name: 'null output', simulation: { mock_outputs: { main: null } }, expectations: [{ step: 'main', output: null }] }] };
