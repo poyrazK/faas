@@ -1639,6 +1639,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithStoreOutageAtStartup(storeOutageAtStartup).
 		WithNodeRegistry(nodeRegistry).
 		WithEvents(eventsPlatform).
+		WithOpsMetrics(ops).
 		WithReachableHook(engine.DestroyLostVMs)
 	if leaseGuard != nil {
 		hb.WithTakeoverGuard(leaseGuard)

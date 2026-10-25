@@ -115,6 +115,9 @@ type OpsMetrics struct {
 	// wakeFailover counts schedd's re-placements of a wake a node refused
 	// before the VM started (ADR-20261022184531). Closed labels only.
 	wakeFailover *prometheus.CounterVec
+	// computeNodeReadiness is one-hot per node: 1 for the node's current
+	// readiness, 0 for the others (ADR-20261022184531).
+	computeNodeReadiness *prometheus.GaugeVec
 	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
 	// warm-pool size by plan. Runtime reconciliation will update the
 	// gauge in a follow-up; registering it here makes the contract
@@ -2219,6 +2222,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 			}
 		}
 	}
+	computeNodeReadiness := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_compute_node_readiness",
+		Help: "One-hot readiness of each compute node this schedd heartbeats (ADR-20261022184531): 1 on the state the node last proved, 0 on the others. state is ready, degraded (answers but cannot serve a wake), unavailable or draining (both mirror lifecycle). node is the compute node name.",
+	}, []string{"node", "state"})
 	initSnapshotCaptureDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_init_snapshot_capture_duration_seconds",
 		Help:    "Wall-clock duration of new terminal init snapshot captures, including before_checkpoint, by site and outcome. Reused snapshots are excluded.",
@@ -4065,7 +4072,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		planGateRescuedByExclude,
 	}
 	if prefix == "schedd" {
-		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover)
+		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness)
 	}
 	if prefix == "imaged" {
 		commonCollectors = append(commonCollectors, snapshotPublication)
@@ -5505,6 +5512,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		initSnapshotAttempts:                       initSnapshotAttempts,
 		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
 		wakeFailover:                               wakeFailover,
+		computeNodeReadiness:                       computeNodeReadiness,
 		snapshotPublication:                        snapshotPublication,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
@@ -6252,6 +6260,26 @@ var (
 	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing}
 	WakeFailoverOutcomes = []string{WakeFailoverOutcomeSucceeded, WakeFailoverOutcomeRefusedAgain, WakeFailoverOutcomeNoAlternate, WakeFailoverOutcomeOutOfTime, WakeFailoverOutcomeFailed}
 )
+
+// ComputeNodeReadinessStates are the closed state label values of
+// schedd_compute_node_readiness; they mirror compute_nodes_readiness_chk.
+var ComputeNodeReadinessStates = []string{"ready", "degraded", "unavailable", "draining"}
+
+// SetComputeNodeReadiness marks node's current readiness. Only schedd
+// exports the gauge; an unknown state or empty node is dropped.
+func (m *OpsMetrics) SetComputeNodeReadiness(node, readiness string) {
+	if m == nil || m.computeNodeReadiness == nil || m.metricPrefix != "schedd" ||
+		node == "" || !slices.Contains(ComputeNodeReadinessStates, readiness) {
+		return
+	}
+	for _, candidate := range ComputeNodeReadinessStates {
+		value := 0.0
+		if candidate == readiness {
+			value = 1
+		}
+		m.computeNodeReadiness.WithLabelValues(node, candidate).Set(value)
+	}
+}
 
 // RecordWakeFailover counts one refused wake attempt by what its failover
 // did. Only schedd exports the collector; unknown labels are dropped.
