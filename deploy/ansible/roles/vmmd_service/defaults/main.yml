@@ -25,6 +25,14 @@ vmmd_outbound_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
 # 64-77 ms on every wake (hunt #9). 0 disables; the API bound is 0-16.
 vmmd_prepared_networks: 4
 
+# ADR-20261024225612 Firecracker CPU template every guest boots with. Set one
+# value for every compute node of a cell: "T2CL" lets Intel Cascade Lake and
+# Ice Lake nodes share snapshots, "T2S" Skylake + Cascade Lake, "C3"/"T2"
+# Skylake through Ice Lake, "T2A" AMD Milan. vmmd refuses to start on a CPU
+# the template does not list. Changing it makes every app cold-boot once.
+# Empty (the default) keeps the host's CPUID and installs no drop-in.
+vmmd_cpu_template: ""
+
 # vmmd restart adoption (docs/adr/20261017-vmmd-restart-adoption.md): with
 # all three on, a rollout restarts vmmd without draining the node when the
 # new vmmd adopts every live guest (node_join.yml asks `vmmd adoption-check`).
@@ -44,6 +52,26 @@ vmmd_prepared_networks: 4
 vmmd_adoption_record: false
 vmmd_adopt_running_vms: false
 vmmd_adopt_admitted_runtimes: false
+
+# Connection survival (docs/adr/20261017-connection-survival-across-data-path-restarts.md),
+# phase P1: with all three on and the adoption switches above, an instance's
+# bridge outlives a vmmd restart that adopts the guest. Streams through it
+# still end with vmmd until forwardd (P2) takes over the RPCs. Rendered as
+# FAAS_* environment only when on; off sets nothing, which leaves vmmd's
+# default (off). node_join.yml renders the same switches on every rollout
+# (zz-faas-bridge.conf). Set them per host (host_vars) to canary one node:
+# - vmmd_bridge_unprivileged runs each instance's bridges as its own bridge
+#   uid with no capability (slice 1a). vmmd refuses to start while an account
+#   holds a uid in the bridge range.
+# - vmmd_instance_bridge_sessions carries raw, TCP and UDP forwards as sessions
+#   on the instance's persistent bridge instead of a process per connection
+#   (P1b), so they ride the bridge that outlives vmmd.
+# - vmmd_instance_bridge_unit runs that bridge as a transient systemd service
+#   that outlives vmmd (P1c); needs vmmd_bridge_unprivileged. Turning it off
+#   is safe: the next vmmd stops every bridge unit it finds.
+vmmd_bridge_unprivileged: false
+vmmd_instance_bridge_sessions: false
+vmmd_instance_bridge_unit: false
 
 # ADR-740 developer live source patches. Must match control_plane_service's
 # value: apid publishes patches and vmmd serves them to developer environments.

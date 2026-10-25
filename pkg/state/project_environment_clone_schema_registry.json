@@ -3343,6 +3343,8 @@
       "active",
       "admission_ceiling_mb",
       "cert_fingerprint",
+      "cpu_model",
+      "cpu_template",
       "created_at",
       "drain_completed_at",
       "drain_initiated_at",
@@ -16552,6 +16554,8 @@
     "columns": [
       "application_standard_capture_token",
       "base_image_version",
+      "cpu_model",
+      "cpu_template",
       "created_at",
       "delete_pending",
       "deployment_id",

@@ -17,6 +17,13 @@ ExecStart=/usr/sbin/grafana-server \
     cfg:default.server.http_port={{ gv_listen_addr.split(':')[1] }}
 Restart=on-failure
 RestartSec=10s
+# ADR-20261023124955 §1: capped observability slice, below Prometheus and
+# Alertmanager for CPU. production-us measured 106 MB RSS and a 181 MB peak
+# on 2026-10-23; MemoryHigh throttles a heavy dashboard before MemoryMax.
+Slice=faas-obs.slice
+CPUWeight={{ gv_cpu_weight }}
+MemoryHigh={{ gv_memory_high }}
+MemoryMax={{ gv_memory_max }}
 
 # Hardening (mirrors alertmanager.service + prometheus.service).
 # Grafana runs unprivileged with the same lockdown as the rest of

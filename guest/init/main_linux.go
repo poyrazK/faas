@@ -230,7 +230,7 @@ func boot() error {
 	if extensionHooks != nil {
 		if err := listenResumeHookWithExtension(slog.Default(),
 			func() { extensionHooks.emit(extension.PhasePostRestore) },
-			func(req extensionHookRequest) { extensionHooks.emitWithMetadata(req.Phase, req.Metadata) },
+			func(req extensionHookRequest) error { return extensionHooks.emitWithMetadata(req.Phase, req.Metadata) },
 			func() error {
 				cfg := afterRestore.Load()
 				if cfg == nil {

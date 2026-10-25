@@ -49,9 +49,19 @@
 # `config-file:` input on the Initialize CodeQL step. The
 # queries: input is set at the workflow level
 # (security-and-quality), so we don't repeat it here.
+#
+# `go/log-injection` is excluded for the same reason (2026-10-25 triage:
+# 120 open alerts, all false positives). Log injection forges log lines by
+# putting newlines or control characters into a logged value. Every daemon
+# logs through wire.Logger() (pkg/wire/daemon.go), a slog JSON handler that
+# escapes them, and the query does not recognise structured slog key/value
+# arguments or pkg/logsanitize as safe. A new plain-text log sink (log.Printf
+# or fmt to a log file) would bypass the JSON handler: review those by hand.
 
 name: codeql-config
 
 query-filters:
   - exclude:
       id: go/reflected-xss
+  - exclude:
+      id: go/log-injection
