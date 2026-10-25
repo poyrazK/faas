@@ -49,6 +49,27 @@ type EventReplayBackfillClaim struct {
 
 const EventReplayBackfillRetryMax = api.EventReplayBackfillRetryMax
 
+// EventReplayBackfillRangeError is a backfill range longer than the owner's
+// settled-receipt window (ADR-20261023215834): receipts older than the
+// window are already pruned, so the range could not be honoured.
+type EventReplayBackfillRangeError struct{ Range, Limit time.Duration }
+
+func (e *EventReplayBackfillRangeError) Error() string { return ErrEventReplayBackfillRange.Error() }
+func (e *EventReplayBackfillRangeError) Unwrap() error { return ErrEventReplayBackfillRange }
+
+// checkEventReplayBackfillRange bounds the acceptance range by the owner's
+// settled-receipt window.
+func (s *PgStore) checkEventReplayBackfillRange(ctx context.Context, accountID string, from, cutoff time.Time) error {
+	retention, err := eventSettledRetention(ctx, sqlc.New(), s.pool, accountID)
+	if err != nil {
+		return err
+	}
+	if span := cutoff.Sub(from); span > retention {
+		return &EventReplayBackfillRangeError{Range: span, Limit: retention}
+	}
+	return nil
+}
+
 func validateEventReplayBackfillQuery(accountID string, query *EventReplayBackfillQuery, now time.Time) error {
 	for _, id := range []string{accountID, query.AppID, query.SubscriptionID} {
 		if _, err := uuid.Parse(id); err != nil {
@@ -65,9 +86,6 @@ func validateEventReplayBackfillQuery(accountID string, query *EventReplayBackfi
 	if !fromBoundary.Before(cutoff) {
 		return fmt.Errorf("%w: from must precede the acceptance cutoff", ErrEventReplayBackfillQuery)
 	}
-	if cutoff.Sub(fromBoundary) > api.EventReplayBackfillMaxRange {
-		return ErrEventReplayBackfillRange
-	}
 	return nil
 }
 
@@ -81,6 +99,9 @@ func eventReplayBackfillCutoff(until, now time.Time) time.Time {
 func (s *PgStore) CreateEventReplayBackfill(ctx context.Context, accountID string, query EventReplayBackfillQuery) (api.EventReplayBackfillJobResponse, error) {
 	now := time.Now().UTC()
 	if err := validateEventReplayBackfillQuery(accountID, &query, now); err != nil {
+		return api.EventReplayBackfillJobResponse{}, err
+	}
+	if err := s.checkEventReplayBackfillRange(ctx, accountID, eventReplayPreviewPgBoundary(query.From).Time, eventReplayBackfillCutoff(query.Until, now)); err != nil {
 		return api.EventReplayBackfillJobResponse{}, err
 	}
 	tx, err := s.pool.Begin(ctx)

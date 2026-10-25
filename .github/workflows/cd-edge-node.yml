@@ -88,7 +88,7 @@ jobs:
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/gregale-units
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: workflow-src
           sparse-checkout: scripts/ci/verify_unit_release.sh
@@ -103,7 +103,7 @@ jobs:
           echo "UNITS_DIR=$RUNNER_TEMP/gregale-units/unpacked" >> "$GITHUB_ENV"
           echo "UNITS_SHA=$git_sha" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Main's history and the release tags, not every branch
           # (scripts/ci/fetch_release_history.sh).

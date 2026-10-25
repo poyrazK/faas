@@ -50,6 +50,47 @@ func TestRegistry_OutboundIsWiredToOutbounddAlone(t *testing.T) {
 	}
 }
 
+func TestRegistry_SourceIsWiredToGithubdAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Source)
+	if !ok || !s.Wired {
+		t.Fatalf("source domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "githubd" {
+		t.Fatalf("source readers = %v, want [githubd]", s.Readers)
+	}
+	if got := sealdomain.ReaderDomains("apid"); containsDomain(got, sealdomain.Source) {
+		t.Fatalf("apid reads %v; it must only seal webhook secrets", got)
+	}
+}
+
+func TestRegistry_EdgeIsWiredToGatewaydInternalAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Edge)
+	if !ok || !s.Wired {
+		t.Fatalf("edge domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "gatewayd-internal" {
+		t.Fatalf("edge readers = %v, want [gatewayd-internal]", s.Readers)
+	}
+	for _, d := range []string{"apid", "gatewayd-public"} {
+		if containsDomain(sealdomain.ReaderDomains(d), sealdomain.Edge) {
+			t.Fatalf("%s reads the edge domain; only gatewayd-internal opens its columns", d)
+		}
+	}
+}
+
+func TestRegistry_BuildIsWiredToImagedAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Build)
+	if !ok || !s.Wired {
+		t.Fatalf("build domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "imaged" {
+		t.Fatalf("build readers = %v, want [imaged]", s.Readers)
+	}
+	if got := sealdomain.ReaderDomains("apid"); containsDomain(got, sealdomain.Build) {
+		t.Fatalf("apid reads %v; it must only seal registry passwords", got)
+	}
+}
+
 func TestParse_RejectsUnknownDomain(t *testing.T) {
 	if _, err := sealdomain.Parse("fleet"); err == nil {
 		t.Fatal("Parse accepted a name outside the registry")

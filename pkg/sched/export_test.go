@@ -23,6 +23,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -133,6 +134,7 @@ var JsonStdUnmarshal = jsonStdUnmarshal
 var KafkaSASLMechanism = kafkaSASLMechanism
 var KindsOf = kindsOf
 var ListServiceReplicas = listServiceReplicas
+var LiveCount = liveCount
 var MakeEngine = makeEngine
 var MakeLoopForDLQ = makeLoopForDLQ
 var MarshalJSON = marshalJSON
@@ -198,12 +200,14 @@ var SeedTwoNodes = seedTwoNodes
 var SeedWorkerScopes = seedWorkerScopes
 var SilenceLog = silenceLog
 var StageReaperPolicyDeployment = stageReaperPolicyDeployment
+var StalledSurgeMirror = stalledSurgeMirror
 var StandardNativeTestNodeID = standardNativeTestNodeID
 var StartupCPUBoostQuota = startupCPUBoostQuota
 var StartupDeadlineForApp = startupDeadlineForApp
 var TaskObservationStore = taskObservationStore
 var TestLog = testLog
 var TriggerDispatchParent = triggerDispatchParent
+var TruncateCodeError = truncateCodeError
 var UntilNextMinuteTick = untilNextMinuteTick
 var ValidEnvironmentGitOpsJobVariables = validEnvironmentGitOpsJobVariables
 var ValidRuntimeSnapshot = validRuntimeSnapshot
@@ -211,6 +215,7 @@ var ValidRuntimeSnapshotIdentity = validRuntimeSnapshotIdentity
 var ValidRuntimeSnapshotRequest = validRuntimeSnapshotRequest
 var WaitFor = waitFor
 var WakeEngineWithEvents = wakeEngineWithEvents
+var WakeN = wakeN
 var WireRenderMetrics = wireRenderMetrics
 var WithAppTaskStage = withAppTaskStage
 var WithRequestedWakeID = withRequestedWakeID
@@ -251,6 +256,9 @@ func (r *DeploymentCounterWatcher) Resync(p0 context.Context) error { return r.r
 
 // Members of DiskDrift
 func (r *DiskDrift) Timeout() *time.Duration { return &r.timeout }
+
+// Members of EgressCircuitBreaker
+func (r *EgressCircuitBreaker) Resolve() *EgressResolver { return &r.resolve }
 
 // Members of Drain
 func (r *Drain) Engine() **Engine       { return &r.engine }
@@ -377,6 +385,9 @@ func (r *Engine) WakeInstanceModeMatchesApp(p0 context.Context, p1 string, p2 st
 	return r.wakeInstanceModeMatchesApp(p0, p1, p2)
 }
 func (r *Engine) XOwnsApp(p0 state.App) bool { return r.ownsApp(p0) }
+
+// Members of ForkCoordinator
+func (r *ForkCoordinator) Now() *func() time.Time { return &r.now }
 
 // Members of Heartbeat
 func (r *Heartbeat) Now() *func() time.Time { return &r.now }
@@ -668,3 +679,64 @@ func CreateRuntimeWithRehearsalRun(ctx context.Context, vmm RoutedVMM, spec AppS
 // Members of workPool
 func (r *workPool) Drain()                                          { r.drain() }
 func (r *workPool) Submit(p0 workKind, p1 string, p2 func()) string { return r.submit(p0, p1, p2) }
+
+// QueueRetryGroups exposes the queue retry last_error grouping (Hunt 12
+// H12-34).
+func QueueRetryGroups(items []string, statusByID map[string]TriggerDispatchResult) map[string][]string {
+	out := map[string][]string{}
+	for _, group := range queueRetryGroups(items, statusByID) {
+		out[group.reason] = group.items
+	}
+	return out
+}
+
+// WarmCaptureInstanceGatesOpen exposes the warm-capture gates shared by the
+// capture and the freeze decision (Hunt 12 H12-52).
+var WarmCaptureInstanceGatesOpen = warmCaptureInstanceGatesOpen
+
+// SettleTriggerDeadLetters runs the per-record DLQ settlement; queue selects
+// the queue poller's Nack-first order (ADR-20261022203653).
+func (r *Loop) SettleTriggerDeadLetters(ctx context.Context, t sqlc.Trigger, poller triggerSource, store storeLike, queue bool,
+	recordIDs, items, reasons, lastErrors []string, attempts []int32) {
+	claimed := make(map[string]sqlc.TriggerRecord, len(recordIDs))
+	for _, id := range recordIDs {
+		var record sqlc.TriggerRecord
+		_ = record.ID.Scan(id)
+		claimed[id] = record
+	}
+	r.settleTriggerDeadLetters(ctx, t, poller, store, queue, claimed, terminalTriggerResults{
+		recordIDs: recordIDs, items: items, reasons: reasons, errors: lastErrors, attempts: attempts})
+}
+
+// ADR-20261024085817: a draining node keeps no resident work.
+var PublishWarmFixture = publishWarmFixture
+
+type WarmResumeFakeVMM = warmResumeFakeVMM
+
+func NewWarmResumeFakeVMM() *warmResumeFakeVMM { return &warmResumeFakeVMM{fakeVMM: &fakeVMM{}} }
+
+func (r *Engine) DrainRequestBound() *time.Duration { return &r.drainRequestBound }
+
+func (r *warmResumeFakeVMM) ResumeCalls() *int { return &r.resumeCalls }
+
+// ADR-20261024140000: build secrets resolve with state.ResolveRuntimeSecretSources;
+// RuntimeMainSecretEntries is the wake's own serving delivery to compare it with.
+func RuntimeMainSecretEntries(snapshot state.RuntimeAppValuesSnapshot, intent state.AppEnvironmentSecretIntent) ([]fcvm.SealedEnvEntry, error) {
+	refs, err := state.DeploymentSecretReferences(snapshot.SecretGrants.OverrideEnvSecrets)
+	if err != nil {
+		return nil, err
+	}
+	delivery, err := sealedEnvDeliveryFromRowsWithIntent(snapshot.Secrets, snapshot.AccountID, snapshot.AppID, snapshot.Scope, refs, false, intent, true)
+	if err != nil {
+		return nil, err
+	}
+	if len(refs) == 0 {
+		return withInheritedProjectSecrets(snapshot.InheritedSecrets, delivery.Entries), nil
+	}
+	return delivery.Entries, nil
+}
+
+var QueueDeadLetterError = queueDeadLetterError
+var PrimeRuntimeBusyBackoff = &primeRuntimeBusyBackoff
+var ApplicationStandardRuntimeProblem = applicationStandardRuntimeProblem
+var HealthcheckGRPCForApp = healthcheckGRPCForApp

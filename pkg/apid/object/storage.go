@@ -379,7 +379,7 @@ func (s *Service) reserveBucket(ctx context.Context, st state.ObjectBucketStore,
 		return state.ObjectBucket{}, err
 	}
 	id := uuid.NewString()
-	b, err := st.ReserveObjectBucket(ctx, state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: "gregale-" + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}, s.Host.ObjectStorage().MaxBucketsPerApp)
+	b, err := st.ReserveObjectBucket(ctx, state.ObjectBucket{ID: id, AccountID: account, AppID: app, Name: req.Name, Scope: req.Scope, Region: req.Region, BackendID: backend.ID, BackendFingerprint: backend.Fingerprint, PhysicalName: objectstorage.PhysicalBucketPrefix + strings.ReplaceAll(id, "-", ""), PublicRead: req.Public, ServeAt: req.ServeAt}, s.Host.ObjectStorage().MaxBucketsPerApp)
 	if err == nil && b.Region != req.Region {
 		return b, state.ErrConflict
 	}

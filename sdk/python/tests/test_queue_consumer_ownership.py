@@ -4,8 +4,8 @@ import httpx
 import pytest
 
 from faas_sdk import FaaSClient, FaasProblemError
-from faas_sdk.api.triggers import delete_trigger, pause_trigger, resume_trigger, update_trigger
-from faas_sdk.models import Trigger, UpdateTriggerRequest
+from faas_sdk.preview.api.triggers import delete_trigger, pause_trigger, resume_trigger, update_trigger
+from faas_sdk.preview.models import Trigger, UpdateTriggerRequest
 
 
 def test_trigger_controls_and_binding_ownership_conflicts() -> None:
@@ -78,7 +78,7 @@ def test_generated_client_parses_binding_ownership_problem() -> None:
         ),
     )
     from faas_sdk.client import Client
-    from faas_sdk.models import Problem
+    from faas_sdk.preview.models import Problem
 
     generated = Client(base_url="https://api.example.test").set_httpx_client(client)
     try:

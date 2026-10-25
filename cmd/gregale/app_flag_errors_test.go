@@ -413,7 +413,7 @@ func TestIssuesResolveRequiresDeploymentLocally(t *testing.T) {
 	stderr, restore := main.CaptureStderr(t)
 	code := main.CmdIssues([]string{"resolve", "--app", "demo", "cdb54d72-348d-4112-9e4b-2a9ec68befff"})
 	restore()
-	if code == 0 || (*f.SawMethod()) != "" || !strings.Contains(stderr.String(), "--deployment <uuid> is required") {
+	if code == 0 || (*f.SawMethod()) != "" || !strings.Contains(stderr.String(), "--deployment <uuid|vN> is required") {
 		t.Fatalf("exit=%d request=%s stderr=%q, want a local --deployment error", code, (*f.SawMethod()), stderr.String())
 	}
 }

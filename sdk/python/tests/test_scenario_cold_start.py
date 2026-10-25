@@ -1,5 +1,5 @@
-from faas_sdk.models.register_scenario_test_request import RegisterScenarioTestRequest
-from faas_sdk.models.scenario_cold_start_evidence import ScenarioColdStartEvidence
+from faas_sdk.preview.models.register_scenario_test_request import RegisterScenarioTestRequest
+from faas_sdk.preview.models.scenario_cold_start_evidence import ScenarioColdStartEvidence
 
 
 def test_cold_start_budget_and_host_receipts_are_typed_and_round_trip():

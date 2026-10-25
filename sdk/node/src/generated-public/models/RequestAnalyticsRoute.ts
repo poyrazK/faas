@@ -1,0 +1,89 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { RequestAnalyticsDependency } from './RequestAnalyticsDependency.js';
+import type { RequestAnalyticsRouteDeploymentObservation } from './RequestAnalyticsRouteDeploymentObservation.js';
+/**
+ * Aggregated request analytics for one route and HTTP method. Counts include collapsed telemetry row weights.
+ */
+export type RequestAnalyticsRoute = {
+  /**
+   * Route template, not an expanded URL.
+   */
+  route: string;
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+  requests: number;
+  error_requests: number;
+  error_rate_pct: number;
+  cold_boots: number;
+  p50_ms: number;
+  p95_ms: number;
+  p99_ms: number;
+  /**
+   * Weighted p95 gateway-observed request duration among requests that woke a cold instance. Includes handler time; not an isolated wake-phase duration.
+   */
+  cold_request_p95_ms?: number | null;
+  /**
+   * p95 from schedd wake.boot_started to wake.boot_completed (instance RUNNING) for distinct wake IDs correlated to this route; null when event pairs are unavailable.
+   */
+  wake_boot_p95_ms?: number | null;
+  /**
+   * Weighted p50 wall time from platform-runner execution evidence; not CPU time. Null when runtime evidence is unavailable.
+   */
+  guest_execution_p50_ms?: number | null;
+  /**
+   * Weighted p95 wall time from platform-runner execution evidence; not CPU time. Null when runtime evidence is unavailable.
+   */
+  guest_execution_p95_ms?: number | null;
+  /**
+   * Request-weighted average child-process user+system CPU time for Linux one-shot invocations. Includes runtime startup and uses bounded upward buckets; null for persistent workers and arbitrary HTTP containers.
+   */
+  guest_cpu_avg_ms?: number | null;
+  /**
+   * Weighted p95 child-process CPU time from Linux one-shot invocations, using bounded upward buckets; null when process usage is unavailable.
+   */
+  guest_cpu_p95_ms?: number | null;
+  /**
+   * Maximum process high-water RSS across measured invocations, rounded into an upper MiB bucket; null when process usage is unavailable.
+   */
+  guest_peak_rss_max_mb?: number | null;
+  /**
+   * Count of retained, platform-classified dependency span samples for this route; not a complete call count.
+   */
+  dependency_samples?: number;
+  /**
+   * Collapsed request weight represented by rows with at least one classified dependency span.
+   */
+  dependency_requests?: number;
+  /**
+   * Top classified dependencies ranked by sampled exclusive p95. Values are bounded and sample-based.
+   */
+  dependencies?: Array<RequestAnalyticsDependency>;
+  /**
+   * At most the five highest-request deployments for this route/method, with request-share compute estimates and measured guest CPU comparisons against the preceding comparable revision.
+   */
+  deployment_observations?: Array<RequestAnalyticsRouteDeploymentObservation>;
+  /**
+   * Route requests from deployments outside the top-five list.
+   */
+  other_deployment_requests?: number;
+  /**
+   * This route's estimated compute value allocated to deployments outside the top-five list by request share.
+   */
+  other_deployment_estimated_compute_cost_millicents?: number;
+  /**
+   * Estimated raw RAM-hour value allocated to this route by its share of observed request time (ADR-743), or by request share when no timing exists; excludes account-level included allowance and egress.
+   */
+  estimated_compute_cost_millicents?: number;
+  request_share_pct?: number;
+  /**
+   * Total gateway-observed request time for this route in the window, in milliseconds.
+   */
+  request_time_ms?: number;
+  /**
+   * This route's share of all observed app request time in the window.
+   */
+  request_time_share_pct?: number;
+};
+

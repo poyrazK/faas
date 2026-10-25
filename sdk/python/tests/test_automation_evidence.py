@@ -1,5 +1,5 @@
-from faas_sdk.models.automation_revision_response import AutomationRevisionResponse
-from faas_sdk.models.publish_automation_request import PublishAutomationRequest
+from faas_sdk.preview.models.automation_revision_response import AutomationRevisionResponse
+from faas_sdk.preview.models.publish_automation_request import PublishAutomationRequest
 
 EVIDENCE = {
     "definition_hash": "a" * 64,

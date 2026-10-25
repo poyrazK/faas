@@ -40,7 +40,7 @@ func (s *server) getAppDeploymentSummary(w http.ResponseWriter, r *http.Request,
 		previousResponse = &projected
 	}
 
-	rollbackTargetID, rollbackTargetRevision, err := s.rollbackTarget(r.Context(), app.ID, deployment.ID)
+	rollbackTargetID, rollbackTargetRevision, err := s.rollbackTarget(r.Context(), app.ID, deployment)
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("could not read rollback target"))
 		return
@@ -90,13 +90,16 @@ func (s *server) previousAppDeployment(ctx context.Context, appID string, curren
 // The revision rides along so the CLI can print a rollback command a human can
 // retype. A pre-ADR-198 row has revision 0, which callers must treat as "no
 // revision" and fall back to the id.
-func (s *server) rollbackTarget(ctx context.Context, appID, currentID string) (string, int, error) {
-	if _, split := s.trafficSplitEarlierRelease(ctx, appID); split {
+func (s *server) rollbackTarget(ctx context.Context, appID string, current state.Deployment) (string, int, error) {
+	currentID := current.ID
+	if _, split := s.trafficSplitEarlierRelease(ctx, appID, current.Scope); split {
 		// A plain rollback refuses during a split (H10-10); there is no
 		// target to advertise.
 		return "", 0, nil
 	}
-	target, err := s.store.LatestSupersededDeployment(ctx, appID)
+	// The summary advertises `rollback --to`, so the target is the previous
+	// release of the summarized deployment's own environment.
+	target, err := s.store.LatestSupersededDeployment(ctx, appID, current.Scope)
 	if errors.Is(err, state.ErrNotFound) {
 		return "", 0, nil
 	}

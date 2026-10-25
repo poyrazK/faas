@@ -32,7 +32,7 @@ period. Inside a Gregale VM they authenticate with a workload-identity token,
 so the image needs no API key.
 
 ```js
-import { consumeQueue } from '@gregale/sdk-node/queues/runtime';
+import { consumeQueue } from '@gregale/sdk-node/preview/queues/runtime';
 
 consumeQueue({ app: 'my-worker', queue: 'jobs', concurrency: 4 }, async (message, { signal }) => {
   await resize(message.payload, { signal }); // signal aborts if the lease is lost
@@ -41,7 +41,7 @@ consumeQueue({ app: 'my-worker', queue: 'jobs', concurrency: 4 }, async (message
 
 ```python
 import asyncio
-from faas_sdk.queue_consumer import consume_queue
+from faas_sdk.preview.queue_consumer import consume_queue
 
 async def handle(message):
     await resize(message.payload)  # message.lease_lost is set if the lease is lost

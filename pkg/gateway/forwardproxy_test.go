@@ -593,6 +593,9 @@ func (f *fakeVmmdClient) StopInstance(context.Context, *vmmdpb.StopInstanceReque
 func (f *fakeVmmdClient) Stats(context.Context, *vmmdpb.StatsRequest, ...grpc.CallOption) (*vmmdpb.StatsResponse, error) {
 	panic("Stats: not stubbed")
 }
+func (f *fakeVmmdClient) CaptureProfile(context.Context, *vmmdpb.CaptureProfileRequest, ...grpc.CallOption) (*vmmdpb.CaptureProfileResponse, error) {
+	panic("CaptureProfile: not stubbed")
+}
 func (f *fakeVmmdClient) Heartbeat(context.Context, *vmmdpb.HeartbeatRequest, ...grpc.CallOption) (*vmmdpb.HeartbeatResponse, error) {
 	panic("Heartbeat: not stubbed")
 }

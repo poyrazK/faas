@@ -60,6 +60,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		Action: dashboardEdgeRulesActionFlash(r),
 	}
 	data.Protection = s.edgeRules.AppEdgeProtection(ctx, app, edgerules.EdgeProtectionDefaultRange)
+	data.AttackModeAvailable = s.edgeRules.AttackModeReleased(acct)
 	data.Trace = dashboard.EdgeRuleTraceFormData{Host: app.Slug, Path: "/", Method: http.MethodGet}
 	if appURL, parseErr := url.Parse(data.App.URL); parseErr == nil && appURL.Hostname() != "" {
 		data.Trace.Host = appURL.Hostname()
@@ -78,17 +79,18 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 		data.ErrorMessage = "Edge-rule data is temporarily unavailable. Please try again shortly."
 		log.Warn("dashboard edge rules: list rules", "account_id", acct.ID, "app_id", app.ID, "err", listErr)
 	} else {
-		data.Rules = projectDashboardEdgeRules(rules)
-		data.Recipes = dashboardEdgeRuleRecipes(rules, acct.Plan)
+		data.Rules = projectDashboardEdgeRules(rules, func(row state.EdgeRule) []string { return s.edgeRules.RuleResponse(acct, row).UnreleasedFeatures })
+		data.Recipes = dashboardEdgeRuleRecipes(rules, acct.Plan, func(feature string) bool { return s.edgeRules.FeatureReleased(acct, feature) })
 		if limits, ok := api.LimitsFor(acct.Plan); ok && limits.AlertRuleLimitPerApp > 0 {
 			data.RecipeAlerts = true
 		}
-		data.Suggestions = s.dashboardEdgeRuleSuggestions(ctx, log, app, acct.Plan, data.Recipes)
+		data.Suggestions = s.dashboardEdgeRuleSuggestions(ctx, log, acct, app, data.Recipes)
 		data.Hosts = s.dashboardEdgeRuleHostCoverage(ctx, log, app, rules)
 		if hits, ok := s.addDashboardEdgeRuleHits(ctx, log, app.ID, data.Rules); ok {
 			data.Review = dashboardEdgeRuleReview(rules, data.Rules, hits)
 		}
 		data.Events = s.loadDashboardEdgeRuleEvents(r, log, acct, app, rules)
+		data.WAFReview = s.loadDashboardEdgeWAFReview(r, log, acct, app, rules)
 		for _, rule := range rules {
 			if isSecurityHeadersRule(rule) && rule.Enabled {
 				data.SecurityHeadersEnabled = true
@@ -99,6 +101,9 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			traceContext := *traceInput
 			traceContext.AppMaintenanceLoaded = true
 			traceContext.AppMaintenanceMode = app.MaintenanceMode
+			traceContext.EdgeAnswersLoaded = true
+			traceContext.AppHealthPath = edgeruletrace.EdgeAnswerHealthPath(app.Manifest.HealthPath, app.Manifest.Healthz)
+			traceContext.AppHealthPathWakes = app.Manifest.HealthPathWakes
 			effectiveLimits := appEffectiveLimits(app, acct.Plan)
 			traceContext.AppRequestBudgetLoaded = effectiveLimits.RequestBudgetMS > 0 && effectiveLimits.RequestBudgetMaxMS > 0
 			traceContext.RequestBudgetMS = effectiveLimits.RequestBudgetMS
@@ -148,7 +153,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			}
 			apiRules := make([]api.EdgeRuleResponse, 0, len(rules))
 			for _, rule := range rules {
-				apiRules = append(apiRules, edgerules.EdgeRuleResponse(rule))
+				apiRules = append(apiRules, s.edgeRules.RuleResponse(acct, rule))
 			}
 			if names := edgeruletrace.ReferencedEdgeRuleLists(apiRules); len(names) > 0 {
 				if store, ok := s.store.(state.EdgeRuleListStore); ok {
@@ -266,7 +271,9 @@ func (s *server) dashboardTraceEdgeRules(w http.ResponseWriter, r *http.Request)
 	s.renderAppEdgeRules(w, r, s.log, acct, r.PathValue("slug"), &form, &input)
 }
 
-func projectDashboardEdgeRules(rows []state.EdgeRule) []dashboard.EdgeRulePageItem {
+// unreleased names the gated features a rule uses that the account's flags
+// do not release (ADR-20261023113721).
+func projectDashboardEdgeRules(rows []state.EdgeRule, unreleased func(state.EdgeRule) []string) []dashboard.EdgeRulePageItem {
 	items := make([]dashboard.EdgeRulePageItem, 0, len(rows))
 	for _, row := range rows {
 		actionJSON, _ := json.Marshal(row.Action)
@@ -277,11 +284,33 @@ func projectDashboardEdgeRules(rows []state.EdgeRule) []dashboard.EdgeRulePageIt
 			CreatedAt: dashboardJobsTime(row.CreatedAt), UpdatedAt: dashboardJobsTime(row.UpdatedAt),
 			SecurityPreset: isSecurityHeadersRule(row),
 			Name:           row.Name, Mode: edgeRuleModeOrDefault(row.Mode),
-			AppWide: api.IsEdgeRuleAppHosts(row.MatchHost),
+			AppWide:    api.IsEdgeRuleAppHosts(row.MatchHost),
+			AttackMode: row.AttackMode(),
+		}
+		for _, feature := range unreleased(row) {
+			item.Unreleased = append(item.Unreleased, dashboardEdgeFeatureLabel(feature))
 		}
 		items = append(items, item)
 	}
 	return items
+}
+
+// dashboardEdgeFeatureLabel names an unreleased edge feature for the rule
+// list.
+func dashboardEdgeFeatureLabel(feature string) string {
+	switch feature {
+	case api.EdgeFeatureChallenge:
+		return "challenge rules"
+	case api.EdgeFeatureWAFBlocking:
+		return "WAF warn and block"
+	case api.EdgeFeaturePenaltyBox:
+		return "penalties"
+	case api.EdgeFeatureAICrawlers:
+		return "AI crawler conditions"
+	case api.EdgeFeatureAttackMode:
+		return "attack mode"
+	}
+	return feature
 }
 
 func projectDashboardCorsPresets(rows []state.CorsPreset, appID string) []dashboard.CorsPresetPageItem {
@@ -327,7 +356,7 @@ func edgeRuleActionSummary(rule state.EdgeRule) string {
 func dashboardEdgeRulesActionFlash(r *http.Request) string {
 	switch r.URL.Query().Get("action") {
 	case "created", "updated", "deleted", "security_headers_enabled", "mode_enforce", "mode_log", "recipe_log", "recipe_enforce",
-		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed":
+		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed", "attack_mode_on", "attack_mode_off", "waf_excluded":
 		return r.URL.Query().Get("action")
 	case "error":
 		return "error"
@@ -623,12 +652,19 @@ func (s *server) dashboardApplyEdgeRuleRecipe(w http.ResponseWriter, r *http.Req
 
 // dashboardEdgeRuleRecipes projects the recipe catalog for the page: which
 // recipes already have a rule, and which need a higher plan.
-func dashboardEdgeRuleRecipes(rules []state.EdgeRule, plan api.Plan) []dashboard.EdgeRuleRecipeView {
+// released reports whether the account may use an edge feature
+// (api.EdgeFeature*, ADR-20261023113721): a recipe for an unreleased kind
+// says so instead of offering a form, and an unreleased penalty field is
+// left out.
+func dashboardEdgeRuleRecipes(rules []state.EdgeRule, plan api.Plan, released func(feature string) bool) []dashboard.EdgeRuleRecipeView {
 	limits, _ := api.LimitsFor(plan)
 	out := make([]dashboard.EdgeRuleRecipeView, 0, len(api.EdgeRuleRecipes))
 	for _, recipe := range api.EdgeRuleRecipes {
 		view := dashboard.EdgeRuleRecipeView{ID: recipe.ID, Title: recipe.Title, Summary: recipe.Summary, LogNote: recipe.LogNote}
 		for _, p := range recipe.Params {
+			if p.Name == api.EdgeRuleRecipePenaltyParamName && !released(api.EdgeFeaturePenaltyBox) {
+				continue
+			}
 			view.Params = append(view.Params, dashboard.EdgeRuleRecipeParamView{Name: p.Name, Label: p.Label, Help: p.Help, Default: p.Default, Placeholder: p.Placeholder, Required: p.Required})
 		}
 		description := api.EdgeRuleRecipeDescription(recipe.ID)
@@ -644,19 +680,42 @@ func dashboardEdgeRuleRecipes(rules []state.EdgeRule, plan api.Plan) []dashboard
 		if recipe.Kind == string(state.EdgeRuleKindChallenge) && limits.EdgeRulesChallengePerApp == 0 {
 			view.Blocked = "Available on the Hobby plan and above, which include challenge rules."
 		}
+		if recipe.Kind == string(state.EdgeRuleKindChallenge) && view.Blocked == "" && !released(api.EdgeFeatureChallenge) {
+			view.Blocked = "Challenge rules are not yet available to this account."
+		}
+		if recipe.ID == api.EdgeRuleRecipeControlAICrawlers && view.Blocked == "" && !released(api.EdgeFeatureAICrawlers) {
+			view.Blocked = "AI crawler conditions are not yet available to this account."
+		}
 		out = append(out, view)
 	}
 	return out
 }
 
+// dashboardSelectorHostCoverage lists the <app>--<name> hostnames the edge
+// routes to the app's companions and public listeners, so the page shows that
+// they are public and which rules cover them.
+func (s *server) dashboardSelectorHostCoverage(ctx context.Context, log *slog.Logger, app state.App, platformHost string) []dashboard.EdgeRuleHostCoverage {
+	live, err := s.store.LiveDeployments(ctx, app.ID)
+	if err != nil {
+		log.Warn("dashboard edge rules: list live deployments", "app_id", app.ID, "err", err)
+	}
+	var hosts []dashboard.EdgeRuleHostCoverage
+	for _, selector := range edgerules.SelectorHosts(platformHost, live, app.Manifest.Ports) {
+		hosts = append(hosts, dashboard.EdgeRuleHostCoverage{Host: selector.Host, Selector: selector.Name, PublicPort: selector.PublicPort})
+	}
+	return hosts
+}
+
 // dashboardEdgeRuleHostCoverage counts, for each hostname the app serves
-// (its platform host and verified custom domains), the enabled rules that
+// (its platform host, its companion and public-listener selector hosts, and
+// verified custom domains), the enabled rules that
 // apply to it: host-specific, pattern ("*", "*.example.com") and app-wide
 // ("@app", ADR-1191) rules alike.
 func (s *server) dashboardEdgeRuleHostCoverage(ctx context.Context, log *slog.Logger, app state.App, rules []state.EdgeRule) []dashboard.EdgeRuleHostCoverage {
 	hosts := []dashboard.EdgeRuleHostCoverage{}
 	if parsed, err := url.Parse(appURLForDomain(app.Slug, s.domain)); err == nil && parsed.Hostname() != "" {
 		hosts = append(hosts, dashboard.EdgeRuleHostCoverage{Host: parsed.Hostname()})
+		hosts = append(hosts, s.dashboardSelectorHostCoverage(ctx, log, app, parsed.Hostname())...)
 	}
 	domains, err := s.store.ListDomainsForApp(ctx, app.ID)
 	if err != nil {
@@ -733,12 +792,12 @@ func (s *server) addDashboardRecipeAlert(r *http.Request, acct state.Account, sl
 // fields and any required parameter the suggestion cannot fill becomes an
 // input. A plan without request telemetry, or a telemetry error, hides the
 // section rather than failing the page.
-func (s *server) dashboardEdgeRuleSuggestions(ctx context.Context, log *slog.Logger, app state.App, plan api.Plan, recipes []dashboard.EdgeRuleRecipeView) []dashboard.EdgeRuleSuggestionView {
-	days := api.EdgeRuleRecipeSuggestionDays(plan)
+func (s *server) dashboardEdgeRuleSuggestions(ctx context.Context, log *slog.Logger, acct state.Account, app state.App, recipes []dashboard.EdgeRuleRecipeView) []dashboard.EdgeRuleSuggestionView {
+	days := api.EdgeRuleRecipeSuggestionDays(acct.Plan)
 	if days == 0 {
 		return nil
 	}
-	suggestions, err := s.edgeRules.RecipeSuggestions(ctx, app, days)
+	suggestions, err := s.edgeRules.RecipeSuggestions(ctx, acct, app, days)
 	if err != nil {
 		log.Warn("dashboard edge rules: recipe suggestions", "app_id", app.ID, "err", err)
 		return nil

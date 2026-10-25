@@ -15,6 +15,7 @@ import type { EdgeRuleJWTAction } from './EdgeRuleJWTAction.js';
 import type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
 import type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
 import type { EdgeRuleMatchExpr } from './EdgeRuleMatchExpr.js';
+import type { EdgeRulePenalty } from './EdgeRulePenalty.js';
 import type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
 import type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
 import type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
@@ -67,5 +68,6 @@ export type CreateEdgeRuleRequest = {
    * Start the rule enforced (default) or in log mode, where it is only matched and counted.
    */
   mode?: 'enforce' | 'log';
+  penalty?: EdgeRulePenalty;
 };
 

@@ -481,17 +481,17 @@ func postMultipartDeploymentWithSourceRoot(t *testing.T, h *e2etest.Harness, key
 
 // postMultipartDeploymentWithOverrides is the issue #460 / ADR-053
 // (PR-C) variant of postMultipartDeployment. It stamps an optional
-// `overrides` JSON form-field onto the multipart body so the test
-// can pin per-deployment Overrides.Port (and any future field from
-// the same struct). Nil overrides = behaves exactly like the
-// non-overrides helper above.
+// `overrides` JSON form-field onto the multipart body. apid ignores
+// that field: ADR-053 leaves multipart deploys to take their manifest
+// from the build pipeline, so a source fixture declares its port in
+// gregale.yaml (hosting.port) instead. Nil overrides = behaves exactly
+// like the non-overrides helper above.
 //
 // idempotencyKey follows the same convention as postMultipartDeployment:
 // non-empty sets the Idempotency-Key header for replay.
 //
 // Kept in this file next to postMultipartDeployment so the multipart
-// shape stays in one place; apid's createDeployment handler parses
-// the `overrides` field as JSON into pkg/api.CreateDeploymentOverrides.
+// shape stays in one place.
 func postMultipartDeploymentWithOverrides(t *testing.T, h *e2etest.Harness, key, slug string, sourceTar []byte, isDockerfile bool, ov *api.CreateDeploymentOverrides, idempotencyKey string) ([]byte, int) {
 	t.Helper()
 	var body bytes.Buffer

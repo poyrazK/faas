@@ -328,8 +328,11 @@ type StatsSnapshot struct {
 	LiveCount          int32
 	LeasedCount        int32
 	TotalResidentBytes *int64
-	Instances          []VMInstanceStat
-	SampledAt          time.Time
+	// InstanceBridgeResidentBytes is the node's instance bridge units'
+	// memory (connection-survival ADR §2); nil when vmmd reports none.
+	InstanceBridgeResidentBytes *int64
+	Instances                   []VMInstanceStat
+	SampledAt                   time.Time
 }
 
 // VMInstanceStat is the sched-side view of vmmdpb.InstanceStats —
@@ -394,7 +397,10 @@ type VMInstanceStat struct {
 	// QuietPaused (ADR-1151): vmmd holds the instance paused between requests.
 	QuietPaused bool
 	// Frozen (ADR-1151): vmmd holds the instance frozen in place.
-	Frozen        bool
+	Frozen bool
+	// QuietPause is the quiet pause record for the pause ledger
+	// (ADR-20261023171905).
+	QuietPause    QuietPauseRecord
 	LastRequestAt time.Time
 	// RequestCountTotal is vmmd's cumulative ForwardHTTP count for this
 	// instance. It is optional because older vmmds do not emit it and the
@@ -436,12 +442,15 @@ type AppSpec struct {
 	// envelope. The flat APIEnv/sealed inputs already carry the boot payload.
 	migrationRuntime     *migrationRuntimeInputs
 	migrationAdmissionID string
-	BaseKey              string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
-	LayerKey             string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
-	VCPUCount            int32  // 2, or 4 for Scale
-	MemSizeMiB           int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
-	CPUMillicores        int32  // sustained cgroup CPU allowance; 250, 500, or 1000
-	EgressMbit           int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
+	// WakeID preserves an existing VM lifetime through migration or pool restore metadata.
+	// It is control-plane identity, independent of the guest AppSpec proto.
+	WakeID        string
+	BaseKey       string // drive0 base rootfs StorageBackend key (e.g. "base/runtime-node22.ext4")
+	LayerKey      string // drive1 per-app layer StorageBackend key (e.g. "apps/<slug>/<depID>.ext4")
+	VCPUCount     int32  // 2, or 4 for Scale
+	MemSizeMiB    int32  // plan RAM; the slice fences at +8 MiB (pkg/api/limits.go)
+	CPUMillicores int32  // sustained cgroup CPU allowance; 250, 500, or 1000
+	EgressMbit    int32  // per-plan tc cap (pkg/api/limits.EgressMbit); 0 = no cap
 	// StartupDeadlineS is the plan-resolved readiness budget. 0 preserves the
 	// vmmd default for legacy callers.
 	StartupDeadlineS int32
@@ -1123,6 +1132,9 @@ func (c *VMMClient) createFromSnapshot(ctx context.Context, instance string, app
 	}
 	// issue #517: see CreateColdBoot above for the rationale.
 	fields, _ := wire.FromContext(ctx)
+	if keepPaused && app.WakeID != "" {
+		fields.WakeID, fields.AppID, fields.InstanceID, fields.DeploymentID = app.WakeID, app.AppID, instance, app.DeploymentID
+	}
 	ctx = wire.WithCorrelationOutgoing(ctx, fields)
 	boot := c.cli.CreateFromSnapshot
 	if app.RehearsalRunID != "" {
@@ -1644,6 +1656,7 @@ func (c *VMMClient) AdoptMigratedInstance(ctx context.Context, _, instanceID str
 		return LiveMigrationAdopt{}, err
 	}
 	fields, _ := wire.FromContext(ctx)
+	fields.WakeID, fields.AppID, fields.InstanceID, fields.DeploymentID = app.WakeID, app.AppID, instanceID, app.DeploymentID
 	if app.migrationRuntime != nil {
 		fields.WakeID = app.migrationRuntime.WakeID
 	}
@@ -1759,6 +1772,10 @@ func (c *VMMClient) Stats(ctx context.Context) (*StatsSnapshot, error) {
 		b := v.GetValue()
 		out.TotalResidentBytes = &b
 	}
+	if v := resp.GetInstanceBridgeResidentBytes(); v != nil {
+		b := v.GetValue()
+		out.InstanceBridgeResidentBytes = &b
+	}
 	for _, in := range resp.GetInstances() {
 		row := vmInstanceStatFromProto(in)
 		if row.InstanceID == "" {
@@ -1786,6 +1803,8 @@ func vmInstanceStatFromProto(in *vmmdpb.InstanceStats) VMInstanceStat {
 		InflightRequests: in.GetInflightRequests(),
 		QuietPaused:      in.GetQuietPaused(),
 		Frozen:           in.GetFrozen(),
+		QuietPause: QuietPauseRecordFromProto(in.GetQuietPausedSince(),
+			in.GetQuietLastPauseStartedAt(), in.GetQuietLastPauseEndedAt(), in.GetQuietPausedNsTotal()),
 	}
 	if v := in.GetResidentBytes(); v != nil {
 		b := v.GetValue()

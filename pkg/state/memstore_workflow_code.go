@@ -173,8 +173,29 @@ func (m *MemStore) FinishWorkflowCodeInvocation(ctx context.Context, runID strin
 	return m.syncOperationWorkflowLocked(runID)
 }
 
-func (m *MemStore) ParkWorkflowCodeEvent(ctx context.Context, runID, stepName, eventName string, occurrence int, timeout time.Duration) (*WorkflowEvent, bool, time.Time, error) {
-	if eventName == "" || occurrence < 0 || timeout <= 0 {
+// consumedWorkflowCodeEventsLocked returns the events of that name other
+// waits of the run consumed, plus how many waits resolved with an event
+// before consumed IDs were recorded; those took the earliest events.
+func (m *MemStore) consumedWorkflowCodeEventsLocked(runID, eventName string) (map[string]bool, int) {
+	consumed := map[string]bool{}
+	legacy := 0
+	for _, step := range m.workflowSteps[runID] {
+		wait, ok := decodeWorkflowCodeEventWait(step.Input)
+		if !ok || wait.Event != eventName {
+			continue
+		}
+		switch {
+		case wait.EventID != "":
+			consumed[wait.EventID] = true
+		case step.Status == WorkflowStepStatusSucceeded && len(step.Output) > 0:
+			legacy++
+		}
+	}
+	return consumed, legacy
+}
+
+func (m *MemStore) ParkWorkflowCodeEvent(ctx context.Context, runID, stepName, eventName string, timeout time.Duration) (*WorkflowEvent, bool, time.Time, error) {
+	if eventName == "" || timeout <= 0 {
 		return nil, false, time.Time{}, ErrWorkflowInvalidRecord
 	}
 	m.mu.Lock()
@@ -194,9 +215,10 @@ func (m *MemStore) ParkWorkflowCodeEvent(ctx context.Context, runID, stepName, e
 	if step.StartedAt != nil {
 		deadline = step.StartedAt.Add(timeout)
 	}
+	consumed, legacy := m.consumedWorkflowCodeEventsLocked(runID, eventName)
 	var matches []WorkflowEvent
 	for _, event := range m.workflowEvents[runID] {
-		if event.EventName == eventName && (deadline.IsZero() || event.ReceivedAt.Before(deadline)) {
+		if event.EventName == eventName && !consumed[event.ID] && (deadline.IsZero() || event.ReceivedAt.Before(deadline)) {
 			matches = append(matches, event)
 		}
 	}
@@ -207,9 +229,14 @@ func (m *MemStore) ParkWorkflowCodeEvent(ctx context.Context, runID, stepName, e
 		return matches[i].ReceivedAt.Before(matches[j].ReceivedAt)
 	})
 	now := time.Now().UTC()
-	if occurrence < len(matches) {
-		matched := matches[occurrence]
+	if legacy < len(matches) {
+		matched := matches[legacy]
 		matched.Payload = cloneWorkflowJSON(matched.Payload)
+		input, err := withWorkflowCodeEventID(step.Input, matched.ID)
+		if err != nil {
+			return nil, false, time.Time{}, fmt.Errorf("%w: event wait descriptor: %w", ErrWorkflowInvalidRecord, err)
+		}
+		step.Input = input
 		step.Status = WorkflowStepStatusSucceeded
 		step.Output = cloneWorkflowJSON(matched.Payload)
 		if step.StartedAt == nil {

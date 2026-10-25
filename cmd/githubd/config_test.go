@@ -172,3 +172,28 @@ func TestHostKeyPath_Precedence(t *testing.T) {
 		t.Errorf("FAAS_HOST_AGE_IDENTITY_PATH hostKeyPath() = %q, want /credential/identity.age", got)
 	}
 }
+
+// adr: 570
+func TestLoadConfigAppsDomain(t *testing.T) {
+	for _, test := range []struct{ name, toml, env, want string }{
+		{"default", "", "", "gregale.dev"},
+		{"custom", `apps_domain = "apps.example.test"`, "", "apps.example.test"},
+		{"disabled", `apps_domain = ""`, "", ""},
+		{"env-overrides-toml", `apps_domain = "apps.example.test"`, "other.example.test", "other.example.test"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			t.Setenv("FAAS_APPS_DOMAIN", test.env)
+			path := filepath.Join(t.TempDir(), "githubd.toml")
+			if err := os.WriteFile(path, []byte(test.toml), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.AppsDomain != test.want {
+				t.Fatalf("apps_domain=%q want=%q", cfg.AppsDomain, test.want)
+			}
+		})
+	}
+}

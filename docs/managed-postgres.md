@@ -675,7 +675,12 @@ effective normalized safety ceilings and internal millicent COGS line items;
 it still omits provider resource IDs, credentials, and connection URLs.
 
 Account deletion is fail-closed until all managed databases reach their
-provider-confirmed `deleted` tombstone. The final GDPR deletion transaction
+provider-confirmed `deleted` tombstone. A self-service deletion that a live
+database blocks returns `409 account_deletion_managed_postgres_databases` with
+the number of databases; delete them with `gregale postgres list` and
+`gregale postgres delete`, then retry. A non-payment deletion includes the
+account's databases and deletes them when the 30-day grace ends
+([ADR-20261024150500](adr/20261024150500-account-deletion-includes-managed-postgres.md)). The final GDPR deletion transaction
 then removes usage, binding, and database tombstones before deleting apps and
 the account, so a stale catalog row cannot block deletion or remain after the
 account is gone. Lifecycle actions emit audit events without credentials,
@@ -685,6 +690,52 @@ The adapter contract is based on Neon's maintained
 [v2 OpenAPI specification](https://neon.com/api_spec/release/v2.json). A live
 qualification run against an isolated organization is still required before
 enabling provisioning.
+
+## Compute caps on running databases
+
+Admission only stops new work. A running database is held to its account's
+monthly compute ceiling by the provider itself
+([ADR-20261025094915](adr/20261025094915-managed-postgres-compute-caps-on-running-databases.md)).
+
+After each usage sweep, apid runs one enforcement sweep:
+
+- The ceiling is the plan's monthly compute allowance (`pkg/api/managed_postgres.go`),
+  capped by `usage.max_monthly_compute_unit_seconds`.
+- The account's use is the larger of the ledger, which still counts databases
+  deleted this month, and the live provider counters.
+- Each Neon project gets `settings.quota.compute_time_seconds` set to its own
+  use plus what the account has left. A restore is a branch inside its source's
+  project, so the two share one quota.
+- When nothing is left, every quota equals its project's use, and Neon suspends
+  the computes until the quota is raised or the counters reset on the 1st. A
+  cap never deletes a database.
+
+`FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` selects the mode:
+
+- `shadow` (the default) logs `managed postgres compute cap (shadow)` with the
+  quota it would set, and writes nothing.
+- `on` writes the quotas, and requires the usage ledger.
+- `off` does nothing.
+
+Quotas written earlier stay on the projects in every mode, so switching to
+`off` or rolling back never lifts a suspension.
+
+A sweep skips an account, without failing it, when its provider has no quota
+support, or when the provider's consumption period does not start within an
+hour of the UTC month start. Metrics:
+
+- `apid_managed_postgres_cap_accounts{state}`
+- `apid_managed_postgres_cap_quota_decisions_total{outcome}`
+- `apid_managed_postgres_cap_last_sweep_timestamp_seconds`
+- `apid_managed_postgres_cap_enforcement_mode{mode}`
+
+Before setting `on`, run the staging qualification in the ADR's decision 10.
+It checks:
+
+- that Neon's CPU-second counter matches the ledger's compute-unit seconds;
+- that a quota at or below use suspends at once;
+- that raising the quota lets the database wake;
+- that the quota write leaves `logical_size_bytes` unchanged.
 
 ## Restore-to-new-database safety
 
@@ -792,9 +843,14 @@ See [ADR-1335](adr/1335-managed-postgres-source-writer-isolation.md).
 fences, drain writers, publish credentials or resume workloads. See
 [ADR-1333](adr/1333-managed-postgres-activation-preflight.md).
 
-Preparation, verification and preflight keep bindings on the source. The current API has
-no activation operation; complete writer draining and atomic publication remain
-pending. Both databases and the selected source bindings stay pinned until
+Preparation, verification and preflight keep bindings on the source. The cutover API has
+no activation operation. Only a rollback that restores the database activates its
+own cutover: it fences and drains the app, then moves the bindings in one
+transaction, and the cutover becomes `activated`, which is final. It accepts the
+loss of writes made after the restore point, so it does not need the writer
+isolation above; see [Rollbacks that restore the database](deploys.md#rollbacks-that-restore-the-database)
+and [ADR-20261023181931](adr/20261023181931-rollbacks-that-restore-the-database.md).
+For other cutovers, both databases and the selected source bindings stay pinned until
 `gregale postgres cutover cancel CUTOVER_ID` finishes revoking every staged role.
 Cancellation and status remain available when provisioning is disabled. Required
 host age/HMAC keys must remain available while envelopes are staged; cancel and

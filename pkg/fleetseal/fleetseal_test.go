@@ -118,6 +118,38 @@ func TestMigrateAndVerifyAcrossTwelveUniqueHosts(t *testing.T) {
 	}
 }
 
+// TestMigrateLeavesRowsOfOtherSealDomains pins ADR 20261022111812: a row
+// re-sealed to a seal domain (runtime) is not fleet material any more, and
+// fleet-seal migrate leaves it alone instead of failing on it.
+func TestMigrateLeavesRowsOfOtherSealDomains(t *testing.T) {
+	legacy, _ := age.GenerateX25519Identity()
+	fleet, _ := age.GenerateX25519Identity()
+	runtime, _ := age.GenerateX25519Identity()
+	privatePEM, publicPEM, kid := signingKey(t)
+	clusterBlob, err := secretbox.SealBytes(fleet.Recipient(), "internal_svc", privatePEM, 4096)
+	if err != nil {
+		t.Fatal(err)
+	}
+	domainBlob, err := secretbox.SealOne(runtime.Recipient(), "API_KEY", "sk-domain", 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeStore{
+		cluster: state.ClusterSigningKey{ID: 1, KeyID: kid, PublicKeyPEM: string(publicPEM), SealedBlob: clusterBlob},
+		secrets: []state.AppSecret{{AccountID: "a", AppID: "b", Scope: state.DefaultEnvScope, Key: "API_KEY", Kid: runtime.Recipient().String(), Ciphertext: domainBlob}},
+	}
+	report, err := Migrate(context.Background(), store, fleet, []*age.X25519Identity{legacy})
+	if err != nil {
+		t.Fatalf("migrate failed on a seal-domain row: %v", err)
+	}
+	if report.SecretsInOtherDomains != 1 || report.SecretsResealed != 0 {
+		t.Fatalf("report = %+v; want the domain row skipped", report)
+	}
+	if env, err := secretbox.Open(runtime, store.secrets[0].Ciphertext); err != nil || env["API_KEY"] != "sk-domain" {
+		t.Fatalf("domain row changed: %v, %v", env, err)
+	}
+}
+
 func TestVerifyRejectsHostIdentityEqualToFleet(t *testing.T) {
 	fleet, _ := age.GenerateX25519Identity()
 	if _, err := Verify(context.Background(), &fakeStore{}, fleet, fleet); err == nil {

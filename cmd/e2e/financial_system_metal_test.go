@@ -135,10 +135,11 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 		}
 	}
 	instances, err := e2etest.WaitForInstanceState(t.Context(), t, pool, apps[1].ID, state.StateRunning, 30*time.Second)
-	if err != nil || len(instances) != 1 {
+	running := financialSystemRunning(instances)
+	if err != nil || len(running) != 1 {
 		t.Fatalf("single running instance: %+v %v", instances, err)
 	}
-	instance := instances[0].ID
+	instance := running[0].ID
 	lease := financialSystemLease(t, s, account, apps[1].ID, instance)
 	if !lease.EgressFunded || !lease.AccountFunded || lease.EgressGranted == 0 {
 		t.Fatalf("unfunded native publication: %+v", lease)
@@ -221,9 +222,10 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 		if got := request(t, apps[1].Slug); got != http.StatusOK {
 			t.Fatalf("request after recovery: %d", got)
 		}
-		live, err := e2etest.WaitForInstanceState(t.Context(), t, pool, apps[1].ID, state.StateRunning, 30*time.Second)
+		instances, err := e2etest.WaitForInstanceState(t.Context(), t, pool, apps[1].ID, state.StateRunning, 30*time.Second)
+		live := financialSystemRunning(instances)
 		if err != nil || len(live) != 1 {
-			t.Fatalf("replacement instance: %+v %v", live, err)
+			t.Fatalf("replacement instance: %+v %v", instances, err)
 		}
 		old := financialSystemLease(t, s, account, apps[1].ID, live[0].ID)
 		physical := financialSystemNativeRecord(t, old.InstanceID)
@@ -250,9 +252,10 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 			if got := request(t, apps[1].Slug); got != http.StatusOK {
 				t.Fatalf("new funded generation after restart: %d", got)
 			}
-			live, err := e2etest.WaitForInstanceState(t.Context(), t, pool, apps[1].ID, state.StateRunning, 30*time.Second)
+			instances, err := e2etest.WaitForInstanceState(t.Context(), t, pool, apps[1].ID, state.StateRunning, 30*time.Second)
+			live := financialSystemRunning(instances)
 			if err != nil || len(live) != 1 || live[0].ID == old.InstanceID {
-				t.Fatalf("replacement attempt: %+v %v", live, err)
+				t.Fatalf("replacement attempt: %+v %v", instances, err)
 			}
 			physical := financialSystemNativeRecord(t, live[0].ID)
 			before, err := netns.ReadVethRXBytes(physical.Lease.VethHost)
@@ -290,7 +293,7 @@ func releaseStrictBudgetsForSystem(t *testing.T, s *state.PgStore) {
 		t.Fatal(err)
 	}
 	key := platformflags.ConfigKey(platformflags.StrictBudgets)
-	row, err := s.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: key, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: value, ApplyMode: state.RuntimeConfigApplyHot, ActorID: "e2e", Reason: "native financial system acceptance"})
+	row, err := s.UpsertRuntimeConfig(t.Context(), state.RuntimeConfigUpdate{Key: key, Scope: state.RuntimeConfigScopeGlobal, DesiredValue: value, ApplyMode: state.RuntimeConfigApplyHot, ActorID: uuid.NewString(), Reason: "native financial system acceptance"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,6 +324,19 @@ func financialSystemWait(t *testing.T, timeout time.Duration, what string, ready
 		case <-tick.C:
 		}
 	}
+}
+
+// financialSystemRunning keeps the running rows. The instance waiter returns
+// every row of the app, and once parking works a parked row survives beside
+// each instance restored from its snapshot (ADR 20261022184951).
+func financialSystemRunning(instances []state.Instance) []state.Instance {
+	var running []state.Instance
+	for _, instance := range instances {
+		if instance.State == string(state.StateRunning) {
+			running = append(running, instance)
+		}
+	}
+	return running
 }
 
 func financialSystemLease(t *testing.T, s *state.PgStore, account, app, instance string) financial.ComputeLease {

@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -22,7 +24,7 @@ func TestEncryptedUploadRouteClient(t *testing.T) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.Method {
 		case http.MethodPost:
-			var in faas.CreateObjectUploadRouteRequest
+			var in preview.CreateObjectUploadRouteRequest
 			if json.NewDecoder(r.Body).Decode(&in) != nil || in.Encryption == nil || in.Encryption.KeyID != key || r.URL.EscapedPath() != "/v1/apps/demo%20app/upload-routes" {
 				t.Error("owned route encryption missing")
 			}
@@ -47,15 +49,15 @@ func TestEncryptedUploadRouteClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	route, err := client.CreateObjectUploadRoute(context.Background(), "demo app", faas.CreateObjectUploadRouteRequest{Name: "files", BucketID: "bucket", Encryption: &faas.ObjectEncryption{Algorithm: "aws:kms", KeyID: key}})
+	route, err := preview.Wrap(client).CreateObjectUploadRoute(context.Background(), "demo app", preview.CreateObjectUploadRouteRequest{Name: "files", BucketID: "bucket", Encryption: &preview.ObjectEncryption{Algorithm: "aws:kms", KeyID: key}})
 	if err != nil || route.Encryption == nil || route.Encryption.KeyID != key {
 		t.Fatal(route, err)
 	}
-	list, err := client.ListObjectUploadRoutes(context.Background(), "demo app")
+	list, err := preview.Wrap(client).ListObjectUploadRoutes(context.Background(), "demo app")
 	if err != nil || len(list.Items) != 1 || list.Items[0].Encryption.KeyID != key {
 		t.Fatal(list, err)
 	}
-	if err = client.DeleteObjectUploadRoute(context.Background(), "demo app", "files"); err != nil {
+	if err = preview.Wrap(client).DeleteObjectUploadRoute(context.Background(), "demo app", "files"); err != nil {
 		t.Fatal(err)
 	}
 	receipt, err := client.GetObjectWriteReceipt(context.Background(), "demo app", "bucket", "receipt")

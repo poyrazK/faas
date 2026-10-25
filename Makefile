@@ -426,6 +426,12 @@ shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture tre
 deploy-action-head-check: ## Verify stale branch and invalid release-tag pushes cannot submit Action deployments
 	@bash scripts/ci/test_deploy_action_head.sh
 
+.PHONY: cli-install-check
+cli-install-check: ## Hermetic curl installer tests and the cli-channel pointer job (ADR-20261025092617)
+	@bash scripts/install_test.sh
+	@python3 scripts/ci/cli_channel_test.py
+	@bash scripts/ci/advance-cli-channel_test.sh
+
 .PHONY: deploy-action-cli-check
 deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip-compressed vendored CLI
 	@bash scripts/ci/deploy_action_cli_test.sh
@@ -914,6 +920,16 @@ lint: egress-check lint-incompatible-mods image-validate sealed-env-scope-check 
 runbook-sql-check: ## Reject mutating SQL in normal operator docs; emergency recipes live under docs/break-glass
 	@python3 scripts/ci/check_runbook_mutating_sql.py
 
+.PHONY: committed-binaries-check
+committed-binaries-check: ## Reject committed ELF/Mach-O/PE executables outside the justified allowlist (ADR-131)
+	@python3 scripts/ci/check_committed_binaries_test.py
+	@python3 scripts/ci/check_committed_binaries.py
+
+.PHONY: action-pin-check
+action-pin-check: ## Require third-party GitHub Actions pinned to a commit SHA (`owner/repo@<sha> # vN`)
+	@python3 scripts/ci/check_action_pins_test.py
+	@python3 scripts/ci/check_action_pins.py
+
 .PHONY: postmortem
 postmortem: ## Create docs/postmortems/YYYY-MM-DD-NAME.md from the post-mortem template (NAME required)
 	@test -n "$(NAME)" || (echo "NAME is required, e.g. make postmortem NAME=api-outage" >&2; exit 2)
@@ -1077,6 +1093,7 @@ ansible-syntax-check: ## Validate the bare-metal Ansible playbooks with the prod
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_promote.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/standby_takeover.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/cp_state_restore.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/object_storage_reconcile.yml --syntax-check
 
 .PHONY: ansible-lint
 ansible-lint: ## Lint deploy/ansible at the production profile (config: deploy/ansible/.ansible-lint) — ADR-143
@@ -1098,6 +1115,10 @@ env-contract-check: ## Every FAAS_* a daemon reads is declared + delivered; docs
 .PHONY: verify-fleet
 verify-fleet: ## Strict post-activation verification: every required daemon enabled, active, probe-answering; gregalectl doctor — ADR-143
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/verify.yml
+
+.PHONY: object-storage-reconcile
+object-storage-reconcile: ## After a PostgreSQL restore: compare the object bucket catalog with each provider, read-only; ACCEPT=1 once findings are handled (ADR 20261025111015)
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/object_storage_reconcile.yml $(if $(ACCEPT),-e faas_object_storage_reconcile_accept=true)
 
 .PHONY: bootstrap-observability
 bootstrap-observability: ## Deploy the off-host Loki backend and FaaS Promtail shippers
@@ -1452,6 +1473,22 @@ capabilities-check: ## Verify the product capability registry and generated matr
 	@cmp -s /tmp/faas-capabilities.md docs/capabilities.md || (echo "docs/capabilities.md is stale; run 'make capabilities-md'"; diff -u docs/capabilities.md /tmp/faas-capabilities.md || true; exit 1)
 	@echo "capabilities-check: OK"
 
+.PHONY: capability-coverage-check
+capability-coverage-check: ## CI gate: every customer entry point maps to a row of docs/ga-capability-inventory.md (ADR-20261023115741)
+	@python3 -I scripts/ga/capability_coverage_test.py
+	@python3 -I scripts/ga/capability_coverage.py
+
+.PHONY: sdk-spec
+sdk-spec: ## Regenerate sdk/openapi.yaml, the GA and beta spec the SDKs are generated from (ADR-20261023115741)
+	@$(GO) run ./cmd/sdk-spec > sdk/openapi.yaml
+	@echo "sdk-spec: sdk/openapi.yaml regenerated; run 'make sdk-gen-node sdk-gen-python'"
+
+.PHONY: sdk-spec-check
+sdk-spec-check: ## Verify sdk/openapi.yaml matches api/openapi.yaml and the product catalog
+	@$(GO) run ./cmd/sdk-spec > /tmp/faas-sdk-openapi.yaml
+	@cmp -s /tmp/faas-sdk-openapi.yaml sdk/openapi.yaml || (echo "sdk/openapi.yaml is stale; run 'make sdk-spec' and regenerate the SDKs"; exit 1)
+	@echo "sdk-spec-check: OK"
+
 .PHONY: standards-md
 standards-md: ## Regenerate the standards compatibility matrix from the standards registry
 	@$(GO) run ./cmd/standards-md > docs/standards.md
@@ -1651,6 +1688,10 @@ sdk-gen: ## (re)generate every generated SDK + assert clean diff vs HEAD
 pre-pr: ## Pre-PR drift check: every regenerate-and-diff gate that runs in CI
 	@echo "==> pre-pr: capabilities-check (product registry ↔ generated matrix)"
 	@$(MAKE) capabilities-check
+	@echo "==> pre-pr: capability-coverage-check (entry points ↔ capability inventory)"
+	@$(MAKE) capability-coverage-check
+	@echo "==> pre-pr: sdk-spec-check (sdk/openapi.yaml ↔ spec + catalog)"
+	@$(MAKE) sdk-spec-check
 	@echo "==> pre-pr: pricing-check (plan limits ↔ customer pricing)"
 	@$(MAKE) pricing-check
 	@echo "==> pre-pr: docs-links-check (docs URLs ↔ customer pages)"

@@ -276,12 +276,27 @@ func (s *savedDeploySession) recovery(stage string) *deployRecovery {
 		r.Hint = "Acceptance remains uncertain. Resume checks the saved submission or upload receipt without submitting another build; inspect deployment history if acceptance cannot be confirmed."
 	}
 	if s.record.Outcome == deploySubmissionRejected {
-		r.Hint = "Submission stopped before acceptance. Resume cannot submit a deployment; correct the error and rerun the original deploy."
+		// Resume refuses a rejected submission, so offering its command
+		// contradicted this hint (Hunt 14 H14-10).
+		r.ResumeCommand = ""
+		r.Hint = "Submission stopped before acceptance. Correct the error and rerun the original deploy."
 	}
-	if s.shouldCleanPolicies() {
+	if s.shouldCleanPolicies() && s.hasStagedSettingsToRestore() {
+		r.ResumeCommand = s.resumeCommand()
 		r.Hint = "No deployment needs to be submitted to recover this attempt. Resume the saved deploy to finish saved deployment settings cleanup; concurrent edits are preserved."
 	}
 	return r
+}
+
+// hasStagedSettingsToRestore reports whether a stopped deploy staged policies
+// or crons that resume would restore. A frozen deploy of an app without
+// gregale.yaml said it had settings cleanup to finish (Hunt 12 H12-31).
+func (s *savedDeploySession) hasStagedSettingsToRestore() bool {
+	if j := s.record.PolicyJournal; j != nil && !j.Cleaned && len(j.Intent.Desired) > 0 {
+		return true
+	}
+	j := s.record.CronJournal
+	return j != nil && j.Managed && !j.Cleaned
 }
 
 func (s *savedDeploySession) failure(title, stage string, err error) int {

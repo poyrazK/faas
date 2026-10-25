@@ -62,16 +62,24 @@ func writeEventReceipt(receipt api.EventReceiptResponse) {
 	if receipt.RetainUntil != nil {
 		_, _ = fmt.Fprintf(osStdout, "Receipt retained until: %s\n", receipt.RetainUntil.Format(time.RFC3339))
 	}
+	if len(receipt.Recipients) == 0 && receipt.NextAfter == "" {
+		// A bare table header followed "Recipients: 0" (Hunt 14 H14-47).
+		_, _ = fmt.Fprintln(osStdout, "No subscription matched this event; list an app's subscriptions with `gregale events subscriptions <app>`.")
+		return
+	}
 	_, _ = fmt.Fprintln(osStdout, "APP\tSUBSCRIPTION\tROUTING\tROUTE ATTEMPTS\tHANDLER\tHANDLER ATTEMPTS\tNEXT RETRY\tRECOVERY\tERROR")
 	for _, entry := range receipt.Recipients {
-		writeEventReceiptRecipient(entry)
+		writeEventReceiptRecipient(receipt, entry)
 	}
 	if receipt.NextAfter != "" {
 		_, _ = fmt.Fprintf(osStdout, "Next page: --after %s\n", receipt.NextAfter)
 	}
 }
 
-func writeEventReceiptRecipient(entry api.EventReceiptRecipientResponse) {
+func writeEventReceiptRecipient(receipt api.EventReceiptResponse, entry api.EventReceiptRecipientResponse) {
+	// Print runnable commands: "(with this event's --source and --id)" left
+	// the customer to assemble them (Hunt 12 H12-46).
+	eventArgs := "--source " + quoteCLIArg(oneLine(receipt.EventSource)) + " --id " + quoteCLIArg(oneLine(receipt.EventID))
 	handler, attempts, lastError, next := "-", 0, entry.Routing.LastError, entry.Routing.NextAttemptAt
 	if entry.Execution != nil {
 		handler, attempts, lastError, next = entry.Execution.State, entry.Execution.Attempts, entry.Execution.LastError, entry.Execution.NextAttemptAt
@@ -100,7 +108,7 @@ func writeEventReceiptRecipient(entry api.EventReceiptRecipientResponse) {
 		}
 	}
 	if len(entry.RecoveryActions) > 0 {
-		_, _ = fmt.Fprintf(osStdout, "  Recover: gregale events recover --subscription %s (with this event's --source and --id; add --dry-run to preview)\n", oneLine(entry.SubscriptionID))
+		_, _ = fmt.Fprintf(osStdout, "  Recover: gregale events recover --subscription %s %s (add --dry-run to preview)\n", oneLine(entry.SubscriptionID), eventArgs)
 	}
 	if entry.Origin == "backfill" {
 		_, _ = fmt.Fprintln(osStdout, "  Origin: backfill")
@@ -109,7 +117,7 @@ func writeEventReceiptRecipient(entry api.EventReceiptRecipientResponse) {
 		}
 	}
 	if entry.AttemptHistoryURL != "" {
-		_, _ = fmt.Fprintf(osStdout, "  Attempt history: gregale events attempts --subscription %s (with this event's --source and --id)\n", oneLine(entry.SubscriptionID))
+		_, _ = fmt.Fprintf(osStdout, "  Attempt history: gregale events attempts --subscription %s %s\n", oneLine(entry.SubscriptionID), eventArgs)
 	}
 	if entry.Recovery != nil && entry.Recovery.LatestReplay != nil {
 		latest := entry.Recovery.LatestReplay

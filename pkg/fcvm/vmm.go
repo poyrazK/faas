@@ -59,6 +59,8 @@ type JailerVMM struct {
 	nativeRecovery                *nativeProcessRecoveryRuntime // opt-in, configured before admission
 	nativeImageStagingRoot        string                        // opt-in persistent disk claims; configure before native recovery
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
+	nativeRuntimeCapture          bool                          // ADR 20261022184951: native park/warm capture; requires native recovery
+	nativeRuntimeSnapshots        *storage.LocalStorageBackend  // ADR 20261022184951 amendment 1: the tree only vmmd writes
 	chrootBase                    string                        // /srv/fc/jail
 	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
 	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
@@ -82,6 +84,9 @@ type JailerVMM struct {
 	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
 	// nil keeps drive0 on virtio-blk.
 	pmemBase *pmemBaseStore
+	// restoreReseedThread boots app VMs with the thread-mode reseed barrier
+	// client (ADR-20261024105607).
+	restoreReseedThread bool
 	// preBoot tracks which pre-boot files each instance's drive and each
 	// captured drive already hold, so an unchanged restore skips the loop
 	// mount (see preboot_skip.go).
@@ -121,6 +126,15 @@ type JailerVMM struct {
 	// listeners here closes the race where a fast guest sends its characterization
 	// or job-exit frame before the corresponding wait RPC starts.
 	guestVsockListeners map[guestVsockListenerKey]*net.UnixListener
+	// jobExits are the receivers on job-exit listeners, kept after the
+	// payload arrives so WaitJobExit can be called again.
+	jobExits    map[string]*jobExitReceiver
+	jobExitSink func(instance string, payload JobExitPayload)
+	// fdStoreMu orders the listener store's messages with storedJobExits:
+	// the job-exit listeners currently in the store, by instance.
+	fdStoreMu      sync.Mutex
+	listenerStore  ListenerStore
+	storedJobExits map[string]*net.UnixListener
 	// Private restored channels have their own callbacks and live producer
 	// authority. They never borrow daemon serving handlers or the CID index.
 	nativeRestoreChannels map[string]*nativeQualificationRestoreChannels
@@ -203,6 +217,9 @@ type JailerVMM struct {
 	// over a path while a running VM still holds the old inode, and the next
 	// boot must bind the new file rather than fail.
 	bindSourceModes map[bindSourceKey]bindSourceMode
+	// fileConsole launches guests with their console file as stdout and
+	// stderr (console_file.go). Guarded by mu.
+	fileConsole bool
 	// wakePhaseMetrics is the vmmd wake registry (ADR-098 C11), shared with
 	// the Manager. Optional; every observation site is nil-safe.
 	wakePhaseMetrics *WakePhaseMetrics
@@ -240,6 +257,9 @@ type ephemeralBind struct {
 	target     *resourceFileIdentity // Placeholder behind the bind, before mounting.
 	tracked    bool                  // Image bind intent; TUN in the child namespace is separate.
 	released   bool                  // Permission reference released; journal retirement may still fail.
+	// adopted marks a bind a previous vmmd made (adoption ADR §2): it lives
+	// only in that vmmd's mount namespace, invisible here.
+	adopted bool
 }
 
 // bindSourceKey names one bound source file: its path and the inode that was
@@ -389,6 +409,9 @@ type instanceRecord struct {
 	exited      bool          // set by the watchdog when cmd.Wait completes
 	exitCode    int           // captured from cmd.Wait's ProcessState.ExitCode()
 	done        chan struct{} // closed by the watchdog; readers <-done to wake
+	// fileConsole marks a guest whose stdout and stderr are its console
+	// file, not a pipe into vmmd (console_file.go).
+	fileConsole bool
 }
 
 // ringWriter is a thin io.Writer that forwards every Write call to the
@@ -414,6 +437,9 @@ type customerConsoleWriter struct {
 	mu      sync.Mutex
 	ring    *logbuf.Ring
 	pending []byte
+	// initPanic is set while the kernel prints its "Attempted to kill init"
+	// panic dump, which ends with "Rebooting in N seconds..".
+	initPanic bool
 }
 
 func (w *customerConsoleWriter) Write(p []byte) (int, error) {
@@ -456,7 +482,7 @@ func (w *customerConsoleWriter) Flush() error {
 
 // commitLocked filters one complete line and writes it to the ring.
 func (w *customerConsoleWriter) commitLocked(line []byte) error {
-	if firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) {
+	if w.dropInitPanicLocked(line) || firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) || functionRunnerStartupLine(line) {
 		return nil
 	}
 	// The guest serial console's tty turns every '\n' into "\r\n"
@@ -468,6 +494,73 @@ func (w *customerConsoleWriter) commitLocked(line []byte) error {
 	}
 	_, err := w.ring.Write("stdout", line)
 	return err
+}
+
+// functionRunnerStartupLine matches the function runner shim's two startup
+// lines, e.g. "2026/10/25 02:29:10 go124 runner: serving on :8080 (handler=
+// /app/handler, ...)" and "... h2c-listener: listening on :8080 (H2C-capable)".
+// They opened every function cold boot's customer log on production-us rc.294
+// (Hunt 14 H14-28). The runner's handler errors stay customer-visible.
+func functionRunnerStartupLine(line []byte) bool {
+	text := strings.TrimSpace(string(line))
+	const stamp = len("2006/01/02 15:04:05 ")
+	if len(text) <= stamp || text[4] != '/' || text[7] != '/' || text[10] != ' ' || text[13] != ':' || text[16] != ':' || text[19] != ' ' {
+		return false
+	}
+	msg := text[stamp:]
+	if strings.HasPrefix(msg, "h2c-listener: listening on ") {
+		return true
+	}
+	runtime, rest, ok := strings.Cut(msg, " runner: serving on ")
+	return ok && rest != "" && runtime != "" && !strings.ContainsAny(runtime, " \t")
+}
+
+// dropInitPanicLocked drops the kernel's panic dump after guest-init (PID 1)
+// exits: "Kernel panic - not syncing: Attempted to kill init!", a register
+// and call-trace dump, then "Rebooting in 1 seconds..". On production-us
+// rc.294 a crash-looping app put 25 such lines in its customer log (Hunt 14
+// H14-26). guest-init's own reason line, e.g. "guest-init: app crash-looped
+// after 3 restart(s)", comes first and stays; the unfiltered console file
+// keeps the dump for operators.
+func (w *customerConsoleWriter) dropInitPanicLocked(line []byte) bool {
+	message, ok := kernelConsoleMessage(line)
+	if !ok {
+		return false
+	}
+	if strings.HasPrefix(message, "Kernel panic - not syncing: Attempted to kill init!") {
+		w.initPanic = true
+		return true
+	}
+	if !w.initPanic {
+		return false
+	}
+	if strings.HasPrefix(message, "Rebooting in ") {
+		w.initPanic = false
+	}
+	return true
+}
+
+// kernelConsoleMessage returns the message of a dmesg-formatted console line
+// such as "[ 6744.209731] Kernel panic - not syncing: ...".
+func kernelConsoleMessage(line []byte) (string, bool) {
+	text := strings.TrimSpace(string(line))
+	if !strings.HasPrefix(text, "[") {
+		return "", false
+	}
+	end := strings.IndexByte(text, ']')
+	if end < 0 {
+		return "", false
+	}
+	stamp := strings.TrimSpace(text[1:end])
+	if stamp == "" {
+		return "", false
+	}
+	for _, r := range stamp {
+		if (r < '0' || r > '9') && r != '.' {
+			return "", false
+		}
+	}
+	return strings.TrimSpace(text[end+1:]), true
 }
 
 // guestInitStageLine matches guest-init's internal boot-progress markers
@@ -496,6 +589,10 @@ var guestInitPlatformMessages = []string{
 	// ended every job task log, its attempt being the vsock retry rather than
 	// the task attempt the log header names (hunt #10).
 	"job-exit ", "job cancel ",
+	// App-task exec listener: "INFO fork exec listener started
+	// vsock_port=1034" opened every cold boot's customer log on
+	// production-us rc.294 (Hunt 14 H14-27).
+	"fork exec listener ",
 }
 
 // guestInitPlatformLine matches a default-slog line ("2006/01/02 15:04:05
@@ -625,6 +722,16 @@ func firecrackerControlLine(line []byte) bool {
 		"api request took",
 		"snapshot/load",
 		"snapshot load",
+		// Firecracker 1.17 net device before the guest driver binds it:
+		// "Net: The device is not yet activated. Spurious event received: 3".
+		// It reached every job task's customer log on production-us
+		// (Hunt 12).
+		"spurious event received",
+		// Firecracker's API thread waking the VMM loop with nothing queued:
+		// "Got a spurious notification from api thread". It reached a
+		// queue worker's customer log on production-us rc.294 (Hunt 14
+		// H14-5).
+		"spurious notification from api thread",
 	} {
 		if strings.Contains(body, marker) {
 			return true
@@ -754,22 +861,66 @@ func (v *JailerVMM) WithSlowSubscriberCallback(cb func()) *JailerVMM {
 	return v
 }
 
-// WithLogCommitCallback observes newly received app log lines. App identity
-// comes from the scheduler's correlation envelope captured before guest startup.
+// WithLogCommitCallback adds an observer of newly received app log lines;
+// observers run in the order they were added, so independent consumers (MCP
+// protocol metrics, ADR-746 line counts) never displace each other. App
+// identity comes from the scheduler's correlation envelope captured before
+// guest startup.
 func (v *JailerVMM) WithLogCommitCallback(cb func(appID string, line logbuf.Line)) *JailerVMM {
+	if cb == nil {
+		return v
+	}
 	v.mu.Lock()
+	if prev := v.committedLine; prev != nil {
+		next := cb
+		cb = func(appID string, line logbuf.Line) {
+			prev(appID, line)
+			next(appID, line)
+		}
+	}
 	v.committedLine = cb
 	v.mu.Unlock()
 	return v
 }
 
-// WithInstanceLogObserver installs bounded, non-blocking lifecycle and log callbacks.
-// Identities come from host context. Stop must be idempotent.
+// WithInstanceLogObserver adds bounded, non-blocking lifecycle and log
+// callbacks; observers run in the order they were added. Identities come from
+// host context. Stop must be idempotent.
 func (v *JailerVMM) WithInstanceLogObserver(cb func(string, string, string) (func(logbuf.Line), func())) *JailerVMM {
+	if cb == nil {
+		return v
+	}
 	v.mu.Lock()
+	if prev := v.instanceLogObserver; prev != nil {
+		cb = chainInstanceLogObservers(prev, cb)
+	}
 	v.instanceLogObserver = cb
 	v.mu.Unlock()
 	return v
+}
+
+func chainInstanceLogObservers(first, second func(string, string, string) (func(logbuf.Line), func())) func(string, string, string) (func(logbuf.Line), func()) {
+	return func(appID, deploymentID, instance string) (func(logbuf.Line), func()) {
+		observeFirst, stopFirst := first(appID, deploymentID, instance)
+		observeSecond, stopSecond := second(appID, deploymentID, instance)
+		observe := func(line logbuf.Line) {
+			if observeFirst != nil {
+				observeFirst(line)
+			}
+			if observeSecond != nil {
+				observeSecond(line)
+			}
+		}
+		stop := func() {
+			if stopFirst != nil {
+				stopFirst()
+			}
+			if stopSecond != nil {
+				stopSecond()
+			}
+		}
+		return observe, stop
+	}
 }
 
 // WithInstancePauseObserver reports successful host pause/resume transitions.
@@ -1208,6 +1359,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 
 	cfg = v.withBalloon(cfg)
 	cfg = v.withPmemBase(l, cfg)
+	cfg = v.withRestoreReseedMode(l, cfg)
 	cfg = withBlockRateLimit(l, cfg)
 	jailed, err := v.provisionForOwner(ctx, stagingOwner, root, cfg, l.UID, l.GID, l.Instance)
 	if err != nil {
@@ -1239,7 +1391,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 		return err
 	}
 	if !l.IsBuilder && cfg.VsockDevice != nil {
-		if err = v.prepareRegisteredGuestVsockListeners(l); err != nil {
+		if err = v.prepareRegisteredGuestVsockListenersForWake(ctx, l); err != nil {
 			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
 		}
 	}
@@ -2161,7 +2313,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// cannot escape quota accounting by writing past its read-only
 	// boundary).
 	for i := 1; i < len(resolvedWorkloads); i++ {
-		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], snapshotRestoreSidecarName(spec, i, resolvedWorkloads[i]), l.Instance); err != nil {
+		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], restoreSidecarDriveName(i), l.Instance); err != nil {
 			return fmt.Errorf("vmm: stage sidecar %d: %w", i-1, err)
 		}
 	}
@@ -2227,7 +2379,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		return err
 	}
 	if !l.IsBuilder {
-		if err = v.prepareRegisteredGuestVsockListeners(l); err != nil {
+		if err = v.prepareRegisteredGuestVsockListenersForWake(ctx, l); err != nil {
 			return fmt.Errorf("vmm: prepare platform guest receivers: %w", err)
 		}
 	}
@@ -2554,7 +2706,34 @@ func (v *JailerVMM) notifyGuestVsockTransport(port uint32, failureKind string, e
 // instance. A preparation failure aborts boot/restore and marks the daemon
 // unhealthy; serving a VM without its platform channels would make lifecycle
 // and identity behavior silently incomplete.
-func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
+// GuestVsockStreamOrigin is fixed when a VM listener is prepared. It is never
+// read from a guest frame or looked up through a replacement Manager entry.
+type GuestVsockStreamOrigin struct{ AppID, WakeID, NodeID string }
+type guestVsockOriginConn struct {
+	net.Conn
+	origin GuestVsockStreamOrigin
+}
+
+func GuestVsockOrigin(conn net.Conn) (GuestVsockStreamOrigin, bool) {
+	identified, ok := conn.(*guestVsockOriginConn)
+	if !ok {
+		return GuestVsockStreamOrigin{}, false
+	}
+	return identified.origin, true
+}
+
+// GuestVsockOriginConnForTest binds origin to conn as a prepared listener
+// does, for receivers tested without a VM.
+func GuestVsockOriginConnForTest(conn net.Conn, origin GuestVsockStreamOrigin) net.Conn {
+	return &guestVsockOriginConn{Conn: conn, origin: origin}
+}
+
+func (v *JailerVMM) prepareRegisteredGuestVsockListenersForWake(ctx context.Context, l Lease) error {
+	fields, _ := wire.FromContext(ctx)
+	return v.prepareRegisteredGuestVsockListeners(l, GuestVsockStreamOrigin{AppID: fields.AppID, WakeID: fields.WakeID, NodeID: fields.NodeID})
+}
+
+func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease, origins ...GuestVsockStreamOrigin) error {
 	if v.nativeRecovery != nil {
 		path, err := v.nativeRecovery.journal.qualifications("").restores().path(l.Instance)
 		if err == nil {
@@ -2584,6 +2763,12 @@ func (v *JailerVMM) prepareRegisteredGuestVsockListeners(l Lease) error {
 			return fmt.Errorf("prepare guest vsock receiver port %d: %w", port, err)
 		}
 		v.notifyGuestVsockTransport(port, "", nil)
+		if len(origins) > 0 {
+			origin, original := origins[0], handler
+			handler = func(instance string, conn net.Conn) (string, error) {
+				return original(instance, &guestVsockOriginConn{Conn: conn, origin: origin})
+			}
+		}
 		go v.serveGuestVsockStreams(l.Instance, port, ln, handler)
 	}
 	return nil
@@ -2731,6 +2916,7 @@ func (v *JailerVMM) closeGuestVsockListeners(instance string) {
 		}
 	}
 	delete(v.characterizationReceipts, instance)
+	delete(v.jobExits, instance)
 	v.mu.Unlock()
 	for port, ln := range listeners {
 		if ln != nil {
@@ -3509,6 +3695,13 @@ func (v *JailerVMM) SnapshotKeepAlive(ctx context.Context, l Lease, spec Snapsho
 		// This legacy path creates memory/state files before drive export.
 		// Native capture requires its original output/publication session;
 		// refuse before hooks, pause, file creation or failed-capture deletion.
+		// Ordinary protocol-1 park and warm captures may instead run the
+		// native producer (ADR 20261022184951); migration and admitted
+		// protocol-2 captures keep this refusal.
+		if v.nativeRuntimeCaptureEnabled() && spec.nativeRuntime != nil && spec.admittedParent.Binding.ProtocolVersion == 0 &&
+			spec.admittedGrant == nil && spec.functionMigration == nil && spec.functionMigrationGrant == nil && spec.Storage == nil {
+			return v.captureNativeRuntimeSnapshot(ctx, l, spec)
+		}
 		return SnapshotInfo{}, fmt.Errorf("native recovery: snapshot publication producer is unavailable: %w", state.ErrConflict)
 	}
 	capture, err := v.beginNativeSnapshot(ctx, l, spec)
@@ -4583,8 +4776,8 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 	// guest, so the mount is also nodev,nosuid,noexec: a device node the
 	// build created (the host's NVMe, /dev/zero) must not become a live
 	// device when vmmd, as root, reads the export.
-	if out, mountErr := exec.Command("mount", "-o", "loop,ro,noload,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); mountErr != nil {
-		if roOut, roErr := exec.Command("mount", "-o", "loop,ro,nodev,nosuid,noexec", drive1, mp).CombinedOutput(); roErr != nil {
+	if out, mountErr := exec.Command("mount", guestDiskMountArgs("ro,noload", drive1, mp)...).CombinedOutput(); mountErr != nil {
+		if roOut, roErr := exec.Command("mount", guestDiskMountArgs("ro", drive1, mp)...).CombinedOutput(); roErr != nil {
 			return fmt.Errorf("mount loop: ro,noload=%w (%s); ro=%w (%s)", mountErr, bytes.TrimSpace(out), roErr, bytes.TrimSpace(roOut))
 		}
 	}
@@ -4751,6 +4944,29 @@ func isLowerHex(s string) bool {
 // the FC drive ID is "layer-sidecar-0".
 func sidecarDriveImageName(idx int) string {
 	return fmt.Sprintf("sidecar-%d.ext4", idx)
+}
+
+// coldBootReadOnlyDriveName is the jail name provisionForOwner stages
+// read-only config drive i under. i counts virtio-blk drives with the base
+// as drive 0, also when a pmem base takes its place, so a sidecar's name
+// does not depend on the base device.
+func coldBootReadOnlyDriveName(i int, d Drive) string {
+	if i == 0 {
+		return stableReadOnlyName(d.PathOnHost, baseImageName)
+	}
+	if strings.HasPrefix(d.DriveID, DriveSidecarPrefix) {
+		return sidecarDriveImageName(i - 1)
+	}
+	return filepath.Base(d.PathOnHost)
+}
+
+// restoreSidecarDriveName is the jail name a restore stages workload i's
+// drive under. A Firecracker snapshot records each drive by the name cold
+// boot gave it, and workload i is config drive i+1, so this must match
+// coldBootReadOnlyDriveName(i+1, …): staging under any other name makes
+// every restore of an app with a companion fail and fall back to cold boot.
+func restoreSidecarDriveName(i int) string {
+	return sidecarDriveImageName(i)
 }
 
 // workloadManifestPath is the in-guest location guest-init reads to
@@ -5506,6 +5722,9 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	ring := v.ringFor(l.Instance)
 	consolePath := v.consoleLogPath(l.Instance)
 	consoleFile := v.takeConsoleFile(l.Instance)
+	// Adoption ADR §2: a file console is Firecracker's own stdout, so the
+	// guest's console does not depend on this vmmd staying alive.
+	fileConsole := v.fileConsoleEnabled() && consoleFile != nil
 	stdout := io.Discard
 	var consoleWriter *customerConsoleWriter
 	if ring != nil {
@@ -5516,7 +5735,10 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 		consoleWriter = &customerConsoleWriter{ring: ring}
 		stdout = consoleWriter
 	}
-	if consoleFile != nil {
+	if fileConsole {
+		// Firecracker writes the file itself; tailConsole feeds the ring.
+		stdout = consoleFile
+	} else if consoleFile != nil {
 		stdout = io.MultiWriter(stdout, consoleFile)
 	}
 	cmd.Stdout = stdout
@@ -5551,9 +5773,18 @@ func (v *JailerVMM) startJailer(ctx context.Context, l Lease, extraFCArgs ...str
 	}
 	v.mu.Lock()
 	v.proc[l.Instance] = cmd
-	rec := &instanceRecord{cmd: cmd, consolePath: consolePath, isBuilder: l.IsBuilder, done: make(chan struct{})}
+	rec := &instanceRecord{cmd: cmd, consolePath: consolePath, isBuilder: l.IsBuilder, done: make(chan struct{}), fileConsole: fileConsole}
 	v.recs[l.Instance] = rec
 	v.mu.Unlock()
+	if fileConsole {
+		// The child holds its own descriptor; vmmd's copy is not needed.
+		_ = consoleFile.Close()
+		consoleFile = nil
+		if consoleWriter != nil {
+			go tailConsole(consolePath, 0, consoleWriter, consoleWriter.Flush, rec.done)
+			consoleWriter = nil // the tail flushes it once the process exits
+		}
+	}
 	if rec.isBuilder {
 		go watchBuilderGuestHalt(rec.consolePath, rec.done, 250*time.Millisecond, func() {
 			v.killProcess(l.Instance)
@@ -5688,14 +5919,7 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		var name string
 		var err error
 		if d.IsReadOnly {
-			name = filepath.Base(d.PathOnHost)
-			if i == 0 {
-				name = stableReadOnlyName(d.PathOnHost, baseImageName)
-			}
-			if i > 0 && strings.HasPrefix(d.DriveID, DriveSidecarPrefix) {
-				name = sidecarDriveImageName(i - 1)
-			}
-			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, name, instanceID)
+			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, coldBootReadOnlyDriveName(i, d), instanceID)
 		} else if cfg.EphemeralWritable {
 			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
 		} else {
@@ -6307,6 +6531,17 @@ func (v *JailerVMM) unmountBindMounts(instance string) error {
 	v.mu.Unlock()
 	for i := len(binds) - 1; i >= 0; i-- {
 		b := binds[i]
+		if b.adopted && b.mount != nil {
+			// The mount lives on in any process still in the namespace that
+			// made it; the source keeps its widened mode until none remains.
+			held, err := mountNamespaceHeld("/proc", b.mount.Namespace)
+			if err != nil {
+				return err
+			}
+			if held {
+				return errors.New("adopted bind is still mounted in the previous vmmd's namespace; retaining ownership")
+			}
+		}
 		if b.tracked {
 			current, err := resourceMountAt(b.mountpoint)
 			if err != nil {
@@ -7757,9 +7992,7 @@ func (v *JailerVMM) stageWritableAsForOwner(ctx context.Context, owner nativeLau
 	if instance == "" {
 		return stageWritableAs(root, src, name, uid, gid)
 	}
-	clone, cloned, err := reflinkCloneTempWithCreator(src, instance, func(dir, pattern string) (*os.File, error) {
-		return v.newMaterialisedFile(instance, dir, pattern, "clone")
-	}, v.removeMaterialisedFile)
+	clone, cloned, err := v.reflinkWritableClone(src, instance)
 	if err != nil {
 		return "", fmt.Errorf("reflink writable %s: %w", src, err)
 	}
@@ -7907,8 +8140,9 @@ func (v *JailerVMM) materializeFromStorage(ctx context.Context, instanceID, key 
 		return key, nil // nil storage: key IS the direct host path (builderd path-through mode)
 	}
 	// A wake reads what it fetched from the page cache; the node cache
-	// makes the fill durable and installs it after the wake has it.
-	rc, err := v.storage.Get(storage.WithDeferredCacheDurability(ctx), key)
+	// makes the fill durable and installs it after the wake has it. A native
+	// runtime capture is read from the tree only vmmd writes.
+	rc, err := v.snapshotStore(key).Get(storage.WithDeferredCacheDurability(ctx), key)
 	if err != nil {
 		return "", fmt.Errorf("vmm: storage get %q: %w", key, err)
 	}
@@ -8049,11 +8283,12 @@ func (v *JailerVMM) probeRestoreLocalPath(key string) (string, string, bool, err
 	if key == "" || filepath.IsAbs(key) || v.storage == nil {
 		return "", "", false, nil
 	}
-	if resolver, ok := v.storage.(storage.LocalPathSourceResolver); ok {
+	store := v.snapshotStore(key)
+	if resolver, ok := store.(storage.LocalPathSourceResolver); ok {
 		path, source, local, err := resolver.LocalPathWithSource(key)
 		return path, string(source), local, err
 	}
-	if resolver, ok := v.storage.(storage.LocalPathResolver); ok {
+	if resolver, ok := store.(storage.LocalPathResolver); ok {
 		path, local, err := resolver.LocalPath(key)
 		if err != nil || !local {
 			return path, "", local, err
@@ -8201,6 +8436,42 @@ func (v *JailerVMM) trackMaterialised(instanceID, tmpPath string) {
 	v.mu.Lock()
 	v.materialisedTmp[instanceID] = append(v.materialisedTmp[instanceID], tmpPath)
 	v.mu.Unlock()
+}
+
+// reflinkWritableClone takes the journaled CoW clone of src for instance, or
+// reports false when the filesystem cannot reflink. The probe file is then
+// released in full, asset included: a record that names a file which is
+// gone makes a restarted vmmd refuse the guest at adoption.
+func (v *JailerVMM) reflinkWritableClone(src, instance string) (string, bool, error) {
+	return reflinkCloneTempWithCreator(src, instance, func(dir, pattern string) (*os.File, error) {
+		return v.newMaterialisedFile(instance, dir, pattern, "clone")
+	}, func(path string) error { return v.releaseMaterialisedFile(instance, path) })
+}
+
+// releaseMaterialisedFile removes one owned staged file now, as teardown's
+// sweep would: the file, its journal asset and its tracking.
+func (v *JailerVMM) releaseMaterialisedFile(instanceID, path string) error {
+	if err := v.removeMaterialisedFile(path); err != nil {
+		return err
+	}
+	if err := v.retireResourceAsset(instanceID, path); err != nil {
+		return err
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	delete(v.materialisedIdentity, path)
+	kept := v.materialisedTmp[instanceID][:0]
+	for _, p := range v.materialisedTmp[instanceID] {
+		if p != path {
+			kept = append(kept, p)
+		}
+	}
+	if len(kept) == 0 {
+		delete(v.materialisedTmp, instanceID)
+	} else {
+		v.materialisedTmp[instanceID] = kept
+	}
+	return nil
 }
 
 // sweepMaterialised retains paths that could not be removed for teardown retry.

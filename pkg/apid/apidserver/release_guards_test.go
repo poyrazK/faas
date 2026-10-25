@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -18,6 +19,8 @@ import (
 // or lifted, and an after-rollback policy freezes an app Gregale rolled back.
 // adr: 20261019071734 — release gates round-trip and roll back a release
 // that fails one after its rollout completed.
+// adr: 20261022153155 — an ai gate rolls back a release whose AI cost per
+// call rose past its bound over the predecessor's.
 
 // guardDo sends a request and decodes a 2xx response into out.
 func guardDo(t *testing.T, e apidserver.TestEnv, method, path string, body, out any) *httptest.ResponseRecorder {
@@ -129,6 +132,7 @@ func TestAfterRollbackPolicyFreezesAnAppTheWatchRolledBack(t *testing.T) {
 // gateEvidence stands in for Postgres release gate evidence.
 type gateEvidence struct {
 	groups map[string][]state.ReleaseGateErrorGroup
+	ai     map[string]state.ReleaseGateAIWindow
 }
 
 func (g gateEvidence) ReleaseGateSLO(context.Context, string, string) (state.ReleaseGateSLOTarget, error) {
@@ -143,12 +147,17 @@ func (g gateEvidence) ReleaseGateNewErrorGroups(_ context.Context, _, deployment
 func (g gateEvidence) ReleaseGateCustomMetricWindow(context.Context, string, string, time.Time, time.Time) (int64, float64, error) {
 	return 0, 0, nil
 }
+func (g gateEvidence) ReleaseGateDeploymentAI(_ context.Context, _, deploymentID string, _, _ time.Time) (state.ReleaseGateAIWindow, error) {
+	return g.ai[deploymentID], nil
+}
 
 func TestReleaseGatesRoundTripAndValidate(t *testing.T) {
 	f := newPostReleaseFixture(t, "gate-crud", true, time.Hour)
 	e := f.e
 	if rec := guardDo(t, e, http.MethodPost, "/v1/apps/gate-crud/release-gates", api.CreateReleaseGateRequest{Name: "checkout", Kind: "slo", SLO: "missing"}, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("gate on a missing SLO = %d %s, want 400", rec.Code, rec.Body)
+	} else if !strings.Contains(rec.Body.String(), "gregale slos list --app gate-crud") {
+		t.Fatalf("missing-SLO hint names the wrong command: %s", rec.Body)
 	}
 	var gate api.ReleaseGate
 	if rec := guardDo(t, e, http.MethodPost, "/v1/apps/gate-crud/release-gates", api.CreateReleaseGateRequest{Name: "no-new-errors", Kind: "new_errors"}, &gate); rec.Code != http.StatusCreated {
@@ -197,6 +206,54 @@ func TestPostReleaseWatchRollsBackAReleaseThatFailsAGate(t *testing.T) {
 	}
 	if decision.Rule != api.RolloutRuleAbortPostReleaseGate || len(decision.Gates) != 1 || decision.Gates[0].Passed ||
 		len(decision.Gates[0].ErrorClasses) != 1 || decision.Gates[0].ErrorClasses[0] != "null_pointer" {
+		t.Fatalf("decision = %+v", decision)
+	}
+}
+
+func TestPostReleaseWatchRollsBackAReleaseThatFailsAnAIGate(t *testing.T) {
+	f := newPostReleaseFixture(t, "gate-ai", true, time.Minute)
+	e := f.e
+	for _, bad := range []api.CreateReleaseGateRequest{
+		{Name: "ai-cost", Kind: "ai", Metric: "tokens"},
+		{Name: "ai-cost", Kind: "ai", Metric: "cost_per_call", MaxIncreasePercent: 1001},
+		{Name: "ai-cost", Kind: "ai", Metric: "cost_per_call", Comparison: "above"},
+		{Name: "ai-cost", Kind: "custom_metric", Metric: "queue", Comparison: "above", Threshold: new(float64), MaxIncreasePercent: 10},
+	} {
+		if rec := guardDo(t, e, http.MethodPost, "/v1/apps/gate-ai/release-gates", bad, nil); rec.Code != http.StatusBadRequest {
+			t.Fatalf("%+v = %d %s, want 400", bad, rec.Code, rec.Body)
+		}
+	}
+	var gate api.ReleaseGate
+	req := api.CreateReleaseGateRequest{Name: "ai-cost", Kind: "ai", Metric: "cost_per_call", MinSamples: 10}
+	if rec := guardDo(t, e, http.MethodPost, "/v1/apps/gate-ai/release-gates", req, &gate); rec.Code != http.StatusCreated {
+		t.Fatalf("create gate = %d %s", rec.Code, rec.Body)
+	}
+	if gate.Kind != "ai" || gate.Metric != "cost_per_call" || gate.MaxIncreasePercent != api.ReleaseGateAIDefaultMaxIncrease || gate.Threshold != nil {
+		t.Fatalf("gate = %+v", gate)
+	}
+	baseline := f.previous.ID
+	evidence := gateEvidence{ai: map[string]state.ReleaseGateAIWindow{
+		baseline:     {Calls: 100, CostMillicents: 10_000},
+		f.release.ID: {Calls: 40, CostMillicents: 5_600},
+	}}
+	(*e.S()).SetReleaseGateEvidence(evidence)
+	f.sweep(t)
+	if got := f.read(t, f.release.ID); got.Status != state.DeployLive || got.LastAutoRollbackReason != "" {
+		t.Fatalf("release 40%% dearer per call = %s %q, want it left live", got.Status, got.LastAutoRollbackReason)
+	}
+
+	evidence.ai[f.release.ID] = state.ReleaseGateAIWindow{Calls: 40, CostMillicents: 8_000}
+	f.sweep(t)
+	got := f.read(t, f.release.ID)
+	if got.LastAutoRollbackReason != string(state.AutoRollbackReasonPostReleaseRegression) {
+		t.Fatalf("reason = %q, want a post-release rollback", got.LastAutoRollbackReason)
+	}
+	var decision api.RolloutDecision
+	if err := json.Unmarshal(got.RolloutDecision, &decision); err != nil {
+		t.Fatalf("decode decision %s: %v", got.RolloutDecision, err)
+	}
+	if decision.Rule != api.RolloutRuleAbortPostReleaseGate || len(decision.Gates) != 1 || decision.Gates[0].Passed ||
+		decision.Gates[0].Kind != "ai" || decision.Gates[0].Observed != 200 || decision.Gates[0].Bound != 150 || decision.Gates[0].Samples != 40 {
 		t.Fatalf("decision = %+v", decision)
 	}
 }

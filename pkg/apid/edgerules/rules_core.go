@@ -17,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -37,7 +38,7 @@ type precondition func(ctx context.Context) (etag string, prob *api.Problem)
 
 // writeRuleMutation writes a mutation outcome: the If-Match ETag or the
 // convergence state with a problem, or the rule with the rule-set ETag.
-func (s *Service) writeRuleMutation(ctx context.Context, w http.ResponseWriter, m ruleMutation, prob *api.Problem, status int) {
+func (s *Service) writeRuleMutation(ctx context.Context, w http.ResponseWriter, acct state.Account, m ruleMutation, prob *api.Problem, status int) {
 	if prob != nil {
 		if m.etag != "" {
 			w.Header().Set("ETag", m.etag)
@@ -50,20 +51,20 @@ func (s *Service) writeRuleMutation(ctx context.Context, w http.ResponseWriter, 
 	}
 	m.convergence.SetResponseState(w, "active")
 	s.setEdgeRuleSetETag(ctx, w, m.row.AppID)
-	httpkit.WriteJSON(w, status, EdgeRuleResponse(m.row))
+	httpkit.WriteJSON(w, status, s.RuleResponse(acct, m.row))
 }
 
 // CreateRule creates an edge rule for app through the same path as
 // POST /v1/apps/{slug}/edge-rules, without an If-Match precondition.
 func (s *Service) CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (api.EdgeRuleResponse, *api.Problem) {
-	if prob := planKindProblem(acct, req.Kind); prob != nil {
+	if prob := s.kindProblem(acct, req.Kind); prob != nil {
 		return api.EdgeRuleResponse{}, prob
 	}
 	m, prob := s.createRule(ctx, acct, app, req, nil)
 	if prob != nil {
 		return api.EdgeRuleResponse{}, prob
 	}
-	return EdgeRuleResponse(m.row), nil
+	return s.RuleResponse(acct, m.row), nil
 }
 
 // UpdateRule changes one of the account's edge rules through the same path
@@ -77,7 +78,7 @@ func (s *Service) UpdateRule(ctx context.Context, acct state.Account, ruleID str
 	if prob != nil {
 		return api.EdgeRuleResponse{}, prob
 	}
-	return EdgeRuleResponse(m.row), nil
+	return s.RuleResponse(acct, m.row), nil
 }
 
 // planKindProblem is the plan-kind gate. Hobby+ unlocks jwt and ip; Free
@@ -105,13 +106,29 @@ func planKindProblem(acct state.Account, kind string) *api.Problem {
 	return nil
 }
 
+// kindProblem is the plan gate, then the capability gate, for a new rule's kind.
+func (s *Service) kindProblem(acct state.Account, kind string) *api.Problem {
+	if prob := planKindProblem(acct, kind); prob != nil {
+		return prob
+	}
+	if s.SettingCheck != nil {
+		return s.SettingCheck(acct, kind)
+	}
+	return nil
+}
+
 // ruleForUpdate loads one of the account's rules for an update; respond
-// rules stay on preview applications.
+// rules stay on preview applications, and the attack-mode rule changes only
+// through its switch (ADR-20261021220456).
 func (s *Service) ruleForUpdate(ctx context.Context, acct state.Account, id string) (state.EdgeRule, *api.Problem) {
 	notFound := api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such edge rule")
 	row, err := s.Host.Store().GetEdgeRuleByID(ctx, id)
 	if err != nil || row.AccountID != acct.ID {
 		return state.EdgeRule{}, notFound
+	}
+	if row.AttackMode() {
+		return state.EdgeRule{}, api.ErrEdgeRuleConflict("this is the app's attack-mode rule; extend it or switch it off with " +
+			"PUT or DELETE /v1/apps/{slug}/edge-protection/attack-mode (gregale edge-rules attack-mode)")
 	}
 	if row.Kind == state.EdgeRuleKindRespond {
 		app, appErr := s.Host.Store().AppByID(ctx, row.AppID)
@@ -139,10 +156,16 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 	if prob := ValidateEdgeRuleBody(&req, acct.Plan); prob != nil {
 		return m, prob
 	}
+	if prob := s.createReleaseProblem(acct, req); prob != nil {
+		return m, prob
+	}
 	if prob := s.validateEdgeRuleMatchLists(ctx, acct.ID, req.Match); prob != nil {
 		return m, prob
 	}
 	if prob := s.ValidateEdgeRuleAsyncDestinations(ctx, app.ID, acct.ID, req.Kind, req.Action); prob != nil {
+		return m, prob
+	}
+	if prob := s.RouteTargetProblem(ctx, acct.ID, req.Kind, req.Action); prob != nil {
 		return m, prob
 	}
 	// Default priority=100, enabled=true when unset.
@@ -184,7 +207,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		Priority:     priority,
 		Enabled:      enabled,
 		Kind:         state.EdgeRuleKind(req.Kind),
-		Action:       ActionFromBody(req.Kind, req.Action),
+		Action:       withPenalty(ActionFromBody(req.Kind, req.Action), req.Penalty),
 		// ValidateMode (ADR-128 D1): the top-level wire
 		// field is the source of truth for kind=validate.
 		// If the wire field is empty (client didn't send
@@ -213,7 +236,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		case errors.Is(err, state.ErrConflict):
 			return m, api.ErrEdgeRuleConflict(err.Error())
 		default:
-			return m, api.ErrCapacity("could not create edge rule")
+			return m, trafficproblem.Policy(err, api.ErrCapacity("could not create edge rule"))
 		}
 	}
 	s.Host.Logger().Info("edge rule created",
@@ -290,6 +313,12 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 			return m, prob
 		}
 	}
+	if prob := validatePenaltyUpdate(row, req); prob != nil {
+		return m, prob
+	}
+	if prob := s.updateReleaseProblem(acct, row, req); prob != nil {
+		return m, prob
+	}
 	matchPath := row.MatchPath
 	if req.MatchPath != nil {
 		matchPath = *req.MatchPath
@@ -300,6 +329,9 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 			return m, prob
 		}
 		if prob := s.ValidateEdgeRuleAsyncDestinations(ctx, row.AppID, acct.ID, string(row.Kind), *req.Action); prob != nil {
+			return m, prob
+		}
+		if prob := s.RouteTargetProblem(ctx, acct.ID, string(row.Kind), *req.Action); prob != nil {
 			return m, prob
 		}
 	} else if req.MatchPath != nil && row.Action.Validate != nil && row.Action.Validate.Parameters != nil {
@@ -389,13 +421,13 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 			return m, checkProb
 		}
 	}
-	updated, err := s.Host.Store().UpdateEdgeRule(ctx, row.ID, edgeRuleUpdateParamsFrom(req, row.Kind))
+	updated, err := s.Host.Store().UpdateEdgeRule(ctx, row.ID, penaltyUpdateParams(row, req, edgeRuleUpdateParamsFrom(req, row.Kind)))
 	if err != nil {
 		convergence.Abort(ctx)
 		if errors.Is(err, state.ErrNotFound) {
 			return m, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such edge rule")
 		}
-		return m, api.ErrCapacity("could not update edge rule")
+		return m, trafficproblem.Policy(err, api.ErrCapacity("could not update edge rule"))
 	}
 	s.Host.Logger().Info("edge rule updated",
 		"rule", logsanitize.Field(updated.ID),
@@ -417,4 +449,62 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		return m, api.ErrCapacity("edge rule was saved but the serving fleet has not acknowledged it; read the current rule state before retrying this mutation")
 	}
 	return m, nil
+}
+
+// withPenalty sets a stored action's penalty box (ADR-20261022105846).
+func withPenalty(action state.EdgeRuleAction, p *api.EdgeRulePenalty) state.EdgeRuleAction {
+	action.Penalty = stateEdgeRulePenalty(p)
+	return action
+}
+
+// validatePenaltyUpdate checks a PATCH against the penalty box: a new
+// penalty must be valid for the rule's kind, and a waf rule that keeps a
+// penalty must stay in block mode.
+func validatePenaltyUpdate(row state.EdgeRule, req api.UpdateEdgeRuleRequest) *api.Problem {
+	if req.Penalty != nil && req.ClearPenalty {
+		return api.ErrValidation("penalty and clear_penalty are mutually exclusive")
+	}
+	keeps := req.Penalty != nil || (row.Action.Penalty != nil && !req.ClearPenalty)
+	if !keeps {
+		return nil
+	}
+	wafMode := ""
+	if row.Kind == state.EdgeRuleKindWAF {
+		if row.Action.WAF != nil {
+			wafMode = row.Action.WAF.Mode
+		}
+		if req.Action != nil {
+			wafMode = wafModeFromAction(string(row.Kind), *req.Action)
+		}
+	}
+	if prob := api.ValidateEdgeRulePenaltyKind(string(row.Kind), wafMode); prob != nil {
+		return prob
+	}
+	if req.Penalty != nil {
+		return req.Penalty.Validate()
+	}
+	return nil
+}
+
+// penaltyUpdateParams carries the penalty box through a PATCH: an action
+// replacement keeps the stored penalty, penalty replaces it, clear_penalty
+// removes it.
+func penaltyUpdateParams(row state.EdgeRule, req api.UpdateEdgeRuleRequest, params state.UpdateEdgeRuleParams) state.UpdateEdgeRuleParams {
+	if params.Action == nil && req.Penalty == nil && !req.ClearPenalty {
+		return params
+	}
+	action := row.Action
+	if params.Action != nil {
+		action = *params.Action
+	}
+	switch {
+	case req.ClearPenalty:
+		action.Penalty = nil
+	case req.Penalty != nil:
+		action.Penalty = stateEdgeRulePenalty(req.Penalty)
+	default:
+		action.Penalty = row.Action.Penalty
+	}
+	params.Action = &action
+	return params
 }

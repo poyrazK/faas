@@ -7,17 +7,17 @@ def test_standard_mutations_preserve_empty_false_and_revocation_over_transport()
     import json
     from uuid import UUID
 
-    from faas_sdk.api.orgs import (
+    from faas_sdk.preview.api.orgs import (
         approve_application_standard_exception,
         revoke_application_standard_exception,
         set_application_standard_local_intent,
     )
     from faas_sdk.client import AuthenticatedClient
-    from faas_sdk.models.approve_application_standard_exception_request import (
+    from faas_sdk.preview.models.approve_application_standard_exception_request import (
         ApproveApplicationStandardExceptionRequest,
     )
-    from faas_sdk.models.revoke_application_standard_exception_request import RevokeApplicationStandardExceptionRequest
-    from faas_sdk.models.set_application_standard_local_intent_request import SetApplicationStandardLocalIntentRequest
+    from faas_sdk.preview.models.revoke_application_standard_exception_request import RevokeApplicationStandardExceptionRequest
+    from faas_sdk.preview.models.set_application_standard_local_intent_request import SetApplicationStandardLocalIntentRequest
 
     resource = "00000000-0000-4000-8000-000000000001"
     stamp = "2026-10-05T12:00:00+00:00"
@@ -113,10 +113,10 @@ def test_standard_mutations_preserve_empty_false_and_revocation_over_transport()
     ]
 
 
-from faas_sdk.api.orgs import get_application_standard_version, publish_application_standard_version
+from faas_sdk.preview.api.orgs import get_application_standard_version, publish_application_standard_version
 from faas_sdk.client import Client
-from faas_sdk.models.application_standard_version import ApplicationStandardVersion
-from faas_sdk.models.create_application_standard_version_request import CreateApplicationStandardVersionRequest
+from faas_sdk.preview.models.application_standard_version import ApplicationStandardVersion
+from faas_sdk.preview.models.create_application_standard_version_request import CreateApplicationStandardVersionRequest
 
 
 def test_standard_sdk_retains_all_requirement_types_and_parses_success():
@@ -156,9 +156,9 @@ def test_standard_sdk_retains_all_requirement_types_and_parses_success():
 
 
 def test_review_sdk_retains_false_and_zero_and_parses_saved_preview():
-    from faas_sdk.api.orgs import get_application_standard_review, preview_application_standard_assignment
-    from faas_sdk.models.application_standard_review import ApplicationStandardReview
-    from faas_sdk.models.application_standard_review_request import ApplicationStandardReviewRequest
+    from faas_sdk.preview.api.orgs import get_application_standard_review, preview_application_standard_assignment
+    from faas_sdk.preview.models.application_standard_review import ApplicationStandardReview
+    from faas_sdk.preview.models.application_standard_review_request import ApplicationStandardReviewRequest
 
     resource = "00000000-0000-4000-8000-000000000001"
     request = {
@@ -203,8 +203,8 @@ def test_review_sdk_retains_false_and_zero_and_parses_saved_preview():
 def test_operation_sdk_keeps_persisted_progress_separate_from_observation():
     from uuid import UUID
 
-    from faas_sdk.api.orgs import get_application_standard_operation
-    from faas_sdk.models.application_standard_operation import ApplicationStandardOperation
+    from faas_sdk.preview.api.orgs import get_application_standard_operation
+    from faas_sdk.preview.models.application_standard_operation import ApplicationStandardOperation
 
     resource = "00000000-0000-4000-8000-000000000001"
     stamp = "2026-10-04T12:00:00Z"
@@ -259,9 +259,9 @@ def test_operation_sdk_keeps_persisted_progress_separate_from_observation():
 def test_exception_sdk_preserves_history_values_cursors_and_projection_expiry():
     from uuid import UUID
 
-    from faas_sdk.api.orgs import get_application_standard_enrollment, list_application_standard_exceptions
-    from faas_sdk.models.application_standard_enrollment import ApplicationStandardEnrollment
-    from faas_sdk.models.application_standard_exception_list import ApplicationStandardExceptionList
+    from faas_sdk.preview.api.orgs import get_application_standard_enrollment, list_application_standard_exceptions
+    from faas_sdk.preview.models.application_standard_enrollment import ApplicationStandardEnrollment
+    from faas_sdk.preview.models.application_standard_exception_list import ApplicationStandardExceptionList
 
     resource = "00000000-0000-4000-8000-000000000001"
     stamp = "2026-10-04T12:00:00Z"
@@ -321,15 +321,15 @@ def test_review_approval_and_operator_controls_preserve_microsecond_tokens():
     import json
     from uuid import UUID
 
-    from faas_sdk.api.orgs import (
+    from faas_sdk.preview.api.orgs import (
         abort_application_standard_operation,
         approve_application_standard_review,
         pause_application_standard_operation,
         resume_application_standard_operation,
     )
     from faas_sdk.client import AuthenticatedClient
-    from faas_sdk.models.approve_application_standard_review_request import ApproveApplicationStandardReviewRequest
-    from faas_sdk.models.control_application_standard_operation_request import (
+    from faas_sdk.preview.models.approve_application_standard_review_request import ApproveApplicationStandardReviewRequest
+    from faas_sdk.preview.models.control_application_standard_operation_request import (
         ControlApplicationStandardOperationRequest,
     )
 
@@ -392,7 +392,7 @@ def test_assignment_inventory_preserves_inactive_revision_and_cursor():
     from datetime import datetime
     from uuid import UUID
 
-    from faas_sdk.api.orgs import get_application_standard_assignment, list_application_standard_assignments
+    from faas_sdk.preview.api.orgs import get_application_standard_assignment, list_application_standard_assignments
     from faas_sdk.client import AuthenticatedClient
 
     resource = "00000000-0000-4000-8000-000000000001"

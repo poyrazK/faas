@@ -28,7 +28,12 @@ type ApplicationStandardSnapshotCaptureRecord struct {
 	Grant                 runtimeadmission.SnapshotGrant
 	Acknowledgment        *runtimeadmission.SnapshotAcknowledgment
 	CreatedAt, ReceivedAt time.Time
-	inputs                json.RawMessage // Private immutable source inputs, also retained by PostgreSQL.
+	// ProducerIncarnation is the vmmd process the acknowledgment was
+	// accepted from: the source's effective incarnation then, which after a
+	// re-bind is not its receipt's. Empty for a capture acknowledged before
+	// it was recorded, which reads as the parent's.
+	ProducerIncarnation string
+	inputs              json.RawMessage // Private immutable source inputs, also retained by PostgreSQL.
 }
 
 func (r ApplicationStandardSnapshotCaptureRecord) Clone() ApplicationStandardSnapshotCaptureRecord {

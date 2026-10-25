@@ -76,7 +76,7 @@ func TestEdgeRulesValidate_CLIContractLifecycle(t *testing.T) {
 	if err := json.Unmarshal(createRec, &app); err != nil {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
-	host := "edgectl-validate-cli.apps.test.example"
+	host := "edgectl-validate-cli.edge-e2e.example"
 	seedRouteSubstitute(t, context.Background(), pool, accountID, app.ID, host, slug)
 
 	schema := `{"type":"object","properties":{"name":{"type":"string","minLength":2},"email":{"type":"string"}},"required":["name","email"],"additionalProperties":false}`
@@ -242,7 +242,7 @@ func TestEdgeRulesValidate_E2E_HappyAndReject(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-validate.apps.test.example"
+	synthHost := "edgectl-validate.edge-e2e.example"
 
 	// Precondition: kind=route substitute (synthetic host → real test app).
 	seedRouteSubstitute(t, context.Background(), pool,
@@ -333,7 +333,7 @@ func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-validate-stream.apps.test.example"
+	synthHost := "edgectl-validate-stream.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
@@ -392,13 +392,12 @@ func TestEdgeRulesValidate_StreamingSkipped(t *testing.T) {
 // can land a rule with a `$ref: "https://..."` body in the row.
 // pkg/edgevalidate.Compile rejects it while the gateway loads the host,
 // so the runtime never sees the external reference and the malformed rule
-// is dropped with an operator-visible compile-error metric.
+// is rejected with an operator-visible compile-error metric. ADR-570 refuses
+// the request while an owned rule cannot compile, then permits ordinary routing
+// after the invalid rule is removed through the customer API.
 //
-// We send a body that the inline schema would otherwise accept; the
-// request reaches the backend only if compile-time rejection worked. To
-// reach the compile path we simply
-// POST anything that matches the inline shape (`name`, `email`,
-// `age`) so the rule doesn't 422 on the runtime branch first.
+// We send a body that an inline schema would accept, require policy refusal,
+// then repair the policy and retain the original backend-fallthrough check.
 func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if pool == nil {
@@ -420,7 +419,7 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 		t.Fatalf("decode app: %v body=%s", err, createRec)
 	}
 
-	synthHost := "edgectl-validate-xref.apps.test.example"
+	synthHost := "edgectl-validate-xref.edge-e2e.example"
 
 	seedRouteSubstitute(t, context.Background(), pool,
 		accountID, app.ID, synthHost, slug)
@@ -428,12 +427,8 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 	// Build a schema with an external `$ref`. seedEdgeRuleDirect
 	// bypasses apid-Validate so this lands in the row.
 	//
-	// Note: pkg/edgevalidate.Compile re-strips external `$ref` /
-	// `$id` URLs at compile time per the gateway hot path. With
-	// the strip firing on compile, the rule never reaches the
-	// runtime branch — the runtime emits 502 (handler.go:1649).
-	// The exact literal returned (502 vs an apid-side 422) is a
-	// product of which layer fires first.
+	// The compiler records the failure; the pinned owner-policy guard refuses
+	// dispatch instead of silently omitting this enabled validation rule.
 	xrefSchema := `{
 		"type": "object",
 		"properties": {
@@ -441,7 +436,7 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 		},
 		"$ref": "https://internal.example.com/secrets.json"
 	}`
-	seedEdgeRuleDirect(t, context.Background(), pool,
+	invalidRuleID := seedEdgeRuleDirect(t, context.Background(), pool,
 		accountID, app.ID, synthHost,
 		state.EdgeRuleKindValidate,
 		map[string]any{
@@ -456,13 +451,12 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 	resetEdgeRuleCache(t, h)
 
 	body := map[string]any{"name": "Ada"}
-	_, respBody, status := doReqHeaders(t, h, synthHost, http.MethodPost,
+	headers, respBody, status := doReqHeaders(t, h, synthHost, http.MethodPost,
 		"/users", body)
 
-	// Compile rejects and drops a malformed stored rule before the hot
-	// path, so the request continues through the valid route rule. Pin both
-	// the fallthrough and the operator-visible compile-error signal.
-	assertBackendFallthrough(t, status, respBody)
+	if status != http.StatusServiceUnavailable || problemCode(respBody) != api.CodeTrafficPolicyUnavailable || headers.Get("Retry-After") != "1" {
+		t.Fatalf("uncompiled owned policy did not refuse dispatch: status=%d body=%s headers=%v", status, respBody, headers)
+	}
 	metricsReq, err := http.NewRequestWithContext(context.Background(), http.MethodGet,
 		h.GatewayControlURL+"/metrics", nil)
 	if err != nil {
@@ -484,4 +478,11 @@ func TestEdgeRulesValidate_ExternalRefRejected(t *testing.T) {
 	if match == nil || string(match[1]) == "0" {
 		t.Fatalf("external-$ref compile rejection metric missing; metrics=%s", metricsBody)
 	}
+	repairBody, repairStatus := doReq(t, h, key, http.MethodDelete, "/v1/edge-rules/"+invalidRuleID, nil)
+	if repairStatus != http.StatusNoContent {
+		t.Fatalf("remove invalid policy: status=%d body=%s", repairStatus, repairBody)
+	}
+	resetEdgeRuleCache(t, h)
+	_, resumedBody, resumedStatus := doReqHeaders(t, h, synthHost, http.MethodPost, "/users", body)
+	assertBackendFallthrough(t, resumedStatus, resumedBody)
 }

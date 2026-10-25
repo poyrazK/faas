@@ -474,6 +474,9 @@ func appScalePlanWarnings(app api.AppResponse, request api.UpdateAppRequest, pla
 		if policy.WakeMaxQueueWaitSeconds > api.WakeQueueMaxWaitSeconds {
 			warnings = append(warnings, fmt.Sprintf("Cold-wake queue wait exceeds the limit of %d seconds.", api.WakeQueueMaxWaitSeconds))
 		}
+		if policy.PerInstanceConcurrency > limits.ConcurrencyPerVMBound {
+			warnings = append(warnings, fmt.Sprintf("Requests per instance %d exceeds this plan's concurrency per VM of %d.", policy.PerInstanceConcurrency, limits.ConcurrencyPerVMBound))
+		}
 	}
 	if minInstances > 0 && !limits.MinInstancesAllowed {
 		warnings = append(warnings, "This plan does not allow keeping a minimum number of instances warm.")

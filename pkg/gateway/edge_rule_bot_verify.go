@@ -30,6 +30,9 @@ type BotVerifier struct {
 	resolver BotResolver
 	now      func() time.Time
 	inFlight chan struct{}
+	// ranges, when set, verifies a claimed crawler whose IP is in its
+	// operator's published ranges without DNS (ADR-20261022083601).
+	ranges *CrawlerRanges
 
 	mu    sync.Mutex
 	cache map[string]botVerdict // key: bot name + "|" + ip
@@ -70,10 +73,32 @@ func (v *BotVerifier) VerifiedBot(ctx context.Context, ip net.IP, userAgent stri
 	if !ok {
 		return ""
 	}
-	if v.verify(ctx, ip, bot) {
+	if v.ranges.Contains(bot.Name, ip) || v.verify(ctx, ip, bot) {
 		return bot.Name
 	}
 	return ""
+}
+
+// WithCrawlerRanges arms published-range verification: verified_bot
+// without a DNS lookup for an IP in its crawler's ranges, and
+// verified_ai_crawler (ADR-20261022083601).
+func (v *BotVerifier) WithCrawlerRanges(r *CrawlerRanges) *BotVerifier {
+	v.ranges = r
+	return v
+}
+
+// VerifiedAICrawler returns the AI crawler userAgent claims to be when ip
+// is in that operator's published ranges, else "". It never looks up DNS:
+// an AI crawler without published ranges never verifies.
+func (v *BotVerifier) VerifiedAICrawler(ip net.IP, userAgent string) string {
+	if v == nil || ip == nil {
+		return ""
+	}
+	crawler, ok := api.ClaimedAICrawler(userAgent)
+	if !ok || crawler.RangesURL == "" || !v.ranges.Contains(crawler.Name, ip) {
+		return ""
+	}
+	return crawler.Name
 }
 
 func (v *BotVerifier) verify(ctx context.Context, ip net.IP, bot api.EdgeRuleKnownBot) bool {
@@ -196,9 +221,9 @@ func (h *Handler) WithBotVerifier(v *BotVerifier) *Handler {
 	return h
 }
 
-// SetBotVerifier installs crawler verification for the request (ADR-973).
-// Call before the context is attached to a request; nil leaves the
-// verified_bot field absent.
+// SetBotVerifier installs crawler verification for the request (ADR-973,
+// ADR-20261022083601). Call before the context is attached to a request;
+// nil leaves the verified_bot and verified_ai_crawler fields absent.
 func (m *EdgeRuleMatchContext) SetBotVerifier(ctx context.Context, v *BotVerifier) {
 	if v == nil {
 		return
@@ -208,5 +233,11 @@ func (m *EdgeRuleMatchContext) SetBotVerifier(ctx context.Context, v *BotVerifie
 			m.bot = v.VerifiedBot(ctx, m.ClientIP, m.Headers.Get("User-Agent"))
 		})
 		return m.bot
+	}
+	m.verifiedAICrawler = func() string {
+		m.aiOnce.Do(func() {
+			m.aiCrawler = v.VerifiedAICrawler(m.ClientIP, m.Headers.Get("User-Agent"))
+		})
+		return m.aiCrawler
 	}
 }

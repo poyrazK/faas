@@ -3,10 +3,12 @@ package faas_test
 import (
 	"context"
 	"encoding/json"
-	faas "github.com/poyrazK/faas/sdk/go"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 func TestIssueNativeTrackerSDKKeepsExpectedSnapshot(t *testing.T) {
@@ -44,24 +46,24 @@ func TestIssueNativeTrackerSDKKeepsExpectedSnapshot(t *testing.T) {
 }
 
 func TestIssueNativeCreationSDKRetainsRequestIdentity(t *testing.T) {
-	input := faas.CreateNativeIssueTicketRequest{RequestID: "11111111-1111-4111-8111-111111111111", Repository: "owner/repo", Title: "Fix", RecoveryURL: "https://github.com/owner/repo/issues/42"}
+	input := preview.CreateNativeIssueTicketRequest{RequestID: "11111111-1111-4111-8111-111111111111", Repository: "owner/repo", Title: "Fix", RecoveryURL: "https://github.com/owner/repo/issues/42"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || r.URL.Path != "/v1/apps/payments/issues/issue/native-tickets" {
 			t.Error("wrong creation route")
 		}
-		var in faas.CreateNativeIssueTicketRequest
+		var in preview.CreateNativeIssueTicketRequest
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in != input {
 			t.Error("creation identity lost", in, err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(faas.NativeIssueTicketResult{RequestID: in.RequestID, State: "linked", TicketURL: in.RecoveryURL, LinkID: "link"})
+		_ = json.NewEncoder(w).Encode(preview.NativeIssueTicketResult{RequestID: in.RequestID, State: "linked", TicketURL: in.RecoveryURL, LinkID: "link"})
 	}))
 	defer server.Close()
 	client, err := faas.NewClient(server.URL, "fp_live_test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.CreateNativeIssueTicket(faas.SDKTestContext(t), "payments", "issue", input)
+	out, err := preview.Wrap(client).CreateNativeIssueTicket(faas.SDKTestContext(t), "payments", "issue", input)
 	if err != nil || out.RequestID != input.RequestID || out.State != "linked" {
 		t.Fatal(out, err)
 	}
@@ -98,53 +100,53 @@ func TestIssueNativeAutoSyncSDKKeepsRevisionAndDelegationSnapshot(t *testing.T) 
 }
 
 func TestIssueNativeLinearConnectionSDKPreservesDecisionAndRevision(t *testing.T) {
-	input := faas.UpdateIssueTrackerLinearConnectionRequest{Connected: true, ExpectedRevision: 7, TeamID: "team", APIKey: "secret"}
+	input := preview.UpdateIssueTrackerLinearConnectionRequest{Connected: true, ExpectedRevision: 7, TeamID: "team", APIKey: "secret"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/apps/payments/issue-tracker-linear-connection" {
 			t.Error("wrong connection route")
 		}
 		if r.Method == "PUT" {
-			var in faas.UpdateIssueTrackerLinearConnectionRequest
+			var in preview.UpdateIssueTrackerLinearConnectionRequest
 			if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in != input {
 				t.Error("connection input lost", err)
 			}
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(faas.IssueTrackerLinearConnection{Connected: true, Revision: 8, TeamID: "team", AuthMethod: "oauth", OAuthStatus: "reconnect_required"})
+		_ = json.NewEncoder(w).Encode(preview.IssueTrackerLinearConnection{Connected: true, Revision: 8, TeamID: "team", AuthMethod: "oauth", OAuthStatus: "reconnect_required"})
 	}))
 	defer server.Close()
 	client, err := faas.NewClient(server.URL, "fp_live_test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.GetIssueTrackerLinearConnection(faas.SDKTestContext(t), "payments"); err != nil {
+	if _, err := preview.Wrap(client).GetIssueTrackerLinearConnection(faas.SDKTestContext(t), "payments"); err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.UpdateIssueTrackerLinearConnection(faas.SDKTestContext(t), "payments", input)
+	out, err := preview.Wrap(client).UpdateIssueTrackerLinearConnection(faas.SDKTestContext(t), "payments", input)
 	if err != nil || out.Revision != 8 || !out.Connected || out.AuthMethod != "oauth" || out.OAuthStatus != "reconnect_required" {
 		t.Fatal("connection response lost", err)
 	}
 }
 
 func TestIssueNativeLinearCreationSDKPreservesUUIDRecovery(t *testing.T) {
-	input := faas.CreateNativeLinearIssueTicketRequest{RequestID: "11111111-1111-4111-8111-111111111111", TeamID: "22222222-2222-4222-8222-222222222222", Title: "Fix", Recover: true}
+	input := preview.CreateNativeLinearIssueTicketRequest{RequestID: "11111111-1111-4111-8111-111111111111", TeamID: "22222222-2222-4222-8222-222222222222", Title: "Fix", Recover: true}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != "POST" || r.URL.Path != "/v1/apps/payments/issues/issue/native-linear-tickets" {
 			t.Error("wrong Linear creation route")
 		}
-		var in faas.CreateNativeLinearIssueTicketRequest
+		var in preview.CreateNativeLinearIssueTicketRequest
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in != input {
 			t.Error("UUID recovery lost", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(faas.NativeIssueTicketResult{RequestID: in.RequestID, State: "linked", TicketURL: "https://linear.app/acme/issue/PAY-42", LinkID: "link"})
+		_ = json.NewEncoder(w).Encode(preview.NativeIssueTicketResult{RequestID: in.RequestID, State: "linked", TicketURL: "https://linear.app/acme/issue/PAY-42", LinkID: "link"})
 	}))
 	defer server.Close()
 	client, err := faas.NewClient(server.URL, "fp_live_test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.CreateNativeLinearIssueTicket(faas.SDKTestContext(t), "payments", "issue", input)
+	out, err := preview.Wrap(client).CreateNativeLinearIssueTicket(faas.SDKTestContext(t), "payments", "issue", input)
 	if err != nil || out.RequestID != input.RequestID || out.State != "linked" {
 		t.Fatal(out, err)
 	}
@@ -206,18 +208,18 @@ func TestIssueNativeLinearAutoSyncSDKPreservesMappingsAndScope(t *testing.T) {
 func TestIssueNativeLinearCallbackSDKPreservesWriteOnlySecretAndMetadata(t *testing.T) {
 	secret := "linear_signing_secret_1234567890abcdef"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var in faas.UpdateIssueTrackerLinearConnectionRequest
+		var in preview.UpdateIssueTrackerLinearConnectionRequest
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.WebhookSecret != secret {
 			t.Error("signing secret lost", err)
 		}
-		_ = json.NewEncoder(w).Encode(faas.IssueTrackerLinearConnection{Connected: true, Revision: 3, WebhookEnabled: true, CallbackPath: "/hooks/issue-trackers/linear/app"})
+		_ = json.NewEncoder(w).Encode(preview.IssueTrackerLinearConnection{Connected: true, Revision: 3, WebhookEnabled: true, CallbackPath: "/hooks/issue-trackers/linear/app"})
 	}))
 	defer server.Close()
 	client, err := faas.NewClient(server.URL, "fp_live_test")
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := client.UpdateIssueTrackerLinearConnection(faas.SDKTestContext(t), "payments", faas.UpdateIssueTrackerLinearConnectionRequest{Connected: true, ExpectedRevision: 2, APIKey: "key", TeamID: "team", WebhookSecret: secret})
+	out, err := preview.Wrap(client).UpdateIssueTrackerLinearConnection(faas.SDKTestContext(t), "payments", preview.UpdateIssueTrackerLinearConnectionRequest{Connected: true, ExpectedRevision: 2, APIKey: "key", TeamID: "team", WebhookSecret: secret})
 	if err != nil || !out.WebhookEnabled || out.CallbackPath != "/hooks/issue-trackers/linear/app" {
 		t.Fatal(out, err)
 	}

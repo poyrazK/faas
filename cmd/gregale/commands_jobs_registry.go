@@ -26,7 +26,7 @@ func cmdJobsRegistry(args []string) int {
 		return cmdJobsRegistryRm(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown jobs registry subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "jobs registry", nestedCliCommand("jobs", "registry"), args[0])
 	}
 }
 

@@ -227,6 +227,14 @@ func requestLogResponse(entries []state.OutboundAIRequestLogEntry, limit int) ap
 			DurationMS: entry.DurationMS, TimeToFirstByteMS: copyInt64(entry.TTFBMS), Attempts: entry.Attempts,
 			ContentCaptured: entry.ContentCaptured, Tags: append([]string{}, entry.Tags...),
 		}
+		if entry.TraceID != "" {
+			traceID := entry.TraceID
+			item.TraceID = &traceID
+		}
+		if len(entry.ToolCalls) > 0 {
+			item.ToolCalls = append([]string{}, entry.ToolCalls...)
+		}
+		qualityFields(&item, entry)
 		if entry.RouteID != "" {
 			routeID := entry.RouteID
 			item.RouteID = &routeID

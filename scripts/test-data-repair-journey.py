@@ -27,7 +27,7 @@ from psycopg import sql
 def main() -> None:
     root = Path(__file__).resolve().parents[1]
     sys.path.insert(0, str(root / "sdk/python"))
-    from faas_sdk import (
+    from faas_sdk.preview import (
         operation_request_from_headers,
         with_repairable_operation_transaction,
     )
@@ -50,7 +50,7 @@ def main() -> None:
         scope = {"account_id": str(uuid4()), "app_id": str(uuid4()), "environment": "production"}
         schema = subprocess.run([cli, "data-repair", "schema"], check=True, capture_output=True, text=True, env=env).stdout
         conn.execute(schema)
-        conn.execute((root / "sdk/go/operation_schema.sql").read_text())
+        conn.execute((root / "sdk/go/preview/operation_schema.sql").read_text())
         conn.execute("CREATE TABLE public.gregale_customer_operation_inbox(LIKE public.gregale_operation_inbox INCLUDING ALL);ALTER TABLE public.gregale_customer_operation_inbox ALTER COLUMN platform_tenant_id SET NOT NULL")
         conn.execute("CREATE TABLE products(id bigint PRIMARY KEY,category text NOT NULL CHECK(category IN ('original','bad','human')))")
         conn.execute("CREATE TABLE repair_policy(id int PRIMARY KEY,enabled boolean NOT NULL)")

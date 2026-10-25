@@ -41,6 +41,45 @@ Every process receives loopback discovery variables such as
 available to the helper as `FAAS_WORKLOAD_MAIN_ADDR`. A helper without a port
 is valid for background processing.
 
+## Writable paths
+
+A companion's image filesystem is read-only. Its only writable path is
+`/tmp`, a private in-memory filesystem sized by `scratch_mb` (derived from
+`ram_mb` when omitted), plus the shared directory described below. An image
+that writes anywhere else at startup exits with a read-only filesystem
+error. The stock `nginx` image, for example, fails with
+`mkdir() "/var/cache/nginx/client_temp" failed (30: Read-only file system)`.
+Use an image built for a read-only root, or point the program's cache, PID
+and temporary paths at `/tmp` with `cmd` or `env`. Anything written to
+`/tmp` is lost when the instance stops.
+
+## Public hostname for a companion port
+
+A companion that declares a `port` is also reachable from the internet. The
+edge routes `<app>--<companion>.<apps domain>`, for example
+`shop--database-proxy.gregale.dev`, straight to that port on a running
+instance, the same way it routes the application's own hostname. The
+companion above is therefore public at that hostname, not only on loopback.
+
+- The declared port also sets the helper's `FAAS_WORKLOAD_<NAME>_ADDR`
+  discovery variable and its default probe port. A helper that needs neither,
+  for example one the application reaches through its shared directory, can
+  omit the port and has no public hostname.
+- A helper that keeps a port but should serve only the application must
+  authenticate its callers, for example with a shared secret from the
+  application's environment.
+- Edge rules that name only the application's main hostname do not cover a
+  companion's hostname. Use an app-wide rule (match host `@app`) to protect
+  every hostname the app serves, or a rule for the companion's hostname. The
+  edge-rules page lists each companion hostname and the rules that apply to
+  it.
+- During a traffic-split rollout the hostname is routed only when every
+  deployment carrying traffic declares that companion with the same port.
+
+Public listeners declared under `ports` follow the same pattern at
+`<app>--port-<name>.<apps domain>`; a listener marked `internal` gets no
+public hostname.
+
 ## Startup, liveness, and readiness probes
 
 `startup_probe` gates a workload's `healthy` dependency state. It may use an

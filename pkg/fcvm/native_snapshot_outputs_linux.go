@@ -101,7 +101,7 @@ func (b linuxNativeImageSources) prepareCaptureOutputRoot(ctx context.Context, o
 		directory.Uid != uint32(owner.Lease.UID) || directory.Gid != uint32(owner.Lease.GID) || directory.Mode&0o022 != 0 {
 		return file, errors.New("native snapshot output: live jail lacks original process and UID ownership")
 	}
-	if err := permit.Capture.validate(permit.Incoming); err != nil {
+	if err := permit.validateCapture(); err != nil {
 		return file, err
 	}
 	if !permit.Capture.CompletedAt.IsZero() {

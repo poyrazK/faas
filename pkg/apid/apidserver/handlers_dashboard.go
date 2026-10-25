@@ -914,6 +914,7 @@ func (s *server) renderAppDetail(w http.ResponseWriter, r *http.Request, log *sl
 	operational := s.appOperationalSummary(ctx, acct, app)
 	appCosts := s.dashboardAppCosts(ctx, log, acct, app, costMonth, costMonthNotice)
 	page := dashboard.Page{Title: app.Slug, Body: "app_detail", Account: dashboardAccountView(view, appCount), Data: dashboard.AppDetailData{
+		AnnouncedCaptures:  s.announcedProfileCaptures(ctx, log, acct, app),
 		ProductControlURL:  s.productControlConsoleURL(app.Slug),
 		ProfilingAvailable: s.profileBackend != nil && api.MustLimitsFor(acct.Plan).Profiling.Enabled,
 		ApplicationAuth:    s.applicationAuthEnabled(appFlagSubject(acct, app)),
@@ -1144,6 +1145,7 @@ func (s *server) fetchDashboardMetrics(ctx context.Context, log *slog.Logger, ap
 		ColdStartPct: resp.ColdStartPct,
 		WakeP95MS:    resp.WakeP95MS,
 	}
+	view.WakeP95Unavailable = resp.WakeSamples != nil && *resp.WakeSamples < api.FleetWakeP95MinSamples
 	if resp.CacheHitRatePct != nil {
 		view.CacheHitRatePct = *resp.CacheHitRatePct
 		view.CacheHitRateAvailable = true
@@ -1813,8 +1815,9 @@ func (s *server) renderAccount(w http.ResponseWriter, r *http.Request, log *slog
 		appCount = 0
 	}
 	data := dashboard.AccountData{
-		Keys:       keyItems,
-		ShowDelete: view.Status != state.AccountDeletedPending,
+		Keys:                      keyItems,
+		ShowDelete:                view.Status != state.AccountDeletedPending,
+		ShowDeleteManagedPostgres: api.AccountDeletionManagedPostgresEnabled(acct.ID),
 		// A deletion dunning scheduled is cancelled by paying, not by
 		// the Restore button (the store refuses it).
 		ShowRestore: view.Status == state.AccountDeletedPending && view.PastDueAt == nil,
@@ -2944,6 +2947,9 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	data := dashboard.DeploymentDetailData{
 		App:        dashboard.AppListItem{Slug: app.Slug},
 		Deployment: dashboardDeploymentItem(dep),
+	}
+	if dep.ErrorCode == api.CodeAppRuntimeOOM {
+		data.OOMCaptureURL = s.oomProfileCaptureURL(r.Context(), acct, app, dep)
 	}
 	// Keep the dashboard's failure explanation aligned with the API/CLI
 	// projection: the persisted profile is the source of truth for the

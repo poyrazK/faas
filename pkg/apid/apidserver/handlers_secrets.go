@@ -409,7 +409,7 @@ func (s *server) setAppSecret(r *http.Request, acct state.Account, app state.App
 // HMAC key is a misconfiguration that must surface as a 5xx, not
 // a silently empty value_hash.
 func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, scope, key, value, secretClass string, limits api.Limits) *api.Problem {
-	ciphertext, kid, valueHash, problem := s.sealSecretValue("app secret", key, value, limits.SecretValueMaxBytes)
+	ciphertext, kid, valueHash, problem := s.sealSecretValue("app secret", app.AccountID, key, value, limits.SecretValueMaxBytes)
 	if problem != nil {
 		return problem
 	}
@@ -434,13 +434,15 @@ func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, sco
 // sealSecretValue seals one key's value to the fleet recipient as a
 // single-key envelope and returns it with its kid and value fingerprint.
 // noun names the secret kind in logs ("app secret", "project secret").
-func (s *server) sealSecretValue(noun, key, value string, maxBytes int) ([]byte, string, string, *api.Problem) {
+// accountID is the account whose workloads receive the value; the envelope
+// is bound to it once runtime binding is on (ADR-20261023173624).
+func (s *server) sealSecretValue(noun, accountID, key, value string, maxBytes int) ([]byte, string, string, *api.Problem) {
 	unavailable := func(operation string, err error) *api.Problem {
 		return customerCapacityProblem(s.log, operation, "Secret storage temporarily unavailable",
 			"Gregale could not securely store this value.",
 			"Retry in a few seconds; if it still fails, contact support.", err)
 	}
-	recipient := hostSecretRecipient()
+	recipient := runtimeSecretRecipient()
 	if recipient == nil {
 		return nil, "", "", unavailable("store "+noun, nil)
 	}
@@ -465,7 +467,7 @@ func (s *server) sealSecretValue(noun, key, value string, maxBytes int) ([]byte,
 		// (misconfiguration: handler let an empty value through).
 		return nil, "", "", unavailable("fingerprint "+noun+" value", err)
 	}
-	ciphertext, err := secretbox.SealOne(recipient, key, value, maxBytes)
+	ciphertext, err := secretbox.SealOneBound(recipient, runtimeSecretBinding(accountID), key, value, maxBytes)
 	if err != nil {
 		// SealOne may return an api.Problem (over-cap) — surface it directly.
 		if prob := api.AsProblem(err); prob != nil {

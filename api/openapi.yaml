@@ -13,7 +13,10 @@ info:
     durable inbound webhook ingress.
     Successful POSTs generally accept an `Idempotency-Key` header (24h TTL)
     and replay with `Idempotent-Replayed: true`; the one-time token-creation
-    endpoint deliberately does not cache plaintext for retries.
+    endpoint deliberately does not cache plaintext for retries. A key is
+    bound to the request it was first used for: the same key with a
+    different body, query or precondition header returns
+    `422 idempotency_key_reused` and does not run.
 
     Errors use RFC 9457 `application/problem+json` with a stable `code`
     field — see `Problem` schema. Authentication rate limits use the same
@@ -5937,6 +5940,154 @@ paths:
         '404': { $ref: '#/components/responses/NotFound' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
 
+  /v1/outbound/integrations/{integration}/ai-traces:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose AI traces are read.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: listOutboundAITraces
+      summary: Page an integration's AI traces.
+      description: >-
+        Requires MFA and read scope (ADR 20261020202035). A trace groups the calls of one agent task, named by
+        X-Gregale-AI-Trace or the trace ID of a W3C traceparent header. Traces are recorded while the integration keeps a
+        request log or has trace limits, and are kept for 7 days. Newest last call first.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Traces per page, 1 to 200 (default 200).
+          schema: { type: integer, minimum: 1, maximum: 200 }
+        - name: before
+          in: query
+          required: false
+          description: The previous page's next_before, to read traces last called earlier.
+          schema: { type: string, format: date-time }
+        - name: app_id
+          in: query
+          required: false
+          description: Only traces whose first call came from this app.
+          schema: { type: string, format: uuid }
+        - name: end_user
+          in: query
+          required: false
+          description: Only traces whose first call named this X-Gregale-AI-User.
+          schema: { type: string, maxLength: 64 }
+      responses:
+        '200':
+          description: One page of traces.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAITraceList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-traces/{trace}:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration that recorded the trace.
+        schema: { type: string, format: uuid }
+      - name: trace
+        in: path
+        required: true
+        description: The trace ID, path-escaped.
+        schema: { type: string, maxLength: 64 }
+    get:
+      tags: [outbound]
+      operationId: getOutboundAITrace
+      summary: Read an AI trace with its logged calls.
+      description: >-
+        Requires MFA and read scope (ADR 20261020202035). Calls are the trace's request-log entries, oldest first, at most
+        500; calls_truncated marks a longer trace.
+      responses:
+        '200':
+          description: The trace.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAITraceResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-quality-alerts:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration whose alerts are listed.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [outbound]
+      operationId: listOutboundAIQualityAlerts
+      summary: List an integration's AI quality drift alerts.
+      description: >-
+        Requires MFA and read scope (ADR 20261021171712). Alerts are newest first and kept for 31 days; each fires once per
+        model, metric and UTC day.
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          description: Alerts to return, 1 to 100 (default 50).
+          schema: { type: integer, minimum: 1, maximum: 100 }
+      responses:
+        '200':
+          description: The alerts.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/OutboundAIQualityAlertList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
+  /v1/outbound/integrations/{integration}/ai-requests/{request}/feedback:
+    parameters:
+      - name: integration
+        in: path
+        required: true
+        description: UUID of the integration that logged the call.
+        schema: { type: string, format: uuid }
+      - name: request
+        in: path
+        required: true
+        description: ID of the request-log entry, the value X-Gregale-AI-Call returned.
+        schema: { type: string, format: uuid }
+    put:
+      tags: [outbound]
+      operationId: putOutboundAIRequestFeedback
+      summary: Rate a logged AI call.
+      description: >-
+        Requires MFA and deploy-write scope (ADR 20261021171712). Apps rate their own calls through the gateway at
+        /i/{integration}/_gregale/feedback; this rates any logged call on a person's behalf. A later rating replaces the
+        earlier one, and the call's daily usage counts the change.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/PutOutboundAIFeedbackRequest' }
+      responses:
+        '204': { description: The rating was stored. }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
+
   /v1/outbound/integrations/{integration}/ai-requests/{request}/replays:
     parameters:
       - name: integration
@@ -6042,7 +6193,7 @@ paths:
       - name: integration
         in: path
         required: true
-        description: UUID of the integration that logged the call.
+        description: UUID of the integration whose logged call is rated.
         schema: { type: string, format: uuid }
       - name: request
         in: path
@@ -6655,6 +6806,33 @@ paths:
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/apps/{slug}/ai-deployments:
+    parameters:
+      - name: slug
+        in: path
+        required: true
+        description: The app whose deployments to list.
+        schema: { type: string }
+    get:
+      tags: [outbound]
+      operationId: listAIDeployments
+      summary: List an app's AI gateway calls by deployment.
+      description: >-
+        Requires MFA and read scope. Each deployment with AI gateway calls in the last 14 days, latest call first, at most
+        50: its calls, provider errors, flagged answers, cost, tokens and mean time to first byte. Only calls made from
+        the app's instances count; access tokens, Runs, replays and cached responses do not (ADR 20261022153155).
+      responses:
+        '200':
+          description: The app's deployments.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/AIDeploymentUsageList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/AIGatewayPlanGated' }
+        '403': { $ref: '#/components/responses/AIGatewayUnavailable' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503': { $ref: '#/components/responses/ServiceUnavailable' }
   /v1/apps/{slug}/ai-access-tokens:
     parameters:
       - name: slug
@@ -10390,7 +10568,8 @@ paths:
         not change duplicate identity. Fanout uses normal account subscriptions
         matching the generated source; the publishing app is not the only consumer.
         Deduplication lasts while the normal receipt is retained: settled receipts
-        become eligible for pruning after 30 days; holds can extend this window.
+        become eligible for pruning after the plan's settled-receipt window (Free
+        1 day, Hobby 3, Pro 7, Scale 14); holds can extend this window.
         After pruning the same key may be accepted again. App renames preserve
         identity; replacement apps have a new UUID and a new key namespace.
         Optional expected_app_id must match the resolved canonical app UUID;
@@ -10480,7 +10659,8 @@ paths:
       summary: Inspect receipt pruning eligibility, retention holds and account storage.
       description: |
         Read-only account snapshot under apps:read/admin scopes and MFA.
-        Receipt retention is 30 days after routing settles; unsettled receipts
+        Receipt retention is the plan's settled-receipt window after routing
+        settles (Free 1 day, Hobby 3, Pro 7, Scale 14); unsettled receipts
         have no pruning deadline. Reports current eligible, upcoming expiring
         and held receipts using the pruning worker's shared hold predicate.
         Running backfills pin their acceptance ranges; retained completed
@@ -13702,6 +13882,11 @@ paths:
         reached. This does not attest host-level firewall policy or guest
         configuration.
         `unverified` means no revision or no relevant serving fleet can be observed.
+        Gateway policy acknowledgements belong to the current process generation
+        and require a fresh serving report. Replacement clears convergence until
+        the new consumers replay. `traffic_runtime` reports compute gateway wiring
+        separately; fresh wiring does not prove request enforcement. The optional
+        `wait` applies to policy convergence only.
       parameters:
         - name: wait
           in: query
@@ -20181,6 +20366,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '501': { $ref: '#/components/responses/RehearsalNotEnabled' }
     delete:
       tags: [dev]
       operationId: deleteScenarioTest
@@ -20286,6 +20472,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/RehearsalNotEnabled' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       tags: [dev]
@@ -20351,6 +20538,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/RehearsalNotEnabled' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       tags: [dev]
@@ -20996,6 +21184,62 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+  /v1/apps/{slug}/edge-protection/attack-mode:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: getAppEdgeAttackMode
+      summary: Read an app's attack mode.
+      responses:
+        '200':
+          description: The app's attack mode.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeAttackModeStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    put:
+      tags: [edge_rules]
+      operationId: enableAppEdgeAttackMode
+      summary: Switch attack mode on, or extend it.
+      description: |
+        Challenges every request to every host of the app until it ends
+        (ADR-20261021220456). Available on every plan, outside the plan's
+        edge-rule quotas. The response returns once the serving gateways
+        have applied it; `X-Faas-Edge-Rules-State: converging` with 503 means it
+        was saved but not yet acknowledged. An empty body applies the
+        default duration of one hour.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EnableEdgeAttackModeRequest' }
+      responses:
+        '200':
+          description: Attack mode is on.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeAttackModeStatus' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+    delete:
+      tags: [edge_rules]
+      operationId: disableAppEdgeAttackMode
+      summary: Switch attack mode off.
+      description: Removes the attack-mode rule. Succeeds when attack mode is already off.
+      responses:
+        '200':
+          description: Attack mode is off.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeAttackModeStatus' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/apps/{slug}/release-review:
     get:
       operationId: getAppReleaseReview
@@ -21148,6 +21392,392 @@ paths:
               schema: { $ref: '#/components/schemas/AppChangeTimelineResponse' }
         default:
           description: Invalid window, access denial, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/log-events:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [observability]
+      operationId: searchAppLogEvents
+      summary: Search an app's log events.
+      description: |
+        ADR-20261018083536 internal preview, enabled by
+        `FAAS_LOG_SEARCH_ENABLED=1`; otherwise 503 `log_search_unavailable`.
+        Requires apps:read or admin.
+
+        Returns one newest-first page of the app's ADR-213 log ledger. Filters
+        combine with AND. A text search (`q`) covers at most 24 hours and
+        answers 400 `log_search_window_too_large` beyond that; every search
+        runs under a 5 second statement timeout and answers 503
+        `log_search_timeout` when it trips. Pass `next_cursor` back as
+        `cursor` for the following page.
+      parameters:
+        - $ref: '#/components/parameters/LogSearchSince'
+        - $ref: '#/components/parameters/LogSearchUntil'
+        - $ref: '#/components/parameters/LogSearchSource'
+        - $ref: '#/components/parameters/LogSearchLevel'
+        - $ref: '#/components/parameters/LogSearchRoute'
+        - $ref: '#/components/parameters/LogSearchStatus'
+        - $ref: '#/components/parameters/LogSearchDeployment'
+        - $ref: '#/components/parameters/LogSearchRequest'
+        - $ref: '#/components/parameters/LogSearchTrace'
+        - $ref: '#/components/parameters/LogSearchText'
+        - $ref: '#/components/parameters/LogSearchSaved'
+        - name: limit
+          in: query
+          description: Page size.
+          schema: { type: integer, minimum: 1, maximum: 200, default: 100 }
+        - name: cursor
+          in: query
+          description: The next_cursor of the previous page.
+          schema: { type: string }
+      responses:
+        '200':
+          description: One page of matching events.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogEventsResponse' }
+        default:
+          description: Invalid filters, a window over its bound, a timeout, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/log-events/facets:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [observability]
+      operationId: getAppLogEventFacets
+      summary: Count an app's log events by facet.
+      description: |
+        ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+        Takes the same filters as the search and counts the matches by
+        source, level, status class, and the ten busiest routes. Counts sum
+        each event's occurrences. The window is at most 7 days.
+      parameters:
+        - $ref: '#/components/parameters/LogSearchSince'
+        - $ref: '#/components/parameters/LogSearchUntil'
+        - $ref: '#/components/parameters/LogSearchSource'
+        - $ref: '#/components/parameters/LogSearchLevel'
+        - $ref: '#/components/parameters/LogSearchRoute'
+        - $ref: '#/components/parameters/LogSearchStatus'
+        - $ref: '#/components/parameters/LogSearchDeployment'
+        - $ref: '#/components/parameters/LogSearchRequest'
+        - $ref: '#/components/parameters/LogSearchTrace'
+        - $ref: '#/components/parameters/LogSearchText'
+        - $ref: '#/components/parameters/LogSearchSaved'
+      responses:
+        '200':
+          description: Facet counts for the window.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogEventFacetsResponse' }
+        default:
+          description: Invalid filters, a window over 7 days, a timeout, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/dashboards:
+    get:
+      tags: [observability]
+      operationId: listDashboards
+      summary: List the account's custom dashboards.
+      description: |
+        ADR-20261022173833 internal preview behind `FAAS_CUSTOM_DASHBOARDS_ENABLED=1`.
+        Returns the account's saved dashboards by name.
+      responses:
+        '200':
+          description: The account's dashboards.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardsResponse' }
+        default:
+          description: The preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    post:
+      tags: [observability]
+      operationId: createDashboard
+      summary: Create a custom dashboard.
+      description: |
+        Saves a named dashboard of up to 24 widgets. Each widget references a
+        signal by kind (app_metric, log_count, custom_metric, slo) and an app
+        the account owns. An account keeps at most 20 dashboards.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DashboardRequest' }
+      responses:
+        '201':
+          description: The created dashboard, with widget defaults applied.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dashboard' }
+        default:
+          description: Invalid widgets, a taken name (dashboard_name_taken), the per-account limit (dashboard_quota_exceeded), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/dashboards/{id}:
+    parameters:
+      - $ref: '#/components/parameters/DashboardID'
+    get:
+      tags: [observability]
+      operationId: getDashboard
+      summary: Get a custom dashboard.
+      description: Returns one of the account's dashboards with its widgets.
+      responses:
+        '200':
+          description: The dashboard.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dashboard' }
+        default:
+          description: No such dashboard (dashboard_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      tags: [observability]
+      operationId: replaceDashboard
+      summary: Replace a custom dashboard.
+      description: Replaces the dashboard's name and widgets.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DashboardRequest' }
+      responses:
+        '200':
+          description: The replaced dashboard.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Dashboard' }
+        default:
+          description: Invalid widgets, a taken name, no such dashboard, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [observability]
+      operationId: deleteDashboard
+      summary: Delete a custom dashboard.
+      description: Deletes one of the account's dashboards.
+      responses:
+        '204':
+          description: The dashboard is deleted.
+        default:
+          description: No dashboard to delete (dashboard_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/dashboards/{id}/data:
+    parameters:
+      - $ref: '#/components/parameters/DashboardID'
+    get:
+      tags: [observability]
+      operationId: getDashboardData
+      summary: Read a custom dashboard's widgets.
+      description: |
+        Resolves every widget for its window through the code behind the
+        per-app endpoints: request metrics, log search counts, pushed custom
+        metrics and SLO status. A widget that cannot be read carries `error`
+        and no value; the rest still resolve.
+      responses:
+        '200':
+          description: The resolved widgets.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DashboardData' }
+        default:
+          description: No dashboard to read widgets for (dashboard_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/incidents:
+    get:
+      tags: [observability]
+      operationId: listIncidents
+      summary: List the account's incidents.
+      description: |
+        ADR-20261022193512 internal preview behind `FAAS_INCIDENTS_ENABLED=1`.
+        One list of alert rule firing periods, route monitor incidents and
+        platform incidents from the status page: everything open plus what
+        resolved since `since`, open first, then newest first, at most 100.
+        Each entry says who in the account acknowledged it. A source that
+        cannot be read (including `acknowledgements`) is named in
+        `unavailable_sources`.
+      parameters:
+        - name: app
+          in: query
+          required: false
+          description: Keep one app's incidents (platform incidents always show).
+          schema: { type: string }
+        - name: status
+          in: query
+          required: false
+          description: "`open` lists open incidents only; `all` (the default) adds resolved ones."
+          schema: { type: string, enum: [open, all] }
+        - name: since
+          in: query
+          required: false
+          description: RFC 3339; resolved incidents from here on. Default 7 days ago, at most 30.
+          schema: { type: string, format: date-time }
+      responses:
+        '200':
+          description: The incidents.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentsResponse' }
+        default:
+          description: An invalid query, an unknown app, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/incidents/{id}:
+    parameters:
+      - $ref: '#/components/parameters/IncidentID'
+    get:
+      tags: [observability]
+      operationId: getIncident
+      summary: Read an incident and its evidence.
+      description: |
+        The incident with what the platform has for it: an alert's
+        notifications and the log context its newest one carried, a platform
+        incident's status updates, for an app incident the app's change
+        timeline from an hour before it opened until it resolved, and the
+        account's acknowledgement and notes.
+      responses:
+        '200':
+          description: The incident.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentDetail' }
+        default:
+          description: No such incident (incident_not_found), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/incidents/{id}/acknowledge:
+    parameters:
+      - $ref: '#/components/parameters/IncidentID'
+    post:
+      tags: [observability]
+      operationId: acknowledgeIncident
+      summary: Acknowledge an open incident.
+      description: |
+        Records that someone in the account took the incident on. An
+        account acknowledges an incident once; acknowledging again returns
+        the first acknowledgement with 200. Acknowledging does not change
+        what an alert rule sends.
+      responses:
+        '201':
+          description: The new acknowledgement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentNote' }
+        '200':
+          description: The account's existing acknowledgement.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentNote' }
+        default:
+          description: No such incident (incident_not_found), a resolved incident (incident_resolved), the per-incident note limit (incident_notes_limit), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/incidents/{id}/notes:
+    parameters:
+      - $ref: '#/components/parameters/IncidentID'
+    post:
+      tags: [observability]
+      operationId: addIncidentNote
+      summary: Add a note to an incident.
+      description: |
+        Appends a note to an open or resolved incident. Notes cannot be
+        edited or deleted. A note is at most 2000 characters, and an
+        incident holds at most 100 notes from an account, its
+        acknowledgement included.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/IncidentNoteRequest' }
+      responses:
+        '201':
+          description: The note.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/IncidentNote' }
+        default:
+          description: An empty or too long note, no such incident (incident_not_found), the per-incident note limit (incident_notes_limit), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/log-searches:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [observability]
+      operationId: listAppLogSavedSearches
+      summary: List an app's saved log searches.
+      description: |
+        ADR-20261018083536 internal preview behind `FAAS_LOG_SEARCH_ENABLED=1`.
+        Returns the app's saved searches by name. Each holds filters only;
+        a search, the dashboard or an alert brings its own window.
+      responses:
+        '200':
+          description: The app's saved searches.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogSavedSearchesResponse' }
+        default:
+          description: Unknown app, or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/log-searches/{name}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - $ref: '#/components/parameters/LogSavedSearchName'
+    put:
+      tags: [observability]
+      operationId: putAppLogSavedSearch
+      summary: Create a saved log search or replace its filters.
+      description: |
+        Stores the query canonically: only source, level, status, route,
+        deployment_id, request_id, trace_id and q, one value each. An app
+        keeps at most 25 saved searches; replacing one never counts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/LogSavedSearchRequest' }
+      responses:
+        '200':
+          description: The stored saved search.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/LogSavedSearch' }
+        default:
+          description: Invalid name or filters, the per-app limit (log_saved_search_quota_exceeded), or the preview is disabled.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      tags: [observability]
+      operationId: deleteAppLogSavedSearch
+      summary: Delete a saved log search.
+      description: Deletes the app's saved search by name.
+      responses:
+        '204':
+          description: The saved search is deleted.
+        default:
+          description: No such saved search (log_saved_search_not_found), or the preview is disabled.
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
@@ -23934,6 +24564,177 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/ProfileCompareResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/heap:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: getAppHeapProfile
+      summary: Query the continuous live heap near a window end (ADR-1155).
+      description: Requires profiling.kinds to include heap. The query is narrowed to the last collection window before end so merged snapshots are not summed. Values are live heap bytes.
+      parameters:
+        - { name: deployment_id, in: query, required: true, description: Deployment whose live heap to read., schema: { type: string, format: uuid } }
+        - { name: runtime, in: query, required: true, description: Runtime the heap snapshots were collected under., schema: { type: string } }
+        - { name: start, in: query, required: true, description: Earliest acceptable snapshot time., schema: { type: string, format: date-time } }
+        - { name: end, in: query, required: true, description: Point in time to inspect., schema: { type: string, format: date-time } }
+      responses:
+        '200':
+          description: Live heap functions and call paths.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileHeapResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [apps]
+      operationId: listProfileCaptures
+      summary: List the app's on-demand profile captures, newest first.
+      responses:
+        '200':
+          description: Up to 50 captures retained for 7 days.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureList' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+    post:
+      tags: [apps]
+      operationId: createProfileCapture
+      summary: Capture CPU and/or heap profiles from a running instance now (ADR-1155).
+      description: Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an account can start 60 per hour. Gregale also queues a heap capture automatically (trigger memory_pressure) when an instance runs low on memory, at most once per hour per app.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CreateProfileCaptureRequest' }
+      responses:
+        '202':
+          description: Capture queued.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCapture' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Profile capture id., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getProfileCapture
+      summary: Read one on-demand profile capture.
+      responses:
+        '200':
+          description: Capture status and collected profile summary.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCapture' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/view:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Capture whose merged view to read., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: getProfileCaptureView
+      summary: Merged functions and call paths of one capture kind.
+      parameters:
+        - { name: kind, in: query, required: false, description: 'cpu, heap, stacks, block or mutex; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+      responses:
+        '200':
+          description: CPU nanoseconds or live heap bytes merged across the instance's processes.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureView' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/pprof:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Capture to download., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: downloadProfileCapture
+      summary: Download one capture kind as a merged gzip pprof profile.
+      parameters:
+        - { name: kind, in: query, required: false, description: 'Kind to download as pprof: cpu, heap, stacks, block or mutex; defaults to the capture''s first kind.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+      responses:
+        '200':
+          description: gzip-compressed pprof protobuf for go tool pprof, speedscope or Pyroscope.
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '402': { $ref: '#/components/responses/PaymentRequired' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/profiles/captures/{id}/diff:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - { name: id, in: path, required: true, description: Candidate capture id., schema: { type: string, format: uuid } }
+    get:
+      tags: [apps]
+      operationId: diffProfileCaptures
+      summary: Compare one capture kind with an earlier capture of the same app.
+      description: Merges both captures and returns every call path and function with its baseline value, candidate value and difference, largest growth first. Values are not rescaled; captures of different durations or deployments carry warnings.
+      parameters:
+        - { name: base, in: query, required: true, description: Baseline capture id of the same app., schema: { type: string, format: uuid } }
+        - { name: kind, in: query, required: false, description: 'cpu, heap, stacks, block or mutex; defaults to a kind both captures collected, preferring heap.', schema: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+      responses:
+        '200':
+          description: Differential view in the kind's unit.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProfileCaptureDiff' }
+        '409': { $ref: '#/components/responses/Conflict' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '402': { $ref: '#/components/responses/PaymentRequired' }
@@ -27233,6 +28034,77 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/database-switches:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listDatabaseSwitches
+      summary: List rollbacks that restore the database.
+      description: An app's database switches, newest first (ADR-20261023181931).
+      responses:
+        '200':
+          description: The app's switches.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseSwitchList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/database-switches/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Database switch UUID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [deployments]
+      operationId: getDatabaseSwitch
+      summary: Read a rollback that restores the database.
+      description: The switch's phase, restore point, databases, drain counts and outcome.
+      responses:
+        '200':
+          description: The switch.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseSwitch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/database-switches/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: UUID of the database switch to cancel.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [deployments]
+      operationId: cancelDatabaseSwitch
+      summary: Cancel a rollback that restores the database.
+      description: "Unwinds the switch; the app keeps its current release and database. Refused with database_switch_not_cancellable once the switch started switching the release and the bindings."
+      responses:
+        '202':
+          description: Cancellation recorded; the worker unwinds the switch.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseSwitch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/rollouts/recover:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -27644,7 +28516,7 @@ paths:
 
         Once current-month overage meets/exceeds the cap, schedd refuses
         new wakes with `code: admission_refused` (HTTP 402). The cap is
-        account-self-scoped (no admin scope required) and the response
+        account-self-scoped (admin scope required) and the response
         is the post-update account state. Audit row
         `overage.cap_changed` is emitted on every successful call.
       requestBody:
@@ -29907,7 +30779,7 @@ paths:
       tags: [deployments]
       operationId: createReleaseGate
       summary: Add a release gate (ADR-20261019071734).
-      description: "An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average. Omitted numbers take Gregale's defaults."
+      description: "An slo gate names one of the app's SLOs; a new_errors gate counts error groups the release produced first; a custom_metric gate bounds a custom metric's average; an ai gate fails a release whose AI gateway calls got worse than its baseline's (ADR 20261022153155). Omitted numbers take Gregale's defaults."
       requestBody:
         required: true
         content:
@@ -39277,7 +40149,9 @@ paths:
         Every field is optional. `kind` is NOT patchable — rotating
         kind mid-life would break the action union. To change kind,
         delete and recreate. `action` replaces the jsonb column
-        whole (no partial-update shape).
+        whole (no partial-update shape). The app's attack-mode rule
+        (`managed_by: attack_mode`) is refused with 409; change it through
+        `/v1/apps/{slug}/edge-protection/attack-mode`.
       requestBody:
         required: true
         content:
@@ -39292,6 +40166,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/EdgeRuleConflict' }
         '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
         '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
@@ -39307,6 +40182,39 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/edge-rules/{id}/waf-exclusions:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [edge_rules]
+      operationId: updateEdgeWAFExclusions
+      summary: Add or remove CRS rule IDs on a kind=waf rule's exclusions.
+      description: |
+        ADR-831 amendment 13. Changes exclude_rule_ids and keeps the rest of
+        the rule's action and its penalty, so silencing a false positive does
+        not mean restating the whole action. Recorded as a new rule-set
+        version like any PATCH.
+      parameters:
+        - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EdgeWAFExclusionsRequest' }
+      responses:
+        '200':
+          description: The updated rule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/EdgeRuleConflict' }
+        '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
   /v1/apps/{slug}/edge-rules/versions:
@@ -39382,6 +40290,11 @@ paths:
           required: false
           description: Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
           schema: { type: string, enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed] }
+        - name: request_id
+          in: query
+          required: false
+          description: Only events for this request ID, such as the reference a visitor without JavaScript sees on the challenge page (ADR-831 amendment 8).
+          schema: { type: string, maxLength: 128 }
         - name: since
           in: query
           required: false
@@ -39403,6 +40316,47 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EdgeRuleEventsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/waf-review:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeWAFReview
+      summary: The app's WAF detections grouped for a false-positive review.
+      description: |
+        ADR-831 amendment 13. Reads the app's sampled kind=waf detections
+        (detected, warned and blocked events, ADR-831 amendment 5) and groups
+        them by edge rule, CRS rule and path, with id-like path segments read
+        as {id}. Each group is assessed: likely_false_positive (a documented
+        false positive, or at least 3 clients flagged on the path with none
+        sending most of the detections), likely_attack (most detections from
+        clients flagged on 5 or more paths), excluded (the rule already
+        excludes the CRS rule) or review. The newest 5,000 detections of each
+        outcome are read and at most 50 groups returned, largest first.
+        Detections are sampled, so counts are lower bounds. The window
+        defaults to 7 days and is clamped to the plan's event window.
+      parameters:
+        - name: rule
+          in: query
+          required: false
+          description: Only detections of this kind=waf edge rule id.
+          schema: { type: string, format: uuid }
+        - name: since
+          in: query
+          required: false
+          description: Duration such as 24h or 7d.
+          schema: { type: string, default: '7d' }
+      responses:
+        '200':
+          description: The review.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeWAFReviewResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -45760,7 +46714,8 @@ paths:
         replay eligibility. No deliveries, replay jobs or retention pins are created.
         Retention can remove rows between pages. This is a live retained view, not a
         frozen export or a complete archive; late commits can change visible rows.
-        Settled receipts retain 30 days from routing settlement; pending receipts may
+        Settled receipts are kept for the plan's settled-receipt window from routing
+        settlement (Free 1 day, Hobby 3, Pro 7, Scale 14); pending receipts may
         survive longer. Earliest retained acceptance is account-wide and does not
         establish coverage of a requested range. Responses use Cache-Control: no-store
         and require the existing read scopes and MFA rules.
@@ -45939,8 +46894,8 @@ paths:
         Creates a durable job for one currently eligible event-triggered workflow
         in the app's preferred live default deployment. The selected workflow
         definition and trigger are snapshotted at creation. The half-open range
-        uses platform acceptance time with a fixed exclusive cutoff and a
-        maximum 30-day range. Only retained events with a known immutable
+        uses platform acceptance time with a fixed exclusive cutoff and spans
+        at most the plan's settled-receipt window. Only retained events with a known immutable
         recipient snapshot, a settled delivered receipt, and no captured
         membership for this app workflow are considered. Legacy events with an
         unknown snapshot, events that already captured this workflow, unsettled
@@ -55320,8 +56275,12 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '403':
           description: |
-            `403 Forbidden` — the org is at the member cap. Stable
-            code `org_member_cap_exceeded`.
+            `403 Forbidden` — the org is at the member cap (stable code
+            `org_member_cap_exceeded`), the caller has no fresh step-up
+            (`step_up_required`), or the accepting account has not
+            verified its email address (`email_verification_required`).
+            The invitation's email match binds acceptance to the invitee
+            only for a verified address.
           content: { application/problem+json: { schema: { $ref: '#/components/schemas/Problem' } } }
         '409':
           description: |
@@ -62252,9 +63211,10 @@ paths:
       - $ref: '#/components/parameters/OrgProjectOrganization'
       - $ref: '#/components/parameters/OrgProjectSlug'
       - $ref: '#/components/parameters/OrgProjectEnvironment'
-      - $ref: '#/components/parameters/OrgProjectFrom'
-      - $ref: '#/components/parameters/OrgProjectSyncConfig'
     get:
+      parameters:
+        - $ref: '#/components/parameters/OrgProjectFrom'
+        - $ref: '#/components/parameters/OrgProjectSyncConfig'
       tags: [projects]
       operationId: getOrgProjectEnvironmentPromotionPreview
       summary: "Preview promotion between organization project environments."
@@ -62272,6 +63232,31 @@ paths:
 
         '403': { $ref: '#/components/responses/Forbidden' }
         '409': { $ref: '#/components/responses/Conflict' }
+    post:
+      tags: [projects]
+      operationId: previewOrgProjectEnvironmentPromotionSecrets
+      summary: "Preview a company promotion with destination production secret changes."
+      description: "Read-only, bounded preview with immutable secret version references, with the same rules as the personal secret preview. Requires MFA, secrets write permission and deployment permission in the organization."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionSecretPreviewRequest' }
+      responses:
+        '200':
+          description: "Company promotion preview listing secret key changes as version references only."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectEnvironmentPromotionPreviewResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '503':
+          description: "Company secret releases or destination verification are unavailable."
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/orgs/{organization}/projects/{slug}/environments/{environment}/approvals/{approval}:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -62568,6 +63553,105 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
         '403': { $ref: '#/components/responses/Forbidden' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/abort:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectPromotion'
+    post:
+      tags: [projects]
+      operationId: abortOrgProjectEnvironmentPromotion
+      summary: "Abort an in-progress company environment promotion."
+      description: "Generation-fenced operator decision on a company promotion, with the same semantics as the personal abort route. Requires deployment permission in the organization."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPromotionControlRequest' }
+      responses:
+        '200':
+          description: "Terminal acknowledgement of the company abort decision."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '202':
+          description: "Company abort accepted; fresh baseline checks run before restoration."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Company abort refused: the generation, request identity, phase or destination intent changed; inspect the promotion.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/recover:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectPromotion'
+    post:
+      tags: [projects]
+      operationId: recoverOrgProjectEnvironmentPromotion
+      summary: "Retry guarded restoration of a blocked company environment promotion."
+      description: "Retries a blocked company restoration with fresh baseline health and worker startup proof, like the personal recover route. Requires deployment permission in the organization."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPromotionControlRequest' }
+      responses:
+        '200':
+          description: "Terminal acknowledgement of the company restoration retry."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '202':
+          description: "Company restoration retry accepted; baseline and worker checks are pending."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionControl' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Company restoration retry refused: the inspected generation, request identity, phase or destination intent no longer allows it.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+  /v1/orgs/{organization}/projects/{slug}/environments/{environment}/promotions/{promotion}/recover-migration:
+    parameters:
+      - $ref: '#/components/parameters/OrgProjectOrganization'
+      - $ref: '#/components/parameters/OrgProjectSlug'
+      - $ref: '#/components/parameters/OrgProjectEnvironment'
+      - $ref: '#/components/parameters/OrgProjectPromotion'
+    post:
+      tags: [projects]
+      operationId: recoverOrgProjectEnvironmentPromotionMigration
+      summary: "Recover an interrupted company promotion migration without replaying SQL."
+      description: "Records explicit database inspection and resumes or resolves an interrupted company promotion migration, like the personal recover-migration route. Requires deployment permission in the organization."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ProjectPromotionMigrationRecoveryRequest' }
+      responses:
+        '200':
+          description: "Existing terminal acknowledgement of the company migration recovery."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionMigrationRecovery' }
+        '202':
+          description: "Company migration recovery accepted; teardown or verification is pending."
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ProjectPromotionMigrationRecovery' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { description: 'Company migration recovery refused: the task, generation, runtime or destination intent changed.' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
   /v1/orgs/{organization}/projects/{slug}/environments/{environment}/workloads/{workload}/policies:
     parameters:
       - $ref: '#/components/parameters/OrgProjectOrganization'
@@ -65563,6 +66647,79 @@ components:
       required: true
       schema: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$', minLength: 3, maxLength: 40 }
       description: App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+    LogSearchSince:
+      name: since
+      in: query
+      description: Window start, as a lookback duration (15m, 6h, 3d) or RFC 3339. Defaults to one hour before until and is clamped to the plan's log retention.
+      schema: { type: string }
+    LogSearchUntil:
+      name: until
+      in: query
+      description: Exclusive window end (RFC 3339). Defaults to and is clamped to now.
+      schema: { type: string, format: date-time }
+    LogSearchSource:
+      name: source
+      in: query
+      description: Keep one ledger source.
+      schema: { type: string, enum: [runtime, build, deploy, http, network, dns] }
+    LogSearchLevel:
+      name: level
+      in: query
+      description: Comma list of severities to keep (trace, debug, info, warn, error, fatal).
+      schema: { type: string, example: 'error,warn' }
+    LogSearchRoute:
+      name: route
+      in: query
+      description: Exact route template without the method, such as /checkout/{id}.
+      schema: { type: string, maxLength: 256 }
+    LogSearchStatus:
+      name: status
+      in: query
+      description: Exact HTTP status (502) or a status class (5xx).
+      schema: { type: string, example: 5xx }
+    LogSearchDeployment:
+      name: deployment_id
+      in: query
+      description: Keep events from one deployment.
+      schema: { type: string, format: uuid }
+    LogSearchRequest:
+      name: request_id
+      in: query
+      description: Keep events whose request id or trace id equals this value.
+      schema: { type: string, maxLength: 256 }
+    LogSearchTrace:
+      name: trace_id
+      in: query
+      description: Keep events carrying this W3C trace id.
+      schema: { type: string, maxLength: 128 }
+    LogSearchText:
+      name: q
+      in: query
+      description: Case-insensitive literal substring of the message, 2 to 256 characters. Text searches cover at most 24 hours.
+      schema: { type: string, minLength: 2, maxLength: 256 }
+    LogSearchSaved:
+      name: saved
+      in: query
+      description: Name of one of the app's saved log searches. Its filters apply unless the request sets the same parameter.
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+    IncidentID:
+      name: id
+      in: path
+      required: true
+      description: Incident id, prefixed with its source (`alert-`, `route-`, `platform-`).
+      schema: { type: string }
+    DashboardID:
+      name: id
+      in: path
+      required: true
+      description: Dashboard id.
+      schema: { type: string, format: uuid }
+    LogSavedSearchName:
+      name: name
+      in: path
+      required: true
+      description: Saved log search name, 1 to 63 lowercase letters, digits and dashes.
+      schema: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
     QueueLeaseQueue:
       name: queue
       in: path
@@ -76258,16 +77415,17 @@ components:
         until: {"type": "string", "format": "date-time"}
         window_clamped: {"type": "boolean"}
         idle_timeout_seconds: {"type": "integer", "description": "The app's effective idle timeout: how long it stays awake after its last successful request."}
+        wait_until_timeout_seconds: {"type": "integer", "description": "The plan's waitUntil task timeout when the plan enables waitUntil. An instance parks no earlier than the later of the idle timeout and its last waitUntil task, so a request keeps the app awake for the longer of the two (ADR-20261022184757)."}
         window_seconds: {"type": "integer", "format": "int64"}
         awake_seconds: {"type": "integer", "format": "int64"}
         awake_share: {"type": "number", "minimum": 0, "maximum": 1, "description": "Share of the window's minutes with at least one instance running."}
         mb_seconds: {"type": "integer", "format": "int64", "description": "Billed MB-seconds in the window."}
         gb_hours: {"type": "number"}
         wakes: {"type": "integer", "format": "int64", "description": "Cold boots in the window."}
-        unattributed_seconds: {"type": "integer", "format": "int64", "description": "Awake time no recorded request, probe or prewarm explains: minimum instances, queue, cron and waitUntil work, probes older than a day, or telemetry the plan's rate cap dropped."}
+        unattributed_seconds: {"type": "integer", "format": "int64", "description": "Awake time no recorded request, probe, prewarm or delivery explains: minimum instances, probes older than a day, deliveries already pruned by result retention, or telemetry the plan's rate cap dropped."}
         sources:
           type: array
-          description: "Awake time credited to causes other than customer requests, for minutes no request explains (ADR-1199)."
+          description: "Awake time credited to causes other than customer requests, for minutes no request explains: route probes and prewarms (ADR-1199), and cron, queue and other deliveries schedd made to the app, per cron job and per queue (ADR-20261022184757)."
           items: { $ref: '#/components/schemas/RouteAwakeSource' }
         min_instances: {"type": "integer", "description": "The app's current minimum instance count; above zero the app never parks, so unattributed time is expected."}
         other_routes_seconds: {"type": "integer", "format": "int64", "description": "Awake time attributed to routes outside the busiest routes_limit."}
@@ -76277,14 +77435,18 @@ components:
           items: { $ref: '#/components/schemas/RouteAwakeRoute' }
     RouteAwakeSource:
       type: object
-      description: "Awake time one non-request cause explains (ADR-1199)."
+      description: "Awake time one non-request cause explains (ADR-1199, ADR-20261022184757)."
       required: [source, events, awake_seconds, awake_share, gb_hours]
       properties:
-        source: {"type": "string", "enum": ["route_probe", "prewarm"], "description": "route_probe: synthetic canary probes the app answered (ADR-847; kept for a day). prewarm: instances a scheduled prewarm admitted."}
-        events: {"type": "integer", "format": "int64", "description": "Probe requests answered without a 5xx or an auth rejection, or prewarmed instances."}
+        source: {"type": "string", "enum": ["route_probe", "prewarm", "cron", "queue", "delayed_task", "async_invoke", "inbound_webhook", "replay", "esm"], "description": "route_probe: synthetic canary probes the app answered (ADR-847; kept for a day). prewarm: instances a scheduled prewarm admitted. The others are deliveries schedd made to the app, by invocation source; a delivery counts from when it reached the instance until it completed, at most 60 minutes."}
+        name: {"type": "string", "description": "One cron job (the path or command it runs and its schedule) or one queue; absent for other sources."}
+        events: {"type": "integer", "format": "int64", "description": "Probe requests answered without a 5xx or an auth rejection, prewarmed instances, or deliveries that started in the window."}
         awake_seconds: {"type": "integer", "format": "int64"}
         awake_share: {"type": "number", "minimum": 0, "maximum": 1}
         gb_hours: {"type": "number"}
+        pattern: {"type": "string", "enum": ["periodic", "irregular"], "description": "Set for cron jobs: periodic when the job fires at a steady interval."}
+        interval_seconds: {"type": "integer", "description": "Approximate interval between the cron job's firings when pattern is periodic."}
+        suggestion: { $ref: '#/components/schemas/RouteAwakeSuggestion' }
     RouteAwakeRoute:
       type: object
       description: "One route's share of the app's awake time and what removing its requests would change."
@@ -76314,7 +77476,7 @@ components:
       description: "A change that would let the app park."
       required: [kind, message]
       properties:
-        kind: {"type": "string", "enum": ["edge_cache", "call_less_often"]}
+        kind: {"type": "string", "enum": ["edge_cache", "call_less_often", "run_less_often"]}
         message: {"type": "string"}
     RouteInsightsResponse:
       type: object
@@ -79008,6 +80170,26 @@ components:
         ai_auto_prompt_cache:
           type: boolean
           description: Whether the gateway adds prompt-cache breakpoints to Claude requests that carry none (ADR-1437).
+        ai_trace_max_calls:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000
+          description: Calls each AI trace may make, settled and in flight (ADR 20261020202035). Absent when unlimited.
+        ai_trace_max_cost_millicents:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000000000
+          description: Cost each AI trace may reach, with live reservations (ADR 20261020202035). Absent when unlimited.
+        ai_trace_max_repeated_tool_calls:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000
+          description: >-
+            Consecutive calls of a trace whose responses may request the same tools with the same arguments
+            (ADR 20261020202035). Absent when unlimited.
         ai_user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -79020,6 +80202,13 @@ components:
           minimum: 1
           maximum: 1000000000000
           description: UTC-day cost limit for each end user named by X-Gregale-AI-User (ADR-994).
+        ai_online_evaluation:
+          allOf:
+            - $ref: '#/components/schemas/OutboundAIOnlineEvaluation'
+          description: The sample of answered app calls a judge model scores (ADR 20261021171712).
+        ai_quality_alerts:
+          type: boolean
+          description: Drift alerts on the integration's quality signals are on (ADR 20261021171712).
     CreateOutboundIntegrationRequest:
       type: object
       description: A fixed public HTTPS destination, maximum HTTP route policy, and optional admission policy and daily admitted-request limit.
@@ -79104,6 +80293,31 @@ components:
             none: after a system prompt or tool list seen again within five minutes, and after the last message of a
             conversation that carries earlier turns or names X-Gregale-AI-Session. Prompts under about 1,024 tokens are not
             marked; the response names the added breakpoints in X-Gregale-AI-Prompt-Cache (ADR-1437). Requires ai_provider.
+        trace_max_calls:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000
+          description: >-
+            Refuse a trace's call once the trace made this many calls, settled and in flight, with 429
+            outbound_budget_exhausted and X-Gregale-Outbound-Rejection trace_call_limit (ADR 20261020202035). Requires
+            ai_provider.
+        trace_max_cost_millicents:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000000000000
+          description: >-
+            Refuse a trace's call that would take the trace's cost past this, with trace_cost_limit (ADR 20261020202035).
+            Requires ai_provider.
+        trace_max_repeated_tool_calls:
+          type: integer
+          format: int64
+          minimum: 1
+          maximum: 1000
+          description: >-
+            Refuse a trace's call once this many consecutive calls requested the same tools with the same arguments, with
+            trace_tool_loop: the agent is looping (ADR 20261020202035). Requires ai_provider.
         user_daily_token_limit:
           type: [integer, 'null']
           format: int64
@@ -79116,10 +80330,21 @@ components:
           minimum: 1
           maximum: 1000000000000
           description: Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
+        online_evaluation:
+          allOf:
+            - $ref: '#/components/schemas/OutboundAIOnlineEvaluation'
+          description: >-
+            Score a sample of answered app calls with a judge model (ADR 20261021171712). Requires ai_provider and
+            request_log_content.
+        quality_alerts:
+          type: boolean
+          description: >-
+            Alert bound apps with outbound.ai_quality.drift when a model's quality signals move away from its previous 7 days
+            (ADR 20261021171712). Requires ai_provider.
     OutboundAIUsageItem:
       type: object
       description: One UTC-day rollup for a caller and model. input_tokens includes cached reads and cache writes, which are also reported separately.
-      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb, cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens]
+      required: [caller, model, requests, error_requests, usage_unknown_requests, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, images, audio_seconds, characters, video_seconds, web_searches, file_searches, code_session_gb, cached_requests, cache_saved_millicents, prompt_cache_saved_millicents, input_audio_tokens, output_audio_tokens, truncated_requests, refused_requests, empty_requests, invalid_json_requests, tool_error_requests, good_feedback, bad_feedback, evaluated_requests, evaluation_score_sum, evaluation_errors]
       properties:
         caller: { type: string, description: 'App UUID, "runs" for stateless Runs, or "replay" for replayed calls (ADR-997).' }
         model: { type: string, maxLength: 128, description: 'Provider-reported model; "other" collects models beyond the daily distinct-model cap and "unknown" covers responses without one.' }
@@ -79143,6 +80368,16 @@ components:
         prompt_cache_saved_millicents: { type: integer, format: int64, description: 'What provider prompt caching saved against plain input prices; negative when cache writes outweighed reads.' }
         input_audio_tokens: { type: integer, format: int64, minimum: 0, description: 'Audio part of input_tokens, priced at the audio input price (ADR 20261019072722).' }
         output_audio_tokens: { type: integer, format: int64, minimum: 0, description: 'Audio part of output_tokens, priced at the audio output price.' }
+        truncated_requests: { type: integer, format: int64, minimum: 0, description: 'Answered calls that stopped at the output-token limit (ADR 20261021171712).' }
+        refused_requests: { type: integer, format: int64, minimum: 0, description: 'Answered calls the provider refused or filtered.' }
+        empty_requests: { type: integer, format: int64, minimum: 0, description: 'Answered calls with no text and no requested tools.' }
+        invalid_json_requests: { type: integer, format: int64, minimum: 0, description: 'Answered calls whose requested JSON, or tool-call arguments, did not parse.' }
+        tool_error_requests: { type: integer, format: int64, minimum: 0, description: 'Calls whose newest turn reported a failed tool.' }
+        good_feedback: { type: integer, format: int64, minimum: 0, description: 'Calls rated good (ADR 20261021171712).' }
+        bad_feedback: { type: integer, format: int64, minimum: 0, description: 'Calls rated bad.' }
+        evaluated_requests: { type: integer, format: int64, minimum: 0, description: 'Calls an online evaluation scored.' }
+        evaluation_score_sum: { type: integer, format: int64, minimum: 0, description: 'Sum of their scores from 1 to 5; divide by evaluated_requests for the mean.' }
+        evaluation_errors: { type: integer, format: int64, minimum: 0, description: 'Sampled calls the judge could not score.' }
     OutboundAIUsageResponse:
       type: object
       description: One UTC day of AI gateway usage for an integration.
@@ -79738,6 +80973,33 @@ components:
         created_at: { type: string, format: date-time }
         last_used_at: { type: [string, 'null'], format: date-time }
         revoked_at: { type: [string, 'null'], format: date-time }
+    AIDeploymentUsage:
+      type: object
+      description: One deployment's AI gateway calls over the last 14 days (ADR 20261022153155).
+      required: [deployment_id, first_call_at, last_call_at, calls, error_calls, flagged_calls, cost_millicents, input_tokens, output_tokens, error_rate, flagged_rate, cost_per_call_millicents]
+      properties:
+        deployment_id: { type: string, format: uuid }
+        first_call_at: { type: string, format: date-time, description: The UTC minute of its first call in the window. }
+        last_call_at: { type: string, format: date-time, description: The UTC minute of its latest call. }
+        calls: { type: integer, format: int64, minimum: 0 }
+        error_calls: { type: integer, format: int64, minimum: 0, description: Calls the provider failed. }
+        flagged_calls: { type: integer, format: int64, minimum: 0, description: Calls whose answer had a quality flag. }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        error_rate: { type: number, minimum: 0, maximum: 1 }
+        flagged_rate: { type: number, minimum: 0, maximum: 1 }
+        cost_per_call_millicents: { type: integer, format: int64, minimum: 0 }
+        mean_ttfb_ms: { type: integer, format: int64, minimum: 0, description: Mean time to first byte; omitted when no call had one. }
+    AIDeploymentUsageList:
+      type: object
+      description: An app's deployments with AI gateway calls, latest call first.
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/AIDeploymentUsage' }
     OutboundAIAccessTokenList:
       type: object
       description: An app's access tokens, newest first.
@@ -79874,6 +81136,14 @@ components:
       description: One settled AI call's metadata (ADR-991). Its bodies are kept only when the integration captures content (ADR-996).
       required: [id, created_at, caller, route_id, model, status, outcome, input_tokens, cached_input_tokens, cache_write_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, attempts, end_user, content_captured, tags]
       properties:
+        quality_flags:
+          type: array
+          maxItems: 5
+          items: { type: string, enum: [truncated, refused, empty, invalid_json, tool_error] }
+          description: What went wrong with the answer (ADR 20261021171712).
+        feedback: { type: string, enum: [good, bad], description: The call's rating (ADR 20261021171712). }
+        feedback_label: { type: string, maxLength: 32, pattern: '^[a-z][a-z0-9_.-]{0,31}$', description: The rating's label. }
+        evaluation_score: { type: integer, format: int32, minimum: 1, maximum: 5, description: The online evaluation's score. }
         id: { type: string, format: uuid }
         created_at: { type: string, format: date-time }
         caller: { type: string, description: 'App UUID, or "runs".' }
@@ -79896,6 +81166,15 @@ components:
           maxItems: 5
           description: The call's X-Gregale-AI-Tags as key=value, sorted by key (ADR-1436).
           items: { type: string, maxLength: 97 }
+        trace_id:
+          type: string
+          maxLength: 64
+          description: The call's AI trace, when the integration records traces (ADR 20261020202035).
+        tool_calls:
+          type: array
+          maxItems: 16
+          description: The names of the tools the call's response requested, in order (ADR 20261020202035).
+          items: { type: string, maxLength: 64 }
     OutboundAIContentBody:
       type: object
       description: The start of one captured body.
@@ -80046,6 +81325,124 @@ components:
           type: array
           items: { $ref: '#/components/schemas/OutboundAIRequestLogEntry' }
         next_before: { type: [string, 'null'], format: date-time, description: Pass as before to read the next page; null on the last page. }
+    OutboundAITrace:
+      type: object
+      description: >-
+        One AI trace's totals (ADR 20261020202035). app_id and end_user are its first call's; repeated_tool_calls is its
+        current streak of calls that requested the same tools with the same arguments.
+      required: [trace_id, app_id, end_user, first_at, last_at, calls, error_calls, usage_unknown_calls, input_tokens, output_tokens, cost_millicents, tool_calls, repeated_tool_calls, models]
+      properties:
+        trace_id: { type: string, maxLength: 64 }
+        app_id: { type: [string, 'null'], format: uuid }
+        end_user: { type: [string, 'null'], maxLength: 64 }
+        first_at: { type: string, format: date-time }
+        last_at: { type: string, format: date-time }
+        calls: { type: integer, format: int64, minimum: 0 }
+        error_calls: { type: integer, format: int64, minimum: 0 }
+        usage_unknown_calls: { type: integer, format: int64, minimum: 0 }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        tool_calls:
+          type: integer
+          format: int64
+          minimum: 0
+          description: Tool calls the trace's responses requested.
+        repeated_tool_calls: { type: integer, format: int64, minimum: 0 }
+        models:
+          type: array
+          maxItems: 8
+          items: { type: string }
+    OutboundAIOnlineEvaluation:
+      type: object
+      description: >-
+        Score sample_percent of answered app calls from 1 to 5 with judge_model through judge_integration_id, one of the
+        account's AI integrations, metered under the caller evaluation (ADR 20261021171712).
+      required: [sample_percent, judge_integration_id, judge_model]
+      properties:
+        sample_percent: { type: integer, format: int32, minimum: 1, maximum: 100 }
+        judge_integration_id: { type: string, format: uuid }
+        judge_model: { type: string, minLength: 1, maxLength: 200 }
+        rubric: { type: string, maxLength: 1000, description: What a good answer does for this app, given to the judge. }
+    PutOutboundAIFeedbackRequest:
+      type: object
+      description: A rating of one logged call (ADR 20261021171712). A later rating replaces the earlier one.
+      required: [rating]
+      properties:
+        rating: { type: string, enum: [good, bad] }
+        label: { type: string, maxLength: 32, pattern: '^[a-z][a-z0-9_.-]{0,31}$' }
+    OutboundAIQualityAlert:
+      type: object
+      description: >-
+        One drift the check found: a model's metric today against its previous 7 days (ADR 20261021171712). Rates are basis
+        points of answered calls (of rated calls for bad_feedback); evaluation_score is the mean score in hundredths.
+      required: [id, integration_id, usage_date, model, metric, current_value, baseline_value, current_count, baseline_count, detected_at]
+      properties:
+        id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        usage_date: { type: string, format: date }
+        model: { type: string, maxLength: 200 }
+        metric: { type: string, enum: [truncated, refused, empty, invalid_json, tool_error, bad_feedback, evaluation_score] }
+        current_value: { type: integer, format: int64, minimum: 0 }
+        baseline_value: { type: integer, format: int64, minimum: 0 }
+        current_count: { type: integer, format: int64, minimum: 0 }
+        baseline_count: { type: integer, format: int64, minimum: 0 }
+        detected_at: { type: string, format: date-time }
+    OutboundAIQualityAlertList:
+      type: object
+      description: A page of an integration's AI quality drift alerts, newest first.
+      required: [items]
+      properties:
+        items:
+          type: array
+          maxItems: 100
+          items: { $ref: '#/components/schemas/OutboundAIQualityAlert' }
+    OutboundAITraceList:
+      type: object
+      description: One page of AI traces, newest last call first.
+      required: [items, next_before]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/OutboundAITrace' }
+        next_before:
+          type: [string, 'null']
+          format: date-time
+          description: The last page item's last call, to pass as before for older traces; null on the last page.
+    OutboundAITraceCall:
+      type: object
+      description: One logged call of an AI trace.
+      required: [id, created_at, caller, model, status, outcome, input_tokens, output_tokens, cost_millicents, duration_ms, ttfb_ms, tool_calls]
+      properties:
+        id: { type: string, format: uuid }
+        created_at: { type: string, format: date-time }
+        caller: { type: string }
+        model: { type: string }
+        status: { type: integer, minimum: 100, maximum: 599 }
+        outcome: { type: string, enum: [known, unknown, error] }
+        input_tokens: { type: integer, format: int64, minimum: 0 }
+        output_tokens: { type: integer, format: int64, minimum: 0 }
+        cost_millicents: { type: integer, format: int64, minimum: 0 }
+        duration_ms: { type: integer, format: int64, minimum: 0 }
+        ttfb_ms: { type: [integer, 'null'], format: int64, minimum: 0 }
+        tool_calls:
+          type: array
+          maxItems: 16
+          description: The names of the tools the call's response requested.
+          items: { type: string, maxLength: 64 }
+    OutboundAITraceResponse:
+      type: object
+      description: One AI trace with its logged calls, oldest first.
+      required: [trace, calls, calls_truncated]
+      properties:
+        trace: { $ref: '#/components/schemas/OutboundAITrace' }
+        calls:
+          type: array
+          maxItems: 500
+          items: { $ref: '#/components/schemas/OutboundAITraceCall' }
+        calls_truncated:
+          type: boolean
+          description: Whether the trace logged more calls than were returned.
     UpdateOutboundBindingPolicyRequest:
       type: object
       description: Explicit nonempty method and path subsets for a bound app.
@@ -80945,7 +82342,7 @@ components:
         target_database_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
-        state: { type: string, enum: [preparing, prepared, verifying, verified, cancelling, cancelled] }
+        state: { type: string, enum: [preparing, prepared, verifying, verified, cancelling, cancelled, activated] }
         verification_fresh: { type: boolean, description: All staged members have SQL evidence no older than verification_max_age_seconds. }
         verification_max_age_seconds: { type: integer, format: int64, minimum: 1 }
         verified_at: { type: string, format: date-time }
@@ -81946,6 +83343,7 @@ components:
         version: { type: integer, format: int64, minimum: 1 }
         reason: { type: string, minLength: 3, maxLength: 500 }
         expected_version: { type: integer, format: int64, minimum: 0 }
+        force: { type: boolean, description: "Confirms restoring a revision that turns a core capability flag off for every account (ADR-20261023115741)." }
 
     # ─── Platform flags (ADR-1700) ───────────────────────────────────────
 
@@ -82105,6 +83503,10 @@ components:
           items: { $ref: '#/components/schemas/OperatorRuntimeConfigApplyReceipt' }
         convergence: { $ref: '#/components/schemas/OperatorPlatformFlagConvergence' }
         opt_ins: { $ref: '#/components/schemas/OperatorPlatformFlagOptIns' }
+        maturity: { type: string, enum: [ga, beta, preview, internal], description: "Tier of the capability the flag releases (ADR-20261023115741)." }
+        parent: { type: string, description: "Parent capability flag; a sub-feature is released only while its parent is." }
+        core: { type: boolean, description: "Core capability flag: turning it off for every account needs force." }
+        enforcement: { type: string, description: "What the flag gates today, joined with +: routes, settings, daemons; or handler or none." }
 
     OperatorPlatformFlagGroups:
       description: "Shared named account sets referenced by platform-flag rules."
@@ -82569,6 +83971,10 @@ components:
         capabilities:
           type: array
           items: { $ref: '#/components/schemas/CapabilityStatus' }
+        hidden_capabilities:
+          type: array
+          items: { type: string }
+          description: Catalog capabilities, internal ones included, whose platform flag is off for this account (ADR-20261023115741). Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
 
     AccountResponse:
       description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count."
@@ -84530,13 +85936,13 @@ components:
         plan_cpu_max_millicores: { type: integer, description: "Largest sustained CPU allowance the current plan permits, in millicores." }
         cpu_weight: { type: integer, description: "Relative cgroup CPU scheduling weight applied when the host is contended." }
         max_instances: { type: integer, description: "Effective per-app live-instance ceiling after applying the scaling policy." }
-        concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance. Handler-level concurrency remains the application's responsibility." }
+        concurrency_per_instance: { type: integer, description: "Maximum in-flight requests accepted by one instance: the app's scaling_policy.per_instance_concurrency when set, otherwise the plan's concurrency_per_vm." }
         concurrency_queue_depth: { type: integer, description: "Effective maximum number of requests allowed to wait for warm instance capacity." }
         concurrency_queue_wait_ms: { type: integer, format: int64, description: "Effective maximum warm saturation wait in milliseconds." }
         app_request_rate_rps: { type: integer, description: "Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime override." }
         app_request_burst: { type: integer, description: "Effective per-app edge token-bucket burst capacity after any app-level runtime override." }
         account_request_rate_rpm: { type: integer, description: "Account-wide edge token-bucket refill rate across all apps, in requests per minute." }
-        request_budget_ms: { type: integer, format: int64, description: "Default end-to-end request budget before a route override, in milliseconds." }
+        request_budget_ms: { type: integer, format: int64, description: "Default execution budget after upload, wake and admission, before a route override, in milliseconds." }
         request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
         response_write_timeout_s: { type: integer, format: int64, description: "Maximum response write window for the plan, in seconds." }
         request_body_max_bytes: { type: integer, format: int64, description: "Maximum inbound request body accepted for this app's plan, in bytes." }
@@ -84749,7 +86155,7 @@ components:
       enum: [allow, deny]
 
     RuntimePolicyStatusResponse:
-      description: Runtime policy status across gateway replicas, the owning scheduler, and live VM consumers. Each component reports its scoped desired revision. Gateway request policy filters app-row changes from the combined app-cache and traffic projection; consumers use their existing acknowledged cursor.
+      description: Runtime policy status across gateway replicas, the owning scheduler, and live VM consumers. Each component reports its scoped desired revision. Gateway request policy filters app-row changes from the combined app-cache and traffic projection. Gateway acknowledgements require the current process generation and a fresh serving report. Traffic runtime reports wiring independently of convergence and enforcement; older API servers may omit it.
       type: object
       required: [app_id, desired_revision, state, coverage, serving_gateways, applied_gateways, pending_gateways, stale_gateways, request_policy, edge_rules, cors_presets, response_cache, egress_allowlist, cpu_limit, scheduler_scaling]
       properties:
@@ -84769,6 +86175,36 @@ components:
         egress_allowlist: { $ref: '#/components/schemas/RuntimePolicyNodeStatus' }
         cpu_limit: { $ref: '#/components/schemas/RuntimePolicyNodeStatus' }
         scheduler_scaling: { $ref: '#/components/schemas/RuntimePolicySchedulerStatus' }
+        traffic_runtime: { $ref: '#/components/schemas/TrafficRuntimeStatus' }
+
+    TrafficRuntimeStatus:
+      description: Fresh compute gateway wiring observations for the active serving roster. Reports expire after 10 seconds; replacement, missing reports and readiness failure remove observations. Wiring does not prove backend health or request enforcement. Node identities and process tokens are not exposed.
+      type: object
+      required: [scope, state, enforcement_status, serving_gateways, fresh_gateways, stale_gateways, missing_gateways, public_retry, rate_counter, retry_counter, deadline_signing, policy_snapshot, security_revocation, managed_http, managed_circuit]
+      properties:
+        scope: { type: string, enum: [compute_gateway_wiring] }
+        state: { type: string, enum: [observed, partial, unverified] }
+        enforcement_status: { type: string, enum: [unverified] }
+        serving_gateways: { type: integer, minimum: 0 }
+        fresh_gateways: { type: integer, minimum: 0 }
+        stale_gateways: { type: integer, minimum: 0 }
+        missing_gateways: { type: integer, minimum: 0 }
+        public_retry: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        rate_counter: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        retry_counter: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        deadline_signing: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        policy_snapshot: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        security_revocation: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        managed_http: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        managed_circuit: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+
+    TrafficRuntimeFeatureStatus:
+      description: Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified.
+      type: object
+      required: [state, mode]
+      properties:
+        state: { type: string, enum: [observed, mixed, unverified] }
+        mode: { type: string, enum: [enabled, disabled, central, local, shared, redis, mixed, unwired] }
 
     RuntimePolicyComponentStatus:
       description: Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful within that component's ledger or filtered projection.
@@ -87186,7 +88622,7 @@ components:
     EdgeProtectionResponse:
       description: Edge rejection counts for one app over a range.
       type: object
-      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge]
+      required: [app_id, range, source, as_of, pre_auth, validation_failures, rejections, waf, challenge, penalty, attack_mode, ai_crawlers]
       properties:
         app_id: { type: string }
         range: { type: string, enum: [5m, 15m, 1h, 6h, 24h, 7d, 15d] }
@@ -87214,7 +88650,7 @@ components:
             type: object
             required: [gate, status, count]
             properties:
-              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge] }
+              gate: { type: string, enum: [jwt, ip_allowlist, internal_only, ip, geo, limit, body_limit, throttle, waf, challenge, penalty] }
               status: { type: string, enum: ['401', '403', '413', '429', '503', other] }
               count: { type: integer, format: int64, minimum: 0 }
         waf:
@@ -87258,6 +88694,78 @@ components:
             passed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a pass from an earlier solve." }
             bypassed: { type: integer, format: int64, minimum: 0, description: "Requests let through on a verified API key, consumer key or JWT." }
             invalid: { type: integer, format: int64, minimum: 0, description: "Solutions refused: wrong work or an expired token." }
+            raised: { type: integer, format: int64, minimum: 0, description: "The part of issued served at a difficulty raised under attack (ADR-831 amendment 8)." }
+        penalty:
+          type: object
+          description: Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty.
+          required: [boxed, rejected]
+          properties:
+            boxed: { type: integer, format: int64, minimum: 0, description: "Clients a rule's penalty boxed." }
+            rejected: { type: integer, format: int64, minimum: 0, description: "Requests refused from boxed clients." }
+        attack_mode:
+          $ref: '#/components/schemas/EdgeAttackModeStatus'
+        ai_crawlers:
+          type: array
+          description: Requests whose User-Agent names an AI crawler (ADR-20261022083601), largest first, counted before any edge rule acted on them.
+          items: { $ref: '#/components/schemas/EdgeProtectionAICrawler' }
+
+    EdgeAttackModeStatus:
+      type: object
+      description: |
+        An app's attack mode (ADR-20261021220456). While it is on, every
+        request without a challenge pass is challenged: browsers solve a
+        short proof of work once and continue, verified search crawlers and
+        requests with a verified API key, consumer key or JWT pass straight
+        through, and other clients get 403 `challenge_required`. It always
+        ends on its own at `expires_at`. Read from the rules, so it is
+        current even when the edge-protection counts are degraded.
+      required: [active]
+      properties:
+        active: { type: boolean, description: Attack mode is on now. }
+        rule_id: { type: string, description: "The app-wide challenge rule that carries attack mode (managed_by attack_mode). Still set after attack mode ran out, until it is switched on again or off." }
+        started_at: { type: string, format: date-time, description: When attack mode was switched on; extending it keeps this time. }
+        expires_at: { type: string, format: date-time, description: When attack mode ends, or ended. }
+        difficulty: { type: integer, description: Leading zero bits the browser's proof of work must find. }
+        pass_ttl_seconds: { type: integer, description: Seconds a browser that solved the attack-mode challenge is let through. }
+
+    EnableEdgeAttackModeRequest:
+      type: object
+      description: Switches attack mode on for a duration, or moves the end of an active one.
+      additionalProperties: false
+      properties:
+        duration_seconds:
+          type: integer
+          minimum: 900
+          maximum: 86400
+          default: 3600
+          description: How long attack mode stays on from now. Switching it on while it is on restarts the clock with this duration.
+
+    EdgeProtectionAICrawler:
+      type: object
+      description: One AI crawler's requests over the summary's range.
+      required: [name, operator, purpose, count]
+      properties:
+        name: { type: string, description: "Crawler name as the ai_crawler match field uses it, e.g. gptbot." }
+        operator: { type: string, description: Company that runs the crawler. }
+        purpose: { type: string, enum: [training, search, assistant], description: "What its fetches are for: training models, AI search, or an assistant answering a user." }
+        count: { type: integer, format: int64, minimum: 0 }
+
+    EdgeRulePenalty:
+      type: object
+      description: |
+        A rule's penalty box (ADR-20261022105846). Once the rule has refused
+        the same client `after` times within `within_seconds`, every request
+        from that client to the app is refused with 403 `penalty_box` and
+        Retry-After for `seconds`, whichever rule or path it targets. The
+        client is its IP address (an IPv6 client is its /64). Boxes are held
+        in each gateway node's memory. Allowed on ip, geo, throttle and waf
+        (block mode) rules; editing the rule's penalty away, disabling it or
+        putting it in log mode releases its clients.
+      required: [seconds]
+      properties:
+        seconds: { type: integer, minimum: 60, maximum: 86400, description: How long a boxed client is refused. }
+        after: { type: integer, minimum: 1, maximum: 1000, default: 1, description: Refusals by this rule that box the client. }
+        within_seconds: { type: integer, minimum: 1, maximum: 3600, default: 60, description: Window the refusals count in. }
 
     PreAuthEnforcementSuggestion:
       description: |
@@ -89272,6 +90780,11 @@ components:
           minimum: 0
           maximum: 60
           example: 30
+        per_instance_concurrency:
+          description: "Requests one instance serves at once (ADR-20261022203523). The gateway admits at most this many to an instance and scales out on the next request; requests over every instance's limit wait in the warm queue (30 s unless max_queue_wait_ms is set). 0 uses the plan's concurrency_per_vm, which is also the upper bound."
+          type: integer
+          minimum: 0
+          example: 2
         timezone:
           description: "IANA timezone every schedule's cron expression is evaluated in (ADR-195). Empty means UTC. One zone per app rather than one per schedule: a business has a working day, not a working day per rule."
           type: string
@@ -89767,6 +91280,7 @@ components:
           $ref: '#/components/schemas/ProfilingConfig'
         tracing:
           $ref: '#/components/schemas/TracingConfig'
+        profiling_on_demand: { type: boolean, description: 'Dormant on-demand profile collectors stamped by imaged (ADR-1155).' }
         entrypoint:
           type: array
           items: { type: string }
@@ -89804,6 +91318,11 @@ components:
           type: boolean
           default: false
           description: "Wait for the workload to publish FAAS_SECRETS_RELOAD_READY_FILE before sending a secret reload signal. Requires secret_reload_signal. Main and sidecar workloads opt in independently (ADR-506)."
+        secret_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecretFile'
+          description: "App secrets guest-init writes to /run/secrets for the main workload (ADR-20261023090000). Set from the app's Compose service secrets."
         stop_grace_period:
           type: [string, "null"]
           description: "OCI StopGracePeriod as a Go duration string (e.g. \"30s\"). Per-plan cap (Hobby 30s, Pro 60s, Scale 120s) enforced by Validate() — ADR-138 §Decision 4."
@@ -90814,6 +92333,9 @@ components:
         scheduled_release:
           $ref: '#/components/schemas/ScheduledRelease'
           description: The schedule of a release that waits live without traffic for its scheduled start, or how its latest schedule ended (ADR-20261021152201).
+        database_switch:
+          $ref: '#/components/schemas/DatabaseSwitch'
+          description: The switch a rollback with restore_databases started (ADR-20261023181931).
         durable_entity_validator:
           $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
@@ -91547,6 +93069,9 @@ components:
         acknowledge_releases:
           type: boolean
           description: "Roll back although release commands ran after the target last served (ADR-1448). Rollback does not undo them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks never set it."
+        restore_databases:
+          type: boolean
+          description: "Also restore the managed PostgreSQL database the crossed release commands migrated to just before the earliest of them, and switch the app to that copy (ADR-20261023181931). Requires acknowledge_releases and the postgres:manage scope; cannot be combined with expected_current_deployment_id. The response carries database_switch; the code rollback happens inside it while the app is fenced."
 
     RollbackCrossedRelease:
       description: "A release command that ran after a rollback target last served (ADR-1448). A rollback does not undo it."
@@ -98414,7 +99939,7 @@ components:
 
     EventStorageUsageResponse:
       description: Retained customer event counts, logical JSON bytes, pending age and current account budgets.
-      example: { retained_events: 0, retained_bytes: 0, pending_events: 0, oldest_pending_at: null, limits: { retained_events: 16384, retained_bytes: 67108864 } }
+      example: { retained_events: 0, retained_bytes: 0, pending_events: 0, oldest_pending_at: null, limits: { retained_events: 131072, retained_bytes: 268435456, settled_retention_seconds: 259200 } }
       type: object
       additionalProperties: false
       required: [retained_events, retained_bytes, pending_events, oldest_pending_at, limits]
@@ -98424,13 +99949,14 @@ components:
         pending_events: { type: integer, format: int64, minimum: 0 }
         oldest_pending_at: { type: [string, 'null'], format: date-time }
         limits:
-          example: { retained_events: 16384, retained_bytes: 67108864 }
+          example: { retained_events: 131072, retained_bytes: 268435456, settled_retention_seconds: 259200 }
           type: object
           additionalProperties: false
           required: [retained_events, retained_bytes]
           properties:
             retained_events: { type: integer, format: int64, minimum: 0 }
             retained_bytes: { type: integer, format: int64, minimum: 0 }
+            settled_retention_seconds: { type: integer, format: int64, minimum: 0, description: "How long a settled receipt is kept on the plan (ADR-20261023215834); it bounds duplicate acceptance, recovery and replay ranges. Absent from servers that predate per-plan windows." }
 
     RegisterEventSchemaRequest:
       description: Immutable event schema registration request.
@@ -98613,7 +100139,7 @@ components:
         settled_retention_seconds:
           type: integer
           format: int64
-          description: Retention duration after routing settlement (2592000 seconds); unresolved receipts may survive longer.
+          description: The plan's retention duration after routing settlement (86400, 259200, 604800 or 1209600 seconds on Free, Hobby, Pro and Scale); unresolved receipts may survive longer.
         earliest_retained_at:
           type: string
           format: date-time
@@ -98709,7 +100235,7 @@ components:
       properties:
         allow_expired: { type: boolean, default: false, description: 'Explicitly override delivery age for this replay generation or historical backfill job. Preserves deterministic invocation identity and manual controls.' }
         from: { type: string, format: date-time, description: Inclusive platform acceptance-time lower bound. }
-        until: { type: string, format: date-time, description: Exclusive upper bound; future values are capped at creation time. The range may not exceed 30 days. }
+        until: { type: string, format: date-time, description: Exclusive upper bound; future values are capped at creation time. The range may not exceed the plan's settled-receipt window. }
     WorkflowEventReplayBackfillRequest:
       description: Current event-triggered workflow and acceptance-time range for a durable historical run-admission job.
       type: object
@@ -98718,7 +100244,7 @@ components:
       properties:
         workflow_name: { type: string, minLength: 1, maxLength: 256, description: Workflow in the app's preferred live default deployment; its definition is pinned when the job is created. }
         from: { type: string, format: date-time, description: Inclusive lower bound on platform event acceptance. }
-        until: { type: string, format: date-time, description: Exclusive acceptance upper bound; future values stop at job creation. At most 30 days are allowed. }
+        until: { type: string, format: date-time, description: Exclusive acceptance upper bound; future values stop at job creation. The range may not exceed the plan's settled-receipt window. }
     EventReplayBackfillRetryRequest:
       description: Bound for the number of failed routing recipients requeued in this call.
       type: object
@@ -99024,7 +100550,7 @@ components:
         schema_version: { type: string }
         accepted_at: { type: string, format: date-time, description: "First durable acceptance time, preserved on identical retries." }
         routing_settled_at: { type: string, format: date-time, description: "All routing candidates settled, including filtered and failed outcomes; absent while routing is active." }
-        retain_until: { type: string, format: date-time, description: 'Settled receipt retention boundary, 30 days after routing settled. Absent for active routing.' }
+        retain_until: { type: string, format: date-time, description: 'Settled receipt retention boundary: the settled-receipt window of the plan after routing settled. Absent for active routing.' }
         snapshot_captured: { type: boolean, description: "False means legacy recipient membership is unknown, rather than an empty matching set." }
         routing_mode: { type: string, enum: [event, recipient], description: Whole-event legacy routing or independent recipient leases. }
         recipient_count: { type: integer, minimum: 0, description: Total captured candidates across all pages; unknown when snapshot_captured=false. }
@@ -104134,6 +105660,39 @@ components:
           type: integer
           minimum: 1
           description: "Seconds between the stop signal and SIGKILL, capped by the plan."
+    SecretFile:
+      type: object
+      description: "An app secret guest-init writes to /run/secrets/<name> in the main workload (ADR-20261023090000), from a Compose service's secrets. Names the secret; its value is never returned."
+      required: [secret, name]
+      properties:
+        secret:
+          type: string
+          description: "App secret whose value the file holds."
+        name:
+          type: string
+          pattern: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+          description: "File name in /run/secrets."
+        mode:
+          type: integer
+          minimum: 0
+          maximum: 511
+          description: "Permission bits; omitted means 0444."
+    ComposeResources:
+      type: object
+      description: "A Compose service's deploy.replicas and deploy.resources.limits, converted to app settings (ADR-20261023120000). Omitted fields are undeclared and keep the app's own settings."
+      properties:
+        replicas:
+          type: integer
+          minimum: 1
+          description: "Caps a request-mode app's instances (max_concurrency) and fixes a worker's or service's replica count."
+        memory_mb:
+          type: integer
+          minimum: 1
+          description: "App RAM in MB, rounded up from the declared size."
+        cpu_millicores:
+          type: integer
+          enum: [250, 500, 1000]
+          description: "App CPU share."
     PlanWorkload:
       description: "One discovered unit of work. Mirrors reposcan.Workload."
       type: object
@@ -104175,6 +105734,13 @@ components:
           type: array
           items: { type: string }
           description: "Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."
+        secret_files:
+          type: array
+          items:
+            $ref: '#/components/schemas/SecretFile'
+          description: "Compose secrets written to /run/secrets (ADR-20261023090000)."
+        resources:
+          $ref: '#/components/schemas/ComposeResources'
         command:
           type: array
           items: { type: string }
@@ -104190,7 +105756,7 @@ components:
           description: "Explicit Compose dependency conditions. service_started retains admission ordering; service_healthy gates release on the captured same-project, same-environment dependency deployment."
         service_binding_policy:
           $ref: '#/components/schemas/ServiceBindingPolicy'
-          description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted."
+          description: "Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project` (ADR-20261022111119); existing workloads retain their persisted policy when the extension is omitted."
         service_reliability:
           $ref: '#/components/schemas/ServiceReliabilityPolicies'
           description: "Dependency-specific policy selected by Compose `x-gregale-service-reliability`."
@@ -104224,6 +105790,20 @@ components:
           type: array
           items: { type: string }
           description: "Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements."
+        unset_env_keys:
+          type: array
+          items: { type: string }
+          description: "Names from env_keys and required_env_keys that will have no value in the selected environment: not configured on the app and not provided by the platform. Names only, never values."
+        unset_env_key_reasons:
+          type: object
+          additionalProperties:
+            type: string
+            enum: [not_opted_in, secret, service_address, local_address, interpolated, host_value, empty, invalid]
+          description: "For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never values."
+        imported_env_keys:
+          type: array
+          items: { type: string }
+          description: "Compose environment names whose plain values apply will write, because the project sets x-gregale-env-import: true and they are unset (ADR-20261023085230). Names only."
         source:
           type: string
           description: "detector provenance, e.g. compose.yaml: api"
@@ -105055,6 +106635,7 @@ components:
             - workflow_waiting_age_seconds
             - workflow_due_age_seconds
             - custom_metric
+            - log_search_matches
             - log_error_lines
             - log_warn_lines
             - slo_budget_burn
@@ -105081,6 +106662,10 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'The pushed custom metric a custom_metric rule watches (ADR-745). Present only when metric is custom_metric.'
           example: orders_pending
+        log_query:
+          type: string
+          description: 'The canonical log search filters a log_search_matches rule counts (ADR-20261018083536). Present only when metric is log_search_matches.'
+          example: level=error&q=timeout&source=runtime
         slo_id:
           type: string
           format: uuid
@@ -105159,7 +106744,7 @@ components:
         metric:
           type: string
           description: 'Selected metric for the existing alert rule. MCP task age reads a fresh app gauge in seconds and degrades when unavailable; mcp_tasks_metrics_stale is 1 when either task gauge is missing, stale, or invalid. Min=0 worker apps also require a fresh observer heartbeat with value 1. mcp_task_promotion_hold_age_seconds reads the oldest active hold directly from state (seconds, zero with no holds); its alerts support webhook action only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches]
         comparison:
           type: string
           enum: [gt, gte, lt, lte, above_baseline, below_baseline]
@@ -105175,6 +106760,11 @@ components:
           pattern: '^[a-z][a-z0-9_]{0,62}$'
           description: 'Required when metric is custom_metric; omit otherwise. A gauge is compared on its average over the window and a counter on its per-second rate. custom_metric rules support webhook action only and windows up to 24h.'
           example: orders_pending
+        log_query:
+          type: string
+          maxLength: 2048
+          description: 'Required when metric is log_search_matches; omit otherwise. URL query string of log search filters (source, level, status, route, deployment_id, request_id, trace_id, q); the rule counts matching log events in its window. Webhook action only, windows up to 24h.'
+          example: level=error&q=timeout&source=runtime
         slo_id:
           type: string
           format: uuid
@@ -105239,7 +106829,7 @@ components:
         metric:
           type: string
           description: 'Cannot cross metric families (e.g. error_rate_pct → failed_invocations) — returns 400. MCP task metrics are notification-only.'
-          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected]
+          enum: [error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms, cold_start_pct, request_count, failed_invocations, api_up, account_spend_eur, deployment_failed, cert_expiry_seconds, cert_issuance_failed, queue_depth, new_error_fingerprint, cold_wake_rate_pct, daily_cost_cents, slo_burn_rate, pre_auth_target_threshold, pre_auth_target_signal_gap_pct, pre_auth_pressure, edge_validation_failures, edge_rejections, edge_waf_detections, event_pending_recipients, event_oldest_pending_seconds, event_retry_rate_per_second, event_terminal_failure_pct, event_routing_latency_p95_seconds, event_paused_seconds, event_drain_rate_per_second, event_execution_dead_letters, event_execution_dead_letter_rate_per_second, event_handler_failure_pct, event_completion_latency_p95_seconds, event_recovery_stalled_jobs, event_recovery_expiring_jobs, event_recovery_capacity_wait_jobs, event_recovery_execution_waiting_jobs, event_recovery_execution_prolonged_wait_jobs, event_recovery_execution_unknown_jobs, event_recovery_execution_retention_risk_jobs, event_recovery_notification_admission_overdue_jobs, event_recovery_notification_admission_dead_jobs, event_recovery_notification_admission_unknown_jobs, event_recovery_notification_admission_no_receivers_jobs, event_recovery_notification_execution_overdue_jobs, event_recovery_notification_execution_dead_jobs, event_recovery_notification_execution_unknown_jobs, event_recovery_notification_execution_no_receivers_jobs, event_retention_expiring_receipts, event_storage_utilization_pct, mcp_tasks_oldest_age_seconds, mcp_tasks_metrics_stale, mcp_task_promotion_hold_age_seconds, mcp_policy_unconverged_gateways, mcp_policy_unverified, mcp_readiness_unhealthy, mcp_catalog_drift, mcp_catalog_monitor_unavailable, mcp_oauth_reauthorization_required, mcp_oauth_renewal_failed, mcp_oauth_retirement_expiring, mcp_oauth_issuance_unknown, mcp_protocol_error_rate_pct, mcp_protocol_execution_p95_ms, edge_rule_hits, edge_rule_log_hits, custom_metric, log_error_lines, log_warn_lines, slo_budget_burn, slo_budget_remaining_pct, synthetic_check_consecutive_failures, synthetic_check_latency_p95_ms, edge_rule_activity, route_insights_detected, log_search_matches]
         comparison: { type: string, enum: [gt, gte, lt, lte, above_baseline, below_baseline] }
         threshold: { type: number, format: double }
         window_spec: { type: string, enum: ['5m', '15m', '1h', '6h', '24h', '7d', '15d'] }
@@ -105535,6 +107125,18 @@ components:
         expired: { type: boolean, description: True once expires_at has passed and the rule no longer applies. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: enforce (default) or log; a log-mode rule is matched and counted but never acts. }
+        managed_by: { type: string, enum: [attack_mode], description: "Set on the app's attack-mode rule (ADR-20261021220456), which changes only through /v1/apps/{slug}/edge-protection/attack-mode; PATCH refuses it. Absent on every other rule." }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
+        unreleased_features:
+          type: array
+          description: |
+            Gated features this rule uses that are not yet released to the
+            account (ADR-20261023113721). The gateway does not enforce them:
+            a challenge rule is inert, a warn or block WAF rule only
+            observes, a penalty boxes nobody, an AI crawler condition never
+            matches, and attack mode challenges nobody. Absent when every
+            feature the rule uses is released.
+          items: { type: string, enum: [challenge, waf_blocking, penalty_box, ai_crawlers, attack_mode] }
 
     DeploymentRoutePolicySnapshotResponse:
       description: Immutable gateway edge-rule state recorded on the deployment's first live transition.
@@ -105606,6 +107208,7 @@ components:
         expires_at: { type: string, format: date-time, description: Optional time after which the gateway stops applying the new rule. }
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         mode: { type: string, enum: [enforce, log], description: 'Start the rule enforced (default) or in log mode, where it is only matched and counted.' }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
 
     UpdateEdgeRuleRequest:
       description: 'Partial update — every field optional. Kind is not patchable.'
@@ -105659,6 +107262,8 @@ components:
         match: { $ref: '#/components/schemas/EdgeRuleMatchExpr' }
         clear_match: { type: boolean, description: Remove the match condition. }
         mode: { type: string, enum: [enforce, log], description: 'Switch the rule to enforce, or to log so it is matched and counted but never acts.' }
+        penalty: { $ref: '#/components/schemas/EdgeRulePenalty' }
+        clear_penalty: { type: boolean, description: "Remove the rule's penalty box, releasing the clients it holds." }
 
     EdgeRuleMatchExpr:
       description: |
@@ -105667,11 +107272,18 @@ components:
         path, host, client_ip, country, asn (ADR-966: the client IP's
         autonomous system, e.g. 13335 or AS13335), ua_family (ADR-973: the
         User-Agent's family, one of browser, mobile, bot, tool, other),
-        verified_bot (ADR-973: a known crawler confirmed by forward-confirmed
-        reverse DNS of the client IP, one of googlebot, bingbot, applebot,
-        yandexbot, baiduspider, yahoo, petalbot; absent otherwise),
-        header:<name>, cookie:<name>, query:<name>. ua_family and
-        verified_bot take eq, ne, in, not_in, exists, missing. Ops: eq, ne, in, not_in, prefix, suffix, contains,
+        verified_bot (ADR-973: a known crawler confirmed by its operator's
+        published IP ranges or forward-confirmed reverse DNS of the client
+        IP, one of googlebot, bingbot, applebot, yandexbot, baiduspider,
+        yahoo, petalbot; absent otherwise), ai_crawler (ADR-20261022083601:
+        the AI crawler the User-Agent claims, such as gptbot, claudebot,
+        ccbot, perplexitybot, bytespider), ai_crawler_purpose (that
+        crawler's purpose: training, search or assistant),
+        verified_ai_crawler (the claimed AI crawler when the client IP is
+        in its operator's published ranges; only crawlers that publish
+        ranges can verify), header:<name>, cookie:<name>, query:<name>.
+        ua_family, verified_bot and the AI crawler fields take eq, ne, in,
+        not_in, exists, missing. Ops: eq, ne, in, not_in, prefix, suffix, contains,
         exists, missing, regex (RE2), cidr (client_ip only), in_list (ADR-963:
         list names an account list whose kind fits the field). Depth at most 4,
         at most 32 nodes, 64 values per leaf, values and regexes at most 256
@@ -105804,6 +107416,62 @@ components:
           description: CRS attack categories of a kind=waf detection (sqli, xss, lfi, ...).
           items: { type: string }
         waf_score: { type: integer, minimum: 0, maximum: 10000, description: CRS inbound anomaly score of a kind=waf detection. }
+
+    EdgeWAFReviewResponse:
+      description: An app's sampled kind=waf detections grouped for a false-positive review (ADR-831 amendment 13).
+      type: object
+      required: [since, scanned, truncated, groups]
+      properties:
+        since: { type: string, format: date-time, description: Start of the reviewed window, after the plan clamp. }
+        scanned: { type: integer, minimum: 0, description: Detection events read. }
+        truncated: { type: boolean, description: 'The window held more detections than a review reads (5,000 per outcome, newest first), so the oldest were left out.' }
+        groups:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EdgeWAFReviewGroup' }
+
+    EdgeWAFReviewGroup:
+      description: One edge rule's detections by one CRS rule on one path (ADR-831 amendment 13).
+      type: object
+      required: [rule_id, crs_rule_id, category, path, events, detected, warned, blocked, clients, top_client_percent, scanner_percent, first_seen, last_seen, request_ids, excluded, assessment, reason]
+      properties:
+        rule_id: { type: string }
+        rule_name: { type: string }
+        rule_mode: { type: string, enum: [observe, warn, block] }
+        crs_rule_id: { type: integer }
+        category: { type: string, description: 'CRS attack category of the rule (sqli, xss, rce, lfi, rfi, php, java, generic, protocol, multipart, scanner, session_fixation, other).' }
+        path: { type: string, description: 'Request path with id-like segments (numbers, UUIDs, long hex or tokens) read as {id}.' }
+        events: { type: integer, minimum: 0 }
+        detected: { type: integer, minimum: 0, description: Detections in sampled requests. }
+        warned: { type: integer, minimum: 0 }
+        blocked: { type: integer, minimum: 0 }
+        clients: { type: integer, minimum: 0, description: Distinct client IPs. }
+        top_client_percent: { type: integer, minimum: 0, maximum: 100, description: Share of the group's detections from its busiest client. }
+        scanner_percent: { type: integer, minimum: 0, maximum: 100, description: Share of the group's detections from clients flagged on 5 or more paths in the window. }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        request_ids:
+          type: array
+          maxItems: 3
+          description: The newest example request IDs; look them up with the events listing.
+          items: { type: string }
+        known_false_positive: { type: string, description: The documented legitimate traffic this CRS rule flags. }
+        excluded: { type: boolean, description: The rule excludes this CRS rule now. }
+        assessment: { type: string, enum: [likely_false_positive, likely_attack, review, excluded] }
+        reason: { type: string, description: Why the group got its assessment. }
+
+    EdgeWAFExclusionsRequest:
+      description: CRS rule IDs to add to and remove from a kind=waf rule's exclude_rule_ids (ADR-831 amendment 13).
+      type: object
+      properties:
+        add:
+          type: array
+          maxItems: 50
+          items: { type: integer, minimum: 900000, maximum: 999999 }
+        remove:
+          type: array
+          maxItems: 50
+          items: { type: integer, minimum: 900000, maximum: 999999 }
 
     EdgeRuleStatsResponse:
       description: Per-rule match counts over a window (ADR-960).
@@ -106855,6 +108523,11 @@ components:
           maximum: 86400
           default: 3600
           description: How long a solved challenge lets the browser through.
+        max_difficulty:
+          type: integer
+          minimum: 10
+          maximum: 22
+          description: When above difficulty, the gateway raises the difficulty up to this while the rule serves far more challenge pages than usual, two bits (4x the work) per minute, and lowers it again as the load eases (ADR-831 amendment 8). Must be at least difficulty. Omitted or equal to difficulty keeps the difficulty fixed.
     EdgeRuleAsyncAction:
       description: |
         Marks the matched route for durable asynchronous execution (ADR-215).
@@ -107080,42 +108753,23 @@ components:
 
     EdgeRuleBudgetAction:
       description: |
-        Per-route end-to-end request budget (ADR-093 / §4.1.2.16).
-        The primitive for "POST /payment → 3 s, POST /signup → 10 s"
-        without writing timeout-propagation code in the customer's
-        app. The hot-path applier (cmd/gatewayd-public/main.go:PR-B
-        + pkg/gateway/handler_apply_edge_rule_budget.go) installs a
-        per-request `Budget` onto `r.Context()` via
-        `reqbudget.WithRemaining`; every downstream hop (DB, gRPC,
-        HTTP) tightens itself against the budget via
-        `reqbudget.WithOverhead` / `WithCeiling`.
+        Per-route execution budget plus an optional total deadline (ADR-570).
+        budget_ms starts after upload, wake and capacity admission. Its
+        configured override header (default x-faas-budget-ms) may alter the
+        execution allowance within the plan ceiling.
 
-        On expiry the platform returns 504 + RFC 7807 problem
-        envelope (`code: request_budget_exceeded`) BEFORE the
-        customer's handler runs — the goal is bounded resource
-        pin per request, not customer-visible timer logic. Customer
-        code can read `reqbudget.FromContext(r.Context()).Remaining`
-        if it wants to short-circuit its own work early.
-
-        Field-by-field:
-          * `budget_ms` — required wall-clock budget. Must be > 0
-            and ≤ 15 min (`RequestBudgetPlanMax`). The plan's ceiling
-            (`Plan.RequestBudgetMaxMs`: Free 30 s, Hobby 60 s, Pro
-            5 min, Scale 15 min; ADR-1150) clamps it at request time.
-            A 0 or negative value is rejected at create-time with 422.
-          * `allow_override_header` — optional HTTP request header
-            that lets a customer set a per-request override
-            (default `x-faas-budget-ms`). Empty (default) =
-            no override accepted; the edge-rule value is the
-            authoritative budget. The header is parsed as a
-            decimal integer in `[1, math.MaxInt32]`; out-of-range
-            values are ignored and the edge-rule value wins
-            (silent clamp, no 400 — the budget is a quality
-            primitive, not a security gate).
-
-        Rejections never reach the wake gate, the auth chain, or
-        the rate limiter — same posture as the other kind=budget
-        edge-rule appliers. Free-and-above (no plan gate).
+        total_deadline_ms starts when the public proxy receives the request
+        and includes upload, routing, auth, queueing, wake, retries and the
+        ordinary response exchange. It cannot be increased by an execution
+        override. Zero or omission leaves existing execution semantics.
+        Both values are at most 15 min (`RequestBudgetPlanMax`); the plan
+        ceiling (`Plan.RequestBudgetMaxMs`: Free 30 s, Hobby 60 s, Pro 5 min,
+        Scale 15 min; ADR-1150) caps them at request time. Expiry returns a 504 problem with code
+        request_budget_exceeded before response commitment; a committed
+        ordinary response is terminated on expiry. Streaming and upgrades
+        use their idle/session contract after successful response headers.
+        Detached work and unmediated guest sockets are excluded. Nested
+        managed-service deadline transport remains pending acceptance.
       type: object
       required: [budget_ms]
       properties:
@@ -107124,12 +108778,19 @@ components:
           format: int64
           minimum: 1
           maximum: 900000
-          description: "Per-request wall-clock budget in milliseconds (1 ms – 15 min; the plan's ceiling applies at request time)."
+          description: "Execution allowance in milliseconds, after upload/wake/admission (1 ms – 15 min; the plan's ceiling applies at request time)."
+        total_deadline_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 900000
+          default: 0
+          description: "Optional total deadline from trusted public ingress; zero leaves it unset."
         allow_override_header:
           type: string
           maxLength: 128
           pattern: '^[A-Za-z][A-Za-z0-9-]*$'
-          description: "Optional RFC 7230 token header name for per-request override (default `x-faas-budget-ms`). Empty = no override."
+          description: "Header for the execution override; default x-faas-budget-ms. It never increases total_deadline_ms."
 
     # ─── Mirror (issue #72 / ADR-125 / ADR-124 PR-A2) ──────────────────────
 
@@ -108316,15 +109977,16 @@ components:
       required: [name, kind, min_samples, created_by, created_at]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
         slo: { type: string, description: "slo gates: the SLO judged." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: the burn rate that fails the gate." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: new error groups allowed." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: events before a group counts." }
-        metric: { type: string, description: "custom_metric gates: the custom metric." }
+        metric: { type: string, description: "custom_metric gates: the custom metric. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
         comparison: { type: string, enum: [below, above], description: "custom_metric gates: which side of the threshold fails." }
         threshold: { type: number, description: "custom_metric gates: the bound on the metric's average." }
-        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests or metric values a release needs before the gate is judged." }
+        max_increase_percent: { type: integer, minimum: 1, maximum: 1000, description: "ai gates: the largest increase over the baseline, in percent." }
+        min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Requests, metric values or AI calls (on each side, for ai gates) needed before the gate is judged." }
         created_by: { type: string }
         created_at: { type: string, format: date-time }
     CreateReleaseGateRequest:
@@ -108333,14 +109995,15 @@ components:
       required: [name, kind]
       properties:
         name: { type: string, pattern: '^[a-z][a-z0-9_-]{0,62}$' }
-        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
         slo: { type: string, description: "slo gates: the name of one of the app's SLOs." }
         max_burn_rate: { type: integer, minimum: 1, maximum: 1000, description: "slo gates: default 10." }
         max_new_groups: { type: integer, minimum: 0, maximum: 100, description: "new_errors gates: default 0." }
         min_events: { type: integer, minimum: 1, maximum: 100000, description: "new_errors gates: default 3." }
-        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric gates: the custom metric's name." }
+        metric: { type: string, pattern: '^[a-z][a-z0-9_]{0,62}$', description: "custom_metric gates: the custom metric's name. ai gates: error_rate, flagged_rate, cost_per_call or ttfb_ms." }
         comparison: { type: string, enum: [below, above], description: "custom_metric gates: fail when the average is below or above the threshold." }
         threshold: { type: number, description: "custom_metric gates: the bound." }
+        max_increase_percent: { type: integer, minimum: 1, maximum: 1000, description: "ai gates: fail when the release's metric is this many percent above its baseline's, and above a floor (1 percentage point, 50 ms or 1 millicent). Default 50." }
         min_samples: { type: integer, minimum: 1, maximum: 1000000, description: "Default 20." }
     ListReleaseGatesResponse:
       description: "An app's release gates, by name."
@@ -108392,6 +110055,65 @@ components:
         comment: { type: string }
         counted: { type: boolean, description: "Whether the approval counts toward the policy; the deployer's own approval does not unless self-approval is allowed." }
         decided_at: { type: string, format: date-time }
+    DatabaseSwitch:
+      description: "A rollback that restores the app's managed PostgreSQL database with the code (ADR-20261023181931). The database is restored to restore_point as a new database, and the app moves to it and to the target release while it is fenced."
+      type: object
+      required: [id, app_id, scope, phase, target_deployment_id, undone_deployment_ids, source_database_id, target_name, restore_point, drain, phase_started_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string, description: "The deployment scope the rollback restores." }
+        phase:
+          type: string
+          enum: [restoring, staging, verifying, fencing, settling, draining, switching, resuming, aborting, completed, failed, cancelled]
+          description: "From fencing until completed the app does not serve. aborting unwinds everything done before the bindings switched."
+        from_deployment_id: { type: string, format: uuid, description: "The release serving when the switch was requested; the switch aborts if another one serves before it switches." }
+        from_revision: { type: integer, minimum: 0 }
+        target_deployment_id: { type: string, format: uuid, description: "The rollback target." }
+        target_revision: { type: integer, minimum: 0 }
+        undone_deployment_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: "Deployments whose release commands the restore undoes; rolling back to them is refused afterwards."
+        source_database_id: { type: string, format: uuid, description: "The database the app leaves. It keeps every write." }
+        source_database_name: { type: string }
+        target_database_id: { type: string, format: uuid, description: "The restored copy, once its restore has started." }
+        target_name: { type: string, description: "Name of the restored copy." }
+        restore_point: { type: string, format: date-time, description: "Writes after this moment stay only in the source database." }
+        drain:
+          $ref: '#/components/schemas/DatabaseSwitchDrain'
+        failure_code: { type: string, description: "Why a switch failed or was cancelled, or why it is aborting." }
+        failure_detail: { type: string }
+        last_error_code: { type: string, description: "The latest transient error the switch is retrying." }
+        requested_by: { type: string }
+        cancel_requested_at: { type: string, format: date-time }
+        fenced_at: { type: string, format: date-time }
+        release_switched_at: { type: string, format: date-time }
+        activated_at: { type: string, format: date-time, description: "When the bindings moved to the copy; there is no way back after it." }
+        finished_at: { type: string, format: date-time }
+        phase_started_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    DatabaseSwitchDrain:
+      description: "A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot invalidated), still pending, or blocking the switch."
+      type: object
+      required: [retired, parked, pending, blocked]
+      properties:
+        retired: { type: integer, minimum: 0 }
+        parked: { type: integer, minimum: 0 }
+        pending: { type: integer, minimum: 0 }
+        blocked: { type: integer, minimum: 0 }
+
+    DatabaseSwitchList:
+      description: "An app's database switches, newest first."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DatabaseSwitch' }
+
     ScheduledRelease:
       description: "A release built ahead of time that starts its rollout at release_at (ADR-20261021152201)."
       type: object
@@ -108543,11 +110265,11 @@ components:
       required: [name, kind, passed, summary, observed, bound, samples]
       properties:
         name: { type: string }
-        kind: { type: string, enum: [slo, new_errors, custom_metric] }
+        kind: { type: string, enum: [slo, new_errors, custom_metric, ai] }
         passed: { type: boolean }
-        observed: { type: number, description: "The burn rate, new error groups, or metric average." }
+        observed: { type: number, description: "The burn rate, new error groups, metric average, or the release's AI metric." }
         bound: { type: number, description: "The value that fails the gate." }
-        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, or metric values." }
+        samples: { type: integer, format: int64, minimum: 0, description: "The release's requests, new-error events, metric values or AI calls." }
         baseline_bad_fraction: { type: number, description: "slo gates: the predecessor's bad fraction." }
         error_classes: { type: array, maxItems: 5, items: { type: string }, description: "new_errors gates: the new groups' error classes." }
         summary: { type: string, description: "What the gate measured, in one line." }
@@ -109271,6 +110993,11 @@ components:
           description: "FLEET p95 wake latency (the unlabeled histogram). Labelled as such in the UI."
           x-since: "2026-07"
           x-issue: "273"
+        wake_samples:
+          type: integer
+          format: int64
+          description: "Number of fleet wakes wake_p95_ms was computed from. Below 20 the p95 is not meaningful and clients show it as unavailable. Omitted when the count is unknown."
+          x-since: "2026-10"
         queue_depth:
           type: integer
           format: int64
@@ -111653,6 +113380,234 @@ components:
           type: array
           items: { $ref: '#/components/schemas/AccountTraceLookupError' }
 
+    LogEventsResponse:
+      description: One newest-first page of an app's log ledger (ADR-20261018083536).
+      type: object
+      required: [since, until, events]
+      properties:
+        since: { type: string, format: date-time, description: Effective window start after clamping to retention. }
+        until: { type: string, format: date-time }
+        events:
+          type: array
+          items: { $ref: '#/components/schemas/LogQueryEvent' }
+        next_cursor: { type: string, description: Present when more events match; pass it back as cursor. }
+    LogFacetCount:
+      description: One facet value and how many events carry it.
+      type: object
+      required: [value, count]
+      properties:
+        value: { type: string }
+        count: { type: integer, format: int64 }
+    LogEventFacetsResponse:
+      description: Log event counts by facet over one window (ADR-20261018083536).
+      type: object
+      required: [since, until, total, sources, levels, status_classes, routes, routes_truncated]
+      properties:
+        since: { type: string, format: date-time, description: Facet window start after clamping to retention. }
+        until: { type: string, format: date-time }
+        total: { type: integer, format: int64 }
+        sources:
+          type: array
+          items: { $ref: '#/components/schemas/LogFacetCount' }
+        levels:
+          type: array
+          items: { $ref: '#/components/schemas/LogFacetCount' }
+        status_classes:
+          type: array
+          items: { $ref: '#/components/schemas/LogFacetCount' }
+        routes:
+          type: array
+          items: { $ref: '#/components/schemas/LogFacetCount' }
+        routes_truncated: { type: boolean, description: More routes matched than the ten returned. }
+    DashboardWidget:
+      type: object
+      description: 'One typed reference to a signal (ADR-20261022173833). app_metric and custom_metric use metric, log_count uses query, slo uses slo_id.'
+      required: [title, kind, app]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 80 }
+        kind: { type: string, enum: [app_metric, log_count, custom_metric, slo] }
+        app: { type: string, description: 'Slug of an app the account owns.' }
+        metric:
+          type: string
+          description: 'app_metric: request_count, error_rate_pct, latency_p50_ms, latency_p95_ms, latency_p99_ms or cold_start_pct. custom_metric: the pushed metric name.'
+        query: { type: string, description: 'log_count: log search filters as a URL query string (source, level, status, route, deployment_id, request_id, trace_id, q).' }
+        slo_id: { type: string, format: uuid, description: 'slo: the SLO id.' }
+        window: { type: string, enum: ['5m', '1h', '6h', '24h', '7d'], description: 'Defaults to 1h; ignored by slo widgets.' }
+    Dashboard:
+      type: object
+      description: An account's saved dashboard.
+      required: [id, name, widgets, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        widgets:
+          type: array
+          items: { $ref: '#/components/schemas/DashboardWidget' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    DashboardRequest:
+      type: object
+      description: Body of a dashboard create or replace.
+      required: [name, widgets]
+      properties:
+        name: { type: string, pattern: '^[a-z0-9][a-z0-9-]{0,62}$' }
+        widgets:
+          type: array
+          maxItems: 24
+          items: { $ref: '#/components/schemas/DashboardWidget' }
+    Incident:
+      type: object
+      description: An alert rule's firing period, a route monitor incident, or a platform incident.
+      required: [id, source, status, title, opened_at]
+      properties:
+        id: { type: string }
+        source: { type: string, enum: [alert, route_monitor, platform] }
+        status: { type: string, enum: [open, resolved] }
+        title: { type: string }
+        app: { type: string, description: The app's slug; absent for account-wide alerts and platform incidents. }
+        opened_at: { type: string, format: date-time }
+        resolved_at: { type: string, format: date-time }
+        rule_id: { type: string, format: uuid, description: An alert incident's rule. }
+        metric: { type: string, description: An alert incident's rule metric. }
+        deployment_id: { type: string, format: uuid, description: The deployment a route monitor incident watched. }
+        impact: { type: string, description: A platform incident's status page impact. }
+        acknowledged_at: { type: string, format: date-time, description: When someone in the account acknowledged the incident. }
+        acknowledged_by: { type: string, description: 'Who acknowledged it, an email or api_key:<id>.' }
+    IncidentNote:
+      type: object
+      description: An account's acknowledgement (no body) or note on an incident.
+      required: [id, kind, author, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { type: string, enum: [acknowledged, note] }
+        body: { type: string, maxLength: 2000 }
+        author: { type: string, description: 'An email or api_key:<id>.' }
+        created_at: { type: string, format: date-time }
+    IncidentNoteRequest:
+      type: object
+      description: A note to append to an incident.
+      required: [body]
+      properties:
+        body: { type: string, minLength: 1, maxLength: 2000 }
+    IncidentsResponse:
+      type: object
+      description: The account's open incidents and those resolved since `since`, open first.
+      required: [since, incidents, truncated, unavailable_sources]
+      properties:
+        since: { type: string, format: date-time }
+        incidents:
+          type: array
+          items: { $ref: '#/components/schemas/Incident' }
+        truncated: { type: boolean }
+        unavailable_sources:
+          type: array
+          items: { type: string }
+    IncidentFire:
+      type: object
+      description: One notification an alert incident sent.
+      required: [at, observed, status]
+      properties:
+        at: { type: string, format: date-time }
+        observed: { type: number, format: double }
+        status: { type: string }
+    IncidentUpdate:
+      type: object
+      description: One status page update of a platform incident.
+      required: [at, state, message]
+      properties:
+        at: { type: string, format: date-time }
+        state: { type: string }
+        message: { type: string }
+    IncidentDetail:
+      type: object
+      description: An incident with the evidence the platform has for it and the account's notes.
+      required: [incident, notes, unavailable_sources]
+      properties:
+        incident: { $ref: '#/components/schemas/Incident' }
+        fires:
+          type: array
+          items: { $ref: '#/components/schemas/IncidentFire' }
+        log_context:
+          type: object
+          additionalProperties: true
+          description: What the logs showed at the newest fire, when log search was on.
+        updates:
+          type: array
+          items: { $ref: '#/components/schemas/IncidentUpdate' }
+        changes:
+          type: array
+          items: { $ref: '#/components/schemas/AppChangeEvent' }
+        changes_truncated: { type: boolean }
+        notes:
+          type: array
+          description: The account's acknowledgement and notes, oldest first.
+          items: { $ref: '#/components/schemas/IncidentNote' }
+        unavailable_sources:
+          type: array
+          items: { type: string }
+    DashboardPoint:
+      type: object
+      description: One time-series sample.
+      required: [at, value]
+      properties:
+        at: { type: string, format: date-time }
+        value: { type: number, format: double }
+    DashboardWidgetValue:
+      description: A widget with its resolved value, or the reason it has none.
+      allOf:
+        - $ref: '#/components/schemas/DashboardWidget'
+        - type: object
+          properties:
+            value: { type: number, format: double, description: 'The headline number, in unit.' }
+            unit: { type: string, description: 'ms, %, requests, events, gauge, per second, or % budget left.' }
+            detail: { type: string, description: 'Context: log counts by level, SLO attainment.' }
+            series:
+              type: array
+              description: The custom metric's points over the window.
+              items: { $ref: '#/components/schemas/DashboardPoint' }
+            error: { type: string, description: 'Why the widget has no value: an unavailable app or source, no data, or a plan gate.' }
+    DashboardData:
+      type: object
+      description: A dashboard with every widget resolved.
+      required: [id, name, as_of, widgets]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        as_of: { type: string, format: date-time }
+        widgets:
+          type: array
+          items: { $ref: '#/components/schemas/DashboardWidgetValue' }
+    DashboardsResponse:
+      type: object
+      description: The account's dashboards by name.
+      required: [dashboards]
+      properties:
+        dashboards:
+          type: array
+          items: { $ref: '#/components/schemas/Dashboard' }
+    LogSavedSearch:
+      type: object
+      description: One app's named log search filters (ADR-20261018083536).
+      required: [name, query, created_at, updated_at]
+      properties:
+        name: { type: string, description: 'Unique within the app.' }
+        query: { type: string, description: 'Canonical URL query string of filters, e.g. level=error&q=timeout.' }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    LogSavedSearchRequest:
+      type: object
+      description: Body of a saved log search create or replace.
+      required: [query]
+      properties:
+        query: { type: string, maxLength: 2048, description: 'URL query string of filters: source, level, status, route, deployment_id, request_id, trace_id, q.' }
+    LogSavedSearchesResponse:
+      type: object
+      description: An app's saved log searches by name.
+      required: [searches]
+      properties:
+        searches:
+          type: array
+          items: { $ref: '#/components/schemas/LogSavedSearch' }
     LogQueryEvent:
       type: object
       description: "Safe source-neutral log query event; trace lookup returns the HTTP access-log projection."
@@ -115658,6 +117613,24 @@ components:
         used: { type: integer, format: int64, minimum: 0 }
         crossed_at: { type: string, format: date-time }
         tag: { type: [string, 'null'], maxLength: 97, description: The tag whose daily cost limit crossed the threshold (ADR-1438). }
+    OutboundAIQualityDriftWebhookPayload:
+      type: object
+      description: >-
+        Data delivered with outbound.ai_quality.drift to every app bound to the integration when a model's quality signal
+        moves away from its previous 7 days (ADR 20261021171712). alert_id is stable across retries.
+      required: [alert_id, integration_id, integration_name, usage_date, model, metric, current_value, baseline_value, current_count, baseline_count, detected_at]
+      properties:
+        alert_id: { type: string, format: uuid }
+        integration_id: { type: string, format: uuid }
+        integration_name: { type: string }
+        usage_date: { type: string, format: date }
+        model: { type: string, maxLength: 200 }
+        metric: { type: string, enum: [truncated, refused, empty, invalid_json, tool_error, bad_feedback, evaluation_score] }
+        current_value: { type: integer, format: int64, minimum: 0, description: 'Basis points of answered (or rated) calls; hundredths of a point for evaluation_score.' }
+        baseline_value: { type: integer, format: int64, minimum: 0 }
+        current_count: { type: integer, format: int64, minimum: 0, description: Calls the current value was taken over. }
+        baseline_count: { type: integer, format: int64, minimum: 0 }
+        detected_at: { type: string, format: date-time }
     ManagedRealtimeBatchMessageRequest:
       type: object
       required:
@@ -115842,7 +117815,7 @@ components:
     ConsumerBillingStatement:
       description: "One finalized statement as its consumer sees it."
       type: object
-      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents]
+      required: [id, period_start, period_end, revision, currency, billable_units, amount_millicents, credit_applied_millicents, amount_due_millicents]
       properties:
         id: { type: string, format: uuid }
         period_start: { type: string, format: date-time }
@@ -115851,6 +117824,8 @@ components:
         currency: { type: string, pattern: '^[A-Z]{3}$' }
         billable_units: { type: integer, format: int64, minimum: 0 }
         amount_millicents: { type: integer, format: int64 }
+        credit_applied_millicents: { type: integer, format: int64, minimum: 0, description: "Prepaid credit drawn when the statement was finalized (ADR-20261020211500)." }
+        amount_due_millicents: { type: integer, format: int64, minimum: 0, description: "amount_millicents less credit_applied_millicents: what is left to pay." }
         finalized_at: { type: string, format: date-time }
         invoice: { $ref: '#/components/schemas/ConsumerBillingInvoice' }
 
@@ -116589,6 +118564,7 @@ components:
               - consumer.plan_changed
               - consumer.closed
               - outbound.ai_budget.threshold
+              - outbound.ai_quality.drift
               - issue.created
               - issue.assigned
               - issue.resolved
@@ -116633,6 +118609,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -117262,6 +119240,22 @@ components:
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,47}$'
+          description: "Name of the endpoint within its app, used by gregale.yaml. Absent for endpoints created without one."
+        channel_rules:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/RealtimeChannelRule' }
+
+    RealtimeChannelRule:
+      type: object
+      description: "Grants a channel to a verified token without the authorize callback. The pattern is literal text with {claim} placeholders that must equal the token's claims and an optional trailing * matching any suffix."
+      required: [pattern, read]
+      properties:
+        pattern: { type: string, minLength: 1, maxLength: 256, example: "org:{org_id}:room:*" }
+        read: { type: boolean, description: "Must be true: a rule grants read access." }
 
     CreateManagedRealtimeEndpointRequest:
       type: object
@@ -117297,6 +119291,15 @@ components:
         max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576, default: 0 }
         max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800, default: 0 }
         enabled: { type: boolean, default: true }
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,47}$'
+          description: "Optional name of the endpoint within its app, unique per app. gregale.yaml declares endpoints by slug."
+        channel_rules:
+          type: array
+          maxItems: 32
+          description: "Channels granted from verified token claims without the authorize callback. A matching channel trusts the token until it expires."
+          items: { $ref: '#/components/schemas/RealtimeChannelRule' }
 
     UpdateManagedRealtimeEndpointRequest:
       type: object
@@ -117331,6 +119334,15 @@ components:
         max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576 }
         max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
         enabled: { type: boolean }
+        slug:
+          type: string
+          pattern: '^$|^[a-z0-9][a-z0-9-]{0,47}$'
+          description: "Replace the endpoint's slug. An empty string removes it."
+        channel_rules:
+          type: array
+          maxItems: 32
+          description: "Replace the endpoint's channel rules. An empty list removes them."
+          items: { $ref: '#/components/schemas/RealtimeChannelRule' }
 
     RotateManagedRealtimeAuthRequest:
       type: object
@@ -117647,6 +119659,7 @@ components:
               - consumer.plan_changed
               - consumer.closed
               - outbound.ai_budget.threshold
+              - outbound.ai_quality.drift
               - issue.created
               - issue.assigned
               - issue.resolved
@@ -117691,6 +119704,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -117831,6 +119846,7 @@ components:
               - consumer.plan_changed
               - consumer.closed
               - outbound.ai_budget.threshold
+              - outbound.ai_quality.drift
               - issue.created
               - issue.assigned
               - issue.resolved
@@ -117875,6 +119891,8 @@ components:
               - event_recovery.expired
               - profile.route_regressed
               - profile.route_recovered
+              - profile.capture_ready
+              - profile.capture_oom_linked
               - event_recovery.execution_finished
               - realtime.channel.published
               - realtime.channel.acknowledged
@@ -118428,6 +120446,163 @@ components:
       properties:
         enabled: { type: boolean }
         window_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+        kinds:
+          description: Continuous profile kinds (ADR-1155); defaults to cpu.
+          type: array
+          maxItems: 2
+          items: { type: string, enum: [cpu, heap] }
+        pprof_port:
+          description: Guest-local port where a Go application serves net/http/pprof (ADR-1155). The platform then collects CPU, heap and goroutine profiles from it, so the application needs no Gregale SDK. 9191 and 4318 are reserved.
+          type: integer
+          minimum: 1
+          maximum: 65535
+    CreateProfileCaptureRequest:
+      description: On-demand capture request (ADR-1155). Kinds defaults to [cpu]; duration_seconds to 10. Stacks is an instant snapshot of where every goroutine or thread is waiting, taken when the capture starts. Block and mutex are Go contention profiles (time goroutines spent blocked on channels or locks, or waiting for a mutex, during the window).
+      type: object
+      properties:
+        kinds: { type: array, maxItems: 5, items: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+        duration_seconds: { type: integer, minimum: 1, maximum: 60, default: 10 }
+        instance_id: { type: string, format: uuid, description: Running instance to profile; empty selects the earliest-started RUNNING instance. }
+    ProfileCaptureProfile:
+      description: One collector's stored profile.
+      type: object
+      required: [kind, bytes]
+      properties:
+        kind: { type: string, enum: [cpu, heap, stacks, block, mutex] }
+        process_id: { type: string }
+        bytes: { type: integer }
+    ProfileCapture:
+      description: An on-demand capture. processes counts instrumented processes that saw the capture; zero means the instance has no collector.
+      type: object
+      required: [id, app_id, status, kinds, duration_seconds, processes, profiles, created_at, expires_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        status: { type: string, enum: [queued, capturing, ready, failed] }
+        kinds: { type: array, items: { type: string, enum: [cpu, heap, stacks, block, mutex] } }
+        duration_seconds: { type: integer }
+        requested_instance_id: { type: string, format: uuid }
+        trigger: { type: string, enum: [manual, memory_pressure, slow_request, cpu_saturation], description: 'Who started the capture; memory_pressure captures are queued automatically when an instance runs low on memory, slow_request captures (stacks and CPU) when a request stays in flight for 10 seconds, cpu_saturation captures (CPU) when an instance uses 90% of its CPU limit for 30 seconds.' }
+        request_id: { type: string, maxLength: 128, description: The x-faas-request-id of the in-flight request that started a slow_request capture. }
+        request_trace_id: { type: string, maxLength: 128, description: The trace id that request's telemetry is stored under. }
+        trigger_detail: { type: string }
+        instance_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        processes: { type: integer }
+        dropped: { type: integer, description: Profiles discarded by the reply bounds. }
+        reason: { type: string }
+        profiles: { type: array, maxItems: 8, items: { $ref: '#/components/schemas/ProfileCaptureProfile' } }
+        partial: { type: boolean, description: 'The capture ended early, normally because the workload was OOM-killed; heap profiles are the last checkpoints before the kill.' }
+        oom_killed_at: { type: string, format: date-time, description: Set when the captured instance was OOM-killed within 15 minutes of the capture. }
+        oom_peak_mb: { type: integer, description: Memory in use when the instance was OOM-killed. }
+        oom_plan_mb: { type: integer, description: The instance's plan memory limit. }
+        created_at: { type: string, format: date-time }
+        completed_at: { type: string, format: date-time }
+        expires_at: { type: string, format: date-time }
+    ProfileCaptureList:
+      description: An app's profile captures, newest first.
+      type: object
+      required: [captures]
+      properties:
+        captures: { type: array, maxItems: 50, items: { $ref: '#/components/schemas/ProfileCapture' } }
+    ProfileCaptureWebhookPayload:
+      description: Payload of the profile.capture_ready and profile.capture_oom_linked app webhook events (ADR-1155). Carries the capture record and its paths, never profile samples.
+      type: object
+      required: [version, capture, capture_path, api_path]
+      properties:
+        version: { type: integer, minimum: 1, maximum: 1 }
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        capture_path: { type: string, description: Dashboard page of the capture. }
+        api_path: { type: string, description: API resource of the capture. }
+    ProfileCaptureFunction:
+      description: Self and inclusive cost of one function in the view's unit.
+      type: object
+      required: [name, self, total]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        self: { type: integer, format: int64 }
+        total: { type: integer, format: int64 }
+    ProfileCaptureStack:
+      description: One frame in a bounded call-path tree.
+      type: object
+      required: [name, value]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        value: { type: integer, format: int64 }
+        children: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureStack' } }
+    ProfileCaptureView:
+      description: One profile kind merged across processes. unit is nanoseconds for cpu, bytes for heap and count (goroutines or threads) for stacks. Node and Python heap captures report memory allocated during the window and still live at its end; Go reports the sampled live heap.
+      type: object
+      required: [capture, kind, unit, total, functions, flamegraph, empty]
+      properties:
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [cpu, heap, stacks, block, mutex] }
+        unit: { type: string, enum: [nanoseconds, bytes, count] }
+        total: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
+        empty: { type: boolean }
+        source: { $ref: '#/components/schemas/ProfileSource' }
+    ProfileCaptureDiff:
+      description: One kind compared between two ready captures of an app (ADR-1155). Values keep the kind's unit and are not rescaled.
+      type: object
+      required: [baseline, candidate, kind, unit, baseline_total, candidate_total, delta, functions, flamegraph, warnings]
+      properties:
+        baseline: { $ref: '#/components/schemas/ProfileCapture' }
+        candidate: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [cpu, heap, stacks, block, mutex] }
+        unit: { type: string, enum: [nanoseconds, bytes, count] }
+        baseline_total: { type: integer, format: int64 }
+        candidate_total: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunctionDelta' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStackDelta' }
+        warnings: { type: array, items: { type: string } }
+    ProfileCaptureFunctionDelta:
+      description: One function's self cost in both captures; named functions aggregate across lines.
+      type: object
+      required: [name, baseline, candidate, delta]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        baseline: { type: integer, format: int64 }
+        candidate: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+    ProfileCaptureStackDelta:
+      description: One call path in both captures.
+      type: object
+      required: [name, baseline, candidate, delta]
+      properties:
+        name: { type: string }
+        file: { type: string }
+        line: { type: integer, format: int64 }
+        source: { $ref: '#/components/schemas/ProfileSourceLocation' }
+        baseline: { type: integer, format: int64 }
+        candidate: { type: integer, format: int64 }
+        delta: { type: integer, format: int64 }
+        children: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureStackDelta' } }
+    ProfileHeapResponse:
+      description: Continuous live heap near query.end (ADR-1155).
+      type: object
+      required: [query, kind, unit, total, functions, flamegraph, empty]
+      properties:
+        query: { $ref: '#/components/schemas/ProfileQuery' }
+        capture: { $ref: '#/components/schemas/ProfileCapture' }
+        kind: { type: string, enum: [heap] }
+        unit: { type: string, enum: [bytes] }
+        total: { type: integer, format: int64 }
+        functions: { type: array, items: { $ref: '#/components/schemas/ProfileCaptureFunction' } }
+        flamegraph: { $ref: '#/components/schemas/ProfileCaptureStack' }
+        empty: { type: boolean }
+        source: { $ref: '#/components/schemas/ProfileSource' }
     TracingConfig:
       description: "Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database, cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own OTel exporter are left untouched."
       type: object
@@ -118806,6 +120981,7 @@ components:
         image_digest: { type: string, description: "Immutable image/artifact digest associated with the deployment." }
         guest:
           $ref: '#/components/schemas/DebugGuestExecutionEvidence'
+        profile_capture_id: { type: string, format: uuid, description: "Stack snapshot taken while this request was in flight (ADR-1155 slow_request capture), when one exists." }
 
     DebugGuestExecutionEvidence:
       type: object
@@ -129001,6 +131177,12 @@ components:
 
     NotFound:
       description: 'code: not_found'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    RehearsalNotEnabled:
+      description: 'code: rehearsal_not_enabled — a requested rehearsal capability is not enabled on this installation. Retrying will not help.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

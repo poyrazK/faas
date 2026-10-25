@@ -1,6 +1,6 @@
 package apidserver_test
 
-// adr: 1187, 1199
+// adr: 1187, 1199, 20261022184757
 
 import (
 	"context"
@@ -24,7 +24,9 @@ type routeAwakeTestStore struct {
 	minutes  []sqlc.RouteAwakeMinutesRow
 	routes   []sqlc.RouteAwakeRouteMinutesRow
 	sources  []sqlc.RouteAwakeSourceMinutesRow
+	work     []sqlc.RouteAwakeWorkMinutesRow
 	params   sqlc.RouteAwakeRouteMinutesParams
+	workArgs sqlc.RouteAwakeWorkMinutesParams
 	err      error
 }
 
@@ -39,6 +41,11 @@ func (s *routeAwakeTestStore) RouteAwakeRouteMinutes(_ context.Context, arg sqlc
 
 func (s *routeAwakeTestStore) RouteAwakeSourceMinutes(context.Context, sqlc.RouteAwakeSourceMinutesParams) ([]sqlc.RouteAwakeSourceMinutesRow, error) {
 	return s.sources, s.err
+}
+
+func (s *routeAwakeTestStore) RouteAwakeWorkMinutes(_ context.Context, arg sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error) {
+	s.workArgs = arg
+	return s.work, s.err
 }
 
 // routeAwakeFixture is an app awake for the last two hours, pinged once a
@@ -112,5 +119,36 @@ func TestRouteAwakeRejectsAndDegrades(t *testing.T) {
 	(*(*e.S()).Store()) = statetest.NewMem(store)
 	if res := e.Do(t, "GET", "/v1/apps/shop/routes/awake", nil, nil); res.Code != http.StatusServiceUnavailable {
 		t.Fatalf("read failure: %d %s", res.Code, res.Body.String())
+	}
+}
+
+// Requests stop after ten minutes and a cron job fires every minute after
+// that: the cron job, named by its path and schedule, explains the rest of
+// the awake time, and the report says the plan's waitUntil timeout.
+func TestRouteAwakeReportCreditsBackgroundWork(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	store := routeAwakeFixture(t, e, apidserver.MustSeedApp(t, e, "shop"))
+	store.routes = store.routes[:10]
+	for m := 10; m < 120; m++ {
+		store.work = append(store.work, sqlc.RouteAwakeWorkMinutesRow{
+			Minute: store.minutes[m].Minute, Source: api.RouteAwakeSourceCron, Detail: "11111111-1111-4111-8111-111111111111",
+			CronSchedule: "* * * * *", CronTarget: "/sync", Running: 1, Started: 1,
+		})
+	}
+	(*(*e.S()).Store()) = statetest.NewMem(store)
+	res := e.Do(t, "GET", "/v1/apps/shop/routes/awake", nil, nil)
+	var out api.RouteAwakeResponse
+	if res.Code != http.StatusOK || json.Unmarshal(res.Body.Bytes(), &out) != nil {
+		t.Fatalf("%d: %s", res.Code, res.Body.String())
+	}
+	if store.workArgs.MaxMinutes != api.RouteAwakeWorkMaxMinutes || !store.workArgs.AppID.Valid {
+		t.Fatalf("work args = %+v", store.workArgs)
+	}
+	if len(out.Sources) != 1 || out.Sources[0].Source != api.RouteAwakeSourceCron || out.Sources[0].Name != "/sync (* * * * *)" ||
+		out.Sources[0].Events != 110 || out.Sources[0].Suggestion == nil || out.UnattributedSeconds != 0 {
+		t.Fatalf("sources = %+v unattributed = %d", out.Sources, out.UnattributedSeconds)
+	}
+	if want := api.MustLimitsFor(api.PlanPro).WaitUntilTimeoutS(); out.WaitUntilTimeoutSeconds != want {
+		t.Fatalf("wait_until_timeout_seconds = %d, want %d", out.WaitUntilTimeoutSeconds, want)
 	}
 }
