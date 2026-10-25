@@ -1220,6 +1220,13 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 			if n.Channel == db.NotifyAppWake {
 				if err := l.handleAppWake(ctx, n); err != nil {
+					// Every schedd hears the wake and the owner serves it; the
+					// others logged a WARN for each explicit wake on a two-node
+					// production-us (Hunt 14 H14-30).
+					if errors.Is(err, ErrAppOwnedByAnotherNode) {
+						l.log.Debug("sched: explicit app wake left to the owning node", "err", err)
+						continue
+					}
 					l.log.Warn("sched: explicit app wake failed; leaving durable request pending", "err", err)
 					continue
 				}
@@ -2221,6 +2228,10 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	switch n.Channel {
 	case db.NotifyAppWake:
 		if err := l.handleAppWake(ctx, n); err != nil {
+			if errors.Is(err, ErrAppOwnedByAnotherNode) {
+				l.log.Debug("sched: explicit app wake left to the owning node", "err", err)
+				return
+			}
 			l.log.Warn("sched: explicit app wake failed", "err", err)
 		}
 	case db.NotifyAppChanged:

@@ -2368,8 +2368,8 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 		}
 		if err == nil && !e.ownsApp(app) {
 			return CoordOutcome{}, fmt.Errorf(
-				"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box)",
-				appID, app.NodeID, e.ownerNodeID,
+				"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box): %w",
+				appID, app.NodeID, e.ownerNodeID, ErrAppOwnedByAnotherNode,
 			)
 		}
 		if err == nil {
@@ -2831,6 +2831,11 @@ func (e *Engine) AdmitMirrorInstance(ctx context.Context, appID, mirrorRuleID, m
 // the customer's source response was already returned; mirror
 // is best-effort by design.
 var ErrMirrorSlotAtCapacity = errors.New("sched: mirror slot at capacity")
+
+// ErrAppOwnedByAnotherNode marks a wake refused because another node's
+// schedd owns the app. Every schedd hears an explicit app wake; the owner
+// serves it, so for the others this is expected, not a failure.
+var ErrAppOwnedByAnotherNode = errors.New("app owned by another node")
 
 // AdmitInstanceForDeployment is the floor-trigger entry point that
 // admits a specific deployment (issue #557 closure / ADR-074).
