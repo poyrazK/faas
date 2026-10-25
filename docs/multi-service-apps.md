@@ -59,8 +59,11 @@ another app, for example `shop-api`.
 
 A Compose service that publishes `ports:` gets a public URL. One without
 `ports:` is **internal**: other services in the project can call it, and it has
-no public URL. The plan marks these with `visibility=internal`. See
-[networking](networking.md) for changing visibility later.
+no public URL. Other services are public unless
+[`.gregale/project.yaml`](#without-a-compose-file) says `visibility: internal`.
+The plan lists every public service under **Public on the internet** and marks
+the rest `visibility=internal`. Visibility is set when the app is created; see
+[networking](networking.md) for changing it later.
 
 ## Call another service
 
@@ -89,6 +92,29 @@ services a workload declares in `depends_on`, set
 `x-gregale-service-policy: declared` on it in Compose, or set it once for the
 whole file at the top level. [Networking](networking.md) covers caller
 allowlists, per-route scopes, HTTPS between services and timeouts.
+
+## Without a Compose file
+
+A repository without Compose declares the same things in
+`.gregale/project.yaml` at its root
+([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)):
+
+```yaml
+service_policy: project        # project, declared or account, for every service
+services:
+  billing:
+    visibility: internal       # no public URL; set when the app is created
+    depends_on: [ledger]       # billing gets GREGALE_SERVICE_LEDGER_URL
+  admin:
+    service_policy: declared   # admin may call only what it declares
+```
+
+Service names are the ones the plan shows. The file also applies to Compose
+services, but Compose stays the more specific source: a Compose
+`x-gregale-service-policy` wins, and `depends_on` lists from both are merged.
+A project created before the `project` policy became the default switches by
+setting `service_policy: project` here. An unknown name, key or value fails
+the plan and names the file.
 
 ## Configuration
 
