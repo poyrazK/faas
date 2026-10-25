@@ -1302,6 +1302,9 @@ func (h *Harness) prepareRealtimed(which Which, extraEnv []string) []string {
 // socket. Callers pass the preview flags they exercise in extraEnv.
 func startRealtimed(t *testing.T, h *Harness, bin string, extraEnv []string) {
 	t.Helper()
+	if err := ensureRealtimed(bin); err != nil {
+		t.Fatal(err)
+	}
 	outbox := filepath.Join(h.TmpDir, "realtime-outbox")
 	if err := os.MkdirAll(outbox, 0o700); err != nil {
 		t.Fatalf("e2etest: mkdir realtime outbox: %v", err)
@@ -2145,7 +2148,7 @@ func (h *Harness) RestartAPID() error {
 // Tier A7 (ADR-070) PR-A: the legacy 'gatewayd' binary is gone (its source
 // moved into cmd/gatewayd-internal/). gatewayd-public and the TCP bridge are
 // included so the raw-TCP metal acceptance can boot the production path.
-var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public", "meterd", "builderd", "realtimed", "vmmd-stream-bridge", "vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge"}
+var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public", "meterd", "builderd", "vmmd-stream-bridge", "vmmd-raw-bridge", "vmmd-tcp-bridge", "vmmd-udp-bridge"}
 
 // StaticHelperBinaries are built alongside the daemons but with CGO_ENABLED=0,
 // because they execute inside a jailer chroot that contains no dynamic loader
@@ -2272,6 +2275,41 @@ func EnsureSharedBinaries() (string, error) {
 		sharedBinDir = dir
 	})
 	return sharedBinDir, sharedBinErr
+}
+
+// realtimedBuild builds realtimed into the shared binary directory the first
+// time a test starts it. It stays out of DaemonBinaries because the native
+// acceptance gates stage exactly the binaries their contracts list, and only
+// realtime tests need this one.
+var realtimedBuild struct {
+	once sync.Once
+	err  error
+}
+
+func ensureRealtimed(dir string) error {
+	realtimedBuild.once.Do(func() {
+		if binaryPresent(filepath.Join(dir, "realtimed")) {
+			return
+		}
+		mod, err := moduleImportPath()
+		if err != nil {
+			realtimedBuild.err = err
+			return
+		}
+		args := []string{"build"}
+		if daemonBuildTags != "" {
+			args = append(args, "-tags", daemonBuildTags)
+		}
+		args = append(args, "-o", filepath.Join(dir, "realtimed"), mod+"/cmd/realtimed")
+		var out bytes.Buffer
+		cmd := exec.Command("go", args...)
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			realtimedBuild.err = fmt.Errorf("e2etest: go build realtimed: %w\n%s", err, out.String())
+		}
+	})
+	return realtimedBuild.err
 }
 
 // binaryPresent reports whether path is a non-empty executable regular file.
