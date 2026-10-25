@@ -1717,3 +1717,9 @@ func (s *server) IncidentAppVisibleForTest(ctx context.Context, acct state.Accou
 }
 
 var ValidateAndPlanSidecars = validateAndPlanSidecars
+
+// StatusPageFromStore evaluates the public status page against a Prometheus
+// URL and a store with the durable deployment-outcome aggregate.
+func StatusPageFromStore(ctx context.Context, promURL string, store state.Store) (StatusPage, error) {
+	return newStatusCacheWithStore(promURL, store, slog.Default()).Get(ctx)
+}

@@ -129,6 +129,10 @@ type DeploymentStatus string
 type DeploymentOutcomeCounts struct {
 	Succeeded int
 	Failed    int
+	// FailedAccounts counts the distinct accounts behind Failed, so public
+	// status can tell one tenant's failing apps from a platform-wide problem
+	// (Hunt 14 H14-22).
+	FailedAccounts int
 }
 
 // LatestDeploymentOutcome is the last platform-attributable terminal

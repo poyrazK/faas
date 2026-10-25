@@ -7885,27 +7885,35 @@ func (s *PgStore) ListAllDeployments(ctx context.Context) ([]Deployment, error) 
 // OOM, ...). Other failures after a successful build (scan, snapshot,
 // readiness timeouts) remain visible as platform failures. Deleted apps
 // remain in the aggregate because release-acceptance apps are deliberately
-// cleaned up after their terminal result is recorded.
+// cleaned up after their terminal result is recorded. FailedAccounts counts the
+// tenants behind the failures; a deployment whose app row is gone counts as
+// its own tenant.
 func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
 	var out DeploymentOutcomeCounts
 	err := s.pool.QueryRow(ctx, `
-		select
-			count(*) filter (where d.status in ('live', 'superseded')),
-			count(*) filter (
-				where d.status = 'failed'
-				  and coalesce(d.error_code, '') <> all($2::text[])
-				  and not exists (
+		with outcomes as (
+			select coalesce(a.account_id, d.app_id) as tenant,
+			       d.status in ('live', 'superseded') as succeeded,
+			       d.status = 'failed'
+			         and coalesce(d.error_code, '') <> all($2::text[])
+			         and not exists (
 					select 1 from builds b
 					 where b.deployment_id = d.id
 					   and b.failure_class = 'user_error'
-				  )
-			)
-		  from deployments d
-		 where (
-			(d.status in ('live', 'superseded') and coalesce(d.rollout_completed_at, d.created_at) >= $1)
-			or
-			(d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) >= $1)
-		   )`, since.UTC(), api.CustomerCausedDeploymentFailureCodes()).Scan(&out.Succeeded, &out.Failed)
+				 ) as platform_failed
+			  from deployments d
+			  left join apps a on a.id = d.app_id
+			 where (
+				(d.status in ('live', 'superseded') and coalesce(d.rollout_completed_at, d.created_at) >= $1)
+				or
+				(d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) >= $1)
+			   )
+		)
+		select
+			count(*) filter (where succeeded),
+			count(*) filter (where platform_failed),
+			count(distinct tenant) filter (where platform_failed)
+		  from outcomes`, since.UTC(), api.CustomerCausedDeploymentFailureCodes()).Scan(&out.Succeeded, &out.Failed, &out.FailedAccounts)
 	return out, err
 }
 
