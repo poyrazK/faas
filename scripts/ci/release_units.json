@@ -51,6 +51,7 @@
     },
     "vmmd": {"lane": "compute"},
     "vmmd-jail-helper": {"lane": "compute"},
+    "vmmd-guestdisk": {"lane": "compute"},
     "vmmd-raw-bridge": {"lane": "compute"},
     "vmmd-tcp-bridge": {"lane": "compute"},
     "vmmd-udp-bridge": {"lane": "compute"},

@@ -2181,7 +2181,7 @@ var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-inte
 // (Makefile DAEMONS, deploy/packer/scripts/compile-daemons.sh,
 // pkg/releaseinstall.Names), so building it here makes the harness match the
 // node rather than depend on a fallback that only works for static builds.
-var StaticHelperBinaries = []string{"vmmd-jail-helper"}
+var StaticHelperBinaries = []string{"vmmd-jail-helper", "vmmd-guestdisk"}
 
 var (
 	sharedBinOnce sync.Once
