@@ -50,6 +50,11 @@ const CodeApplicationStandardVersionStale = "application_standard_version_stale"
 
 const CodeApplicationStandardsPending = "application_standards_pending"
 
+// PreviewNotEnabledHint is the remediation for a dark-launched preview's 503.
+// Without it the CLI's generic 5xx hint told customers to check Gregale's
+// service status and inspect deployments before retrying (Hunt 14 H14-37).
+const PreviewNotEnabledHint = "This preview is not enabled for this account; retrying will not help. Ask Gregale support for access."
+
 // dashboardBillingURL is duplicated from pkg/wire because pkg/api cannot
 // import pkg/wire without creating an import cycle.
 const dashboardBillingURL = "https://gregale.dev/dashboard/billing"

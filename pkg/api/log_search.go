@@ -51,7 +51,7 @@ func ErrLogSearchTimeout() *Problem {
 // ErrLogSearchUnavailable is the FAAS_LOG_SEARCH_ENABLED gate's answer.
 func ErrLogSearchUnavailable() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, "log_search_unavailable", "Log search unavailable",
-		"the log search preview is not enabled")
+		"the log search preview is not enabled").WithHint(PreviewNotEnabledHint)
 }
 
 // LogEventsResponse is GET /v1/apps/{slug}/log-events (ADR-20261018083536):

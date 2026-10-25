@@ -3593,6 +3593,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			Release: deployPreflightScheduled(releaseAt, deployPreflightRelease(
 				*safeDeploy, *canaryPreset, *trafficPercent, rollbackOn5xxPtr,
 			)),
+			Image: *image != "",
 		})
 	}
 
