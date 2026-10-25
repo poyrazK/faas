@@ -319,6 +319,8 @@ type runLimits struct {
 	fsize int64
 	// readDirs and writeDirs are scratch directories the tool may use.
 	readDirs, writeDirs []string
+	// extraFiles are inherited by the tool from fd 3 on.
+	extraFiles []*os.File
 }
 
 type runResult struct {
@@ -354,6 +356,7 @@ func (s *Session) run(ctx context.Context, tool string, args []string, stdin []b
 		cmd = exec.CommandContext(ctx, s.ed.cfg.Helper, append(helperArgs, args...)...)
 		cmd.SysProcAttr = sandboxSysProcAttr()
 	}
+	cmd.ExtraFiles = lim.extraFiles
 	cmd.Env = []string{"PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C", "LC_ALL=C"}
 	cmd.Dir = "/"
 	cmd.WaitDelay = 2 * time.Second

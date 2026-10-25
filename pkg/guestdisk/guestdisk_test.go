@@ -354,9 +354,12 @@ func TestDumpTree(t *testing.T) {
 		}
 	})
 	s := openSession(t, img)
-	dir, err := s.DumpTree(context.Background(), "/upper/build/out")
+	dir, err := s.DumpTree(context.Background(), "/upper/build/out", t.TempDir())
 	if err != nil {
 		t.Fatal(err)
+	}
+	if filepath.Base(dir) != "out" {
+		t.Fatalf("dump root = %s, want .../out", dir)
 	}
 	if b, err := os.ReadFile(filepath.Join(dir, "sub/b.txt")); err != nil || string(b) != "b" {
 		t.Fatalf("sub/b.txt = %q, %v", b, err)
@@ -364,7 +367,7 @@ func TestDumpTree(t *testing.T) {
 	if info, err := os.Lstat(filepath.Join(dir, "escape")); err != nil || info.Mode()&os.ModeSymlink == 0 {
 		t.Fatalf("escape = %v, %v; want a symlink left for the caller to drop", info, err)
 	}
-	if _, err := s.DumpTree(context.Background(), "/upper/missing"); err == nil {
+	if _, err := s.DumpTree(context.Background(), "/upper/missing", t.TempDir()); err == nil {
 		t.Fatal("dumping a missing directory succeeded")
 	}
 }

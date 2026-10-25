@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path"
 	"path/filepath"
@@ -58,10 +59,18 @@ const (
 // directory, fails with a *PathError naming the file. A later File with the
 // same Path wins.
 func (s *Session) WriteFiles(ctx context.Context, files []File) error {
+	return s.WriteFilesAfter(ctx, files, nil)
+}
+
+// WriteFilesAfter is WriteFiles for a caller that has already inspected the
+// files' paths and their parents: state saves a separate inspection run, and
+// only paths missing from it are inspected again. The image must not have
+// changed since.
+func (s *Session) WriteFilesAfter(ctx context.Context, files []File, inspected map[string]Entry) error {
 	if len(files) == 0 {
 		return nil
 	}
-	var probe []string
+	var need []string
 	for _, f := range files {
 		if err := CheckPath(f.Path); err != nil {
 			return &PathError{Path: f.Path, Err: err}
@@ -72,11 +81,23 @@ func (s *Session) WriteFiles(ctx context.Context, files []File) error {
 		if f.Mode&^0o7777 != 0 {
 			return &PathError{Path: f.Path, Err: fmt.Errorf("invalid mode %o", f.Mode)}
 		}
-		probe = append(probe, components(f.Path)...)
+		need = append(need, components(f.Path)...)
 	}
-	state, err := s.Inspect(ctx, probe, nil)
-	if err != nil {
-		return err
+	state := make(map[string]Entry, len(need))
+	var missing []string
+	for _, p := range need {
+		if e, ok := inspected[p]; ok {
+			state[p] = e
+		} else {
+			missing = append(missing, p)
+		}
+	}
+	if len(missing) > 0 {
+		got, err := s.Inspect(ctx, missing, nil)
+		if err != nil {
+			return err
+		}
+		maps.Copy(state, got)
 	}
 	in := filepath.Join(s.scratch, "in")
 	if err := s.mkScratchDir(in); err != nil {
@@ -84,8 +105,7 @@ func (s *Session) WriteFiles(ctx context.Context, files []File) error {
 	}
 	var script bytes.Buffer
 	final := make(map[string]written)
-	var order []string
-	var dirs []string
+	var order, dirs []string
 	for i, f := range files {
 		comps := components(f.Path)
 		for _, dir := range comps[:len(comps)-1] {
@@ -127,27 +147,18 @@ func (s *Session) WriteFiles(ctx context.Context, files []File) error {
 		}
 		final[f.Path] = written{data: f.Data, mode: mode, uid: uid, gid: gid}
 	}
-	if err := s.applyScript(ctx, script.Bytes(), []string{in}); err != nil {
-		return err
-	}
-	return s.verifyWrites(ctx, order, final, dirs)
-}
-
-// written is what one planned write must leave behind.
-type written struct {
-	data     []byte
-	mode     uint32
-	uid, gid int
-}
-
-// verifyWrites reads every written file back: debugfs keeps going after a
-// failed command, so its silence is not proof.
-func (s *Session) verifyWrites(ctx context.Context, order []string, final map[string]written, dirs []string) error {
+	// Read everything back in the same run: debugfs keeps going after a
+	// failed command, so its silence is not proof.
 	reads := make(map[string]Read, len(order))
 	for _, p := range order {
 		reads[p] = Read{Max: int64(len(final[p].data))}
 	}
-	got, err := s.Inspect(ctx, append(append([]string(nil), dirs...), order...), reads)
+	probes, err := s.newProbes(append(append([]string(nil), dirs...), order...), reads)
+	if err != nil {
+		return err
+	}
+	script.Write(probes.script)
+	got, err := s.applyScript(ctx, script.Bytes(), probes, nil, []string{in})
 	if err != nil {
 		return err
 	}
@@ -163,6 +174,13 @@ func (s *Session) verifyWrites(ctx context.Context, order []string, final map[st
 		}
 	}
 	return nil
+}
+
+// written is what one planned write must leave behind.
+type written struct {
+	data     []byte
+	mode     uint32
+	uid, gid int
 }
 
 // RemoveAll removes each path and, for a directory, everything beneath it.
@@ -216,14 +234,21 @@ func (s *Session) RemoveAll(ctx context.Context, paths []string) error {
 	if script.Len() == 0 {
 		return nil
 	}
-	if err := s.applyScript(ctx, script.Bytes(), nil); err != nil {
-		return err
-	}
-	got, err := s.Inspect(ctx, append(files, trees...), nil)
+	removed := append(files, trees...)
+	probes, err := s.newProbes(removed, nil)
 	if err != nil {
 		return err
 	}
-	for _, p := range append(files, trees...) {
+	script.Write(probes.script)
+	expectMissing := make(map[string]bool, len(removed))
+	for _, p := range removed {
+		expectMissing[p] = true
+	}
+	got, err := s.applyScript(ctx, script.Bytes(), probes, expectMissing, nil)
+	if err != nil {
+		return err
+	}
+	for _, p := range removed {
 		if got[p].Kind != Missing {
 			return &PathError{Path: p, Err: errors.New("removal did not take effect")}
 		}
@@ -294,28 +319,41 @@ func (s *Session) treeRemovals(ctx context.Context, trees []string) ([]byte, err
 	return script.Bytes(), nil
 }
 
-// applyScript runs a write script. Every command in it was planned to
-// succeed, so anything on stderr beyond debugfs's version banner fails the
-// session.
-func (s *Session) applyScript(ctx context.Context, script []byte, readDirs []string) error {
-	res, err := s.run(ctx, s.ed.debugfs, []string{"-w", "-f", "-", s.image}, script, runLimits{output: 1 << 20, readDirs: readDirs})
+// applyScript runs a write script that ends with a probe batch and returns
+// what the probes saw. Every edit command was planned to succeed, so stderr
+// may hold only debugfs's version banner, the probe markers' own "not found"
+// lines and, for paths in expectMissing, theirs.
+func (s *Session) applyScript(ctx context.Context, script []byte, probes *probeBatch, expectMissing map[string]bool, readDirs []string) (map[string]Entry, error) {
+	res, err := s.run(ctx, s.ed.debugfs, []string{"-w", "-f", "-", s.image}, script, runLimits{output: probes.output + 1<<20, readDirs: readDirs})
 	if err != nil {
-		return fmt.Errorf("guestdisk: edit: %w", err)
+		return nil, fmt.Errorf("guestdisk: edit: %w", err)
 	}
 	if res.exit != 0 {
-		return fmt.Errorf("guestdisk: edit: debugfs exit %d: %s", res.exit, firstLines(res.stderr, 4))
+		return nil, fmt.Errorf("guestdisk: edit: debugfs exit %d: %s", res.exit, firstLines(res.stderr, 4))
 	}
-	if problems := unexpectedStderr(res.stderr); len(problems) > 0 {
-		return fmt.Errorf("guestdisk: edit: %s", strings.Join(problems, "; "))
+	if problems := s.unexpectedStderr(res.stderr, expectMissing); len(problems) > 0 {
+		return nil, fmt.Errorf("guestdisk: edit: %s", strings.Join(problems, "; "))
 	}
-	return syncImage(s.image)
+	got, err := probes.parse(res.stdout, res.stderr)
+	if err != nil {
+		return nil, err
+	}
+	return got, syncImage(s.image)
 }
 
-func unexpectedStderr(stderr []byte) []string {
+func (s *Session) unexpectedStderr(stderr []byte, expectMissing map[string]bool) []string {
 	var out []string
 	for _, line := range strings.Split(string(stderr), "\n") {
 		line = strings.TrimSpace(line)
-		if line == "" || strings.HasPrefix(line, "debugfs ") && strings.HasSuffix(line, ")") {
+		switch {
+		case line == "":
+			continue
+		case strings.HasPrefix(line, "debugfs ") && strings.HasSuffix(line, ")"):
+			continue
+		case strings.Contains(line, "/.gregale-guestdisk-"+s.nonce+"-"):
+			continue
+		}
+		if p, ok := strings.CutSuffix(line, ": File not found by ext2_lookup"); ok && expectMissing[p] {
 			continue
 		}
 		out = append(out, line)

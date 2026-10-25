@@ -37,7 +37,6 @@ import (
 	"log/slog"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -371,13 +370,9 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 }
 
 // stageJobManifest writes the JSON-encoded JobManifest to the private drive1
-// at /etc/faas/job.json. The loop mount lives outside the chroot so a failed
-// unmount can never make chroot cleanup traverse and delete a mounted image.
-//
-// Idempotent on overwrite: a second write to the same path
-// truncates and replaces (rare; the chroot is per-instance so the
-// path is unique). Best-effort umount on error so a partial write
-// doesn't leak the mount.
+// at /etc/faas/job.json, mode 0600, in one sandboxed drive session
+// (ADR-20261025090000). A second write to the same path replaces the file
+// (rare; the chroot is per-instance so the path is unique).
 //
 // CR-C / code-review #2 round-3: the previous shape stats
 // "drive1.img" which is NOT the canonical in-chroot drive1 image
@@ -386,7 +381,7 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 // chroot. Stat'ing drive1.img always returns ENOENT, every job
 // boot fails, the guest never sees /etc/faas/job.json, vsock
 // never gets a job_exit frame. Fix: stat the canonical name.
-func (v *JailerVMM) stageJobManifest(instance string, m JobManifest) (retErr error) {
+func (v *JailerVMM) stageJobManifest(instance string, m JobManifest) error {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
 	owner, err := v.nativeDriveStagingOwner(ctx, instance)
@@ -396,62 +391,13 @@ func (v *JailerVMM) stageJobManifest(instance string, m JobManifest) (retErr err
 	return v.stageJobManifestForOwner(ctx, owner, instance, m)
 }
 
-func (v *JailerVMM) stageJobManifestForOwner(ctx context.Context, owner nativeLaunchRecord, instance string, m JobManifest) (retErr error) {
+func (v *JailerVMM) stageJobManifestForOwner(ctx context.Context, owner nativeLaunchRecord, instance string, m JobManifest) error {
 	if v.chrootBase == "" {
 		return fmt.Errorf("vmm: stageJobManifest: chrootBase not configured")
 	}
-	root := v.chrootRoot(instance)
-	drive1Img := filepath.Join(root, layerImageName)
+	drive1Img := filepath.Join(v.chrootRoot(instance), layerImageName)
 	if _, err := os.Stat(drive1Img); err != nil {
 		return fmt.Errorf("vmm: stageJobManifest: %s missing at %s: %w", layerImageName, drive1Img, err)
-	}
-	if v.nativeRecovery != nil {
-		return v.driveStagingSession(ctx, owner, instance, drive1Img, "faas-job-manifest-", func(mnt string) error {
-			return writeJobManifest(mnt, m)
-		})
-	}
-	mnt, err := os.MkdirTemp("", "faas-job-manifest-*")
-	if err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: create mountpoint: %w", err)
-	}
-	mounted := false
-	defer func() {
-		if !mounted {
-			_ = os.Remove(mnt)
-		}
-	}()
-	if out, err := exec.Command("mount", guestDiskMountArgs("rw", drive1Img, mnt)...).CombinedOutput(); err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: mount: %w: %s", err, string(out))
-	}
-	mounted = true
-	defer func() {
-		if out, err := exec.Command("umount", mnt).CombinedOutput(); err != nil {
-			unmountErr := fmt.Errorf("vmm: stageJobManifest: umount: %w: %s", err, string(out))
-			if lazyOut, lazyErr := exec.Command("umount", "-l", mnt).CombinedOutput(); lazyErr != nil {
-				unmountErr = errors.Join(unmountErr, fmt.Errorf("lazy umount: %w: %s", lazyErr, string(lazyOut)))
-			} else {
-				mounted = false
-			}
-			retErr = errors.Join(retErr, unmountErr)
-		} else {
-			mounted = false
-		}
-		if !mounted {
-			_ = os.Remove(mnt)
-		}
-	}()
-
-	return writeJobManifest(mnt, m)
-}
-
-func writeJobManifest(mnt string, m JobManifest) error {
-	manifestRoot, err := jobManifestStorageRoot(mnt)
-	if err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: resolve artifact layout: %w", err)
-	}
-	etc, err := ensureJobManifestDirectory(manifestRoot)
-	if err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: prepare etc/faas: %w", err)
 	}
 	blob, err := json.MarshalIndent(m, "", "  ")
 	if err != nil {
@@ -460,134 +406,15 @@ func writeJobManifest(mnt string, m JobManifest) error {
 	if len(blob) > JobManifestMaxBytes {
 		return fmt.Errorf("vmm: stageJobManifest: manifest is %d bytes (max %d)", len(blob), JobManifestMaxBytes)
 	}
-	tmp, err := os.CreateTemp(etc, ".job.json-*")
-	if err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: create temp: %w", err)
-	}
-	tmpName := tmp.Name()
-	defer func() { _ = os.Remove(tmpName) }()
-	if err := tmp.Chmod(0o600); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("vmm: stageJobManifest: chmod temp: %w", err)
-	}
-	if _, err := tmp.Write(blob); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("vmm: stageJobManifest: write temp: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		_ = tmp.Close()
-		return fmt.Errorf("vmm: stageJobManifest: sync temp: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: close temp: %w", err)
-	}
-	dst := filepath.Join(etc, "job.json")
-	if err := os.Rename(tmpName, dst); err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: publish %s: %w", dst, err)
-	}
-	dir, err := os.Open(etc)
-	if err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: open parent: %w", err)
-	}
-	if err := dir.Sync(); err != nil {
-		_ = dir.Close()
-		return fmt.Errorf("vmm: stageJobManifest: sync parent: %w", err)
-	}
-	if err := dir.Close(); err != nil {
-		return fmt.Errorf("vmm: stageJobManifest: close parent: %w", err)
-	}
-	return nil
+	// job.json lands where the guest's root is: below /upper on an optimized
+	// artifact (the overlay upperdir), at the ext4 root of a full-rootfs one.
+	// Writing every manifest at the ext4 root once made optimized job VMs
+	// miss job.json and start as ordinary HTTP apps.
+	return v.stageDriveFile(ctx, owner, instance, drive1Img, driveFile{what: "vmm: stageJobManifest", path: jobManifestPath, want: blob, mode: 0o600})
 }
 
-// jobManifestStorageRoot returns the directory that becomes / inside the
-// guest. Optimized artifacts store their filesystem below /upper because the
-// guest mounts it as overlayfs' upperdir. Full-rootfs artifacts pivot directly
-// into the ext4 root and carry the authenticated full-rootfs marker there.
-// Writing every manifest at the ext4 root made optimized job VMs miss
-// job.json and start as ordinary HTTP apps.
-func jobManifestStorageRoot(mountpoint string) (string, error) {
-	fullRootfs, err := jobArtifactIsFullRootfs(mountpoint)
-	if err != nil {
-		return "", err
-	}
-	if fullRootfs {
-		return mountpoint, nil
-	}
-	upper := filepath.Join(mountpoint, "upper")
-	info, err := os.Lstat(upper)
-	if err != nil {
-		return "", fmt.Errorf("optimized artifact upper: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-		return "", fmt.Errorf("optimized artifact upper %s is not a real directory", upper)
-	}
-	return upper, nil
-}
-
-// jobArtifactIsFullRootfs validates the marker without following an
-// image-provided symlink in any ancestor. A missing marker selects the normal
-// optimized /upper layout; a malformed marker rejects the artifact.
-func jobArtifactIsFullRootfs(mountpoint string) (bool, error) {
-	components := strings.Split(strings.TrimPrefix(api.FullRootfsMarkerPath, "/"), "/")
-	current := mountpoint
-	for i, component := range components {
-		current = filepath.Join(current, component)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			return false, nil
-		}
-		if err != nil {
-			return false, err
-		}
-		if info.Mode()&os.ModeSymlink != 0 {
-			return false, fmt.Errorf("full-rootfs marker path %s contains a symlink", current)
-		}
-		if i < len(components)-1 {
-			if !info.IsDir() {
-				return false, fmt.Errorf("full-rootfs marker parent %s is not a directory", current)
-			}
-			continue
-		}
-		if !info.Mode().IsRegular() {
-			return false, fmt.Errorf("full-rootfs marker %s is not a regular file", current)
-		}
-		data, err := os.ReadFile(current)
-		if err != nil {
-			return false, err
-		}
-		if string(data) != api.FullRootfsMarkerValue {
-			return false, fmt.Errorf("full-rootfs marker %s has invalid payload", current)
-		}
-		return true, nil
-	}
-	return false, nil
-}
-
-// ensureJobManifestDirectory creates the fixed platform-owned directory one
-// component at a time and refuses image-provided symlinks. The private image
-// is not attached to a guest yet, so these Lstat/create checks cannot race a
-// customer process; rejecting links prevents an absolute /etc or /etc/faas
-// symlink from redirecting vmmd's root write into the host filesystem.
-func ensureJobManifestDirectory(mountpoint string) (string, error) {
-	current := mountpoint
-	for _, component := range []string{"etc", "faas"} {
-		current = filepath.Join(current, component)
-		info, err := os.Lstat(current)
-		if errors.Is(err, os.ErrNotExist) {
-			if err := os.Mkdir(current, 0o755); err != nil {
-				return "", err
-			}
-			continue
-		}
-		if err != nil {
-			return "", err
-		}
-		if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
-			return "", fmt.Errorf("%s is not a real directory", current)
-		}
-	}
-	return current, nil
-}
+// jobManifestPath is job.json in the optimized layout.
+const jobManifestPath = "upper/etc/faas/job.json"
 
 // BuildJobColdBootConfig builds the Firecracker config for a job
 // VM. Mirrors BuildColdBootConfig (line 274) but emits only one

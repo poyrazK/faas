@@ -95,8 +95,16 @@ func TestSandboxedEdit(t *testing.T) {
 	if err := s.RemoveAll(ctx, []string{"/upper/app"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.DumpTree(ctx, "/upper/etc"); err != nil {
+	dest := filepath.Join(sandboxTestRootOrTemp(t), "dump")
+	if err := os.Mkdir(dest, 0o700); err != nil {
 		t.Fatal(err)
+	}
+	dumped, err := s.DumpTree(ctx, "/upper/etc", dest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b, err := os.ReadFile(filepath.Join(dumped, "faas/secrets.env")); err != nil || string(b) != "s" {
+		t.Fatalf("dumped secrets.env = %q, %v", b, err)
 	}
 	fsckClean(t, s.image)
 }

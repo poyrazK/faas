@@ -10,9 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
-
-	"github.com/google/uuid"
 )
 
 type nativeLoopIdentity struct {
@@ -27,8 +24,9 @@ type nativeLoopDevice struct {
 	Namespace nativeLoopIdentity `json:"namespace"`
 }
 
-// The backing file and mount namespace are pinned before publishing this frame.
-// No loop attachment or mount can precede its durable ownership record.
+// A frame records one loop mount an older vmmd made of a VM drive. Staging no
+// longer mounts drives (ADR-20261025090000), so no new frame is written;
+// recovery still retires and attests frames an upgraded node inherited.
 type nativeLoopMountRecord struct {
 	ID        string             `json:"id"`
 	Owner     nativeLaunchRecord `json:"owner"`
@@ -76,18 +74,8 @@ func (r nativeLoopMountRecord) validate(owner nativeLaunchRecord) error {
 	return nil
 }
 
-// Prepare opens and pins a regular backing file and an unconfigured loop FD.
-// Configure must atomically attach with AUTOCLEAR, without a helper process.
 // Retire never lazily unmounts or detaches a loop with a different identity.
-type nativeLoopReservation interface {
-	Device() nativeLoopDevice
-	Configure() error
-	Mount(string) (uint64, error)
-	Close() error
-}
-
 type nativeLoopMountBackend interface {
-	Prepare(string, string) (nativeLoopReservation, error)
 	Retire(context.Context, nativeLoopMountRecord, string) error
 	Removed(nativeLoopMountRecord, string) error
 	Inventory([]nativeLoopMountRecord) error
@@ -223,23 +211,13 @@ func (j *nativeLoopMountJournal) requireRemoved(owner nativeLaunchRecord) error 
 	return nil
 }
 
-// The lock covers synchronous Go writers as well as kernel operations. A stop
-// waits for them; after daemon death, the durable frame owns any surviving mount.
-func (j *nativeLoopMountJournal) session(ctx context.Context, expected nativeLaunchRecord, drive string, fn func(string) error, measured ...*loopMountTimings) (err error) {
-	var timings *loopMountTimings
-	var started time.Time
-	mountMeasured := false
-	if len(measured) > 0 && measured[0] != nil {
-		timings, started = measured[0], time.Now()
-		*timings = loopMountTimings{}
-		defer func() {
-			if !mountMeasured {
-				timings.Mount = time.Since(started) - timings.Unmount
-			}
-		}()
-	}
+// editSession runs fn, a sandboxed edit of the instance's drive, under the
+// prepared VM owner's staging authority. The lock covers the edit: a stop
+// waits for it, and a revoked, launched or replaced owner never reaches fn. A
+// loop mount an older vmmd left behind must be retired first.
+func (j *nativeLoopMountJournal) editSession(ctx context.Context, expected nativeLaunchRecord, fn func() error) (err error) {
 	if j.backend == nil || fn == nil {
-		return errors.New("native loop mount: native backend and writer are required")
+		return errors.New("native drive edit: native backend and editor are required")
 	}
 	lock, err := j.owner.lock(ctx, expected.Lease.Instance)
 	if err != nil {
@@ -251,7 +229,7 @@ func (j *nativeLoopMountJournal) session(ctx context.Context, expected nativeLau
 		return err
 	}
 	if owner.Generation != expected.Generation || owner.KernelBootID != expected.KernelBootID || !sameNativePhysicalLease(owner.Lease, expected.Lease) || owner.Revoked || owner.Authorized || owner.ResourcesRemoved {
-		return errors.New("native loop mount: prepared staging authority changed or was revoked")
+		return errors.New("native drive edit: prepared staging authority changed or was revoked")
 	}
 	if err := j.requireRemoved(owner); err != nil {
 		return err
@@ -268,82 +246,10 @@ func (j *nativeLoopMountJournal) session(ctx context.Context, expected nativeLau
 	if err := tun.require(owner, false); err != nil {
 		return err
 	}
-	id := uuid.NewString()
-	reservation, err := j.backend.Prepare(drive, id)
-	if err != nil {
-		return err
-	}
-	defer func() {
-		if reservation != nil {
-			err = errors.Join(err, reservation.Close())
-		}
-	}()
-	record := nativeLoopMountRecord{ID: id, Owner: owner, Device: reservation.Device()}
-	for _, path := range []string{filepath.Dir(j.root(owner.Generation)), j.root(owner.Generation), filepath.Dir(j.point(record))} {
-		if err := os.MkdirAll(path, 0o700); err != nil {
-			return err
-		}
-		if err := checkNativeJournalPath(path, true); err != nil {
-			return err
-		}
-	}
-	if err := j.write(owner, record); err != nil {
-		return err
-	}
-	defer func() {
-		var retireStarted time.Time
-		if timings != nil {
-			retireStarted = time.Now()
-		}
-		// Close the reservation before probing retirement: AUTOCLEAR can then
-		// detach an attachment that never reached mount. Never remove a tree.
-		closeErr := reservation.Close()
-		reservation = nil
-		err = errors.Join(err, closeErr, j.removeLocked(context.WithoutCancel(ctx), owner, record))
-		if timings != nil {
-			timings.Unmount = time.Since(retireStarted)
-		}
-	}()
-	if err := os.Mkdir(j.point(record), 0o700); err != nil {
-		return err
-	}
-	record.Directory, err = nativeLoopDirectoryIdentity(j.point(record))
-	if err != nil {
-		return err
-	}
-	if err := j.write(owner, record); err != nil {
-		return err
-	}
-	parent, err := os.Open(filepath.Dir(j.point(record)))
-	if err != nil {
-		return err
-	}
-	if err := errors.Join(parent.Sync(), parent.Close()); err != nil {
-		return err
-	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := reservation.Configure(); err != nil {
-		return err
-	}
-	record.MountID, err = reservation.Mount(j.point(record))
-	if err != nil {
-		return err
-	}
-	if record.MountID == 0 {
-		return errors.New("native loop mount: mount has no kernel identity")
-	}
-	if err := j.write(owner, record); err != nil {
-		return err
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if timings != nil {
-		timings.Mount, mountMeasured = time.Since(started), true
-	}
-	return errors.Join(fn(j.point(record)), ctx.Err())
+	return errors.Join(fn(), ctx.Err())
 }
 
 func (j *nativeLoopMountJournal) removeLocked(ctx context.Context, owner nativeLaunchRecord, record nativeLoopMountRecord) error {

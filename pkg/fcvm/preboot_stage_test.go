@@ -1,4 +1,4 @@
-// adr: 192
+// adr: 192, 20261025090000
 // spec: §6.3
 package fcvm
 
@@ -8,26 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-)
 
-// fakeLoopMounts swaps loopMountSession for a plain directory so the
-// pure-Go tier can count mount sessions and inspect what each one wrote.
-// Returns the counter and a restore func for t.Cleanup.
-func fakeLoopMounts(t *testing.T) (*int, *string) {
-	t.Helper()
-	sessions := 0
-	root := t.TempDir()
-	prev := loopMountSession
-	loopMountSession = func(drive, prefix string, fn func(mountRoot string) error, _ ...*loopMountTimings) error {
-		if _, err := os.Stat(drive); err != nil {
-			return err
-		}
-		sessions++
-		return fn(root)
-	}
-	t.Cleanup(func() { loopMountSession = prev })
-	return &sessions, &root
-}
+	"github.com/onebox-faas/faas/pkg/guestdisk"
+)
 
 // newStagingVMM returns a JailerVMM whose chroot for instance already holds
 // the canonical drive1 basename, mirroring the state Restore reaches right
@@ -45,11 +28,11 @@ func newStagingVMM(t *testing.T, instance string) *JailerVMM {
 	return v
 }
 
-// TestStagePreBootFiles_SingleMountSession pins ADR-192: every per-instance
-// file lands on drive1 through ONE loop-mount session, whatever the mix of
+// TestStagePreBootFiles_SingleDriveSession pins ADR-192: every per-instance
+// file lands on drive1 through ONE drive session, whatever the mix of
 // secrets, API env, resolver and workload files.
-func TestStagePreBootFiles_SingleMountSession(t *testing.T) {
-	sessions, mountRoot := fakeLoopMounts(t)
+func TestStagePreBootFiles_SingleDriveSession(t *testing.T) {
+	sessions, mountRoot := fakeDriveImages(t)
 	v := newStagingVMM(t, "inst-preboot")
 
 	workloads := []WorkloadSpec{
@@ -61,7 +44,7 @@ func TestStagePreBootFiles_SingleMountSession(t *testing.T) {
 		t.Fatalf("stagePreBootFiles: %v", err)
 	}
 	if *sessions != 1 {
-		t.Fatalf("loop mount sessions = %d, want exactly 1", *sessions)
+		t.Fatalf("drive sessions = %d, want exactly 1", *sessions)
 	}
 	for _, rel := range []string{
 		"upper/etc/faas/secrets.env",
@@ -86,25 +69,25 @@ func TestStagePreBootFiles_SingleMountSession(t *testing.T) {
 	}
 }
 
-// TestStagePreBootFiles_NothingToWrite_NoMount: an app with no secrets, no
+// TestStagePreBootFiles_NothingToWrite_NoSession: an app with no secrets, no
 // API env, no resolver and a single workload must not resolve drive1 or
-// take a mount at all — the previous per-file short-circuits are preserved
+// open a drive session at all — the per-file short-circuits are preserved
 // in aggregate.
-func TestStagePreBootFiles_NothingToWrite_NoMount(t *testing.T) {
-	sessions, _ := fakeLoopMounts(t)
+func TestStagePreBootFiles_NothingToWrite_NoSession(t *testing.T) {
+	sessions, _ := fakeDriveImages(t)
 	v := NewJailerVMM(t.TempDir(), 0) // no chroot, no drive1 on purpose
 	if err := v.stagePreBootFiles("inst-empty", []WorkloadSpec{{Name: "main"}}, nil, nil, "", false); err != nil {
 		t.Fatalf("stagePreBootFiles: %v", err)
 	}
 	if *sessions != 0 {
-		t.Fatalf("loop mount sessions = %d, want 0", *sessions)
+		t.Fatalf("drive sessions = %d, want 0", *sessions)
 	}
 }
 
-// TestStagePreBootFiles_ValidationBeforeMount: input validation and byte-cap
-// projection happen before any mount so a rejected payload never costs a
-// loop device.
-func TestStagePreBootFiles_ValidationBeforeMount(t *testing.T) {
+// TestStagePreBootFiles_ValidationBeforeSession: input validation and
+// byte-cap projection happen before any drive session so a rejected payload
+// never costs one.
+func TestStagePreBootFiles_ValidationBeforeSession(t *testing.T) {
 	cases := []struct {
 		name       string
 		workloads  []WorkloadSpec
@@ -128,14 +111,14 @@ func TestStagePreBootFiles_ValidationBeforeMount(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sessions, _ := fakeLoopMounts(t)
+			sessions, _ := fakeDriveImages(t)
 			v := newStagingVMM(t, "inst-validate")
 			err := v.stagePreBootFiles("inst-validate", tc.workloads, nil, nil, tc.resolverIP, false)
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("err = %v, want containing %q", err, tc.wantErr)
 			}
 			if *sessions != 0 {
-				t.Errorf("loop mount sessions = %d, want 0 on validation failure", *sessions)
+				t.Errorf("drive sessions = %d, want 0 on validation failure", *sessions)
 			}
 		})
 	}
@@ -146,34 +129,30 @@ func TestStagePreBootFiles_ValidationBeforeMount(t *testing.T) {
 // used, so operator triage strings are unchanged.
 func TestStagePreBootFiles_WriteErrorNamesOperation(t *testing.T) {
 	v := newStagingVMM(t, "inst-fail")
-	prev := loopMountSession
-	loopMountSession = func(drive, prefix string, fn func(string) error, _ ...*loopMountTimings) error {
-		root := t.TempDir()
-		// Make etc/faas a file so the secrets mkdir fails.
-		if err := os.MkdirAll(filepath.Join(root, "upper/etc"), 0o755); err != nil {
-			t.Fatal(err)
-		}
-		if err := os.WriteFile(filepath.Join(root, "upper/etc/faas"), nil, 0o600); err != nil {
-			t.Fatal(err)
-		}
-		return fn(root)
+	root := t.TempDir()
+	// Make etc/faas a file so the secrets.env parent is not a directory.
+	if err := os.MkdirAll(filepath.Join(root, "upper/etc"), 0o755); err != nil {
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { loopMountSession = prev })
+	if err := os.WriteFile(filepath.Join(root, "upper/etc/faas"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	withDriveDir(t, root)
 
 	err := v.stagePreBootFiles("inst-fail", nil, []byte(`{"S":"x"}`), nil, "", false)
 	if err == nil || !strings.HasPrefix(err.Error(), "stage secrets.env: ") {
 		t.Fatalf("err = %v, want prefix %q", err, "stage secrets.env: ")
 	}
-	var pathErr *os.PathError
-	if !errors.As(err, &pathErr) {
+	var pathErr *guestdisk.PathError
+	if !errors.As(err, &pathErr) || !errors.Is(err, guestdisk.ErrNotDirectory) {
 		t.Errorf("underlying error not preserved via %%w: %v", err)
 	}
 }
 
-// TestPublicStageMethods_StillMountIndividually: the legacy Manager path
-// and callers outside Restore keep the one-file-per-mount contract.
-func TestPublicStageMethods_StillMountIndividually(t *testing.T) {
-	sessions, mountRoot := fakeLoopMounts(t)
+// TestPublicStageMethods_OneSessionEach: the legacy Manager path and callers
+// outside Restore keep the one-file-per-session contract.
+func TestPublicStageMethods_OneSessionEach(t *testing.T) {
+	sessions, mountRoot := fakeDriveImages(t)
 	v := newStagingVMM(t, "inst-public")
 	if err := v.StageSecretsEnv("inst-public", []byte(`{"S":"1"}`)); err != nil {
 		t.Fatal(err)
@@ -191,7 +170,7 @@ func TestPublicStageMethods_StillMountIndividually(t *testing.T) {
 		t.Fatal(err)
 	}
 	if *sessions != 5 {
-		t.Fatalf("loop mount sessions = %d, want 5 (one per public call)", *sessions)
+		t.Fatalf("drive sessions = %d, want 5 (one per public call)", *sessions)
 	}
 	if _, err := os.Stat(filepath.Join(*mountRoot, "upper/etc/faas/workloads/metrics/env.json")); err != nil {
 		t.Errorf("sidecar env not written: %v", err)

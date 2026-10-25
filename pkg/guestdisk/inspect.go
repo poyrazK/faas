@@ -85,14 +85,36 @@ func (s *Session) Inspect(ctx context.Context, paths []string, reads map[string]
 	if len(paths) == 0 {
 		return map[string]Entry{}, nil
 	}
-	type probe struct {
-		path        string
-		start, cont []byte
-		read        bool
+	probes, err := s.newProbes(paths, reads)
+	if err != nil {
+		return nil, err
 	}
+	res, err := s.run(ctx, s.ed.debugfs, []string{"-f", "-", s.image}, probes.script, runLimits{output: probes.output})
+	if err != nil {
+		return nil, fmt.Errorf("guestdisk: inspect: %w", err)
+	}
+	return probes.parse(res.stdout, res.stderr)
+}
+
+// probeBatch is a set of path inspections as debugfs script lines. An edit
+// appends one to its own script to read its changes back in the same run.
+type probeBatch struct {
+	probes []probe
+	reads  map[string]Read
+	end    []byte
+	script []byte
+	output int
+}
+
+type probe struct {
+	path        string
+	start, cont []byte
+	read        bool
+}
+
+func (s *Session) newProbes(paths []string, reads map[string]Read) (*probeBatch, error) {
 	var script bytes.Buffer
-	probes := make([]probe, 0, len(paths))
-	output := 64 << 10
+	b := &probeBatch{reads: reads, output: 64 << 10}
 	seen := make(map[string]bool, len(paths))
 	for _, p := range paths {
 		if err := CheckPath(p); err != nil {
@@ -107,26 +129,27 @@ func (s *Session) Inspect(ctx context.Context, paths []string, reads map[string]
 		if r, ok := reads[p]; ok {
 			pr.read = true
 			fmt.Fprintf(&script, "cat %s\n", p)
-			output += int(r.Max) + 4096
+			b.output += int(r.Max) + 4096
 		}
-		output += 4096
-		probes = append(probes, pr)
+		b.output += 4096
+		b.probes = append(b.probes, pr)
 	}
-	end := s.marker("end")
-	fmt.Fprintf(&script, "%s\n", end)
-	res, err := s.run(ctx, s.ed.debugfs, []string{"-f", "-", s.image}, script.Bytes(), runLimits{output: output})
-	if err != nil {
-		return nil, fmt.Errorf("guestdisk: inspect: %w", err)
-	}
-	notFound := notFoundPaths(res.stderr)
-	out := make(map[string]Entry, len(probes))
+	b.end = s.marker("end")
+	fmt.Fprintf(&script, "%s\n", b.end)
+	b.script = script.Bytes()
+	return b, nil
+}
+
+func (b *probeBatch) parse(stdout, stderr []byte) (map[string]Entry, error) {
+	notFound := notFoundPaths(stderr)
+	out := make(map[string]Entry, len(b.probes))
 	cursor := 0
-	for i, pr := range probes {
-		next := end
-		if i+1 < len(probes) {
-			next = probes[i+1].start
+	for i, pr := range b.probes {
+		next := b.end
+		if i+1 < len(b.probes) {
+			next = b.probes[i+1].start
 		}
-		statBlock, err := between(res.stdout, &cursor, echo(pr.start), echo(pr.cont))
+		statBlock, err := between(stdout, &cursor, echo(pr.start), echo(pr.cont))
 		if err != nil {
 			return nil, err
 		}
@@ -134,7 +157,7 @@ func (s *Session) Inspect(ctx context.Context, paths []string, reads map[string]
 		if err != nil {
 			return nil, fmt.Errorf("guestdisk: inspect %s: %w", pr.path, err)
 		}
-		contBlock, err := between(res.stdout, &cursor, echo(pr.cont), echo(next))
+		contBlock, err := between(stdout, &cursor, echo(pr.cont), echo(next))
 		if err != nil {
 			return nil, err
 		}
@@ -143,7 +166,7 @@ func (s *Session) Inspect(ctx context.Context, paths []string, reads map[string]
 			if !ok {
 				return nil, fmt.Errorf("guestdisk: inspect %s: missing cat output", pr.path)
 			}
-			if int64(len(data)) == entry.Size && entry.Size <= reads[pr.path].Max {
+			if int64(len(data)) == entry.Size && entry.Size <= b.reads[pr.path].Max {
 				entry.Data = data
 			}
 		}
