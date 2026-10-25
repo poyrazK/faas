@@ -72,6 +72,13 @@ func spoolRoot() string {
 	return "/var/spool/faas/builds"
 }
 
+// multipartOverridesProblem rejects an `overrides` field on a source upload.
+// Only JSON image deployments take the overrides object (ADR-053); a source
+// tree declares its run contract in gregale.yaml.
+func multipartOverridesProblem() *api.Problem {
+	return api.ErrValidation("overrides is accepted only on JSON image deployments; a source deployment declares hosting.port, hosting.start and hosting.health in gregale.yaml, and the multipart healthcheck and override_env fields set its startup probe and environment")
+}
+
 // createDeploymentMultipart handles source tarball + dockerfile + function
 // source uploads (spec §4.2, §9). Multipart form fields:
 //
@@ -83,6 +90,8 @@ func spoolRoot() string {
 //	source_url string — optional informational repository provenance URL.
 //	commit_sha string — optional lowercase hexadecimal Git commit identifier.
 //	override_env string — optional JSON object of per-deployment plaintext env values.
+//
+// An `overrides` field is rejected (multipartOverridesProblem).
 //
 // DeployedApps is enforced at app-create time via
 // store.CreateAppIfUnderQuota — the deploy path cannot bypass it because
@@ -375,6 +384,12 @@ func (s *server) createDeploymentMultipart(w http.ResponseWriter, r *http.Reques
 				api.WriteProblem(w, prob)
 				return
 			}
+		case "overrides":
+			// The JSON deployment field is not a multipart field (ADR-053):
+			// silently dropping it deployed without the caller's port or
+			// healthcheck.
+			api.WriteProblem(w, multipartOverridesProblem())
+			return
 		default:
 			// Ignore unknown fields so clients can ship extra metadata.
 			_, _ = io.Copy(io.Discard, part)

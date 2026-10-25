@@ -291,6 +291,10 @@ type Request struct {
 	// through to the normal fleet chooser and the shared backend remains the
 	// cold-restore fallback.
 	PreferredNodeIDs []string
+	// ExcludeNodeIDs are nodes that already refused this wake before
+	// starting its VM (ADR-20261022184531). The chooser skips them like
+	// nodes without headroom; hints never bring them back.
+	ExcludeNodeIDs []string
 	// PrioritizeSnapshotLocality is reserved for an authenticated deployment
 	// smoke. The candidate's first public request must use a fitting node
 	// already holding its snapshot when one is known; choosing an empty node

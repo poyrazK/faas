@@ -2434,6 +2434,10 @@ func (h *Handler) buildImageLayer(ctx context.Context, app state.App, dep state.
 		_ = h.markDeployFailed(ctx, dep.ID, err, "manifest invalid")
 		return fmt.Errorf("imaged: validate manifest: %w", err)
 	}
+	if err := checkCompanionPorts(manifest, dep); err != nil {
+		_ = h.markDeployFailed(ctx, dep.ID, err, "workload ports")
+		return fmt.Errorf("imaged: workload ports: %w", err)
+	}
 	if err := h.store.SetDeploymentSecretReloadSignal(ctx, dep.ID, manifest.SecretReloadSignal); err != nil {
 		_ = h.markDeployFailed(ctx, dep.ID, err, "persist secret reload support")
 		return fmt.Errorf("imaged: persist secret reload support: %w", err)

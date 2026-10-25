@@ -571,6 +571,8 @@ type MemStore struct {
 	githubWebhookSecrets map[int64]GithubWebhookSecret
 	// honeytokens is keyed by HoneytokenDigest (ADR 20261024014500).
 	honeytokens map[string]Honeytoken
+	// alertTestSends are relayed test sends (ADR 20261022111812).
+	alertTestSends map[string]memAlertTestSend
 	// githubWebhookSecretMeta stamps (upgraded_at, upgraded_by)
 	// for each per-tenant row so the apid admin route can echo
 	// the row back without a second query.
