@@ -91,6 +91,16 @@ func UnitGatewaydInternal() daemonunit.Unit {
 		EnvironmentFile: "-/etc/faas/compute-db.env -/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env -/etc/faas/otel.env",
 
 		Environment: []daemonunit.KV{
+			// Every request on the node allocates through this daemon, and at
+			// Go's default GOGC=100 garbage collection was ~5% of its CPU plus
+			// ~10% in allocation. A prod A/B on 2026-10-25 (100 req/s, one
+			// node tuned, the other as control, two runs) measured GOGC=200 at
+			// ~16% less CPU per request for ~20 MB more RSS (120 -> ~140 MB).
+			// GOMEMLIMIT keeps 128 MiB of the cgroup cap outside Go's soft
+			// limit, as gatewayd-public does, so the larger heap target can
+			// never push the daemon into its MemoryMax.
+			{Key: "GOGC", Value: "200"},
+			{Key: "GOMEMLIMIT", Value: "384MiB"},
 			{Key: "FAAS_GATEWAY_LISTEN", Value: "off"},
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
 			{Key: "FAAS_HOST_KEY_PATH", Value: "%d/host.age"},
