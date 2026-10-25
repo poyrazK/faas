@@ -58,7 +58,7 @@ func TestPublicRouteGraphPostgresForeignOverloadCannotBlockClaimedOwner(t *testi
 			if got := g.MatchRoute(ctx, host, "/", http.MethodGet); got == nil || got.AccountID != f.app.AccountID {
 				t.Fatalf("claimed owner route unavailable: %+v", got)
 			}
-			if _, err := newPublicRoutingPinner(f.store, false)(ctx, app, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
+			if _, err := newPublicRoutingPinner(f.store)(ctx, app, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
 				t.Fatalf("foreign overload blocked owner dispatch: %v", err)
 			}
 		})

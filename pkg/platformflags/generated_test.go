@@ -75,3 +75,49 @@ func TestGeneratedFlagDefaultsFollowTier(t *testing.T) {
 		}
 	}
 }
+
+// ungatedGeneratedFlags are capabilities whose generated flag gates nothing
+// by design, with the reason (ADR-20261023115741).
+var ungatedGeneratedFlags = map[string]string{
+	"framework-profiles": "detection runs inside the CLI's deploy and init flows; there is no request or daemon decision to gate",
+	"frozen-tier":        "operator performance switch (FAAS_FROZEN_TIER) with no customer-visible behaviour to release",
+}
+
+// TestEveryGeneratedFlagGatesSomething fails when a capability's generated
+// flag decides nothing: no route, setting, daemon or CLI command consults it,
+// so turning it off would hide nothing. Give the capability an owner in
+// pkg/productcap/catalog.json, a hand-written flag its handlers check, or an
+// entry above with the reason.
+func TestEveryGeneratedFlagGatesSomething(t *testing.T) {
+	products, err := productcap.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := map[string]bool{}
+	for _, capability := range products.Capabilities {
+		ids[capability.ID] = true
+		if capability.AlwaysOn {
+			continue
+		}
+		key, ok := CapabilityFlag(capability.ID)
+		if !ok {
+			continue // TestEveryCapabilityHasExactlyOneFlag reports it
+		}
+		if spec, _ := Lookup(key); !spec.Generated {
+			continue // a hand-written flag is checked by its own handlers
+		}
+		gates := len(capability.Routes) > 0 || len(capability.Settings) > 0 || len(capability.Consumers) > 0 || len(capability.CLI) > 0
+		_, exempt := ungatedGeneratedFlags[capability.ID]
+		switch {
+		case !gates && !exempt:
+			t.Errorf("capability %q: its generated flag %q gates no route, setting, daemon or CLI command", capability.ID, key)
+		case gates && exempt:
+			t.Errorf("capability %q gates something now; drop it from ungatedGeneratedFlags", capability.ID)
+		}
+	}
+	for id := range ungatedGeneratedFlags {
+		if !ids[id] {
+			t.Errorf("ungatedGeneratedFlags names %q, which the catalog does not have", id)
+		}
+	}
+}

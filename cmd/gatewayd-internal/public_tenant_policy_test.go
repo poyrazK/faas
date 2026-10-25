@@ -44,7 +44,7 @@ func TestPublicTenantPostgresHTTPPeersRefuseAndRepairWithoutNotify(t *testing.T)
 	for _, http2 := range []bool{false, true} {
 		handler := gateway.NewHandlerWith(gateway.NewPGBackend(router, domainRemovalScheduler{gateway.NewFakeScheduler("node").WithInstanceID(uuid.NewString())}, nil), nil, nil)
 		handler.SetWakeGateHook()
-		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store, false)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil)
+		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil)
 		handler.WithForwarding(func(gateway.Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { forwards.Add(1); w.WriteHeader(http.StatusNoContent) })
 		})
@@ -110,7 +110,7 @@ func TestPublicTenantPostgresHTTPPeersRefuseAndRepairWithoutNotify(t *testing.T)
 	}
 	policies := newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router)
 	admittedContext, admitted := f.compiledAppWithRouter(t, policies, router, host)
-	if _, err := newPublicRoutingPinner(f.store, false)(admittedContext, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
+	if _, err := newPublicRoutingPinner(f.store)(admittedContext, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
 		t.Fatalf("verified tenant dispatch policy: %v", err)
 	}
 	request(http.StatusNoContent)
@@ -185,7 +185,7 @@ func TestPublicTenantRemovalPostgresHTTPPeersFallbackWithoutNotify(t *testing.T)
 		scheduler := domainRemovalScheduler{gateway.NewFakeScheduler("node").WithInstanceID(uuid.NewString())}
 		handler := gateway.NewHandlerWith(gateway.NewPGBackend(router, scheduler, nil), nil, nil)
 		handler.SetWakeGateHook()
-		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store, false)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil)
+		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil)
 		handler.WithForwarding(func(gateway.Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { forwards.Add(1); w.WriteHeader(http.StatusNoContent) })
 		})
@@ -251,7 +251,7 @@ func TestPublicTenantRemovalPostgresHTTPPeersFallbackWithoutNotify(t *testing.T)
 	if err := f.store.DeleteTenantHostnameForSurface(t.Context(), host, surface.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store, false)(old, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
+	if _, err := newPublicRoutingPinner(f.store)(old, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
 		t.Fatal("removed tenant claim authorized the old owner's dispatch")
 	}
 	if headers := policies.MatchHeaders(old, host, "/", "GET"); headers == nil || headers.ResponseHeaders[0].Value != "original" {

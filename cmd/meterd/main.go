@@ -64,6 +64,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/safedeploy"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -1175,9 +1176,21 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		appsDomain = "gregale.dev" // apid's default for unset deployments
 	}
 	go runSyntheticChecks(ctx, store, appsDomain, log)
-	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient)
+	// ADR 20261022111812: once the seal_domains role stages the alerting
+	// domain, its identity opens alert secrets, channel destinations and MCP
+	// readiness provider keys ahead of the fleet and host identities.
+	alertingIdentities, err := loadAlertingSealDomain(deps.getenv)
+	if err != nil {
+		return err
+	}
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Alerting, len(alertingIdentities) > 0)
+	log.Info("alerting seal domain", "domain_identity", len(alertingIdentities) > 0)
+	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient, alertingIdentities...)
 	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
 	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
+	// ADR 20261022111812: apid relays the test sends it cannot open here;
+	// meterd holds the alerting key.
+	go runAlertTestSends(ctx, evaluator, log)
 	// ADR-20261022172052: firing app alerts carry what the log ledger shows.
 	evaluator.SetLogContext(deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1")
 	// ADR-747: record customer SLO budget hours from Prometheus.
@@ -1502,6 +1515,26 @@ func stuckAfterFromEnvMeterd(getenv func(string) string, log *slog.Logger) time.
 	return d
 }
 
+// runAlertTestSends sends the test sends apid relays (ADR 20261022111812,
+// section 3), checking for new ones every second; apid waits for the result.
+func runAlertTestSends(ctx context.Context, e *alerts.Evaluator, log *slog.Logger) {
+	if e == nil {
+		return
+	}
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		if _, err := e.RunTestSendsOnce(ctx); err != nil && ctx.Err() == nil {
+			log.Warn("meterd: alert test sends", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
+}
+
 // buildAlertEvaluator wires the alert-evaluator (issue #396 /
 // ADR-045 PR 4). Returns nil if neither FAAS_PROMETHEUS_URL nor
 // FAAS_HOST_AGE_IDENTITY_PATH is configured — the dev loop runs
@@ -1529,7 +1562,7 @@ func buildPromQLClient(deps runDeps) appmetrics.PromQL {
 	return promql.NewClient(promURL, nil)
 }
 
-func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Logger, ops *wire.OpsMetrics, promClient appmetrics.PromQL) *alerts.Evaluator {
+func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Logger, ops *wire.OpsMetrics, promClient appmetrics.PromQL, alerting ...*age.X25519Identity) *alerts.Evaluator {
 	identityPath := deps.getenv("FAAS_HOST_AGE_IDENTITY_PATH")
 	if promClient == nil && identityPath == "" {
 		log.Warn("meterd: alert evaluator disabled — both FAAS_PROMETHEUS_URL and FAAS_HOST_AGE_IDENTITY_PATH unset; running with five ticks")
@@ -1570,6 +1603,18 @@ func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Lo
 				log.Info("meterd: rotation overlap active — alert dispatch falls back across current + previous host.age")
 			}
 		}
+	}
+
+	if len(alerting) > 0 {
+		var legacy []*age.X25519Identity
+		switch {
+		case identitiesLoader != nil:
+			legacy = identitiesLoader()
+		case identityLoader != nil:
+			legacy = []*age.X25519Identity{identityLoader()}
+		}
+		readers := alertingReaders(alerting, legacy)
+		identitiesLoader = func() []*age.X25519Identity { return readers }
 	}
 
 	dispatcher := webhookout.NewDispatcher(webhookout.DispatcherOptions{})

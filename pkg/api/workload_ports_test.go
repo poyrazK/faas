@@ -25,6 +25,17 @@ func TestSidecarsValidatePortConflicts(t *testing.T) {
 			wantErr:  true,
 		},
 		{
+			name:     "unknown main port compares companions only",
+			mainPort: -1,
+			sidecars: Sidecars{{Name: "web", Port: 8080}},
+		},
+		{
+			name:     "unknown main port still catches companion collisions",
+			mainPort: -1,
+			sidecars: Sidecars{{Name: "a", Port: 9100}, {Name: "b", Port: 9100}},
+			wantErr:  true,
+		},
+		{
 			name:     "sidecar collision",
 			mainPort: 9000,
 			sidecars: Sidecars{{Name: "a", Port: 9100}, {Name: "b", Port: 9100}},

@@ -44,7 +44,21 @@ existing S3 driver and does not change the preview's provider qualification gate
 ### Deploy the branded gateway
 
 The production Ansible path keeps this optional until a backend is qualified.
-Set the following inventory values on the control-plane host:
+Declare the gateway in the deploy manifest (ADR 20261025111015), and
+`gregalectl manifest ansible` renders the inventory values for the
+control-plane host:
+
+```yaml
+object_storage:
+  gateway: managed
+  config_src: /operator/config/object-storage.json
+  # S3/R2/OVH only; GCS with attached ADC does not need this file.
+  provider_env_src: /operator/secrets/object-storage.env
+```
+
+Strict `make verify-fleet` fails when `faas-s3-gatewayd` runs on a
+control-plane node that the manifest does not manage; lenient verification
+warns. Inventories written by hand set the same values directly:
 
 ```yaml
 faas_object_storage_gateway_managed: true
@@ -1738,8 +1752,13 @@ S3 clients can sign `X-Gregale-Delete-Id` for retry identity. Signed AWS SDK
 invocation IDs are also used; botocore (boto3, the AWS CLI) adds its invocation
 ID after signing, so an unsigned one is ignored and that delete receives a
 generated ID. Responses return `X-Gregale-Delete-Id`; ordinary
-Enabled deletion returns an owned marker version ID. A dispatched uncertain
-intent fences bucket writes, versioning, bucket deletion and inventories. Permanent
+Enabled deletion returns an owned marker version ID. A bucket runs one deletion
+per key at a time, and deletes of different keys overlap; S3 `DeleteObjects`
+runs up to eight entries at once and answers in request order
+([ADR-20261025115958](adr/20261025115958-object-storage-per-key-deletion.md)).
+A dispatched uncertain intent fences writes of its key, and versioning, bucket
+deletion and inventories of its bucket. While an inventory scan of the bucket
+runs, new deletions wait for it. Permanent
 immutable deletes use the same journal. Recovery can safely resend their exact
 owned private selector and settle only a valid acknowledgment; a rejection of a
 recovery attempt cannot prove that the earlier request finished. An initial

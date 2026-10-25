@@ -63,7 +63,7 @@ func TestPublicRouteSourcePostgresRequiresStableClaimAndTarget(t *testing.T) {
 			if target.PublicRouteSource.Found != (kind != "new-claim") {
 				t.Fatal("source claim presence was guessed")
 			}
-			pin := newPublicRoutingPinner(f.store, false)
+			pin := newPublicRoutingPinner(f.store)
 			inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production"}
 			if snapshot, err := pin(t.Context(), target, inputs); err != nil || len(snapshot.Weights) != 1 || snapshot.Weights[0].ID != deployment.ID {
 				t.Fatalf("unchanged source/target refused: %+v %v", snapshot, err)
@@ -118,11 +118,11 @@ func TestPublicRouteSourcePostgresUsesSameViewAsTargetAndWeights(t *testing.T) {
 	// before the later source read must not mix that new claim into this view.
 	during, err := newPublicRoutingPinner(publicSnapshotAfterOwner{PublicRoutingSnapshotStore: f.store, after: func() {
 		f.sourceApp(t, "new-source", f.app.AccountID)
-	}}, false)(t.Context(), target, inputs)
+	}})(t.Context(), target, inputs)
 	if err != nil || len(during.Weights) != 1 || during.Weights[0].ID != deployment.ID {
 		t.Fatalf("source, target and routing did not share one view: %+v %v", during, err)
 	}
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), target, inputs); err == nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), target, inputs); err == nil {
 		t.Fatal("fresh dispatch ignored a newly claimed synthetic hostname")
 	}
 }
@@ -160,7 +160,7 @@ func TestPublicRouteSourcePostgresRefusesMissingOrInconsistentEvidence(t *testin
 			case "ordinary-with-source":
 				malformed.PublicPolicySource = f.routingApp().PublicPolicySource
 			}
-			if snapshot, err := newPublicRoutingPinner(f.store, false)(t.Context(), malformed, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil || len(snapshot.Weights) != 0 {
+			if snapshot, err := newPublicRoutingPinner(f.store)(t.Context(), malformed, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil || len(snapshot.Weights) != 0 {
 				t.Fatalf("malformed source evidence accepted: %+v %v", snapshot, err)
 			}
 		})
@@ -241,7 +241,7 @@ func TestPublicRouteSourcePostgresReservationsCannotBecomeSyntheticHosts(t *test
 				}
 				source.PublicPolicySource.CanSubstitute = true
 				target.PublicRouteSource = &gateway.PublicRouteSourcePolicy{Source: source.PublicPolicySource}
-				if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), target, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
+				if _, err := newPublicRoutingPinner(f.store)(t.Context(), target, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
 					t.Fatal("reserved hostname authorized a synthetic target")
 				}
 			}
@@ -288,7 +288,7 @@ func TestPublicRouteSourcePostgresNewReservationRefusesOldNegativeClaim(t *testi
 	const host = "new-reservation.example.test"
 	target := f.routeTarget(t, host)
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production"}
-	pin := newPublicRoutingPinner(f.store, false)
+	pin := newPublicRoutingPinner(f.store)
 	if _, err := pin(t.Context(), target, inputs); err != nil {
 		t.Fatalf("unclaimed hostname refused: %v", err)
 	}
@@ -331,7 +331,7 @@ func TestPublicRouteSourcePostgresUnavailableClaimRefusesAndReleasesTransaction(
 	}
 	bounded, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
-	if snapshot, err := newPublicRoutingPinner(f.store, false)(bounded, target, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil || len(snapshot.Weights) != 0 {
+	if snapshot, err := newPublicRoutingPinner(f.store)(bounded, target, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil || len(snapshot.Weights) != 0 {
 		t.Fatalf("blocked source read granted dispatch: %+v %v", snapshot, err)
 	}
 	if err := lock.Rollback(t.Context()); err != nil {
@@ -350,7 +350,7 @@ func TestPublicRouteSourcePostgresUnavailableClaimRefusesAndReleasesTransaction(
 			t.Fatal("refused source read retained its transaction")
 		}
 	}
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), target, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), target, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
 		t.Fatalf("source read did not recover after store became available: %v", err)
 	}
 }

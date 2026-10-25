@@ -29,8 +29,11 @@ and removes both units, their drop-ins and the firewall rules.
    token is never on its command line or in its environment. Until the file
    exists the connector stays stopped (`ConditionPathExists=`) and no traffic
    arrives. The edge itself still listens on loopback.
-3. Point `*.<apps domain>` at the tunnel only after the pilot hostname
-   passes (ADR-1343 rollout step 6).
+3. Move app traffic with `docs/runbooks/AppEdgeCutover.md`: one pilot host
+   first, through the public-timeout Worker, and `*.<apps domain>` only
+   after the pilot passes (ADR-1343 rollout step 6). Create the tunnel's
+   ingress through the API as that runbook shows; the dashboard's public
+   hostname form also writes a DNS record.
 
 ## Checks
 

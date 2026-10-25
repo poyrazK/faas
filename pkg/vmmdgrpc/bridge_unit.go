@@ -15,15 +15,17 @@ package vmmdgrpc
 // destroy, a failed wake or a freeze stop it and wait until systemd has
 // unloaded it, so a parked app keeps no process or cgroup (invariant 4).
 //
-// This slice still stops every bridge unit when vmmd shuts down, and sweeps
-// any it finds at startup (a crash leaves them): it does not adopt them
-// yet. Only namespace bridges with a bridge uid (FAAS_BRIDGE_UNPRIVILEGED=1)
-// run as units; public-target bridges keep the process path.
+// A planned stop whose successor adopts the guests leaves the units running,
+// and the successor keeps the ones it can prove (bridge_unit_adopt.go); any
+// other stop, and any unit it cannot prove, stops them. Only namespace
+// bridges with a bridge uid (FAAS_BRIDGE_UNPRIVILEGED=1) run as units;
+// public-target bridges keep the process path.
 
 import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/netip"
 	"os"
@@ -31,7 +33,6 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
-	"sync"
 	"syscall"
 	"time"
 
@@ -102,6 +103,12 @@ type bridgeUnit struct {
 	name string
 	unit sdunit.Unit
 	proc unitProcess
+	// appProtocol is the app protocol the bridge was started for; adoption
+	// restores the entry's start parameters from it.
+	appProtocol string
+	// recorded: the run is in the instance's adoption record. Guarded by
+	// the manager's mu.
+	recorded bool
 }
 
 // unitProcess is the bridge unit's main process, held by a pidfd so its
@@ -170,7 +177,7 @@ func bridgeService(entry *streamBridgeEntry, bridgePath, netnsPath, guestIP stri
 
 // startEntryUnit starts entry's bridge as a unit in the namespace bound at
 // netnsRunDir/netnsName.
-func (m *streamBridgeManager) startEntryUnit(ctx context.Context, entry *streamBridgeEntry, bridgePath, netnsName, guestIP string, port uint32, deadline string, env []string) error {
+func (m *streamBridgeManager) startEntryUnit(ctx context.Context, entry *streamBridgeEntry, bridgePath, netnsName, guestIP string, port uint32, deadline string, env []string, appProtocol string) error {
 	if err := entry.identity.prepareSocketDir(entry.socket); err != nil {
 		return fmt.Errorf("stream bridge socket: %w", err)
 	}
@@ -196,7 +203,7 @@ func (m *streamBridgeManager) startEntryUnit(ctx context.Context, entry *streamB
 	if err == nil {
 		var proc unitProcess
 		if proc, err = m.openUnitProcess(u, netnsPath); err == nil {
-			entry.unit = &bridgeUnit{name: name, unit: u, proc: proc}
+			entry.unit = &bridgeUnit{name: name, unit: u, proc: proc, appProtocol: appProtocol}
 			return nil
 		}
 	}
@@ -217,50 +224,15 @@ func (m *streamBridgeManager) stopUnitName(ctx context.Context, name string) {
 	}
 }
 
-// stopEntryUnit stops entry's unit and waits until it is unloaded.
+// stopEntryUnit stops entry's unit, waits until it is unloaded and drops
+// its adoption record.
 func (m *streamBridgeManager) stopEntryUnit(ctx context.Context, entry *streamBridgeEntry) {
 	u := entry.unit
 	m.stopUnitName(ctx, u.name)
 	u.proc.close()
-}
-
-// sweepUnits stops every bridge unit of an instance with no entry. At startup that is all
-// of them: this slice never adopts a predecessor's bridge, and nothing
-// routes to it. It returns how many it tried to stop.
-func (m *streamBridgeManager) sweepUnits(ctx context.Context) (int, error) {
-	units, err := m.unitManager(ctx)
-	if err != nil {
-		return 0, err
+	if m.journal != nil {
+		m.journal.ForgetInstanceBridge(entry.instance, u.name)
 	}
-	names, err := units.List(ctx, instanceBridgeUnitPattern)
-	if err != nil {
-		return 0, err
-	}
-	// An instance with an entry owns its units, a starting one included
-	// (whose unit field is not published yet).
-	owned := map[string]bool{}
-	m.mu.Lock()
-	for _, entry := range m.entries {
-		owned[entry.instance] = true
-	}
-	m.mu.Unlock()
-	var stale []string
-	for _, name := range names {
-		if instance, ok := bridgeUnitInstance(name); ok && !owned[instance] {
-			stale = append(stale, name)
-		}
-	}
-	var wg sync.WaitGroup
-	for _, name := range stale {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			m.stopUnitName(ctx, name)
-		}()
-	}
-	wg.Wait()
-	m.removeStaleSocketDirs()
-	return len(stale), nil
 }
 
 // removeStaleSocketDirs removes the bridge socket directories no entry
@@ -290,22 +262,6 @@ func (m *streamBridgeManager) removeStaleSocketDirs() {
 	}
 }
 
-// SweepInstanceBridgeUnits stops the bridge units a previous vmmd left; call
-// it before serving. A no-op unless instance bridge units are switched on.
-func (s *Server) SweepInstanceBridgeUnits(ctx context.Context) {
-	if s == nil || s.streamBridges == nil || !InstanceBridgeUnitsEnabled() {
-		return
-	}
-	n, err := s.streamBridges.sweepUnits(ctx)
-	if err != nil {
-		s.log.Warn("vmmd: instance bridge unit sweep failed", "err", err)
-		return
-	}
-	if n > 0 {
-		s.log.Info("vmmd: stopped instance bridge units left by a previous vmmd", "units", n)
-	}
-}
-
 // sameNamespace reports whether the namespace binding at path is the one
 // the process pid runs in.
 func sameNamespace(path string, pid int) bool {
@@ -314,4 +270,23 @@ func sameNamespace(path string, pid int) bool {
 		return false
 	}
 	return want.Dev == got.Dev && want.Ino == got.Ino
+}
+
+// instanceBridgeSliceDir is faas-tenant-ibridge.slice's cgroup. A variable
+// so tests can point it at a temporary directory.
+var instanceBridgeSliceDir = "/sys/fs/cgroup/faas.slice/faas-tenant.slice/" + instanceBridgeSlice
+
+// instanceBridgeResidentBytes is the memory every bridge unit on the node
+// holds (ADR §2 "Memory", the ADR-909 amendment). A slice systemd has not
+// created yet holds no bridge.
+func instanceBridgeResidentBytes() (int64, bool) {
+	raw, err := os.ReadFile(filepath.Join(instanceBridgeSliceDir, "memory.current"))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, true
+	}
+	if err != nil {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	return v, err == nil && v >= 0
 }

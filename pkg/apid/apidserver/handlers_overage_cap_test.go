@@ -75,3 +75,38 @@ func TestGetOverageCap_ReadFailure(t *testing.T) {
 		t.Fatalf("status %d: %s", rec.Code, rec.Body)
 	}
 }
+
+// Setting or clearing the spend cap is a billing change, like the plan and
+// billing routes: a deploy-scoped key (a CI key, or an MCP connection with
+// writes) must not remove the account's spending ceiling. A refused call
+// leaves the saved cap as it was.
+func TestRaiseOverageCap_RequiresAdminScope(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		scopes []string
+		want   int
+	}{
+		{"deploy key", []string{api.ScopeDeployWrite}, 403},
+		{"read and deploy key", []string{api.ScopeAppsRead, api.ScopeDeployWrite}, 403},
+		{"admin key", api.ScopesAdminOnly, 200},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			e := apidserver.SetupWithScopes(t, tc.scopes)
+			saved := int64(500)
+			if err := (*e.Store()).UpdateAccountOverageCapCents(context.Background(), (*e.Acct()).ID, &saved); err != nil {
+				t.Fatal(err)
+			}
+			rec := e.Do(t, "POST", "/v1/account/overage-cap", map[string]any{"overage_cap_cents": nil}, nil)
+			if rec.Code != tc.want {
+				t.Fatalf("status %d, want %d: %s", rec.Code, tc.want, rec.Body)
+			}
+			cents, capped, err := (*e.Store()).GetAccountOverageCapCents(context.Background(), (*e.Acct()).ID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cleared := !capped; cleared != (tc.want == 200) || capped && cents != saved {
+				t.Fatalf("cap after the call = %d (capped %v)", cents, capped)
+			}
+		})
+	}
+}

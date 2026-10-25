@@ -47,10 +47,11 @@ stages the keys on every host it joins or rebuilds.
   - `SEAL_DOMAIN_<DOMAIN>_AGE_KEY`: the contents of `<domain>.age`;
   - `SEAL_DOMAIN_<DOMAIN>_AGE_RECIPIENT`: the contents of `<domain>.age.pub`.
 
-  The control-plane CD then stages the `outbound` and `source` identities
-  and every domain's recipient. The compute join stages the `runtime` and
-  `build` identities on each node it joins, and leaves the node drained if
-  `seal-domain verify` fails there. Before apid seals to a domain, the role
+  The control-plane CD then stages the `outbound`, `source` and `alerting`
+  identities and every domain's recipient. The compute join stages the `runtime`,
+  `build` and `edge` identities on each node it joins, and leaves the node
+  drained if `seal-domain verify` fails there. Before apid seals to a
+  domain, the role
   checks that the staged recipient is the one readers published the probe
   with, so a recipient from another pair stops the converge.
 - **Settings** (`faas_seal_domain_<domain>_writes` and
@@ -681,4 +682,209 @@ Passwords re-sealed in this step stay domain-only, so:
 
 - never remove `build.age` from a compute host;
 - never roll imaged back past the first release that carried the build
+  reader.
+
+## 7. Edge seal domain
+
+gatewayd-internal on compute hosts is the only reader of app basic-auth
+credentials and log drain authentication headers; apid seals them. At the
+end of this stage only `edge.age` opens them, except the log destinations
+of application standards and the drains those standards manage, which stay
+on the fleet key for now (ADR 20261022111812, fifth slice).
+
+### 7a. Create the identity (operator machine)
+
+```bash
+gregalectl seal-domain init --domain edge --dir ~/gregale-seal/<environment>
+```
+
+Store `edge.age` with the other domain identities. If it is lost after 7d,
+customers must set their basic-auth credentials and log drain headers
+again.
+
+### 7b. Stage the readers; seal to both keys
+
+Add to the local variables file, or set the `SEAL_DOMAIN_EDGE_*` secrets:
+
+```yaml
+faas_seal_domain_edge_identity_src: /Users/<you>/gregale-seal/<environment>/edge.age
+faas_seal_domain_edge_recipient_src: /Users/<you>/gregale-seal/<environment>/edge.age.pub
+```
+
+1. **Each compute host:**
+   `ANSIBLE_LIMIT=<host> make ANSIBLE_INVENTORY=<inventory> bootstrap-compute`.
+   The role:
+   - installs `edge.age`;
+   - restarts gatewayd-internal, as any gatewayd-internal configuration
+     change does;
+   - proves the probe, publishing it on the first host.
+
+   Converge one host at a time.
+2. **Control plane:** converge the role alone. With
+   `faas_seal_domain_edge_writes` left empty, apid seals new credentials to
+   both the domain and the fleet key, so this step and step 1 can run in
+   either order.
+
+   ```bash
+   gregalectl deploy converge-control-plane --roles seal_domains --manifest-file <signed manifest> --ssh-known-hosts-file <known_hosts> --ansible-vars-file <local vars file>
+   ```
+
+Check:
+
+- Every compute host's `faas_seal_domain_edge.prom` shows
+  `faas_seal_domain_ready{domain="edge"} 1`.
+- In Prometheus, `faas_seal_domain_loaded{domain="edge"}` is 1 on every
+  gatewayd-internal, and FaasSealDomainIdentityMissing does not fire.
+- gatewayd-internal logs `"edge seal domain"` with `"domain_identity":true`.
+- apid logs `"edge seal domain"` with `"recipients":2`.
+- On a test app, set basic auth after the converge and request it with the
+  credentials; add a log drain with an authentication header and check
+  that its receiver gets lines.
+
+Rollback: set `faas_seal_domain_edge_writes: fleet` and converge the control
+plane. Credentials saved in the meantime also carry the fleet key.
+
+### 7c. Wait out the rollback window
+
+Go on only when every gatewayd-internal reports
+`faas_seal_domain_loaded{domain="edge"} 1` and gatewayd-internal's previous
+release (N-1) also carries the edge reader. A compute node that joins later
+needs `edge.age` before it serves traffic. With the `SEAL_DOMAIN_EDGE_*`
+secrets set, CD's join stages and verifies it; without them, stage it by
+hand before activating the node.
+
+### 7d. Seal to the domain only; re-seal stored credentials
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_edge_readers_verified: true
+faas_seal_domain_edge_writes: domain
+```
+
+apid then logs `"write_mode":"domain"`. Re-seal on a compute host, which
+holds `edge.age` (its `gregalectl` must not be newer than the data
+release):
+
+```bash
+sudo gregalectl seal-domain migrate --domain edge --readers-verified --db-env /etc/faas/compute-db.env
+```
+
+- Expect `0 failed`.
+- `changed concurrently` counts rows a customer changed during the run,
+  and rows a guard held: a project clone in progress or a pending standard
+  review. Run the migration again later.
+- `left on the fleet key` counts application-standard log destinations and
+  the drains they manage. They are expected and keep working; a later
+  release re-seals them.
+- A second run reports every other row `current`.
+- If `failed` is not 0, gatewayd-internal cannot open those credentials
+  today either; their owners must set them again.
+
+Request the test app again, and check the drain still delivers.
+
+Rollback: set `faas_seal_domain_edge_writes` back to empty and converge.
+Credentials re-sealed in this step stay domain-only, so:
+
+- never remove `edge.age` from a compute host;
+- never roll gatewayd-internal back past the first release that carried
+  the edge reader.
+
+## 8. Alerting seal domain
+
+meterd on the control plane is the only reader of alert rule webhook
+secrets, notification channel destinations (Slack URLs, PagerDuty routing
+keys) and MCP readiness PagerDuty and fallback keys; apid seals them. At the
+end of this stage only `alerting.age` opens them, and only meterd holds it.
+Customer test sends that apid cannot open go through meterd (ADR
+20261022111812, section 3).
+
+### 8a. Create the identity (operator machine)
+
+```bash
+gregalectl seal-domain init --domain alerting --dir ~/gregale-seal/<environment>
+```
+
+Store `alerting.age` with the other domain identities. If it is lost after
+8d, customers must set their alert webhook secrets, channel destinations and
+MCP readiness keys again.
+
+### 8b. Stage the reader; seal to both keys
+
+Set the `SEAL_DOMAIN_ALERTING_*` secrets, or add to the local variables
+file:
+
+```yaml
+faas_seal_domain_alerting_identity_src: /Users/<you>/gregale-seal/<environment>/alerting.age
+faas_seal_domain_alerting_recipient_src: /Users/<you>/gregale-seal/<environment>/alerting.age.pub
+```
+
+Then converge the role on the control plane:
+
+```bash
+gregalectl deploy converge-control-plane --roles seal_domains --manifest-file <signed manifest> --ssh-known-hosts-file <known_hosts> --ansible-vars-file <local vars file>
+```
+
+As for outbound, the role installs `alerting.age`, restarts meterd, proves
+the probe, and only then gives apid the recipient. With
+`faas_seal_domain_alerting_writes` left empty, apid seals new values to both
+the domain and the fleet key.
+
+Check, on each control-plane host:
+
+- `faas_seal_domain_alerting.prom` shows
+  `faas_seal_domain_ready{domain="alerting"} 1`.
+- In Prometheus, `faas_seal_domain_loaded{domain="alerting"}` is 1 on every
+  meterd.
+- meterd logs `"alerting seal domain"` with `"domain_identity":true`.
+- apid logs `"alerting seal domain"` with `"recipients":2`.
+- On a test account, create a Slack channel and an alert rule with a
+  webhook, and run both test sends. They still go out from apid, which can
+  open values sealed to both keys.
+
+Rollback: set `faas_seal_domain_alerting_writes: fleet` and converge.
+
+### 8c. Wait out the rollback window
+
+Go on only when every meterd reports `faas_seal_domain_loaded{domain="alerting"} 1`
+and meterd's previous release (N-1) also carries the alerting reader and the
+test-send relay.
+
+### 8d. Seal to the domain only; re-seal stored values
+
+Add to the local variables file, and converge the control plane:
+
+```yaml
+faas_seal_domain_alerting_readers_verified: true
+faas_seal_domain_alerting_writes: domain
+```
+
+apid then logs `"write_mode":"domain"`. Re-seal on a control-plane host,
+which holds `alerting.age`:
+
+```bash
+sudo gregalectl seal-domain migrate --domain alerting --readers-verified --db-env /etc/faas/compute-db.env
+```
+
+- Expect `0 failed`.
+- If `changed concurrently` is not 0, a customer changed that value during
+  the run; run the migration again.
+- A second run reports every row `current`.
+- If `failed` is not 0, meterd cannot open those values today either; their
+  owners must set them again.
+
+Run the test sends from 8b again. apid can no longer open the values, so
+meterd sends them; a 504 means meterd did not pick the request up within
+the wait (check meterd's `"meterd: alert test sends"` log lines).
+
+Open MCP readiness incidents keep a copy of their route's key in
+`delivery_routing`, sealed as it was when the incident opened. Those copies
+stay readable while meterd keeps the fleet identity, and go away as the
+incidents close.
+
+Rollback: set `faas_seal_domain_alerting_writes` back to empty and converge.
+Values re-sealed in this step stay domain-only, so:
+
+- never remove `alerting.age` from a control-plane host;
+- never roll meterd back past the first release that carried the alerting
   reader.

@@ -3559,6 +3559,7 @@ type Querier interface {
 	// whose 13-way join took 0.6-0.8 s to plan on every service call through the
 	// transaction pooler (Hunt 14 H14-33).
 	LiveServiceProxyInstanceRowsByHostIP(ctx context.Context, db DBTX, arg LiveServiceProxyInstanceRowsByHostIPParams) ([]LiveServiceProxyInstanceRowsByHostIPRow, error)
+	LiveSnapshotsForTier(ctx context.Context, db DBTX, arg LiveSnapshotsForTierParams) ([]Snapshot, error)
 	// Both collections come from one statement snapshot, including empty drain sets.
 	LoadApplicationStandardLogConsumerSnapshot(ctx context.Context, db DBTX) ([]byte, error)
 	// ADR-732: production fork intent (app_forks). apid admits forks under a
@@ -4227,6 +4228,9 @@ type Querier interface {
 	ObjectCapacityDeleteWrites(ctx context.Context, db DBTX, bucketID pgtype.UUID) error
 	ObjectCapacityDue(ctx context.Context, db DBTX, limit int32) ([]ObjectStorageCapacityReconciliation, error)
 	ObjectCapacityFenced(ctx context.Context, db DBTX, bucketID pgtype.UUID) (bool, error)
+	// ObjectCapacityFenced, except that only a deletion of this key fences it
+	// (ADR-20261025115958).
+	ObjectCapacityFencedForKey(ctx context.Context, db DBTX, arg ObjectCapacityFencedForKeyParams) (bool, error)
 	ObjectCapacityGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectCapacityGetRow, error)
 	ObjectCapacityInsert(ctx context.Context, db DBTX, arg ObjectCapacityInsertParams) (ObjectStorageCapacityReconciliation, error)
 	ObjectCapacityLock(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectStorageCapacityReconciliation, error)
@@ -4247,11 +4251,16 @@ type Querier interface {
 	ObjectDeletionDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error)
 	ObjectDeletionGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectDeletionGetRow, error)
 	ObjectDeletionInsert(ctx context.Context, db DBTX, arg ObjectDeletionInsertParams) error
+	// ADR-20261025115958: a deletion waits only for work on its own key; the
+	// bucket's accounting mode (unsafe grants, observed versions) stays bucket-wide.
+	ObjectDeletionKeyReadiness(ctx context.Context, db DBTX, arg ObjectDeletionKeyReadinessParams) (ObjectDeletionKeyReadinessRow, error)
 	ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDeletionSaveParams) error
 	ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg ObjectGatewayUploadInsertParams) (ObjectUploadCompletion, error)
 	ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32) ([]ObjectBucket, error)
 	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)
 	ObjectInventoryFinish(ctx context.Context, db DBTX, arg ObjectInventoryFinishParams) (int64, error)
+	// Give up a claim without publishing; attempt_at keeps the retry cadence.
+	ObjectInventoryRelease(ctx context.Context, db DBTX, arg ObjectInventoryReleaseParams) (int64, error)
 	ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error
 	ObjectLifecycleMultipartAdmit(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartAdmitParams) (int64, error)
 	ObjectLifecycleMultipartList(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartListParams) ([]ObjectStorageMultipartUpload, error)

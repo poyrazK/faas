@@ -63,6 +63,36 @@ func TestRegistry_SourceIsWiredToGithubdAlone(t *testing.T) {
 	}
 }
 
+func TestRegistry_AlertingIsWiredToMeterdAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Alerting)
+	if !ok || !s.Wired {
+		t.Fatalf("alerting domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "meterd" {
+		t.Fatalf("alerting readers = %v, want [meterd]", s.Readers)
+	}
+	// apid seals alerting values and sends the tests it cannot open
+	// through meterd (ADR 20261022111812, section 3).
+	if containsDomain(sealdomain.ReaderDomains("apid"), sealdomain.Alerting) {
+		t.Fatal("apid reads the alerting domain; it must only seal alerting values")
+	}
+}
+
+func TestRegistry_EdgeIsWiredToGatewaydInternalAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Edge)
+	if !ok || !s.Wired {
+		t.Fatalf("edge domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "gatewayd-internal" {
+		t.Fatalf("edge readers = %v, want [gatewayd-internal]", s.Readers)
+	}
+	for _, d := range []string{"apid", "gatewayd-public"} {
+		if containsDomain(sealdomain.ReaderDomains(d), sealdomain.Edge) {
+			t.Fatalf("%s reads the edge domain; only gatewayd-internal opens its columns", d)
+		}
+	}
+}
+
 func TestRegistry_BuildIsWiredToImagedAlone(t *testing.T) {
 	s, ok := sealdomain.Lookup(sealdomain.Build)
 	if !ok || !s.Wired {

@@ -10,12 +10,21 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// newPublicRoutingPinner reads dispatch policy in one snapshot. With
-// cachedHostPolicy (FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY off, the default)
-// the request's host came from the route cache, which carries no snapshot
-// source, so only the authoritative path re-verifies host policy here
-// (ADR-570).
-func newPublicRoutingPinner(store state.PublicRoutingSnapshotStore, cachedHostPolicy bool) gateway.PublicRoutingPinner {
+// newPublicRoutingPinner verifies the app's ADR-570 host-policy snapshot in
+// the same view as the deployment roster (FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY).
+func newPublicRoutingPinner(store state.PublicRoutingSnapshotStore) gateway.PublicRoutingPinner {
+	return publicRoutingPinner(store, true)
+}
+
+// publicRoutingPinnerFor is the production wiring. With the default cached
+// host policy a host resolves from the route cache and carries no host-policy
+// snapshot to re-verify, so requiring one refused every public request. The
+// view still verifies the owner and pins the deployment roster.
+func publicRoutingPinnerFor(store state.PublicRoutingSnapshotStore, cachedHostPolicy bool) gateway.PublicRoutingPinner {
+	return publicRoutingPinner(store, !cachedHostPolicy)
+}
+
+func publicRoutingPinner(store state.PublicRoutingSnapshotStore, verifyHostPolicy bool) gateway.PublicRoutingPinner {
 	return func(ctx context.Context, app gateway.App, inputs gateway.PublicRoutingInputs) (gateway.PublicRoutingSnapshot, error) {
 		result := gateway.PublicRoutingSnapshot{AppID: app.ID, AccountID: app.AccountID, Scope: inputs.Scope,
 			ReleaseRequested: inputs.RequestedReleaseID, RevisionID: inputs.RequestedRevisionID,
@@ -27,7 +36,7 @@ func newPublicRoutingPinner(store state.PublicRoutingSnapshotStore, cachedHostPo
 			if err := reader.VerifyPublicRoutingOwner(ctx, app.ID, app.AccountID, app.ProjectID); err != nil {
 				return err
 			}
-			if !cachedHostPolicy {
+			if verifyHostPolicy {
 				if err := verifyPublicHostPolicy(ctx, reader, app); err != nil {
 					return err
 				}

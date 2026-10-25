@@ -108,12 +108,12 @@ func TestPublicRoutingSnapshotPostgresRetainsOneViewAcrossCutover(t *testing.T) 
 	old := f.deployment(t, "production", "sha256:old")
 	first := f.publish(t, old.ID)
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production"}
-	pin := newPublicRoutingPinner(f.store, false)
+	pin := newPublicRoutingPinner(f.store)
 	var next state.Deployment
 	during, err := newPublicRoutingPinner(publicSnapshotAfterOwner{PublicRoutingSnapshotStore: f.store, after: func() {
 		next = f.deployment(t, "production", "sha256:next")
 		f.publish(t, next.ID)
-	}}, false)(t.Context(), f.routingApp(), inputs)
+	}})(t.Context(), f.routingApp(), inputs)
 	if err != nil || len(during.Weights) != 1 || during.Weights[0].ID != old.ID {
 		t.Fatalf("mixed weight snapshot: %+v %v", during, err)
 	}
@@ -133,7 +133,7 @@ func TestPublicRoutingSnapshotPostgresRetainsOneViewAcrossCutover(t *testing.T) 
 		if _, err := f.pool.Exec(t.Context(), `UPDATE deployment_revision_pins SET expires_at=now()-interval '1 minute' WHERE deployment_id=$1`, old.ID); err != nil {
 			t.Fatal(err)
 		}
-	}}, false)(t.Context(), f.routingApp(), inputs)
+	}})(t.Context(), f.routingApp(), inputs)
 	if err != nil || during.ReleaseVerdict != "allowed" || during.ReleaseDeploymentID != old.ID {
 		t.Fatalf("mixed release snapshot: %+v %v", during, err)
 	}
@@ -197,7 +197,7 @@ func TestPublicRoutingSnapshotPostgresBoundsRosterAndIncompleteGraph(t *testing.
 	if _, err := f.pool.Exec(t.Context(), `DELETE FROM project_release_members WHERE release_id=$1 AND app_id=$2`, release.ID, f.app.ID); err != nil {
 		t.Fatal(err)
 	}
-	pin := newPublicRoutingPinner(f.store, false)
+	pin := newPublicRoutingPinner(f.store)
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production", ResolveRelease: true}
 	if _, _, err := (pgRouter{store: f.store}).resolvePublicAppSlug(t.Context(), f.app.Slug); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("incomplete production graph resolved host settings: %v", err)
@@ -233,5 +233,50 @@ func TestPublicRoutingSnapshotPostgresBoundsRosterAndIncompleteGraph(t *testing.
 	}
 	if f.pool.Stat().AcquiredConns() != 0 {
 		t.Fatal("refused routing retained a transaction")
+	}
+}
+
+// cachedRoutingStore serves one live deployment for any verified owner.
+type cachedRoutingStore struct{ deployment string }
+
+func (s cachedRoutingStore) WithPublicRoutingSnapshot(_ context.Context, read func(state.PublicRoutingPolicyReader) error) error {
+	return read(cachedRoutingReader(s))
+}
+
+type cachedRoutingReader cachedRoutingStore
+
+func (cachedRoutingReader) VerifyPublicRoutingOwner(context.Context, string, string, string) error {
+	return nil
+}
+
+func (r cachedRoutingReader) PublicDeploymentWeights(context.Context, string, string) ([]state.ServiceDeploymentWeight, error) {
+	return []state.ServiceDeploymentWeight{{ID: r.deployment, TrafficPercent: 100}}, nil
+}
+
+func (cachedRoutingReader) ResolvePublicProjectRelease(context.Context, string, string, string) (string, string, error) {
+	return "", "", nil
+}
+
+func (cachedRoutingReader) PublicRevisionAllowed(context.Context, string, string, string) (bool, error) {
+	return false, nil
+}
+
+func (cachedRoutingReader) PublicHostPinAllowed(context.Context, string, string, string) (bool, error) {
+	return false, nil
+}
+
+// A host resolved from the route cache (the production default) carries no
+// host-policy snapshot. Requiring one refused every public request with
+// traffic_policy_unavailable; only the authoritative mode re-verifies it.
+func TestPublicRoutingPinnerVerifiesHostPolicyOnlyWhenAuthoritative(t *testing.T) {
+	deployment := uuid.NewString()
+	app := gateway.App{ID: uuid.NewString(), AccountID: uuid.NewString()}
+	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production"}
+	snapshot, err := publicRoutingPinnerFor(cachedRoutingStore{deployment}, true)(t.Context(), app, inputs)
+	if err != nil || len(snapshot.Weights) != 1 || snapshot.Weights[0].ID != deployment {
+		t.Fatalf("cached host policy: snapshot=%+v err=%v; want the live roster", snapshot, err)
+	}
+	if _, err := publicRoutingPinnerFor(cachedRoutingStore{deployment}, false)(t.Context(), app, inputs); err == nil {
+		t.Fatal("authoritative host policy accepted an app without a host-policy snapshot")
 	}
 }

@@ -85,6 +85,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	schedpkg "github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -1313,6 +1314,10 @@ type runDeps struct {
 	// FAAS_HOST_KEY_PATH (the same convention cmd/meterd +
 	// cmd/vmmd use); production points at /etc/faas/keys.
 	hostKeyDir string
+	// edgeIdentities open app basic-auth credentials and log drain
+	// headers: the edge seal-domain identity first once staged, then the
+	// fleet and host identities (ADR 20261022111812).
+	edgeIdentities []*age.X25519Identity
 	// audit is the *pkg/audit.Auditor that emits the auth.mfa_gate_hit
 	// / auth.session.stolen rows. nil in tests.
 	audit *audit.Auditor
@@ -2435,18 +2440,29 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// cmd/meterd/main.go:983) — the same identities slice
 	// the apid + meterd daemons load.
 	deps.publicAuthCache = gateway.NewPublicAuthCache()
+	// ADR 20261022111812: once the seal_domains role stages the edge
+	// domain, its identity opens basic-auth credentials and log drain
+	// headers ahead of the fleet and host identities.
+	edgeDomainIdentities, err := loadEdgeSealDomain(osGetenv)
+	if err != nil {
+		return err
+	}
+	sealdomain.RegisterLoaded(gatewayOps.Registry(), sealdomain.Edge, len(edgeDomainIdentities) > 0)
+	var legacyIdentities []*age.X25519Identity
 	if deps.hostKeyDir != "" {
 		if identities, loadErr := secretbox.LoadFleetAndHostKeys(deps.hostKeyDir); loadErr != nil {
-			log.Warn("gatewayd-internal: LoadHostKeys (rotation overlap) failed; basic-auth will be unseal-disabled until next boot",
+			log.Warn("gatewayd-internal: LoadHostKeys (rotation overlap) failed; edge credentials sealed to the fleet key will not open until next boot",
 				"dir", deps.hostKeyDir, "err", loadErr.Error())
 		} else {
-			loader := func() []*age.X25519Identity { return identities }
-			deps.publicAuthUnsealer = newPublicAuthUnsealer(loader)
-			if len(identities) > 1 {
-				log.Info("gatewayd-internal: rotation overlap active — basic-auth unseals across current + previous host.age")
-			}
+			legacyIdentities = identities
 		}
 	}
+	deps.edgeIdentities = edgeReaders(edgeDomainIdentities, legacyIdentities)
+	if len(deps.edgeIdentities) > 0 {
+		identities := deps.edgeIdentities
+		deps.publicAuthUnsealer = newPublicAuthUnsealer(func() []*age.X25519Identity { return identities })
+	}
+	log.Info("edge seal domain", "domain_identity", len(edgeDomainIdentities) > 0, "identities", len(deps.edgeIdentities))
 	// PR-3 / ADR-125 fleet-wide signing key: try the
 	// cluster_signing_keys PG row FIRST so a JWT minted by
 	// schedd on box A is verifiable by gatewayd-internal on
@@ -2841,7 +2857,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if routingStore == nil {
 			routingStore = state.NewPgStore(deps.pool)
 		}
-		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(routingStore, deps.cachedHostPolicy))
+		handler.WithPublicRoutingPolicy(publicRoutingPinnerFor(routingStore, deps.cachedHostPolicy))
 	}
 	if deps.declaredRoutesMatcher != nil && deps.pool != nil {
 		go watchDeclaredRouteInvalidations(ctx, deps.pool, deps.declaredRoutesMatcher, log)
@@ -3598,10 +3614,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reconciles enabled rows so create/update/delete changes take effect
 	// without a gateway restart; delivery remains bounded and non-blocking.
 	if deps.pgStore != nil && deps.scheddRouter != nil {
-		unseal, unsealErr := newAppLogDrainUnsealer(deps.hostKeyDir)
-		if unsealErr != nil {
-			log.Warn("gatewayd-internal: customer log drains disabled until gateway restart", "err", unsealErr)
-		}
+		unseal := newAppLogDrainUnsealer(deps.edgeIdentities)
 		manager := newAppLogDrainManager(
 			deps.pgStore,
 			appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},

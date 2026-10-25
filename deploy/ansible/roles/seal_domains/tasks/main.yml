@@ -21,9 +21,19 @@
     - faas_box_role | default('single-box') in ['control-plane', 'single-box']
     - faas_seal_domain_source_identity_src | length > 0 or faas_seal_domain_source_recipient_src | length > 0
 
+- name: seal_domains — alerting domain
+  ansible.builtin.include_tasks: alerting.yml
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_alerting_identity_src | length > 0 or faas_seal_domain_alerting_recipient_src | length > 0
+
 - name: seal_domains — build domain
   ansible.builtin.include_tasks: build.yml
   when: faas_seal_domain_build_identity_src | length > 0 or faas_seal_domain_build_recipient_src | length > 0
+
+- name: seal_domains — edge domain
+  ansible.builtin.include_tasks: edge.yml
+  when: faas_seal_domain_edge_identity_src | length > 0 or faas_seal_domain_edge_recipient_src | length > 0
 
 - name: seal_domains — runtime domain
   ansible.builtin.include_tasks: runtime.yml

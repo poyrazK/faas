@@ -2,8 +2,6 @@
 package rehearsal
 
 import (
-	"net/http"
-
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/rehearsalcommand"
 )
@@ -38,5 +36,5 @@ func ValidateTask(req api.ResolvedCreateAppTaskRequest, enabled bool) *api.Probl
 }
 
 func unavailable() *api.Problem {
-	return api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Contained commands unavailable", "The operator must qualify and enable rehearsal command execution before using this runner")
+	return api.ErrRehearsalNotEnabled("Contained rehearsal command execution")
 }

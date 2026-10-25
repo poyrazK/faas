@@ -38,10 +38,10 @@ through a real Prometheus scraping the gateway, within the per-gateway series
 budget; route advice and the awake report read it; apid's own insights
 evaluator records a cacheable insight whose fix makes the gateway answer from
 its cache without reaching the app; and apid's production route monitor opens
-one incident from two sustained 5xx windows. The run also found that ADR-570's
-public routing pinner refused every public request with the default
-`FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY=false`; it now verifies host policy only
-on the authoritative path. Open: canary route health, route requirements and
+one incident from two sustained 5xx windows. The first runs also hit the
+ADR-570 regression where the public routing pinner refused every public request
+with the default `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY=false`, fixed by
+#5406; the passing runs carried an equivalent fix. Open: canary route health, route requirements and
 OpenAPI contract preview have no end-to-end test; six routes capabilities are
 `internal` and three `preview` (ADR-20261023115741).
 
@@ -96,17 +96,18 @@ and `edge_challenge` on once the release carrying the `@grx` engine is
 deployed. Penalties, attack mode and AI crawler controls are `preview`.
 
 Met: the kill switches; rules the edge does not enforce say so
-(`unreleased_features`); WAF latency at 100-500 req/s on the reference node
-(p95 1.49-2.00 ms); corpus detection; fail-open; the challenge journey,
+(`unreleased_features`); WAF latency and skips at 100-500 req/s on the
+reference node (p95 1.48-1.58 ms, under 0.05% skipped, three passes on
+2026-10-24, ADR-831 amendment 14); corpus detection; fail-open; the challenge journey,
 solver and escalation; penalty correctness, caps and sharing across
 gateways (in tests); attack mode and its two-flag gate; AI crawler matching,
 range refresh and gating.
 
 Open:
-- WAF skips under load: 2.5-8% measured before ADR-831 amendment 12's slot
-  sizing, which models 0.003-0.013%; needs a `FAAS_E2E_WAF_LOAD_GATE=1` run
-  of `TestEdgeWAFInlineLoad_E2E` on the reference node.
-- Challenge solve time on a low-end phone (no measurement yet).
+- Challenge solve time on a low-end phone: estimated at p95 0.88-1.12 s on a
+  2020 mid-range phone from throttled Chrome, after ADR-831 amendment 15
+  made the solver about 5x faster (3.8-4.9 s before); the device
+  measurement is still needed.
 - The 14-day reviews at the internal and design-partner stages (penalties,
   attack mode, AI crawler controls), and the WAF production false-positive
   review (the review tool and procedure exist: ADR-831 amendment 13,
@@ -1917,6 +1918,16 @@ remain open; production admission is disabled.
   (2026-10-22): a built service's `entrypoint` joins its start command, and
   `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
   deployment and applied to the built image. Unit tests pass; no native run.
+- **Compose include env files.**
+  [ADR-20261025090000](adr/20261025090000-compose-include-env-files.md)
+  (2026-10-25): an included Compose file interpolates with its own values (the
+  including project's, overlaid by its `env_file` list or the `.env` beside it);
+  environment import now honors `COMPOSE_PROFILES`. Unit tests pass.
+- **Image runs read a Docker config.**
+  [ADR-20261025110000](adr/20261025110000-image-run-docker-config.md)
+  (2026-10-25): `gregale run --docker-config PATH` takes the image registry's
+  credentials from a Docker `config.json`, its inline `auths` or the configured
+  credential helper, instead of `--registry-username`. Unit tests pass.
 - **Build secrets resolve like the runtime.**
   [ADR-20261024140000](adr/20261024140000-build-secrets-resolve-like-the-runtime.md)
   (2026-10-24): a build secret named `NAME` gets the secret the app receives

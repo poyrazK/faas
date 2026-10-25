@@ -52,6 +52,11 @@ services:
 	if _, ok := env.Services["debug"]; ok {
 		t.Fatal("a service behind an inactive profile was read")
 	}
+	// COMPOSE_PROFILES in the root .env activates it, as it does for Scan.
+	fsys[".env"] = &fstest.MapFile{Data: []byte("COMPOSE_PROFILES=debug\n")}
+	if active, err := reposcan.ReadComposeEnv(fsys); err != nil || active.Services["debug"] == nil || *active.Services["debug"]["ONLY_IN_PROFILE"] != "1" {
+		t.Fatalf("active profile environment = %+v, %v", active.Services["debug"], err)
+	}
 
 	// Without a merge the scalar's source text is kept.
 	plain, err := reposcan.ReadComposeEnv(fstest.MapFS{"compose.yaml": {Data: []byte("services:\n  api:\n    build: .\n    environment:\n      RATIO: 1.0\n")}})

@@ -2,6 +2,7 @@
 package fcvm
 
 import (
+	"context"
 	"os"
 	"path/filepath"
 	"testing"
@@ -39,7 +40,7 @@ func TestScrubDriveSecretsRemovesOnlySecretProjections(t *testing.T) {
 	}
 
 	for range 2 { // idempotent: the second pass finds nothing to remove
-		if err := scrubDriveSecrets(root); err != nil {
+		if err := scrubDriveSecrets(context.Background(), &dirDriveImage{root: root}); err != nil {
 			t.Fatalf("scrubDriveSecrets: %v", err)
 		}
 	}
@@ -63,7 +64,7 @@ func TestScrubDriveSecretsWithoutSidecars(t *testing.T) {
 	if err := os.MkdirAll(filepath.Join(root, "upper/etc/faas"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := scrubDriveSecrets(root); err != nil {
+	if err := scrubDriveSecrets(context.Background(), &dirDriveImage{root: root}); err != nil {
 		t.Fatalf("scrubDriveSecrets on a drive with no secrets or sidecars: %v", err)
 	}
 }

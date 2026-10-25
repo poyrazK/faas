@@ -121,7 +121,31 @@ func ChoosePlacement(nodes []state.ComputeNode, usedMB map[string]int64, usedVCP
 // choosePlacementWithCPU is the production chooser. The exported wrapper
 // keeps the pre-millicore pure-function seam stable for older callers and
 // tests; Engine supplies the ledger's per-node sustained CPU reservations.
+//
+// ADR-20261022184531: a node that answers its heartbeat but has proven it
+// cannot serve a wake is degraded. Placement chooses among the other nodes
+// first, and takes a degraded node only when none of them fits: a wake that
+// may be refused (and re-placed) beats a capacity refusal.
 func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, usedVCPU, usedCPUMillicores map[string]int64, r Request) (Placement, error) {
+	if proven := withoutDegradedNodes(nodes); len(proven) < len(nodes) {
+		if placement, err := chooseAmongNodes(proven, usedMB, usedVCPU, usedCPUMillicores, r); err == nil {
+			return placement, nil
+		}
+	}
+	return chooseAmongNodes(nodes, usedMB, usedVCPU, usedCPUMillicores, r)
+}
+
+func withoutDegradedNodes(nodes []state.ComputeNode) []state.ComputeNode {
+	proven := make([]state.ComputeNode, 0, len(nodes))
+	for _, n := range nodes {
+		if n.Readiness != state.NodeReadinessDegraded {
+			proven = append(proven, n)
+		}
+	}
+	return proven
+}
+
+func chooseAmongNodes(nodes []state.ComputeNode, usedMB map[string]int64, usedVCPU, usedCPUMillicores map[string]int64, r Request) (Placement, error) {
 	if r.RAMMB <= 0 {
 		return Placement{}, api.ErrCapacity(fmt.Sprintf("placement: request RAM must be positive (got %d)", r.RAMMB))
 	}
@@ -164,6 +188,9 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 			continue
 		}
 		if !n.Active {
+			continue
+		}
+		if containsNodeID(r.ExcludeNodeIDs, n.ID) {
 			continue
 		}
 		if n.AdmissionCeilingMB <= 0 {

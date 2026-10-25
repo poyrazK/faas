@@ -1,11 +1,15 @@
 # seal_domains
 
-Stages per-reader seal-domain identities (ADR 20261022111812). Four domains
+Stages per-reader seal-domain identities (ADR 20261022111812). Six domains
 are wired, each opened by one daemon:
 - `outbound`: customer AI provider and other outbound credentials (outboundd);
 - `runtime`: customer env vars and secrets (vmmd);
 - `source`: GitHub install tokens and webhook secrets (githubd);
-- `build`: app and job private-registry passwords (imaged).
+- `build`: app and job private-registry passwords (imaged);
+- `edge`: app basic-auth credentials and log drain headers (gatewayd-internal);
+- `alerting`: alert rule webhook secrets, notification channel destinations
+  and MCP readiness provider keys (meterd, on the control plane like
+  `outbound`).
 
 The `outbound` steps:
 
@@ -60,7 +64,8 @@ The `build` domain stages like `runtime`: compute hosts get
 `faas_seal_domain_build_identity_src` (imaged reads it; the role restarts
 imaged and proves the probe), control-plane hosts
 `faas_seal_domain_build_recipient_src` (apid seals to it, to both keys until
-`faas_seal_domain_build_writes: domain`).
+`faas_seal_domain_build_writes: domain`). The `edge` domain stages the same
+way, with gatewayd-internal as its reader.
 
 In production, CD supplies the `*_src` variables from the
 `SEAL_DOMAIN_<DOMAIN>_AGE_KEY` and `_AGE_RECIPIENT` secrets

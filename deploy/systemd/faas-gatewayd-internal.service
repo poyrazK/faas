@@ -24,6 +24,8 @@ AmbientCapabilities=CAP_NET_BIND_SERVICE
 EnvironmentFile=-/etc/faas/compute-db.env
 EnvironmentFile=-/etc/faas/secrets/gatewayd-internal/gatewayd-internal.env
 EnvironmentFile=-/etc/faas/otel.env
+Environment=GOGC=200
+Environment=GOMEMLIMIT=384MiB
 Environment=FAAS_GATEWAY_LISTEN=off
 Environment=FAAS_REALTIME_SOCKET=/run/faas/realtimed.sock
 Environment=FAAS_HOST_KEY_PATH=%d/host.age

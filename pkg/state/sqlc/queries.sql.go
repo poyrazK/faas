@@ -12179,11 +12179,12 @@ func (q *Queries) CreateSession(ctx context.Context, db DBTX, arg CreateSessionP
 }
 
 const createSnapshot = `-- name: CreateSnapshot :one
-INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation)
+INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation,cpu_template,cpu_model)
 VALUES($1::uuid,$2::text,$3::text,
  $4::bigint,$5::bigint,$6::bigint,
- $7::text,$8::boolean,$9::text,$10::uuid,$11::bigint)
-RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation
+ $7::text,$8::boolean,$9::text,$10::uuid,$11::bigint,
+ $12::text,$13::text)
+RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model
 `
 
 type CreateSnapshotParams struct {
@@ -12198,6 +12199,8 @@ type CreateSnapshotParams struct {
 	Tier                            string
 	ApplicationStandardCaptureToken pgtype.UUID
 	RecoveryGeneration              int64
+	CpuTemplate                     string
+	CpuModel                        string
 }
 
 func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapshotParams) (Snapshot, error) {
@@ -12213,6 +12216,8 @@ func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapsho
 		arg.Tier,
 		arg.ApplicationStandardCaptureToken,
 		arg.RecoveryGeneration,
+		arg.CpuTemplate,
+		arg.CpuModel,
 	)
 	var i Snapshot
 	err := row.Scan(
@@ -12230,6 +12235,8 @@ func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapsho
 		&i.DeletePending,
 		&i.ApplicationStandardCaptureToken,
 		&i.RecoveryGeneration,
+		&i.CpuTemplate,
+		&i.CpuModel,
 	)
 	return i, err
 }
@@ -39487,7 +39494,7 @@ func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX,
 }
 
 const latestSnapshot = `-- name: LatestSnapshot :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY (tier='warm') DESC,created_at DESC LIMIT 1
 `
@@ -39510,12 +39517,14 @@ func (q *Queries) LatestSnapshot(ctx context.Context, db DBTX, deploymentID pgty
 		&i.DeletePending,
 		&i.ApplicationStandardCaptureToken,
 		&i.RecoveryGeneration,
+		&i.CpuTemplate,
+		&i.CpuModel,
 	)
 	return i, err
 }
 
 const latestSnapshotForTier = `-- name: LatestSnapshotForTier :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY created_at DESC LIMIT 1
 `
@@ -39543,6 +39552,8 @@ func (q *Queries) LatestSnapshotForTier(ctx context.Context, db DBTX, arg Latest
 		&i.DeletePending,
 		&i.ApplicationStandardCaptureToken,
 		&i.RecoveryGeneration,
+		&i.CpuTemplate,
+		&i.CpuModel,
 	)
 	return i, err
 }
@@ -52812,6 +52823,54 @@ func (q *Queries) LiveServiceProxyInstanceRowsByHostIP(ctx context.Context, db D
 	return items, nil
 }
 
+const liveSnapshotsForTier = `-- name: LiveSnapshotsForTier :many
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
+ORDER BY created_at DESC
+`
+
+type LiveSnapshotsForTierParams struct {
+	DeploymentID pgtype.UUID
+	Tier         string
+}
+
+func (q *Queries) LiveSnapshotsForTier(ctx context.Context, db DBTX, arg LiveSnapshotsForTierParams) ([]Snapshot, error) {
+	rows, err := db.Query(ctx, liveSnapshotsForTier, arg.DeploymentID, arg.Tier)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Snapshot{}
+	for rows.Next() {
+		var i Snapshot
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.FcVersion,
+			&i.MemBytes,
+			&i.DiskBytes,
+			&i.Stale,
+			&i.CreatedAt,
+			&i.StorageKey,
+			&i.Tier,
+			&i.StoredBytes,
+			&i.BaseImageVersion,
+			&i.DeletePending,
+			&i.ApplicationStandardCaptureToken,
+			&i.RecoveryGeneration,
+			&i.CpuTemplate,
+			&i.CpuModel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const loadApplicationStandardLogConsumerSnapshot = `-- name: LoadApplicationStandardLogConsumerSnapshot :one
 SELECT jsonb_build_object('drains',coalesce((SELECT jsonb_agg(jsonb_build_object('spec',
  jsonb_build_object('ID',d.id::text,'AppID',d.app_id::text,'AccountID',d.account_id::text,
@@ -62377,6 +62436,24 @@ func (q *Queries) ObjectCapacityFenced(ctx context.Context, db DBTX, bucketID pg
 	return fenced, err
 }
 
+const objectCapacityFencedForKey = `-- name: ObjectCapacityFencedForKey :one
+SELECT (EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=$1::uuid AND p.state IN ('waiting','applying')) OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=$1::uuid AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1::uuid AND d.object_key=$2::text AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1::uuid AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1::uuid AND c.state IN ('waiting','scanning')))::boolean AS fenced
+`
+
+type ObjectCapacityFencedForKeyParams struct {
+	BucketID  pgtype.UUID
+	ObjectKey string
+}
+
+// ObjectCapacityFenced, except that only a deletion of this key fences it
+// (ADR-20261025115958).
+func (q *Queries) ObjectCapacityFencedForKey(ctx context.Context, db DBTX, arg ObjectCapacityFencedForKeyParams) (bool, error) {
+	row := db.QueryRow(ctx, objectCapacityFencedForKey, arg.BucketID, arg.ObjectKey)
+	var fenced bool
+	err := row.Scan(&fenced)
+	return fenced, err
+}
+
 const objectCapacityGet = `-- name: ObjectCapacityGet :one
 SELECT c.id, c.bucket_id, c.state, c.lease_token, c.lease_until, c.retry_at, c.deadline_at, c.before_bytes, c.before_keys, c.after_bytes, c.after_keys, c.reclaimed_bytes, c.reclaimed_keys, c.pending_writes, c.last_error_code, c.created_at, c.updated_at, c.finished_at, c.inventory_scope, c.inventory_cursor, c.inventory_verified, c.scanned_pages, c.scanned_bytes, c.scanned_versions,b.account_id,b.app_id FROM object_storage_capacity_reconciliations c JOIN object_buckets b ON b.id=c.bucket_id WHERE c.id=$1
 `
@@ -63163,6 +63240,43 @@ func (q *Queries) ObjectDeletionInsert(ctx context.Context, db DBTX, arg ObjectD
 	return err
 }
 
+const objectDeletionKeyReadiness = `-- name: ObjectDeletionKeyReadiness :one
+SELECT
+ ((SELECT count(*) FROM object_version_protection p WHERE p.bucket_id=$1::uuid AND p.state IN ('waiting','applying')) + (SELECT count(*) FROM object_deletions d WHERE d.bucket_id=$1::uuid AND d.object_key=$2::text AND d.state IN ('prepared','dispatched')) + (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
+  WHERE w.bucket_id=$1::uuid AND w.key_hash=$3::text AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted')))))::bigint AS pending,
+ EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1::uuid AND NOT reclaimable) AS unsafe,
+ EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1::uuid AND m.object_key=$2::text AND
+  (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
+ (EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1::uuid AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1::uuid AND versions_observed) OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=$1::uuid AND completion_versions_observed) OR EXISTS (SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1::uuid AND inventory_scope='all_versions') OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1::uuid AND versions_required)) AS versions
+`
+
+type ObjectDeletionKeyReadinessParams struct {
+	BucketID  pgtype.UUID
+	ObjectKey string
+	KeyHash   string
+}
+
+type ObjectDeletionKeyReadinessRow struct {
+	Pending   int64
+	Unsafe    bool
+	Multipart bool
+	Versions  pgtype.Bool
+}
+
+// ADR-20261025115958: a deletion waits only for work on its own key; the
+// bucket's accounting mode (unsafe grants, observed versions) stays bucket-wide.
+func (q *Queries) ObjectDeletionKeyReadiness(ctx context.Context, db DBTX, arg ObjectDeletionKeyReadinessParams) (ObjectDeletionKeyReadinessRow, error) {
+	row := db.QueryRow(ctx, objectDeletionKeyReadiness, arg.BucketID, arg.ObjectKey, arg.KeyHash)
+	var i ObjectDeletionKeyReadinessRow
+	err := row.Scan(
+		&i.Pending,
+		&i.Unsafe,
+		&i.Multipart,
+		&i.Versions,
+	)
+	return i, err
+}
+
 const objectDeletionSave = `-- name: ObjectDeletionSave :exec
 UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_id=$5,delete_marker=$6,lease_token=$7,lease_until=$8,retry_at=$9,last_error_code=$10,updated_at=$11,recovery_claimed=$12,protection_verified=$13,deletion_verified=$14 WHERE id=$1
 `
@@ -63391,6 +63505,25 @@ func (q *Queries) ObjectInventoryFinish(ctx context.Context, db DBTX, arg Object
 		arg.Bytes,
 		arg.Objects,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectInventoryRelease = `-- name: ObjectInventoryRelease :execrows
+UPDATE object_storage_bucket_usage SET lease_until=NULL, token=''
+WHERE bucket_id=$1 AND token=$2::text AND token<>''
+`
+
+type ObjectInventoryReleaseParams struct {
+	BucketID pgtype.UUID
+	Token    string
+}
+
+// Give up a claim without publishing; attempt_at keeps the retry cadence.
+func (q *Queries) ObjectInventoryRelease(ctx context.Context, db DBTX, arg ObjectInventoryReleaseParams) (int64, error) {
+	result, err := db.Exec(ctx, objectInventoryRelease, arg.BucketID, arg.Token)
 	if err != nil {
 		return 0, err
 	}

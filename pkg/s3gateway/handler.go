@@ -247,6 +247,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	r = r.WithContext(ctx)
 	h.setTransferDeadlines(w, ctx)
+	if r.Body != nil && r.Body != http.NoBody {
+		deadline, _ := ctx.Deadline()
+		r.Body = newProgressBody(w, r.Body, deadline)
+	}
 	requestID := strings.ReplaceAll(uuid.NewString(), "-", "")
 	w.Header().Set("Server", "Gregale")
 	w.Header().Set("x-amz-request-id", requestID)
@@ -738,15 +742,14 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, req requ
 	}
 	w.Header().Set("X-Gregale-Delete-Id", id)
 	result := deleteObjectsResult{XMLNS: s3XMLNamespace}
-	for index, object := range request.Objects {
-		deleted, err := h.deleteBulkTarget(r.Context(), req, object, bulkDeletionRequestID(id, index))
-		if err == nil {
+	for index, entry := range h.deleteBulkTargets(r.Context(), req, request.Objects, id) {
+		if entry.err == nil {
 			if !request.Quiet {
-				result.Deleted = append(result.Deleted, deleted)
+				result.Deleted = append(result.Deleted, entry.deleted)
 			}
 			continue
 		}
-		result.Errors = append(result.Errors, bulkDeleteError(object, err))
+		result.Errors = append(result.Errors, bulkDeleteError(request.Objects[index], entry.err))
 	}
 	writeS3XML(w, http.StatusOK, req.requestID, result)
 }

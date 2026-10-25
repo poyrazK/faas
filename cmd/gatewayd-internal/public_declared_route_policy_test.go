@@ -73,7 +73,7 @@ func TestPublicDeclaredContractPostgresAppAndDocumentShareOneView(t *testing.T) 
 	assertContractMatch(t, matcher, oldContext, oldApp, "/old/123", true)
 	assertContractMatch(t, matcher, oldContext, oldApp, "/new", false)
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production"}
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), during, inputs); err == nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), during, inputs); err == nil {
 		t.Fatal("old contract combined with new dispatch policy")
 	}
 	fresh := f.routingApp()
@@ -87,7 +87,7 @@ func TestPublicDeclaredContractPostgresAppAndDocumentShareOneView(t *testing.T) 
 	if template, matched, err := matcher.ResolveObservedRoute(oldContext, oldApp, "/old/123", "GET"); err != nil || !matched || template != "/old/{id}" {
 		t.Fatalf("observation changed its admitted contract: %s/%v/%v", template, matched, err)
 	}
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), fresh, inputs); err != nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), fresh, inputs); err != nil {
 		t.Fatalf("fresh contract did not recover: %v", err)
 	}
 }
@@ -103,7 +103,7 @@ func TestPublicDeclaredContractPostgresMissingCreatedAndDeletedWithoutNotify(t *
 	}
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production"}
 	f.importedContract(t, "/created")
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), missing, inputs); err == nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), missing, inputs); err == nil {
 		t.Fatal("old missing-document baseline survived a new import")
 	}
 	created := f.routingApp()
@@ -118,7 +118,7 @@ func TestPublicDeclaredContractPostgresMissingCreatedAndDeletedWithoutNotify(t *
 	if err := f.store.DeleteAppOpenAPIDoc(t.Context(), f.app.ID, f.app.AccountID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), created, inputs); err == nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), created, inputs); err == nil {
 		t.Fatal("deleted document survived dispatch verification")
 	}
 	deleted := f.routingApp()
@@ -126,7 +126,7 @@ func TestPublicDeclaredContractPostgresMissingCreatedAndDeletedWithoutNotify(t *
 		t.Fatalf("compilation cache hid document deletion: %v", err)
 	}
 	assertContractMatch(t, matcher, createdContext, createdApp, "/created", true)
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), deleted, inputs); err != nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), deleted, inputs); err != nil {
 		t.Fatalf("fresh missing contract refused: %v", err)
 	}
 }
@@ -162,13 +162,13 @@ func TestPublicDeclaredContractPostgresScopedOverlayAndFallback(t *testing.T) {
 	assertContractMatch(t, matcher, ctx, admitted, "/imported", false)
 	assertContractMatch(t, matcher, t.Context(), f.routingApp(), "/imported", true)
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "staging", HostDeploymentID: stage.ID, HostScope: "staging"}
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), app, inputs); err != nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), app, inputs); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `DELETE FROM project_environment_route_policies WHERE app_id=$1 AND environment_slug='staging'`, f.app.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), app, inputs); err == nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), app, inputs); err == nil {
 		t.Fatal("scoped deletion combined old contract and new dispatch")
 	}
 	fresh, found, err := router.ResolveHost(t.Context(), host)
@@ -218,7 +218,7 @@ func TestPublicDeclaredContractPostgresExplicitRoutesSkipUnavailableImport(t *te
 	matcher := newDeclaredRoutesMatcher(f.store)
 	assertContractMatch(t, matcher, t.Context(), app, "/explicit", true)
 	assertContractMatch(t, matcher, t.Context(), app, "/unused", false)
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), app, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), app, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
 		t.Fatalf("unused blocked document affected explicit contract: %v", err)
 	}
 }
@@ -239,13 +239,13 @@ func TestPublicDeclaredContractPostgresBoundsOutageOwnershipAndCleanup(t *testin
 	}
 	bounded, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
-	if _, err := newPublicRoutingPinner(f.store, false)(bounded, app, inputs); err == nil {
+	if _, err := newPublicRoutingPinner(f.store)(bounded, app, inputs); err == nil {
 		t.Fatal("unavailable contract authorized dispatch")
 	}
 	if err := lock.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), app, inputs); err != nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), app, inputs); err != nil {
 		t.Fatalf("contract store recovery failed: %v", err)
 	}
 	var escaped state.PublicHostPolicyReader
@@ -276,11 +276,11 @@ func TestPublicDeclaredContractPostgresBoundsOutageOwnershipAndCleanup(t *testin
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), app, inputs); err == nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), app, inputs); err == nil {
 		t.Fatal("oversized contract authorized old dispatch")
 	}
 	f.importedContract(t, "/repaired")
-	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), f.routingApp(), inputs); err != nil {
+	if _, err := newPublicRoutingPinner(f.store)(t.Context(), f.routingApp(), inputs); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -329,7 +329,7 @@ func TestPublicDeclaredContractPostgresTwoHTTPGatewaysRepairWithoutNotify(t *tes
 		handler := gateway.NewHandlerWith(backend, nil, nil)
 		handler.SetWakeGateHook()
 		handler.WithDeclaredRouteMatcher(newDeclaredRoutesMatcher(f.store)).
-			WithPublicRoutingPolicy(newPublicRoutingPinner(f.store, false)).
+			WithPublicRoutingPolicy(newPublicRoutingPinner(f.store)).
 			WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil)
 		forwards := &atomic.Int32{}
 		handler.WithForwarding(func(target gateway.Target) http.Handler {

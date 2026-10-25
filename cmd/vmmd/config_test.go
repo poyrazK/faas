@@ -1081,6 +1081,43 @@ func TestLoadConfig_RestoreReseedThreadSwitch(t *testing.T) {
 	}
 }
 
+// adr: 20261025150000 — the invoke-hook backoff is off by default; TOML can
+// enable it and FAAS_INVOKE_HOOK_BACKOFF overrides TOML in either direction.
+func TestLoadConfig_InvokeHookBackoffSwitch(t *testing.T) {
+	cfg, err := LoadConfig(filepath.Join(t.TempDir(), "missing.toml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.InvokeHookBackoff {
+		t.Fatal("the invoke-hook backoff must default to off")
+	}
+	path := filepath.Join(t.TempDir(), "vmmd.toml")
+	if err := os.WriteFile(path, []byte("invoke_hook_backoff = true\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		env     string
+		enabled bool
+	}{{"", true}, {"1", true}, {"0", false}, {"false", false}} {
+		t.Run("env="+tc.env, func(t *testing.T) {
+			if tc.env != "" {
+				t.Setenv("FAAS_INVOKE_HOOK_BACKOFF", tc.env)
+			}
+			cfg, err := LoadConfig(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if cfg.InvokeHookBackoff != tc.enabled {
+				t.Fatalf("InvokeHookBackoff = %v, want %v", cfg.InvokeHookBackoff, tc.enabled)
+			}
+		})
+	}
+	t.Setenv("FAAS_INVOKE_HOOK_BACKOFF", "sometimes")
+	if _, err := LoadConfig(path); err == nil || !strings.Contains(err.Error(), "FAAS_INVOKE_HOOK_BACKOFF") {
+		t.Fatalf("invalid FAAS_INVOKE_HOOK_BACKOFF error = %v, want named validation error", err)
+	}
+}
+
 // adr: 908 — per-account pmem bases are on by default ("auto"); vmmd.toml
 // or the environment can name a directory or turn them off, and the
 // environment overrides TOML.
