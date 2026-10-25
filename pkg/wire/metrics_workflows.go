@@ -67,8 +67,8 @@ func NewWorkflowMetrics(reg prometheus.Registerer) *WorkflowMetrics {
 		DispatchLagSeconds: prometheus.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "workflow_dispatch_lag_seconds",
-				Help:    "Delay between scheduled_for and actual step execution dispatch in seconds.",
-				Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10},
+				Help:    "Seconds between a run's scheduled_for and schedd claiming it for dispatch.",
+				Buckets: []float64{0.01, 0.05, 0.1, 0.25, 0.5, 1, 2, 5, 10, 30, 60, 300, 900, 3600},
 			},
 			[]string{"plan"},
 		),
@@ -105,6 +105,14 @@ func (m *WorkflowMetrics) ObserveStepComplete(app, plan, step, outcome string, d
 	}
 	m.StepsTotal.WithLabelValues(app, plan, step, outcome).Inc()
 	m.StepDurationSeconds.WithLabelValues(app, plan, step).Observe(duration.Seconds())
+}
+
+// ObserveDispatchLag records how late a due run was claimed.
+func (m *WorkflowMetrics) ObserveDispatchLag(plan string, lag time.Duration) {
+	if m == nil {
+		return
+	}
+	m.DispatchLagSeconds.WithLabelValues(plan).Observe(max(0, lag.Seconds()))
 }
 
 // ObserveDeadLetter records a dead-letter event.

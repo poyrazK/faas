@@ -393,6 +393,10 @@ func (m *MemStore) ClaimNextDueWorkflowRun(ctx context.Context) (*WorkflowRun, e
 		chosen.Input = cloneWorkflowJSON(chosen.Input)
 		chosen.Output = cloneWorkflowJSON(chosen.Output)
 		chosen.DefinitionSnapshot = cloneWorkflowJSON(chosen.DefinitionSnapshot)
+		if priorStatus != WorkflowRunStatusRunning {
+			dueAt := chosen.ScheduledFor
+			chosen.ClaimedDueAt = &dueAt
+		}
 		return &chosen, nil
 	}
 	return nil, ErrNotFound

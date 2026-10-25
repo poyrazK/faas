@@ -511,6 +511,9 @@ func (o *WorkflowOrchestrator) dispatchOne(ctx context.Context) (bool, error) {
 			}
 			return true, nil
 		}
+		if claimed.ClaimedDueAt != nil {
+			o.metrics.ObserveDispatchLag("unknown", time.Since(*claimed.ClaimedDueAt))
+		}
 		if err := o.initAndAdvanceRun(ctx, claimed); err != nil {
 			if errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) || errors.Is(err, state.ErrWorkflowGuardNotReady) {
 				return true, nil
