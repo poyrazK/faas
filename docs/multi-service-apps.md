@@ -156,13 +156,19 @@ See [ADR-20261023085230](adr/20261023085230-compose-env-import.md).
 
 ## Pull request previews
 
-A pull request preview runs the changed service and the services it lists in
-`depends_on`. A preview calling a service outside that set would reach
-production, so it is refused by default (`403
-preview_production_dependency_denied`); declare `depends_on` for every service
-a preview needs. See [preview environments](preview-environments.md) and
-[networking](networking.md) for letting chosen production services accept
-preview traffic.
+A pull request preview of a service under the `project` policy runs every
+service of the project that serves calls, built from the pull request's
+branch, so its calls reach the same pull request's siblings
+([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)).
+Workers, jobs and scheduled services join only when a service lists them in
+`depends_on`, so a preview never consumes production work. Each preview
+service counts against the plan's pull request preview allowance.
+
+Under the `declared` policy a preview runs the changed service and the services
+it lists in `depends_on`. A call outside that set would reach production, so it
+is refused by default (`403 preview_production_dependency_denied`). See
+[preview environments](preview-environments.md) and [networking](networking.md)
+for letting chosen production services accept preview traffic.
 
 ## Cold starts and tracing
 

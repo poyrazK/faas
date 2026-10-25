@@ -1048,9 +1048,12 @@ project, or account. The target preview's protocol and WebSocket settings are
 used exactly as they are on the public edge.
 
 Preview provisioning creates the bound app and the transitive `depends_on`
-workloads present at the PR head. A dependency that is absent from that
-closure can still resolve to the production app, so the gateway applies the
-project's production-dependency policy.
+workloads present at the PR head. When the bound app's service policy is
+`project`, it also creates every other callable workload of the project:
+workers, jobs and scheduled workloads join only as declared dependencies
+([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)).
+A dependency that is absent from that set can still resolve to the production
+app, so the gateway applies the project's production-dependency policy.
 
 All projects use `preview_service_policy: deny` by default. A denied call returns
 `403 application/problem+json` with code
