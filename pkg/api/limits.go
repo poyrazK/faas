@@ -8187,6 +8187,19 @@ const (
 	// it lives in pkg/netns/config.go::NftCommands.
 	DefaultConntrackCap = 4096
 
+	// Instance bridge unit limits (connection-survival ADR §8, slice 1c).
+	// With FAAS_INSTANCE_BRIDGE_UNIT=1 each instance's bridge is a systemd
+	// service in faas-tenant-ibridge.slice with these per-unit caps. One
+	// platform-wide number, not per plan: the bridge is platform overhead
+	// and is not billed (§4.7). The values are the ADR's proposals; the P0
+	// density measurement confirms them before the switch is turned on.
+	InstanceBridgeMemoryMaxMB = 32
+	InstanceBridgeTasksMax    = 64
+	// InstanceBridgeMaxConnections is the open-connection budget; the unit's
+	// LimitNOFILE allows two descriptors per connection (client and guest)
+	// plus the bridge's own.
+	InstanceBridgeMaxConnections = DefaultConntrackCap
+
 	// MaxPreparedNetworkCacheSize bounds unused host network namespaces.
 	// This is separate from admitted VMs, RAM, vCPUs, and per-app concurrency.
 	MaxPreparedNetworkCacheSize = 16

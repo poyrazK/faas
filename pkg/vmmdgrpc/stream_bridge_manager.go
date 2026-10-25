@@ -20,6 +20,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/netns"
+	"github.com/onebox-faas/faas/pkg/sdunit"
 	"golang.org/x/net/http2"
 )
 
@@ -33,16 +34,19 @@ const (
 type streamBridgeSpawnFunc func(context.Context, string, string, bridgeIdentity, string, string, uint32, string, []string) (*exec.Cmd, *bytes.Buffer, error)
 
 type streamBridgeEntry struct {
-	key       string
-	target    *netns.PublicForwardTarget
-	instance  string
-	netns     string
-	port      uint32
-	protocol  string
-	identity  bridgeIdentity
-	socket    string
-	cmd       *exec.Cmd
-	stderr    *bytes.Buffer
+	key      string
+	target   *netns.PublicForwardTarget
+	instance string
+	netns    string
+	port     uint32
+	protocol string
+	identity bridgeIdentity
+	socket   string
+	cmd      *exec.Cmd
+	stderr   *bytes.Buffer
+	// unit is set instead of cmd when the bridge runs as a systemd unit
+	// (bridge_unit.go).
+	unit      *bridgeUnit
 	client    *http.Client
 	transport *http2.Transport
 	waitDone  chan struct{}
@@ -114,6 +118,15 @@ type streamBridgeManager struct {
 	newTransport func(string, bridgeIdentity) *http2.Transport
 	stop         func(context.Context, *exec.Cmd, *bytes.Buffer) error
 
+	// Bridge units (bridge_unit.go). unitsOn defaults to
+	// InstanceBridgeUnitsEnabled; units is the systemd connection, opened
+	// on first use by connectUnits.
+	unitsOn         func() bool
+	unitMu          sync.Mutex
+	units           sdunit.Manager
+	connectUnits    func(context.Context) (sdunit.Manager, error)
+	openUnitProcess unitProcessOpener
+
 	reaperOnce sync.Once
 	reaperCtx  context.Context
 	cancel     context.CancelFunc
@@ -139,7 +152,23 @@ func newStreamBridgeManager(log *slog.Logger) *streamBridgeManager {
 		waitSocket:   waitForUnixSock,
 		newTransport: newStreamBridgeH2CTransport,
 		stop:         stopStreamBridge,
+
+		unitsOn:         InstanceBridgeUnitsEnabled,
+		connectUnits:    connectSystemd,
+		openUnitProcess: openUnitProcessReal,
 	}
+}
+
+func (m *streamBridgeManager) unitsEnabled() bool {
+	return m.unitsOn != nil && m.unitsOn()
+}
+
+// alive reports whether the entry's bridge still runs.
+func (e *streamBridgeEntry) alive() bool {
+	if e.unit != nil {
+		return e.unit.proc.alive()
+	}
+	return streamBridgeProcessAlive(e.cmd)
 }
 
 func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHTTPRequestInit, netnsName string, id bridgeIdentity) (*streamBridgeLease, error) {
@@ -228,7 +257,7 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 			m.closeEntry(context.WithoutCancel(ctx), entry)
 			continue
 		}
-		if !streamBridgeProcessAlive(entry.cmd) {
+		if !entry.alive() {
 			delete(m.entries, entry.mapKey())
 			entry.closed = true
 			m.mu.Unlock()
@@ -256,7 +285,7 @@ func (m *streamBridgeManager) acquireSession(ctx context.Context, instance, netn
 	key := streamBridgeEntryKey(instance, target)
 	m.mu.Lock()
 	if entry := m.entries[key]; entry != nil && !entry.starting && !entry.closed && entry.netns == netnsName && entry.identity == id &&
-		samePublicTarget(entry.target, target) && streamBridgeProcessAlive(entry.cmd) {
+		samePublicTarget(entry.target, target) && entry.alive() {
 		entry.active++
 		entry.lastUsed = m.now()
 		m.mu.Unlock()
@@ -419,6 +448,21 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 	if port == 0 {
 		port = netns.AppPort
 	}
+	deadline := m.now().Add(streamBridgeSessionDeadline).UTC().Format(time.RFC3339)
+	spawnNetns, guestIP := streamBridgeTarget(withPublicTarget(ctx, entry.target), entry.netns)
+	env := netns.PublicForwardEnv(streamBridgeStaticEnv(req), entry.target)
+	if m.useUnit(entry) {
+		if err := m.startEntryUnit(ctx, entry, bridgePath, spawnNetns, guestIP, port, deadline, env); err != nil {
+			return err
+		}
+		if err := m.waitSocket(entry.socket, streamBridgeSocketReadyTimeout); err != nil {
+			return fmt.Errorf("stream bridge socket not ready: %w", err)
+		}
+		if !entry.alive() {
+			return fmt.Errorf("instance bridge unit %s exited before becoming ready", entry.unit.name)
+		}
+		return m.connectEntry(entry)
+	}
 	if entry.identity.unprivileged() {
 		if err := entry.identity.prepareSocketDir(entry.socket); err != nil {
 			return fmt.Errorf("stream bridge socket: %w", err)
@@ -426,9 +470,6 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 	} else if err := os.Remove(entry.socket); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("remove stale stream bridge socket: %w", err)
 	}
-	deadline := m.now().Add(streamBridgeSessionDeadline).UTC().Format(time.RFC3339)
-	spawnNetns, guestIP := streamBridgeTarget(withPublicTarget(ctx, entry.target), entry.netns)
-	env := netns.PublicForwardEnv(streamBridgeStaticEnv(req), entry.target)
 	cmd, stderr, err := m.spawn(ctx, bridgePath, spawnNetns, entry.identity, entry.socket, guestIP, port, deadline, env)
 	if err != nil {
 		return fmt.Errorf("stream bridge start: %w", err)
@@ -445,12 +486,17 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 		return fmt.Errorf("stream bridge exited before becoming ready: %w", entry.waitError())
 	default:
 	}
+	return m.connectEntry(entry)
+}
+
+// connectEntry gives a started bridge its H2C transport.
+func (m *streamBridgeManager) connectEntry(entry *streamBridgeEntry) error {
 	transport := m.newTransport(entry.socket, entry.identity)
 	m.mu.Lock()
 	if entry.closed {
 		m.mu.Unlock()
 		transport.CloseIdleConnections()
-		return fmt.Errorf("stream bridge exited before becoming ready: %w", entry.waitError())
+		return errors.New("stream bridge closed before becoming ready")
 	}
 	entry.transport = transport
 	entry.client = newGuestHTTPClient(transport)
@@ -526,7 +572,9 @@ func (m *streamBridgeManager) closeEntry(ctx context.Context, entry *streamBridg
 	if entry.transport != nil {
 		entry.transport.CloseIdleConnections()
 	}
-	if entry.cmd != nil {
+	if entry.unit != nil {
+		m.stopEntryUnit(ctx, entry)
+	} else if entry.cmd != nil {
 		var err error
 		if entry.waitDone == nil {
 			err = m.stop(ctx, entry.cmd, entry.stderr)
@@ -600,7 +648,8 @@ func (m *streamBridgeManager) reapIdle(ctx context.Context) {
 	var expired []*streamBridgeEntry
 	m.mu.Lock()
 	for instance, entry := range m.entries {
-		if entry.starting || entry.active != 0 || now.Sub(entry.lastUsed) < m.idleTimeout {
+		// A unit bridge lives as long as its instance (bridge_unit.go).
+		if entry.starting || entry.unit != nil || entry.active != 0 || now.Sub(entry.lastUsed) < m.idleTimeout {
 			continue
 		}
 		delete(m.entries, instance)
@@ -651,6 +700,12 @@ func (m *streamBridgeManager) close(ctx context.Context) error {
 		}()
 	}
 	wg.Wait()
+	m.unitMu.Lock()
+	if m.units != nil {
+		_ = m.units.Close()
+		m.units = nil
+	}
+	m.unitMu.Unlock()
 	return nil
 }
 
