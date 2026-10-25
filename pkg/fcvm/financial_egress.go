@@ -38,7 +38,10 @@ func (m *Manager) financialEgressLow(local *localComputeLease) (bool, error) {
 	}
 	// This is only a low-water hint. Counter gaps and high packet rates can
 	// stall at the kernel boundary, but cannot spend beyond a financed quota.
-	return observed-local.egressObserved >= uint64(local.lease.EgressGrant/api.FinancialEgressFramingFactor/2), nil
+	// The mark is the netdev share, so namespace-local ARP cannot exhaust its
+	// gate before a refill is asked for.
+	mark, _ := netns.EgressBudgetQuotas(local.lease.EgressGrant)
+	return observed-local.egressObserved >= uint64(mark), nil
 }
 
 // Caller holds local.mu through the DB response and exactly one helper call.

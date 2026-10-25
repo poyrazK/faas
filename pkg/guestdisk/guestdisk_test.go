@@ -342,30 +342,76 @@ func TestListParsesNamesWithNewlines(t *testing.T) {
 	}
 }
 
-func TestDumpTree(t *testing.T) {
+var testDumpBudget = DumpBudget{FileBytes: 1 << 20, TotalBytes: 4 << 20, Entries: 100}
+
+func TestDumpFiles(t *testing.T) {
 	img := mkImage(t, func(root string) {
 		write(t, filepath.Join(root, "upper/build/out/a.txt"), "a")
 		write(t, filepath.Join(root, "upper/build/out/sub/b.txt"), "b")
+		write(t, filepath.Join(root, "upper/build/out/with space/c.txt"), "c")
 		if err := os.Symlink("/etc/passwd", filepath.Join(root, "upper/build/out/escape")); err != nil {
 			t.Fatal(err)
 		}
 	})
 	s := openSession(t, img)
-	dir, err := s.DumpTree(context.Background(), "/upper/build/out", t.TempDir())
+	dir, err := s.DumpFiles(context.Background(), "/upper/build/out", t.TempDir(), testDumpBudget)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if filepath.Base(dir) != "out" {
 		t.Fatalf("dump root = %s, want .../out", dir)
 	}
-	if b, err := os.ReadFile(filepath.Join(dir, "sub/b.txt")); err != nil || string(b) != "b" {
-		t.Fatalf("sub/b.txt = %q, %v", b, err)
+	for rel, want := range map[string]string{"a.txt": "a", "sub/b.txt": "b", "with space/c.txt": "c"} {
+		if b, err := os.ReadFile(filepath.Join(dir, rel)); err != nil || string(b) != want {
+			t.Fatalf("%s = %q, %v", rel, b, err)
+		}
 	}
-	if info, err := os.Lstat(filepath.Join(dir, "escape")); err != nil || info.Mode()&os.ModeSymlink == 0 {
-		t.Fatalf("escape = %v, %v; want a symlink left for the caller to drop", info, err)
+	if _, err := os.Lstat(filepath.Join(dir, "escape")); !os.IsNotExist(err) {
+		t.Fatalf("symlink recreated on the host (err=%v)", err)
 	}
-	if _, err := s.DumpTree(context.Background(), "/upper/missing", t.TempDir()); err == nil {
+	if _, err := s.DumpFiles(context.Background(), "/upper/missing", t.TempDir(), testDumpBudget); err == nil {
 		t.Fatal("dumping a missing directory succeeded")
+	}
+}
+
+// Sparse files and hard links take no room on the drive but would be
+// written at full size, so the budget counts apparent sizes, and a tree past
+// it writes nothing at all.
+func TestDumpFilesHoldsTheTreeToItsBudget(t *testing.T) {
+	img := mkImage(t, func(root string) {
+		for _, name := range []string{"a", "b", "c"} {
+			p := filepath.Join(root, "upper/out", name)
+			write(t, p, "")
+			if err := os.Truncate(p, 1<<20); err != nil { // sparse: 1 MiB apparent
+				t.Fatal(err)
+			}
+		}
+		if err := os.Link(filepath.Join(root, "upper/out/a"), filepath.Join(root, "upper/out/a-link")); err != nil {
+			t.Fatal(err)
+		}
+		write(t, filepath.Join(root, "upper/out/big"), strings.Repeat("x", 2<<20))
+	})
+	s := openSession(t, img)
+	ctx := context.Background()
+	dest := t.TempDir()
+	if _, err := s.DumpFiles(ctx, "/upper/out", dest, DumpBudget{FileBytes: 1 << 20, TotalBytes: 3 << 20, Entries: 100}); !errors.Is(err, ErrDumpBudget) {
+		t.Fatalf("4 MiB apparent under a 3 MiB budget = %v, want ErrDumpBudget", err)
+	}
+	if entries, _ := os.ReadDir(dest); len(entries) != 0 {
+		t.Fatalf("a refused dump wrote %d entries", len(entries))
+	}
+	if _, err := s.DumpFiles(ctx, "/upper/out", t.TempDir(), DumpBudget{FileBytes: 1 << 20, TotalBytes: 4 << 20, Entries: 3}); !errors.Is(err, ErrDumpBudget) {
+		t.Fatalf("past the entry budget = %v, want ErrDumpBudget", err)
+	}
+	dir, err := s.DumpFiles(ctx, "/upper/out", t.TempDir(), DumpBudget{FileBytes: 1 << 20, TotalBytes: 4 << 20, Entries: 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(filepath.Join(dir, "big")); !os.IsNotExist(err) {
+		t.Fatalf("a file over the per-file cap was dumped (err=%v)", err)
+	}
+	if info, err := os.Stat(filepath.Join(dir, "a-link")); err != nil || info.Size() != 1<<20 {
+		t.Fatalf("a-link = %v, %v", info, err)
 	}
 }
 

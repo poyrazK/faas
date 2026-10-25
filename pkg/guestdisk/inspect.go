@@ -260,10 +260,15 @@ func notFoundPaths(stderr []byte) map[string]bool {
 	return out
 }
 
+// errListTooLong reports a listing past its entry bound.
+var errListTooLong = errors.New("guestdisk: listing exceeds its entry bound")
+
 // DirEntry is one name in a directory listing.
 type DirEntry struct {
 	Name string
 	Kind Kind
+	// Size is a regular file's apparent size; zero for anything else.
+	Size int64
 }
 
 // List returns the entries of each directory, without "." and "..". A name
@@ -287,6 +292,9 @@ func (s *Session) List(ctx context.Context, dirs []string, maxEntries int) (map[
 	end := s.marker("end")
 	fmt.Fprintf(&script, "%s\n", end)
 	res, err := s.run(ctx, s.ed.debugfs, []string{"-f", "-", s.image}, script.Bytes(), runLimits{output: 64<<10 + maxEntries*600})
+	if errors.Is(err, errOutputCap) {
+		return nil, fmt.Errorf("%w: more than %d entries", errListTooLong, maxEntries)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("guestdisk: list: %w", err)
 	}
@@ -311,7 +319,7 @@ func (s *Session) List(ctx context.Context, dirs []string, maxEntries int) (map[
 		}
 		total += len(entries)
 		if total > maxEntries {
-			return nil, fmt.Errorf("guestdisk: list: more than %d entries", maxEntries)
+			return nil, fmt.Errorf("%w: more than %d entries", errListTooLong, maxEntries)
 		}
 		out[pr.dir] = entries
 	}
@@ -332,7 +340,7 @@ func parseList(body []byte) ([]DirEntry, error) {
 	}
 	var out []DirEntry
 	for i := 1; i+6 <= len(fields); i += 7 {
-		ino, mode, name, sep := fields[i], fields[i+1], fields[i+4], fields[i+6]
+		ino, mode, name, size, sep := fields[i], fields[i+1], fields[i+4], fields[i+5], fields[i+6]
 		if _, err := strconv.ParseUint(ino, 10, 64); err != nil {
 			return nil, errors.New("unrecognised listing inode")
 		}
@@ -355,7 +363,13 @@ func parseList(body []byte) ([]DirEntry, error) {
 		case 0o120000:
 			kind = Symlink
 		}
-		out = append(out, DirEntry{Name: name, Kind: kind})
+		e := DirEntry{Name: name, Kind: kind}
+		if kind == Regular {
+			if e.Size, err = strconv.ParseInt(size, 10, 64); err != nil || e.Size < 0 {
+				return nil, errors.New("unrecognised listing size")
+			}
+		}
+		out = append(out, e)
 	}
 	return out, nil
 }

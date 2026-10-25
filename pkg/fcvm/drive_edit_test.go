@@ -185,27 +185,37 @@ func (d *dirDriveImage) List(_ context.Context, dirs []string, maxEntries int) (
 	return out, nil
 }
 
-// DumpTree copies like debugfs rdump: directories, regular files, and
-// symlinks recreated as symlinks.
-func (d *dirDriveImage) DumpTree(_ context.Context, dir, dest string) (string, error) {
+// DumpFiles copies directories and regular files within the budget, as the
+// sandboxed dump does; links and special files are skipped.
+func (d *dirDriveImage) DumpFiles(_ context.Context, dir, dest string, b guestdisk.DumpBudget) (string, error) {
 	src := d.host(dir)
 	out := filepath.Join(dest, filepath.Base(src))
+	entries, total := 0, int64(0)
 	err := filepath.WalkDir(src, func(path string, e fs.DirEntry, err error) error {
 		if err != nil {
 			return err
+		}
+		if path != src {
+			if entries++; entries > b.Entries {
+				return guestdisk.ErrDumpBudget
+			}
 		}
 		rel, _ := filepath.Rel(src, path)
 		target := filepath.Join(out, rel)
 		switch {
 		case e.IsDir():
 			return os.MkdirAll(target, 0o755)
-		case e.Type()&fs.ModeSymlink != 0:
-			link, err := os.Readlink(path)
+		case e.Type().IsRegular():
+			info, err := e.Info()
 			if err != nil {
 				return err
 			}
-			return os.Symlink(link, target)
-		case e.Type().IsRegular():
+			if b.FileBytes > 0 && info.Size() > b.FileBytes {
+				return nil
+			}
+			if total += info.Size(); total > b.TotalBytes {
+				return guestdisk.ErrDumpBudget
+			}
 			in, err := os.Open(path)
 			if err != nil {
 				return err

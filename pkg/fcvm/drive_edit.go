@@ -41,7 +41,7 @@ type driveImage interface {
 	WriteFilesAfter(ctx context.Context, files []guestdisk.File, inspected map[string]guestdisk.Entry) error
 	RemoveAll(ctx context.Context, paths []string) error
 	List(ctx context.Context, dirs []string, maxEntries int) (map[string][]guestdisk.DirEntry, error)
-	DumpTree(ctx context.Context, dir, dest string) (string, error)
+	DumpFiles(ctx context.Context, dir, dest string, b guestdisk.DumpBudget) (string, error)
 	Close() error
 }
 

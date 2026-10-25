@@ -295,6 +295,21 @@ type AlertRuleChannel struct {
 	ChannelID pgtype.UUID
 }
 
+// Test sends apid relays to meterd, which holds the alerting seal-domain key (ADR 20261022111812). Short-lived: apid deletes a row once it reads the result, meterd prunes abandoned ones.
+type AlertTestSend struct {
+	ID           pgtype.UUID
+	AccountID    pgtype.UUID
+	Kind         string
+	SubjectID    pgtype.UUID
+	Event        []byte
+	State        string
+	ClaimToken   pgtype.UUID
+	ClaimedUntil pgtype.Timestamptz
+	Result       []byte
+	CreatedAt    pgtype.Timestamptz
+	CompletedAt  pgtype.Timestamptz
+}
+
 type ApiConsumer struct {
 	ID                    pgtype.UUID
 	AccountID             pgtype.UUID

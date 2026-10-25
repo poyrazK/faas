@@ -99,7 +99,7 @@ func TestSandboxedEdit(t *testing.T) {
 	if err := os.Mkdir(dest, 0o700); err != nil {
 		t.Fatal(err)
 	}
-	dumped, err := s.DumpTree(ctx, "/upper/etc", dest)
+	dumped, err := s.DumpFiles(ctx, "/upper/etc", dest, testDumpBudget)
 	if err != nil {
 		t.Fatal(err)
 	}

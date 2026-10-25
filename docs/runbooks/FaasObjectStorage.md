@@ -18,8 +18,9 @@ Severity: warn.
   temporarily unavailable` on one bucket while the account's other buckets
   work. A bucket needs a successful inventory every 900 s.
 - **Gateway 5xx.** S3 clients get `ServiceUnavailable` (provider unreachable
-  or accounting stale) or `SlowDown` (the bucket is busy settling other
-  deletions and writes). Both count as 5xx.
+  or accounting stale) or `SlowDown` (another delete or write of the same
+  key, or an inventory scan of the bucket, is still settling). Both count as
+  5xx.
 - **Usage export stale.** With provider-report accounting, admission refuses
   transfers on every bucket of that backend once reports exceed
   `max_report_age_seconds`.
@@ -31,7 +32,8 @@ Severity: warn.
    cannot be listed within 45 s, never completes a scan.
 2. Gateway errors: `journalctl -u faas-s3-gatewayd` around the alert window.
    Compare with the provider's status page. Many `SlowDown` answers on one
-   bucket mean customer concurrency, not an outage.
+   bucket mean customer concurrency on the same keys, or an uncertain delete
+   holding its key, not an outage.
 3. Usage export: `s3_gateway_usage_exports_total{outcome}` by backend, and the
    exporter's provider credentials.
 

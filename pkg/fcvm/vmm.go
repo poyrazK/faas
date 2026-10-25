@@ -62,6 +62,7 @@ type JailerVMM struct {
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
 	nativeRuntimeCapture          bool                          // ADR 20261022184951: native park/warm capture; requires native recovery
 	nativeRuntimeSnapshots        *storage.LocalStorageBackend  // ADR 20261022184951 amendment 1: the tree only vmmd writes
+	nativeLaunchOwners            bool                          // ADR-2026101710 amendment 1: version-three launch records name this vmmd
 	chrootBase                    string                        // /srv/fc/jail
 	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
 	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
@@ -4655,13 +4656,19 @@ func exportBuildDrive(ctx context.Context, img driveImage, exportDir string, max
 		return nil
 	}
 	// Dump next to the export, on its filesystem: an output can be several
-	// GiB, too large for the tmpfs session scratch.
+	// GiB, too large for the tmpfs session scratch. The dump is planned from
+	// a listing and held to the export budgets before anything is written:
+	// sparse files and hard links take no room on the drive the build wrote
+	// but would be written at full size.
 	staging := filepath.Join(exportDir, ".guestdisk-dump")
 	if err := os.Mkdir(staging, 0o700); err != nil {
 		return fmt.Errorf("mkdir export staging: %w", err)
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
-	src, err := img.DumpTree(ctx, buildOutImagePath, staging)
+	src, err := img.DumpFiles(ctx, buildOutImagePath, staging, guestdisk.DumpBudget{FileBytes: maxBytes, TotalBytes: api.MaxExportedTreeBytes, Entries: api.MaxExportedTreeEntries})
+	if errors.Is(err, guestdisk.ErrDumpBudget) {
+		return fmt.Errorf("%w: %w", errExportBudget, err)
+	}
 	if err != nil {
 		return fmt.Errorf("dump build output: %w", err)
 	}
@@ -5326,20 +5333,33 @@ func (v *JailerVMM) destroyWaitFor(exportDir string, buildTimeoutSec int) time.D
 	return wait
 }
 
-// copyTree copies a directory tree from src to dst, skipping any single file
-// whose size exceeds maxBytes. Best-effort by design — partial copies are OK
-// for a build that overshot the cap.
+// errExportBudget stops an export whose tree passes the total budget.
+var errExportBudget = errors.New("vmm: build output exceeds the export budget")
+
 // moveTree moves an untrusted dump's directories and regular files into dst.
 // Builder output is an OCI tarball plus BuildKit's local cache: directories
 // and regular files only. Symlinks, device nodes, FIFOs and sockets the
 // untrusted build created are dropped (recreating a link hands builderd a
-// path into the host), as is any file over maxBytes. Nothing writes the dump
-// any more: the sandboxed tool has exited, and so has the builder VM that
-// shares its uid.
+// path into the host), as is any file over maxBytes. The whole tree is also
+// held to api.MaxExportedTreeBytes and api.MaxExportedTreeEntries: the build
+// wrote the drive, so sparse files and hard links can each pass the per-file
+// cap while together they would fill the host. The dump already enforced the
+// same budgets before writing; this is the second check. Nothing writes the
+// dump any more: the sandboxed tool has exited, and so has the builder VM
+// that shares its uid.
 func moveTree(src, dst string, maxBytes int64) error {
+	return moveTreeWithin(src, dst, maxBytes, api.MaxExportedTreeBytes, api.MaxExportedTreeEntries)
+}
+
+func moveTreeWithin(src, dst string, maxBytes, maxTotalBytes int64, maxEntries int) error {
+	var totalBytes int64
+	entries := 0
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if entries++; entries > maxEntries {
+			return fmt.Errorf("%w: more than %d entries", errExportBudget, maxEntries)
 		}
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
@@ -5359,6 +5379,10 @@ func moveTree(src, dst string, maxBytes int64) error {
 		case d.Type().IsRegular():
 			if maxBytes > 0 && info.Size() > maxBytes {
 				return nil // skip the oversize file
+			}
+			// Apparent size: a sparse or linked file counts at full size.
+			if totalBytes += info.Size(); totalBytes > maxTotalBytes {
+				return fmt.Errorf("%w: more than %d bytes", errExportBudget, maxTotalBytes)
 			}
 			if err := os.Rename(path, target); err != nil {
 				return err
@@ -6672,6 +6696,9 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 				if loopbackErr := loopbackBindProblem(receipt.report, err); loopbackErr != nil {
 					return loopbackErr
 				}
+				if portErr := portMismatchProblem(receipt.report, l.AppPort, err); portErr != nil {
+					return portErr
+				}
 			}
 			return err
 		case <-receiptDone:
@@ -6779,6 +6806,24 @@ func loopbackBindProblem(report api.CharacterizationReport, readinessErr error) 
 	return api.NewProblem(422, api.CodeAppLoopbackBound, "app bound to loopback",
 		fmt.Sprintf("startup_phase=handler_boot: the app listens on %s, which the gateway cannot reach; bind 0.0.0.0 (or ::) instead (%s)",
 			strings.Join(report.ListeningAddrs, ", "), readinessErr))
+}
+
+// portMismatchProblem names the port an app listens on when readiness found
+// nothing on the port the host routes to. Production apps listen on $PORT
+// (ADR-1170); since ADR-051's 2026-10-25 amendment no guest rescues another
+// port, and "the app never listened" alone sent customers looking for a
+// crash. Characterization reports the routed port whenever the app listens
+// on it, so a different observed port means the app does not.
+func portMismatchProblem(report api.CharacterizationReport, appPort int, readinessErr error) error {
+	if appPort <= 0 {
+		appPort = api.DefaultAppPort
+	}
+	if p := api.AsProblem(readinessErr); p == nil || p.Code != api.CodeAppNotListening || report.ObservedPort <= 0 || report.ObservedPort == appPort {
+		return nil
+	}
+	return api.NewProblem(422, api.CodeAppNotListening, "app listens on a different port",
+		fmt.Sprintf("startup_phase=handler_boot: the app listens on port %d, but this deployment routes to port %d ($PORT). Listen on $PORT, or declare port %d: hosting.port in gregale.yaml, or overrides.port for an image deployment (%s)",
+			report.ObservedPort, appPort, report.ObservedPort, readinessErr))
 }
 
 // loopbackListenAddr reports a host:port bound to a loopback address. An

@@ -101,7 +101,7 @@ const (
 // a degradation (the platform never fails a deploy on a probe
 // failure — the host falls back to the scan-hint class).
 type CharacterizationResult struct {
-	Mode          PortNormMode // "none" | "dnat" | "forward" — what rung
+	Mode          PortNormMode // always "none"; see portnorm_common.go
 	Port          int          // the observed bind port (0 if none)
 	ExitCode      int          // 0=clean, -1=still running, 1..255=failure
 	ObservedClass string       // guest best-guess (host re-derives)
@@ -182,33 +182,10 @@ func runCharacterization(ctx context.Context, args RunArgs) CharacterizationResu
 	classHint, openAPIDoc, openAPIDocTruncated := runL7Probes(ctx, args, res.Port)
 	res.ObservedClass = deriveGuestCharacterizationClass(res.Port, classHint, res.ExitCode, exited)
 
-	// 3. Pick a portnorm mode. Only a positive observed port is a
-	// meaningful normalization target. A bind timeout is a valid
-	// characterization result (jobs and crash-looping apps commonly
-	// have no listener); trying to install DNAT to port 0 would invoke
-	// iptables with an invalid rule and then startForwarder would fail.
-	if res.Port > 0 {
-		// manifest.Port==0 means DefaultAppPort was effective (the
-		// customer's process is expected to bind 8080). Anything else
-		// requires a ladder rung.
-		res.Mode = choosePortNormMode(args.Manifest, res.Port)
-		if res.Mode == PortNormDNAT {
-			if err := installDNAT(res.Port, args.Log); err != nil {
-				res.Mode = PortNormForward
-				_, _ = startForwarder(res.Port, args.Log)
-			}
-		}
-		if res.Mode == PortNormForward {
-			ln, fErr := startForwarder(res.Port, args.Log)
-			if fErr != nil || ln == nil {
-				args.Log.Warn("portnorm forward failed; host will see listen mismatch",
-					"port", res.Port, "err", fErr)
-			}
-		}
-	} else {
-		res.Mode = PortNormNone
-		args.Log.Debug("portnorm skipped: no observed listener", "port", res.Port)
-	}
+	// 3. No port normalization (ADR-051 amendment 2026-10-25): the host
+	// routes to the deployment's port, and an app listening elsewhere
+	// fails readiness with app_not_listening naming the observed port.
+	res.Mode = PortNormNone
 
 	// 4. Build the report and ship it. A bound server is reported
 	// immediately with exit_code=-1; waiting for a long-running server to exit

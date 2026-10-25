@@ -369,7 +369,7 @@ func (s *Session) run(ctx context.Context, tool string, args []string, stdin []b
 	err := cmd.Run()
 	res := runResult{stdout: stdout.buf, stderr: stderr.buf}
 	if stdout.overflow {
-		return res, fmt.Errorf("%s printed more than %d bytes", filepath.Base(tool), lim.output)
+		return res, fmt.Errorf("%w: %s printed more than %d bytes", errOutputCap, filepath.Base(tool), lim.output)
 	}
 	var exitErr *exec.ExitError
 	switch {
@@ -386,6 +386,9 @@ func (s *Session) run(ctx context.Context, tool string, args []string, stdin []b
 	}
 	return res, nil
 }
+
+// errOutputCap reports a tool that printed more than its run allowed.
+var errOutputCap = errors.New("guestdisk: tool output over its cap")
 
 // cappedBuffer keeps at most limit bytes and records an overflow.
 type cappedBuffer struct {
