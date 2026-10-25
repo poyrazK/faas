@@ -1852,7 +1852,7 @@ sum by (route) (rate(apid_request_total{account_id="<uuid>"}[5m]))
 
 The `account_id="__other__"` series is the bounded overflow bucket — drill-down on this means the customer is past the 10 000 admission cap, and the operator must check the daemon slog for the original id (issue #278).
 
-**SLOs (public, on the status page):** API availability 99.5 % monthly; wake p95 < 1 s; build success (non-`user_error`) 99 %. Error budgets, not promises — single-node deployments (until Gate A) are stated honestly on the status page.
+**SLOs (public, on the status page):** API availability 99.5 % monthly; wake p95 < 1 s; build success (non-`user_error`) 99 %. Error budgets, not promises — single-node deployments (until Gate A) are stated honestly on the status page. The `faas_slo_monthly` recording group computes each as a rolling 30 d ratio (`faas_slo_api_availability:ratio_30d`, `faas_slo_wakes_within_1s:ratio_30d`, `faas_slo_build_success:ratio_30d`, plus `faas_slo_platform_wakes_within_350ms:ratio_30d` for the 350 ms platform gate), shown on the fleet dashboard; Prometheus keeps 35 d so the window is whole (ADR-20261023124955).
 
 Logs: journald → Loki free tier; tenant app stdout/stderr ring-buffered per instance (10 MB), surfaced via `GET /v1/apps/{app}/logs` (tail + follow).
 
@@ -2004,6 +2004,7 @@ same values, so rules and panels aggregate with `max`. Alerts are `warn`
 |---|---|---|
 | `system.slice` | 2,048 MB | OS, sshd, journald, node_exporter, chrony |
 | `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 384 (two generations during a reload, ADR 20261018132058) · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,176 → **1 guaranteed builder VM (2,048 + 8) lives here** |
+| `faas-obs.slice` (control plane) | 3,584 MB, `CPUWeight=20`, `CPUQuota=100%`, `IOWeight=20` | prometheus (`MemoryHigh` 2,304) · alertmanager 128 · grafana 384 · loki and the control plane's promtail once logs are enabled; yields CPU and IO to PostgreSQL and the daemons. Sized for a split-box control plane with no tenant VMs; a single box that also runs tenants sizes `faas_obs_slice_memory_max` down, out of the headroom above the admission line (ADR-20261023124955) |
 | `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits measured memory only to 47,600 MB** (85 % of the model's 56 GB budget; reservations up to twice that, ADR-909) |
 | headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 
