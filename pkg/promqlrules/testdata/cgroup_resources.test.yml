@@ -1,0 +1,129 @@
+# Per-slice host resources (ADR-20261023124955). faas-cgroup-metrics writes
+# cgroup v2 numbers to the node_exporter textfile collector. These cases pin
+# that the memory alert reads anonymous memory (page cache is reclaimable),
+# that an OOM kill is reported once, that PostgreSQL CPU stall needs a
+# sustained majority of the time, and that a stopped collector is noticed.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 30s
+    name: "anonymous memory near the limit warns; page cache does not"
+    input_series:
+      # faas-obs.slice: 3.2 of 3.5 GiB anonymous (91%).
+      - series: 'faas_cgroup_memory_anon_bytes{job="node",instance="cp",cgroup="faas-obs.slice"}'
+        values: '3435973837x60'
+      - series: 'faas_cgroup_memory_max_bytes{job="node",instance="cp",cgroup="faas-obs.slice"}'
+        values: '3758096384x60'
+      # faas-cp.slice: full of page cache but only 1 of 6 GiB anonymous.
+      - series: 'faas_cgroup_memory_anon_bytes{job="node",instance="cp",cgroup="faas-cp.slice"}'
+        values: '1073741824x60'
+      - series: 'faas_cgroup_memory_max_bytes{job="node",instance="cp",cgroup="faas-cp.slice"}'
+        values: '6442450944x60'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasCgroupMemoryNearLimit
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: FaasCgroupMemoryNearLimit
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: node
+              family: cgroup_resources
+              public_status: internal
+              job: node
+              instance: cp
+              cgroup: faas-obs.slice
+            exp_annotations:
+              summary: "faas-obs.slice on cp holds over 85% of its memory limit in anonymous memory"
+              description: "Anonymous (non-reclaimable) memory in faas-obs.slice has stayed above 85% of its MemoryMax for 15 minutes, so the next allocation spike OOM-kills a process in it. Find the largest member with faas_cgroup_memory_anon_bytes before raising the limit; on the control plane, faas-obs.slice must not grow into the memory PostgreSQL needs."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCgroupResources.md"
+
+  - interval: 30s
+    name: "an OOM kill warns, and stops once the counter is flat for 10m"
+    input_series:
+      - series: 'faas_cgroup_memory_events_total{job="node",instance="cp",cgroup="faas-obs.slice",event="oom_kill"}'
+        values: '0x10 1x50'
+      - series: 'faas_cgroup_memory_events_total{job="node",instance="cp",cgroup="faas-obs.slice",event="oom"}'
+        values: '0x10 1x50'
+    alert_rule_test:
+      - eval_time: 4m
+        alertname: FaasCgroupOOMKill
+        exp_alerts: []
+      - eval_time: 8m
+        alertname: FaasCgroupOOMKill
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: node
+              family: cgroup_resources
+              public_status: internal
+              job: node
+              instance: cp
+              cgroup: faas-obs.slice
+              event: oom_kill
+            exp_annotations:
+              summary: "The kernel OOM-killed a process in faas-obs.slice on cp"
+              description: "memory.events oom_kill increased in the last 10 minutes. A slice counts its children, so find the service that restarted (systemctl list-units --failed; journalctl -k | grep -i oom) and compare its memory with its limit on the Control plane resources dashboard."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCgroupResources.md"
+      - eval_time: 25m
+        alertname: FaasCgroupOOMKill
+        exp_alerts: []
+
+  - interval: 30s
+    name: "PostgreSQL CPU stall warns only when sustained above half the time"
+    input_series:
+      # 0.3 s of stall per second for 20m: busy but not starved.
+      - series: 'faas_cgroup_pressure_stall_seconds_total{job="node",instance="cp",cgroup="system.slice/system-postgresql.slice",resource="cpu",kind="some"}'
+        values: '0+9x40 360+21x60'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: FaasPostgresCPUStalled
+        exp_alerts: []
+      # From 20m it stalls 0.7 s per second; 10m rate crosses 0.5 then holds 15m.
+      - eval_time: 50m
+        alertname: FaasPostgresCPUStalled
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: postgres
+              family: cgroup_resources
+              public_status: internal
+              job: node
+              instance: cp
+              cgroup: system.slice/system-postgresql.slice
+              resource: cpu
+              kind: some
+            exp_annotations:
+              summary: "PostgreSQL on cp has waited for CPU more than half the time for 15m"
+              description: "At least one PostgreSQL process was runnable but waiting for a CPU more than 50% of the time (cgroup cpu.pressure) for 15 minutes. Every control-plane daemon queues behind the database while this lasts. The Control plane resources dashboard shows which slice is taking the CPU; the GitHub runners and faas-obs.slice are the usual competitors."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCgroupResources.md"
+
+  - interval: 30s
+    name: "a collector that stops writing warns"
+    input_series:
+      # Writes every 30 s for 10m, then the timestamp freezes at 600 s.
+      - series: 'faas_cgroup_metrics_last_run_timestamp_seconds{job="node-compute",instance="fsn-2"}'
+        values: '0+30x20 600x40'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: FaasCgroupMetricsStale
+        exp_alerts: []
+      - eval_time: 21m
+        alertname: FaasCgroupMetricsStale
+        exp_alerts:
+          - exp_labels:
+              severity: warn
+              component: node
+              family: cgroup_resources
+              public_status: internal
+              job: node-compute
+              instance: fsn-2
+            exp_annotations:
+              summary: "faas-cgroup-metrics on fsn-2 has not written for over 5 minutes"
+              description: "The per-slice resource numbers on fsn-2 are stale, so the other cgroup_resources alerts cannot fire there. Check systemctl status faas-cgroup-metrics.timer and journalctl -u faas-cgroup-metrics."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCgroupResources.md"
