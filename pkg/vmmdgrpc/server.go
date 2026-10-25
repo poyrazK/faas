@@ -317,6 +317,9 @@ type Server struct {
 	// inflightTraces holds each in-flight HTTP forward's traceparent for
 	// InflightRequestTrace (ADR-1138).
 	inflightTraces inflightTraces
+	// invokeHooks skips per-request invoke events for instances whose guest
+	// has no extension endpoint (ADR-20261025150000).
+	invokeHooks invokeHookBackoff
 	// identitySigner mints execution-only assertions for the scheduler's
 	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
 	identitySigner *workloadidentity.Signer

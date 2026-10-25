@@ -3008,6 +3008,12 @@ func readResumeCapabilities(conn net.Conn) (*resumetimingproto.Timings, error) {
 // guest extension bridge (guest/init/listen_resume_linux.go).
 const extensionHookMsgEvent uint32 = 3
 
+// extensionHookAckUnavailable is the guest's answer when no extension
+// endpoint accepted the event (guest/init VsockExtensionAckUnavailable,
+// ADR-20261025150000). TriggerExtensionHook reports it as
+// extension.ErrUnavailable so callers can stop sending per-request events.
+const extensionHookAckUnavailable byte = 16
+
 const beforeCheckpointHookMsg uint32 = 5
 const beforeCheckpointHookAckFailed byte = 14
 
@@ -3488,8 +3494,11 @@ func (v *JailerVMM) TriggerExtensionHook(ctx context.Context, l Lease, phase str
 						ack := []byte{0}
 						if _, err = io.ReadFull(conn, ack); err == nil {
 							_ = conn.Close()
-							if ack[0] == 0 {
+							switch ack[0] {
+							case 0:
 								return nil
+							case extensionHookAckUnavailable:
+								return fmt.Errorf("vmm: guest has no extension endpoint: %w", extension.ErrUnavailable)
 							}
 							return fmt.Errorf("vmm: extension hook rejected (ack=%d)", ack[0])
 						}
