@@ -732,3 +732,5 @@ func RuntimeMainSecretEntries(snapshot state.RuntimeAppValuesSnapshot, intent st
 	}
 	return delivery.Entries, nil
 }
+
+var QueueDeadLetterError = queueDeadLetterError
