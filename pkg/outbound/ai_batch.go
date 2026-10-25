@@ -647,7 +647,8 @@ func (r *batchResultReader) endLine() {
 	if json.Unmarshal(bytes.TrimSpace(r.line), &line) != nil {
 		return
 	}
-	format, body := aiFormatOpenAI, json.RawMessage(nil)
+	format := aiFormatOpenAI
+	var body json.RawMessage
 	switch {
 	case line.Response != nil && line.Response.StatusCode >= 200 && line.Response.StatusCode <= 299:
 		body = line.Response.Body

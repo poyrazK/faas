@@ -75,7 +75,7 @@ func recoverMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, st
 		trafficErr = fmt.Errorf("serving deployment %q differs from the captured baseline %q and candidate %q", serving, s.ServingDeployment, s.WebDeployment)
 	}
 	checks := []mcpNativeRecoveryCheck{check("serving_generation", trafficErr)}
-	candidateErr := error(nil)
+	var candidateErr error
 	if s.WorkerDeployment == "" || len(s.WorkerIDs) == 0 {
 		candidateErr = errors.New("candidate worker deployment or captured worker IDs are missing")
 	} else {
@@ -84,7 +84,7 @@ func recoverMCPNativeRelease(p mcpNativeReleasePlan, s mcpNativeReleaseState, st
 	checks = append(checks, check("candidate_workers", candidateErr))
 	observerErr := mcpNativeObserverHealthy(ctx, c, p)
 	checks = append(checks, check("observer", observerErr))
-	endpointErr := error(nil)
+	var endpointErr error
 	if changed {
 		endpointErr = errors.New("candidate endpoint cannot be verified while the serving generation has changed")
 	} else if serving == "" || s.WebDeployment == "" {
