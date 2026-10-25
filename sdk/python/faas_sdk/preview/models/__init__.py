@@ -5740,6 +5740,13 @@ from .trace_span import TraceSpan
 from .trace_span_attributes import TraceSpanAttributes
 from .trace_span_status import TraceSpanStatus
 from .tracing_config import TracingConfig
+from .traffic_runtime_feature_status import TrafficRuntimeFeatureStatus
+from .traffic_runtime_feature_status_mode import TrafficRuntimeFeatureStatusMode
+from .traffic_runtime_feature_status_state import TrafficRuntimeFeatureStatusState
+from .traffic_runtime_status import TrafficRuntimeStatus
+from .traffic_runtime_status_enforcement_status import TrafficRuntimeStatusEnforcementStatus
+from .traffic_runtime_status_scope import TrafficRuntimeStatusScope
+from .traffic_runtime_status_state import TrafficRuntimeStatusState
 from .transfer_ownership_request import TransferOwnershipRequest
 from .trigger import Trigger
 from .trigger_broker_poison_strategy import TriggerBrokerPoisonStrategy
@@ -11584,6 +11591,13 @@ __all__ = (
     "TraceSpanAttributes",
     "TraceSpanStatus",
     "TracingConfig",
+    "TrafficRuntimeFeatureStatus",
+    "TrafficRuntimeFeatureStatusMode",
+    "TrafficRuntimeFeatureStatusState",
+    "TrafficRuntimeStatus",
+    "TrafficRuntimeStatusEnforcementStatus",
+    "TrafficRuntimeStatusScope",
+    "TrafficRuntimeStatusState",
     "TransferOwnershipRequest",
     "Trigger",
     "TriggerBrokerPoisonStrategy",

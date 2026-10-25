@@ -13,6 +13,7 @@ elsewhere its calls answer 404 no such API route.
 from .. import (
     DEFAULT_WEBHOOK_TIMESTAMP_TOLERANCE,
     GREGALE_RELEASE_HEADER,
+    GREGALE_REQUEST_DEADLINE_HEADER,
     GREGALE_REVISION_HEADER,
     PRE_AUTH_TARGET_HEADER,
     WEBHOOK_DELIVERY_ID_HEADER,
@@ -42,6 +43,7 @@ from .. import (
     aiter_sse,
     as_faas_error,
     current_gregale_release,
+    current_gregale_request_deadline,
     current_idempotency_key,
     install_chain,
     is_faas_error,
@@ -52,6 +54,7 @@ from .. import (
     raise_for_problem,
     verify_webhook,
     with_gregale_release,
+    with_gregale_request_context,
     with_idempotency_key,
 )
 from .. import __all__ as _PACKAGE_ALL
