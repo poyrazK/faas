@@ -794,6 +794,9 @@ type Engine struct {
 	// restartNotices are the nodes whose vmmd is restarting under a planned
 	// notice (vmmd restart adoption ADR §3); placement tries others first.
 	restartNotices *RestartNotices
+	// breaker counts platform-attributable wake failures per node and opens
+	// the node's durable wake breaker (ADR-20261022184531 step 3).
+	breaker *nodeWakeBreaker
 
 	// telemetryCache is the receiver for the batched vmmd Stats rows carried
 	// on the persistent ReportCapacity stream. The instance-stats poller
@@ -1001,6 +1004,7 @@ func NewEngine(ctx context.Context, store state.Store, ledger *NodeLedger, vmm R
 		serviceAppMu:             map[string]*sync.Mutex{},
 		serviceMu:                map[string]*sync.Mutex{},
 		wakeCoord:                newWakeCoord(),
+		breaker:                  newNodeWakeBreaker(),
 		warmBroadcaster:          newWarmHintBroadcaster(),
 		capacityTable:            newNodeCapacityTable(),
 		telemetryCache:           NewNodeTelemetryCache(),

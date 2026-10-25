@@ -34,6 +34,7 @@ package sched
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -136,9 +137,12 @@ func choosePlacementWithCPU(nodes []state.ComputeNode, usedMB map[string]int64, 
 }
 
 func withoutDegradedNodes(nodes []state.ComputeNode) []state.ComputeNode {
+	now := time.Now()
 	proven := make([]state.ComputeNode, 0, len(nodes))
 	for _, n := range nodes {
-		if n.Readiness != state.NodeReadinessDegraded {
+		// Degraded by vmmd's report (step 2) or by an open wake breaker
+		// (step 3).
+		if n.Readiness != state.NodeReadinessDegraded && !n.WakeBreakerOpen(now) {
 			proven = append(proven, n)
 		}
 	}

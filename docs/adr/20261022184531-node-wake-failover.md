@@ -200,6 +200,46 @@ Each schedd keeps its own breaker in memory and writes the verdict to
 canary wake per node per minute, which proves readiness without customer
 traffic, is optional and stays behind a flag until its cost is measured.
 
+As built (step 3):
+
+- **Durable breaker.** The breaker lives in two new nullable columns,
+  `wake_breaker_open_until` and `wake_breaker_reason`. It is not written
+  into `readiness`, which stays the heartbeat's Ping-derived verdict. If the
+  breaker were folded into `readiness`, the heartbeat and every schedd's
+  breaker would overwrite one another.
+  - A node is degraded while `now < wake_breaker_open_until`. Every schedd
+    sees this through `compute_node_changed`, so one schedd's breaker
+    degrades the node fleet-wide.
+  - Once that time passes, the breaker is half-open, and the node takes
+    wakes again. The first platform failure there reopens it at once (no
+    count needed). The first successful wake closes it (`NULL`).
+- **Counting.** Each schedd counts in memory the consecutive
+  platform-attributable failures on each node within
+  `NodeWakeBreakerWindowSeconds`. A successful wake on the node resets the
+  count.
+  - Customer failures neither count nor reset it.
+  - Ambiguous errors (`internal`, deadline) are ignored.
+- **The vmmd marker** covers only the failures that are certainly node-local
+  and certainly before guest code: jail lease acquisition and network setup.
+  They wrap `fcvm.ErrWakeNotStarted`. The wake RPCs send ErrorInfo metadata
+  `wake_stage=pre_start`, and schedd lifts it into `ErrVMMWakeNotStarted`.
+  Jailer start, cgroup and disk-full failures happen inside the VMM's boot,
+  where "did the VM start" is not yet provable. They stay out until the VMM
+  reports its own boundary.
+  - The same marker makes those failures re-placeable by step 1, under
+    `reason="node_setup"`.
+  - schedd never forwards the marker: the gateway sees the same Problem as
+    before.
+- **Limits** (`pkg/api/limits.go`): `NodeWakeBreakerFailures` 3,
+  `NodeWakeBreakerWindowSeconds` 60, `NodeWakeBreakerCooldownSeconds` 30.
+- **Observability.**
+  - `schedd_node_wake_breaker_total{transition}`, with transition `opened`,
+    `reopened` or `closed`.
+  - The readiness gauge reads degraded while the breaker is open.
+  - `FaasComputeNodeDegraded` (warn, 5 m) and `FaasNoComputeNodeReady`
+    (page, 2 m), with a promtool fixture and a runbook.
+- **Not built:** the canary wake.
+
 ### 4. The previous base generation stays adoptable
 
 This was the root cause of the incident. A node rolled back in the middle of
