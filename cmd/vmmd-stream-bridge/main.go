@@ -557,7 +557,7 @@ func newGuestRequest(ctx context.Context, method, target string, inbound *http.R
 }
 
 func handleH1StreamLegacy(w http.ResponseWriter, r *http.Request, ctx context.Context, guestIP string, guestPort uint16, method, url, host string, extraHeaders []headerEntry) {
-	d := net.Dialer{Timeout: dialTimeout}
+	d := net.Dialer{Timeout: guestDialTimeout()}
 	conn, err := netns.DialBridgeContext(ctx, &d, "tcp", net.JoinHostPort(guestIP, strconv.FormatUint(uint64(guestPort), 10)))
 	if err != nil {
 		http.Error(w, fmt.Sprintf("dial guest: %v", err), http.StatusBadGateway)
