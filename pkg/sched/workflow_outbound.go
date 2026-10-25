@@ -115,25 +115,29 @@ func (e *workflowOutboundExecutor) ExecuteOutboundStep(ctx context.Context, runI
 	}
 	// The integration call holds no dispatch DB-phase token; the attempt
 	// check above polls once a second untracked.
-	var response *http.Response
+	var status int
+	var retryAfter string
 	var body []byte
 	var readErr error
 	outsideDBPhase(ctx, func() {
-		response, err = e.client.Do(request)
-		if err == nil {
-			body, readErr = io.ReadAll(io.LimitReader(response.Body, api.WorkflowOutboundBodyMaxBytes+1))
+		response, doErr := e.client.Do(request)
+		if doErr != nil {
+			err = doErr
+			return
 		}
+		defer func() { _ = response.Body.Close() }()
+		status, retryAfter = response.StatusCode, response.Header.Get("Retry-After")
+		body, readErr = io.ReadAll(io.LimitReader(response.Body, api.WorkflowOutboundBodyMaxBytes+1))
 	})
 	if err != nil {
 		return 0, nil, zero, errors.New("workflow outbound request failed")
 	}
-	defer func() { _ = response.Body.Close() }()
-	retryAt := workflowOutboundRetryAfter(response.Header.Get("Retry-After"), time.Now().UTC())
+	retryAt := workflowOutboundRetryAfter(retryAfter, time.Now().UTC())
 	if readErr != nil || int64(len(body)) > api.WorkflowOutboundBodyMaxBytes {
-		return response.StatusCode, nil, retryAt, errors.New("workflow outbound response incomplete or exceeds the limit")
+		return status, nil, retryAt, errors.New("workflow outbound response incomplete or exceeds the limit")
 	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		return response.StatusCode, nil, retryAt, nil
+	if status < 200 || status >= 300 {
+		return status, nil, retryAt, nil
 	}
 	var value any
 	if len(body) > 0 {
@@ -146,8 +150,8 @@ func (e *workflowOutboundExecutor) ExecuteOutboundStep(ctx context.Context, runI
 	output, err := json.Marshal(struct {
 		Status int `json:"status"`
 		Body   any `json:"body"`
-	}{response.StatusCode, value})
-	return response.StatusCode, output, retryAt, err
+	}{status, value})
+	return status, output, retryAt, err
 }
 
 func workflowOutboundRetryAfter(raw string, now time.Time) time.Time {
