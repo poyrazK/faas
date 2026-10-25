@@ -7040,7 +7040,9 @@ func loopbackBindProblem(report api.CharacterizationReport, readinessErr error) 
 // (ADR-1170); since ADR-051's 2026-10-25 amendment no guest rescues another
 // port, and "the app never listened" alone sent customers looking for a
 // crash. Characterization reports the routed port whenever the app listens
-// on it, so a different observed port means the app does not.
+// on it, so a different observed port means the app does not. The detail
+// leaves out the probe's "on :N got ECONNREFUSED (... deadline=...)" text:
+// the CLI reads that as an app that started too slowly and rewrites the hint.
 func portMismatchProblem(report api.CharacterizationReport, appPort int, readinessErr error) error {
 	if appPort <= 0 {
 		appPort = api.DefaultAppPort
@@ -7049,8 +7051,8 @@ func portMismatchProblem(report api.CharacterizationReport, appPort int, readine
 		return nil
 	}
 	return api.NewProblem(422, api.CodeAppNotListening, "app listens on a different port",
-		fmt.Sprintf("startup_phase=handler_boot: the app listens on port %d, but this deployment routes to port %d ($PORT). Listen on $PORT, or declare port %d: hosting.port in gregale.yaml, or overrides.port for an image deployment (%s)",
-			report.ObservedPort, appPort, report.ObservedPort, readinessErr))
+		fmt.Sprintf("startup_phase=handler_boot: the app listens on port %d, but this deployment routes to port %d ($PORT). Listen on $PORT, or declare port %d: hosting.port in gregale.yaml, or overrides.port for an image deployment",
+			report.ObservedPort, appPort, report.ObservedPort))
 }
 
 // loopbackListenAddr reports a host:port bound to a loopback address. An
@@ -7224,6 +7226,15 @@ func workloadOutputTail(lines []string, max int) string {
 	return string(tail)
 }
 
+// guestAppPort is the port the host routes the app's traffic and readiness
+// probe to: the deployment's port, or api.DefaultAppPort.
+func (l Lease) guestAppPort() int {
+	if l.AppPort < 1 || l.AppPort > 65535 {
+		return api.DefaultAppPort
+	}
+	return l.AppPort
+}
+
 // notReadyProblem shapes the deadline-expired error from the TCP
 // probe path. When every probe hit ECONNREFUSED, the kernel is
 // telling us nothing is listening — the canonical
@@ -7231,12 +7242,9 @@ func workloadOutputTail(lines []string, max int) string {
 // landed), we fall through to app_startup_timeout (the app may be
 // booting, but we waited the full window).
 //
-// The port literal "8080" mirrors waitReady's hard-coded addr —
-// ADR-009 fixes the readiness probe on 8080 regardless of the
-// deployment's per-app override (the override only affects the
-// HTTP GET path on healthcheckPath != ""). The whycopy catalog's
-// Observed renderer templates the port into the Why field so the
-// customer sees the literal ":8080" in the failure response.
+// The detail names the routed port in the "on :N got ECONNREFUSED"
+// form the CLI reads to explain a startup deadline. It used to say
+// ":8080" whatever port the deployment routed to.
 func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefusedCount int, timeout ...time.Duration) *api.Problem {
 	readyTimeout := v.readyTimeout
 	if len(timeout) > 0 && timeout[0] > 0 {
@@ -7245,8 +7253,8 @@ func (v *JailerVMM) notReadyProblem(l Lease, healthcheckPath string, connRefused
 	if connRefusedCount > 0 {
 		return api.NewProblem(422, api.CodeAppNotListening,
 			"no process listening on $PORT",
-			fmt.Sprintf("startup_phase=handler_boot: readiness probe dialed :8080 and got ECONNREFUSED (refused_count=%d, deadline=%s, instance=%s)",
-				connRefusedCount, readyTimeout, l.Instance))
+			fmt.Sprintf("startup_phase=handler_boot: readiness probe on :%d got ECONNREFUSED (refused_count=%d, deadline=%s, instance=%s)",
+				l.guestAppPort(), connRefusedCount, readyTimeout, l.Instance))
 	}
 	return api.NewProblem(422, api.CodeAppStartupTimeout,
 		"app did not become ready in time",
@@ -7274,8 +7282,8 @@ func (v *JailerVMM) healthcheckNotReadyProblem(l Lease, healthcheckPath string, 
 	if seen.connRefused > 0 {
 		return api.NewProblem(422, api.CodeAppNotListening,
 			"no process listening on $PORT",
-			fmt.Sprintf("startup_phase=handler_boot: readiness probe GET %s on :8080 got ECONNREFUSED (refused_count=%d, deadline=%s, instance=%s); the app never listened or exited during startup",
-				healthcheckPath, seen.connRefused, readyTimeout, l.Instance))
+			fmt.Sprintf("startup_phase=handler_boot: readiness probe GET %s on :%d got ECONNREFUSED (refused_count=%d, deadline=%s, instance=%s); the app never listened or exited during startup",
+				healthcheckPath, l.guestAppPort(), seen.connRefused, readyTimeout, l.Instance))
 	}
 	return api.NewProblem(422, api.CodeAppStartupTimeout,
 		"app did not become ready in time",
