@@ -18,6 +18,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -111,6 +112,9 @@ type OpsMetrics struct {
 	initSnapshotAttempts        *prometheus.CounterVec
 	initSnapshotCaptureDuration *prometheus.HistogramVec
 	snapshotPublication         *prometheus.CounterVec
+	// wakeFailover counts schedd's re-placements of a wake a node refused
+	// before the VM started (ADR-20261022184531). Closed labels only.
+	wakeFailover *prometheus.CounterVec
 	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
 	// warm-pool size by plan. Runtime reconciliation will update the
 	// gauge in a follow-up; registering it here makes the contract
@@ -2204,6 +2208,17 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_init_snapshot_attempt_total",
 		Help: "Terminal init snapshot path outcomes by site (prime or park). Reuse is counted separately from new captures; reuse_cleanup_failed means destroying the source guest failed.",
 	}, []string{"site", "outcome"})
+	wakeFailover := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_wake_failover_total",
+		Help: "Wakes a compute node refused before the VM started, by refusal reason and what schedd's re-placement did (ADR-20261022184531). outcome=succeeded is a wake another node served; refused_again means the alternate node refused too; no_alternate means no other node fit; out_of_time means too little of the wake's deadline remained; failed means the alternate attempt failed for another reason.",
+	}, []string{"reason", "outcome"})
+	if prefix == "schedd" {
+		for _, reason := range WakeFailoverReasons {
+			for _, outcome := range WakeFailoverOutcomes {
+				wakeFailover.WithLabelValues(reason, outcome)
+			}
+		}
+	}
 	initSnapshotCaptureDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_init_snapshot_capture_duration_seconds",
 		Help:    "Wall-clock duration of new terminal init snapshot captures, including before_checkpoint, by site and outcome. Reused snapshots are excluded.",
@@ -4050,7 +4065,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		planGateRescuedByExclude,
 	}
 	if prefix == "schedd" {
-		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration)
+		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover)
 	}
 	if prefix == "imaged" {
 		commonCollectors = append(commonCollectors, snapshotPublication)
@@ -5489,6 +5504,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		warmSnapshotErrors:                         warmSnapshotErrors,
 		initSnapshotAttempts:                       initSnapshotAttempts,
 		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
+		wakeFailover:                               wakeFailover,
 		snapshotPublication:                        snapshotPublication,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
@@ -6216,6 +6232,35 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 	if outcome != InitSnapshotOutcomeReused && outcome != InitSnapshotOutcomeReuseCleanupFailed && outcome != InitSnapshotOutcomeSourceDiverged {
 		m.initSnapshotCaptureDuration.WithLabelValues(site, outcome).Observe(duration.Seconds())
 	}
+}
+
+// Closed label values of schedd_wake_failover_total (ADR-20261022184531).
+const (
+	WakeFailoverReasonBaseGeneration     = "base_generation"
+	WakeFailoverReasonScanSidecarMissing = "scan_sidecar_missing"
+
+	WakeFailoverOutcomeSucceeded    = "succeeded"
+	WakeFailoverOutcomeRefusedAgain = "refused_again"
+	WakeFailoverOutcomeNoAlternate  = "no_alternate"
+	WakeFailoverOutcomeOutOfTime    = "out_of_time"
+	WakeFailoverOutcomeFailed       = "failed"
+)
+
+// WakeFailoverReasons and WakeFailoverOutcomes are pre-instantiated so the
+// counter reads zero, not absent, on a fleet that has never failed over.
+var (
+	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing}
+	WakeFailoverOutcomes = []string{WakeFailoverOutcomeSucceeded, WakeFailoverOutcomeRefusedAgain, WakeFailoverOutcomeNoAlternate, WakeFailoverOutcomeOutOfTime, WakeFailoverOutcomeFailed}
+)
+
+// RecordWakeFailover counts one refused wake attempt by what its failover
+// did. Only schedd exports the collector; unknown labels are dropped.
+func (m *OpsMetrics) RecordWakeFailover(reason, outcome string) {
+	if m == nil || m.wakeFailover == nil || m.metricPrefix != "schedd" ||
+		!slices.Contains(WakeFailoverReasons, reason) || !slices.Contains(WakeFailoverOutcomes, outcome) {
+		return
+	}
+	m.wakeFailover.WithLabelValues(reason, outcome).Inc()
 }
 
 const (
