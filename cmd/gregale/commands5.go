@@ -807,7 +807,7 @@ func cmdAppScale(slug string, args []string) int {
 	cpuMillicores := fs.Int("cpu-millicores", 0, "update sustained CPU allowance (250, 500, or 1000 millicores)")
 	profile := new(string)
 	resourceSizeFlag(fs, profile, "update named resource size: micro|small|medium|large|xlarge")
-	conc := fs.Int("max-concurrency", 0, "update max concurrent requests")
+	conc := fs.Int("max-concurrency", 0, "update the maximum instances (replicas) the app scales to")
 	concurrencyOverflow := fs.String("concurrency-overflow", "", "saturated concurrency behavior: queue|drop")
 	maxQueueDepth := fs.Int("max-queue-depth", 0, "maximum queued requests at warm saturation (0 = plan default)")
 	maxQueueWait := fs.Duration("max-queue-wait", 0, "maximum warm-saturation wait as a duration, for example 750ms or 2s (0 = plan default)")

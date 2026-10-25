@@ -5078,7 +5078,7 @@ RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Conne
 | `--profile <SIZE>` | deprecated: use --size |  |
 | `--ram <MB>` | set RAM in MB |  |
 | `--cpu-millicores <250|500|1000>` | set sustained CPU allowance | one of `250` · `500` · `1000` |
-| `--max-concurrency <N>` | set maximum concurrent requests |  |
+| `--max-concurrency <N>` | set the maximum instances (replicas) the app scales to |  |
 | `--concurrency-overflow <value>` | set saturated concurrency behavior | one of `queue` · `drop` |
 | `--max-queue-depth <N>` | set maximum queued requests (0 uses plan default) |  |
 | `--max-queue-wait <DURATION>` | set queue wait, e.g. 750ms (0 uses plan default); excludes --max-queue-wait-ms |  |
@@ -5199,7 +5199,7 @@ Preview or change resources and settings
 | `--profile <SIZE>` | deprecated: use --size |  |
 | `--ram <MB>` | RAM in MB |  |
 | `--cpu-millicores <250|500|1000>` | sustained CPU allowance | one of `250` · `500` · `1000` |
-| `--max-concurrency <N>` | maximum concurrent requests |  |
+| `--max-concurrency <N>` | maximum instances (replicas) the app scales to |  |
 | `--concurrency-overflow <POLICY>` | saturated concurrency behavior | one of `queue` · `drop` |
 | `--max-queue-depth <N>` | maximum queued requests at warm saturation |  |
 | `--max-queue-wait <DURATION>` | maximum warm-saturation wait |  |
