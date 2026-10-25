@@ -1,4 +1,4 @@
-// adr: 20261025090000
+// adr: 20261025090100
 package fcvm
 
 import (
@@ -17,7 +17,7 @@ import (
 
 // A VM drive is guest-written: the tenant is root in its microVM and can
 // write any block of its writable drive, and the customer image seeds it. The
-// host kernel therefore never mounts one (ADR-20261025090000). vmmd reads and
+// host kernel therefore never mounts one (ADR-20261025090100). vmmd reads and
 // edits drives with e2fsprogs in the vmmd-guestdisk sandbox instead, running
 // as the drive owner's jail uid.
 

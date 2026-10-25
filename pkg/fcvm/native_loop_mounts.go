@@ -25,7 +25,7 @@ type nativeLoopDevice struct {
 }
 
 // A frame records one loop mount an older vmmd made of a VM drive. Staging no
-// longer mounts drives (ADR-20261025090000), so no new frame is written;
+// longer mounts drives (ADR-20261025090100), so no new frame is written;
 // recovery still retires and attests frames an upgraded node inherited.
 type nativeLoopMountRecord struct {
 	ID        string             `json:"id"`

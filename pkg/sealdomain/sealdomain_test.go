@@ -63,6 +63,21 @@ func TestRegistry_SourceIsWiredToGithubdAlone(t *testing.T) {
 	}
 }
 
+func TestRegistry_EdgeIsWiredToGatewaydInternalAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Edge)
+	if !ok || !s.Wired {
+		t.Fatalf("edge domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "gatewayd-internal" {
+		t.Fatalf("edge readers = %v, want [gatewayd-internal]", s.Readers)
+	}
+	for _, d := range []string{"apid", "gatewayd-public"} {
+		if containsDomain(sealdomain.ReaderDomains(d), sealdomain.Edge) {
+			t.Fatalf("%s reads the edge domain; only gatewayd-internal opens its columns", d)
+		}
+	}
+}
+
 func TestRegistry_BuildIsWiredToImagedAlone(t *testing.T) {
 	s, ok := sealdomain.Lookup(sealdomain.Build)
 	if !ok || !s.Wired {

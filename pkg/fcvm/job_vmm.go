@@ -371,7 +371,7 @@ func (v *JailerVMM) BootColdBootForJob(ctx context.Context, l Lease, spec JobCol
 
 // stageJobManifest writes the JSON-encoded JobManifest to the private drive1
 // at /etc/faas/job.json, mode 0600, in one sandboxed drive session
-// (ADR-20261025090000). A second write to the same path replaces the file
+// (ADR-20261025090100). A second write to the same path replaces the file
 // (rare; the chroot is per-instance so the path is unique).
 //
 // CR-C / code-review #2 round-3: the previous shape stats

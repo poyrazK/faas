@@ -1,5 +1,5 @@
 // Package guestdisk reads and edits ext4 images that a guest may have
-// written, without the host kernel ever parsing them (ADR-20261025090000).
+// written, without the host kernel ever parsing them (ADR-20261025090100).
 //
 // A tenant runs as root inside its microVM and can write any block of its
 // writable drive. Mounting that image on the host, even read-only, hands

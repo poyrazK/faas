@@ -388,7 +388,7 @@ func TestEditDriveOpensReplaysAndCloses(t *testing.T) {
 	}
 }
 
-// No VM drive is ever mounted on the host (ADR-20261025090000): a new call
+// No VM drive is ever mounted on the host (ADR-20261025090100): a new call
 // site would hand guest-written ext4 metadata to the host kernel. Bind and
 // tmpfs mounts stay legal; ext4, loop and loop-device attachment do not.
 func TestNothingInFcvmMountsADriveOnTheHost(t *testing.T) {

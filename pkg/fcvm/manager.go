@@ -720,6 +720,9 @@ type Instance struct {
 	// recorded in its adoption block so a successor keeps refusing its
 	// snapshots. Guarded by Manager.mu.
 	devPatched bool
+	// bridge is the instance bridge unit run recorded in the adoption block
+	// (instance_bridge.go). Guarded by Manager.mu.
+	bridge *resourceAdoptionBridge
 	// migrationPaused marks a live-migration source SnapshotKeepAlive left
 	// paused for the migration lease owner, who alone may resume or destroy
 	// it. Recorded in the adoption block, so a successor keeps it paused.

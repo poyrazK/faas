@@ -1,9 +1,9 @@
 //go:build linux && metal
 
-// adr: 568, 20261025090000
+// adr: 568, 20261025090100
 package fcvm
 
-// The loop-mount staging producer vmmd ran before ADR-20261025090000. It is
+// The loop-mount staging producer vmmd ran before ADR-20261025090100. It is
 // kept only so the native acceptance host can create the inherited mounts
 // that recovery must still retire on an upgraded node.
 

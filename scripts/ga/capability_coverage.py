@@ -130,7 +130,7 @@ RULES = [
     (r"^multi-service-apps$", "Projects:"),
     (r"penalty-box|attack-mode|ai-crawler|crawler-ip-ranges|crawler-ranges", "Edge protection"),
     (r"^quiet-pause-watermarks$", "Instances:"),
-    (r"^(honeytokens|bridgeproc)$", "INFRA"),
+    (r"^(honeytokens|bridgeproc|sdunit)$", "INFRA"),
     (r"auth-rpc|rekey|standby-warmup|service-capacity-policy|service-recovery|worker-recovery|production-lifecycle-review|app-service-address-cursor|warm-hint|capdecl|renderer|role-templating|safetext|cursor|^data$|dispatch|hostsize|authcode|cosign|daemonenv|daemonunit|cpstate|drills|grafana|pki|guestmemproto|resumetimingproto|loglevel|logsanitize|lruutil|jsonschemautil|httpjson|middleware|nodeclaim|nodejoin|nodereport|promql|redact|crashcrypt|crashcapturewire|markers-internal", "INFRA"),
     (r"^declarative-response-caching$", "Declarative response caching"),
     (r"crash-capture", "Crash snapshots"),
@@ -359,7 +359,7 @@ PRIORITY_RULES = [
 # Platform internals: not customer capabilities. Classified explicitly so nothing is ignored silently.
 INFRA_RULES = [
     r"^(state|statetest|wire|db|migrate|migration-new|schema-dump|goose|sqlc|pgx|api|apid|apidserver|httpkit|durable|receivers|object$)",
-    r"sched|schedd|vmmd|fcvm|netns|rootfs|imaged|meterd|gateway$|gatewayd|snapshot|base-|layer-|nft|denylist|hostage|jail|cgroup|kernel|rng|reseed|guest-init|init-helper|vsock",
+    r"sched|schedd|vmmd|fcvm|netns|rootfs|imaged|meterd|gateway$|gatewayd|snapshot|base-|layer-|nft|denylist|hostage|jail|cgroup|kernel|rng|reseed|guest-init|init-helper|vsock|sdunit",
     r"lock|lease-|fence|leader|ledger|journal|outbox-reconcil|receipt|idempotency-key|retention|gc$|janitor|reconcil|watchdog|spool|backpressure|ratelimit|rate-limit|quota|admission|eviction",
     r"release-artifact|releasebundle|releaseinstall|release-compat|unit-|deploy-order|version-skew|pricing-md|standards-md|capabilities-md|obs-rule|denylist-md|runtime-qualification|api-hosting-(scorecard|contract)",
     r"metric|prometheus|promauto|otel|slog|log$|telemetry-internal|healthz|livez|readyz|^/metrics",

@@ -107,7 +107,7 @@ type JailerVMM struct {
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
 	// guestDisk is the sandboxed editor every drive read and write goes
-	// through (ADR-20261025090000).
+	// through (ADR-20261025090100).
 	guestDisk guestDiskState
 
 	// fences records the cgroup fence written for each live VM so
@@ -1549,7 +1549,7 @@ func (v *JailerVMM) preparesWakeStateBeforeBoot() bool { return true }
 // drive1 in ONE drive session (ADR-192): secrets.env, env.json, the service
 // resolver, each sidecar env override, the main manifest and the roster.
 // The session edits the drive in the vmmd-guestdisk sandbox; the host
-// kernel never mounts it (ADR-20261025090000). The public Stage* methods
+// kernel never mounts it (ADR-20261025090100). The public Stage* methods
 // keep one session per file for the legacy Manager path and for tests.
 func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) error {
 	_, err := v.stagePreBootFilesUnless(instance, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
@@ -2164,7 +2164,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// cannot escape quota accounting by writing past its read-only
 	// boundary).
 	for i := 1; i < len(resolvedWorkloads); i++ {
-		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], snapshotRestoreSidecarName(spec, i, resolvedWorkloads[i]), l.Instance); err != nil {
+		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], restoreSidecarDriveName(i), l.Instance); err != nil {
 			return fmt.Errorf("vmm: stage sidecar %d: %w", i-1, err)
 		}
 	}
@@ -4588,7 +4588,7 @@ func (v *JailerVMM) InstancePID(instance string) (int, bool) {
 // exportBuildArtifacts copies /etc/faas/build-done.json and /build/out/*
 // from the builder's drive1 into exportDir. Untrusted build code ran as root
 // and wrote that drive, so it is read in the vmmd-guestdisk sandbox and never
-// mounted on the host (ADR-20261025090000). Files larger than exportMaxBytes
+// mounted on the host (ADR-20261025090100). Files larger than exportMaxBytes
 // are skipped (best-effort — never blocks the caller).
 func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr error) {
 	if v.nativeRecovery != nil {
@@ -4775,6 +4775,29 @@ func sidecarDriveImageName(idx int) string {
 	return fmt.Sprintf("sidecar-%d.ext4", idx)
 }
 
+// coldBootReadOnlyDriveName is the jail name provisionForOwner stages
+// read-only config drive i under. i counts virtio-blk drives with the base
+// as drive 0, also when a pmem base takes its place, so a sidecar's name
+// does not depend on the base device.
+func coldBootReadOnlyDriveName(i int, d Drive) string {
+	if i == 0 {
+		return stableReadOnlyName(d.PathOnHost, baseImageName)
+	}
+	if strings.HasPrefix(d.DriveID, DriveSidecarPrefix) {
+		return sidecarDriveImageName(i - 1)
+	}
+	return filepath.Base(d.PathOnHost)
+}
+
+// restoreSidecarDriveName is the jail name a restore stages workload i's
+// drive under. A Firecracker snapshot records each drive by the name cold
+// boot gave it, and workload i is config drive i+1, so this must match
+// coldBootReadOnlyDriveName(i+1, …): staging under any other name makes
+// every restore of an app with a companion fail and fall back to cold boot.
+func restoreSidecarDriveName(i int) string {
+	return sidecarDriveImageName(i)
+}
+
 // workloadManifestPath is the in-guest location guest-init reads to
 // discover a workload's runtime shape (issue #463 / ADR-069 / PR-B).
 // Each sidecar drive carries /etc/faas/workload.json (the manifest
@@ -4804,7 +4827,7 @@ const apiEnvPath = "upper/etc/faas/env.json"
 
 // StageSecretsEnv writes /etc/faas/secrets.env with mode 0400 onto drive1
 // (the per-app layer, the only fs the VM can write at runtime) in one
-// sandboxed drive session (ADR-20261025090000). The plaintext passes through
+// sandboxed drive session (ADR-20261025090100). The plaintext passes through
 // the session's private scratch directory only for the duration of this
 // call. The function is a no-op when jsonBlob is empty: no file is written
 // and no session opened, so an app with zero secrets pays nothing.
@@ -5664,14 +5687,7 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		var name string
 		var err error
 		if d.IsReadOnly {
-			name = filepath.Base(d.PathOnHost)
-			if i == 0 {
-				name = stableReadOnlyName(d.PathOnHost, baseImageName)
-			}
-			if i > 0 && strings.HasPrefix(d.DriveID, DriveSidecarPrefix) {
-				name = sidecarDriveImageName(i - 1)
-			}
-			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, name, instanceID)
+			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, coldBootReadOnlyDriveName(i, d), instanceID)
 		} else if cfg.EphemeralWritable {
 			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
 		} else {

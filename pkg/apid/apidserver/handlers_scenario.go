@@ -65,7 +65,7 @@ func (s *server) scenarioTestPolicySupported(w http.ResponseWriter, req api.Regi
 		return false
 	}
 	if req.NetworkMode != "" && !s.rehearsalNetworkEnabled {
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Rehearsal containment unavailable", "The operator must qualify and enable rehearsal network containment before enrolling apps"))
+		api.WriteProblem(w, api.ErrRehearsalNotEnabled("Rehearsal network containment"))
 		return false
 	}
 	if problem := rehearsal.ValidateEnrollment(req, s.rehearsalCommandsEnabled && s.appTaskAPIEnabled); problem != nil {

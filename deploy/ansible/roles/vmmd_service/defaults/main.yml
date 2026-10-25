@@ -25,6 +25,26 @@ vmmd_outbound_client_tls_ca_path: /etc/faas/tls/ca/ca.crt
 # 64-77 ms on every wake (hunt #9). 0 disables; the API bound is 0-16.
 vmmd_prepared_networks: 4
 
+# vmmd restart adoption (docs/adr/20261017-vmmd-restart-adoption.md): with
+# all three on, a rollout restarts vmmd without draining the node when the
+# new vmmd adopts every live guest (node_join.yml asks `vmmd adoption-check`).
+# Rendered as FAAS_VMMD_* environment: a switch that is on overrides vmmd.toml,
+# one that is off leaves vmmd.toml (default off) in charge. node_join.yml
+# renders the same switches on every rollout (zz-faas-adoption.conf), so a
+# host var change needs no bootstrap convergence. Off by default; turn them on
+# in this order only:
+# - vmmd_adoption_record writes the version-7 adoption blocks. Turn it on only
+#   once every compute node and any rollback target reads version 7.
+# - vmmd_adopt_running_vms adopts running guests at startup; needs the record.
+#   The first rollout after turning it on still drains (the serving vmmd wrote
+#   no blocks); later ones can skip the drain.
+# - vmmd_adopt_admitted_runtimes also adopts runtime-admitted guests (ADR-595
+#   re-bind); needs vmmd_adopt_running_vms.
+# Set them per host (host_vars) to canary one node.
+vmmd_adoption_record: false
+vmmd_adopt_running_vms: false
+vmmd_adopt_admitted_runtimes: false
+
 # ADR-740 developer live source patches. Must match control_plane_service's
 # value: apid publishes patches and vmmd serves them to developer environments.
 faas_dev_patch_delivery_enabled: false

@@ -1,7 +1,7 @@
 //go:build linux && metal
 
 // adr: 568 — daemon death retains recoverable loop ownership before resource release.
-// adr: 20261025090000 — the mounts come from the retired producer; recovery is current code.
+// adr: 20261025090100 — the mounts come from the retired producer; recovery is current code.
 package fcvm
 
 import (

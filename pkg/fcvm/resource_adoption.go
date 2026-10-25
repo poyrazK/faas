@@ -84,6 +84,8 @@ type resourceAdoption struct {
 	// Backing is the kernel, base and timer identity the guest booted with.
 	// A capture of the adopted guest needs it to be restorable.
 	Backing *BackingIdentity `json:"backing,omitempty"`
+	// Bridge is the instance's bridge unit run (instance_bridge.go).
+	Bridge *resourceAdoptionBridge `json:"bridge,omitempty"`
 }
 
 // resourceAdoptionFirecracker identifies the guest's Firecracker process.
@@ -255,6 +257,7 @@ func (a *resourceAdoption) clone() *resourceAdoption {
 		b := *a.Backing
 		c.Backing = &b
 	}
+	c.Bridge = a.Bridge.clone()
 	c.Instance.WorkloadNames = append([]string(nil), a.Instance.WorkloadNames...)
 	c.Instance.LivenessProbe = append(json.RawMessage(nil), a.Instance.LivenessProbe...)
 	c.Instance.ReadinessProbe = append(json.RawMessage(nil), a.Instance.ReadinessProbe...)
@@ -399,6 +402,9 @@ func (r resourceJournalRecord) validateAdoption() error {
 	if b := a.Backing; b != nil && (!b.complete() || !adoptionString(b.Kernel) || !adoptionString(b.Base) || !adoptionString(b.Timer)) {
 		return errors.New("invalid adoption backing identity")
 	}
+	if err := a.Bridge.validate(r.Lease); err != nil {
+		return err
+	}
 	switch a.Lifecycle.State {
 	case adoptionStateReady, adoptionStateStopping:
 		if a.Lifecycle.FrozenSince != nil {
@@ -534,6 +540,7 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 		block.Lifecycle = resourceAdoptionLifecycle{State: adoptionStateFrozen, FrozenSince: &since}
 	}
 	block.Lifecycle.Op = inst.adoptionOp.clone()
+	block.Bridge = inst.bridge.clone()
 	return block
 }
 

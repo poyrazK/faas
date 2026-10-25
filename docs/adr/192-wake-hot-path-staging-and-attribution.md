@@ -100,7 +100,7 @@ that a new instance must miss. That rule bought nothing:
 
 ## Amendment (2026-10-25): the session no longer mounts drive1
 
-[ADR-20261025090000](20261025090000-host-never-mounts-guest-drives.md)
+[ADR-20261025090100](20261025090100-host-never-mounts-guest-drives.md)
 replaces the loop mount with a sandboxed e2fsprogs session: the captured
 drive is guest-written, so mounting it handed attacker-chosen ext4 metadata
 to the host kernel. The objection above, that `debugfs` is unsafe against a

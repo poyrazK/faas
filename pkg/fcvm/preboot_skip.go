@@ -16,7 +16,7 @@ import (
 //
 // Every restore opens the instance's writable drive to rewrite secrets.env,
 // env.json, the resolver and workload files: a loop mount before
-// ADR-20261025090000 (~15-20 ms, about a fifth of a warm restore), sandboxed
+// ADR-20261025090100 (~15-20 ms, about a fifth of a warm restore), sandboxed
 // e2fsprogs runs since. On a v2 restore that drive is a clone of the drive
 // captured at park, which already holds whatever this vmmd wrote for the
 // instance the capture came from. vmmd remembers a digest of those writes per

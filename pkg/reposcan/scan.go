@@ -134,8 +134,9 @@ type Workload struct {
 	// reconciliation metadata; the signed archive hash still binds the full
 	// project request.
 	SourceSHA256 string
-	// DependsOn contains service names declared by Compose's depends_on.
-	// The graph orders admission; explicit conditions also gate release.
+	// DependsOn contains service names declared by Compose's depends_on or by
+	// .gregale/project.yaml (ADR-20261025093331). The graph orders admission;
+	// explicit conditions also gate release.
 	DependsOn           []string
 	DependsOnConditions map[string]string
 	// ServiceBindingPolicy is the caller-side internal-service authorization
@@ -160,8 +161,9 @@ type Workload struct {
 	// PlatformTenantRequired is an explicit ingress policy declaration.
 	// Nil preserves an existing app's policy during reconciliation.
 	PlatformTenantRequired *bool
-	// Unpublished marks a Compose service without `ports:`. Docker publishes
-	// nothing for it, so a new app for it is internal (ADR-20261022131852).
+	// Unpublished marks a Compose service without `ports:`, which Docker does
+	// not publish, or a service .gregale/project.yaml declares internal. A new
+	// app for it is internal (ADR-20261022131852, ADR-20261025093331).
 	Unpublished bool
 	// InternalPorts are internal-only TCP listeners from compose expose:
 	// (ADR-576). Nil means the source declares none, so reconcile keeps the
@@ -413,6 +415,9 @@ func Scan(fsys fs.FS) (Result, error) {
 
 	workloads := mergeByKey(seeds)
 	if err := attachProcfileReleaseCommand(fsys, workloads); err != nil {
+		return Result{}, err
+	}
+	if err := applyProjectConfig(fsys, workloads); err != nil {
 		return Result{}, err
 	}
 	detectionWarnings = append(detectionWarnings, mergedDetectionWarnings(workloads)...)

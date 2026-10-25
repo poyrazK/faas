@@ -1,7 +1,7 @@
 //go:build linux || darwin
 
 // adr: 568 — drive writers remain fenced until mount and loop retirement is confirmed.
-// adr: 20261025090000 — staging no longer mounts; recovery still retires inherited mounts.
+// adr: 20261025090100 — staging no longer mounts; recovery still retires inherited mounts.
 package fcvm
 
 import (

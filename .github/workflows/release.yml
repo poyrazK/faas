@@ -423,13 +423,33 @@ jobs:
           done < <(printf '%s\n' "$CLI_RELEASE_ASSETS")
           scripts/ci/upload-release-assets.sh "${assets[@]}"
 
+  # ADR-20261025092617: the curl installer's version pointers. Moves
+  # CLI-LATEST (and CLI-STABLE for a stable tag) on the cli-channel release
+  # once this tag's CLI assets are attached, only forward. The installer
+  # reads them through releases/download, which GitHub does not count
+  # against the anonymous API limit. A separate job, so a failure here cannot
+  # hold up publish-npm; the pointers then stay on the previous release,
+  # which still installs and verifies.
+  advance-cli-channel:
+    name: Advance the curl installer channel
+    needs: [build]
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    concurrency:
+      group: gregale-cli-channel
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Move CLI-LATEST, and CLI-STABLE for a stable tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/ci/advance-cli-channel.sh
+
   # ADR-172: the npm channel. Consumes the archives built above rather than
   # rebuilding the CLI, so npm and the curl installer can never ship
   # different bytes for the same tag.
-  #
-  # The curl installer has no counterpart job on purpose — it resolves the
-  # release from the GitHub API at run time, so attaching the assets above
-  # is the entire publish step for that channel.
   publish-npm:
     name: Publish the npm channel
     needs: [build]
