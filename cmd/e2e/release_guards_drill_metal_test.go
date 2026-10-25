@@ -103,10 +103,11 @@ func TestReleaseGuardsDrillMetal(t *testing.T) {
 	d.waitLease(true, 2*time.Minute)
 	g := &guardsDrill{d: d, pool: store}
 
-	// One email channel carries every release notice in the drill.
+	// One email channel carries every release notice in the drill. Email
+	// channels may only send to the account's own address.
 	const channel = "guards-mail"
 	g.mustStatus(t, d.key, http.MethodPost, "/v1/notification-channels",
-		api.CreateNotificationChannelRequest{Name: channel, Kind: "email", Email: "release-guards@test.example"}, http.StatusCreated, nil)
+		api.CreateNotificationChannelRequest{Name: channel, Kind: "email", Email: guardsDeployerEmail}, http.StatusCreated, nil)
 
 	t.Run("freeze refuses production releases until overridden or lifted, never rollbacks", func(t *testing.T) {
 		const app = "rg-freeze"
@@ -350,6 +351,9 @@ func TestReleaseGuardsDrillMetal(t *testing.T) {
 	})
 }
 
+// guardsDeployerEmail is the address SeedAccount gives the drill account.
+const guardsDeployerEmail = "e2e+hobby+guards@test.example"
+
 // guardsDrill adds the release-guard calls to the safe-release drill.
 type guardsDrill struct {
 	d    *safeReleaseDrill
@@ -404,7 +408,7 @@ func (g *guardsDrill) orgWithApprover(t *testing.T, ctx context.Context, app str
 	t.Helper()
 	h, store := g.d.h, g.pool
 	approverKey := h.SeedAccount(ctx, api.PlanHobby, "guards-approver")
-	deployer, err := store.AccountByEmail(ctx, "e2e+hobby+guards@test.example")
+	deployer, err := store.AccountByEmail(ctx, guardsDeployerEmail)
 	if err != nil {
 		t.Fatal(err)
 	}
