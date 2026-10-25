@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -89,8 +90,7 @@ func internalMCPInstanceProbeHandler(
 		guestRequest.Header.Set("Accept", "application/json")
 		guestRequest.Header.Set("Cache-Control", "no-cache, no-store")
 		guestResponse := &boundedMCPProbeResponseWriter{header: make(http.Header), cancel: cancel, maxBytes: mcpInstanceProbeMaxBodyBytes}
-		forward(target).ServeHTTP(guestResponse, guestRequest)
-		if guestResponse.status == 0 {
+		if serveBoundedProbe(forward(target), guestResponse, guestRequest) || guestResponse.status == 0 {
 			guestResponse.status = http.StatusBadGateway
 		}
 
@@ -107,6 +107,23 @@ func internalMCPInstanceProbeHandler(
 		w.WriteHeader(http.StatusOK)
 		_ = json.NewEncoder(w).Encode(response)
 	}
+}
+
+// serveBoundedProbe runs one probe request. The forwarder aborts a response it
+// cannot complete (ADR-570); when the probe itself cancelled the stream at its
+// byte bound, the truncated preview is the expected result, not an abort.
+func serveBoundedProbe(handler http.Handler, w *boundedMCPProbeResponseWriter, r *http.Request) (aborted bool) {
+	defer func() {
+		if caught := recover(); caught != nil {
+			err, ok := caught.(error)
+			if !ok || !errors.Is(err, http.ErrAbortHandler) {
+				panic(caught)
+			}
+			aborted = !w.tooLarge
+		}
+	}()
+	handler.ServeHTTP(w, r)
+	return false
 }
 
 type boundedMCPProbeResponseWriter struct {

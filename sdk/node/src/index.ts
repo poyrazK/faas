@@ -158,11 +158,13 @@ export {
 export {
   createGregaleFetch,
   currentGregaleRelease,
+  currentGregaleRequestDeadline,
   gregaleReleaseMetaTag,
   withGregaleReleaseContext,
   withGregaleRequestContext,
   GREGALE_RELEASE_HEADER,
   GREGALE_REVISION_HEADER,
+  GREGALE_REQUEST_DEADLINE_HEADER,
 } from './release-context.js';
 export { captureCrashSnapshot, CRASH_SNAPSHOT_ENDPOINT } from './crash-snapshots.js';
 export type { CrashSnapshotOptions, CrashSnapshotResult, CrashSnapshotStatus } from './crash-snapshots.js';

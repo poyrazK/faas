@@ -18,10 +18,20 @@ type invocationDispatchAuthorityReader interface {
 }
 
 func (s *PgStore) invocationDispatchAuthority(ctx context.Context, id string) (invocationDispatchAuthority, error) {
+	return readInvocationDispatchAuthority(ctx, s.pool, id)
+}
+
+// ADR-570: the invocation version snapshot reads the ledger row in its own
+// committed view, so the snapshot path keeps these checks.
+func (s invocationVersionPolicyReader) invocationDispatchAuthority(ctx context.Context, id string) (invocationDispatchAuthority, error) {
+	return readInvocationDispatchAuthority(ctx, s.tx, id)
+}
+
+func readInvocationDispatchAuthority(ctx context.Context, db sqlc.DBTX, id string) (invocationDispatchAuthority, error) {
 	if !canonicalStateUUID(id) {
 		return invocationDispatchAuthority{}, ErrInvalidArgument
 	}
-	row, err := sqlc.New().ReadInvocationDispatchAuthority(ctx, s.pool, mustPgUUID(id))
+	row, err := sqlc.New().ReadInvocationDispatchAuthority(ctx, db, mustPgUUID(id))
 	if err != nil {
 		return invocationDispatchAuthority{}, mapErr(err)
 	}
@@ -31,6 +41,15 @@ func (s *PgStore) invocationDispatchAuthority(ctx context.Context, id string) (i
 func (m *MemStore) invocationDispatchAuthority(_ context.Context, id string) (invocationDispatchAuthority, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.invocationDispatchAuthorityLocked(id)
+}
+
+// The snapshot already holds the store lock.
+func (s memInvocationVersionReader) invocationDispatchAuthority(_ context.Context, id string) (invocationDispatchAuthority, error) {
+	return s.store.invocationDispatchAuthorityLocked(id)
+}
+
+func (m *MemStore) invocationDispatchAuthorityLocked(id string) (invocationDispatchAuthority, error) {
 	inv, ok := m.invocations[id]
 	if !ok {
 		return invocationDispatchAuthority{}, ErrNotFound

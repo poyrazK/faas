@@ -11,7 +11,7 @@ func (m *MemStore) CreateDeploymentForEnvironmentPromotion(ctx context.Context, 
 	return created, err
 }
 
-func (m *MemStore) ProjectEnvironmentPromotionWorkloadSpec(_ context.Context, accountID, promotionID, appID string) (ProjectEnvironmentPromotionWorkloadSpec, error) {
+func (m *MemStore) ProjectEnvironmentPromotionWorkloadSpec(ctx context.Context, accountID, promotionID, appID string) (ProjectEnvironmentPromotionWorkloadSpec, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	promotion, ok := m.projectEnvironmentPromotions[promotionID]

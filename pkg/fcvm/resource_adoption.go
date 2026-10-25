@@ -105,8 +105,12 @@ type resourceAdoptionFirecracker struct {
 // resourceAdoptionInstance is the schedd-owned identity and the monitor
 // configuration an adopting vmmd needs to restart its loops.
 type resourceAdoptionInstance struct {
-	AppID           string `json:"app_id,omitempty"`
-	AccountID       string `json:"account_id,omitempty"`
+	AppID     string `json:"app_id,omitempty"`
+	AccountID string `json:"account_id,omitempty"`
+	// WakeID and NodeID are the identity the guest's channels and readiness
+	// observations carry (ADR-570); a successor binds them to the same wake.
+	WakeID          string `json:"wake_id,omitempty"`
+	NodeID          string `json:"node_id,omitempty"`
 	DeploymentID    string `json:"deployment_id,omitempty"`
 	Port            int    `json:"port,omitempty"`
 	HealthcheckPath string `json:"healthcheck_path,omitempty"`
@@ -205,6 +209,9 @@ type resourceAdoptionNetwork struct {
 	// network carries (ADR-20261017201005). Adoption refuses such a guest:
 	// the containment and the run's recorder are not rebuilt.
 	RehearsalRunID string `json:"rehearsal_run_id,omitempty"`
+	// EgressCircuits: the guest's netns carries ADR-570 egress-circuit sets.
+	// Adoption refuses such a guest: its circuit registration is not rebuilt.
+	EgressCircuits bool `json:"egress_circuits,omitempty"`
 	// Private is the guest's attachment to a Gregale private network, when
 	// it has one. The side-link names follow from the slot.
 	Private *resourceAdoptionPrivateNetwork `json:"private,omitempty"`
@@ -468,6 +475,8 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 		Instance: resourceAdoptionInstance{
 			AppID:                    inst.AppID,
 			AccountID:                inst.AccountID,
+			WakeID:                   inst.WakeID,
+			NodeID:                   inst.NodeID,
 			DeploymentID:             inst.DeploymentID,
 			Port:                     inst.Port,
 			HealthcheckPath:          inst.HealthcheckPath,
@@ -494,6 +503,7 @@ func (m *Manager) adoptionBlockFor(inst *Instance, now time.Time) resourceAdopti
 			PrivateNetworkHandleV6: inst.PrivateNetworkHandleV6,
 			Private:                adoptionPrivateNetworkFor(inst.Net),
 			RehearsalRunID:         inst.Net.RehearsalRunID,
+			EgressCircuits:         inst.Net.EgressCircuitEnabled,
 		},
 		Lifecycle: resourceAdoptionLifecycle{State: adoptionStateReady},
 	}

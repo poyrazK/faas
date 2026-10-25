@@ -300,11 +300,20 @@ func TestAdoptJobExitListenerReadsTheStoredBacklog(t *testing.T) {
 	}
 	// The exit is recorded: the listener left the store, and a retry of the
 	// frame, whose first ack the guest never saw, is acknowledged at once.
-	store.mu.Lock()
-	removed := len(store.removed) == 1 && store.removed[0] == name
-	store.mu.Unlock()
-	if !removed {
-		t.Fatalf("after the exit the store still holds the listener: removed %v", store.removed)
+	// The receiver publishes the exit before it unstores the listener, so
+	// the removal can trail WaitJobExit.
+	var removed []string
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		store.mu.Lock()
+		removed = append([]string(nil), store.removed...)
+		store.mu.Unlock()
+		if len(removed) > 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(removed) != 1 || removed[0] != name {
+		t.Fatalf("after the exit the store still holds the listener: removed %v", removed)
 	}
 	if ack := sendJobExitFrame(t, path, want); ack != 0 {
 		t.Fatalf("retry ack = %d, want 0", ack)

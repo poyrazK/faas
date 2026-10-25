@@ -99,9 +99,13 @@ func (q *Queries) LockAccount(ctx context.Context, db DBTX, id pgtype.UUID) (pgt
 }
 
 const lockOwner = `-- name: LockOwner :exec
-SELECT pg_advisory_xact_lock(hashtextextended('org-app-quota:' || $1::uuid::text, 0))
+INSERT INTO org_app_quota_fences (org_id) VALUES ($1::uuid)
+ON CONFLICT (org_id) DO UPDATE SET generation = org_app_quota_fences.generation + 1
 `
 
+// A row write, not an advisory lock: it serializes admissions and makes a
+// repeatable-read admission whose snapshot predates another's commit fail
+// with 40001 instead of counting a stale snapshot (ADR-570).
 func (q *Queries) LockOwner(ctx context.Context, db DBTX, orgID pgtype.UUID) error {
 	_, err := db.Exec(ctx, lockOwner, orgID)
 	return err
