@@ -437,6 +437,9 @@ type customerConsoleWriter struct {
 	mu      sync.Mutex
 	ring    *logbuf.Ring
 	pending []byte
+	// initPanic is set while the kernel prints its "Attempted to kill init"
+	// panic dump, which ends with "Rebooting in N seconds..".
+	initPanic bool
 }
 
 func (w *customerConsoleWriter) Write(p []byte) (int, error) {
@@ -479,7 +482,7 @@ func (w *customerConsoleWriter) Flush() error {
 
 // commitLocked filters one complete line and writes it to the ring.
 func (w *customerConsoleWriter) commitLocked(line []byte) error {
-	if firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) {
+	if w.dropInitPanicLocked(line) || firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) {
 		return nil
 	}
 	// The guest serial console's tty turns every '\n' into "\r\n"
@@ -491,6 +494,54 @@ func (w *customerConsoleWriter) commitLocked(line []byte) error {
 	}
 	_, err := w.ring.Write("stdout", line)
 	return err
+}
+
+// dropInitPanicLocked drops the kernel's panic dump after guest-init (PID 1)
+// exits: "Kernel panic - not syncing: Attempted to kill init!", a register
+// and call-trace dump, then "Rebooting in 1 seconds..". On production-us
+// rc.294 a crash-looping app put 25 such lines in its customer log (Hunt 14
+// H14-26). guest-init's own reason line, e.g. "guest-init: app crash-looped
+// after 3 restart(s)", comes first and stays; the unfiltered console file
+// keeps the dump for operators.
+func (w *customerConsoleWriter) dropInitPanicLocked(line []byte) bool {
+	message, ok := kernelConsoleMessage(line)
+	if !ok {
+		return false
+	}
+	if strings.HasPrefix(message, "Kernel panic - not syncing: Attempted to kill init!") {
+		w.initPanic = true
+		return true
+	}
+	if !w.initPanic {
+		return false
+	}
+	if strings.HasPrefix(message, "Rebooting in ") {
+		w.initPanic = false
+	}
+	return true
+}
+
+// kernelConsoleMessage returns the message of a dmesg-formatted console line
+// such as "[ 6744.209731] Kernel panic - not syncing: ...".
+func kernelConsoleMessage(line []byte) (string, bool) {
+	text := strings.TrimSpace(string(line))
+	if !strings.HasPrefix(text, "[") {
+		return "", false
+	}
+	end := strings.IndexByte(text, ']')
+	if end < 0 {
+		return "", false
+	}
+	stamp := strings.TrimSpace(text[1:end])
+	if stamp == "" {
+		return "", false
+	}
+	for _, r := range stamp {
+		if (r < '0' || r > '9') && r != '.' {
+			return "", false
+		}
+	}
+	return strings.TrimSpace(text[end+1:]), true
 }
 
 // guestInitStageLine matches guest-init's internal boot-progress markers

@@ -276,3 +276,42 @@ func TestCustomerConsoleWriterBoundsPartialLine(t *testing.T) {
 		t.Fatalf("an over-long partial line blocked later output: %d lines", len(lines))
 	}
 }
+
+// Production-us rc.294: when h14-py crash-looped, guest-init exited and the
+// kernel's "Attempted to kill init" panic dump (25 lines of registers and
+// call trace) reached the customer log (Hunt 14 H14-26).
+func TestCustomerConsoleDropsTheInitPanicDump(t *testing.T) {
+	ring := logbuf.New(64 << 10)
+	w := &customerConsoleWriter{ring: ring}
+	for _, line := range []string{
+		"[2026-10-25 02:42:34 +0000] [658] [ERROR] Reason: Worker failed to boot.",
+		"guest-init: app crash-looped after 3 restart(s): run [/bin/bash -c gunicorn --workers 2 handler:app]: exit status 3",
+		"[ 6744.209731] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000100",
+		"[ 6744.213399] CPU: 0 UID: 0 PID: 626 Comm: init Not tainted 6.18.54 #1 PREEMPT(none) ",
+		"[ 6744.216609] Call Trace:",
+		"[ 6744.218838]  dump_stack_lvl+0x27/0x70",
+		"[ 6744.266399] R13: 00001819d52a5008 R14: 00001819d52a6f00 R15: ffffffffffffffff",
+		"[ 6744.271859] Kernel Offset: disabled",
+		"[ 6744.273445] Rebooting in 1 seconds..",
+		"[    0.000000] Linux version 6.18.54 (after reboot, not part of the dump)",
+	} {
+		if _, err := w.Write([]byte(line + "\r\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got []string
+	for _, l := range ring.Snapshot(1) {
+		got = append(got, strings.TrimSpace(l.Line))
+	}
+	joined := strings.Join(got, "\n")
+	for _, keep := range []string{"Worker failed to boot", "guest-init: app crash-looped after 3 restart(s)", "Linux version 6.18.54"} {
+		if !strings.Contains(joined, keep) {
+			t.Errorf("customer line %q was lost:\n%s", keep, joined)
+		}
+	}
+	for _, drop := range []string{"Kernel panic", "Call Trace", "dump_stack_lvl", "R13:", "Rebooting in"} {
+		if strings.Contains(joined, drop) {
+			t.Errorf("panic dump line %q reached the customer log:\n%s", drop, joined)
+		}
+	}
+}
