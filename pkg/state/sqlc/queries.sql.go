@@ -62377,6 +62377,24 @@ func (q *Queries) ObjectCapacityFenced(ctx context.Context, db DBTX, bucketID pg
 	return fenced, err
 }
 
+const objectCapacityFencedForKey = `-- name: ObjectCapacityFencedForKey :one
+SELECT (EXISTS(SELECT 1 FROM object_version_protection p WHERE p.bucket_id=$1::uuid AND p.state IN ('waiting','applying')) OR EXISTS(SELECT 1 FROM object_bucket_object_lock l WHERE l.bucket_id=$1::uuid AND l.state<>'ready') OR EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=$1::uuid AND d.object_key=$2::text AND d.state IN ('prepared','dispatched')) OR EXISTS(SELECT 1 FROM object_bucket_versioning v WHERE v.bucket_id=$1::uuid AND v.state<>'ready') OR EXISTS (SELECT 1 FROM object_storage_capacity_reconciliations c WHERE c.bucket_id=$1::uuid AND c.state IN ('waiting','scanning')))::boolean AS fenced
+`
+
+type ObjectCapacityFencedForKeyParams struct {
+	BucketID  pgtype.UUID
+	ObjectKey string
+}
+
+// ObjectCapacityFenced, except that only a deletion of this key fences it
+// (ADR-20261025115958).
+func (q *Queries) ObjectCapacityFencedForKey(ctx context.Context, db DBTX, arg ObjectCapacityFencedForKeyParams) (bool, error) {
+	row := db.QueryRow(ctx, objectCapacityFencedForKey, arg.BucketID, arg.ObjectKey)
+	var fenced bool
+	err := row.Scan(&fenced)
+	return fenced, err
+}
+
 const objectCapacityGet = `-- name: ObjectCapacityGet :one
 SELECT c.id, c.bucket_id, c.state, c.lease_token, c.lease_until, c.retry_at, c.deadline_at, c.before_bytes, c.before_keys, c.after_bytes, c.after_keys, c.reclaimed_bytes, c.reclaimed_keys, c.pending_writes, c.last_error_code, c.created_at, c.updated_at, c.finished_at, c.inventory_scope, c.inventory_cursor, c.inventory_verified, c.scanned_pages, c.scanned_bytes, c.scanned_versions,b.account_id,b.app_id FROM object_storage_capacity_reconciliations c JOIN object_buckets b ON b.id=c.bucket_id WHERE c.id=$1
 `
@@ -63163,6 +63181,43 @@ func (q *Queries) ObjectDeletionInsert(ctx context.Context, db DBTX, arg ObjectD
 	return err
 }
 
+const objectDeletionKeyReadiness = `-- name: ObjectDeletionKeyReadiness :one
+SELECT
+ ((SELECT count(*) FROM object_version_protection p WHERE p.bucket_id=$1::uuid AND p.state IN ('waiting','applying')) + (SELECT count(*) FROM object_deletions d WHERE d.bucket_id=$1::uuid AND d.object_key=$2::text AND d.state IN ('prepared','dispatched')) + (SELECT count(*) FROM object_storage_write_admissions w LEFT JOIN object_storage_multipart_uploads m ON m.id=w.multipart_upload_id
+  WHERE w.bucket_id=$1::uuid AND w.key_hash=$3::text AND ((w.kind='proxy' AND w.state='pending') OR (w.kind='multipart' AND m.state NOT IN ('completed','aborted')))))::bigint AS pending,
+ EXISTS (SELECT 1 FROM object_storage_key_grants WHERE bucket_id=$1::uuid AND NOT reclaimable) AS unsafe,
+ EXISTS (SELECT 1 FROM object_storage_multipart_uploads m WHERE m.bucket_id=$1::uuid AND m.object_key=$2::text AND
+  (m.state NOT IN ('completed','aborted') OR (m.state<>'completed' AND EXISTS (SELECT 1 FROM object_storage_multipart_part_grants p WHERE p.upload_id=m.id)))) AS multipart,
+ (EXISTS (SELECT 1 FROM object_upload_completions WHERE bucket_id=$1::uuid AND recovery_versions_observed) OR EXISTS(SELECT 1 FROM object_version_references WHERE bucket_id=$1::uuid AND versions_observed) OR EXISTS(SELECT 1 FROM object_storage_multipart_uploads WHERE bucket_id=$1::uuid AND completion_versions_observed) OR EXISTS (SELECT 1 FROM object_storage_bucket_usage WHERE bucket_id=$1::uuid AND inventory_scope='all_versions') OR EXISTS(SELECT 1 FROM object_bucket_versioning WHERE bucket_id=$1::uuid AND versions_required)) AS versions
+`
+
+type ObjectDeletionKeyReadinessParams struct {
+	BucketID  pgtype.UUID
+	ObjectKey string
+	KeyHash   string
+}
+
+type ObjectDeletionKeyReadinessRow struct {
+	Pending   int64
+	Unsafe    bool
+	Multipart bool
+	Versions  pgtype.Bool
+}
+
+// ADR-20261025115958: a deletion waits only for work on its own key; the
+// bucket's accounting mode (unsafe grants, observed versions) stays bucket-wide.
+func (q *Queries) ObjectDeletionKeyReadiness(ctx context.Context, db DBTX, arg ObjectDeletionKeyReadinessParams) (ObjectDeletionKeyReadinessRow, error) {
+	row := db.QueryRow(ctx, objectDeletionKeyReadiness, arg.BucketID, arg.ObjectKey, arg.KeyHash)
+	var i ObjectDeletionKeyReadinessRow
+	err := row.Scan(
+		&i.Pending,
+		&i.Unsafe,
+		&i.Multipart,
+		&i.Versions,
+	)
+	return i, err
+}
+
 const objectDeletionSave = `-- name: ObjectDeletionSave :exec
 UPDATE object_deletions SET state=$2,baseline=$3,provider_version_id=$4,version_id=$5,delete_marker=$6,lease_token=$7,lease_until=$8,retry_at=$9,last_error_code=$10,updated_at=$11,recovery_claimed=$12,protection_verified=$13,deletion_verified=$14 WHERE id=$1
 `
@@ -63391,6 +63446,25 @@ func (q *Queries) ObjectInventoryFinish(ctx context.Context, db DBTX, arg Object
 		arg.Bytes,
 		arg.Objects,
 	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const objectInventoryRelease = `-- name: ObjectInventoryRelease :execrows
+UPDATE object_storage_bucket_usage SET lease_until=NULL, token=''
+WHERE bucket_id=$1 AND token=$2::text AND token<>''
+`
+
+type ObjectInventoryReleaseParams struct {
+	BucketID pgtype.UUID
+	Token    string
+}
+
+// Give up a claim without publishing; attempt_at keeps the retry cadence.
+func (q *Queries) ObjectInventoryRelease(ctx context.Context, db DBTX, arg ObjectInventoryReleaseParams) (int64, error) {
+	result, err := db.Exec(ctx, objectInventoryRelease, arg.BucketID, arg.Token)
 	if err != nil {
 		return 0, err
 	}

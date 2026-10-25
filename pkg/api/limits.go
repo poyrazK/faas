@@ -2131,6 +2131,13 @@ const (
 	ObjectCapacityReconciliationTimeout    = time.Hour
 	ObjectCapacityReconciliationRetry      = 30 * time.Second
 	ObjectCapacityInventoryTimeout         = 45 * time.Second
+	// After claiming a bucket, inventory waits up to
+	// ObjectInventoryDeletionDrain for deletions admitted before the claim to
+	// settle. New deletions in the bucket wait while the claim is younger than
+	// ObjectInventoryDeletionYield, the drain plus one scan, so a stream of
+	// deletes cannot starve inventory (ADR-20261025115958).
+	ObjectInventoryDeletionDrain = 10 * time.Second
+	ObjectInventoryDeletionYield = ObjectInventoryDeletionDrain + ObjectCapacityInventoryTimeout
 	// Read-only owned-node audits retain bounded diagnostics and publish cached
 	// metrics. These are operator work bounds, not customer allowances.
 	ObjectNodeInventoryInterval         = time.Minute
@@ -12150,18 +12157,22 @@ const (
 	ObjectDeletionLease            = 2 * time.Minute
 	ObjectDeletionOperationTimeout = time.Minute
 	ObjectDeletionRetry            = 30 * time.Second
-	// A bucket admits one deletion at a time (ADR-547). A deletion refused only
-	// because other work is settling waits up to ObjectDeletionAdmissionWait,
-	// polling with backoff from ObjectDeletionAdmissionPoll to
-	// ObjectDeletionAdmissionMaxPoll, so concurrent deletes of different keys
-	// queue instead of failing (H9-S156, ADR-20261023223000).
-	ObjectDeletionAdmissionWait          = 15 * time.Second
-	ObjectDeletionAdmissionPoll          = 50 * time.Millisecond
-	ObjectDeletionAdmissionMaxPoll       = 250 * time.Millisecond
-	ObjectDeletionBatch            int32 = 20
-	ObjectDeletionHistoryPages           = 8
-	ObjectDeletionHistoryVersions        = 4096
-	MaxObjectDeletionBodyBytes     int64 = 8 << 10
+	// A bucket admits one deletion per key at a time (ADR-547,
+	// ADR-20261025115958). A deletion refused only because other work on its
+	// key, or an inventory scan, is settling waits up to
+	// ObjectDeletionAdmissionWait, polling with backoff from
+	// ObjectDeletionAdmissionPoll to ObjectDeletionAdmissionMaxPoll
+	// (H9-S156, ADR-20261023223000).
+	ObjectDeletionAdmissionWait    = 15 * time.Second
+	ObjectDeletionAdmissionPoll    = 50 * time.Millisecond
+	ObjectDeletionAdmissionMaxPoll = 250 * time.Millisecond
+	// ObjectDeletionBulkConcurrency bounds the entries of one S3
+	// DeleteObjects request that run at once (ADR-20261025115958).
+	ObjectDeletionBulkConcurrency       = 8
+	ObjectDeletionBatch           int32 = 20
+	ObjectDeletionHistoryPages          = 8
+	ObjectDeletionHistoryVersions       = 4096
+	MaxObjectDeletionBodyBytes    int64 = 8 << 10
 )
 
 const (

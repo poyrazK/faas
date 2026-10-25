@@ -12436,7 +12436,7 @@ END $$;
 CREATE FUNCTION public.fence_object_deletion() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE bid uuid;
+DECLARE bid uuid; fence_key text; fence_key_hash text;
 BEGIN
  IF TG_TABLE_NAME='object_buckets' THEN
   IF TG_OP='DELETE' THEN bid:=OLD.id;
@@ -12444,8 +12444,14 @@ BEGIN
  ELSE
   bid:=NEW.bucket_id;
   IF TG_TABLE_NAME='object_bucket_versioning' THEN IF NEW.state='ready' THEN RETURN NEW; END IF; END IF;
+  -- Writes, multipart uploads and key grants touch one key.
+  IF TG_TABLE_NAME IN ('object_storage_write_admissions','object_storage_key_grants') THEN fence_key_hash:=NEW.key_hash;
+  ELSIF TG_TABLE_NAME='object_storage_multipart_uploads' THEN fence_key:=NEW.object_key;
+  END IF;
  END IF;
- IF EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=bid AND d.state IN ('prepared','dispatched')) THEN
+ IF EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=bid AND d.state IN ('prepared','dispatched')
+  AND (fence_key IS NULL OR d.object_key=fence_key)
+  AND (fence_key_hash IS NULL OR encode(sha256(convert_to(d.object_key,'UTF8')),'hex')=fence_key_hash)) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_deletion_fenced',MESSAGE='Unsettled deletion fences mutation and inventory';
  END IF;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
@@ -73919,10 +73925,10 @@ CREATE INDEX object_deletion_lifecycle_scan ON public.object_deletions USING btr
 
 
 --
--- Name: object_deletions_active_bucket; Type: INDEX; Schema: public; Owner: -
+-- Name: object_deletions_active_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX object_deletions_active_bucket ON public.object_deletions USING btree (bucket_id) WHERE (state = ANY (ARRAY['prepared'::text, 'dispatched'::text]));
+CREATE UNIQUE INDEX object_deletions_active_key ON public.object_deletions USING btree (bucket_id, object_key) WHERE (state = ANY (ARRAY['prepared'::text, 'dispatched'::text]));
 
 
 --
