@@ -87,6 +87,14 @@ func cmdRoutesRequirementsGet(args []string) int {
 	defer cancel()
 	saved, err := client.GetSavedRouteRequirements(ctx, positional[0])
 	if err != nil {
+		// The API answers 404 for an app with nothing saved yet as well as
+		// for a missing app; "Not found: app, saved route requirements or
+		// deployment" left the customer to guess (Hunt 14 H14-60).
+		if isNotFound(err) && !jsonOutput {
+			if _, appErr := client.GetApp(ctx, positional[0]); appErr == nil {
+				return printErr("No saved route requirements", fmt.Errorf("%s has none saved yet; save them with `gregale routes requirements set %s --requirements PATH --expected-revision 0`", positional[0], positional[0]))
+			}
+		}
 		return printErr("Could not read saved route requirements", err)
 	}
 	saved, err = normalizeSavedRequirementsResponse(saved)

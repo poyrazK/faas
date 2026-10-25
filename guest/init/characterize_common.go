@@ -23,18 +23,6 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// containsNat reports whether the byte slice lists "nat" as a line.
-// Avoids a strings.Contains that could match e.g. "nat1234"; the
-// file format is one table per line — exact match on the trimmed line.
-func containsNat(data []byte) bool {
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.TrimSpace(line) == "nat" {
-			return true
-		}
-	}
-	return false
-}
-
 // procNetInodeColumn is the inode's position in a /proc/net/tcp{,6} row:
 // sl local_address rem_address st tx:rx tr:tm->when retrnsmt uid timeout inode.
 const procNetInodeColumn = 9
@@ -209,9 +197,6 @@ func truncateLog(s string, n int) string {
 	}
 	return s[len(s)-n:]
 }
-
-// choosePortNormMode lives in portnorm_common.go (it depends on the
-// PortNormMode type + ladder constants, which are platform-agnostic).
 
 // probeListening is the cross-platform entry point. The no-child
 // early-out is here (testable on every platform); the /proc walk

@@ -413,6 +413,54 @@ identity opens none that is still valid.
 - **Rehearsal object credentials** (behind `FAAS_REHEARSAL_OBJECT_FIXTURES`,
   stored in a jsonb document) stay on the fleet key in this slice.
 
+## Implemented in the sixth slice: the alerting domain
+
+- **meterd** loads `domains/alerting.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_ALERTING_IDENTITY_PATH`, a `LoadCredential` drop-in from
+  the `seal_domains` role on control-plane and single-box hosts. A
+  configured identity that does not load fails startup. meterd exports
+  `faas_seal_domain_loaded{domain="alerting"}`.
+- **One identity list** opens every alerting value: the alerting domain
+  first, then the fleet and host identities. It covers alert rule webhooks,
+  notification channels (alerts and financial budgets), MCP readiness
+  deliveries and relayed test sends.
+- **apid seals the six writers** to `FAAS_SEAL_DOMAIN_ALERTING_RECIPIENT_PATH`
+  under `FAAS_SEAL_DOMAIN_ALERTING_WRITES`:
+  - an alert rule's webhook secret (create, update, rotate, preset enable);
+  - a notification channel's destination;
+  - the MCP readiness PagerDuty and fallback keys.
+
+  The MCP PagerDuty acknowledgement signing secret is an `account` column
+  and stays as it is. Tests apid cannot open go through the relay below.
+- **Re-seal:** `gregalectl seal-domain migrate --domain alerting
+  --readers-verified` re-seals the five columns with compare-and-swap
+  writes on a control-plane host. Each value keeps its namespace, including
+  the legacy `alert_rule` one the evaluator still opens. Open MCP readiness
+  incidents keep copies of their route's key in `delivery_routing` (jsonb);
+  those are not re-sealed and age out with the incidents.
+
+## Implemented: the alerting test-send relay
+
+Section 3 moves apid's alerting test sends behind meterd, ahead of the
+`alerting` domain itself.
+
+- **apid records a request** in `alert_test_sends` when it cannot open a
+  notification channel's destination or an alert rule's webhook secret. The
+  request names the channel or rule, plus the test event for a webhook.
+- **meterd** claims requests every second (`FOR UPDATE SKIP LOCKED` with a
+  two-minute lease). It opens the destination with its own identities,
+  sends the test as apid would have, and writes the result.
+- **apid waits** for the result and answers as before, then deletes the
+  request. The wait is 45 seconds for a channel and two minutes for a
+  webhook, whose test retries like a real delivery. On timeout apid answers
+  504. meterd prunes requests older than an hour.
+- **While apid can open a value it still sends the test itself.** No request
+  exists until a value is sealed to the domain alone, and the domain's
+  `readers_verified` gate already requires every meterd to run a release
+  with the relay. So a meterd one release older never sees a request. apid
+  stops opening alerting values when it loses the fleet identity, in the
+  contract step.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:
@@ -420,8 +468,8 @@ Each domain's key pair is a pair of GitHub environment secrets:
 
 - `scripts/ci/seal_domain_vars.sh` writes the files a host role needs on the
   runner and points the `seal_domains` role at them:
-  - control plane: the `outbound` and `source` identities and every
-    recipient;
+  - control plane: the `outbound`, `source` and `alerting` identities and
+    every recipient;
   - compute: the `runtime`, `build` and `edge` identities.
 - The control-plane converges (the full one and the host-configuration
   lane) and the compute join run the role with those variables.

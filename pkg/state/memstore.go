@@ -571,6 +571,8 @@ type MemStore struct {
 	githubWebhookSecrets map[int64]GithubWebhookSecret
 	// honeytokens is keyed by HoneytokenDigest (ADR 20261024014500).
 	honeytokens map[string]Honeytoken
+	// alertTestSends are relayed test sends (ADR 20261022111812).
+	alertTestSends map[string]memAlertTestSend
 	// githubWebhookSecretMeta stamps (upgraded_at, upgraded_by)
 	// for each per-tenant row so the apid admin route can echo
 	// the row back without a second query.
@@ -5583,6 +5585,7 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out DeploymentOutcomeCounts
+	failedTenants := map[string]struct{}{}
 	for _, d := range m.deployments {
 		switch d.Status {
 		case DeployLive, DeploySuperseded:
@@ -5604,9 +5607,15 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 			}
 			if !m.customerCausedFailureLocked(d) {
 				out.Failed++
+				tenant := d.AppID
+				if app, ok := m.apps[d.AppID]; ok && app.AccountID != "" {
+					tenant = app.AccountID
+				}
+				failedTenants[tenant] = struct{}{}
 			}
 		}
 	}
+	out.FailedAccounts = len(failedTenants)
 	return out, nil
 }
 
@@ -17437,6 +17446,32 @@ func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs
 		}
 	}
 	return used, nil
+}
+
+// SetComputeNodeReadiness mirrors PgStore.SetComputeNodeReadiness.
+func (m *MemStore) SetComputeNodeReadiness(_ context.Context, nodeID string, readiness NodeReadiness, reason string) (bool, error) {
+	if !readiness.Valid() {
+		return false, fmt.Errorf("state: set compute_node %s readiness: invalid value %q", nodeID, readiness)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok {
+		return false, nil
+	}
+	current := ""
+	if n.ReadinessReason != nil {
+		current = *n.ReadinessReason
+	}
+	if n.Readiness == readiness && current == reason {
+		return false, nil
+	}
+	n.Readiness, n.ReadinessReason = readiness, nil
+	if reason != "" {
+		n.ReadinessReason = &reason
+	}
+	m.computeNodes[nodeID] = n
+	return true, nil
 }
 
 func (m *MemStore) HeartbeatComputeNode(_ context.Context, nodeID string) error {

@@ -1095,7 +1095,11 @@
       "docs_url": "/docs/adr/745-custom-metric-history",
       "operator_flag": "FAAS_CUSTOM_METRIC_HISTORY_ENABLED",
       "acceptance_test": "pkg/apid/apidserver/custom_metric_exporter_test.go::TestCustomMetricExporterExportsOnlyFreshValues",
-      "parent": "custom-metrics"
+      "parent": "custom-metrics",
+      "routes": [
+        "/v1/apps/{}/custom-metrics/{}/series",
+        "/v1/apps/{}/otlp"
+      ]
     },
     {
       "id": "custom-metrics",
@@ -1112,9 +1116,7 @@
       "acceptance_test": "pkg/api/custom_metrics_validation_test.go::TestCustomMetricsPlanGate",
       "routes": [
         "/dashboard/apps/{}/custom-metrics",
-        "/dashboard/apps/{}/otlp",
-        "/v1/apps/{}/custom-metrics",
-        "/v1/apps/{}/otlp"
+        "/v1/apps/{}/custom-metrics"
       ]
     },
     {
@@ -1965,7 +1967,14 @@
       "plans": [],
       "docs_url": "/docs/adr/201-traffic-as-a-platform-primitive",
       "operator_flag": "FAAS_EGRESS_CIRCUIT_BREAKER",
-      "acceptance_test": "pkg/sched/egress_circuit_test.go::TestEgressBreakerClosesAndRemovesRuleAfterRecovery"
+      "acceptance_test": "pkg/sched/egress_circuit_test.go::TestEgressBreakerClosesAndRemovesRuleAfterRecovery",
+      "parent": "data-upstreams",
+      "consumers": [
+        "schedd"
+      ],
+      "routes": [
+        "/v1/apps/{}/upstreams/{}/circuit-breaker"
+      ]
     },
     {
       "id": "entity-backups",
@@ -4216,7 +4225,8 @@
       "docs_url": "/docs/realtime",
       "acceptance_test": "cmd/gregale/commands_realtime_usage_test.go::TestPrintRealtimeUsage",
       "settings": [
-        "manifest.realtime"
+        "manifest.realtime",
+        "manifest.triggers.realtime"
       ],
       "routes": [
         "/dashboard/apps/{}/realtime",

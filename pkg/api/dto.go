@@ -8596,7 +8596,9 @@ func (ss Sidecars) ValidateWithMainDependencies(mainDependencies []WorkloadDepen
 // collide inside the shared task network namespace. Port zero on a sidecar is
 // intentionally ignored: init/worker sidecars commonly have no listener and
 // image-derived ports are checked again by guest-init once the baked manifest
-// is available. A zero mainPort uses the platform's 8080 contract.
+// is available. A zero mainPort uses the platform's 8080 contract; a negative
+// mainPort means the main port is not known yet (the build decides it), so
+// only the companions are compared with each other.
 func (ss Sidecars) ValidatePortConflicts(mainPort int) *Problem {
 	if mainPort == 0 {
 		mainPort = DefaultAppPort

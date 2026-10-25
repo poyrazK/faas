@@ -53,6 +53,12 @@ type Config struct {
 	// Keep it configured after turning capture off: restores and collection
 	// still read the snapshots it holds.
 	NativeRuntimeSnapshotRoot string `toml:"native_runtime_snapshot_root"`
+	// NativeLaunchOwnerRecords publishes ordinary native launches as
+	// version-three records naming this vmmd incarnation, so a restarted
+	// vmmd can prove it exited and clean up after it (ADR-2026101710
+	// Amendment 1). Older vmmd binaries refuse such a journal: enable it only
+	// once every compute node and any rollback target can read version three.
+	NativeLaunchOwnerRecords bool `toml:"native_launch_owner_records"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
@@ -615,6 +621,26 @@ func LoadConfig(path string) (*Config, error) {
 		preparedNetworksSet = md.IsDefined("prepared_networks")
 	}
 	c.PreparedNetworksExplicit = preparedNetworksSet
+	// The restart adoption switches can also come from the unit environment,
+	// so a rollout turns them on per node without editing vmmd.toml
+	// (ansible vmmd_adoption_record, vmmd_adopt_running_vms,
+	// vmmd_adopt_admitted_runtimes). A set variable overrides the TOML.
+	for _, sw := range []struct {
+		env string
+		dst *bool
+	}{
+		{"FAAS_VMMD_ADOPTION_RECORD", &c.AdoptionRecord},
+		{"FAAS_VMMD_ADOPT_RUNNING_VMS", &c.AdoptRunningVMs},
+		{"FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES", &c.AdoptAdmittedRuntimes},
+	} {
+		if v := os.Getenv(sw.env); v != "" {
+			on, perr := strconv.ParseBool(v)
+			if perr != nil {
+				return nil, fmt.Errorf("vmmd: %s must be a boolean (got %q)", sw.env, v)
+			}
+			*sw.dst = on
+		}
+	}
 	// Native recovery refuses the cache until its claims are journaled
 	// (ADR-568), so the default must not stop such a node from starting.
 	if c.NativeProcessRecovery && !preparedNetworksSet {
@@ -976,6 +1002,9 @@ func validateNativeSnapshotPublicationConfig(nativeRecovery bool, root string) e
 func validateNativeRuntimeCaptureConfig(c *Config) error {
 	if root := c.NativeRuntimeSnapshotRoot; root != "" && (!filepath.IsAbs(root) || filepath.Clean(root) != root || root == string(filepath.Separator)) {
 		return errors.New("vmmd: native_runtime_snapshot_root must be a clean absolute non-root path")
+	}
+	if c.NativeLaunchOwnerRecords && !c.NativeProcessRecovery {
+		return errors.New("vmmd: native_launch_owner_records requires native_process_recovery = true")
 	}
 	if !c.NativeRuntimeCapture {
 		return nil

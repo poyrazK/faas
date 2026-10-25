@@ -607,7 +607,23 @@ const (
 	ProfileMemoryPressureAvailablePercent      = 15
 	ProfileMemoryPressureRearmAvailablePercent = 30
 	ProfileMemoryPressurePollInterval          = 2 * time.Second
-	ProfileCaptureAutomaticDuration            = 10 * time.Second
+	// vmmd relays at most one memory-pressure report per instance per
+	// ProfileMemoryPressureRelayMinInterval, with at most
+	// ProfileMemoryPressureRelayInFlight relays to schedd open at once. The
+	// guest writes the frame, so guest-init's once-per-episode reporting
+	// bounds nothing; schedd captures at most once per app per
+	// ProfileCaptureAutomaticMinInterval in any case.
+	ProfileMemoryPressureRelayMinInterval = time.Minute
+	ProfileMemoryPressureRelayInFlight    = 4
+	// vmmd answers each instance's runtime-config requests (vsock port 1031:
+	// env, secrets, secret reload status, developer patches) at
+	// RuntimeConfigRequestsPerSecond with bursts of RuntimeConfigRequestBurst.
+	// Every request reads the database and may open sealed secrets; guest-init
+	// polls far below this (secrets every 10 s, dev patches every second), but
+	// the guest controls the socket. Excess requests get "rate_limited".
+	RuntimeConfigRequestsPerSecond  = 20
+	RuntimeConfigRequestBurst       = 40
+	ProfileCaptureAutomaticDuration = 10 * time.Second
 	// ProfileCaptureAutomaticMinInterval bounds automatic captures per app.
 	ProfileCaptureAutomaticMinInterval = time.Hour
 	// ProfileCaptureCheckpointInterval paces interim heap profiles during an
@@ -2115,6 +2131,13 @@ const (
 	ObjectCapacityReconciliationTimeout    = time.Hour
 	ObjectCapacityReconciliationRetry      = 30 * time.Second
 	ObjectCapacityInventoryTimeout         = 45 * time.Second
+	// After claiming a bucket, inventory waits up to
+	// ObjectInventoryDeletionDrain for deletions admitted before the claim to
+	// settle. New deletions in the bucket wait while the claim is younger than
+	// ObjectInventoryDeletionYield, the drain plus one scan, so a stream of
+	// deletes cannot starve inventory (ADR-20261025115958).
+	ObjectInventoryDeletionDrain = 10 * time.Second
+	ObjectInventoryDeletionYield = ObjectInventoryDeletionDrain + ObjectCapacityInventoryTimeout
 	// Read-only owned-node audits retain bounded diagnostics and publish cached
 	// metrics. These are operator work bounds, not customer allowances.
 	ObjectNodeInventoryInterval         = time.Minute
@@ -6537,6 +6560,17 @@ const (
 	// well above the §14 target (~130 MB) so it's not the limiting factor; it's
 	// the ceiling we refuse to copy past. See pkg/fcvm/vmm.go::exportBuildArtifacts.
 	MaxExportedLayerBytes int64 = 4 << 30
+	// MaxExportedTreeBytes and MaxExportedTreeEntries bound everything one
+	// export copies, not just each file. The untrusted build writes the drive:
+	// sparse files or hard links can each sit under MaxExportedLayerBytes and
+	// take no room on the drive, then expand to their full size on the host.
+	MaxExportedTreeBytes   int64 = MaxExportedLayerBytes
+	MaxExportedTreeEntries       = 100_000
+	// GoFunctionLayerExtractionMaxBytes bounds the files imaged unpacks from a
+	// built Go function image to find its executable. The layers come from the
+	// tenant's build, so a small compressed layer could otherwise expand
+	// without limit on the image staging filesystem.
+	GoFunctionLayerExtractionMaxBytes int64 = MaxExportedLayerBytes
 
 	// Edge request caps (spec §4.1).
 	MaxRequestBodyBytes = 25 * 1024 * 1024 // 25 MB either direction
@@ -6546,6 +6580,22 @@ const (
 	WakePageAfterMs     = 1500
 	WakeQueueCap        = 512 // per-app wake queue
 	WakeQueueTTLSeconds = 30
+
+	// WakeFailoverMaxAlternates bounds how many other nodes schedd tries
+	// after a node refuses a wake before starting the VM
+	// (ADR-20261022184531): at most three attempts per wake.
+	WakeFailoverMaxAlternates = 2
+	// WakeFailoverMinRemainingMs is the least of the wake's deadline that
+	// must remain for an alternate attempt to start. The coordinated wake
+	// runs under the WakeQueueTTLSeconds hold, so failover never extends it.
+	WakeFailoverMinRemainingMs = 2000
+
+	// BaseGenerationReadinessCheckIntervalSeconds is how old vmmd's verdict
+	// on adopting its configured base generations may get before the next
+	// Ping starts a fresh check; the timeout bounds that background check
+	// (ADR-20261022184531). Ping itself never waits for it.
+	BaseGenerationReadinessCheckIntervalSeconds = 30
+	BaseGenerationReadinessCheckTimeoutSeconds  = 10
 
 	// GatewayWakeAdmissionParallelism bounds concurrent cold-wake
 	// admissions in one gateway process. The gateway still coalesces
@@ -6920,11 +6970,12 @@ const (
 	// --- ADR-831 amendment 7: kind=challenge bounds -------------------
 
 	// EdgeChallengeDefaultDifficulty is how many leading zero bits the
-	// browser must find in a SHA-256 hash: about 65,000 hashes, tens to a
-	// few hundred milliseconds in a browser. Each extra bit doubles the
-	// work; MaxEdgeChallengeDifficulty (about 4 million hashes) keeps slow
-	// phones within seconds, and MinEdgeChallengeDifficulty keeps the work
-	// above trivial.
+	// browser must find in a SHA-256 hash: about 65,000 hashes on average
+	// and 196,000 at the 95th percentile, which a 2020 mid-range phone does
+	// in about a second (estimated, ADR-831 amendment 15). Each extra bit
+	// doubles the work: MaxEdgeChallengeDifficulty (about 4 million hashes)
+	// costs such a phone 15-20 s, so it is for attacks, and
+	// MinEdgeChallengeDifficulty keeps the work above trivial.
 	EdgeChallengeDefaultDifficulty = 16
 	MinEdgeChallengeDifficulty     = 10
 	MaxEdgeChallengeDifficulty     = 22
@@ -12122,18 +12173,22 @@ const (
 	ObjectDeletionLease            = 2 * time.Minute
 	ObjectDeletionOperationTimeout = time.Minute
 	ObjectDeletionRetry            = 30 * time.Second
-	// A bucket admits one deletion at a time (ADR-547). A deletion refused only
-	// because other work is settling waits up to ObjectDeletionAdmissionWait,
-	// polling with backoff from ObjectDeletionAdmissionPoll to
-	// ObjectDeletionAdmissionMaxPoll, so concurrent deletes of different keys
-	// queue instead of failing (H9-S156, ADR-20261023223000).
-	ObjectDeletionAdmissionWait          = 15 * time.Second
-	ObjectDeletionAdmissionPoll          = 50 * time.Millisecond
-	ObjectDeletionAdmissionMaxPoll       = 250 * time.Millisecond
-	ObjectDeletionBatch            int32 = 20
-	ObjectDeletionHistoryPages           = 8
-	ObjectDeletionHistoryVersions        = 4096
-	MaxObjectDeletionBodyBytes     int64 = 8 << 10
+	// A bucket admits one deletion per key at a time (ADR-547,
+	// ADR-20261025115958). A deletion refused only because other work on its
+	// key, or an inventory scan, is settling waits up to
+	// ObjectDeletionAdmissionWait, polling with backoff from
+	// ObjectDeletionAdmissionPoll to ObjectDeletionAdmissionMaxPoll
+	// (H9-S156, ADR-20261023223000).
+	ObjectDeletionAdmissionWait    = 15 * time.Second
+	ObjectDeletionAdmissionPoll    = 50 * time.Millisecond
+	ObjectDeletionAdmissionMaxPoll = 250 * time.Millisecond
+	// ObjectDeletionBulkConcurrency bounds the entries of one S3
+	// DeleteObjects request that run at once (ADR-20261025115958).
+	ObjectDeletionBulkConcurrency       = 8
+	ObjectDeletionBatch           int32 = 20
+	ObjectDeletionHistoryPages          = 8
+	ObjectDeletionHistoryVersions       = 4096
+	MaxObjectDeletionBodyBytes    int64 = 8 << 10
 )
 
 const (
