@@ -247,6 +247,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	r = r.WithContext(ctx)
 	h.setTransferDeadlines(w, ctx)
+	if r.Body != nil && r.Body != http.NoBody {
+		deadline, _ := ctx.Deadline()
+		r.Body = newProgressBody(w, r.Body, deadline)
+	}
 	requestID := strings.ReplaceAll(uuid.NewString(), "-", "")
 	w.Header().Set("Server", "Gregale")
 	w.Header().Set("x-amz-request-id", requestID)
