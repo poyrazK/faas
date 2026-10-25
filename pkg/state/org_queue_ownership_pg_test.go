@@ -35,6 +35,9 @@ func TestPostgresOrgQueueExternalTriggerGuard(t *testing.T) {
 	orgQueueExternalTriggerGuard(t, state.NewPgStore(pgtest.OpenMigrated(t)))
 }
 
+// The queue ownership migration runs beside the previous release's quota
+// writers, which release by namespace: open reservations keep their namespace
+// counter, and only pooling (the next release) moves company reservations.
 func TestPostgresOrgQueueBackfill(t *testing.T) {
 	for _, scenario := range []string{"retained roots", "mixed queue root", "inconsistent quota"} {
 		t.Run(scenario, func(t *testing.T) {
@@ -42,15 +45,11 @@ func TestPostgresOrgQueueBackfill(t *testing.T) {
 			store := state.NewPgStore(pool)
 			f := setupOffboarding(t, store)
 			adoptObjectCompany(t, f)
-			raw, err := migrations.FS.ReadFile("20261018003100007_org_queue_ownership.sql")
+			raw, err := migrations.FS.ReadFile("20261019190114676_org_queue_ownership_online.sql")
 			if err != nil {
 				t.Fatal(err)
 			}
-			up, down, ok := strings.Cut(string(raw), "-- +goose Down")
-			if !ok {
-				t.Fatal("missing rollback")
-			}
-			if _, err := pool.Exec(t.Context(), down); err != nil {
+			if err := pgtest.ExecMigration(t.Context(), t, pool, string(raw), false); err != nil {
 				t.Fatal(err)
 			}
 			binding, inv := uuid.NewString(), uuid.NewString()
@@ -71,8 +70,8 @@ func TestPostgresOrgQueueBackfill(t *testing.T) {
 			if _, err := pool.Exec(t.Context(), `INSERT INTO account_async_quota(account_id,max_inflight,current_inflight) VALUES($1,10,$2)`, f.actor.ID, current); err != nil {
 				t.Fatal(err)
 			}
-			_, err = pool.Exec(t.Context(), up)
-			if scenario != "retained roots" {
+			err = pgtest.ExecMigration(t.Context(), t, pool, string(raw), true)
+			if scenario == "mixed queue root" {
 				if err == nil || !strings.Contains(err.Error(), "remediate") {
 					t.Fatalf("unsafe migration: %v", err)
 				}
@@ -82,7 +81,7 @@ func TestPostgresOrgQueueBackfill(t *testing.T) {
 				t.Fatal(err)
 			}
 			var org, subject string
-			var oldCount, newCount int
+			var oldCount, companyCounters int
 			if err := pool.QueryRow(t.Context(), `SELECT org_id FROM queue_bindings WHERE id=$1`, binding).Scan(&org); err != nil {
 				t.Fatal(err)
 			}
@@ -92,13 +91,36 @@ func TestPostgresOrgQueueBackfill(t *testing.T) {
 			if err := pool.QueryRow(t.Context(), `SELECT current_inflight FROM account_async_quota WHERE account_id=$1`, f.actor.ID).Scan(&oldCount); err != nil {
 				t.Fatal(err)
 			}
+			if err := pool.QueryRow(t.Context(), `SELECT count(*) FROM account_async_quota WHERE account_id=$1`, f.org.ID).Scan(&companyCounters); err != nil {
+				t.Fatal(err)
+			}
+			if org != f.org.ID || subject != f.actor.ID || oldCount != current || companyCounters != 0 {
+				t.Fatalf("backfill ownership %s %s, counters %d %d", org, subject, oldCount, companyCounters)
+			}
+			err = state.PoolOrgAsyncReservations(t.Context(), store, f.org.ID)
+			if scenario == "inconsistent quota" {
+				if err == nil || !strings.Contains(err.Error(), "remediate") {
+					t.Fatalf("pooled an inconsistent counter: %v", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var newCount int
+			if err := pool.QueryRow(t.Context(), `SELECT async_quota_subject_id FROM invocations WHERE id=$1`, inv).Scan(&subject); err != nil {
+				t.Fatal(err)
+			}
+			if err := pool.QueryRow(t.Context(), `SELECT current_inflight FROM account_async_quota WHERE account_id=$1`, f.actor.ID).Scan(&oldCount); err != nil {
+				t.Fatal(err)
+			}
 			if err := pool.QueryRow(t.Context(), `SELECT current_inflight FROM account_async_quota WHERE account_id=$1`, f.org.ID).Scan(&newCount); err != nil {
 				t.Fatal(err)
 			}
-			if org != f.org.ID || subject != f.org.ID || oldCount != 1 || newCount != 1 {
-				t.Fatalf("backfill ownership %s %s, counters %d %d", org, subject, oldCount, newCount)
+			if subject != f.org.ID || oldCount != 1 || newCount != 1 {
+				t.Fatalf("pooled ownership %s, counters %d %d", subject, oldCount, newCount)
 			}
-			if _, err := pool.Exec(t.Context(), down); err == nil || !strings.Contains(err.Error(), "drain") {
+			if err := pgtest.ExecMigration(t.Context(), t, pool, string(raw), false); err == nil || !strings.Contains(err.Error(), "drain") {
 				t.Fatalf("unsafe reservation rollback: %v", err)
 			}
 			if _, err := pool.Exec(t.Context(), `UPDATE queue_bindings SET account_id=$2 WHERE id=$1`, binding, f.owner.ID); err == nil {

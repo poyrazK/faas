@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // MemStore DeleteAccount cascade tests + RestoreAccount tests.
 //
@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // seedMemStoreFullAccount is the MemStore mirror of the PgStore
@@ -34,7 +35,7 @@ import (
 // The seeded deployment is `pending` so DeleteAccount's conditional
 // `WHERE status = 'deleted_pending'` doesn't trip. Tests call
 // MarkAccountDeletionPending first.
-func seedMemStoreFullAccount(t *testing.T, m *MemStore) (acctID string) {
+func seedMemStoreFullAccount(t *testing.T, m *state.MemStore) (acctID string) {
 	t.Helper()
 	ctx := context.Background()
 
@@ -43,21 +44,21 @@ func seedMemStoreFullAccount(t *testing.T, m *MemStore) (acctID string) {
 	if err != nil {
 		t.Fatalf("CreateAccount: %v", err)
 	}
-	app, err := m.CreateApp(ctx, App{
+	app, err := m.CreateApp(ctx, state.App{
 		AccountID: acct.ID, Slug: fmt.Sprintf("mem-cascade-%s", t.Name()),
-		Type: AppTypeApp, RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
+		Type: state.AppTypeApp, RAMMB: 256, MaxConcurrency: 2, IdleTimeoutS: 60,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp: %v", err)
 	}
-	dep, err := m.CreateDeployment(ctx, Deployment{
-		AppID: app.ID, Kind: DeploymentKindImage,
-		ImageDigest: "sha256:abc", Status: DeployLive,
+	dep, err := m.CreateDeployment(ctx, state.Deployment{
+		AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:abc", Status: state.DeployLive,
 	})
 	if err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
-	if _, err := m.CreateBuild(ctx, dep.ID, DeploymentKindDockerfile, 4096, "/tmp/log"); err != nil {
+	if _, err := m.CreateBuild(ctx, dep.ID, state.DeploymentKindDockerfile, 4096, "/tmp/log"); err != nil {
 		t.Fatalf("CreateBuild: %v", err)
 	}
 	if _, err := m.CreateInstance(ctx, app.ID, dep.ID, "running", 256, "default-local", ""); err != nil {
@@ -91,7 +92,7 @@ func seedMemStoreFullAccount(t *testing.T, m *MemStore) (acctID string) {
 // markPendingAndDelete is the standard pattern: seed the account,
 // mark it pending, then delete. Returns nothing — failure aborts via
 // t.Fatal in the helper.
-func markPendingAndDelete(t *testing.T, m *MemStore, acctID string) {
+func markPendingAndDelete(t *testing.T, m *state.MemStore, acctID string) {
 	t.Helper()
 	if err := m.MarkAccountDeletionPending(context.Background(), acctID); err != nil {
 		t.Fatalf("MarkAccountDeletionPending: %v", err)
@@ -106,12 +107,12 @@ func markPendingAndDelete(t *testing.T, m *MemStore, acctID string) {
 // TestPg_DeleteAccount_CascadesAllRows — we mirror the assertion shape
 // (post-delete AppBySlug returns ErrNotFound for the seeded slug).
 func TestMem_DeleteAccount_CascadesApps(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	slug := fmt.Sprintf("mem-cascade-%s", t.Name())
 	acctID := seedMemStoreFullAccount(t, m)
 	markPendingAndDelete(t, m, acctID)
 
-	if _, err := m.AppBySlug(context.Background(), slug); !errors.Is(err, ErrNotFound) {
+	if _, err := m.AppBySlug(context.Background(), slug); !errors.Is(err, state.ErrNotFound) {
 		t.Errorf("AppBySlug after delete: err = %v, want ErrNotFound", err)
 	}
 }
@@ -122,7 +123,7 @@ func TestMem_DeleteAccount_CascadesApps(t *testing.T) {
 // so the test exercises the same surface the rest of the codebase
 // uses.
 func TestMem_DeleteAccount_CascadesDeployments(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := seedMemStoreFullAccount(t, m)
 	markPendingAndDelete(t, m, acctID)
 
@@ -140,7 +141,7 @@ func TestMem_DeleteAccount_CascadesDeployments(t *testing.T) {
 // through the deployment-cascade walk; bundling them keeps the test
 // count at 6 instead of 7 per the plan.
 func TestMem_DeleteAccount_CascadesBuildsAndInstances(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := seedMemStoreFullAccount(t, m)
 	markPendingAndDelete(t, m, acctID)
 
@@ -164,7 +165,7 @@ func TestMem_DeleteAccount_CascadesBuildsAndInstances(t *testing.T) {
 // and custom domains are cleared. Both are walked via the apps-
 // account reverse-lookup; bundling keeps the test count at 6.
 func TestMem_DeleteAccount_CascadesCronsAndDomains(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := seedMemStoreFullAccount(t, m)
 	markPendingAndDelete(t, m, acctID)
 
@@ -189,19 +190,18 @@ func TestMem_DeleteAccount_CascadesCronsAndDomains(t *testing.T) {
 // inspection since neither surface has a "list for account" reader
 // that survives DeleteAccount (by design — the parent row is gone).
 func TestMem_DeleteAccount_CascadesSecretsAndAPIKeys(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := seedMemStoreFullAccount(t, m)
 	// Snapshot the pre-delete state for the post-delete comparison.
 	markPendingAndDelete(t, m, acctID)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for k, sec := range m.secrets {
+	(*m.Mu()).Lock()
+	defer (*m.Mu()).Unlock()
+	for k, sec := range *m.Secrets() {
 		if sec.AccountID == acctID {
 			t.Errorf("secrets[%v] still present after delete (accountID = %q)", k, sec.AccountID)
 		}
 	}
-	for kid, k := range m.keys {
+	for kid, k := range *m.Keys() {
 		if k.AccountID == acctID {
 			t.Errorf("keys[%v] still present after delete (accountID = %q)", kid, k.AccountID)
 		}
@@ -214,35 +214,34 @@ func TestMem_DeleteAccount_CascadesSecretsAndAPIKeys(t *testing.T) {
 // Direct map inspection again — no public reader for these survives
 // the account row's deletion.
 func TestMem_DeleteAccount_CascadesIdempotencyAndUsageAndStripe(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := seedMemStoreFullAccount(t, m)
 	markPendingAndDelete(t, m, acctID)
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	(*m.Mu()).Lock()
+	defer (*m.Mu()).Unlock()
 	// idem keys are "<accountID>\x00<key>"; any prefix match is a leak.
-	for k := range m.idem {
+	for k := range *m.Idem() {
 		if len(k) >= len(acctID)+1 && k[:len(acctID)+1] == acctID+"\x00" {
 			t.Errorf("idem[%q] still present after delete (account prefix leak)", k)
 		}
 	}
-	for _, u := range m.usage {
+	for _, u := range *m.Usage() {
 		if u.AccountID == acctID {
 			t.Errorf("usage row still present after delete (accountID = %q)", u.AccountID)
 		}
 	}
-	for _, u := range m.usageByMonth {
+	for _, u := range *m.XUsageByMonth() {
 		if u.AccountID == acctID {
 			t.Errorf("usageByMonth row still present after delete (accountID = %q)", u.AccountID)
 		}
 	}
-	for sc, acid := range m.stripeByCustomer {
+	for sc, acid := range *m.StripeByCustomer() {
 		if acid == acctID {
 			t.Errorf("stripeByCustomer[%q] still present (accountID = %q)", sc, acid)
 		}
 	}
-	for k := range m.paddleOverageMonths {
-		if k.accountID == acctID {
+	for k := range *m.PaddleOverageMonths() {
+		if (*k.AccountID()) == acctID {
 			t.Errorf("paddleOverageMonths[%v] still present (accountID = %q)", k, acctID)
 		}
 	}
@@ -253,7 +252,7 @@ func TestMem_DeleteAccount_CascadesIdempotencyAndUsageAndStripe(t *testing.T) {
 // AccountByID returns the active account. The status flips back to
 // AccountActive and DeletionRequestedAt is cleared.
 func TestMem_RestoreAccount_WithinGrace(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := seedMemStoreFullAccount(t, m)
 
 	if err := m.MarkAccountDeletionPending(context.Background(), acctID); err != nil {
@@ -263,8 +262,8 @@ func TestMem_RestoreAccount_WithinGrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AccountByID (pending): %v", err)
 	}
-	if pending.Status != AccountDeletedPending {
-		t.Fatalf("pending.Status = %q, want %q", pending.Status, AccountDeletedPending)
+	if pending.Status != state.AccountDeletedPending {
+		t.Fatalf("pending.Status = %q, want %q", pending.Status, state.AccountDeletedPending)
 	}
 	if err := m.RestoreAccount(context.Background(), acctID); err != nil {
 		t.Fatalf("RestoreAccount: %v", err)
@@ -273,8 +272,8 @@ func TestMem_RestoreAccount_WithinGrace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AccountByID (restored): %v", err)
 	}
-	if got.Status != AccountActive {
-		t.Errorf("Status = %q, want %q", got.Status, AccountActive)
+	if got.Status != state.AccountActive {
+		t.Errorf("Status = %q, want %q", got.Status, state.AccountActive)
 	}
 	if got.DeletionRequestedAt != nil {
 		t.Errorf("DeletionRequestedAt = %v, want nil after restore", got.DeletionRequestedAt)
@@ -288,7 +287,7 @@ func TestMem_RestoreAccount_WithinGrace(t *testing.T) {
 // guard fires and RestoreAccount returns ErrConflict — the signal
 // pkg/grace uses to log and skip the tick.
 func TestMem_RestoreAccount_PastGraceReturnsErrConflict(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := seedMemStoreFullAccount(t, m)
 	if err := m.MarkAccountDeletionPending(context.Background(), acctID); err != nil {
 		t.Fatalf("MarkAccountDeletionPending: %v", err)
@@ -298,14 +297,14 @@ func TestMem_RestoreAccount_PastGraceReturnsErrConflict(t *testing.T) {
 		t.Fatalf("SetDeletionRequestedAtForTest: %v", err)
 	}
 	err := m.RestoreAccount(context.Background(), acctID)
-	if !errors.Is(err, ErrConflict) {
+	if !errors.Is(err, state.ErrConflict) {
 		t.Errorf("RestoreAccount past grace: err = %v, want ErrConflict", err)
 	}
 	// Account row must still exist in pending state (no row-level
 	// mutation on ErrConflict).
 	got, _ := m.AccountByID(context.Background(), acctID)
-	if got.Status != AccountDeletedPending {
-		t.Errorf("Status after ErrConflict = %q, want %q (no mutation)", got.Status, AccountDeletedPending)
+	if got.Status != state.AccountDeletedPending {
+		t.Errorf("Status after ErrConflict = %q, want %q (no mutation)", got.Status, state.AccountDeletedPending)
 	}
 }
 
@@ -315,11 +314,11 @@ func TestMem_RestoreAccount_PastGraceReturnsErrConflict(t *testing.T) {
 // in-memory impl deliberately uses ErrConflict to keep the caller's
 // "no-op on stale tick" branch uniform.
 func TestMem_RestoreAccount_OnActiveRowReturnsErrConflict(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	acctID := seedMemStoreFullAccount(t, m)
 	// Don't MarkAccountDeletionPending — account stays active.
 	err := m.RestoreAccount(context.Background(), acctID)
-	if !errors.Is(err, ErrConflict) {
+	if !errors.Is(err, state.ErrConflict) {
 		t.Errorf("RestoreAccount on active row: err = %v, want ErrConflict", err)
 	}
 }
@@ -339,10 +338,10 @@ func TestMem_RestoreAccount_OnActiveRowReturnsErrConflict(t *testing.T) {
 // pgtest.Open + GDPR scenario would diverge between the two
 // stores.
 func TestMem_DeleteAccount_CascadesConsumerKeys(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	ctx := context.Background()
 	acctID := seedMemStoreFullAccount(t, m)
-	appID := m.apps[firstKey(m.apps)].ID
+	appID := (*m.Apps())[firstKey((*m.Apps()))].ID
 
 	// Mint three consumer keys under this account + app.
 	for i := 0; i < 3; i++ {
@@ -356,7 +355,7 @@ func TestMem_DeleteAccount_CascadesConsumerKeys(t *testing.T) {
 	}
 
 	// Sanity: three rows present.
-	if got := len(m.consumerKeys); got != 3 {
+	if got := len((*m.ConsumerKeys())); got != 3 {
 		t.Fatalf("pre-delete consumerKeys = %d, want 3 (seed failed)", got)
 	}
 
@@ -369,14 +368,14 @@ func TestMem_DeleteAccount_CascadesConsumerKeys(t *testing.T) {
 	}
 
 	// Every consumer key must be gone.
-	if got := len(m.consumerKeys); got != 0 {
+	if got := len((*m.ConsumerKeys())); got != 0 {
 		t.Errorf("post-delete consumerKeys = %d, want 0 (GDPR hard-delete must purge consumer_keys — mirrors the FK CASCADE)", got)
 	}
 
 	// The apps must also be gone (sanity — the cascade order is
 	// apps → consumer_keys in the FK contract; the memstore loop
 	// runs consumer_keys first then apps).
-	if got := len(m.apps); got != 0 {
+	if got := len((*m.Apps())); got != 0 {
 		t.Errorf("post-delete apps = %d, want 0 (the cascade must drop child apps)", got)
 	}
 }

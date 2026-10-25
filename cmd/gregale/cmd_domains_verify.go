@@ -88,7 +88,7 @@ func cmdDomainsShow(args []string) int {
 	}
 	d, err := client.GetDomain(ctx, domain)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not read domain", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(d))
@@ -113,7 +113,7 @@ func cmdDomainsStatus(args []string) int {
 	defer cancel()
 	domains, err := client.ListDomains(ctx)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list domains", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(domains))

@@ -79,7 +79,7 @@ func TestObsAnomalies_AuthGate_RejectsCustomerKey(t *testing.T) {
 // window_hours=24 (the default).
 func TestObsAnomalies_HappyPath_EmptyStore(t *testing.T) {
 	e := newObsPR2Env(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/anomalies", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/anomalies", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("anomalies: got status %d, want 200; body=%s", rec.Code, rec.Body.String())
 	}
@@ -108,7 +108,7 @@ func TestObsAnomalies_HappyPath_EmptyStore(t *testing.T) {
 // (=168) cap. window_hours=999 → 400 with limit+observed detail.
 func TestObsAnomalies_WindowTooLarge_400(t *testing.T) {
 	e := newObsPR2Env(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/anomalies?window_hours=999", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/anomalies?window_hours=999", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("window_hours=999: got status %d, want 400; body=%s", rec.Code, rec.Body.String())
 	}
@@ -120,7 +120,7 @@ func TestObsAnomalies_WindowTooLarge_400(t *testing.T) {
 // silently coercing to the default.
 func TestObsAnomalies_WindowNonInteger_400(t *testing.T) {
 	e := newObsPR2Env(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/anomalies?window_hours=abc", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/anomalies?window_hours=abc", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Errorf("window_hours=abc: got status %d, want 400", rec.Code)
 	}
@@ -163,7 +163,7 @@ func TestObsAnomalies_Seeded_HourOfDayFlags(t *testing.T) {
 		t.Fatalf("spike seed: %v", err)
 	}
 
-	rec := e.do(t, "GET", "/v1/admin/obs/anomalies", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/anomalies", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("anomalies with seed: got status %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -207,7 +207,7 @@ func TestObsRateLimits_AuthGate_RejectsCustomerKey(t *testing.T) {
 // ["durable", "live"], lag_seconds=30. Items are non-nil slices.
 func TestObsRateLimits_HappyPath_EmptyStore(t *testing.T) {
 	e := newObsPR2Env(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/rate-limits", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/rate-limits", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rate-limits: got status %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -248,7 +248,7 @@ func TestObsRateLimits_Seeded_DurableBucket(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	rec := e.do(t, "GET", "/v1/admin/obs/rate-limits", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/rate-limits", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rate-limits seeded: got status %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -278,7 +278,7 @@ func TestObsRateLimits_Seeded_DurableBucket(t *testing.T) {
 // frontend can hard-code the array index.
 func TestObsRateLimits_SourcesStable(t *testing.T) {
 	e := newObsPR2Env(t, api.ScopesAdminOnly, "ops@faas.dev", "ops@faas.dev")
-	rec := e.do(t, "GET", "/v1/admin/obs/rate-limits", nil, nil)
+	rec := e.doOperator(t, "GET", "/v1/admin/obs/rate-limits", nil, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("rate-limits: got status %d, body=%s", rec.Code, rec.Body.String())
 	}
@@ -308,7 +308,7 @@ func TestObsSecurity_PR2_NoNewPIISurface(t *testing.T) {
 		"/v1/admin/obs/anomalies",
 		"/v1/admin/obs/rate-limits",
 	} {
-		rec := e.do(t, "GET", path, nil, nil)
+		rec := e.doOperator(t, "GET", path, nil, nil)
 		if rec.Code != http.StatusOK {
 			t.Fatalf("%s: got status %d", path, rec.Code)
 		}

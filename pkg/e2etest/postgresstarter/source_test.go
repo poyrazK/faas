@@ -54,7 +54,7 @@ func TestSourceKeepsShippedEntrypointsAndManifest(t *testing.T) {
 				t.Fatal("fixture source must add only the CA under the shipped runtime COPY")
 			}
 			manifest, err := gregalemanifest.ParseBytes([]byte(files["gregale.yaml"]))
-			if err != nil || manifest.Validate() != nil || manifest.Release.Command != starter.ReleaseCommand || manifest.Lifecycle.AfterRestore.TimeoutMS != 2000 {
+			if err != nil || manifest.Validate() != nil || manifest.Release.Command != starter.ReleaseCommand || manifest.Lifecycle.AfterRestore.TimeoutMS != 2000 || manifest.Lifecycle.BeforeCheckpoint == nil || manifest.Lifecycle.BeforeCheckpoint.TimeoutMS != 2000 {
 				t.Fatal("deployed source lost its lifecycle contract")
 			}
 			if files[CAPath] != string(ca) || files["fixture-ca.pem"] != "" {

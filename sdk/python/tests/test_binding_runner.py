@@ -8,7 +8,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from faas_sdk import (
+from faas_sdk.preview import (
     BindingVerificationRecoveryError,
     arun_binding_verification,
     arun_project_binding_verification,
@@ -540,7 +540,7 @@ def test_async_cancellation_during_diagnostics_is_immediate(task_cancel):
 
 
 def test_sync_stop_during_diagnostics_and_total_timeout(monkeypatch):
-    from faas_sdk import _binding_runner_diagnostics as helpers
+    from faas_sdk.preview import _binding_runner_diagnostics as helpers
 
     monkeypatch.setattr(helpers, "DIAGNOSTICS_TIMEOUT", 0.08)
     for stop in [False, True]:

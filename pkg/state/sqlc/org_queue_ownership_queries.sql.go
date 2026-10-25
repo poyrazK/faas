@@ -126,7 +126,8 @@ func (q *Queries) OrgQueuePersonalInvocationReference(ctx context.Context, db DB
 
 const orgQueueReadPolicy = `-- name: OrgQueueReadPolicy :one
 SELECT c.plan,c.status,c.abuse_hold_at,
- CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE NULL::uuid END::uuid AS owner_org_id
+ CASE WHEN NOT o.personal_org AND o.resource_ownership_enabled THEN o.id ELSE NULL::uuid END::uuid AS owner_org_id,
+ (NOT o.personal_org AND o.resource_ownership_enabled AND o.async_quota_pooled_at IS NOT NULL)::boolean AS async_quota_pooled
 FROM apps a JOIN app_resource_accounts c ON c.app_id=a.id JOIN orgs o ON o.id=a.org_id
 WHERE a.id=$1::uuid AND a.account_id=$2::uuid
 `
@@ -137,12 +138,15 @@ type OrgQueueReadPolicyParams struct {
 }
 
 type OrgQueueReadPolicyRow struct {
-	Plan        string
-	Status      string
-	AbuseHoldAt pgtype.Timestamptz
-	OwnerOrgID  pgtype.UUID
+	Plan             string
+	Status           string
+	AbuseHoldAt      pgtype.Timestamptz
+	OwnerOrgID       pgtype.UUID
+	AsyncQuotaPooled bool
 }
 
+// async_quota_pooled: the organization's async reservations use its own
+// counter. Until then they stay on the namespace counter (ADR-202610171908).
 func (q *Queries) OrgQueueReadPolicy(ctx context.Context, db DBTX, arg OrgQueueReadPolicyParams) (OrgQueueReadPolicyRow, error) {
 	row := db.QueryRow(ctx, orgQueueReadPolicy, arg.AppID, arg.AccountID)
 	var i OrgQueueReadPolicyRow
@@ -151,6 +155,7 @@ func (q *Queries) OrgQueueReadPolicy(ctx context.Context, db DBTX, arg OrgQueueR
 		&i.Status,
 		&i.AbuseHoldAt,
 		&i.OwnerOrgID,
+		&i.AsyncQuotaPooled,
 	)
 	return i, err
 }

@@ -42,9 +42,9 @@ func metalAssetFixture(t *testing.T) (*JailerVMM, *ResourceJournal, string, stri
 	if err := os.WriteFile(source, []byte("owned image"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	syncDir := j.directorySync
+	syncDir := j.commitSync
 	t.Cleanup(func() {
-		j.directorySync = syncDir
+		j.commitSync = syncDir
 		for _, id := range []string{idOther, idLive} {
 			if err := v.unmountBindMounts(id); err != nil {
 				t.Errorf("fixture bind cleanup: %v", err)
@@ -79,16 +79,16 @@ func TestMetalResourceAssetsBindLifecycle(t *testing.T) {
 	}
 	// The first source reference is released once, even if journal retirement
 	// fails after physical unmount/removal. Retry must preserve the second owner.
-	syncDir := j.directorySync
+	syncDir := j.commitSync
 	injected := errors.New("retirement fsync fixture")
-	j.directorySync = func() error { return injected }
+	j.commitSync = func(durable bool) error { return injected }
 	if err := v.unmountBindMounts(idLive); !errors.Is(err, injected) {
 		t.Fatalf("uncertain retirement: %v", err)
 	}
 	if len(v.bindMounts[idLive]) != 1 || !v.bindMounts[idLive][0].released || v.bindSourceRefs(source) != 1 {
 		t.Fatal("uncertain retirement lost released-reference state")
 	}
-	j.directorySync = syncDir
+	j.commitSync = syncDir
 	if err := v.unmountBindMounts(idLive); err != nil {
 		t.Fatal(err)
 	}
@@ -217,15 +217,15 @@ func TestMetalResourceAssetsFailedBindCheckpoint(t *testing.T) {
 	for _, phase := range []string{"intent", "target", "mount"} {
 		t.Run(phase, func(t *testing.T) {
 			v, j, source, root := metalAssetFixture(t)
-			syncDir := j.directorySync
+			syncDir := j.commitSync
 			injected := errors.New("bind checkpoint fsync fixture")
-			j.directorySync = func() error {
+			j.commitSync = func(durable bool) error {
 				for _, a := range j.records[idLive].Assets {
 					if (phase == "intent" && a.Target == nil) || (phase == "target" && a.Target != nil && a.Mount == nil) || (phase == "mount" && a.Mount != nil) {
 						return injected
 					}
 				}
-				return syncDir()
+				return syncDir(durable)
 			}
 			if _, err := v.bindImage(root, source, "image", idLive, 0o044, true); !errors.Is(err, injected) {
 				t.Fatalf("failed checkpoint acknowledged: %v", err)
@@ -234,7 +234,7 @@ func TestMetalResourceAssetsFailedBindCheckpoint(t *testing.T) {
 			if err != nil || (mount != nil) != (phase == "mount") {
 				t.Fatalf("unexpected partial mount: %+v %v", mount, err)
 			}
-			j.directorySync = syncDir
+			j.commitSync = syncDir
 			if err := v.unmountBindMounts(idLive); err != nil {
 				t.Fatal(err)
 			}

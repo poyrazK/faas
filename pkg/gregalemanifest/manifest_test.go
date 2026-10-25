@@ -355,6 +355,7 @@ scaling:
   concurrency_overflow: drop
   max_queue_depth: 11
   max_queue_wait_ms: 1250
+  per_instance_concurrency: 2
 `), 0o644); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -369,7 +370,8 @@ scaling:
 	if policy.MinInstances != 1 || policy.MaxInstances != 4 || policy.Target == nil ||
 		policy.Target.Metric != "concurrent_requests" || policy.Target.Value != 2 ||
 		policy.ScaleOutCooldownS != defaultScaleOutCooldownS || policy.ScaleInCooldownS != 90 ||
-		policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueDepth != 11 || policy.MaxQueueWaitMS != 1250 {
+		policy.ConcurrencyOverflow != api.ConcurrencyOverflowDrop || policy.MaxQueueDepth != 11 || policy.MaxQueueWaitMS != 1250 ||
+		policy.PerInstanceConcurrency != 2 {
 		t.Fatalf("policy = %+v, want manifest values plus default scale-out cooldown", policy)
 	}
 }
@@ -390,6 +392,8 @@ func TestScalingConfigValidation(t *testing.T) {
 		{"bad cooldown", &ScalingConfig{ScaleOutCooldownS: &cooldown}, "scale_out_cooldown_s"},
 		{"bad overflow", &ScalingConfig{ConcurrencyOverflow: "reject"}, "concurrency_overflow"},
 		{"bad queue depth", &ScalingConfig{MaxQueueDepth: -1}, "max_queue_depth"},
+		// adr: 20261022203523 — the API applies the plan's upper bound.
+		{"negative per-instance concurrency", &ScalingConfig{PerInstanceConcurrency: -1}, "per_instance_concurrency"},
 		{"bad queue wait", &ScalingConfig{MaxQueueWaitMS: api.MaxConcurrencyQueueWaitMS + 1}, "max_queue_wait_ms"},
 		{"zero queue target", &ScalingConfig{Target: &ScalingTarget{Metric: "queue_depth"}}, "target.value"},
 		// adr: 194 — p99_latency_ms validated for releases with no source
@@ -647,9 +651,9 @@ func TestValidate_HappyPath(t *testing.T) {
 }
 
 func TestValidate_UnknownKind(t *testing.T) {
-	// "rabbitmq" is a kind we genuinely don't support — neither in
-	// ADR-0NN and subsequent widening added rabbitmq/amqp as valid kinds,
-	// so "pulsar" is used here to exercise the unknown-kind rejection branch.
+	// amqp/rabbitmq are recognised but not available yet (see
+	// TestValidate_AMQP_NotAvailable), so "pulsar" exercises the
+	// unknown-kind rejection branch.
 	m := &Manifest{Triggers: []Trigger{
 		{Kind: "pulsar", App: "x", Schedule: "0 3 * * *", Path: "/y"},
 	}}
@@ -876,23 +880,25 @@ func TestValidate_Queue_RejectsReservedBindingIdentity(t *testing.T) {
 	}
 }
 
-func TestValidate_AMQP_Happy(t *testing.T) {
-	m := &Manifest{Triggers: []Trigger{{
-		Kind: TriggerKindRabbitMQ, App: "my-api", Slug: "rabbit-orders",
-		Config: map[string]any{"url": "amqp://guest:guest@localhost:5672/", "queue": "orders"},
-	}}}
-	if err := m.Validate(); err != nil {
-		t.Errorf("err = %v, want nil", err)
-	}
-}
-
-func TestValidate_AMQP_BadScheme(t *testing.T) {
-	m := &Manifest{Triggers: []Trigger{{
-		Kind: TriggerKindAMQP, App: "my-api", Slug: "rabbit-bad",
-		Config: map[string]any{"url": "http://localhost:5672/", "queue": "orders"},
-	}}}
-	if err := m.Validate(); err == nil || !strings.Contains(err.Error(), "url must be amqp:// or amqps://") {
-		t.Errorf("err = %v, want bad scheme error", err)
+// apid's trigger API, plan allowlist and the triggers.kind CHECK accept no
+// AMQP kind, so the manifest must reject it up front instead of letting the
+// deploy fail later with "not available on the <plan> plan".
+func TestValidate_AMQP_NotAvailable(t *testing.T) {
+	for _, kind := range []TriggerKind{TriggerKindAMQP, TriggerKindRabbitMQ} {
+		m := &Manifest{Triggers: []Trigger{{
+			Kind: kind, App: "my-api", Slug: "rabbit-orders",
+			Config: map[string]any{"url": "amqp://guest:guest@localhost:5672/", "queue": "orders"},
+		}}}
+		err := m.Validate()
+		if err == nil || !strings.Contains(err.Error(), string(kind)+" triggers are not available yet") {
+			t.Errorf("%s: err = %v, want not-available error", kind, err)
+		}
+		if err != nil && strings.Contains(err.Error(), "amqp, rabbitmq") {
+			t.Errorf("%s: err = %v, must not list amqp/rabbitmq as supported", kind, err)
+		}
+		if validExclusiveBrokerKind(string(kind)) {
+			t.Errorf("%s: exclusive broker bindings must not accept a kind no trigger can have", kind)
+		}
 	}
 }
 
@@ -1437,6 +1443,45 @@ worker:
 	}
 }
 
+// The CLI and apid's source deploys both apply LifecycleRequest, so the
+// lifecycle hooks and worker settings it builds are the app update either
+// path sends.
+func TestManifestLifecycleRequest(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		check         func(t *testing.T, req api.UpdateAppRequest, ok bool)
+	}{
+		{"no lifecycle or worker block", "release:\n  command: ./migrate\n", func(t *testing.T, _ api.UpdateAppRequest, ok bool) {
+			if ok {
+				t.Fatal("a manifest without lifecycle or worker asked for an app update")
+			}
+		}},
+		{"lifecycle hooks", "lifecycle:\n  before_checkpoint:\n    path: /internal/before-checkpoint\n    timeout_ms: 2000\n  after_restore:\n    path: /internal/after-restore\n    timeout_ms: 1500\n",
+			func(t *testing.T, req api.UpdateAppRequest, ok bool) {
+				if !ok || req.BeforeCheckpoint == nil || req.BeforeCheckpoint.Path != "/internal/before-checkpoint" || req.BeforeCheckpoint.TimeoutMS != 2000 ||
+					req.AfterRestore == nil || req.AfterRestore.Path != "/internal/after-restore" || req.AfterRestore.TimeoutMS != 1500 || req.ExecutionMode != nil {
+					t.Fatalf("request = %+v, ok=%v", req, ok)
+				}
+			}},
+		{"worker block", "worker:\n  command: ./consumer\n  drain_timeout: 45s\n  stop_signal: SIGINT\n  scale:\n    min: 0\n    max: 50\n    metric: queue_lag\n    target: 500\n",
+			func(t *testing.T, req api.UpdateAppRequest, ok bool) {
+				if !ok || req.ExecutionMode == nil || *req.ExecutionMode != api.ExecutionModeWorker || req.WorkerReplicas == nil ||
+					req.StopGracePeriodS == nil || *req.StopGracePeriodS != 45 || req.StopSignal == nil || *req.StopSignal != "SIGINT" {
+					t.Fatalf("request = %+v, ok=%v", req, ok)
+				}
+			}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m, err := ParseBytes([]byte(tc.content))
+			if err != nil {
+				t.Fatal(err)
+			}
+			req, ok := m.LifecycleRequest()
+			tc.check(t, req, ok)
+		})
+	}
+}
+
 func TestWorkerManifest_CustomMetricScaleParsesName(t *testing.T) {
 	dir := t.TempDir()
 	content := `
@@ -1521,6 +1566,14 @@ func TestWorkerManifest_ValidationErrors(t *testing.T) {
 				Source: &Trigger{Kind: "unsupported"},
 			},
 			want: "unsupported kind",
+		},
+		{
+			name: "amqp source kind not available yet",
+			spec: WorkerSpec{
+				Scale:  WorkerScaleSpec{Min: 0, Max: 10, Metric: "queue_lag", Target: 100},
+				Source: &Trigger{Kind: TriggerKindAMQP, Config: map[string]any{"url": "amqp://broker.example/", "queue": "orders"}},
+			},
+			want: "amqp triggers are not available yet",
 		},
 		{
 			name: "negative drain_timeout_s",
@@ -1681,6 +1734,22 @@ func TestParseManifestErrorsNameKeysNotGoTypes(t *testing.T) {
 		if strings.Contains(err.Error(), "gregalemanifest.") || strings.Contains(err.Error(), "hostingconfig.") || strings.Contains(err.Error(), "unmarshal errors") {
 			t.Errorf("error still names Go internals: %q", err)
 		}
+	}
+}
+
+func TestContractCommandManifest(t *testing.T) {
+	for _, command := range []string{"node migrate.js contract", "echo\x00invalid", strings.Repeat("x", api.AppTaskMaxCommandArgBytes+1)} {
+		config := &ReleaseConfig{Command: "node migrate.js expand", ContractCommand: command}
+		err := config.Validate()
+		if command == "node migrate.js contract" && err != nil {
+			t.Fatal(err)
+		}
+		if command != "node migrate.js contract" && err == nil {
+			t.Fatal("invalid cleanup command accepted")
+		}
+	}
+	if err := (&ReleaseConfig{ContractCommand: "node migrate.js contract"}).Validate(); err != nil {
+		t.Fatalf("Procfile expansion owner cannot declare cleanup: %v", err)
 	}
 }
 

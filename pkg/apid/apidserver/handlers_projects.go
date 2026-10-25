@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -342,6 +343,7 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 		"protected": environment.Protected, "cloned_from": req.FromEnvironment,
 		"variables_copied": clone.VariablesCopied, "secrets_copied": clone.SecretsCopied,
 		"secret_references_copied": clone.SecretReferencesCopied,
+		"project_secrets_copied":   clone.ProjectSecretsCopied,
 		"bindings_copied":          clone.BindingsCopied, "routes_copied": clone.RoutesCopied, "policies_copied": clone.PoliciesCopied,
 	})
 	response := projectEnvironmentResponse(environment)
@@ -357,6 +359,7 @@ func (s *server) createProjectEnvironment(w http.ResponseWriter, r *http.Request
 			ConfigurationCopied: clone.ConfigurationCopied, VariablesCopied: clone.VariablesCopied,
 			SecretsCopied: clone.SecretsCopied, WorkloadsCopied: clone.WorkloadsCopied,
 			SecretReferencesCopied: clone.SecretReferencesCopied,
+			ProjectSecretsCopied:   clone.ProjectSecretsCopied,
 			BindingsCopied:         clone.BindingsCopied, RoutesCopied: clone.RoutesCopied, PoliciesCopied: clone.PoliciesCopied, SharedResources: sharedResources,
 		}
 	}
@@ -509,7 +512,7 @@ func writeCreateProjectEnvironmentError(w http.ResponseWriter, projectSlug strin
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Environment already exists", "the project already has an environment with this slug"))
 	default:
-		api.WriteProblem(w, api.ErrCapacity("could not create project environment"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not create project environment")))
 	}
 }
 

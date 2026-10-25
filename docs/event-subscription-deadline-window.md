@@ -54,13 +54,13 @@ complete observation, not a substitute for a failed read.
 ## Sustained Go watch alerts
 
 ```go
-options := faas.EventDeliveryHealthWatchOptions{
+options := preview.EventDeliveryHealthWatchOptions{
     Window: "5m",
     Interval: 5 * time.Second,
     Timeout: 10 * time.Minute,
     MaxAge: 30 * time.Second,
-    RateRisk: &faas.EventDeliveryRateRiskOptions{
-        DeadlineWindow: &faas.EventDeliveryDeadlineWindowOptions{
+    RateRisk: &preview.EventDeliveryRateRiskOptions{
+        DeadlineWindow: &preview.EventDeliveryDeadlineWindowOptions{
             Within: 5 * time.Minute,
             Upcoming: 50,
             Expired: 1,
@@ -133,7 +133,7 @@ Go watches can select independent thresholds for observed reasons inside either
 cohort, without enabling total-count alerts:
 
 ```go
-DeadlineWindow: &faas.EventDeliveryDeadlineWindowOptions{
+DeadlineWindow: &preview.EventDeliveryDeadlineWindowOptions{
     Within: 5 * time.Minute,
     UpcomingReasons: map[string]int64{
         "subscription_paused": 10,
@@ -199,13 +199,13 @@ incidents repeatedly near the warning boundary. For example:
 
 ```go
 upcomingRecovery := int64(20)
-options := faas.EventDeliveryHealthWatchOptions{
+options := preview.EventDeliveryHealthWatchOptions{
     Window: "5m",
     Interval: 5 * time.Second,
     Timeout: 10 * time.Minute,
     MaxAge: 30 * time.Second,
-    RateRisk: &faas.EventDeliveryRateRiskOptions{
-        DeadlineWindow: &faas.EventDeliveryDeadlineWindowOptions{
+    RateRisk: &preview.EventDeliveryRateRiskOptions{
+        DeadlineWindow: &preview.EventDeliveryDeadlineWindowOptions{
             Within: 5 * time.Minute,
             Upcoming: 50,
             UpcomingRecovery: &upcomingRecovery,

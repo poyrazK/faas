@@ -50,6 +50,7 @@ func TestMain(m *testing.M) {
 	// Helper subprocesses (exec of this test binary) inherit the parent's
 	// sandbox; creating their own leaked one empty dir per helper because
 	// they are killed before the deferred cleanup runs.
+	pinGoToolEnv()
 	sandbox, owned := os.Getenv("HOME"), false
 	if !strings.Contains(filepath.Base(sandbox), cliTestHomePrefix) {
 		var err error
@@ -57,6 +58,12 @@ func TestMain(m *testing.M) {
 			panic(err)
 		}
 		owned = true
+	}
+	// Source/session helpers canonicalize paths. Keep the sandbox fence in
+	// that same form on macOS, where /var resolves through /private/var.
+	var err error
+	if sandbox, err = filepath.EvalSymlinks(sandbox); err != nil {
+		panic(err)
 	}
 	for key, dir := range map[string]string{"HOME": sandbox, "XDG_CONFIG_HOME": sandbox + "/.config", "XDG_CACHE_HOME": sandbox + "/.cache", "XDG_STATE_HOME": sandbox + "/.local/state"} {
 		_ = os.Setenv(key, dir)
@@ -68,11 +75,10 @@ func TestMain(m *testing.M) {
 		panic(err)
 	}
 	_ = os.Setenv("TMPDIR", tempRoot)
-	_ = os.Setenv("GOTMPDIR", tempRoot)
 	_ = os.Setenv("TMP", tempRoot)
 	_ = os.Setenv("TEMP", tempRoot)
-	// Go 1.26's testing.TempDir honors GOTMPDIR before TMPDIR. Keep an
-	// inherited compiler scratch directory from bypassing this test sandbox.
+	// Go 1.26's testing.TempDir prefers GOTMPDIR over TMPDIR. Preserve the
+	// same owned boundary even when the outer build uses another scratch root.
 	_ = os.Setenv("GOTMPDIR", tempRoot)
 	testOnlyProjectContextRoot = sandbox
 	previousNoColor, hadNoColor := os.LookupEnv("NO_COLOR")
@@ -80,9 +86,12 @@ func TestMain(m *testing.M) {
 	resetNOColorCache()
 	on := true
 	testOnlyTTY = &on
+	// ADR-20261023115741: every command stays discoverable unless a test of
+	// capability hiding clears this (capability_visibility_test.go).
+	_ = os.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "1")
 	code := m.Run()
 	if owned {
-		_ = os.RemoveAll(sandbox)
+		removeCLITestSandbox(sandbox)
 	}
 	testOnlyTTY = nil
 	if hadNoColor {

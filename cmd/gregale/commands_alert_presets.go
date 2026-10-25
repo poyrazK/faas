@@ -46,9 +46,7 @@ func cmdAlertsPreset(args []string) int {
 		return cmdAlertPresetEnable(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown alerts preset subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "alerts preset", parent, args[0])
 }
 
 // cmdAlertPresetList mirrors cmdAlertList (commands_alerts.go:68)

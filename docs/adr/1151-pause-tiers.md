@@ -84,6 +84,11 @@ Two tiers built on the same Firecracker pause, with different owners.
 - The row stays `running`. There is no database write and no schedd round
   trip, and billing is unchanged: a quiet-paused instance is a running
   instance that is not using its vCPUs.
+  (Amended 2026-10-23 by ADR-20261023171905: with meterd's
+  `quiet_pause_unbilled = "on"`, a quiet-paused second is no longer billed.
+  schedd records the pauses in a ledger and meterd subtracts the ones it can
+  prove; the row still stays `running` and nothing changes on the request
+  path.)
 - vmmd reports `quiet_paused` and `quiet_paused_since` in `InstanceStats`;
   schedd uses them for admission (section 3).
 - schedd decides eligibility at wake and sends it in the app spec

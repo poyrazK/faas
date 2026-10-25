@@ -1,6 +1,6 @@
-from faas_sdk.models.mcp_readiness_notification_action import MCPReadinessNotificationAction
-from faas_sdk.models.mcp_readiness_notification_queues import MCPReadinessNotificationQueues
-from faas_sdk.models.mcp_readiness_notification_receipt import MCPReadinessNotificationReceipt
+from faas_sdk.preview.models.mcp_readiness_notification_action import MCPReadinessNotificationAction
+from faas_sdk.preview.models.mcp_readiness_notification_queues import MCPReadinessNotificationQueues
+from faas_sdk.preview.models.mcp_readiness_notification_receipt import MCPReadinessNotificationReceipt
 
 
 def test_notification_recovery_contract_round_trip():

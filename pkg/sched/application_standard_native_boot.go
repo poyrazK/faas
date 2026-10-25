@@ -68,8 +68,17 @@ func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanc
 			fields.AppID = ins.AppID
 			fields.InstanceID = ins.ID
 			fields.WakeID = ins.WakeID
+			fields.NodeID = ins.NodeID
 			ctx = wire.WithContext(ctx, fields)
 		}
+	}
+	// vmmd's wake.readiness_200 takes node_id from this envelope and the
+	// event is rejected without one. Prime arrives with no envelope at all:
+	// after rc.282 every deploy-time first boot raised
+	// FaasWakeEventIdentityMissing.
+	if fields.NodeID == "" && nodeID != "" {
+		fields.NodeID = nodeID
+		ctx = wire.WithContext(ctx, fields)
 	}
 	// A wake hands over the rehearsal network and the standards capture it
 	// already read (ADR-1741); anything not handed over is read here, the
@@ -89,6 +98,9 @@ func (e *Engine) createRuntimeWithStandards(ctx context.Context, nodeID, instanc
 		return nil, runErr
 	}
 	spec.RehearsalRunID = runID
+	if runID != "" {
+		spec.APIEnv = appendRehearsalPlatformAPI(spec.APIEnv)
+	}
 	if captureErr != nil {
 		return nil, applicationStandardRuntimeProblem(captureErr)
 	}

@@ -22,14 +22,29 @@ import (
 // admit only one replay across the fleet; when Redis becomes unavailable,
 // each gateway must keep serving originals while denying its replay.
 func TestE2E_ServiceRetryBudget_TwoGatewayCanary(t *testing.T) {
+	redis := miniredis.RunT(t)
+	runServiceRetryBudgetCanary(t, "redis://"+redis.Addr(), func(*normalPathFixture) { redis.Close() })
+}
+
+// ADR-570: a missing Redis setting uses the authoritative Postgres budget.
+func TestE2E_ServiceRetryBudget_PostgresDefaultTwoGatewayCanary(t *testing.T) {
+	runServiceRetryBudgetCanary(t, "", func(f *normalPathFixture) {
+		if _, err := f.h.Pool.Exec(f.ctx, "ALTER TABLE traffic_retry_counters RENAME TO traffic_retry_counters_offline"); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func runServiceRetryBudgetCanary(t *testing.T, redisURL string, failBackend func(*normalPathFixture)) {
+	t.Helper()
+	t.Setenv("FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL", "")
+	t.Setenv("FAAS_GATEWAY_RETRY_BUDGET_REDIS_URL_FILE", "")
 	const (
 		callerSlug    = "retry-budget-canary-caller"
 		sharedTarget  = "retry-budget-shared"
 		outageTarget  = "retry-budget-outage"
 		secondaryName = "retry-budget-gateway-b"
 	)
-	redis := miniredis.RunT(t)
-	redisURL := "redis://" + redis.Addr()
 	targets := []string{sharedTarget, outageTarget}
 	reliability := api.ServiceReliabilityPolicy{MaxAttempts: 2, RetryBudgetPercent: 10}
 	request := api.CreateAppRequest{
@@ -80,25 +95,25 @@ func TestE2E_ServiceRetryBudget_TwoGatewayCanary(t *testing.T) {
 	outageSecond := createRetryBudgetCanarySibling(t, f, outageApp.ID, outageDeployment.ID, "outage-second")
 	f.vmmd.FailAll(outageFirst.ID, status.Error(codes.Unavailable, "canary stale target"))
 	f.vmmd.FailAll(outageSecond.ID, status.Error(codes.Unavailable, "canary stale target"))
-	redis.Close()
+	failBackend(f)
 
 	before = f.vmmd.ForwardCount()
 	statuses = runRetryBudgetCanaryCalls(t, f.app.ID, outageTarget,
 		[]string{f.h.GatewayControlURL, secondaryControlURL}, "/outage")
 	for i, code := range statuses {
 		if code != http.StatusServiceUnavailable {
-			t.Errorf("Redis-outage request %d status=%d, want original 503", i, code)
+			t.Errorf("Shared-store-outage request %d status=%d, want original 503", i, code)
 		}
 	}
 	if got := f.vmmd.ForwardCount() - before; got != 2 {
-		t.Fatalf("Redis-outage VMMD forwards=%d, want 2 originals and no replay", got)
+		t.Fatalf("Shared-store-outage VMMD forwards=%d, want 2 originals and no replay", got)
 	}
 	primaryMetrics = readRetryBudgetCanaryMetrics(t, f.h.GatewayControlURL)
 	secondaryMetrics = readRetryBudgetCanaryMetrics(t, secondaryControlURL)
-	if retryBudgetCanaryCounter(primaryMetrics, "admit", "error") < 1 || retryBudgetCanaryCounter(secondaryMetrics, "admit", "error") < 1 {
-		t.Errorf("each gateway should record a Redis admission error; primary=%v secondary=%v",
-			retryBudgetCanaryCounter(primaryMetrics, "admit", "error"),
-			retryBudgetCanaryCounter(secondaryMetrics, "admit", "error"))
+	if retryBudgetCanaryCounter(primaryMetrics, "observe", "error") < 1 || retryBudgetCanaryCounter(secondaryMetrics, "observe", "error") < 1 {
+		t.Errorf("each gateway should record a shared original-observation error; primary=%v secondary=%v",
+			retryBudgetCanaryCounter(primaryMetrics, "observe", "error"),
+			retryBudgetCanaryCounter(secondaryMetrics, "observe", "error"))
 	}
 }
 

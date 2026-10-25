@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -49,6 +50,10 @@ type RegistryClient struct {
 	// DiskBlobCache to make immutable config/layer blobs reusable across
 	// deployments on the same compute node.
 	blobCache BlobCache
+	// blobGrants records "<registry>/<repository>@<digest>" keys this
+	// process saw the registry serve to a pull, so a cached blob is read
+	// only by pulls whose own repository holds it (confirmBlobInRepository).
+	blobGrants sync.Map
 	// timeout records an explicit WithTimeout request. It is applied once,
 	// after every option has run, so the result no longer depends on the
 	// order WithTimeout and WithHTTPClient were passed in.
@@ -634,6 +639,15 @@ func (c *RegistryClient) openBlobWithAuth(ctx context.Context, r Reference, dige
 		}
 		return contentType, newVerifyingBlob(body, digest), nil
 	}
+	// The cache is keyed by digest alone, so a pull must show its own
+	// repository holds the blob before reading a copy another pull fetched.
+	grant := c.baseURL(r) + "/" + r.Repository + "@" + digest
+	if _, ok := c.blobGrants.Load(grant); !ok {
+		if err := c.confirmBlobInRepository(ctx, r, digest, auth); err != nil {
+			return "", nil, err
+		}
+		c.blobGrants.Store(grant, struct{}{})
+	}
 	rc, err := c.blobCache.Open(ctx, digest, func(fetchCtx context.Context) (io.ReadCloser, error) {
 		_, body, err := c.openBlobNetworkWithAuth(fetchCtx, r, digest, auth)
 		return body, err
@@ -644,6 +658,57 @@ func (c *RegistryClient) openBlobWithAuth(ctx context.Context, r Reference, dige
 	// The content type is advisory and no caller consumes it. Returning an
 	// empty value for cached readers keeps the cache seam independent of HTTP.
 	return "", newVerifyingBlob(rc, digest), nil
+}
+
+// confirmBlobInRepository asks the registry, as this pull, whether r's
+// repository serves digest. The blob cache shares bytes by digest across
+// every pull on the node; without this a tenant who learned another
+// tenant's private layer digests could list them in a manifest of its own
+// repository and read them from the cache, never authenticating to the
+// registry that holds them. A redirect counts as served: registries hand
+// blobs to storage URLs that are often signed for GET only, so it is not
+// followed.
+func (c *RegistryClient) confirmBlobInRepository(ctx context.Context, r Reference, digest string, auth *BasicAuth) error {
+	url := c.baseURL(r) + "/v2/" + r.Repository + "/blobs/" + digest
+	hc := *c.hc
+	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	head := func(token string) (int, http.Header, error) {
+		req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
+		if err != nil {
+			return 0, nil, fmt.Errorf("oci: build blob check: %w", err)
+		}
+		req.Header.Set("User-Agent", c.ua)
+		if token != "" {
+			req.Header.Set("Authorization", "Bearer "+token)
+		}
+		resp, err := c.doPullRequestWith(ctx, &hc, req)
+		if err != nil {
+			return 0, nil, fmt.Errorf("oci: check blob: %w", err)
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode, resp.Header, nil
+	}
+	status, header, err := head("")
+	if err != nil {
+		return err
+	}
+	if status == http.StatusUnauthorized {
+		token, err := c.fetchToken(ctx, parseChallenge(strings.Join(header.Values("Www-Authenticate"), ", ")), auth)
+		if err != nil {
+			return err
+		}
+		if status, _, err = head(token); err != nil {
+			return err
+		}
+	}
+	switch {
+	case status == http.StatusOK || status >= 300 && status < 400:
+		return nil
+	case status == http.StatusNotFound || status == http.StatusUnauthorized || status == http.StatusForbidden:
+		return fmt.Errorf("%w: blob %s is not served by %s (%d)", ErrImageNotFound, digest, r.Repository, status)
+	default:
+		return fmt.Errorf("oci: check blob %s returned %d", digest, status)
+	}
 }
 
 func (c *RegistryClient) openBlobNetworkWithAuth(ctx context.Context, r Reference, digest string, auth *BasicAuth) (string, io.ReadCloser, error) {

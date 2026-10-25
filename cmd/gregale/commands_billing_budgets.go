@@ -6,6 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"strings"
 	"text/tabwriter"
 	"time"
 
@@ -16,14 +17,14 @@ import (
 
 func cmdBillingBudgets(args []string) int {
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
-		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history> [flags] [ID]\nEnable monitored notify policies or compute-only stop_previews policies. Strict supports app/job gross compute or account net compute optionally combined with egress, using suspend_workloads with zero drain and no alert thresholds. Other stopping actions remain drafts. Preview consequences with billing budget-preview."); err != nil {
+		if _, err := fmt.Fprintln(osStdout, "usage: gregale billing budgets <list|get|create|update|delete|history|channels> [flags] [ID]\nchannels ID lists the notification channels a budget's alerts also go to; --set ID,ID replaces them and --clear removes them.\nEnable monitored notify policies or compute-only stop_previews policies. Strict supports app/job gross compute or account net compute optionally combined with egress, using suspend_workloads with zero drain and no alert thresholds. Other stopping actions remain drafts. Preview consequences with billing budget-preview."); err != nil {
 			return printErr("Could not print budget help", err)
 		}
 		return 0
 	}
 	verb := args[0]
-	if verb != "list" && verb != "get" && verb != "create" && verb != "update" && verb != "delete" && verb != "history" {
-		return printErr("Invalid budget command", errors.New("expected list, get, create, update, delete or history"))
+	if verb != "list" && verb != "get" && verb != "create" && verb != "update" && verb != "delete" && verb != "history" && verb != "channels" {
+		return printErr("Invalid budget command", errors.New("expected list, get, create, update, delete, history or channels"))
 	}
 	fs := newFlagSet("billing budgets "+verb, flag.ContinueOnError)
 	asJSON := fs.Bool("json", false, "print machine-readable data")
@@ -39,6 +40,12 @@ func cmdBillingBudgets(args []string) int {
 	if verb == "create" || verb == "update" || verb == "delete" {
 		fs.StringVar(&key, "key", "", "stable operation key for retries")
 	}
+	var set string
+	var clear bool
+	if verb == "channels" {
+		fs.StringVar(&set, "set", "", "replace the channels with these comma-separated channel IDs")
+		fs.BoolVar(&clear, "clear", false, "remove every channel; alerts go to the account email only")
+	}
 	if verb == "history" {
 		fs.Int64Var(&after, "after-revision", 0, "continue after this revision")
 		fs.IntVar(&limit, "limit", api.FinancialBudgetHistoryMax, "maximum revisions in this page")
@@ -50,7 +57,7 @@ func cmdBillingBudgets(args []string) int {
 		return 1
 	}
 	id := ""
-	needsID := verb == "get" || verb == "update" || verb == "delete" || verb == "history"
+	needsID := verb == "get" || verb == "update" || verb == "delete" || verb == "history" || verb == "channels"
 	if needsID {
 		if fs.NArg() != 1 || uuid.Validate(fs.Arg(0)) != nil {
 			return printErr("Invalid budget ID", errors.New("expected one UUID after flags"))
@@ -65,7 +72,69 @@ func cmdBillingBudgets(args []string) int {
 	if after < 0 || after > api.FinancialBudgetRevisionMax || limit < 1 || limit > api.FinancialBudgetHistoryMax || len(key) > api.FinancialBudgetOperationKeyBytes {
 		return printErr("Invalid budget arguments", errors.New("history bounds or operation key exceeded"))
 	}
-	return runBillingBudget(verb, id, file, key, expected, after, limit, *asJSON)
+	if verb == "channels" {
+		return runBillingBudgetChannels(id, set, clear, *asJSON || jsonOutput)
+	}
+	// The global --json is consumed before dispatch (Hunt 12 H12-42).
+	return runBillingBudget(verb, id, file, key, expected, after, limit, *asJSON || jsonOutput)
+}
+
+// runBillingBudgetChannels shows or replaces a budget's alert channels
+// (ADR-20261019193500).
+func runBillingBudgetChannels(id, set string, clear, asJSON bool) int {
+	if clear && set != "" {
+		return printErr("Invalid budget channels", errors.New("use --set or --clear, not both"))
+	}
+	var ids []string
+	if set != "" {
+		for _, raw := range strings.Split(set, ",") {
+			raw = strings.TrimSpace(raw)
+			if uuid.Validate(raw) != nil {
+				return printErr("Invalid channel ID", fmt.Errorf("%q is not a UUID", raw))
+			}
+			ids = append(ids, raw)
+		}
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	var out api.FinancialBudgetChannelsResponse
+	if set != "" || clear {
+		out, err = client.SetFinancialBudgetChannels(context.Background(), id, ids)
+	} else {
+		out, err = client.GetFinancialBudgetChannels(context.Background(), id)
+	}
+	if err != nil {
+		return printErr("Budget channel operation failed", err)
+	}
+	if asJSON {
+		if err := json.NewEncoder(osStdout).Encode(out); err != nil {
+			return printErr("Could not print budget channels", err)
+		}
+		return 0
+	}
+	if err := printBillingBudgetChannels(out); err != nil {
+		return printErr("Could not print budget channels", err)
+	}
+	return 0
+}
+
+func printBillingBudgetChannels(out api.FinancialBudgetChannelsResponse) error {
+	if len(out.Channels) == 0 {
+		_, err := fmt.Fprintln(osStdout, "No channels: alerts go to the account email only.")
+		return err
+	}
+	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
+	if _, err := fmt.Fprintln(tw, "ID\tNAME\tKIND\tTARGET\tLAST DELIVERED\tLAST ERROR"); err != nil {
+		return err
+	}
+	for _, c := range out.Channels {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n", c.ID, c.Name, c.Kind, c.Target, c.LastDeliveredAt, c.LastError); err != nil {
+			return err
+		}
+	}
+	return tw.Flush()
 }
 
 func runBillingBudget(verb, id, file, key string, expected, after int64, limit int, asJSON bool) int {
@@ -238,8 +307,20 @@ func printBillingBudgetRuntime(runtime *financial.BudgetRuntime) error {
 			return err
 		}
 	}
+	projection := "unavailable (" + e.ProjectionReason + ")"
+	if e.ProjectedMillicents != nil {
+		projection = financialMoney(*e.ProjectedMillicents) + " at the current rate (an estimate, not an invoice)"
+	}
+	if _, err := fmt.Fprintf(osStdout, "Projected month end: %s\n", projection); err != nil {
+		return err
+	}
 	for _, a := range runtime.Alerts {
 		if _, err := fmt.Fprintf(osStdout, "Alert %s: %s at %s (%d attempts)\n", a.ID, a.State, financialMoney(a.ThresholdMillicents), a.Attempts); err != nil {
+			return err
+		}
+	}
+	if a := runtime.Projection; a != nil {
+		if _, err := fmt.Fprintf(osStdout, "Projected-overrun alert %s: %s (%d attempts)\n", a.ID, a.State, a.Attempts); err != nil {
 			return err
 		}
 	}

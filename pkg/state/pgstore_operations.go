@@ -325,6 +325,13 @@ func (s *PgStore) admitOperationTx(ctx context.Context, tx pgx.Tx, account, defi
 	if err := prepareProductOperationTx(ctx, tx, &op, def, admission, now); err != nil {
 		return Operation{}, false, err
 	}
+	queued, err := operationConcurrencyHoldTx(ctx, tx, op, def)
+	if err != nil {
+		return Operation{}, false, err
+	}
+	if queued {
+		holdOperationDispatch(&op, &inv)
+	}
 	if def.Spec.Workflow != "" {
 		if err := admitOperationWorkflowTx(ctx, tx, &op, inv, def, api.Plan(plan)); err != nil {
 			return Operation{}, false, err
@@ -341,6 +348,12 @@ func (s *PgStore) admitOperationTx(ctx context.Context, tx pgx.Tx, account, defi
 	}
 	if err := operationPinsTx(ctx, tx, op); err != nil {
 		return Operation{}, false, err
+	}
+	if queued {
+		if err := queueOperationTx(ctx, tx, op, def); err != nil {
+			return Operation{}, false, err
+		}
+		op.dispatchHold = time.Time{}
 	}
 	if err := insertProductOperationTx(ctx, tx, op); err != nil {
 		return Operation{}, false, err

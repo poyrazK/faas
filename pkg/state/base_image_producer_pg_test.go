@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435
 
@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgBaseProducerLifecycle(t *testing.T) {
@@ -22,14 +23,14 @@ func TestPgBaseProducerLifecycle(t *testing.T) {
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
-	baseProducerLifecycle(t, NewPgStore(pool))
+	state.BaseProducerLifecycle(t, state.NewPgStore(pool))
 }
 func TestPgBaseProducerRefusals(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
-	baseProducerRefusals(t, NewPgStore(pool))
+	state.BaseProducerRefusals(t, state.NewPgStore(pool))
 }
 
 func TestPgBaseProducerSharedReadFence(t *testing.T) {
@@ -37,8 +38,8 @@ func TestPgBaseProducerSharedReadFence(t *testing.T) {
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
-	s := NewPgStore(pool)
-	base, err := s.PublishBaseImageProducer(t.Context(), baseProducerFixture(t, "base/shared-read.ext4", "content"))
+	s := state.NewPgStore(pool)
+	base, err := s.PublishBaseImageProducer(t.Context(), state.BaseProducerFixture(t, "base/shared-read.ext4", "content"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +50,7 @@ func TestPgBaseProducerSharedReadFence(t *testing.T) {
 			t.Fatal(err)
 		}
 		defer readers[i].Rollback(t.Context())
-		if err := lockBaseImageProducerKeysShared(t.Context(), readers[i], base.Input.Artifact.StorageKey); err != nil {
+		if err := state.LockBaseImageProducerKeysShared(t.Context(), readers[i], base.Input.Artifact.StorageKey); err != nil {
 			t.Fatalf("shared base reader %d did not coexist: %v", i, err)
 		}
 	}
@@ -57,7 +58,7 @@ func TestPgBaseProducerSharedReadFence(t *testing.T) {
 	replacement.ID = uuid.NewString()
 	bounded, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if _, err := s.PublishBaseImageProducer(bounded, replacement); !errors.Is(err, ErrApplicationStandardReviewBusy) {
+	if _, err := s.PublishBaseImageProducer(bounded, replacement); !errors.Is(err, state.ErrApplicationStandardReviewBusy) {
 		t.Fatalf("base publication bypassed active shared readers: %v", err)
 	}
 	for _, tx := range readers {
@@ -75,8 +76,8 @@ func TestPgBaseProducerFencesAndGuards(t *testing.T) {
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
-	s := NewPgStore(pool)
-	in := baseProducerFixture(t, "base/fenced.ext4", "content")
+	s := state.NewPgStore(pool)
+	in := state.BaseProducerFixture(t, "base/fenced.ext4", "content")
 	tx, err := pool.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -87,7 +88,7 @@ func TestPgBaseProducerFencesAndGuards(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
 	defer cancel()
-	if _, err := s.PublishBaseImageProducer(ctx, in); !errors.Is(err, ErrApplicationStandardReviewBusy) {
+	if _, err := s.PublishBaseImageProducer(ctx, in); !errors.Is(err, state.ErrApplicationStandardReviewBusy) {
 		t.Fatalf("busy fence waited or bypassed: %v", err)
 	}
 	if err := tx.Rollback(t.Context()); err != nil {
@@ -123,5 +124,5 @@ func TestPgRegistryRootfsBaseBinding(t *testing.T) {
 	if err := db.MigrateUp(t.Context(), pool); err != nil {
 		t.Fatal(err)
 	}
-	registryRootfsBaseBinding(t, NewPgStore(pool))
+	registryRootfsBaseBinding(t, state.NewPgStore(pool))
 }

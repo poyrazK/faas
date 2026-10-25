@@ -43,15 +43,15 @@ func (linuxNativeSnapshotControl) Request(ctx context.Context, socket string, ow
 func (v *JailerVMM) controlNativeQualificationSnapshot(ctx context.Context, lease Lease, action nativeSnapshotControlAction) (err error) {
 	r := v.nativeRecovery
 	permit, ok := ctx.Value(nativeSnapshotCaptureContextKey{}).(nativeSnapshotCapturePermit)
-	if r == nil || r.journal == nil || r.imageSources == nil || !ok || permit.Incoming.Execution.InstanceID != lease.Instance || !sameNativePhysicalLease(lease, permit.Incoming.NativeLease) {
+	if r == nil || r.journal == nil || r.imageSources == nil || !ok || permit.instanceID() != lease.Instance || !sameNativePhysicalLease(lease, permit.nativeLease()) {
 		return fmt.Errorf("native snapshot control: original capture capability is required: %w", state.ErrConflict)
 	}
 	if _, _, _, err := nativeSnapshotControlRequest(permit.Capture.CaptureID, action); err != nil {
 		return err
 	}
-	ctx, cancel := context.WithDeadline(ctx, permit.Incoming.Deadline)
+	ctx, cancel := context.WithDeadline(ctx, permit.deadline())
 	defer cancel()
-	if r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
+	if r.generation(lease.Instance) != permit.nativeGeneration() {
 		return fmt.Errorf("native snapshot control: original local producer is required: %w", state.ErrConflict)
 	}
 	if err := r.checkDaemonOwnership(); err != nil {
@@ -72,12 +72,17 @@ func (v *JailerVMM) controlNativeQualificationSnapshot(ctx context.Context, leas
 // The complete producer holds the physical lock through control, freezing and
 // uploads. This helper must never acquire that lock again or retry an effect.
 func (v *JailerVMM) controlNativeQualificationSnapshotLocked(ctx context.Context, lease Lease, permit nativeSnapshotCapturePermit, owner nativeLaunchRecord, action nativeSnapshotControlAction) error {
+	if action == nativeSnapshotPause && v.functionPauseBarrier != nil {
+		if err := v.functionPauseBarrier(lease.Instance); err != nil {
+			return err
+		}
+	}
 	r := v.nativeRecovery
 	method, path, body, err := nativeSnapshotControlRequest(permit.Capture.CaptureID, action)
 	if err != nil {
 		return err
 	}
-	if r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
+	if r.generation(lease.Instance) != permit.nativeGeneration() {
 		return errors.New("native snapshot control: original local producer is required")
 	}
 	if err := r.checkDaemonOwnership(); err != nil {
@@ -96,7 +101,7 @@ func (v *JailerVMM) controlNativeQualificationSnapshotLocked(ctx context.Context
 	if err := r.snapshotControl.Request(ctx, v.socketPath(lease.Instance), owner, method, path, body); err != nil {
 		return err // A lost response never retries a possibly completed effect.
 	}
-	if r.generation(lease.Instance) != permit.Incoming.NativeGeneration {
+	if r.generation(lease.Instance) != permit.nativeGeneration() {
 		return errors.New("native snapshot control: original local producer changed during the effect")
 	}
 	if err := r.checkDaemonOwnership(); err != nil {

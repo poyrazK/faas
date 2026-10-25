@@ -1,0 +1,8 @@
+# Managed by the seal_domains role (ADR 20261022111812): apid seals app
+# basic-auth credentials and log drain authentication headers to the edge
+# seal domain. It holds the public recipient only and cannot open what it
+# seals.
+[Service]
+LoadCredential=faas_seal_domain_edge_recipient:/etc/faas/secrets/domains/edge.age.pub
+Environment=FAAS_SEAL_DOMAIN_EDGE_RECIPIENT_PATH=%d/faas_seal_domain_edge_recipient
+Environment=FAAS_SEAL_DOMAIN_EDGE_WRITES={{ faas_seal_domain_edge_writes }}

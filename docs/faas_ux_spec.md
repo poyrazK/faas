@@ -41,7 +41,7 @@ curl -fsSL https://get.gregale.dev | sh          # single static Go binary, no d
 # after npm publication: npm install -g gregale@rc (prerelease)
 ```
 
-Post-install prints exactly one next step: `Run 'gregale login' to get started.` No telemetry prompt walls, no account required to install.
+Post-install prints exactly one next step: `next: gregale start` (the guided start signs in when needed). No telemetry prompt walls, no account required to install.
 
 ### 2.2 Login (budget: 45 s) — implements gap G5
 
@@ -265,7 +265,7 @@ All three screens obey the §7 three-line shape (headline → cause → one next
 
 ## 8. Onboarding, empty states, docs
 
-- **First-run (`gregale login` → empty account):** the CLI prints a 3-line quickstart, not a wall. "You're in. Deploy your first app: `cd` into a project and run `gregale deploy`. No project handy? `gregale deploy --template hello-node`."
+- **First-run (`gregale login` → empty account):** the CLI prints one next step, not a wall. "You're in. Next step — deploy your first app: `gregale start`." Start deploys the current project, or offers a starter in an empty directory. `gregale apps` on an empty account names the same step.
 - **Templates:** `gregale deploy --template <name>` scaffolds a minimal working app (hello-node, hello-python, hello-go, cron-example, function-node, function-python) so a user with no repo still reaches a URL in 5 minutes. **Wave 0 PR-B adds a second template family** for the stateless contract: `gregale init --template={s3-uploader,slack-bot,rest-api-postgres,cron-worker}` scaffolds a project whose docs header names the managed service to plug in (S3/R2, Slack signing secret, Neon, Upstash QStash) and fails clearly if the customer forgot to `gregale secrets set` the relevant env var.
 - **Empty dashboard:** one primary CTA (Connect GitHub / Deploy via CLI), a link to the quickstart, nothing else. No fake sample data.
 - **Docs site (static, launch-critical):** Quickstart · How scale-to-zero works (§6) · Build detection & Dockerfiles · **External storage (stateless contract)** · Plans & pricing (mirrors the model) · Secrets · Custom domains · Functions (node22/python312 contract) · CLI reference (generated from the CLI) · Status. Docs are part of the product, not an afterthought; the €3/mo domain line already budgets hosting.

@@ -26,7 +26,7 @@ func suggestUnknownFlag(diagnostic string, fs *flag.FlagSet) string {
 		if len(candidate.Name) < 4 || len(candidate.Name) > 64 {
 			return
 		}
-		distance := levenshtein(name, candidate.Name)
+		distance := editDistance(name, candidate.Name)
 		if distance < best {
 			best, tied, suggestion = distance, false, candidate.Name
 		} else if distance == best {

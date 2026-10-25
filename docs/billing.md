@@ -8,7 +8,7 @@ gregale billing status
 gregale billing portal
 ```
 
-Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero, and function instances held frozen between requests, do not accrue running-instance usage; storage and other explicitly metered services remain separate line items.
+Usage is measured in GB-RAM-hours for running app instances. The plan also sets deployed-app, developer-app, concurrency, storage-layer, and idle-timeout limits. Apps parked by scale-to-zero, and instances held frozen between requests, do not accrue running-instance usage; storage and other explicitly metered services remain separate line items. Where early freeze is enabled, a `between_requests` workload (functions by default) is frozen a few seconds after its last request rather than at its idle timeout, so it is billed for little more than the time it spends serving ([how frozen instances work](cold-wake.md#frozen-instances)).
 
 Free accounts have a zero monthly charge and are subject to the published limits. Paid plans are billed monthly through the account billing portal. Treat the portal as the source of truth for invoices, tax, payment methods, credits, and failed-payment recovery.
 
@@ -23,7 +23,9 @@ gregale overage-cap --clear  # remove the cap
 ```
 
 `POST /v1/account/overage-cap` with `{"overage_cap_cents": 500}` (or `null`
-to clear) does the same. A cap of 0 is a pause switch: it counts as reached
+to clear) does the same. It needs the `admin` scope, like plan and billing
+changes: a deploy-scoped key, such as a CI key or an MCP connection allowed to
+write, cannot raise or remove the cap. A cap of 0 is a pause switch: it counts as reached
 immediately, so the account's workloads stop even within the included
 allowance.
 
@@ -227,6 +229,65 @@ The Node and Python generated Billing clients expose the same operations,
 revision conditions, retry headers and readiness fields. Revision history is
 intent history; `runtime.stops` separately retains threshold decisions and
 current scheduler acknowledgements.
+
+### Budget alerts on Slack, PagerDuty and email channels
+
+A budget's threshold alerts always go to the account email. They can also go to
+up to five of the account's notification channels (the same Slack, PagerDuty
+and email channels alert rules use;
+[ADR 20261019193500](adr/20261019193500-budget-alert-channels.md)):
+
+```bash
+gregale channels list                                         # find channel IDs
+gregale billing budgets channels --set CHANNEL_ID,CHANNEL_ID POLICY_ID
+gregale billing budgets channels POLICY_ID                    # last delivery per channel
+gregale billing budgets channels --clear POLICY_ID
+```
+
+The REST form is `GET`/`PUT /v1/billing/budgets/{id}/channels` with
+`{"channel_ids": [...]}`; `PUT` needs `admin`, session MFA and an
+`Idempotency-Key`. Changing channels does not change the policy revision.
+
+Each threshold is sent once to each channel. A failed send is retried with
+backoff (1 minute, doubling to 1 hour) and given up after 12 attempts; the
+channel shows the last error. A channel added mid-month receives a threshold
+already crossed this month at the next evaluation. Removing a channel pauses
+its pending alerts, and deleting it discards them. On PagerDuty, every threshold
+of one budget in one month updates a single incident: `warning` below the
+limit, `error` at it. Amounts are the selected usage meters, not the invoice.
+
+### Projected overruns
+
+Each evaluation also projects the budget to the end of the UTC month at this
+month's usage rate (`runtime.evaluation.projected_millicents`; `gregale billing
+budgets get` prints "Projected month end"). When the projection reaches the
+limit while known usage is still below it, the account email and the bound
+channels get one "projected to exceed its limit" alert for the month. It
+shows the projected amount, the limit and the usage so far. It is an estimate,
+not an invoice, and it never stops a workload.
+
+A projection needs complete, fresh evidence for every selected meter and at
+least a day of usage this month. Otherwise `projection_reason` says why it is
+unavailable (for example `compute:insufficient_history`). Editing the budget
+starts a new revision, so a still-projected overrun can alert again.
+
+### Object storage in budgets
+
+A monitored account budget can include object storage by adding
+`object_storage` to `meters`, for example `["compute", "object_storage"]`.
+Object storage cannot be selected on app, job, project or environment budgets
+(buckets carry no such attribution), or on strict budgets
+([ADR 20261020160000](adr/20261020160000-object-storage-in-budgets.md)).
+
+The amount is the live object-storage estimate: this month's stored
+GiB-months, requests and egress, priced with the same rates and plan
+allowance as `gregale usage object-storage` and month close. Gross is before the
+allowance and net is after. apid refreshes it every five minutes, and an
+estimate more than 15 minutes old counts as stale. `GET /v1/billing/costs`
+shows it as the `object_storage` meter. Threshold and projected-overrun alerts
+count it like compute and egress. The invoice line still comes from month
+close, which also applies the overage cap; the budget counts the uncapped
+estimate.
 
 ## Active spending notifications
 
@@ -515,7 +576,27 @@ spending. It does not establish a strict compute or full-invoice ceiling.
 ## Strict app compute candidate
 
 This implementation is local; native KVM acceptance and release review remain
-required. Configure `scope={kind:app,id:APP_ID}`, `mode=strict`,
+required. Strict budgets are released per account through the `strict_budgets`
+platform flag. Until it includes your account, creating or enabling one returns
+422 `financial_budget_activation_unavailable` ("Strict budgets not released").
+
+A project can be capped the same way with `scope={kind:project,id:PROJECT_ID}`:
+one limit shared by every app in the project, and when it is reached every app
+in the project is held. Jobs are not part of a project, so they need their own
+job caps. Activation needs every app in the project to be idle
+([ADR-1750, amendment 1](adr/1750-strict-app-compute-reservations.md#amendment-1-2026-10-20-strict-project-caps)).
+
+An environment can be capped with `scope={kind:environment,id:ENVIRONMENT_ID}`:
+one limit shared by every deployment that runs in the environment, across the
+project's apps. When it is reached, only that environment's deployments are
+held; the same apps keep serving other environments. A deployment without a
+recorded environment counts toward the project's environment of the same name.
+Capacity floors are app-wide, so an environment cap neither counts nor waives
+them; use an app or project cap to bound them. Activation needs every
+deployment in the environment to be idle
+([ADR-1750, amendment 2](adr/1750-strict-app-compute-reservations.md#amendment-2-2026-10-21-strict-environment-caps)).
+
+Configure `scope={kind:app,id:APP_ID}`, `mode=strict`,
 `basis=gross_usage`, `meters=[compute]`, `action=suspend_workloads`,
 `drain_seconds=0`, and `notify_millicents=[]`. A separate monitored policy can
 send spending alerts. Subscription, storage, network egress, taxes, builds and

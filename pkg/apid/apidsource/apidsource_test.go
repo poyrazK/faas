@@ -786,3 +786,39 @@ func TestEnqueue_CapturesDockerfileBuildOptions(t *testing.T) {
 		})
 	}
 }
+
+// A built service's Compose user, working_dir and stop contract are frozen in
+// the profile for imaged (ADR-20261022160000).
+func TestEnqueue_CapturesBuildProcess(t *testing.T) {
+	grace := 20
+	process := &api.ComposeProcess{User: "node", WorkingDir: "/srv/app", StopSignal: "SIGINT", StopGracePeriodS: &grace}
+	for _, tc := range []struct {
+		name    string
+		process *api.ComposeProcess
+		want    *api.ComposeProcess
+	}{
+		{"declared", process, process},
+		{"none", nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := state.NewMemStore()
+			app := mustSeedApp(t, st)
+			srcPath, srcBytes := stageSource(t, t.TempDir())
+			result, err := Enqueue(context.Background(), st, &recordingNotifier{}, EnqueueParams{
+				AppID: app.ID, Kind: state.DeploymentKindDockerfile, SourcePath: srcPath, SourceBytes: srcBytes,
+				DockerfilePath: "Dockerfile", ImageProcess: tc.process, LogSpool: t.TempDir(), Log: quietLogger(),
+			})
+			if err != nil {
+				t.Fatalf("Enqueue: %v", err)
+			}
+			dep, err := st.DeploymentByID(context.Background(), result.DeploymentID)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var profile frameworkprofile.Profile
+			if err := json.Unmarshal(dep.InferredProfile, &profile); err != nil || !reflect.DeepEqual(profile.BuildProcess, tc.want) {
+				t.Fatalf("profile %s (%v); want build process %+v", dep.InferredProfile, err, tc.want)
+			}
+		})
+	}
+}

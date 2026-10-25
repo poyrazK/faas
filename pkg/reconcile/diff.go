@@ -17,6 +17,7 @@ package reconcile
 import (
 	"maps"
 	"reflect"
+	"slices"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/reposcan"
@@ -292,6 +293,10 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !reflect.DeepEqual(a.Manifest.ProjectImageProcess, imageManifest.ProjectImageProcess) {
 		changed = append(changed, "image_process")
 	}
+	if !slices.Equal(a.Manifest.ProjectSecretFiles, imageManifest.ProjectSecretFiles) {
+		changed = append(changed, "secret_files")
+	}
+	changed = append(changed, composeResourcesChanged(a, w)...)
 	if !maps.Equal(a.Manifest.ProjectDependencyConditions, w.DependsOnConditions) {
 		changed = append(changed, "dependency_conditions")
 	}
@@ -312,7 +317,7 @@ func diffFieldsChanged(a state.App, w reposcan.Workload, startCmd string, availa
 	if !maps.Equal(a.Manifest.ServiceReliability, serviceReliabilityForWorkload(w, serviceNames, a.Manifest.ServiceReliability)) {
 		changed = append(changed, "service_reliability")
 	}
-	if a.Manifest.EffectiveServiceBindingPolicy() != serviceBindingPolicyForExistingWorkload(w, a.Manifest.ServiceBindingPolicy) {
+	if a.Manifest.EffectiveServiceBindingPolicy() != serviceBindingPolicyForExistingWorkload(w, a.Manifest.ServiceBindingPolicy).Effective() {
 		changed = append(changed, "service_binding_policy")
 	}
 	if a.Manifest.EffectiveServiceBindingTransport() != transport.Effective() {

@@ -1,16 +1,17 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
 func TestPgApplicationStandardRuntimeRefresh(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
-	standardRuntimeRefreshLifecycle(t, s, func(id string) Snapshot {
-		var snap Snapshot
+	s, pool := state.StandardOperationPGStore(t)
+	standardRuntimeRefreshLifecycle(t, s, func(id string) state.Snapshot {
+		var snap state.Snapshot
 		if err := pool.QueryRow(t.Context(), `SELECT id::text,deployment_id::text,storage_key,stale FROM snapshots WHERE id=$1`, id).Scan(&snap.ID, &snap.DeploymentID, &snap.StorageKey, &snap.Stale); err != nil {
 			t.Fatal(err)
 		}
@@ -19,9 +20,9 @@ func TestPgApplicationStandardRuntimeRefresh(t *testing.T) {
 }
 
 func TestPgApplicationStandardRuntimeRefreshAtomicHandoffFailure(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
+	s, pool := state.StandardOperationPGStore(t)
 	f, snaps := standardRuntimeRefreshFixture(t, s)
-	o, err := s.ApproveApplicationStandardReview(t.Context(), f.plan.OrgID, f.owner.Account.ID, f.plan.ID, f.plan.ApprovalHash)
+	o, err := s.ApproveApplicationStandardReview(t.Context(), (*f.Plan()).OrgID, (*f.Owner()).Account.ID, (*f.Plan()).ID, (*f.Plan()).ApprovalHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -46,7 +47,7 @@ func TestPgApplicationStandardRuntimeRefreshAtomicHandoffFailure(t *testing.T) {
 	if err := pool.QueryRow(t.Context(), `SELECT stale FROM snapshots WHERE id=$1`, snaps[appID].ID).Scan(&stale); err != nil || stale {
 		t.Fatal("cache invalidation escaped rolled back install", stale, err)
 	}
-	if _, err := s.GetApplicationStandardRuntimeRefresh(t.Context(), o.OrgID, appID); !errors.Is(err, ErrNotFound) {
+	if _, err := s.GetApplicationStandardRuntimeRefresh(t.Context(), o.OrgID, appID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatal("failed install left runtime work", err)
 	}
 	o, err = s.GetApplicationStandardOperation(t.Context(), o.OrgID, o.ID)

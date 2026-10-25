@@ -156,6 +156,11 @@ func renderQueuedDeployment(dep api.DeploymentResponse, appURL string, darkDeplo
 		PrintOK(osStdout, "Deployment %s queued. %s", dep.ID, appURL)
 		return
 	}
+	if dep.ScheduledRelease != nil && dep.ScheduledRelease.State == api.ScheduledReleaseStatePending {
+		PrintOK(osStdout, "Deployment %s queued; its rollout starts %s.", dep.ID, describeReleaseTime(dep.ScheduledRelease.ReleaseAt, time.Now()))
+		PrintProgress(osStdout, "Production traffic remains unchanged until then. %s", appURL)
+		return
+	}
 	PrintOK(osStdout, "Deployment %s queued with 0%% production traffic.", dep.ID)
 	PrintProgress(osStdout, "Production traffic remains unchanged. %s", appURL)
 }
@@ -200,14 +205,26 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 		PrintProgress(osStdout, "Rollout: %d%% traffic · step %d/%d · in progress", final.TrafficPercent, step, final.CanaryTotalSteps)
 		PrintProgress(osStdout, "follow: gregale deployment wait %s --rollout", final.ID)
 		// ADR-1446: a production release rolls out behind the health-gated
-		// canary by default, so name both ways out of it.
-		if appOK && app.ReleasePolicy != api.ReleasePolicyImmediate {
+		// canary by default, so name both ways out of it. Only when this
+		// rollout is that default: after an explicit `--rollout fast` the line
+		// called the user's own choice "this app's default" (Hunt 14 H14-29).
+		if appOK && app.ReleasePolicy != api.ReleasePolicyImmediate && final.CanaryPreset == api.ReleasePolicyCanaryPreset(app.ReleasePolicy) {
 			PrintProgress(osStdout, "A health-gated rollout is this app's default: skip it once with --rollout immediate, or always with gregale app %s --release-policy immediate", appSlug)
 		}
 	} else if darkDeploy {
 		if final.TrafficPercent != 0 {
+			// A scheduled release whose time passed during its build starts
+			// as soon as it is ready (ADR-20261021152201).
+			if sr, err := c.GetDeploymentSchedule(ctx, final.ID); err == nil && sr.State == api.ScheduledReleaseStateStarted {
+				PrintOK(osStdout, "Scheduled %s started its rollout at %s. %s", deploymentCommandRef(final), localReleaseTime(sr.StartedAt), appURL)
+				PrintProgress(osStdout, "follow: gregale deployment wait %s --rollout", final.ID)
+				return 0
+			}
 			PrintFail(osStderr, "Deployment %s became live with %d%% production traffic; expected 0%%. Inspect with: gregale traffic status %s", final.ID, final.TrafficPercent, appSlug)
 			return 1
+		}
+		if renderPendingSchedule(final, appURL) {
+			return 0
 		}
 		ref := deploymentCommandRef(final)
 		PrintOK(osStdout, "Staged %s with 0%% production traffic.", ref)
@@ -240,6 +257,7 @@ func renderSuccessfulDeploymentWithOptions(ctx context.Context, c *Client, dep a
 	} else {
 		PrintOK(osStdout, "Deployed. %s", appURL)
 	}
+	renderCronActivation(ctx, final)
 	switch {
 	case darkDeploy:
 	case noHTTP:
@@ -455,13 +473,17 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		receipt.WaitStage = stage
 		receipt.ResumeCommand = resumeCommand
 		receipt.Recovery = newDeployRecovery(stage, appSlug, receiptDep.ID, "", deadline, waitForRollout)
-		if code := jsonOut(writeJSON(receipt)); code != 0 {
+		if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 			return code
 		}
 		if receipt.Interrupted {
-			return printDeploymentWaitRecovery(context.Canceled, receiptDep, appSlug, stage, deadline, waitForRollout, 130)
+			return printSessionWaitRecovery(ctx, context.Canceled, receiptDep, appSlug, stage, deadline, waitForRollout, 130)
 		}
-		return printDeploymentWaitRecovery(context.DeadlineExceeded, receiptDep, appSlug, stage, deadline, waitForRollout, 3)
+		return printSessionWaitRecovery(ctx, context.DeadlineExceeded, receiptDep, appSlug, stage, deadline, waitForRollout, 3)
+	}
+	var configurationErr error
+	if session := sessionFromContext(ctx); session != nil && final.Status == statusLive && (!waitForRollout || final.RolloutState != rolloutStateAborted) && (!darkDeploy || final.TrafficPercent == 0) {
+		configurationErr = session.applySettings(ctx, c)
 	}
 	receipt := newDeployReceipt(final, prov, appURL, sourceSHA256, simplePlans...)
 	receipt.IssueSourceMaps = sourceMaps
@@ -485,8 +507,15 @@ func writeWaitedDeploymentReceiptUntilWithSourceMaps(ctx context.Context, c *Cli
 		receipt.Recovery.NextCommand = failedDeploymentRecovery(appSlug, final).NextCommand
 		receipt.Recovery.Hint = "The deployment or rollout reached a failed terminal state. Inspect the deployment and its logs before submitting a corrected deployment."
 	}
-	if code := jsonOut(writeJSON(receipt)); code != 0 {
+	if configurationErr != nil {
+		receipt.WaitStage = "configuration"
+		receipt.Recovery = sessionFromContext(ctx).recovery("configuration")
+	}
+	if code := jsonOut(writeJSON(sessionDeployReceipt(ctx, receipt))); code != 0 {
 		return code
+	}
+	if configurationErr != nil {
+		return sessionFromContext(ctx).failure("Saved deploy settings remain pending", "configuration", configurationErr)
 	}
 	if waitForRollout && final.CanaryTotalSteps > 0 && final.RolloutState == rolloutStateAborted {
 		return 1

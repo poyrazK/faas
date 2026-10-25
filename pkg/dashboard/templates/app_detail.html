@@ -7,8 +7,8 @@
        htmx SSE extension. Same wire as apps_list; EventSource
        auto-reconnects on transient drops. -->
   <title>{{.Title}} — onebox faas</title>
-  <script src="https://unpkg.com/htmx.org@2.0.4" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous" nonce="{{.Nonce}}" defer></script>
-  <script src="https://unpkg.com/htmx-ext-sse@2.2.2" integrity="sha384-fw+eTlCc7suMV/1w/7fr2/PmwElUIt5i82bi+qTiLXvjRXZ2/FkiTNA/w0MhXnGI" crossorigin="anonymous" nonce="{{.Nonce}}" defer></script>
+  <script src="/dashboard/assets/htmx-2.0.4.min.js" integrity="sha384-HGfztofotfshcF7+8n44JQL2oJmowVChPTg48S+jvZoztPfvwD79OC/LTtG6dMp+" crossorigin="anonymous" nonce="{{.Nonce}}" defer></script>
+  <script src="/dashboard/assets/htmx-ext-sse-2.2.2.js" integrity="sha384-fw+eTlCc7suMV/1w/7fr2/PmwElUIt5i82bi+qTiLXvjRXZ2/FkiTNA/w0MhXnGI" crossorigin="anonymous" nonce="{{.Nonce}}" defer></script>
   <style nonce="{{.Nonce}}">
     :root { color-scheme: light dark; }
     body { font-family: ui-sans-serif, system-ui, sans-serif; margin: 0; padding: 0 1.5rem; max-width: 920px; margin-inline: auto; }
@@ -168,6 +168,7 @@
     .alert-preset-explanation .fix   { margin: 0.2rem 0; color: #374151; white-space: pre-line; }
     .alert-preset-explanation .docs  { margin: 0.3rem 0 0; font-size: 0.8rem; }
     .cost-note { color: #6b7280; font-size: 0.9rem; }
+    .announced-captures { border-left: 3px solid #b45309; background: #fffbeb; padding: 0.25rem 0.75rem; margin: 0.75rem 0; }
     .cost-month-selector { display: flex; gap: 0.5rem; align-items: center; flex-wrap: wrap; margin: 0.5rem 0; }
     .cost-month-selector input, .cost-month-selector button { padding: 0.35rem 0.5rem; font: inherit; }
     .cost-export-link { display: inline-block; margin: 0.25rem 0 0.5rem; }
@@ -193,16 +194,16 @@
     <nav>
       <a href="/dashboard/">Overview</a>
       <a href="/dashboard/apps">Apps</a>
-      <a href="/dashboard/mcp">MCP operations</a>
-      <a href="/dashboard/app-costs">App costs</a>
-      <a href="/dashboard/developers">Developer environments</a>
-      <a href="/dashboard/projects">Projects</a>
+      {{if $.On "mcp-hosting"}}<a href="/dashboard/mcp">MCP operations</a>{{end}}
+      {{if $.On "app-costs"}}<a href="/dashboard/app-costs">App costs</a>{{end}}
+      {{if $.On "developer-environments"}}<a href="/dashboard/developers">Developer environments</a>{{end}}
+      {{if $.On "projects"}}<a href="/dashboard/projects">Projects</a>{{end}}
       <a href="/dashboard/usage">Usage</a>
       <a href="#analytics">Analytics</a>
       <a href="/dashboard/billing">Billing</a>
       <a href="/dashboard/pricing">Pricing</a>
       <a href="/dashboard/invoices">Invoices</a>
-      <a href="/dashboard/stateless">Stateless</a>
+      {{if $.On "stateless-contract"}}<a href="/dashboard/stateless">Stateless</a>{{end}}
       <a href="/dashboard/account">Account</a>
     </nav>
   </header>
@@ -229,6 +230,14 @@
         · URL: <a href="{{.Data.App.URL}}">{{.Data.App.URL}}</a>
       </p>
       {{if .Data.Operational}}{{template "app-operational-summary" .Data}}{{end}}
+      {{with .Data.AnnouncedCaptures}}
+      <section class="announced-captures" aria-label="Profile captures to review" role="status">
+        <p><strong>Profile captures to review: {{.Count}}</strong> in the last {{.Days}} days{{if .OOMKilled}}, {{.OOMKilled}} linked to an OOM kill{{end}}.
+          Latest: <a href="{{.LatestURL}}">{{.LatestTrigger}}{{if .Latest.TriggerDetail}} · {{.Latest.TriggerDetail}}{{end}}</a>
+          at <time>{{.Latest.CreatedAt.Format "2006-01-02T15:04:05Z07:00"}}</time>{{if .Latest.OOMKilledAt}}, <strong>OOM-killed after</strong>{{end}}.
+          <a href="{{.ListURL}}">All captures</a></p>
+      </section>
+      {{end}}
       {{if .Data.AppCosts}}
       <section aria-label="App cost and usage">
         <h2>Cost and usage</h2>
@@ -297,25 +306,25 @@
         {{end}}
       </section>
       {{end}}
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/logs">View live logs →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/issues">Investigate issues →</a></p>
+      {{if $.On "logs"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/logs">View live logs →</a></p>{{end}}
+      {{if $.On "issues"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/issues">Investigate issues →</a></p>{{end}}
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/customer-operations">View customer operations →</a></p>
       {{if .Data.ProductControlURL}}<p><a href="{{.Data.ProductControlURL}}">Manage Product Control →</a></p>{{end}}
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/errors">View grouped errors →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/debug">Open production debugger →</a></p>
+      {{if $.On "issues"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/errors">View grouped errors →</a></p>{{end}}
+      {{if $.On "debug"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/debug">Open production debugger →</a></p>{{end}}
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/domains">Manage custom domains →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/instances">Inspect instances →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/edge-rules">Manage edge rules →</a></p>
+      {{if $.On "instances"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/instances">Inspect instances →</a></p>{{end}}
+      {{if $.On "edge-rules"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/edge-rules">Manage edge rules →</a></p>{{end}}
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/pre-auth">Inspect pre-auth protection →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/data-api">Open Data API →</a></p>
+      {{if $.On "data-api"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/data-api">Open Data API →</a></p>{{end}}
       {{if .Data.ApplicationAuth}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/auth">Manage application Auth users →</a></p>{{end}}
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/env">Manage environment &amp; secrets →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/realtime">Inspect realtime events →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/webhooks">Manage outbound webhooks →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/log-drains">Inspect log-drain health →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/tenant-surfaces">Manage tenant surfaces →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/mirrors">Manage traffic mirrors →</a></p>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/storage">Manage object storage →</a></p>
+      {{if $.On "env-vars"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/env">Manage environment &amp; secrets →</a></p>{{end}}
+      {{if $.On "realtime"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/realtime">Inspect realtime events →</a></p>{{end}}
+      {{if $.On "outbound-webhooks"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/webhooks">Manage outbound webhooks →</a></p>{{end}}
+      {{if $.On "log-drains"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/log-drains">Inspect log-drain health →</a></p>{{end}}
+      {{if $.On "tenant-surfaces"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/tenant-surfaces">Manage tenant surfaces →</a></p>{{end}}
+      {{if $.On "traffic-mirroring"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/mirrors">Manage traffic mirrors →</a></p>{{end}}
+      {{if $.On "object-storage"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/storage">Manage object storage →</a></p>{{end}}
 
       {{if .Data.GitHubConnection}}
       <h2>GitHub connection</h2>
@@ -580,7 +589,7 @@
       {{end}}
 
       <h2>Workflows</h2>
-      <p><a href="/dashboard/apps/{{.Data.App.Slug}}/automations">Build and manage automations →</a></p>
+      {{if $.On "automations"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/automations">Build and manage automations →</a></p>{{end}}
       {{if .Data.Workflows}}
         <p class="muted">Recent durable workflow runs. Inputs and outputs stay in the workflow API; this view is for run state and step diagnostics.</p>
         {{range .Data.Workflows}}
@@ -641,7 +650,7 @@
               <dt>Request latency p99</dt><dd>{{printf "%.1f" .Data.Metrics.LatencyP99MS}} ms</dd>
               <dt>Error rate</dt><dd>{{printf "%.1f" .Data.Metrics.ErrorRatePct}}%</dd>
               <dt>Cold-start share</dt><dd>{{printf "%.1f" .Data.Metrics.ColdStartPct}}%</dd>
-              <dt>Wake latency p95 <small style="color:#888">(fleet)</small></dt><dd>{{printf "%.1f" .Data.Metrics.WakeP95MS}} ms</dd>
+              <dt>Wake latency p95 <small style="color:#888">(fleet)</small></dt><dd>{{if .Data.Metrics.WakeP95Unavailable}}— (too few wakes){{else}}{{printf "%.1f" .Data.Metrics.WakeP95MS}} ms{{end}}</dd>
               {{if .Data.Metrics.CacheHitRateAvailable}}
                 <dt>Response-cache hit rate</dt><dd>{{printf "%.1f" .Data.Metrics.CacheHitRatePct}}%</dd>
               {{end}}
@@ -925,6 +934,49 @@
           {{end}}
         {{end}}
       </section>
+
+      {{with .Data.RouteInsights}}
+        <section id="route-insights" aria-label="Route insights">
+          <h2>Route insights</h2>
+          <p class="muted">Checked every six hours from this app's traffic: routes that keep it awake, routes safe to cache, and cache rules that serve stale or too-short responses.</p>
+          {{if eq .Flash "fixed"}}<p role="status"><strong>Fix applied.</strong> {{.FlashDetail}}</p>{{end}}
+          {{if eq .Flash "changed"}}<p role="status">The fix changed since the page loaded. Review the current fix below before applying it.</p>{{end}}
+          {{if eq .Flash "error"}}<p role="alert"><strong>The fix was not applied.</strong> {{.FlashDetail}}</p>{{end}}
+          {{if not .Available}}
+            <p role="status">Route insights are temporarily unavailable. Refresh the page to try again.</p>
+          {{else if .Active}}
+            <ul aria-label="Active route insights">
+              {{range .Active}}
+                <li>
+                  <p><span class="badge">{{.KindLabel}}</span> <code>{{.Method}} {{.Route}}</code> · detected {{.FirstDetectedAt}}</p>
+                  <p>{{.Message}}</p>
+                  {{if .FixID}}
+                    <form method="POST" action="/dashboard/apps/{{$.Data.App.Slug}}/routes/insights/{{.ID}}/fix">
+                      <input type="hidden" name="csrf_token" value="{{$.Data.RouteInsights.CSRF}}">
+                      <input type="hidden" name="fix_id" value="{{.FixID}}">
+                      <p class="muted">{{.FixSummary}}</p>
+                      <button type="submit">Apply fix</button>
+                    </form>
+                  {{end}}
+                </li>
+              {{end}}
+            </ul>
+          {{else}}
+            <p>No active insights. Nothing measured in the last day keeps this app awake or should change how its routes are cached.</p>
+          {{end}}
+          {{if .Resolved}}
+            <details>
+              <summary>Resolved in the last 7 days ({{len .Resolved}})</summary>
+              <ul aria-label="Resolved route insights">
+                {{range .Resolved}}
+                  <li><span class="badge">{{.KindLabel}}</span> <code>{{.Method}} {{.Route}}</code> · {{if .FixedAt}}fixed {{.FixedAt}}{{else}}resolved {{.ResolvedAt}}{{end}}</li>
+                {{end}}
+              </ul>
+            </details>
+          {{end}}
+          <p class="muted">To hear about new insights by email, Slack or PagerDuty, enable the "New route insights" <a href="#alert-presets">alert preset</a> and bind a notification channel.</p>
+        </section>
+      {{end}}
 
       {{if .Data.PreviewEnvironment}}
         {{with .Data.PreviewEnvironment}}

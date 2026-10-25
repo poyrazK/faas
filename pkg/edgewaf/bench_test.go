@@ -222,7 +222,9 @@ func inlineAttacks() []gateway.WAFSample {
 //
 // FAAS_WAF_INLINE_RATES (comma-separated mean req/s across all apps,
 // default 100,500,1000,2000), FAAS_WAF_INLINE_APPS (default 10) and
-// FAAS_WAF_INLINE_SECONDS per rate (default 10) tune the run.
+// FAAS_WAF_INLINE_SECONDS per rate (default 10) tune the run;
+// FAAS_WAF_INLINE_SLOTS and FAAS_WAF_INLINE_WAIT_US override the shipped
+// slot count and slot wait, to compare sizings on one node (amendment 12).
 //
 //	FAAS_WAF_INLINE_LOAD=1 go test ./pkg/edgewaf/ -run TestInlineLoad -v
 func TestInlineLoad(t *testing.T) {
@@ -248,6 +250,9 @@ func TestInlineLoad(t *testing.T) {
 	}
 	apps := max(env("FAAS_WAF_INLINE_APPS", 10), 1)
 	seconds := max(env("FAAS_WAF_INLINE_SECONDS", 10), 1)
+	shipped := New(&recordingObserver{}, nil)
+	slots := max(env("FAAS_WAF_INLINE_SLOTS", shipped.InlineSlots()), 1)
+	wait := time.Duration(env("FAAS_WAF_INLINE_WAIT_US", int(shipped.inlineWait/time.Microsecond))) * time.Microsecond
 
 	var benign []gateway.WAFSample
 	for _, br := range benignCorpus() {
@@ -255,10 +260,10 @@ func TestInlineLoad(t *testing.T) {
 			benign = append(benign, br.s)
 		}
 	}
-	t.Logf("in-path load: %d apps, %ds per rate, GOMAXPROCS %d, %d check slots, %d ms/s per app (burst %d)",
-		apps, seconds, runtime.GOMAXPROCS(0), api.EdgeWAFInlineConcurrency, api.EdgeWAFInlineMsPerAppPerSecond, api.EdgeWAFInlineMsPerAppBurst)
+	t.Logf("in-path load: %d apps, %ds per rate, GOMAXPROCS %d, %d check slots, %s slot wait, %d ms/s per app (burst %d)",
+		apps, seconds, runtime.GOMAXPROCS(0), slots, wait, api.EdgeWAFInlineMsPerAppPerSecond, api.EdgeWAFInlineMsPerAppBurst)
 	for _, rate := range rates {
-		runInlineLoad(t, rate, apps, seconds, benign, inlineAttacks())
+		runInlineLoad(t, rate, apps, seconds, slots, wait, benign, inlineAttacks())
 	}
 }
 
@@ -298,9 +303,10 @@ func cpuSeconds(t *testing.T) float64 {
 	return time.Duration(ru.Utime.Nano() + ru.Stime.Nano()).Seconds()
 }
 
-func runInlineLoad(t *testing.T, rate, apps, seconds int, benign, attacks []gateway.WAFSample) {
+func runInlineLoad(t *testing.T, rate, apps, seconds, slots int, wait time.Duration, benign, attacks []gateway.WAFSample) {
 	t.Helper()
 	i := New(&recordingObserver{}, nil)
+	i.inlineSlots, i.inlineWait = make(chan struct{}, slots), wait
 	if _, err := i.inlineWAF(); err != nil {
 		t.Fatal(err)
 	}
@@ -355,7 +361,7 @@ func runInlineLoad(t *testing.T, rate, apps, seconds int, benign, attacks []gate
 		return 1000 * checked[min(int(p*float64(len(checked))), len(checked)-1)]
 	}
 	pct := func(n, d int) float64 { return 100 * float64(n) / float64(max(d, 1)) }
-	t.Logf("rate %5d req/s: %6d requests, check p50 %.2f ms, p95 %.2f ms, p99 %.2f ms, max %.2f ms; CPU %.2f ms per check, %d GCs; skipped %.1f%%; attacks detected %d/%d (skips included); benign flagged %d; errors %d",
+	t.Logf("rate %5d req/s: %6d requests, check p50 %.2f ms, p95 %.2f ms, p99 %.2f ms, max %.2f ms; CPU %.2f ms per check, %d GCs; skipped %.2f%%; attacks detected %d/%d (skips included); benign flagged %d; errors %d",
 		rate, total, ms(0.50), ms(0.95), ms(0.99), ms(1), 1000*cpu/float64(max(len(checked), 1)), gcAfter.NumGC-gcBefore.NumGC,
 		pct(st.outcomes[gateway.WAFInlineSkipped], total), st.attacksCaught, st.attacksSent, st.benignFlagged, st.outcomes[gateway.WAFInlineError])
 	if st.outcomes[gateway.WAFInlineError] > 0 {

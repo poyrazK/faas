@@ -26,7 +26,7 @@ func (s *server) scenarioSimulationSupported(w http.ResponseWriter, req api.Regi
 		return true
 	}
 	if !s.rehearsalSimulationEnabled {
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Rehearsal simulation unavailable", "The operator must qualify and enable rehearsal action simulation before enrolling fixtures"))
+		api.WriteProblem(w, api.ErrRehearsalNotEnabled("Rehearsal action simulation"))
 		return false
 	}
 	if req.NetworkMode != state.ScenarioNetworkContained || req.WebhookMode != state.ScenarioWebhookCaptureMode || req.ActionEvidenceVersion != api.ScenarioSimulationSnapshotVersion {

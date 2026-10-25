@@ -21,6 +21,9 @@ const (
 
 	StatementSourceAppConsumer    = "app_consumer"
 	StatementSourcePlatformTenant = "platform_tenant"
+	// StatementSourceProductControl is a finalized Product Control
+	// statement document (ADR-20261018212918).
+	StatementSourceProductControl = "product_control"
 
 	StatementInvoiceExportCreating  = "creating"
 	StatementInvoiceExportCompleted = "completed"
@@ -123,6 +126,29 @@ type StatementInvoiceExport struct {
 	StatusSyncedAt       *time.Time
 	NextStatusSyncAt     *time.Time
 	OverdueNotifiedAt    *time.Time
+	// Attempt counts retargets after a rejection; RejectedAt is set while
+	// the provider's refusal before creating anything is the export's last
+	// outcome (ADR-20261019180000).
+	Attempt    int
+	RejectedAt *time.Time
+	// HandoffReserved is set once the export reserved its statement's
+	// handoff, before calling the provider: an overlapping statement then
+	// cannot be handed off or exported (ADR-20261020211500).
+	HandoffReserved bool
+
+	// claimToken and claimedUntil hold the MemStore's claim.
+	claimToken   string
+	claimedUntil time.Time
+}
+
+// ErrStatementInvoiceExportInProgress reports that another attempt holds
+// the export's claim (ADR-20261019180000).
+var ErrStatementInvoiceExportInProgress = errors.New("state: statement invoice export in progress")
+
+// Retargetable reports whether the next attempt may change the export's
+// provider or customer: the provider refused it before any invoice existed.
+func (e StatementInvoiceExport) Retargetable() bool {
+	return e.Status != StatementInvoiceExportCompleted && e.ProviderInvoiceID == "" && e.RejectedAt != nil
 }
 
 // Overdue reports whether an open invoice is past due with an amount left.
@@ -138,8 +164,26 @@ type StatementInvoiceExportStore interface {
 	DeleteBillingConnection(ctx context.Context, accountID, provider string) error
 	// BeginStatementInvoiceExport records an export or returns the existing
 	// one for the statement; existing reports which. An existing export for
-	// a different customer or provider is ErrConflict.
+	// a different customer or provider is ErrConflict, unless it is
+	// Retargetable and unclaimed: then it takes e's target and settings as
+	// its next attempt (ADR-20261019180000).
 	BeginStatementInvoiceExport(context.Context, StatementInvoiceExport) (export StatementInvoiceExport, existing bool, err error)
+	// ClaimStatementInvoiceExport holds the export for one attempt, named by
+	// token, until until, and returns it as it stands;
+	// ErrStatementInvoiceExportInProgress while another attempt's claim
+	// holds (ADR-20261019180000).
+	ClaimStatementInvoiceExport(ctx context.Context, accountID, exportID, token string, until time.Time) (StatementInvoiceExport, error)
+	// ReleaseStatementInvoiceExport ends the attempt's claim.
+	ReleaseStatementInvoiceExport(ctx context.Context, accountID, exportID, token string) error
+	// RejectStatementInvoiceExport records that the provider refused the
+	// attempt before creating anything, ends its claim and releases its
+	// handoff reservation.
+	RejectStatementInvoiceExport(ctx context.Context, accountID, exportID, token string) error
+	// ReserveStatementHandoff reserves the export's statement handoff under
+	// ADR-238's overlap rules, as creating the handoff would; ErrConflict
+	// when another statement's handoff or reservation overlaps it
+	// (ADR-20261020211500).
+	ReserveStatementHandoff(ctx context.Context, accountID, exportID string) error
 	// SetStatementInvoiceExportInvoice records the provider invoice once;
 	// recording a different invoice is ErrConflict.
 	SetStatementInvoiceExportInvoice(ctx context.Context, accountID, exportID, invoiceID string) error
@@ -158,7 +202,7 @@ func validateStatementInvoiceExport(e StatementInvoiceExport) error {
 			return fmt.Errorf("%w: %s must be a UUID", ErrInvalidArgument, name)
 		}
 	}
-	if e.SourceKind != StatementSourceAppConsumer && e.SourceKind != StatementSourcePlatformTenant {
+	if e.SourceKind != StatementSourceAppConsumer && e.SourceKind != StatementSourcePlatformTenant && e.SourceKind != StatementSourceProductControl {
 		return fmt.Errorf("%w: unknown statement source %q", ErrInvalidArgument, e.SourceKind)
 	}
 	if !ValidBillingProvider(e.Provider) || e.Customer == "" || !isUpperASCIICurrency(e.Currency) ||
@@ -244,8 +288,16 @@ func (m *MemStore) BeginStatementInvoiceExport(_ context.Context, e StatementInv
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	for _, existing := range m.statementInvoiceExports {
+	now := time.Now()
+	for id, existing := range m.statementInvoiceExports {
 		if existing.SourceKind == e.SourceKind && existing.StatementID == e.StatementID {
+			if existing.AccountID == e.AccountID && existing.Retargetable() && !existing.claimedUntil.After(now) {
+				existing.Provider, existing.Customer, existing.Currency, existing.AmountMinor = e.Provider, e.Customer, e.Currency, e.AmountMinor
+				existing.Livemode, existing.Collection, existing.DaysUntilDue, existing.AutomaticTax = e.Livemode, e.Collection, e.DaysUntilDue, e.AutomaticTax
+				existing.Attempt, existing.RejectedAt = existing.Attempt+1, nil
+				m.statementInvoiceExports[id] = existing
+				return existing, true, nil
+			}
 			if existing.AccountID != e.AccountID || existing.Customer != e.Customer || existing.Provider != e.Provider {
 				return StatementInvoiceExport{}, true, ErrConflict
 			}
@@ -290,9 +342,88 @@ func (m *MemStore) CompleteStatementInvoiceExport(_ context.Context, accountID, 
 		next := now.Add(api.StatementInvoiceFirstSyncDelay)
 		e.Status, e.CompletedAt = StatementInvoiceExportCompleted, &now
 		e.PaymentStatus, e.NextStatusSyncAt = InvoicePaymentDraft, &next
+		e.claimToken, e.claimedUntil = "", time.Time{}
 		m.statementInvoiceExports[exportID] = e
 	}
 	return e, nil
+}
+
+func (m *MemStore) ClaimStatementInvoiceExport(_ context.Context, accountID, exportID, token string, until time.Time) (StatementInvoiceExport, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.statementInvoiceExports[exportID]
+	if !ok || e.AccountID != accountID {
+		return StatementInvoiceExport{}, ErrNotFound
+	}
+	if e.claimToken != token && e.claimedUntil.After(time.Now()) {
+		return StatementInvoiceExport{}, ErrStatementInvoiceExportInProgress
+	}
+	e.claimToken, e.claimedUntil = token, until
+	m.statementInvoiceExports[exportID] = e
+	return e, nil
+}
+
+func (m *MemStore) ReleaseStatementInvoiceExport(_ context.Context, accountID, exportID, token string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.statementInvoiceExports[exportID]
+	if !ok || e.AccountID != accountID {
+		return ErrNotFound
+	}
+	if e.claimToken == token {
+		e.claimToken, e.claimedUntil = "", time.Time{}
+		m.statementInvoiceExports[exportID] = e
+	}
+	return nil
+}
+
+func (m *MemStore) RejectStatementInvoiceExport(_ context.Context, accountID, exportID, token string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.statementInvoiceExports[exportID]
+	if !ok || e.AccountID != accountID {
+		return ErrNotFound
+	}
+	if e.claimToken != token || e.ProviderInvoiceID != "" {
+		return ErrConflict
+	}
+	now := time.Now().UTC()
+	e.RejectedAt, e.claimToken, e.claimedUntil, e.HandoffReserved = &now, "", time.Time{}, false
+	m.statementInvoiceExports[exportID] = e
+	return nil
+}
+
+func (m *MemStore) ReserveStatementHandoff(_ context.Context, accountID, exportID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	e, ok := m.statementInvoiceExports[exportID]
+	if !ok || e.AccountID != accountID {
+		return ErrNotFound
+	}
+	if e.HandoffReserved {
+		return nil
+	}
+	var blocked bool
+	switch e.SourceKind {
+	case StatementSourceAppConsumer:
+		statement, ok := m.apiConsumerUsageStatements[e.StatementID]
+		if !ok || statement.AccountID != accountID {
+			return ErrNotFound
+		}
+		blocked = m.apiConsumerHandoffOverlapLocked(statement)
+	case StatementSourcePlatformTenant:
+		statement, ok := m.platformTenantStatements[e.StatementID]
+		if !ok || statement.AccountID != accountID {
+			return ErrNotFound
+		}
+		blocked = m.tenantHandoffOverlapLocked(statement)
+	}
+	if blocked {
+		return ErrConflict
+	}
+	e.HandoffReserved = true
+	m.statementInvoiceExports[exportID] = e
+	return nil
 }
 
 func (m *MemStore) GetStatementInvoiceExport(_ context.Context, accountID, sourceKind, statementID string) (StatementInvoiceExport, error) {
@@ -360,14 +491,16 @@ func (s *PgStore) DeleteBillingConnection(ctx context.Context, accountID, provid
 const statementInvoiceExportCols = `id, account_id, source_kind, statement_id, provider, customer, status,
 	coalesce(provider_invoice_id, ''), currency, amount_minor, livemode, created_at, completed_at,
 	coalesce(payment_status, ''), amount_paid_minor, amount_remaining_minor, due_at, paid_at,
-	coalesce(hosted_invoice_url, ''), status_synced_at, next_status_sync_at, overdue_notified_at, collection, days_until_due, automatic_tax`
+	coalesce(hosted_invoice_url, ''), status_synced_at, next_status_sync_at, overdue_notified_at, collection, days_until_due, automatic_tax,
+	attempt, rejected_at, handoff_reserved`
 
 func scanStatementInvoiceExport(row pgx.Row) (StatementInvoiceExport, error) {
 	var e StatementInvoiceExport
 	err := row.Scan(&e.ID, &e.AccountID, &e.SourceKind, &e.StatementID, &e.Provider, &e.Customer, &e.Status,
 		&e.ProviderInvoiceID, &e.Currency, &e.AmountMinor, &e.Livemode, &e.CreatedAt, &e.CompletedAt,
 		&e.PaymentStatus, &e.AmountPaidMinor, &e.AmountRemainingMinor, &e.DueAt, &e.PaidAt,
-		&e.HostedInvoiceURL, &e.StatusSyncedAt, &e.NextStatusSyncAt, &e.OverdueNotifiedAt, &e.Collection, &e.DaysUntilDue, &e.AutomaticTax)
+		&e.HostedInvoiceURL, &e.StatusSyncedAt, &e.NextStatusSyncAt, &e.OverdueNotifiedAt, &e.Collection, &e.DaysUntilDue, &e.AutomaticTax,
+		&e.Attempt, &e.RejectedAt, &e.HandoffReserved)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return StatementInvoiceExport{}, ErrNotFound
 	}
@@ -399,6 +532,23 @@ func (s *PgStore) BeginStatementInvoiceExport(ctx context.Context, e StatementIn
 	}
 	if !errors.Is(err, ErrNotFound) {
 		return StatementInvoiceExport{}, false, fmt.Errorf("begin statement invoice export: %w", err)
+	}
+	// A rejected, unclaimed export takes the new target as its next attempt
+	// (ADR-20261019180000).
+	retargeted, err := scanStatementInvoiceExport(s.pool.QueryRow(ctx, `update usage_statement_invoice_exports
+		   set provider = $4, customer = $5, currency = $6, amount_minor = $7, livemode = $8, collection = $9,
+		       days_until_due = $10, automatic_tax = $11, attempt = attempt + 1, rejected_at = null
+		 where source_kind = $1 and statement_id = $2::uuid and account_id = $3::uuid
+		   and status <> 'completed' and provider_invoice_id is null and rejected_at is not null
+		   and (claimed_until is null or claimed_until <= now())
+		returning `+statementInvoiceExportCols,
+		e.SourceKind, e.StatementID, e.AccountID, e.Provider, e.Customer, e.Currency, e.AmountMinor, e.Livemode, e.Collection,
+		e.DaysUntilDue, e.AutomaticTax))
+	if err == nil {
+		return retargeted, true, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return StatementInvoiceExport{}, false, fmt.Errorf("retarget statement invoice export: %w", err)
 	}
 	existing, err := scanStatementInvoiceExport(s.pool.QueryRow(ctx, `select `+statementInvoiceExportCols+`
 		from usage_statement_invoice_exports where source_kind = $1 and statement_id = $2::uuid`, e.SourceKind, e.StatementID))
@@ -432,7 +582,7 @@ func (s *PgStore) SetStatementInvoiceExportInvoice(ctx context.Context, accountI
 func (s *PgStore) CompleteStatementInvoiceExport(ctx context.Context, accountID, exportID string) (StatementInvoiceExport, error) {
 	e, err := scanStatementInvoiceExport(s.pool.QueryRow(ctx, `update usage_statement_invoice_exports
 		   set status = 'completed', completed_at = coalesce(completed_at, now()),
-		       payment_status = coalesce(payment_status, 'draft'),
+		       payment_status = coalesce(payment_status, 'draft'), claim_token = null, claimed_until = null,
 		       next_status_sync_at = case when payment_status is null then $3::timestamptz else next_status_sync_at end
 		 where id = $1::uuid and account_id = $2::uuid and provider_invoice_id is not null
 		returning `+statementInvoiceExportCols, exportID, accountID, time.Now().Add(api.StatementInvoiceFirstSyncDelay)))
@@ -443,6 +593,92 @@ func (s *PgStore) CompleteStatementInvoiceExport(ctx context.Context, accountID,
 		return StatementInvoiceExport{}, fmt.Errorf("complete statement invoice export: %w", err)
 	}
 	return e, nil
+}
+
+func (s *PgStore) ClaimStatementInvoiceExport(ctx context.Context, accountID, exportID, token string, until time.Time) (StatementInvoiceExport, error) {
+	e, err := scanStatementInvoiceExport(s.pool.QueryRow(ctx, `update usage_statement_invoice_exports
+		   set claim_token = $3::uuid, claimed_until = $4
+		 where id = $1::uuid and account_id = $2::uuid
+		   and (claimed_until is null or claimed_until <= now() or claim_token = $3::uuid)
+		returning `+statementInvoiceExportCols, exportID, accountID, token, until.UTC()))
+	if err == nil {
+		return e, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return StatementInvoiceExport{}, fmt.Errorf("claim statement invoice export: %w", err)
+	}
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `select exists (select 1 from usage_statement_invoice_exports where id = $1::uuid and account_id = $2::uuid)`,
+		exportID, accountID).Scan(&exists); err != nil {
+		return StatementInvoiceExport{}, fmt.Errorf("read statement invoice export claim: %w", err)
+	}
+	if exists {
+		return StatementInvoiceExport{}, ErrStatementInvoiceExportInProgress
+	}
+	return StatementInvoiceExport{}, ErrNotFound
+}
+
+func (s *PgStore) ReleaseStatementInvoiceExport(ctx context.Context, accountID, exportID, token string) error {
+	if _, err := s.pool.Exec(ctx, `update usage_statement_invoice_exports set claim_token = null, claimed_until = null
+		where id = $1::uuid and account_id = $2::uuid and claim_token = $3::uuid`, exportID, accountID, token); err != nil {
+		return fmt.Errorf("release statement invoice export: %w", err)
+	}
+	return nil
+}
+
+func (s *PgStore) RejectStatementInvoiceExport(ctx context.Context, accountID, exportID, token string) error {
+	tag, err := s.pool.Exec(ctx, `update usage_statement_invoice_exports
+		   set rejected_at = now(), claim_token = null, claimed_until = null, handoff_reserved = false
+		 where id = $1::uuid and account_id = $2::uuid and claim_token = $3::uuid and provider_invoice_id is null`,
+		exportID, accountID, token)
+	if err != nil {
+		return fmt.Errorf("reject statement invoice export: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PgStore) ReserveStatementHandoff(ctx context.Context, accountID, exportID string) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin handoff reservation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	// Handoff creation takes the same account lock, so a reservation and a
+	// handoff of overlapping statements cannot both pass the overlap check.
+	var locked string
+	if err := tx.QueryRow(ctx, `select id from accounts where id = $1::uuid for update`, accountID).Scan(&locked); err != nil {
+		return fmt.Errorf("lock account for handoff reservation: %w", err)
+	}
+	var kind, statementID string
+	var reserved bool
+	err = tx.QueryRow(ctx, `select source_kind, statement_id::text, handoff_reserved from usage_statement_invoice_exports
+		where id = $1::uuid and account_id = $2::uuid for update`, exportID, accountID).Scan(&kind, &statementID, &reserved)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("read export for handoff reservation: %w", err)
+	}
+	if reserved {
+		return nil
+	}
+	blocked, err := statementHandoffBlocked(ctx, tx, accountID, kind, statementID)
+	if err != nil {
+		return err
+	}
+	if blocked {
+		return ErrConflict
+	}
+	if _, err := tx.Exec(ctx, `update usage_statement_invoice_exports set handoff_reserved = true where id = $1::uuid`, exportID); err != nil {
+		return fmt.Errorf("reserve handoff: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit handoff reservation: %w", err)
+	}
+	return nil
 }
 
 func (s *PgStore) GetStatementInvoiceExport(ctx context.Context, accountID, sourceKind, statementID string) (StatementInvoiceExport, error) {

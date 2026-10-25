@@ -2,10 +2,9 @@ package state
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
-
-	"github.com/jackc/pgx/v5"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -14,13 +13,27 @@ var _ OrgActivityAppLifecycleMutationStore = (*PgStore)(nil)
 
 // CreateAppIfUnderQuotaWithActivity commits the app and its creation event in
 // the same transaction. Quota and slug-conflict behavior matches the ordinary
-// create path.
+// create path, including its retry of a stale quota snapshot.
 func (s *PgStore) CreateAppIfUnderQuotaWithActivity(ctx context.Context, app App, limits api.Limits, entry OrgActivity) (App, int64, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	r, err := retryTrafficSerialization(ctx, func() (appActivityResult, error) {
+		created, outboxID, err := s.createAppIfUnderQuotaWithActivityOnce(ctx, app, limits, entry)
+		return appActivityResult{app: created, outboxID: outboxID}, err
+	})
+	return r.app, r.outboxID, err
+}
+
+// appActivityResult carries an app mutation and its outbox row through a retry.
+type appActivityResult struct {
+	app      App
+	outboxID int64
+}
+
+func (s *PgStore) createAppIfUnderQuotaWithActivityOnce(ctx context.Context, app App, limits api.Limits, entry OrgActivity) (App, int64, error) {
+	tx, err := s.beginTrafficPolicyMutation(ctx, uuidToPgtype(app.AccountID))
 	if err != nil {
 		return App{}, 0, fmt.Errorf("state: begin app activity create: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	created, err := createAppIfUnderQuotaTx(ctx, tx, app, limits)
 	if err != nil {
 		return App{}, 0, err
@@ -46,11 +59,11 @@ func (s *PgStore) ScheduleAppDeletionWithActivity(ctx context.Context, id string
 	if graceUntil.IsZero() {
 		graceUntil = time.Now().UTC().Add(AppDeleteGraceDuration())
 	}
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
 		return App{}, 0, fmt.Errorf("state: begin app activity delete: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var priorStatus string
 	if err := tx.QueryRow(ctx, `select status from apps where id = $1 for update`, id).Scan(&priorStatus); err != nil {
@@ -83,6 +96,9 @@ func (s *PgStore) ScheduleAppDeletionWithActivity(ctx context.Context, id string
 	if err := scanAppInto(&app, row); err != nil {
 		return App{}, 0, mapErr(err)
 	}
+	if err := cancelAppInvocationsTx(ctx, tx, id); err != nil {
+		return App{}, 0, err
+	}
 	var outboxID int64
 	if priorStatus != string(AppDeleted) {
 		entry, err = bindOrgActivityToApp(entry, app)
@@ -104,11 +120,22 @@ func (s *PgStore) ScheduleAppDeletionWithActivity(ctx context.Context, id string
 // handoff together. A closed or claimed grace window retains RestoreApp's
 // existing conflict behavior.
 func (s *PgStore) RestoreAppWithActivity(ctx context.Context, id string, limits api.Limits, entry OrgActivity) (App, int64, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	r, err := retryTrafficSerialization(ctx, func() (appActivityResult, error) {
+		app, outboxID, err := s.restoreAppWithActivityOnce(ctx, id, limits, entry)
+		return appActivityResult{app: app, outboxID: outboxID}, err
+	})
+	return r.app, r.outboxID, err
+}
+
+func (s *PgStore) restoreAppWithActivityOnce(ctx context.Context, id string, limits api.Limits, entry OrgActivity) (App, int64, error) {
+	tx, err := s.beginAppTrafficMutation(ctx, id)
 	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			return App{}, 0, ErrConflict
+		}
 		return App{}, 0, fmt.Errorf("state: begin app activity restore: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	app, err := restoreAppTx(ctx, tx, id, limits)
 	if err != nil {
 		return App{}, 0, err

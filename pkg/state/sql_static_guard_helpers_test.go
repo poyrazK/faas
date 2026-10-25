@@ -7,7 +7,7 @@
 // invoice/usage surfaces) reuse the same primitives instead of
 // duplicating them.
 
-package state
+package state_test
 
 import "strings"
 

@@ -178,13 +178,13 @@ jobs:
             exit 1
           }
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # Unit/controller sources must come from the same commit as the
           # release assets. No daemon source is built in this workflow.
           ref: ${{ inputs.release_tag }}
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: go.mod
           # The fleet runner is long-lived and keeps its local Go build cache
@@ -359,13 +359,28 @@ jobs:
             test -s /etc/faas/storage.env
             grep -Eq '^FAAS_STORAGE_BACKEND=(oci|gcs)$' /etc/faas/storage.env
             getent group faas >/dev/null
-            install -o root -g faas -m 0440 "$remote_stage" /etc/faas/apid-storage.env
+            # Unchanged bytes keep their modification time, so deployctl can
+            # still hand apid off instead of restarting it (see the
+            # credentials step's install_if_changed).
+            if [[ -e /etc/faas/apid-storage.env ]] && cmp -s "$remote_stage" /etc/faas/apid-storage.env; then
+              chown root:faas /etc/faas/apid-storage.env
+              chmod 0440 /etc/faas/apid-storage.env
+            else
+              install -o root -g faas -m 0440 "$remote_stage" /etc/faas/apid-storage.env
+            fi
             install -d -o root -g root -m 0755 /etc/systemd/system/faas-apid.service.d
-            cat > /etc/systemd/system/faas-apid.service.d/99-storage-lifecycle.conf <<'CREDENTIALS'
+            dropin=/etc/systemd/system/faas-apid.service.d/99-storage-lifecycle.conf
+            dropin_stage="$(mktemp)"
+            cat > "$dropin_stage" <<'CREDENTIALS'
           [Service]
           EnvironmentFile=/etc/faas/apid-storage.env
           CREDENTIALS
-            chmod 0644 /etc/systemd/system/faas-apid.service.d/99-storage-lifecycle.conf
+            if [[ -e "$dropin" ]] && cmp -s "$dropin_stage" "$dropin"; then
+              chmod 0644 "$dropin"
+            else
+              install -o root -g root -m 0644 "$dropin_stage" "$dropin"
+            fi
+            rm -f -- "$dropin_stage"
             rm -f -- \
               /etc/faas/oci-e2e.env \
               /etc/systemd/system/faas-apid.service.d/99-codex-oci-source.conf \
@@ -409,6 +424,7 @@ jobs:
           install -m 0644 deploy/ansible/roles/prometheus/files/faas.rules.yml "${BUNDLE_ROOT}/prometheus/faas.rules.yml"
           install -m 0644 deploy/ansible/roles/prometheus/files/bridge.rules.yml "${BUNDLE_ROOT}/prometheus/bridge.rules.yml"
           install -m 0644 deploy/ansible/roles/prometheus/files/pg_backup.rules.yml "${BUNDLE_ROOT}/prometheus/pg_backup.rules.yml"
+          install -m 0644 deploy/ansible/roles/prometheus/files/data_repair.rules.yml "${BUNDLE_ROOT}/prometheus/data_repair.rules.yml"
           install -m 0644 pkg/promqlrules/data_placement.yaml "${BUNDLE_ROOT}/prometheus/data_placement.yaml"
           # The daemon and guest-runner bytes come only from the verified
           # release.tar.gz. The two controller-local tools are compiled on
@@ -658,6 +674,24 @@ jobs:
           grep -qE '^AGE-SECRET-KEY-1[0-9A-Z]+$' "$stage/fleet.age"
           grep -qE '^age1[0-9a-z]+$' "$stage/fleet.age.pub"
           grep -qx -- '-----BEGIN PUBLIC KEY-----' "$stage/sign-pub.pem"
+          # Rewrite host files only when their content changes. deployctl
+          # hands a daemon off (zero-downtime reload) only when no unit input
+          # (unit file, drop-ins, environment files, credential sources) has a
+          # modification time newer than the running process; rewriting
+          # identical bytes on every deploy made apid restart instead
+          # (rc.281: one API probe timed out and the rollout gate failed).
+          install_if_changed() { # MODE SRC DEST
+            if [[ -e "$3" ]] && cmp -s "$2" "$3"; then
+              chown root:root "$3"; chmod "$1" "$3"; return 0
+            fi
+            install -o root -g root -m "$1" "$2" "$3"
+          }
+          write_if_changed() { # MODE DEST < content
+            local tmp; tmp="$(mktemp)"
+            cat > "$tmp"
+            install_if_changed "$1" "$tmp" "$2"
+            rm -f "$tmp"
+          }
           install -d -o root -g root -m 0700 /etc/faas/secrets
           for file in fleet.age fleet.age.pub; do
             if [[ -e "/etc/faas/secrets/$file" ]] && ! cmp -s "$stage/$file" "/etc/faas/secrets/$file"; then
@@ -665,8 +699,8 @@ jobs:
               exit 1
             fi
           done
-          install -o root -g root -m 0400 "$stage/fleet.age" /etc/faas/secrets/fleet.age
-          install -o root -g root -m 0444 "$stage/fleet.age.pub" /etc/faas/secrets/fleet.age.pub
+          install_if_changed 0400 "$stage/fleet.age" /etc/faas/secrets/fleet.age
+          install_if_changed 0444 "$stage/fleet.age.pub" /etc/faas/secrets/fleet.age.pub
 
           # apid and schedd verify image signatures with the fleet's public
           # signing key (LoadCredential=cd_sign_pub below). Compute joins
@@ -676,20 +710,18 @@ jobs:
             echo "existing sign-pub.pem differs from COMPUTE_VERIFY_KEY; use the signing-key rotation procedure" >&2
             exit 1
           fi
-          install -o root -g root -m 0444 "$stage/sign-pub.pem" /etc/faas/secrets/sign-pub.pem
+          install_if_changed 0444 "$stage/sign-pub.pem" /etc/faas/secrets/sign-pub.pem
 
           # Keep both the incoming release and an older rollback release able
           # to read the public recipients while /etc/faas/secrets stays 0700.
           # This drop-in is host state, so deployctl preserves it across the
           # release unit install and any rollback.
           install -d -o root -g root -m 0755 /etc/systemd/system/faas-apid.service.d
-          cat > /etc/faas/apid-age-recipients.env <<'RECIPIENTS'
+          write_if_changed 0644 /etc/faas/apid-age-recipients.env <<'RECIPIENTS'
           FAAS_FLEET_AGE_RECIPIENT_PATH=/run/credentials/faas-apid.service/cd_fleet_age_recipient
           FAAS_HOST_AGE_RECIPIENT_PATH=/run/credentials/faas-apid.service/cd_host_age_recipient
           RECIPIENTS
-          chown root:root /etc/faas/apid-age-recipients.env
-          chmod 0644 /etc/faas/apid-age-recipients.env
-          cat > /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf <<'CREDENTIALS'
+          write_if_changed 0644 /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf <<'CREDENTIALS'
           [Service]
           LoadCredential=cd_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub
           LoadCredential=cd_host_age_recipient:/etc/faas/secrets/host.age.pub
@@ -697,25 +729,22 @@ jobs:
           Environment=FAAS_SIGN_PUB=%d/cd_sign_pub
           EnvironmentFile=/etc/faas/apid-age-recipients.env
           CREDENTIALS
-          chmod 0644 /etc/systemd/system/faas-apid.service.d/98-age-recipient-credentials.conf
 
           install -d -o root -g root -m 0755 /etc/systemd/system/faas-schedd.service.d
-          cat > /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf <<'CREDENTIALS'
+          write_if_changed 0644 /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf <<'CREDENTIALS'
           [Service]
           LoadCredential=cd_sign_pub:/etc/faas/secrets/sign-pub.pem
           Environment=FAAS_SIGN_PUB=%d/cd_sign_pub
           CREDENTIALS
-          chmod 0644 /etc/systemd/system/faas-schedd.service.d/98-signing-public-key-credential.conf
 
           install -d -o root -g root -m 0755 /etc/systemd/system/faas-githubd.service.d
-          cat > /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf <<'CREDENTIALS'
+          write_if_changed 0644 /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf <<'CREDENTIALS'
           [Service]
           LoadCredential=cd_fleet_age_recipient:/etc/faas/secrets/fleet.age.pub
           LoadCredential=cd_github_app_key:/etc/faas/secrets/githubd/app.pem
           Environment=FAAS_HOST_AGE_PUB=%d/cd_fleet_age_recipient
           Environment=FAAS_GITHUB_APP_KEY_PATH=%d/cd_github_app_key
           CREDENTIALS
-          chmod 0644 /etc/systemd/system/faas-githubd.service.d/98-fleet-recipient-credential.conf
           REMOTE
 
       # ADR-580: converge the control-plane bootstrap roles before release
@@ -730,6 +759,16 @@ jobs:
         if: ${{ !inputs.hosted_runner }}
         env:
           CP_ANSIBLE_VARS_B64: ${{ secrets.CP_ANSIBLE_VARS_B64 }}
+          SEAL_DOMAIN_OUTBOUND_AGE_KEY: ${{ secrets.SEAL_DOMAIN_OUTBOUND_AGE_KEY }}
+          SEAL_DOMAIN_OUTBOUND_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_OUTBOUND_AGE_RECIPIENT }}
+          SEAL_DOMAIN_SOURCE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_SOURCE_AGE_KEY }}
+          SEAL_DOMAIN_SOURCE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_SOURCE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_RUNTIME_AGE_KEY: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_KEY }}
+          SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT }}
+          SEAL_DOMAIN_BUILD_AGE_KEY: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_KEY }}
+          SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
+          SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
+          SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
@@ -750,6 +789,9 @@ jobs:
           install -d -m 0700 "$work"
           trap 'rm -rf -- "$work"' EXIT
           printf '%s' "$CP_ANSIBLE_VARS_B64" | base64 --decode > "$work/vars.yml"
+          # ADR 20261022111812: the seal_domains role stages the domain keys
+          # held as SEAL_DOMAIN_* secrets; the write modes stay in the vars.
+          scripts/ci/seal_domain_vars.sh control-plane "$work/seal-domains" "$work/vars.yml"
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"
           chmod 0600 "$work/vars.yml" "$work/ssh-key" "$work/known_hosts"
@@ -971,7 +1013,7 @@ jobs:
 
       - name: Upload control-plane rollout probe evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: control-plane-rollout-probes-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
@@ -1030,13 +1072,16 @@ jobs:
           release_id="$1"
           source_dir="/opt/faas/releases/${release_id}/prometheus"
           config_dir=/etc/prometheus
-          files=(prometheus.yml faas.rules.yml bridge.rules.yml pg_backup.rules.yml data_placement.yaml)
+          # Every rule file prometheus.yml.j2 lists; promtool check config
+          # fails on any it cannot find.
+          files=(prometheus.yml faas.rules.yml bridge.rules.yml pg_backup.rules.yml data_repair.rules.yml data_placement.yaml)
 
           test -d "$source_dir"
           promtool check rules \
             "$source_dir/faas.rules.yml" \
             "$source_dir/bridge.rules.yml" \
             "$source_dir/pg_backup.rules.yml" \
+            "$source_dir/data_repair.rules.yml" \
             "$source_dir/data_placement.yaml"
 
           validation_dir="$(mktemp -d)"
@@ -1289,7 +1334,7 @@ jobs:
 
       # The verifier comes from the workflow's own ref; the release commit's
       # checkout below is only trusted once its signature verified.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: workflow-src
           sparse-checkout: scripts/ci/verify_unit_release.sh
@@ -1310,13 +1355,19 @@ jobs:
             echo "The unit release changed no control-plane host role." >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         if: steps.verify.outputs.carries == 'true'
         with:
           # The roles converge from the unit release's commit; the planner's
-          # ancestry and N±1 checks need history and tags.
+          # ancestry and N±1 checks need main's history and the release tags,
+          # not every branch (scripts/ci/fetch_release_history.sh).
           ref: ${{ steps.verify.outputs.git_sha }}
-          fetch-depth: 0
+          filter: blob:none
+
+      - name: Fetch main's history, release tags and the base release's roles
+        if: steps.verify.outputs.carries == 'true'
+        # plan_host_config.py hashes deploy/ at the base release.
+        run: scripts/ci/fetch_release_history.sh --prefetch-deploy
 
       - name: Install pinned Ansible toolchain
         if: steps.verify.outputs.carries == 'true'
@@ -1400,6 +1451,16 @@ jobs:
         if: steps.plan.outputs.action == 'converge'
         env:
           CP_ANSIBLE_VARS_B64: ${{ secrets.CP_ANSIBLE_VARS_B64 }}
+          SEAL_DOMAIN_OUTBOUND_AGE_KEY: ${{ secrets.SEAL_DOMAIN_OUTBOUND_AGE_KEY }}
+          SEAL_DOMAIN_OUTBOUND_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_OUTBOUND_AGE_RECIPIENT }}
+          SEAL_DOMAIN_SOURCE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_SOURCE_AGE_KEY }}
+          SEAL_DOMAIN_SOURCE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_SOURCE_AGE_RECIPIENT }}
+          SEAL_DOMAIN_RUNTIME_AGE_KEY: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_KEY }}
+          SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT }}
+          SEAL_DOMAIN_BUILD_AGE_KEY: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_KEY }}
+          SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
+          SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
+          SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
           COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
           COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
           DEPLOY_ENVIRONMENT: ${{ inputs.deploy_environment }}
@@ -1422,6 +1483,9 @@ jobs:
           done
           work="$HOST_CONFIG_WORK"
           printf '%s' "$CP_ANSIBLE_VARS_B64" | base64 --decode > "$work/vars.yml"
+          # ADR 20261022111812: the seal_domains role stages the domain keys
+          # held as SEAL_DOMAIN_* secrets; the write modes stay in the vars.
+          scripts/ci/seal_domain_vars.sh control-plane "$work/seal-domains" "$work/vars.yml"
           printf '%s\n' "$COMPUTE_SSH_KEY" > "$work/ssh-key"
           printf '%s\n' "$COMPUTE_KNOWN_HOSTS" > "$work/known_hosts"
           chmod 0600 "$work/vars.yml" "$work/ssh-key" "$work/known_hosts"
@@ -1513,7 +1577,7 @@ jobs:
 
       - name: Upload host-config rollout probe evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: control-plane-host-config-probes-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv
@@ -1612,7 +1676,7 @@ jobs:
 
       # The verifier comes from the workflow's own ref; the release commit's
       # checkout below is only trusted once its signature verified.
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: workflow-src
           sparse-checkout: scripts/ci/verify_unit_release.sh
@@ -1627,12 +1691,16 @@ jobs:
           echo "UNITS_DIR=$RUNNER_TEMP/gregale-units/unpacked" >> "$GITHUB_ENV"
           echo "UNITS_SHA=$git_sha" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           # The planner and deployctl come from the unit release's commit;
-          # the planner's ancestry and N±1 checks need history and tags.
+          # the planner's ancestry and N±1 checks need main's history and the
+          # release tags, not every branch (scripts/ci/fetch_release_history.sh).
           ref: ${{ steps.verify.outputs.git_sha }}
-          fetch-depth: 0
+          filter: blob:none
+
+      - name: Fetch main's history and release tags
+        run: scripts/ci/fetch_release_history.sh
 
       - name: Set up SSH
         env:
@@ -1693,6 +1761,8 @@ jobs:
             echo
             echo "Plan: **${action}** over \`$(jq -r .current "$RUNNER_TEMP/host-state.json")\` (previous release \`${previous_tag}\`)."
             echo "Restart: $(jq -r '.only | join(", ") | if . == "" then "none" else . end' "$plan")."
+            kept="$(jq -r '.kept // [] | join(", ")' "$plan")"
+            [[ -z "$kept" ]] || echo "Already running this release's code, not restarted: ${kept}."
             migrations="$(jq -r '.migrations // [] | length' "$plan")"
             [[ "$migrations" == 0 ]] || echo "Migrations applied first: ${migrations} ($(jq -r '.data.version' "$UNITS_DIR/units-manifest.json")), lane-eligible expand only."
             pending="$(jq -r '[.pending[][]] | join(", ")' "$UNITS_DIR/units-manifest.json")"
@@ -1706,6 +1776,16 @@ jobs:
           # deployctl rides in the signed unit release (tools/deployctl).
           remote="$(scripts/ci/unit_deploy.sh stage "$UNIT_PLAN" "$UNITS_DIR" "$UNITS_DIR/tools/deployctl")"
           echo "REMOTE_STAGE=$remote" >> "$GITHUB_ENV"
+
+      # The post-deploy watch (docs/adr/20261020214632-automatic-unit-deploy-
+      # safety-rails.md): record this release as unwatched over the host's
+      # known-good one and make this run the watch's owner before anything is
+      # activated. Exit 3: the host already holds the most unwatched releases
+      # allowed (release-units' preflight waits for that).
+      - name: Take over the post-deploy watch
+        id: watch_open
+        if: steps.plan.outputs.action == 'deploy' || steps.plan.outputs.action == 'converge'
+        run: scripts/ci/unit_deploy.sh watch-open "$UNIT_PLAN" control-plane
 
       - name: Activate the unit release
         id: activate
@@ -1735,9 +1815,15 @@ jobs:
             exit 1
           fi
 
+      # A failed activation or gate put the host back on the release it ran
+      # before: the watch record forgets what this deploy added.
+      - name: Return the host to the watch record
+        if: failure() && steps.watch_open.outcome == 'success'
+        run: scripts/ci/unit_deploy.sh watch-revert control-plane
+
       - name: Upload unit rollout probe evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: control-plane-unit-rollout-probes-${{ github.run_id }}-${{ github.run_attempt }}-${{ inputs.units_lane }}
           path: ${{ runner.temp }}/gregale-rollout-availability-${{ github.run_id }}-${{ github.run_attempt }}-*.tsv

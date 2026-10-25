@@ -23,8 +23,10 @@ func compileLimits(spec *api.OperationDefinitionSpec, plan api.OperationPlanLimi
 		return fmt.Errorf("operation deadline_seconds must be between 1 and %d", plan.DeadlineSecondsMax)
 	case l.MaxAttempts < 0 || l.MaxAttempts > plan.AttemptsMax:
 		return fmt.Errorf("operation max_attempts must be between 1 and %d", plan.AttemptsMax)
-	case (l.MaxAttempts > 0 || l.MaxExecutionSeconds > 0) && spec.Workflow != "":
-		return fmt.Errorf("workflow steps carry their own retries and timeouts; max_attempts and max_execution_seconds apply to HTTP operations")
+	case l.MaxAttempts > 0 && spec.Workflow != "":
+		// ADR-20261016110803: workflow steps never repeat automatically; a failed step
+		// needs reconciliation. Their budget is max_execution_seconds.
+		return fmt.Errorf("workflow steps do not retry automatically; max_attempts applies to HTTP operations")
 	case l.MaxExecutionSeconds < 0 || l.MaxExecutionSeconds > plan.ExecutionSecondsMax:
 		return fmt.Errorf("operation max_execution_seconds must be between 1 and %d", plan.ExecutionSecondsMax)
 	}

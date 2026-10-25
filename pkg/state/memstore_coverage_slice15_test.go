@@ -1,7 +1,8 @@
-package state
+package state_test
 
 import (
 	"errors"
+	"github.com/onebox-faas/faas/pkg/state"
 	"net/netip"
 	"strings"
 	"testing"
@@ -13,10 +14,10 @@ import (
 // SetStaticEgressIP=true with a non-nil pointer writes the IP and
 // stamps SetAt; SetStaticEgressIP=true with nil clears both.
 func TestCoverageSlice15StaticEgressIPSet(t *testing.T) {
-	m, ctx, _, app, _ := memCoverageFixture(t)
+	m, ctx, _, app, _ := state.MemCoverageFixture(t)
 
 	ip := netip.MustParseAddr("203.0.113.42")
-	updated, err := m.UpdateApp(ctx, app.ID, UpdateAppParams{
+	updated, err := m.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		SetStaticEgressIP: true,
 		StaticEgressIP:    &ip,
 	})
@@ -37,17 +38,17 @@ func TestCoverageSlice15StaticEgressIPSet(t *testing.T) {
 // TestCoverageSlice15StaticEgressIPClear drives the nil-pointer
 // clears-both-columns branch. Used by the DELETE wire shape.
 func TestCoverageSlice15StaticEgressIPClear(t *testing.T) {
-	m, ctx, _, app, _ := memCoverageFixture(t)
+	m, ctx, _, app, _ := state.MemCoverageFixture(t)
 
 	ip := netip.MustParseAddr("203.0.113.42")
-	if _, err := m.UpdateApp(ctx, app.ID, UpdateAppParams{
+	if _, err := m.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		SetStaticEgressIP: true,
 		StaticEgressIP:    &ip,
 	}); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
-	updated, err := m.UpdateApp(ctx, app.ID, UpdateAppParams{
+	updated, err := m.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		SetStaticEgressIP: true,
 		StaticEgressIP:    nil,
 	})
@@ -66,10 +67,10 @@ func TestCoverageSlice15StaticEgressIPClear(t *testing.T) {
 // SetStaticEgressIP=false (don't touch) branch. The columns must
 // remain at their pre-PATCH values.
 func TestCoverageSlice15StaticEgressIPNoTouch(t *testing.T) {
-	m, ctx, _, app, _ := memCoverageFixture(t)
+	m, ctx, _, app, _ := state.MemCoverageFixture(t)
 
 	ip := netip.MustParseAddr("203.0.113.42")
-	if _, err := m.UpdateApp(ctx, app.ID, UpdateAppParams{
+	if _, err := m.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		SetStaticEgressIP: true,
 		StaticEgressIP:    &ip,
 	}); err != nil {
@@ -82,7 +83,7 @@ func TestCoverageSlice15StaticEgressIPNoTouch(t *testing.T) {
 
 	// PATCH with SetStaticEgressIP=false (the default-zero path).
 	other := netip.MustParseAddr("198.51.100.7")
-	if _, err := m.UpdateApp(ctx, app.ID, UpdateAppParams{
+	if _, err := m.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		StaticEgressIP: &other, // ignored when Set is false
 	}); err != nil {
 		t.Fatalf("UpdateApp no-touch: %v", err)
@@ -101,7 +102,7 @@ func TestCoverageSlice15StaticEgressIPNoTouch(t *testing.T) {
 // migration 00325 default is NULL on both columns, and the
 // MemStore's CreateApp mirrors that.
 func TestCoverageSlice15StaticEgressIPDefaultIsZero(t *testing.T) {
-	m, ctx, _, app, _ := memCoverageFixture(t)
+	m, ctx, _, app, _ := state.MemCoverageFixture(t)
 	got, err := m.AppByID(ctx, app.ID)
 	if err != nil {
 		t.Fatalf("AppByID: %v", err)
@@ -120,10 +121,10 @@ func TestCoverageSlice15StaticEgressIPDefaultIsZero(t *testing.T) {
 // index — the apid handler branches on errors.Is(err, ErrConflict)
 // and the index-name substring to return 403 plan_static_egress_ip_quota.
 func TestCoverageSlice15StaticEgressIPCrossAppConflict(t *testing.T) {
-	m, ctx, _, app, _ := memCoverageFixture(t)
+	m, ctx, _, app, _ := state.MemCoverageFixture(t)
 
 	ip := netip.MustParseAddr("203.0.113.42")
-	if _, err := m.UpdateApp(ctx, app.ID, UpdateAppParams{
+	if _, err := m.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		SetStaticEgressIP: true,
 		StaticEgressIP:    &ip,
 	}); err != nil {
@@ -131,23 +132,23 @@ func TestCoverageSlice15StaticEgressIPCrossAppConflict(t *testing.T) {
 	}
 
 	// Second app on the same account tries to pin the same IP.
-	second, err := m.CreateApp(ctx, App{
+	second, err := m.CreateApp(ctx, state.App{
 		AccountID: app.AccountID,
 		Slug:      "second-app-" + app.Slug,
 		RAMMB:     256,
-		Status:    AppActive,
+		Status:    state.AppActive,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp second: %v", err)
 	}
-	_, err = m.UpdateApp(ctx, second.ID, UpdateAppParams{
+	_, err = m.UpdateApp(ctx, second.ID, state.UpdateAppParams{
 		SetStaticEgressIP: true,
 		StaticEgressIP:    &ip,
 	})
 	if err == nil {
 		t.Fatal("expected ErrConflict on cross-app same-IP, got nil")
 	}
-	if !errors.Is(err, ErrConflict) {
+	if !errors.Is(err, state.ErrConflict) {
 		t.Errorf("err = %v, want ErrConflict", err)
 	}
 	if !strings.Contains(err.Error(), "apps_static_egress_ip_key") {
@@ -169,24 +170,24 @@ func TestCoverageSlice15StaticEgressIPCrossAppConflict(t *testing.T) {
 //   - same-account no-ip: a sibling on the same account with no IP
 //   - same-account matching-ip: a sibling on the same account with the same IP
 func TestCoverageSlice15StaticEgressIPCrossAppLoopAllBranches(t *testing.T) {
-	m, ctx, _, app, _ := memCoverageFixture(t)
+	m, ctx, _, app, _ := state.MemCoverageFixture(t)
 
 	ip := netip.MustParseAddr("203.0.113.42")
 
 	// 1) other-account sibling — must be skipped by the loop.
-	_, _, _, otherAcct, _ := memCoverageFixtureOrg(t)
-	otherAcctApp, err := m.CreateApp(ctx, App{
+	_, _, _, otherAcct, _ := state.MemCoverageFixtureOrg(t)
+	otherAcctApp, err := m.CreateApp(ctx, state.App{
 		AccountID: otherAcct.ID,
 		Slug:      "other-acct-app",
 		RAMMB:     256,
-		Status:    AppActive,
+		Status:    state.AppActive,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp other: %v", err)
 	}
 	// Pre-pin the conflicting IP on the OTHER account so the loop
 	// has a candidate that should NOT raise conflict (skip branch).
-	if _, err := m.UpdateApp(ctx, otherAcctApp.ID, UpdateAppParams{
+	if _, err := m.UpdateApp(ctx, otherAcctApp.ID, state.UpdateAppParams{
 		SetStaticEgressIP: true,
 		StaticEgressIP:    &ip,
 	}); err != nil {
@@ -194,18 +195,18 @@ func TestCoverageSlice15StaticEgressIPCrossAppLoopAllBranches(t *testing.T) {
 	}
 
 	// 2) same-account sibling with no IP — must be skipped.
-	noIPApp, err := m.CreateApp(ctx, App{
+	noIPApp, err := m.CreateApp(ctx, state.App{
 		AccountID: app.AccountID,
 		Slug:      "same-acct-no-ip-" + app.Slug,
 		RAMMB:     256,
-		Status:    AppActive,
+		Status:    state.AppActive,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp same-acct no-ip: %v", err)
 	}
 
 	// 3) Pin the target IP on `app` first.
-	if _, err := m.UpdateApp(ctx, app.ID, UpdateAppParams{
+	if _, err := m.UpdateApp(ctx, app.ID, state.UpdateAppParams{
 		SetStaticEgressIP: true,
 		StaticEgressIP:    &ip,
 	}); err != nil {
@@ -214,7 +215,7 @@ func TestCoverageSlice15StaticEgressIPCrossAppLoopAllBranches(t *testing.T) {
 
 	// 4) Same-account sibling with a DIFFERENT IP — must not conflict.
 	differentIP := netip.MustParseAddr("198.51.100.7")
-	if _, err := m.UpdateApp(ctx, noIPApp.ID, UpdateAppParams{
+	if _, err := m.UpdateApp(ctx, noIPApp.ID, state.UpdateAppParams{
 		SetStaticEgressIP: true,
 		StaticEgressIP:    &differentIP,
 	}); err != nil {
@@ -222,23 +223,23 @@ func TestCoverageSlice15StaticEgressIPCrossAppLoopAllBranches(t *testing.T) {
 	}
 
 	// 5) Try to pin `ip` on a NEW same-account app — must conflict.
-	freshSameAcct, err := m.CreateApp(ctx, App{
+	freshSameAcct, err := m.CreateApp(ctx, state.App{
 		AccountID: app.AccountID,
 		Slug:      "fresh-same-acct-" + app.Slug,
 		RAMMB:     256,
-		Status:    AppActive,
+		Status:    state.AppActive,
 	})
 	if err != nil {
 		t.Fatalf("CreateApp fresh: %v", err)
 	}
-	_, err = m.UpdateApp(ctx, freshSameAcct.ID, UpdateAppParams{
+	_, err = m.UpdateApp(ctx, freshSameAcct.ID, state.UpdateAppParams{
 		SetStaticEgressIP: true,
 		StaticEgressIP:    &ip,
 	})
 	if err == nil {
 		t.Fatal("expected ErrConflict on cross-app same-IP, got nil")
 	}
-	if !errors.Is(err, ErrConflict) {
+	if !errors.Is(err, state.ErrConflict) {
 		t.Errorf("err = %v, want ErrConflict", err)
 	}
 }
@@ -248,7 +249,7 @@ func TestCoverageSlice15StaticEgressIPCrossAppLoopAllBranches(t *testing.T) {
 // Covers the empty-accountID short-circuit + the !Is4 short-circuit
 // + the normal hit + the normal miss branches.
 func TestCoverageSlice15ProvisionedStaticEgressIPExists(t *testing.T) {
-	m, ctx, _, app, _ := memCoverageFixture(t)
+	m, ctx, _, app, _ := state.MemCoverageFixture(t)
 
 	ip := netip.MustParseAddr("203.0.113.42")
 
@@ -286,7 +287,7 @@ func TestCoverageSlice15ProvisionedStaticEgressIPExists(t *testing.T) {
 // Covers the empty-accountID error branch + the non-v4 IP error
 // branch + the normal replace (clear-then-insert) branch.
 func TestCoverageSlice15ReplaceProvisionedStaticEgressIPs(t *testing.T) {
-	m, ctx, _, app, _ := memCoverageFixture(t)
+	m, ctx, _, app, _ := state.MemCoverageFixture(t)
 
 	// Empty accountID returns error.
 	if err := m.ReplaceProvisionedStaticEgressIPs(ctx, "", nil); err == nil {

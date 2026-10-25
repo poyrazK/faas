@@ -95,7 +95,14 @@ func (t *dependencyTransport) RoundTrip(req *http.Request) (*http.Response, erro
 		span.End()
 		return resp, nil
 	}
-	resp.Body = &spanReadCloser{ReadCloser: resp.Body, span: span}
+	body := &spanReadCloser{ReadCloser: resp.Body, span: span}
+	if conn, ok := resp.Body.(io.ReadWriteCloser); ok && resp.StatusCode == http.StatusSwitchingProtocols {
+		// An upgraded connection stays writable, as net/http returns it, so
+		// a WebSocket can be carried through the traced client.
+		resp.Body = &spanReadWriteCloser{spanReadCloser: body, writer: conn}
+		return resp, nil
+	}
+	resp.Body = body
 	return resp, nil
 }
 
@@ -168,3 +175,12 @@ func (r *spanReadCloser) Close() error {
 func (r *spanReadCloser) end() {
 	r.once.Do(func() { r.span.End() })
 }
+
+// spanReadWriteCloser is the body of a switched protocol: its reads end
+// the span like any body, and writes go to the connection.
+type spanReadWriteCloser struct {
+	*spanReadCloser
+	writer io.Writer
+}
+
+func (rw *spanReadWriteCloser) Write(p []byte) (int, error) { return rw.writer.Write(p) }

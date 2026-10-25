@@ -63,7 +63,7 @@ func (h *Handler) bucketLifecycle(w http.ResponseWriter, r *http.Request, req re
 }
 func (h *Handler) lifecyclePolicyService(w http.ResponseWriter, r *http.Request, req requestContext) (objectstorage.LifecyclePolicyService, bool) {
 	svc := objectstorage.LifecyclePolicyService{}
-	permission := state.ObjectBucketPermissionWrite
+	permission := bucketSettingsPermission
 	if r.Method == http.MethodGet {
 		permission = state.ObjectBucketPermissionRead
 	}

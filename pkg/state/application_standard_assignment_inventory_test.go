@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -12,24 +12,25 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/appstandards"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-type standardAssignmentInventoryTestStore = contractTestStore
+type standardAssignmentInventoryTestStore = state.ContractTestStore
 
 func TestMemApplicationStandardAssignmentInventoryLifecycle(t *testing.T) {
-	standardAssignmentInventoryLifecycle(t, NewMemStore())
+	standardAssignmentInventoryLifecycle(t, state.NewMemStore())
 }
 
 func standardAssignmentInventoryLifecycle(t *testing.T, s standardAssignmentInventoryTestStore) {
 	t.Helper()
 	ctx := t.Context()
-	f := newStandardApprovalFixture(t, s)
-	org, actor := f.owner.PersonalOrg.ID, f.owner.Account.ID
+	f := state.NewStandardApprovalFixture(t, s)
+	org, actor := (*f.Owner()).PersonalOrg.ID, (*f.Owner()).Account.ID
 	empty, err := s.ListApplicationStandardAssignmentRecords(ctx, org, "", api.ApplicationStandardMaxListPage)
 	if err != nil || empty == nil || len(empty) != 0 {
 		t.Fatalf("empty inventory: %+v %v", empty, err)
 	}
-	op, err := s.ApproveApplicationStandardReview(ctx, org, actor, f.plan.ID, f.plan.ApprovalHash)
+	op, err := s.ApproveApplicationStandardReview(ctx, org, actor, (*f.Plan()).ID, (*f.Plan()).ApprovalHash)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,10 +38,10 @@ func standardAssignmentInventoryLifecycle(t *testing.T, s standardAssignmentInve
 	if err != nil || first.Revision != 1 || !first.Active || first.AdmissionVersion != 1 || first.CreatedAt.IsZero() || first.UpdatedAt.IsZero() || uuid.MustParse(first.CreatedBy) != uuid.MustParse(actor) {
 		t.Fatalf("active record: %+v %v", first, err)
 	}
-	if _, err = s.ControlApplicationStandardOperation(ctx, org, actor, op.ID, op.UpdatedAt, ApplicationStandardOperationAbort); err != nil {
+	if _, err = s.ControlApplicationStandardOperation(ctx, org, actor, op.ID, op.UpdatedAt, state.ApplicationStandardOperationAbort); err != nil {
 		t.Fatal(err)
 	}
-	r := f.plan.Request
+	r := (*f.Plan()).Request
 	r.AssignmentID, r.ExpectedRevision, r.Active = first.ID, first.Revision, false
 	p, err := s.PreviewApplicationStandardAssignment(ctx, org, actor, r)
 	if err != nil {
@@ -61,31 +62,31 @@ func standardAssignmentInventoryLifecycle(t *testing.T, s standardAssignmentInve
 	if err != nil || len(active) != 0 {
 		t.Fatalf("inventory changed admission selection: %+v %v", active, err)
 	}
-	if _, err = s.GetApplicationStandardAssignmentRecord(ctx, uuid.NewString(), first.ID); !errors.Is(err, ErrNotFound) {
+	if _, err = s.GetApplicationStandardAssignmentRecord(ctx, uuid.NewString(), first.ID); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("foreign assignment visible: %v", err)
 	}
 }
 
 func TestMemApplicationStandardAssignmentInventoryPaging(t *testing.T) {
-	m := NewMemStore()
+	m := state.NewMemStore()
 	standardAssignmentInventoryPaging(t, m, func(a api.ApplicationStandardAssignment) {
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if m.applicationStandardAssignments == nil {
-			m.applicationStandardAssignments = map[string]applicationStandardAssignmentRecord{}
+		(*m.Mu()).Lock()
+		defer (*m.Mu()).Unlock()
+		if (*m.ApplicationStandardAssignments()) == nil {
+			(*m.ApplicationStandardAssignments()) = map[string]state.ApplicationStandardAssignmentRecord{}
 		}
-		m.applicationStandardAssignments[a.ID] = applicationStandardAssignmentRecord{Assignment: appstandards.Assignment{ID: a.ID, OrgID: a.OrgID, Scope: a.Scope, ScopeID: a.ScopeID, StandardID: a.StandardID, AdmissionVersion: a.AdmissionVersion}, Revision: a.Revision, Active: a.Active, CreatedBy: a.CreatedBy, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt}
+		(*m.ApplicationStandardAssignments())[a.ID] = state.ApplicationStandardAssignmentRecord{Assignment: appstandards.Assignment{ID: a.ID, OrgID: a.OrgID, Scope: a.Scope, ScopeID: a.ScopeID, StandardID: a.StandardID, AdmissionVersion: a.AdmissionVersion}, Revision: a.Revision, Active: a.Active, CreatedBy: a.CreatedBy, CreatedAt: a.CreatedAt, UpdatedAt: a.UpdatedAt}
 	})
 }
 
 func standardAssignmentInventoryPaging(t *testing.T, s standardAssignmentInventoryTestStore, seed func(api.ApplicationStandardAssignment)) {
 	t.Helper()
 	ctx := t.Context()
-	f := newStandardApprovalFixture(t, s)
-	org, actor := f.owner.PersonalOrg.ID, f.owner.Account.ID
+	f := state.NewStandardApprovalFixture(t, s)
+	org, actor := (*f.Owner()).PersonalOrg.ID, (*f.Owner()).Account.ID
 	count := api.ApplicationStandardMaxListPage + 2
 	for i := count; i > 0; i-- {
-		v, err := s.PublishApplicationStandardVersion(ctx, ApplicationStandardPublish{OrgID: org, ActorID: actor, Slug: fmt.Sprintf("inventory-%03d", i), CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: json.RawMessage(`{"security_policy":{"mode":"default","value":"warn"}}`)}})
+		v, err := s.PublishApplicationStandardVersion(ctx, state.ApplicationStandardPublish{OrgID: org, ActorID: actor, Slug: fmt.Sprintf("inventory-%03d", i), CreateApplicationStandardVersionRequest: api.CreateApplicationStandardVersionRequest{Definition: json.RawMessage(`{"security_policy":{"mode":"default","value":"warn"}}`)}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -116,22 +117,22 @@ func standardAssignmentInventoryPaging(t *testing.T, s standardAssignmentInvento
 }
 
 func TestMemApplicationStandardAssignmentInventoryValidation(t *testing.T) {
-	standardAssignmentInventoryValidation(t, NewMemStore())
+	standardAssignmentInventoryValidation(t, state.NewMemStore())
 }
 
-func standardAssignmentInventoryValidation(t *testing.T, s ApplicationStandardAssignmentInventoryStore) {
+func standardAssignmentInventoryValidation(t *testing.T, s state.ApplicationStandardAssignmentInventoryStore) {
 	t.Helper()
 	org, id := uuid.NewString(), uuid.NewString()
 	for _, tc := range []struct {
 		org, after string
 		limit      int
 	}{{"", "", 1}, {"bad", "", 1}, {org, "bad", 1}, {org, uuid.Nil.String(), 1}, {org, "", 0}, {org, "", api.ApplicationStandardMaxListPage + 2}} {
-		if _, err := s.ListApplicationStandardAssignmentRecords(t.Context(), tc.org, tc.after, tc.limit); !errors.Is(err, ErrInvalidArgument) {
+		if _, err := s.ListApplicationStandardAssignmentRecords(t.Context(), tc.org, tc.after, tc.limit); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatalf("invalid page accepted: %+v %v", tc, err)
 		}
 	}
 	for _, invalid := range []string{"", "bad", uuid.Nil.String()} {
-		if _, err := s.GetApplicationStandardAssignmentRecord(t.Context(), org, invalid); !errors.Is(err, ErrInvalidArgument) {
+		if _, err := s.GetApplicationStandardAssignmentRecord(t.Context(), org, invalid); !errors.Is(err, state.ErrInvalidArgument) {
 			t.Fatalf("invalid ID accepted: %q %v", invalid, err)
 		}
 	}

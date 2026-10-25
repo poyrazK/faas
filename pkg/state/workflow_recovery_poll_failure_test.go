@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -11,42 +11,43 @@ import (
 
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // adr: 1280
 func TestWorkflowRecoveryAutomaticPollingIsolation(t *testing.T) {
 	for _, mode := range []string{"automatic_initial", "automatic_retry"} {
 		t.Run(mode, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
 				ctx := context.Background()
-				seed := func() (App, string) {
+				seed := func() (state.App, string) {
 					if mode == "automatic_initial" {
-						_, app, r, _ := seedInitialAutomatic(t, s)
+						_, app, r, _ := state.SeedInitialAutomatic(t, s)
 						return app, r.ID
 					}
-					r, app, _, _ := seedAutomaticRecoveryReview(t, s, nil)
+					r, app, _, _ := state.SeedAutomaticRecoveryReview(t, s, nil)
 					return app, r.ID
 				}
 				bad, badReview := seed()
 				good, goodReview := seed()
-				policies := s.(WorkflowRecoveryPolicyStore)
+				policies := s.(state.WorkflowRecoveryPolicyStore)
 				original, err := policies.GetWorkflowRecoveryPolicy(ctx, bad.AccountID, bad.ID)
 				if err != nil {
 					t.Fatal(err)
 				}
 				mutate := func(policy api.WorkflowRecoveryPolicy) {
 					t.Helper()
-					if m, ok := s.(*MemStore); ok {
-						m.mu.Lock()
-						m.recoveryPolicies[canonicalMemUUID(bad.ID)].Response.Policy = policy
-						m.mu.Unlock()
+					if m, ok := s.(*state.MemStore); ok {
+						(*m.Mu()).Lock()
+						(*m.RecoveryPolicies())[state.CanonicalMemUUID(bad.ID)].Response.Policy = policy
+						(*m.Mu()).Unlock()
 						return
 					}
 					raw, e := json.Marshal(policy)
 					if e != nil {
 						t.Fatal(e)
 					}
-					if _, e = s.(*PgStore).pool.Exec(ctx, "UPDATE workflow_recovery_policies SET policy=$2::jsonb WHERE app_id=$1::uuid", bad.ID, raw); e != nil {
+					if _, e = (*s.(*state.PgStore).Pool()).Exec(ctx, "UPDATE workflow_recovery_policies SET policy=$2::jsonb WHERE app_id=$1::uuid", bad.ID, raw); e != nil {
 						t.Fatal(e)
 					}
 				}
@@ -54,15 +55,15 @@ func TestWorkflowRecoveryAutomaticPollingIsolation(t *testing.T) {
 				poisoned.HourlyExecutionBudget = 0
 				mutate(poisoned)
 				now := time.Now().UTC().Add(3 * time.Minute).Truncate(time.Microsecond)
-				if m, ok := s.(*MemStore); ok {
-					m.recoveryPolicies[canonicalMemUUID(bad.ID)].NextExecute = now.Add(-time.Hour)
-					m.recoveryPolicies[canonicalMemUUID(good.ID)].NextExecute = now
-				} else if _, err = s.(*PgStore).pool.Exec(ctx, "UPDATE workflow_recovery_policies SET next_execute_at=CASE WHEN app_id=$1::uuid THEN $3::timestamptz ELSE $4::timestamptz END WHERE app_id IN ($1::uuid,$2::uuid)", bad.ID, good.ID, now.Add(-time.Hour), now); err != nil {
+				if m, ok := s.(*state.MemStore); ok {
+					(*m.RecoveryPolicies())[state.CanonicalMemUUID(bad.ID)].NextExecute = now.Add(-time.Hour)
+					(*m.RecoveryPolicies())[state.CanonicalMemUUID(good.ID)].NextExecute = now
+				} else if _, err = (*s.(*state.PgStore).Pool()).Exec(ctx, "UPDATE workflow_recovery_policies SET next_execute_at=CASE WHEN app_id=$1::uuid THEN $3::timestamptz ELSE $4::timestamptz END WHERE app_id IN ($1::uuid,$2::uuid)", bad.ID, good.ID, now.Add(-time.Hour), now); err != nil {
 					t.Fatal(err)
 				}
 				get := func() api.WorkflowRecoveryPolicyResponse {
 					t.Helper()
-					p, e := s.(WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicy(ctx, bad.AccountID, bad.ID)
+					p, e := s.(state.WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicy(ctx, bad.AccountID, bad.ID)
 					if e != nil {
 						t.Fatal(e)
 					}
@@ -70,7 +71,7 @@ func TestWorkflowRecoveryAutomaticPollingIsolation(t *testing.T) {
 				}
 				poll := func(at time.Time) bool {
 					t.Helper()
-					did, e := s.(WorkflowRecoveryAutomaticPolicyStore).ProcessNextWorkflowRecoveryAutomaticPolicy(ctx, at)
+					did, e := s.(state.WorkflowRecoveryAutomaticPolicyStore).ProcessNextWorkflowRecoveryAutomaticPolicy(ctx, at)
 					if e != nil {
 						t.Fatal(e)
 					}
@@ -88,33 +89,33 @@ func TestWorkflowRecoveryAutomaticPollingIsolation(t *testing.T) {
 					t.Fatal("healthy policy starved")
 				}
 				if mode == "automatic_initial" {
-					if r := initialAutomaticReview(t, s, good, goodReview); r.JobID == "" {
+					if r := state.InitialAutomaticReview(t, s, good, goodReview); r.JobID == "" {
 						t.Fatal("healthy submission missing")
 					}
-					if r := initialAutomaticReview(t, s, bad, badReview); r.Status != "prepared" || r.JobID != "" {
+					if r := state.InitialAutomaticReview(t, s, bad, badReview); r.Status != "prepared" || r.JobID != "" {
 						t.Fatal("failed poll submitted job")
 					}
 				} else {
-					r, e := s.(WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicyReview(ctx, good.AccountID, good.ID, goodReview)
+					r, e := s.(state.WorkflowRecoveryPolicyStore).GetWorkflowRecoveryPolicyReview(ctx, good.AccountID, good.ID, goodReview)
 					if e != nil {
 						t.Fatal(e)
 					}
-					if _, e = automaticChild(t, s, good, r); e != nil {
+					if _, e = state.AutomaticChild(t, s, good, r); e != nil {
 						t.Fatal("healthy retry missing", e)
 					}
 				}
 				if poll(now) {
 					t.Fatal("failure retried before due")
 				}
-				if pg, ok := s.(*PgStore); ok {
-					s = NewPgStore(pg.pool.Pool)
+				if pg, ok := s.(*state.PgStore); ok {
+					s = state.NewPgStore((*pg.Pool()).Pool)
 				}
 				if !reflect.DeepEqual(get().AutomaticExecution.PollingFailure, f) {
 					t.Fatal("failure lost after restart")
 				}
 				canceled, cancel := context.WithCancel(ctx)
 				cancel()
-				if _, e := s.(WorkflowRecoveryAutomaticPolicyStore).ProcessNextWorkflowRecoveryAutomaticPolicy(canceled, f.RetryAt); !errors.Is(e, context.Canceled) {
+				if _, e := s.(state.WorkflowRecoveryAutomaticPolicyStore).ProcessNextWorkflowRecoveryAutomaticPolicy(canceled, f.RetryAt); !errors.Is(e, context.Canceled) {
 					t.Fatalf("cancellation %v", e)
 				}
 				for range 2 {
@@ -137,7 +138,7 @@ func TestWorkflowRecoveryAutomaticPollingIsolation(t *testing.T) {
 					poll(second.RetryAt.Add(time.Minute))
 				}
 				current := get()
-				current, err = s.(WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, bad.AccountID, bad.ID, api.SetWorkflowRecoveryPolicyRequest{ExpectedVersion: current.Version, Policy: original.Policy})
+				current, err = s.(state.WorkflowRecoveryPolicyStore).SetWorkflowRecoveryPolicy(ctx, bad.AccountID, bad.ID, api.SetWorkflowRecoveryPolicyRequest{ExpectedVersion: current.Version, Policy: original.Policy})
 				if err != nil {
 					t.Fatal(err)
 				}
@@ -151,18 +152,18 @@ func TestWorkflowRecoveryAutomaticPollingIsolation(t *testing.T) {
 
 func TestWorkflowRecoveryAutomaticPollingClassification(t *testing.T) {
 	for _, code := range []string{"08006", "40001", "57014", "53100", "XX000"} {
-		if automaticPollingFailureCode(fmt.Errorf("poll: %w", &pgconn.PgError{Code: code})) != "" {
+		if state.AutomaticPollingFailureCode(fmt.Errorf("poll: %w", &pgconn.PgError{Code: code})) != "" {
 			t.Fatal("infrastructure deferred", code)
 		}
 	}
-	for _, err := range []error{context.Canceled, context.DeadlineExceeded, errors.New("unknown"), errors.Join(errAutomaticPollingData, context.Canceled)} {
-		if automaticPollingFailureCode(err) != "" {
+	for _, err := range []error{context.Canceled, context.DeadlineExceeded, errors.New("unknown"), errors.Join((*state.ErrAutomaticPollingData), context.Canceled)} {
+		if state.AutomaticPollingFailureCode(err) != "" {
 			t.Fatal("unexpected deferral", err)
 		}
 	}
-	f := nextAutomaticPollingFailure(nil, "invalid_polling_data", time.Now().UTC())
+	f := state.NextAutomaticPollingFailure(nil, "invalid_polling_data", time.Now().UTC())
 	for range 100 {
-		f = nextAutomaticPollingFailure(f, "invalid_polling_data", f.RetryAt)
+		f = state.NextAutomaticPollingFailure(f, "invalid_polling_data", f.RetryAt)
 	}
 	if f.Attempts != api.WorkflowAutomaticPollingMaxAttempts || f.RetryAt.Sub(f.FailedAt) != api.WorkflowAutomaticPollingMaxBackoff {
 		t.Fatal("unbounded backoff", f)
@@ -172,25 +173,25 @@ func TestWorkflowRecoveryAutomaticPollingClassification(t *testing.T) {
 func TestWorkflowRecoveryAutomaticPollingRollback(t *testing.T) {
 	for _, mode := range []string{"automatic_initial", "automatic_retry"} {
 		t.Run(mode, func(t *testing.T) {
-			workflowScheduleStores(t, func(t *testing.T, s Store) {
-				pg, ok := s.(*PgStore)
+			state.WorkflowScheduleStores(t, func(t *testing.T, s state.Store) {
+				pg, ok := s.(*state.PgStore)
 				if !ok {
 					t.Skip("PostgreSQL atomic job and budget regression")
 				}
 				ctx := context.Background()
-				var app App
+				var app state.App
 				var reviewID string
 				if mode == "automatic_initial" {
-					_, a, r, _ := seedInitialAutomatic(t, s)
+					_, a, r, _ := state.SeedInitialAutomatic(t, s)
 					app, reviewID = a, r.ID
 				} else {
-					r, a, _, _ := seedAutomaticRecoveryReview(t, s, nil)
+					r, a, _, _ := state.SeedAutomaticRecoveryReview(t, s, nil)
 					app, reviewID = a, r.ID
 				}
 				count := func(query string) int {
 					t.Helper()
 					var n int
-					if err := pg.pool.QueryRow(ctx, query, app.ID).Scan(&n); err != nil {
+					if err := (*pg.Pool()).QueryRow(ctx, query, app.ID).Scan(&n); err != nil {
 						t.Fatal(err)
 					}
 					return n
@@ -199,11 +200,11 @@ func TestWorkflowRecoveryAutomaticPollingRollback(t *testing.T) {
 				budgetQuery := "SELECT count(*) FROM (SELECT app_id FROM workflow_recovery_policy_execution_charges UNION ALL SELECT app_id FROM workflow_initial_recovery_reviews WHERE submitted_at IS NOT NULL AND review->'policy'->>'mode'='automatic_initial') charges WHERE app_id=$1::uuid"
 				historyQuery := "SELECT count(*) FROM workflow_recovery_history_events WHERE app_id=$1::uuid"
 				jobs, budget, history := count(jobsQuery), count(budgetQuery), count(historyQuery)
-				if _, err := pg.pool.Exec(ctx, "UPDATE workflow_recovery_policies SET next_execute_at='epoch'::timestamptz WHERE app_id=$1::uuid", app.ID); err != nil {
+				if _, err := (*pg.Pool()).Exec(ctx, "UPDATE workflow_recovery_policies SET next_execute_at='epoch'::timestamptz WHERE app_id=$1::uuid", app.ID); err != nil {
 					t.Fatal(err)
 				}
 				// Reject final advancement after native submission and accounting writes.
-				if _, err := pg.pool.Exec(ctx, "ALTER TABLE workflow_recovery_policies ADD CONSTRAINT test_automatic_poll_advance CHECK (next_execute_at='epoch'::timestamptz OR automatic_poll_failure IS NOT NULL)"); err != nil {
+				if _, err := (*pg.Pool()).Exec(ctx, "ALTER TABLE workflow_recovery_policies ADD CONSTRAINT test_automatic_poll_advance CHECK (next_execute_at='epoch'::timestamptz OR automatic_poll_failure IS NOT NULL)"); err != nil {
 					t.Fatal(err)
 				}
 				now := time.Now().UTC().Add(3 * time.Minute).Truncate(time.Microsecond)
@@ -214,7 +215,7 @@ func TestWorkflowRecoveryAutomaticPollingRollback(t *testing.T) {
 					t.Fatal("failed poll leaked jobs, accounting or history")
 				}
 				if mode == "automatic_initial" {
-					r := initialAutomaticReview(t, s, app, reviewID)
+					r := state.InitialAutomaticReview(t, s, app, reviewID)
 					if r.Status != "prepared" || r.JobID != "" || r.AutomaticEvaluation != nil {
 						t.Fatal("failed poll leaked initial submission")
 					}
@@ -234,10 +235,10 @@ func TestWorkflowRecoveryAutomaticPollingRollback(t *testing.T) {
 				if p.AutomaticExecution.PollingFailure == nil || p.AutomaticExecution.ConsecutiveFailures != 0 || p.AutomaticExecution.PausedAt != nil {
 					t.Fatal("failure state missing or execution counter changed")
 				}
-				if _, err = pg.pool.Exec(ctx, "ALTER TABLE workflow_recovery_policies DROP CONSTRAINT test_automatic_poll_advance"); err != nil {
+				if _, err = (*pg.Pool()).Exec(ctx, "ALTER TABLE workflow_recovery_policies DROP CONSTRAINT test_automatic_poll_advance"); err != nil {
 					t.Fatal(err)
 				}
-				pg = NewPgStore(pg.pool.Pool)
+				pg = state.NewPgStore((*pg.Pool()).Pool)
 				if did, e := pg.ProcessNextWorkflowRecoveryAutomaticPolicy(ctx, p.AutomaticExecution.PollingFailure.RetryAt); e != nil || !did {
 					t.Fatalf("retry %v %v", did, e)
 				}

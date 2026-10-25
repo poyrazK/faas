@@ -226,9 +226,13 @@ request, and at least EUR 100.00 of usage a month.
   - after a plan change or a new card mid-month, the old card charges until
     the change and the new one from it, each minimum covered by the usage that
     card priced. A new card that doesn't prorate starts charging next month;
-  - a consumer revoked mid-month pays until the revocation, unless that
-    month's statement was already finalized: finalized fees are never reduced.
-    Finalize monthly statements after the month ends, as billing runs do.
+  - a consumer revoked mid-month pays until the revocation, unless a
+    statement of that month was priced before the revocation and finalized:
+    finalized fees are never reduced. Finalize monthly statements after the
+    month ends, as billing runs do.
+
+  A share that shrinks after its minimum was finalized never lowers that
+  minimum; only usage billed later does.
 - **Minimum.** When usage costs less than the minimum, the statement adds a
   top-up for the difference. Late usage lowers the top-up instead of adding
   to the total.
@@ -427,6 +431,12 @@ gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMEN
   | `send` | Finalized and emailed, due after `--days-until-due` (default 30) | Not available | Billed with the customer's newest address and emailed, due after `--days-until-due` |
   | `charge` | Finalized and charged to the customer's default payment method | Charged through Lago's payment provider | Not available |
 
+  A Paddle invoice billed with `send` also carries the customer's most recently
+  updated active business, and so its tax identifier, when it has one
+  ([ADR-20261020120000](adr/20261020120000-product-control-customer-billing-details.md)).
+  Product Control customers can enter their address and business in the
+  portal; for other customers, add them in Paddle.
+
   Charges, retries and emails follow your own provider settings. The money
   never passes through Gregale. Each export keeps the mode it started with.
   With `send` or `charge`, an export or billing run reaches your customers
@@ -439,11 +449,21 @@ gregale platform-tenants statement-export --id TENANT_ID --statement-id STATEMEN
   addresses. Gregale's statement totals stay net of tax.
 - **Handoff.** The export records the statement's handoff with the provider's
   invoice ID, so the usual rule that a revision is invoiced once applies. A
-  statement exports to one provider only.
+  statement exports to one provider only. The export reserves the handoff
+  before it calls the provider, so while it runs, a statement covering the
+  same usage, such as a customer statement that includes the consumer, gets
+  `409` instead of being invoiced too. If the provider refuses the invoice,
+  the reservation is released.
 - **Retries.** If the provider fails part-way, run the export again. It
   resumes the same invoice and never adds an item twice. If Lago issued an
   invoice but the export stopped before tagging it, the retry names that
   invoice and stops; void it in Lago, then retry.
+- **One at a time.** While another request or a billing run is exporting a
+  statement, a second export gets `409 statement_invoice_export_in_progress`;
+  retry once it finishes.
+- **Wrong customer.** If the provider refuses the invoice before creating it,
+  for example because the customer doesn't exist, export again with the
+  right `--customer` or another provider.
 - **Currencies.** Any ISO 4217 currency with up to three decimal places:
   two-decimal ones such as EUR and USD, zero-decimal ones such as JPY and
   KRW, and three-decimal ones such as KWD and BHD. Invoices, payment amounts
@@ -503,6 +523,11 @@ completeness. It then finalizes the statement and, with `--export stripe`,
   tenant's statement, so those consumers are skipped in the app part of the
   run. Use `--sources app_consumers` to bill every consumer by app statement
   instead.
+- **Product Control customers.** With `--sources product_customers` (alone or
+  with the other sources), the run also bills each Product Control customer's
+  statement for the month, once per app. It is accepted only while Product
+  Control is enabled. See
+  [Product Control billing runs](ops/product-control.md#bill-every-customer-in-a-billing-run).
 - **Running a month again.** Late usage becomes adjustment statements.
   Statements already invoiced stay `up_to_date`. Every finalized statement of
   the month without a handoff is exported, oldest first. Statements with a
@@ -563,9 +588,15 @@ gregale consumers spend-cap my-api CONSUMER_ID
 - **Soft limit.** Gregale checks each cap every minute, and right away when
   you change the cap or the credit. A consumer can therefore go over by about
   two minutes of traffic. The refused requests are not billed.
+- **Repricing.** A check reprices the month only when the consumer made
+  requests since the last one, and at least every 15 minutes. Changes other
+  than usage, such as a new rate card or credit expiring, can take up to
+  15 minutes to reach the cap.
 - **Currency.** The cap is compared with the month to date in its own
   currency only.
 - **Usage only.** Caps count usage charges, not base fees or minimums.
+  Credit pays a statement's fees first, so credit spent on fees does not
+  lift a cap.
 
 ### Overdue invoices
 
@@ -583,6 +614,9 @@ gregale consumers overdue-holds my-api
 - **Timing.** Holds are recomputed every 5 minutes. While an invoice holds
   its consumer, Gregale checks its payment every 15 minutes, so paying lifts
   the hold within about 20 minutes.
+- **Can't check, won't block.** A hold needs a payment status Gregale read in
+  the last 24 hours. If your provider key is rotated or removed, Gregale
+  emails you to reconnect it and lets held customers through after a day.
 - **Lifting all holds.** `billing-policy-delete` removes the rule; holds lift
   at the next check.
 
@@ -602,14 +636,101 @@ curl -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consumer-billi
 - **Month to date.** The summary prices this month's usage the same way the
   next statement will. It also shows the plan's monthly cap, the prepaid
   credit left, and the spend cap. Late usage can still change it.
-- **Statements.** The latest finalized statements include each invoice's
-  payment status and the provider's hosted invoice or checkout page, where
-  your customer can pay.
+- **Statements.** The latest finalized statements show the prepaid credit
+  applied (`credit_applied_millicents`), what is left to pay
+  (`amount_due_millicents`), and each invoice's payment status and the
+  provider's hosted invoice or checkout page, where your customer can pay.
 - **Own data only.** A key reads only its own consumer, never other customers
   or your rate cards. A key with only the `billing` scope cannot call your
   app.
 - **Limits.** Each key may make 60 requests a minute. A usage request covers
   at most 31 days.
+
+## Let customers sign up themselves
+
+Turn on sign-up, and customers can start using your API without you
+creating anything by hand. They pick a plan, save a card with Stripe and get
+a consumer key with the scopes you choose:
+
+```bash
+gregale account billing-connection connect stripe < stripe-key.txt   # if not connected yet
+gregale consumers signup-set my-api --display-name "Weather API" --plans pro,team --trial-days 14
+gregale consumers signup my-api     # shows the page URL to link to
+gregale consumers signups my-api    # recent sign-ups
+```
+
+- **The page.** Link customers to the page URL,
+  `https://<gregale domain>/v1/consumer-signup/my-api/page`. It shows the
+  plans with their current prices. Gregale hosts the page and runs the
+  Checkout in your Stripe account.
+- **What a customer gets.**
+  - A consumer named after them, whose `external_ref` is their new Stripe
+    customer. Exports use that customer by default.
+  - The chosen plan and your trial.
+  - A key with the scopes from `--key-scopes` (default `write,billing`), so
+    they can call your API and [read their own billing](#let-customers-see-their-own-billing).
+- **Nothing is charged at sign-up.** Stripe saves the card and Gregale makes
+  it the customer's default. Invoices exported with collection `charge`
+  charge that card; with `send`, Stripe emails the invoice.
+- **Stripe only.** Paddle and Lago cannot save a card without charging, so
+  they cannot take sign-ups. A restricted Stripe key needs write access to
+  Customers and Checkout Sessions, and read access to SetupIntents.
+- **Your own page.** Build your own page on the same API instead:
+  1. `GET /v1/consumer-signup/my-api` returns the form.
+  2. `POST /v1/consumer-signup/my-api` with `email`, `name` and `plan_id`
+     returns a `checkout_url` and a `claim_token`.
+  3. After the Checkout, `POST .../signups/{id}/complete` with the claim
+     token returns the key.
+
+  Completing again within 24 hours issues a new key and revokes the
+  previous one.
+- **Limits.**
+  - Each address can start 10 sign-ups an hour.
+  - An app takes `--daily-limit` sign-ups a UTC day (default 100, at most
+    1,000).
+  - Sign-ups not completed within 24 hours expire, and Gregale deletes them
+    a week later.
+  - Failed sign-ups show in your audit log as `api_consumer.signup_failed`
+    with the reason, such as a rejected Stripe key.
+- **Turning it off.** `gregale consumers signup-delete my-api` closes the
+  page. `signup-set --disabled` closes it but keeps the settings.
+
+### Customers manage their own account
+
+With their `billing` key, a customer can change their card, switch plans or
+leave without asking you:
+
+```bash
+curl -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consumer-billing/my-api/plans
+curl -X PUT -H "Authorization: Bearer ck_..." -d '{"plan_id":"PLAN_ID"}' https://api.gregale.dev/v1/consumer-billing/my-api/plan
+curl -X POST -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consumer-billing/my-api/portal
+curl -X POST -H "Authorization: Bearer ck_..." https://api.gregale.dev/v1/consumer-billing/my-api/close
+```
+
+- **Card and invoices.** `portal` returns a short-lived Stripe customer
+  portal link for customers billed through your Stripe. In live mode, save
+  your portal settings in the Stripe dashboard once. If Stripe refuses,
+  your audit log shows `api_consumer.portal_failed` with the reason.
+- **Plans.** `plan` switches between the plans you offer at sign-up, from
+  the next minute. Allow it with `signup-set --customer-plan-changes`.
+- **Closing.** `close` revokes the customer, so their keys stop working.
+  Usage until then is still billed. Allow it with
+  `signup-set --customer-closing`.
+- Anything you have not allowed gets `409 consumer_self_service_unavailable`.
+
+### Know when customers sign up or change
+
+Subscribe an app webhook to these events to provision accounts, send
+welcome mail or update your CRM:
+
+- `consumer.signed_up`: a sign-up created a consumer. It carries the
+  customer's name, email, Stripe customer, plan, trial end and whether it
+  was test mode.
+- `consumer.plan_changed`: a customer switched plans themselves, from and to
+  which plan, and from when.
+- `consumer.closed`: a customer closed their account themselves.
+
+Changes you make yourself do not send these events.
 
 ## Customers across several apps
 
@@ -700,8 +821,9 @@ gregale platform-tenants spend-cap --id TENANT_ID
 - **Spend caps.** Once the customer's usage for the month, after credit,
   passes the cap, every request attributed to the customer gets
   `402 tenant_spend_cap_reached`, through consumers, surfaces and JWT rules.
-  Caps count usage, not fees, are checked every minute, and can be overshot
-  by about two minutes of traffic, as for consumers.
+  Caps count usage, not fees, are checked every minute, repriced when the
+  customer has new usage or every 15 minutes, and can be overshot by about
+  two minutes of traffic, as for consumers.
 
 ### Tenant plans
 

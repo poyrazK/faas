@@ -169,6 +169,15 @@ func (s *PgStore) RegisterScenarioTestMembers(ctx context.Context, accountID, ru
 			if !unstarted.Valid || !unstarted.Bool {
 				return ErrConflict
 			}
+			if member.NetworkMode == ScenarioNetworkContained {
+				bound, err := q.ScenarioActionAppHasManagedBindings(ctx, tx, member.AppID)
+				if err != nil {
+					return err
+				}
+				if bound {
+					return ErrScenarioManagedBindings
+				}
+			}
 			if err := q.InsertScenarioActionPolicy(ctx, tx, sqlc.InsertScenarioActionPolicyParams{AccountID: accountID, RunID: runID, AppID: member.AppID, Workload: member.Workload, NetworkMode: member.NetworkMode, SimulationPlan: scenarioSimulationJSON(member.SimulationJSON), ColdStartSpec: scenarioSimulationJSON(member.ColdStartJSON), SuspendResumeSpec: scenarioSimulationJSON(member.SuspendResumeJSON), ManagedWorkPlan: scenarioSimulationJSON(member.ManagedWorkJSON)}); err != nil {
 				return mapErr(err)
 			}
@@ -228,6 +237,9 @@ func (m *MemStore) RegisterScenarioTestMembers(_ context.Context, accountID, run
 		}
 		if member.WebhookMode == ScenarioWebhookCaptureMode && !m.scenarioActionAppUnstartedLocked(member.AppID) {
 			return ErrConflict
+		}
+		if member.WebhookMode == ScenarioWebhookCaptureMode && member.NetworkMode == ScenarioNetworkContained && m.appHasManagedBindingsLocked(member.AppID) {
+			return ErrScenarioManagedBindings
 		}
 		for _, existing := range m.scenarioTestMembers {
 			if existing.AccountID == accountID && existing.RunID == runID && existing.Workload == member.Workload {
@@ -489,22 +501,36 @@ func (s *PgStore) ScenarioTestDNSChaosByHostIP(ctx context.Context, nodeName, ho
 	return policy, nil
 }
 
+// RecordScenarioTestChaosInjections writes the whole batch in one statement, so
+// a failed call persists nothing and the gateway can retry it without counting
+// any match twice.
 func (s *PgStore) RecordScenarioTestChaosInjections(ctx context.Context, injections []chaos.InjectionBatch) error {
-	for _, injection := range injections {
+	if len(injections) == 0 {
+		return nil
+	}
+	runIDs := make([]string, len(injections))
+	callers := make([]string, len(injections))
+	generations := make([]string, len(injections))
+	ruleIDs := make([]string, len(injections))
+	counts := make([]int64, len(injections))
+	for i, injection := range injections {
 		if err := validateScenarioChaosInjection(injection); err != nil {
 			return err
 		}
-		_, err := s.pool.Exec(ctx, `insert into scenario_test_chaos_matches
-			(account_id, run_id, caller_app_id, generation, rule_id, matches)
-			select m.account_id, m.run_id, m.app_id, $3::uuid, $4, $5
-			from scenario_test_members m
-			where m.run_id = $1 and m.app_id = $2 and m.chaos_generation = $3::uuid
-			on conflict (account_id, run_id, caller_app_id, generation, rule_id)
-			do update set matches = scenario_test_chaos_matches.matches + excluded.matches, updated_at = now()`,
-			injection.RunID, injection.CallerApp, injection.Generation, injection.RuleID, injection.Count)
-		if err != nil {
-			return fmt.Errorf("record scenario chaos matches: %w", err)
-		}
+		runIDs[i], callers[i], generations[i], ruleIDs[i], counts[i] = injection.RunID, injection.CallerApp, injection.Generation, injection.RuleID, injection.Count
+	}
+	_, err := s.pool.Exec(ctx, `insert into scenario_test_chaos_matches
+		(account_id, run_id, caller_app_id, generation, rule_id, matches)
+		select m.account_id, m.run_id, m.app_id, i.generation::uuid, i.rule_id, sum(i.matches)::bigint
+		from unnest($1::text[], $2::text[], $3::text[], $4::text[], $5::bigint[]) as i(run_id, caller_app_id, generation, rule_id, matches)
+		join scenario_test_members m
+		  on m.run_id = i.run_id and m.app_id = i.caller_app_id::uuid and m.chaos_generation = i.generation::uuid
+		group by m.account_id, m.run_id, m.app_id, i.generation, i.rule_id
+		on conflict (account_id, run_id, caller_app_id, generation, rule_id)
+		do update set matches = scenario_test_chaos_matches.matches + excluded.matches, updated_at = now()`,
+		runIDs, callers, generations, ruleIDs, counts)
+	if err != nil {
+		return fmt.Errorf("record scenario chaos matches: %w", err)
 	}
 	return nil
 }

@@ -1,8 +1,27 @@
 # @gregale/sdk-node
 
 > Node 22 SDK for the Gregale platform. Generated from
-> [`api/openapi.yaml`](../../api/openapi.yaml), wrapped in a hand-written
-> façade that ships retry, RFC 7807 error sentinels, idempotency, and SSE.
+> [`sdk/openapi.yaml`](../openapi.yaml) (generally available and beta) and
+> [`api/openapi.yaml`](../../api/openapi.yaml) (preview), wrapped in a
+> hand-written façade that ships retry, RFC 7807 error sentinels,
+> idempotency, and SSE.
+
+## Default and preview entries
+
+`@gregale/sdk-node` exposes generally available and beta capabilities only:
+the client generated from `sdk/openapi.yaml` and the helpers for those
+capabilities (`FaaSClient`, error sentinels, idempotency, SSE, webhook and
+service-caller verification, release context). The `./browser`,
+`./secrets/runtime` and `./workflows` subpaths are part of it too.
+
+Preview and internal capabilities (realtime, durable entities, operations,
+events, queues, object storage, managed Postgres, disposable runs, issues,
+commit and data repair, and more) are in `@gregale/sdk-node/preview`, which
+re-exports the whole SDK, and its subpaths such as
+`@gregale/sdk-node/preview/operations` or
+`@gregale/sdk-node/preview/durable-entities/runtime`. apid serves a preview
+capability only to the accounts it is released to; elsewhere its calls
+answer `404 no such API route` (ADR-20261023115741).
 
 The SDK includes `verifyWebhook` for verifying signed outbound Gregale
 webhook requests. See
@@ -51,6 +70,93 @@ npm pack --pack-destination /tmp     # -> /tmp/gregale-sdk-node-0.1.0.tgz
 cd /path/to/your/project
 npm install /tmp/gregale-sdk-node-0.1.0.tgz
 ```
+
+## PostgreSQL pools across checkpoint, restore and thaw
+
+The `@gregale/sdk-node/postgres/runtime` subpath exports `createPostgresPool`,
+`postgresPoolConfig`, and `PostgresPoolError`. Install `pg` separately. This
+runtime has no control-plane client or driver dependency, and does not install
+process handlers. The CLI's `rest-api-postgres` starter bundles the same compiled
+runtime, so scaffolding does not depend on a published npm SDK.
+
+```ts
+import pg from 'pg';
+import {createPostgresPool, postgresPoolConfig} from '@gregale/sdk-node/preview/postgres/runtime';
+
+const database = createPostgresPool(
+  () => new pg.Pool(postgresPoolConfig(process.env.DATABASE_URL!)),
+  {
+    readinessQuery: {text: 'SELECT id FROM notes LIMIT 1'},
+    onEvent: event => console.error(JSON.stringify(event)),
+  },
+);
+const {rows} = await database.query<{id: number; body: string}>(
+  'INSERT INTO notes(body) VALUES ($1) RETURNING id, body', ['hello'],
+  {write: true, signal: requestAbortSignal},
+);
+```
+
+Read current credentials **inside** the factory; it must return a fresh `pg.Pool`
+each time. The helper does not mutate `process.env` or subscribe to secret
+reloads. Managed binding rotation still uses Gregale's replacement/retirement
+protocol. Never share the underlying pool with other borrowers or call its
+`end()` yourself.
+
+Declare both hooks in `gregale.yaml` and wire their HTTP handlers:
+
+```yaml
+lifecycle:
+  before_checkpoint:
+    path: /internal/before-checkpoint
+    timeout_ms: 2000
+  after_restore:
+    path: /internal/after-restore
+    timeout_ms: 2000
+```
+
+| Handler | Required marker | SDK call |
+| --- | --- | --- |
+| `POST /internal/before-checkpoint` | `X-Faas-Before-Checkpoint: 1` | `await database.beforeCheckpoint({signal})` |
+| `POST /internal/after-restore` | `X-Faas-After-Restore: 1` | `await database.afterRestore({signal})` |
+
+Require the actual socket peer to be `127.0.0.1`, `::1`, or `::ffff:127.0.0.1`
+**and** the exact marker. Forwarded client addresses are insufficient. Return
+204 only after the SDK call resolves, and 503 on failure; pass the HTTP
+disconnect signal. The [starter handlers](../../cmd/gregale/templates/rest-api-postgres/app.js)
+provide the complete wiring. Gregale's [lifecycle contract](../../docs/cold-wake.md)
+defines capture failures, restore cold fallback, and thaw recovery.
+
+`beforeCheckpoint` stops admission, cancels unfinished transactions and waits
+for all owned sessions to close. The pool stays closed until `afterRestore`
+creates a new one and probes readiness in a read-only transaction. The latter
+also works without a prior checkpoint, as required for frozen thaw. Duplicate
+calls of the same hook coalesce; different hooks cannot overlap. A cancelled
+duplicate waiter does not cancel the owning hook. Failed or timed-out hooks
+leave SQL admission closed; a late probe cannot make the old pool ready.
+
+The total hook and shutdown budget defaults to 1500ms (maximum 1500ms), leaving
+headroom within the platform's two-second hook. `timeoutMs` defaults to 5000ms
+per request, including acquisition and COMMIT. `maxInFlight` defaults to 16
+executing/queued requests; excess work fails with `database_busy`. Other fixed
+errors are `database_unavailable` and `database_cancelled`. `diagnostics` reports
+state, successful restore generation, active requests, and owned pool count;
+`onEvent` receives only fixed event codes and those counts, without provider
+errors, SQL or credentials. `close()` is terminal, bounded and idempotent.
+
+`query` executes one statement in an explicit read-only transaction by default;
+use `write: true` for mutations. Use parameterized statements, not transaction
+control SQL. The helper is not a drop-in `pg.Pool` for ORMs or multi-statement
+transaction callbacks. It never retries SQL or performs schema changes. A
+cancelled connection before COMMIT rolls back; a lost COMMIT response can have
+an uncertain outcome. Add application idempotency before retrying writes.
+
+`postgresPoolConfig` preserves certificate and hostname verification even for
+`sslmode=require`, rejects URL TLS overrides, and accepts explicit
+`sslmode=disable` for local development. Private CAs use `NODE_EXTRA_CA_CERTS`.
+Migrate the application schema separately before deployment; a probe of an
+existing table also detects missing migrations. The default probe is `SELECT 1`.
+Remote PostgreSQL and transaction-mode poolers can use the helper, but provider
+pooling and native guest behavior require their separate acceptance gates.
 
 ## Container listeners
 
@@ -132,7 +238,7 @@ token. For example, with the separate `ws` package
 
 ```ts
 import WebSocket from 'ws';
-import { consumeRealtimeChannel } from '@gregale/sdk-node';
+import { consumeRealtimeChannel } from '@gregale/sdk-node/preview';
 
 await consumeRealtimeChannel({
   url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
@@ -211,7 +317,7 @@ reconnect and gives you actions for the current connection:
 
 ```ts
 import WebSocket from 'ws';
-import { consumeRealtimeChannel, type RealtimeChannelActions } from '@gregale/sdk-node';
+import { consumeRealtimeChannel, type RealtimeChannelActions } from '@gregale/sdk-node/preview';
 
 let room: RealtimeChannelActions | undefined;
 function onTypingChanged(typing: boolean) {
@@ -270,7 +376,7 @@ For notifications that must survive a disconnect, have the backend use
 principal inbox. Give each independently consuming device a stable `consumerId`:
 
 ```ts
-import { consumeRealtimeInbox, createBrowserRealtimeSocketFactory } from '@gregale/sdk-node/browser';
+import { consumeRealtimeInbox, createBrowserRealtimeSocketFactory } from '@gregale/sdk-node/preview/browser';
 
 await consumeRealtimeInbox({
   url: realtimeEndpointURL,
@@ -313,7 +419,7 @@ are shared:
 
 ```ts
 import WebSocket from 'ws';
-import { consumeRealtimeChannels } from '@gregale/sdk-node';
+import { consumeRealtimeChannels } from '@gregale/sdk-node/preview';
 
 await consumeRealtimeChannels({
   url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
@@ -347,7 +453,7 @@ it once from the logical event or outbox row, and reuse it only when retrying
 that exact payload:
 
 ```ts
-import { RealtimeService } from '@gregale/sdk-node';
+import { RealtimeService } from '@gregale/sdk-node/preview';
 
 const payload = Buffer.from(JSON.stringify(event));
 const outcome = await RealtimeService.publishManagedRealtimeChannel({
@@ -390,7 +496,7 @@ OIDC JWT in a reserved WebSocket subprotocol when the endpoint has an explicit
 import {
   consumeRealtimeChannel,
   createBrowserRealtimeSocketFactory,
-} from '@gregale/sdk-node/browser';
+} from '@gregale/sdk-node/preview/browser';
 
 const cursorKey = `realtime:ENDPOINT_ID:${currentUser.id}:notifications`;
 await consumeRealtimeChannel({
@@ -460,7 +566,7 @@ record in delivery order and returns the response body; a record whose handler
 throws is retried, the rest are complete:
 
 ```ts
-import { handleTriggerBatch, isTriggerBatch } from '@gregale/sdk-node/triggers/runtime';
+import { handleTriggerBatch, isTriggerBatch } from '@gregale/sdk-node/preview/triggers/runtime';
 
 export async function POST(request: Request) {
   const result = await handleTriggerBatch(await request.json(), async (record) => {
@@ -471,6 +577,28 @@ export async function POST(request: Request) {
 ```
 
 `isTriggerBatch(request.headers)` tells batch and single-record deliveries apart.
+
+## Code-first workflows
+
+`@gregale/sdk-node/workflows` serves a workflow written as async code
+(ADR-20261021204307). Declare `code: { run: order_followup }` on the workflow in
+`gregale.yaml` and serve the entry handler:
+
+```ts
+import { defineWorkflow, serveWorkflows, runWorkflowLocally } from '@gregale/sdk-node/workflows';
+
+const orderFollowup = defineWorkflow('order_followup', async (order: { id: string }, wf) => {
+  const charge = await wf.step('charge', ({ idempotencyKey }) => chargeCard(order.id, idempotencyKey));
+  await wf.sleep('delivery_delay', '3d');
+  const approval = await wf.waitForEvent('approval', { event: 'approved', timeout: '7d' });
+  return { charge, approved: approval !== null };
+});
+
+export const POST = serveWorkflows([orderFollowup]); // Fetch handler; toNodeListener() for node:http
+```
+
+`runWorkflowLocally(orderFollowup, input, { events })` runs a workflow to
+completion in-process for unit tests. See [code-first workflows](../../docs/code-workflows.md).
 Options: `concurrency` (1-100) for records that do not depend on each other's
 order, `stopOnFailure` to retry every record after a failure in order, and
 `onError` to log each failure. A malformed body throws `TriggerBatchError`;
@@ -485,7 +613,7 @@ only when something does, so it works with `useSyncExternalStore` and other
 stores:
 
 ```ts
-import { createBrowserRealtimeTicketSocketFactory, createRealtimeClient } from '@gregale/sdk-node/browser';
+import { createBrowserRealtimeTicketSocketFactory, createRealtimeClient } from '@gregale/sdk-node/preview/browser';
 
 const client = createRealtimeClient({ url, webSocketFactory: createBrowserRealtimeTicketSocketFactory(fetchTicket) });
 const lobby = client.channel('lobby', { occupancy: true });
@@ -535,7 +663,7 @@ body, validate business input, and return a pure transition:
 import {
   decodeDurableEntityHandlerRequest, durableEntityWebhookIntent,
   encodeDurableEntityTransition,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const call = decodeDurableEntityHandlerRequest(originalBody);
 const next = { status: 'reserved', quantity: 2 };
@@ -642,7 +770,7 @@ managed service calls. In an Express service, install `devBridgeMiddleware` befo
 handlers and use `createDevBridgeFetch` for outbound HTTP:
 
 ```ts
-import { devBridgeMiddleware, createDevBridgeFetch } from '@gregale/sdk-node';
+import { devBridgeMiddleware, createDevBridgeFetch } from '@gregale/sdk-node/preview';
 
 app.use(devBridgeMiddleware);
 const serviceFetch = createDevBridgeFetch();
@@ -670,8 +798,8 @@ See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
 ## Project release context
 
 Capture the release selected for an inbound Gregale request and use the
-wrapped fetch for outbound managed service calls. The helper forwards only
-`X-Gregale-Release` to `*.svc.gregale` and removes the caller-scoped
+wrapped fetch for outbound managed service calls. The helper forwards
+`X-Gregale-Release` to `*.svc.gregale` and declared `*.internal` aliases, and removes the caller-scoped
 `X-Gregale-Revision` header on that hop:
 
 ```ts
@@ -689,6 +817,17 @@ async function checkout(request: Request) {
 The async context is isolated between concurrent handlers. Use it only around
 work caused by that inbound request; detached background jobs should capture
 the release explicitly when they are enqueued.
+
+The same request helper captures Gregale's signed `X-Gregale-Request-Deadline`
+for participating ordinary HTTP chains. Managed calls carry the current
+request's deadline even if a downstream header tries to override it. The
+gateway verifies it before wake and preserves the absolute deadline across
+retries. External calls have this private carrier removed. Signed managed
+calls return redirects for you to follow explicitly through `serviceFetch`;
+they never automatically forward the carrier to a redirect destination.
+Omitting the helper or carrier makes a call unlinked to the parent deadline.
+The platform's complete-path acceptance is still pending; see
+[the deadline contract](../../docs/ops/traffic-total-deadline.md).
 
 ### Browser SPA release pinning
 
@@ -719,7 +858,7 @@ Browser clients can use the browser-safe fetch adapter without importing the
 Node-only SDK entry point:
 
 ```ts
-import { createGregaleBrowserFetch } from '@gregale/sdk-node/browser';
+import { createGregaleBrowserFetch } from '@gregale/sdk-node/preview/browser';
 
 const releaseFromBootstrap = document
   .querySelector('meta[name="gregale-release"]')
@@ -914,7 +1053,7 @@ enabled acceptance, import `GregaleOperationClient` from the browser entry point
 and supply a callback that obtains a current tenant-bound token:
 
 ```ts
-import { GregaleOperationClient } from '@gregale/sdk-node/browser';
+import { GregaleOperationClient } from '@gregale/sdk-node/preview/browser';
 
 const operations = new GregaleOperationClient({
   apiURL: 'https://api.example.com',
@@ -971,7 +1110,7 @@ Managed source files remain supported. For file results, `prepareArtifact` snaps
 exact UTF-8 byte count and `sha256:` digest, and keeps one immutable report ID:
 
 ```ts
-import { GregaleOperations } from '@gregale/sdk-node/operations/runtime';
+import { GregaleOperations } from '@gregale/sdk-node/preview/operations/runtime';
 
 await runtime.runRequest(req.headers, async () => {
   const context = runtime.context()!;
@@ -1053,7 +1192,7 @@ browser-safe `@gregale/sdk-node/operations` entry point; handlers can import
 state. Its first type is the result; its second types explicit submissions:
 
 ```ts
-import { GregaleOperationClient, GregaleOperationSession, createBrowserOperationReceiptStore } from '@gregale/sdk-node/operations';
+import { GregaleOperationClient, GregaleOperationSession, createBrowserOperationReceiptStore } from '@gregale/sdk-node/preview/operations';
 
 type ExportInput = { count: number };
 type ExportResult = { csv: string };
@@ -1109,7 +1248,7 @@ responsible for returning the current tenant-bound token and reporting account
 changes:
 
 ```ts
-import { CustomerOperationFeature, createBrowserOperationReceiptStore } from '@gregale/sdk-node/operations';
+import { CustomerOperationFeature, createBrowserOperationReceiptStore } from '@gregale/sdk-node/preview/operations';
 
 type ExportInput = { count: number };
 type ExportResult = { artifact_id: string; rows: number };
@@ -1301,7 +1440,7 @@ import WebSocket from 'ws';
 import {
   consumeRealtimeChannel, createRealtimeSignalTracker,
   type RealtimeChannelActions,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const tracker = createRealtimeSignalTracker((active) => renderRoomActivity(active));
 let room: RealtimeChannelActions | undefined;
@@ -1414,7 +1553,7 @@ For an inbox, use `onReadActions` to obtain the same controls:
 
 ```ts
 import WebSocket from 'ws';
-import { consumeRealtimeInbox, type RealtimeReadActions } from '@gregale/sdk-node';
+import { consumeRealtimeInbox, type RealtimeReadActions } from '@gregale/sdk-node/preview';
 
 let reads: RealtimeReadActions | undefined;
 let processedThrough = 0;
@@ -1478,7 +1617,7 @@ Configure FCM, APNs, or Web Push on the endpoint with the account API/CLI. A
 verified inbox consumer can then register a token over its current socket:
 
 ```ts
-import { realtimeWebPushRegistration } from '@gregale/sdk-node/browser';
+import { realtimeWebPushRegistration } from '@gregale/sdk-node/preview/browser';
 
 await consumeRealtimeInbox({
   // ...connection options...
@@ -1645,7 +1784,7 @@ Load snapshots through an application-authorized backend route, then commit stat
 before returning the replay baseline:
 
 ```ts
-import { recoverRealtimeChannelSnapshot } from '@gregale/sdk-node';
+import { recoverRealtimeChannelSnapshot } from '@gregale/sdk-node/preview';
 
 const recover = () => recoverRealtimeChannelSnapshot(
   'jobs',
@@ -1670,7 +1809,7 @@ requires a fresh snapshot. Keep management credentials on the backend.
 transport, and validates the returned contiguous sequences:
 
 ```ts
-import { publishRealtimeChannelBatch } from '@gregale/sdk-node';
+import { publishRealtimeChannelBatch } from '@gregale/sdk-node/preview';
 
 const encode = (value: unknown) => new TextEncoder().encode(JSON.stringify(value));
 const result = await publishRealtimeChannelBatch('job-123-completed', [
@@ -1711,7 +1850,7 @@ Register immutable JSON Schema Draft 2020-12 versions through your backend's
 management API, then select them in publisher metadata:
 
 ```ts
-import { realtimeEventSchemaMetadata } from '@gregale/sdk-node';
+import { realtimeEventSchemaMetadata } from '@gregale/sdk-node/preview';
 
 const metadata = realtimeEventSchemaMetadata('job.progress', 1, { project_id: 'alpha' });
 // Supply this metadata on a retained publish or a batch item:
@@ -1733,7 +1872,7 @@ its exact current channel sequence. Retained operation events then maintain stat
 and channel snapshots atomically:
 
 ```ts
-import { realtimeReducerEvent } from '@gregale/sdk-node';
+import { realtimeReducerEvent } from '@gregale/sdk-node/preview';
 
 const data = realtimeReducerEvent({
   op: 'merge',
@@ -1755,7 +1894,7 @@ manual snapshot writes; publish compensating operations instead.
 Use a channel head or reducer snapshot sequence to avoid overwriting newer state:
 
 ```ts
-import { realtimeExpectedSequence } from '@gregale/sdk-node';
+import { realtimeExpectedSequence } from '@gregale/sdk-node/preview';
 
 const body = {
   ...realtimeExpectedSequence(42),
@@ -3181,7 +3320,7 @@ It requires account `apps:read` or admin permission and preview app enablement.
 Missing delivery history is `unknown`; an empty queue does not prove delivery.
 
 ```ts
-import { inspectDurableEntity } from '@gregale/sdk-node';
+import { inspectDurableEntity } from '@gregale/sdk-node/preview';
 const inspection = await inspectDurableEntity({
   slug: 'reservations', namespace: 'reservations', key: 'reservation:123',
 });
@@ -3204,7 +3343,7 @@ receiver deliveries are not resent. After a conflict or uncertain response,
 inspect again before deciding whether to submit another recovery.
 
 ```ts
-import { retryDurableEntity } from '@gregale/sdk-node';
+import { retryDurableEntity } from '@gregale/sdk-node/preview';
 if (inspection.outbox.exhausted) {
   await retryDurableEntity({ slug: 'reservations', requestBody: {
     namespace: 'reservations', key: 'reservation:123', target: 'outbox',
@@ -3224,7 +3363,7 @@ helper rejects unsafe versions before sending a request.
 After configuring `FaaSClient`, bind logical entity selectors once:
 
 ```ts
-import { durableEntityHandle } from '@gregale/sdk-node';
+import { durableEntityHandle } from '@gregale/sdk-node/preview';
 const counter = durableEntityHandle<{ delta: number }, { count: number }>(
   { slug: 'counter', namespace: 'counters', key: 'customer:456', environment: 'staging' },
   value => {
@@ -3528,7 +3667,7 @@ Binding verification review endpoints return an executable plan and opaque diges
 After reviewing and creating a consented receipt, save its UUID and resume it directly:
 
 ```ts
-import { runBindingVerification, runProjectBindingVerification } from '@gregale/sdk-node';
+import { runBindingVerification, runProjectBindingVerification } from '@gregale/sdk-node/preview';
 const run = await runBindingVerification('api', savedRunId, {
   concurrency: 2,
   signal: controller.signal,

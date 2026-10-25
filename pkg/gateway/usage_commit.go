@@ -259,10 +259,11 @@ func usageCommitFrom(ctx context.Context) *usageCommit {
 // is off (ADR-20261018090210), keeps the observe-time append.
 func (h *Handler) armUsageCommit(r *http.Request, target Target) {
 	holder, _ := r.Context().Value(usageCommitKey{}).(*usageCommitHolder)
-	if holder == nil || h.usageOutbox == nil || !h.apiMonetizationEnabled() || isRouteProbe(r.Context()) || r.Context().Value(suppressFinancialUsageKey{}) == true {
+	accountID, appID := accountIDFromContext(r.Context()), appIDFromContext(r.Context())
+	if holder == nil || h.usageOutbox == nil || !h.APIMonetizationEnabledFor(accountID.String()) || isRouteProbe(r.Context()) ||
+		r.Context().Value(suppressFinancialUsageKey{}) == true {
 		return
 	}
-	accountID, appID := accountIDFromContext(r.Context()), appIDFromContext(r.Context())
 	attr := requestUsageAttribution(r)
 	if accountID == uuid.Nil || appID == uuid.Nil || !attr.financial() {
 		return

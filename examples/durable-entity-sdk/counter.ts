@@ -1,6 +1,6 @@
 // A pure guest computation. Mount it behind the existing trusted handler route;
 // parsing an envelope is not authentication for a public endpoint.
-import { decodeDurableEntityCall } from '@gregale/sdk-node';
+import { decodeDurableEntityCall } from '@gregale/sdk-node/preview';
 
 type Counter = { count: number };
 type Input = { delta?: number };

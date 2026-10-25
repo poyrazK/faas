@@ -86,6 +86,11 @@ type quietState struct {
 	epoch atomic.Uint64
 	// since is when the current pause took effect. Guarded by mu.
 	since time.Time
+	// lastStarted and lastEnded bound the most recent completed pause, and
+	// pausedTotal sums every completed pause of this incarnation on the
+	// monotonic clock (ADR-20261023171905). Guarded by mu.
+	lastStarted, lastEnded time.Time
+	pausedTotal            time.Duration
 	// seenAt is when the pause pass first saw this incarnation. Idleness is
 	// never measured from before it: the activity tracker keys on the
 	// instance id, so its last request may belong to an earlier VM.
@@ -111,6 +116,9 @@ func quietPauseAfterFor(req WakeRequest, qualificationOnly bool) time.Duration {
 func (m *Manager) quietEligibleLocked(id string, inst *Instance) bool {
 	if inst == nil || inst.QuietPauseAfter <= 0 || inst.Paused || inst.Frozen || inst.IsJob ||
 		inst.ExecutionOnly || inst.AppTaskOnly || inst.QualificationOnly || inst.TailCount > 0 {
+		return false
+	}
+	if functionExecutionBusy(inst) || functionMigrationActive(inst) {
 		return false
 	}
 	if _, busy := m.instanceFlights[id]; busy {
@@ -306,6 +314,12 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	if frozen {
 		return nil
 	}
+	m.mu.Lock()
+	migrating := functionMigrationActive(inst)
+	m.mu.Unlock()
+	if migrating {
+		return ErrInstanceBusy
+	}
 	started := time.Now()
 	resumeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), quietVMMTimeout)
 	err := m.ensureRehearsalNetwork(resumeCtx, inst)
@@ -316,6 +330,10 @@ func (m *Manager) QuietResume(ctx context.Context, instance string) error {
 	if err != nil {
 		m.quietMetrics.observeResumeError()
 		return fmt.Errorf("quiet resume %s: %w", instance, err)
+	}
+	if !st.since.IsZero() {
+		st.lastStarted, st.lastEnded = st.since, time.Now()
+		st.pausedTotal += st.lastEnded.Sub(st.lastStarted)
 	}
 	st.paused.Store(false)
 	st.since = time.Time{}
@@ -346,6 +364,38 @@ func (m *Manager) QuietPauseState(instance string) (paused bool, since time.Time
 		return false, time.Time{}
 	}
 	return true, st.since
+}
+
+// QuietPauseReport is the quiet pause record of an instance's live
+// incarnation that vmmd reports in InstanceStats. schedd keeps the pauses
+// in the ledger meterd subtracts from billed seconds (ADR-20261023171905).
+type QuietPauseReport struct {
+	// Paused and Since describe the current pause; Since is zero unless
+	// Paused.
+	Paused bool
+	Since  time.Time
+	// LastStarted and LastEnded bound the most recent completed pause;
+	// both are zero until the first resume.
+	LastStarted, LastEnded time.Time
+	// PausedTotal sums this incarnation's completed pauses.
+	PausedTotal time.Duration
+}
+
+// QuietPauseReport returns the quiet pause record of instance's live
+// incarnation. An instance without one, or replaced by a new VM, reports
+// the zero record.
+func (m *Manager) QuietPauseReport(instance string) QuietPauseReport {
+	st := m.quietStateIfAny(instance)
+	if st == nil {
+		return QuietPauseReport{}
+	}
+	st.mu.Lock()
+	defer st.mu.Unlock()
+	r := QuietPauseReport{LastStarted: st.lastStarted, LastEnded: st.lastEnded, PausedTotal: st.pausedTotal}
+	if st.paused.Load() {
+		r.Paused, r.Since = true, st.since
+	}
+	return r
 }
 
 // QuietGate lets a host-side probe loop skip a quiet-paused guest. A probe

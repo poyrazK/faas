@@ -319,7 +319,7 @@ func TestWebhookAutomationDurableAdmissionAndProviderRetry(t *testing.T) {
 		if err != nil || handled {
 			t.Fatalf("future routing=%v %v", handled, err)
 		}
-		if _, err := store.(PublishedEventRetentionStore).PruneDeliveredPublishedEvents(ctx, time.Now().Add(time.Hour), 100); err != nil {
+		if _, err := store.(PublishedEventRetentionStore).PruneSettledPublishedEvents(ctx, time.Now().Add(api.EventSettledRetentionMax()+time.Hour), 100); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := starts.GetWebhookAutomationReceipt(ctx, endpoint.ID, "evt_atomic"); !errors.Is(err, ErrNotFound) {

@@ -33,3 +33,14 @@ func (m *MemStore) RouteAwakeMinutes(_ context.Context, _ sqlc.RouteAwakeMinutes
 func (m *MemStore) RouteAwakeRouteMinutes(_ context.Context, _ sqlc.RouteAwakeRouteMinutesParams) ([]sqlc.RouteAwakeRouteMinutesRow, error) {
 	return nil, errMemStoreRequestTelemetry
 }
+
+// RouteAwakeWorkMinutes reads the deliveries schedd made to the app: cron,
+// queue, delayed task, async invoke, webhook, replay and event-source work
+// (ADR-20261022184757).
+func (s *PgStore) RouteAwakeWorkMinutes(ctx context.Context, arg sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error) {
+	return s.appErrorsQueries().RouteAwakeWorkMinutes(ctx, s.pool, arg)
+}
+
+func (m *MemStore) RouteAwakeWorkMinutes(_ context.Context, _ sqlc.RouteAwakeWorkMinutesParams) ([]sqlc.RouteAwakeWorkMinutesRow, error) {
+	return nil, errMemStoreRequestTelemetry
+}

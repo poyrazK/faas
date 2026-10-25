@@ -19,7 +19,7 @@ import (
 // no production fallback. Production callers, standalone previews,
 // unregistered developer sessions, and legacy preview rows without project
 // identity retain global slug resolution.
-func newServiceProxyResolver(store state.Store) gateway.ServiceProxyResolver {
+func newServiceProxyResolver(store servicePolicyApps) gateway.ServiceProxyResolver {
 	return func(ctx context.Context, callerAppID, service string) (gateway.ServiceTarget, bool, error) {
 		scopedPreviewCaller := false
 		var productionCaller state.App
@@ -81,7 +81,7 @@ func newServiceProxyResolver(store state.Store) gateway.ServiceProxyResolver {
 			// production fallback uses the same project alias as production.
 			productionCaller.PreviewOfSlug = ""
 		}
-		app, err := state.AppByServiceName(ctx, store, productionCaller, service)
+		app, err := serviceAppByName(ctx, store, productionCaller, service)
 		if errors.Is(err, state.ErrNotFound) {
 			return gateway.ServiceTarget{}, false, nil
 		}
@@ -109,11 +109,13 @@ func serviceTargetFromApp(app state.App, isPreview bool) gateway.ServiceTarget {
 
 func newServiceProxyEnvironmentBindingResolver(store state.Store) gateway.ServiceProxyEnvironmentBindingResolver {
 	return func(ctx context.Context, callerAppID, callerDeploymentID, service string) (gateway.ServiceProxyEnvironmentBinding, bool, bool, error) {
-		bindingStore, ok := store.(state.EnvironmentGitOpsServiceBindingStore)
-		if !ok {
-			return gateway.ServiceProxyEnvironmentBinding{}, false, false, nil
+		route, managed, found, err := resolveFrozenProjectBinding(ctx, store, callerAppID, callerDeploymentID, service)
+		frozen := managed
+		if err == nil && !managed {
+			if bindingStore, ok := store.(state.EnvironmentGitOpsServiceBindingStore); ok {
+				route, managed, found, err = bindingStore.ResolveEnvironmentGitOpsServiceBinding(ctx, callerAppID, callerDeploymentID, service)
+			}
 		}
-		route, managed, found, err := bindingStore.ResolveEnvironmentGitOpsServiceBinding(ctx, callerAppID, callerDeploymentID, service)
 		if err != nil {
 			if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrInvalidArgument) {
 				return gateway.ServiceProxyEnvironmentBinding{}, managed, false, gateway.ErrServiceProxyBindingDenied
@@ -130,8 +132,13 @@ func newServiceProxyEnvironmentBindingResolver(store state.Store) gateway.Servic
 		if target.ID != route.TargetAppID || target.Status == state.AppDeleted || target.AccountID != route.AccountID {
 			return gateway.ServiceProxyEnvironmentBinding{}, true, false, gateway.ErrServiceProxyBindingDenied
 		}
+		resolvedTarget := serviceTargetFromApp(target, false)
+		if frozen {
+			resolvedTarget.AppProtocol, resolvedTarget.WebSocketEnabled = route.AppProtocol, route.WebSocketEnabled
+		}
 		return gateway.ServiceProxyEnvironmentBinding{
-			Target:             serviceTargetFromApp(target, false),
+			FrozenPolicy:       frozen,
+			Target:             resolvedTarget,
 			TargetDeploymentID: route.TargetDeploymentID,
 			ReleaseSetID:       route.ReleaseSetID,
 			AccountID:          route.AccountID,
@@ -140,4 +147,16 @@ func newServiceProxyEnvironmentBindingResolver(store state.Store) gateway.Servic
 			Reliability:        route.Reliability,
 		}, true, true, nil
 	}
+}
+
+// serviceAppByName resolves project aliases through the read the store has: a
+// pinned policy view looks up one alias, a full store reads the project.
+func serviceAppByName(ctx context.Context, store servicePolicyApps, caller state.App, service string) (state.App, error) {
+	switch reader := store.(type) {
+	case state.ProjectServiceLookupReader:
+		return state.AppByServiceLookup(ctx, reader, caller, service)
+	case state.ProjectServiceReader:
+		return state.AppByServiceName(ctx, reader, caller, service)
+	}
+	return state.App{}, errors.New("project service lookup is unavailable")
 }

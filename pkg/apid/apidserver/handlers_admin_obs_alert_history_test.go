@@ -43,7 +43,7 @@ func TestObsRetainedAlertsRecoverAndRemainReadableOffline(t *testing.T) {
 	}
 	// There is no Prometheus client in this environment. Retained evidence and
 	// both historical/current-unknown episodes must still return 200.
-	rec := e.Do(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&limit=1", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&limit=1", nil, nil)
 	var list api.ObsIncidentListResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestObsRetainedAlertsRecoverAndRemainReadableOffline(t *testing.T) {
 	if rec.Code != 200 || len(list.Items) != 1 || list.NextCursor == "" || len(list.UnavailableSources) != 1 || list.UnavailableSources[0] != "platform_alert_history" {
 		t.Fatalf("list status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	next := e.Do(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&limit=1&cursor="+list.NextCursor, nil, nil)
+	next := e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&limit=1&cursor="+list.NextCursor, nil, nil)
 	var second api.ObsIncidentListResponse
 	if err := json.Unmarshal(next.Body.Bytes(), &second); err != nil {
 		t.Fatal(err)
@@ -60,7 +60,7 @@ func TestObsRetainedAlertsRecoverAndRemainReadableOffline(t *testing.T) {
 		t.Fatalf("second page status=%d body=%s", next.Code, next.Body.String())
 	}
 	path := "/v1/admin/obs/incidents/platform_alert/" + first.ID + "/evidence?limit=1"
-	rec = e.Do(t, "GET", path, nil, nil)
+	rec = e.DoOperator(t, "GET", path, nil, nil)
 	var evidence api.ObsIncidentEvidenceResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &evidence); err != nil {
 		t.Fatal(err)
@@ -68,7 +68,7 @@ func TestObsRetainedAlertsRecoverAndRemainReadableOffline(t *testing.T) {
 	if rec.Code != 200 || evidence.Incident.Status != "resolved" || !evidence.Truncated || evidence.Incident.AlertEpisode == nil || evidence.Incident.AlertEpisode.ResolvedAt == nil || evidence.History[0].Kind != "platform_alert.resolved" {
 		t.Fatalf("evidence status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	rec = e.Do(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&alert_status=resolved", nil, nil)
+	rec = e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&alert_status=resolved", nil, nil)
 	list = api.ObsIncidentListResponse{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatal(err)
@@ -76,7 +76,7 @@ func TestObsRetainedAlertsRecoverAndRemainReadableOffline(t *testing.T) {
 	if rec.Code != 200 || len(list.Items) != 1 || list.Items[0].ID != "platform_alert/"+first.ID {
 		t.Fatalf("status filter %d %s", rec.Code, rec.Body.String())
 	}
-	rec = e.Do(t, "GET", "/v1/admin/obs/incidents/platform_alert/"+first.SeriesID+"/evidence", nil, nil)
+	rec = e.DoOperator(t, "GET", "/v1/admin/obs/incidents/platform_alert/"+first.SeriesID+"/evidence", nil, nil)
 	evidence = api.ObsIncidentEvidenceResponse{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &evidence); err != nil {
 		t.Fatal(err)
@@ -84,7 +84,7 @@ func TestObsRetainedAlertsRecoverAndRemainReadableOffline(t *testing.T) {
 	if rec.Code != 200 || evidence.Incident.Status != "unknown" || evidence.Incident.ID == "platform_alert/"+first.ID {
 		t.Fatalf("legacy latest link %d %s", rec.Code, rec.Body.String())
 	}
-	rec = e.Do(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&since="+now.Add(-20*24*time.Hour).Format(time.RFC3339), nil, nil)
+	rec = e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=platform_alert&since="+now.Add(-20*24*time.Hour).Format(time.RFC3339), nil, nil)
 	list = api.ObsIncidentListResponse{}
 	if err := json.Unmarshal(rec.Body.Bytes(), &list); err != nil {
 		t.Fatal(err)
@@ -93,7 +93,7 @@ func TestObsRetainedAlertsRecoverAndRemainReadableOffline(t *testing.T) {
 		t.Fatalf("retained history window %d %s", rec.Code, rec.Body.String())
 	}
 	for _, path := range []string{"/v1/admin/obs/incidents?alert_status=resolved", "/v1/admin/obs/incidents?type=deployment&alert_status=resolved", "/v1/admin/obs/incidents?type=platform_alert&alert_status=healthy"} {
-		rec = e.Do(t, "GET", path, nil, nil)
+		rec = e.DoOperator(t, "GET", path, nil, nil)
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("invalid filter %s: %d", path, rec.Code)
 		}
@@ -128,7 +128,7 @@ func TestObsAlertHistoryDatabaseFailureIsUnavailable(t *testing.T) {
 	fake := &obsAlertFailureStore{Store: *(*e.S()).Store()}
 	*(*e.S()).Store() = statetest.NewStore(fake)
 	for _, path := range []string{"/v1/admin/obs/incidents?type=platform_alert", "/v1/admin/obs/incidents/platform_alert/" + strings.Repeat("a", 64) + "/evidence", "/v1/admin/obs/health", "/v1/admin/obs/incidents/platform_alert/" + strings.Repeat("a", 64) + "/triage-history"} {
-		rec := e.Do(t, "GET", path, nil, nil)
+		rec := e.DoOperator(t, "GET", path, nil, nil)
 		if rec.Code != 503 || strings.Contains(rec.Body.String(), "private database detail") {
 			t.Fatalf("%s: %d %s", path, rec.Code, rec.Body.String())
 		}

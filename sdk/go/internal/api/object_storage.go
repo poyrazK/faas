@@ -69,13 +69,13 @@ type ObjectSignedRequest struct {
 
 // SignBucketObject contacts the control API. Execute its returned URL using
 // ordinary HTTP with only the returned headers, without the API bearer token.
-func (c *Client) SignBucketObject(ctx context.Context, slug, bucket string, req ObjectSignRequest) (ObjectSignedRequest, error) {
+func (c *PreviewClient) SignBucketObject(ctx context.Context, slug, bucket string, req ObjectSignRequest) (ObjectSignedRequest, error) {
 	var out ObjectSignedRequest
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/buckets/"+url.PathEscape(bucket)+"/signed-url", req, &out)
 	return out, err
 }
 
-func (c *Client) ListObjectBuckets(ctx context.Context, slug string) (ObjectBucketList, error) {
+func (c *PreviewClient) ListObjectBuckets(ctx context.Context, slug string) (ObjectBucketList, error) {
 	var out ObjectBucketList
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/buckets", nil, &out)
 	return out, err

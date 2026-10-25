@@ -106,6 +106,119 @@ SELECT c.outbox_id, c.recipient, c.claim_token, c.generation, c.attempts,
        c.total_attempts, c.available_at, c.lease_until, o.payload, o.created_at AS accepted_at, c.backfill_job_id, (o.recipient_progress->c.subscription_id)::jsonb AS previous_progress
 FROM claimed c JOIN event_fanout_outbox o ON o.id = c.outbox_id;
 
+-- name: EventRecipientClaimBatch :many
+-- One scan claims what back-to-back EventRecipientClaim calls would claim, in
+-- the same order: each round takes one recipient from every eligible account
+-- in service order and rotates the account's consumers. A consumer with
+-- delivery controls contributes one recipient per batch, so its admission
+-- gate sees current counters before its next claim.
+WITH eligible AS MATERIALIZED (
+    SELECT r.outbox_id, r.subscription_id, o.account_id, r.available_at,
+        event_recipient_schema_version_mismatch(r.recipient,o.payload) AS schema_mismatch,
+        coalesce(fa.last_claimed_at,'epoch'::timestamptz) AS account_served,
+        coalesce(fc.last_claimed_at,'epoch'::timestamptz) AS consumer_served,
+        (EXISTS (SELECT 1 FROM event_subscription_delivery_controls c
+            WHERE c.app_id=r.app_id AND c.account_id=o.account_id AND c.subscription_id::text=r.subscription_id)
+         OR EXISTS (SELECT 1 FROM event_subscription_circuit_breakers b
+            WHERE b.app_id=r.app_id AND b.account_id=o.account_id AND b.subscription_id::text=r.subscription_id)) AS controlled
+    FROM event_fanout_recipients r
+    JOIN event_fanout_outbox o ON o.id=r.outbox_id
+    LEFT JOIN event_routing_fairness fa ON fa.account_id=o.account_id AND fa.subscription_id=''
+    LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r.subscription_id
+    WHERE ((r.state = 'pending' AND (r.available_at <= sqlc.arg(now_at)::timestamptz OR r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload)))
+       OR (r.state = 'processing' AND r.lease_until <= sqlc.arg(now_at)::timestamptz))
+      AND (sqlc.arg(include_workflows)::boolean OR NOT r.recipient ? 'workflow')
+      AND (r.backfill_job_id IS NULL OR EXISTS (
+          SELECT 1 FROM event_replay_jobs j JOIN event_replay_job_items i ON i.job_id=j.id
+          WHERE j.id=r.backfill_job_id AND j.state='running' AND i.outbox_id=r.outbox_id
+            AND i.state IN ('pending','processing')))
+      AND (r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload) OR event_subscription_delivery_waiting_reason(o.account_id,r.app_id,r.subscription_id,sqlc.arg(now_at)::timestamptz)='')
+      AND (r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz OR event_recipient_schema_version_mismatch(r.recipient,o.payload) OR NOT event_recipient_order_blocked(r.outbox_id, r.subscription_id, r.recipient, true))
+), consumer_rounds AS (
+    SELECT e.*, row_number() OVER consumer_order AS consumer_round,
+        first_value(e.available_at) OVER consumer_order AS consumer_first_available_at,
+        first_value(e.outbox_id) OVER consumer_order AS consumer_first_outbox_id
+    FROM eligible e
+    WINDOW consumer_order AS (PARTITION BY e.account_id, e.subscription_id ORDER BY e.available_at, e.outbox_id)
+), account_rounds AS (
+    SELECT c.*, row_number() OVER (PARTITION BY c.account_id ORDER BY c.consumer_round, c.consumer_served,
+        c.consumer_first_available_at, c.consumer_first_outbox_id, c.subscription_id) AS account_round
+    FROM consumer_rounds c
+    WHERE c.consumer_round = 1 OR NOT c.controlled
+), account_firsts AS (
+    -- Later rounds visit accounts in the order their first claims took.
+    SELECT a.*, first_value(a.consumer_served) OVER account_order AS first_consumer_served,
+        first_value(a.available_at) OVER account_order AS first_available_at,
+        first_value(a.outbox_id) OVER account_order AS first_outbox_id,
+        first_value(a.subscription_id) OVER account_order AS first_subscription_id
+    FROM account_rounds a
+    WINDOW account_order AS (PARTITION BY a.account_id ORDER BY a.account_round)
+), ordered AS (
+    SELECT f.outbox_id, f.subscription_id, f.schema_mismatch,
+        row_number() OVER (ORDER BY f.account_round, f.account_served, f.first_consumer_served,
+            f.first_available_at, f.first_outbox_id, f.first_subscription_id) AS position
+    FROM account_firsts f
+), candidate AS (
+    -- Repeating the due test here re-checks a row another worker claimed
+    -- after this statement's snapshot, before SKIP LOCKED could skip it.
+    -- Only the first ranks can be claimed, so only they are looked up; a
+    -- batch short of rows that other workers hold is topped up next scan.
+    SELECT r.outbox_id, r.subscription_id, k.position
+    FROM event_fanout_recipients r
+    JOIN ordered k ON k.outbox_id=r.outbox_id AND k.subscription_id=r.subscription_id
+    WHERE k.position <= 2 * sqlc.arg(batch_limit)::integer
+      AND ((r.state = 'pending' AND (r.available_at <= sqlc.arg(now_at)::timestamptz OR r.delivery_deadline_at <= sqlc.arg(now_at)::timestamptz OR k.schema_mismatch))
+       OR (r.state = 'processing' AND r.lease_until <= sqlc.arg(now_at)::timestamptz))
+    ORDER BY k.position
+    FOR UPDATE OF r SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
+), claimed AS (
+    UPDATE event_fanout_recipients r
+    SET state = 'processing', claim_token = gen_random_uuid(),
+        lease_until = sqlc.arg(now_at)::timestamptz + interval '5 minutes',
+        attempts = r.attempts + 1, total_attempts = r.total_attempts + 1
+    FROM candidate c
+    WHERE r.outbox_id = c.outbox_id AND r.subscription_id = c.subscription_id
+    RETURNING r.*, c.position
+), replay_item AS (
+    UPDATE event_replay_job_items i SET state='processing', attempts=c.total_attempts, updated_at=clock_timestamp()
+    FROM claimed c WHERE c.backfill_job_id=i.job_id AND c.outbox_id=i.outbox_id
+      AND i.state IN ('pending','processing')
+    RETURNING i.job_id
+), stamp AS MATERIALIZED (
+    SELECT clock_timestamp() AS at
+), served AS (
+    -- Each account and consumer is stamped at its last claim in the batch, as
+    -- back-to-back claims would leave it.
+    SELECT o.account_id, ''::text AS subscription_id, max(c.position) AS position
+    FROM claimed c JOIN event_fanout_outbox o ON o.id=c.outbox_id
+    GROUP BY o.account_id
+    UNION ALL
+    SELECT o.account_id, c.subscription_id, max(c.position)
+    FROM claimed c JOIN event_fanout_outbox o ON o.id=c.outbox_id
+    GROUP BY o.account_id, c.subscription_id
+), fairness AS (
+    -- Rows are written in key order, the lock order every claim uses.
+    INSERT INTO event_routing_fairness
+    SELECT s.account_id, s.subscription_id, t.at + s.position * interval '1 microsecond' FROM served s CROSS JOIN stamp t
+    ORDER BY s.account_id, s.subscription_id
+    ON CONFLICT (account_id,subscription_id) DO UPDATE SET last_claimed_at=excluded.last_claimed_at
+    RETURNING account_id
+)
+SELECT c.outbox_id, c.recipient, c.claim_token, c.generation, c.attempts,
+       c.capacity_deferrals,c.generation_capacity_deferrals,
+       c.total_attempts, c.available_at, c.lease_until, o.payload, o.created_at AS accepted_at, c.backfill_job_id, (o.recipient_progress->c.subscription_id)::jsonb AS previous_progress
+FROM claimed c JOIN event_fanout_outbox o ON o.id = c.outbox_id
+ORDER BY c.position;
+
+-- name: EventRecipientReleaseClaim :execrows
+-- Returns an unprocessed batch claim as if it had not been made.
+UPDATE event_fanout_recipients
+SET state = 'pending', claim_token = NULL, lease_until = NULL,
+    attempts = attempts - 1, total_attempts = total_attempts - 1
+WHERE outbox_id = sqlc.arg(outbox_id)::bigint AND subscription_id = sqlc.arg(subscription_id)::text
+  AND state = 'processing' AND claim_token = sqlc.arg(claim_token)::uuid
+  AND generation = sqlc.arg(generation)::bigint;
+
 -- name: EventRecipientLockReceipt :one
 SELECT id FROM event_fanout_outbox
 WHERE id = sqlc.arg(id)::bigint AND recipient_claims FOR UPDATE;
@@ -208,11 +321,13 @@ VALUES (sqlc.arg(account_id)::uuid,sqlc.arg(consumer_limit)::integer,sqlc.arg(ap
 ON CONFLICT (account_id) DO UPDATE SET consumer_limit=excluded.consumer_limit,app_limit=excluded.app_limit,account_limit=excluded.account_limit;
 
 -- name: EventDeliveryCounts :one
+-- Reads the account's live slots (event_delivery_slots_live), not its whole
+-- delivery history; the invocation's state still decides.
 SELECT count(*)::bigint AS account_count,
  count(*) FILTER (WHERE s.app_id=sqlc.arg(app_id)::uuid)::bigint AS app_count,
  count(*) FILTER (WHERE s.app_id=sqlc.arg(app_id)::uuid AND s.subscription_id=sqlc.arg(subscription_id)::text)::bigint AS consumer_count
 FROM event_delivery_slots s JOIN invocations i ON i.id=s.invocation_id
-WHERE s.account_id=sqlc.arg(account_id)::uuid AND i.state IN ('pending','dispatching')
+WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.live AND i.state IN ('pending','dispatching')
  AND NOT (sqlc.arg(replace_pending)::boolean AND i.state='pending' AND i.app_id=sqlc.arg(app_id)::uuid
    AND coalesce(i.work_policy_name,'')=sqlc.arg(policy_name)::text AND i.work_key_digest=sqlc.arg(key_digest)::bytea);
 
@@ -268,6 +383,80 @@ WITH candidate AS (
  ON CONFLICT (account_id,subscription_id) DO UPDATE SET last_claimed_at=excluded.last_claimed_at RETURNING account_id
 )
 SELECT c.* FROM claimed c WHERE EXISTS (SELECT 1 FROM fairness f WHERE f.account_id=c.account_id);
+
+-- name: EventRoutingClaimReceiptsForAdoption :many
+-- One scan claims up to batch_limit receipts for recipient adoption, as
+-- repeated EventRoutingClaimReceipt adoption claims would: each round takes
+-- one receipt from every eligible account in service order. Within an
+-- account, receipts keep the consumer order they had before the batch.
+WITH eligible AS MATERIALIZED (
+ SELECT o.id, o.account_id,
+   coalesce(fa.last_claimed_at,'epoch'::timestamptz) AS account_served,
+   coalesce(cf.last_claimed_at,fa.last_claimed_at,'epoch'::timestamptz) AS consumer_served
+ FROM event_fanout_outbox o
+ LEFT JOIN event_routing_fairness fa ON fa.account_id=o.account_id AND fa.subscription_id=''
+ LEFT JOIN LATERAL (
+   SELECT min(coalesce(fc.last_claimed_at,'epoch'::timestamptz)) AS last_claimed_at
+   FROM jsonb_array_elements(coalesce(o.recipient_snapshot,'[]'::jsonb)) r
+   LEFT JOIN event_routing_fairness fc ON fc.account_id=o.account_id AND fc.subscription_id=r->>'id'
+   WHERE coalesce(o.recipient_progress->(r->>'id')->>'state','pending') NOT IN ('enqueued','filtered','failed')
+     AND coalesce((o.recipient_progress->(r->>'id')->>'next_attempt_at')::timestamptz,'epoch'::timestamptz)<=sqlc.arg(now_at)::timestamptz
+ ) cf ON true
+ WHERE NOT o.recipient_claims AND ((o.state='pending' AND o.available_at<=sqlc.arg(now_at)::timestamptz)
+   OR (o.state='processing' AND o.lease_until<=sqlc.arg(now_at)::timestamptz))
+), rounds AS (
+ SELECT e.*, row_number() OVER (PARTITION BY e.account_id ORDER BY e.consumer_served, e.id) AS account_round
+ FROM eligible e
+), account_firsts AS (
+ -- Later rounds visit accounts in the order their first claims took.
+ SELECT r.*, first_value(r.consumer_served) OVER account_order AS first_consumer_served,
+   first_value(r.id) OVER account_order AS first_id
+ FROM rounds r
+ WINDOW account_order AS (PARTITION BY r.account_id ORDER BY r.account_round)
+), ordered AS (
+ SELECT f.id, row_number() OVER (ORDER BY f.account_round, f.account_served, f.first_consumer_served, f.first_id) AS position
+ FROM account_firsts f
+), candidate AS (
+ -- Repeating the due test here re-checks a receipt another worker claimed
+ -- after this statement's snapshot, before SKIP LOCKED could skip it.
+ -- Only the first ranks can be claimed, so only they are looked up.
+ SELECT o.id, k.position FROM event_fanout_outbox o JOIN ordered k ON k.id=o.id
+ WHERE k.position <= 2 * sqlc.arg(batch_limit)::integer
+   AND NOT o.recipient_claims AND ((o.state='pending' AND o.available_at<=sqlc.arg(now_at)::timestamptz)
+   OR (o.state='processing' AND o.lease_until<=sqlc.arg(now_at)::timestamptz))
+ ORDER BY k.position
+ FOR UPDATE OF o SKIP LOCKED LIMIT sqlc.arg(batch_limit)::integer
+), claimed AS (
+ UPDATE event_fanout_outbox o SET state='processing',claim_token=gen_random_uuid(),
+ lease_until=sqlc.arg(now_at)::timestamptz+interval '5 minutes',attempts=o.attempts+1
+ FROM candidate c WHERE o.id=c.id RETURNING o.*, c.position
+), stamp AS MATERIALIZED (
+ SELECT clock_timestamp() AS at
+), served AS (
+ -- Each account and consumer is stamped at its last claim in the batch.
+ SELECT c.account_id, ''::text AS subscription_id, max(c.position) AS position
+ FROM claimed c GROUP BY c.account_id
+ UNION ALL
+ SELECT c.account_id, r->>'id', max(c.position)
+ FROM claimed c CROSS JOIN LATERAL jsonb_array_elements(coalesce(c.recipient_snapshot,'[]'::jsonb)) r
+ WHERE coalesce(c.recipient_progress->(r->>'id')->>'state','pending') NOT IN ('enqueued','filtered','failed')
+   AND coalesce((c.recipient_progress->(r->>'id')->>'next_attempt_at')::timestamptz,'epoch'::timestamptz)<=sqlc.arg(now_at)::timestamptz
+ GROUP BY c.account_id, r->>'id'
+), fairness AS (
+ -- Rows are written in key order, the lock order every claim uses.
+ INSERT INTO event_routing_fairness
+ SELECT s.account_id, s.subscription_id, t.at + s.position * interval '1 microsecond' FROM served s CROSS JOIN stamp t
+ ORDER BY s.account_id, s.subscription_id
+ ON CONFLICT (account_id,subscription_id) DO UPDATE SET last_claimed_at=excluded.last_claimed_at RETURNING account_id
+)
+SELECT c.id, c.claim_token, c.attempts, c.lease_until, c.created_at, c.payload, c.recipient_snapshot, c.recipient_progress
+FROM claimed c ORDER BY c.position;
+
+-- name: EventRoutingReleaseAdoptionClaim :execrows
+-- Returns an unprocessed adoption claim as if it had not been made.
+UPDATE event_fanout_outbox SET state='pending', claim_token=NULL, lease_until=NULL, attempts=attempts-1
+WHERE id=sqlc.arg(id)::bigint AND claim_token=sqlc.arg(claim_token)::uuid
+  AND state='processing' AND NOT recipient_claims;
 
 -- name: EventDeliveryReplayAccount :one
 SELECT s.account_id,a.plan FROM event_delivery_slots s JOIN accounts a ON a.id=s.account_id

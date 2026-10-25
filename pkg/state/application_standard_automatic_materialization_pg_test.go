@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"context"
@@ -9,32 +9,33 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestPgApplicationStandardAutomaticOnboarding(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardAutomaticOnboarding(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardAutomaticOnboarding(t, s)
 }
 func TestPgApplicationStandardAutomaticDetach(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardAutomaticDetach(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardAutomaticDetach(t, s)
 }
 func TestPgApplicationStandardAutomaticRestoreDefault(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardAutomaticRestoreDefault(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardAutomaticRestoreDefault(t, s)
 }
 func TestPgApplicationStandardAutomaticCreatorPlan(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardAutomaticCreatorPlan(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardAutomaticCreatorPlan(t, s)
 }
 func TestPgApplicationStandardAutomaticReviewPrecedence(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardAutomaticReviewPrecedence(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardAutomaticReviewPrecedence(t, s)
 }
 
 func TestPgApplicationStandardAutomaticLeaseFencing(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
-	standardAutomaticLeaseFencing(t, s, func(c ApplicationStandardEnrollmentClaim) {
+	s, pool := state.StandardOperationPGStore(t)
+	state.StandardAutomaticLeaseFencing(t, s, func(c state.ApplicationStandardEnrollmentClaim) {
 		if _, err := pool.Exec(context.Background(), `UPDATE app_application_standards SET lease_until=clock_timestamp()-interval '1 second' WHERE app_id=$1`, c.AppID); err != nil {
 			t.Fatal(err)
 		}
@@ -42,8 +43,8 @@ func TestPgApplicationStandardAutomaticLeaseFencing(t *testing.T) {
 }
 
 func TestPgApplicationStandardAutomaticBlockedRecovery(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
-	standardAutomaticBlockedRecovery(t, s, func(appID string) {
+	s, pool := state.StandardOperationPGStore(t)
+	state.StandardAutomaticBlockedRecovery(t, s, func(appID string) {
 		if _, err := pool.Exec(context.Background(), `UPDATE app_application_standards SET updated_at=clock_timestamp()-interval '1 minute' WHERE app_id=$1`, appID); err != nil {
 			t.Fatal(err)
 		}
@@ -51,15 +52,15 @@ func TestPgApplicationStandardAutomaticBlockedRecovery(t *testing.T) {
 }
 
 func TestPgApplicationStandardWorkerFairness(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardWorkerFairness(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardWorkerFairness(t, s)
 }
 
 func TestPgApplicationStandardAutomaticLeaseExpiryRollsBack(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
+	s, pool := state.StandardOperationPGStore(t)
 	ctx := context.Background()
-	f := standardAutomaticSetup(t, s, false, false)
-	app := automaticCreate(t, s, f, "automatic-expiring-transaction")
+	f := state.StandardAutomaticSetup(t, s, false, false)
+	app := state.AutomaticCreate(t, s, f, "automatic-expiring-transaction")
 	c, err := s.ClaimApplicationStandardEnrollment(ctx, "expiring-enrollment-worker")
 	if err != nil {
 		t.Fatal(err)
@@ -75,13 +76,13 @@ func TestPgApplicationStandardAutomaticLeaseExpiryRollsBack(t *testing.T) {
 	}
 	c.Until = time.Now().Add(time.Hour)
 	started := time.Now()
-	if _, err := s.MaterializeApplicationStandardEnrollment(ctx, c); !errors.Is(err, ErrApplicationStandardLeaseLost) {
+	if _, err := s.MaterializeApplicationStandardEnrollment(ctx, c); !errors.Is(err, state.ErrApplicationStandardLeaseLost) {
 		t.Fatalf("expired transaction installed controls: %v", err)
 	}
 	if time.Since(started) < 700*time.Millisecond {
 		t.Fatal("lease expired before the post-write checkpoint was exercised")
 	}
-	e, err := s.GetApplicationStandardEnrollment(ctx, f.owner.PersonalOrg.ID, app.ID)
+	e, err := s.GetApplicationStandardEnrollment(ctx, (*f.Owner()).PersonalOrg.ID, app.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestPgApplicationStandardAutomaticLeaseExpiryRollsBack(t *testing.T) {
 	if _, err := pool.Exec(ctx, `DROP TRIGGER standard_automatic_slow ON app_application_standards; DROP FUNCTION standard_automatic_slow();`); err != nil {
 		t.Fatal(err)
 	}
-	if repaired := automaticRepair(t, s); repaired.State != "persisted" {
+	if repaired := state.AutomaticRepair(t, s); repaired.State != "persisted" {
 		t.Fatalf("expired work did not resume: %+v", repaired)
 	}
 }

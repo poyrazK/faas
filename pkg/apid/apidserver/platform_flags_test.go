@@ -13,12 +13,19 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidserver"
+	"github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// subjectOf decides for an account outside any organization context.
+func subjectOf(acct state.Account) platformflags.Subject {
+	return platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan)}
+}
 
 func platformFlagRule(id string, value bool, mutate func(*platformflags.Rule)) platformflags.Rule {
 	rule := platformflags.Rule{ID: id, Value: &value}
@@ -58,8 +65,14 @@ func TestPlatformFlagsAdminLifecycle(t *testing.T) {
 		t.Fatalf("items = %d, want every catalogued flag", len(initial.Items))
 	}
 	for _, item := range initial.Items {
-		if item.Source != "default_or_environment" || item.Definition.Enabled || item.ConfigKey != platformflags.ConfigKey(item.Key) {
-			t.Fatalf("fresh flag = %+v, want an off bootstrap value", item)
+		// Hand-written flags boot off; generated capability flags boot at their
+		// tier default (ADR-20261023115741).
+		spec, _ := platformflags.Lookup(item.Key)
+		if item.Source != "default_or_environment" || item.Definition.Enabled != spec.Default.Enabled || item.Definition.Default != spec.Default.Default || item.ConfigKey != platformflags.ConfigKey(item.Key) {
+			t.Fatalf("fresh flag = %+v, want its declared bootstrap value %+v", item, spec.Default)
+		}
+		if !spec.Generated && item.Definition.Enabled {
+			t.Fatalf("hand-written flag %s must boot off", item.Key)
 		}
 	}
 
@@ -89,7 +102,7 @@ func TestPlatformFlagsAdminLifecycle(t *testing.T) {
 	if !got.Enabled || got.Reason != "rule_match" || got.RuleID != "partners" || got.Entitled == nil || !*got.Entitled || !got.Available || got.Version != 1 {
 		t.Fatalf("decision = %+v", got)
 	}
-	view := e.Do(t, http.MethodGet, "/v1/admin/accounts/"+account+"/flags", nil, nil)
+	view := e.DoOperator(t, http.MethodGet, "/v1/admin/accounts/"+account+"/flags", nil, nil)
 	accountFlags := decodeBody[api.OperatorAccountPlatformFlags](t, view.Code, view.Body.Bytes(), http.StatusOK)
 	if accountFlags.Plan != string(api.PlanPro) || len(accountFlags.Items) != len(platformflags.Catalog()) {
 		t.Fatalf("account view = %+v", accountFlags)
@@ -118,7 +131,7 @@ func TestPlatformFlagsAdminLifecycle(t *testing.T) {
 		"/v1/admin/flags/ai_gateway/decision?account_id=" + uuid.NewString(): http.StatusNotFound,
 		"/v1/admin/accounts/" + uuid.NewString() + "/flags":                  http.StatusNotFound,
 	} {
-		if res := e.Do(t, http.MethodGet, path, nil, nil); res.Code != want {
+		if res := e.DoOperator(t, http.MethodGet, path, nil, nil); res.Code != want {
 			t.Errorf("GET %s = %d, want %d", path, res.Code, want)
 		}
 	}
@@ -223,6 +236,7 @@ func TestEnvGatesYieldToOperatorPlatformFlags(t *testing.T) {
 	e := apidserver.Setup(t, api.PlanPro)
 	s, acct := *e.S(), *e.Acct()
 	other := state.Account{ID: uuid.NewString(), Plan: api.PlanPro}
+	me, them := subjectOf(acct), subjectOf(other)
 	only := func(id string) json.RawMessage {
 		return platformflags.Definition{Enabled: true, Rules: []platformflags.Rule{
 			platformFlagRule("pilot", true, func(r *platformflags.Rule) { r.Accounts = []string{id} }),
@@ -238,43 +252,77 @@ func TestEnvGatesYieldToOperatorPlatformFlags(t *testing.T) {
 
 	t.Run("application_auth", func(t *testing.T) {
 		t.Setenv("FAAS_APPLICATION_AUTH_ENABLED", "1")
-		if !s.ApplicationAuthEnabledFor(acct) {
+		if !s.ApplicationAuthEnabledFor(me) {
 			t.Fatal("the environment gate must decide until an operator writes the flag")
 		}
 		apply(platformflags.ApplicationAuth, off, 1)
-		if s.ApplicationAuthEnabledFor(acct) {
+		if s.ApplicationAuthEnabledFor(me) {
 			t.Fatal("an operator kill switch must override FAAS_APPLICATION_AUTH_ENABLED")
 		}
 		apply(platformflags.ApplicationAuth, only(acct.ID), 2)
-		if !s.ApplicationAuthEnabledFor(acct) || s.ApplicationAuthEnabledFor(other) {
+		if !s.ApplicationAuthEnabledFor(me) || s.ApplicationAuthEnabledFor(them) {
 			t.Fatal("the operator rule must release Auth to the listed account only")
 		}
 	})
 	t.Run("change_timeline", func(t *testing.T) {
-		if !s.ChangeTimelineEnabledFor(acct, true) || s.ChangeTimelineEnabledFor(acct, false) {
+		if !s.ChangeTimelineEnabledFor(me, true) || s.ChangeTimelineEnabledFor(me, false) {
 			t.Fatal("FAAS_CHANGE_TIMELINE_ENABLED must decide until an operator writes the flag")
 		}
 		apply(platformflags.ChangeTimeline, only(acct.ID), 1)
-		if !s.ChangeTimelineEnabledFor(acct, false) || s.ChangeTimelineEnabledFor(other, true) {
+		if !s.ChangeTimelineEnabledFor(me, false) || s.ChangeTimelineEnabledFor(them, true) {
 			t.Fatal("the operator rule must decide once written, whatever the environment says")
 		}
 	})
 	t.Run("anomaly_alerts", func(t *testing.T) {
-		if s.AnomalyAlertsAllowedFor(acct, false) || !s.AnomalyAlertsAllowedFor(acct, true) {
+		if s.AnomalyAlertsAllowedFor(me, false) || !s.AnomalyAlertsAllowedFor(me, true) {
 			t.Fatal("FAAS_ANOMALY_ALERTS_ENABLED must decide until an operator writes the flag")
 		}
 		apply(platformflags.AnomalyAlerts, only(acct.ID), 1)
-		if !s.AnomalyAlertsAllowedFor(acct, false) || s.AnomalyAlertsAllowedFor(other, true) {
+		if !s.AnomalyAlertsAllowedFor(me, false) || s.AnomalyAlertsAllowedFor(them, true) {
 			t.Fatal("the operator rule must decide once written, whatever the environment says")
 		}
 	})
 	t.Run("trigger_batch_delivery", func(t *testing.T) {
-		if s.TriggerBatchDeliveryAllowedFor(acct, false) || !s.TriggerBatchDeliveryAllowedFor(acct, true) {
+		if s.TriggerBatchDeliveryAllowedFor(me, false) || !s.TriggerBatchDeliveryAllowedFor(me, true) {
 			t.Fatal("FAAS_TRIGGER_BATCH_DELIVERY_PREVIEW_ENABLED must decide until an operator writes the flag")
 		}
 		apply(platformflags.TriggerBatchDelivery, only(acct.ID), 1)
-		if !s.TriggerBatchDeliveryAllowedFor(acct, false) || s.TriggerBatchDeliveryAllowedFor(other, true) {
+		if !s.TriggerBatchDeliveryAllowedFor(me, false) || s.TriggerBatchDeliveryAllowedFor(them, true) {
 			t.Fatal("the operator rule must decide once written, whatever the environment says")
+		}
+	})
+	t.Run("operation_schedules_and_children", func(t *testing.T) {
+		t.Setenv("FAAS_OPERATION_SCHEDULES_ACCOUNTS", acct.ID)
+		t.Setenv("FAAS_OPERATION_CHILDREN_ACCOUNTS", acct.ID)
+		if !s.OperationSchedulesOpen(acct.ID) || s.OperationSchedulesOpen(other.ID) || !s.OperationChildrenOpen(acct.ID) {
+			t.Fatal("the environment allowlists must decide until an operator writes the flags")
+		}
+		apply(platformflags.OperationSchedules, only(other.ID), 1)
+		apply(platformflags.OperationChildren, off, 1)
+		if s.OperationSchedulesOpen(acct.ID) || !s.OperationSchedulesOpen(other.ID) || s.OperationChildrenOpen(acct.ID) {
+			t.Fatal("the operator values must decide once written, whatever the allowlists say")
+		}
+	})
+	t.Run("service_map_guest_tracing_static_egress", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/v1/service-map", nil)
+		if !s.ServiceMapReleased(req, acct, true) || s.GuestTracingReleased(acct, false) {
+			t.Fatal("the environment gates must decide until an operator writes the flags")
+		}
+		t.Setenv("FAAS_STATIC_EGRESS_IP_ENABLED", "1")
+		if !s.StaticEgressIPReleased(me) {
+			t.Fatal("FAAS_STATIC_EGRESS_IP_ENABLED must decide until an operator writes the flag")
+		}
+		apply(platformflags.ServiceMap, only(acct.ID), 1)
+		apply(platformflags.GuestTracing, only(acct.ID), 1)
+		apply(platformflags.StaticEgressIP, off, 1)
+		if !s.ServiceMapReleased(req, acct, false) || s.ServiceMapReleased(req, other, true) {
+			t.Fatal("service_map must follow the operator rule once written")
+		}
+		if !s.GuestTracingReleased(acct, false) || s.GuestTracingReleased(other, true) {
+			t.Fatal("guest_tracing must follow the operator rule once written")
+		}
+		if s.StaticEgressIPReleased(me) {
+			t.Fatal("an operator kill switch must override FAAS_STATIC_EGRESS_IP_ENABLED")
 		}
 	})
 	t.Run("live_queries", func(t *testing.T) {
@@ -295,6 +343,95 @@ func TestEnvGatesYieldToOperatorPlatformFlags(t *testing.T) {
 			t.Fatal("releasing to every account must stop hiding the routes")
 		}
 	})
+	// adr: 20261019102657
+	t.Run("realtime_preview", func(t *testing.T) {
+		if err := s.ConfigureRealtimePreviewForTest(func(key string) string {
+			if key == "FAAS_REALTIME_PREVIEW_ACCOUNTS" {
+				return other.ID
+			}
+			return ""
+		}); err != nil {
+			t.Fatal(err)
+		}
+		gate := s.RealtimePreviewGateForTest()
+		if !gate.Allows(other.ID) || gate.Allows(acct.ID) {
+			t.Fatal("FAAS_REALTIME_PREVIEW_ACCOUNTS must decide until an operator writes the flag")
+		}
+		apply(platformflags.RealtimePreview, only(acct.ID), 1)
+		if !gate.Allows(acct.ID) || gate.Allows(other.ID) || s.RealtimePreviewPublishedForTest() {
+			t.Fatal("the operator rule must release the preview to that account only and keep the spec hidden")
+		}
+		apply(platformflags.RealtimePreview, platformflags.Definition{Enabled: true, Default: true}.Marshal(), 2)
+		if !gate.Allows(other.ID) || !s.RealtimePreviewPublishedForTest() {
+			t.Fatal("releasing to every account must publish the preview")
+		}
+		apply(platformflags.RealtimePreview, platformflags.Definition{}.Marshal(), 3)
+		if off, ok := gate.(interface{ Off() bool }); !ok || !off.Off() || gate.Allows(acct.ID) {
+			t.Fatal("the kill switch must hide the preview from every account")
+		}
+	})
+}
+
+// Company targeting (ADR 20261021080640): an org rule releases a feature to
+// whoever acts under that organization, never to the same person outside it.
+func TestPlatformFlagOrgRulesFollowTheRequestOrganization(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	s, acct := *e.S(), *e.Acct()
+	org := uuid.NewString()
+	def := platformflags.Definition{Enabled: true, Rules: []platformflags.Rule{
+		platformFlagRule("acme", true, func(r *platformflags.Rule) { r.Orgs = []string{org} }),
+	}}
+	if _, err := s.ApplyRuntimeConfig(platformflags.ConfigKey(platformflags.ApplicationAuth), def.Marshal(), 1); err != nil {
+		t.Fatal(err)
+	}
+	inside := platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan), OrgID: org}
+	colleague := platformflags.Subject{AccountID: uuid.NewString(), Plan: string(api.PlanFree), OrgID: org}
+	if !s.ApplicationAuthEnabledFor(inside) || !s.ApplicationAuthEnabledFor(colleague) {
+		t.Fatal("an org rule must release the feature to everyone acting under the organization")
+	}
+	if s.ApplicationAuthEnabledFor(subjectOf(acct)) {
+		t.Fatal("the same person outside the organization must not match an org rule")
+	}
+}
+
+func TestFlagSubjectReadsTheRequestOrganization(t *testing.T) {
+	acct := state.Account{ID: uuid.NewString(), Plan: api.PlanPro}
+	keyOrg, activeOrg := uuid.NewString(), uuid.NewString()
+	req := httptest.NewRequest(http.MethodGet, "/v1/capabilities", nil)
+	if got := apidserver.FlagSubject(req, acct); got.OrgID != "" {
+		t.Fatalf("no principal: org = %q, want none", got.OrgID)
+	}
+	key := &state.APIKey{ID: uuid.NewString(), OrgID: keyOrg}
+	withKey := req.WithContext(middleware.WithPrincipal(req.Context(), acct, key, nil))
+	if got := apidserver.FlagSubject(withKey, acct); got.OrgID != keyOrg || got.AccountID != acct.ID || got.Plan != string(api.PlanPro) {
+		t.Fatalf("API key request subject = %+v, want the key's organization", got)
+	}
+	member := &state.OrgMembership{OrgID: activeOrg, AccountID: acct.ID}
+	active := req.WithContext(middleware.WithPrincipal(req.Context(), acct, key, member))
+	if got := apidserver.FlagSubject(active, acct); got.OrgID != activeOrg {
+		t.Fatalf("active-org request org = %q, want the active organization over the key's", got.OrgID)
+	}
+}
+
+// A rule using an attribute some consumer cannot supply would silently match
+// nobody there, so the write is refused.
+func TestPlatformFlagWritesRefuseUnsupportedTargeting(t *testing.T) {
+	e := apidserver.NewObsEnv(t, []string{"admin"}, "ops@faas.dev", "ops@faas.dev")
+	orgRule := platformflags.Definition{Enabled: true, Rules: []platformflags.Rule{
+		platformFlagRule("acme", true, func(r *platformflags.Rule) { r.Orgs = []string{uuid.NewString()} }),
+	}}
+	planRule := platformflags.Definition{Enabled: true, Rules: []platformflags.Rule{
+		platformFlagRule("pro", true, func(r *platformflags.Rule) { r.Plans = []string{string(api.PlanPro)} }),
+	}}
+	if code := patchPlatformConfig(t, e, platformflags.ConfigKey(platformflags.AIGateway), orgRule, 0); code != http.StatusConflict {
+		t.Fatalf("org rule on ai_gateway = %d, want 409: outboundd cannot see the organization", code)
+	}
+	if code := patchPlatformConfig(t, e, platformflags.ConfigKey(platformflags.LiveQueries), planRule, 0); code != http.StatusConflict {
+		t.Fatalf("plan rule on live_queries = %d, want 409: the realtime path knows only the account", code)
+	}
+	if code := patchPlatformConfig(t, e, platformflags.ConfigKey(platformflags.ApplicationAuth), orgRule, 0); code != http.StatusOK {
+		t.Fatalf("org rule on application_auth = %d, want 200", code)
+	}
 }
 
 func TestEnvGatesSeedTheirPlatformFlags(t *testing.T) {
@@ -313,5 +450,25 @@ func TestEnvGatesSeedTheirPlatformFlags(t *testing.T) {
 	}
 	if def, _, _ := s.PlatformFlagSet().Snapshot().Definition(platformflags.ChangeTimeline); def.Enabled {
 		t.Fatal("an unset FAAS_CHANGE_TIMELINE_ENABLED must seed change_timeline off")
+	}
+}
+
+func TestRetireByGaugeCoversOnlyDatedPreviews(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	apidserver.RegisterPlatformFlagRetireBy(registry)
+	families, err := registry.Gather()
+	if err != nil || len(families) != 1 || families[0].GetName() != "apid_platform_flag_retire_by_timestamp_seconds" {
+		t.Fatalf("gather = %v, %v", families, err)
+	}
+	got := map[string]float64{}
+	for _, metric := range families[0].GetMetric() {
+		got[metric.GetLabel()[0].GetValue()] = metric.GetGauge().GetValue()
+	}
+	for _, spec := range platformflags.Catalog() {
+		at, dated := spec.RetireByTime()
+		value, exported := got[spec.Key]
+		if exported != dated || (dated && value != float64(at.Unix())) {
+			t.Errorf("%s: exported=%t value=%v, want exported=%t at %v", spec.Key, exported, value, dated, at)
+		}
 	}
 }

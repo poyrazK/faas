@@ -45,7 +45,14 @@ type Metrics struct {
 	aiCanaryRollbacks      *prometheus.CounterVec
 	aiModeration           *prometheus.CounterVec
 	aiLogExports           *prometheus.CounterVec
+	aiQualityFlags         *prometheus.CounterVec
+	aiFeedback             *prometheus.CounterVec
+	aiOnlineEvaluations    *prometheus.CounterVec
+	aiQualityAlerts        *prometheus.CounterVec
 	aiResponseChecks       *prometheus.CounterVec
+	aiRealtimeSessions     *prometheus.CounterVec
+	aiPromptPrefixShared   *prometheus.CounterVec
+	aiRealtimeActive       prometheus.Gauge
 	aiResponseFindings     *prometheus.CounterVec
 	aiPromptCacheMarks     *prometheus.CounterVec
 	aiResponseCacheSaved   *prometheus.CounterVec
@@ -201,6 +208,45 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 			Name: "outbound_ai_log_exports_total",
 			Help: "Settled AI calls written to the log-drain export outbox, by integration (ADR-1340).",
 		}, []string{"integration_id"}),
+		aiQualityFlags: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_quality_flags_total",
+			Help: "Settled AI calls by integration and quality flag: truncated, refused, empty, invalid_json or tool_error (ADR 20261021171712).",
+		}, []string{"integration_id", "flag"}),
+		aiFeedback: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_feedback_total",
+			Help: "Ratings apps stored for their AI calls, by integration and rating (ADR 20261021171712).",
+		}, []string{"integration_id", "rating"}),
+		aiOnlineEvaluations: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_online_evaluations_total",
+			Help: "Online evaluations by result: scored or judge_error (ADR 20261021171712).",
+		}, []string{"result"}),
+		aiQualityAlerts: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_quality_alerts_total",
+			Help: "AI quality drift alerts recorded, by metric (ADR 20261021171712).",
+		}, []string{"metric"}),
+		aiRealtimeSessions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_realtime_sessions_total",
+			Help: "AI realtime sessions by event: opened, unmetered, and closed by the client, the provider, a cap, the duration bound, unreadable usage or an error (ADR 20261019072722).",
+		}, []string{"event"}),
+		aiPromptPrefixShared: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "outbound_ai_prompt_cache_shared_total",
+			Help: "Shared prompt-prefix lookups by integration and result: repeated, first, refreshed or error (ADR 20261019132139).",
+		}, []string{"integration_id", "result"}),
+		aiRealtimeActive: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "outbound_ai_realtime_sessions_active",
+			Help: "AI realtime sessions open on this outboundd (ADR 20261019072722).",
+		}),
+	}
+	// The alert rules read these by reason or outcome alone. A series that
+	// starts at zero lets increase() see a process's first event.
+	for _, reason := range []string{api.OutboundAIRouteCanaryReasonErrorRate, api.OutboundAIRouteCanaryReasonLatency} {
+		m.aiCanaryRollbacks.WithLabelValues(reason)
+	}
+	for _, outcome := range []AIUsageOutcome{AIUsageOutcomeKnown, AIUsageOutcomeUnknown, AIUsageOutcomeError} {
+		m.aiBatches.WithLabelValues(string(outcome))
+	}
+	for _, event := range aiRealtimeSessionEvents {
+		m.aiRealtimeSessions.WithLabelValues(event)
 	}
 	collectors := []prometheus.Collector{
 		m.admissions,
@@ -234,10 +280,17 @@ func NewMetrics(reg prometheus.Registerer) (*Metrics, error) {
 		m.aiCanaryRollbacks,
 		m.aiModeration,
 		m.aiLogExports,
+		m.aiQualityFlags,
+		m.aiFeedback,
+		m.aiOnlineEvaluations,
+		m.aiQualityAlerts,
 		m.aiResponseChecks,
 		m.aiResponseFindings,
 		m.aiPromptCacheMarks,
 		m.aiResponseCacheSaved,
+		m.aiRealtimeSessions,
+		m.aiRealtimeActive,
+		m.aiPromptPrefixShared,
 	}
 	for _, collector := range collectors {
 		if err := reg.Register(collector); err != nil {
@@ -439,6 +492,32 @@ func (m *Metrics) ObserveAIRouteCanaryCall(canary bool) {
 	m.aiCanaryCalls.WithLabelValues(target).Inc()
 }
 
+// ObserveAIRealtimeSession counts one realtime session event
+// (ADR 20261019072722).
+func (m *Metrics) ObserveAIRealtimeSession(event string) {
+	if m == nil || m.aiRealtimeSessions == nil {
+		return
+	}
+	m.aiRealtimeSessions.WithLabelValues(event).Inc()
+}
+
+// ObserveAIPromptPrefixShared counts one shared prompt-prefix lookup
+// (ADR 20261019132139).
+func (m *Metrics) ObserveAIPromptPrefixShared(integrationID, result string) {
+	if m == nil || m.aiPromptPrefixShared == nil {
+		return
+	}
+	m.aiPromptPrefixShared.WithLabelValues(integrationID, result).Inc()
+}
+
+// AddAIRealtimeActive moves the open realtime session gauge.
+func (m *Metrics) AddAIRealtimeActive(delta float64) {
+	if m == nil || m.aiRealtimeActive == nil {
+		return
+	}
+	m.aiRealtimeActive.Add(delta)
+}
+
 func (m *Metrics) ObserveAIRouteCanaryRollback(reason string) {
 	if m == nil || m.aiCanaryRollbacks == nil {
 		return
@@ -492,6 +571,45 @@ func (m *Metrics) ObserveAILogExport(integrationID string) {
 		return
 	}
 	m.aiLogExports.WithLabelValues(integrationID).Inc()
+}
+
+// ObserveAIQualityFlag counts one settled call's quality flag
+// (ADR 20261021171712).
+func (m *Metrics) ObserveAIQualityFlag(integrationID, flag string) {
+	if m == nil || m.aiQualityFlags == nil {
+		return
+	}
+	m.aiQualityFlags.WithLabelValues(integrationID, flag).Inc()
+}
+
+// ObserveAIFeedback counts one stored rating (ADR 20261021171712).
+func (m *Metrics) ObserveAIFeedback(integrationID, rating string) {
+	if m == nil || m.aiFeedback == nil {
+		return
+	}
+	m.aiFeedback.WithLabelValues(integrationID, rating).Inc()
+}
+
+// ObserveAIOnlineEvaluation counts one finished online evaluation; a zero
+// score is a judge error (ADR 20261021171712).
+func (m *Metrics) ObserveAIOnlineEvaluation(score int) {
+	if m == nil || m.aiOnlineEvaluations == nil {
+		return
+	}
+	result := "scored"
+	if score == 0 {
+		result = "judge_error"
+	}
+	m.aiOnlineEvaluations.WithLabelValues(result).Inc()
+}
+
+// ObserveAIQualityAlert counts one recorded drift alert
+// (ADR 20261021171712).
+func (m *Metrics) ObserveAIQualityAlert(metric string) {
+	if m == nil || m.aiQualityAlerts == nil {
+		return
+	}
+	m.aiQualityAlerts.WithLabelValues(metric).Inc()
 }
 
 func (m *Metrics) ObserveAIRouteFallback(reason string) {

@@ -18,7 +18,7 @@ import (
 
 func main() {
 	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: job-fixture success|fail|sleep|ticks|oom|contract|customer-operation|customer-workflow|interactive|whoami")
+		fmt.Fprintln(os.Stderr, "usage: job-fixture success|fail|sleep|ticks|oom|contract|customer-operation|customer-workflow|customer-http|interactive|whoami")
 		os.Exit(2)
 	}
 	switch os.Args[1] {
@@ -67,6 +67,11 @@ func main() {
 		}
 	case "customer-workflow":
 		if err := serveCustomerWorkflow(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
+			os.Exit(1)
+		}
+	case "customer-http":
+		if err := serveCustomerHTTP(); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}

@@ -35,14 +35,14 @@ type CreateObjectUploadRouteRequest struct {
 }
 
 // ListObjectUploadRoutes returns the policy-controlled upload endpoints for an app.
-func (c *Client) ListObjectUploadRoutes(ctx context.Context, slug string) (ObjectUploadRouteList, error) {
+func (c *PreviewClient) ListObjectUploadRoutes(ctx context.Context, slug string) (ObjectUploadRouteList, error) {
 	var out ObjectUploadRouteList
 	err := c.do(ctx, http.MethodGet, "/v1/apps/"+url.PathEscape(slug)+"/upload-routes", nil, &out)
 	return out, err
 }
 
 // CreateObjectUploadRoute creates or updates an authenticated upload endpoint.
-func (c *Client) CreateObjectUploadRoute(ctx context.Context, slug string, req CreateObjectUploadRouteRequest) (ObjectUploadRoute, error) {
+func (c *PreviewClient) CreateObjectUploadRoute(ctx context.Context, slug string, req CreateObjectUploadRouteRequest) (ObjectUploadRoute, error) {
 	var out ObjectUploadRoute
 	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/upload-routes", req, &out)
 	return out, err
@@ -50,6 +50,6 @@ func (c *Client) CreateObjectUploadRoute(ctx context.Context, slug string, req C
 
 // DeleteObjectUploadRoute stops new uploads for the named endpoint without
 // deleting objects already written through it.
-func (c *Client) DeleteObjectUploadRoute(ctx context.Context, slug, route string) error {
+func (c *PreviewClient) DeleteObjectUploadRoute(ctx context.Context, slug, route string) error {
 	return c.do(ctx, http.MethodDelete, "/v1/apps/"+url.PathEscape(slug)+"/upload-routes/"+url.PathEscape(route), nil, nil)
 }

@@ -37,9 +37,17 @@ on:
   # full matrix for it.
   workflow_dispatch:
     inputs:
+      qualify_coordinated:
+        description: Add coordinated HTTP/worker/migration qualification and its service-graph prerequisite
+        type: boolean
+        default: false
+      qualify_service_graph:
+        description: Add frontend/API promotion qualification (promotion lane only)
+        type: boolean
+        default: false
       lane:
         description: >-
-          smoke: beta path + 100 wake cycles (~45 min); full: complete metal matrix (~60 min);
+          smoke: beta path + 100 wake cycles (~45 min); full: complete metal matrix in two bounded jobs;
           qualify: full plus runtime candidates; containers: OCI qualification;
           jobs-only: blocking Jobs lifecycle; exclusive-operations-only:
           blocking stale-owner KVM test; managed-operation-only: native workflow
@@ -47,10 +55,19 @@ on:
           native customer Job results, restart, recovery, cancellation and cleanup;
           customer-workflow-operations-only: native customer workflow files,
           crash/resume, cancellation, deadlines, owner revocation and cleanup;
+          project-environment-promotion-only: HTTP/worker promotion, operator recovery, concurrency, admission, database migration safety and publication crash recovery (six jobs);
+          project-worker-release-only: mixed HTTP/worker isolation, controller
+          restarts, cutover, probe rollback, startup failure and bounded drain;
+          project-migration-contract-only: guarded cleanup success, failure and owner loss;
+          project-migration-sql-only: real PostgreSQL compatibility, DDL isolation and recovery;
+          project-progressive-release-only: 5/25/100 promotion, daemon recovery,
+          worker crash with pinned retry, and paired graph/config rollback;
+          customer-http-operations-only: native ordinary HTTP Operations files,
+          progress, crash/recovery, cancellation, owner revocation and cleanup;
           financial-system: full-daemon funding recovery and provider reconciliation;
           bindings: strict PostgreSQL, storage and queue guest qualification.
         type: choice
-        options: [smoke, full, qualify, jobs-only, containers, exclusive-operations-only, managed-operation-only, customer-job-operations-only, customer-workflow-operations-only, financial-system, bindings]
+        options: [smoke, full, qualify, jobs-only, containers, exclusive-operations-only, managed-operation-only, customer-job-operations-only, customer-workflow-operations-only, project-worker-release-only, project-progressive-release-only, project-progressive-http-only, project-concurrent-release-only, project-rollback-retention-only, project-release-secrets-only, project-migration-contract-only, project-migration-sql-only, project-environment-promotion-only, customer-http-operations-only, financial-system, bindings]
         default: smoke
       keep_node_running:
         description: >-
@@ -73,7 +90,7 @@ permissions:
   id-token: write
 
 env:
-  GO_VERSION: "1.26.9"
+  GO_VERSION: "1.26.10"
   GCP_PROJECT: project-5ae37259-04cf-4070-bef
   GCP_ZONE: europe-west3-c
   GCP_INSTANCE: faas-acceptance-1
@@ -90,29 +107,31 @@ jobs:
       github.event_name == 'schedule' ||
       (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' && inputs.lane != 'financial-system' && inputs.lane != 'bindings')
     runs-on: ubuntu-latest
-    # 150 min: the suite is the whole ./cmd/e2e package under -race, including
-    # real cold boots, builder microVM builds and the 100-cycle wake loop. The
-    # remote unit caps itself at 120 min; this leaves room for transfer and
-    # cleanup so a hung test fails here rather than by GitHub's 6 h default.
-    # Must outlast the SUM of every phase's RuntimeMaxSec plus staging and
-    # cleanup. A job that hits this limit is killed outright — GitHub skips the
-    # remaining steps, always() included — so neither the Verdict nor "Stop the
-    # acceptance node" runs. Run 35115616655 hit the previous 150m against
-    # 325m of phase caps: no verdict, and the node stayed up billing until the
-    # next dispatch found it. TestJobTimeoutCoversEveryPhaseCap pins the sum.
-    timeout-minutes: 360
+    # Full/qualify runs are serialized into bounded source and runtime jobs.
+    # Targeted lanes run once. Each job restores services and stops its node.
+    strategy:
+      fail-fast: false
+      max-parallel: 1
+      matrix:
+        group: ${{ fromJSON((github.event_name == 'schedule' || inputs.lane == 'full' || inputs.lane == 'qualify') && '["source","runtime"]' || inputs.lane == 'project-environment-promotion-only' && inputs.qualify_coordinated && '["promotion-core","promotion-controls","promotion-load","promotion-admission","promotion-migrations","promotion-publication","promotion-service-graph","promotion-coordinated"]' || inputs.lane == 'project-environment-promotion-only' && inputs.qualify_service_graph && '["promotion-core","promotion-controls","promotion-load","promotion-admission","promotion-migrations","promotion-publication","promotion-service-graph"]' || inputs.lane == 'project-environment-promotion-only' && '["promotion-core","promotion-controls","promotion-load","promotion-admission","promotion-migrations","promotion-publication"]' || '["single"]') }}
+    timeout-minutes: ${{ (matrix.group == 'promotion-admission' || matrix.group == 'promotion-migrations' || matrix.group == 'promotion-coordinated') && 360 || 240 }}
     steps:
-      - uses: actions/checkout@v7
+      - name: Validate optional qualification selection
+        if: (inputs.qualify_service_graph || inputs.qualify_coordinated) && !(inputs.lane == 'project-environment-promotion-only')
+        run: |
+          echo 'optional promotion qualification requires the project-environment-promotion-only lane' >&2
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
           cache: 'npm'
@@ -140,13 +159,13 @@ jobs:
 
       - id: auth
         name: Authenticate to GCP with GitHub OIDC
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       - name: Start the acceptance node when CI owns its lifecycle
         id: compute-node
@@ -245,7 +264,7 @@ jobs:
 
       - name: Phase 1 — fixtures (app shape checks, no microVM)
         id: phase_fixtures
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'project-worker-release-only' && inputs.lane != 'project-progressive-release-only' && inputs.lane != 'project-progressive-http-only' && inputs.lane != 'project-concurrent-release-only' && inputs.lane != 'project-rollback-retention-only' && inputs.lane != 'project-release-secrets-only' && inputs.lane != 'project-migration-contract-only' && inputs.lane != 'project-migration-sql-only' && inputs.lane != 'project-environment-promotion-only' && inputs.lane != 'customer-http-operations-only' && matrix.group == 'source'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -264,7 +283,7 @@ jobs:
 
       - name: Phase 2 — build (source → builderd → builder microVM)
         id: phase_build
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'project-worker-release-only' && inputs.lane != 'project-progressive-release-only' && inputs.lane != 'project-progressive-http-only' && inputs.lane != 'project-concurrent-release-only' && inputs.lane != 'project-rollback-retention-only' && inputs.lane != 'project-release-secrets-only' && inputs.lane != 'project-migration-contract-only' && inputs.lane != 'project-migration-sql-only' && inputs.lane != 'project-environment-promotion-only' && inputs.lane != 'customer-http-operations-only' && matrix.group == 'source'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -284,7 +303,7 @@ jobs:
 
       - name: Phase 3 — deploy (image, tarball, healthcheck, secrets)
         id: phase_deploy
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'project-worker-release-only' && inputs.lane != 'project-progressive-release-only' && inputs.lane != 'project-progressive-http-only' && inputs.lane != 'project-concurrent-release-only' && inputs.lane != 'project-rollback-retention-only' && inputs.lane != 'project-release-secrets-only' && inputs.lane != 'project-migration-contract-only' && inputs.lane != 'project-migration-sql-only' && inputs.lane != 'project-environment-promotion-only' && inputs.lane != 'customer-http-operations-only' && matrix.group == 'source'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -299,11 +318,11 @@ jobs:
           # /etc/faas/e2e-acceptance.env, so it never reaches the process list.
           gcloud compute ssh "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
-            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=55m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=100m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
 
       - name: Phase 4 — wake (restore, native Flags refresh, scheduling)
         id: phase_wake
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'project-worker-release-only' && inputs.lane != 'project-progressive-release-only' && inputs.lane != 'project-progressive-http-only' && inputs.lane != 'project-concurrent-release-only' && inputs.lane != 'project-rollback-retention-only' && inputs.lane != 'project-release-secrets-only' && inputs.lane != 'project-migration-contract-only' && inputs.lane != 'project-migration-sql-only' && inputs.lane != 'project-environment-promotion-only' && inputs.lane != 'customer-http-operations-only' && matrix.group == 'runtime'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -322,7 +341,7 @@ jobs:
 
       - name: Phase 5 — streaming (response streaming, h2c inner leg)
         id: phase_streaming
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'project-worker-release-only' && inputs.lane != 'project-progressive-release-only' && inputs.lane != 'project-progressive-http-only' && inputs.lane != 'project-concurrent-release-only' && inputs.lane != 'project-rollback-retention-only' && inputs.lane != 'project-release-secrets-only' && inputs.lane != 'project-migration-contract-only' && inputs.lane != 'project-migration-sql-only' && inputs.lane != 'project-environment-promotion-only' && inputs.lane != 'customer-http-operations-only' && matrix.group == 'runtime'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -341,7 +360,7 @@ jobs:
 
       - name: Phase 6 — logs (app log SSE)
         id: phase_logs
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'project-worker-release-only' && inputs.lane != 'project-progressive-release-only' && inputs.lane != 'project-progressive-http-only' && inputs.lane != 'project-concurrent-release-only' && inputs.lane != 'project-rollback-retention-only' && inputs.lane != 'project-release-secrets-only' && inputs.lane != 'project-migration-contract-only' && inputs.lane != 'project-migration-sql-only' && inputs.lane != 'project-environment-promotion-only' && inputs.lane != 'customer-http-operations-only' && matrix.group == 'runtime'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -360,7 +379,7 @@ jobs:
 
       - name: Phase 7 — security fences (§11, ship-blocking)
         id: phase_security
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'project-worker-release-only' && inputs.lane != 'project-progressive-release-only' && inputs.lane != 'project-progressive-http-only' && inputs.lane != 'project-concurrent-release-only' && inputs.lane != 'project-rollback-retention-only' && inputs.lane != 'project-release-secrets-only' && inputs.lane != 'project-migration-contract-only' && inputs.lane != 'project-migration-sql-only' && inputs.lane != 'project-environment-promotion-only' && inputs.lane != 'customer-http-operations-only' && matrix.group == 'runtime'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -379,7 +398,7 @@ jobs:
 
       - name: Phase 8 — two-node (recovery arbiter, drain, drills)
         id: phase_twonode
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'project-worker-release-only' && inputs.lane != 'project-progressive-release-only' && inputs.lane != 'project-progressive-http-only' && inputs.lane != 'project-concurrent-release-only' && inputs.lane != 'project-rollback-retention-only' && inputs.lane != 'project-release-secrets-only' && inputs.lane != 'project-migration-contract-only' && inputs.lane != 'project-migration-sql-only' && inputs.lane != 'project-environment-promotion-only' && inputs.lane != 'customer-http-operations-only' && matrix.group == 'runtime'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -398,7 +417,7 @@ jobs:
 
       - name: Phase 9 — jobs (awaiting native verification, #2569)
         id: phase_jobs
-        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only'
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane != 'smoke' && inputs.lane != 'jobs-only' && inputs.lane != 'containers' && inputs.lane != 'exclusive-operations-only' && inputs.lane != 'managed-operation-only' && inputs.lane != 'customer-job-operations-only' && inputs.lane != 'customer-workflow-operations-only' && inputs.lane != 'project-worker-release-only' && inputs.lane != 'project-progressive-release-only' && inputs.lane != 'project-progressive-http-only' && inputs.lane != 'project-concurrent-release-only' && inputs.lane != 'project-rollback-retention-only' && inputs.lane != 'project-release-secrets-only' && inputs.lane != 'project-migration-contract-only' && inputs.lane != 'project-migration-sql-only' && inputs.lane != 'project-environment-promotion-only' && inputs.lane != 'customer-http-operations-only' && matrix.group == 'runtime'
         continue-on-error: true
         env:
           SOURCE_SHA: ${{ github.sha }}
@@ -489,9 +508,161 @@ jobs:
             --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
             --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=40m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
 
+      - name: Project worker release acceptance (blocking KVM lane)
+        id: phase_project_worker_release_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'project-worker-release-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: project-worker-release-only
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=80m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Environment promotion acceptance (blocking KVM lane)
+        id: phase_project_environment_promotion_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'project-environment-promotion-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: project-environment-promotion-only
+          PROMOTION_GROUP: ${{ matrix.group }}
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          runtime=215m
+          if [[ "$PROMOTION_GROUP" == promotion-admission || "$PROMOTION_GROUP" == promotion-migrations || "$PROMOTION_GROUP" == promotion-coordinated ]]; then runtime=335m; fi
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=$runtime --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' --setenv=FAAS_E2E_PROMOTION_GROUP='$PROMOTION_GROUP' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Project progressive release acceptance (blocking KVM lane)
+        id: phase_project_progressive_release_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'project-progressive-release-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: project-progressive-release-only
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=105m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Project HTTP progressive acceptance (blocking KVM lane)
+        id: phase_project_progressive_http_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'project-progressive-http-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: project-progressive-http-only
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=215m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Project concurrent deploy acceptance (blocking KVM lane)
+        id: phase_project_concurrent_release_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'project-concurrent-release-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: project-concurrent-release-only
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=185m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Project rollback retention acceptance (blocking KVM lane)
+        id: phase_project_rollback_retention_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'project-rollback-retention-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: project-rollback-retention-only
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=125m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Project atomic secret release acceptance (blocking KVM lane)
+        id: phase_project_release_secrets_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'project-release-secrets-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: project-release-secrets-only
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=95m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Project migration contract release acceptance (blocking KVM lane)
+        id: phase_project_migration_contract_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'project-migration-contract-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: project-migration-contract-only
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=215m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
+      - name: Project migration SQL acceptance (blocking KVM lane)
+        id: phase_project_migration_sql_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'project-migration-sql-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: project-migration-sql-only
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=155m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+      - name: Customer HTTP Operations acceptance (blocking KVM lane)
+        id: phase_customer_http_operations_only
+        if: always() && steps.compute-node.conclusion == 'success' && inputs.lane == 'customer-http-operations-only'
+        continue-on-error: true
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          PHASE: customer-http-operations-only
+        run: |
+          set -euo pipefail
+          remote_root="/var/tmp/faas-native-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          unit="faas-e2e-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-$PHASE"
+          gcloud compute ssh "$GCP_INSTANCE" --quiet \
+            --project "$GCP_PROJECT" --zone "$GCP_ZONE" \
+            --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=40m --property='StandardOutput=append:$remote_root/native-e2e.log' --property='StandardError=append:$remote_root/native-e2e.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_RUN_ID='${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' --setenv=FAAS_E2E_PHASE='$PHASE' /bin/bash scripts/ci/run-native-e2e.sh" 2>&1 | tee "$RUNNER_TEMP/phase-$PHASE.log"
+
       - name: Refresh GCP authentication for cleanup
         if: always() && steps.auth.outcome == 'success'
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -532,6 +703,7 @@ jobs:
         if: always() && steps.compute-node.conclusion == 'success'
         env:
           LANE: ${{ inputs.lane }}
+          PHASE_GROUP: ${{ matrix.group }}
           PHASE_OUTCOMES: >-
             smoke=${{ steps.phase_smoke.outcome }}
             containers=${{ steps.phase_containers.outcome }}
@@ -549,6 +721,16 @@ jobs:
             managed_operation_only=${{ steps.phase_managed_operation_only.outcome }}
             customer_job_operations_only=${{ steps.phase_customer_job_operations_only.outcome }}
             customer_workflow_operations_only=${{ steps.phase_customer_workflow_operations_only.outcome }}
+            project_worker_release_only=${{ steps.phase_project_worker_release_only.outcome }}
+            project_environment_promotion_only=${{ steps.phase_project_environment_promotion_only.outcome }}
+            project_progressive_release_only=${{ steps.phase_project_progressive_release_only.outcome }}
+            project_progressive_http_only=${{ steps.phase_project_progressive_http_only.outcome }}
+            project_concurrent_release_only=${{ steps.phase_project_concurrent_release_only.outcome }}
+            project_rollback_retention_only=${{ steps.phase_project_rollback_retention_only.outcome }}
+            project_release_secrets_only=${{ steps.phase_project_release_secrets_only.outcome }}
+            project_migration_contract_only=${{ steps.phase_project_migration_contract_only.outcome }}
+            project_migration_sql_only=${{ steps.phase_project_migration_sql_only.outcome }}
+            customer_http_operations_only=${{ steps.phase_customer_http_operations_only.outcome }}
         run: |
           set -uo pipefail
           # Jobs still needs a successful dedicated-KVM run before it can be
@@ -663,7 +845,139 @@ jobs:
                 done < <(native_e2e_lane_tests customer-workflow-operations-only "$GITHUB_WORKSPACE")
                 native_e2e_lane_verdict "$log" "Customer Workflow Operations KVM lane" "${lane_tests[@]}" || rc=1
                 ;;
+              project-worker-release-only)
+                # This lane requires the native project HTTP/push-worker release
+                # scenario to PASS, including rollback, restart recovery and bounded drain.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests project-worker-release-only "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "Project worker release KVM lane" "${lane_tests[@]}" || rc=1
+                ;;
+              project-environment-promotion-only)
+                # Require this promotion partition, its runtime observations,
+                # exact source identity and final host cleanup.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests project-environment-promotion-only "$GITHUB_WORKSPACE" "$PHASE_GROUP")
+                native_e2e_lane_verdict "$log" "Environment promotion KVM lane" "${lane_tests[@]}" || rc=1
+                if [[ "$PHASE_GROUP" == promotion-coordinated ]]; then
+                  python3 scripts/ci/promotion-coordinated-qualification.py --log "$log" --sha "$GITHUB_SHA" --output "$RUNNER_TEMP/coordinated-qualification.json" || rc=1
+                elif [[ "$PHASE_GROUP" == promotion-service-graph ]]; then
+                  python3 scripts/ci/promotion-service-graph-qualification.py --log "$log" --sha "$GITHUB_SHA" --output "$RUNNER_TEMP/service-graph-qualification.json" || rc=1
+                else
+                  python3 scripts/ci/promotion-qualification.py --log "$log" --sha "$GITHUB_SHA" --group "$PHASE_GROUP" --output "$RUNNER_TEMP/promotion-qualification.json" || rc=1
+                fi
+                ;;
+              project-progressive-release-only)
+                # This lane requires the native project HTTP/push-worker release
+                # scenario to PASS, including rollback, restart recovery and bounded drain.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests project-progressive-release-only "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "Project progressive release KVM lane" "${lane_tests[@]}" || rc=1
+                ;;
+              project-progressive-http-only)
+                # This lane requires the native project HTTP/push-worker release
+                # scenario to PASS, including rollback, restart recovery and bounded drain.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests project-progressive-http-only "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "Project HTTP progressive KVM lane" "${lane_tests[@]}" || rc=1
+                python3 scripts/ci/project-http-qualification.py --log "$log" --sha "$GITHUB_SHA" --output "$RUNNER_TEMP/project-http-qualification.json" || rc=1
+                ;;
+              project-concurrent-release-only)
+                # This lane requires the native project HTTP/push-worker release
+                # scenario to PASS, including rollback, restart recovery and bounded drain.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests project-concurrent-release-only "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "Project concurrent deploy KVM lane" "${lane_tests[@]}" || rc=1
+                python3 scripts/ci/project-http-qualification.py --scope project-concurrent-release-only --log "$log" --sha "$GITHUB_SHA" --output "$RUNNER_TEMP/project-concurrent-qualification.json" || rc=1
+                ;;
+              project-rollback-retention-only)
+                # This lane requires the native project HTTP/push-worker release
+                # scenario to PASS, including rollback, restart recovery and bounded drain.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests project-rollback-retention-only "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "Project rollback retention KVM lane" "${lane_tests[@]}" || rc=1
+                python3 scripts/ci/project-http-qualification.py --scope project-rollback-retention-only --log "$log" --sha "$GITHUB_SHA" --output "$RUNNER_TEMP/project-retention-qualification.json" || rc=1
+                ;;
+              project-release-secrets-only)
+                # This lane requires the native project HTTP/push-worker release
+                # scenario to PASS, including rollback, restart recovery and bounded drain.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests project-release-secrets-only "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "Project atomic secret release KVM lane" "${lane_tests[@]}" || rc=1
+                python3 scripts/ci/project-http-qualification.py --scope project-release-secrets-only --log "$log" --sha "$GITHUB_SHA" --output "$RUNNER_TEMP/project-secret-qualification.json" || rc=1
+                ;;
+              project-migration-contract-only)
+                # This lane requires the native project HTTP/push-worker release
+                # scenario to PASS, including rollback, restart recovery and bounded drain.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests project-migration-contract-only "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "Project migration contract KVM lane" "${lane_tests[@]}" || rc=1
+                ;;
+              project-migration-sql-only)
+                # This lane requires the native project HTTP/push-worker release
+                # scenario to PASS, including rollback, restart recovery and bounded drain.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests project-migration-sql-only "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "Project migration SQL KVM lane" "${lane_tests[@]}" || rc=1
+              customer-http-operations-only)
+                # This lane requires every native Customer HTTP Operations
+                # scenario to PASS before a customer preview cohort opens.
+                # shellcheck source=scripts/ci/native-e2e-phases.sh
+                source scripts/ci/native-e2e-phases.sh
+                lane_tests=()
+                while IFS= read -r selected_test; do
+                  lane_tests+=("$selected_test")
+                done < <(native_e2e_lane_tests customer-http-operations-only "$GITHUB_WORKSPACE")
+                native_e2e_lane_verdict "$log" "Customer HTTP Operations KVM lane" "${lane_tests[@]}" || rc=1
+                ;;
               *)
+                if [[ "${PHASE_GROUP}" != single ]]; then
+                  source scripts/ci/native-e2e-phases.sh
+                  group_tests=""
+                  while IFS= read -r selected_phase; do
+                    group_tests+="$(native_e2e_phase_tests "$selected_phase" "$GITHUB_WORKSPACE")"$'\n'
+                  done < <(native_e2e_group_phases "$PHASE_GROUP")
+                  group_required=()
+                  for required in "${NATIVE_E2E_REQUIRED_TESTS[@]}"; do
+                    if grep -Fxq "$required" <<<"$group_tests"; then group_required+=("$required"); fi
+                  done
+                  NATIVE_E2E_REQUIRED_TESTS=("${group_required[@]}")
+                fi
                 native_e2e_verdict "$log" || rc=1
                 ;;
             esac
@@ -674,12 +988,26 @@ jobs:
 
           exit "$rc"
 
+      - name: Record evidence identity
+        if: always()
+        run: |
+          printf 'sha=%s\ngroup=%s\n' '${{ github.sha }}' '${{ matrix.group }}' > "$RUNNER_TEMP/native-group.txt"
+
       - name: Upload e2e log
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
-          name: native-e2e-${{ github.sha }}
-          path: ${{ runner.temp }}/native-e2e.log
+          name: native-e2e-${{ github.sha }}-${{ matrix.group }}
+          path: |
+            ${{ runner.temp }}/native-e2e.log
+            ${{ runner.temp }}/native-group.txt
+            ${{ runner.temp }}/project-http-qualification.json
+            ${{ runner.temp }}/project-concurrent-qualification.json
+            ${{ runner.temp }}/project-retention-qualification.json
+            ${{ runner.temp }}/project-secret-qualification.json
+            ${{ runner.temp }}/promotion-qualification.json
+            ${{ runner.temp }}/service-graph-qualification.json
+            ${{ runner.temp }}/coordinated-qualification.json
           if-no-files-found: warn
           retention-days: 14
 
@@ -709,6 +1037,54 @@ jobs:
           gcloud compute instances stop "$GCP_INSTANCE" --quiet \
             --project "$GCP_PROJECT" --zone "$GCP_ZONE"
 
+  combined-verdict:
+    name: complete native qualification verdict
+    needs: e2e-native
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ github.sha }}
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
+        with:
+          pattern: native-e2e-${{ github.sha }}-*
+          path: ${{ runner.temp }}/native-evidence
+      - name: Verify all jobs and the full chain
+        env:
+          QUALIFY_SERVICE_GRAPH: ${{ inputs.qualify_service_graph || inputs.qualify_coordinated }}
+          QUALIFY_COORDINATED: ${{ inputs.qualify_coordinated }}
+          JOB_RESULT: ${{ needs.e2e-native.result }}
+          LANE: ${{ inputs.lane }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          source scripts/ci/native-e2e-combined-verdict.sh
+          selected_lane="${LANE:-full}"
+          if [[ "$EVENT_NAME" == schedule ]]; then selected_lane=full; fi
+          native_e2e_combined_verdict "$GITHUB_WORKSPACE" "$RUNNER_TEMP/native-evidence" "$GITHUB_SHA" "$JOB_RESULT" "$selected_lane" "${QUALIFY_SERVICE_GRAPH:-false}" "${QUALIFY_COORDINATED:-false}"
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always() && inputs.lane == 'project-environment-promotion-only'
+        with:
+          name: promotion-qualification-${{ github.sha }}
+          path: ${{ runner.temp }}/native-evidence/promotion-qualification.json
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always() && inputs.lane == 'project-environment-promotion-only' && (inputs.qualify_service_graph || inputs.qualify_coordinated)
+        with:
+          name: service-graph-qualification-${{ github.sha }}
+          path: ${{ runner.temp }}/native-evidence/service-graph-qualification.json
+          if-no-files-found: error
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always() && inputs.lane == 'project-environment-promotion-only' && inputs.qualify_coordinated
+        with:
+          name: coordinated-qualification-${{ github.sha }}
+          path: ${{ runner.temp }}/native-evidence/coordinated-qualification.json
+          if-no-files-found: error
 
   binding-native:
     name: binding guest qualification (native amd64)
@@ -718,11 +1094,11 @@ jobs:
     # compilation/cleanup; 300m leaves staging, collection and node-stop time.
     timeout-minutes: 300
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
@@ -735,12 +1111,12 @@ jobs:
           bash scripts/ci/package-go-toolchain.sh "$(go env GOROOT)" "$RUNNER_TEMP/binding-go.tar.gz"
       - id: auth
         name: Authenticate to GCP with GitHub OIDC
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
       - name: Start the dedicated acceptance node
         id: compute-node
         run: |
@@ -781,7 +1157,7 @@ jobs:
             --command "sudo systemd-run --quiet --wait --collect --unit='$unit' --property=RuntimeMaxSec=270m --property=TimeoutStopSec=120 --property='StandardOutput=append:$remote_root/binding-native.log' --property='StandardError=append:$remote_root/binding-native.log' --working-directory='$remote_root/source' --setenv=FAAS_E2E_SOURCE_SHA='$SOURCE_SHA' --setenv=FAAS_E2E_GO='$remote_root/tools/go/bin/go' --setenv=FAAS_E2E_TRANSFER_ROOT='$remote_root' /bin/bash scripts/ci/run-binding-native.sh"
       - name: Refresh binding authentication for cleanup
         if: always() && steps.auth.outcome == 'success'
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -806,7 +1182,7 @@ jobs:
           test -s "$RUNNER_TEMP/binding-evidence/summary.json"
       - name: Retain binding reports
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: binding-native-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/binding-evidence/*.json
@@ -839,17 +1215,17 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 100
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ github.sha }}
           fetch-depth: 1
 
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7
         with:
           node-version: '22.10.0'
           cache: 'npm'
@@ -877,13 +1253,13 @@ jobs:
 
       - id: auth
         name: Authenticate to GCP with GitHub OIDC
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
           service_account: ${{ env.GCP_SERVICE_ACCOUNT }}
 
-      - uses: google-github-actions/setup-gcloud@v3
+      - uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db # v3
 
       - name: Start the acceptance node when CI owns its lifecycle
         id: compute-node
@@ -956,7 +1332,7 @@ jobs:
 
       - name: Refresh GCP authentication for cleanup
         if: always() && steps.auth.outcome == 'success'
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_WORKLOAD_IDENTITY_PROVIDER }}
@@ -1001,7 +1377,7 @@ jobs:
 
       - name: Upload financial evidence
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: native-financial-system-${{ github.sha }}
           path: |

@@ -48,9 +48,14 @@ const (
 
 	restoreReseedOptOutEnv = "GREGALE_RESTORE_RESEED"
 	restoreReseedSocketEnv = "GREGALE_RESEED_SOCKET"
-	restoreReseedHelloWait = 2 * time.Second
-	restoreReseedMaxLine   = 256
-	restoreReseedNonceSize = 32
+	// restoreReseedModeEnv selects how a preloaded process answers the
+	// barrier. "thread" (ADR-20261024105607) has Node answer from the
+	// addon's native thread; unset keeps the event-loop client.
+	restoreReseedModeEnv    = "GREGALE_RESEED_MODE"
+	restoreReseedThreadMode = "thread"
+	restoreReseedHelloWait  = 2 * time.Second
+	restoreReseedMaxLine    = 256
+	restoreReseedNonceSize  = 32
 )
 
 //go:embed rngpreload/node-reseed.cjs rngpreload/reseed.node rngpreload/python/sitecustomize.py
@@ -61,6 +66,10 @@ var restoreReseedAssets embed.FS
 // stop every Node process from starting.
 var restoreReseedEnabled atomic.Bool
 
+// restoreReseedThread is set when vmmd booted this guest with
+// api.RestoreReseedThreadBootArg.
+var restoreReseedThread atomic.Bool
+
 // StampRestoreReseedEnv injects the Node and Python preloads. A workload may
 // opt out with GREGALE_RESTORE_RESEED=off, which the docs flag as unsafe for
 // any snapshot-restored app that generates secrets or nonces.
@@ -68,7 +77,20 @@ func StampRestoreReseedEnv(env []string) []string {
 	if !restoreReseedEnabled.Load() {
 		return env
 	}
-	return stampRestoreReseedEnv(env, RestoreReseedAssetDir, RestoreReseedSocketPath)
+	env = stampRestoreReseedEnv(env, RestoreReseedAssetDir, RestoreReseedSocketPath)
+	if restoreReseedThread.Load() {
+		env = stampRestoreReseedMode(env, restoreReseedThreadMode)
+	}
+	return env
+}
+
+// stampRestoreReseedMode selects the barrier client mode. The platform owns
+// the value, like the socket path: a workload's own setting is replaced.
+func stampRestoreReseedMode(env []string, mode string) []string {
+	if strings.EqualFold(envValue(env, restoreReseedOptOutEnv), "off") {
+		return env
+	}
+	return setEnvValue(env, restoreReseedModeEnv, mode)
 }
 
 func stampRestoreReseedEnv(env []string, assetDir, socketPath string) []string {
@@ -227,31 +249,52 @@ func (b *restoreReseedBarrier) registered() int {
 // answers garbage fails the barrier, because its generators may still
 // replay the snapshot's values.
 func (b *restoreReseedBarrier) Reseed(timeout time.Duration) error {
+	_, err := b.ReseedWithStats(timeout)
+	return err
+}
+
+// restoreReseedStats says what one barrier pass waited for: how many
+// processes answered and which one answered last.
+type restoreReseedStats struct {
+	Clients        int
+	Slowest        time.Duration
+	SlowestRuntime string
+}
+
+// ReseedWithStats is Reseed plus the per-process latency the resume hook
+// reports to vmmd (resumetimingproto).
+func (b *restoreReseedBarrier) ReseedWithStats(timeout time.Duration) (restoreReseedStats, error) {
 	b.mu.Lock()
 	clients := make([]*restoreReseedClient, 0, len(b.clients))
 	for c := range b.clients {
 		clients = append(clients, c)
 	}
 	b.mu.Unlock()
+	stats := restoreReseedStats{Clients: len(clients)}
 	if len(clients) == 0 {
-		return nil
+		return stats, nil
 	}
 	deadline := time.Now().Add(timeout)
 	type outcome struct {
-		client *restoreReseedClient
-		gone   bool
-		err    error
+		client  *restoreReseedClient
+		gone    bool
+		err     error
+		elapsed time.Duration
 	}
 	results := make(chan outcome, len(clients))
 	for _, c := range clients {
 		go func(c *restoreReseedClient) {
+			start := time.Now()
 			gone, err := c.reseed(deadline)
-			results <- outcome{client: c, gone: gone, err: err}
+			results <- outcome{client: c, gone: gone, err: err, elapsed: time.Since(start)}
 		}(c)
 	}
 	var failures []string
 	for range clients {
 		r := <-results
+		if r.elapsed > stats.Slowest {
+			stats.Slowest, stats.SlowestRuntime = r.elapsed, r.client.runtime
+		}
 		if r.gone {
 			b.mu.Lock()
 			delete(b.clients, r.client)
@@ -264,10 +307,10 @@ func (b *restoreReseedBarrier) Reseed(timeout time.Duration) error {
 		}
 	}
 	if len(failures) > 0 {
-		return fmt.Errorf("restore reseed: %d of %d processes did not reseed: %s",
+		return stats, fmt.Errorf("restore reseed: %d of %d processes did not reseed: %s",
 			len(failures), len(clients), strings.Join(failures, "; "))
 	}
-	return nil
+	return stats, nil
 }
 
 func (c *restoreReseedClient) reseed(deadline time.Time) (gone bool, err error) {

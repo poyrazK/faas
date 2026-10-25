@@ -75,14 +75,19 @@ func (s *PgStore) FinishAppHealth(ctx context.Context, claim AppHealthClaim, a a
 			return err
 		}
 	}
-	if err := q.FinishAppHealthCollection(ctx, tx, sqlc.FinishAppHealthCollectionParams{AppID: claim.AppID, Assessment: body, AssessmentKey: key, NotificationState: notification.StateJSON, CheckedAt: NewPgtypeTime(at), NextCheckAt: NewPgtypeTime(now.Add(api.AppHealthCollectorInterval))}); err != nil {
+	if err := q.FinishAppHealthCollection(ctx, tx, sqlc.FinishAppHealthCollectionParams{AppID: claim.AppID, Assessment: body, AssessmentKey: key, NotificationState: notification.StateJSON, CheckedAt: NewPgtypeTime(at), NextCheckAt: NewPgtypeTime(now.Add(appHealthNextCheck(entries, a)))}); err != nil {
 		return fmt.Errorf("finish app health observation: %w", err)
 	}
 	if err := pgEnqueueAppHealthNotification(ctx, tx, claim, notification); err != nil {
 		return err
 	}
-	if err := q.PruneAppHealthHistory(ctx, tx, sqlc.PruneAppHealthHistoryParams{AppID: claim.AppID, MaxEntries: api.AppHealthHistoryMaxEntries, MaxBytes: api.AppHealthHistoryMaxBytes, OldestAt: NewPgtypeTime(now.Add(-api.AppHealthHistoryMaxAge))}); err != nil {
-		return fmt.Errorf("prune app health history: %w", err)
+	// Only an insert can push the app over its entry or byte cap. Age is
+	// enforced by reads and by PruneExpiredAppHealthHistory, so an
+	// unchanged assessment (most observations) skips the window scan.
+	if len(entries) > 0 {
+		if err := q.PruneAppHealthHistory(ctx, tx, sqlc.PruneAppHealthHistoryParams{AppID: claim.AppID, MaxEntries: api.AppHealthHistoryMaxEntries, MaxBytes: api.AppHealthHistoryMaxBytes, OldestAt: NewPgtypeTime(now.Add(-api.AppHealthHistoryMaxAge))}); err != nil {
+			return fmt.Errorf("prune app health history: %w", err)
+		}
 	}
 	return tx.Commit(ctx)
 }

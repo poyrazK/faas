@@ -52,6 +52,7 @@ while [ "$#" -gt 0 ]; do
 		;;
 	esac
 done
+printf '%s\n' "$url" >>"$FAKE_ROOT/requests.log"
 case "$url" in
 *releases/latest) path="$FAKE_ROOT/api/latest.json" ;;
 *releases\?per_page=*) path="$FAKE_ROOT/api/list.json" ;;
@@ -166,6 +167,12 @@ run expect-ok "explicit --version" --version "$TAG" --dir "$DEST"
 "$DEST/gregale" version >/dev/null || fail "installed binary does not run"
 grep -Fq "installed $DEST/gregale" <<<"$RUN_OUT" ||
 	fail "installer should report where it installed: $RUN_OUT"
+# One next step, the guided start that README and the quickstart lead with.
+# It signs in when needed, so a separate login step is not recommended.
+grep -Fq "next: gregale start" <<<"$RUN_OUT" ||
+	fail "installer should recommend gregale start as the next step: $RUN_OUT"
+[ "$(grep -c "^next: " <<<"$RUN_OUT")" -eq 1 ] ||
+	fail "installer should recommend exactly one next step: $RUN_OUT"
 
 # A bare semver without the leading v must resolve to the same release;
 # people copy version numbers out of `gregale version` output.
@@ -232,6 +239,46 @@ grep -Fq "could not resolve a release" <<<"$RUN_OUT" ||
 	fail "unresolvable release should say so: $RUN_OUT"
 mv "$FAKE_ROOT/api/list.json.off" "$FAKE_ROOT/api/list.json"
 mv "$FAKE_ROOT/api/latest.json.off" "$FAKE_ROOT/api/latest.json"
+
+# ------------------------------------------------------ channel pointers
+
+# ADR-20261025092617: release.yml publishes CLI-STABLE and CLI-LATEST on the
+# cli-channel release. Read through releases/download, they keep installs off
+# the GitHub API, whose anonymous limit (60 an hour per address) a shared NAT
+# or CI runner pool exhausts.
+api_off() { for f in latest list; do mv "$FAKE_ROOT/api/$f.json" "$FAKE_ROOT/api/$f.json.off"; done; }
+api_on() { for f in latest list; do mv "$FAKE_ROOT/api/$f.json.off" "$FAKE_ROOT/api/$f.json"; done; }
+api_calls() { grep -c "api.github.com" "$FAKE_ROOT/requests.log" || true; }
+
+api_off
+printf '%s\n' "$TAG" >"$FAKE_ROOT/dl/CLI-STABLE"
+printf 'v2.0.0-rc.7\n' >"$FAKE_ROOT/dl/CLI-LATEST"
+: >"$FAKE_ROOT/requests.log"
+run expect-ok "stable channel pointer without the API" --dir "$TMP_DIR/bin-channel-stable"
+grep -Fq "installing gregale $TAG" <<<"$RUN_OUT" || fail "stable pointer should win: $RUN_OUT"
+[ "$(api_calls)" -eq 0 ] || fail "a channel install must not call the API: $(cat "$FAKE_ROOT/requests.log")"
+if grep -Fq "prerelease" <<<"$RUN_OUT"; then fail "a stable install must not warn about a prerelease: $RUN_OUT"; fi
+
+# Today's state: no stable release yet, so only CLI-LATEST exists.
+rm "$FAKE_ROOT/dl/CLI-STABLE"
+: >"$FAKE_ROOT/requests.log"
+run expect-ok "prerelease channel pointer without the API" --dir "$TMP_DIR/bin-channel-latest"
+grep -Fq "installing gregale v2.0.0-rc.7" <<<"$RUN_OUT" || fail "latest pointer should install: $RUN_OUT"
+grep -Fq "warning: installing prerelease v2.0.0-rc.7" <<<"$RUN_OUT" ||
+	fail "a prerelease from the channel must warn: $RUN_OUT"
+[ "$(api_calls)" -eq 0 ] || fail "a channel install must not call the API: $(cat "$FAKE_ROOT/requests.log")"
+api_on
+
+# A pointer whose release does not list this platform, or that is not a tag
+# at all, is skipped for the API resolution rather than trusted.
+printf 'v9.9.9\n' >"$FAKE_ROOT/dl/CLI-STABLE"
+printf 'v2.0.0-rc.7;touch /tmp/pwned\n' >"$FAKE_ROOT/dl/CLI-LATEST"
+: >"$FAKE_ROOT/requests.log"
+run expect-ok "unusable pointers fall back to the API" --dir "$TMP_DIR/bin-channel-fallback"
+grep -Fq "installing gregale $TAG" <<<"$RUN_OUT" || fail "API fallback should install the stable tag: $RUN_OUT"
+[ "$(api_calls)" -gt 0 ] || fail "unusable pointers must fall back to the API"
+if grep -Fq "v9.9.9" <<<"$RUN_OUT"; then fail "a pointer without this platform must not be installed: $RUN_OUT"; fi
+rm "$FAKE_ROOT/dl/CLI-STABLE" "$FAKE_ROOT/dl/CLI-LATEST"
 
 # ------------------------------------------------------ checksum enforcement
 

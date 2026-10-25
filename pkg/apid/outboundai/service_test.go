@@ -64,7 +64,7 @@ func TestGetPriceCatalog(t *testing.T) {
 	service, _, acct, _ := newTestService(t)
 	all := serve(service.GetPriceCatalog, acct, http.MethodGet, "/v1/outbound/ai-price-catalog?provider=anthropic", "", "")
 	var list api.OutboundAIPriceCatalogResponse
-	if all.Code != http.StatusOK || json.Unmarshal(all.Body.Bytes(), &list) != nil || len(list.Entries) < 5 || list.USDPerEUR == "" {
+	if all.Code != http.StatusOK || json.Unmarshal(all.Body.Bytes(), &list) != nil || len(list.Entries) < 5 || list.Currency != api.BillingCurrency || list.USDPerEUR != "1" {
 		t.Fatalf("catalog = %d %s", all.Code, all.Body.String())
 	}
 	one := serve(service.GetPriceCatalog, acct, http.MethodGet, "/v1/outbound/ai-price-catalog?provider=openai&model=gpt-4o-2024-08-06", "", "")

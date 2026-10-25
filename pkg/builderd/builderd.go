@@ -32,9 +32,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/markers"
 	"github.com/onebox-faas/faas/pkg/safetext"
-	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
+	"github.com/onebox-faas/faas/pkg/storagekey"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -151,6 +151,9 @@ type Config struct {
 
 // Builderd is the orchestrator. It is the cmd/builderd main loop.
 type Builderd struct {
+	// releasePaused reports the break-glass release pause (ADR
+	// 20261022140000); while it is true no queued build is claimed.
+	releasePaused  func() bool
 	buildPublisher buildpublisher.Signer
 	validatorBuild func(context.Context, string, string, string, string) error
 	store          state.Store
@@ -378,6 +381,18 @@ func (b *Builderd) WithOpsMetrics(ops *wire.OpsMetrics) *Builderd {
 	return b
 }
 
+// WithReleasePause makes the claim paths check the break-glass release
+// pause (ADR 20261022140000). While paused() is true a queued build stays
+// queued; the polling worker claims it after the pause is lifted.
+func (b *Builderd) WithReleasePause(paused func() bool) *Builderd {
+	b.releasePaused = paused
+	return b
+}
+
+func (b *Builderd) claimsPaused() bool {
+	return b.releasePaused != nil && b.releasePaused()
+}
+
 // WithEvents attaches the events Platform (issue #517 / PR-C /
 // ADR-064) and returns the same Builderd for chaining. Mirrors
 // schedd.Engine.WithEvents / vmmd.Server.WithEvents. When non-nil,
@@ -537,6 +552,10 @@ func (b *Builderd) ProcessOne(ctx context.Context, buildID string) (BuildResult,
 		return BuildResult{}, err
 	}
 	defer b.endProcess()
+	if b.claimsPaused() {
+		// Leave the build queued: no claim was acquired.
+		return BuildResult{}, nil
+	}
 
 	var build state.Build
 	var err error
@@ -579,6 +598,10 @@ func (b *Builderd) ProcessNext(ctx context.Context) (BuildResult, error) {
 		return BuildResult{}, err
 	}
 	defer b.endProcess()
+	if b.claimsPaused() {
+		// The same answer as an empty queue, so the poller backs off.
+		return BuildResult{}, state.ErrNotFound
+	}
 
 	var build state.Build
 	var err error
@@ -909,13 +932,30 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, buildOptionsErr
 	}
 	if buildOptionsIgnored {
-		b.emitBuildLog(ctx, build.ID, "Compose build.args and build.target ignored: this service builds without a Dockerfile\n")
+		b.emitBuildLog(ctx, build.ID, "Compose build.args, build.target and build.secrets ignored: this service builds without a Dockerfile\n")
 	}
 	if dockerfileBuild != nil && dockerfileBuild.Target != "" {
 		b.emitBuildLog(ctx, build.ID, "building Dockerfile stage "+dockerfileBuild.Target+"\n")
 	}
 	if shadowed := shadowedBuildArgs(dockerfileBuild, publicURLs); len(shadowed) > 0 {
 		b.emitBuildLog(ctx, build.ID, "build arguments "+strings.Join(shadowed, ", ")+" are also public build URLs; the reviewed URLs are used\n")
+	}
+	var buildSecrets []SealedBuildSecret
+	if dockerfileBuild != nil {
+		var secretsErr error
+		buildSecrets, secretsErr = loadBuildSecrets(ctx, b.store, app, dep, dockerfileBuild.Secrets)
+		if secretsErr != nil {
+			class := state.FailureInfra
+			if errors.Is(secretsErr, errBuildSecretMissing) {
+				class = state.FailureUserError
+			}
+			b.markFailed(ctx, build, class, secretsErr.Error(), buildStart)
+			return BuildResult{}, secretsErr
+		}
+		if len(buildSecrets) > 0 {
+			// Names only; vmmd opens the values into the builder VM.
+			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("mounting %d build secrets\n", len(dockerfileBuild.Secrets)))
+		}
 	}
 	recipe := BuildCacheRecipe{
 		BuildDependencyDigest: buildDependencyDigest,
@@ -927,11 +967,18 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Function:        app.Type == state.AppTypeFunction,
 		DevWatchCommand: watch.Command,
 		DevWatchHost:    watch.Host,
+		AccountID:       app.AccountID,
 	}
+	recipe.BuildSecretScope = buildSecretScope(app.AccountID, app.ID, dep.Scope, buildSecrets)
+	reuseScope, reuseOptedIn := gitOpsReuseScope(app, dep)
+	recipe.GitOpsReuseScope = reuseScope
 	if sourceMaps != nil {
 		recipe.IssueSourceMapsDirectory = sourceMaps.Directory
 	}
 	buildEnvironment, cacheAvailable := b.resolveBuildEnvironment()
+	if reuseOptedIn && (reuseScope == "" || b.buildPublisher == nil) {
+		cacheAvailable = false
+	}
 	if cacheAvailable {
 		recipe.BuilderBaseIdentity = buildEnvironment.BuilderBaseIdentity
 		recipe.TargetPlatform = buildEnvironment.TargetPlatform
@@ -941,6 +988,16 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		cacheKeySHA256 = ""
 	}
 	cached, cacheOutcome, cacheHit := b.lookupCurrentCacheEntry(recipe, buildEnvironment, cacheAvailable, dep.ID)
+	if cacheHit && reuseOptedIn {
+		trusted, ok := b.trustedGitOpsCacheEntry(ctx, app, dep, recipe, buildEnvironment, cached)
+		if !ok || !b.buildEnvironmentStillCurrent(buildEnvironment) {
+			b.cache.ReleaseLease(cached.Path)
+			cached, cacheOutcome, cacheHit = CacheEntry{}, cacheOutcomeInvalidated, false
+			b.emitBuildLog(ctx, build.ID, "[gitops] unchanged build reuse unavailable: origin is not a current same-app signed retained producer with matching inputs; building afresh\n")
+		} else {
+			cached.Toolchain = trusted
+		}
+	}
 	b.observeCacheOutcome(ctx, build.ID, cacheOutcome, cacheKeySHA256)
 	if cacheHit {
 		if b.stopIfBuildCancelled(ctx, build) {
@@ -954,6 +1011,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// (PR-B review finding M-3).
 		b.ops.ObserveBuildQueueWait(time.Since(build.EnqueuedAt))
 		buildStart = time.Now()
+		if reuseOptedIn {
+			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[gitops] unchanged isolated context and recipe verified; reusing signed origin deployment %s build %s; target qualification remains required\n", cached.Toolchain.OriginDeploymentID, cached.Toolchain.OriginBuildID))
+		}
 		b.emitBuildLog(ctx, build.ID, "build started (cache hit)\n")
 		b.emitBuildLog(ctx, build.ID, fmt.Sprintf("[build] cache hit (sha256:%s) — skipping vm spawn\n", cacheKeySHA256))
 		completed, completeErr := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver,
@@ -964,6 +1024,17 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 				IssueSourceMaps: cached.Toolchain.IssueSourceMaps, IssueSourceMapsImageSHA256: cached.Toolchain.IssueSourceMapsImageSHA256}, buildStart)
 		if completeErr != nil || completed.BuildID == "" {
 			b.cache.ReleaseLease(cached.Path)
+		} else if reuseOptedIn && b.buildEnvironmentStillCurrent(buildEnvironment) {
+			// Keep the verified origin. After its own signed completion this
+			// target becomes the fallback origin, used only once the current
+			// one stops being a live signed producer; a target that never
+			// goes live therefore cannot stall reuse. Bytes are unchanged, so
+			// only the metadata is rewritten.
+			metadata := cached.Toolchain
+			metadata.NextOriginDeploymentID, metadata.NextOriginBuildID = dep.ID, build.ID
+			if err := b.cache.UpdateBuildOrigins(recipe, cached.Path, metadata); err != nil {
+				b.log.Warn("builderd: record GitOps cache fallback origin (continuing)", "err", err)
+			}
 		}
 		return completed, completeErr
 
@@ -1022,6 +1093,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
 		DockerfileBuild:       dockerfileBuild,
+		BuildSecrets:          buildSecrets,
 		BuildID:               build.ID,
 		TenantID:              app.AccountID,
 		DeploymentID:          dep.ID,
@@ -1044,6 +1116,11 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Plan:                  string(acct.Plan),
 		WarmScopeKey:          builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
 	}
+	if len(buildSecrets) > 0 {
+		// A build with secrets never restores or leaves a warm builder, so a
+		// value cannot outlive its build in a snapshot (ADR-20261022185329).
+		vmReq.WarmScopeKey = ""
+	}
 	warmVM, warmResult, warmSnapshot, warmStarted := b.prepareWarmBuilder(ctx, slot, vmReq)
 	var warmCaptured WarmSnapshot
 	warmCommitted := false
@@ -1064,6 +1141,10 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	timeout := time.Duration(b.cfg.BuildTimeoutSeconds) * time.Second
 	vmCtx, cancel := context.WithTimeout(ctx, timeout)
 
+	// Phase timings: builds took minutes on production-us while the guest's
+	// own build steps took seconds, and nothing recorded where the rest went
+	// (Hunt 14 H14-11).
+	phases := buildPhaseClock{start: time.Now()}
 	var handle BuildHandle
 	if warmStarted && warmResult == WarmRestoreHit {
 		handle, err = warmVM.RestoreWarmBuilder(vmCtx, vmReq, warmSnapshot)
@@ -1130,6 +1211,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		cancelVM()
 	}
 	defer b.unregisterActiveVM(build.ID)
+	phases.vmReady = time.Now()
 	if handle.DependencyCacheKey != "" {
 		if handle.DependencyCacheRestored {
 			b.emitBuildLog(ctx, build.ID, "dependency cache restored — reusing matching install layers\n")
@@ -1191,6 +1273,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, fc, "vm wait: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
+	phases.vmDone = time.Now()
+	b.emitBuildLog(ctx, build.ID, phases.vmLine())
 	if out.WarmSnapshotError != "" {
 		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
 		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
@@ -1330,15 +1414,19 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		}
 		buildResult.IssueSourceMaps, buildResult.IssueSourceMapsImageSHA256 = &set.Request, digest
 	}
+	phases.published = time.Now()
 	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver, buildResult, buildStart)
 	if err != nil || result.BuildID == "" {
 		return result, err
 	}
+	phases.completed = time.Now()
+	b.log.Info("builderd: build phases", append([]any{"build", build.ID, "deployment", build.DeploymentID}, phases.attrs()...)...)
 	// Only cache a successfully committed build produced by the same builder
 	// environment observed before VM launch. A concurrent base restage leaves
 	// the successful deployment intact but deliberately skips cache publication.
 	if cacheAvailable && b.buildEnvironmentStillCurrent(buildEnvironment) {
 		if err := b.cache.StoreBuildWithToolchain(recipe, out.OCIImage, artifactBytes, CacheToolchain{
+			OriginDeploymentID: dep.ID, OriginBuildID: build.ID,
 			BuildkitVer:                result.BuildkitVer,
 			RailpackVer:                result.RailpackVer,
 			DevPatch:                   result.DevPatch,
@@ -1671,10 +1759,10 @@ func (b *Builderd) completeBuild(ctx context.Context, build state.Build, dep sta
 			if !ok {
 				return errors.New("source-map build publication store unavailable")
 			}
-			return st.CompleteBuildWithIssueSourceMaps(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov,
+			return st.CompleteBuildWithIssueSourceMaps(ctx, build, result.LayerPath, storagekey.AppLayer(app.Slug, dep.ID), result.LayerBytes, prov,
 				state.BuildIssueSourceMapPublication{AccountID: app.AccountID, AppID: app.ID, Request: *result.IssueSourceMaps})
 		}
-		return b.store.CompleteBuild(ctx, build, result.LayerPath, sched.AppLayerKey(app.Slug, dep.ID), result.LayerBytes, prov)
+		return b.store.CompleteBuild(ctx, build, result.LayerPath, storagekey.AppLayer(app.Slug, dep.ID), result.LayerBytes, prov)
 	}); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return BuildResult{}, nil
@@ -1829,22 +1917,54 @@ func boundedGuestBuildLogTail(raw string) string {
 		daemonSection  = "\n[buildkitd]\n"
 		customerHeader = "[build]\n"
 	)
+	raw = dropBuildkitdRefLockRetries(raw)
 	build, daemon, split := strings.Cut(raw, daemonSection)
 	body := strings.TrimPrefix(build, customerHeader)
 	if split && strings.TrimSpace(body) != "" {
-		daemon = strings.TrimSpace(safetext.TruncateTail(daemon, daemonTail))
+		daemon = strings.TrimSpace(tailWholeLines(daemon, daemonTail))
 		budget := maxBytes - len(customerHeader) - len(daemonSection) - len(daemon)
-		out := customerHeader + strings.TrimSpace(safetext.TruncateTail(body, budget))
+		out := customerHeader + strings.TrimSpace(tailWholeLines(body, budget))
 		if daemon != "" {
 			out += daemonSection + daemon
 		}
 		return strings.TrimSpace(out)
 	}
-	// safetext.TruncateTail advances to the next rune boundary, so a cut
-	// landing inside a multi-byte character drops the partial rune instead of
-	// prefixing the customer's build log with a stray U+FFFD. It also
-	// subsumes the ToValidUTF8 pass this used to do by hand.
-	return strings.TrimSpace(safetext.TruncateTail(raw, maxBytes))
+	return strings.TrimSpace(tailWholeLines(raw, maxBytes))
+}
+
+// dropBuildkitdRefLockRetries removes BuildKit content-store retries from
+// a successful or failed build log. When the image and cache exporters write
+// the same layer, buildkitd logs `level=error msg="(*service).Write failed"
+// ... ref layer-sha256:... locked for ...` and retries; the export still
+// succeeds. Customers read those lines as build errors (Hunt 11 H11-2) and
+// they used most of the 3 KiB tail.
+func dropBuildkitdRefLockRetries(raw string) string {
+	if !strings.Contains(raw, "(*service).Write failed") {
+		return raw
+	}
+	lines := strings.SplitAfter(raw, "\n")
+	kept := lines[:0]
+	for _, line := range lines {
+		if strings.Contains(line, "(*service).Write failed") && strings.Contains(line, " locked for ") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	return strings.Join(kept, "")
+}
+
+// tailWholeLines is safetext.TruncateTail that also drops the partial first
+// line a byte cut leaves, so the log does not open mid-message. TruncateTail
+// advances to the next rune boundary (no stray U+FFFD) and subsumes the
+// ToValidUTF8 pass this used to do by hand.
+func tailWholeLines(s string, maxBytes int) string {
+	tail := safetext.TruncateTail(s, maxBytes)
+	if len(tail) < len(safetext.Clean(s)) {
+		if i := strings.IndexByte(tail, '\n'); i >= 0 && i < len(tail)-1 {
+			tail = tail[i+1:]
+		}
+	}
+	return tail
 }
 
 // materializeSource preserves the package-local helper used by older tests;

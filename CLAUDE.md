@@ -33,7 +33,7 @@ make lint-changed   # golangci-lint only the packages your diff touches + testst
 make native-m9-acceptance # guarded two-node failure-safe acceptance on native x86_64
 ```
 
-Go 1.26.9 (the version pinned by `go.mod`). One binary per `cmd/` dir. If a
+Go 1.26.10 (the version pinned by `go.mod`). One binary per `cmd/` dir. If a
 change touches VM lifecycle, run `test-metal` and `leakcheck` before calling it
 done. Metal and snapshot acceptance is supported only on the dedicated native
 x86_64 Linux KVM hosts; macOS and nested virtualization are not supported
@@ -140,6 +140,8 @@ Cron limits: Free 0 · Hobby 5/app 10/acct · Pro 20/app 50/acct · Scale 100/ap
 - Tenant egress: deny 25/465/587, deny RFC1918 + link-local + metadata ranges.
 - No shared host directories with guests — block devices only. virtio-rng always attached.
 - Post-restore resume hook must re-seed entropy + step clock before readiness (test V6).
+- Only migrations run as the schema owner `faas`. Daemons log in as `faas_runtime` members
+  (`FAAS_DB_ROLE`): row DML only — never grant them DDL, TRUNCATE or ledger writes (ADR-20261023104734).
 
 ## Workflow
 

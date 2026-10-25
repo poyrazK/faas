@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/apid/wakehistory"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
@@ -156,7 +157,7 @@ func (s *server) addAccountTraceEvidence(ctx context.Context, accountID string, 
 	} else {
 		result.LogsTruncated = result.LogsTruncated || hasMoreLogs
 		for _, event := range logEvents {
-			result.Logs = append(result.Logs, accountTraceLogQueryEvent(appSlugs[event.AppID], event))
+			result.Logs = append(result.Logs, logsearch.QueryEvent(appSlugs[event.AppID], event))
 		}
 	}
 
@@ -221,35 +222,9 @@ func accountTraceTelemetryRow(row sqlc.ListRequestTelemetryByAccountTraceRow) sq
 		ID: row.ID, DeploymentID: row.DeploymentID, Route: row.Route, Method: row.Method,
 		Status: row.Status, LatencyMs: row.LatencyMs, Count: row.Count, ColdBoot: row.ColdBoot,
 		TraceID: row.TraceID, ReceivedAt: row.ReceivedAt, SpansSummary: row.SpansSummary,
-		WakeID: row.WakeID, InstanceID: row.InstanceID, GuestDurationMs: row.GuestDurationMs,
+		WakeID: row.WakeID, InstanceID: row.InstanceID, GuestDurationMs: row.GuestDurationMs, TraceInferred: row.TraceInferred,
 		GuestRuntime: row.GuestRuntime, GuestOutcome: row.GuestOutcome, GuestErrorClass: row.GuestErrorClass,
 		ConsumerID: row.ConsumerID, NodeID: row.NodeID, Region: row.Region, CommitSha: row.CommitSha,
 		DeploymentTag: row.DeploymentTag, DeploymentCreatedAt: row.DeploymentCreatedAt, ImageDigest: row.ImageDigest,
-	}
-}
-
-func accountTraceLogQueryEvent(app string, event state.LogEvent) api.LogQueryEvent {
-	latencyMS := 0
-	if event.LatencyMS != nil {
-		latencyMS = *event.LatencyMS
-	}
-	return api.LogQueryEvent{
-		ID:           event.ID,
-		App:          app,
-		Timestamp:    event.OccurredAt.UTC().Format(time.RFC3339Nano),
-		Source:       api.LogSource(event.Source),
-		DeploymentID: event.DeploymentID,
-		InstanceID:   event.InstanceID,
-		RequestID:    event.RequestID,
-		TraceID:      event.TraceID,
-		Route:        event.Route,
-		Method:       event.Method,
-		Status:       event.Status,
-		Level:        event.Level,
-		Stream:       event.Stream,
-		Message:      event.Message,
-		LatencyMS:    latencyMS,
-		Count:        event.Occurrences,
-		ColdBoot:     event.ColdBoot,
 	}
 }

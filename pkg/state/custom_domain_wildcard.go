@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // CustomDomainWildcardStore is the optional read seam used by the gateway
@@ -14,6 +16,14 @@ import (
 // test doubles remain source-compatible.
 type CustomDomainWildcardStore interface {
 	WildcardDomainForHost(ctx context.Context, host string) (CustomDomain, error)
+}
+
+// unicode.IsSpace's whitespace set, also supplied to SQL btrim so legacy
+// suffixes use the same normalization as strings.TrimSpace.
+const customDomainTrimCharacters = "\t\n\v\f\r \u0085\u00a0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000"
+
+func normalizeWildcardDomainHost(host string) string {
+	return strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
 }
 
 // TenantSurfaceHostnameStore is the optional global read seam used when
@@ -28,7 +38,7 @@ type TenantSurfaceHostnameStore interface {
 // limited to one label: this is the shape covered by an ACME wildcard
 // certificate and avoids ambiguous nested matches.
 func ValidateCustomDomainName(domain string) error {
-	if domain == "" || len(domain) > 253 || strings.HasSuffix(domain, ".") {
+	if domain == "" || len(domain) > api.TrafficPolicyMaxHostnameBytes || strings.HasSuffix(domain, ".") {
 		return errors.New("domain must be a non-empty DNS name without a trailing dot")
 	}
 	if strings.ContainsAny(domain, " \t\r\n") {
@@ -88,7 +98,7 @@ func WildcardMatchesHost(domain, host string) bool {
 	if !ok {
 		return false
 	}
-	host = strings.TrimSuffix(strings.ToLower(strings.TrimSpace(host)), ".")
+	host = normalizeWildcardDomainHost(host)
 	return !strings.Contains(host, "*") && host != suffix && strings.HasSuffix(host, "."+suffix)
 }
 
@@ -111,6 +121,49 @@ func WildcardProbeHost(domain string) (string, bool) {
 		return domain, false
 	}
 	return "www." + suffix, true
+}
+
+// ForeignVerifiedWildcard returns the verified wildcard custom domain, owned
+// by an account other than accountID, that covers domain (an exact name, or
+// every name below a wildcard), or "" when there is none. A verified wildcard
+// proves control of its zone (ADR-167). A reservation below it needs no DNS
+// proof, yet while pending it shadows the wildcard's route and certificate,
+// so another account must not make one.
+func ForeignVerifiedWildcard(ctx context.Context, store interface {
+	DomainByName(context.Context, string) (CustomDomain, error)
+	AppByID(context.Context, string) (App, error)
+}, domain, accountID string) (string, error) {
+	base := strings.ToLower(strings.TrimSpace(domain))
+	if suffix, ok := WildcardDomainSuffix(base); ok {
+		base = suffix
+	}
+	for {
+		_, parent, ok := strings.Cut(base, ".")
+		if !ok || !strings.Contains(parent, ".") {
+			return "", nil
+		}
+		base = parent
+		wildcard, err := store.DomainByName(ctx, "*."+parent)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("load wildcard domain %q: %w", "*."+parent, err)
+		}
+		if !wildcard.Verified() {
+			continue
+		}
+		app, err := store.AppByID(ctx, wildcard.AppID)
+		if errors.Is(err, ErrNotFound) {
+			continue
+		}
+		if err != nil {
+			return "", fmt.Errorf("load wildcard domain app: %w", err)
+		}
+		if app.AccountID != accountID {
+			return wildcard.Domain, nil
+		}
+	}
 }
 
 var _ CustomDomainWildcardStore = (*PgStore)(nil)

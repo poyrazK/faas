@@ -9,12 +9,48 @@ import (
 	"filippo.io/age"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/rehearsalpg"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreOrgResourceLifecycle(t *testing.T) {
 	orgResourceLifecycleSuite(t, func(t *testing.T) state.Store { t.Helper(); return state.NewMemStore() })
+}
+
+// The in-memory twin of TestPostgresOrgResourceRehearsalFixtureBlocksErasureOnlyWhileLive.
+func TestMemStoreRehearsalFixtureBlocksErasureOnlyWhileLive(t *testing.T) {
+	for _, tc := range []struct {
+		status  string
+		blocked bool
+	}{
+		{"complete", false},
+		{"deleted", false},
+		{"provisioning", true},
+		{"sealing", true},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			store := state.NewMemStore()
+			f := setupOffboarding(t, store)
+			ctx := t.Context()
+			if err := store.UpdateAccountProviderCustomerID(ctx, f.org.ID, "cus_rehearsal_guard"); err != nil {
+				t.Fatal(err)
+			}
+			if err := store.UpdateAccountStripeSubscriptionItem(ctx, f.org.ID, "si_rehearsal_guard"); err != nil {
+				t.Fatal(err)
+			}
+			*store.ScenarioPostgres() = map[string]rehearsalpg.Resource{
+				f.actor.ID + ":run": {ID: uuid.NewString(), AccountID: f.actor.ID, RunID: "run", AppID: f.app.ID, Status: tc.status},
+			}
+			if err := store.RemoveOrgMember(ctx, f.org.ID, f.actor.ID); err != nil {
+				t.Fatal(err)
+			}
+			err := store.MarkAccountDeletionPending(ctx, f.actor.ID)
+			if blocked := errors.Is(err, state.ErrOrgAppOwnershipPending); blocked != tc.blocked || (!blocked && err != nil) {
+				t.Fatalf("erasure with a %s fixture: %v, want blocked=%v", tc.status, err, tc.blocked)
+			}
+		})
+	}
 }
 
 func orgResourceLifecycleSuite(t *testing.T, newStore func(*testing.T) state.Store) {

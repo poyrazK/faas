@@ -301,3 +301,42 @@ upgrade vmmd first, then redeploy applications with the updated helper and guest
 together. Old helpers running in new guests receive `409` until they echo their own
 execution ID. Historical completed revocation operations retain their completion
 history; live receipts are invalidated on restart.
+
+## Project environment secrets
+
+A credential every service of a project needs, such as a shared database
+password or a payment API key, can be set once per project environment instead
+of once per app (ADR-1139):
+
+```bash
+printf 'DATABASE_PASSWORD=%s\n' "$DATABASE_PASSWORD" | \
+  gregale projects environments secrets set shop production --from-stdin
+gregale projects environments secrets rotate shop production --file ./rotated.env
+gregale projects environments secrets shop production
+gregale projects environments secrets unset shop production PAYMENTS_KEY
+```
+
+Every service of the environment receives the value as an environment variable
+at its next boot, including services added later. Deployments in the `default`
+scope read the `production` environment's secrets. A service that sets the same
+key itself, as a plain variable, a secret or a secret reference, keeps its own
+value. Deployments that list their secrets explicitly (`env_secrets`) receive
+only what they list, and Git-managed scheduled Jobs receive only their reviewed
+definition.
+
+Creating an environment from another (`gregale projects environments create
+--from`) copies the source's shared secrets along with the services' own
+secrets. Promotion does not copy them: each environment keeps its own. A
+release qualification records the shared secrets it ran with, and promoting
+that release is refused if one of them changed afterwards.
+
+Values are write-only: listings show each key's version, sealing `kid`, value
+fingerprint and timestamps, never the value. A change reaches each service at
+its next boot; running instances keep the value they started with, and paused or
+snapshotted instances boot again rather than resume with an old value.
+
+Writes need the `secrets:write` scope and, in an organization, the
+`org.manage_project_secrets` permission (owners, admins and developers). Each
+plan limits the shared secrets per project environment (`ProjectSecretCountMax`:
+Free 8, Hobby 25, Pro 50, Scale 100); a value's size limit is the plan's
+per-secret limit.

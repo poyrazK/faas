@@ -41,6 +41,9 @@ func (s *server) registerScenarioTest(w http.ResponseWriter, r *http.Request, ac
 		switch {
 		case errors.Is(err, state.ErrConflict):
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Test environment conflict", "run or workload is already registered"))
+		case errors.Is(err, state.ErrScenarioManagedBindings):
+			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Managed bindings cannot be contained",
+				"a contained rehearsal member cannot use real managed PostgreSQL or object storage; declare isolated postgres/objects fixtures instead"))
 		case errors.Is(err, state.ErrNotFound):
 			s.notFound(w, "test developer session is unavailable")
 		default:
@@ -62,7 +65,7 @@ func (s *server) scenarioTestPolicySupported(w http.ResponseWriter, req api.Regi
 		return false
 	}
 	if req.NetworkMode != "" && !s.rehearsalNetworkEnabled {
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Rehearsal containment unavailable", "The operator must qualify and enable rehearsal network containment before enrolling apps"))
+		api.WriteProblem(w, api.ErrRehearsalNotEnabled("Rehearsal network containment"))
 		return false
 	}
 	if problem := rehearsal.ValidateEnrollment(req, s.rehearsalCommandsEnabled && s.appTaskAPIEnabled); problem != nil {

@@ -1,5 +1,25 @@
 package api
 
+// ProvenWorkerBootArg is the kernel command-line flag vmmd adds to a cold boot
+// of a declared worker whose deployment already passed the full
+// characterization window on that node. guest-init then observes for
+// ProvenWorkerCharacterizationWindow instead of CharacterizationDeadline
+// (ADR-20261018101500).
+const ProvenWorkerBootArg = "faas.worker=proven"
+
+// FunctionRunnerBootArg is the kernel command-line flag vmmd adds to a cold
+// boot of a function (an app with a runner runtime such as node22 or
+// binary). Characterization's L7 probes would reach the customer's handler
+// through the runner and run it with probe input, so guest-init skips them;
+// a function's class is known from its type (Hunt 12 H12-6).
+const FunctionRunnerBootArg = "faas.runner=function"
+
+// RestoreReseedThreadBootArg is the kernel command-line flag vmmd adds to an
+// app VM's cold boot when FAAS_RESTORE_RESEED_THREAD is on. guest-init then
+// has Node processes answer the restore reseed barrier from a native thread
+// instead of their event loop (ADR-20261024105607).
+const RestoreReseedThreadBootArg = "faas.reseed=thread"
+
 // CharacterizationReport is the payload guest-init ships to the host
 // over AF_VSOCK STREAM at port 1026 / msgtype 3 (ADR-051 §"Wire
 // constants") during the FIRST cold boot of a new deployment. The

@@ -291,7 +291,9 @@ func TestControlPlaneConvergePlaybookRecordsContractOnlyAfterBootstrap(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(string(bootstrap), "when: faas_join_bootstrap_contract_current | default(false) | bool") {
+	// The node_join.yml prepare clause (ADR-20261025095348) is false here: the converge
+	// playbook never sets faas_join_rollout_phase.
+	if !strings.Contains(string(bootstrap), "(faas_join_bootstrap_contract_current | default(false) | bool) or") {
 		t.Fatal("bootstrap.yml no longer honors faas_join_bootstrap_contract_current; an unchanged control-plane contract would reconverge every rollout")
 	}
 }

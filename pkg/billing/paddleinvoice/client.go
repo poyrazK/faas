@@ -262,32 +262,28 @@ func termsDays(days int) int {
 // needs before it bills a transaction (ADR-20261019100333).
 var ErrNoAddress = errors.New("paddle customer has no active address")
 
-// CustomerAddress returns the ID of the customer's most recently updated
-// active address.
+// CustomerAddress returns the ID of the customer's newest active address.
 func (c *Client) CustomerAddress(ctx context.Context, key, customerID string) (string, error) {
-	q := url.Values{}
-	q.Set("status", "active")
-	q.Set("order_by", "updated_at[DESC]")
-	q.Set("per_page", "1")
-	var out struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-	if err := c.do(ctx, key, http.MethodGet, "/customers/"+url.PathEscape(customerID)+"/addresses?"+q.Encode(), nil, &out); err != nil {
+	address, ok, err := c.ActiveAddress(ctx, key, customerID)
+	if err != nil {
 		return "", err
 	}
-	if len(out.Data) == 0 || out.Data[0].ID == "" {
+	if !ok || address.ID == "" {
 		return "", ErrNoAddress
 	}
-	return out.Data[0].ID, nil
+	return address.ID, nil
 }
 
 // BillTransaction issues a draft or ready manually collected transaction:
 // Paddle gives it an invoice number, emails it to the customer and starts
-// its payment terms (ADR-20261019100333).
-func (c *Client) BillTransaction(ctx context.Context, key, transactionID, addressID string) error {
+// its payment terms (ADR-20261019100333). A non-empty businessID puts the
+// customer's business and tax identifier on the invoice
+// (ADR-20261020120000).
+func (c *Client) BillTransaction(ctx context.Context, key, transactionID, addressID, businessID string) error {
 	body := map[string]any{"address_id": addressID, "status": "billed"}
+	if businessID != "" {
+		body["business_id"] = businessID
+	}
 	return c.do(ctx, key, http.MethodPatch, "/transactions/"+url.PathEscape(transactionID), body, nil)
 }
 

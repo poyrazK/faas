@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -51,6 +52,13 @@ type Service struct {
 	Preview          *operations.PreviewAdmission
 	WorkloadVerifier *workloadidentity.Verifier
 	ArtifactStorage  storage.StorageBackend
+	Metrics          *Metrics // ADR-20261016123221; nil counts nothing
+
+	// SchedulesReleased and ChildrenReleased are the operation_schedules
+	// and operation_children platform flags (ADR 20261021080640), wired by
+	// apid. Nil falls back to the environment allowlists.
+	SchedulesReleased func(accountID string) bool
+	ChildrenReleased  func(accountID string) bool
 
 	artifactBudget operationArtifactBudget
 	streamHub      *operationStreamHub
@@ -62,4 +70,21 @@ func (s *Service) ArtifactBudgetInUse() (transfers int, bytes int64) {
 	s.artifactBudget.mu.Lock()
 	defer s.artifactBudget.mu.Unlock()
 	return s.artifactBudget.transfers, s.artifactBudget.bytes
+}
+
+// schedulesOpen reports whether Operation schedules are released to the
+// account.
+func (s *Service) schedulesOpen(accountID string) bool {
+	if s.SchedulesReleased != nil {
+		return s.SchedulesReleased(accountID)
+	}
+	return api.OperationSchedulesEnabled(accountID)
+}
+
+// childrenOpen reports whether child Operations are released to the account.
+func (s *Service) childrenOpen(accountID string) bool {
+	if s.ChildrenReleased != nil {
+		return s.ChildrenReleased(accountID)
+	}
+	return api.OperationChildrenEnabled(accountID)
 }

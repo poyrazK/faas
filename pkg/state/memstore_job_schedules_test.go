@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"context"
@@ -7,13 +7,14 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
 
 func TestMemStoreJobRunCreateScheduledClaimsOnce(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	job, err := store.JobCreateScheduledIfUnderQuota(ctx, Job{
+	store := state.NewMemStore()
+	job, err := store.JobCreateScheduledIfUnderQuota(ctx, state.Job{
 		AccountID:      "account-scheduled",
 		Name:           "nightly-export",
 		Kind:           "recurring",
@@ -60,8 +61,8 @@ func TestMemStoreJobRunCreateScheduledClaimsOnce(t *testing.T) {
 
 func TestMemStoreScheduledOccurrenceIsConcurrencySafe(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	job, err := store.JobCreateScheduledIfUnderQuota(ctx, Job{
+	store := state.NewMemStore()
+	job, err := store.JobCreateScheduledIfUnderQuota(ctx, state.Job{
 		AccountID:      "account-scheduled-concurrent",
 		Name:           "minute-export",
 		Kind:           "recurring",
@@ -112,8 +113,8 @@ func TestMemStoreScheduledOccurrenceIsConcurrencySafe(t *testing.T) {
 
 func TestMemStoreScheduledJobRunRejectsStaleDefinition(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	job, err := store.JobCreateScheduledIfUnderQuota(ctx, Job{
+	store := state.NewMemStore()
+	job, err := store.JobCreateScheduledIfUnderQuota(ctx, state.Job{
 		AccountID:      "account-scheduled",
 		Name:           "nightly-export",
 		Kind:           "recurring",
@@ -150,8 +151,8 @@ func TestMemStoreScheduledJobRunRejectsStaleDefinition(t *testing.T) {
 
 func TestMemStoreScheduledOccurrenceExpiresBeforeFirstTaskStart(t *testing.T) {
 	ctx := context.Background()
-	store := NewMemStore()
-	job, err := store.JobCreateScheduledIfUnderQuota(ctx, Job{
+	store := state.NewMemStore()
+	job, err := store.JobCreateScheduledIfUnderQuota(ctx, state.Job{
 		AccountID: "account-deadline", Name: "deadline-worker", Kind: "recurring",
 		ImageRef: "ghcr.io/example/worker:v1", Command: []string{"/app/run"},
 		RAMMB: 256, TaskTimeoutS: 60, MaxParallelism: 1, RetryMax: 1,
@@ -163,21 +164,21 @@ func TestMemStoreScheduledOccurrenceExpiresBeforeFirstTaskStart(t *testing.T) {
 	}
 	firedAt := job.CreatedAt.Add(time.Minute).UTC()
 	run, created, err := store.JobRunCreateScheduledOccurrence(ctx, job.ID, job.CronSchedule, job.CronTimezone,
-		nil, firedAt, JobScheduledOccurrenceOptions{ScheduledFor: firedAt, ScheduleRevision: job.ScheduleRevision})
+		nil, firedAt, state.JobScheduledOccurrenceOptions{ScheduledFor: firedAt, ScheduleRevision: job.ScheduleRevision})
 	if err != nil || !created {
 		t.Fatalf("create scheduled run=%+v created=%t err=%v", run, created, err)
 	}
 	// Move the persisted deadline to the past to exercise the dispatcher expiry
 	// path without a wall-clock sleep.
 	deadline := time.Now().UTC().Add(-time.Second)
-	store.mu.Lock()
-	storedRun := store.jobRuns[run.ID]
+	(*store.Mu()).Lock()
+	storedRun := (*store.JobRuns())[run.ID]
 	storedRun.StartDeadlineAt = &deadline
-	store.jobRuns[run.ID] = storedRun
-	occurrence := store.scheduleOccurrences[run.OccurrenceID]
+	(*store.JobRuns())[run.ID] = storedRun
+	occurrence := (*store.ScheduleOccurrences())[run.OccurrenceID]
 	occurrence.StartDeadlineAt = &deadline
-	store.scheduleOccurrences[run.OccurrenceID] = occurrence
-	store.mu.Unlock()
+	(*store.ScheduleOccurrences())[run.OccurrenceID] = occurrence
+	(*store.Mu()).Unlock()
 
 	expired, err := store.JobTaskExpireUnstarted(ctx, time.Now().UTC())
 	if err != nil || len(expired) != 1 || expired[0] != run.ID {

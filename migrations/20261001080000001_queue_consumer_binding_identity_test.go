@@ -1,5 +1,6 @@
 //go:build !no_pg
 
+// adr: 570
 package migrations_test
 
 import (
@@ -23,10 +24,7 @@ func TestMigrationQueueConsumerBindingIdentityAdoptionAndGuards(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "queue-identity-migration", WorkloadClass: state.WorkloadClassWorker})
-	if err != nil {
-		t.Fatal(err)
-	}
+	app := seedHistoricalInvocationApp(t, ctx, pool, state.App{AccountID: account.ID, Slug: "queue-identity-migration", WorkloadClass: state.WorkloadClassWorker})
 	binding := func(name string) state.QueueBinding {
 		t.Helper()
 		// Seed the historical schema before retirement exists.

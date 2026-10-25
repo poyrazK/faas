@@ -1,16 +1,19 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 435
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestPgRegistryImageChainPublication(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	registryImageChainPublication(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.RegistryImageChainPublication(t, s)
 }
 func TestPgRegistryImageChainMetadata(t *testing.T) {
-	s, _ := registryVerificationPGStore(t)
-	registryImageChainRejectsTamperedMetadata(t, s)
+	s, _ := state.RegistryVerificationPGStore(t)
+	state.RegistryImageChainRejectsTamperedMetadata(t, s)
 }

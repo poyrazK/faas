@@ -70,7 +70,9 @@ type Job struct {
 	UpdatedAt        time.Time
 	Command          []string // migrations/00572
 	// ImageResolvedDigest is the immutable OCI manifest digest selected from
-	// ImageRef by imaged. Empty until materialization succeeds.
+	// ImageRef by imaged. Source-backed GitOps Jobs instead record an explicit
+	// gregale-deployment:<UUID> identity, never an invented OCI digest. Empty
+	// until materialization or qualified graph activation succeeds.
 	ImageResolvedDigest string
 	// ImageStorageKey is the immutable ext4 artifact consumed by vmmd. New
 	// materializations use a per-attempt key; legacy verified artifacts may

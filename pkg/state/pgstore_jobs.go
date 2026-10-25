@@ -473,7 +473,8 @@ func (s *PgStore) JobListPendingImageMaterialization(ctx context.Context, limit 
 	rows, err := s.pool.Query(ctx,
 		`select `+jobSelectCols+` from jobs
 		  where status <> 'deleted'
-		    and image_materialization_status = 'pending'
+		    and image_ref NOT LIKE 'gregale-source://%'
+		   and image_materialization_status = 'pending'
 		    and (image_materialization_next_attempt_at is null or image_materialization_next_attempt_at <= now())
 		    and (image_materialization_lease_until is null or image_materialization_lease_until <= now())
 		  order by updated_at asc, id asc
@@ -502,6 +503,7 @@ func (s *PgStore) JobClaimImageMaterialization(ctx context.Context, id, owner st
 		   updated_at = now()
 		 where id = $1::uuid
 		   and status <> 'deleted'
+		   and image_ref NOT LIKE 'gregale-source://%'
 		   and image_materialization_status = 'pending'
 		   and (image_materialization_next_attempt_at is null or image_materialization_next_attempt_at <= now())
 		   and (image_materialization_lease_until is null or image_materialization_lease_until <= now())
@@ -528,7 +530,8 @@ func (s *PgStore) JobClaimPendingImageMaterialization(ctx context.Context, limit
 		`with candidates as (
 			select id as candidate_id from jobs
 			 where status <> 'deleted'
-			   and image_materialization_status = 'pending'
+			   and image_ref NOT LIKE 'gregale-source://%'
+		   and image_materialization_status = 'pending'
 			   and (image_materialization_next_attempt_at is null or image_materialization_next_attempt_at <= now())
 			   and (image_materialization_lease_until is null or image_materialization_lease_until <= now())
 			 order by updated_at asc, id asc
@@ -561,6 +564,7 @@ func (s *PgStore) JobRenewImageMaterializationLease(ctx context.Context, id, sou
 		`update jobs set image_materialization_lease_until = clock_timestamp() + $5::interval,
 		        updated_at = now()
 		 where id = $1::uuid and image_ref = $2 and status <> 'deleted'
+		   and image_ref NOT LIKE 'gregale-source://%'
 		   and image_materialization_status = 'pending'
 		   and image_materialization_attempts = $4
 		   and image_materialization_lease_owner = $3
@@ -655,6 +659,7 @@ func (s *PgStore) JobPublishImageMaterialization(ctx context.Context, id, source
 		   image_materialization_lease_until = null,
 		   updated_at = now()
 		 where id = $1::uuid and image_ref = $2 and status <> 'deleted'
+		   and image_ref NOT LIKE 'gregale-source://%'
 		   and image_materialization_status = 'pending'
 		   and image_materialization_attempts = $4
 		   and image_materialization_lease_owner = $3
@@ -1662,6 +1667,10 @@ func (s *PgStore) JobTaskClaimBatch(ctx context.Context, limit int) ([]JobTask, 
 		        and (failed.work_decision->>'action' = 'fail_partition' OR
  ((failed.work_decision is null or failed.work_decision->>'action' = 'retry') and failed.attempt > coalesce(r.retry_max, j.retry_max)))))
 		    and (job_tasks.next_attempt_at is null or job_tasks.next_attempt_at <= now())
+		    and not exists (
+		      -- ADR-20261018210500: a queued customer Operation waits for apid's releaser.
+		      select 1 from customer_operations o join customer_operation_queue q on q.operation_id = o.id
+		      where o.job_run_id = job_tasks.run_id)
 			and (r.execution_class = 'standard' or
 			         (r.eligible_at <= now() and r.latest_start_at > now()))
 		    and (r.start_deadline_at is null or r.start_deadline_at >= now() or exists (

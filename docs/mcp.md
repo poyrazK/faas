@@ -2068,7 +2068,7 @@ In another terminal:
 ```sh
 gregale mcp doctor --url http://127.0.0.1:8080/mcp --legacy --stream-tool stream_demo
 gregale mcp call --url http://127.0.0.1:8080/mcp --tool add --arguments '{"a":7,"b":5}'
-gregale mcp deploy --path . --name my-mcp --profile small
+gregale mcp deploy --path . --name my-mcp --size small
 gregale mcp tools --app my-mcp
 gregale mcp resources --app my-mcp
 gregale mcp resource-read --app my-mcp --uri 'customer://records/example-1'

@@ -168,6 +168,7 @@ func (e *Engine) WithEnvironmentWorkloadQualificationRuntime(ctx context.Context
 	if err := e.prepareQualificationServiceBindings(ctx, claimed, placement.NodeID, &prepared.Spec); err != nil {
 		return fmt.Errorf("prepare qualification service bindings: %w", err)
 	}
+	prepared.Spec.WorkerPushDelivery = qualificationWorkerPushDelivery(claimed)
 	var configDigest string
 	if ctx.Value(qualificationGraphContextKey{}) == claimed.GraphID {
 		configDigest, err = fcvm.QualificationAPIEnvSHA256(prepared.Spec.APIEnv)

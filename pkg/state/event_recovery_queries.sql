@@ -247,7 +247,7 @@ WHERE id=sqlc.arg(job_id)::uuid RETURNING state;
 -- name: EventRecoveryPreflight :many
 WITH slots AS MATERIALIZED (
  SELECT s.* FROM event_delivery_slots s JOIN invocations v ON v.id=s.invocation_id
- WHERE s.account_id=sqlc.arg(account_id)::uuid AND v.state IN ('pending','dispatching')
+ WHERE s.account_id=sqlc.arg(account_id)::uuid AND s.live AND v.state IN ('pending','dispatching')
 ), totals AS (
  SELECT count(*)::bigint AS account_count,count(*) FILTER (WHERE slots.app_id=j.app_id)::bigint AS app_count
  FROM slots CROSS JOIN event_recovery_jobs j WHERE j.id=sqlc.arg(job_id)::uuid

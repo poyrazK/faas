@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/dataapiusage"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dataapi"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -92,6 +93,7 @@ func (s *server) populateDataAPIWorkspace(r *http.Request, acct state.Account, a
 			}
 		}
 	}
+	s.populateDataAPIUsageAndAccess(r, acct, app, data)
 	id := r.URL.Query().Get("task")
 	if id == "" || !s.appTaskAPIEnabled {
 		return
@@ -122,6 +124,27 @@ func (s *server) populateDataAPIWorkspace(r *http.Request, acct state.Account, a
 	} else {
 		data.Message = "The app returned an invalid TypeScript contract."
 	}
+}
+
+// populateDataAPIUsageAndAccess adds the last week's usage and which owner
+// settings are present (ADR-20261019102108).
+func (s *server) populateDataAPIUsageAndAccess(r *http.Request, acct state.Account, app state.App, data *dashboard.DataAPIData) {
+	if s.dataAPIUsage == nil {
+		data.UsageMessage = "Usage is not available on this host."
+	} else if usage, err := dataapiusage.View(r.Context(), s.dataAPIUsage, app.ID, app.Slug, time.Now(), 7*24*time.Hour, "day"); err != nil {
+		data.UsageMessage = "Usage is temporarily unavailable."
+	} else {
+		data.Usage = dashboard.NewDataAPIUsageView(usage)
+	}
+	secrets, err := s.store.ListAppSecretsInScope(r.Context(), acct.ID, app.ID, api.DefaultEnvScope)
+	if err != nil {
+		return
+	}
+	keys := make(map[string]bool, len(secrets))
+	for _, secret := range secrets {
+		keys[secret.Key] = true
+	}
+	data.Access, data.ServerKeys = dashboard.DataAPIAccessSettings(app.Slug, keys)
 }
 
 func (s *server) currentDataAPITask(r *http.Request, app state.App, task state.AppTask) bool {

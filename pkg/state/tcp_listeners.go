@@ -82,7 +82,7 @@ const tcpListenerColumns = `
     id, app_id, account_id, listener_name, guest_port, public_port,
     protocol, enabled, created_at, updated_at, tls_mode, tls_hostname`
 
-func (s *PgStore) CreateTCPListener(ctx context.Context, in TCPListener) (TCPListener, error) {
+func (s *pgCore) CreateTCPListener(ctx context.Context, in TCPListener) (TCPListener, error) {
 	in, err := normalizeTCPListener(in)
 	if err != nil {
 		return TCPListener{}, err
@@ -131,7 +131,7 @@ func (s *PgStore) CreateTCPListener(ctx context.Context, in TCPListener) (TCPLis
 	return listener, nil
 }
 
-func (s *PgStore) TCPListenerByID(ctx context.Context, id string) (TCPListener, error) {
+func (s *pgCore) TCPListenerByID(ctx context.Context, id string) (TCPListener, error) {
 	row := s.pool.QueryRow(ctx, `
 		select `+tcpListenerColumns+` from app_tcp_listeners where id = $1
 	`, id)
@@ -145,7 +145,7 @@ func (s *PgStore) TCPListenerByID(ctx context.Context, id string) (TCPListener, 
 	return listener, nil
 }
 
-func (s *PgStore) TCPListenerByAppAndName(ctx context.Context, appID, listenerName string) (TCPListener, error) {
+func (s *pgCore) TCPListenerByAppAndName(ctx context.Context, appID, listenerName string) (TCPListener, error) {
 	listenerName = strings.ToLower(strings.TrimSpace(listenerName))
 	row := s.pool.QueryRow(ctx, `
 		select `+tcpListenerColumns+` from app_tcp_listeners
@@ -164,7 +164,7 @@ func (s *PgStore) TCPListenerByAppAndName(ctx context.Context, appID, listenerNa
 func tcpListenerFromSQL(row sqlc.AppTcpListener) TCPListener {
 	return TCPListener{ID: pgUUIDString(row.ID), AccountID: pgUUIDString(row.AccountID), AppID: pgUUIDString(row.AppID), ListenerName: row.ListenerName, GuestPort: int(row.GuestPort), PublicPort: int(row.PublicPort), Protocol: row.Protocol, Enabled: row.Enabled, CreatedAt: timeFromPgtype(row.CreatedAt), UpdatedAt: timeFromPgtype(row.UpdatedAt), TLSMode: api.TCPListenerTLSMode(row.TlsMode), TLSHostname: row.TlsHostname}
 }
-func (s *PgStore) TCPListenerByPublicPort(ctx context.Context, publicPort int) (TCPListener, error) {
+func (s *pgCore) TCPListenerByPublicPort(ctx context.Context, publicPort int) (TCPListener, error) {
 	if publicPort < TCPListenerPublicPortMin || publicPort > TCPListenerPublicPortMax {
 		return TCPListener{}, ErrNotFound
 	}
@@ -178,7 +178,7 @@ func (s *PgStore) TCPListenerByPublicPort(ctx context.Context, publicPort int) (
 	return tcpListenerFromSQL(row), nil
 }
 
-func (s *PgStore) ListTCPListenersForApp(ctx context.Context, appID string) ([]TCPListener, error) {
+func (s *pgCore) ListTCPListenersForApp(ctx context.Context, appID string) ([]TCPListener, error) {
 	rows, err := s.pool.Query(ctx, `
 		select `+tcpListenerColumns+` from app_tcp_listeners
 		 where app_id = $1 order by created_at desc, id desc
@@ -205,7 +205,7 @@ func (s *PgStore) ListTCPListenersForApp(ctx context.Context, appID string) ([]T
 // edge should currently bind. It is intentionally separate from
 // TCPListenerStore so existing narrow store adapters do not need to grow a
 // fleet-wide listing method just to adopt tcpd.
-func (s *PgStore) ListEnabledTCPListeners(ctx context.Context) ([]TCPListener, error) {
+func (s *pgCore) ListEnabledTCPListeners(ctx context.Context) ([]TCPListener, error) {
 	rows, err := sqlc.New().ListActiveTCPListeners(ctx, s.pool)
 	if err != nil {
 		return nil, fmt.Errorf("state: list active TCP listeners: %w", err)
@@ -217,7 +217,7 @@ func (s *PgStore) ListEnabledTCPListeners(ctx context.Context) ([]TCPListener, e
 	return listeners, nil
 }
 
-func (s *PgStore) SetTCPListenerEnabled(ctx context.Context, id string, enabled bool) (TCPListener, error) {
+func (s *pgCore) SetTCPListenerEnabled(ctx context.Context, id string, enabled bool) (TCPListener, error) {
 	row := s.pool.QueryRow(ctx, `
 		update app_tcp_listeners set enabled = $2, updated_at = now()
 		 where id = $1
@@ -233,7 +233,7 @@ func (s *PgStore) SetTCPListenerEnabled(ctx context.Context, id string, enabled 
 	return listener, nil
 }
 
-func (s *PgStore) DeleteTCPListener(ctx context.Context, id string) error {
+func (s *pgCore) DeleteTCPListener(ctx context.Context, id string) error {
 	tag, err := s.pool.Exec(ctx, `delete from app_tcp_listeners where id = $1`, id)
 	if err != nil {
 		return fmt.Errorf("state: delete TCP listener: %w", err)

@@ -52,6 +52,45 @@ func TestStartRemembersAppAndRetainsAcceptedRecovery(t *testing.T) {
 	}
 }
 
+func TestStartRememberMovesPendingRecoveryWithoutChangingOtherAccounts(t *testing.T) {
+	main.StartTestEnvironment(t)
+	source := main.StartTestSource(t)
+	runner := main.StartTestRunner(t, source, "")
+	(*runner.Session()).AppID, (*runner.Session()).DeploymentID, (*runner.Session()).VerifiedDeploymentID = "app-1", "previous-1", "previous-1"
+	(*runner.Session()).PendingSubmission = &main.StartPendingSubmission{Key: "11111111-1111-4111-8111-111111111111", Transport: "resumable", UploadID: "pending-upload", TotalSize: 512}
+	previousPath := (*runner.StatePath())
+	if err := main.SaveStartSession(previousPath, (*runner.Session())); err != nil {
+		t.Fatal(err)
+	}
+	other := (*runner.Session())
+	other.AccountID, other.AppID, other.DeploymentID = "other-account", "other-app", "other-deployment"
+	other.PendingSubmission = nil
+	otherPath := main.StartContextSessionPath(previousPath, other.APIBase, other.AccountID)
+	if err := main.SaveStartSession(otherPath, other); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(otherPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := runner.RememberApp(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(previousPath); !os.IsNotExist(err) {
+		t.Fatalf("previous pending record was not retired: %v", err)
+	}
+	after, err := os.ReadFile(otherPath)
+	if err != nil || string(before) != string(after) {
+		t.Fatalf("another account's recovery record changed: %v", err)
+	}
+	recovery := main.StartTestRunner(t, source, "\n")
+	resume, proceed, err := recovery.ChooseRecovery()
+	saved := (*recovery.Session())
+	if err != nil || !resume || !proceed || saved.DeploymentID != "previous-1" || saved.VerifiedDeploymentID != "previous-1" || saved.PendingSubmission == nil || *saved.PendingSubmission != *(*runner.Session()).PendingSubmission {
+		t.Fatalf("pending recovery changed while remembering the app: resume=%t proceed=%t session=%+v err=%v", resume, proceed, saved, err)
+	}
+}
+
 func TestStartRememberPreservesChangedContext(t *testing.T) {
 	main.StartTestEnvironment(t)
 	source := main.StartTestSource(t)

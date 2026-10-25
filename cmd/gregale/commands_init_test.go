@@ -618,7 +618,7 @@ func TestCmdInit_List_GroupsByCategory(t *testing.T) {
 	}
 	for cat, names := range wantPerCat {
 		for _, n := range names {
-			needle := "\n  " + n + "\n"
+			needle := "\n  " + n + " "
 			if !strings.Contains(out, needle) {
 				t.Errorf("category %q missing template %q (looked for %q); output:\n%s", cat, n, needle, out)
 			}

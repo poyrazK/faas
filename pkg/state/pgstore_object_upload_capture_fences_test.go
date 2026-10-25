@@ -48,7 +48,7 @@ func TestPgObjectUploadCaptureMigrationRoundTripAndHeldDownRefusal(t *testing.T)
 			t.Fatal(err)
 		}
 	}
-	// 20261018003100006 (#4882) later rewrites the admission guard to lock the
+	// 20261019190114551 (#4882, applied online) later rewrites the admission guard to lock the
 	// durable resource namespace instead of the account; reapply that rewrite
 	// so the comparison covers only this migration's own round trip.
 	if _, err := tx.Exec(ctx, `DO $$ DECLARE declaration text; BEGIN SELECT pg_get_functiondef(to_regprocedure('fence_object_upload_capture_admission()')) INTO declaration; EXECUTE replace(declaration,'FROM accounts ','FROM resource_namespaces '); END $$`); err != nil {

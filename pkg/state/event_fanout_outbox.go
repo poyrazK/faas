@@ -263,11 +263,12 @@ type EventFanoutReplayBatchStore interface {
 }
 
 const PublishedEventLease = 5 * time.Minute
-const PublishedEventIdentityRetention = 30 * 24 * time.Hour
 const EventFanoutReplayBatchMax = 100
 
+// PublishedEventRetentionStore prunes settled receipts past their owner's
+// plan window (ADR-20261023215834), at most limit per call.
 type PublishedEventRetentionStore interface {
-	PruneDeliveredPublishedEvents(context.Context, time.Time, int) (int64, error)
+	PruneSettledPublishedEvents(ctx context.Context, now time.Time, limit int) (int64, error)
 }
 
 func (s *PgStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*PublishedEventWork, error) {
@@ -277,22 +278,68 @@ func (s *PgStore) ClaimDuePublishedEventForRecipientAdoption(ctx context.Context
 	return s.claimDuePublishedEvent(ctx, now, true)
 }
 func (s *PgStore) claimDuePublishedEvent(ctx context.Context, now time.Time, adopt bool) (*PublishedEventWork, error) {
-	var work PublishedEventWork
-	var payload []byte
-	var snapshot []byte
-	var progress []byte
 	row, err := sqlc.New().EventRoutingClaimReceipt(ctx, s.pool, sqlc.EventRoutingClaimReceiptParams{NowAt: pgtypeFromTime(now), ForRecipientAdoption: adopt})
-	if err == nil {
-		work.ID, work.ClaimToken, work.Attempts = row.ID, uuidString(row.ClaimToken), int(row.Attempts)
-		work.LeaseUntil, work.CreatedAt = timeFromPgtype(row.LeaseUntil), timeFromPgtype(row.CreatedAt)
-		payload, snapshot, progress = row.Payload, row.RecipientSnapshot, row.RecipientProgress
-	}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrNotFound
 	}
 	if err != nil {
 		return nil, fmt.Errorf("claim published event: %w", err)
 	}
+	return publishedEventWorkFromClaim(sqlc.EventRoutingClaimReceiptsForAdoptionRow{ID: row.ID, ClaimToken: row.ClaimToken,
+		Attempts: row.Attempts, LeaseUntil: row.LeaseUntil, CreatedAt: row.CreatedAt, Payload: row.Payload,
+		RecipientSnapshot: row.RecipientSnapshot, RecipientProgress: row.RecipientProgress})
+}
+
+// PublishedEventAdoptionBatchClaimStore claims up to limit receipts for
+// recipient adoption in one scan, in the order that many single adoption
+// claims would take them. Release returns a claim the caller did not adopt.
+type PublishedEventAdoptionBatchClaimStore interface {
+	ClaimDuePublishedEventsForRecipientAdoption(ctx context.Context, now time.Time, limit int) ([]*PublishedEventWork, error)
+	ReleasePublishedEventAdoptionClaim(context.Context, *PublishedEventWork) error
+}
+
+func (s *PgStore) ClaimDuePublishedEventsForRecipientAdoption(ctx context.Context, now time.Time, limit int) ([]*PublishedEventWork, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := sqlc.New().EventRoutingClaimReceiptsForAdoption(ctx, s.pool, sqlc.EventRoutingClaimReceiptsForAdoptionParams{
+		NowAt: pgtypeFromTime(now), BatchLimit: int32(limit),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("claim published events for adoption: %w", err)
+	}
+	works := make([]*PublishedEventWork, 0, len(rows))
+	for _, row := range rows {
+		work, err := publishedEventWorkFromClaim(row)
+		if err != nil {
+			return nil, err
+		}
+		works = append(works, work)
+	}
+	return works, nil
+}
+
+func (s *PgStore) ReleasePublishedEventAdoptionClaim(ctx context.Context, work *PublishedEventWork) error {
+	if work == nil {
+		return ErrConflict
+	}
+	n, err := sqlc.New().EventRoutingReleaseAdoptionClaim(ctx, s.pool, sqlc.EventRoutingReleaseAdoptionClaimParams{
+		ID: work.ID, ClaimToken: mustPgUUID(work.ClaimToken),
+	})
+	if err != nil {
+		return fmt.Errorf("release published event adoption claim: %w", err)
+	}
+	if n == 0 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func publishedEventWorkFromClaim(row sqlc.EventRoutingClaimReceiptsForAdoptionRow) (*PublishedEventWork, error) {
+	var work PublishedEventWork
+	work.ID, work.ClaimToken, work.Attempts = row.ID, uuidString(row.ClaimToken), int(row.Attempts)
+	work.LeaseUntil, work.CreatedAt = timeFromPgtype(row.LeaseUntil), timeFromPgtype(row.CreatedAt)
+	payload, snapshot, progress := row.Payload, row.RecipientSnapshot, row.RecipientProgress
 	work.Payload = payload
 	if snapshot != nil {
 		work.SnapshotCaptured = true
@@ -402,15 +449,17 @@ func (s *PgStore) FinishPublishedEvent(ctx context.Context, id int64, token stri
 	return nil
 }
 
-func (s *PgStore) PruneDeliveredPublishedEvents(ctx context.Context, before time.Time, limit int) (int64, error) {
+func (s *PgStore) PruneSettledPublishedEvents(ctx context.Context, now time.Time, limit int) (int64, error) {
 	if limit <= 0 {
 		return 0, nil
 	}
 	q := sqlc.New()
-	now := before.Add(PublishedEventIdentityRetention).UTC()
+	now = now.UTC()
 	cutoff := now.Add(-api.EventReplayBackfillJobRetention)
+	plans, seconds := eventSettledRetentionPlans()
 	accounts, err := q.EventReplayBackfillPruneAccounts(ctx, s.pool, sqlc.EventReplayBackfillPruneAccountsParams{
-		BeforeAt: pgtypeFromTime(before.UTC()), JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit, api.EventReplayBackfillPruneBatch)),
+		Plans: plans, RetentionSeconds: seconds, MaxRetentionSeconds: int64(api.EventSettledRetentionMax() / time.Second),
+		JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit, api.EventReplayBackfillPruneBatch)),
 	})
 	if err != nil {
 		return 0, fmt.Errorf("select receipt pruning accounts: %w", err)
@@ -421,7 +470,7 @@ func (s *PgStore) PruneDeliveredPublishedEvents(ctx context.Context, before time
 			break
 		}
 		n, err := s.pruneEventReceiptsForAccount(ctx, q, sqlc.EventReplayBackfillPruneEnvelopesParams{
-			AccountID: account, BeforeAt: pgtypeFromTime(before.UTC()), JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit-int(removed), api.EventReplayBackfillPruneBatch)),
+			AccountID: account.AccountID, BeforeAt: account.BeforeAt, JobCutoffAt: pgtypeFromTime(cutoff), NowAt: pgtypeFromTime(now), PageLimit: int32(min(limit-int(removed), api.EventReplayBackfillPruneBatch)),
 		})
 		if err != nil {
 			return removed, err
@@ -676,6 +725,15 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 	} else {
 		recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
 	}
+	// ADR-20261021210000: an app enrolled in a rehearsal never receives the
+	// account's events, mirroring enqueue_event_fanout.
+	kept := recipients[:0]
+	for _, recipient := range recipients {
+		if _, enrolled := m.scenarioActionPolicyLocked(recipient.AppID); !enrolled {
+			kept = append(kept, recipient)
+		}
+	}
+	recipients = kept
 	nextID := m.eventFanoutNextID + 1
 	for index := range recipients {
 		work := recipients[index].Work
@@ -734,6 +792,37 @@ func (m *MemStore) ClaimDuePublishedEvent(ctx context.Context, now time.Time) (*
 }
 func (m *MemStore) ClaimDuePublishedEventForRecipientAdoption(ctx context.Context, now time.Time) (*PublishedEventWork, error) {
 	return m.claimDuePublishedEvent(ctx, now, true)
+}
+
+func (m *MemStore) ClaimDuePublishedEventsForRecipientAdoption(ctx context.Context, now time.Time, limit int) ([]*PublishedEventWork, error) {
+	var works []*PublishedEventWork
+	for len(works) < limit {
+		work, err := m.claimDuePublishedEvent(ctx, now, true)
+		if errors.Is(err, ErrNotFound) {
+			break
+		}
+		if err != nil {
+			return nil, err
+		}
+		works = append(works, work)
+	}
+	return works, nil
+}
+
+func (m *MemStore) ReleasePublishedEventAdoptionClaim(_ context.Context, claimed *PublishedEventWork) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if claimed == nil {
+		return ErrConflict
+	}
+	work := m.routingReceiptLocked(claimed.ID)
+	if work == nil || work.RecipientClaims || work.ClaimToken == "" || work.ClaimToken != claimed.ClaimToken {
+		return ErrConflict
+	}
+	work.ClaimToken = ""
+	work.LeaseUntil = time.Time{}
+	work.Attempts--
+	return nil
 }
 func (m *MemStore) claimDuePublishedEvent(_ context.Context, now time.Time, adopt bool) (*PublishedEventWork, error) {
 	m.mu.Lock()
@@ -891,17 +980,17 @@ func (m *MemStore) FinishPublishedEvent(_ context.Context, id int64, token strin
 	return ErrNotFound
 }
 
-func (m *MemStore) PruneDeliveredPublishedEvents(_ context.Context, before time.Time, limit int) (int64, error) {
+func (m *MemStore) PruneSettledPublishedEvents(_ context.Context, now time.Time, limit int) (int64, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	holds := m.eventRecoveryReceiptHoldsLocked("", before.Add(PublishedEventIdentityRetention))
+	holds := m.eventRecoveryReceiptHoldsLocked("", now)
 	var pruned int64
 	for key, work := range m.eventFanout {
 		if int(pruned) >= limit {
 			break
 		}
 		_, held := holds[work.ID]
-		if work.Delivered && work.DeliveredAt.Before(before) && !held {
+		if work.Delivered && work.DeliveredAt.Before(now.Add(-m.eventSettledRetentionLocked(memEventFanoutOwner(key)))) && !held {
 			for _, recipient := range work.RecipientSnapshot {
 				m.loseSubscriptionExecutionCoverageLocked(recipient.ID, "receipt_deleted", time.Now().UTC())
 			}

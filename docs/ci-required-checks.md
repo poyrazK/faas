@@ -21,7 +21,7 @@ push:
 
 | Tier | Workflow | Runs on | Contents |
 |---|---|---|---|
-| Light | `ci-light.yml` | every pull request push, every merge to `main` | about 10 minutes per job: golangci-lint (govet included) and `-race` tests for changed packages (`scripts/ci/affected_packages.py`), the §6.2 invariant property tests when anything in their import tree changes, for `cmd/gregale`, `pkg/state` and `pkg/apid/apidserver` only the tests related to the change, capped and without `-race` (`scripts/ci/select_package_tests.py`), boot-contract, generated-code drift, policy gates, version-skew checks against the previous release and the migration expand/contract lint ([release-compatibility.md](release-compatibility.md)), migration ID hygiene plus apply/replay when migrations change |
+| Light | `ci-light.yml` | every pull request push, every merge to `main` | about 10 minutes per job: golangci-lint (govet included) and `-race` tests for changed packages (`scripts/ci/affected_packages.py`), the §6.2 invariant property tests when anything in their import tree changes, for `cmd/gregale`, `pkg/sched`, `pkg/state` and `pkg/apid/apidserver` only the tests related to the change, capped and without `-race` (`scripts/ci/select_package_tests.py`), boot-contract, generated-code drift, policy gates, version-skew checks against the previous release and the migration expand/contract lint ([release-compatibility.md](release-compatibility.md)), migration ID hygiene plus apply/replay when migrations change |
 | Mega | `ci.yml` | nightly on `main`, `workflow_dispatch`, and from `release.yml` | the complete suite: every unit shard, e2e, migration history, container/UDP contracts, flags, load, SDK acceptance, ops/infra gates |
 
 `release.yml` calls `ci.yml` (`full-ci`) and every build/publish job depends
@@ -30,6 +30,17 @@ commit. What the light tier deliberately skips (importers' compilation and tests
 full `cmd/gregale`/`pkg/state`/`pkg/apid/apidserver` suites and their `-race` runs, e2e,
 migration history, container/UDP contracts, flags, load, SDK acceptance) is
 caught by the nightly run or, at the latest, the release gate.
+
+`blast-radius.yml` runs on every pull request and is report-only (never
+required): `scripts/ci/blast_radius.py` lists the release binaries whose
+import closure the change touches (what a per-unit release ships,
+ADR-1650) and, of those, the ones whose code changes, built at the merge
+base and the head with the release flags and an empty Go build ID; a
+binary whose only difference is Go's line table (`.gopclntab`) is listed
+as `lines`. The report is the job summary and one sticky pull-request
+comment. Run it locally with
+`python3 scripts/ci/blast_radius.py --base origin/main` (`--closure-only`
+skips the builds; `--tags` measures a build-tag change to the recipe).
 
 ## Currently required
 

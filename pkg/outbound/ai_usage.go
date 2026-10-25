@@ -43,6 +43,12 @@ type AIUsage struct {
 	WebSearches   int64
 	FileSearches  int64
 	CodeSessionGB int64
+	// Audio usage (ADR 20261019072722): InputAudioTokens and
+	// OutputAudioTokens are the audio parts of InputTokens and OutputTokens,
+	// and CachedInputAudioTokens the audio part of CachedInputTokens.
+	InputAudioTokens       int64
+	CachedInputAudioTokens int64
+	OutputAudioTokens      int64
 }
 
 // priceModel is the name a call is priced under: a video call's model
@@ -83,6 +89,26 @@ type AIUsageRecord struct {
 	EndUser string
 	// Tags are the call's usage tags, sorted by key (ADR-1436).
 	Tags []string
+	// TraceID is the call's AI trace, set when its integration records
+	// traces; ToolCalls names the tools its response requested, and
+	// ToolSignature hashes them with their arguments (ADR 20261020202035).
+	TraceID       string
+	ToolCalls     []string
+	ToolSignature []byte
+	// CallID is the call's ID and its request-log entry ID, or empty for
+	// the store to choose; QualityFlags mark what went wrong with its
+	// answer (ADR 20261021171712).
+	CallID       string
+	QualityFlags []string
+	// EvaluationSampled marks a logged, captured call the settlement may
+	// queue for the online evaluation worker (ADR 20261021171712).
+	EvaluationSampled bool
+	// InstanceID is the calling app instance a verified workload identity
+	// names; the settlement adds the call, with its time to first byte in
+	// TTFBMS (nil when no byte arrived), to that instance's deployment
+	// (ADR 20261022153155). Empty for every other caller.
+	InstanceID string
+	TTFBMS     *int64
 	// LeaseID is the call's admission lease. It keys the settlement, so a
 	// retried settlement counts the call once, and the settlement deletes
 	// the lease (ADR-1120). Empty settles without a key.
@@ -278,6 +304,12 @@ func validateAIUsageRecord(record AIUsageRecord) error {
 	if record.EndUser != "" && !api.ValidOutboundAIUserID(record.EndUser) {
 		return fmt.Errorf("%w: AI usage end user is invalid", ErrInvalidIntegration)
 	}
+	if err := validateAITraceRecord(record); err != nil {
+		return err
+	}
+	if err := validateAIQualityRecord(record); err != nil {
+		return err
+	}
 	if record.LeaseID != "" && !validUUID(record.LeaseID) {
 		return fmt.Errorf("%w: AI usage lease id must be a UUID", ErrInvalidIntegration)
 	}
@@ -322,17 +354,21 @@ type aiUsageFields struct {
 	OutputTokens        *int64 `json:"output_tokens"`
 	PromptTokensDetails *struct {
 		CachedTokens *int64 `json:"cached_tokens"`
+		AudioTokens  *int64 `json:"audio_tokens"`
 	} `json:"prompt_tokens_details"`
-	InputTokensDetails *struct {
-		CachedTokens *int64 `json:"cached_tokens"`
-		ImageTokens  *int64 `json:"image_tokens"`
-	} `json:"input_tokens_details"`
+	// Chat completions audio output (ADR 20261019072722).
+	CompletionTokensDetails *struct {
+		AudioTokens *int64 `json:"audio_tokens"`
+	} `json:"completion_tokens_details"`
+	InputTokensDetails *openAITokenDetails `json:"input_tokens_details"`
 	// OpenAI image generation output and transcription duration usage
 	// (ADR-997).
-	OutputTokensDetails *struct {
-		ImageTokens *int64 `json:"image_tokens"`
-	} `json:"output_tokens_details"`
-	Seconds *float64 `json:"seconds"`
+	OutputTokensDetails *openAITokenDetails `json:"output_tokens_details"`
+	// OpenAI Realtime usage names its details in the singular
+	// (ADR 20261019072722).
+	InputTokenDetails  *openAITokenDetails `json:"input_token_details"`
+	OutputTokenDetails *openAITokenDetails `json:"output_token_details"`
+	Seconds            *float64            `json:"seconds"`
 
 	CacheReadInputTokens     *int64 `json:"cache_read_input_tokens"`
 	CacheCreationInputTokens *int64 `json:"cache_creation_input_tokens"`
@@ -348,6 +384,10 @@ type aiUsageFields struct {
 	// Gemini token counts by modality (ADR-997).
 	PromptTokensByModality     []geminiModalityCount `json:"promptTokensDetails"`
 	CandidatesTokensByModality []geminiModalityCount `json:"candidatesTokensDetails"`
+	// The Gemini API's Live usage names output "response" tokens
+	// (ADR 20261020161811).
+	ResponseTokenCount       *int64                `json:"responseTokenCount"`
+	ResponseTokensByModality []geminiModalityCount `json:"responseTokensDetails"`
 	// Bedrock Converse usage.
 	BedrockInputTokens      *int64 `json:"inputTokens"`
 	BedrockOutputTokens     *int64 `json:"outputTokens"`
@@ -360,17 +400,29 @@ type aiUsageFields struct {
 	CacheWriteInputTokenCount *int64 `json:"cacheWriteInputTokenCount"`
 }
 
+// openAITokenDetails is a token breakdown by kind: cached, image and audio
+// tokens, and the cached tokens' own breakdown.
+type openAITokenDetails struct {
+	CachedTokens        *int64 `json:"cached_tokens"`
+	ImageTokens         *int64 `json:"image_tokens"`
+	AudioTokens         *int64 `json:"audio_tokens"`
+	CachedTokensDetails *struct {
+		AudioTokens *int64 `json:"audio_tokens"`
+	} `json:"cached_tokens_details"`
+}
+
 type geminiModalityCount struct {
 	Modality   string `json:"modality"`
 	TokenCount *int64 `json:"tokenCount"`
 }
 
-// geminiImageTokens sums the IMAGE modality counts, or returns nil.
-func geminiImageTokens(counts []geminiModalityCount) *int64 {
+// geminiModalityTokens sums one modality's counts (IMAGE, AUDIO), or
+// returns nil.
+func geminiModalityTokens(counts []geminiModalityCount, modality string) *int64 {
 	var total int64
 	seen := false
 	for _, count := range counts {
-		if count.Modality == "IMAGE" && count.TokenCount != nil {
+		if count.Modality == modality && count.TokenCount != nil {
 			total += max(*count.TokenCount, 0)
 			seen = true
 		}
@@ -386,6 +438,13 @@ type aiEnvelopeInner struct {
 	Usage *aiUsageFields `json:"usage"`
 	// Output is an OpenAI Responses object's output items (ADR-1433).
 	Output json.RawMessage `json:"output"`
+	// Content is an Anthropic message's content blocks, whose tool_use
+	// blocks are requested tool calls (ADR 20261020202035).
+	Content json.RawMessage `json:"content"`
+	// Status and IncompleteDetails say why a Responses object stopped
+	// early (ADR 20261021171712).
+	Status            json.RawMessage `json:"status"`
+	IncompleteDetails json.RawMessage `json:"incomplete_details"`
 }
 
 // aiToolItem is one OpenAI Responses output item, as far as built-in tool
@@ -429,6 +488,24 @@ type aiEnvelope struct {
 	Output     json.RawMessage `json:"output"`
 	Item       json.RawMessage `json:"item"`
 	Candidates json.RawMessage `json:"candidates"`
+	// Requested tool calls (ADR 20261020202035): Chat Completions choices,
+	// Anthropic content and its stream's content blocks and deltas at an
+	// index, and Bedrock ConverseStream block starts and deltas.
+	Choices           json.RawMessage `json:"choices"`
+	Content           json.RawMessage `json:"content"`
+	ContentBlock      json.RawMessage `json:"content_block"`
+	Index             json.RawMessage `json:"index"`
+	Delta             json.RawMessage `json:"delta"`
+	Start             json.RawMessage `json:"start"`
+	ContentBlockIndex json.RawMessage `json:"contentBlockIndex"`
+	// Quality flags (ADR 20261021171712): Anthropic and Bedrock stop
+	// reasons, a Responses object's status and incomplete reason, and a
+	// Gemini prompt's block reason.
+	StopReason        json.RawMessage `json:"stop_reason"`
+	BedrockStopReason json.RawMessage `json:"stopReason"`
+	Status            json.RawMessage `json:"status"`
+	IncompleteDetails json.RawMessage `json:"incomplete_details"`
+	PromptFeedback    json.RawMessage `json:"promptFeedback"`
 	// Predictions carries Vertex AI text-embedding token counts (ADR-995).
 	Predictions []struct {
 		Embeddings *struct {
@@ -470,6 +547,8 @@ type aiRawUsage struct {
 	inputImage, outputImage, geminiPromptImage, geminiCandidatesImage int64
 	seenOutputImage                                                   bool
 	images, audioSeconds                                              int64
+	// Audio token counts (ADR 20261019072722).
+	inputAudio, cachedInputAudio, outputAudio, geminiPromptAudio, geminiCandidatesAudio int64
 	// Built-in tool uses (ADR-1433). webSearchRequests is Anthropic's;
 	// the Responses counts take the larger of a final response's items and
 	// the items streamed one by one.
@@ -512,9 +591,30 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	take(&r.output, fields.OutputTokens)
 	if fields.PromptTokensDetails != nil {
 		take(&r.cached, fields.PromptTokensDetails.CachedTokens)
+		take(&r.inputAudio, fields.PromptTokensDetails.AudioTokens)
 	}
-	if fields.InputTokensDetails != nil {
-		take(&r.cached, fields.InputTokensDetails.CachedTokens)
+	if fields.CompletionTokensDetails != nil {
+		take(&r.outputAudio, fields.CompletionTokensDetails.AudioTokens)
+	}
+	for _, details := range []*openAITokenDetails{fields.InputTokensDetails, fields.InputTokenDetails} {
+		if details == nil {
+			continue
+		}
+		take(&r.cached, details.CachedTokens)
+		take(&r.inputImage, details.ImageTokens)
+		take(&r.inputAudio, details.AudioTokens)
+		if details.CachedTokensDetails != nil {
+			take(&r.cachedInputAudio, details.CachedTokensDetails.AudioTokens)
+		}
+	}
+	for _, details := range []*openAITokenDetails{fields.OutputTokensDetails, fields.OutputTokenDetails} {
+		if details == nil {
+			continue
+		}
+		if take(&r.outputImage, details.ImageTokens) {
+			r.seenOutputImage = true
+		}
+		take(&r.outputAudio, details.AudioTokens)
 	}
 	take(&r.cacheRead, fields.CacheReadInputTokens)
 	take(&r.cacheCreation, fields.CacheCreationInputTokens)
@@ -523,20 +623,19 @@ func (r *aiRawUsage) merge(fields *aiUsageFields) {
 	}
 	take(&r.geminiPrompt, fields.PromptTokenCount)
 	take(&r.geminiCandidates, fields.CandidatesTokenCount)
+	take(&r.geminiCandidates, fields.ResponseTokenCount)
 	take(&r.geminiCached, fields.CachedContentTokenCount)
 	take(&r.geminiThoughts, fields.ThoughtsTokenCount)
 	take(&r.bedrockInput, fields.BedrockInputTokens)
 	take(&r.bedrockOutput, fields.BedrockOutputTokens)
 	take(&r.bedrockCacheRead, fields.BedrockCacheReadTokens)
 	take(&r.bedrockCacheWrite, fields.BedrockCacheWriteTokens)
-	if fields.InputTokensDetails != nil {
-		take(&r.inputImage, fields.InputTokensDetails.ImageTokens)
-	}
-	if fields.OutputTokensDetails != nil && take(&r.outputImage, fields.OutputTokensDetails.ImageTokens) {
-		r.seenOutputImage = true
-	}
-	take(&r.geminiPromptImage, geminiImageTokens(fields.PromptTokensByModality))
-	take(&r.geminiCandidatesImage, geminiImageTokens(fields.CandidatesTokensByModality))
+	take(&r.geminiPromptImage, geminiModalityTokens(fields.PromptTokensByModality, "IMAGE"))
+	take(&r.geminiCandidatesImage, geminiModalityTokens(fields.CandidatesTokensByModality, "IMAGE"))
+	take(&r.geminiPromptAudio, geminiModalityTokens(fields.PromptTokensByModality, "AUDIO"))
+	take(&r.geminiCandidatesAudio, geminiModalityTokens(fields.CandidatesTokensByModality, "AUDIO"))
+	take(&r.geminiCandidatesImage, geminiModalityTokens(fields.ResponseTokensByModality, "IMAGE"))
+	take(&r.geminiCandidatesAudio, geminiModalityTokens(fields.ResponseTokensByModality, "AUDIO"))
 	if fields.Seconds != nil {
 		r.noteAudioSeconds(*fields.Seconds)
 	}
@@ -712,6 +811,8 @@ func (r aiRawUsage) normalizeTokens(format aiWireFormat, media aiMediaKind) AIUs
 		usage.OutputTokens = r.geminiCandidates + r.geminiThoughts
 		usage.InputImageTokens = min(r.geminiPromptImage, usage.InputTokens)
 		usage.OutputImageTokens = min(r.geminiCandidatesImage, usage.OutputTokens)
+		usage.InputAudioTokens = min(r.geminiPromptAudio, usage.InputTokens-usage.InputImageTokens)
+		usage.OutputAudioTokens = min(r.geminiCandidatesAudio, usage.OutputTokens-usage.OutputImageTokens)
 	case format == aiFormatBedrockConverse:
 		usage.InputTokens = r.bedrockInput + r.bedrockCacheRead + r.bedrockCacheWrite
 		usage.CachedInputTokens = r.bedrockCacheRead
@@ -734,6 +835,10 @@ func (r aiRawUsage) normalizeTokens(format aiWireFormat, media aiMediaKind) AIUs
 		if media == aiMediaImage && !r.seenOutputImage {
 			usage.OutputImageTokens = usage.OutputTokens
 		}
+		// ADR 20261019072722: audio is the rest of a part, never more.
+		usage.InputAudioTokens = min(r.inputAudio, usage.InputTokens-usage.InputImageTokens)
+		usage.CachedInputAudioTokens = min(r.cachedInputAudio, usage.CachedInputTokens, usage.InputAudioTokens)
+		usage.OutputAudioTokens = min(r.outputAudio, usage.OutputTokens-usage.OutputImageTokens)
 	}
 	return usage
 }
@@ -781,6 +886,10 @@ type aiUsageObserver struct {
 	// chatSearch marks a chat completion on a search model, which runs one
 	// web search per call (ADR-1433).
 	chatSearch bool
+	// tools are the tool calls the response requested (ADR 20261020202035).
+	tools aiToolCalls
+	// quality follows the answer's quality flags (ADR 20261021171712).
+	quality aiQuality
 }
 
 // newAIUsageObserver observes a call in the provider's default format.
@@ -1054,6 +1163,8 @@ func (o *aiUsageObserver) applyEnvelope(envelope aiEnvelope) {
 			o.raw.noteGrounding(candidates)
 		}
 	}
+	o.noteToolCalls(envelope)
+	o.noteQuality(envelope)
 	o.noteModel(envelope.Model)
 	o.noteModel(envelope.ModelVersion)
 	for _, inner := range []*aiEnvelopeInner{envelope.Message, envelope.Response} {
@@ -1112,6 +1223,10 @@ func (o *aiUsageObserver) Finish() AIUsage {
 // containerIDs lists the code-interpreter containers a response used
 // (ADR-1433).
 func (o *aiUsageObserver) containerIDs() []string { return o.raw.containers }
+
+// toolCalls reports the names of the tool calls the response requested,
+// and their signature for loop detection (ADR 20261020202035).
+func (o *aiUsageObserver) toolCalls() ([]string, []byte) { return o.tools.names(), o.tools.signature() }
 
 // FirstByteAt reports when the first response body byte was observed.
 func (o *aiUsageObserver) FirstByteAt() time.Time { return o.firstByteAt }

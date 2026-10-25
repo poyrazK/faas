@@ -834,40 +834,64 @@ func (q *Queries) EventReplayBackfillNextJob(ctx context.Context, db DBTX, inFli
 }
 
 const eventReplayBackfillPruneAccounts = `-- name: EventReplayBackfillPruneAccounts :many
-WITH candidates AS MATERIALIZED (
- SELECT o.account_id,o.delivered_at,o.id FROM event_fanout_outbox o
- WHERE o.state='delivered' AND o.delivered_at<$1::timestamptz
-  AND event_receipt_retention_hold(o.account_id,o.id,o.created_at,$2::timestamptz,$3::timestamptz)=''
- ORDER BY o.delivered_at,o.id LIMIT $4::integer
+WITH plan_retention AS (
+ SELECT unnest($5::text[]) AS plan,unnest($6::bigint[]) AS seconds
 )
-SELECT account_id FROM candidates GROUP BY account_id ORDER BY min(delivered_at),account_id
+SELECT u.account_id,w.before_at::timestamptz AS before_at
+FROM event_receipt_usage u
+LEFT JOIN accounts a ON a.id=u.account_id
+LEFT JOIN orgs g ON g.id=u.account_id AND NOT g.personal_org AND g.resource_ownership_enabled
+LEFT JOIN plan_retention r ON r.plan=coalesce(a.plan,g.plan)
+CROSS JOIN LATERAL (
+ SELECT $1::timestamptz-make_interval(secs=>coalesce(r.seconds,$2::bigint)) AS before_at
+) w
+CROSS JOIN LATERAL (
+ SELECT o.delivered_at FROM event_fanout_outbox o
+ WHERE o.account_id=u.account_id AND o.state='delivered' AND o.delivered_at<w.before_at
+  AND event_receipt_retention_hold(o.account_id,o.id,o.created_at,$3::timestamptz,$1::timestamptz)=''
+ ORDER BY o.delivered_at,o.id LIMIT 1
+) due
+ORDER BY due.delivered_at,u.account_id LIMIT $4::integer
 `
 
 type EventReplayBackfillPruneAccountsParams struct {
-	BeforeAt    pgtype.Timestamptz
-	JobCutoffAt pgtype.Timestamptz
-	NowAt       pgtype.Timestamptz
-	PageLimit   int32
+	NowAt               pgtype.Timestamptz
+	MaxRetentionSeconds int64
+	JobCutoffAt         pgtype.Timestamptz
+	PageLimit           int32
+	Plans               []string
+	RetentionSeconds    []int64
 }
 
-func (q *Queries) EventReplayBackfillPruneAccounts(ctx context.Context, db DBTX, arg EventReplayBackfillPruneAccountsParams) ([]pgtype.UUID, error) {
+type EventReplayBackfillPruneAccountsRow struct {
+	AccountID pgtype.UUID
+	BeforeAt  pgtype.Timestamptz
+}
+
+// ADR-20261023215834: owners with an unheld settled receipt past their
+// plan's window, oldest first, each with its cutoff. Every owner with a
+// receipt has a usage row, and its retention index bounds each probe. An
+// owner without a known plan keeps the longest window.
+func (q *Queries) EventReplayBackfillPruneAccounts(ctx context.Context, db DBTX, arg EventReplayBackfillPruneAccountsParams) ([]EventReplayBackfillPruneAccountsRow, error) {
 	rows, err := db.Query(ctx, eventReplayBackfillPruneAccounts,
-		arg.BeforeAt,
-		arg.JobCutoffAt,
 		arg.NowAt,
+		arg.MaxRetentionSeconds,
+		arg.JobCutoffAt,
 		arg.PageLimit,
+		arg.Plans,
+		arg.RetentionSeconds,
 	)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []pgtype.UUID{}
+	items := []EventReplayBackfillPruneAccountsRow{}
 	for rows.Next() {
-		var account_id pgtype.UUID
-		if err := rows.Scan(&account_id); err != nil {
+		var i EventReplayBackfillPruneAccountsRow
+		if err := rows.Scan(&i.AccountID, &i.BeforeAt); err != nil {
 			return nil, err
 		}
-		items = append(items, account_id)
+		items = append(items, i)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err

@@ -14,6 +14,13 @@ and a nested-node diagnostic must not be mistaken for guest execution evidence.
 
 ## Decision
 
+**2026-10-16 update:** the report envelope remains version 1; its required guest
+suite is now version 4 with twenty phases covering both shipped starters and
+Node frozen-thaw recovery. The Node PostgreSQL SDK adapter and
+shipped starter add pre-checkpoint draining and same-guest frozen-thaw recovery.
+The shared contract and strict verdict reject earlier reports. These additions
+need fresh supported native execution before they provide rollout evidence.
+
 Keep provider v8 usable for isolated staging diagnosis. Add guest evidence v1
 and a combined read-only result with separate `provider_lifecycle` and `guest`
 results. The combined `ready` value requires both. Verification performs no
@@ -29,8 +36,8 @@ fingerprint therefore cannot silently reuse an earlier report for a new release.
 
 The guest report requires:
 
-- One complete Go JSON execution of the selected package, root and all thirteen
-  phases, without failed/skipped descendants, duplicate completion or missing
+- One complete Go JSON execution of the selected package, root and all phases
+  required by the current suite, without failed/skipped descendants, duplicate completion or missing
   package completion. Shared contract JSON defines phase and artifact names.
 - Native Linux amd64, a clean checkout, the actual SQL major, bounded execution
   times and an expiry (24 hours by default, at most seven days).

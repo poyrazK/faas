@@ -1,6 +1,6 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 // adr: 595 Raw SQL must enforce the same measured lineage as both Go stores.
 
@@ -11,22 +11,23 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/state"
 	"google.golang.org/protobuf/proto"
 )
 
 func TestPgStandardMeasuredSnapshotPromotion(t *testing.T) {
-	s, _ := runtimeCapturePGStore(t)
-	standardMeasuredSnapshotPromotion(t, s)
+	s, _ := state.RuntimeCapturePGStore(t)
+	state.StandardMeasuredSnapshotPromotion(t, s)
 }
 
 func TestPgStandardMeasuredSnapshotPromotionRawProofAndWire(t *testing.T) {
-	s, pool := runtimeCapturePGStore(t)
-	f, parent := standardPausedRestoreFixture(t, s)
-	p, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), promotionTestGrant(t, parent))
+	s, pool := state.RuntimeCapturePGStore(t)
+	f, parent := state.StandardPausedRestoreFixture(t, s)
+	p, err := s.IssueInstanceApplicationStandardPromotion(t.Context(), state.PromotionTestGrant(t, parent))
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := standardMeasuredPromotionReceipt(t, p)
+	r := state.StandardMeasuredPromotionReceipt(t, p)
 	raw, _ := json.Marshal(r)
 	parentRaw, _ := json.Marshal(parent)
 	var sqlWire []byte
@@ -91,7 +92,7 @@ func TestPgStandardMeasuredSnapshotPromotionRawProofAndWire(t *testing.T) {
 		t.Fatal("stale catalog bypassed final publication")
 	}
 	actual, err := s.InstanceByID(t.Context(), f.Target.ID)
-	if err != nil || actual.State != string(StateWarm) {
+	if err != nil || actual.State != string(state.StateWarm) {
 		t.Fatal("raw refusal changed residency", err)
 	}
 }

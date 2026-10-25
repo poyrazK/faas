@@ -7,10 +7,14 @@ SELECT * FROM customer_operation_webhook_bindings WHERE endpoint_id = $1;
 SELECT * FROM customer_operation_webhook_bindings WHERE endpoint_id = $1 FOR SHARE;
 
 -- name: SaveOperationWebhookBinding :one
-INSERT INTO customer_operation_webhook_bindings(endpoint_id, account_id, app_id, scope, operation_name, platform_tenant_id, event_types, version)
-VALUES ($1, $2, $3, $4, $5, $6, $7, nextval('customer_operation_webhook_binding_revision_seq'))
+INSERT INTO customer_operation_webhook_bindings(endpoint_id, account_id, app_id, scope, operation_name, platform_tenant_id, event_types,
+    mode, subject_type, subject_id_from, signals, version)
+VALUES (sqlc.arg(endpoint_id), sqlc.arg(account_id), sqlc.arg(app_id), sqlc.arg(scope), sqlc.arg(operation_name), sqlc.arg(platform_tenant_id),
+    sqlc.arg(event_types), sqlc.arg(mode)::text, sqlc.narg(subject_type)::text, sqlc.narg(subject_id_from)::text, sqlc.arg(signals)::jsonb,
+    nextval('customer_operation_webhook_binding_revision_seq'))
 ON CONFLICT (endpoint_id) DO UPDATE SET scope = EXCLUDED.scope, operation_name = EXCLUDED.operation_name,
     platform_tenant_id = EXCLUDED.platform_tenant_id, event_types = EXCLUDED.event_types,
+    mode = EXCLUDED.mode, subject_type = EXCLUDED.subject_type, subject_id_from = EXCLUDED.subject_id_from, signals = EXCLUDED.signals,
     version = EXCLUDED.version, updated_at = clock_timestamp()
 WHERE customer_operation_webhook_bindings.account_id = EXCLUDED.account_id
   AND customer_operation_webhook_bindings.app_id = EXCLUDED.app_id

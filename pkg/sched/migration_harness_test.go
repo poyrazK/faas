@@ -711,7 +711,7 @@ func TestBuildAppSpecForMigration_UsesInstanceDeployment(t *testing.T) {
 		string(state.StateRunning),
 		256,
 		"dying",
-		"",
+		"source-wake",
 	)
 	if err != nil {
 		t.Fatal(err)
@@ -734,6 +734,9 @@ func TestBuildAppSpecForMigration_UsesInstanceDeployment(t *testing.T) {
 	spec, err := engine.BuildAppSpecForMigration(context.Background(), ins.ID)
 	if err != nil {
 		t.Fatalf("BuildAppSpecForMigration: %v", err)
+	}
+	if spec.WakeID != ins.WakeID {
+		t.Fatalf("migration wake = %q, want %q", spec.WakeID, ins.WakeID)
 	}
 	if spec.DeploymentID != original.ID {
 		t.Fatalf("DeploymentID = %q, want instance deployment %q", spec.DeploymentID, original.ID)

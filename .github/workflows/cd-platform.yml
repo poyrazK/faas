@@ -49,7 +49,7 @@ on:
         default: "[]"
         type: string
       compute_rollout_mode:
-        description: "Compute rollout path: phased for managed hosts, full after bootstrap-contract changes"
+        description: "Compute rollout path: phased prepares every managed host in parallel and activates one at a time, converging changed roles during activation (ADR-20261025095348); full is the serialized path for fresh hosts and recovery"
         required: false
         default: phased
         type: choice
@@ -352,7 +352,7 @@ jobs:
       PLAN_RESULT: ${{ needs.plan.result }}
       RELEASE_TAG: ${{ inputs.release_tag }}
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.release_tag }}
           fetch-depth: 1
@@ -564,11 +564,13 @@ jobs:
       # and returned success, so until now a failure left the bad release
       # serving and the documented remedy was "rerun CD".
       #
-      # deployctl rollback activates the newest verified retained release under
-      # the same lock a deploy takes. It re-verifies the target first, so a
-      # drifted retained directory is refused rather than shipped as a
-      # recovery. The step keeps the job red either way: a successful rollback
-      # means the fleet is safe, not that the release was good.
+      # deployctl rollback activates the release its activation history records
+      # as active before this one (ADR-1650 "Rollback target"; it refuses
+      # rather than guess when there is none), under the same lock a deploy
+      # takes. It re-verifies the target first, so a drifted retained
+      # directory is refused rather than shipped as a recovery. The step keeps
+      # the job red either way: a successful rollback means the fleet is safe,
+      # not that the release was good.
       #
       # The binary comes from the release that just failed, which is the same
       # path cd-controlplane already uses. That is sound because the gates

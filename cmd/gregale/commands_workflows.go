@@ -130,7 +130,7 @@ func cmdWorkflowsList(args []string) int {
 	}
 	items, next, err := collectWorkflowRunPages(client, *appSlug, opts, *all)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list workflow runs", err)
 	}
 
 	if jsonOutput {
@@ -291,7 +291,7 @@ func cmdWorkflowsStatus(args []string) int {
 	}
 	run, err := client.GetWorkflowRun(ctx, runID)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not read workflow run", err)
 	}
 	if *check && run.ID != runID {
 		return printErr("Invalid workflow run", fmt.Errorf("status response did not identify the requested run"))
@@ -369,7 +369,7 @@ func cmdWorkflowsSteps(args []string) int {
 	}
 	resp, err := client.ListWorkflowSteps(ctx, runID)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list workflow steps", err)
 	}
 
 	if *failedOnly {
@@ -440,7 +440,7 @@ func cmdWorkflowsAttempts(args []string) int {
 	}
 	resp, err := client.ListWorkflowStepAttempts(ctx, runID, stepName)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list workflow step attempts", err)
 	}
 	if *failedOnly {
 		failed := make([]api.WorkflowStepAttemptResponse, 0)
@@ -514,7 +514,7 @@ func cmdWorkflowsResume(args []string) int {
 		ExpectedResumeCount: &expected,
 	}, key)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not resume workflow run", err)
 	}
 	if run.ID == runID {
 		rememberAcceptedWorkflow("", "", run)
@@ -561,7 +561,7 @@ func cmdWorkflowsResumes(args []string) int {
 	}
 	resp, err := client.ListWorkflowResumes(ctx, runID)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not list workflow resumes", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeNDJSON(resp.Resumes))
@@ -591,7 +591,7 @@ func cmdWorkflowsCancel(args []string) int {
 
 	run, err := client.CancelWorkflowRun(context.Background(), runID)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not cancel workflow run", err)
 	}
 
 	if jsonOutput {
@@ -643,7 +643,7 @@ func cmdWorkflowsRetry(args []string) int {
 	}
 	run, err := client.RetryWorkflowStep(context.Background(), runID, stepName)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not retry workflow step", err)
 	}
 	if run.ID == runID {
 		rememberAcceptedWorkflow("", "", run)
@@ -684,7 +684,7 @@ func cmdWorkflowsEvents(args []string) int {
 		return 1
 	}
 	if len(posArgs) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale workflows events <run_id> <event_name> [--payload JSON | --payload-file PATH|-]", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows events <run_id> <event_name> [--payload JSON | --payload-file PATH|-]; legacy form: gregale workflows events send <run_id> <event_name>", "workflows")
 		return 1
 	}
 
@@ -718,7 +718,7 @@ func cmdWorkflowsEvents(args []string) int {
 
 	resp, err := client.SendWorkflowEvent(context.Background(), runID, eventName, payload)
 	if err != nil {
-		return printErr("Request failed", err)
+		return printErr("Could not send workflow event", err)
 	}
 
 	if jsonOutput {

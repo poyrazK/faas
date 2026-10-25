@@ -45,6 +45,7 @@ import (
 	"net/http"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -76,7 +77,7 @@ func (s *server) createCorsPreset(w http.ResponseWriter, r *http.Request, acct s
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.gateCorsPresetApp(r.Context(), acct, req.AppID); prob != nil {
+	if prob := s.gateCorsPresetApp(r, acct, req.AppID); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -103,7 +104,7 @@ func (s *server) listCorsPresets(w http.ResponseWriter, r *http.Request, acct st
 		filter.AppID = &id
 	}
 	if filter.AppID != nil {
-		if prob := s.gateCorsPresetApp(r.Context(), acct, filter.AppID); prob != nil {
+		if prob := s.gateCorsPresetApp(r, acct, filter.AppID); prob != nil {
 			api.WriteProblem(w, prob)
 			return
 		}
@@ -191,7 +192,7 @@ func (s *server) patchCorsPreset(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
-	if prob := s.gateCorsPresetApp(r.Context(), acct, appIDPtr(merged.AppID)); prob != nil {
+	if prob := s.gateCorsPresetApp(r, acct, appIDPtr(merged.AppID)); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -205,7 +206,7 @@ func (s *server) patchCorsPreset(w http.ResponseWriter, r *http.Request, acct st
 			api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeValidation, "Name already in use", "a cors preset with this name already exists for the (account, app) tuple"))
 			return
 		}
-		api.WriteProblem(w, api.ErrCapacity("could not update cors preset"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not update cors preset")))
 		return
 	}
 	s.audit.Emit(r.Context(), "cors_preset.updated", &acct.ID, map[string]any{
@@ -270,15 +271,15 @@ func (s *server) deleteCorsPreset(w http.ResponseWriter, r *http.Request, acct s
 // the caller's account. A nil AppID (account-wide) skips the
 // check. The 404 on miss matches the convention at
 // handlers_alerts.go:243-247 (no slug-leak).
-func (s *server) gateCorsPresetApp(ctx context.Context, acct state.Account, appID *string) *api.Problem {
+func (s *server) gateCorsPresetApp(r *http.Request, acct state.Account, appID *string) *api.Problem {
 	if appID == nil {
 		return nil
 	}
-	app, err := s.store.AppByID(ctx, *appID)
+	app, err := s.store.AppByID(r.Context(), *appID)
 	if err != nil || app.AccountID != acct.ID {
 		return api.NewProblem(http.StatusNotFound, api.CodeValidation, "No such app", "no app with that id is visible to this account")
 	}
-	return nil
+	return s.authorizeNamedApp(r, acct, app)
 }
 
 // appIDPtr is a small helper to convert a state.CorsPreset.AppID
@@ -324,7 +325,7 @@ func (s *server) persistCreateCorsPreset(ctx context.Context, acct state.Account
 		case errors.Is(err, state.ErrConflict):
 			return state.CorsPreset{}, api.NewProblem(http.StatusConflict, api.CodeValidation, "Name already in use", "a cors preset with this name already exists for the (account, app) tuple")
 		default:
-			return state.CorsPreset{}, api.ErrCapacity("could not create cors preset")
+			return state.CorsPreset{}, trafficproblem.Policy(err, api.ErrCapacity("could not create cors preset"))
 		}
 	}
 	s.audit.Emit(ctx, "cors_preset.created", &acct.ID, map[string]any{

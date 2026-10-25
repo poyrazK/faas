@@ -1,9 +1,10 @@
-package state
+package state_test
 
 // adr: 595
 
 import (
 	"encoding/json"
+	"github.com/onebox-faas/faas/pkg/state"
 	"testing"
 )
 
@@ -28,11 +29,11 @@ func TestUnmanagedMirrorInputCompatibilityRetainsNativeFences(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			got, err := standardRuntimeInputsMatch(captured, current)
+			got, err := state.StandardRuntimeInputsMatch(captured, current)
 			if err != nil || got != tc.want {
 				t.Fatalf("ordinary match=%v want=%v err=%v", got, tc.want, err)
 			}
-			if got, err := standardNativeRuntimeInputsMatch(captured, current); err != nil || got {
+			if got, err := state.StandardNativeRuntimeInputsMatch(captured, current); err != nil || got {
 				t.Fatalf("changed mode gained native receipt compatibility: %v, %v", got, err)
 			}
 		})

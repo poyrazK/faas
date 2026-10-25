@@ -1,24 +1,25 @@
 //go:build !no_pg
 
-package state
+package state_test
 
 import (
 	"errors"
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
+	"github.com/onebox-faas/faas/pkg/state"
 	"net/netip"
 	"testing"
 	"time"
 )
 
 func TestPgApplicationStandardEgress(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardEgressLifecycle(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardEgressLifecycle(t, s)
 }
 
 func TestPgApplicationStandardEgressCanonicalHash(t *testing.T) {
-	_, pool := standardOperationPGStore(t)
+	_, pool := state.StandardOperationPGStore(t)
 	for _, cidrs := range [][]string{{}, {"8.8.8.0/24", "1.1.1.0/24", "8.8.8.0/24"}, {"2001:4860::/64", "::ffff:8.8.8.0/120", "::/128"}} {
 		p := runtimeadmission.EgressPolicy{AppID: uuid.NewString(), Revision: 42, Ports: []int{8443, 80, 8443, 443}}
 		for _, c := range cidrs {
@@ -37,18 +38,18 @@ func TestPgApplicationStandardEgressCanonicalHash(t *testing.T) {
 }
 
 func TestPgApplicationStandardEgressRawGuardAndNonwaiting(t *testing.T) {
-	s, pool := standardOperationPGStore(t)
-	f := newStandardEgressFixture(t, s)
-	standardEgressWrite(t, s, f.target)
+	s, pool := state.StandardOperationPGStore(t)
+	f := state.NewStandardEgressFixture(t, s)
+	state.StandardEgressWrite(t, s, (*f.Target()))
 	ctx := t.Context()
 	for _, tc := range []struct {
 		query string
 		args  []any
 	}{
-		{`UPDATE application_standard_egress_observations SET target=jsonb_set(target,'{policy,ports}','[]') WHERE app_id=$1`, []any{f.target.AppID}},
-		{`UPDATE application_standard_egress_observations SET receipt=jsonb_set(receipt,'{identity,Incarnation}',to_jsonb($2::text)) WHERE app_id=$1`, []any{f.target.AppID, uuid.NewString()}},
+		{`UPDATE application_standard_egress_observations SET target=jsonb_set(target,'{policy,ports}','[]') WHERE app_id=$1`, []any{(*f.Target()).AppID}},
+		{`UPDATE application_standard_egress_observations SET receipt=jsonb_set(receipt,'{identity,Incarnation}',to_jsonb($2::text)) WHERE app_id=$1`, []any{(*f.Target()).AppID, uuid.NewString()}},
 	} {
-		if _, err := pool.Exec(ctx, tc.query, tc.args...); !errors.Is(standardEgressPGError(err), ErrApplicationStandardRuntimeStale) {
+		if _, err := pool.Exec(ctx, tc.query, tc.args...); !errors.Is(state.StandardEgressPGError(err), state.ErrApplicationStandardRuntimeStale) {
 			t.Fatal("raw stale fact accepted", err)
 		}
 	}
@@ -58,19 +59,19 @@ func TestPgApplicationStandardEgressRawGuardAndNonwaiting(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer tx.Rollback(ctx)
-	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.controls.'||$1::uuid::text,0))`, f.target.AppID); err != nil {
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock_shared(hashtextextended('gregale.application-standard.controls.'||$1::uuid::text,0))`, (*f.Target()).AppID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := s.RecordApplicationStandardEgress(ctx, f.target, standardEgressReceipt(f.target)); !errors.Is(err, ErrApplicationStandardReviewBusy) {
+	if _, err := s.RecordApplicationStandardEgress(ctx, (*f.Target()), state.StandardEgressReceipt((*f.Target()))); !errors.Is(err, state.ErrApplicationStandardReviewBusy) {
 		t.Fatal("observation waited on intent writer", err)
 	}
 	if err := tx.Rollback(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := pool.Exec(ctx, `UPDATE application_standard_egress_observations SET observed_at=$2 WHERE app_id=$1`, f.target.AppID, time.Now().Add(time.Hour)); err != nil {
+	if _, err := pool.Exec(ctx, `UPDATE application_standard_egress_observations SET observed_at=$2 WHERE app_id=$1`, (*f.Target()).AppID, time.Now().Add(time.Hour)); err != nil {
 		t.Fatal(err)
 	}
-	rows, err := s.ListApplicationStandardEgress(ctx, f.target.OrgID, f.target.AppID)
+	rows, err := s.ListApplicationStandardEgress(ctx, (*f.Target()).OrgID, (*f.Target()).AppID)
 	if err != nil || len(rows) != 1 || rows[0].ObservedAt.After(time.Now()) {
 		t.Fatal("caller controlled observation clock", err)
 	}
@@ -91,25 +92,25 @@ func TestPgApplicationStandardEgressRawGuardAndNonwaiting(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	rows, err = s.ListApplicationStandardEgress(ctx, f.target.OrgID, f.target.AppID)
+	rows, err = s.ListApplicationStandardEgress(ctx, (*f.Target()).OrgID, (*f.Target()).AppID)
 	if err != nil || len(rows) != 0 {
 		t.Fatal("expired fact accepted", err)
 	}
-	standardEgressPending(t, s, f.target.AppID)
-	if err := s.DeleteInstance(ctx, f.instance.ID); err != nil {
+	state.StandardEgressPending(t, s, (*f.Target()).AppID)
+	if err := s.DeleteInstance(ctx, (*f.Instance()).ID); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.DeleteComputeNode(ctx, f.node.ID); err != nil {
+	if err := s.DeleteComputeNode(ctx, (*f.Node()).ID); err != nil {
 		t.Fatal(err)
 	}
 	var count int
-	if err := pool.QueryRow(ctx, `SELECT count(*) FROM application_standard_egress_observations WHERE node_id=$1`, f.node.ID).Scan(&count); err != nil || count != 0 {
+	if err := pool.QueryRow(ctx, `SELECT count(*) FROM application_standard_egress_observations WHERE node_id=$1`, (*f.Node()).ID).Scan(&count); err != nil || count != 0 {
 		t.Fatal("node erasure retained observation", err)
 	}
 
 }
 
 func TestPgApplicationStandardEgressExceptionDeadline(t *testing.T) {
-	s, _ := standardOperationPGStore(t)
-	standardEgressExceptionDeadline(t, s)
+	s, _ := state.StandardOperationPGStore(t)
+	state.StandardEgressExceptionDeadline(t, s)
 }

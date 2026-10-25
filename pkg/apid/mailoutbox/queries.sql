@@ -30,8 +30,9 @@ SELECT id,email,status,deletion_requested_at FROM accounts WHERE id=$1 FOR UPDAT
 SELECT deployment_mail_revision,subscription_mail_revision,coalesce(stripe_subscription_item,'')::text AS stripe_subscription_item,plan,last_quota_warning_at,quota_mail_revision,id,email,status,deletion_requested_at,email_verified_at,abuse_hold_at,password_reset_revision,mfa_enrolled_at,mfa_revision,past_due_at,billing_mail_revision FROM accounts WHERE id=$1 FOR SHARE;
 
 -- name: ScheduleDeletion :one
-UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp())
-WHERE id=$1 AND status IN ('active','deleted_pending') RETURNING id,email,deletion_requested_at;
+UPDATE accounts SET status='deleted_pending',deletion_requested_at=coalesce(deletion_requested_at,clock_timestamp()),
+    deletion_includes_managed_postgres=deletion_includes_managed_postgres OR sqlc.arg(include_managed_postgres)::boolean
+WHERE id=sqlc.arg(id) AND status IN ('active','deleted_pending') RETURNING id,email,deletion_requested_at;
 
 -- name: ExistingIntent :one
 SELECT id FROM platform_mail_producer_outbox WHERE account_id=$1 AND template='account_deletion_pending' AND deletion_requested_at=$2;
@@ -743,8 +744,9 @@ SELECT id,email,status,past_due_at,deletion_requested_at,billing_mail_revision,c
 FROM accounts WHERE id=$1 FOR UPDATE;
 
 -- name: ScheduleNonpaymentDeletionAccount :one
-UPDATE accounts SET status='deleted_pending',suspended_reason=NULL,deletion_requested_at=clock_timestamp()
-WHERE id=$1 AND status='suspended' AND deletion_requested_at IS NULL
+UPDATE accounts SET status='deleted_pending',suspended_reason=NULL,deletion_requested_at=clock_timestamp(),
+    deletion_includes_managed_postgres=sqlc.arg(include_managed_postgres)::boolean
+WHERE id=sqlc.arg(id) AND status='suspended' AND deletion_requested_at IS NULL
 RETURNING billing_mail_revision,deletion_requested_at;
 
 -- name: CreateNonpaymentDeletionIntent :exec
@@ -1017,6 +1019,8 @@ JOIN accounts a ON a.id=d.mail_failure_account_id
 WHERE d.status='failed' AND d.deleted_at IS NULL AND d.mail_failed_at>=c.started_at
     AND d.mail_failed_at>clock_timestamp()-make_interval(secs=>sqlc.arg(ttl_seconds)::integer)
     AND NOT EXISTS(SELECT 1 FROM platform_mail_deployment_observations r WHERE r.deployment_id=d.id AND r.failure_revision=d.mail_failure_revision)
+    -- A rehearsal candidate's failed deploy is run evidence, not mail (ADR-20261019180000).
+    AND NOT EXISTS(SELECT 1 FROM scenario_test_action_policies p WHERE p.app_id=d.app_id)
 ORDER BY d.mail_failed_at,d.id LIMIT sqlc.arg(batch_size);
 
 -- name: LockDeploymentFailureApp :one

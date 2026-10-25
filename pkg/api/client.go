@@ -396,6 +396,10 @@ func (c *Client) doReqWithSuccess(cli *http.Client, req *http.Request, out any, 
 		defer cancel()
 		req = req.Clone(newCtx)
 	}
+	preventDeploymentReplay(req)
+	if err := recordDeploymentSubmissionBoundary(req); err != nil {
+		return err
+	}
 	resp, err := cli.Do(req)
 	if err != nil {
 		return fmt.Errorf("could not reach the API: %w", err)
@@ -636,10 +640,22 @@ func (c *Client) StreamAccountExport(ctx context.Context, includeSecrets bool, r
 // idempotent under Idempotency-Key; callers may pass an explicit
 // stable key (CI retries) or "" to auto-mint a UUIDv4 per call.
 func (c *Client) DeleteAccount(ctx context.Context, idempotencyKey string) (AccountDeletionResponse, error) {
+	return c.deleteAccount(ctx, idempotencyKey, "/v1/account")
+}
+
+// DeleteAccountIncludingManagedPostgres schedules the deletion and asks it to
+// include the account's managed PostgreSQL databases, which are deleted when
+// the 30-day grace ends (ADR-20261024150500). Dark until launch: apid ignores
+// the request for accounts outside FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS.
+func (c *Client) DeleteAccountIncludingManagedPostgres(ctx context.Context, idempotencyKey string) (AccountDeletionResponse, error) {
+	return c.deleteAccount(ctx, idempotencyKey, "/v1/account?include_managed_postgres_databases=true")
+}
+
+func (c *Client) deleteAccount(ctx context.Context, idempotencyKey, path string) (AccountDeletionResponse, error) {
 	if idempotencyKey == "" {
 		idempotencyKey = newUUIDv4()
 	}
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/v1/account", nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+path, nil)
 	if err != nil {
 		return AccountDeletionResponse{}, err
 	}
@@ -1141,7 +1157,7 @@ func (c *Client) GetDevSyncHistory(ctx context.Context, project, workspaceID str
 // For tarball / dockerfile deploys use DeployMultipart.
 func (c *Client) Deploy(ctx context.Context, slug string, req CreateDeploymentRequest) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/deployments", req, &out)
+	return out, c.doWithHeaders(deploymentSubmissionContext(ctx), "POST", "/v1/apps/"+slug+"/deployments", req, &out, deploymentAttemptHeaders(ctx))
 }
 
 // PublishAppImage deploys a published digest from the configured project image
@@ -1424,6 +1440,7 @@ func (c *Client) DeployMultipart(ctx context.Context, slug string, source io.Rea
 // an empty value means the archive root. The legacy DeployMultipart method
 // delegates here with an empty root so existing callers remain unchanged.
 func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, sourceRoot string, ann DeployAnnotations) (DeploymentResponse, error) {
+	ctx = deploymentSubmissionContext(ctx)
 	storedRoot, err := normalizeMultipartSourceRoot(sourceRoot)
 	if err != nil {
 		return DeploymentResponse{}, fmt.Errorf("invalid source root: %w", err)
@@ -1460,6 +1477,9 @@ func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string,
 		idempotencyKey = newUUIDv4()
 	}
 	req.Header.Set("Idempotency-Key", idempotencyKey)
+	for key, values := range deploymentAttemptHeaders(ctx) {
+		req.Header[key] = values
+	}
 	var out DeploymentResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
@@ -1470,6 +1490,7 @@ func (c *Client) DeployMultipartWithSourceRoot(ctx context.Context, slug string,
 // validation. A missing disposable base returns CodeDevSourceBaseMissing so
 // callers can transparently retry with the complete snapshot.
 func (c *Client) DeployDevSource(ctx context.Context, slug string, source io.Reader, sourceName, runtime, handler string, dockerfile bool, sourceRoot string, ann DeployAnnotations, baseRevision, targetRevision string, deleted []string) (DeploymentResponse, error) {
+	ctx = deploymentSubmissionContext(ctx)
 	storedRoot, err := normalizeMultipartSourceRoot(sourceRoot)
 	if err != nil {
 		return DeploymentResponse{}, fmt.Errorf("invalid source root: %w", err)
@@ -1516,9 +1537,10 @@ func (c *Client) DeployDevSource(ctx context.Context, slug string, source io.Rea
 // the wire shape but the server enforces it; passing an empty
 // string keeps callers forward-compat when a future format lands.
 func (c *Client) DeployFromSourceRef(ctx context.Context, slug string, req SourceRefDeployRequest) (DeploymentResponse, error) {
+	ctx = deploymentSubmissionContext(ctx)
 	var out DeploymentResponse
-	return out, c.do(ctx, "POST",
-		"/v1/apps/"+slug+"/deployments/source-ref", req, &out)
+	return out, c.doWithHeaders(ctx, "POST",
+		"/v1/apps/"+slug+"/deployments/source-ref", req, &out, deploymentAttemptHeaders(ctx))
 }
 
 // DeployFromSourceTarball is the zero-config local-tarball deploy
@@ -1536,6 +1558,7 @@ func (c *Client) DeployFromSourceRef(ctx context.Context, slug string, req Sourc
 // Idempotency-Key is auto-minted here so retries fold into one
 // build row, mirroring DeployFromSourceRef.
 func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarball io.Reader, tarballName string, sidecar SourceTarballDeployRequest) (DeploymentResponse, error) {
+	ctx = deploymentSubmissionContext(ctx)
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	// tarball: file part. The CLI side wraps `packDirToTarGz` so the
@@ -1552,7 +1575,7 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 	// sidecar: optional JSON. Empty repo+ref → omit the part entirely
 	// (the server treats missing sidecar as zero provenance).
 	if sidecar.Repo != "" || sidecar.Ref != "" || sidecar.Environment != "" || sidecar.Reason != "" || sidecar.Tag != "" ||
-		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.MCPTaskMigrationOverride || sidecar.Healthcheck != nil || sidecar.NoTriggers {
+		sidecar.DeployedBy != "" || sidecar.PRNumber != 0 || sidecar.TrafficPercent != nil || sidecar.Canary != nil || sidecar.RollbackOn5xx != nil || sidecar.DisableStartupCPUBoost != nil || sidecar.MCPTaskMigrationOverride || sidecar.Healthcheck != nil || sidecar.NoTriggers || sidecar.OverrideFreeze != "" {
 		sidecarJSON, err := json.Marshal(sidecar)
 		if err != nil {
 			return DeploymentResponse{}, fmt.Errorf("marshal sidecar: %w", err)
@@ -1581,6 +1604,9 @@ func (c *Client) DeployFromSourceTarball(ctx context.Context, slug string, tarba
 		idempotencyKey = newUUIDv4()
 	}
 	req.Header.Set("Idempotency-Key", idempotencyKey)
+	for key, values := range deploymentAttemptHeaders(ctx) {
+		req.Header[key] = values
+	}
 
 	var out DeploymentResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
@@ -1612,7 +1638,8 @@ func (c *Client) GetApp(ctx context.Context, slug string) (AppResponse, error) {
 // traffic weights, and edge-rule changes. Edge rules have their own revision
 // sequence in the response. wait may be zero for a snapshot or up to 10
 // seconds for a bounded server-side wait; a pending result remains possible
-// on timeout.
+// on timeout. TrafficRuntime reports fresh compute gateway wiring separately
+// from convergence; it does not attest request enforcement or backend health.
 func (c *Client) GetAppsSlugPolicyStatus(ctx context.Context, slug string, wait time.Duration) (RuntimePolicyStatusResponse, error) {
 	var out RuntimePolicyStatusResponse
 	if wait < 0 || wait > 10*time.Second {
@@ -1770,10 +1797,18 @@ func (c *Client) ScanProjectWithBindingEnvironment(
 	environment string,
 	platformTenantRequired ...*bool,
 ) (PlanResponse, error) {
+	if projectSafeReleaseRequested(ctx) && environment == "" {
+		environment = "production"
+	}
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
 	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment); err != nil {
 		return PlanResponse{}, fmt.Errorf("build multipart: %w", err)
+	}
+	if raw := projectReleaseConfigFromContext(ctx); len(raw) > 0 {
+		if err := w.WriteField("release_config", string(raw)); err != nil {
+			return PlanResponse{}, fmt.Errorf("build release configuration field: %w", err)
+		}
 	}
 	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
 		return PlanResponse{}, fmt.Errorf("build tenant policy field: %w", err)
@@ -1789,6 +1824,21 @@ func (c *Client) ScanProjectWithBindingEnvironment(
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	req.Header.Set("Content-Type", w.FormDataContentType())
+	if projectSafeReleaseRequested(ctx) {
+		req.Header.Set(ProjectSafeReleaseHeader, projectSafeReleaseMode(ctx))
+		if projectServiceAdditionsRequested(ctx) {
+			req.Header.Set(ProjectAddServicesHeader, "required")
+		}
+		if projectStabilizationRequested(ctx) {
+			req.Header.Set(ProjectStabilizationHeader, "required")
+		}
+		if projectProgressiveRequested(ctx) {
+			req.Header.Set(ProjectProgressiveHeader, "required")
+		}
+		if projectWorkerHealthRequested(ctx) {
+			req.Header.Set(ProjectWorkerHealthHeader, "required")
+		}
+	}
 	var out PlanResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
@@ -1849,8 +1899,20 @@ func (c *Client) ApplyProjectPlanWithBindingEnvironmentApproval(
 	environment, approvalToken string,
 	platformTenantRequired ...*bool,
 ) (ApplyResponse, error) {
-	return c.ApplyProjectPlanWithInitialSecrets(ctx, planToken, source, sourceName, projectSlug, repoFullName,
-		productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken, nil, platformTenantRequired...)
+	return c.applyProjectPlan(ctx, planToken, source, sourceName, projectSlug, repoFullName, productionBranch,
+		installID, only, exclude, persistExclude, noTriggers, environment, approvalToken, nil, nil, platformTenantRequired...)
+}
+
+// ApplyProjectPlanWithSecrets seals the bundle for every selected workload before
+// admitting any builds. Values are sent only in the apply body, never in source.
+func (c *Client) ApplyProjectPlanWithSecrets(
+	ctx context.Context, planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment, approvalToken string, secrets map[string]string, platformTenantRequired ...*bool,
+) (ApplyResponse, error) {
+	return c.applyProjectPlan(ctx, planToken, source, sourceName, projectSlug, repoFullName, productionBranch,
+		installID, only, exclude, persistExclude, noTriggers, environment, approvalToken, secrets, nil, platformTenantRequired...)
 }
 
 // ApplyProjectPlanWithInitialSecrets seals initial workload configuration on
@@ -1862,13 +1924,41 @@ func (c *Client) ApplyProjectPlanWithInitialSecrets(
 	environment, approvalToken string, initialSecrets ProjectInitialSecrets,
 	platformTenantRequired ...*bool,
 ) (ApplyResponse, error) {
+	return c.applyProjectPlan(ctx, planToken, source, sourceName, projectSlug, repoFullName, productionBranch,
+		installID, only, exclude, persistExclude, noTriggers, environment, approvalToken, nil, initialSecrets, platformTenantRequired...)
+}
+
+func (c *Client) applyProjectPlan(
+	ctx context.Context, planToken string,
+	source io.Reader, sourceName, projectSlug, repoFullName, productionBranch string,
+	installID int64, only, exclude []string, persistExclude, noTriggers bool,
+	environment, approvalToken string, secrets map[string]string, initialSecrets ProjectInitialSecrets,
+	platformTenantRequired ...*bool,
+) (ApplyResponse, error) {
+	if projectSafeReleaseRequested(ctx) && environment == "" {
+		environment = "production"
+	}
 	var b bytes.Buffer
 	w := multipart.NewWriter(&b)
-	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken); err != nil {
+	if err := writeProjectMultipartFields(w, source, sourceName, projectSlug, repoFullName, productionBranch, installID, only, exclude, persistExclude, noTriggers, environment, approvalToken, OverrideFreezeFromContext(ctx)); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build multipart: %w", err)
+	}
+	if raw := projectReleaseConfigFromContext(ctx); len(raw) > 0 {
+		if err := w.WriteField("release_config", string(raw)); err != nil {
+			return ApplyResponse{}, fmt.Errorf("build release configuration field: %w", err)
+		}
 	}
 	if err := writeProjectTenantPolicy(w, platformTenantRequired); err != nil {
 		return ApplyResponse{}, fmt.Errorf("build tenant policy field: %w", err)
+	}
+	if len(secrets) > 0 {
+		payload, err := json.Marshal(secrets)
+		if err != nil {
+			return ApplyResponse{}, fmt.Errorf("encode project secrets: %w", err)
+		}
+		if err := w.WriteField("secrets", string(payload)); err != nil {
+			return ApplyResponse{}, fmt.Errorf("build secrets field: %w", err)
+		}
 	}
 	if len(initialSecrets) > 0 {
 		body, err := json.Marshal(initialSecrets)
@@ -1882,7 +1972,7 @@ func (c *Client) ApplyProjectPlanWithInitialSecrets(
 	if err := w.Close(); err != nil {
 		return ApplyResponse{}, fmt.Errorf("close multipart writer: %w", err)
 	}
-	endpoint := c.baseURL + "/v1/projects"
+	endpoint := c.baseURL + projectApplyRequestPath(ctx)
 	if planToken != "" {
 		endpoint += "?plan_token=" + url.QueryEscape(planToken)
 	}
@@ -1903,6 +1993,27 @@ func (c *Client) ApplyProjectPlanWithInitialSecrets(
 		idempotencyKey = newUUIDv4()
 	}
 	req.Header.Set("Idempotency-Key", idempotencyKey)
+	for key, values := range deploymentAttemptHeaders(ctx) {
+		req.Header[key] = values
+	}
+	if retry := projectRetryHeader(ctx); retry != "" {
+		req.Header.Set(ProjectRetryHeader, retry)
+	}
+	if projectSafeReleaseRequested(ctx) {
+		req.Header.Set(ProjectSafeReleaseHeader, projectSafeReleaseMode(ctx))
+		if projectServiceAdditionsRequested(ctx) {
+			req.Header.Set(ProjectAddServicesHeader, "required")
+		}
+		if projectStabilizationRequested(ctx) {
+			req.Header.Set(ProjectStabilizationHeader, "required")
+		}
+		if projectProgressiveRequested(ctx) {
+			req.Header.Set(ProjectProgressiveHeader, "required")
+		}
+		if projectWorkerHealthRequested(ctx) {
+			req.Header.Set(ProjectWorkerHealthHeader, "required")
+		}
+	}
 	var out ApplyResponse
 	return out, c.doReq(c.uploadHTTP(), req, &out)
 }
@@ -2114,10 +2225,31 @@ func (c *Client) GetProjectEnvironmentPromotionPreview(ctx context.Context, proj
 // GetProjectEnvironmentPromotionPreviewWithConfig opts into copying the
 // source's non-secret environment configuration with the promoted release.
 func (c *Client) GetProjectEnvironmentPromotionPreviewWithConfig(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string, syncConfig bool) (ProjectEnvironmentPromotionPreviewResponse, error) {
+	return c.GetProjectEnvironmentPromotionPreviewWithHealth(ctx, projectSlug, targetEnvironment, sourceEnvironment, syncConfig, false)
+}
+
+// GetProjectEnvironmentPromotionPreviewWithHealth includes the exact probe
+// contract in the preview identity when verify is requested.
+func (c *Client) GetProjectEnvironmentPromotionPreviewWithHealth(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string, syncConfig, verify bool) (ProjectEnvironmentPromotionPreviewResponse, error) {
+	return c.GetProjectEnvironmentPromotionPreviewWithMigration(ctx, projectSlug, targetEnvironment, sourceEnvironment, syncConfig, verify, false)
+}
+
+// GetProjectEnvironmentPromotionPreviewWithMigration authorizes one backward-compatible
+// source release command against the destination runtime before health-gated cutover.
+func (c *Client) GetProjectEnvironmentPromotionPreviewWithMigration(ctx context.Context, projectSlug, targetEnvironment, sourceEnvironment string, syncConfig, verify, migrate bool, workers ...bool) (ProjectEnvironmentPromotionPreviewResponse, error) {
 	var out ProjectEnvironmentPromotionPreviewResponse
 	query := url.Values{"from": []string{sourceEnvironment}}
+	if len(workers) > 0 && workers[0] {
+		query.Set("workers", "true")
+	}
+	if migrate {
+		query.Set("migrate", "true")
+	}
 	if syncConfig {
 		query.Set("sync_config", "true")
+	}
+	if verify {
+		query.Set("verify", "true")
 	}
 	path := "/v1/projects/" + url.PathEscape(projectSlug) + "/environments/" + url.PathEscape(targetEnvironment) + "/promotion-preview?" + query.Encode()
 	return out, c.do(ctx, http.MethodGet, path, nil, &out)
@@ -2328,6 +2460,13 @@ func writeProjectMultipartFields(
 	}
 	if len(environmentAndApproval) > 1 && strings.TrimSpace(environmentAndApproval[1]) != "" {
 		if err := w.WriteField("approval_token", strings.TrimSpace(environmentAndApproval[1])); err != nil {
+			return err
+		}
+	}
+	// ADR-20261019071733: an apply into production during a freeze
+	// carries the audited override reason.
+	if len(environmentAndApproval) > 2 && strings.TrimSpace(environmentAndApproval[2]) != "" {
+		if err := w.WriteField("override_freeze", strings.TrimSpace(environmentAndApproval[2])); err != nil {
 			return err
 		}
 	}
@@ -3581,11 +3720,29 @@ func (c *Client) GetEdgeRuleStats(ctx context.Context, slug, window string) (Edg
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
 
+// GetEdgeRuleRecipeSuggestions returns the protection recipes suggested from
+// the app's last 7 days of traffic (ADR-20261020105000).
+func (c *Client) GetEdgeRuleRecipeSuggestions(ctx context.Context, slug string) (EdgeRuleRecipeSuggestionsResponse, error) {
+	var out EdgeRuleRecipeSuggestionsResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/suggestions", nil, &out)
+}
+
+// GetEdgeRuleStatsWithSeries is GetEdgeRuleStats with each rule's hourly
+// match totals (ADR-20261020105001).
+func (c *Client) GetEdgeRuleStatsWithSeries(ctx context.Context, slug, window string) (EdgeRuleStatsResponse, error) {
+	v := url.Values{"series": {"true"}}
+	if window != "" {
+		v.Set("window", window)
+	}
+	var out EdgeRuleStatsResponse
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-rules/stats?"+v.Encode(), nil, &out)
+}
+
 // ListEdgeRuleEvents returns sampled edge-rule matches for an app, newest
 // first (ADR-964). Pass the response's NextCursor to continue.
 func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRuleEventsQuery) (EdgeRuleEventsResponse, error) {
 	v := url.Values{}
-	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "since": q.Since, "cursor": q.Cursor} {
+	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "request_id": q.RequestID, "since": q.Since, "cursor": q.Cursor} {
 		if val != "" {
 			v.Set(k, val)
 		}
@@ -3599,6 +3756,32 @@ func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRule
 	}
 	var out EdgeRuleEventsResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetEdgeWAFReview returns an app's WAF detections grouped for a
+// false-positive review (ADR-831 amendment 13). ruleID and since are
+// optional; since defaults to 7d.
+func (c *Client) GetEdgeWAFReview(ctx context.Context, slug, ruleID, since string) (EdgeWAFReviewResponse, error) {
+	v := url.Values{}
+	if ruleID != "" {
+		v.Set("rule", ruleID)
+	}
+	if since != "" {
+		v.Set("since", since)
+	}
+	path := "/v1/apps/" + slug + "/edge-rules/waf-review"
+	if len(v) > 0 {
+		path += "?" + v.Encode()
+	}
+	var out EdgeWAFReviewResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// UpdateEdgeWAFExclusions adds and removes CRS rule IDs on a kind=waf rule's
+// exclusions, keeping the rest of its action (ADR-831 amendment 13).
+func (c *Client) UpdateEdgeWAFExclusions(ctx context.Context, id string, req EdgeWAFExclusionsRequest) (EdgeRuleResponse, error) {
+	var out EdgeRuleResponse
+	return out, c.do(ctx, "POST", "/v1/edge-rules/"+url.PathEscape(id)+"/waf-exclusions", req, &out)
 }
 
 // ListEdgeRuleLists returns the account's reusable edge-rule lists, without
@@ -4973,6 +5156,27 @@ func (c *Client) GetAppEdgeProtection(ctx context.Context, slug, rng string) (Ed
 		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppEdgeAttackMode reads slug's attack mode (ADR-20261021220456).
+func (c *Client) GetAppEdgeAttackMode(ctx context.Context, slug string) (EdgeAttackModeStatus, error) {
+	var out EdgeAttackModeStatus
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-protection/attack-mode", nil, &out)
+}
+
+// EnableAppEdgeAttackMode switches slug's attack mode on for
+// durationSeconds from now, or moves the end of an active one. Zero applies
+// the server's default.
+func (c *Client) EnableAppEdgeAttackMode(ctx context.Context, slug string, durationSeconds int) (EdgeAttackModeStatus, error) {
+	var out EdgeAttackModeStatus
+	return out, c.do(ctx, "PUT", "/v1/apps/"+slug+"/edge-protection/attack-mode",
+		EnableEdgeAttackModeRequest{DurationSeconds: durationSeconds}, &out)
+}
+
+// DisableAppEdgeAttackMode switches slug's attack mode off.
+func (c *Client) DisableAppEdgeAttackMode(ctx context.Context, slug string) (EdgeAttackModeStatus, error) {
+	var out EdgeAttackModeStatus
+	return out, c.do(ctx, "DELETE", "/v1/apps/"+slug+"/edge-protection/attack-mode", nil, &out)
 }
 
 // AppWakeTimelineOptions controls the optional query params for

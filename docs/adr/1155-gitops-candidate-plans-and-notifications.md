@@ -55,3 +55,12 @@ account delivery without an app.
 
 Production enforcement, workload provenance and native acceptance retain their
 existing gates. This introduces no VM lifecycle or qualification changes.
+
+The read-only `gitops explain` assessment now shares source freshness,
+generation/intent fences, recognized blocker guidance and workload-stage facts
+across the status API, CLI and dashboard. Historical applied state never proves
+current serving; stale, absent or contradictory evidence stays unknown. Status
+reads project existing receipt checks and build states without acquiring an
+execution lease or changing graph authority. Unknown upstream error text and
+frozen workload values are not copied into the explanation. This adds no
+execution permission and leaves production and native acceptance gates intact.

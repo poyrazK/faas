@@ -5,6 +5,7 @@
 import type { EdgeRuleAsyncAction } from './EdgeRuleAsyncAction.js';
 import type { EdgeRuleBudgetAction } from './EdgeRuleBudgetAction.js';
 import type { EdgeRuleCacheAction } from './EdgeRuleCacheAction.js';
+import type { EdgeRuleChallengeAction } from './EdgeRuleChallengeAction.js';
 import type { EdgeRuleCircuitBreakerAction } from './EdgeRuleCircuitBreakerAction.js';
 import type { EdgeRuleCORSAction } from './EdgeRuleCORSAction.js';
 import type { EdgeRuleGeoAction } from './EdgeRuleGeoAction.js';
@@ -14,6 +15,7 @@ import type { EdgeRuleJWTAction } from './EdgeRuleJWTAction.js';
 import type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
 import type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
 import type { EdgeRuleMatchExpr } from './EdgeRuleMatchExpr.js';
+import type { EdgeRulePenalty } from './EdgeRulePenalty.js';
 import type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
 import type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
 import type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
@@ -50,7 +52,7 @@ export type EdgeRuleResponse = {
   match_headers: Record<string, string>;
   priority: number;
   enabled: boolean;
-  kind: 'route' | 'rewrite' | 'redirect' | 'headers' | 'cors' | 'jwt' | 'ip' | 'validate' | 'limit' | 'maintenance' | 'geo' | 'throttle' | 'budget' | 'cache' | 'respond' | 'retry' | 'circuit_breaker' | 'async' | 'waf';
+  kind: 'route' | 'rewrite' | 'redirect' | 'headers' | 'cors' | 'jwt' | 'ip' | 'validate' | 'limit' | 'maintenance' | 'geo' | 'throttle' | 'budget' | 'cache' | 'respond' | 'retry' | 'circuit_breaker' | 'async' | 'waf' | 'challenge';
   /**
    * Top-level source of truth for kind=validate (ADR-128).
    * Resolved mode; always present on read. Empty on read
@@ -61,7 +63,7 @@ export type EdgeRuleResponse = {
   /**
    * Kind-tagged union — shape varies by `kind`.
    */
-  action: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleCacheAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction | EdgeRuleWAFAction);
+  action: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleCacheAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction | EdgeRuleWAFAction | EdgeRuleChallengeAction);
   created_at: string;
   updated_at: string;
   /**
@@ -85,5 +87,20 @@ export type EdgeRuleResponse = {
    * enforce (default) or log; a log-mode rule is matched and counted but never acts.
    */
   mode?: 'enforce' | 'log';
+  /**
+   * Set on the app's attack-mode rule (ADR-20261021220456), which changes only through /v1/apps/{slug}/edge-protection/attack-mode; PATCH refuses it. Absent on every other rule.
+   */
+  managed_by?: 'attack_mode';
+  penalty?: EdgeRulePenalty;
+  /**
+   * Gated features this rule uses that are not yet released to the
+   * account (ADR-20261023113721). The gateway does not enforce them:
+   * a challenge rule is inert, a warn or block WAF rule only
+   * observes, a penalty boxes nobody, an AI crawler condition never
+   * matches, and attack mode challenges nobody. Absent when every
+   * feature the rule uses is released.
+   *
+   */
+  unreleased_features?: Array<'challenge' | 'waf_blocking' | 'penalty_box' | 'ai_crawlers' | 'attack_mode'>;
 };
 

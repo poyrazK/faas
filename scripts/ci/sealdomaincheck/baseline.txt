@@ -1,0 +1,147 @@
+# sealdomaincheck baseline (ADR 20261022111812). This file only shrinks.
+# A new line is a new holder of a private age identity, a new direct
+# identity loader in daemon code, or a new bytea column that is not sealed;
+# each needs review. Regenerate with: go run ./scripts/ci/sealdomaincheck -write
+credential file:deploy/ansible/node_join.yml /etc/faas/secrets/fleet.age
+credential file:deploy/ansible/node_join.yml /etc/faas/secrets/host.age
+credential file:deploy/ansible/roles/livequeryd_service/templates/50-faas-livequeryd.conf.j2 /etc/faas/secrets/livequeryd/keys.age
+credential unit:faas-apid /etc/faas/secrets/fleet.age
+credential unit:faas-apid /etc/faas/secrets/host.age
+credential unit:faas-apid-clone-worker /etc/faas/secrets/fleet.age
+credential unit:faas-apid-clone-worker /etc/faas/secrets/host.age
+credential unit:faas-apid-data-pipeline-worker /etc/faas/secrets/fleet.age
+credential unit:faas-apid-data-pipeline-worker /etc/faas/secrets/host.age
+credential unit:faas-gatewayd-internal /etc/faas/secrets/fleet.age
+credential unit:faas-gatewayd-internal /etc/faas/secrets/host.age
+credential unit:faas-githubd /etc/faas/secrets/fleet.age
+credential unit:faas-githubd /etc/faas/secrets/host.age
+credential unit:faas-imaged /etc/faas/secrets/fleet.age
+credential unit:faas-imaged /etc/faas/secrets/host.age
+credential unit:faas-meterd /etc/faas/secrets/fleet.age
+credential unit:faas-meterd /etc/faas/secrets/host.age
+credential unit:faas-outboundd /etc/faas/secrets/fleet.age
+credential unit:faas-s3-gatewayd /etc/faas/secrets/fleet.age
+credential unit:faas-s3-gatewayd /etc/faas/secrets/host.age
+credential unit:faas-schedd /etc/faas/secrets/fleet.age
+credential unit:faas-schedd /etc/faas/secrets/host.age
+loader cmd/gatewayd-internal/rehearsal_objects.go 1
+loader cmd/gatewayd-internal/run.go 1
+loader cmd/gatewayd-public/main.go 1
+loader cmd/githubd/main.go 2
+loader cmd/imaged/main.go 1
+loader cmd/livequeryd/keys.go 1
+loader cmd/managed-postgres-qualify/durable.go 1
+loader cmd/meterd/main.go 2
+loader cmd/s3-gatewayd/main.go 2
+loader cmd/schedd/cluster_key_loader.go 1
+loader cmd/schedd/internal_svc_minter.go 1
+loader cmd/schedd/main.go 2
+loader cmd/vmmd/main.go 4
+loader pkg/apid/apidserver/main.go 3
+loader pkg/apid/apidserver/project_environment_clone_worker.go 2
+loader pkg/apid/mailoutbox/verification_config.go 1
+loader pkg/datapipeline/config.go 2
+loader pkg/internalmail/keyring_config.go 2
+plain accounts.mfa_recovery_codes_hash
+plain api_consumer_signups.claim_hash
+plain api_keys.key_sha256
+plain app_fork_execs.stderr
+plain app_fork_execs.stdout
+plain app_forks.access_token_hash
+plain app_openapi_docs.doc_sha256
+plain app_task_attach_sessions.attach_token_sha256
+plain app_trusted_signers.cosign_public_key
+plain application_standard_publishers.public_key_der
+plain billing_subscription_end_receipts.customer_hash
+plain billing_subscription_end_receipts.subscription_hash
+plain billing_subscription_ends.subscription_hash
+plain build_export_publications.payload
+plain build_export_publications.signature
+plain ci_job_runtime.capability_hash
+plain cli_auth_codes.token_hash
+plain consumer_keys.hashed_secret
+plain customer_operation_webhook_receipts.body_sha256
+plain deploy_tokens.token_sha256
+plain deployment_openapi_docs.doc_sha256
+plain deployment_registry_verifications.payload
+plain deployment_registry_verifications.signature
+plain dev_bridge_sessions.attachment_digest
+plain dev_bridge_sessions.request_digest
+plain dev_source_patches.archive
+plain email_verification_tokens.token_hash
+plain event_delivery_acknowledgments.completion_digest
+plain event_delivery_acknowledgments.token_digest
+plain exclusive_work_keys.key_digest
+plain exclusive_work_operations.equivalence_digest
+plain exclusive_work_operations.idempotency_digest
+plain exclusive_work_operations.request_digest
+plain exclusive_work_submissions.idempotency_digest
+plain execution_artifact_grants.token_hash
+plain executions.artifacts
+plain github_webhook_deliveries.payload
+plain hosting_automation_credentials.token_hash
+plain idempotency_keys.request_digest
+plain idempotency_keys.response_body
+plain inbound_webhook_endpoints.token_hash
+plain internal_mail_messages.payload_fingerprint
+plain internal_mail_operations.request_hash
+plain invocation_work_cancellations.key_digest
+plain invocation_work_environment_admissions.fairness_digest
+plain invocation_work_environment_admissions.key_digest
+plain invocation_work_environment_domains.digest
+plain invocation_work_fairness_lanes.fairness_digest
+plain invocation_work_lanes.key_digest
+plain invocations.work_fairness_digest
+plain invocations.work_key_digest
+plain issue_ingest_tokens.token_hash
+plain job_run_attach_sessions.attach_token_sha256
+plain login_tokens.token_hash
+plain magic_link_tokens.token_hash
+plain managed_realtime_channel_batches.payload_hash
+plain managed_realtime_channel_messages.data
+plain managed_realtime_channel_snapshots.data
+plain managed_realtime_commit_receipts.content_hash
+plain managed_realtime_consumer_group_messages.token_hash
+plain managed_realtime_direct_message_receipts.payload_fingerprint
+plain managed_realtime_group_event_ids.event_hash
+plain managed_realtime_group_settlement_receipts.request_hash
+plain managed_realtime_inbox_messages.data
+plain managed_realtime_publisher_credentials.token_hash
+plain managed_realtime_publisher_receipts.content_hash
+plain managed_realtime_schedules.data
+plain managed_realtime_subscription_tickets.token_hash
+plain managed_realtime_worker_credentials.token_hash
+plain mfa_disable_requests.token_hash
+plain mfa_disable_tokens.token_hash
+plain migration_admissions.adoption_receipt
+plain mirror_invocation_results.body_hash
+plain mirror_invocation_results.schema_hash
+plain mirror_invocation_results.source_body_hash
+plain mirror_invocation_results.source_schema_hash
+plain oidc_exchanged_tokens.token_hash
+plain operator_recovery_submissions.response_body
+plain org_invitations.token_hash
+plain outbound_ai_access_tokens.token_hash
+plain outbound_ai_prompt_prefixes.prefix_hash
+plain outbound_ai_replay_results.response_body
+plain outbound_ai_request_content.request_body
+plain outbound_ai_request_content.response_body
+plain outbound_ai_traces.tool_signature
+plain outbound_integrations.token_hash
+plain password_reset_tokens.token_hash
+plain platform_mail_outbox_reconciliations.request_hash
+plain platform_mail_producer_outbox.verification_token_hash
+plain platform_tenant_access_tokens.token_hash
+plain product_control_email_deliveries.unsubscribe_hash
+plain profile_capture_data.profile
+plain route_removal_approvals.baseline_sha256
+plain route_removal_approvals.candidate_sha256
+plain runtime_upgrade_external_fence_authorities.public_key
+plain runtime_upgrade_external_fence_receipts.envelope
+plain runtime_upgrade_native_public_startups.envelope
+plain runtime_upgrade_native_public_startups.review
+plain trigger_records.work_fairness_digest
+plain trigger_records.work_key_digest
+plain workflow_automation_live_verifications.request_fingerprint
+plain workflow_runs.create_request_fingerprint
+plain workflow_webhook_receipts.body_hash

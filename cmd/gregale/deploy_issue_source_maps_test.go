@@ -57,7 +57,7 @@ func TestDeployIssueSourceMapsArchiveBinding(t *testing.T) {
 		archiveFiles["repository/packages/exports/"+name] = body
 	}
 	archiveFiles["repository/package.json"] = `{"workspaces":["packages/*"]}`
-	archive := writeDeploySourceArchive(t, archiveFiles)
+	archive := main.WriteDeploySourceArchive(t, archiveFiles)
 	set, snapshot, cleanup, err := main.PrepareDeployIssueSourceMaps(archive, "packages/exports", "dist/.gregale-issue-maps.json", "/app/dist")
 	if err != nil {
 		t.Fatal(err)
@@ -111,7 +111,7 @@ func TestDeployIssueSourceMapsRejectInvalidArchiveEvidence(t *testing.T) {
 			case "oversized manifest":
 				files["dist/.gregale-issue-maps.json"] = strings.Repeat(" ", api.IssueSourceMapsUploadMaxBytes+1)
 			}
-			_, _, cleanup, err := main.PrepareDeployIssueSourceMaps(writeDeploySourceArchive(t, files), "", "dist/.gregale-issue-maps.json", "/app/dist")
+			_, _, cleanup, err := main.PrepareDeployIssueSourceMaps(main.WriteDeploySourceArchive(t, files), "", "dist/.gregale-issue-maps.json", "/app/dist")
 			if cleanup != nil {
 				cleanup()
 			}
@@ -335,7 +335,7 @@ func TestDeployIssueSourceMapsCLI(t *testing.T) {
 			if scenario == "bundle changed" {
 				files["dist/bundle.js"] += "another build"
 			}
-			archive := writeDeploySourceArchive(t, files)
+			archive := main.WriteDeploySourceArchive(t, files)
 			sourceSHA256, err := main.TarballSHA256(archive)
 			if err != nil {
 				t.Fatal(err)

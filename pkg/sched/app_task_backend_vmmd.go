@@ -15,11 +15,12 @@ import (
 // ResolvedAppTaskRuntime is the command-free result of resolving a task's
 // immutable deployment pin into one vmmd wake envelope.
 type ResolvedAppTaskRuntime struct {
-	NodeID  string
-	Spec    AppTaskRestoreSpec
-	release func()
-	ready   func(context.Context) error
-	publish func(context.Context, *AppTaskRestoreOutcome) error
+	NodeID    string
+	RuntimeID string
+	Spec      AppTaskRestoreSpec
+	release   func()
+	ready     func(context.Context) error
+	publish   func(context.Context, *AppTaskRestoreOutcome) error
 }
 
 type AppTaskRuntimeResolver func(context.Context, AppTaskRestoreRequest) (ResolvedAppTaskRuntime, error)
@@ -54,7 +55,11 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 	if err != nil {
 		return nil, withAppTaskStage("resolve", err)
 	}
-	if resolved.NodeID == "" || resolved.Spec.Instance != request.ID || resolved.Spec.DeploymentID != request.DeploymentID {
+	runtimeID := request.ID
+	if resolved.RuntimeID != "" {
+		runtimeID = resolved.RuntimeID
+	}
+	if resolved.NodeID == "" || resolved.Spec.Instance != runtimeID || resolved.Spec.DeploymentID != request.DeploymentID {
 		if resolved.release != nil {
 			resolved.release()
 		}
@@ -62,7 +67,7 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 	}
 	outcome, err := b.router.RestoreAppTask(ctx, resolved.NodeID, resolved.Spec)
 	if err != nil {
-		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
+		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, runtimeID)
 		if cleanupErr == nil && resolved.release != nil {
 			resolved.release()
 		}
@@ -71,8 +76,8 @@ func (b *RoutedVmmdAppTaskBackend) Restore(ctx context.Context, request AppTaskR
 		}
 		return nil, withAppTaskStage("vmmd_restore", err)
 	}
-	if outcome == nil || outcome.Instance == "" || outcome.Instance != request.ID {
-		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, request.ID)
+	if outcome == nil || outcome.Instance == "" || outcome.Instance != runtimeID {
+		cleanupErr := destroyRestoredAppTask(ctx, b.router, resolved.NodeID, runtimeID)
 		identityErr := errors.New("sched: vmmd returned an unexpected app task instance")
 		if cleanupErr != nil {
 			return nil, errors.Join(identityErr, cleanupErr)
@@ -190,4 +195,11 @@ func appTaskOutcomeFromProtocol(result apptaskproto.Result) AppTaskOutcome {
 		OutcomeCode: result.OutcomeCode,
 		FailureCode: result.FailureCode, FailureMessage: result.FailureMessage,
 	}
+}
+
+func (b *RoutedVmmdAppTaskBackend) QuiescePromotionMigration(ctx context.Context, job state.PromotionMigrationQuiescenceJob) error {
+	if b == nil || b.router == nil || job.NodeID == "" || job.InstanceID == "" {
+		return ErrAppTaskCoordinatorNotWired
+	}
+	return b.router.Destroy(ctx, job.NodeID, job.InstanceID)
 }

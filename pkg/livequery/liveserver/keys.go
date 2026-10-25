@@ -71,7 +71,7 @@ func OpenKeys(database string, keys []livekeys.SealedKey, identities []*age.X255
 		ids    []string
 	)
 	for _, k := range keys {
-		secret, err := openKey(k, identities)
+		secret, err := openKey(k, database, identities)
 		if err != nil {
 			log.Error("livequeryd: a live key does not open; seals made with it are refused", "kid", k.KID, "err", err)
 			continue
@@ -90,14 +90,17 @@ func OpenKeys(database string, keys []livekeys.SealedKey, identities []*age.X255
 	return ring, strings.Join(ids, ",")
 }
 
-func openKey(k livekeys.SealedKey, identities []*age.X25519Identity) (seal.Secret, error) {
+// openKey opens one of database's live keys. A key sealed to another
+// database's namespace is refused, so a row copied between databases does
+// not join this one's ring.
+func openKey(k livekeys.SealedKey, database string, identities []*age.X25519Identity) (seal.Secret, error) {
 	namespace, plain, err := secretbox.OpenBytesMulti(identities, k.Sealed)
 	if err != nil {
 		return seal.Secret{}, err
 	}
 	defer clear(plain)
-	if namespace != livekeys.SealNamespace {
-		return seal.Secret{}, fmt.Errorf("sealed for %q, not live queries", namespace)
+	if !livekeys.KeyNamespaceOpens(namespace, database) {
+		return seal.Secret{}, fmt.Errorf("sealed for %q, not this database's live queries", namespace)
 	}
 	secret, err := seal.ParseSecret(string(plain))
 	if err != nil {

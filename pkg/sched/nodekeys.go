@@ -38,6 +38,7 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/nodereport"
 )
 
 // PublicKey is a diagnostic and compatibility accessor. Authentication paths
@@ -305,11 +306,16 @@ func parsePublicKeyPEM(pemStr string) (*ecdsa.PublicKey, error) {
 	if !ok {
 		return nil, fmt.Errorf("not ECDSA (got %T)", pub)
 	}
-	if ec.Curve != ecdsaP256() {
+	if ec.Curve != nodereport.P256() {
 		return nil, fmt.Errorf("curve %s, want P-256", ec.Curve.Params().Name)
 	}
 	return ec, nil
 }
+
+// nodeKeyLookup is the registry VerifyNodeSignature and
+// VerifyNodeInventory consult (nodereport.KeyLookup); NodeKeyRegistry
+// implements it and tests inject a stub.
+type nodeKeyLookup = nodereport.KeyLookup
 
 // Compile-time guards.
 var (

@@ -1,0 +1,174 @@
+# cd-unit-watch.yml — the post-deploy watch of per-unit releases
+# (docs/adr/20261020214632-automatic-unit-deploy-safety-rails.md, section 3).
+#
+# release-units.yml calls it after its lanes. It keeps the SLO gate running
+# (scripts/ci/slo_gate.py in watch mode, on the control plane, where
+# Prometheus listens) for 30 minutes after the run's last activation, over
+# every unit the control plane's watch record holds on every host, and reads
+# each recorded commit's post-merge light run (scripts/ci/unit_watch.py):
+#
+#   * pass: the record closes; every host's active release is known-good;
+#   * a newer run deployed meanwhile: it owns the record now and watches
+#     both releases; this watch stops, green;
+#   * breach (an SLO, or a failed post-merge light run): every host in the
+#     record goes back to its known-good release, newest change first, with
+#     this run's signed deployctl (`deployctl rollback --only ...
+#     --expect-current ... --to ...`), and a deploy-freeze issue holding the
+#     report pauses automatic deploys;
+#   * inconclusive (Prometheus blind for 5 minutes): nothing is promoted or
+#     rolled back, the record stays, the run fails.
+#
+# A failed lane (deploy_results) also opens the deploy-freeze issue: unit
+# releases accumulate, so the next merge would ship the same change again.
+#
+# Dispatch it with adopt=true to watch a record no watch runs for (the last
+# one ended inconclusive or was cancelled); the preflight asks for that when
+# such a record holds the most unwatched releases a host may have.
+
+name: cd-unit-watch
+
+on:
+  workflow_call:
+    inputs:
+      deploy_environment:
+        description: "GitHub environment holding the target fleet's secrets (production or production-us)"
+        required: false
+        default: production
+        type: string
+      units_run_id:
+        description: "release-units.yml run whose signed deployctl rolls hosts back"
+        required: true
+        type: string
+      deploy_results:
+        description: "The calling run's lane results, as job=result pairs (a failed lane pauses automatic deploys)"
+        required: false
+        default: ""
+        type: string
+  workflow_dispatch:
+    inputs:
+      deploy_environment:
+        description: "GitHub environment holding the target fleet's secrets"
+        required: false
+        default: production
+        type: choice
+        options:
+          - production
+          - production-us
+      units_run_id:
+        description: "release-units.yml run whose signed deployctl rolls hosts back (any run built over the hosts' base)"
+        required: true
+        type: string
+      adopt:
+        description: "Take over a watch record no watch runs for, and watch it for a full window from now"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+  actions: read
+  # A breach or a failed lane opens a deploy-freeze issue.
+  issues: write
+
+jobs:
+  watch:
+    name: Watch
+    environment: ${{ inputs.deploy_environment }}
+    runs-on: ${{ fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
+    if: github.repository == 'poyrazK/faas'
+    # A 30-minute window after the last activation, plus a rollback of every
+    # recorded host.
+    timeout-minutes: 50
+    env:
+      CP_HOST: ${{ secrets.CP_HOST || secrets.DO_HOST }}
+      CP_SSH_KEY: ${{ secrets.CP_SSH_KEY || secrets.DO_SSH_KEY }}
+    steps:
+      - name: Install pinned cosign verifier
+        env:
+          COSIGN_VERSION: "2.4.1"
+          COSIGN_SHA256: "8b24b946dd5809c6bd93de08033bcf6bc0ed7d336b7785787c080f574b89249b"
+        run: |
+          set -euo pipefail
+          echo "TUF_ROOT=$RUNNER_TEMP/sigstore-tuf" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/release-tools"
+          curl --fail --silent --show-error --location \
+            --proto '=https' --tlsv1.2 \
+            -o "$RUNNER_TEMP/release-tools/cosign" \
+            "https://github.com/sigstore/cosign/releases/download/v${COSIGN_VERSION}/cosign-linux-amd64"
+          echo "${COSIGN_SHA256}  $RUNNER_TEMP/release-tools/cosign" | sha256sum -c -
+          chmod 0755 "$RUNNER_TEMP/release-tools/cosign"
+          echo "$RUNNER_TEMP/release-tools" >> "$GITHUB_PATH"
+
+      - name: Download unit release
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: gregale-unit-release
+          run-id: ${{ inputs.units_run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/gregale-units
+
+      # The verifier comes from the workflow's own ref; the deployctl that
+      # rolls hosts back is used only once the release's signature verified.
+      # A directory of its own: a sparse checkout in the default workspace
+      # of this self-hosted runner leaves core.sparseCheckout set, and the
+      # next job's full checkout there keeps only these paths.
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          path: watch-src
+          sparse-checkout: |
+            scripts/ci
+            scripts/unit-release-verify.sh
+          sparse-checkout-cone-mode: false
+
+      - name: Verify unit release
+        run: |
+          set -euo pipefail
+          watch-src/scripts/ci/verify_unit_release.sh "$RUNNER_TEMP/gregale-units" > /dev/null
+          echo "UNITS_DIR=$RUNNER_TEMP/gregale-units/unpacked" >> "$GITHUB_ENV"
+
+      - name: Set up SSH
+        env:
+          COMPUTE_SSH_KEY: ${{ secrets.COMPUTE_SSH_KEY }}
+          COMPUTE_KNOWN_HOSTS: ${{ secrets.COMPUTE_KNOWN_HOSTS }}
+        run: |
+          set -euo pipefail
+          keys="$RUNNER_TEMP/unit-ssh"
+          install -d -m 0700 "$keys"
+          printf '%s\n' "${{ env.CP_SSH_KEY }}" > "$keys/cp-key"
+          printf '%s\n' "$COMPUTE_SSH_KEY" > "$keys/compute-key"
+          chmod 0600 "$keys/cp-key" "$keys/compute-key"
+          # The control plane: only a key listed in COMPUTE_KNOWN_HOSTS.
+          # Compute nodes are pinned by the fingerprint their record entry
+          # keeps (unit_deploy.sh pin-node) when one must be rolled back.
+          : > "$keys/cp-known-hosts"
+          scanned="$(ssh-keyscan -T 10 -t ed25519,ecdsa,rsa "$CP_HOST" 2>/dev/null || true)"
+          while read -r _ key_type key; do
+            [[ -n "${key:-}" ]] || continue
+            if awk -v t="$key_type" -v k="$key" '!/^#/ { for (i = 1; i < NF; i++) if ($i == t && $(i + 1) == k) found = 1 } END { exit !found }' <<<"$COMPUTE_KNOWN_HOSTS"; then
+              printf '%s %s %s\n' "$CP_HOST" "$key_type" "$key" >> "$keys/cp-known-hosts"
+            fi
+          done <<<"$scanned"
+          [[ -s "$keys/cp-known-hosts" ]] || {
+            echo "::error::$CP_HOST presented no host key listed in COMPUTE_KNOWN_HOSTS" >&2
+            exit 1
+          }
+          {
+            echo "UNIT_SSH_TARGET=root@${CP_HOST}"
+            echo "UNIT_SSH_KEY=$keys/cp-key"
+            echo "UNIT_SSH_KNOWN_HOSTS=$keys/cp-known-hosts"
+            echo "UNIT_GATE_SSH_TARGET=root@${CP_HOST}"
+            echo "UNIT_GATE_SSH_KEY=$keys/cp-key"
+            echo "UNIT_GATE_SSH_KNOWN_HOSTS=$keys/cp-known-hosts"
+            echo "COMPUTE_KEY=$keys/compute-key"
+          } >> "$GITHUB_ENV"
+
+      - name: Watch the deployed units
+        env:
+          GH_TOKEN: ${{ github.token }}
+          DEPLOY_RESULTS: ${{ inputs.deploy_results }}
+          ADOPT: ${{ inputs.adopt && 'true' || 'false' }}
+        run: |
+          set -euo pipefail
+          args=(--deployctl "$UNITS_DIR/tools/deployctl" --compute-key "$COMPUTE_KEY" --deploy-results "$DEPLOY_RESULTS")
+          [[ "$ADOPT" != true ]] || args+=(--adopt)
+          python3 watch-src/scripts/ci/unit_watch.py "${args[@]}"

@@ -1,0 +1,110 @@
+---
+# The outbound domain (ADR 20261022111812). The order is the safety argument:
+# outboundd (the reader) gets the domain identity and proves it opens the
+# domain probe before apid (the writer) seals anything to the domain.
+- name: seal_domains — require the outbound domain sources on a control-plane host
+  ansible.builtin.assert:
+    that:
+      - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+      - faas_seal_domain_outbound_identity_src | length > 0
+      - faas_seal_domain_outbound_recipient_src | length > 0
+      - faas_seal_domain_outbound_writes in ['', 'fleet', 'dual', 'domain']
+      - faas_seal_domain_outbound_writes != 'domain' or (faas_seal_domain_outbound_readers_verified | bool)
+    fail_msg: >-
+      The outbound seal domain runs where outboundd runs (a control-plane or
+      single-box host). Set faas_seal_domain_outbound_identity_src and
+      faas_seal_domain_outbound_recipient_src to the files from
+      `gregalectl seal-domain init --domain outbound`. writes=domain also
+      needs faas_seal_domain_outbound_readers_verified once every outboundd
+      verified the domain and the previous release left the rollback window.
+
+# 0400 root:root. systemd hands the identity to outboundd alone as a
+# credential; no other unit names it.
+- name: seal_domains — install the outbound domain identity
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_outbound_identity_src }}"
+    dest: /etc/faas/secrets/domains/outbound.age
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-outboundd for seal domains
+
+- name: seal_domains — install the outbound domain recipient
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_outbound_recipient_src }}"
+    dest: /etc/faas/secrets/domains/outbound.age.pub
+    owner: root
+    group: root
+    mode: "0444"
+  notify: restart faas-apid for seal domains
+
+- name: seal_domains — create unit drop-in directories
+  ansible.builtin.file:
+    path: "/etc/systemd/system/{{ item }}.service.d"
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  loop: [faas-outboundd, faas-apid]
+
+- name: seal_domains — give outboundd the outbound domain identity
+  ansible.builtin.template:
+    src: 60-faas-seal-domain-outbound-reader.conf.j2
+    dest: /etc/systemd/system/faas-outboundd.service.d/60-faas-seal-domain-outbound.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-outboundd for seal domains
+
+- name: seal_domains — restart outboundd before proving the domain
+  ansible.builtin.meta: flush_handlers
+
+- name: seal_domains — prove this node opens the outbound domain probe
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - verify
+      - --domain
+      - outbound
+      - --publish
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --metrics-file
+      - "{{ faas_seal_domain_textfile_dir }}/faas_seal_domain_outbound.prom"
+      - --json
+  register: faas_seal_domain_outbound_verify
+  changed_when: (faas_seal_domain_outbound_verify.stdout | from_json).probe_written | default(false)
+
+# The recipient apid seals to must be the one readers published the probe
+# with; a recipient from another pair would seal to a key no reader holds.
+# Before any reader published the probe there is nothing to compare, which
+# is only acceptable while apid still seals to the fleet key too.
+- name: seal_domains — check the outbound recipient against the published probe
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - verify
+      - --domain
+      - outbound
+      - --recipient-only
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --json
+  register: faas_seal_domain_outbound_recipient_check
+  changed_when: false
+  failed_when: >-
+    faas_seal_domain_outbound_recipient_check.rc != 0 or
+    (faas_seal_domain_outbound_writes == 'domain' and
+     not (faas_seal_domain_outbound_recipient_check.stdout | from_json).probe_published)
+
+- name: seal_domains — have apid seal outbound credentials to the domain
+  ansible.builtin.template:
+    src: 60-faas-seal-domain-outbound-writer.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/60-faas-seal-domain-outbound.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid for seal domains

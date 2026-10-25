@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+	"time"
 
 	scheddpb "github.com/onebox-faas/faas/api/proto/onebox/faas/schedd/v1"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -69,8 +70,53 @@ func wireFailureReports(sourceNodeID string, mgr *fcvm.Manager, cfg *Config, dep
 	mgr.WithWorkloadOOMSink(func(_ context.Context, instanceID string, peakMB, planMB int) {
 		enqueue(failureoutbox.Report{InstanceID: instanceID, Kind: failureoutbox.WorkloadOOM, PeakMB: uint32(peakMB), PlanMB: uint32(planMB)})
 	})
+	mgr.WithMemoryPressureSink(memoryPressureRelay(sourceNodeID, deps.scheddTarget, scheddClientTLS, log))
 	log.Info("vmmd: durable failure reports wired", "target", deps.scheddTarget, "pending", outbox.Pending())
 	return outbox, nil
+}
+
+// memoryPressureRelay forwards guest memory-pressure reports to schedd
+// (ADR-1155). They are advisory: the guest reports once per episode, so a
+// lost report only means no automatic heap capture, and nothing is spooled.
+func memoryPressureRelay(sourceNodeID, target string, tlsConfig func() *tls.Config, log *slog.Logger) fcvm.MemoryPressureSink {
+	return func(ctx context.Context, instanceID string, availableMB, totalMB, anonMB int) {
+		// The relay outlives the report's caller.
+		ctx = context.WithoutCancel(ctx)
+		go func() {
+			ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+			defer cancel()
+			var cfg *tls.Config
+			if tlsConfig != nil {
+				cfg = tlsConfig()
+			}
+			conn, err := wire.DialContext(ctx, target, cfg)
+			if err != nil {
+				log.Warn("vmmd: memory pressure relay dial failed", "instance_id", instanceID, "err", err)
+				return
+			}
+			defer func() { _ = conn.Close() }()
+			ack, err := scheddpb.NewScheddClient(conn).ReportMemoryPressure(ctx, &scheddpb.ReportMemoryPressureRequest{
+				InstanceId: instanceID, SourceNodeId: sourceNodeID,
+				AvailableMb: clampMB(availableMB), TotalMb: clampMB(totalMB), AnonMb: clampMB(anonMB),
+			})
+			if err != nil {
+				log.Warn("vmmd: memory pressure relay failed", "instance_id", instanceID, "err", err)
+				return
+			}
+			log.Info("vmmd: memory pressure reported", "instance_id", instanceID, "available_mb", availableMB,
+				"total_mb", totalMB, "capture_queued", ack.GetQueued(), "reason", ack.GetReason())
+		}()
+	}
+}
+
+func clampMB(v int) uint32 {
+	if v < 0 {
+		return 0
+	}
+	if v > 1<<20 {
+		return 1 << 20
+	}
+	return uint32(v)
 }
 
 // Remember reconciliation for this Manager lifetime: after a confirmed destroy

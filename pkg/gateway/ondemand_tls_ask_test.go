@@ -95,6 +95,27 @@ func TestOnDemandTLSPolicyWildcardBudgetSparesKnownHosts(t *testing.T) {
 	}
 }
 
+// An exact claim past its verification deadline reserves nothing: it must not
+// keep denying the certificate of the verified wildcard above it, which
+// routing already serves (ADR-167).
+func TestOnDemandTLSPolicyExpiredExactClaimFallsThroughToWildcard(t *testing.T) {
+	_, p, _ := onDemandTLSFixture(t)
+	p.SetNow(func() time.Time { return time.Now().Add(8 * 24 * time.Hour) })
+	for _, tc := range []struct {
+		host     string
+		allowed  bool
+		decision string
+	}{
+		{"exact.tenants.example.net", true, OnDemandTLSAllowWildcard},
+		{"pending.example.com", false, OnDemandTLSDenyUnknown},
+		{"shop.example.com", true, OnDemandTLSAllowExact},
+	} {
+		if allowed, decision := p.Decide(context.Background(), tc.host); allowed != tc.allowed || decision != tc.decision {
+			t.Errorf("Decide(%q) after the claim expired = %v, %q; want %v, %q", tc.host, allowed, decision, tc.allowed, tc.decision)
+		}
+	}
+}
+
 type failingTLSStore struct{ *state.MemStore }
 
 func (failingTLSStore) DomainByName(context.Context, string) (state.CustomDomain, error) {
@@ -164,6 +185,46 @@ func TestOnDemandTLSPolicyLookupBudget(t *testing.T) {
 	now = now.Add(time.Second)
 	if ok, decision := p.Decide(ctx, "shop.example.com"); !ok {
 		t.Fatalf("lookup after refill = %q, want allow", decision)
+	}
+}
+
+// The lookup bucket is shared by every server name a client can send. A
+// flood of random names used to deny a real domain its renewal or its
+// certificate load after an edge reload. A host the policy recently allowed
+// now skips the bucket, and its lookup stays authoritative.
+func TestOnDemandTLSPolicyLookupBudgetSparesKnownHosts(t *testing.T) {
+	s, p, _ := onDemandTLSFixture(t)
+	now := time.Date(2026, 10, 3, 12, 0, 0, 0, time.UTC)
+	p.SetNow(func() time.Time { return now })
+	ctx := context.Background()
+	for _, host := range []string{"shop.example.com", "a.tenants.example.net"} {
+		if ok, decision := p.Decide(ctx, host); !ok {
+			t.Fatalf("first ask for %s = %q, want allow", host, decision)
+		}
+	}
+	for i := 0; i < 2*api.OnDemandTLSAskLookupBurst; i++ {
+		p.Decide(ctx, fmt.Sprintf("flood-%d.example.org", i))
+	}
+	if _, decision := p.Decide(ctx, "new.example.com"); decision != OnDemandTLSDenyOverload {
+		t.Fatalf("unknown host during the flood = %q, want %q", decision, OnDemandTLSDenyOverload)
+	}
+	for _, host := range []string{"shop.example.com", "a.tenants.example.net"} {
+		if ok, decision := p.Decide(ctx, host); !ok {
+			t.Fatalf("known host %s during the flood = %q, want allow", host, decision)
+		}
+	}
+	if err := s.DeleteCustomDomain(ctx, "shop.example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if ok, decision := p.Decide(ctx, "shop.example.com"); ok || decision != OnDemandTLSDenyUnknown {
+		t.Fatalf("known host after its domain was deleted = %v, %q; want deny %q", ok, decision, OnDemandTLSDenyUnknown)
+	}
+	now = now.Add(time.Duration(api.OnDemandTLSAskKnownHostSeconds)*time.Second + time.Second)
+	for i := 0; i < 2*api.OnDemandTLSAskLookupBurst; i++ {
+		p.Decide(ctx, fmt.Sprintf("flood-again-%d.example.org", i))
+	}
+	if _, decision := p.Decide(ctx, "a.tenants.example.net"); decision != OnDemandTLSDenyOverload {
+		t.Fatalf("known host after its bypass expired, bucket drained = %q, want %q", decision, OnDemandTLSDenyOverload)
 	}
 }
 

@@ -95,6 +95,7 @@ const (
 	OrgActionManageAppSecrets                  OrgAction = "org.manage_app_secrets"
 	OrgActionManageAppSecurity                 OrgAction = "org.manage_app_security"
 	OrgActionDeleteApp                         OrgAction = "org.delete_app"
+	OrgActionApproveAppRelease                 OrgAction = "org.approve_app_release"
 	ReadObjectStorage                          OrgAction = "org.read_object_storage"
 	ManageObjectStorage                        OrgAction = "org.manage_object_storage"
 	BindObjectStorage                          OrgAction = "org.bind_object_storage"
@@ -112,12 +113,17 @@ const (
 	OrgActionConfigureProject                  OrgAction = "org.configure_project"
 	OrgActionDeployProject                     OrgAction = "org.deploy_project"
 	OrgActionManageProjectSecurity             OrgAction = "org.manage_project_security"
+	OrgActionManageProjectSecrets              OrgAction = "org.manage_project_secrets" // ADR-1139
 	OrgActionApproveProjectEnvironment         OrgAction = "org.approve_project_environment"
 	OrgActionDeleteProject                     OrgAction = "org.delete_project"
 	OrgActionViewApplicationStandards          OrgAction = "org.view_application_standards"
 	OrgActionManageApplicationStandards        OrgAction = "org.manage_application_standards"
 	OrgActionApproveApplicationStandards       OrgAction = "org.approve_application_standards"
 	OrgActionSetApplicationStandardLocalIntent OrgAction = "org.set_application_standard_local_intent"
+	// OrgActionManagePreviews joins or leaves a self-serve platform preview
+	// for the whole organization (ADR 20261021080640). Owner + admin: it
+	// changes what every member gets while acting for the company.
+	OrgActionManagePreviews OrgAction = "org.manage_previews"
 )
 
 // AllOrgActions is the closed vocabulary in iteration order. Used by
@@ -143,6 +149,7 @@ var AllOrgActions = []OrgAction{
 	OrgActionManageAppSecrets,
 	OrgActionManageAppSecurity,
 	OrgActionDeleteApp,
+	OrgActionApproveAppRelease,
 	ReadObjectStorage, ManageObjectStorage, BindObjectStorage, ReadObjectStorageUsage,
 	OrgActionReadQueues,
 	OrgActionConfigureQueues,
@@ -157,12 +164,14 @@ var AllOrgActions = []OrgAction{
 	OrgActionConfigureProject,
 	OrgActionDeployProject,
 	OrgActionManageProjectSecurity,
+	OrgActionManageProjectSecrets,
 	OrgActionApproveProjectEnvironment,
 	OrgActionDeleteProject,
 	OrgActionViewApplicationStandards,
 	OrgActionManageApplicationStandards,
 	OrgActionApproveApplicationStandards,
 	OrgActionSetApplicationStandardLocalIntent,
+	OrgActionManagePreviews,
 }
 
 // AllOrgRoles is the closed role vocabulary in priority order. The

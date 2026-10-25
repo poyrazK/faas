@@ -32,6 +32,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	canarycatalog "github.com/onebox-faas/faas/pkg/api/canary"
+	"github.com/onebox-faas/faas/pkg/releasegate"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
@@ -77,6 +78,13 @@ type SafeReleaseHealthStore interface {
 // the same bounded rollout window, plus the candidate's OOM counter. The
 // adapter lives in meterd so this package does not depend on pkg/state or a
 // concrete Prometheus client.
+// ReleaseGateChecker is an optional Store extension that judges the app's
+// release gates (ADR-20261019071734) for the candidate against its stable
+// predecessor since the rollout started.
+type ReleaseGateChecker interface {
+	ReleaseGateVerdict(ctx context.Context, row CanaryRow, stableDeploymentID string, now time.Time) (releasegate.Verdict, error)
+}
+
 type CircuitBreakerStore interface {
 	CircuitBreakerObservation(ctx context.Context, row CanaryRow, since, now time.Time) (CircuitBreakerObservation, error)
 }
@@ -324,9 +332,14 @@ func (p *Progression) Once(ctx context.Context) (Stats, error) {
 		// runtime cannot apply a stale or caller-invented traffic value.
 		response, err := p.advance(ctx, row, record)
 		if err != nil {
-			var problem *api.Problem
-			if errors.As(err, &problem) && (problem.Code == api.CodeRouteGateBlocked || problem.Code == api.CodeRouteHealthBlocked || problem.Code == api.CodeProfileGateBlocked) {
+			switch problemCode(err) {
+			case api.CodeRouteGateBlocked, api.CodeRouteHealthBlocked, api.CodeProfileGateBlocked:
 				stats.SkippedRouteGate++
+				continue
+			case api.CodeReleaseApprovalRequired, api.CodeReleaseApprovalRejected:
+				// ADR-20261020085706: apid recorded why the release waits,
+				// and aborts it at the approval timeout.
+				stats.SkippedAwaitingApproval++
 				continue
 			}
 			p.Log.Warn("canary: advance failed",
@@ -472,6 +485,18 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 		return false, nil
 	}
 	decision := EvaluateCircuitBreaker(observation)
+	var gateResults []api.ReleaseGateResult
+	if decision.Action != CircuitBreakerAbort && observation.HasStable {
+		verdict := p.releaseGateVerdict(ctx, row, observation.StableDeploymentID, now)
+		if verdict.Failed != nil {
+			gateDecision := CircuitBreakerDecision{Action: CircuitBreakerAbort, Reason: verdict.Summary()}
+			record := rolloutDecisionRecord(row, api.RolloutRuleAbortReleaseGate, gateDecision.Reason, &observation, since, now)
+			record.Gates = verdict.Results
+			p.abortCircuitBreaker(ctx, row, gateDecision, observation, record, stats)
+			return false, nil
+		}
+		gateResults = verdict.Results
+	}
 	elapsed := now.Sub(row.CanaryStepStarted)
 	beforeTimer := elapsed < stage.Duration
 	switch decision.Action {
@@ -482,6 +507,7 @@ func (p *Progression) circuitBreakerReady(ctx context.Context, row CanaryRow, st
 			return true, nil
 		}
 		record := rolloutDecisionRecord(row, rule, decision.Reason, &observation, since, now)
+		record.Gates = gateResults
 		return true, &record
 	case CircuitBreakerAbort:
 		record := rolloutDecisionRecord(row, circuitBreakerRule(decision), decision.Reason, &observation, since, now)
@@ -540,6 +566,20 @@ func earlyAdvanceAllowed(stage canarycatalog.Stage, elapsed time.Duration) bool 
 
 // advance asks APID for one step, carrying the evidence when the client can
 // record it (ADR-1447).
+// problemCode is the API problem code behind err. apid's client wraps a
+// problem in *api.APIError; narrow test clients return *api.Problem.
+func problemCode(err error) string {
+	var apiErr *api.APIError
+	if errors.As(err, &apiErr) {
+		return apiErr.Problem.Code
+	}
+	var problem *api.Problem
+	if errors.As(err, &problem) {
+		return problem.Code
+	}
+	return ""
+}
+
 func (p *Progression) advance(ctx context.Context, row CanaryRow, record *api.RolloutDecision) (api.CanaryAdvanceResponse, error) {
 	if client, ok := p.APID.(decisionAdvanceClient); ok && record != nil {
 		err := record.Validate()
@@ -580,6 +620,15 @@ func (p *Progression) abortCircuitBreaker(ctx context.Context, row CanaryRow, de
 		reason = "circuit breaker: managed dependency error regression; restoring predecessor " + observation.StableDeploymentID
 	case strings.HasPrefix(decision.Reason, "crash loop"):
 		reason = "circuit breaker: crash loop (repeated liveness restarts); restoring predecessor " + observation.StableDeploymentID
+	case strings.HasPrefix(decision.Reason, "release gate"):
+		// Name the gate: "a release gate failed" left the customer to guess
+		// which one (Hunt 12 H12-36). The name is stable across retries; the
+		// observed values after it are not, so they stay in the log.
+		if name := releaseGateName(decision.Reason); name != "" {
+			reason = "circuit breaker: release gate " + name + " failed; restoring predecessor " + observation.StableDeploymentID
+		} else {
+			reason = "circuit breaker: a release gate failed; restoring predecessor " + observation.StableDeploymentID
+		}
 	}
 	key := "canary-circuit-breaker-abort-" + row.ID + "-" + observation.StableDeploymentID
 	var err error
@@ -643,9 +692,26 @@ func circuitBreakerAbortEvent(reason string) string {
 		return "abort_oom"
 	case strings.HasPrefix(reason, "crash loop"):
 		return "abort_crash_loop"
+	case strings.HasPrefix(reason, "release gate"):
+		return "abort_release_gate"
 	default:
 		return "hold_recovery_failed"
 	}
+}
+
+// releaseGateName is the gate a "release gate <name>: <summary>" decision
+// names, or "" when the reason has another shape.
+func releaseGateName(reason string) string {
+	rest, ok := strings.CutPrefix(reason, "release gate ")
+	if !ok {
+		return ""
+	}
+	name, _, ok := strings.Cut(rest, ":")
+	name = strings.TrimSpace(name)
+	if !ok || name == "" || len(name) > 64 || strings.ContainsAny(name, " \t\r\n;") {
+		return ""
+	}
+	return name
 }
 
 func circuitBreakerHoldEvent(reason string) string {
@@ -665,6 +731,22 @@ func circuitBreakerHoldEvent(reason string) string {
 	default:
 		return "hold_observation_unavailable"
 	}
+}
+
+// releaseGateVerdict judges the app's release gates. A store without gates,
+// or one that cannot read them, yields an empty verdict: gates detect
+// failures and never hold a rollout on missing evidence.
+func (p *Progression) releaseGateVerdict(ctx context.Context, row CanaryRow, stableDeploymentID string, now time.Time) releasegate.Verdict {
+	checker, ok := p.Store.(ReleaseGateChecker)
+	if !ok {
+		return releasegate.Verdict{}
+	}
+	verdict, err := checker.ReleaseGateVerdict(ctx, row, stableDeploymentID, now)
+	if err != nil {
+		p.Log.Warn("canary: some release gates could not be read; judging the rest",
+			"deployment_id", row.ID, "err", err)
+	}
+	return verdict
 }
 
 func (p *Progression) recordCircuitBreakerEvent(event string) {
@@ -724,4 +806,7 @@ type Stats struct {
 	SkippedMirrorNotReady  int
 	SkippedHealthGate      int
 	SkippedRouteGate       int
+	// SkippedAwaitingApproval counts releases waiting for people
+	// (ADR-20261020085706).
+	SkippedAwaitingApproval int
 }

@@ -4,7 +4,7 @@ import {readFileSync} from 'node:fs';
 import {resolve} from 'node:path';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {AppsService, FaaSClient, type RouteMonitorIncident, type RouteMonitorConfig, type RouteMonitorPreview, type RouteMonitorWebhookPayload} from '../src/index.js';
+import {AppsService, FaaSClient, type RouteMonitorIncident, type RouteMonitorConfig, type RouteMonitorPreview, type RouteMonitorWebhookPayload} from '../src/preview.js';
 
 test('route monitor escalation webhook carries a stable aggregate transition summary', () => {
   const event: RouteMonitorWebhookPayload = {

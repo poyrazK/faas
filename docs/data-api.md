@@ -31,9 +31,13 @@ Both require managed PostgreSQL read permission and return `Cache-Control:
 no-store`. No provider calls, SQL probes, credential delivery or admission changes
 occur. Different database snapshots are independent.
 
-The canonical planning model uses two total connections per Data API runtime,
-including the reserved reader when coordinated refresh splits the pool, and four
-per Auth runtime. It retains nonterminal resident states and parked instances,
+The planning model counts each Data API runtime at the connections it reports
+(its [engine pool](#engine-pool-size), including the reserved reader when
+coordinated refresh splits the pool). Unreported and planned runtimes count at
+the largest pool validly reported for the same binding, and never below two.
+With no valid report they count at two, or at eight when the app sets
+`DATA_API_POOL`, whose sealed value the platform cannot read. Auth runtimes
+count at four each. It retains nonterminal resident states and parked instances,
 deduplicates app/scope/access consumers, and plans for the greater of observed
 resident-plus-parked instances or effective concurrency plus one overlap slot
 when rotation/deployment overlap is observed. Existing replacements are not
@@ -83,13 +87,57 @@ Older logs and routes bypassing admission have no admission metadata; zero
 observations give null wait percentiles. These are retained-log samples, not
 durable counters, SQL execution timing or measurements of SQL pool wait.
 
+## Engine pool size
+
+Each Data API instance runs its requests on a pool of engine connections: two by
+default. A busy API that answers `503 data_api_overloaded` while the database
+has room can use more:
+
+```sh
+gregale data-api configure shop-data --pool 6
+```
+
+The pool takes 1 to 8 connections, and `--pool default` returns to two.
+Requests in flight per instance follow it, and so do per-user concurrency
+limits and the pool metrics in `data-api health`. The queue stays at eight
+waiters. Data API bindings connect through the provider's connection pooler,
+so a larger pool adds pooled client sessions rather than PostgreSQL server
+connections. Watch `data-api health`'s connection budget when you raise it.
+Coordinated refresh keeps one connection of the pool for its reader, so it
+needs a pool of at least two. A `DATA_API_USER_CONCURRENCY` above the pool
+acts as the pool. Upgrade the CLI before changing the pool: older CLIs
+report health from a runtime with another pool as inconsistent.
+
+### Server-key limits
+
+Server keys skip the per-user limits, so they have their own:
+
+- **Concurrency.** Server-key requests together hold at most all but one of
+  the pool's slots, so signed-in users and visitors always keep one.
+  `--server-key-concurrency N` changes that from 1 to 8; a value at or above
+  the pool removes the separate limit, as does a one-connection pool. A
+  request past the limit waits in order, like admission's queue: up to eight
+  wait, for up to one second. After that it answers
+  `429 data_api_concurrency_limited` with `reason: "server_key"` and
+  `Retry-After`, so backends should retry. A request whose client
+  disconnects after its query starts keeps its slot for up to 15 seconds,
+  because the query may still be running.
+- **Rate.** `--server-key-rate-limit 50` (or `50,burst=100`) adds a token
+  bucket per key slot, so each of the two keys has its own budget. A request
+  past it answers `429 data_api_rate_limited` with `reason: "server_key"`.
+  `--server-key-rate-limit off` removes it.
+
+`data-api diagnostics` counts both refusals under their codes and shows the
+reason, never the key.
+
 ## Per-user concurrent request limits
 
 Set `DATA_API_USER_CONCURRENCY=1` in the deployment environment to limit each
 verified user to one concurrent authenticated request per runtime. The setting
 is optional and absent means disabled. It accepts decimal integers from one to
-the serving admission capacity: two normally, one with coordinated refresh.
-Invalid settings fail startup. Rebuild from the updated runtime template and
+eight. A value above the serving admission capacity, the
+[engine pool](#engine-pool-size) (two by default) less one with coordinated
+refresh, acts as that capacity. Invalid settings fail startup. Rebuild from the updated runtime template and
 fresh-restart after changing deployment settings.
 
 The policy covers REST, RPC, schema and OpenAPI routes. JWTs with the same verified
@@ -1256,6 +1304,125 @@ serves traffic, so several instances can each go slightly past a cap before
 they hear about it. `data-api diagnostics` counts requests refused by caps.
 Cap values are stored as app secrets and are not shown again; set them again
 to change them.
+
+## Live reads
+
+A live read keeps a Data API read current: the client receives the rows, then
+each change as writes commit. Row-level security decides every row with the
+same claims a REST read gets.
+
+```sh
+gregale data-api live enable shop-data
+gregale data-api live status shop-data   # the same report, changing nothing
+```
+
+`enable` sets up only what is missing:
+
+- live queries on the Data API's database;
+- usage reporting, which also tells realtime how this Data API verifies user
+  tokens, which relations are public and the hashes of its server keys (never
+  the keys). The API restarts to report them;
+- a realtime endpoint on the Data API app. Its connections carry live reads
+  only and never call the app.
+
+It prints the WebSocket URL and the database ID that clients use with
+[`@gregale/data/live`](../sdk/data/README.md#live-reads):
+
+```ts
+const connection = new LiveConnection({ connect: liveSocket(LIVE_URL) })
+const feed = connection.query({ database: DATABASE_ID, token: () => session.accessToken,
+  ...liveRead(db.from('messages').select('id,body').eq('channel_id', 7)) })
+```
+
+Each read brings its own credential, checked like a REST request:
+
+- **A signed-in user's token** is verified with the Data API's issuer, JWKS
+  and audience.
+- **`anonymous: true`** reads only relations in the
+  [public-read allowlist](#public-reads), embedded relations included.
+- **A server key** stays within its [permissions](#restrict-what-a-server-key-can-do)
+  and is refused on connections opened from a browser.
+
+Open reads check their credential again every hour, so a revoked key or a
+narrowed allowlist reaches them within the hour. Live connections count
+against your realtime connection limits. If live queries are not yet
+available to your account, `enable` says so and changes nothing.
+
+## File storage
+
+Files are rows: a table `storage_objects` in your API's schema records every
+stored file, and your row-level security policies on it decide who may
+upload, download and remove each one. The same tokens, public-read allowlist
+and server keys apply as for REST.
+
+1. Add the table with a migration. The printed SQL creates it with RLS and a
+   guard trigger, and includes example policies to adapt:
+
+   ```sh
+   gregale data-api storage sql > migrations/0005_storage.sql
+   ```
+
+   ```sql
+   -- Signed-in users manage their own files in "uploads", up to 10 MiB each.
+   CREATE POLICY own_uploads ON api.storage_objects
+     USING (bucket = 'uploads' AND owner = current_setting('request.jwt.claims', true)::jsonb ->> 'sub')
+     WITH CHECK (bucket = 'uploads' AND owner = current_setting('request.jwt.claims', true)::jsonb ->> 'sub' AND size <= 10485760);
+   ```
+
+2. Bind a bucket and turn storage on:
+
+   ```sh
+   gregale data-api storage enable shop-data --bucket uploads
+   ```
+
+   This creates the bucket if needed, binds it to the Data API app with read
+   and write access, and restarts the API. In storage routes a bucket goes by
+   its name in lower case with other characters as `_` (`user-files` becomes
+   `user_files`). `storage status` lists them; `storage disable` turns storage
+   off and keeps the buckets and their files.
+
+3. Use it from the browser or a backend:
+
+   ```ts
+   import { createStorageClient } from '@gregale/data'
+
+   const files = createStorageClient({ url: 'https://shop-data.gregale.dev', accessToken: () => session.accessToken }).from('uploads')
+   await files.upload(`${userId}/avatar.png`, file)            // a Blob brings its type
+   const image = await (await files.download(`${userId}/avatar.png`)).blob()
+   const { url } = await files.signedUrl(`${userId}/avatar.png`) // 60 seconds, no token, for <img src>
+   await files.remove(`${userId}/avatar.png`)
+   ```
+
+Each route asks PostgreSQL first, as the caller:
+
+| Route | Your policies decide |
+|---|---|
+| `PUT /storage/v1/object/{bucket}/{name}` | INSERT, or UPDATE when replacing (`WITH CHECK` sees `size` and `content_type`) |
+| `GET`/`HEAD /storage/v1/object/{bucket}/{name}` | SELECT |
+| `POST /storage/v1/sign/{bucket}/{name}` | SELECT |
+| `DELETE /storage/v1/object/{bucket}/{name}` | DELETE |
+
+- **Refusals and missing files.** A refused upload answers
+  `403 storage_forbidden`. A file the caller may not see answers
+  `404 storage_not_found`, exactly like a missing one.
+- **Owners.** `owner` is the caller's `sub`. A server key acting for a user
+  (`X-Gregale-Subject`) uploads as that user. Replacing a file keeps its owner
+  and creation time.
+- **List files with queries.** Query `storage_objects` like any table: REST,
+  generated types and [live reads](#live-reads) all follow your policies.
+  Only the storage routes can change its rows; REST writes to it are refused.
+- **Visitors.** They can download and sign files when
+  `api.storage_objects` is in the [public-read allowlist](#public-reads);
+  policies still decide which files. Visitors cannot upload or remove files.
+- **Sizes.** Uploads need `Content-Length` and are at most 25 MiB by default
+  (`--max-object-bytes`, up to 100 MiB). Files stream through the Data API,
+  four transfers at a time per instance, each within two minutes.
+- **Safe serving.** Downloads are served with `Content-Security-Policy:
+  sandbox` and `nosniff`, so an uploaded page cannot run as your API's
+  origin.
+- **Before the migration.** Until `storage_objects` exists with RLS and its
+  guard trigger, storage routes answer `503 storage_unavailable` and the rest
+  of the API keeps serving.
 
 ## Aggregates
 
@@ -3173,8 +3340,9 @@ Generated types are retained after a client-check failure, and completed DDL
 is not rolled back. Losing the private token requires owner-controlled recovery
 of the database barrier; the CLI does not adopt another session automatically.
 
-This mode reserves one of the existing two connections for its control reader
-and one for PostgREST. Engine-only SIGUSR1 reloads are rejected; use coordinated
+This mode reserves one connection of the [engine pool](#engine-pool-size) for
+its control reader and leaves the rest to PostgREST, so it needs a pool of at
+least two. Engine-only SIGUSR1 reloads are rejected; use coordinated
 sync. Owner/superuser DDL and direct database connections remain outside this
 barrier. Serialize DDL through the workflow; fingerprints do not cover policy
 bodies or every behavioral change. Upgrade every runtime sharing the binding

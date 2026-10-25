@@ -36,6 +36,25 @@ func TestRenderEdgeProtection(t *testing.T) {
 		t.Fatalf("empty output = %q, want explicit none lines and no waf section", buf.String())
 	}
 
+	// adr: 20261022083601 — AI crawler counts with operator and purpose, and
+	// the recipe that controls them.
+	buf.Reset()
+	main.RenderEdgeProtection(&buf, "shop", api.EdgeProtectionResponse{Range: "1h", Source: "prometheus",
+		AICrawlers: []api.EdgeProtectionAICrawler{{Name: "gptbot", Operator: "OpenAI", Purpose: "training", Count: 20}}})
+	for _, want := range []string{"ai crawlers:", "gptbot 20 (OpenAI, training)", "recipe control-ai-crawlers --app shop"} {
+		if !strings.Contains(buf.String(), want) {
+			t.Errorf("ai crawler output missing %q:\n%s", want, buf.String())
+		}
+	}
+
+	// adr: 20261022105846 — the penalty box line appears once it has acted.
+	buf.Reset()
+	main.RenderEdgeProtection(&buf, "shop", api.EdgeProtectionResponse{Range: "1h", Source: "prometheus",
+		Penalty: api.EdgeProtectionPenalty{Boxed: 4, Rejected: 31}})
+	if !strings.Contains(buf.String(), "4 clients boxed, 31 requests refused while boxed") {
+		t.Errorf("penalty output missing:\n%s", buf.String())
+	}
+
 	buf.Reset()
 	main.RenderEdgeProtection(&buf, "shop", api.EdgeProtectionResponse{Range: "1h", Source: "prometheus",
 		WAF: api.EdgeProtectionWAF{Inspected: 96, Detected: 6, NotInspected: 4, Warned: 2, Blocked: 8, InlineSkipped: 1,

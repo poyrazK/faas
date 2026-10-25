@@ -21,7 +21,11 @@ func (s *PgStore) OperationForWorkflowRun(ctx context.Context, runID string) (Op
 		// handle them just as MemStore does.
 		return Operation{}, false, nil
 	}
-	raw, err := sqlc.New().GetCustomerOperationForWorkflow(ctx, s.pool, id)
+	return readOperationForWorkflowRun(ctx, s.pool, id)
+}
+
+func readOperationForWorkflowRun(ctx context.Context, db sqlc.DBTX, id pgtype.UUID) (Operation, bool, error) {
+	raw, err := sqlc.New().GetCustomerOperationForWorkflow(ctx, db, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Operation{}, false, nil
 	}
@@ -61,7 +65,7 @@ func admitOperationWorkflowTx(ctx context.Context, tx pgx.Tx, op *Operation, inv
 	if err != nil {
 		return err
 	}
-	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(op.AppID)})
+	active, err := q.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(op.AppID), ParkedMax: int64(plan.WorkflowMaxParkedRuns())})
 	if err != nil {
 		return err
 	}
@@ -154,6 +158,14 @@ func syncOperationWorkflowTx(ctx context.Context, tx pgx.Tx, runID string) error
 		return err
 	}
 	events = append(events, publishWorkflowArtifacts(&op, *run, steps, false, time.Now().UTC())...)
+	usageChanged := false
+	if op.Usage != nil {
+		usage, err := workflowOperationUsageTx(ctx, tx, *run)
+		if err != nil {
+			return err
+		}
+		usageChanged = refreshWorkflowOperationUsage(&op, usage)
+	}
 	// Keep the generation's creation time stable through progress updates.
 	created := op.CreatedAt
 	if run.ResumeCount > 0 {
@@ -175,6 +187,9 @@ func syncOperationWorkflowTx(ctx context.Context, tx pgx.Tx, runID string) error
 		return err
 	}
 	if len(events) == 0 {
+		if usageChanged {
+			return saveOperationRecordTx(ctx, tx, op)
+		}
 		return nil
 	}
 	if op.State.Terminal() {

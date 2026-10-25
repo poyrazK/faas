@@ -360,3 +360,27 @@ of eight, and a five-minute backoff cap. Public workflow admission still waits
 for production loop wiring, aggregate progress projection, business
 settlement, explicit confirmed-step recovery, and native lifecycle
 qualification.
+
+## Native HTTP qualification and pilot window — 2026-10-13
+
+Ordinary HTTP is the default execution kind, yet only the Job and workflow
+adapters had native KVM scenarios. The `customer-http-operations-only` lane
+adds four real-guest scenarios: result and lost-acknowledgement receipts,
+process death with daemon restart and evidenced recovery, queued and running
+cancellation, and customer suspension. It is a blocking lane and part of the
+full matrix's wake phase. See the
+[native lane](../ops/customer-http-operations-native.md).
+
+The lane records two HTTP semantics that differ from native workflows. Recovery
+creates a new invocation, so generation 2 receives fresh file receipts and the
+uncertain generation-1 copy stays private. Customer suspension closes customer
+reads, downloads and new admission immediately, but does not interrupt an
+admitted HTTP handler; the account retains its settled outcome.
+
+`OperationPreviewWindowMax` rises from one hour to 30 days. A one-hour bound
+forced an operator to rewrite the policy file hourly for the length of a pilot.
+That rotation is itself a hazard, and a forgotten policy still closes admission
+at expiry. Every other bound, the fail-closed file checks, per-customer
+allowlists and rollback by atomic replacement are unchanged. Earlier sections
+that state a one-hour window describe the bound in force when they were written.
+

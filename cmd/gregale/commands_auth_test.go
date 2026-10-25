@@ -43,7 +43,7 @@ func testAuthCreateDeploysRuntime(t *testing.T, resume, workflows bool) {
 	secrets := map[string]string{}
 	created, patched, minted := 0, 0, 0
 	var bindingAccess string
-	app := map[string]any{"id": "app", "slug": "shop-auth", "type": "app", "url": "https://shop-auth.gregale.app", "require_authn": true, "public_auth": map[string]string{"mode": "bearer"}}
+	app := map[string]any{"id": "a1", "slug": "shop-auth", "type": "app", "url": "https://shop-auth.gregale.app", "require_authn": true, "public_auth": map[string]string{"mode": "bearer"}}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == "GET" && r.URL.Path == "/v1/postgres/databases":
@@ -231,7 +231,7 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"bodyBytes": api.AuthMaxRequestBytes, "authzBodyBytes": api.AuthAuthzBodyBytes, "authzConfigBytes": api.AuthAuthzConfigBytes, "redirectURLs": api.AuthMaxRedirectURLs,
 		"migrationStatementMs": api.AuthMigrationStatementTimeoutMS, "invitationSeconds": api.AuthInvitationTTLSeconds,
 		"emailTimeoutMs": api.AuthEmailTimeoutMs, "hookBodyBytes": api.AuthHookBodyBytes, "storageURLSeconds": api.AuthStorageURLSeconds,
-		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "adminPageSize": api.AuthAdminPageSize, "reauthenticationSeconds": api.AuthReauthenticationSeconds, "emailSubjectChars": api.AuthEmailSubjectMaxChars, "emailBodyBytes": api.AuthEmailBodyMaxBytes, "signingKeys": api.AuthMaxSigningKeys,
+		"adminBodyBytes": api.AuthAdminBodyBytes, "importBatch": api.AuthImportBatch, "adminPageSize": api.AuthAdminPageSize, "customClaimsBytes": api.AuthCustomClaimsMaxBytes, "signupDomains": api.AuthSignupDomainsMax, "waitlistPending": api.AuthWaitlistMaxPending, "signupApproveBatch": api.AuthSignupApproveBatch, "impersonationDefaultMinutes": api.AuthImpersonationDefaultMinutes, "impersonationMaxMinutes": api.AuthImpersonationMaxMinutes, "reauthenticationSeconds": api.AuthReauthenticationSeconds, "sessionMinMinutes": api.AuthSessionMinMinutes, "sessionMaxMinutes": api.AuthSessionMaxMinutes, "emailSubjectChars": api.AuthEmailSubjectMaxChars, "emailBodyBytes": api.AuthEmailBodyMaxBytes, "signingKeys": api.AuthMaxSigningKeys,
 		"emailGrantSeconds": api.ProductControlEmailGrantSeconds,
 		"teamMembers":       api.ProductControlTeamMaxMembers, "teamInvitations": api.ProductControlTeamMaxInvitations,
 		"teamEmailBytes": api.ProductControlTeamEmailMaxBytes, "teamContextBytes": api.ProductControlTeamContextMaxBytes,
@@ -241,7 +241,8 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 		"auditPruneBatches": api.AuthAuditPruneBatches, "auditPruneIntervalSeconds": api.AuthAuditPruneIntervalSeconds,
 		"eventBatch": api.AuthEventBatch, "eventLeaseSeconds": api.AuthEventLeaseSeconds, "eventMaxBackoffSeconds": api.AuthEventMaxBackoffSeconds, "eventRetentionSeconds": api.AuthEventRetentionSeconds, "smsCodeSeconds": api.AuthSMSCodeSeconds,
 		"ssoMetadataBytes": api.AuthSSOMetadataBytes, "ssoDomains": api.AuthSSOMaxDomains, "smsCountries": api.AuthSMSMaxCountries,
-		"scimPageSize": api.AuthSCIMPageSize, "scimBodyBytes": api.AuthSCIMBodyBytes, "oauthClients": api.AuthOAuthMaxClients, "anonymousRetentionMaxDays": api.AuthAnonymousRetentionMaxDays} {
+		"scimPageSize": api.AuthSCIMPageSize, "scimBodyBytes": api.AuthSCIMBodyBytes, "oauthClients": api.AuthOAuthMaxClients, "anonymousRetentionMaxDays": api.AuthAnonymousRetentionMaxDays,
+		"serviceAccountsPerOrg": api.AuthServiceAccountsPerOrg, "serviceAccountSecrets": api.AuthServiceAccountSecrets, "serviceAccountSecretMaxDays": api.AuthServiceAccountSecretMaxDays, "serviceAccountTokensPerMinute": api.AuthServiceAccountTokensPerMinute} {
 		if !strings.Contains(string(config), fmt.Sprintf("%s: %d", name, bound)) {
 			t.Fatalf("runtime %s differs from canonical limit", name)
 		}
@@ -253,6 +254,19 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 	templates, err := os.ReadFile("templates/auth/sql/0014_email_templates.sql")
 	if err != nil || !strings.Contains(string(templates), fmt.Sprintf("char_length(subject) BETWEEN 1 AND %d", api.AuthEmailSubjectMaxChars)) || !strings.Contains(string(templates), fmt.Sprintf("octet_length(body) BETWEEN 1 AND %d", api.AuthEmailBodyMaxBytes)) {
 		t.Fatalf("email template SQL differs from the canonical limits: %v", err)
+	}
+	accounts, err := os.ReadFile("templates/auth/sql/0021_service_accounts.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bound := range []string{
+		fmt.Sprintf("WHERE a.org_id = org) >= %d", api.AuthServiceAccountsPerOrg),
+		fmt.Sprintf("(expires_at IS NULL OR expires_at > now())) >= %d", api.AuthServiceAccountSecrets),
+		fmt.Sprintf("lifetime_days NOT BETWEEN 1 AND %d", api.AuthServiceAccountSecretMaxDays),
+	} {
+		if !strings.Contains(string(accounts), bound) {
+			t.Fatalf("service account SQL differs from canonical limit: %q", bound)
+		}
 	}
 	// 0009 replaces create_organization; both must keep the bound.
 	anonymous, err := os.ReadFile("templates/auth/sql/0009_anonymous_users.sql")
@@ -266,6 +280,21 @@ func TestAuthTemplateRuntimeBounds(t *testing.T) {
 	} {
 		if !strings.Contains(string(authorization), bound) {
 			t.Fatalf("authorization SQL differs from canonical limit: %q", bound)
+		}
+	}
+	// 0022 replaces invite(); it keeps the bounds above and adds the rates.
+	grants, err := os.ReadFile("templates/auth/sql/0022_role_grants_and_invitation_limits.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bound := range []string{
+		fmt.Sprintf("expires_at > now()) >= %d", api.AuthMaxPendingInvitationsPerOrg),
+		fmt.Sprintf("ttl_seconds NOT BETWEEN 300 AND %d", api.AuthMaxInvitationTTLSeconds),
+		fmt.Sprintf("created_at > now() - interval '1 hour') >= %d", api.AuthInvitationsPerInviterPerHour),
+		fmt.Sprintf("created_at > now() - interval '1 day') >= %d", api.AuthInvitationsPerAddressPerDay),
+	} {
+		if !strings.Contains(string(grants), bound) {
+			t.Fatalf("invitation SQL differs from canonical limit: %q", bound)
 		}
 	}
 }
@@ -549,8 +578,8 @@ func TestAuthConfigAnonymousUsersAndLinking(t *testing.T) {
 	oldErr := (*main.OsStderr)
 	(*main.OsStderr) = &stderr
 	t.Cleanup(func() { (*main.OsStderr) = oldErr })
-	if code := main.CmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on", "--self-deletion", "on", "--org-claims", "on"}); code != 0 ||
-		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" || sealed["AUTH_SELF_DELETION"] != "1" || sealed["AUTH_ORG_CLAIMS"] != "1" {
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--anonymous", "on", "--anonymous-retention", "30", "--identity-linking", "on", "--self-deletion", "on", "--org-claims", "on", "--org-domains", "on", "--session-max-age", "30d", "--session-idle", "off", "--single-session", "on"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_ANONYMOUS_USERS_ENABLED"] != "true" || sealed["AUTH_ANONYMOUS_RETENTION_DAYS"] != "30" || sealed["AUTH_IDENTITY_LINKING"] != "1" || sealed["AUTH_SELF_DELETION"] != "1" || sealed["AUTH_ORG_CLAIMS"] != "1" || sealed["AUTH_SESSION_MAX_AGE_MINUTES"] != "43200" || sealed["AUTH_SINGLE_SESSION"] != "1" || sealed["AUTH_ORG_DOMAINS"] != "1" {
 		t.Fatalf("config = %d, sealed %v", code, main.SortedKeys(sealed))
 	}
 	if !strings.Contains(stderr.String(), "turn on CAPTCHA") {
@@ -564,5 +593,16 @@ func TestAuthConfigAnonymousUsersAndLinking(t *testing.T) {
 	}
 	if code := main.CmdAuth([]string{"config", "shop-auth", "--anonymous-retention", "0"}); code == 0 {
 		t.Fatal("accepted zero days")
+	}
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--web3", "ethereum,solana"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED"] != "true" || sealed["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"] != "true" {
+		t.Fatalf("web3 = %d, sealed %v", code, sealed)
+	}
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--web3", "off"}); code != 0 ||
+		sealed["GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED"] != "false" || sealed["GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED"] != "false" {
+		t.Fatalf("web3 off = %d, sealed %v", code, sealed)
+	}
+	if code := main.CmdAuth([]string{"config", "shop-auth", "--web3", "bitcoin"}); code == 0 {
+		t.Fatal("accepted an unknown chain")
 	}
 }

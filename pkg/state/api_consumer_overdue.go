@@ -72,12 +72,14 @@ func validateAPIConsumerBillingPolicy(p APIConsumerBillingPolicy) error {
 
 // overdueExport reports whether an exported invoice blocks its consumer at
 // now under a policy: completed, still open or uncollectible with an amount
-// left, and due more than days ago.
+// left, due more than days ago, and that status read within
+// api.ConsumerOverdueStatusMaxAge (ADR-20261019180000).
 func overdueExport(e StatementInvoiceExport, days int, now time.Time) bool {
 	return e.Status == StatementInvoiceExportCompleted && e.DueAt != nil &&
 		(e.PaymentStatus == InvoicePaymentOpen || e.PaymentStatus == InvoicePaymentUncollectible) &&
 		(e.AmountRemainingMinor == nil || *e.AmountRemainingMinor > 0) &&
-		!e.DueAt.AddDate(0, 0, days).After(now)
+		!e.DueAt.AddDate(0, 0, days).After(now) &&
+		e.StatusSyncedAt != nil && !e.StatusSyncedAt.Before(now.Add(-api.ConsumerOverdueStatusMaxAge))
 }
 
 // --- MemStore ---
@@ -253,6 +255,7 @@ func (s *PgStore) SyncAPIConsumerOverdueHolds(ctx context.Context, now time.Time
 			   and e.payment_status in ('open', 'uncollectible') and e.due_at is not null
 			   and coalesce(e.amount_remaining_minor, 1) > 0
 			   and e.due_at + make_interval(days => p.block_overdue_after_days) <= $1
+			   and e.status_synced_at >= $2
 			 order by s.consumer_id, e.due_at
 		), placed as (
 			insert into api_consumer_overdue_holds (consumer_id, account_id, app_id, export_id, due_at, since)
@@ -266,7 +269,8 @@ func (s *PgStore) SyncAPIConsumerOverdueHolds(ctx context.Context, now time.Time
 		)
 		select true, consumer_id::text, account_id::text, app_id::text, export_id::text, due_at, since from placed where inserted
 		union all
-		select false, consumer_id::text, account_id::text, app_id::text, export_id::text, due_at, since from lifted`, now.UTC())
+		select false, consumer_id::text, account_id::text, app_id::text, export_id::text, due_at, since from lifted`,
+		now.UTC(), now.Add(-api.ConsumerOverdueStatusMaxAge).UTC())
 	if err != nil {
 		return nil, nil, fmt.Errorf("sync overdue holds: %w", err)
 	}

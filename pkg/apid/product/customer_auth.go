@@ -391,7 +391,8 @@ func customerPermissionAllowed(w http.ResponseWriter, permissions api.ProductPer
 		permission == api.ProductPermissionRunWork && permissions.RunWork ||
 		permission == api.ProductPermissionViewBilling && permissions.ViewBilling ||
 		permission == api.ProductPermissionManagePlan && permissions.ManagePlan ||
-		permission == api.ProductPermissionManageTeam && permissions.ManageTeam
+		permission == api.ProductPermissionManageTeam && permissions.ManageTeam ||
+		permission == api.ProductPermissionManageBilling && permissions.ManageBilling
 	if !allowed {
 		api.WriteProblem(w, api.NewProblem(http.StatusForbidden, "product_permission_denied", "Product permission required", "your workspace role does not allow this action; contact your product team"))
 	}

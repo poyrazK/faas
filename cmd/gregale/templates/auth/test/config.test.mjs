@@ -109,6 +109,23 @@ test('one signing key and up to three verification-only keys, each its own secre
   assert.throws(() => signingKeys({ AUTH_JWT_KEY_0A1B2C3D: 'not json', AUTH_JWT_SIGNER_0A1B2C3D: '1700000000' }), /Invalid AUTH_JWT_KEY_0A1B2C3D/)
 })
 
+test('wallet sign-in allows the hosted pages\' host as GoTrue checks a signed message', () => {
+  const off = runtimeConfig(env({}))
+  assert.ok(!off.gotrueEnv.GOTRUE_URI_ALLOW_LIST.split(',').some(u => /\/$/.test(u)))
+  const on = runtimeConfig(env({ GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED: 'true' }))
+  assert.ok(on.gotrueEnv.GOTRUE_URI_ALLOW_LIST.split(',').includes(`${on.external}/`))
+  assert.deepEqual(on.settings.web3, { ethereum: true, solana: false })
+})
+
+test('joining by email domain needs addresses the app confirms', () => {
+  for (const [extra, enabled, joining] of [[{}, false, false], [{ AUTH_ORG_DOMAINS: '1' }, true, true], [{ AUTH_ORG_DOMAINS: '1', AUTH_AUTOCONFIRM: '1' }, true, false]]) {
+    const config = runtimeConfig(env(extra))
+    assert.deepEqual([config.orgDomains, config.domainJoin], [enabled, joining], JSON.stringify(extra))
+    assert.deepEqual(config.settings.organization_domains, { enabled, joining })
+  }
+  assert.throws(() => runtimeConfig(env({ AUTH_ORG_DOMAINS: 'yes' })), /Invalid AUTH_ORG_DOMAINS/)
+})
+
 test('enabled providers get this app\'s callback, and settings report only public values', () => {
   const config = runtimeConfig(env({
     ...keySecret('FFFF0001'),
@@ -123,11 +140,11 @@ test('enabled providers get this app\'s callback, and settings report only publi
   assert.equal(config.gotrueEnv.GOTRUE_EXTERNAL_DISCORD_REDIRECT_URI, undefined)
   assert.deepEqual(config.settings, {
     app: 'shop.example.com', site_url: 'https://shop.example.com', redirect_urls: [],
-    signup: { enabled: false, autoconfirm: false }, providers: ['github', 'google'],
+    signup: { enabled: false, autoconfirm: false, access: 'open', allowed_domains: null, block_disposable: false, blocked_domains: 0 }, providers: ['github', 'google'],
     password: { min_length: 12, required: ['lower', 'digit', 'custom'], leaked_password_check: false },
     mfa: { totp: false, phone: false, recovery_codes: false }, email: { configured: false, provider: null, from: null }, events: { lifecycle: false },
     passkeys: { enabled: false, rp_id: 'shop-auth.gregale.app', origins: ['https://shop-auth.gregale.app'] },
-    branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, anonymous: { enabled: false, retention_days: null }, identity_linking: false, self_deletion: false, organization_claims: false, phone: { enabled: false, provider: null, countries: null }, sso: { enabled: false, entity_id: null, acs_url: null, self_service: false }, oauth: { enabled: false, dynamic_registration: false, issuer: null, metadata_url: null, default_audience: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
+    branding: { name: 'shop.example.com', color: null, logo_url: null }, captcha: null, activity: { retention_days: null }, anonymous: { enabled: false, retention_days: null }, identity_linking: false, self_deletion: false, organization_claims: false, impersonation: false, service_accounts: { enabled: false, token_endpoint: null }, web3: { ethereum: false, solana: false }, sessions: { max_age_minutes: null, idle_minutes: null, single_per_user: false }, organization_domains: { enabled: false, joining: false }, phone: { enabled: false, provider: null, countries: null }, sso: { enabled: false, entity_id: null, acs_url: null, self_service: false }, oauth: { enabled: false, dynamic_registration: false, issuer: null, metadata_url: null, default_audience: null }, keys: { signing: '0A1B2C3D', verifying: ['FFFF0001'] },
   })
   assert.ok(!JSON.stringify(config.settings).includes('provider-secret'))
   assert.deepEqual(runtimeConfig(env()).settings.password, { min_length: 6, required: [], leaked_password_check: false })
@@ -227,4 +244,24 @@ test('SMS codes as a second factor need an SMS provider', () => {
     assert.equal(off.settings.mfa.phone, false)
   } finally { console.error = original }
   assert.deepEqual(errors.map(line => JSON.parse(line).event), ['phone_mfa_without_sms_provider'])
+})
+
+test('maps session limits onto GoTrue and refuses unsafe ones', () => {
+  const config = runtimeConfig(env({ AUTH_SESSION_MAX_AGE_MINUTES: '43200', AUTH_SESSION_IDLE_MINUTES: '10080', AUTH_SINGLE_SESSION: '1' }))
+  assert.equal(config.gotrueEnv.GOTRUE_SESSIONS_TIMEBOX, '43200m')
+  assert.equal(config.gotrueEnv.GOTRUE_SESSIONS_INACTIVITY_TIMEOUT, '10080m')
+  assert.equal(config.gotrueEnv.GOTRUE_SESSIONS_SINGLE_PER_USER, 'true')
+  assert.deepEqual(config.settings.sessions, { max_age_minutes: 43200, idle_minutes: 10080, single_per_user: true })
+  const none = runtimeConfig(env())
+  assert.equal(none.gotrueEnv.GOTRUE_SESSIONS_TIMEBOX, undefined)
+  assert.equal(none.gotrueEnv.GOTRUE_SESSIONS_SINGLE_PER_USER, undefined)
+  for (const [settings, error] of [
+    [{ AUTH_SESSION_MAX_AGE_MINUTES: '10' }, /AUTH_SESSION_MAX_AGE_MINUTES must be 15 to 525600/],
+    [{ AUTH_SESSION_IDLE_MINUTES: '525601' }, /AUTH_SESSION_IDLE_MINUTES must be 15/],
+    [{ AUTH_SESSION_MAX_AGE_MINUTES: '1h' }, /AUTH_SESSION_MAX_AGE_MINUTES/],
+    [{ AUTH_SINGLE_SESSION: 'yes' }, /AUTH_SINGLE_SESSION/],
+  ]) assert.throws(() => runtimeConfig(env(settings)), error)
+  assert.equal(runtimeConfig(env({ AUTH_SESSION_MAX_AGE_MINUTES: '60', AUTH_SESSION_IDLE_MINUTES: '120' })).gotrueEnv.GOTRUE_SESSIONS_INACTIVITY_TIMEOUT, '120m', 'set separately: kept, not fatal')
+  // GoTrue's own session settings are managed here, not passed through.
+  assert.throws(() => runtimeConfig(env({ GOTRUE_SESSIONS_TIMEBOX: '1m' })), /managed by Gregale/)
 })

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { AppsService, OpenAPI } from '../src/index.js';
-import type { CreateBindingVerificationRunRequest } from '../src/index.js';
+import { AppsService, OpenAPI } from '../src/preview.js';
+import type { CreateBindingVerificationRunRequest } from '../src/preview.js';
 test('verification receipts preserve caller identity, consent and atomic step routes', async () => {
  const oldFetch=globalThis.fetch,oldBase=OpenAPI.BASE;
  OpenAPI.BASE='https://api.invalid';

@@ -26,8 +26,8 @@ func (s *server) environmentGitSourceSpecForRequest(ctx context.Context, account
 		}
 		spec.RepositoryID, spec.InstallationID, spec.Repository = repositoryID, project.InstallID, project.RepoFullName
 	case "gitlab":
-		if request.Ref == "" || !gitlabsource.ValidRepositoryPath(request.Repository) || spec.Mode != "report" || spec.ApprovalPolicy != "manual" || spec.Prune {
-			return spec, api.ErrValidation("GitLab.com GitOps requires a repository path, ref, report mode, manual approval, and prune=false.")
+		if request.Ref == "" || !gitlabsource.ValidRepositoryPath(request.Repository) {
+			return spec, api.ErrValidation("GitLab.com GitOps requires a repository path and explicit ref.")
 		}
 		token, err := s.gitLabTokenForAccount(ctx, account.ID)
 		if err != nil {

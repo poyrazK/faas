@@ -35,6 +35,27 @@ Three consequences:
   no live snapshot carries a guest-init that reads it. Record that check in
   the allowlist entry (below).
 
+## Runtime base generations during a compute rollout
+
+A runtime base (`base/base-<arch>.ext4`, `base/runner-<runtime>-<arch>.ext4`)
+is one logical key in shared storage, and each node's cache commits one
+generation of it. A release-N-1 vmmd refuses every guest on a base whose
+cached generation is not the one in its environment. So a node must not
+adopt release N's generation while it still serves on N-1. `node_join.yml`
+runs `vmmd base-generation-check` and, when a release changes a generation,
+pre-stages it only behind the drain barrier and never re-activates a node
+whose cache has moved
+([ADR 20261024085817](adr/20261024085817-rollout-base-generation-and-drain-completion.md)).
+That pre-stage publishes every base the release configures that the node
+could not adopt, whoever owns the apps on it, and the play keeps the node
+drained until `vmmd base-adoption-check` confirms that its installed vmmd
+can adopt every configured base
+([ADR 20261024191249](adr/20261024191249-rollout-publishes-release-bases-and-gates-activation.md)).
+So the first node to roll publishes each changed base: from then on an N-1
+node refuses a changed base it has not cached, until it rolls, and a compute
+rollback across a generation change is not covered yet. Both wait for
+generation-addressed base keys.
+
 ## No downtime, no exceptions
 
 **No migration and no release may require stopping writers or a
@@ -78,6 +99,14 @@ Roll a release out in this order, and roll back in the reverse order:
 
 A contract migration (a drop, or tightening a constraint) is the data step of
 a *later* release, after every unit that read the old shape has moved past it.
+
+The public edge's Caddy follows the same rule for a new upstream protocol.
+gatewayd-public accepts HTTP/2 cleartext (h2c) for gRPC on its loopback
+listener; Caddy only starts sending gRPC that way when the operator sets
+`faas_public_edge_grpc_h2c`, which is safe once every gatewayd-public in the
+fleet runs that release. Rolling back past it means turning the variable off
+first. Every other request stays on HTTP/1.1, so an older gatewayd-public
+behind an h2c-enabled Caddy fails gRPC only.
 
 ## Gate 1: version skew (CI, every pull request)
 
@@ -354,7 +383,8 @@ set in `scripts/ci/release_units.json` under `gates`. They run one gate per rest
 unit, in parallel on the control plane (Prometheus at `127.0.0.1:9095`),
 through `scripts/ci/unit_deploy.sh gate`. Exit 1 or 3 from any of them rolls
 the host's units back to the release that was active before
-(`deployctl rollback --only`) and stops the run.
+(`deployctl rollback --only … --expect-current <overlay> --to <base>`) and
+stops the run.
 `scripts/ci/observe_rollout_availability.sh` keeps doing the black-box
 probing during the control plane's activation itself.
 
@@ -366,6 +396,11 @@ The unit lanes enforce the rules above in their workflows:
   full release tag before its commit, which is the release CI compared each
   merge against. Units at that base and units at the unit release's commit
   are therefore at most one release apart.
+- **Code, not closure.** A unit release carries every daemon of its lanes
+  whose import closure changed since the base, and a host restarts only the
+  ones whose code it does not run yet (ADR-1650, "Selection by code"). A
+  daemon it skips keeps running the base's binary or an earlier unit
+  release's over the same base, so N±1 holds for it too.
 - **Order.** The data step rides the control-plane lane. A range whose
   migrations are all lane-eligible counts as eligible. Lane-eligible means:
   - each migration is marked `expand`;
@@ -390,8 +425,8 @@ The unit lanes enforce the rules above in their workflows:
 
   `release-units.yml` deploys the control-plane lane first, and the edge
   lane (`cd-edge-units.yml`) only after it. When the edge lane runs alone,
-  it first checks that the control plane already runs that unit release's
-  control-plane units and has applied its migrations. The runtime step
+  it first checks that the control plane already runs the code of that unit
+  release's control-plane units and has applied its migrations. The runtime step
   (guest and images) always waits for the next full release. A rollback
   restores binaries, never the schema. The previous binaries run against an
   expand-only schema, and their startup migration ignores ledger versions

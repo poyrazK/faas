@@ -1,10 +1,11 @@
-package state
+package state_test
 
 import (
 	"testing"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
@@ -29,7 +30,7 @@ func TestManagedPostgresDrainPlanNeverQueuesUnprovenLifecycleKinds(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			row := base
 			tc.change(&row)
-			if got := drainPlanInventoryBlocker(row); got != tc.want {
+			if got := state.DrainPlanInventoryBlocker(row); got != tc.want {
 				t.Fatalf("blocker = %q, want %q", got, tc.want)
 			}
 		})

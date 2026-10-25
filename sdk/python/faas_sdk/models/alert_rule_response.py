@@ -71,8 +71,8 @@ class AlertRuleResponse:
     """Immutable subscription selector. Required only for event consumer metrics; webhook action and windows up to
     24h are required."""
     edge_rule_id: UUID | Unset = UNSET
-    """ADR-1192. Immutable edge rule selector for edge_rule_hits and edge_rule_log_hits; absent means every rule of
-    the app."""
+    """ADR-1192. Immutable edge rule selector for edge_rule_hits, edge_rule_log_hits and edge_rule_activity; absent
+    means every rule of the app."""
     post_deploy_rollback_window_seconds: int | Unset = UNSET
     """Configured completed-release rollback eligibility window in seconds; 0 is disabled. Acceptance requires
     deployment-specific error_rate_pct evidence, a gt or gte comparison, and recorded predecessor lineage."""
@@ -80,6 +80,9 @@ class AlertRuleResponse:
     """Source dimension for failed_invocations; omit when metric is not failed_invocations (xor_chk)."""
     custom_metric_name: str | Unset = UNSET
     """The pushed custom metric a custom_metric rule watches (ADR-745). Present only when metric is custom_metric."""
+    log_query: str | Unset = UNSET
+    """The canonical log search filters a log_search_matches rule counts (ADR-20261018083536). Present only when
+    metric is log_search_matches."""
     slo_id: UUID | Unset = UNSET
     """The customer SLO an slo_budget_burn or slo_budget_remaining_pct rule watches (ADR-747); absent for other
     metrics."""
@@ -144,6 +147,8 @@ class AlertRuleResponse:
 
         custom_metric_name = self.custom_metric_name
 
+        log_query = self.log_query
+
         slo_id: str | Unset = UNSET
         if not isinstance(self.slo_id, Unset):
             slo_id = str(self.slo_id)
@@ -204,6 +209,8 @@ class AlertRuleResponse:
             field_dict["failure_source"] = failure_source
         if custom_metric_name is not UNSET:
             field_dict["custom_metric_name"] = custom_metric_name
+        if log_query is not UNSET:
+            field_dict["log_query"] = log_query
         if slo_id is not UNSET:
             field_dict["slo_id"] = slo_id
         if synthetic_check_id is not UNSET:
@@ -281,6 +288,8 @@ class AlertRuleResponse:
 
         custom_metric_name = d.pop("custom_metric_name", UNSET)
 
+        log_query = d.pop("log_query", UNSET)
+
         _slo_id = d.pop("slo_id", UNSET)
         slo_id: UUID | Unset
         if isinstance(_slo_id, Unset):
@@ -342,6 +351,7 @@ class AlertRuleResponse:
             post_deploy_rollback_window_seconds=post_deploy_rollback_window_seconds,
             failure_source=failure_source,
             custom_metric_name=custom_metric_name,
+            log_query=log_query,
             slo_id=slo_id,
             synthetic_check_id=synthetic_check_id,
             channel_ids=channel_ids,

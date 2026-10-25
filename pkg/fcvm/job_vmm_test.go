@@ -8,6 +8,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -15,6 +16,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -132,6 +134,210 @@ func TestWaitJobExitAcceptsGuestInitiatedStream(t *testing.T) {
 		}
 	case <-time.After(3 * time.Second):
 		t.Fatal("WaitJobExit did not return")
+	}
+}
+
+// sendJobExitFrame writes one exit frame as guest-init does and returns the
+// ack byte.
+func sendJobExitFrame(t *testing.T, socket string, payload JobExitPayload) byte {
+	t.Helper()
+	conn, err := net.DialTimeout("unix", socket, time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = conn.Close() }()
+	body, err := json.Marshal(payload)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hdr [8]byte
+	binary.BigEndian.PutUint32(hdr[:4], VsockJobExitMsgType)
+	binary.BigEndian.PutUint32(hdr[4:], uint32(len(body)))
+	if _, err := conn.Write(append(hdr[:], body...)); err != nil {
+		t.Fatal(err)
+	}
+	var ack [1]byte
+	_ = conn.SetReadDeadline(time.Now().Add(2 * time.Second))
+	if _, err := io.ReadFull(conn, ack[:]); err != nil {
+		t.Fatal(err)
+	}
+	return ack[0]
+}
+
+// vmmd accepts the exit itself: the frame is recorded through the sink
+// before the ack, with no WaitJobExit call open, and WaitJobExit can be
+// called again after a call is cut short, as across a vmmd restart.
+func TestJobExitReceiverRecordsBeforeAckAndIsReCallable(t *testing.T) {
+	base, err := os.MkdirTemp("/tmp", "fj-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	v := NewJailerVMM(base, time.Second)
+	lease := Lease{Instance: "job-1", UID: os.Getuid(), GID: os.Getgid()}
+	if err := os.MkdirAll(v.chrootRoot(lease.Instance), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	recorded := make(chan JobExitPayload, 1)
+	v.WithJobExitSink(func(instance string, p JobExitPayload) {
+		if instance == lease.Instance {
+			recorded <- p
+		}
+	})
+	if err := v.prepareJobExitListener(lease); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { v.closeGuestVsockListeners(lease.Instance) })
+
+	// A call cut short leaves the receiver running.
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := v.WaitJobExit(ctx, lease, time.Second); !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled wait = %v", err)
+	}
+	if _, err := v.WaitJobExit(context.Background(), lease, 10*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expired wait = %v", err)
+	}
+
+	want := JobExitPayload{ExitCode: 3, ErrorClass: "failed", FinishedAtUnixNano: time.Now().UnixNano(), LeaseToken: "lease-1"}
+	if ack := sendJobExitFrame(t, v.jobExitUDSSock(lease.Instance), want); ack != 0 {
+		t.Fatalf("ack = %d, want 0", ack)
+	}
+	select {
+	case got := <-recorded:
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("recorded %+v, want %+v", got, want)
+		}
+	default:
+		t.Fatal("the exit was acknowledged before it was recorded")
+	}
+	for i := 0; i < 2; i++ {
+		got, err := v.WaitJobExit(context.Background(), lease, time.Second)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("wait %d = %+v, %v", i, got, err)
+		}
+	}
+	// Teardown forgets the receiver.
+	v.closeGuestVsockListeners(lease.Instance)
+	if _, err := v.WaitJobExit(context.Background(), lease, time.Second); err == nil || !strings.Contains(err.Error(), "not prepared") {
+		t.Fatalf("wait after teardown = %v", err)
+	}
+}
+
+// fakeListenerStore is systemd's fd store for one process lifetime.
+type fakeListenerStore struct {
+	mu      sync.Mutex
+	stored  map[string]*net.UnixListener
+	removed []string
+}
+
+func (s *fakeListenerStore) Store(name string, ln *net.UnixListener) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.stored == nil {
+		s.stored = map[string]*net.UnixListener{}
+	}
+	s.stored[name] = ln
+	return nil
+}
+
+func (s *fakeListenerStore) Remove(name string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.stored, name)
+	s.removed = append(s.removed, name)
+	return nil
+}
+
+func (s *fakeListenerStore) Take(name string) *net.UnixListener {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ln := s.stored[name]
+	delete(s.stored, name)
+	return ln
+}
+
+// A job's exit sent while no vmmd runs waits in the stored listener's
+// backlog, and the successor's receiver reads it. A fresh listener is kept
+// in the store until its receiver is done.
+func TestAdoptJobExitListenerReadsTheStoredBacklog(t *testing.T) {
+	base, err := os.MkdirTemp("/tmp", "fj-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(base) })
+	lease := Lease{Instance: "job-1", UID: os.Getuid(), GID: os.Getgid()}
+	name := jobExitStoreName(lease.Instance)
+
+	// The predecessor bound and stored the listener, then stopped.
+	predecessor := NewJailerVMM(base, time.Second)
+	if err := os.MkdirAll(predecessor.chrootRoot(lease.Instance), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	path := predecessor.jobExitUDSSock(lease.Instance)
+	ln, err := net.ListenUnix("unix", &net.UnixAddr{Name: path, Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ln.SetUnlinkOnClose(false) // a dead process unlinks nothing
+	store := &fakeListenerStore{stored: map[string]*net.UnixListener{name: ln}}
+
+	// The guest connects and writes its frame with nobody accepting.
+	want := JobExitPayload{ExitCode: 0, ErrorClass: "succeeded", FinishedAtUnixNano: 9, LeaseToken: "lease-1"}
+	acked := make(chan byte, 1)
+	go func() { acked <- sendJobExitFrame(t, path, want) }()
+
+	successor := NewJailerVMM(base, time.Second).WithListenerStore(store)
+	if err := successor.adoptJobExitListener(lease); err != nil {
+		t.Fatal(err)
+	}
+	got, err := successor.WaitJobExit(context.Background(), lease, 2*time.Second)
+	if err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("WaitJobExit = %+v, %v", got, err)
+	}
+	if ack := <-acked; ack != 0 {
+		t.Fatalf("ack = %d", ack)
+	}
+	// The exit is recorded: the listener left the store, and a retry of the
+	// frame, whose first ack the guest never saw, is acknowledged at once.
+	// The receiver publishes the exit before it unstores the listener, so
+	// the removal can trail WaitJobExit.
+	var removed []string
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		store.mu.Lock()
+		removed = append([]string(nil), store.removed...)
+		store.mu.Unlock()
+		if len(removed) > 0 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if len(removed) != 1 || removed[0] != name {
+		t.Fatalf("after the exit the store still holds the listener: removed %v", removed)
+	}
+	if ack := sendJobExitFrame(t, path, want); ack != 0 {
+		t.Fatalf("retry ack = %d, want 0", ack)
+	}
+	// Teardown closes it and unlinks the path.
+	successor.closeGuestVsockListeners(lease.Instance)
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("listener path after teardown: %v", err)
+	}
+
+	// Without a stored listener the successor re-binds and stores the new one.
+	lease2 := Lease{Instance: "job-2", UID: os.Getuid(), GID: os.Getgid()}
+	if err := os.MkdirAll(successor.chrootRoot(lease2.Instance), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := successor.adoptJobExitListener(lease2); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { successor.closeGuestVsockListeners(lease2.Instance) })
+	store.mu.Lock()
+	_, kept := store.stored[jobExitStoreName(lease2.Instance)]
+	store.mu.Unlock()
+	if !kept {
+		t.Fatal("the re-bound listener was not stored")
 	}
 }
 

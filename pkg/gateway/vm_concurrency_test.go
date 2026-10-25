@@ -370,7 +370,7 @@ func TestEffectiveVMConcurrencyLimitMatchesPublishedListenerLimit(t *testing.T) 
 		{name: "request mode app", app: App{Type: AppTypeApp}, plan: 80, want: 80},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := effectiveVMConcurrencyLimit(tc.app, tc.plan); got != tc.want {
+			if got := effectiveVMConcurrencyLimit(tc.app, api.Limits{ConcurrencyPerVMBound: tc.plan}); got != tc.want {
 				t.Fatalf("effectiveVMConcurrencyLimit() = %d, want %d", got, tc.want)
 			}
 		})
@@ -382,7 +382,7 @@ func TestAdvertisedScaleFunctionBurstDoesNotWaitForCapacity(t *testing.T) {
 	const concurrency = 20
 	releases := make([]func(), 0, concurrency)
 	for i := 0; i < concurrency; i++ {
-		release, ok := m.tryAcquire("vm-a", "scale", effectiveVMConcurrencyLimit(App{Type: AppTypeFunction}, 80))
+		release, ok := m.tryAcquire("vm-a", "scale", effectiveVMConcurrencyLimit(App{Type: AppTypeFunction}, api.Limits{ConcurrencyPerVMBound: 80}))
 		if !ok {
 			t.Fatalf("request %d entered a capacity wait below the advertised 80-request limit", i+1)
 		}

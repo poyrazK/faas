@@ -110,17 +110,36 @@ func (e *Evaluator) channelMessage(ctx context.Context, rule state.AlertRule, ev
 	if rule.AppID == "" {
 		return msg
 	}
-	if apps, ok := e.store.(interface {
-		AppByID(context.Context, string) (state.App, error)
-	}); ok {
-		if app, err := apps.AppByID(ctx, rule.AppID); err == nil {
-			msg.AppSlug = app.Slug
-			if e.dashboardBaseURL != "" {
-				msg.DashboardURL = e.dashboardBaseURL + "/dashboard/apps/" + app.Slug
-			}
+	if rule.Metric == state.AlertMetricRouteInsightsDetected && event == alertchannels.EventFire {
+		msg.Notes = e.routeInsightNotes(ctx, rule)
+	}
+	if msg.AppSlug = e.appSlug(ctx, rule.AppID); msg.AppSlug != "" && e.dashboardBaseURL != "" {
+		msg.DashboardURL = e.dashboardBaseURL + "/dashboard/apps/" + msg.AppSlug
+	}
+	if event == alertchannels.EventFire {
+		if lc, ok := e.readLogContext(ctx, rule, msg.AppSlug, now); ok {
+			msg.Notes = append(msg.Notes, lc.notes(e.dashboardBaseURL)...)
 		}
 	}
 	return msg
+}
+
+// appSlug resolves an app's slug for links; "" when unknown.
+func (e *Evaluator) appSlug(ctx context.Context, appID string) string {
+	if appID == "" {
+		return ""
+	}
+	apps, ok := e.store.(interface {
+		AppByID(context.Context, string) (state.App, error)
+	})
+	if !ok {
+		return ""
+	}
+	app, err := apps.AppByID(ctx, appID)
+	if err != nil {
+		return ""
+	}
+	return app.Slug
 }
 
 // unsealIdentities returns the host identities that open sealed secrets,

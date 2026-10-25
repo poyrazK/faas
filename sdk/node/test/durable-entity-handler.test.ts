@@ -5,7 +5,7 @@ import {
   decodeDurableEntityHandlerRequest, durableEntityWebhookIntent, encodeDurableEntityTransition,
   DURABLE_ENTITY_PROTOCOL_VERSION, DURABLE_ENTITY_OUTBOX_PROTOCOL_VERSION, DURABLE_ENTITY_MAX_REQUEST_BYTES,
   type DurableEntityHandlerRequest, type DurableEntityTransition,
-} from '../src/index.js';
+} from '../src/preview.js';
 
 const hook = '6dd283da-3c14-40de-9d47-bb71fb35be9a';
 function fixture(): DurableEntityHandlerRequest {

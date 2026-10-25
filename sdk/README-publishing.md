@@ -9,7 +9,7 @@ in [Blocker: licensing](#blocker-licensing).
 |---|---|---|---|
 | Go | `github.com/poyrazK/faas/sdk/go` | `faas` | needs a `sdk/go/vX.Y.Z` tag |
 | Node | `@gregale/sdk-node` | `@gregale/sdk-node` | npm scope `@gregale` unregistered |
-| Data API | `@gregale/data` | `@gregale/data` | source package in `sdk/data`; not published |
+| Data API | `@gregale/data` | `@gregale/data` | not published; release job ready, off (see [Data API SDK](#data-api-sdk)) |
 | Application Auth | `@gregale/auth` | `@gregale/auth` | source package in `sdk/auth`; not published |
 | Python | `gregale-sdk` | `faas_sdk` | PyPI project unregistered |
 
@@ -94,6 +94,27 @@ npm publish
 
 `prepublishOnly` reruns the build, so a stale `dist/` cannot ship.
 
+## Data API SDK
+
+`release.yml` has a `publish-data-sdk` job for `@gregale/data`. It stays off
+until the licensing decision above; set the repository variable
+`PUBLISH_DATA_SDK=true` to turn it on. On each release tag it then:
+
+1. installs the locked dependencies without lifecycle scripts and runs
+   `npm test` (build, declaration and type tests, unit tests);
+2. checks the packed files, including the live-read module (`dist/live`)
+   behind `@gregale/data/live` and `@gregale/data/live/react`;
+3. publishes the version in `sdk/data/package.json` unless the registry already
+   has it, so a CLI release that does not bump the SDK publishes nothing.
+
+`publishConfig.access` is `restricted` today, which publishes a private
+package only members of the `@gregale` npm organization can install. Change it
+to `public` together with the license decision. The `@gregale` scope already
+holds the CLI's `@gregale/cli-*` packages, so no registration step remains.
+
+The generated Python and Go clients (`gregale data-api types --language`) are
+not packages: the CLI renders them into each project.
+
 ## Python
 
 1. Register the `gregale-sdk` project on PyPI (currently unregistered).
@@ -109,9 +130,17 @@ Do **not** publish as `faas-sdk` or `faas_sdk`. That name resolves to Sonra
 Intelligence Ltd's package and shipping under it would be a supply-chain
 confusion hazard for customers.
 
+#4262 (2026-10-06) put the distribution name back to `faas_sdk`, and the
+customer docs then told users to `pip install 'faas_sdk[auth]'`, which
+installs Sonra's package (Hunt 13 H13-4). `tests/test_packaging.py` now pins
+`gregale-sdk`. Until `gregale-sdk` is registered on PyPI, anyone can claim
+that name too, so customer docs install only from the repository
+([docs/sdks.md](../docs/sdks.md)), never by bare name.
+
 ## Local install (works today, no registry)
 
-The paths customers can use right now are documented in each SDK's README:
+The customer-facing install page is [docs/sdks.md](../docs/sdks.md). The
+paths customers can use right now:
 
 - Node — `npm pack` a tarball, then `npm install /path/to/tarball.tgz`
 - Python — `poetry build -f wheel`, then `pip install dist/*.whl`
