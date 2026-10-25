@@ -63,10 +63,12 @@ func (s *server) sendChannelTest(ctx context.Context, acct state.Account, row st
 		return res.Error, nil
 	}
 	msg := alertchannels.Message{Event: alertchannels.EventTest, RuleName: "test", DedupKey: "test-" + row.ID, OccurredAt: now}
+	// A failed delivery is the test's result, not an apid error.
+	deliveryErr := ""
 	if err := channelSender(apidChannelMailer{s.mailer}).Send(ctx, target, msg); err != nil {
-		return err.Error(), nil
+		deliveryErr = err.Error()
 	}
-	return "", nil
+	return deliveryErr, nil
 }
 
 // openChannelTarget unseals a channel's destination. Error details stay in
