@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261025090000: The host kernel never mounts a drive a guest has written](20261025090000-host-never-mounts-guest-drives.md) — restore staging, fork scrub and build export read and edit VM drives with e2fsprogs in the vmmd-guestdisk sandbox (jail uid, private namespaces, Landlock, rlimits) after an `e2fsck` journal replay; no ext4 or loop mount remains in pkg/fcvm; amends ADR-192 and ADR-568
 - [Every capability behind a platform flag](20261023115741-every-capability-behind-a-platform-flag.md)
 - [Per-account realtime preview rollout and realtime apps declared in gregale.yaml](20261019102657-realtime-preview-rollout-and-declared-apps.md)
 - [Gateway-metered object storage billing](20261024132844-gateway-metered-object-storage-billing.md) — gateway safety meters stored byte-hours from inventory; storage-only rate card bills ADR-1430's $0.03/GiB-month
