@@ -1788,9 +1788,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if cfg.AdoptRunningVMs {
 		impl.WithAdoptionReport(adoptionReport)
 	}
-	// Bridge units a crashed predecessor left (connection-survival ADR 1c):
-	// nothing routes to them, and this vmmd does not adopt them.
-	impl.SweepInstanceBridgeUnits(ctx)
+	// Bridge units (connection-survival ADR 1c): keep the adopted instances'
+	// proven ones, stop the rest; leave them running at a planned stop
+	// whose successor adopts the guests.
+	impl.WithInstanceBridgeHandoff(cfg.AdoptRunningVMs && cfg.AdoptionRecord)
+	impl.ReconcileInstanceBridgeUnits(ctx)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// on the gRPC server. vmmd is the source for the corroborating wake.boot_observed event at the
 	// gRPC server boundary and the canonical emit site for wake.readiness_200

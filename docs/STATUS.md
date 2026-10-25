@@ -83,16 +83,14 @@ and `edge_challenge` on once the release carrying the `@grx` engine is
 deployed. Penalties, attack mode and AI crawler controls are `preview`.
 
 Met: the kill switches; rules the edge does not enforce say so
-(`unreleased_features`); WAF latency at 100-500 req/s on the reference node
-(p95 1.49-2.00 ms); corpus detection; fail-open; the challenge journey,
+(`unreleased_features`); WAF latency and skips at 100-500 req/s on the
+reference node (p95 1.48-1.58 ms, under 0.05% skipped, three passes on
+2026-10-24, ADR-831 amendment 14); corpus detection; fail-open; the challenge journey,
 solver and escalation; penalty correctness, caps and sharing across
 gateways (in tests); attack mode and its two-flag gate; AI crawler matching,
 range refresh and gating.
 
 Open:
-- WAF skips under load: 2.5-8% measured before ADR-831 amendment 12's slot
-  sizing, which models 0.003-0.013%; needs a `FAAS_E2E_WAF_LOAD_GATE=1` run
-  of `TestEdgeWAFInlineLoad_E2E` on the reference node.
 - Challenge solve time on a low-end phone (no measurement yet).
 - The 14-day reviews at the internal and design-partner stages (penalties,
   attack mode, AI crawler controls), and the WAF production false-positive
@@ -1904,6 +1902,11 @@ remain open; production admission is disabled.
   (2026-10-22): a built service's `entrypoint` joins its start command, and
   `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
   deployment and applied to the built image. Unit tests pass; no native run.
+- **Image runs read a Docker config.**
+  [ADR-20261025110000](adr/20261025110000-image-run-docker-config.md)
+  (2026-10-25): `gregale run --docker-config PATH` takes the image registry's
+  credentials from a Docker `config.json`, its inline `auths` or the configured
+  credential helper, instead of `--registry-username`. Unit tests pass.
 - **Build secrets resolve like the runtime.**
   [ADR-20261024140000](adr/20261024140000-build-secrets-resolve-like-the-runtime.md)
   (2026-10-24): a build secret named `NAME` gets the secret the app receives

@@ -2,6 +2,7 @@
 
 - **Status:** accepted
 - **Date:** 2026-10-18
+- **Amended by:** ADR-20261025110000 (credentials from a Docker config)
 - **Amends:** ADR-1161 (image runs; closes its private-registry follow-up),
   ADR-1239 (applies its image identity to image-run jobs)
 - **Decision:** An image run executes with the image's `ENV`, `USER` and
