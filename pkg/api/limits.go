@@ -607,7 +607,23 @@ const (
 	ProfileMemoryPressureAvailablePercent      = 15
 	ProfileMemoryPressureRearmAvailablePercent = 30
 	ProfileMemoryPressurePollInterval          = 2 * time.Second
-	ProfileCaptureAutomaticDuration            = 10 * time.Second
+	// vmmd relays at most one memory-pressure report per instance per
+	// ProfileMemoryPressureRelayMinInterval, with at most
+	// ProfileMemoryPressureRelayInFlight relays to schedd open at once. The
+	// guest writes the frame, so guest-init's once-per-episode reporting
+	// bounds nothing; schedd captures at most once per app per
+	// ProfileCaptureAutomaticMinInterval in any case.
+	ProfileMemoryPressureRelayMinInterval = time.Minute
+	ProfileMemoryPressureRelayInFlight    = 4
+	// vmmd answers each instance's runtime-config requests (vsock port 1031:
+	// env, secrets, secret reload status, developer patches) at
+	// RuntimeConfigRequestsPerSecond with bursts of RuntimeConfigRequestBurst.
+	// Every request reads the database and may open sealed secrets; guest-init
+	// polls far below this (secrets every 10 s, dev patches every second), but
+	// the guest controls the socket. Excess requests get "rate_limited".
+	RuntimeConfigRequestsPerSecond  = 20
+	RuntimeConfigRequestBurst       = 40
+	ProfileCaptureAutomaticDuration = 10 * time.Second
 	// ProfileCaptureAutomaticMinInterval bounds automatic captures per app.
 	ProfileCaptureAutomaticMinInterval = time.Hour
 	// ProfileCaptureCheckpointInterval paces interim heap profiles during an
