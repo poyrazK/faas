@@ -88,7 +88,8 @@ func validCORSHeaderPattern(name string) bool {
 
 func validCORSHeaderName(name string) bool {
 	for _, c := range name {
-		if !(c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z' || c >= '0' && c <= '9' || strings.ContainsRune("-_.!#$%&'+^`|~", c)) {
+		letter := c >= 'a' && c <= 'z' || c >= 'A' && c <= 'Z'
+		if !letter && (c < '0' || c > '9') && !strings.ContainsRune("-_.!#$%&'+^`|~", c) {
 			return false
 		}
 	}
