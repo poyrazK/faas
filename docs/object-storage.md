@@ -44,7 +44,7 @@ existing S3 driver and does not change the preview's provider qualification gate
 ### Deploy the branded gateway
 
 The production Ansible path keeps this optional until a backend is qualified.
-Declare the gateway in the deploy manifest (ADR 20261025090000), and
+Declare the gateway in the deploy manifest (ADR 20261025111015), and
 `gregalectl manifest ansible` renders the inventory values for the
 control-plane host:
 

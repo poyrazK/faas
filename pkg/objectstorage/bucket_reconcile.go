@@ -22,7 +22,7 @@ const PhysicalBucketPrefix = "gregale-"
 // BucketLister is the optional provider capability operator reconciliation
 // uses after a control-plane database restore: it lists the physical buckets
 // in the backend's dedicated namespace whose names start with prefix, sorted
-// (ADR-20261025090000).
+// (ADR-20261025111015).
 type BucketLister interface {
 	ListBucketNames(ctx context.Context, prefix string) ([]string, error)
 }

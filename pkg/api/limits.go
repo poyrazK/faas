@@ -2100,7 +2100,7 @@ const (
 	ObjectStorageInventoryMaxAgeSeconds int64 = 900
 	ObjectStorageInventoryMaxPages            = 1000
 	// MaxObjectStorageReconcileBuckets bounds one backend's bucket listing in
-	// operator reconciliation after a database restore (ADR-20261025090000).
+	// operator reconciliation after a database restore (ADR-20261025111015).
 	MaxObjectStorageReconcileBuckets = 100_000
 	// One apid's inventory sweep claims due buckets in batches and scans up to
 	// ObjectStorageInventorySweepConcurrency of them at once, starting new

@@ -628,7 +628,7 @@ func TestRenderManifestAnsibleFiles_PostgresStandby(t *testing.T) {
 	}
 }
 
-// ADR 20261025090000: the manifest, not a hand edit, decides whether the
+// ADR 20261025111015: the manifest, not a hand edit, decides whether the
 // playbooks own s3-gatewayd.
 func TestRenderManifestAnsibleFiles_ObjectStorageGateway(t *testing.T) {
 	base := strings.Replace(validManifestYAML,

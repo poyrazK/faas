@@ -61,7 +61,7 @@
   loop_control:
     label: "{{ item.item }}"
 
-# ADR 20261025090000: a running s3-gatewayd that the manifest does not
+# ADR 20261025111015: a running s3-gatewayd that the manifest does not
 # manage has hand-edited configuration, no scrape job and silent alerts, and
 # a converge can revert it.
 - name: fleet_verify — read whether s3-gatewayd runs  # noqa: command-instead-of-module (read-only query / no module equivalent)

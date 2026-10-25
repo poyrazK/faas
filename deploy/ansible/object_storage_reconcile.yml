@@ -1,5 +1,5 @@
 ---
-# ADR 20261025090000: after PostgreSQL is restored (a control-plane rebuild
+# ADR 20261025111015: after PostgreSQL is restored (a control-plane rebuild
 # or a point-in-time restore), compare the object bucket catalog with each
 # provider. Read-only. Findings stop the play so an operator reviews them
 # (docs/runbooks/ObjectStorageRestoreReconcile.md); rerun with

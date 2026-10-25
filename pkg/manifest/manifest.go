@@ -171,7 +171,7 @@ type Manifest struct {
 	Egress Egress `yaml:"egress,omitempty"`
 
 	// ObjectStorage places the customer object storage gateway
-	// (s3-gatewayd) under the playbooks (ADR 20261025090000). Absent keeps
+	// (s3-gatewayd) under the playbooks (ADR 20261025111015). Absent keeps
 	// the gateway unmanaged; strict fleet verify then fails if one runs.
 	ObjectStorage ObjectStorage `yaml:"object_storage,omitempty"`
 }

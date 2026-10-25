@@ -274,7 +274,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 // FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket (ADR-1736). The renderer
 // writes the same bind into schedd.toml, so the three cannot disagree.
 // renderObjectStorageGatewayVars places s3-gatewayd under the playbooks when
-// the manifest manages it (ADR 20261025090000). Unmanaged emits nothing, so
+// the manifest manages it (ADR 20261025111015). Unmanaged emits nothing, so
 // an existing hand-run gateway is never started or stopped by a converge.
 func renderObjectStorageGatewayVars(o manifest.ObjectStorage) string {
 	if !o.Managed() {

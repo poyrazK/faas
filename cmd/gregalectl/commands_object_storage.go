@@ -1,6 +1,6 @@
 package main
 
-// ADR 20261025090000: after a control-plane database restore, the object
+// ADR 20261025111015: after a control-plane database restore, the object
 // bucket catalog can disagree with the providers. `object-storage reconcile`
 // lists each backend's Gregale buckets and compares them with the catalog,
 // read-only. It runs on a control-plane node, which holds the provider

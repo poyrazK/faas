@@ -8,7 +8,7 @@ Tool: `gregalectl object-storage reconcile` on a control-plane node, wrapped by
 (`deploy/ansible/object_storage_reconcile.yml`). It is read-only: it lists each
 backend's `gregale-*` buckets and the catalog rows bound to that backend, and
 reports where they disagree. It never creates, changes or deletes a bucket.
-Decision record: [ADR 20261025090000](../adr/20261025090000-object-storage-managed-gateway-and-restore-reconcile.md).
+Decision record: [ADR 20261025111015](../adr/20261025111015-object-storage-managed-gateway-and-restore-reconcile.md).
 Severity: blocks re-enabling `s3_enabled` after a restore.
 
 ## Symptom

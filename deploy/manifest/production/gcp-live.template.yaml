@@ -131,7 +131,7 @@ egress:
   overlay_exceptions:
     - 10.10.0.0/20
 
-# Branded S3 gateway (ADR 20261025090000). `managed` installs and health-gates
+# Branded S3 gateway (ADR 20261025111015). `managed` installs and health-gates
 # s3-gatewayd on the control-plane node from these operator-local files; leave
 # it unset only when no backend is configured. Strict `verify-fleet` fails when
 # the gateway runs without this.
