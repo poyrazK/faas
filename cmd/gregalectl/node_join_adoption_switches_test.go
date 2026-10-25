@@ -61,6 +61,20 @@ func TestVMMDServiceAdoptionSwitchesDefaultOff(t *testing.T) {
 			t.Errorf("vmmd_service defaults lack %q", v)
 		}
 	}
+	// Production step 1: the fleet writes adoption blocks, but adoption is a
+	// per-host canary, never a fleet-wide group var.
+	fleet, err := os.ReadFile(filepath.Join("..", "..", "deploy", "ansible", "group_vars", "compute_nodes", "vmmd_adoption.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(fleet), "\nvmmd_adoption_record: true\n") {
+		t.Error("compute_nodes group vars do not turn adoption records on")
+	}
+	for _, v := range []string{"vmmd_adopt_running_vms:", "vmmd_adopt_admitted_runtimes:"} {
+		if strings.Contains(string(fleet), "\n"+v) {
+			t.Errorf("compute_nodes group vars set %s fleet-wide", v)
+		}
+	}
 	template, err := os.ReadFile(filepath.Join(role, "templates", "99-faas-adoption.conf.j2"))
 	if err != nil {
 		t.Fatal(err)

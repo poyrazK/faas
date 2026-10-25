@@ -1178,6 +1178,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient)
 	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
 	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
+	// ADR 20261022111812: apid relays the test sends it cannot open here;
+	// meterd holds the alerting key.
+	go runAlertTestSends(ctx, evaluator, log)
 	// ADR-20261022172052: firing app alerts carry what the log ledger shows.
 	evaluator.SetLogContext(deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1")
 	// ADR-747: record customer SLO budget hours from Prometheus.
@@ -1500,6 +1503,26 @@ func stuckAfterFromEnvMeterd(getenv func(string) string, log *slog.Logger) time.
 		return 0
 	}
 	return d
+}
+
+// runAlertTestSends sends the test sends apid relays (ADR 20261022111812,
+// section 3), checking for new ones every second; apid waits for the result.
+func runAlertTestSends(ctx context.Context, e *alerts.Evaluator, log *slog.Logger) {
+	if e == nil {
+		return
+	}
+	tick := time.NewTicker(time.Second)
+	defer tick.Stop()
+	for {
+		if _, err := e.RunTestSendsOnce(ctx); err != nil && ctx.Err() == nil {
+			log.Warn("meterd: alert test sends", "err", err)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-tick.C:
+		}
+	}
 }
 
 // buildAlertEvaluator wires the alert-evaluator (issue #396 /

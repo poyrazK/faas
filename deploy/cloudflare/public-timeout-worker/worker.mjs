@@ -109,6 +109,29 @@ function withFrontendSecurityHeaders(response) {
   });
 }
 
+function hostList(value) {
+  return new Set(
+    String(value || "")
+      .split(",")
+      .map((host) => host.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+// originFor picks the origin a request resolves to. App hosts listed in
+// APP_EDGE_HOSTS go to the compute-node app edge (ADR-1343): the Cloudflare
+// Tunnel behind APP_EDGE_ORIGIN_HOSTNAME, an in-zone CNAME to
+// <tunnel-id>.cfargotunnel.com. Everything else, and every host while either
+// variable is unset, keeps the control-plane origin. The list holds exact
+// hostnames only, so the pilot moves one test app and nothing else.
+function originFor(requestHost, env) {
+  const appEdgeOrigin = String(env?.APP_EDGE_ORIGIN_HOSTNAME || "").trim();
+  if (appEdgeOrigin && hostList(env?.APP_EDGE_HOSTS).has(requestHost)) {
+    return appEdgeOrigin;
+  }
+  return String(env?.ORIGIN_HOSTNAME || "").trim();
+}
+
 // Exported separately so the contract tests can exercise the Worker with a
 // stub fetch implementation. Cloudflare invokes the default export below.
 export async function handleRequest(request, env, fetchImpl = globalThis.fetch) {
@@ -127,7 +150,7 @@ export async function handleRequest(request, env, fetchImpl = globalThis.fetch) 
     }
   }
 
-  const originHost = String(env?.ORIGIN_HOSTNAME || "").trim();
+  const originHost = originFor(requestHost, env);
   if (!originHost) {
     return new Response("public-timeout-worker: ORIGIN_HOSTNAME is not configured", {
       status: 500,

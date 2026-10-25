@@ -185,6 +185,11 @@ type Evaluator struct {
 	now          func() time.Time
 	log          *slog.Logger
 	ops          Ops
+
+	// testSendsPrunedAt is when RunTestSendsOnce last pruned abandoned test
+	// sends (ADR 20261022111812).
+	testSendsPrunedAt time.Time
+
 	// channels and its companions deliver to ADR-749 notification
 	// channels; nil disables channel delivery.
 	channels         ChannelSender

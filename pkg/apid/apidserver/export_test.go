@@ -253,6 +253,8 @@ var CapsDecl = &capsDecl
 var CertDialContextFunc = &certDialContextFunc
 var CertLookupIPFunc = &certLookupIPFunc
 var ChannelSender = &channelSender
+var TestRelayPoll = &testRelayPoll
+var ChannelTestRelayWait = &channelTestRelayWait
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
@@ -1713,3 +1715,5 @@ func (s *server) DashboardWidgetAppForTest(ctx context.Context, acct state.Accou
 func (s *server) IncidentAppVisibleForTest(ctx context.Context, acct state.Account, app state.App) bool {
 	return incidentsHost{s}.AppVisible(ctx, acct, app)
 }
+
+var ValidateAndPlanSidecars = validateAndPlanSidecars

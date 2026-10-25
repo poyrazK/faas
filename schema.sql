@@ -12436,7 +12436,7 @@ END $$;
 CREATE FUNCTION public.fence_object_deletion() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE bid uuid;
+DECLARE bid uuid; fence_key text; fence_key_hash text;
 BEGIN
  IF TG_TABLE_NAME='object_buckets' THEN
   IF TG_OP='DELETE' THEN bid:=OLD.id;
@@ -12444,8 +12444,14 @@ BEGIN
  ELSE
   bid:=NEW.bucket_id;
   IF TG_TABLE_NAME='object_bucket_versioning' THEN IF NEW.state='ready' THEN RETURN NEW; END IF; END IF;
+  -- Writes, multipart uploads and key grants touch one key.
+  IF TG_TABLE_NAME IN ('object_storage_write_admissions','object_storage_key_grants') THEN fence_key_hash:=NEW.key_hash;
+  ELSIF TG_TABLE_NAME='object_storage_multipart_uploads' THEN fence_key:=NEW.object_key;
+  END IF;
  END IF;
- IF EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=bid AND d.state IN ('prepared','dispatched')) THEN
+ IF EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=bid AND d.state IN ('prepared','dispatched')
+  AND (fence_key IS NULL OR d.object_key=fence_key)
+  AND (fence_key_hash IS NULL OR encode(sha256(convert_to(d.object_key,'UTF8')),'hex')=fence_key_hash)) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_deletion_fenced',MESSAGE='Unsettled deletion fences mutation and inventory';
  END IF;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
@@ -28184,6 +28190,38 @@ END)::double precision)) OR ((metric <> ALL (ARRAY['mcp_protocol_error_rate_pct'
     CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text]))),
     CONSTRAINT alert_rules_workflow_notification_chk CHECK (((metric <> ALL (ARRAY['workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text])) OR (action = 'webhook'::text)))
 );
+
+
+--
+-- Name: alert_test_sends; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_test_sends (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    subject_id uuid NOT NULL,
+    event jsonb DEFAULT '{}'::jsonb NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    claim_token uuid,
+    claimed_until timestamp with time zone,
+    result jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT alert_test_sends_check CHECK (((state = 'claimed'::text) = ((claim_token IS NOT NULL) AND (claimed_until IS NOT NULL)))),
+    CONSTRAINT alert_test_sends_check1 CHECK (((state = 'done'::text) = ((result IS NOT NULL) AND (completed_at IS NOT NULL)))),
+    CONSTRAINT alert_test_sends_event_check CHECK ((pg_column_size(event) <= 65536)),
+    CONSTRAINT alert_test_sends_kind_check CHECK ((kind = ANY (ARRAY['notification_channel'::text, 'alert_rule_webhook'::text]))),
+    CONSTRAINT alert_test_sends_result_check CHECK (((result IS NULL) OR (pg_column_size(result) <= 8192))),
+    CONSTRAINT alert_test_sends_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'claimed'::text, 'done'::text])))
+);
+
+
+--
+-- Name: TABLE alert_test_sends; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.alert_test_sends IS 'Test sends apid relays to meterd, which holds the alerting seal-domain key (ADR 20261022111812). Short-lived: apid deletes a row once it reads the result, meterd prunes abandoned ones.';
 
 
 --
@@ -55433,6 +55471,14 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: alert_test_sends alert_test_sends_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_test_sends
+    ADD CONSTRAINT alert_test_sends_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: api_consumer_billing_policies api_consumer_billing_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -67676,6 +67722,13 @@ CREATE INDEX alert_rules_synthetic_check_id_idx ON public.alert_rules USING btre
 
 
 --
+-- Name: alert_test_sends_open; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_test_sends_open ON public.alert_test_sends USING btree (created_at) WHERE (state <> 'done'::text);
+
+
+--
 -- Name: api_consumer_credit_applications_statement_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -73875,10 +73928,10 @@ CREATE INDEX object_deletion_lifecycle_scan ON public.object_deletions USING btr
 
 
 --
--- Name: object_deletions_active_bucket; Type: INDEX; Schema: public; Owner: -
+-- Name: object_deletions_active_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX object_deletions_active_bucket ON public.object_deletions USING btree (bucket_id) WHERE (state = ANY (ARRAY['prepared'::text, 'dispatched'::text]));
+CREATE UNIQUE INDEX object_deletions_active_key ON public.object_deletions USING btree (bucket_id, object_key) WHERE (state = ANY (ARRAY['prepared'::text, 'dispatched'::text]));
 
 
 --
@@ -84449,6 +84502,14 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_rules
     ADD CONSTRAINT alert_rules_synthetic_check_id_fkey FOREIGN KEY (synthetic_check_id) REFERENCES public.synthetic_checks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_test_sends alert_test_sends_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_test_sends
+    ADD CONSTRAINT alert_test_sends_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
