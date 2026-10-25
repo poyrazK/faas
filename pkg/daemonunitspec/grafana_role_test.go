@@ -50,3 +50,34 @@ func TestGrafanaKeepsAdminPasswordPrivate(t *testing.T) {
 		}
 	}
 }
+
+// TestGrafanaAppliesProvisionedAdminPassword pins the second fix the
+// obs-stack-smoke workflow found. grafana-server ignores GF_*__FILE; only
+// Grafana's Docker entrypoint converts it, so every Grafana this role created
+// kept admin/admin. The password now goes through grafana.ini's $__file{}
+// expansion, and a reconcile step sets it, through stdin only, on a database
+// created before.
+func TestGrafanaAppliesProvisionedAdminPassword(t *testing.T) {
+	ini := readGrafanaRole(t, "templates/grafana.ini.j2")
+	if !strings.Contains(ini, "admin_password = $__file{{ '{' }}{{ gv_admin_password_file }}{{ '}' }}") {
+		t.Error("grafana.ini.j2 must set admin_password through $__file{gv_admin_password_file}")
+	}
+	if unit := readGrafanaRole(t, "templates/grafana-server.service.j2"); strings.Contains(unit, "__FILE") {
+		t.Error("grafana-server.service.j2 sets a GF_*__FILE variable, which grafana-server ignores")
+	}
+	tasks := readGrafanaRole(t, "tasks/main.yml")
+	start, _ := grafanaTask(t, tasks, "grafana — enable + start service (production only)")
+	if !strings.Contains(start, "daemon_reload: true") {
+		t.Errorf("the first start must reload systemd so it runs the role's unit:\n%s", start)
+	}
+	set, _ := grafanaTask(t, tasks, "grafana — set the provisioned admin password")
+	for _, want := range []string{"reset-admin-password", "--password-from-stdin", "stdin:", "become_user: grafana", "no_log: true", "gv_admin_login.status == 401"} {
+		if !strings.Contains(set, want) {
+			t.Errorf("reconcile task lacks %q:\n%s", want, set)
+		}
+	}
+	argv := set[strings.Index(set, "argv:"):strings.Index(set, "stdin:")]
+	if strings.Contains(argv, "gv_admin_password") {
+		t.Errorf("the password must reach grafana-cli through stdin, not argv:\n%s", argv)
+	}
+}
