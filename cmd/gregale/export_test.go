@@ -2412,3 +2412,5 @@ func AppArgumentPaths() [][]string {
 	}
 	return paths
 }
+
+var ValidateMCPProtocolResponseHeaders = validateMCPProtocolResponseHeaders
