@@ -56,7 +56,9 @@ func TestBaseGenerationReadinessCheck_RolledBackNode(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	cache, err := storage.NewLocalCacheBackend(parent, filepath.Join(dir, "cache"), 1<<30)
+	// Production's parent is remote; hiding the local parent's paths makes a
+	// cache hit the only way the scan sidecar can be local below.
+	cache, err := storage.NewLocalCacheBackend(remoteOnlyBackend{parent}, filepath.Join(dir, "cache"), 1<<30)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,4 +77,10 @@ func TestBaseGenerationReadinessCheck_RolledBackNode(t *testing.T) {
 	if _, cached, err := cache.LocalPath(wire.ScanKeyForBaseKey(baseKey)); err != nil || cached {
 		t.Fatalf("the check cached the shared scan sidecar (cached=%t, %v)", cached, err)
 	}
+}
+
+// remoteOnlyBackend exposes only the StorageBackend methods, so a cache over it
+// cannot report the parent's own files as local.
+type remoteOnlyBackend struct {
+	storage.StorageBackend
 }
