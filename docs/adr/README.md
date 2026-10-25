@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [ADR-20261025094915: Managed PostgreSQL compute caps hold on running databases](20261025094915-managed-postgres-compute-caps-on-running-databases.md) — proposed; Free suspends at its allowance, paid plans suspend at it unless the customer turns overage on (then at 2×); Neon project quotas, never a deletion (amends ADR-1430, ADR-155)
 - [Each Compose include interpolates with its own .env](20261025090000-compose-include-env-files.md)
 - [Image runs read registry credentials from a Docker config](20261025110000-image-run-docker-config.md)
 - [ADR-20261025092617: The curl installer resolves its version from a release-published pointer, not the GitHub API](20261025092617-cli-install-channel-pointer.md) — accepted; `release.yml` keeps forward-only `CLI-STABLE`/`CLI-LATEST` pointers on a `cli-channel` release, read through `releases/download` (no anonymous API limit), with the API path as fallback; amends ADR-172
