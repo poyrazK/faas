@@ -26116,17 +26116,21 @@ CREATE FUNCTION public.scenario_webhook_delivery_fence() RETURNS trigger
 BEGIN
     -- Serialize new deliveries with the registration transaction. A registration
     -- takes FOR UPDATE and refuses any app that already has work or deliveries.
-    PERFORM id FROM apps
-    WHERE id = NEW.app_id OR id = (SELECT app_id FROM app_webhooks WHERE id = NEW.webhook_id)
-    ORDER BY id FOR KEY SHARE;
-    IF EXISTS (
-        SELECT 1 FROM scenario_test_action_policies p
-        WHERE p.app_id = NEW.app_id
-           OR p.app_id = (SELECT app_id FROM app_webhooks WHERE id = NEW.webhook_id)
-    ) AND NEW.status IN ('pending', 'in_flight', 'failed') THEN
-        NEW.status := 'dead';
-        NEW.last_error := 'rehearsal: unsupported webhook delivery suppressed';
-        NEW.updated_at := clock_timestamp();
+    IF TG_OP = 'INSERT' THEN
+        PERFORM id FROM apps
+        WHERE id = NEW.app_id OR id = (SELECT app_id FROM app_webhooks WHERE id = NEW.webhook_id)
+        ORDER BY id FOR KEY SHARE;
+    END IF;
+    IF NEW.status IN ('pending', 'in_flight', 'failed') THEN
+        IF EXISTS (
+            SELECT 1 FROM scenario_test_action_policies p
+            WHERE p.app_id = NEW.app_id
+               OR p.app_id = (SELECT app_id FROM app_webhooks WHERE id = NEW.webhook_id)
+        ) THEN
+            NEW.status := 'dead';
+            NEW.last_error := 'rehearsal: unsupported webhook delivery suppressed';
+            NEW.updated_at := clock_timestamp();
+        END IF;
     END IF;
     RETURN NEW;
 END $$;

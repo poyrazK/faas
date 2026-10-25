@@ -1882,3 +1882,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261022184757: Background work and waitUntil in the awake report](20261022184757-route-awake-background-work.md)
 - [ADR-20261023220532: Move the Debian-based runtime bases to Debian 13](20261023220532-debian-13-runtime-bases.md) — accepted; clears the bookworm `<no-dsa>` glibc/SQLite criticals (#5206), matches Railpack's Debian 13 builder, audits `base-minimal` apps first
 - [ADR-20261024154324: Route subsystems at public scale](20261024154324-route-subsystems-at-public-scale.md) — per-gateway per-route series budget with idle eviction, fair route insight scheduling, concurrent route monitor drain, route worker alerts (amends ADR-093, ADR-1198)
+- [ADR-20261024230731: Rehearsal checks on webhook deliveries and private DNS stay off other apps' critical path](20261024230731-rehearsal-webhook-and-dns-hot-paths.md)
