@@ -24,7 +24,6 @@ credential unit:faas-s3-gatewayd /etc/faas/secrets/fleet.age
 credential unit:faas-s3-gatewayd /etc/faas/secrets/host.age
 credential unit:faas-schedd /etc/faas/secrets/fleet.age
 credential unit:faas-schedd /etc/faas/secrets/host.age
-loader cmd/gatewayd-internal/log_drains.go 1
 loader cmd/gatewayd-internal/rehearsal_objects.go 1
 loader cmd/gatewayd-internal/run.go 1
 loader cmd/gatewayd-public/main.go 1

@@ -90,7 +90,7 @@ def sync_detailed(
 
     Once current-month overage meets/exceeds the cap, schedd refuses
     new wakes with `code: admission_refused` (HTTP 402). The cap is
-    account-self-scoped (no admin scope required) and the response
+    account-self-scoped (admin scope required) and the response
     is the post-update account state. Audit row
     `overage.cap_changed` is emitted on every successful call.
 
@@ -144,7 +144,7 @@ def sync(
 
     Once current-month overage meets/exceeds the cap, schedd refuses
     new wakes with `code: admission_refused` (HTTP 402). The cap is
-    account-self-scoped (no admin scope required) and the response
+    account-self-scoped (admin scope required) and the response
     is the post-update account state. Audit row
     `overage.cap_changed` is emitted on every successful call.
 
@@ -193,7 +193,7 @@ async def asyncio_detailed(
 
     Once current-month overage meets/exceeds the cap, schedd refuses
     new wakes with `code: admission_refused` (HTTP 402). The cap is
-    account-self-scoped (no admin scope required) and the response
+    account-self-scoped (admin scope required) and the response
     is the post-update account state. Audit row
     `overage.cap_changed` is emitted on every successful call.
 
@@ -245,7 +245,7 @@ async def asyncio(
 
     Once current-month overage meets/exceeds the cap, schedd refuses
     new wakes with `code: admission_refused` (HTTP 402). The cap is
-    account-self-scoped (no admin scope required) and the response
+    account-self-scoped (admin scope required) and the response
     is the post-update account state. Audit row
     `overage.cap_changed` is emitted on every successful call.
 

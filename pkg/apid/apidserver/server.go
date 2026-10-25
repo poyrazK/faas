@@ -1966,7 +1966,10 @@ func (s *server) handler() http.Handler {
 	// and a retry without one would emit two overage.cap_changed
 	// audit rows for the same logical operation (review finding #9).
 	mux.HandleFunc("GET /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOverageCap))))
-	mux.HandleFunc("POST /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.raiseOverageCap)))))
+	// Raising or clearing the spend cap is a billing change: admin, like
+	// the plan and billing routes, so a deploy-scoped CI key or MCP
+	// connection cannot remove the account's spending ceiling.
+	mux.HandleFunc("POST /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.raiseOverageCap)))))
 	// IAM-5 (issue #189): per-account rotation grace-window
 	// override. Admin-only because the rotation primitive is
 	// admin-only (POST /v1/keys/{id}/rotate mirrors the same
