@@ -1133,6 +1133,10 @@ from .data_upstream_list_response import DataUpstreamListResponse
 from .data_upstream_response import DataUpstreamResponse
 from .data_upstream_response_kind import DataUpstreamResponseKind
 from .data_upstream_response_source import DataUpstreamResponseSource
+from .database_switch import DatabaseSwitch
+from .database_switch_drain import DatabaseSwitchDrain
+from .database_switch_list import DatabaseSwitchList
+from .database_switch_phase import DatabaseSwitchPhase
 from .dead_letter_event import DeadLetterEvent
 from .dead_letter_event_error_detail import DeadLetterEventErrorDetail
 from .dead_letter_event_headers import DeadLetterEventHeaders
@@ -1498,6 +1502,11 @@ from .edge_rule_validate_parameters_path import EdgeRuleValidateParametersPath
 from .edge_rule_validate_parameters_query import EdgeRuleValidateParametersQuery
 from .edge_rule_waf_action import EdgeRuleWAFAction
 from .edge_rule_waf_action_mode import EdgeRuleWAFActionMode
+from .edge_waf_exclusions_request import EdgeWAFExclusionsRequest
+from .edge_waf_review_group import EdgeWAFReviewGroup
+from .edge_waf_review_group_assessment import EdgeWAFReviewGroupAssessment
+from .edge_waf_review_group_rule_mode import EdgeWAFReviewGroupRuleMode
+from .edge_waf_review_response import EdgeWAFReviewResponse
 from .egress_circuit_breaker_policy import EgressCircuitBreakerPolicy
 from .egress_circuit_breaker_policy_state import EgressCircuitBreakerPolicyState
 from .egress_flow_log_entry import EgressFlowLogEntry
@@ -7233,6 +7242,10 @@ __all__ = (
     "DataAPIUsageReportResponse",
     "DataAPIUsageReportVersion",
     "DataAPIUserAuth",
+    "DatabaseSwitch",
+    "DatabaseSwitchDrain",
+    "DatabaseSwitchList",
+    "DatabaseSwitchPhase",
     "DataConnection",
     "DataConnectionCheck",
     "DataConnectionCheckState",
@@ -7630,6 +7643,11 @@ __all__ = (
     "EdgeRuleValidateParametersQuery",
     "EdgeRuleWAFAction",
     "EdgeRuleWAFActionMode",
+    "EdgeWAFExclusionsRequest",
+    "EdgeWAFReviewGroup",
+    "EdgeWAFReviewGroupAssessment",
+    "EdgeWAFReviewGroupRuleMode",
+    "EdgeWAFReviewResponse",
     "EgressCircuitBreakerPolicy",
     "EgressCircuitBreakerPolicyState",
     "EgressFlowLogEntry",

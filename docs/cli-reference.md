@@ -11267,6 +11267,49 @@ gregale edge-rules events --app my-site --request-id REQUEST_ID
 
 Includes kind=waf detections; up to 10 of each per rule per minute, kept 7 days.
 
+### edge-rules waf-review
+
+Group WAF detections by rule and path to find false positives
+
+`gregale edge-rules waf-review [--app <slug>] [--rule <ID>] [--since <DURATION>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | app slug (defaults to linked project context) |  |
+| `--rule <ID>` | only this kind=waf rule id |  |
+| `--since <DURATION>` | how far back, e.g. 24h or 7d (default 7d, clamped to the plan window) |  |
+
+Examples:
+
+```sh
+gregale edge-rules waf-review --app my-api
+gregale edge-rules waf-review --app my-api --rule RULE_ID --since 24h
+```
+
+Each group is assessed: likely_false_positive (a documented false positive, or many clients flagged on one path), likely_attack (clients flagged on many paths), excluded or review.
+
+Detections are sampled, so counts are lower bounds.
+
+### edge-rules waf-exclude
+
+Add or remove CRS rule IDs on a kind=waf rule&#39;s exclusions
+
+`gregale edge-rules waf-exclude [--add <IDS>] [--remove <IDS>] <rule-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--add <IDS>` | CRS rule IDs to exclude, comma-separated |  |
+| `--remove <IDS>` | CRS rule IDs to stop excluding, comma-separated |  |
+
+Examples:
+
+```sh
+gregale edge-rules waf-exclude RULE_ID --add 942190
+gregale edge-rules waf-exclude RULE_ID --remove 942100
+```
+
+Keeps the rest of the rule&#39;s WAF action and its penalty.
+
 ### edge-rules rollback
 
 Restore an app&#39;s edge rules to a recorded version
@@ -16896,7 +16939,7 @@ Show bearer token rotation state
 
 Restore a previous deployment, or check an exact historical rollback
 
-`gregale rollback [<subcommand>] <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
+`gregale rollback [<subcommand>] <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -16905,6 +16948,7 @@ Restore a previous deployment, or check an exact historical rollback
 | `--expected-current <deployment_id|vN>` | exact completed serving deployment; requires --to |  |
 | `--reason <TEXT>` | one-line reason of at most 256 bytes; requires --expected-current |  |
 | `--acknowledge-releases` | roll back even though release commands ran after the target last served; rollback does not undo them |  |
+| `--restore-databases` | also restore the managed database the crossed releases migrated, and move the app to that copy; the app pauses while it switches |  |
 | `--wait` | wait until the rollback completes (default for a plain rollback; a checked rollback waits only with this flag) |  |
 | `--no-wait` | return once a plain rollback is requested instead of waiting for the previous release to serve |  |
 | `--timeout <duration>` | wait deadline (default 10m) |  |
@@ -16918,6 +16962,7 @@ gregale rollback my-api --interactive
 gregale rollback my-api
 gregale rollback my-api --to v41
 gregale rollback my-api --to v41 --expected-current v42 --wait
+gregale rollback my-api --to v41 --restore-databases
 ```
 
 ### rollback status
@@ -16935,6 +16980,38 @@ Read an exact rollback operation
 | `--json` | print the operation receipt |  |
 
 Waiting never submits another rollback.
+
+### rollback switches
+
+List rollbacks that restored or are restoring the database
+
+`gregale rollback switches [--json] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--json` | machine-readable output |  |
+
+### rollback switch
+
+Show, follow or cancel a rollback that restores the database
+
+`gregale rollback switch [--cancel] [--wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug> <switch-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--cancel` | cancel the switch; the app keeps its current release and database |  |
+| `--wait` | follow the switch until it ends |  |
+| `--timeout <duration>` | wait deadline (default 60m) |  |
+| `--poll-interval <duration>` | poll interval (default 2s) |  |
+| `--json` | machine-readable output |  |
+
+Examples:
+
+```sh
+gregale rollback switch my-api 6f1c2b0e-7d2a-4f7e-9a51-3c8d2f0b9e41 --wait
+```
+
+A switch can be cancelled until it starts switching the release and the bindings.
 
 
 ## projects

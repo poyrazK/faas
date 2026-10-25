@@ -28029,6 +28029,77 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/database-switches:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listDatabaseSwitches
+      summary: List rollbacks that restore the database.
+      description: An app's database switches, newest first (ADR-20261023181931).
+      responses:
+        '200':
+          description: The app's switches.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseSwitchList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/database-switches/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Database switch UUID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [deployments]
+      operationId: getDatabaseSwitch
+      summary: Read a rollback that restores the database.
+      description: The switch's phase, restore point, databases, drain counts and outcome.
+      responses:
+        '200':
+          description: The switch.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseSwitch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/database-switches/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: UUID of the database switch to cancel.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [deployments]
+      operationId: cancelDatabaseSwitch
+      summary: Cancel a rollback that restores the database.
+      description: "Unwinds the switch; the app keeps its current release and database. Refused with database_switch_not_cancellable once the switch started switching the release and the bindings."
+      responses:
+        '202':
+          description: Cancellation recorded; the worker unwinds the switch.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseSwitch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/rollouts/recover:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -40108,6 +40179,39 @@ paths:
         '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/edge-rules/{id}/waf-exclusions:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [edge_rules]
+      operationId: updateEdgeWAFExclusions
+      summary: Add or remove CRS rule IDs on a kind=waf rule's exclusions.
+      description: |
+        ADR-831 amendment 13. Changes exclude_rule_ids and keeps the rest of
+        the rule's action and its penalty, so silencing a false positive does
+        not mean restating the whole action. Recorded as a new rule-set
+        version like any PATCH.
+      parameters:
+        - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EdgeWAFExclusionsRequest' }
+      responses:
+        '200':
+          description: The updated rule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/EdgeRuleConflict' }
+        '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/edge-rules/versions:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -40207,6 +40311,47 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EdgeRuleEventsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/waf-review:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeWAFReview
+      summary: The app's WAF detections grouped for a false-positive review.
+      description: |
+        ADR-831 amendment 13. Reads the app's sampled kind=waf detections
+        (detected, warned and blocked events, ADR-831 amendment 5) and groups
+        them by edge rule, CRS rule and path, with id-like path segments read
+        as {id}. Each group is assessed: likely_false_positive (a documented
+        false positive, or at least 3 clients flagged on the path with none
+        sending most of the detections), likely_attack (most detections from
+        clients flagged on 5 or more paths), excluded (the rule already
+        excludes the CRS rule) or review. The newest 5,000 detections of each
+        outcome are read and at most 50 groups returned, largest first.
+        Detections are sampled, so counts are lower bounds. The window
+        defaults to 7 days and is clamped to the plan's event window.
+      parameters:
+        - name: rule
+          in: query
+          required: false
+          description: Only detections of this kind=waf edge rule id.
+          schema: { type: string, format: uuid }
+        - name: since
+          in: query
+          required: false
+          description: Duration such as 24h or 7d.
+          schema: { type: string, default: '7d' }
+      responses:
+        '200':
+          description: The review.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeWAFReviewResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -82192,7 +82337,7 @@ components:
         target_database_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
-        state: { type: string, enum: [preparing, prepared, verifying, verified, cancelling, cancelled] }
+        state: { type: string, enum: [preparing, prepared, verifying, verified, cancelling, cancelled, activated] }
         verification_fresh: { type: boolean, description: All staged members have SQL evidence no older than verification_max_age_seconds. }
         verification_max_age_seconds: { type: integer, format: int64, minimum: 1 }
         verified_at: { type: string, format: date-time }
@@ -92144,6 +92289,9 @@ components:
         scheduled_release:
           $ref: '#/components/schemas/ScheduledRelease'
           description: The schedule of a release that waits live without traffic for its scheduled start, or how its latest schedule ended (ADR-20261021152201).
+        database_switch:
+          $ref: '#/components/schemas/DatabaseSwitch'
+          description: The switch a rollback with restore_databases started (ADR-20261023181931).
         durable_entity_validator:
           $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
@@ -92877,6 +93025,9 @@ components:
         acknowledge_releases:
           type: boolean
           description: "Roll back although release commands ran after the target last served (ADR-1448). Rollback does not undo them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks never set it."
+        restore_databases:
+          type: boolean
+          description: "Also restore the managed PostgreSQL database the crossed release commands migrated to just before the earliest of them, and switch the app to that copy (ADR-20261023181931). Requires acknowledge_releases and the postgres:manage scope; cannot be combined with expected_current_deployment_id. The response carries database_switch; the code rollback happens inside it while the app is fenced."
 
     RollbackCrossedRelease:
       description: "A release command that ran after a rollback target last served (ADR-1448). A rollback does not undo it."
@@ -107222,6 +107373,62 @@ components:
           items: { type: string }
         waf_score: { type: integer, minimum: 0, maximum: 10000, description: CRS inbound anomaly score of a kind=waf detection. }
 
+    EdgeWAFReviewResponse:
+      description: An app's sampled kind=waf detections grouped for a false-positive review (ADR-831 amendment 13).
+      type: object
+      required: [since, scanned, truncated, groups]
+      properties:
+        since: { type: string, format: date-time, description: Start of the reviewed window, after the plan clamp. }
+        scanned: { type: integer, minimum: 0, description: Detection events read. }
+        truncated: { type: boolean, description: 'The window held more detections than a review reads (5,000 per outcome, newest first), so the oldest were left out.' }
+        groups:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EdgeWAFReviewGroup' }
+
+    EdgeWAFReviewGroup:
+      description: One edge rule's detections by one CRS rule on one path (ADR-831 amendment 13).
+      type: object
+      required: [rule_id, crs_rule_id, category, path, events, detected, warned, blocked, clients, top_client_percent, scanner_percent, first_seen, last_seen, request_ids, excluded, assessment, reason]
+      properties:
+        rule_id: { type: string }
+        rule_name: { type: string }
+        rule_mode: { type: string, enum: [observe, warn, block] }
+        crs_rule_id: { type: integer }
+        category: { type: string, description: 'CRS attack category of the rule (sqli, xss, rce, lfi, rfi, php, java, generic, protocol, multipart, scanner, session_fixation, other).' }
+        path: { type: string, description: 'Request path with id-like segments (numbers, UUIDs, long hex or tokens) read as {id}.' }
+        events: { type: integer, minimum: 0 }
+        detected: { type: integer, minimum: 0, description: Detections in sampled requests. }
+        warned: { type: integer, minimum: 0 }
+        blocked: { type: integer, minimum: 0 }
+        clients: { type: integer, minimum: 0, description: Distinct client IPs. }
+        top_client_percent: { type: integer, minimum: 0, maximum: 100, description: Share of the group's detections from its busiest client. }
+        scanner_percent: { type: integer, minimum: 0, maximum: 100, description: Share of the group's detections from clients flagged on 5 or more paths in the window. }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        request_ids:
+          type: array
+          maxItems: 3
+          description: The newest example request IDs; look them up with the events listing.
+          items: { type: string }
+        known_false_positive: { type: string, description: The documented legitimate traffic this CRS rule flags. }
+        excluded: { type: boolean, description: The rule excludes this CRS rule now. }
+        assessment: { type: string, enum: [likely_false_positive, likely_attack, review, excluded] }
+        reason: { type: string, description: Why the group got its assessment. }
+
+    EdgeWAFExclusionsRequest:
+      description: CRS rule IDs to add to and remove from a kind=waf rule's exclude_rule_ids (ADR-831 amendment 13).
+      type: object
+      properties:
+        add:
+          type: array
+          maxItems: 50
+          items: { type: integer, minimum: 900000, maximum: 999999 }
+        remove:
+          type: array
+          maxItems: 50
+          items: { type: integer, minimum: 900000, maximum: 999999 }
+
     EdgeRuleStatsResponse:
       description: Per-rule match counts over a window (ADR-960).
       type: object
@@ -109816,6 +110023,65 @@ components:
         comment: { type: string }
         counted: { type: boolean, description: "Whether the approval counts toward the policy; the deployer's own approval does not unless self-approval is allowed." }
         decided_at: { type: string, format: date-time }
+    DatabaseSwitch:
+      description: "A rollback that restores the app's managed PostgreSQL database with the code (ADR-20261023181931). The database is restored to restore_point as a new database, and the app moves to it and to the target release while it is fenced."
+      type: object
+      required: [id, app_id, scope, phase, target_deployment_id, undone_deployment_ids, source_database_id, target_name, restore_point, drain, phase_started_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string, description: "The deployment scope the rollback restores." }
+        phase:
+          type: string
+          enum: [restoring, staging, verifying, fencing, settling, draining, switching, resuming, aborting, completed, failed, cancelled]
+          description: "From fencing until completed the app does not serve. aborting unwinds everything done before the bindings switched."
+        from_deployment_id: { type: string, format: uuid, description: "The release serving when the switch was requested; the switch aborts if another one serves before it switches." }
+        from_revision: { type: integer, minimum: 0 }
+        target_deployment_id: { type: string, format: uuid, description: "The rollback target." }
+        target_revision: { type: integer, minimum: 0 }
+        undone_deployment_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: "Deployments whose release commands the restore undoes; rolling back to them is refused afterwards."
+        source_database_id: { type: string, format: uuid, description: "The database the app leaves. It keeps every write." }
+        source_database_name: { type: string }
+        target_database_id: { type: string, format: uuid, description: "The restored copy, once its restore has started." }
+        target_name: { type: string, description: "Name of the restored copy." }
+        restore_point: { type: string, format: date-time, description: "Writes after this moment stay only in the source database." }
+        drain:
+          $ref: '#/components/schemas/DatabaseSwitchDrain'
+        failure_code: { type: string, description: "Why a switch failed or was cancelled, or why it is aborting." }
+        failure_detail: { type: string }
+        last_error_code: { type: string, description: "The latest transient error the switch is retrying." }
+        requested_by: { type: string }
+        cancel_requested_at: { type: string, format: date-time }
+        fenced_at: { type: string, format: date-time }
+        release_switched_at: { type: string, format: date-time }
+        activated_at: { type: string, format: date-time, description: "When the bindings moved to the copy; there is no way back after it." }
+        finished_at: { type: string, format: date-time }
+        phase_started_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    DatabaseSwitchDrain:
+      description: "A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot invalidated), still pending, or blocking the switch."
+      type: object
+      required: [retired, parked, pending, blocked]
+      properties:
+        retired: { type: integer, minimum: 0 }
+        parked: { type: integer, minimum: 0 }
+        pending: { type: integer, minimum: 0 }
+        blocked: { type: integer, minimum: 0 }
+
+    DatabaseSwitchList:
+      description: "An app's database switches, newest first."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DatabaseSwitch' }
+
     ScheduledRelease:
       description: "A release built ahead of time that starts its rollout at release_at (ADR-20261021152201)."
       type: object

@@ -579,6 +579,9 @@ export type { DataAPIUsageMonthToDate } from './models/DataAPIUsageMonthToDate.j
 export type { DataAPIUsageReport } from './models/DataAPIUsageReport.js';
 export type { DataAPIUsageReportResponse } from './models/DataAPIUsageReportResponse.js';
 export type { DataAPIUserAuth } from './models/DataAPIUserAuth.js';
+export type { DatabaseSwitch } from './models/DatabaseSwitch.js';
+export type { DatabaseSwitchDrain } from './models/DatabaseSwitchDrain.js';
+export type { DatabaseSwitchList } from './models/DatabaseSwitchList.js';
 export type { DataConnection } from './models/DataConnection.js';
 export type { DataConnectionCheck } from './models/DataConnectionCheck.js';
 export type { DataConnectionIssue } from './models/DataConnectionIssue.js';
@@ -788,6 +791,9 @@ export type { EdgeRuleThrottleAction } from './models/EdgeRuleThrottleAction.js'
 export type { EdgeRuleValidateAction } from './models/EdgeRuleValidateAction.js';
 export type { EdgeRuleValidateParameters } from './models/EdgeRuleValidateParameters.js';
 export type { EdgeRuleWAFAction } from './models/EdgeRuleWAFAction.js';
+export type { EdgeWAFExclusionsRequest } from './models/EdgeWAFExclusionsRequest.js';
+export type { EdgeWAFReviewGroup } from './models/EdgeWAFReviewGroup.js';
+export type { EdgeWAFReviewResponse } from './models/EdgeWAFReviewResponse.js';
 export type { EgressCircuitBreakerPolicy } from './models/EgressCircuitBreakerPolicy.js';
 export type { EgressFlowLogEntry } from './models/EgressFlowLogEntry.js';
 export type { EgressFlowLogResponse } from './models/EgressFlowLogResponse.js';

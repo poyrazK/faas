@@ -796,6 +796,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runConfigGuardWorker(ctx)
 		go srv.runPostReleaseWatchWorker(ctx)
 		go srv.runScheduledReleaseWorker(ctx)
+		go srv.runDatabaseSwitchWorker(ctx)
 		go srv.plainRollbacks().Run(ctx)
 		go srv.operation.RunOperationArtifactCleanup(ctx)
 		go srv.operation.RunScheduleFirer(ctx)
@@ -989,6 +990,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// measured safe to cache; a trigger notifies subscribed app webhooks.
 		if insightStore, ok := srv.store.(routeinsights.Store); ok {
 			insights := &routeinsights.Evaluator{Store: insightStore, Log: log}
+			if srv.ops != nil {
+				insights.Metrics = routeinsights.NewMetrics(srv.ops.Registry(), srv.ops.MetricPrefix())
+			}
 			go func() { _ = insights.Run(ctx) }()
 		}
 		// Issue #562 / PR-A: log archive shipper. Walks the local

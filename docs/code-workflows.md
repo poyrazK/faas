@@ -13,6 +13,9 @@ and attempts appear in `gregale workflows list`, `steps` and `attempts`, and
 triggers (manual, schedule, event) work unchanged. Workflow execution remains a
 preview feature on Hobby and higher plans.
 
+The Node, Python and Go SDKs below are installed from the Gregale repository;
+see [Install the SDKs](sdks.md).
+
 ## Declare the entry handler
 
 ```yaml
@@ -134,7 +137,8 @@ once. `faas.RunWorkflowLocally` is the local test runner.
 - **Loops.** Repeating a name records `poll`, `poll#2`, `poll#3`, …, so a step
   or wait can sit in a loop. Each wait for an event name consumes one event of
   that name, in arrival order, and an event sent before its wait starts is kept
-  for it.
+  for it. A wait that times out consumes nothing, so the next wait for that
+  name receives the next event.
 - **Idempotency.** Steps receive `idempotencyKey` (`idempotency_key` in Python),
   `workflow/<run-id>/<step-name>`, unchanged across attempts. Delivery is at
   least once, as for declarative steps; pass the key to external APIs.
@@ -161,7 +165,7 @@ steps must be deterministic:
 | Recorded results, payloads and errors per run | 1.5 MiB |
 | Results reported by one call (parallel steps share it) | 960 KiB of JSON |
 | Workflow output | 960 KiB of JSON |
-| Operation name | 1–128 of `A-Z a-z 0-9 _ . : # / -`, starting with a letter or digit |
+| Operation name | 1–128 of `A-Z a-z 0-9 _ . : / -`, starting with a letter or digit; `#` is reserved for repeated names |
 
 A step whose result would push one call's answer past 960 KiB fails without
 retry. Large data belongs in [object storage](object-storage.md); return its
