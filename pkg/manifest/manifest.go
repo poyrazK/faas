@@ -169,6 +169,46 @@ type Manifest struct {
 	// manifest sees the consequence spelled out before they can
 	// flip it.
 	Egress Egress `yaml:"egress,omitempty"`
+
+	// ObjectStorage places the customer object storage gateway
+	// (s3-gatewayd) under the playbooks (ADR 20261025111015). Absent keeps
+	// the gateway unmanaged; strict fleet verify then fails if one runs.
+	ObjectStorage ObjectStorage `yaml:"object_storage,omitempty"`
+}
+
+// ObjectStorage is the s3-gatewayd deployment contract for the control plane.
+type ObjectStorage struct {
+	// Gateway is "managed" (the s3_gateway_service role installs and
+	// health-gates s3-gatewayd, and Prometheus scrapes it) or empty/"off".
+	Gateway string `yaml:"gateway,omitempty"`
+	// ConfigSrc is the controller-local provider registry JSON the role
+	// copies to /etc/faas/object-storage.json. Required when managed.
+	ConfigSrc string `yaml:"config_src,omitempty"`
+	// ProviderEnvSrc is the optional controller-local credential env file
+	// for S3-compatible providers; GCS with attached ADC needs none.
+	ProviderEnvSrc string `yaml:"provider_env_src,omitempty"`
+}
+
+// Managed reports whether the playbooks own s3-gatewayd.
+func (o ObjectStorage) Managed() bool { return o.Gateway == "managed" }
+
+func (o ObjectStorage) validate() Errors {
+	var errs Errors
+	switch o.Gateway {
+	case "", "off", "managed":
+	default:
+		errs = append(errs, Error{"object_storage.gateway", fmt.Sprintf("%q must be managed or off", o.Gateway)})
+	}
+	if o.Managed() && !filepath.IsAbs(o.ConfigSrc) {
+		errs = append(errs, Error{"object_storage.config_src", "must be an absolute controller path when the gateway is managed"})
+	}
+	if o.ProviderEnvSrc != "" && !filepath.IsAbs(o.ProviderEnvSrc) {
+		errs = append(errs, Error{"object_storage.provider_env_src", "must be an absolute controller path"})
+	}
+	if !o.Managed() && (o.ConfigSrc != "" || o.ProviderEnvSrc != "") {
+		errs = append(errs, Error{"object_storage.gateway", "must be managed when config_src or provider_env_src is set"})
+	}
+	return errs
 }
 
 // Egress is the top-level egress-policy knob. PR scale-out
@@ -1026,6 +1066,7 @@ func (m *Manifest) Validate() Errors {
 	errs = append(errs, m.Cgroups.validate()...)
 	errs = append(errs, m.PKI.validate()...)
 	errs = append(errs, m.Egress.validate(m.Overlay.CIDR)...)
+	errs = append(errs, m.ObjectStorage.validate()...)
 	if len(errs) > 0 {
 		return errs
 	}

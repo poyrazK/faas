@@ -25,6 +25,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/netip"
 	"os"
@@ -269,4 +270,23 @@ func sameNamespace(path string, pid int) bool {
 		return false
 	}
 	return want.Dev == got.Dev && want.Ino == got.Ino
+}
+
+// instanceBridgeSliceDir is faas-tenant-ibridge.slice's cgroup. A variable
+// so tests can point it at a temporary directory.
+var instanceBridgeSliceDir = "/sys/fs/cgroup/faas.slice/faas-tenant.slice/" + instanceBridgeSlice
+
+// instanceBridgeResidentBytes is the memory every bridge unit on the node
+// holds (ADR §2 "Memory", the ADR-909 amendment). A slice systemd has not
+// created yet holds no bridge.
+func instanceBridgeResidentBytes() (int64, bool) {
+	raw, err := os.ReadFile(filepath.Join(instanceBridgeSliceDir, "memory.current"))
+	if errors.Is(err, os.ErrNotExist) {
+		return 0, true
+	}
+	if err != nil {
+		return 0, false
+	}
+	v, err := strconv.ParseInt(strings.TrimSpace(string(raw)), 10, 64)
+	return v, err == nil && v >= 0
 }

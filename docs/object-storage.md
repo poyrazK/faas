@@ -44,7 +44,21 @@ existing S3 driver and does not change the preview's provider qualification gate
 ### Deploy the branded gateway
 
 The production Ansible path keeps this optional until a backend is qualified.
-Set the following inventory values on the control-plane host:
+Declare the gateway in the deploy manifest (ADR 20261025111015), and
+`gregalectl manifest ansible` renders the inventory values for the
+control-plane host:
+
+```yaml
+object_storage:
+  gateway: managed
+  config_src: /operator/config/object-storage.json
+  # S3/R2/OVH only; GCS with attached ADC does not need this file.
+  provider_env_src: /operator/secrets/object-storage.env
+```
+
+Strict `make verify-fleet` fails when `faas-s3-gatewayd` runs on a
+control-plane node that the manifest does not manage; lenient verification
+warns. Inventories written by hand set the same values directly:
 
 ```yaml
 faas_object_storage_gateway_managed: true

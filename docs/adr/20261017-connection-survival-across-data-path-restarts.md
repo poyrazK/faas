@@ -732,15 +732,19 @@ its own.
       switched on only once every node that could read the journal, a
       rollback target included, runs a reader.
     - `faas-tenant-ibridge.slice` (ansible `systemd_slices`) sits inside the
-      tenant fence. Admission does not count it yet (ADR-909 amendment,
-      below).
+      tenant fence. vmmd reports the slice's `memory.current` as
+      `instance_bridge_resident_bytes` in `Stats` and on the capacity stream
+      (telemetry, outside the capacity signature, like the instance rows).
+      schedd adds it to the node's measured charge (the ADR-909 amendment);
+      it reserves nothing and is never billed. An older vmmd omits it, and an
+      older schedd ignores it.
     - Not yet: the bridge keeps the `vmmd-stream-bridge` binary and path
       until P5 launches from the release directory, and a failed bridge start
       does not fail the wake (`bridge_start_failed`): the first request
       still starts the bridge, as before.
-    - Still owed in 1c: the slice's measured memory in node stats for
-      admission, and the `instance_bridge_*` metrics of §7. Streams through
-      a restarting vmmd still end with it: the RPCs terminate there until P2.
+    - Still owed in 1c: the `instance_bridge_*` metrics of §7. Streams
+      through a restarting vmmd still end with it: the RPCs terminate there
+      until P2.
   - 1d: gate and counters move to the bridge, with ADR-1151 property tests.
 
   After P1, bridges survive vmmd, but streams are still cut, because the

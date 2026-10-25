@@ -59,8 +59,11 @@ another app, for example `shop-api`.
 
 A Compose service that publishes `ports:` gets a public URL. One without
 `ports:` is **internal**: other services in the project can call it, and it has
-no public URL. The plan marks these with `visibility=internal`. See
-[networking](networking.md) for changing visibility later.
+no public URL. Other services are public unless
+[`.gregale/project.yaml`](#without-a-compose-file) says `visibility: internal`.
+The plan lists every public service under **Public on the internet** and marks
+the rest `visibility=internal`. Visibility is set when the app is created; see
+[networking](networking.md) for changing it later.
 
 ## Call another service
 
@@ -89,6 +92,29 @@ services a workload declares in `depends_on`, set
 `x-gregale-service-policy: declared` on it in Compose, or set it once for the
 whole file at the top level. [Networking](networking.md) covers caller
 allowlists, per-route scopes, HTTPS between services and timeouts.
+
+## Without a Compose file
+
+A repository without Compose declares the same things in
+`.gregale/project.yaml` at its root
+([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)):
+
+```yaml
+service_policy: project        # project, declared or account, for every service
+services:
+  billing:
+    visibility: internal       # no public URL; set when the app is created
+    depends_on: [ledger]       # billing gets GREGALE_SERVICE_LEDGER_URL
+  admin:
+    service_policy: declared   # admin may call only what it declares
+```
+
+Service names are the ones the plan shows. The file also applies to Compose
+services, but Compose stays the more specific source: a Compose
+`x-gregale-service-policy` wins, and `depends_on` lists from both are merged.
+A project created before the `project` policy became the default switches by
+setting `service_policy: project` here. An unknown name, key or value fails
+the plan and names the file.
 
 ## Configuration
 
@@ -130,13 +156,19 @@ See [ADR-20261023085230](adr/20261023085230-compose-env-import.md).
 
 ## Pull request previews
 
-A pull request preview runs the changed service and the services it lists in
-`depends_on`. A preview calling a service outside that set would reach
-production, so it is refused by default (`403
-preview_production_dependency_denied`); declare `depends_on` for every service
-a preview needs. See [preview environments](preview-environments.md) and
-[networking](networking.md) for letting chosen production services accept
-preview traffic.
+A pull request preview of a service under the `project` policy runs every
+service of the project that serves calls, built from the pull request's
+branch, so its calls reach the same pull request's siblings
+([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)).
+Workers, jobs and scheduled services join only when a service lists them in
+`depends_on`, so a preview never consumes production work. Each preview
+service counts against the plan's pull request preview allowance.
+
+Under the `declared` policy a preview runs the changed service and the services
+it lists in `depends_on`. A call outside that set would reach production, so it
+is refused by default (`403 preview_production_dependency_denied`). See
+[preview environments](preview-environments.md) and [networking](networking.md)
+for letting chosen production services accept preview traffic.
 
 ## Cold starts and tracing
 

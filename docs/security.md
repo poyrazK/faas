@@ -395,8 +395,10 @@ gregale edge-rules update <rule-id> --mode enforce
 ```
 
 `--challenge-difficulty` (10 to 22, default 16) sets how much work a browser
-does; each step doubles it. `--challenge-pass-ttl` (300 to 86400 seconds)
-sets how long a pass lasts.
+does; each step doubles it. At the default, a laptop solves the page in a
+fraction of a second, and an older mid-range phone in about a second. At
+22, that phone takes 15-20 seconds, so keep high values for attacks.
+`--challenge-pass-ttl` (300 to 86400 seconds) sets how long a pass lasts.
 
 Under attack the difficulty can rise on its own. Set
 `--challenge-max-difficulty` above the difficulty, and while the rule serves

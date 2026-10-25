@@ -2,7 +2,8 @@
 
 Every pull request against a connected GitHub repo gets an
 ephemeral app for the bound workload and its declared transitive
-`depends_on` workload dependencies, deployed on push and routed at
+`depends_on` workload dependencies (every callable project service under the
+`project` service policy), deployed on push and routed at
 per-PR subdomains. They are torn down on PR close (or after the TTL —
 whichever comes first). No CI configuration required; the integration is
 triggered by the GitHub App the customer installed via
@@ -289,10 +290,14 @@ A project PR preview first resolves a service name inside its own account,
 project, and PR. If that workload preview exists, the call stays isolated; a
 preview in another PR, project, or account is never eligible.
 
-On each PR head update, githubd scans the source and provisions only the bound
-workload's transitive `depends_on` app closure, in dependency order. Enqueue
-order does not itself guarantee that a dependency is live before its caller
-starts. Unrelated project workloads are not copied. Retries reuse the same
+On each PR head update, githubd scans the source and provisions the bound
+workload's transitive `depends_on` app closure, in dependency order. When the
+bound workload's service policy is `project`, every other callable workload of
+the project joins it, since the preview may call any of them without declaring
+it; workers, jobs and scheduled workloads join only as declared dependencies
+([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md)).
+Enqueue order does not itself guarantee that a dependency is live before its
+caller starts. Under other policies unrelated project workloads are not copied. Retries reuse the same
 preview rows; closing the PR closes the sibling rows together. Managed services
 are external to this app fan-out. A newly declared dependency with no
 production app gets a preview-only sibling from the PR source, with no

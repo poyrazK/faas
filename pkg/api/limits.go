@@ -2099,6 +2099,9 @@ const (
 	MaxObjectStorageReportAgeSeconds    int64 = 86400
 	ObjectStorageInventoryMaxAgeSeconds int64 = 900
 	ObjectStorageInventoryMaxPages            = 1000
+	// MaxObjectStorageReconcileBuckets bounds one backend's bucket listing in
+	// operator reconciliation after a database restore (ADR-20261025111015).
+	MaxObjectStorageReconcileBuckets = 100_000
 	// One apid's inventory sweep claims due buckets in batches and scans up to
 	// ObjectStorageInventorySweepConcurrency of them at once, starting new
 	// batches until none is due or ObjectStorageInventorySweepBudget has
@@ -6917,11 +6920,12 @@ const (
 	// --- ADR-831 amendment 7: kind=challenge bounds -------------------
 
 	// EdgeChallengeDefaultDifficulty is how many leading zero bits the
-	// browser must find in a SHA-256 hash: about 65,000 hashes, tens to a
-	// few hundred milliseconds in a browser. Each extra bit doubles the
-	// work; MaxEdgeChallengeDifficulty (about 4 million hashes) keeps slow
-	// phones within seconds, and MinEdgeChallengeDifficulty keeps the work
-	// above trivial.
+	// browser must find in a SHA-256 hash: about 65,000 hashes on average
+	// and 196,000 at the 95th percentile, which a 2020 mid-range phone does
+	// in about a second (estimated, ADR-831 amendment 15). Each extra bit
+	// doubles the work: MaxEdgeChallengeDifficulty (about 4 million hashes)
+	// costs such a phone 15-20 s, so it is for attacks, and
+	// MinEdgeChallengeDifficulty keeps the work above trivial.
 	EdgeChallengeDefaultDifficulty = 16
 	MinEdgeChallengeDifficulty     = 10
 	MaxEdgeChallengeDifficulty     = 22
@@ -11940,9 +11944,21 @@ const (
 	// the local vmmd to name the trace of the one request a calling instance
 	// is serving (ADR-1138); past it the call starts its own trace.
 	ServiceTraceInferenceTimeout = 25 * time.Millisecond
+	// Private guest DNS reads the scenario DNS chaos policy for every
+	// *.svc.gregale question, rehearsing or not (ADR-20261024230731). A read
+	// gets ServiceDNSChaosLookupTimeout; after a failed read the node answers
+	// without chaos for ServiceDNSChaosBackoff instead of retrying per question.
+	ServiceDNSChaosLookupTimeout = 250 * time.Millisecond
+	ServiceDNSChaosBackoff       = 5 * time.Second
 	// Scenario TCP impairment bounds are node-wide, independent of plan quotas.
 	ScenarioTCPChaosMaxRoutesPerNode    = 256
 	ScenarioTCPChaosMaxRateKiBPerSecond = 1_000_000
+	// gatewayd-internal persists scenario chaos match counters in atomic
+	// batches of at most ScenarioChaosMatchWriteBatch and holds at most
+	// ScenarioChaosMatchMaxPendingKeys unpersisted counters per node. Guests
+	// choose request correlation IDs, so the cap bounds one run's fan-out.
+	ScenarioChaosMatchWriteBatch     = 1024
+	ScenarioChaosMatchMaxPendingKeys = 65536
 )
 
 // ServiceTCPReservedPorts belong to the HTTP service mesh on every service
