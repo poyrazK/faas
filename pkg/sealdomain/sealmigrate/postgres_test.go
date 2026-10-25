@@ -384,7 +384,7 @@ func TestPostgresMigrateEdge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{PublicAuth: &state.AppPublicAuthUpdate{Mode: api.AppPublicAuthModeBasic, Sealed: basic}}); err != nil {
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{SetPublicAuth: true, PublicAuth: &state.AppPublicAuthUpdate{Mode: api.AppPublicAuthModeBasic, Sealed: basic}}); err != nil {
 		t.Fatal(err)
 	}
 	header, err := secretbox.SealBytes(fleet.Recipient(), "APP_LOG_DRAIN_AUTH_HEADER", []byte("Authorization: Bearer d"), api.AppLogDrainAuthHeaderMaxBytes)
@@ -400,7 +400,7 @@ func TestPostgresMigrateEdge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if report.Resealed < 2 {
+	if report.Scanned < 2 || report.Resealed < 2 {
 		t.Fatalf("report = %+v, want the basic-auth credential and the drain header re-sealed", report)
 	}
 	gotApp, err := store.AppByID(ctx, app.ID)
