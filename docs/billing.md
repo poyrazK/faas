@@ -23,7 +23,9 @@ gregale overage-cap --clear  # remove the cap
 ```
 
 `POST /v1/account/overage-cap` with `{"overage_cap_cents": 500}` (or `null`
-to clear) does the same. A cap of 0 is a pause switch: it counts as reached
+to clear) does the same. It needs the `admin` scope, like plan and billing
+changes: a deploy-scoped key, such as a CI key or an MCP connection allowed to
+write, cannot raise or remove the cap. A cap of 0 is a pause switch: it counts as reached
 immediately, so the account's workloads stop even within the included
 allowance.
 
