@@ -381,6 +381,20 @@ the prompt:
 printf '%s' "$GHCR_TOKEN" | gregale run --registry-username ci --registry-password-stdin ghcr.io/acme/tool:1.4 --version
 ```
 
+If you already ran `docker login`, `--docker-config` uses those credentials
+instead
+([ADR-20261025110000](adr/20261025110000-image-run-docker-config.md)):
+
+```sh
+gregale run --docker-config ~/.docker ghcr.io/acme/tool:1.4 --version
+```
+
+It reads the image registry's entry from that `config.json` (or the
+directory holding it), or asks the credential helper Docker is configured
+with, such as the macOS keychain or Docker Desktop. Identity tokens are
+not supported; use `--registry-username` with an access token for those
+registries.
+
 The credential is stored sealed on the image's runner job and is used for
 that image's registry only. Every run that passes it refreshes it, so it
 survives the runner job being evicted from the image cache. Without it, a
