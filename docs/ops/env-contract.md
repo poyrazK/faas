@@ -465,6 +465,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_INTERNAL_SVC_KEY_SEALED_NAMESPACE` | schedd | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_SVC_PUBKEYS` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
+| `FAAS_INVOKE_HOOK_BACKOFF` | vmmd | `default` |  |  | `` | optional boolean switch: stop per-request invoke extension events to an instance for 30 s after its guest reports no extension endpoint (ADR-20261025150000); production default is off |
 | `FAAS_ISSUE_SLACK_APP_ID` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack app identity; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
 | `FAAS_ISSUE_SLACK_CLIENT_ID` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack OAuth client; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
 | `FAAS_ISSUE_SLACK_CLIENT_SECRET` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack OAuth client secret; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
