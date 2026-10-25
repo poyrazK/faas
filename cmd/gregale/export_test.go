@@ -2445,3 +2445,10 @@ var InspectAttention = inspectAttention
 var RemoveCLITestSandbox = removeCLITestSandbox
 var WorkerScalingMetrics = workerScalingMetrics
 var WorkerMetricLabel = workerMetricLabel
+
+// ADR-20261025110000: registry credentials from a Docker config.
+type DockerCredentialHelper = dockerCredentialHelper
+
+func DockerConfigRegistryAuth(ctx context.Context, configPath, image string, helper DockerCredentialHelper) (*api.ImageRunRegistryAuth, error) {
+	return dockerConfigRegistryAuth(ctx, configPath, image, helper)
+}

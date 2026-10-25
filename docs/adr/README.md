@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Image runs read registry credentials from a Docker config](20261025110000-image-run-docker-config.md)
 - [Manifest-managed S3 gateway and restore reconciliation](20261025090000-object-storage-managed-gateway-and-restore-reconcile.md) — `object_storage.gateway: managed` in the deploy manifest, strict verify fails on an unmanaged gateway, read-only `gregalectl object-storage reconcile` after a PostgreSQL restore
 - [Every capability behind a platform flag](20261023115741-every-capability-behind-a-platform-flag.md)
 - [Per-account realtime preview rollout and realtime apps declared in gregale.yaml](20261019102657-realtime-preview-rollout-and-declared-apps.md)
