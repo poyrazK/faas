@@ -2423,3 +2423,4 @@ func SavedDeployRecovery(outcome string) (resume, hint string) {
 	r := s.recovery("submission")
 	return r.ResumeCommand, r.Hint
 }
+var RoutesAppFlagAsPositional = routesAppFlagAsPositional
