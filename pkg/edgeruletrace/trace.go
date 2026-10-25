@@ -140,6 +140,13 @@ type Input struct {
 	AsyncRequestInvocationsEnabled bool
 	AsyncAppRetryPolicyLoaded      bool
 	AsyncAppRetryPolicy            *api.RetryPolicyDTO
+	// EdgeAnswersLoaded marks the app's edge-answered paths as known. The
+	// gateway answers GET/HEAD on the health path (unless AppHealthPathWakes),
+	// /favicon.ico and /robots.txt itself, before any edge-rule phase.
+	// AppHealthPath is the manifest's health_path, falling back to healthz.
+	EdgeAnswersLoaded  bool
+	AppHealthPath      string
+	AppHealthPathWakes bool
 }
 
 type Result struct {
@@ -694,6 +701,12 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 		return simulation
 	}
 
+	if reason, ok := edgeAnswerReason(input); ok {
+		stopped := stop("complete", "edge_answer", "edge_answer", reason, nil)
+		stopped.Steps[len(stopped.Steps)-1].Kind = "edge_answer"
+		return stopped
+	}
+
 	phases := []string{"route", "app_maintenance", "maintenance", "redirect", "rewrite", "headers", "cors", "declared_routes", "jwt", "ip", "geo", "limit", "throttle", "validate", "challenge", "respond", "async", "cache", "budget", "circuit_breaker", "retry"}
 	for _, phase := range phases {
 		if phase == "app_maintenance" {
@@ -1119,6 +1132,44 @@ func simulateRequest(input Input, rules []api.EdgeRuleResponse) Simulation {
 // declaredRouteAllowed mirrors gatewayd-internal's declared route matcher.
 // The public path/method are supplied separately from the rewritten path so
 // edge rewrites cannot change the app's public contract.
+// EdgeAnswerHealthPath is the health path the gateway answers at the edge:
+// the manifest's health_path, falling back to its readiness healthz path
+// (cmd/gatewayd-internal edgeAnswersFromManifest).
+func EdgeAnswerHealthPath(healthPath, healthz string) string {
+	if strings.TrimSpace(healthPath) != "" {
+		return healthPath
+	}
+	return healthz
+}
+
+// edgeAnswerReason names the static paths the gateway answers itself, after
+// app resolution and the app's consumer gate but before any edge-rule phase,
+// operator auth, limiter or wake (pkg/gateway serveEdgeAnswer). No rule runs
+// for GET or HEAD on them: an enforced rate limit on /healthz traced as a
+// match on production-us and never returned 429 (Hunt 14 H14-49).
+func edgeAnswerReason(input Input) (string, bool) {
+	if !input.EdgeAnswersLoaded || (input.Method != http.MethodGet && input.Method != http.MethodHead) {
+		return "", false
+	}
+	const tail = " itself, before edge rules, rate limiters and wake, so no edge rule runs for this request"
+	switch input.Path {
+	case "/favicon.ico":
+		return "the gateway answers GET and HEAD /favicon.ico from the app's favicon setting" + tail, true
+	case "/robots.txt":
+		return "the gateway answers GET and HEAD /robots.txt from the app's robots setting" + tail, true
+	}
+	healthPath := strings.TrimSpace(input.AppHealthPath)
+	if healthPath == "" {
+		healthPath = "/healthz"
+	} else if !strings.HasPrefix(healthPath, "/") {
+		healthPath = "/" + healthPath
+	}
+	if input.Path == healthPath && !input.AppHealthPathWakes {
+		return "the gateway answers GET and HEAD " + healthPath + " (the app's health path) from the last wake's health state" + tail, true
+	}
+	return "", false
+}
+
 func declaredRouteAllowed(input Input, requestPath, requestMethod string) (allowed, unavailable, loaded bool) {
 	if input.DeclaredRoutesLoaded || len(input.DeclaredRoutes) > 0 {
 		allowed, err := matchDeclaredRoutes(input.DeclaredRoutes, requestPath, requestMethod)
