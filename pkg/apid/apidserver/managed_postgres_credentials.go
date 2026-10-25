@@ -42,6 +42,9 @@ func (s *appSecretCredentialSink) SealCredential(ctx context.Context, binding ma
 	}
 	return credentialdelivery.SealBound(binding, material, s.recipient(), runtimeSecretBinding(binding.AccountID), s.hmacKey())
 }
+func (s *appSecretCredentialSink) PublishSealed(ctx context.Context, binding managedpostgres.Binding, sealed managedpostgres.SealedCredential) error {
+	return s.delivery.PublishSealed(ctx, binding, sealed)
+}
 func (s *appSecretCredentialSink) Delete(ctx context.Context, binding managedpostgres.Binding) error {
 	return s.delivery.Delete(ctx, binding)
 }

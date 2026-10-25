@@ -1026,6 +1026,23 @@ const ScheduledReleaseStartGrace = time.Hour
 const ScheduledReleaseNotifyChannelsMax = 5
 const ScheduledReleaseListMax = 50
 
+// Database switches (ADR-20261023181931). apid advances active switches
+// every DatabaseSwitchCheckInterval, DatabaseSwitchBatch at a time, under a
+// DatabaseSwitchLease. A switch fails when its restored copy is not ready
+// within DatabaseSwitchRestoreTimeout, when in-flight members of the fenced
+// app have not settled within DatabaseSwitchSettleTimeout, or when its drain
+// has not retired every instance within DatabaseSwitchDrainTimeout; the two
+// fenced waits bound how long the app is unavailable before an abort. A
+// listing returns at most DatabaseSwitchListMax switches. Plan-independent:
+// these bound one operation, not what a plan may use.
+const DatabaseSwitchCheckInterval = 5 * time.Second
+const DatabaseSwitchBatch = 10
+const DatabaseSwitchLease = 2 * time.Minute
+const DatabaseSwitchRestoreTimeout = time.Hour
+const DatabaseSwitchSettleTimeout = 2 * time.Minute
+const DatabaseSwitchDrainTimeout = 10 * time.Minute
+const DatabaseSwitchListMax = 50
+
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
 // failed when it leaves activation without serving or when
