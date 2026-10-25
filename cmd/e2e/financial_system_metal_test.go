@@ -222,9 +222,21 @@ func TestFinancialSystemDaemonRecoveryMetal(t *testing.T) {
 		return
 	}
 	t.Run("owner_crash", func(t *testing.T) {
-		if got := request(t, apps[1].Slug); got != http.StatusOK {
-			t.Fatalf("request after recovery: %d", got)
+		// schedd and vmmd have just restarted after the outage; a wake they
+		// cannot take yet is a retryable 503, as for any client. Recovery
+		// must still serve funded traffic within the window.
+		var statuses []int
+		for deadline := time.Now().Add(30 * time.Second); ; time.Sleep(time.Second) {
+			got := request(t, apps[1].Slug)
+			statuses = append(statuses, got)
+			if got == http.StatusOK {
+				break
+			}
+			if got != http.StatusServiceUnavailable || time.Now().After(deadline) {
+				t.Fatalf("request after recovery: %v", statuses)
+			}
 		}
+		t.Logf("financial-recovery-request: statuses=%v", statuses)
 		instances, err := e2etest.WaitForInstanceState(t.Context(), t, pool, apps[1].ID, state.StateRunning, 30*time.Second)
 		live := financialSystemRunning(instances)
 		if err != nil || len(live) != 1 {
