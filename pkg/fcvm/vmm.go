@@ -83,6 +83,9 @@ type JailerVMM struct {
 	// freePageReporting attaches a free-page-reporting balloon to every cold
 	// boot (ADR-907).
 	freePageReporting bool
+	// cpuTemplate is the Firecracker CPU template every boot uses
+	// (ADR-20261024225612). Empty boots with the host's CPUID.
+	cpuTemplate string
 	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
 	// nil keeps drive0 on virtio-blk.
 	pmemBase *pmemBaseStore
@@ -1363,6 +1366,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	_ = v.registerLeaseRing(ctx, l)
 
 	cfg = v.withBalloon(cfg)
+	cfg = v.withCPUTemplate(cfg)
 	cfg = v.withPmemBase(l, cfg)
 	cfg = v.withRestoreReseedMode(l, cfg)
 	cfg = withBlockRateLimit(l, cfg)

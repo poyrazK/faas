@@ -107,6 +107,12 @@ type Config struct {
 	// loop (ADR-20261024105607). Off by default; FAAS_RESTORE_RESEED_THREAD
 	// overrides TOML.
 	RestoreReseedThread bool `toml:"restore_reseed_thread"`
+	// CPUTemplate is the Firecracker CPU template every guest boots with
+	// (ADR-20261024225612), e.g. "T2CL" for a cell that mixes Cascade
+	// Lake and Ice Lake nodes. Empty (the default) boots with the host's
+	// CPUID. vmmd refuses to start when the host CPU is not one the
+	// template is documented as safe on. FAAS_CPU_TEMPLATE overrides TOML.
+	CPUTemplate string `toml:"cpu_template"`
 	// QuietPause enables ADR-1151 quiet pause: vmmd pauses an eligible
 	// instance's vCPUs between requests and resumes it on the next one.
 	// Off by default; schedd decides which instances are eligible.
@@ -332,6 +338,11 @@ type Config struct {
 // fallback (legacy default-local single-box path) is
 // `unix://`+SocketPath.
 type ComputeNodeConfig struct {
+	// CPUTemplate and CPUModel are not configuration: resolveCPUIdentity
+	// fills them from cpu_template and the probed host CPU before
+	// registration (ADR-20261024225612).
+	CPUTemplate        string `toml:"-"`
+	CPUModel           string `toml:"-"`
 	NodeName           string `toml:"name"`                 // defaults to short hostname when empty
 	TargetURL          string `toml:"target_url"`           // dial target written to compute_nodes.target_url
 	VPCPUs             int    `toml:"vpcpus"`               // total vCPUs this box offers
@@ -828,6 +839,12 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_QUIET_PAUSE must be a boolean (got %q)", v)
 		}
 		c.QuietPause = enabled
+	}
+	if v, ok := os.LookupEnv("FAAS_CPU_TEMPLATE"); ok {
+		c.CPUTemplate = strings.TrimSpace(v)
+	}
+	if !fcvm.ValidCPUTemplate(c.CPUTemplate) {
+		return nil, fmt.Errorf("vmmd: cpu_template %q is not one of %s (empty for none)", c.CPUTemplate, strings.Join(fcvm.CPUTemplateNames(), ", "))
 	}
 	if v := os.Getenv("FAAS_RUNTIME_SECRET_BINDING_REQUIRED"); v != "" {
 		required, perr := strconv.ParseBool(v)

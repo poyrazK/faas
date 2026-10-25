@@ -759,3 +759,29 @@ var QueueDeadLetterError = queueDeadLetterError
 var PrimeRuntimeBusyBackoff = &primeRuntimeBusyBackoff
 var ApplicationStandardRuntimeProblem = applicationStandardRuntimeProblem
 var HealthcheckGRPCForApp = healthcheckGRPCForApp
+
+// ADR-20261024225612 (CPU-compatible restore, per-platform snapshot slots).
+var (
+	SnapshotRestorableOn      = snapshotRestorableOn
+	LegacySnapshotsRestorable = legacySnapshotsRestorable
+)
+
+func (r *Engine) XReusableSnapshotOn(ctx context.Context, depID, tier, nodeID string) (state.Snapshot, bool) {
+	return r.reusableSnapshotOn(ctx, depID, tier, nodeID)
+}
+
+func (r *Engine) XEmitSnapshotWritten(ctx context.Context, nodeID string) {
+	r.emitSnapshotWritten(ctx, "ins", time.Time{}, "dep", nodeID, "", "key", SnapshotBytes{}, state.SnapshotTierInit, nil)
+}
+
+// LastPayload is the newest notification payload on channel.
+func (r *fakeNotifier) LastPayload(channel string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := len(r.events) - 1; i >= 0; i-- {
+		if r.events[i].channel == channel {
+			return r.events[i].payload, true
+		}
+	}
+	return "", false
+}
