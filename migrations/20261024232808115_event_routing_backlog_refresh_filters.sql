@@ -67,6 +67,7 @@ CREATE TRIGGER event_routing_backlog_recipient AFTER INSERT OR DELETE ON event_f
     FOR EACH ROW EXECUTE FUNCTION project_event_routing_backlog_recipient();
 -- The view reads these recipient columns; other updates (claim tokens,
 -- generation counters, deadlines) cannot change the projection.
+DROP TRIGGER IF EXISTS event_routing_backlog_recipient_update ON event_fanout_recipients;
 CREATE TRIGGER event_routing_backlog_recipient_update
     AFTER UPDATE OF state, total_attempts, capacity_deferrals, available_at, lease_until, recipient, receipt_position, outbox_id, subscription_id
     ON event_fanout_recipients FOR EACH ROW
