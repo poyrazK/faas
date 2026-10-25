@@ -427,6 +427,9 @@ from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
 from .daily_usage_response import DailyUsageResponse
+from .database_switch import DatabaseSwitch
+from .database_switch_drain import DatabaseSwitchDrain
+from .database_switch_phase import DatabaseSwitchPhase
 from .debug_coverage_response import DebugCoverageResponse
 from .debug_coverage_signal import DebugCoverageSignal
 from .debug_critical_path_segment import DebugCriticalPathSegment
@@ -2868,6 +2871,9 @@ __all__ = (
     "DailyUsageListResponse",
     "DailyUsagePoint",
     "DailyUsageResponse",
+    "DatabaseSwitch",
+    "DatabaseSwitchDrain",
+    "DatabaseSwitchPhase",
     "DebugCoverageResponse",
     "DebugCoverageSignal",
     "DebugCriticalPathSegment",
