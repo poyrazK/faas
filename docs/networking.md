@@ -170,6 +170,32 @@ seconds. Send a ping or an application heartbeat at least every 60 seconds,
 and reconnect when the connection closes. A connection that carries traffic
 stays open.
 
+## Public gRPC
+
+When Gregale itself refuses a gRPC call, before it reaches your app, the
+client receives a gRPC status, not an HTTP error page. Examples are a missing
+bearer token, a rate limit, a timed-out wake, or maintenance. `grpc-message`
+carries the reason and the stable problem code, for example
+`Authentication required: … (unauthorized)`.
+
+| Refusal (HTTP) | gRPC status |
+|---|---|
+| 400, 422 | `INVALID_ARGUMENT` |
+| 401 | `UNAUTHENTICATED` |
+| 402, 412, 428 | `FAILED_PRECONDITION` |
+| 403 | `PERMISSION_DENIED` |
+| 404, 410 | `NOT_FOUND` |
+| 405, 501 | `UNIMPLEMENTED` |
+| 408, 504 | `DEADLINE_EXCEEDED` |
+| 409 | `ABORTED` |
+| 413, 431, 429 | `RESOURCE_EXHAUSTED` |
+| 500 | `INTERNAL` |
+| 502, 503 | `UNAVAILABLE` |
+| anything else | `UNKNOWN` |
+
+Your app's own gRPC responses, including their `grpc-status` trailers, pass
+through unchanged. gRPC-Web requests are not translated.
+
 ## Internal services
 
 Apps in the same account reach one another by name, on every plan. There is no
