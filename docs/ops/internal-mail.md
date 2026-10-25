@@ -3218,8 +3218,15 @@ per-period receipt commit together. Failed persistence, capacity exhaustion,
 recovery hold or gate withdrawal leaves the transition retryable. Duplicate
 ticks cannot create another notice. No historical deletion is backfilled.
 
+A non-payment deletion includes the account's managed PostgreSQL databases,
+which apid deletes when the 30-day grace ends
+([ADR-20261024150500](../adr/20261024150500-account-deletion-includes-managed-postgres.md)).
+The operator kill switch `FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES=off`, set on
+apid and meterd, stops that and restores the guard below.
+
 A deletion guard is not an outage. When the account still owns live managed
-PostgreSQL databases (or shared app ownership is unresolved), apid answers
+PostgreSQL databases and the kill switch is off (or shared app ownership is
+unresolved), apid answers
 `409` with `{"reason":"managed_postgres_databases","managed_postgres_databases":N}`
 (or `shared_app_ownership`) and commits nothing. Meterd logs
 `meter: non-payment deletion blocked` with the account and reason, keeps the
@@ -3228,7 +3235,7 @@ store transition reports the same guard. The gauge
 `meterd_dunning_deletion_blocked_accounts{reason}` counts the accounts the last
 sweep could not advance; a non-zero `managed_postgres_databases` value means
 suspended accounts keep provider databases running. Meterd never deletes
-customer databases.
+customer databases; only apid's grace sweep does.
 
 The frozen V1 body retains the original overdue timestamp and the actual
 hard-deletion deadline: saved `deletion_requested_at` plus the canonical account

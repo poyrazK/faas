@@ -1321,7 +1321,10 @@ type Store interface {
 	// rollup; PgStore runs a SELECT … WHERE account_id = $1 AND minute >= $2.
 	// Empty since means "every row" — used by the GDPR export bundle.
 	UsageByAccount(ctx context.Context, accountID string, since time.Time) ([]Usage, error)
-	MarkAccountDeletionPending(ctx context.Context, id string) error
+	// MarkAccountDeletionPending with IncludingManagedPostgres(true) lets the
+	// account into deleted_pending while it owns live personal managed
+	// PostgreSQL databases; the grace sweep deletes them (ADR-20261024150500).
+	MarkAccountDeletionPending(ctx context.Context, id string, opts ...AccountDeletionOption) error
 	RestoreAccount(ctx context.Context, id string) error
 
 	// Dunning + quota warning (spec §4.7). These three are the load-
@@ -1345,8 +1348,9 @@ type Store interface {
 	// destination is past_due. Returns ErrNotFound when the row is
 	// missing OR its status didn't match `from` (the latter is the
 	// redelivery race: two ticks firing close together on the same
-	// overdue row, the second must not double-transition).
-	MarkDunningStep(ctx context.Context, accountID string, from, to AccountStatus) error
+	// overdue row, the second must not double-transition). Options apply
+	// only when `to` is deleted_pending.
+	MarkDunningStep(ctx context.Context, accountID string, from, to AccountStatus, opts ...AccountDeletionOption) error
 
 	// Mail suppression (issue #246 acceptance item 7, ADR-115 §D.3).
 	// RecordMailSuppression writes a row for a hard-bounce or

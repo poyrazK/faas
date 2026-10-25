@@ -13331,14 +13331,19 @@ CREATE FUNCTION public.guard_account_managed_postgres_databases() RETURNS trigge
     AS $$
 DECLARE live bigint;
 BEGIN
-    IF NEW.status = 'deleted_pending' THEN
-        SELECT count(*) INTO live FROM managed_postgres_databases d JOIN orgs o ON o.id=d.org_id
-        WHERE d.account_id=NEW.id AND d.state<>'deleted'
-          AND (o.personal_org OR NOT o.resource_ownership_enabled);
-        IF live > 0 THEN
-            RAISE EXCEPTION 'account has managed postgres databases'
-                USING ERRCODE = '23514', CONSTRAINT = 'account_has_managed_postgres_databases', DETAIL = live::text;
-        END IF;
+    IF NEW.status <> 'deleted_pending' THEN
+        NEW.deletion_includes_managed_postgres := false;
+        RETURN NEW;
+    END IF;
+    IF NEW.deletion_includes_managed_postgres THEN
+        RETURN NEW;
+    END IF;
+    SELECT count(*) INTO live FROM managed_postgres_databases d JOIN orgs o ON o.id=d.org_id
+    WHERE d.account_id=NEW.id AND d.state<>'deleted'
+      AND (o.personal_org OR NOT o.resource_ownership_enabled);
+    IF live > 0 THEN
+        RAISE EXCEPTION 'account has managed postgres databases'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_has_managed_postgres_databases', DETAIL = live::text;
     END IF;
     RETURN NEW;
 END;
@@ -19374,6 +19379,7 @@ CREATE TABLE public.accounts (
     subscription_mail_revision bigint DEFAULT 1 NOT NULL,
     deployment_mail_revision bigint DEFAULT 1 NOT NULL,
     mfa_totp_last_step bigint,
+    deletion_includes_managed_postgres boolean DEFAULT false NOT NULL,
     CONSTRAINT accounts_abuse_hold_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'operator'::text]))))),
     CONSTRAINT accounts_billing_address_length_chk CHECK (((billing_address IS NULL) OR ((char_length(billing_address) >= 1) AND (char_length(billing_address) <= 1000)))),
     CONSTRAINT accounts_billing_mail_revision_check CHECK ((billing_mail_revision > 0)),
@@ -77740,7 +77746,7 @@ CREATE TRIGGER aa_project_workload_owner BEFORE INSERT OR UPDATE OF project_id, 
 -- Name: accounts account_managed_postgres_databases_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER account_managed_postgres_databases_guard BEFORE UPDATE OF status ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.guard_account_managed_postgres_databases();
+CREATE TRIGGER account_managed_postgres_databases_guard BEFORE UPDATE OF status, deletion_includes_managed_postgres ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.guard_account_managed_postgres_databases();
 
 
 --
