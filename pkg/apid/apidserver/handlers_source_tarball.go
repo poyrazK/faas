@@ -135,6 +135,10 @@ func (s *server) handleSourceTarballDeploy(w http.ResponseWriter, r *http.Reques
 			"Bad multipart", err.Error()))
 		return
 	}
+	if _, sent := r.MultipartForm.Value["overrides"]; sent {
+		api.WriteProblem(w, multipartOverridesProblem())
+		return
+	}
 
 	tarballFile, _, err := r.FormFile(fieldNameTarball)
 	if err != nil {
