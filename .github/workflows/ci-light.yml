@@ -371,6 +371,8 @@ jobs:
           python3 scripts/ci/select_importers_test.py
           python3 scripts/ci/cancel_conflicted_pr_runs_test.py
           bash scripts/ci/light_diff_base_test.sh
+      - name: curl installer and its cli-channel pointers
+        run: make cli-install-check
       - name: deploy Action scripts (vendored CLI, push-head guard, environment preflight)
         run: |
           make deploy-action-cli-check
