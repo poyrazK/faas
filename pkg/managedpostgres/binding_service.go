@@ -342,6 +342,38 @@ func (s *BindingService) Delete(ctx context.Context, accountID, bindingID string
 	return s.finishDelete(ctx, binding)
 }
 
+// revokeRetiredCredentials revokes every provider credential generation of
+// a binding a rollback database switch deleted (ADR-20261023181931). A
+// database that no longer exists took its credentials with it.
+func (s *BindingService) revokeRetiredCredentials(ctx context.Context, binding Binding) error {
+	database, err := s.databases.Get(ctx, binding.DatabaseNamespace(), binding.DatabaseID)
+	if errors.Is(err, ErrNotFound) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if database.ProviderResourceID == "" {
+		return nil
+	}
+	backend, err := s.registry.Resolve(database.BackendID, database.BackendFingerprint)
+	if err != nil {
+		return ErrUnavailable
+	}
+	for _, generation := range []int64{binding.CredentialGeneration, binding.RotationPreviousGeneration} {
+		if generation < 1 {
+			continue
+		}
+		providerContext, cancel := context.WithTimeout(ctx, s.providerTimeout)
+		err := backend.Provider.RevokeCredentials(providerContext, bindingCredentialRequestForGeneration(binding, databaseDataResource(database), generation))
+		cancel()
+		if err != nil && !errors.Is(err, ErrNotFound) {
+			return normalizeProviderError(err)
+		}
+	}
+	return nil
+}
+
 // ReconcileRotationCleanup retires the old provider identity only after the
 // scheduler has marked the rotation wake as delivered. Revoke is idempotent,
 // so an expired lease or process crash is safe to retry.

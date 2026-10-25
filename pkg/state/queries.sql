@@ -11842,7 +11842,7 @@ SELECT * FROM managed_postgres_cutovers WHERE account_id=sqlc.arg(account_id)::t
 
 -- name: GetActiveManagedPostgresCutover :one
 SELECT * FROM managed_postgres_cutovers WHERE account_id=sqlc.arg(account_id)::text::uuid
-AND app_id=sqlc.arg(app_id)::text::uuid AND scope=sqlc.arg(scope)::text AND state<>'cancelled';
+AND app_id=sqlc.arg(app_id)::text::uuid AND scope=sqlc.arg(scope)::text AND state NOT IN ('cancelled','activated');
 
 -- name: ListManagedPostgresCutoverCredentials :many
 SELECT * FROM managed_postgres_cutover_credentials WHERE cutover_id=sqlc.arg(id)::text::uuid ORDER BY environment_key;
@@ -11910,9 +11910,10 @@ WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uui
 AND lease_token=sqlc.arg(token)::text AND lease_until>sqlc.arg(now);
 
 -- name: CancelManagedPostgresCutover :one
+-- An activated cutover is final (ADR-20261023181931); cancelling it matches no row.
 UPDATE managed_postgres_cutovers SET state=CASE WHEN state='cancelled' THEN state ELSE 'cancelling' END,verified_at=NULL,
 retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)
-WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid RETURNING *;
+WHERE id=sqlc.arg(id)::text::uuid AND account_id=sqlc.arg(account_id)::text::uuid AND state<>'activated' RETURNING *;
 
 -- name: CancelDeletedOwnerManagedPostgresCutovers :exec
 UPDATE managed_postgres_cutovers c SET state='cancelling',verified_at=NULL,retry_at=sqlc.arg(now)::timestamptz,updated_at=sqlc.arg(now)

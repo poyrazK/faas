@@ -41,6 +41,11 @@ class RollbackRequest:
     """Roll back although release commands ran after the target last served (ADR-1448). Rollback does not undo
     them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks
     never set it."""
+    restore_databases: bool | Unset = UNSET
+    """Also restore the managed PostgreSQL database the crossed release commands migrated to just before the
+    earliest of them, and switch the app to that copy (ADR-20261023181931). Requires acknowledge_releases and the
+    postgres:manage scope; cannot be combined with expected_current_deployment_id. The response carries
+    database_switch; the code rollback happens inside it while the app is fenced."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -60,6 +65,8 @@ class RollbackRequest:
 
         acknowledge_releases = self.acknowledge_releases
 
+        restore_databases = self.restore_databases
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update({})
@@ -73,6 +80,8 @@ class RollbackRequest:
             field_dict["reason"] = reason
         if acknowledge_releases is not UNSET:
             field_dict["acknowledge_releases"] = acknowledge_releases
+        if restore_databases is not UNSET:
+            field_dict["restore_databases"] = restore_databases
 
         return field_dict
 
@@ -104,12 +113,15 @@ class RollbackRequest:
 
         acknowledge_releases = d.pop("acknowledge_releases", UNSET)
 
+        restore_databases = d.pop("restore_databases", UNSET)
+
         rollback_request = cls(
             target_deployment_id=target_deployment_id,
             alert_rule_id=alert_rule_id,
             expected_current_deployment_id=expected_current_deployment_id,
             reason=reason,
             acknowledge_releases=acknowledge_releases,
+            restore_databases=restore_databases,
         )
 
         rollback_request.additional_properties = d

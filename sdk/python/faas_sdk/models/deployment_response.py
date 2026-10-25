@@ -50,6 +50,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.app_release_review import AppReleaseReview
     from ..models.build_plan import BuildPlan
+    from ..models.database_switch import DatabaseSwitch
     from ..models.deployment_configuration_status import DeploymentConfigurationStatus
     from ..models.deployment_healthcheck import DeploymentHealthcheck
     from ..models.deployment_liveness_probe import DeploymentLivenessProbe
@@ -104,6 +105,10 @@ class DeploymentResponse:
     """Compatibility hold and durable recovery progress for a deployment awaiting promotion."""
     scheduled_release: ScheduledRelease | Unset = UNSET
     """A release built ahead of time that starts its rollout at release_at (ADR-20261021152201)."""
+    database_switch: DatabaseSwitch | Unset = UNSET
+    """A rollback that restores the app's managed PostgreSQL database with the code (ADR-20261023181931). The
+    database is restored to restore_point as a new database, and the app moves to it and to the target release while
+    it is fenced."""
     durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset = UNSET
     """Observational validator readiness on deployment detail; not a reservation or code-purity attestation."""
     stage_state: DeploymentStageState | Unset = UNSET
@@ -339,6 +344,10 @@ class DeploymentResponse:
         scheduled_release: dict[str, Any] | Unset = UNSET
         if not isinstance(self.scheduled_release, Unset):
             scheduled_release = self.scheduled_release.to_dict()
+
+        database_switch: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.database_switch, Unset):
+            database_switch = self.database_switch.to_dict()
 
         durable_entity_validator: dict[str, Any] | Unset = UNSET
         if not isinstance(self.durable_entity_validator, Unset):
@@ -675,6 +684,8 @@ class DeploymentResponse:
             field_dict["promotion_hold"] = promotion_hold
         if scheduled_release is not UNSET:
             field_dict["scheduled_release"] = scheduled_release
+        if database_switch is not UNSET:
+            field_dict["database_switch"] = database_switch
         if durable_entity_validator is not UNSET:
             field_dict["durable_entity_validator"] = durable_entity_validator
         if stage_state is not UNSET:
@@ -804,6 +815,7 @@ class DeploymentResponse:
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
         from ..models.app_release_review import AppReleaseReview
         from ..models.build_plan import BuildPlan
+        from ..models.database_switch import DatabaseSwitch
         from ..models.deployment_configuration_status import DeploymentConfigurationStatus
         from ..models.deployment_healthcheck import DeploymentHealthcheck
         from ..models.deployment_liveness_probe import DeploymentLivenessProbe
@@ -873,6 +885,13 @@ class DeploymentResponse:
             scheduled_release = UNSET
         else:
             scheduled_release = ScheduledRelease.from_dict(_scheduled_release)
+
+        _database_switch = d.pop("database_switch", UNSET)
+        database_switch: DatabaseSwitch | Unset
+        if isinstance(_database_switch, Unset):
+            database_switch = UNSET
+        else:
+            database_switch = DatabaseSwitch.from_dict(_database_switch)
 
         _durable_entity_validator = d.pop("durable_entity_validator", UNSET)
         durable_entity_validator: DurableEntityValidatorDeploymentInfo | Unset
@@ -1458,6 +1477,7 @@ class DeploymentResponse:
             worker_drain=worker_drain,
             promotion_hold=promotion_hold,
             scheduled_release=scheduled_release,
+            database_switch=database_switch,
             durable_entity_validator=durable_entity_validator,
             stage_state=stage_state,
             dev_patch=dev_patch,

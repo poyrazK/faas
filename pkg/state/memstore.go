@@ -389,6 +389,9 @@ type MemStore struct {
 	releaseApprovalEvents   map[string]ReleaseApprovalEvent
 	// scheduledReleases mirrors scheduled_releases (ADR-20261021152201).
 	scheduledReleases map[string]ScheduledRelease
+	// databaseSwitches mirrors release_database_switches
+	// (ADR-20261023181931).
+	databaseSwitches map[string]DatabaseSwitch
 	// Snapshot restore reservations are separate from mu so the coordinator
 	// can serialize only its short lease/count critical section.
 	snapshotRestorePressureMu sync.Mutex

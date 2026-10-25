@@ -311,30 +311,32 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 
 // --- get --------------------------------------------------------------------
 
-// getAlertRule resolves the rule + verifies the customer owns it.
-// AlertRuleByID does NOT filter by account, so the IDOR check is
-// load-bearing — a stolen API key must not be able to read a
-// foreign account's rule by id. Mirrors handlers_ext.go:789.
-func (s *server) getAlertRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	id := r.PathValue("id")
+// alertRuleForSlug loads rule id as the {slug} app sees it: its own rules
+// and the account-wide ones its list shows. AlertRuleByID does NOT filter by
+// account, so the account check stops a stolen key reading a foreign
+// account's rule by id. The app check matters inside one account: an
+// organization's company apps and their creator's personal apps share
+// AccountID, and appaccess authorized the caller for {slug} only, so a
+// removed creator or an app-bound key must not reach another app's rule
+// through it.
+func (s *server) alertRuleForSlug(w http.ResponseWriter, r *http.Request, acct state.Account, id string) (state.AlertRule, bool) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return state.AlertRule{}, false
+	}
 	row, err := s.store.AlertRuleByID(r.Context(), id)
-	if err != nil {
+	if err != nil || row.AccountID != acct.ID || row.AppID != "" && row.AppID != app.ID {
 		s.notFound(w, "no such alert rule")
-		return
+		return state.AlertRule{}, false
 	}
-	if row.AccountID != acct.ID {
-		s.notFound(w, "no such alert rule")
+	return row, true
+}
+
+// getAlertRule returns the rule if the {slug} app may see it.
+func (s *server) getAlertRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
+	row, ok := s.alertRuleForSlug(w, r, acct, r.PathValue("id"))
+	if !ok {
 		return
-	}
-	// Cross-account app check (only when the rule is app-scoped).
-	// Account-wide rules (AppID == "") skip this — they don't have
-	// an app to verify against.
-	if row.AppID != "" {
-		app, err := s.store.AppByID(r.Context(), row.AppID)
-		if err != nil || app.AccountID != acct.ID {
-			s.notFound(w, "no such alert rule")
-			return
-		}
 	}
 	writeJSON(w, http.StatusOK, s.alertRuleResponseWithChannels(r.Context(), row))
 }
@@ -354,27 +356,13 @@ func (s *server) getAlertRule(w http.ResponseWriter, r *http.Request, acct state
 // partial index alert_deliveries_rule_fired_production_idx
 // (migrations/00528).
 //
-// Auth: same scope as getAlertRule (read surface). The IDOR check
-// uses AlertRuleByID + an AccountID match — mirroring getAlertRule
-// line-by-line so a customer cannot probe another account's
-// delivery ledger by guessing rule IDs.
+// Auth: same scope as getAlertRule (read surface), and the same
+// alertRuleForSlug check, so a caller cannot probe another account's
+// or another app's delivery ledger by guessing rule IDs.
 func (s *server) listAlertRuleDeliveries(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	row, err := s.store.AlertRuleByID(r.Context(), id)
-	if err != nil {
-		s.notFound(w, "no such alert rule")
+	if _, ok := s.alertRuleForSlug(w, r, acct, id); !ok {
 		return
-	}
-	if row.AccountID != acct.ID {
-		s.notFound(w, "no such alert rule")
-		return
-	}
-	if row.AppID != "" {
-		app, err := s.store.AppByID(r.Context(), row.AppID)
-		if err != nil || app.AccountID != acct.ID {
-			s.notFound(w, "no such alert rule")
-			return
-		}
 	}
 	includeTest, _ := strconv.ParseBool(r.URL.Query().Get("include_test"))
 	limit := 50
@@ -421,21 +409,9 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		return
 	}
 	id := r.PathValue("id")
-	row, err := s.store.AlertRuleByID(r.Context(), id)
-	if err != nil {
-		s.notFound(w, "no such alert rule")
+	row, ok := s.alertRuleForSlug(w, r, acct, id)
+	if !ok {
 		return
-	}
-	if row.AccountID != acct.ID {
-		s.notFound(w, "no such alert rule")
-		return
-	}
-	if row.AppID != "" {
-		app, err := s.store.AppByID(r.Context(), row.AppID)
-		if err != nil || app.AccountID != acct.ID {
-			s.notFound(w, "no such alert rule")
-			return
-		}
 	}
 	if req.MCPReadinessScope != nil && *req.MCPReadinessScope != row.MCPReadinessScope {
 		api.WriteProblem(w, api.ErrAlertRuleInvalid("readiness alert environment cannot change; create a new rule"))
@@ -606,21 +582,9 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 // audit row would be empty.
 func (s *server) deleteAlertRule(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	id := r.PathValue("id")
-	row, err := s.store.AlertRuleByID(r.Context(), id)
-	if err != nil {
-		s.notFound(w, "no such alert rule")
+	row, ok := s.alertRuleForSlug(w, r, acct, id)
+	if !ok {
 		return
-	}
-	if row.AccountID != acct.ID {
-		s.notFound(w, "no such alert rule")
-		return
-	}
-	if row.AppID != "" {
-		app, err := s.store.AppByID(r.Context(), row.AppID)
-		if err != nil || app.AccountID != acct.ID {
-			s.notFound(w, "no such alert rule")
-			return
-		}
 	}
 	if err := s.store.DeleteAlertRule(r.Context(), id); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
@@ -671,21 +635,9 @@ func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	id := r.PathValue("id")
-	row, err := s.store.AlertRuleByID(r.Context(), id)
-	if err != nil {
-		s.notFound(w, "no such alert rule")
+	row, ok := s.alertRuleForSlug(w, r, acct, id)
+	if !ok {
 		return
-	}
-	if row.AccountID != acct.ID {
-		s.notFound(w, "no such alert rule")
-		return
-	}
-	if row.AppID != "" {
-		app, err := s.store.AppByID(r.Context(), row.AppID)
-		if err != nil || app.AccountID != acct.ID {
-			s.notFound(w, "no such alert rule")
-			return
-		}
 	}
 	plaintext := []byte(req.WebhookSecret)
 	recipient := hostSecretRecipient()

@@ -203,10 +203,13 @@ type server struct {
 	clonePostgresContentsReadPool *copycontents.ReadPool
 	cloneWorkerAdmission          func(context.Context) error
 	// Installed only by private wiring for an independently qualified owner.
-	cloneWorkloadRetirementDriver    cloneCheckpointWorkloadRetirementDriver
-	managedPostgresReconciler        *managedpostgres.Reconciler
-	managedPostgresBindings          *managedpostgres.BindingService
-	managedPostgresCutovers          *managedpostgres.CutoverService
+	cloneWorkloadRetirementDriver cloneCheckpointWorkloadRetirementDriver
+	managedPostgresReconciler     *managedpostgres.Reconciler
+	managedPostgresBindings       *managedpostgres.BindingService
+	managedPostgresCutovers       *managedpostgres.CutoverService
+	// databaseSwitchDrainOverride feeds the database switch worker drain
+	// evidence on stores without schedd's drain plans (tests).
+	databaseSwitchDrainOverride      state.DatabaseSwitchDrainStore
 	managedPostgresBindingReconciler *managedpostgres.BindingReconciler
 	managedPostgresUsageCollector    *managedpostgres.UsageCollector
 	managedPostgresHealthCollector   *managedpostgres.HealthCollector
@@ -2951,6 +2954,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/builds/{id}/sbom", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getBuildSbom)))
 	mux.HandleFunc("GET /v1/apps/{slug}/rollbacks/{operation}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getCheckedRollback)))
 	mux.HandleFunc("POST /v1/apps/{slug}/rollback", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.rollbackApp)))))
+	// ADR-20261023181931: rollbacks that restore the database.
+	mux.HandleFunc("GET /v1/apps/{slug}/database-switches", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.listDatabaseSwitches)))
+	mux.HandleFunc("GET /v1/apps/{slug}/database-switches/{id}", s.authLimited(s.requireScope(api.ScopesReadSurface...)(s.getDatabaseSwitch)))
+	mux.HandleFunc("POST /v1/apps/{slug}/database-switches/{id}/cancel", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.cancelDatabaseSwitch))))
 	// SAFE-RELEASES-R (issue #976 / ADR-122): the operator
 	// manual-rollout-recovery escape hatch. The CLI subcommand
 	// `gregale rollouts recover <slug>` is the canonical caller;
