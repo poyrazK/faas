@@ -1,0 +1,22 @@
+# ADR-20261025111824: A Compose postgres service becomes a managed database
+
+- **Status:** accepted
+- **Date:** 2026-10-25
+- **Amends:** the Compose datastore deny-list (`pkg/reposcan/denylist.go`, `docs/storage.md`): `postgres` images, where managed PostgreSQL is open to the account, are provided rather than only listed
+- **Decision:** At a reviewed project apply, a Compose service whose image is `postgres` becomes a managed PostgreSQL database named `<project>-<service>`, bound to the project services that use it.
+  - **Who uses it:** a service with a Compose `environment` key whose value points at the database service (`DATABASE_URL: postgres://app:secret@db:5432/app`) gets that key bound. A service that `depends_on` it without such a key, and without its own value for the conventional key, gets `DATABASE_URL`.
+  - **Never rebinds.** A key that is already configured on the app in the deploy's environment, as a variable, a secret or an existing binding, keeps its value. The database is created only when at least one service still needs it. Setting `DATABASE_URL` yourself opts a service out.
+  - **Where available:** only where managed PostgreSQL provisioning is open to the account and its plan allows a development database. The database gets the defaults of `gregale postgres create`: development class, scale to zero, the plan's storage pool and restore window. Organization-owned projects keep attaching databases explicitly.
+  - **Quota:** a new database counts against the plan's database limit. The plan reports `quota` instead of creating one beyond it. A database with the same name is reused, so a later deploy creates nothing new.
+  - **Reviewed first:** the plan lists the database and its bindings under the managed service (`provision`), or why it is not provided (`not_provisioned_reason`: `unavailable`, `plan`, `quota`, `unsupported`, `configured`, `not_referenced`). A bound key leaves **Needs a value**.
+  - **Readiness:** bindings are reserved immediately. A database that is still provisioning gets its key injected by the binding reconciler as soon as it is ready, usually before the first build finishes. A service that starts before that sees no key, and works on its next start.
+  - `postgis`, other datastores and PR previews are unchanged: they are listed, not provided.
+- **Why:** Compose projects almost always run their database in Compose. The plan said "not provisioned", so a first deploy needed a database from somewhere else, plus credentials typed in by hand, before any service could start. That was the largest remaining first-hour gap for multi-service apps on accounts that have managed PostgreSQL.
+- **Consequences:**
+  - On an account with managed PostgreSQL, a Compose project with a `postgres` service deploys with its database, created and bound in one reviewed apply.
+  - Removing the service from Compose, or the project, does not delete the database. Data is never deleted implicitly; `gregale postgres delete` stays explicit.
+  - Rolling upgrades: an older apid lists the service as before and creates nothing. The plan fields are additive.
+- **Rejected alternatives:**
+  - **Run the Compose `postgres` image as an app.** Apps are stateless and scale to zero; a database there would lose data.
+  - **Block the apply until the database is ready.** That would hold the API request on provider latency; the reconciler already injects the key once the database is ready.
+  - **Opt in with a Compose extension.** The plan review already shows the database before it exists, and an explicitly set key opts a service out.

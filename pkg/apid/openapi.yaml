@@ -105904,6 +105904,30 @@ components:
         env_hint: { type: string, example: DATABASE_URL }
         source: { type: string }
         image: { type: string }
+        provision:
+          $ref: '#/components/schemas/PlanManagedProvision'
+        not_provisioned_reason:
+          type: string
+          enum: [unavailable, plan, quota, unsupported, configured, not_referenced]
+          description: "Why apply does not provide a Compose postgres service (ADR-20261025111824). Omitted for other datastores and when provision is set."
+
+    PlanManagedProvision:
+      description: "The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the service keys it binds (ADR-20261025111824)."
+      type: object
+      required: [database, bindings]
+      properties:
+        database: { type: string, example: shop-db }
+        existing:
+          type: boolean
+          description: "True when a database with this name already exists and is reused."
+        bindings:
+          type: array
+          items:
+            type: object
+            required: [workload, env_key]
+            properties:
+              workload: { type: string }
+              env_key: { type: string, example: DATABASE_URL }
 
     PlanAffectedApp:
       description: |

@@ -616,6 +616,56 @@ func printPlanText(w io.Writer, plan api.PlanResponse, excludeSet []string, show
 	return printPlanTextWithExplain(w, plan, excludeSet, showAffected, false)
 }
 
+// printManagedServices lists the datastores the repository declares: the
+// managed databases apply provides (ADR-20261025111824), then those it does
+// not, with the variable services expect.
+//
+//nolint:errcheck // a failed write is handled like printPlanTextWithExplain's
+func printManagedServices(w io.Writer, managed []api.PlanManaged) {
+	var provided, listed []api.PlanManaged
+	for _, m := range managed {
+		if m.Provision != nil {
+			provided = append(provided, m)
+		} else {
+			listed = append(listed, m)
+		}
+	}
+	if len(provided) > 0 {
+		fmt.Fprintln(w, "\nManaged PostgreSQL (provided by this deploy):")
+		for _, m := range provided {
+			verb := "creates"
+			if m.Provision.Existing {
+				verb = "reuses"
+			}
+			bindings := make([]string, 0, len(m.Provision.Bindings))
+			for _, b := range m.Provision.Bindings {
+				bindings = append(bindings, b.Workload+"."+b.EnvKey)
+			}
+			fmt.Fprintf(w, "  - %-20s %s %s, bound to %s\n", m.Name, verb, m.Provision.Database, strings.Join(bindings, ", "))
+		}
+	}
+	if len(listed) > 0 {
+		fmt.Fprintln(w, "\nManaged (not provisioned):")
+		for _, m := range listed {
+			reason := ""
+			if text := managedNotProvidedText[m.NotProvisionedReason]; text != "" {
+				reason = "   (" + text + ")"
+			}
+			fmt.Fprintf(w, "  - %s [%s]   hint=%s   image=%s%s\n", m.Name, m.Kind, m.EnvHint, m.Image, reason)
+		}
+	}
+}
+
+// managedNotProvidedText renders the plan's not_provisioned_reason codes.
+var managedNotProvidedText = map[string]string{
+	"unavailable":    "managed PostgreSQL is not available to this account",
+	"plan":           "the plan does not include a managed database",
+	"quota":          "the plan's database limit is reached",
+	"unsupported":    "not supported as a managed database",
+	"configured":     "every service already has its database configured",
+	"not_referenced": "no service uses it",
+}
+
 // printPublicURLs names every workload the plan puts on the public edge, so
 // a reviewer sees which services the internet can reach before applying.
 //
@@ -848,13 +898,7 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			}
 		}
 	}
-	if len(plan.Managed) > 0 {
-		fmt.Fprintln(w, "\nManaged (not provisioned):")
-		for _, m := range plan.Managed {
-			fmt.Fprintf(w, "  - %s [%s]   hint=%s   image=%s\n",
-				m.Name, m.Kind, m.EnvHint, m.Image)
-		}
-	}
+	printManagedServices(w, plan.Managed)
 	printPublicURLs(w, plan.Workloads)
 	printUnsetEnvKeys(w, plan.Workloads)
 	if len(plan.Warnings) > 0 {

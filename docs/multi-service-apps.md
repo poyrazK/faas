@@ -46,10 +46,22 @@ Gregale reads, in this order:
   Dockerfile or language marker.
 
 Datastore images in Compose (`postgres`, `redis`, `mysql`, `mongo` and similar)
-are not run as apps. The plan lists them under **Managed (not provisioned)**
-with the variable your services expect, such as `DATABASE_URL`. Point that
-variable at a database you run elsewhere, or at
-[managed PostgreSQL](managed-postgres.md) where it is enabled for your account.
+are not run as apps.
+
+Where [managed PostgreSQL](managed-postgres.md) is available to your account, a
+`postgres` service becomes a managed database named `<project>-<service>`
+(for example `shop-db`), created and bound by the deploy
+([ADR-20261025111824](adr/20261025111824-compose-postgres-as-managed-database.md)).
+Each service whose Compose variable points at it, such as
+`DATABASE_URL: postgres://app:secret@db:5432/app`, gets that variable bound;
+a service that only lists it in `depends_on` gets `DATABASE_URL`. The plan shows
+the database under **Managed PostgreSQL (provided by this deploy)**. A variable
+you already set on the app keeps its value, and a later deploy reuses the same
+database. Removing the service never deletes the database.
+
+Other datastores, and `postgres` where managed PostgreSQL is not available, are
+listed under **Managed (not provisioned)** with the variable your services
+expect. Point that variable at a database you run elsewhere.
 
 Each service keeps its name inside the project. Its app slug is the same name,
 or `<project>-<name>` when the name is reserved (`api`, `admin`, …) or taken by
