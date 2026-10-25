@@ -154,10 +154,13 @@ is over-storing, not under-deleting. Tune `Days` up if
 you onboard an Enterprise tier with a longer floor.
 
 The rule is required, not advisory: the DPA (section 4,
-application logs) promises the archive keeps logs for at
-most 90 days. Check it on every archive bucket, for example
-`gcloud storage buckets describe gs://<bucket>
---format='yaml(lifecycle_config)'`.
+application logs) promises the archive deletes logs 90 days
+after they are written. Check it on every archive bucket, for
+example `gcloud storage buckets describe gs://<bucket>
+--format='yaml(lifecycle_config,soft_delete_policy)'`. The DPA
+also states that deleted objects stay recoverable for 7 days,
+which is GCS's default soft-delete window; keep the bucket's
+soft-delete retention at or below 7 days.
 
 ### Account erasure
 

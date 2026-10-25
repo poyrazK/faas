@@ -90,9 +90,10 @@ keeping (tax invoices: 7 years).
   output and standard error, which can contain any personal data an
   application chooses to log. Held in memory while an instance runs,
   then archived in object storage. Controller can read archived logs for
-  its plan's log retention (Free 1 day, Hobby 7, Pro 30, Scale 90); the
-  archive keeps them for at most 90 days and deletes them with the
-  account (section 11).
+  its plan's log retention (Free 1 day, Hobby 7, Pro 30, Scale 90). The
+  archive deletes them 90 days after they are written, and with the
+  account (section 11); the storage provider keeps a deleted object
+  recoverable for 7 more days before purging it.
 - Request traces: spans Controller's applications export when tracing is
   on — operation and dependency names, durations, status and failure
   class. Exception messages and stack traces are not retained. Spans are
