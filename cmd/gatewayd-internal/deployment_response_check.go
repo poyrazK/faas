@@ -158,8 +158,7 @@ func (c deploymentResponseChecker) check(ctx context.Context, target deploymentR
 	probe.Header.Set("x-faas-wake-id", target.WakeID)
 	probe.Header.Set("x-faas-protocol", target.protocol)
 	response := &boundedMCPProbeResponseWriter{header: make(http.Header), cancel: cancel, maxBytes: api.DeploymentResponseCheckMaxBodyBytes}
-	c.forward(target.Target).ServeHTTP(response, probe)
-	if ctx.Err() != nil || response.status < 200 || response.status > 599 {
+	if serveBoundedProbe(c.forward(target.Target), response, probe) || ctx.Err() != nil || response.status < 200 || response.status > 599 {
 		return result, errors.New("no complete HTTP response")
 	}
 	result.HTTPStatus, result.BodyTruncated = response.status, response.tooLarge

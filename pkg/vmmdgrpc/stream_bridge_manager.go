@@ -133,7 +133,9 @@ func newStreamBridgeManager(log *slog.Logger) *streamBridgeManager {
 		reapInterval: streamBridgeReapInterval,
 		now:          time.Now,
 		spawn:        streamBridgeSpawn,
-		socketPath:   streamBridgeSockPath,
+		// Each bridge entry gets its own socket, so a replaced bridge never
+		// unlinks a live one's listener.
+		socketPath:   streamBridgeSockPathForRequest,
 		waitSocket:   waitForUnixSock,
 		newTransport: newStreamBridgeH2CTransport,
 		stop:         stopStreamBridge,
@@ -503,20 +505,18 @@ func (m *streamBridgeManager) release(entry *streamBridgeEntry) {
 	entry.lastUsed = m.now()
 }
 
-func (m *streamBridgeManager) invalidate(lease *streamBridgeLease) {
+func (m *streamBridgeManager) invalidate(ctx context.Context, lease *streamBridgeLease) {
 	if m == nil || lease == nil || lease.entry == nil {
 		return
 	}
 	entry := lease.entry
 	m.mu.Lock()
-	if current := m.entries[entry.mapKey()]; current != entry {
-		m.mu.Unlock()
-		return
+	if current := m.entries[entry.mapKey()]; current == entry {
+		delete(m.entries, entry.mapKey())
 	}
-	delete(m.entries, entry.mapKey())
 	entry.closed = true
 	m.mu.Unlock()
-	m.closeEntry(context.Background(), entry)
+	m.closeEntry(context.WithoutCancel(ctx), entry)
 }
 
 func (m *streamBridgeManager) closeEntry(ctx context.Context, entry *streamBridgeEntry) {

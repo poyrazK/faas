@@ -319,9 +319,16 @@ func TestPgStoreOpenAPIImport_IfUnderQuota(t *testing.T) {
 		t.Fatalf("first upsert at planMax=1: %v", err)
 	}
 
-	// --- Branch 2: quota-exceeded — second upsert at planMax=1
-	// trips the observed >= planMax branch.
-	err := store.UpsertAppOpenAPIDocIfUnderQuota(ctx, appID, accountID, doc, 1, "3.1.0", 1)
+	// An existing document reuses its slot, including at the quota boundary.
+	if err := store.UpsertAppOpenAPIDocIfUnderQuota(ctx, appID, accountID, doc, 1, "3.1.0", 1); err != nil {
+		t.Fatalf("replacement at planMax=1: %v", err)
+	}
+	other, err := store.CreateApp(ctx, state.App{AccountID: accountID, Slug: "import-quota-other", Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A different app still needs another slot and must refuse at the cap.
+	err = store.UpsertAppOpenAPIDocIfUnderQuota(ctx, other.ID, accountID, doc, 1, "3.1.0", 1)
 	if err == nil {
 		t.Fatal("second upsert at planMax=1: expected QuotaError, got nil")
 	}

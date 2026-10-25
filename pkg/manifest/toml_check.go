@@ -183,6 +183,7 @@ var HostKeys = map[string]HostBlock{
 	"schedd": {
 		Daemon: "schedd",
 		PrivateKeys: []string{
+			"apps_domain",
 			"socket_path",
 			"listen_addr",
 			"tls_cert_path",
@@ -236,6 +237,7 @@ var HostKeys = map[string]HostBlock{
 			"socket_path",
 			"metrics_addr",
 			"db_url",
+			"apps_domain",
 		},
 		ComputeNodeBlock: nil,
 	},
@@ -281,6 +283,7 @@ var HostKeys = map[string]HostBlock{
 	"imaged": {
 		Daemon: "imaged",
 		PrivateKeys: []string{
+			"apps_domain",
 			"socket_path",
 			"metrics_addr",
 			"db_url",
@@ -290,6 +293,7 @@ var HostKeys = map[string]HostBlock{
 	"builderd": {
 		Daemon: "builderd",
 		PrivateKeys: []string{
+			"apps_domain",
 			"socket_path",
 			"metrics_addr",
 			"db_url",

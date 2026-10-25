@@ -684,7 +684,7 @@ func cmdWorkflowsEvents(args []string) int {
 		return 1
 	}
 	if len(posArgs) != 2 {
-		PrintUsage(os.Stderr, "usage: gregale workflows events <run_id> <event_name> [--payload JSON | --payload-file PATH|-]", "workflows")
+		PrintUsage(os.Stderr, "usage: gregale workflows events <run_id> <event_name> [--payload JSON | --payload-file PATH|-]; legacy form: gregale workflows events send <run_id> <event_name>", "workflows")
 		return 1
 	}
 

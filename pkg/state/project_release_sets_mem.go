@@ -624,7 +624,7 @@ func (m *MemStore) RollbackProjectEnvironmentPromotionReleaseSet(_ context.Conte
 
 func (m *MemStore) releaseTargetLiveLocked(appID, deploymentID string) bool {
 	dep, ok := m.deployments[deploymentID]
-	if !ok || dep.AppID != appID || dep.Status != DeployLive || m.migrationDeploymentRetiredLocked(deploymentID) {
+	if !ok || dep.AppID != appID || dep.Status != DeployLive || dep.DeletedAt != nil || m.migrationDeploymentRetiredLocked(deploymentID) {
 		return false
 	}
 	if dep.TrafficPercent > 0 {
@@ -678,7 +678,7 @@ func (m *MemStore) ResolveProjectRelease(_ context.Context, appID, scope, reques
 
 func (m *MemStore) resolveProjectReleaseLocked(appID, scope, requestedID string) (string, string, error) {
 	app, ok := m.apps[appID]
-	if !ok || app.Status == AppDeleted {
+	if !ok || app.Status == AppDeleted || app.DeletedAt != nil {
 		return "", "", ErrNotFound
 	}
 	if app.ProjectID == "" {
@@ -702,7 +702,8 @@ func (m *MemStore) resolveProjectReleaseLocked(appID, scope, requestedID string)
 		return "", "", nil
 	}
 	depID := releaseMemberForApp(release, appID)
-	if depID == "" || !m.releaseTargetLiveLocked(appID, depID) {
+	dep := m.deployments[depID]
+	if depID == "" || normalizedDeploymentScope(dep.Scope) != normalizedDeploymentScope(scope) || !m.releaseTargetLiveLocked(appID, depID) {
 		return "", "", ErrConflict
 	}
 	return id, depID, nil

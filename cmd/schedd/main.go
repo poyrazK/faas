@@ -390,6 +390,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := deps.migrate(ctx, pool); err != nil {
 		return err
 	}
+	invocationTrafficRegistry, err := newInvocationTrafficRegistry(ctx, pool)
+	if err != nil {
+		return err
+	}
+	defer runInvocationTrafficRegistry(ctx, invocationTrafficRegistry)()
 
 	// ADR-056: handshake-layer NodeVerifier. Gated on cfg.NodeName
 	// (the multi-box gate, mirroring vmmd's cfg.ComputeNode.NodeName
@@ -449,7 +454,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load vmmd TLS: %w", err)
 	}
 	vmmRotator.Set(vmmTLS)
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(os.Getenv)))
 	stopEventWriter, err := eventrecording.Start(ctx, store, "schedd", cfg.EventAcknowledgmentWriterSlot, cfg.EventAcknowledgmentWriterRoster, log)
 	if err != nil {
 		return err
@@ -733,7 +738,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// health signal at all, so enabling one without the other would be a
 	// silent no-op that looks like protection. That combination is a
 	// startup error rather than a warning, per the ADR's rollout section.
-	if os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER") != "" {
+	egressCircuitEnabled, err := api.EgressCircuitBreakerEnabled(os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER"))
+	if err != nil {
+		return err
+	}
+	if egressCircuitEnabled {
 		if os.Getenv("FAAS_UPSTREAM_PROBE") == "" {
 			log.Error("schedd: FAAS_EGRESS_CIRCUIT_BREAKER is set but FAAS_UPSTREAM_PROBE is not; " +
 				"the breaker has no health signal without the ADR-098 probe")
@@ -742,20 +751,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		applier := sched.NewRoutedEgressCircuitApplier(
 			vmmRouter,
 			sched.NewStoreEgressCircuitNodeLister(store),
-		)
+		).WithDesiredStore(store)
 		// The resolver is the node's own DNS. schedd resolves the upstream
 		// locally so the plaintext host never crosses the vmmd wire — the
 		// RPC carries a resolved address, and every label and log line
 		// carries only host_redacted_hash (ADR-098 §11).
-		resolver := func(ctx context.Context, host string) (string, error) {
+		resolver := func(ctx context.Context, host string) ([]string, error) {
 			addrs, err := net.DefaultResolver.LookupHost(ctx, host)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			if len(addrs) == 0 {
-				return "", fmt.Errorf("schedd: egress circuit: no address for upstream")
+				return nil, fmt.Errorf("schedd: egress circuit: no address for upstream")
 			}
-			return addrs[0], nil
+			return addrs, nil
 		}
 		egressBreaker := sched.NewEgressCircuitBreaker(applier, resolver, log).WithMetrics(ops)
 		egressLoop := sched.NewEgressCircuitLoop(
@@ -764,7 +773,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			api.UpstreamAffinityTTL, // one probe cadence
 			0,                       // default: four intervals
 			log,
-		)
+		).WithAppLister(store.ListAppEgressCircuitAppIDs)
 		// One pass before the first tick so a schedd restart re-derives
 		// breaker state from the probe history instead of starting blind
 		// with every circuit closed.
@@ -2517,6 +2526,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	drain := sched.NewDrain(engine.Store(), engine,
 		sched.WithDrainGatewaySynth(drainGateway),
+		sched.WithDrainTrafficRevocations(invocationTrafficRegistry),
 		sched.WithDrainAppTaskCoordinator(appTaskCoordinator),
 		sched.WithDrainNotifier(engine.Notifier()),
 		sched.WithDrainLogger(log),
