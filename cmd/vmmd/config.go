@@ -662,7 +662,6 @@ func LoadConfig(path string) (*Config, error) {
 			"tenant_budget_mb", computeSizing.TenantBudgetMB,
 			"admission_ceiling_mb", computeSizing.AdmissionCeilingMB,
 			"single_box_admission_ceiling_mb", sizing.AdmissionCeilingMB)
-		sizing = computeSizing
 	}
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): env-var overlay for
 	// [compute_node].name so the systemd drop-in (deploy/ansible/
