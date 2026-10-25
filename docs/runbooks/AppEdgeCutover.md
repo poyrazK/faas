@@ -123,17 +123,23 @@ all tunnel traffic at once, also stop `faas-cloudflared` on every node.
 
 ## 5. Pilot evidence
 
-Record each result in the pilot's PR or issue.
+Edge readiness and checks 1 and 2 (and 3, with `ECHO_PATH`) run in one
+command from your workstation. It changes nothing on any host:
+
+```bash
+PILOT_HOST=h10-fn-go.gregale.dev CONTROL_HOST=<an unlisted warm test app>.gregale.dev deploy/scripts/faas-app-edge-pilot-check.sh
+```
+
+Set `ECHO_PATH=<path>` when the pilot app has a path that echoes its request
+headers. The other checks below are by hand. Record each result in the pilot's PR or issue.
 
 1. **The edge serves it.** The control plane's gatewayd-public opens a new
-   TCP connection to a compute node's port 8080 for every request it routes
-   (keep-alives off), and each closed one sits in TIME_WAIT for a minute; the
-   edge uses its node's Unix socket instead. On the control plane, count
-   `ss -Htan state time-wait '( dport = :8080 )' | wc -l`, send 200 requests
-   to the pilot host, and count again: it must not grow by about 200. Do the
-   same with an unlisted test app as the control: it must. On the compute
-   nodes, gatewayd-internal's `gateway_requests_total` for the pilot app grows
-   by 200 in total, and the edges' `gatewayd_public_edge_local_fallback_total`
+   TCP connection to a compute node for every request it routes
+   (keep-alives off), so its `ActiveOpens` counter in `/proc/net/snmp` grows
+   by one per request; the edge uses its node's Unix socket instead. Send 100
+   requests to the pilot host and 100 to an unlisted, warm test app (the
+   control): the counter must grow with the control's requests and not with
+   the pilot's. On the edges, `gatewayd_public_edge_local_fallback_total`
    and `gatewayd_public_edge_misdirected_total` stay flat.
 2. **No control-plane Postgres per request.** With the app warm and
    `ratelimit_lease` on, reset `pg_stat_statements` on the control plane (the
