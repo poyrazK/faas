@@ -720,6 +720,17 @@ After each usage sweep, apid runs one enforcement sweep:
 Quotas written earlier stay on the projects in every mode, so switching to
 `off` or rolling back never lifts a suspension.
 
+Customers see the cap in `GET /v1/account/managed-postgres-usage` and
+`gregale postgres usage`:
+
+- `compute_allowance_unit_seconds`
+- `compute_ceiling_unit_seconds`
+- `compute_cap_state`: one of `healthy`; `warning` (at 80% of the allowance);
+  or `suspended`, which is reported only while enforcement is `on`.
+
+The state is judged from the ledger, which can trail Neon by up to two hours.
+`guardrail_state` is unchanged; it still describes admission of new work.
+
 A sweep skips an account, without failing it, when its provider has no quota
 support, or when the provider's consumption period does not start within an
 hour of the UTC month start. Metrics:

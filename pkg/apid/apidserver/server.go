@@ -219,10 +219,13 @@ type server struct {
 	databaseSwitchDrainOverride      state.DatabaseSwitchDrainStore
 	managedPostgresBindingReconciler *managedpostgres.BindingReconciler
 	managedPostgresUsageCollector    *managedpostgres.UsageCollector
-	managedPostgresHealthCollector   *managedpostgres.HealthCollector
-	store                            state.Store
-	domainVerificationMetrics        *domainVerificationMetrics
-	log                              *slog.Logger
+	// managedPostgresCapMode is FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT, read
+	// by the usage views (ADR-20261025094915).
+	managedPostgresCapMode         managedpostgres.CapEnforcementMode
+	managedPostgresHealthCollector *managedpostgres.HealthCollector
+	store                          state.Store
+	domainVerificationMetrics      *domainVerificationMetrics
+	log                            *slog.Logger
 	// devSourceCacheMu serializes reconstruction with best-effort cache
 	// replacement. The cache is node-local and disposable; this lock is not
 	// cross-node coordination and never guards customer-intent state.

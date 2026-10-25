@@ -6948,7 +6948,7 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 				managedPostgresProblem(w, err)
 				return
 			}
-			view := managedPostgresUsageView(usage, limits)
+			view := managedPostgresUsageView(usage, limits, s.managedPostgresCapMode)
 			out.ManagedPostgres = &view
 		}
 	}

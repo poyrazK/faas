@@ -196,6 +196,13 @@ func cmdPostgresUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "  guardrail_state:              %s\n", result.GuardrailState)
 	_, _ = fmt.Fprintf(osStdout, "  ready_databases:              %d / %d\n", result.ReadyDatabases, result.DatabaseLimit)
 	_, _ = fmt.Fprintf(osStdout, "  compute_unit_seconds:         %d (%s)\n", result.ComputeUnitSeconds, formatComputeUnitHours(result.ComputeUnitSeconds))
+	if result.ComputeAllowanceUnitSeconds > 0 {
+		_, _ = fmt.Fprintf(osStdout, "  compute_allowance:            %s\n", formatComputeUnitHours(result.ComputeAllowanceUnitSeconds))
+		if result.ComputeCeilingUnitSeconds > 0 {
+			_, _ = fmt.Fprintf(osStdout, "  compute_ceiling:              %s\n", formatComputeUnitHours(result.ComputeCeilingUnitSeconds))
+		}
+		_, _ = fmt.Fprintf(osStdout, "  compute_cap_state:            %s\n", result.ComputeCapState)
+	}
 	_, _ = fmt.Fprintf(osStdout, "  storage_byte_seconds:         %d / %d (remaining %d)\n", result.StorageByteSeconds, result.StorageByteSecondsLimit, result.StorageByteSecondsRemaining)
 	_, _ = fmt.Fprintf(osStdout, "                                (%s of %s used)\n", formatGiBMonths(result.StorageByteSeconds), formatGiBMonths(result.StorageByteSecondsLimit))
 	_, _ = fmt.Fprintf(osStdout, "  history_byte_seconds:         %d (%s)\n", result.HistoryByteSeconds, formatGiBMonths(result.HistoryByteSeconds))

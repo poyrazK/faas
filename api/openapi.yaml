@@ -81907,6 +81907,20 @@ components:
         storage_byte_seconds_remaining: { type: integer, format: int64, minimum: 0 }
         history_byte_seconds: { type: integer, format: int64, minimum: 0 }
         egress_bytes: { type: integer, format: int64, minimum: 0 }
+        compute_allowance_unit_seconds:
+          description: The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases (ADR-20261025094915).
+          type: integer
+          format: int64
+          minimum: 0
+        compute_ceiling_unit_seconds:
+          description: Compute-unit seconds this month at which running databases are suspended. Absent while the usage ledger is off.
+          type: integer
+          format: int64
+          minimum: 0
+        compute_cap_state:
+          description: "healthy; warning at 80% of the allowance; suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and resume next month or after an upgrade."
+          type: string
+          enum: [healthy, warning, suspended]
     ManagedPostgresUsageLineItem:
       description: Normalized operator-only managed PostgreSQL ledger line.
       type: object
