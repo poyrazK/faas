@@ -739,3 +739,4 @@ func RuntimeMainSecretEntries(snapshot state.RuntimeAppValuesSnapshot, intent st
 var QueueDeadLetterError = queueDeadLetterError
 var PrimeRuntimeBusyBackoff = &primeRuntimeBusyBackoff
 var ApplicationStandardRuntimeProblem = applicationStandardRuntimeProblem
+var HealthcheckGRPCForApp = healthcheckGRPCForApp
