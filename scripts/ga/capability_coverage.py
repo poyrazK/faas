@@ -359,7 +359,7 @@ PRIORITY_RULES = [
 # Platform internals: not customer capabilities. Classified explicitly so nothing is ignored silently.
 INFRA_RULES = [
     r"^(state|statetest|wire|db|migrate|migration-new|schema-dump|goose|sqlc|pgx|api|apid|apidserver|httpkit|durable|receivers|object$)",
-    r"sched|schedd|vmmd|fcvm|netns|rootfs|imaged|meterd|gateway$|gatewayd|snapshot|base-|layer-|nft|denylist|hostage|jail|cgroup|kernel|rng|reseed|guest-init|init-helper|vsock",
+    r"sched|schedd|vmmd|fcvm|netns|rootfs|imaged|meterd|gateway$|gatewayd|snapshot|base-|layer-|nft|denylist|hostage|jail|cgroup|kernel|rng|reseed|guest-init|init-helper|vsock|^sdunit$",
     r"lock|lease-|fence|leader|ledger|journal|outbox-reconcil|receipt|idempotency-key|retention|gc$|janitor|reconcil|watchdog|spool|backpressure|ratelimit|rate-limit|quota|admission|eviction",
     r"release-artifact|releasebundle|releaseinstall|release-compat|unit-|deploy-order|version-skew|pricing-md|standards-md|capabilities-md|obs-rule|denylist-md|runtime-qualification|api-hosting-(scorecard|contract)",
     r"metric|prometheus|promauto|otel|slog|log$|telemetry-internal|healthz|livez|readyz|^/metrics",
