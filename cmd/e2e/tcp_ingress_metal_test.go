@@ -74,7 +74,7 @@ func TestTCPIngressMetal(t *testing.T) {
 		t.Fatalf("create app %q: status=%d", slug, got)
 	}
 
-	raw, status := postMultipartDeploymentWithOverrides(t, h, key, slug, NodeFixtureTCP(t), false, nil, "")
+	raw, status := postMultipartDeploymentWithFields(t, h, key, slug, NodeFixtureTCP(t), false, nil, "")
 	if status != 202 {
 		t.Fatalf("create deployment: status=%d body=%s", status, raw)
 	}
