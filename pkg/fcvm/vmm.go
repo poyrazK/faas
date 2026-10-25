@@ -2313,7 +2313,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	// cannot escape quota accounting by writing past its read-only
 	// boundary).
 	for i := 1; i < len(resolvedWorkloads); i++ {
-		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], snapshotRestoreSidecarName(spec, i, resolvedWorkloads[i]), l.Instance); err != nil {
+		if _, err := v.stageReadOnlyAsForOwner(ctx, stagingOwner, root, resolvedWorkloads[i], restoreSidecarDriveName(i), l.Instance); err != nil {
 			return fmt.Errorf("vmm: stage sidecar %d: %w", i-1, err)
 		}
 	}
@@ -4946,6 +4946,29 @@ func sidecarDriveImageName(idx int) string {
 	return fmt.Sprintf("sidecar-%d.ext4", idx)
 }
 
+// coldBootReadOnlyDriveName is the jail name provisionForOwner stages
+// read-only config drive i under. i counts virtio-blk drives with the base
+// as drive 0, also when a pmem base takes its place, so a sidecar's name
+// does not depend on the base device.
+func coldBootReadOnlyDriveName(i int, d Drive) string {
+	if i == 0 {
+		return stableReadOnlyName(d.PathOnHost, baseImageName)
+	}
+	if strings.HasPrefix(d.DriveID, DriveSidecarPrefix) {
+		return sidecarDriveImageName(i - 1)
+	}
+	return filepath.Base(d.PathOnHost)
+}
+
+// restoreSidecarDriveName is the jail name a restore stages workload i's
+// drive under. A Firecracker snapshot records each drive by the name cold
+// boot gave it, and workload i is config drive i+1, so this must match
+// coldBootReadOnlyDriveName(i+1, …): staging under any other name makes
+// every restore of an app with a companion fail and fall back to cold boot.
+func restoreSidecarDriveName(i int) string {
+	return sidecarDriveImageName(i)
+}
+
 // workloadManifestPath is the in-guest location guest-init reads to
 // discover a workload's runtime shape (issue #463 / ADR-069 / PR-B).
 // Each sidecar drive carries /etc/faas/workload.json (the manifest
@@ -5896,14 +5919,7 @@ func (v *JailerVMM) provisionForOwner(ctx context.Context, owner nativeLaunchRec
 		var name string
 		var err error
 		if d.IsReadOnly {
-			name = filepath.Base(d.PathOnHost)
-			if i == 0 {
-				name = stableReadOnlyName(d.PathOnHost, baseImageName)
-			}
-			if i > 0 && strings.HasPrefix(d.DriveID, DriveSidecarPrefix) {
-				name = sidecarDriveImageName(i - 1)
-			}
-			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, name, instanceID)
+			name, err = v.stageReadOnlyAsForOwner(ctx, owner, root, d.PathOnHost, coldBootReadOnlyDriveName(i, d), instanceID)
 		} else if cfg.EphemeralWritable {
 			name, err = v.stageEphemeralWritableAsForOwner(ctx, owner, root, d.PathOnHost, layerImageName, uid, gid, instanceID)
 		} else {
