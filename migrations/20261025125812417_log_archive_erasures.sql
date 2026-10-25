@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261025125812000_log_archive_erasures.sql
+-- filename: 20261025125812417_log_archive_erasures.sql
 
 -- +goose Up
 -- +goose StatementBegin
