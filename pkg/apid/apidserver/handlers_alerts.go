@@ -466,12 +466,12 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	// Optional secret re-seal.
 	var sealedPtr *[]byte
 	if req.WebhookSecret != nil {
-		recipient := hostSecretRecipient()
-		if recipient == nil {
-			api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
+		recipients, recipientErr := alertingCredentialRecipients()
+		if recipientErr != nil {
+			api.WriteProblem(w, api.ErrCapacity("alerting recipient not loaded — refusing to seal webhook secret"))
 			return
 		}
-		sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(*req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
+		sealed, err := secretbox.SealBytesTo(recipients, alertRuleSecretSealLabel, []byte(*req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
 		if err != nil {
 			if prob := api.AsProblem(err); prob != nil {
 				api.WriteProblem(w, prob)
@@ -640,12 +640,12 @@ func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	plaintext := []byte(req.WebhookSecret)
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
+	recipients, recipientErr := alertingCredentialRecipients()
+	if recipientErr != nil {
+		api.WriteProblem(w, api.ErrCapacity("alerting recipient not loaded — refusing to seal webhook secret"))
 		return
 	}
-	sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, plaintext, api.AlertRuleWebhookSecretMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, alertRuleSecretSealLabel, plaintext, api.AlertRuleWebhookSecretMaxBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			api.WriteProblem(w, prob)
