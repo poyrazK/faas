@@ -413,6 +413,28 @@ identity opens none that is still valid.
 - **Rehearsal object credentials** (behind `FAAS_REHEARSAL_OBJECT_FIXTURES`,
   stored in a jsonb document) stay on the fleet key in this slice.
 
+## Implemented: the alerting test-send relay
+
+Section 3 moves apid's alerting test sends behind meterd, ahead of the
+`alerting` domain itself.
+
+- **apid records a request** in `alert_test_sends` when it cannot open a
+  notification channel's destination or an alert rule's webhook secret. The
+  request names the channel or rule, plus the test event for a webhook.
+- **meterd** claims requests every second (`FOR UPDATE SKIP LOCKED` with a
+  two-minute lease). It opens the destination with its own identities,
+  sends the test as apid would have, and writes the result.
+- **apid waits** for the result and answers as before, then deletes the
+  request. The wait is 45 seconds for a channel and two minutes for a
+  webhook, whose test retries like a real delivery. On timeout apid answers
+  504. meterd prunes requests older than an hour.
+- **While apid can open a value it still sends the test itself.** No request
+  exists until a value is sealed to the domain alone, and the domain's
+  `readers_verified` gate already requires every meterd to run a release
+  with the relay. So a meterd one release older never sees a request. apid
+  stops opening alerting values when it loses the fleet identity, in the
+  contract step.
+
 ## CD and node join stage the domain keys
 
 Each domain's key pair is a pair of GitHub environment secrets:

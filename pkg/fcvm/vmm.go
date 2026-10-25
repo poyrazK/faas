@@ -61,6 +61,7 @@ type JailerVMM struct {
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
 	nativeRuntimeCapture          bool                          // ADR 20261022184951: native park/warm capture; requires native recovery
 	nativeRuntimeSnapshots        *storage.LocalStorageBackend  // ADR 20261022184951 amendment 1: the tree only vmmd writes
+	nativeLaunchOwners            bool                          // ADR-2026101710 amendment 1: version-three launch records name this vmmd
 	chrootBase                    string                        // /srv/fc/jail
 	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
 	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)
@@ -5556,13 +5557,28 @@ func (v *JailerVMM) destroyWaitFor(exportDir string, buildTimeoutSec int) time.D
 	return wait
 }
 
+// errExportBudget stops an export whose tree passes the total budget.
+var errExportBudget = errors.New("vmm: build output exceeds the export budget")
+
 // copyTree copies a directory tree from src to dst, skipping any single file
 // whose size exceeds maxBytes. Best-effort by design — partial copies are OK
-// for a build that overshot the cap.
+// for a build that overshot the cap. The whole tree is also held to
+// api.MaxExportedTreeBytes and api.MaxExportedTreeEntries: the build wrote
+// the drive, so sparse files and hard links can each pass the per-file cap
+// while together they would fill the host.
 func copyTree(src, dst string, maxBytes int64) error {
+	return copyTreeWithin(src, dst, maxBytes, api.MaxExportedTreeBytes, api.MaxExportedTreeEntries)
+}
+
+func copyTreeWithin(src, dst string, maxBytes, maxTotalBytes int64, maxEntries int) error {
+	var totalBytes int64
+	entries := 0
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
+		}
+		if entries++; entries > maxEntries {
+			return fmt.Errorf("%w: more than %d entries", errExportBudget, maxEntries)
 		}
 		rel, err := filepath.Rel(src, path)
 		if err != nil {
@@ -5593,6 +5609,10 @@ func copyTree(src, dst string, maxBytes int64) error {
 		}
 		if maxBytes > 0 && info.Size() > maxBytes {
 			return nil // skip the oversize file
+		}
+		// Apparent size: copying writes every byte, sparse or linked.
+		if totalBytes += info.Size(); totalBytes > maxTotalBytes {
+			return fmt.Errorf("%w: more than %d bytes", errExportBudget, maxTotalBytes)
 		}
 		if err := copyFile(path, target); err != nil {
 			return err

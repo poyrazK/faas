@@ -607,7 +607,23 @@ const (
 	ProfileMemoryPressureAvailablePercent      = 15
 	ProfileMemoryPressureRearmAvailablePercent = 30
 	ProfileMemoryPressurePollInterval          = 2 * time.Second
-	ProfileCaptureAutomaticDuration            = 10 * time.Second
+	// vmmd relays at most one memory-pressure report per instance per
+	// ProfileMemoryPressureRelayMinInterval, with at most
+	// ProfileMemoryPressureRelayInFlight relays to schedd open at once. The
+	// guest writes the frame, so guest-init's once-per-episode reporting
+	// bounds nothing; schedd captures at most once per app per
+	// ProfileCaptureAutomaticMinInterval in any case.
+	ProfileMemoryPressureRelayMinInterval = time.Minute
+	ProfileMemoryPressureRelayInFlight    = 4
+	// vmmd answers each instance's runtime-config requests (vsock port 1031:
+	// env, secrets, secret reload status, developer patches) at
+	// RuntimeConfigRequestsPerSecond with bursts of RuntimeConfigRequestBurst.
+	// Every request reads the database and may open sealed secrets; guest-init
+	// polls far below this (secrets every 10 s, dev patches every second), but
+	// the guest controls the socket. Excess requests get "rate_limited".
+	RuntimeConfigRequestsPerSecond  = 20
+	RuntimeConfigRequestBurst       = 40
+	ProfileCaptureAutomaticDuration = 10 * time.Second
 	// ProfileCaptureAutomaticMinInterval bounds automatic captures per app.
 	ProfileCaptureAutomaticMinInterval = time.Hour
 	// ProfileCaptureCheckpointInterval paces interim heap profiles during an
@@ -6544,6 +6560,17 @@ const (
 	// well above the §14 target (~130 MB) so it's not the limiting factor; it's
 	// the ceiling we refuse to copy past. See pkg/fcvm/vmm.go::exportBuildArtifacts.
 	MaxExportedLayerBytes int64 = 4 << 30
+	// MaxExportedTreeBytes and MaxExportedTreeEntries bound everything one
+	// export copies, not just each file. The untrusted build writes the drive:
+	// sparse files or hard links can each sit under MaxExportedLayerBytes and
+	// take no room on the drive, then expand to their full size on the host.
+	MaxExportedTreeBytes   int64 = MaxExportedLayerBytes
+	MaxExportedTreeEntries       = 100_000
+	// GoFunctionLayerExtractionMaxBytes bounds the files imaged unpacks from a
+	// built Go function image to find its executable. The layers come from the
+	// tenant's build, so a small compressed layer could otherwise expand
+	// without limit on the image staging filesystem.
+	GoFunctionLayerExtractionMaxBytes int64 = MaxExportedLayerBytes
 
 	// Edge request caps (spec §4.1).
 	MaxRequestBodyBytes = 25 * 1024 * 1024 // 25 MB either direction
