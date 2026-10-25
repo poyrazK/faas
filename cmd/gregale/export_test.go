@@ -1190,6 +1190,7 @@ var DeployOptionsFingerprint = deployOptionsFingerprint
 var DeployPreflightListener = deployPreflightListener
 var DeployPreflightListenerWith = deployPreflightListenerWith
 var DeployPreflightRepoSource = deployPreflightRepoSource
+var DeployPreflightScheduled = deployPreflightScheduled
 var DeployPreflightSource = deployPreflightSource
 var DeployPreviewRequested = deployPreviewRequested
 var DeploymentAliasRevisionLabel = deploymentAliasRevisionLabel
@@ -2432,3 +2433,5 @@ func SavedDeployRecovery(outcome string) (resume, hint string) {
 	r := s.recovery("submission")
 	return r.ResumeCommand, r.Hint
 }
+
+var RoutesAppFlagAsPositional = routesAppFlagAsPositional

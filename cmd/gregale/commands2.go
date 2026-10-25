@@ -1550,17 +1550,7 @@ func cliScalingPolicyPatchWithQueues(ctx context.Context, client interface {
 	// App.MinInstances is the current canonical floor even when a legacy
 	// scaling_policy JSON object omitted the mirrored field.
 	policy.MinInstances = app.MinInstances
-	// Older/default rows can round-trip as a non-nil `{}` policy. The API
-	// validates cooldowns whenever a replacement policy is supplied, so
-	// preserving those zero values makes an unrelated queue-policy update
-	// fail with invalid_cooldown. Fill only the absent cooldowns; valid
-	// existing values remain untouched.
-	if policy.ScaleOutCooldownS == 0 {
-		policy.ScaleOutCooldownS = 5
-	}
-	if policy.ScaleInCooldownS == 0 {
-		policy.ScaleInCooldownS = 60
-	}
+	fillScalingPolicyCooldowns(policy)
 	if setOverflow {
 		policy.ConcurrencyOverflow = overflow
 	}
@@ -2861,9 +2851,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				RuntimeResolution: "detected remotely after checkout",
 				ResourceBehavior:  "preserve existing · plan default for new app",
 				Environment:       *environment,
-				Release: deployPreflightRelease(
+				Release: deployPreflightScheduled(releaseAt, deployPreflightRelease(
 					*safeDeploy, *canaryPreset, *trafficPercent, rollbackOn5xxPtr,
-				),
+				)),
 			})
 		}
 		code := cmdDeployRepoSourceRefContextWithJSONWaitOptionsAndManifestAndRollout(ctx, slug, *repo, *ref, api.DeployAnnotations{
@@ -3600,9 +3590,9 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			ExecutionMode:       *executionMode,
 			Healthcheck:         healthcheck,
 			QueueCanaryBindings: queueCanaryNames,
-			Release: deployPreflightRelease(
+			Release: deployPreflightScheduled(releaseAt, deployPreflightRelease(
 				*safeDeploy, *canaryPreset, *trafficPercent, rollbackOn5xxPtr,
-			),
+			)),
 		})
 	}
 
