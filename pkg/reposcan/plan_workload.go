@@ -61,7 +61,8 @@ func planDetection(d Detection) *api.PlanDetectedBy {
 
 // NewWorkloadVisibility is the edge exposure of a new app for w: a Compose
 // service without `ports:` is internal, as Docker publishes nothing for it
-// (ADR-20261022131852). Empty means public.
+// (ADR-20261022131852), and .gregale/project.yaml can set either way
+// (ADR-20261025093331). Empty means public.
 func NewWorkloadVisibility(w Workload) api.AppVisibility {
 	if w.Unpublished {
 		return api.AppVisibilityInternal

@@ -4,7 +4,8 @@
 // schedd refuses new wakes once the current-month overage meets the
 // cap; the CLI is the only path to flip the cap outside the dashboard.
 //
-// Auth: self (no admin scope required).
+// Auth: an admin-scoped key or a session; a deploy-scoped key cannot
+// change the account's spending ceiling.
 
 package main
 

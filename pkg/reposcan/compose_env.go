@@ -38,7 +38,8 @@ type composeEnvService struct {
 // ReadComposeEnv reads the same Compose model Scan does (base file, its
 // automatic override, extends and include). A repository without a Compose
 // file yields a zero ComposeEnv. Services behind inactive profiles are left
-// out, as Scan leaves them out.
+// out, as Scan leaves them out: a profile is active when COMPOSE_PROFILES in
+// the root .env lists it (ADR-20261022190000).
 func ReadComposeEnv(fsys fs.FS) (ComposeEnv, error) {
 	body, src, err := readFirstValidFile(fsys, composeFileNames)
 	if err != nil || body == nil {
@@ -48,10 +49,16 @@ func ReadComposeEnv(fsys fs.FS) (ComposeEnv, error) {
 	if err != nil {
 		return ComposeEnv{}, err
 	}
-	resolved, sources, _, err = resolveComposeLinks(fsys, resolved, sources)
+	rootEnv, err := readComposeEnv(fsys)
 	if err != nil {
 		return ComposeEnv{}, err
 	}
+	links, err := resolveComposeLinks(fsys, resolved, sources, rootEnv)
+	if err != nil {
+		return ComposeEnv{}, err
+	}
+	resolved, sources = links.body, links.sources
+	active := composeActiveProfiles(rootEnv)
 	var doc composeEnvDoc
 	if err := yaml.Unmarshal(resolved, &doc); err != nil {
 		return ComposeEnv{}, fmt.Errorf("reposcan: parse %s: %w", strings.Join(sources, " + "), err)
@@ -62,7 +69,7 @@ func ReadComposeEnv(fsys fs.FS) (ComposeEnv, error) {
 	}
 	out := ComposeEnv{Import: importFlag != nil && *importFlag, Services: map[string]map[string]*string{}}
 	for name, service := range services {
-		if name == "" || len(service.Profiles) > 0 {
+		if name == "" || !active.enables(service.Profiles) {
 			continue
 		}
 		entries, err := composeEnvEntries(&service.Environment)

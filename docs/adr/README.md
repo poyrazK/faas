@@ -1,7 +1,9 @@
 # Architecture Decision Records
 
 - [ADR-20261025094915: Managed PostgreSQL compute caps hold on running databases](20261025094915-managed-postgres-compute-caps-on-running-databases.md) — proposed; Free suspends at its allowance, paid plans suspend at it unless the customer turns overage on (then at 2×); Neon project quotas, never a deletion (amends ADR-1430, ADR-155)
+- [Each Compose include interpolates with its own .env](20261025090000-compose-include-env-files.md)
 - [Image runs read registry credentials from a Docker config](20261025110000-image-run-docker-config.md)
+- [ADR-20261025092617: The curl installer resolves its version from a release-published pointer, not the GitHub API](20261025092617-cli-install-channel-pointer.md) — accepted; `release.yml` keeps forward-only `CLI-STABLE`/`CLI-LATEST` pointers on a `cli-channel` release, read through `releases/download` (no anonymous API limit), with the API path as fallback; amends ADR-172
 - [Every capability behind a platform flag](20261023115741-every-capability-behind-a-platform-flag.md)
 - [Per-account realtime preview rollout and realtime apps declared in gregale.yaml](20261019102657-realtime-preview-rollout-and-declared-apps.md)
 - [Gateway-metered object storage billing](20261024132844-gateway-metered-object-storage-billing.md) — gateway safety meters stored byte-hours from inventory; storage-only rate card bills ADR-1430's $0.03/GiB-month
@@ -1881,3 +1883,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261022184757: Background work and waitUntil in the awake report](20261022184757-route-awake-background-work.md)
 - [ADR-20261023220532: Move the Debian-based runtime bases to Debian 13](20261023220532-debian-13-runtime-bases.md) — accepted; clears the bookworm `<no-dsa>` glibc/SQLite criticals (#5206), matches Railpack's Debian 13 builder, audits `base-minimal` apps first
 - [ADR-20261024154324: Route subsystems at public scale](20261024154324-route-subsystems-at-public-scale.md) — per-gateway per-route series budget with idle eviction, fair route insight scheduling, concurrent route monitor drain, route worker alerts (amends ADR-093, ADR-1198)
+- [ADR-20261024230731: Rehearsal checks on webhook deliveries and private DNS stay off other apps' critical path](20261024230731-rehearsal-webhook-and-dns-hot-paths.md)
