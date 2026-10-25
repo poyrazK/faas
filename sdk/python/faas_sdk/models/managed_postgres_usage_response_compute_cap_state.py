@@ -1,9 +1,10 @@
 from typing import Literal
 
-ManagedPostgresUsageResponseComputeCapState = Literal["healthy", "suspended", "warning"]
+ManagedPostgresUsageResponseComputeCapState = Literal["healthy", "overage", "suspended", "warning"]
 
 MANAGED_POSTGRES_USAGE_RESPONSE_COMPUTE_CAP_STATE_VALUES: set[ManagedPostgresUsageResponseComputeCapState] = {
     "healthy",
+    "overage",
     "suspended",
     "warning",
 }

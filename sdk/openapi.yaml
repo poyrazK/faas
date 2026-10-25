@@ -20763,9 +20763,9 @@ components:
           format: int64
           minimum: 0
         compute_cap_state:
-          description: "healthy; warning at 80% of the allowance; suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and resume next month or after an upgrade."
+          description: "healthy; warning at 80% of the allowance; overage past the allowance while the account allows overage; suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and resume next month or after an upgrade."
           type: string
-          enum: [healthy, warning, suspended]
+          enum: [healthy, warning, overage, suspended]
     ObjectStoragePolicy:
       description: Operator safety limits. Empty accounting_mode requires qualified provider reports including cost. Explicit gateway_safety_v1 requires a coverage start, proxied transfers, billing off and no cost ceiling; all other budgets remain positive and finite.
       type: object

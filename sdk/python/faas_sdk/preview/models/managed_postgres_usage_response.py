@@ -45,8 +45,9 @@ class ManagedPostgresUsageResponse:
     """Compute-unit seconds this month at which running databases are suspended. Absent while the usage ledger is
     off."""
     compute_cap_state: ManagedPostgresUsageResponseComputeCapState | Unset = UNSET
-    """healthy; warning at 80% of the allowance; suspended once the ceiling is reached and the platform enforces
-    caps. Suspended databases keep their data and resume next month or after an upgrade."""
+    """healthy; warning at 80% of the allowance; overage past the allowance while the account allows overage;
+    suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and
+    resume next month or after an upgrade."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:

@@ -29,8 +29,8 @@ export type ManagedPostgresUsageResponse = {
    */
   compute_ceiling_unit_seconds?: number;
   /**
-   * healthy; warning at 80% of the allowance; suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and resume next month or after an upgrade.
+   * healthy; warning at 80% of the allowance; overage past the allowance while the account allows overage; suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and resume next month or after an upgrade.
    */
-  compute_cap_state?: 'healthy' | 'warning' | 'suspended';
+  compute_cap_state?: 'healthy' | 'warning' | 'overage' | 'suspended';
 };
 

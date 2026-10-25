@@ -726,7 +726,8 @@ Customers see the cap in `GET /v1/account/managed-postgres-usage` and
 - `compute_allowance_unit_seconds`
 - `compute_ceiling_unit_seconds`
 - `compute_cap_state`: one of `healthy`; `warning` (at 80% of the allowance);
-  or `suspended`, which is reported only while enforcement is `on`.
+  `overage` (past the allowance with overage on, once the overage setting
+  ships); or `suspended`, which is reported only while enforcement is `on`.
 
 The state is judged from the ledger, which can trail Neon by up to two hours.
 `guardrail_state` is unchanged; it still describes admission of new work.

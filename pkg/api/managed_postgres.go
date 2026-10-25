@@ -110,8 +110,9 @@ type ManagedPostgresUsageResponse struct {
 	EgressBytes                 int64      `json:"egress_bytes"`
 	// Compute caps on running databases (ADR-20261025094915). The allowance is
 	// the plan's monthly compute; the ceiling is where running databases are
-	// suspended. ComputeCapState is healthy, warning (at 80% of the allowance)
-	// or suspended, and reports suspended only while caps are enforced.
+	// suspended. ComputeCapState is healthy, warning (at 80% of the allowance),
+	// overage (past the allowance while the account allows overage) or
+	// suspended, and reports suspended only while caps are enforced.
 	ComputeAllowanceUnitSeconds int64  `json:"compute_allowance_unit_seconds,omitempty"`
 	ComputeCeilingUnitSeconds   int64  `json:"compute_ceiling_unit_seconds,omitempty"`
 	ComputeCapState             string `json:"compute_cap_state,omitempty"`
@@ -120,6 +121,7 @@ type ManagedPostgresUsageResponse struct {
 const (
 	ManagedPostgresComputeCapHealthy   = "healthy"
 	ManagedPostgresComputeCapWarning   = "warning"
+	ManagedPostgresComputeCapOverage   = "overage"
 	ManagedPostgresComputeCapSuspended = "suspended"
 )
 
