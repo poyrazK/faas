@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/extension"
 	"github.com/onebox-faas/faas/pkg/fcvm/logbuf"
+	"github.com/onebox-faas/faas/pkg/guestdisk"
 	"github.com/onebox-faas/faas/pkg/guestmemproto"
 	"github.com/onebox-faas/faas/pkg/jailsetup"
 	"github.com/onebox-faas/faas/pkg/resumetimingproto"
@@ -82,6 +83,9 @@ type JailerVMM struct {
 	// freePageReporting attaches a free-page-reporting balloon to every cold
 	// boot (ADR-907).
 	freePageReporting bool
+	// cpuTemplate is the Firecracker CPU template every boot uses
+	// (ADR-20261024225612). Empty boots with the host's CPUID.
+	cpuTemplate string
 	// pmemBase holds the per-account base copies attached as pmem (ADR-908);
 	// nil keeps drive0 on virtio-blk.
 	pmemBase *pmemBaseStore
@@ -106,6 +110,9 @@ type JailerVMM struct {
 	// the executable across filesystems on every wake. Older bundles use vmmd.
 	mountHelperMu   sync.Mutex
 	mountHelperPath string
+	// guestDisk is the sandboxed editor every drive read and write goes
+	// through (ADR-20261025090100).
+	guestDisk guestDiskState
 
 	// fences records the cgroup fence written for each live VM so
 	// RepairCgroupFences can restore it (cgroup_fence.go). fenceMu is never
@@ -305,7 +312,7 @@ type restoreTimingBreakdown struct {
 	// reported on stdout. TunSetupJailMs minus this is process-spawn cost.
 	TunSetupJailWorkUs int64
 	CgroupFenceMs      int64
-	// StagePreBootFilesMs is the single loop-mount session that writes
+	// StagePreBootFilesMs is the single drive session that writes
 	// secrets.env / env.json / resolver / workload files onto drive1
 	// (ADR-192). It was folded into StageSnapshotMs before, which made the
 	// two-syscall mem/vmstate bind look expensive.
@@ -1359,6 +1366,7 @@ func (v *JailerVMM) boot(ctx context.Context, l Lease, cfg VMConfig, skipReady b
 	_ = v.registerLeaseRing(ctx, l)
 
 	cfg = v.withBalloon(cfg)
+	cfg = v.withCPUTemplate(cfg)
 	cfg = v.withPmemBase(l, cfg)
 	cfg = v.withRestoreReseedMode(l, cfg)
 	cfg = withBlockRateLimit(l, cfg)
@@ -1543,21 +1551,18 @@ func (v *JailerVMM) preparesWakeStateBeforeBoot() bool { return true }
 // received its config yet, so this is the last safe point for secrets, API env,
 // per-sidecar env overrides, and the sidecar roster.
 // stagePreBootFiles writes every per-instance file the guest expects on
-// drive1 in ONE loop-mount session (ADR-192). Before this, secrets.env,
-// env.json, the service resolver, each sidecar env override, the main
-// manifest and the roster mounted and unmounted the layer on their own, so
-// an app with secrets plus API env paid two to three ext4 mount +
-// journal-flush cycles on every restore — the dominant cost inside the
-// restore breakdown's stage window on the production SSD nodes. The
-// per-file writers are shared with the public Stage* methods, which keep
-// their single-file mount for the legacy Manager path and for tests.
+// drive1 in ONE drive session (ADR-192): secrets.env, env.json, the service
+// resolver, each sidecar env override, the main manifest and the roster.
+// The session edits the drive in the vmmd-guestdisk sandbox; the host
+// kernel never mounts it (ADR-20261025090100). The public Stage* methods
+// keep one session per file for the legacy Manager path and for tests.
 func (v *JailerVMM) stagePreBootFiles(instance string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool) error {
 	_, err := v.stagePreBootFilesUnless(instance, "", workloads, secretsEnvJSON, apiEnvJSON, serviceDiscoveryIP, appTask)
 	return err
 }
 
-// stagePreBootFilesUnless writes the pre-boot files, or skips the loop mount
-// when captureKey's drive is known to already hold byte-identical files
+// stagePreBootFilesUnless writes the pre-boot files, or skips the drive
+// session when captureKey's drive is known to already hold identical files
 // (restore only; cold boot passes ""). It reports whether it skipped.
 func (v *JailerVMM) stagePreBootFilesUnless(instance, captureKey string, workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, measured ...*preBootStageTimings) (bool, error) {
 	if len(measured) > 0 && measured[0] != nil {
@@ -1603,26 +1608,33 @@ func (v *JailerVMM) stagePreBootFilesUnlessForOwner(ctx context.Context, owner n
 		return false, err
 	}
 	learn, present := v.nativeRecovery == nil && v.preBoot.learnable(captureKey), false
-	err = v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-preboot-", func(mountRoot string) error {
-		if learn {
-			started := time.Now()
-			present = preBootFilesPresent(mountRoot, writers)
-			timings.Check = time.Since(started)
-			if present {
-				return nil
-			}
-
-		}
+	err = v.editDrive(ctx, owner, instance, drive1, func(img driveImage) error {
 		started := time.Now()
-		defer func() { timings.Write = time.Since(started) }()
-		for _, w := range writers {
-			if err := w.write(mountRoot); err != nil {
-				return fmt.Errorf("%s: %w", w.what, err)
-			}
-			timings.FilesWritten++
+		paths := make([]string, len(writers))
+		for i, w := range writers {
+			paths[i] = w.path
 		}
+		var reads map[string]int64
+		if learn {
+			reads = presentReads(writers)
+		}
+		layout, err := inspectDrive(ctx, img, paths, reads)
+		timings.Check = time.Since(started)
+		if err != nil {
+			return fmt.Errorf("inspect drive: %w", err)
+		}
+		if learn && driveFilesPresent(layout, writers) {
+			present = true
+			return nil
+		}
+		started = time.Now()
+		defer func() { timings.Write = time.Since(started) }()
+		if err := stageDriveFiles(ctx, img, layout, writers); err != nil {
+			return err
+		}
+		timings.FilesWritten = len(writers)
 		return nil
-	}, &timings.loopMountTimings)
+	}, &timings.Replay)
 	if err != nil {
 		return false, err
 	}
@@ -1635,40 +1647,20 @@ func (v *JailerVMM) stagePreBootFilesUnlessForOwner(ctx context.Context, owner n
 	return false, nil
 }
 
-// preBootFileWriter is one deferred write against a mounted drive1. what is
-// the operation label the caller wraps errors with, matching the messages
-// the previous one-mount-per-file implementation produced. path, want and
-// mode describe the file the write leaves behind (path before full-rootfs
-// resolution), so a restore can tell the drive already holds it.
-type preBootFileWriter struct {
-	what  string
-	write func(mountRoot string) error
-	path  string
-	want  []byte
-	mode  os.FileMode
-	// same, when set, decides whether a file already on the drive is as
-	// good as writing want; otherwise it must equal want byte for byte.
-	same func(got []byte) bool
-}
-
 // preBootFileWriters validates inputs and projects byte caps BEFORE any
-// mount, so a rejected payload never costs a loop mount — the same posture
+// drive session, so a rejected payload never costs one — the same posture
 // the individual Stage* methods always had. Order is preserved from the
 // previous implementation: secrets, API env, resolver, app-task marker,
 // sidecar env overrides, main manifest, roster.
-func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, serviceCAPEM ...[]byte) ([]preBootFileWriter, string, error) {
-	var writers []preBootFileWriter
+func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []byte, serviceDiscoveryIP string, appTask bool, serviceCAPEM ...[]byte) ([]driveFile, string, error) {
+	var writers []driveFile
 	digest := newPreBootDigest()
 	if len(secretsEnvJSON) > 0 {
 		digest.add("secrets.env", secretsEnvJSON)
-		writers = append(writers, preBootFileWriter{what: "stage secrets.env", write: func(mp string) error {
-			return writeSecretsEnv(mp, secretsEnvJSON)
-		}, path: secretsEnvPath, want: secretsEnvJSON, mode: 0o400})
+		writers = append(writers, secretsEnvFile(secretsEnvJSON))
 	}
 	if len(apiEnvJSON) > 0 {
-		writer := preBootFileWriter{what: "stage env.json", write: func(mp string) error {
-			return writeAPIEnv(mp, apiEnvJSON)
-		}, path: apiEnvPath, want: apiEnvJSON, mode: 0o400}
+		writer := apiEnvFile(apiEnvJSON)
 		if stable, err := placementStableAPIEnv(apiEnvJSON); err == nil {
 			digest.add("env.json", stable)
 			writer.same = func(got []byte) bool {
@@ -1686,26 +1678,20 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 			return nil, "", fmt.Errorf("stage service resolver: %w", err)
 		}
 		digest.add("resolv.conf", []byte(ip.String()))
-		writers = append(writers, preBootFileWriter{what: "stage service resolver", write: func(mp string) error {
-			return writeServiceDiscoveryResolver(mp, ip)
-		}, path: serviceDiscoveryResolverPath, want: serviceDiscoveryResolverContents(ip), mode: serviceDiscoveryResolverMode})
+		writers = append(writers, driveFile{what: "stage service resolver", path: serviceDiscoveryResolverPath, want: serviceDiscoveryResolverContents(ip), mode: serviceDiscoveryResolverMode})
 		if len(serviceCAPEM) > 0 && len(serviceCAPEM[0]) > 0 {
 			ca := serviceCAPEM[0]
 			if len(ca) > 64*1024 {
 				return nil, "", errors.New("service proxy CA bundle exceeds 64 KiB")
 			}
 			digest.add("service-proxy-ca.crt", ca)
-			writers = append(writers, preBootFileWriter{what: "stage service proxy CA", write: func(mp string) error {
-				return writeServiceProxyCA(mp, ca)
-			}, path: serviceProxyCAPath, want: ca, mode: 0o444})
+			writers = append(writers, driveFile{what: "stage service proxy CA", path: serviceProxyCAPath, want: ca, mode: 0o444})
 		}
 	}
 	if appTask {
 		digest.add("app-task.json", nil)
 		marker := []byte(`{"kind":"app_task","version":1}`)
-		writers = append(writers, preBootFileWriter{what: "stage app task marker", write: func(mp string) error {
-			return writeDriveFile(mp, appTaskMarkerPath, marker, 0o400, "app-task.json")
-		}, path: appTaskMarkerPath, want: marker, mode: 0o400})
+		writers = append(writers, driveFile{what: "stage app task marker", path: appTaskMarkerPath, want: marker, mode: 0o400, keepAttrs: true})
 	}
 	if len(workloads) > 1 {
 		// Sidecar drives are deliberately read-only. Image defaults and the
@@ -1721,151 +1707,42 @@ func preBootFileWriters(workloads []WorkloadSpec, secretsEnvJSON, apiEnvJSON []b
 			}
 			name, blob := workload.Name, workload.preparedEnvJSON
 			digest.add("workload-env:"+name, blob)
-			writers = append(writers, preBootFileWriter{what: "stage workload " + name + " env", write: func(mp string) error {
-				return writeWorkloadEnv(mp, name, blob)
-			}, path: filepath.Join(workloadEnvPath, name, "env.json"), want: blob, mode: 0o400})
+			writers = append(writers, workloadEnvFile(name, blob))
 		}
 		manifest, err := marshalWorkloadManifest(workloads[0])
 		if err != nil {
 			return nil, "", fmt.Errorf("stage main workload manifest: %w", err)
 		}
 		digest.add("workload.json", manifest)
-		writers = append(writers, preBootFileWriter{what: "stage main workload manifest", write: func(mp string) error {
-			return writeDriveFile(mp, workloadManifestPath, manifest, 0o400, "workload.json")
-		}, path: workloadManifestPath, want: manifest, mode: 0o400})
+		writers = append(writers, driveFile{what: "stage main workload manifest", path: workloadManifestPath, want: manifest, mode: 0o400, keepAttrs: true})
 		roster, err := marshalWorkloadRoster(workloads[0], workloads[1:])
 		if err != nil {
 			return nil, "", fmt.Errorf("stage workload roster: %w", err)
 		}
 		digest.add("workloads.json", roster)
-		writers = append(writers, preBootFileWriter{what: "stage workload roster", write: func(mp string) error {
-			return writeDriveFile(mp, workloadRosterPath, roster, 0o400, "workloads.json")
-		}, path: workloadRosterPath, want: roster, mode: 0o400})
+		writers = append(writers, driveFile{what: "stage workload roster", path: workloadRosterPath, want: roster, mode: 0o400, keepAttrs: true})
 	}
 	return writers, digest.sum(), nil
 }
 
-// openDriveRoot opens a mounted drive as an os.Root and returns target
-// relative to it. The drive is tenant-writable — the guest writes it at
-// runtime and the customer image seeds it — while vmmd writes it as root on
-// the host. Every write therefore resolves through os.Root: a symlink that
-// leaves the mount fails the write instead of redirecting it onto a host
-// path.
-func openDriveRoot(mountRoot, target string) (*os.Root, string, error) {
-	rel, err := filepath.Rel(mountRoot, target)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, "../") {
-		return nil, "", fmt.Errorf("drive path %q is outside mount %q", target, mountRoot)
-	}
-	root, err := os.OpenRoot(mountRoot)
-	if err != nil {
-		return nil, "", fmt.Errorf("open drive root: %w", err)
-	}
-	return root, rel, nil
+// secretsEnvFile, apiEnvFile and workloadEnvFile rewrite an existing
+// regular file in place, keeping its owner and mode as the mounted-drive
+// writers' O_TRUNC rewrite did; anything else at the path is replaced.
+func secretsEnvFile(blob []byte) driveFile {
+	return driveFile{what: "stage secrets.env", path: secretsEnvPath, want: blob, mode: 0o400, keepAttrs: true}
 }
 
-// clearNonRegular removes a symlink or other non-regular entry at rel so the
-// write that follows creates a fresh file rather than following a link the
-// tenant planted, even one that stays inside the drive.
-func clearNonRegular(root *os.Root, rel string) error {
-	info, err := root.Lstat(rel)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	if info.Mode().IsRegular() {
-		return nil
-	}
-	return root.Remove(rel)
+func apiEnvFile(blob []byte) driveFile {
+	return driveFile{what: "stage env.json", path: apiEnvPath, want: blob, mode: 0o400, keepAttrs: true}
 }
 
-// writeDriveFile writes one file beneath a mounted drive, resolving the
-// full-rootfs marker the same way every Stage* method always has.
-func writeDriveFile(mountRoot, optimizedPath string, blob []byte, mode os.FileMode, label string) error {
-	target, err := stagedDrivePath(mountRoot, optimizedPath)
-	if err != nil {
-		return err
-	}
-	root, rel, err := openDriveRoot(mountRoot, target)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
-	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
-		return fmt.Errorf("mkdir %s: %w", strings.TrimPrefix(filepath.Dir(optimizedPath), "upper/"), err)
-	}
-	if err := clearNonRegular(root, rel); err != nil {
-		return fmt.Errorf("write %s: %w", label, err)
-	}
-	if err := root.WriteFile(rel, blob, mode); err != nil {
-		return fmt.Errorf("write %s: %w", label, err)
-	}
-	return nil
-}
-
-func writeSecretsEnv(mountRoot string, blob []byte) error {
-	return writeDriveFile(mountRoot, secretsEnvPath, blob, 0o400, "secrets.env")
-}
-
-func writeAPIEnv(mountRoot string, blob []byte) error {
-	return writeDriveFile(mountRoot, apiEnvPath, blob, 0o400, "env.json")
-}
-
-func writeWorkloadEnv(mountRoot, workloadName string, blob []byte) error {
-	base, err := stagedDrivePath(mountRoot, workloadEnvPath)
-	if err != nil {
-		return err
-	}
-	root, rel, err := openDriveRoot(mountRoot, filepath.Join(base, workloadName, "env.json"))
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
-	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
-		return fmt.Errorf("mkdir workload env: %w", err)
-	}
-	if err := clearNonRegular(root, rel); err != nil {
-		return fmt.Errorf("write workload env: %w", err)
-	}
-	if err := root.WriteFile(rel, blob, 0o400); err != nil {
-		return fmt.Errorf("write workload env: %w", err)
-	}
-	return nil
+func workloadEnvFile(name string, blob []byte) driveFile {
+	return driveFile{what: "stage workload " + name + " env", path: filepath.Join(workloadEnvPath, name, "env.json"), want: blob, mode: 0o400, keepAttrs: true}
 }
 
 const serviceDiscoveryResolverPath = "upper/etc/resolv.conf"
 
 const serviceProxyCAPath = "upper/etc/faas/service-proxy-ca.crt"
-
-func writeServiceProxyCA(mountRoot string, ca []byte) error {
-	target, err := stagedDrivePath(mountRoot, serviceProxyCAPath)
-	if err != nil {
-		return err
-	}
-	root, err := os.OpenRoot(mountRoot)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
-	rel, err := filepath.Rel(mountRoot, target)
-	if err != nil {
-		return err
-	}
-	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
-		return fmt.Errorf("create service CA directory: %w", err)
-	}
-	// Remove a prior file first: Root.WriteFile truncates an existing inode
-	// and would otherwise follow a guest-planted symlink. Root confines every
-	// path component to this mounted drive, including malicious parents.
-	if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("replace service CA: %w", err)
-	}
-	if err := root.WriteFile(rel, ca, 0o444); err != nil {
-		return fmt.Errorf("write service CA: %w", err)
-	}
-	return root.Chmod(rel, 0o444)
-}
 
 const appTaskMarkerPath = "upper/etc/faas/app-task.json"
 
@@ -1875,28 +1752,6 @@ func parseServiceDiscoveryIP(bridgeIP string) (netip.Addr, error) {
 		return netip.Addr{}, fmt.Errorf("invalid private bridge address %q", bridgeIP)
 	}
 	return ip, nil
-}
-
-func writeServiceDiscoveryResolver(mountRoot string, ip netip.Addr) error {
-	target, err := stagedDrivePath(mountRoot, serviceDiscoveryResolverPath)
-	if err != nil {
-		return err
-	}
-	root, rel, err := openDriveRoot(mountRoot, target)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = root.Close() }()
-	if err := root.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
-		return fmt.Errorf("mkdir resolver directory: %w", err)
-	}
-	if err := root.Remove(rel); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("remove existing resolver file: %w", err)
-	}
-	if err := root.WriteFile(rel, serviceDiscoveryResolverContents(ip), serviceDiscoveryResolverMode); err != nil {
-		return fmt.Errorf("write resolver file: %w", err)
-	}
-	return nil
 }
 
 const serviceDiscoveryResolverMode os.FileMode = 0o644
@@ -2322,13 +2177,13 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if err := v.pinVerifiedSnapshotDrives(ctx, l, root, spec); err != nil {
 		return fmt.Errorf("vmm: pin protected restore drives: %w", err)
 	}
-	// The pre-boot write loop-mounts drive1 (a clone already bound into the
-	// jail) on a private host mountpoint; nothing staged next — the snapshot
+	// The pre-boot write edits drive1 (a clone already bound into the jail)
+	// in the vmmd-guestdisk sandbox; nothing staged next — the snapshot
 	// binds, chroot ownership, vsock listeners, mount helper, TUN source —
 	// touches drive1, so the write runs alongside them. It is joined before
-	// startJailer: the jailer's mount namespace must never copy an in-flight
-	// loop mount. Native recovery journals every staging step in order, so it
-	// keeps the serial path.
+	// startJailer: the VM must not boot on a drive still being edited. Native
+	// recovery journals every staging step in order, so it keeps the serial
+	// path.
 	var preBootTimings preBootStageTimings
 	var preBootSkipped bool
 	var preBootErr error
@@ -2349,7 +2204,7 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if v.nativeRecovery == nil {
 		go runPreBoot()
 		// Every return below (including errors) waits for the write, so the
-		// deferred Kill never unmounts drive1 under an active loop session.
+		// deferred Kill never removes drive1 under an active edit session.
 		defer func() { <-preBootDone }()
 	} else {
 		runPreBoot()
@@ -2402,9 +2257,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 	if l.Quarantine {
 		// ADR-732: the capture's drive still holds the secrets files the
 		// original boot wrote. Remove them from this fork's private copy
-		// before resume so a later process start cannot reload them. This
-		// loop-mounts drive1, so it runs only after the pre-boot write joined
-		// and, like it, before startJailer.
+		// before resume so a later process start cannot reload them. It edits
+		// drive1, so it runs only after the pre-boot write joined and, like it,
+		// before startJailer.
 		if err := v.scrubForkSecrets(ctx, stagingOwner, l.Instance); err != nil {
 			return fmt.Errorf("vmm: scrub fork secrets: %w", err)
 		}
@@ -2566,10 +2421,9 @@ func (v *JailerVMM) Restore(ctx context.Context, l Lease, spec RestoreSpec) (err
 		"stage_pre_boot_files_ms", breakdown.StagePreBootFilesMs,
 		"stage_pre_boot_files_skipped", preBootSkipped,
 		"pre_boot_prepare_us", preBootTimings.Prepare.Microseconds(),
-		"pre_boot_mount_ms", preBootTimings.Mount.Milliseconds(),
+		"pre_boot_replay_ms", preBootTimings.Replay.Milliseconds(),
 		"pre_boot_check_us", preBootTimings.Check.Microseconds(),
 		"pre_boot_write_us", preBootTimings.Write.Microseconds(),
-		"pre_boot_unmount_ms", preBootTimings.Unmount.Milliseconds(),
 		"pre_boot_files_total", preBootTimings.FilesTotal,
 		"pre_boot_files_written", preBootTimings.FilesWritten,
 		"stage_snapshot_ms", breakdown.StageSnapshotMs,
@@ -3007,6 +2861,12 @@ func readResumeCapabilities(conn net.Conn) (*resumetimingproto.Timings, error) {
 // It shares the resume listener's CONNECT handshake and is consumed by the
 // guest extension bridge (guest/init/listen_resume_linux.go).
 const extensionHookMsgEvent uint32 = 3
+
+// extensionHookAckUnavailable is the guest's answer when no extension
+// endpoint accepted the event (guest/init VsockExtensionAckUnavailable,
+// ADR-20261025150000). TriggerExtensionHook reports it as
+// extension.ErrUnavailable so callers can stop sending per-request events.
+const extensionHookAckUnavailable byte = 16
 
 const beforeCheckpointHookMsg uint32 = 5
 const beforeCheckpointHookAckFailed byte = 14
@@ -3488,8 +3348,11 @@ func (v *JailerVMM) TriggerExtensionHook(ctx context.Context, l Lease, phase str
 						ack := []byte{0}
 						if _, err = io.ReadFull(conn, ack); err == nil {
 							_ = conn.Close()
-							if ack[0] == 0 {
+							switch ack[0] {
+							case 0:
 								return nil
+							case extensionHookAckUnavailable:
+								return fmt.Errorf("vmm: guest has no extension endpoint: %w", extension.ErrUnavailable)
 							}
 							return fmt.Errorf("vmm: extension hook rejected (ack=%d)", ack[0])
 						}
@@ -4428,8 +4291,9 @@ func signalAndKillRace(cmd *exec.Cmd, doneCh <-chan struct{}, signal syscall.Sig
 // DestroyWithExport is the build-VM teardown path (M6 / spec §4.5). It blocks
 // until the firecracker child exits (capped by v.destroyWait — default 10m,
 // comfortable above spec §1 BuildTimeoutSeconds), captures the exit code, and
-// only if exportDir != "" loopback-mounts the chroot-local drive1 to copy out
-// /etc/faas/build-done.json and /build/out/* before removing the chroot.
+// only if exportDir != "" reads /etc/faas/build-done.json and /build/out/*
+// off the chroot-local drive1 (sandboxed, never mounted) before removing the
+// chroot.
 //
 // Ordinary app VMs with exportDir="" are killed immediately, matching
 // Manager.Destroy's contract. Builder records wait for completion even when
@@ -4521,12 +4385,12 @@ exited:
 		return exitCode, fmt.Errorf("vmm: process exit unconfirmed for %s: %w", l.Instance, waitErr)
 	}
 
-	// 2. Artifact export (build VMs only). Loopback-mount the chroot-local
-	//    drive1.ext4 and copy out /etc/faas/build-done.json + /build/out/*.
-	//    The mount uses root privileges (vmmd is the only root component, §11).
+	// 2. Artifact export (build VMs only). Read /etc/faas/build-done.json and
+	//    /build/out/* off the chroot-local drive1 in the vmmd-guestdisk
+	//    sandbox; the drive is never mounted (ADR-20261025090100).
 	var exportErr error
 	if exportDir != "" {
-		if err := v.exportBuildArtifacts(l.Instance, exportDir); err != nil {
+		if err := v.exportBuildArtifacts(ctx, l.Instance, exportDir); err != nil {
 			// Retain the export error, but release the dead VM's resources
 			// before returning it.
 			exportErr = fmt.Errorf("vmm: export build artifacts: %w", err)
@@ -4735,13 +4599,12 @@ func (v *JailerVMM) InstancePID(instance string) (int, bool) {
 	return cmd.Process.Pid, true
 }
 
-// exportBuildArtifacts loopback-mounts the chroot-local drive1 image and
-// copies /etc/faas/build-done.json and /build/out/* into exportDir. Files
-// larger than exportMaxBytes are skipped + counted as failures (best-effort
-// — never blocks the caller). vmmd is the only root component, so the mount
-// is fine; the chroot-local drive1.ext4 is owned by root after provision
-// (pkg/fcvm/vmm.go:stageWritable).
-func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr error) {
+// exportBuildArtifacts copies /etc/faas/build-done.json and /build/out/*
+// from the builder's drive1 into exportDir. Untrusted build code ran as root
+// and wrote that drive, so it is read in the vmmd-guestdisk sandbox and never
+// mounted on the host (ADR-20261025090100). Files larger than exportMaxBytes
+// are skipped (best-effort — never blocks the caller).
+func (v *JailerVMM) exportBuildArtifacts(ctx context.Context, instance, exportDir string) (retErr error) {
 	if v.nativeRecovery != nil {
 		return errors.New("native recovery: artifact export producer provenance is not implemented")
 	}
@@ -4761,97 +4624,83 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 	if err != nil {
 		return err
 	}
-	mp, err := os.MkdirTemp("", "faas-vmm-export-")
-	if err != nil {
-		return fmt.Errorf("mkdir mountpoint: %w", err)
-	}
-	defer func() { _ = os.RemoveAll(mp) }()
-
-	// Export is read-only: the guest has already synced the upperdir before
-	// powering off. Mount ro,noload first so a dirty ext4 journal cannot make
-	// the host block in rw journal replay while the builder queue is waiting.
-	// A plain read-only mount remains a compatibility fallback for images whose
-	// filesystem features reject noload.
-	//
-	// The drive was written by untrusted build code running as root in the
-	// guest, so the mount is also nodev,nosuid,noexec: a device node the
-	// build created (the host's NVMe, /dev/zero) must not become a live
-	// device when vmmd, as root, reads the export.
-	if out, mountErr := exec.Command("mount", guestDiskMountArgs("ro,noload", drive1, mp)...).CombinedOutput(); mountErr != nil {
-		if roOut, roErr := exec.Command("mount", guestDiskMountArgs("ro", drive1, mp)...).CombinedOutput(); roErr != nil {
-			return fmt.Errorf("mount loop: ro,noload=%w (%s); ro=%w (%s)", mountErr, bytes.TrimSpace(out), roErr, bytes.TrimSpace(roOut))
-		}
-	}
-	defer func() { _ = exec.Command("umount", mp).Run() }()
-
-	// build-done.json is the canonical manifest builderd reads.
-	if data, ok := readBuildDone(mp); ok {
-		if err := os.WriteFile(filepath.Join(exportDir, "build-done.json"), data, 0o644); err != nil {
-			return fmt.Errorf("write build-done.json: %w", err)
-		}
-	} // else: VM died before guest-init wrote it (or it is not a bounded
-	// regular file) — caller falls back to exit-code class.
-
-	// /build/out/ holds the produced OCI tarball. Walk + copy with the size
-	// cap enforced. A build that overruns the cap is logged as infra failure
-	// via the caller's classification (no error returned — best-effort).
-	if srcOut, ok := buildOutDir(mp); ok {
-		dstOut := filepath.Join(exportDir, "build", "out")
-		if err := os.MkdirAll(dstOut, 0o755); err != nil {
-			return fmt.Errorf("mkdir out: %w", err)
-		}
-		return copyTree(srcOut, dstOut, v.exportMax())
-	}
-	return nil
+	// The export outlives a cancelled caller: builderd waits for the files.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), buildExportTimeout)
+	defer cancel()
+	return v.editDrive(ctx, nativeLaunchRecord{}, instance, drive1, func(img driveImage) error {
+		return exportBuildDrive(ctx, img, exportDir, v.exportMax())
+	}, nil)
 }
+
+// buildExportTimeout bounds reading a builder drive's outputs.
+const buildExportTimeout = 10 * time.Minute
 
 // maxBuildDoneBytes bounds the guest-written build-done.json manifest (exit
 // code, failure class, and a log tail).
 const maxBuildDoneBytes = 1 << 20
 
-// buildDoneRel is build-done.json's path on the mounted builder drive.
-const buildDoneRel = "upper/etc/faas/build-done.json"
+// Builder drives use the optimized layout: their files live below /upper.
+const (
+	buildDoneImagePath = "/upper/etc/faas/build-done.json"
+	buildOutImagePath  = "/upper/build/out"
+)
 
-// readBuildDone reads the guest-written build manifest from the mounted
-// builder drive. Untrusted build code wrote the drive and vmmd reads it as
-// root, so the path resolves through os.Root and must name a bounded regular
-// file: a link to a host file, or to an endless device such as /dev/zero,
-// is never read.
-func readBuildDone(mountRoot string) ([]byte, bool) {
-	root, err := os.OpenRoot(mountRoot)
+// exportBuildDrive is the drive half of exportBuildArtifacts.
+func exportBuildDrive(ctx context.Context, img driveImage, exportDir string, maxBytes int64) error {
+	probe := append(imageComponents(buildDoneImagePath), imageComponents(buildOutImagePath)...)
+	entries, err := img.Inspect(ctx, probe, map[string]guestdisk.Read{buildDoneImagePath: {Max: maxBuildDoneBytes}})
 	if err != nil {
-		return nil, false
+		return fmt.Errorf("inspect builder drive: %w", err)
 	}
-	defer func() { _ = root.Close() }()
-	info, err := root.Lstat(buildDoneRel)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > maxBuildDoneBytes {
-		return nil, false
-	}
-	f, err := root.Open(buildDoneRel)
-	if err != nil {
-		return nil, false
-	}
-	defer func() { _ = f.Close() }()
-	data, err := io.ReadAll(io.LimitReader(f, maxBuildDoneBytes+1))
-	if err != nil || len(data) > maxBuildDoneBytes {
-		return nil, false
-	}
-	return data, true
-}
-
-// buildOutDir returns the mounted drive's upper/build/out when every path
-// component is a real directory. A symlinked component would start the
-// export walk inside a host directory.
-func buildOutDir(mountRoot string) (string, bool) {
-	dir := mountRoot
-	for _, part := range []string{"upper", "build", "out"} {
-		dir = filepath.Join(dir, part)
-		info, err := os.Lstat(dir)
-		if err != nil || !info.IsDir() {
-			return "", false
+	// build-done.json is the canonical manifest builderd reads. Without it
+	// (the VM died before guest-init wrote it, or it is not a bounded regular
+	// file) the caller falls back to the exit-code class.
+	if realDirs(entries, buildDoneImagePath) {
+		if e := entries[buildDoneImagePath]; e.Kind == guestdisk.Regular && e.Data != nil {
+			if err := os.WriteFile(filepath.Join(exportDir, "build-done.json"), e.Data, 0o644); err != nil {
+				return fmt.Errorf("write build-done.json: %w", err)
+			}
 		}
 	}
-	return dir, true
+	// /build/out holds the produced OCI tarball. A symlinked component would
+	// start the export inside another directory, so every component must be
+	// a real directory.
+	if !realDirs(entries, buildOutImagePath) || entries[buildOutImagePath].Kind != guestdisk.Directory {
+		return nil
+	}
+	// Dump next to the export, on its filesystem: an output can be several
+	// GiB, too large for the tmpfs session scratch. The dump is planned from
+	// a listing and held to the export budgets before anything is written:
+	// sparse files and hard links take no room on the drive the build wrote
+	// but would be written at full size.
+	staging := filepath.Join(exportDir, ".guestdisk-dump")
+	if err := os.Mkdir(staging, 0o700); err != nil {
+		return fmt.Errorf("mkdir export staging: %w", err)
+	}
+	defer func() { _ = os.RemoveAll(staging) }()
+	src, err := img.DumpFiles(ctx, buildOutImagePath, staging, guestdisk.DumpBudget{FileBytes: maxBytes, TotalBytes: api.MaxExportedTreeBytes, Entries: api.MaxExportedTreeEntries})
+	if errors.Is(err, guestdisk.ErrDumpBudget) {
+		return fmt.Errorf("%w: %w", errExportBudget, err)
+	}
+	if err != nil {
+		return fmt.Errorf("dump build output: %w", err)
+	}
+	dstOut := filepath.Join(exportDir, "build", "out")
+	if err := os.MkdirAll(dstOut, 0o755); err != nil {
+		return fmt.Errorf("mkdir out: %w", err)
+	}
+	return moveTree(src, dstOut, maxBytes)
+}
+
+// realDirs reports whether every parent of p is a real directory.
+func realDirs(entries map[string]guestdisk.Entry, p string) bool {
+	comps := imageComponents(p)
+	for _, dir := range comps[:len(comps)-1] {
+		if entries[dir].Kind != guestdisk.Directory {
+			return false
+		}
+	}
+	return true
 }
 
 func handoffBuildExportOwnership(exportDir string) error {
@@ -4997,56 +4846,12 @@ const secretsEnvPath = "upper/etc/faas/secrets.env"
 // manifest_env > os.environ".
 const apiEnvPath = "upper/etc/faas/env.json"
 
-// stagedDrivePath selects the on-disk contract location for drive1. The
-// optimized two-drive artifact stores mutable runtime files below /upper;
-// full-rootfs artifacts are already mounted as the guest's root and therefore
-// receive the same files directly under /. The marker is written only by the
-// platform builder, so a malformed value fails closed instead of silently
-// writing state to a path guest-init will never read.
-func stagedDrivePath(mountRoot, optimizedPath string) (string, error) {
-	// The marker lives on the tenant-writable drive, so it resolves through
-	// os.Root like every write: a symlinked parent directory cannot point
-	// the read at a host file.
-	root, err := os.OpenRoot(mountRoot)
-	if err != nil {
-		return "", fmt.Errorf("open drive root: %w", err)
-	}
-	defer func() { _ = root.Close() }()
-	marker := strings.TrimPrefix(api.FullRootfsMarkerPath, "/")
-	info, err := root.Lstat(marker)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return filepath.Join(mountRoot, optimizedPath), nil
-		}
-		return "", fmt.Errorf("inspect full-rootfs marker: %w", err)
-	}
-	if info.Mode()&os.ModeSymlink != 0 || !info.Mode().IsRegular() {
-		return "", fmt.Errorf("full-rootfs marker is not a regular file")
-	}
-	if info.Size() != int64(len(api.FullRootfsMarkerValue)) {
-		return "", fmt.Errorf("invalid full-rootfs marker payload")
-	}
-	data, err := root.ReadFile(marker)
-	if err != nil {
-		return "", fmt.Errorf("read full-rootfs marker: %w", err)
-	}
-	if string(data) != api.FullRootfsMarkerValue {
-		return "", fmt.Errorf("invalid full-rootfs marker payload")
-	}
-	return filepath.Join(mountRoot, strings.TrimPrefix(optimizedPath, "upper/")), nil
-}
-
-// StageSecretsEnv loopback-mounts drive1 (the per-app layer, the only fs
-// the VM can write at runtime), writes /etc/faas/secrets.env with mode
-// 0400, and umounts. The plaintext is read off the chroot-local image
-// only for the duration of this call. vmmd is the only root component,
-// so the loopback mount is permitted by the §11 threat model.
-//
-// Mirrors exportBuildArtifacts (read side) — same chroot layout, same
-// mountpoint-handling pattern, write-vs-read swap. The function is a no-op
-// when jsonBlob is empty: no file is written, no mount attempted. This
-// short-circuit is what lets an app with zero secrets proceed without any
-// extra mount/umount cost.
+// StageSecretsEnv writes /etc/faas/secrets.env with mode 0400 onto drive1
+// (the per-app layer, the only fs the VM can write at runtime) in one
+// sandboxed drive session (ADR-20261025090100). The plaintext passes through
+// the session's private scratch directory only for the duration of this
+// call. The function is a no-op when jsonBlob is empty: no file is written
+// and no session opened, so an app with zero secrets pays nothing.
 func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 	ctx, cancel := v.driveStagingContext()
 	defer cancel()
@@ -5061,18 +4866,15 @@ func (v *JailerVMM) StageSecretsEnv(instance string, jsonBlob []byte) error {
 	if err != nil {
 		return err
 	}
-	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-secrets-", func(mp string) error {
-		return writeSecretsEnv(mp, jsonBlob)
-	})
+	return v.stageDriveFile(ctx, owner, instance, drive1, secretsEnvFile(jsonBlob))
 }
 
 // StageAPIEnv is the plaintext sibling of StageSecretsEnv (issue #395 /
 // ADR-045). Writes /etc/faas/env.json on drive1 (a JSON map of key→value)
-// for guest-init to merge into the process env at boot. Same loopback-
-// mount dance as StageSecretsEnv (loop mount drive1 → write file →
-// umount), but the payload is plaintext by contract — no host key
-// needed, no unseal step. Empty jsonBlob short-circuits to a no-op so
-// apps without API env rows skip the mount/umount cycle entirely.
+// for guest-init to merge into the process env at boot, in the same kind of
+// drive session as StageSecretsEnv, but the payload is plaintext by
+// contract — no host key needed, no unseal step. Empty jsonBlob
+// short-circuits to a no-op so apps without API env rows skip the session.
 //
 // File mode 0o400 mirrors StageSecretsEnv's read-only posture even
 // though the contents are non-sensitive — the guest-init process is the
@@ -5092,9 +4894,7 @@ func (v *JailerVMM) StageAPIEnv(instance string, jsonBlob []byte) error {
 	if err != nil {
 		return err
 	}
-	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-apienv-", func(mp string) error {
-		return writeAPIEnv(mp, jsonBlob)
-	})
+	return v.stageDriveFile(ctx, owner, instance, drive1, apiEnvFile(jsonBlob))
 }
 
 // workloadEnvPath is the per-sidecar override file written to the main
@@ -5123,9 +4923,7 @@ func (v *JailerVMM) StageWorkloadEnv(instance, workloadName string, jsonBlob []b
 	if err != nil {
 		return err
 	}
-	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-workload-env-", func(mp string) error {
-		return writeWorkloadEnv(mp, workloadName, jsonBlob)
-	})
+	return v.stageDriveFile(ctx, owner, instance, drive1, workloadEnvFile(workloadName, jsonBlob))
 }
 
 func validWorkloadName(name string) bool {
@@ -5157,9 +4955,10 @@ func validWorkloadName(name string) bool {
 // driveIdx = -1 and we'll point at drive1 (the legacy
 // single-workload path) instead of the sidecarLeaf naming convention.
 //
-// The drive is loopback-mounted rw, the file is written with mode
-// 0o400 (read-only for the in-guest workloads), and umount runs in
-// a defer. The compatibility manifest captures command and port
+// The file is written with mode 0o400 (read-only for the in-guest
+// workloads) in a sandboxed drive session. Sidecar drives are shared
+// read-only artifacts, so only the main workload's drive1 (driveIdx -1) can
+// be stamped. The compatibility manifest captures command and port
 // from the WorkloadSpec that schedd sent on the wake wire; vmmd
 // trusts the wire as it trusts every other wake-field (the gRPC
 // server runs on a unix socket reachable only by the faas group;
@@ -5171,19 +4970,14 @@ func (v *JailerVMM) StageWorkloadManifest(instance string, driveIdx int, w Workl
 	if err != nil {
 		return err
 	}
-	if v.nativeRecovery != nil && driveIdx >= 0 {
-		return errors.New("native loop mount: cannot write a shared read-only sidecar image")
+	if driveIdx >= 0 {
+		return errors.New("vmm: cannot write a shared read-only sidecar image")
 	}
-	if driveIdx < 0 {
-		// Main workload: stamp on drive1 (the legacy path).
-		drive1, err := v.resolveDriveImage(instance)
-		if err != nil {
-			return err
-		}
-		return v.writeWorkloadManifestForOwner(ctx, owner, instance, drive1, w)
+	drive1, err := v.resolveDriveImage(instance)
+	if err != nil {
+		return err
 	}
-	drive := filepath.Join(v.chrootRoot(instance), sidecarDriveImageName(driveIdx))
-	return v.writeWorkloadManifestForOwner(ctx, owner, instance, drive, w)
+	return v.writeWorkloadManifestForOwner(ctx, owner, instance, drive1, w)
 }
 
 func (v *JailerVMM) writeWorkloadManifestForOwner(ctx context.Context, owner nativeLaunchRecord, instance, drive string, w WorkloadSpec) error {
@@ -5194,14 +4988,12 @@ func (v *JailerVMM) writeWorkloadManifestForOwner(ctx context.Context, owner nat
 	if err != nil {
 		return err
 	}
-	return v.driveStagingSession(ctx, owner, instance, drive, "faas-vmm-workload-", func(mp string) error {
-		return writeDriveFile(mp, workloadManifestPath, blob, 0o400, "workload.json")
-	})
+	return v.stageDriveFile(ctx, owner, instance, drive, driveFile{what: "write workload.json", path: workloadManifestPath, want: blob, mode: 0o400, keepAttrs: true})
 }
 
 // marshalWorkloadManifest projects the byte cap and marshals the
-// compatibility manifest. It runs BEFORE any mount so an oversized payload
-// never costs a loop device.
+// compatibility manifest. It runs BEFORE any drive session so an oversized
+// payload never costs one.
 func marshalWorkloadManifest(w WorkloadSpec) ([]byte, error) {
 	// Pre-marshal byte cap projection (PR-B review finding #7).
 	// Marshalling an unbounded Name field before checking size
@@ -5426,10 +5218,9 @@ type workloadRoster struct {
 // single-workload path (no roster) is a guest-init fallback — boot
 // routes to runAppWithEnv unchanged.
 //
-// We mount drive1 once, write both the roster file and verify the
-// per-drive main manifest is in place (StageWorkloadManifest
-// stamps drive1 too with the main spec; that's the operator-visibility
-// affordance for debugging tools, the orchestrator ignores it).
+// StageWorkloadManifest stamps drive1 with the main spec too; that is the
+// operator-visibility affordance for debugging tools, the orchestrator
+// ignores it.
 //
 // sidecars may be nil/empty — boot runs the legacy path. Caller
 // filters out the main workload before passing.
@@ -5448,13 +5239,11 @@ func (v *JailerVMM) StageWorkloadRoster(instance string, main WorkloadSpec, side
 	if err != nil {
 		return err
 	}
-	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-roster-", func(mp string) error {
-		return writeDriveFile(mp, workloadRosterPath, blob, 0o400, "workloads.json")
-	})
+	return v.stageDriveFile(ctx, owner, instance, drive1, driveFile{what: "write workloads.json", path: workloadRosterPath, want: blob, mode: 0o400, keepAttrs: true})
 }
 
 // marshalWorkloadRoster projects the byte cap and marshals the deployment
-// roster before any mount is taken.
+// roster before any drive session opens.
 func marshalWorkloadRoster(main WorkloadSpec, sidecars []WorkloadSpec) ([]byte, error) {
 	// Pre-marshal byte cap projection (PR-B review finding #7).
 	// Cap runs BEFORE json.Marshal — matches the posture
@@ -5560,17 +5349,22 @@ func (v *JailerVMM) destroyWaitFor(exportDir string, buildTimeoutSec int) time.D
 // errExportBudget stops an export whose tree passes the total budget.
 var errExportBudget = errors.New("vmm: build output exceeds the export budget")
 
-// copyTree copies a directory tree from src to dst, skipping any single file
-// whose size exceeds maxBytes. Best-effort by design — partial copies are OK
-// for a build that overshot the cap. The whole tree is also held to
-// api.MaxExportedTreeBytes and api.MaxExportedTreeEntries: the build wrote
-// the drive, so sparse files and hard links can each pass the per-file cap
-// while together they would fill the host.
-func copyTree(src, dst string, maxBytes int64) error {
-	return copyTreeWithin(src, dst, maxBytes, api.MaxExportedTreeBytes, api.MaxExportedTreeEntries)
+// moveTree moves an untrusted dump's directories and regular files into dst.
+// Builder output is an OCI tarball plus BuildKit's local cache: directories
+// and regular files only. Symlinks, device nodes, FIFOs and sockets the
+// untrusted build created are dropped (recreating a link hands builderd a
+// path into the host), as is any file over maxBytes. The whole tree is also
+// held to api.MaxExportedTreeBytes and api.MaxExportedTreeEntries: the build
+// wrote the drive, so sparse files and hard links can each pass the per-file
+// cap while together they would fill the host. The dump already enforced the
+// same budgets before writing; this is the second check. Nothing writes the
+// dump any more: the sandboxed tool has exited, and so has the builder VM
+// that shares its uid.
+func moveTree(src, dst string, maxBytes int64) error {
+	return moveTreeWithin(src, dst, maxBytes, api.MaxExportedTreeBytes, api.MaxExportedTreeEntries)
 }
 
-func copyTreeWithin(src, dst string, maxBytes, maxTotalBytes int64, maxEntries int) error {
+func moveTreeWithin(src, dst string, maxBytes, maxTotalBytes int64, maxEntries int) error {
 	var totalBytes int64
 	entries := 0
 	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
@@ -5585,39 +5379,31 @@ func copyTreeWithin(src, dst string, maxBytes, maxTotalBytes int64, maxEntries i
 			return err
 		}
 		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			if err := os.MkdirAll(target, 0o755); err != nil {
-				return err
-			}
-			info, err := d.Info()
-			if err != nil {
-				return err
-			}
-			return os.Chmod(target, info.Mode().Perm())
-		}
-		if !d.Type().IsRegular() {
-			// Builder output is an OCI tarball plus BuildKit's local
-			// cache — directories and regular files only. Symlinks, device
-			// nodes, FIFOs and sockets the untrusted build created are
-			// dropped: recreating a link hands builderd a path into the
-			// host, and opening a device node reads it as root.
-			return nil
-		}
 		info, err := d.Info()
 		if err != nil {
 			return err
 		}
-		if maxBytes > 0 && info.Size() > maxBytes {
-			return nil // skip the oversize file
+		switch {
+		case d.IsDir():
+			if err := os.MkdirAll(target, 0o755); err != nil {
+				return err
+			}
+			return os.Chmod(target, info.Mode().Perm())
+		case d.Type().IsRegular():
+			if maxBytes > 0 && info.Size() > maxBytes {
+				return nil // skip the oversize file
+			}
+			// Apparent size: a sparse or linked file counts at full size.
+			if totalBytes += info.Size(); totalBytes > maxTotalBytes {
+				return fmt.Errorf("%w: more than %d bytes", errExportBudget, maxTotalBytes)
+			}
+			if err := os.Rename(path, target); err != nil {
+				return err
+			}
+			return os.Chmod(target, info.Mode().Perm())
+		default:
+			return nil
 		}
-		// Apparent size: copying writes every byte, sparse or linked.
-		if totalBytes += info.Size(); totalBytes > maxTotalBytes {
-			return fmt.Errorf("%w: more than %d bytes", errExportBudget, maxTotalBytes)
-		}
-		if err := copyFile(path, target); err != nil {
-			return err
-		}
-		return os.Chmod(target, info.Mode().Perm())
 	})
 }
 
@@ -6923,6 +6709,9 @@ func (v *JailerVMM) waitReadyOrCharacterized(ctx context.Context, l Lease, healt
 				if loopbackErr := loopbackBindProblem(receipt.report, err); loopbackErr != nil {
 					return loopbackErr
 				}
+				if portErr := portMismatchProblem(receipt.report, l.AppPort, err); portErr != nil {
+					return portErr
+				}
 			}
 			return err
 		case <-receiptDone:
@@ -7030,6 +6819,24 @@ func loopbackBindProblem(report api.CharacterizationReport, readinessErr error) 
 	return api.NewProblem(422, api.CodeAppLoopbackBound, "app bound to loopback",
 		fmt.Sprintf("startup_phase=handler_boot: the app listens on %s, which the gateway cannot reach; bind 0.0.0.0 (or ::) instead (%s)",
 			strings.Join(report.ListeningAddrs, ", "), readinessErr))
+}
+
+// portMismatchProblem names the port an app listens on when readiness found
+// nothing on the port the host routes to. Production apps listen on $PORT
+// (ADR-1170); since ADR-051's 2026-10-25 amendment no guest rescues another
+// port, and "the app never listened" alone sent customers looking for a
+// crash. Characterization reports the routed port whenever the app listens
+// on it, so a different observed port means the app does not.
+func portMismatchProblem(report api.CharacterizationReport, appPort int, readinessErr error) error {
+	if appPort <= 0 {
+		appPort = api.DefaultAppPort
+	}
+	if p := api.AsProblem(readinessErr); p == nil || p.Code != api.CodeAppNotListening || report.ObservedPort <= 0 || report.ObservedPort == appPort {
+		return nil
+	}
+	return api.NewProblem(422, api.CodeAppNotListening, "app listens on a different port",
+		fmt.Sprintf("startup_phase=handler_boot: the app listens on port %d, but this deployment routes to port %d ($PORT). Listen on $PORT, or declare port %d: hosting.port in gregale.yaml, or overrides.port for an image deployment (%s)",
+			report.ObservedPort, appPort, report.ObservedPort, readinessErr))
 }
 
 // loopbackListenAddr reports a host:port bound to a loopback address. An

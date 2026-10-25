@@ -1,4 +1,4 @@
-// adr: 20261025150000 — dispatch slots give back their database token while a
+// adr: 20261025232118 — dispatch slots give back their database token while a
 // step runs, so slow handlers no longer stall other customers' workflows.
 package sched_test
 

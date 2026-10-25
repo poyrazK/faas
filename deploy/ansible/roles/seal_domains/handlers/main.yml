@@ -7,6 +7,7 @@
     - restart faas-githubd for seal domains
     - restart faas-imaged for seal domains
     - restart faas-gatewayd-internal for seal domains
+    - restart faas-meterd for seal domains
     - restart faas-apid for seal domains
     - daemon-reload for seal domains
 
@@ -24,6 +25,11 @@
   ansible.builtin.command: systemctl try-restart faas-imaged.service  # noqa: command-instead-of-module
   changed_when: true
   listen: restart faas-imaged for seal domains
+
+- name: seal_domains — try-restart faas-meterd
+  ansible.builtin.command: systemctl try-restart faas-meterd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-meterd for seal domains
 
 # A node join defers service handlers: the node starts drained and its
 # daemons start later with the drop-in in place.

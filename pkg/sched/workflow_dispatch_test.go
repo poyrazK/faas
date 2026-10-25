@@ -80,7 +80,7 @@ func TestWorkflowDispatchFillsSlotsAndCoalescesBusyTicks(t *testing.T) {
 	if len(apps) != api.WorkflowDispatchBaseSlots {
 		t.Fatalf("backlog monopolized slots: %+v", apps)
 	}
-	// While every slot is busy, each tick offers one more slot (ADR-20261025150000)
+	// While every slot is busy, each tick offers one more slot (ADR-20261025232118)
 	// until the per-app cap holds every remaining run: 4 apps × 2 = 8 handlers.
 	for want := api.WorkflowDispatchBaseSlots + 1; want <= len(all); want++ {
 		loop.runWorkflowsDispatchTick(ctx)

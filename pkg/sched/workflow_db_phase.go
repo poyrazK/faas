@@ -7,7 +7,7 @@ import "context"
 // database pool is small and shared with wakes. A goroutine executing a
 // dispatch slot holds one of api.WorkflowDispatchDBPhaseSlots tokens while it
 // reads or writes workflow state, and gives it back while it waits on a
-// handler call or on its child goroutines (ADR-20261025150000). No holder
+// handler call or on its child goroutines (ADR-20261025232118). No holder
 // waits on another goroutine while it holds a token, so the tokens cannot
 // deadlock.
 

@@ -3524,9 +3524,60 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// its own transaction; a store that cannot is bound separately below.
 	recovery := &state.SnapshotRecoveryAdmission{SnapshotID: snap.ID}
 	admitStarted := time.Now()
-	ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(withPlacementPrefetch(ctx, placementAhead), placementRequest, haveSnap && snap.StorageKey != "", func(admitCtx context.Context, p Placement) (state.Instance, error) {
+	restore := haveSnap && snap.StorageKey != ""
+	if restore {
+		// ADR-20261024225612: restore only where the CPU can carry it.
+		restoreSnap := snap
+		placementRequest.restoreSnapshot = &restoreSnap
+	}
+	createInstance := func(admitCtx context.Context, p Placement) (state.Instance, error) {
 		return e.store.CreateInstanceWithMode(state.WithSnapshotRecoveryAdmission(admitCtx, recovery), appID, dep.ID, string(initState), app.RAMMB, p.NodeID, wakeID, mode)
-	})
+	}
+	ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(withPlacementPrefetch(ctx, placementAhead), placementRequest, restore, createInstance)
+	if err != nil && restore && isCapacityProblem(err) && e.snapshotExcludesNodes(ctx, snap) {
+		// ADR-20261024225612 amendment 1: another CPU platform's live row
+		// may restore on the nodes that still have room.
+		tried := map[string]bool{snap.CPUPlatform(): true}
+		expectedRAMMB := snapshotReads.guestRAMMB(e, dep.ID, app.RAMMB)
+		for _, alt := range choice.fallbacks {
+			if tried[alt.CPUPlatform()] || e.snapshotRejectionFor(ctx, alt, &dep, expectedRAMMB, app.AppProtocol, nil) != "" {
+				continue
+			}
+			tried[alt.CPUPlatform()] = true
+			altSnap := alt
+			placementRequest.restoreSnapshot = &altSnap
+			recovery = &state.SnapshotRecoveryAdmission{SnapshotID: alt.ID}
+			ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(ctx, placementRequest, true, createInstance)
+			if err == nil {
+				e.log.Info("wake: restoring another CPU platform's snapshot; the first one's nodes are full",
+					"app_id", appID, "deployment_id", dep.ID, "snapshot_id", alt.ID, "cpu_platform", alt.CPUPlatform())
+				snap = alt
+				break
+			}
+			if !isCapacityProblem(err) {
+				break
+			}
+		}
+	}
+	if err != nil && restore && isCapacityProblem(err) && e.snapshotExcludesNodes(ctx, snap) {
+		// Every node that can restore a live snapshot is full, but a node
+		// none of them restores on may have room: cold boot there (ADR-005).
+		// Its next park captures a snapshot for that node's platform.
+		e.log.Info("wake: no CPU-compatible node has room for the snapshot; cold booting",
+			"app_id", appID, "deployment_id", dep.ID, "snapshot_id", snap.ID,
+			"snapshot_cpu_template", snap.CPUTemplate, "snapshot_cpu_model", snap.CPUModel, "err", err)
+		snap, haveSnap = state.Snapshot{}, false
+		initState = state.StateColdBooting
+		coldReason = ColdReasonCPUIncompatible
+		recovery = &state.SnapshotRecoveryAdmission{}
+		placementRequest.restoreSnapshot = nil
+		if e.ops != nil {
+			if c := e.ops.WakeColdReason(coldReason); c != nil {
+				c.Inc()
+			}
+		}
+		ins, placement, releaseRestorePressure, err = e.createWithNodePlacement(ctx, placementRequest, false, createInstance)
+	}
 	if err != nil {
 		release()
 		if errors.Is(err, state.ErrAccountWorkerCapacity) {
@@ -4956,10 +5007,16 @@ func (s placementSnapshot) choose(r Request) (Placement, error) {
 }
 
 func (e *Engine) loadPlacementSnapshot(ctx context.Context, r Request) (placementSnapshot, error) {
-	if snapshot, err, ok := prefetchedPlacement(ctx, r); ok {
+	snapshot, err, ok := prefetchedPlacement(ctx, r)
+	if !ok {
+		snapshot, err = e.loadPlacementSnapshotFresh(ctx, r)
+	}
+	if err != nil {
 		return snapshot, err
 	}
-	return e.loadPlacementSnapshotFresh(ctx, r)
+	// ADR-20261024225612: a restore may only land on a node whose CPU can
+	// carry the snapshot's recorded CPU state, prefetched or not.
+	return snapshot.restorableFor(r), nil
 }
 
 func (e *Engine) loadPlacementSnapshotFresh(ctx context.Context, r Request) (placementSnapshot, error) {
@@ -7395,12 +7452,15 @@ func (e *Engine) RecycleForDiskPressure(ctx context.Context, instanceID string, 
 	// snapshot. Mark both tiers stale; plans that do not use one of the tiers
 	// simply have no snapshot to update.
 	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
-		snap, snapErr := e.store.LatestSnapshotForTier(ctx, ins.DeploymentID, tier)
-		if snapErr != nil || snap.ID == "" {
+		// Every CPU platform's row (ADR-20261024225612 amendment 1).
+		rows, snapErr := state.LiveSnapshotsForTier(ctx, e.store, ins.DeploymentID, tier)
+		if snapErr != nil {
 			continue
 		}
-		if markErr := e.store.MarkSnapshotStale(ctx, snap.ID); markErr != nil {
-			e.log.Warn("disk pressure: mark snapshot stale", "instance", instanceID, "snap_id", snap.ID, "tier", tier, "err", markErr)
+		for _, snap := range rows {
+			if markErr := e.store.MarkSnapshotStale(ctx, snap.ID); markErr != nil {
+				e.log.Warn("disk pressure: mark snapshot stale", "instance", instanceID, "snap_id", snap.ID, "tier", tier, "err", markErr)
+			}
 		}
 	}
 
@@ -7448,9 +7508,12 @@ func (e *Engine) recycleForEgressAbuse(ctx context.Context, instanceID string, r
 	}
 	defer e.unlockApp(ins.AppID)
 
-	if snap, snapErr := e.store.LatestSnapshotForTier(ctx, ins.DeploymentID, state.SnapshotTierWarm); snapErr == nil && snap.ID != "" {
-		if markErr := e.store.MarkSnapshotStale(ctx, snap.ID); markErr != nil {
-			e.log.Warn("egress abuse: mark warm snapshot stale", "instance", instanceID, "snap_id", snap.ID, "err", markErr)
+	// Every CPU platform's warm row (ADR-20261024225612 amendment 1).
+	if rows, snapErr := state.LiveSnapshotsForTier(ctx, e.store, ins.DeploymentID, state.SnapshotTierWarm); snapErr == nil {
+		for _, snap := range rows {
+			if markErr := e.store.MarkSnapshotStale(ctx, snap.ID); markErr != nil {
+				e.log.Warn("egress abuse: mark warm snapshot stale", "instance", instanceID, "snap_id", snap.ID, "err", markErr)
+			}
 		}
 	}
 
@@ -8461,7 +8524,7 @@ func (e *Engine) captureWarmSnapshotLocked(ctx context.Context, ins state.Instan
 	// Compute the per-tier storage keys. The /warm/ segment keeps
 	// the blobs physically separate from the init tier so imaged's
 	// per-tier GC (PR C) can keep 2+2 without conflating them.
-	if _, ok := e.reusableSnapshot(ctx, ins.DeploymentID, state.SnapshotTierWarm); ok {
+	if _, ok := e.reusableSnapshotOn(ctx, ins.DeploymentID, state.SnapshotTierWarm, ins.NodeID); ok {
 		return SnapshotBytes{}, nil
 	}
 	warmMemKey := state.SnapshotCaptureMemKey(ins.DeploymentID, state.SnapshotTierWarm, uuid.NewString())
@@ -8954,7 +9017,7 @@ var ColdReasons = []string{
 	ColdReasonNoSnapshot, ColdReasonSnapshotsStale, ColdReasonLookupFailed,
 	ColdReasonFCVersion, ColdReasonNoDrive, ColdReasonRAM, ColdReasonBaseImage,
 	ColdReasonStale, ColdReasonInstanceMode, ColdReasonEphemeralSecret,
-	ColdReasonSecretPolicyUnavailable,
+	ColdReasonSecretPolicyUnavailable, ColdReasonCPUIncompatible,
 }
 
 // snapshotRejection returns why snap cannot be restored for this wake, or ""
@@ -8974,6 +9037,10 @@ func (e *Engine) snapshotRejectionFor(ctx context.Context, snap state.Snapshot, 
 		return ColdReasonStale
 	case snap.FCVersion != e.fcVer:
 		return ColdReasonFCVersion
+	case !e.snapshotRestorableSomewhere(ctx, snap):
+		// ADR-20261024225612: no active node's CPU can carry the CPU state
+		// this snapshot recorded. The row stays: a compatible node may join.
+		return ColdReasonCPUIncompatible
 	case state.SnapshotDriveKey(snap) == "":
 		// A legacy capture without its writable drive can never be
 		// restored, yet as the live row of its tier it holds the
@@ -9031,6 +9098,10 @@ type wakeSnapshotChoice struct {
 	// locality is the chosen snapshot's locality, read while the choice
 	// checked it.
 	locality snapshotLocalityRead
+	// fallbacks are live rows of other CPU platforms the wake may restore
+	// when every node that can restore snap is full (ADR-20261024225612
+	// amendment 1). They are not checked yet.
+	fallbacks []state.Snapshot
 }
 
 // snapshotReceipt is one read of a snapshot's runtime-config receipt.
@@ -9044,23 +9115,35 @@ type snapshotReceipt struct {
 // chosen. The init tier decides the reason: it is the last tier every plan
 // falls back to.
 func (e *Engine) chooseWakeSnapshot(ctx context.Context, deploymentID, plan string, expectedRAMMB int, appProtocol string) wakeSnapshotChoice {
+	// One live row per CPU platform per tier (ADR-20261024225612
+	// amendment 1): take the newest that passes.
 	if planAllowsWarm(plan) {
-		warm, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierWarm)
-		if err == nil && e.snapshotCompatible(ctx, warm, expectedRAMMB, appProtocol) {
-			return wakeSnapshotChoice{snap: warm, ok: true, tier: wakeTierWarm}
+		if warms, _, err := e.liveTier(ctx, deploymentID, state.SnapshotTierWarm); err == nil {
+			for _, warm := range warms {
+				if e.snapshotCompatible(ctx, warm, expectedRAMMB, appProtocol) {
+					return wakeSnapshotChoice{snap: warm, ok: true, tier: wakeTierWarm}
+				}
+			}
 		}
 	}
-	snap, err := e.store.LatestSnapshotForTier(ctx, deploymentID, state.SnapshotTierInit)
+	inits, _, err := e.liveTier(ctx, deploymentID, state.SnapshotTierInit)
 	switch {
 	case errors.Is(err, state.ErrNotFound):
 		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: ColdReasonNoSnapshot}
 	case err != nil:
 		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: ColdReasonLookupFailed}
 	}
-	if reason := e.snapshotRejection(ctx, snap, expectedRAMMB, appProtocol); reason != "" {
-		return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: reason, rejected: snap}
+	rejected, firstReason := state.Snapshot{}, ""
+	for i, snap := range inits {
+		reason := e.snapshotRejection(ctx, snap, expectedRAMMB, appProtocol)
+		if reason == "" {
+			return wakeSnapshotChoice{snap: snap, ok: true, tier: wakeTierInit}
+		}
+		if i == 0 {
+			rejected, firstReason = snap, reason
+		}
 	}
-	return wakeSnapshotChoice{snap: snap, ok: true, tier: wakeTierInit}
+	return wakeSnapshotChoice{tier: wakeTierColdBootFallback, coldReason: firstReason, rejected: rejected}
 }
 
 // guestRAMMB is the memory vmmd boots a deployment's guest with: the app's RAM
@@ -9400,18 +9483,21 @@ func (e *Engine) DestroyForLivenessFailure(ctx context.Context, instanceID, reas
 	// plan tier (Free/Hobby cold-boot only; Pro/Scale picks
 	// warm first) sees the stale flag.
 	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
-		snap, terr := e.store.LatestSnapshotForTier(ctx, deploymentID, tier)
-		if terr != nil || snap.ID == "" {
-			if terr != nil && reason == fcvm.LivenessReasonImageHealthcheck && !errors.Is(terr, state.ErrNotFound) {
+		// Every CPU platform's row (ADR-20261024225612 amendment 1).
+		rows, terr := state.LiveSnapshotsForTier(ctx, e.store, deploymentID, tier)
+		if terr != nil {
+			if reason == fcvm.LivenessReasonImageHealthcheck {
 				return fmt.Errorf("sched: image healthcheck: read %s snapshot: %w", tier, terr)
 			}
 			continue
 		}
-		if err := e.store.MarkSnapshotStale(ctx, snap.ID); err != nil {
-			if reason == fcvm.LivenessReasonImageHealthcheck {
-				return fmt.Errorf("sched: image healthcheck: invalidate snapshot %s: %w", snap.ID, err)
+		for _, snap := range rows {
+			if err := e.store.MarkSnapshotStale(ctx, snap.ID); err != nil {
+				if reason == fcvm.LivenessReasonImageHealthcheck {
+					return fmt.Errorf("sched: image healthcheck: invalidate snapshot %s: %w", snap.ID, err)
+				}
+				e.log.Warn("liveness: mark snapshot stale", "instance", instanceID, "snap_id", snap.ID, "tier", tier, "err", err)
 			}
-			e.log.Warn("liveness: mark snapshot stale", "instance", instanceID, "snap_id", snap.ID, "tier", tier, "err", err)
 		}
 	}
 
@@ -9629,19 +9715,22 @@ func (e *Engine) ForceRestart(ctx context.Context, instanceID, reason string) ([
 	// at engine.go:5217).
 	var snapIDs []string
 	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
-		snap, terr := e.store.LatestSnapshotForTier(ctx, deploymentID, tier)
-		if terr != nil || snap.ID == "" {
+		// Every CPU platform's row (ADR-20261024225612 amendment 1).
+		rows, terr := state.LiveSnapshotsForTier(ctx, e.store, deploymentID, tier)
+		if terr != nil {
 			continue
 		}
-		if merr := e.store.MarkSnapshotStale(ctx, snap.ID); merr != nil {
-			e.log.Warn("force_restart: mark snapshot stale",
-				"instance", instanceID,
-				"snap_id", snap.ID,
-				"tier", tier,
-				"err", merr.Error())
-			continue
+		for _, snap := range rows {
+			if merr := e.store.MarkSnapshotStale(ctx, snap.ID); merr != nil {
+				e.log.Warn("force_restart: mark snapshot stale",
+					"instance", instanceID,
+					"snap_id", snap.ID,
+					"tier", tier,
+					"err", merr.Error())
+				continue
+			}
+			snapIDs = append(snapIDs, snap.ID)
 		}
-		snapIDs = append(snapIDs, snap.ID)
 	}
 
 	// Reset the idle timer on the destroyed instance so the
@@ -9772,12 +9861,15 @@ func (e *Engine) DestroyForWorkloadOOMFailure(ctx context.Context, instanceID st
 	// Both warm + init tiers are flipped (mirrors the liveness
 	// path).
 	for _, tier := range []string{state.SnapshotTierWarm, state.SnapshotTierInit} {
-		snap, terr := e.store.LatestSnapshotForTier(ctx, deploymentID, tier)
-		if terr != nil || snap.ID == "" {
+		// Every CPU platform's row (ADR-20261024225612 amendment 1).
+		rows, terr := state.LiveSnapshotsForTier(ctx, e.store, deploymentID, tier)
+		if terr != nil {
 			continue
 		}
-		if err := e.store.MarkSnapshotStale(ctx, snap.ID); err != nil {
-			e.log.Warn("workload_oom: mark snapshot stale", "instance", instanceID, "snap_id", snap.ID, "tier", tier, "err", err)
+		for _, snap := range rows {
+			if err := e.store.MarkSnapshotStale(ctx, snap.ID); err != nil {
+				e.log.Warn("workload_oom: mark snapshot stale", "instance", instanceID, "snap_id", snap.ID, "tier", tier, "err", err)
+			}
 		}
 	}
 
@@ -10200,6 +10292,12 @@ func (e *Engine) emitSnapshotWritten(ctx context.Context, sourceInstanceID strin
 		"fc_version":         e.fcVer,
 		"base_image_version": fcvm.FAAS_BASE_IMAGE_VERSION,
 		"tier":               tier,
+	}
+	// ADR-20261024225612: the snapshot carries the capturing node's CPU
+	// identity so a later wake restores it only where that CPU state runs.
+	if cpuTemplate, cpuModel := e.nodeCPUIdentity(ctx, nodeID); cpuTemplate != "" || cpuModel != "" {
+		fields["cpu_template"] = cpuTemplate
+		fields["cpu_model"] = cpuModel
 	}
 	if promotion != nil {
 		fields["warm_min_requests"] = promotion.MinRequests

@@ -26,7 +26,7 @@ and `jobs`.
   waits on each step call for up to the plan's step timeout, but gives back
   its database token while it waits: only `api.WorkflowDispatchDBPhaseSlots`
   (4) slots touch the database at once
-  ([ADR-20261025150000](../adr/20261025150000-workflow-dispatch-db-phase-tokens.md)).
+  ([ADR-20261025232118](../adr/20261025232118-workflow-dispatch-db-phase-tokens.md)).
   Dispatch needs `FAAS_WORKFLOWS_ENABLED=1` on schedd and apid.
 - **Jobs.** schedd's dispatch tick runs once a second, takes up to 32 ready
   tasks and starts each one in its own job VM, subject to the account's

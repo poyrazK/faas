@@ -8,6 +8,8 @@
  * route applies the frontend document security policy at the CDN boundary.
  */
 
+import appHosts from "./app-hosts.json" with { type: "json" };
+
 const ERROR_CODE = "request_budget_exceeded";
 const ERROR_CODE_HEADER = "X-Faas-Error-Code";
 const REQUEST_ID_HEADER = "X-Faas-Request-Id";
@@ -22,6 +24,7 @@ const RESTORABLE_STATUSES = "502,504";
 const PROBLEM_CONTENT_TYPE = "application/problem+json";
 const PROBLEM_TYPE = "https://gregale.dev/docs/errors/request-budget-exceeded";
 const DEFAULT_FRONTEND_HOSTNAME = "gregale.dev";
+const DEFAULT_APPS_DOMAIN = "gregale.dev";
 const FRONTEND_CSP = [
   "default-src 'self'",
   "base-uri 'self'",
@@ -118,18 +121,49 @@ function hostList(value) {
   );
 }
 
-// originFor picks the origin a request resolves to. App hosts listed in
+const APP_SLUG = new RegExp(appHosts.slug_pattern);
+const NOT_APP_LABELS = new Set([...appHosts.reserved_slugs, ...appHosts.platform_labels]);
+
+// isAppHost reports whether host is <app slug>.<apps domain>: one label that
+// is a valid, unreserved app name (pkg/api ValidAppSlug and IsReservedAppSlug,
+// mirrored in app-hosts.json). Platform hosts, Gregale-owned names, deeper
+// names and anything outside the apps domain are not apps.
+function isAppHost(host, appsDomain) {
+  const suffix = `.${appsDomain}`;
+  if (!appsDomain || !host.endsWith(suffix)) {
+    return false;
+  }
+  const label = host.slice(0, -suffix.length);
+  return (
+    APP_SLUG.test(label) &&
+    !appHosts.invalid_prefixes.some((prefix) => label.startsWith(prefix)) &&
+    !NOT_APP_LABELS.has(label)
+  );
+}
+
+// originFor picks the origin a request resolves to. App hosts selected by
 // APP_EDGE_HOSTS go to the compute-node app edge (ADR-1343): the Cloudflare
 // Tunnel behind APP_EDGE_ORIGIN_HOSTNAME, an in-zone CNAME to
-// <tunnel-id>.cfargotunnel.com. Everything else, and every host while either
-// variable is unset, keeps the control-plane origin. The list holds exact
-// hostnames only, so the pilot moves one test app and nothing else.
+// <tunnel-id>.cfargotunnel.com. APP_EDGE_HOSTS lists exact hostnames (the
+// pilot), or "*" for every app host. APP_EDGE_EXCLUDE_HOSTS keeps exact
+// hostnames on the control plane either way. Everything else, and every host
+// while APP_EDGE_ORIGIN_HOSTNAME or APP_EDGE_HOSTS is unset, keeps the
+// control-plane origin.
 function originFor(requestHost, env) {
+  const controlPlane = String(env?.ORIGIN_HOSTNAME || "").trim();
   const appEdgeOrigin = String(env?.APP_EDGE_ORIGIN_HOSTNAME || "").trim();
-  if (appEdgeOrigin && hostList(env?.APP_EDGE_HOSTS).has(requestHost)) {
+  if (!appEdgeOrigin || hostList(env?.APP_EDGE_EXCLUDE_HOSTS).has(requestHost)) {
+    return controlPlane;
+  }
+  const selected = hostList(env?.APP_EDGE_HOSTS);
+  if (selected.has(requestHost)) {
     return appEdgeOrigin;
   }
-  return String(env?.ORIGIN_HOSTNAME || "").trim();
+  const appsDomain = String(env?.APPS_DOMAIN || DEFAULT_APPS_DOMAIN).trim().toLowerCase();
+  if (selected.has("*") && isAppHost(requestHost, appsDomain)) {
+    return appEdgeOrigin;
+  }
+  return controlPlane;
 }
 
 // Exported separately so the contract tests can exercise the Worker with a

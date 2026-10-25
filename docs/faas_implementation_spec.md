@@ -1677,6 +1677,7 @@ Prometheus (node_exporter + per-daemon `/metrics`) → self-hosted Grafana OSS o
 | `schedd_loop_work_total{kind,outcome}` rate | n/a (per-kind) | `outcome="dropped"` sustained > 1 / min warn (ADR-191 §2 — a reconcile kind's slot budget is too small for the notification rate; the durable table plus its safety ticker still recover the work); any `outcome="panicked"`, shipped as warn (ADR-1235; a handler bug, not a capacity signal) |
 | `schedd_loop_work_duration_seconds{kind}` p95 | `kind="prime"` ≤ 110 s; every other kind ≤ 1 s | none (ADR-191 §2 diagnostic; the prime tail carries cold boot plus snapshot capture by design, so alert on `gateway_wake_latency_seconds` instead) |
 | `schedd_wake_failover_total{reason,outcome}` rate | 0 outside a node fault | none (ADR-20261022184531 diagnostic). Counts wakes a node refused before starting the VM and schedd re-placed: `outcome="succeeded"` is a wake another node served inside the same hold; `refused_again`, `no_alternate` and `out_of_time` are wakes that still failed. A sustained non-zero rate names a node that answers heartbeats but cannot serve (the ADR's step 3 adds a node breaker and the `FaasComputeNodeDegraded` alert) |
+| `schedd_compute_node_readiness{node,state}` gauge | `state="ready"` = 1 for every node | none yet (ADR-20261022184531 step 2; step 3 adds `FaasComputeNodeDegraded`). One-hot per node: `ready`, `degraded` (answers its heartbeat but its vmmd cannot adopt a configured base generation, so placement uses it only when no ready node fits), `unavailable` or `draining` (both mirror lifecycle). `compute_nodes.readiness_reason` says why a node is not ready |
 
 **Alert implementation (ADR-1235).** The rows above that promised an alert
 with no rule behind it now have one, in the `faas_spec12_operator_signals`
@@ -1852,7 +1853,7 @@ sum by (route) (rate(apid_request_total{account_id="<uuid>"}[5m]))
 
 The `account_id="__other__"` series is the bounded overflow bucket — drill-down on this means the customer is past the 10 000 admission cap, and the operator must check the daemon slog for the original id (issue #278).
 
-**SLOs (public, on the status page):** API availability 99.5 % monthly; wake p95 < 1 s; build success (non-`user_error`) 99 %. Error budgets, not promises — single-node deployments (until Gate A) are stated honestly on the status page.
+**SLOs (public, on the status page):** API availability 99.5 % monthly; wake p95 < 1 s; build success (non-`user_error`) 99 %. Error budgets, not promises — single-node deployments (until Gate A) are stated honestly on the status page. The `faas_slo_monthly` recording group computes each as a rolling 30 d ratio (`faas_slo_api_availability:ratio_30d`, `faas_slo_wakes_within_1s:ratio_30d`, `faas_slo_build_success:ratio_30d`, plus `faas_slo_platform_wakes_within_350ms:ratio_30d` for the 350 ms platform gate), shown on the fleet dashboard; Prometheus keeps 35 d so the window is whole (ADR-20261023124955).
 
 Logs: journald → Loki free tier; tenant app stdout/stderr ring-buffered per instance (10 MB), surfaced via `GET /v1/apps/{app}/logs` (tail + follow).
 
@@ -2004,6 +2005,7 @@ same values, so rules and panels aggregate with `max`. Alerts are `warn`
 |---|---|---|
 | `system.slice` | 2,048 MB | OS, sshd, journald, node_exporter, chrony |
 | `faas-cp.slice` | 6,144 MB | postgres 1,536 · gatewayd-public + gatewayd-internal 512 · apid 384 (two generations during a reload, ADR 20261018132058) · schedd 128 · vmmd 256 · builderd 128 · meterd 256 · imaged 512 (spikes during flatten) · loki/promtail agents 256 · slack 2,176 → **1 guaranteed builder VM (2,048 + 8) lives here** |
+| `faas-obs.slice` (control plane) | 3,584 MB, `CPUWeight=20`, `CPUQuota=100%`, `IOWeight=20` | prometheus (`MemoryHigh` 2,304) · alertmanager 128 · grafana 384 · loki and the control plane's promtail once logs are enabled; yields CPU and IO to PostgreSQL and the daemons. Sized for a split-box control plane with no tenant VMs; a single box that also runs tenants sizes `faas_obs_slice_memory_max` down, out of the headroom above the admission line (ADR-20261023124955) |
 | `faas-tenant.slice` | 57,344 MB (`memory.max`, hard fence) | tenant microVMs; **schedd admits measured memory only to 47,600 MB** (85 % of the model's 56 GB budget; reservations up to twice that, ADR-909) |
 | headroom (inside tenant slice, above admission line) | ≈ 8.4 GB | tenant spike absorption and restore safety margin; builder VMs do not borrow from this slice |
 

@@ -7,3 +7,17 @@
 # had set 3 GB by hand, and every convergence reverted it.
 faas_cp_slice_memory_max: 6144M
 faas_cp_slice_cpu_quota: 400%
+
+# faas-obs.slice limits (ADR-20261023124955 §1). Prometheus, Alertmanager and
+# Grafana (and, once enabled, Loki and Promtail) run here instead of in
+# system.slice, whose 2,048 MB budget is for the OS. The memory cap fences
+# the observability stack away from PostgreSQL. CPUWeight 20 keeps its share
+# under contention near what the three units had inside system.slice beside
+# PostgreSQL's weighted slice; CPUQuota stops a runaway query or compaction
+# from taking more than one core. Measured on production-us 2026-10-23:
+# Prometheus 1.24 GB RSS (1.74 GB peak), Grafana 106 MB (181 MB), Alertmanager
+# 33 MB (46 MB). A smaller host sizes these in its operator variables.
+faas_obs_slice_memory_max: 3584M
+faas_obs_slice_cpu_weight: 20
+faas_obs_slice_cpu_quota: 100%
+faas_obs_slice_io_weight: 20

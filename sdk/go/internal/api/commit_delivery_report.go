@@ -130,7 +130,7 @@ func (c *PreviewClient) RefreshCommitDeliveryReport(ctx context.Context, saved C
 	out.ReadComplete = false
 	out.Counts = map[string]int{}
 	out.RecoveryCounts = map[string]int{}
-	validationErr := error(nil)
+	var validationErr error
 	if pages < 1 || pages > CommitDeliveryReportPagesMax || len(out.Items) > CommitPublicationHistoryPageMax {
 		validationErr = ErrValidation("invalid recipient page budget or saved report")
 	} else {

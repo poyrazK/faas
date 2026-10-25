@@ -149,6 +149,38 @@ Placement uses `ready` nodes, and `degraded` nodes only when no ready node
 has capacity. The column defaults to `ready`, so behaviour is unchanged until
 the evaluator writes.
 
+As built (step 2):
+
+- **Columns.** `readiness text NOT NULL DEFAULT 'ready'` with
+  `compute_nodes_readiness_chk`, and a nullable `readiness_reason`. The
+  migration adds the CHECK `NOT VALID` and validates it in its own
+  transaction.
+- **Writer.** Whichever schedd probes a node writes its readiness after each
+  probe: the owner's schedd on a per-node fleet, or the fleet-wide schedd
+  where there is no owner. The write is a conditional `UPDATE` that matches
+  only a changed verdict, so `compute_node_changed` fires, and every schedd's
+  node registry refreshes, only on a change. Writing `unavailable` waits
+  until the failure threshold marks the node unavailable.
+- **vmmd's report.** Ping carries one verdict per configured base. It uses
+  the activation gate's own judgment (`imaged.JudgeBaseAdoption`,
+  ADR-20261024191249): only `stale` (neither the node's cache nor shared
+  storage holds the configured generation, or the shared copy has no commit
+  marker) is not adoptable. The judgment reads the shared copy through
+  `storage.GetCanonical`, which never installs or replaces a cache entry,
+  so a probe never moves a node off a generation it still serves. It runs in
+  the background at most every `BaseGenerationReadinessCheckIntervalSeconds`
+  (30 s), bounded by `BaseGenerationReadinessCheckTimeoutSeconds` (10 s), and
+  Ping returns the last verdict without waiting. A base vmmd cannot judge
+  counts as adoptable: the wake path still refuses on its own evidence, and
+  step 1 re-places the wake. ADR-20261024191249 gates a node's *activation*
+  on the same verdict; this report catches a node that becomes stale while
+  serving, as fsn-3 did when another node published a newer generation.
+- **Placement.** The chooser first runs over every node except degraded ones,
+  then over all nodes if nothing fits. Warm affinity and snapshot locality
+  never pull a wake onto a degraded node while a ready one fits.
+- `schedd_compute_node_readiness{node,state}` is one-hot per node.
+- The third input, recent wakes succeeding, arrives with step 3's breaker.
+
 ### 3. A per-node wake breaker
 
 `NodeWakeBreakerFailures` (3) consecutive platform-attributable wake failures

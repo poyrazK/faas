@@ -31,6 +31,10 @@ gv_version: "11.3.1"
 # The role asserts against this value before any templates render.
 gv_release_sha256: "e6e1cc84d731a79044c5cf528b40bf7be2b097d3295bc7577eae7b014460a4e1"
 gv_listen_addr: "127.0.0.1:3000"
+# Resources inside faas-obs.slice (ADR-20261023124955 §1).
+gv_cpu_weight: 25
+gv_memory_high: 256M
+gv_memory_max: 384M
 gv_data_dir: /var/lib/grafana
 gv_config_path: /etc/grafana/grafana.ini
 gv_provisioning_dir: /etc/grafana/provisioning

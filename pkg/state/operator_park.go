@@ -53,6 +53,8 @@ type OperatorParkTarget struct {
 	VMStateKey       string                          `json:"vmstate_key,omitempty"`
 	FCVersion        string                          `json:"fc_version,omitempty"`
 	BaseImageVersion string                          `json:"base_image_version,omitempty"`
+	CPUTemplate      string                          `json:"cpu_template,omitempty"` // capturing node's CPU identity (ADR-20261024225612)
+	CPUModel         string                          `json:"cpu_model,omitempty"`
 	BeforeCheckpoint bool                            `json:"before_checkpoint,omitempty"`
 	Measured         bool                            `json:"measured,omitempty"`
 	Grant            *runtimeadmission.SnapshotGrant `json:"grant,omitempty"`
@@ -234,6 +236,9 @@ func parkSnapshotNotification(e OperatorParkExecution) []byte {
 	fields := map[string]any{"deployment_id": t.DeploymentID, "source_instance_id": t.InstanceID, "source_started_at": t.StartedAt, "node_id": t.NodeID,
 		"vmstate_path": "", "storage_key": t.MemoryKey, "mem_bytes": r.MemBytes, "vmstate_bytes": r.VMStateBytes, "stored_bytes": r.StoredBytes,
 		"fc_version": t.FCVersion, "base_image_version": t.BaseImageVersion, "tier": SnapshotTierInit}
+	if t.CPUTemplate != "" || t.CPUModel != "" {
+		fields["cpu_template"], fields["cpu_model"] = t.CPUTemplate, t.CPUModel
+	}
 	if t.Grant != nil {
 		fields["application_standard_capture_token"] = t.Grant.Token
 	}

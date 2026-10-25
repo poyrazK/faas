@@ -877,7 +877,7 @@ const (
 // first WorkflowDispatchBaseSlots are offered every tick, and one more only
 // while every lower slot is busy. Database work is bounded separately by
 // WorkflowDispatchDBPhaseSlots, which a slot gives back while it waits on a
-// handler (ADR-20261025150000).
+// handler (ADR-20261025232118).
 const (
 	WorkflowDispatchSlots                = 32
 	WorkflowDispatchBaseSlots            = 4
@@ -2482,6 +2482,16 @@ const (
 // gateway's concurrent staged transfers (at least one), so a single tenant's
 // parallel uploads leave room for others (ADR-20261023223000).
 const ObjectUploadAccountSlotSharePercent = 50
+
+// A request body holds an upload slot while the gateway reads it. It may go
+// ObjectUploadIdleTimeout without a byte and, after ObjectUploadMinRateGrace,
+// must average ObjectUploadMinBytesPerSecond, so a client trickling bytes
+// cannot keep a slot for the whole ObjectTransferTimeout.
+const (
+	ObjectUploadIdleTimeout       = 30 * time.Second
+	ObjectUploadMinRateGrace      = time.Minute
+	ObjectUploadMinBytesPerSecond = 8 << 10
+)
 
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
 // Keep the first release deliberately small: it lets customers right-size
@@ -6598,6 +6608,13 @@ const (
 	// must remain for an alternate attempt to start. The coordinated wake
 	// runs under the WakeQueueTTLSeconds hold, so failover never extends it.
 	WakeFailoverMinRemainingMs = 2000
+
+	// BaseGenerationReadinessCheckIntervalSeconds is how old vmmd's verdict
+	// on adopting its configured base generations may get before the next
+	// Ping starts a fresh check; the timeout bounds that background check
+	// (ADR-20261022184531). Ping itself never waits for it.
+	BaseGenerationReadinessCheckIntervalSeconds = 30
+	BaseGenerationReadinessCheckTimeoutSeconds  = 10
 
 	// GatewayWakeAdmissionParallelism bounds concurrent cold-wake
 	// admissions in one gateway process. The gateway still coalesces

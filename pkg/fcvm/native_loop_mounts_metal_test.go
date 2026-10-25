@@ -1,6 +1,7 @@
 //go:build linux && metal
 
 // adr: 568 — daemon death retains recoverable loop ownership before resource release.
+// adr: 20261025090100 — the mounts come from the retired producer; recovery is current code.
 package fcvm
 
 import (
@@ -94,7 +95,7 @@ func TestMetalNativeLoopMountRecovery(t *testing.T) {
 			t.Error("remove confirmed native loop fixture:", err)
 		}
 	})
-	if err := loops.session(ctx, owner, drive, func(point string) error {
+	if err := legacyNativeLoopSession(loops, ctx, owner, drive, func(point string) error {
 		return os.WriteFile(filepath.Join(point, "written-before-exit"), []byte("original"), 0o600)
 	}); err != nil {
 		t.Fatal(err)
@@ -106,7 +107,7 @@ func TestMetalNativeLoopMountRecovery(t *testing.T) {
 	// A successful LOOP_CLR_FD then only marks AUTOCLEAR; retirement must wait
 	// for this opener to close without issuing a second detach effect.
 	closed := make(chan error, 1)
-	if err := loops.session(ctx, owner, drive, func(string) error {
+	if err := legacyNativeLoopSession(loops, ctx, owner, drive, func(string) error {
 		records, err := loops.records(owner)
 		if err != nil {
 			return err
@@ -205,7 +206,7 @@ func nativeMetalLoopCrashChild(t *testing.T, ctx context.Context, root string) {
 		t.Fatal(err)
 	}
 	loops := &nativeLoopMountJournal{owner: j, backend: newNativeLoopMountBackend()}
-	if err := loops.session(ctx, owner, filepath.Join(root, "drive.ext4"), func(point string) error {
+	if err := legacyNativeLoopSession(loops, ctx, owner, filepath.Join(root, "drive.ext4"), func(point string) error {
 		if _, err := os.Stat(filepath.Join(point, "written-before-exit")); err != nil {
 			return err
 		}

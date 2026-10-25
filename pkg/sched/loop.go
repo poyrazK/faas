@@ -4295,7 +4295,7 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 	})
 	// The base slots are offered every tick. A further slot is offered only
 	// while every lower slot is still busy, so an idle scheduler polls as
-	// before and capacity grows by one slot a tick under load (ADR-20261025150000).
+	// before and capacity grows by one slot a tick under load (ADR-20261025232118).
 	busy := 0
 	for slot := range api.WorkflowDispatchSlots {
 		if slot >= api.WorkflowDispatchBaseSlots && busy < slot {
