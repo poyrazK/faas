@@ -181,14 +181,14 @@ The owner decided the policy on 2026-10-25.
 Each step is its own PR, in this order:
 
 1. This record.
-2. Neon quota support, behind an optional `CapProvider` interface, plus the
-   enforcer and its apid wiring in `shadow` mode, and the staging
-   qualification probe for decision 10.
+2. Neon quota support, behind an optional `ComputeCapProvider` interface, plus
+   the enforcer and its apid wiring in `shadow` mode.
 3. The customer view: usage fields, guardrail states and warning emails.
 4. The `postgres-overage` capability: migration, API, CLI and dashboard, at
    maturity `internal`.
-5. An operator step: `on` in staging, then in production, after a shadow week
-   whose logged quotas match the ledger.
+5. The staging qualification probe for decision 10, then an operator step:
+   `on` in staging, then in production, after a shadow week whose logged
+   quotas match the ledger.
 6. The storage pool (decision 9).
 
 ## Release compatibility
@@ -223,5 +223,5 @@ Each step is its own PR, in this order:
 
 - The price of overage and its invoicing.
 - A per-database cap, or per-database priority within an account's pool.
-- Native (non-Neon) providers. A provider without a compute quota reports
-  `ErrCapUnsupported`, and apid refuses `on` for it.
+- Native (non-Neon) providers. A provider without a compute quota is skipped
+  and counted as `unsupported`; its databases are capped only by admission.
