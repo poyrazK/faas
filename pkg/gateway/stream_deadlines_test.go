@@ -67,6 +67,9 @@ func TestInternalProxyStreamOutlivesListenerTimeouts(t *testing.T) {
 		case "/stream":
 			w.Header().Set("Content-Type", "text/event-stream")
 			w.Header().Set(api.StreamingStatusHeader, string(api.StreamingStatusStreaming))
+			// gatewayd-internal marks a long-lived response with the private
+			// session header; the proxy trusts only that (ADR-570).
+			w.Header().Set(trafficResponseSessionHeader, "long-lived")
 			w.WriteHeader(http.StatusOK)
 			for i := 0; i < count; i++ {
 				if _, err := io.WriteString(w, chunk); err != nil {

@@ -19,11 +19,11 @@ package gateway
 import (
 	"bytes"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
 
 // retryBufferLimit bounds how much of an in-flight response is held back
@@ -79,18 +79,11 @@ type RetryPolicy struct {
 
 // retryable reports whether the policy permits replaying this request.
 func (p RetryPolicy) retryable(r *http.Request) (bool, string) {
-	switch r.Method {
-	case http.MethodGet, http.MethodHead, http.MethodOptions,
-		http.MethodTrace, http.MethodPut, http.MethodDelete:
+	switch api.RequestRetryMethodEligibility(r.Method, p.AllowNonIdempotent, r.Header.Get("Idempotency-Key")) {
+	case "idempotent_method", "non_idempotent_allowed_with_key":
 		return true, ""
-	case http.MethodPost, http.MethodPatch:
-		if !p.AllowNonIdempotent {
-			return false, RetrySkipNonIdempotent
-		}
-		if strings.TrimSpace(r.Header.Get("Idempotency-Key")) == "" {
-			return false, RetrySkipIdempotency
-		}
-		return true, ""
+	case "idempotency_key_required":
+		return false, RetrySkipIdempotency
 	default:
 		return false, RetrySkipNonIdempotent
 	}
@@ -113,7 +106,7 @@ type retryWriter struct {
 }
 
 func newRetryWriter(dst http.ResponseWriter) *retryWriter {
-	return &retryWriter{dst: dst, header: make(http.Header)}
+	return &retryWriter{dst: dst, header: dst.Header().Clone()}
 }
 
 func (w *retryWriter) Header() http.Header { return w.header }
@@ -192,7 +185,7 @@ func (w *retryWriter) finish() {
 func (w *retryWriter) discard() {
 	w.buffer.Reset()
 	w.status = 0
-	w.header = make(http.Header)
+	w.header = w.dst.Header().Clone()
 }
 
 // retryAttempt runs one proxy attempt against target.
@@ -233,6 +226,9 @@ func runWithRetry(
 	}
 	retryable, skipReason := policy.retryable(r)
 	if !policy.Enabled || policy.MaxAttempts < 2 || !retryable {
+		if policy.Enabled && !retryable {
+			recordTrafficRetryStop(r.Context(), skipReason)
+		}
 		if policy.Enabled && obs != nil && !retryable {
 			obs.IncRetryExhausted(skipReason)
 		}
@@ -244,6 +240,7 @@ func runWithRetry(
 	// body. Bodyless requests need no rewind and are always replayable.
 	hasBody := r.Body != nil && r.Body != http.NoBody
 	if hasBody && r.GetBody == nil {
+		recordTrafficRetryStop(r.Context(), RetrySkipBodyNotReplay)
 		if obs != nil {
 			obs.IncRetryExhausted(RetrySkipBodyNotReplay)
 		}
@@ -257,7 +254,14 @@ func runWithRetry(
 		owner := r.Body
 		defer func() { _ = owner.Close() }()
 	}
-	admission.budget.ObserveOriginal(r.Context(), admission.scope)
+	if !admission.budget.ObserveOriginal(r.Context(), admission.scope) {
+		recordTrafficRetryStop(r.Context(), RetrySkipAggregate)
+		if obs != nil {
+			obs.IncRetryExhausted(RetrySkipAggregate)
+		}
+		attempt(w, r, target)
+		return
+	}
 	runAttempts(w, r, target, policy, onStale, attempt, repick, obs, admission)
 }
 
@@ -276,6 +280,7 @@ func runAttempts(
 ) {
 	req, err := replayRequest(r)
 	if err != nil {
+		recordTrafficRetryStop(r.Context(), RetrySkipBodyNotReplay)
 		if obs != nil {
 			obs.IncRetryExhausted(RetrySkipBodyNotReplay)
 		}
@@ -300,6 +305,9 @@ func runAttempts(
 
 		reason, ok := nextAttemptAllowed(req, buf, signal, policy, i)
 		if !ok {
+			if reason != "" {
+				recordTrafficRetryStop(r.Context(), reason)
+			}
 			if obs != nil && reason != "" {
 				obs.IncRetryExhausted(reason)
 			}
@@ -308,6 +316,7 @@ func runAttempts(
 		}
 		next, found := repick()
 		if !found {
+			recordTrafficRetryStop(r.Context(), RetrySkipNoTarget)
 			if obs != nil {
 				obs.IncRetryExhausted(RetrySkipNoTarget)
 			}
@@ -323,6 +332,7 @@ func runAttempts(
 			minRetries = api.EdgeRuleRetryDefaultBudgetMin
 		}
 		if admission.budget != nil && !admission.budget.AllowRetry(r.Context(), admission.scope, percent, minRetries) {
+			recordTrafficRetryStop(r.Context(), RetrySkipAggregate)
 			if obs != nil {
 				obs.IncRetryExhausted(RetrySkipAggregate)
 			}
@@ -333,8 +343,15 @@ func runAttempts(
 		// canceled backoff or failed body rewind must not become an empty 200.
 		req, reason = prepareRetryRequest(r, policy)
 		if reason != "" {
+			recordTrafficRetryStop(r.Context(), reason)
 			if obs != nil {
 				obs.IncRetryExhausted(reason)
+			}
+			// A security revocation during backoff owns the response; any
+			// other stop releases the buffered failure unchanged.
+			if cause := trafficRevocationCause(r.Context()); cause != nil {
+				writeTrafficRevocationError(w, r, cause)
+				return
 			}
 			buf.finish()
 			return
@@ -383,13 +400,16 @@ func prepareRetryRequest(r *http.Request, policy RetryPolicy) (*http.Request, st
 		return nil, RetrySkipBudget
 	}
 	if policy.Backoff > 0 {
+		stopBackoff := measureTrafficPhase(r.Context(), trafficBackoff)
 		timer := time.NewTimer(policy.Backoff)
-		defer timer.Stop()
 		select {
 		case <-timer.C:
 		case <-r.Context().Done():
+			timer.Stop()
+			stopBackoff()
 			return nil, RetrySkipBudget
 		}
+		stopBackoff()
 	}
 	if !retryTimeAvailable(r, policy.MinRemaining, time.Now()) {
 		return nil, RetrySkipBudget
@@ -506,7 +526,8 @@ func (h *Handler) retryPolicyFor(app App, r *http.Request) RetryPolicy {
 }
 
 // proxyAttempt runs the forwarder for one request, replaying against a fresh
-// target when ADR-201 §1 permits.
+// target when ADR-201 §1 permits. It returns the last dispatched target for
+// logical completion accounting, preserving the original request's wake cause.
 //
 // Streaming is excluded outright rather than left to rule 1. A streaming
 // response commits on its first flush, so a replay is impossible by
@@ -522,22 +543,46 @@ func (h *Handler) proxyAttempt(
 	retire func(Target),
 	forward retryAttempt,
 	app App,
-) {
-	forward = h.circuitObserved(app.ID, forward)
+) Target {
+	completed := target
+	unguarded := h.circuitObserved(app.ID, forward)
+	forward = func(dst http.ResponseWriter, req *http.Request, selected Target) {
+		ctx := req.Context()
+		req = requestForTarget(ctx, req, app, selected)
+		if enrollTrafficScopes(dst, req, h.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: selected.DeploymentID}) {
+			return
+		}
+		// WakeID is a cause of this request, not the sibling's cached history.
+		selected.WakeID = target.WakeID
+		completed = selected
+		if app.SessionAffinity {
+			if _, ok := h.backend.(affinityPicker); ok {
+				h.setSessionAffinityCookie(dst, app.ID, selected.InstanceID)
+			}
+		}
+		recordTrafficAttempt(ctx)
+		unguarded(dst, req, selected)
+	}
 	// An authenticated candidate smoke owns its retry loop in imaged. The
 	// generic picker can select the currently serving sibling revision and
 	// must never replay a candidate probe there under the original identity.
 	if isStreaming || deploymentSmokeResponseID(r.Context()) != "" || isRouteProbe(r.Context()) {
 		forward(w, r, target)
-		return
+		return completed
 	}
 	policy := h.retryPolicyFor(app, r)
 	if !policy.Enabled {
 		forward(w, r, target)
-		return
+		return completed
 	}
+	routing, hasRouting := publicRoutingSnapshot(r.Context())
 	repick := func() (Target, bool) {
-		pick := h.backend.Pick(app.ID)
+		var pick PickResult
+		if hasRouting {
+			pick = pickPublicDeployment(h.backend, app.ID, routing.SelectedDeploymentID, "")
+		} else {
+			pick = h.backend.Pick(app.ID)
+		}
 		if !pick.OK {
 			return Target{}, false
 		}
@@ -559,4 +604,5 @@ func (h *Handler) proxyAttempt(
 	}
 	runWithRetry(w, r, target, policy, retire, forward, repick, obs,
 		retryBudgetAdmission{budget: h.retryBudget, scope: app.ID})
+	return completed
 }

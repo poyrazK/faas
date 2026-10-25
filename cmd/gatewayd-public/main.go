@@ -272,6 +272,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd-public: open db: %w", err)
 	}
 	defer pool.Close()
+	trafficRevocations, err := newPublicTrafficRevocationRegistry(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("gatewayd-public: %w", err)
+	}
+	defer trafficRevocations.Close()
+	go trafficRevocations.Run(ctx)
 	// pgStore is the edge store: the queries gatewayd-public runs and
 	// nothing else, so a store change elsewhere does not change this
 	// daemon (docs/adr/20261021092138-edge-store-blast-radius.md).
@@ -423,7 +429,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		internalURL,
 		log,
 		h2cEnabled,
-	).WithTrustedIngressCIDRs(trustedIngressCIDRs)
+	).WithTrustedIngressCIDRs(trustedIngressCIDRs).WithTrafficRevocations(trafficRevocations)
 	// A dynamic dialer selects a different compute node per request. Do not
 	// let the transport pool an idle connection under the single logical
 	// gatewayd URL, otherwise a drained node could keep receiving traffic.

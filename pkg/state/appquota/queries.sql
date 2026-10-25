@@ -6,7 +6,11 @@ WHERE id = sqlc.narg(org_id)::uuid
 FOR SHARE;
 
 -- name: LockOwner :exec
-SELECT pg_advisory_xact_lock(hashtextextended('org-app-quota:' || sqlc.arg(org_id)::uuid::text, 0));
+-- A row write, not an advisory lock: it serializes admissions and makes a
+-- repeatable-read admission whose snapshot predates another's commit fail
+-- with 40001 instead of counting a stale snapshot (ADR-570).
+INSERT INTO org_app_quota_fences (org_id) VALUES (sqlc.arg(org_id)::uuid)
+ON CONFLICT (org_id) DO UPDATE SET generation = org_app_quota_fences.generation + 1;
 
 -- name: LockAccount :one
 SELECT id FROM accounts WHERE id = $1 FOR UPDATE;

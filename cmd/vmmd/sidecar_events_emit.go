@@ -80,7 +80,7 @@ type sidecarHealthWire struct {
 type SidecarEventEmitter interface {
 	EmitSidecarInitExit(ctx context.Context, instanceID, appID, deploymentID, wakeID string, wire sidecarInitExitWire)
 	EmitSidecarRestart(ctx context.Context, instanceID, appID, wakeID string, wire sidecarRestartWire)
-	EmitSidecarHealth(ctx context.Context, instanceID, appID, wakeID string, wire sidecarHealthWire)
+	EmitSidecarHealth(ctx context.Context, instanceID, appID, wakeID, nodeID string, wire sidecarHealthWire)
 }
 
 // noopSidecarEventEmitter is the zero-value default used
@@ -95,7 +95,7 @@ func (noopSidecarEventEmitter) EmitSidecarInitExit(context.Context, string, stri
 }
 func (noopSidecarEventEmitter) EmitSidecarRestart(context.Context, string, string, string, sidecarRestartWire) {
 }
-func (noopSidecarEventEmitter) EmitSidecarHealth(context.Context, string, string, string, sidecarHealthWire) {
+func (noopSidecarEventEmitter) EmitSidecarHealth(context.Context, string, string, string, string, sidecarHealthWire) {
 }
 
 // sidecarStatusInitOK and sidecarStatusInitFailed are the

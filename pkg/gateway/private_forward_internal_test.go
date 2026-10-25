@@ -13,8 +13,9 @@ func TestPrivateServiceGuestRequestMarksAuthorizedRouteWithoutSigningKey(t *test
 	proxy := NewServiceProxy(ServiceProxyConfig{})
 	request := httptest.NewRequest(http.MethodGet, "http://inventory.internal/items", nil)
 	request.Header.Set("Gregale-Private-Forward", "1")
-	guest := proxy.guestRequest(request, "/items", ServiceTarget{AppID: "inventory"}, ServiceCaller{AppID: "worker"})
-	md, _ := metadata.FromOutgoingContext(wire.ForwardContext(guest.Context()))
+	guest := request.Clone(request.Context())
+	ctx := proxy.prepareGuestRequest(guest.Context(), guest, "/items", ServiceTarget{AppID: "inventory"}, ServiceCaller{AppID: "worker"})
+	md, _ := metadata.FromOutgoingContext(wire.ForwardContext(ctx))
 	if !wire.IsPrivateForward(metadata.NewIncomingContext(t.Context(), md)) {
 		t.Fatal("authorized private route depends on optional assertion signer")
 	}
