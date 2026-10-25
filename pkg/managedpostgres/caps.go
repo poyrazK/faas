@@ -136,8 +136,9 @@ func capQuotaNeedsWrite(current, target, used int64) bool {
 	}
 }
 
-// CapCeiling returns an account's monthly compute ceiling in compute-unit
-// seconds. Zero means the account is not capped.
+// CapCeiling returns a usage subject's monthly compute ceiling in
+// compute-unit seconds: an account, or an organization that owns resources.
+// Zero means the subject is not capped.
 type CapCeiling func(ctx context.Context, accountID string) (int64, error)
 
 type CapEnforcerOptions struct {
@@ -223,7 +224,7 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 	if e.mode == CapEnforcementOff {
 		return summary, nil
 	}
-	accounts, err := e.liveDatabasesByAccount(ctx)
+	accounts, err := e.liveDatabasesBySubject(ctx)
 	if err != nil {
 		return summary, err
 	}
@@ -246,8 +247,11 @@ func (e *CapEnforcer) Enforce(ctx context.Context) (summary CapSweepSummary, err
 	return summary, errors.Join(failures...)
 }
 
-func (e *CapEnforcer) liveDatabasesByAccount(ctx context.Context) (map[string][]Database, error) {
-	accounts := make(map[string][]Database)
+// liveDatabasesBySubject groups running databases by the subject the ledger
+// pools their usage by: an organization that owns resources pools every
+// namespace's databases under its own ID.
+func (e *CapEnforcer) liveDatabasesBySubject(ctx context.Context) (map[string][]Database, error) {
+	var live []Database
 	seen := make(map[string]bool)
 	var after UsageDatabaseCursor
 	for {
@@ -260,14 +264,34 @@ func (e *CapEnforcer) liveDatabasesByAccount(ctx context.Context) (map[string][]
 				continue
 			}
 			seen[database.ID] = true
-			accounts[database.AccountID] = append(accounts[database.AccountID], database)
+			live = append(live, database)
 		}
 		if len(databases) < e.batchSize {
-			return accounts, nil
+			break
 		}
 		last := databases[len(databases)-1]
 		after = UsageDatabaseCursor{UpdatedAt: last.UpdatedAt, ID: last.ID}
 	}
+	subjects := map[string]string{}
+	if store, ok := e.store.(CapSubjectStore); ok && len(live) > 0 {
+		ids := make([]string, 0, len(live))
+		for _, database := range live {
+			ids = append(ids, database.ID)
+		}
+		var err error
+		if subjects, err = store.UsageSubjects(ctx, ids); err != nil {
+			return nil, err
+		}
+	}
+	grouped := make(map[string][]Database)
+	for _, database := range live {
+		subject := subjects[database.ID]
+		if subject == "" {
+			subject = database.AccountID
+		}
+		grouped[subject] = append(grouped[subject], database)
+	}
+	return grouped, nil
 }
 
 // capEnforceable keeps databases whose provider resource can be running.

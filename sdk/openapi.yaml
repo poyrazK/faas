@@ -20693,6 +20693,9 @@ components:
           description: "healthy; warning at 80% of the allowance; overage past the allowance while the account allows overage; suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and resume next month or after an upgrade."
           type: string
           enum: [healthy, warning, overage, suspended]
+        overage_enabled:
+          description: True while the account runs its databases past the allowance, up to the ceiling.
+          type: boolean
     ObjectStoragePolicy:
       description: Operator safety limits. Empty accounting_mode requires qualified provider reports including cost. Explicit gateway_safety_v1 requires a coverage start, proxied transfers, billing off and no cost ceiling; all other budgets remain positive and finite.
       type: object
