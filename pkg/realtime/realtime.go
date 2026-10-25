@@ -988,6 +988,7 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var issuedAt time.Time
 	var identity JWTIdentity
 	var identityToken string
+	var tokenExpiry time.Time
 	identityAt := time.Now()
 	if usesTicket {
 		claims, err := m.readTicket(r.Context(), endpoint.ID, ticketToken)
@@ -1029,6 +1030,9 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				principal, identityToken = identity.Principal, token
 			} else {
 				principal, err = m.cfg.JWTAuthorizer.Authorize(r.Context(), token, endpoint.ClientAuth)
+				// v1 sockets never re-check the token, so they end when it
+				// expires instead of living out MaxConnectionAge on it.
+				tokenExpiry = verifiedTokenExpiry(token)
 			}
 			if err != nil || strings.TrimSpace(principal) == "" {
 				m.recordAuthOutcome(authMetricMode, authMetricOutcomeRejected)
@@ -1127,6 +1131,13 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		return ""
 	}(), verifiedConnection)
+	if !tokenExpiry.IsZero() {
+		conn.mu.Lock()
+		if tokenExpiry.Before(conn.info.Expires) {
+			conn.info.Expires = tokenExpiry
+		}
+		conn.mu.Unlock()
+	}
 	state.gate.Unlock()
 	conn.browser = r.Header.Get("Origin") != ""
 	conn.liveOnly = liveOnly
