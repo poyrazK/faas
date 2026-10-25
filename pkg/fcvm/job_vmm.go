@@ -1035,6 +1035,26 @@ func (v *JailerVMM) SignalJob(ctx context.Context, l Lease, signal syscall.Signa
 	return killed, code, err
 }
 
+// errGuestStopUnsupported is a stop frame answered by something other than a
+// stop handler: a guest-init without the H14-59 dispatch serves port 1028 with
+// its liveness listener, whose error reply also starts with a zero byte.
+var errGuestStopUnsupported = errors.New("guest answered the stop frame with a liveness reply")
+
+// confirmJobControlAckEnd checks that the one-byte ack is the whole reply: a
+// stop handler closes the connection after it. Anything more is a liveness
+// reply, so the stop never reached the workload (Hunt 14 H14-59).
+func confirmJobControlAckEnd(conn net.Conn) error {
+	_ = conn.SetReadDeadline(time.Now().Add(jobControlAckEndWait))
+	var extra [1]byte
+	if n, _ := conn.Read(extra[:]); n > 0 {
+		return errGuestStopUnsupported
+	}
+	return nil
+}
+
+// jobControlAckEndWait bounds the wait for the guest to close after its ack.
+const jobControlAckEndWait = 500 * time.Millisecond
+
 // guestStopPollInterval is how often SignalJob reads the console for a guest
 // that stopped on its own.
 const guestStopPollInterval = 100 * time.Millisecond
@@ -1112,10 +1132,16 @@ func (v *JailerVMM) signalJobGuest(ctx context.Context, l Lease, signal syscall.
 			if err == nil && ack[0] != vsockJobControlAckOK {
 				err = fmt.Errorf("guest rejected cancellation")
 			}
+			if err == nil {
+				err = confirmJobControlAckEnd(conn)
+			}
 		}
 		_ = conn.Close()
 		if err == nil {
 			return nil
+		}
+		if errors.Is(err, errGuestStopUnsupported) {
+			return fmt.Errorf("vmm: signal job %s: %w", l.Instance, err)
 		}
 		lastErr = err
 		select {

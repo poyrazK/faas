@@ -1,6 +1,8 @@
 package fcvm
 
 import (
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
 	"testing"
@@ -62,5 +64,33 @@ func TestConsoleShowsGuestStopped(t *testing.T) {
 	}
 	if stopped, _ := consoleShowsGuestStopped(filepath.Join(t.TempDir(), "missing.log")); stopped {
 		t.Fatal("a missing console reported a stopped guest")
+	}
+}
+
+// TestConfirmJobControlAckEnd tells a stop handler's one-byte ack from an
+// older guest-init's liveness reply, which also starts with a zero byte
+// (Hunt 14 H14-59).
+func TestConfirmJobControlAckEnd(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		reply []byte
+		want  error
+	}{
+		{name: "stop handler closes after the ack"},
+		{name: "liveness reply continues", reply: []byte{0, 0, 11, 0, 0, 0, 2, '{', '}'}, want: errGuestStopUnsupported},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			host, guest := net.Pipe()
+			defer func() { _ = host.Close() }()
+			go func() {
+				if len(tc.reply) > 0 {
+					_, _ = guest.Write(tc.reply)
+				}
+				_ = guest.Close()
+			}()
+			if err := confirmJobControlAckEnd(host); !errors.Is(err, tc.want) {
+				t.Fatalf("confirmJobControlAckEnd = %v, want %v", err, tc.want)
+			}
+		})
 	}
 }

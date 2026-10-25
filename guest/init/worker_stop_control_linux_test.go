@@ -4,6 +4,7 @@ package main
 
 import (
 	"encoding/binary"
+	"log/slog"
 	"os"
 	"syscall"
 	"testing"
@@ -53,6 +54,59 @@ func TestControlPortDeliversWorkerStopSignals(t *testing.T) {
 				if got := <-signals; got != tc.signal {
 					t.Fatalf("delivered %v, want %v", got, tc.signal)
 				}
+			}
+		})
+	}
+}
+
+// TestLivenessPortDeliversWorkerStopSignals is the metal finding behind H14-59:
+// a long-running guest's liveness listener owns vsock port 1028, so the host's
+// stop frame reached it and drew a liveness error reply whose first byte the
+// host read as the job-control OK. The liveness listener now dispatches the
+// stop frame to the registered workload signal loop and answers with the
+// one-byte ack.
+func TestLivenessPortDeliversWorkerStopSignals(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		register bool
+		signal   syscall.Signal
+		wantAck  byte
+	}{
+		{"registered SIGTERM", true, syscall.SIGTERM, VsockJobControlAckOK},
+		{"registered SIGUSR2", true, syscall.SIGUSR2, VsockJobControlAckOK},
+		{"no signal loop yet", false, syscall.SIGTERM, VsockJobControlAckError},
+		{"SIGKILL refused", true, syscall.SIGKILL, VsockJobControlAckError},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			signals := make(chan os.Signal, 1)
+			if tc.register {
+				defer registerWorkloadStopSignals(signals)()
+			}
+			fds, err := unix.Socketpair(unix.AF_UNIX, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() { _ = unix.Close(fds[0]) }()
+			done := make(chan struct{})
+			go func() {
+				defer close(done)
+				handleLivenessConn(os.NewFile(uintptr(fds[1]), "liveness"), slog.New(slog.DiscardHandler))
+			}()
+			var frame [8]byte
+			binary.BigEndian.PutUint32(frame[:4], VsockJobCancelMsgType)
+			binary.BigEndian.PutUint32(frame[4:], uint32(tc.signal))
+			if _, err := unix.Write(fds[0], frame[:]); err != nil {
+				t.Fatal(err)
+			}
+			<-done
+			reply := make([]byte, 16)
+			n, err := unix.Read(fds[0], reply)
+			if err != nil || n != 1 || reply[0] != tc.wantAck {
+				t.Fatalf("reply = %v (err %v), want exactly the ack byte %d", reply[:max(n, 0)], err, tc.wantAck)
+			}
+			delivered := len(signals) == 1
+			if delivered != (tc.wantAck == VsockJobControlAckOK) {
+				t.Fatalf("delivered = %v, want %v", delivered, tc.wantAck == VsockJobControlAckOK)
 			}
 		})
 	}

@@ -172,8 +172,11 @@ func runSignalHandlers(ctx context.Context, manifest api.AppManifest, sup *Super
 		syscall.SIGUSR2,
 		syscall.SIGCHLD,
 	)
-	// The host's graceful stop arrives over the control port, not as a
-	// signal to PID 1: vmmd cannot signal inside the VM (Hunt 14 H14-59).
+	// The host's graceful stop arrives over vsock port 1028, not as a signal
+	// to PID 1: vmmd cannot signal inside the VM (Hunt 14 H14-59). The
+	// liveness listener normally owns that port and dispatches the stop
+	// frame through the registry; without it, this guest serves the port.
+	defer registerWorkloadStopSignals(sigCh)()
 	closeControl := listenControlSignals(sigCh, isWorkloadStopSignal, log)
 	defer closeControl()
 
