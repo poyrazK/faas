@@ -159,13 +159,22 @@ Record each result in the pilot's PR or issue.
 8. **Load.** At the same request rate as the October load test, the control
    plane's CPU stays flat while the pilot host takes the traffic.
 
-## 6. Move the wildcard
+## 6. Move every app host
 
-Not yet possible from this runbook. Moving every app host needs the Worker to
-send all app hosts, but none of the platform hosts (`api.`, `operations.`,
-`s3.`, the apex), to the tunnel. ADR-1343 §3 derives that split from
-`apid.IsPlatformHost` with a CI check; that is the next change. After it
-lands, schedule the move at low traffic: WebSocket and SSE connections drop
-when the origin changes.
+After the pilot passes, at low traffic, deploy the Worker with
+`APP_EDGE_HOSTS = "*"`. Every `<app>.<apps domain>` host then resolves to the
+tunnel. A host counts as an app when its one label is a valid, unreserved app
+name (`pkg/api` `ValidAppSlug` and `reservedAppSlugs`, mirrored in the
+Worker's `app-hosts.json`, kept equal by a Go test). The apex, `api.`,
+`operations.`, `s3.`, `origin.`, `app-edge.`, every other reserved name and
+every deeper name stay on the control plane.
+
+- WebSocket and SSE connections drop when their origin changes; clients
+  reconnect to the tunnel.
+- To keep one app on the control plane (an app that misbehaves on the edge),
+  add its host to `APP_EDGE_EXCLUDE_HOSTS` and deploy again.
+- Rollback: set `APP_EDGE_HOSTS` back to the pilot host, or empty, and deploy.
+- Watch [FaasComputeEdge](FaasComputeEdge.md) alerts, the control plane's CPU,
+  and the ADR-1343 exit criterion (§5 checks 1, 2 and 7 at full traffic).
 
 Custom domains (ADR-520) stay on the control-plane edge.
