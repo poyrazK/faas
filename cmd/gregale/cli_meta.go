@@ -3354,14 +3354,14 @@ var cliCommands = []cliCommand{
 		Name: "flags", DocSlug: "flags", Short: "Roll out feature flags to selected customers",
 		Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}},
 		Subcommands: []cliSub{
-			{Name: "get", Short: "Read current flag configuration"},
-			{Name: "apply", Short: "Publish a versioned configuration", Flags: []cliFlag{{Name: "file", Short: "JSON update bundle", Value: "path", Req: true}}},
-			{Name: "history", Short: "List immutable configuration versions", Flags: []cliFlag{{Name: "before-version", Short: "page before this version", Value: "number"}}},
-			{Name: "inspect", Short: "Explain a customer's decision", Flags: []cliFlag{{Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "subject-id", Short: "authenticated application subject (requires --customer-id)", Value: "ID"}, {Name: "fallback-variant", Short: "named-variant fallback", Value: "NAME"}, {Name: "version", Short: "historical configuration version", Value: "number"}}},
-			{Name: "rollback", Short: "Publish an earlier configuration", Flags: []cliFlag{{Name: "version", Short: "version to restore", Value: "number", Req: true}, {Name: "expected-version", Short: "current version", Value: "number", Req: true}}},
-			{Name: "requests", Short: "Inspect request evidence by flag value", Flags: []cliFlag{{Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "value", Short: "true or false", Value: "bool"}, {Name: "variant", Short: "filter by named variant", Value: "NAME"}, {Name: "used", Short: "true or false exposure", Value: "bool"}, {Name: "since", Short: "lookback (default 24h)", Value: "duration"}, {Name: "cursor", Short: "next-page cursor", Value: "cursor"}}},
-			{Name: "outcomes", Short: "Inspect flag decision outcomes", Flags: []cliFlag{{Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "rule-id", Short: "filter to a targeting rule", Value: "ID"}, {Name: "config-version", Short: "filter to one configuration version", Value: "number"}, {Name: "since", Short: "lookback (default 24h)", Value: "duration"}}},
-			{Name: "promote", Short: "Promote a targeting rule rollout", Flags: []cliFlag{{Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "rule-id", Short: "targeting rule ID", Value: "ID", Req: true}, {Name: "expected-version", Short: "current configuration version", Value: "number", Req: true}}},
+			{Name: "get", Short: "Read current flag configuration", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}}},
+			{Name: "apply", Short: "Publish a versioned configuration", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "file", Short: "JSON update bundle", Value: "path", Req: true}}},
+			{Name: "history", Short: "List immutable configuration versions", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "before-version", Short: "page before this version", Value: "number"}}},
+			{Name: "inspect", Short: "Explain a customer's decision", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "subject-id", Short: "authenticated application subject (requires --customer-id)", Value: "ID"}, {Name: "fallback-variant", Short: "named-variant fallback", Value: "NAME"}, {Name: "version", Short: "historical configuration version", Value: "number"}}},
+			{Name: "rollback", Short: "Publish an earlier configuration", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "version", Short: "version to restore", Value: "number", Req: true}, {Name: "expected-version", Short: "current version", Value: "number", Req: true}}},
+			{Name: "requests", Short: "Inspect request evidence by flag value", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "value", Short: "true or false", Value: "bool"}, {Name: "variant", Short: "filter by named variant", Value: "NAME"}, {Name: "used", Short: "true or false exposure", Value: "bool"}, {Name: "since", Short: "lookback (default 24h)", Value: "duration"}, {Name: "cursor", Short: "next-page cursor", Value: "cursor"}}},
+			{Name: "outcomes", Short: "Inspect flag decision outcomes", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "customer-id", Short: "customer UUID", Value: "UUID"}, {Name: "rule-id", Short: "filter to a targeting rule", Value: "ID"}, {Name: "config-version", Short: "filter to one configuration version", Value: "number"}, {Name: "since", Short: "lookback (default 24h)", Value: "duration"}}},
+			{Name: "promote", Short: "Promote a targeting rule rollout", Flags: []cliFlag{{Name: "project", Short: "project slug", Value: "slug", Req: true}, {Name: "environment", Short: "named environment (default production)", Value: "slug"}, {Name: "key", Short: "flag key", Value: "key", Req: true}, {Name: "rule-id", Short: "targeting rule ID", Value: "ID", Req: true}, {Name: "expected-version", Short: "current configuration version", Value: "number", Req: true}}},
 		},
 	},
 	{
@@ -4040,7 +4040,9 @@ var cliCommands = []cliCommand{
 			}},
 		},
 		Flags: []cliFlag{
-			{Name: "app", Short: "app slug", Req: true, Value: "slug"},
+			// get, update, recipes and waf-exclude take a rule ID or nothing,
+			// so --app is not required for every subcommand (Hunt 14 H14-24).
+			{Name: "app", Short: "app slug (for subcommands that take one)", Value: "slug"},
 			{Name: "kind", Short: "rule kind", ClosedSet: edgeRuleKindVocab},
 		},
 	},

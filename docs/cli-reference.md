@@ -10416,34 +10416,47 @@ Roll out feature flags to selected customers
 
 Read current flag configuration
 
+`gregale flags get --project <slug> [--environment <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
+
 ### flags apply
 
 Publish a versioned configuration
 
-`gregale flags apply --file <path>`
+`gregale flags apply --project <slug> [--environment <slug>] --file <path>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--file <path>` | JSON update bundle | required |
 
 ### flags history
 
 List immutable configuration versions
 
-`gregale flags history [--before-version <number>]`
+`gregale flags history --project <slug> [--environment <slug>] [--before-version <number>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--before-version <number>` | page before this version |  |
 
 ### flags inspect
 
 Explain a customer&#39;s decision
 
-`gregale flags inspect --key <key> [--customer-id <UUID>] [--subject-id <ID>] [--fallback-variant <NAME>] [--version <number>]`
+`gregale flags inspect --project <slug> [--environment <slug>] --key <key> [--customer-id <UUID>] [--subject-id <ID>] [--fallback-variant <NAME>] [--version <number>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--key <key>` | flag key | required |
 | `--customer-id <UUID>` | customer UUID |  |
 | `--subject-id <ID>` | authenticated application subject (requires --customer-id) |  |
@@ -10454,10 +10467,12 @@ Explain a customer&#39;s decision
 
 Publish an earlier configuration
 
-`gregale flags rollback --version <number> --expected-version <number>`
+`gregale flags rollback --project <slug> [--environment <slug>] --version <number> --expected-version <number>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--version <number>` | version to restore | required |
 | `--expected-version <number>` | current version | required |
 
@@ -10465,10 +10480,12 @@ Publish an earlier configuration
 
 Inspect request evidence by flag value
 
-`gregale flags requests --key <key> [--customer-id <UUID>] [--value <bool>] [--variant <NAME>] [--used <bool>] [--since <duration>] [--cursor <cursor>]`
+`gregale flags requests --project <slug> [--environment <slug>] --key <key> [--customer-id <UUID>] [--value <bool>] [--variant <NAME>] [--used <bool>] [--since <duration>] [--cursor <cursor>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--key <key>` | flag key | required |
 | `--customer-id <UUID>` | customer UUID |  |
 | `--value <bool>` | true or false |  |
@@ -10481,10 +10498,12 @@ Inspect request evidence by flag value
 
 Inspect flag decision outcomes
 
-`gregale flags outcomes --key <key> [--customer-id <UUID>] [--rule-id <ID>] [--config-version <number>] [--since <duration>]`
+`gregale flags outcomes --project <slug> [--environment <slug>] --key <key> [--customer-id <UUID>] [--rule-id <ID>] [--config-version <number>] [--since <duration>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--key <key>` | flag key | required |
 | `--customer-id <UUID>` | customer UUID |  |
 | `--rule-id <ID>` | filter to a targeting rule |  |
@@ -10495,10 +10514,12 @@ Inspect flag decision outcomes
 
 Promote a targeting rule rollout
 
-`gregale flags promote --key <key> --rule-id <ID> --expected-version <number>`
+`gregale flags promote --project <slug> [--environment <slug>] --key <key> --rule-id <ID> --expected-version <number>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--key <key>` | flag key | required |
 | `--rule-id <ID>` | targeting rule ID | required |
 | `--expected-version <number>` | current configuration version | required |
@@ -10798,11 +10819,11 @@ Delete a list no rule references
 
 Route, rewrite, protect or rate-limit an app&#39;s requests at the edge
 
-`gregale edge-rules [<subcommand>] --app <slug> [--kind <value>]`
+`gregale edge-rules [<subcommand>] [--app <slug>] [--kind <value>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (for subcommands that take one) |  |
 | `--kind <value>` | rule kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `waf` · `async` · `challenge` |
 
 ### edge-rules list
