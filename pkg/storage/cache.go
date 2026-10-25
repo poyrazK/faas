@@ -622,21 +622,6 @@ func (c *LocalCacheBackend) get(ctx context.Context, key string, refresh bool) (
 	return cached, nil
 }
 
-// ReadParent reads key from the canonical parent without reading or
-// replacing this node's cached copy. A readiness probe uses it to see what
-// a refresh would adopt without changing what the node serves today
-// (ADR-20261022184531).
-func (c *LocalCacheBackend) ReadParent(ctx context.Context, key string) (io.ReadCloser, error) {
-	if err := validateKey(key); err != nil {
-		return nil, err
-	}
-	rc, err := c.parent.Get(ctx, key)
-	if err != nil {
-		return nil, fmt.Errorf("storage: cache: read parent %q: %w", key, err)
-	}
-	return rc, nil
-}
-
 // CachedGeneration reports which immutable release reference has been
 // committed for key in this node's cache. Generation markers are local cache
 // metadata; they are never written to the parent backend.

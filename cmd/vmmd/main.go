@@ -1782,6 +1782,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithQualificationNodeID(qualificationNodeID).
 		WithExecutionIdentitySigner(identitySigner).
 		WithDivergedInstances(divergedInstances)
+	// ADR-20261022184531: Ping tells schedd whether this vmmd can adopt each
+	// configured base generation, so a node that cannot is marked degraded.
+	impl.WithBaseGenerationReadiness(vmmdgrpc.NewCachedBaseGenerationReadiness(
+		baseGenerationReadinessCheck(storageBackend, baseGenerations)))
 	if err := vmmdgrpc.FenceStaleStreamBridges(ctx); err != nil {
 		return fmt.Errorf("vmmd: fence previous HTTP forwarding owner: %w", err)
 	}

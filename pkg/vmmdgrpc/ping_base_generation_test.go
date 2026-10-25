@@ -3,50 +3,55 @@ package vmmdgrpc_test
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
-	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/vmmdgrpc"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
 
-type baseReportingVMM struct {
-	*fakeVMM
-	report []fcvm.BaseGenerationReadiness
-}
-
-func (v *baseReportingVMM) BaseGenerationReadiness(context.Context) []fcvm.BaseGenerationReadiness {
-	return v.report
-}
-
+// Ping reports vmmd's base generation verdicts without waiting for shared
+// storage: the first Ping starts the check, a later one carries its result.
 func TestPing_ReportsBaseGenerationReadiness(t *testing.T) {
-	refused := fcvm.BaseGenerationReadiness{BaseKey: "base/base-minimal-amd64.ext4", Generation: "ghcr.io/p/base-minimal@sha256:db529ed",
-		Reason: "shared storage holds generation ghcr.io/p/base-minimal@sha256:5ca69ea"}
-	for _, tc := range []struct {
-		name string
-		vmm  vmmdgrpc.VmmdAPI
-		want []*vmmdpb.BaseGenerationReadiness
-	}{
-		{name: "a manager without the report sends none", vmm: &fakeVMM{}},
-		{name: "a refused generation crosses the wire", vmm: &baseReportingVMM{fakeVMM: &fakeVMM{}, report: []fcvm.BaseGenerationReadiness{refused}},
-			want: []*vmmdpb.BaseGenerationReadiness{{BaseKey: refused.BaseKey, Generation: refused.Generation, Reason: refused.Reason}}},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			resp, err := vmmdgrpc.New(tc.vmm, wire.NewOpsMetrics("vmmd_test"), "1.17.0", nil).Ping(context.Background(), &vmmdpb.PingRequest{})
-			if err != nil {
-				t.Fatal(err)
+	refused := vmmdgrpc.BaseGenerationReadiness{BaseKey: "base/base-amd64.ext4", Generation: "ghcr.io/p/base-minimal@sha256:db529ed",
+		Reason: "shared storage publishes ghcr.io/p/base-minimal@sha256:5ca69ea"}
+	release := make(chan struct{})
+	var checks atomic.Int32
+	readiness := vmmdgrpc.NewCachedBaseGenerationReadiness(func(context.Context) []vmmdgrpc.BaseGenerationReadiness {
+		checks.Add(1)
+		<-release
+		return []vmmdgrpc.BaseGenerationReadiness{refused}
+	})
+	srv := vmmdgrpc.New(&fakeVMM{}, wire.NewOpsMetrics("vmmd_test"), "1.17.0", nil)
+	if resp, err := srv.Ping(context.Background(), &vmmdpb.PingRequest{}); err != nil || len(resp.GetBaseGenerations()) != 0 {
+		t.Fatalf("Ping without a reporter = %v, %v", resp.GetBaseGenerations(), err)
+	}
+	srv.WithBaseGenerationReadiness(readiness)
+	// The check blocks until released; Ping must answer anyway.
+	if resp, err := srv.Ping(context.Background(), &vmmdpb.PingRequest{}); err != nil || len(resp.GetBaseGenerations()) != 0 {
+		t.Fatalf("first Ping = %v, %v; want no report while the check runs", resp.GetBaseGenerations(), err)
+	}
+	close(release)
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp, err := srv.Ping(context.Background(), &vmmdpb.PingRequest{})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := resp.GetBaseGenerations(); len(got) == 1 {
+			if got[0].GetBaseKey() != refused.BaseKey || got[0].GetGeneration() != refused.Generation || got[0].GetAdoptable() || got[0].GetReason() != refused.Reason {
+				t.Fatalf("reported %v, want %+v", got[0], refused)
 			}
-			got := resp.GetBaseGenerations()
-			if len(got) != len(tc.want) {
-				t.Fatalf("base generations = %v, want %v", got, tc.want)
-			}
-			for i := range got {
-				if got[i].GetBaseKey() != tc.want[i].GetBaseKey() || got[i].GetGeneration() != tc.want[i].GetGeneration() ||
-					got[i].GetAdoptable() != tc.want[i].GetAdoptable() || got[i].GetReason() != tc.want[i].GetReason() {
-					t.Fatalf("base generation %d = %v, want %v", i, got[i], tc.want[i])
-				}
-			}
-		})
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("Ping never carried the check's report")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if n := checks.Load(); n != 1 {
+		t.Fatalf("checks = %d, want 1 within the interval", n)
 	}
 }
