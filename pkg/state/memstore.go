@@ -14426,6 +14426,11 @@ func (m *MemStore) ListDueInvocationsAfter(_ context.Context, now time.Time, aft
 		if after.ID != "" && (inv.DueAt.Before(after.DueAt) || (inv.DueAt.Equal(after.DueAt) && inv.ID <= after.ID)) {
 			continue
 		}
+		if after.OwnerNodeID != "" {
+			if app, ok := m.apps[inv.AppID]; !ok || app.NodeID != "" && app.NodeID != after.OwnerNodeID {
+				continue
+			}
+		}
 		out = append(out, inv)
 	}
 	sort.Slice(out, func(i, j int) bool {

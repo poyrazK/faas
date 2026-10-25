@@ -16197,6 +16197,10 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 type InvocationDueCursor struct {
 	DueAt time.Time
 	ID    string
+	// OwnerNodeID, when set, keeps only invocations of apps with no node or
+	// with this node, the apps a scheduler on that node may claim. Without it
+	// a walk bounded in pages could fill every page with other nodes' rows.
+	OwnerNodeID string
 }
 
 // ListDueInvocationsAfter is ListDueInvocations ordered by (due_at, id) and
@@ -16215,13 +16219,23 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 		}
 		afterDue, afterID = after.DueAt.UTC(), after.ID
 	}
+	var owner pgtype.UUID
+	if after.OwnerNodeID != "" {
+		// A node ID that is not a UUID matches no app's node, as in the
+		// scheduler's string compare: it owns only apps with no node.
+		parsed, err := uuid.Parse(after.OwnerNodeID)
+		if err != nil {
+			parsed = uuid.Nil
+		}
+		owner = pgtype.UUID{Bytes: parsed, Valid: true}
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("state: invocations begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := sqlc.New().ListDueInvocationRowsAfter(ctx, tx, sqlc.ListDueInvocationRowsAfterParams{NowAt: pgtype.Timestamptz{Time: now.UTC(), Valid: true}, BatchLimit: int64(limit),
-		FirstPage: after.ID == "", AfterDueAt: pgtype.Timestamptz{Time: afterDue, Valid: true}, AfterID: mustPgUUID(afterID)})
+		FirstPage: after.ID == "", AfterDueAt: pgtype.Timestamptz{Time: afterDue, Valid: true}, AfterID: mustPgUUID(afterID), OwnerNodeID: owner})
 	if err != nil {
 		return nil, fmt.Errorf("state: invocations list-due-after: %w", err)
 	}

@@ -927,6 +927,15 @@ func (e *Engine) OwnsApp(app state.App) bool {
 	return e.ownsAppDecision(app)
 }
 
+// claimNodeID is the node whose apps ownsAppDecision accepts besides apps
+// with no node, or "" when this engine owns every app.
+func (e *Engine) claimNodeID() string {
+	if e.ownerNodeID != "" {
+		return e.ownerNodeID
+	}
+	return e.defaultLocalNodeID
+}
+
 func (e *Engine) ownsAppDecision(app state.App) bool {
 	if app.NodeID == "" {
 		return true

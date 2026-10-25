@@ -7461,6 +7461,11 @@ select i.*
 		         and active.state='claimed' and active.claim_expires_at > sqlc.arg(now_at)
 		   )) < i.work_fairness_limit)
 		   and (sqlc.arg(first_page)::boolean or (i.due_at, i.id) > (sqlc.arg(after_due_at)::timestamptz, sqlc.arg(after_id)::uuid))
+		   and (sqlc.narg(owner_node_id)::uuid is null or exists (
+		       select 1 from apps owner
+		        where owner.id = i.app_id
+		          and (owner.node_id is null or owner.node_id = sqlc.narg(owner_node_id)::uuid)
+		   ))
 		 order by i.due_at, i.id
 		 for update skip locked
 		 limit sqlc.arg(batch_limit)::bigint;

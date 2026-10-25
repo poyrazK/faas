@@ -81,6 +81,7 @@ const TriggerReasonMaxAttempts = triggerReasonMaxAttempts
 const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
+const MaxDuePagesPerTick = maxDuePagesPerTick
 const WorkReaper = workReaper
 
 // Package-level vars
