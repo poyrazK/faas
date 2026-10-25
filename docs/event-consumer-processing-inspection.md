@@ -14,7 +14,7 @@ Authenticate and authorize the diagnostic route first. Supply trusted account/ap
 scope and exact original CloudEvent bytes through an existing request constructor:
 
 ```js
-import { eventConsumerRequestFromHeaders, inspectEventConsumerProcessing } from '@gregale/sdk-node';
+import { eventConsumerRequestFromHeaders, inspectEventConsumerProcessing } from '@gregale/sdk-node/preview';
 
 const input = eventConsumerRequestFromHeaders(headers, originalBody, accountId, appId);
 const evidence = await inspectEventConsumerProcessing(pool, input, { signal });
@@ -136,7 +136,7 @@ and trusted owner scope through the existing request constructor:
 
 ```python
 from dataclasses import asdict
-from faas_sdk import ainspect_event_consumer_processing, event_consumer_request_from_headers
+from faas_sdk.preview import ainspect_event_consumer_processing, event_consumer_request_from_headers
 
 request = event_consumer_request_from_headers(headers, original_body, account_id, app_id)
 async with diagnostic_pool.connection() as connection:

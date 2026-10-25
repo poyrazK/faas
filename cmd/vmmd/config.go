@@ -102,6 +102,11 @@ type Config struct {
 	// returns guest-freed pages to the host. It is on by default on
 	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
 	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
+	// RestoreReseedThread boots app VMs whose Node processes answer the
+	// restore reseed barrier from a native thread instead of their event
+	// loop (ADR-20261024105607). Off by default; FAAS_RESTORE_RESEED_THREAD
+	// overrides TOML.
+	RestoreReseedThread bool `toml:"restore_reseed_thread"`
 	// QuietPause enables ADR-1151 quiet pause: vmmd pauses an eligible
 	// instance's vCPUs between requests and resumes it on the next one.
 	// Off by default; schedd decides which instances are eligible.
@@ -806,6 +811,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_BINDING_REQUIRED must be a boolean (got %q)", v)
 		}
 		c.RequireSecretBinding = required
+	}
+	if v := os.Getenv("FAAS_RESTORE_RESEED_THREAD"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_RESEED_THREAD must be a boolean (got %q)", v)
+		}
+		c.RestoreReseedThread = enabled
 	}
 	if v, ok := os.LookupEnv("FAAS_PMEM_BASE_DIR"); ok {
 		c.PmemBaseDir = v

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, WorkflowsService } from '../src/index.js';
+import { FaaSClient, WorkflowsService } from '../src/preview.js';
 import type { SimulateAutomationRequest } from '../src/generated/models/SimulateAutomationRequest.js';
 
 test('simulation SDK preserves null mocks, loop order and false decisions', async t => {

@@ -52,9 +52,10 @@ var gregaleVersion = "dev"
 func cmdMan(args []string) int {
 	// `--markdown` renders the customer command surface as one Markdown
 	// document for the public site. Operator and compatibility commands remain
-	// available through explicit man pages and `help --all`.
+	// available through explicit man pages and `help --all`. The reference
+	// documents every released command, whatever this account can see.
 	if len(args) == 1 && args[0] == "--markdown" {
-		renderMarkdownReference(osStdout, customerCliCommands())
+		renderMarkdownReference(osStdout, customerAudience(visibleCliCommands()))
 		return 0
 	}
 	switch len(args) {
@@ -62,7 +63,7 @@ func cmdMan(args []string) int {
 		renderManTop(osStdout)
 		return 0
 	case 1:
-		cmd, ok := lookupCliCommand(args[0])
+		cmd, ok := lookupDiscoverableCommand(args[0])
 		if !ok || !cliCommandAvailable(cmd.Name) {
 			printCommandValidation(os.Stderr, "gregale man: unknown command %q\n", args[0])
 			if sug, has := suggestCommand(args[0]); has && !jsonOutput {
@@ -436,7 +437,7 @@ func suggestCommand(query string) (string, bool) {
 	bestName := ""
 	bestDist := maxDist + 1
 	tied := false
-	for _, c := range visibleCliCommands() {
+	for _, c := range discoverableCliCommands() {
 		if !cliCommandAvailable(c.Name) {
 			continue
 		}

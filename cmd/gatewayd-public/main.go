@@ -272,6 +272,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("gatewayd-public: open db: %w", err)
 	}
 	defer pool.Close()
+	trafficRevocations, err := newPublicTrafficRevocationRegistry(ctx, pool)
+	if err != nil {
+		return fmt.Errorf("gatewayd-public: %w", err)
+	}
+	defer trafficRevocations.Close()
+	go trafficRevocations.Run(ctx)
 	// pgStore is the edge store: the queries gatewayd-public runs and
 	// nothing else, so a store change elsewhere does not change this
 	// daemon (docs/adr/20261021092138-edge-store-blast-radius.md).
@@ -423,7 +429,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		internalURL,
 		log,
 		h2cEnabled,
-	).WithTrustedIngressCIDRs(trustedIngressCIDRs)
+	).WithTrustedIngressCIDRs(trustedIngressCIDRs).WithTrafficRevocations(trafficRevocations)
 	// A dynamic dialer selects a different compute node per request. Do not
 	// let the transport pool an idle connection under the single logical
 	// gatewayd URL, otherwise a drained node could keep receiving traffic.
@@ -652,6 +658,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return err
 		}
 	}
+	// Outside both the control-plane proxy and the compute edge: neither may
+	// forward gatewayd-internal's private paths for a public request.
+	rootHandler = refuseComputePrivatePaths(rootHandler)
 	tenantRoot = rootHandler
 	traceMux.Handle("/", rootHandler)
 
@@ -890,6 +899,14 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 		IdleTimeout:       120 * time.Second,
 		MaxHeaderBytes:    api.DefaultMaxHeaderBytes,
 	}
+	// The public edge sends gRPC over HTTP/2 with prior knowledge (h2c)
+	// once it opts in (faas_public_edge_grpc_h2c), so bidirectional streams
+	// work end to end; every other request keeps HTTP/1.1 on the same
+	// loopback listener. Accepting h2c first lets that opt-in follow this
+	// release without an older edge ever sending a preface we cannot read.
+	publicSrv.Protocols = new(http.Protocols)
+	publicSrv.Protocols.SetHTTP1(true)
+	publicSrv.Protocols.SetUnencryptedHTTP2(true)
 	controlSrv := &http.Server{
 		Addr:              controlAddr,
 		Handler:           trace.HTTPHandler("gatewayd-public-control", controlMux),

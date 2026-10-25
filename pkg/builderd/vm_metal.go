@@ -224,6 +224,19 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 	}
 
 	instance := "build-" + req.BuildID
+	// An alias or project secret needs a vmmd that opens an envelope under
+	// another key (ADR-423, ADR-20261024140000). Check before staging, as
+	// schedd does for a wake.
+	aliases := buildSecretsNeedAliasSupport(req.BuildSecrets)
+	if aliases {
+		ping, err := d.cli.Ping(ctx, &vmmdpb.PingRequest{})
+		if err != nil {
+			return BuildHandle{}, fmt.Errorf("builderd: verify vmmd secret alias support: %w", err)
+		}
+		if !ping.GetSupportsSecretAliases() {
+			return BuildHandle{}, errors.New("builderd: vmmd does not support secret aliases, which this build's secrets need")
+		}
+	}
 
 	// 1. Materialise drive1 with BuildManifest.
 	if err := os.MkdirAll(d.driveDir, 0o755); err != nil {
@@ -339,6 +352,13 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 			return handle, &builderSliceOOMError{Delta: delta}
 		}
 		return BuildHandle{}, fmt.Errorf("builderd: nil wake outcome")
+	}
+	// A vmmd replaced between Ping and boot cannot acknowledge the field; its
+	// builder never runs the build.
+	if aliases && !resp.GetSupportsSecretAliases() {
+		cleanupErr := d.stopAndDestroy(ctx, instance)
+		os.Remove(drive1Path)
+		return BuildHandle{}, errors.Join(errors.New("builderd: vmmd boot did not acknowledge secret alias support"), cleanupErr)
 	}
 
 	return handle, nil

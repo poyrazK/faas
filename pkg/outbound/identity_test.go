@@ -87,6 +87,15 @@ func TestWorkloadIdentityVerifierChecksIssuerSignatureAudienceAndTime(t *testing
 	if _, err := NewWorkloadIdentityVerifier(jwks, "http://identity.example"); err == nil {
 		t.Fatal("accepted an insecure issuer")
 	}
+	// adr: 1141 — amendment 2026-10-25: a token for a non-default deployment
+	// scope carries app:<id>:env:<scope> and still identifies its app.
+	staging, err := signer.MintEnvironment(now, "account-1", "app-1", "instance-1", "staging", identityAudiencePrefix+"integration-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity, err := verifier.Verify(staging.AccessToken, "integration-1"); err != nil || identity.AppID != "app-1" {
+		t.Fatalf("staging token = %+v, %v", identity, err)
+	}
 }
 
 func TestExecutionIdentityVerifierFencesRunAndLeaseClaims(t *testing.T) {

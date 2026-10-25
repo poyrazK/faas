@@ -18,7 +18,7 @@ import (
 func (s *server) devBridgeStore(w http.ResponseWriter) (state.DevBridgeStore, bool) {
 	store, ok := s.store.(state.DevBridgeStore)
 	if !ok || !s.devBridgeEnabled {
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "dev_bridge_unavailable", "Dev Bridge unavailable", "the development bridge preview is not enabled"))
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "dev_bridge_unavailable", "Dev Bridge unavailable", "the development bridge preview is not enabled").WithHint(api.PreviewNotEnabledHint))
 		return nil, false
 	}
 	return store, true
@@ -34,7 +34,7 @@ func (s *server) createDevBridge(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, devBridgeValidation("invalid request"))
 		return
 	}
-	scope, prob := s.resolveDevBridgeScope(r.Context(), acct, request)
+	scope, prob := s.resolveDevBridgeScope(r, acct, request)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -88,13 +88,17 @@ func devBridgeValidation(detail string) *api.Problem {
 	return api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid bridge", detail)
 }
 
-func (s *server) resolveDevBridgeScope(ctx context.Context, acct state.Account, request api.CreateDevBridgeRequest) (devbridge.Scope, *api.Problem) {
+func (s *server) resolveDevBridgeScope(r *http.Request, acct state.Account, request api.CreateDevBridgeRequest) (devbridge.Scope, *api.Problem) {
+	ctx := r.Context()
 	if strings.TrimSpace(request.DeveloperID) == "" || len(request.DeveloperID) > 128 || len(request.Dependencies) > api.DevBridgeMaxDependencies {
 		return devbridge.Scope{}, devBridgeValidation("developer_id is required and dependencies must be bounded")
 	}
 	app, err := s.store.AppBySlug(ctx, request.App)
 	if err != nil || app.AccountID != acct.ID || app.ProjectID == "" || app.Status != state.AppActive || app.Type != state.AppTypeApp {
 		return devbridge.Scope{}, api.NewProblem(404, "dev_bridge_target_not_found", "Bridge target unavailable", "select an owned project app")
+	}
+	if prob := s.authorizeNamedApp(r, acct, app); prob != nil {
+		return devbridge.Scope{}, prob
 	}
 	env, err := s.store.ProjectEnvironmentBySlug(ctx, acct.ID, app.ProjectID, request.Environment)
 	if err != nil || env.Protected || env.Slug == "production" || env.Slug == "default" {

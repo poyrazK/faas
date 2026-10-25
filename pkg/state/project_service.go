@@ -16,12 +16,30 @@ type projectServiceLookup interface {
 	ProjectAppByWorkload(context.Context, string, string, string) (App, error)
 }
 
+// ProjectServiceLookupReader resolves a project alias with one indexed read.
+type ProjectServiceLookupReader interface {
+	ProjectAppByWorkload(context.Context, string, string, string) (App, error)
+	AppBySlug(context.Context, string) (App, error)
+}
+
 // AppByServiceName resolves a production project's repository aliases before
 // the established global app-slug fallback. Preview and scenario routing keep
 // their separate environment-aware owners.
 func AppByServiceName(ctx context.Context, reader ProjectServiceReader, caller App, service string) (App, error) {
 	if caller.ProjectID != "" && caller.PreviewOfSlug == "" {
 		app, err := ProjectMemberByWorkload(ctx, reader, caller.AccountID, caller.ProjectID, service)
+		if !errors.Is(err, ErrNotFound) {
+			return app, err
+		}
+	}
+	return reader.AppBySlug(ctx, service)
+}
+
+// AppByServiceLookup is AppByServiceName for readers that never load a whole
+// project inventory, such as the gateway's pinned service-policy view.
+func AppByServiceLookup(ctx context.Context, reader ProjectServiceLookupReader, caller App, service string) (App, error) {
+	if caller.ProjectID != "" && caller.PreviewOfSlug == "" {
+		app, err := reader.ProjectAppByWorkload(ctx, caller.AccountID, caller.ProjectID, service)
 		if !errors.Is(err, ErrNotFound) {
 			return app, err
 		}

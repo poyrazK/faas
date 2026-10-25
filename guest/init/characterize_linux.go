@@ -30,6 +30,7 @@ import (
 	"context"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -576,7 +577,8 @@ func probeHTTP(port int) func() probeResult {
 		req.Header.Set("Connection", "close")
 		resp, err := c.Do(req)
 		if err != nil {
-			return probeResult{}
+			var netErr net.Error
+			return probeResult{Stalled: errors.As(err, &netErr) && netErr.Timeout()}
 		}
 		defer func() { _ = resp.Body.Close() }()
 		// 200-class status is the only thing that counts as an

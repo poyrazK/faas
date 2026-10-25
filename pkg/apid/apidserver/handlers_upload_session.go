@@ -152,6 +152,29 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 			"Invalid total_size", "total_size must be > 0"))
 		return
 	}
+	app, err := s.store.AppBySlug(r.Context(), req.AppSlug)
+	if err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			s.notFound(w, "no such app")
+			return
+		}
+		writeCustomerInternalProblem(w, r, s.log, "load app for upload",
+			"Gregale could not prepare an upload for this app.",
+			"Check the app name and retry; contact support if it continues.", err)
+		return
+	}
+	// Authorization decides who may open the session, and for whom: the
+	// session, its caps and budget, and the plan limits below belong to the
+	// account that owns the app's resources, as on the legacy route. A caller
+	// outside the app answers the same 404, so the cap and budget queries are
+	// never an app-existence oracle.
+	owner, prob := s.authorizeUploadApp(r, acct, app)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	actor := actorAccount(r, acct)
+	acct = owner
 	limits := api.MustLimitsFor(acct.Plan)
 	maxBytes := int64(limits.SourceTarballMaxMB) * 1024 * 1024
 	if req.TotalSize > maxBytes {
@@ -169,29 +192,6 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 			return
 		}
 	}
-	app, err := s.store.AppBySlug(r.Context(), req.AppSlug)
-	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			s.notFound(w, "no such app")
-			return
-		}
-		writeCustomerInternalProblem(w, r, s.log, "load app for upload",
-			"Gregale could not prepare an upload for this app.",
-			"Check the app name and retry; contact support if it continues.", err)
-		return
-	}
-	if app.AccountID != acct.ID {
-		// Do not allow a session to be opened for another account's
-		// slug. Besides avoiding a later commit failure, this keeps
-		// the cap/budget queries from becoming an app-existence oracle.
-		s.notFound(w, "no such app")
-		return
-	}
-	if prob := s.authorizeUploadApp(r, acct, app); prob != nil {
-		api.WriteProblem(w, prob)
-		return
-	}
-
 	acctUUID := pgtypeFromUUIDString(acct.ID)
 	// Keep the cap and budget checks together with the INSERT. The
 	// checks are intentionally handler-side because plan limits are
@@ -306,7 +306,7 @@ func (s *server) handleStartUpload(w http.ResponseWriter, r *http.Request, acct 
 	s.log.Info("upload session opened",
 		"upload_id", uploadID, "app_slug", logsanitize.Field(req.AppSlug),
 		slog.Int64("total_size", req.TotalSize), "chunk_size", chunkSize,
-		"plan", acct.Plan, "account", acct.ID)
+		"plan", acct.Plan, "account", acct.ID, "actor", actor.ID)
 
 	writeJSON(w, http.StatusCreated, startUploadResponse{
 		UploadID:  row.ID,
@@ -332,8 +332,8 @@ func (s *server) handleGetUpload(w http.ResponseWriter, r *http.Request, acct st
 			"Retry the request in a moment; if it continues, contact support.", err)
 		return
 	}
-	if row.AccountID != pgtypeFromUUIDString(acct.ID) {
-		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+	if _, _, prob := s.uploadSessionOwner(r, acct, row); prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
 	var deploymentID *string
@@ -378,16 +378,15 @@ func (s *server) handleAppendUpload(w http.ResponseWriter, r *http.Request, acct
 			"Retry with the current upload offset; contact support if it continues.", err)
 		return
 	}
-	acctUUID := pgtypeFromUUIDString(acct.ID)
-	if row.AccountID != acctUUID {
-		// Defense in depth: even though the auth chain enforces
-		// account scoping, the store's CAS rejects the write via
-		// the (id, account_id) predicate. Returning 404 (not 403)
-		// avoids leaking that the upload_id exists in another
-		// account's namespace.
-		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+	// The caller must be allowed to deploy the session's app, and the
+	// session must belong to that app's resource account. A session the
+	// caller may not see answers 404 (not 403), so its ID is no oracle.
+	_, owner, prob := s.uploadSessionOwner(r, acct, row)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
+	acctUUID := pgtypeFromUUIDString(owner.ID)
 	if row.Status != "open" {
 		s.writeUploadSessionTerminalProblem(r.Context(), w, row)
 		return
@@ -553,7 +552,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 	row, err := s.store.GetUploadSession(r.Context(), uploadID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
-			api.WriteProblem(w, s.uploadCommitRecoveryProblem(r.Context(), acct.ID, uploadID))
+			api.WriteProblem(w, s.uploadCommitRecoveryProblem(r, acct, uploadID))
 			return
 		}
 		writeCustomerInternalProblem(w, r, s.log, "load upload session before commit",
@@ -561,10 +560,27 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 			"Retry the commit request; contact support if it continues.", err)
 		return
 	}
-	if row.AccountID != pgtypeFromUUIDString(acct.ID) {
-		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+	// The commit unpacks, scans, hashes and publishes the whole archive before
+	// it records the deployment. For a 240 MiB source that outran the 30 s
+	// deploy-submission ceiling on production-us, and every store call after
+	// the scans failed with "context deadline exceeded", so no retry could
+	// succeed (hunt #10, H10-26). It runs under a size-scaled bound instead,
+	// from here on so the session-app authorization below shares it; the
+	// outcome is recorded idempotently (H9-127), so a client that stops
+	// waiting recovers the deployment on its retry.
+	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(row.TotalSize))
+	defer cancel()
+	r = r.WithContext(ctx)
+	// Membership, role and organization status are checked again at commit:
+	// the session may have been opened while the caller could still deploy.
+	// From here on acct is the account that owns the app's resources (limits,
+	// plan, audit subject); the actor stays on the request.
+	app, owner, prob := s.uploadSessionOwner(r, acct, row)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
+	acct = owner
 	attemptID, ok := uploadSubmissionAttemptID(w, r)
 	if !ok {
 		return
@@ -599,41 +615,6 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Incomplete upload",
 			fmt.Sprintf("Session received %d of %d bytes; PATCH the remaining bytes before committing.", row.ReceivedBytes, row.TotalSize)))
-		return
-	}
-	// The rest of the commit unpacks, scans, hashes and publishes the whole
-	// archive before it records the deployment. For a 240 MiB source that
-	// outran the 30 s deploy-submission ceiling on production-us, and every
-	// store call after the scans failed with "context deadline exceeded", so
-	// no retry could succeed (hunt #10, H10-26). It runs under a size-scaled
-	// bound instead; the outcome is recorded idempotently (H9-127), so a client
-	// that stops waiting recovers the deployment on its retry.
-	ctx, cancel := reqbudget.Detached(r.Context(), uploadCommitProcessTimeout(row.TotalSize))
-	defer cancel()
-	r = r.WithContext(ctx)
-
-	app, err := s.store.AppBySlug(r.Context(), row.AppSlug)
-	if err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			s.notFound(w, "no such app")
-			return
-		}
-		writeCustomerInternalProblem(w, r, s.log, "load app for upload commit",
-			"Gregale could not load the app for this upload.",
-			"Check the app name and upload status, then retry; contact support if it continues.", err)
-		return
-	}
-	// Defense in depth: the auth chain + upload_sessions row's
-	// account_id together establish the (acct, slug) tenancy,
-	// but verify the resolved app is owned by this account.
-	if app.AccountID != acct.ID {
-		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
-		return
-	}
-	// The session was opened while the caller could deploy; membership,
-	// role and organization status are checked again at commit.
-	if prob := s.authorizeUploadApp(r, acct, app); prob != nil {
-		api.WriteProblem(w, prob)
 		return
 	}
 	if prob := s.enforceSecurityPostureGate(r.Context(), app); prob != nil {
@@ -841,7 +822,7 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		Source:                    "upload-session:" + uploadID,
 		LogSpool:                  spoolRoot(),
 		Log:                       s.log,
-		ActorUserID:               acct.ID,
+		ActorUserID:               actorAccount(r, acct).ID,
 		ActorVia:                  routeKindForRequest(r),
 		ActorFromIP:               middleware.ClientIP(r),
 		ActorPusherLogin:          "",
@@ -849,18 +830,28 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 		Tag:                       opts.Tag,
 		DeployedBy:                opts.DeployedBy,
 		PRNumber:                  opts.PRNumber,
-		RollbackOn5xx:             opts.RollbackOn5xx != nil && *opts.RollbackOn5xx,
-		DisableStartupCPUBoost:    rollout.DisableStartupCPUBoost,
-		Workflows:                 marshalWorkflowDefinitions(opts.Workflows),
-		Sidecars:                  append(json.RawMessage(nil), rollout.Sidecars...),
-		OverrideHealthcheck:       append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
-		OverrideMainDependsOn:     append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
-		ReleaseCommand:            releaseCommand.command,
-		ReleaseCommandShell:       releaseCommand.shell,
-		Scope:                     rolloutReq.Scope,
-		HostingObserver:           s.ops,
-		HostingFlow:               "first_deploy",
-		ServiceRollout:            app.Manifest.ExecutionMode == api.ExecutionModeService,
+		// The rollout comes from the request after the release-policy default
+		// and a scheduled release's parking, not from the saved upload options
+		// (Hunt 14 H14-9).
+		TrafficPercent:         rollout.TrafficPercent,
+		TrafficPercentExplicit: rollout.TrafficPercentExplicit,
+		RollbackOn5xx:          rollout.RollbackOn5xx,
+		CanaryPreset:           rollout.CanaryPreset,
+		CanaryStep:             rollout.CanaryStep,
+		CanaryTotalSteps:       rollout.CanaryTotalSteps,
+		CanaryStepStartedAt:    rollout.CanaryStepStartedAt,
+		CanaryStages:           rollout.CanaryStages,
+		DisableStartupCPUBoost: rollout.DisableStartupCPUBoost,
+		Workflows:              marshalWorkflowDefinitions(opts.Workflows),
+		Sidecars:               append(json.RawMessage(nil), rollout.Sidecars...),
+		OverrideHealthcheck:    append(json.RawMessage(nil), rollout.OverrideHealthcheck...),
+		OverrideMainDependsOn:  append(json.RawMessage(nil), rollout.OverrideMainDependsOn...),
+		ReleaseCommand:         releaseCommand.command,
+		ReleaseCommandShell:    releaseCommand.shell,
+		Scope:                  rolloutReq.Scope,
+		HostingObserver:        s.ops,
+		HostingFlow:            "first_deploy",
+		ServiceRollout:         app.Manifest.ExecutionMode == api.ExecutionModeService,
 	})
 	if err != nil {
 		s.writeDeploymentCreateError(w, err)
@@ -944,7 +935,6 @@ func (s *server) handleCommitUpload(w http.ResponseWriter, r *http.Request, acct
 // → cancelled and removes the .part file.
 func (s *server) handleCancelUpload(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	uploadID := r.PathValue("id")
-	acctUUID := pgtypeFromUUIDString(acct.ID)
 	mu := acquireUploadSessionLock(uploadID)
 	mu.Lock()
 	defer mu.Unlock()
@@ -959,10 +949,12 @@ func (s *server) handleCancelUpload(w http.ResponseWriter, r *http.Request, acct
 			"Retry the cancellation request; contact support if it continues.", err)
 		return
 	}
-	if row.AccountID != acctUUID {
-		api.WriteProblem(w, api.ErrUploadSessionNotFound(uploadID))
+	_, owner, prob := s.uploadSessionOwner(r, acct, row)
+	if prob != nil {
+		api.WriteProblem(w, prob)
 		return
 	}
+	acctUUID := pgtypeFromUUIDString(owner.ID)
 	err = s.store.CancelUploadSession(r.Context(), sqlc.CancelUploadSessionParams{
 		ID:      uploadID,
 		Column2: acctUUID,
@@ -999,12 +991,39 @@ func (s *server) handleCancelUpload(w http.ResponseWriter, r *http.Request, acct
 
 // authorizeUploadApp applies the organization access check that the
 // /v1/apps routes get from appaccess.Wrap. The upload routes name their app
-// in the request body or the stored session, which Wrap cannot see, so a
-// member removed from, demoted in or suspended with the app's organization
-// could still deploy an app they had created through them.
-func (s *server) authorizeUploadApp(r *http.Request, acct state.Account, app state.App) *api.Problem {
-	_, prob := appaccess.Authorize(r, s.store, loadOrgAuditFrom(s.audit), actorAccount(r, acct), app)
-	return prob
+// in the request body or the stored session, which Wrap cannot see. It
+// returns the account that owns the app's resources: like the legacy
+// source-tarball route, sessions, quotas and plan limits belong to that
+// account, while the actor stays on the request (actorAccount). It also
+// enforces an app-bound deploy token's binding.
+func (s *server) authorizeUploadApp(r *http.Request, acct state.Account, app state.App) (state.Account, *api.Problem) {
+	return appaccess.Authorize(r, s.store, loadOrgAuditFrom(s.audit), actorAccount(r, acct), app)
+}
+
+// uploadSessionOwner authorizes the caller for an upload session addressed
+// by ID and returns its app and the account that owns the app's resources. The caller
+// must be allowed to deploy the session's app, and the session must belong to
+// that app's resource account. Anything the caller may not see answers the
+// same session-not-found problem as an unknown ID.
+func (s *server) uploadSessionOwner(r *http.Request, acct state.Account, row sqlc.UploadSession) (state.App, state.Account, *api.Problem) {
+	app, err := s.store.AppBySlug(r.Context(), row.AppSlug)
+	if errors.Is(err, state.ErrNotFound) {
+		return state.App{}, state.Account{}, api.ErrUploadSessionNotFound(row.ID)
+	}
+	if err != nil {
+		return state.App{}, state.Account{}, api.ErrCapacity("could not load the upload's app")
+	}
+	owner, prob := s.authorizeUploadApp(r, acct, app)
+	if prob != nil {
+		if prob.Status == http.StatusNotFound {
+			return state.App{}, state.Account{}, api.ErrUploadSessionNotFound(row.ID)
+		}
+		return state.App{}, state.Account{}, prob
+	}
+	if row.AccountID != pgtypeFromUUIDString(owner.ID) {
+		return state.App{}, state.Account{}, api.ErrUploadSessionNotFound(row.ID)
+	}
+	return app, owner, nil
 }
 
 func uploadSessionExpired(row sqlc.UploadSession) bool {

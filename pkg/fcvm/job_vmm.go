@@ -420,7 +420,7 @@ func (v *JailerVMM) stageJobManifestForOwner(ctx context.Context, owner nativeLa
 			_ = os.Remove(mnt)
 		}
 	}()
-	if out, err := exec.Command("mount", "-o", "loop,rw,nodev,nosuid,noexec", drive1Img, mnt).CombinedOutput(); err != nil {
+	if out, err := exec.Command("mount", guestDiskMountArgs("rw", drive1Img, mnt)...).CombinedOutput(); err != nil {
 		return fmt.Errorf("vmm: stageJobManifest: mount: %w: %s", err, string(out))
 	}
 	mounted = true

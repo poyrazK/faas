@@ -7,7 +7,7 @@ with bounded admissions and concurrency. The host decides when to invoke another
 pass; importing the SDK starts no scheduler, poller or service.
 
 ```js
-import { recoverEventAcknowledgmentIntents } from '@gregale/sdk-node';
+import { recoverEventAcknowledgmentIntents } from '@gregale/sdk-node/preview';
 
 const result = await recoverEventAcknowledgmentIntents(pool, accountId, appId, {
   signal: shutdown.signal,

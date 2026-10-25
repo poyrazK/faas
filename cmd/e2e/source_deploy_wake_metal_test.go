@@ -40,12 +40,15 @@ package e2e_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -792,6 +795,102 @@ func TestSourceDeployWakeMetal(t *testing.T) {
 		}
 		t.Logf("auto-pick-function-from-handler-js: dep=%s app_type=%s", respEnv.ID, appType)
 	})
+
+	// -- 10. resumable-upload-redeploy ------------------------------------
+	// `gregale deploy` and `gregale start` publish source through the
+	// resumable upload API (POST /v1/uploads → PATCH → commit), not the
+	// deprecated multipart endpoint the chain above uses. Redeploy the same
+	// fixture through it and require the new deployment to go live and serve
+	// through the gateway, so the CLI's default source path is covered on a
+	// real builder microVM and wake. It runs last because the commit wake
+	// subtests above pin snapshots to the first deployment.
+	t.Run("resumable-upload-redeploy", func(t *testing.T) {
+		defer h.DumpLogs(t)
+		body, status := uploadSourceDeployment(t, h, key, "srcdeploy", sourceTar)
+		if status != http.StatusCreated {
+			t.Fatalf("upload commit: status=%d body=%s", status, body)
+		}
+		uploadDepID, uploadBuildID := parseQueuedDeployment(t, body)
+		if uploadDepID == depID {
+			t.Fatalf("upload commit returned the multipart deployment %s", depID)
+		}
+		dctx, dcancel := context.WithTimeout(context.Background(), sourceDeployCtxTimeout())
+		defer dcancel()
+		dep, build, err := e2etest.WaitForSourceDeployment(dctx, t, pool, uploadDepID, e2etest.DefaultBuildStallWindow, e2etest.DefaultBuildCeiling)
+		if err != nil {
+			t.Fatalf("uploaded deployment %s did not reach live: %v", uploadDepID, err)
+		}
+		if build.ID != uploadBuildID || build.Status != state.BuildSucceeded || dep.AppID != appID {
+			t.Fatalf("uploaded deployment %s: build %q (%s) app %s; want build %s succeeded for app %s",
+				uploadDepID, build.ID, build.Status, dep.AppID, uploadBuildID, appID)
+		}
+		wctx, wcancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer wcancel()
+		url := gatewayAppURL(h, "srcdeploy")
+		client := h.HTTPClient()
+		if err := e2etest.WaitForHTTPReady(wctx, t, client, url, 5*time.Second); err != nil {
+			t.Fatalf("gateway not ready: %v", err)
+		}
+		served, _, code := doGetWithHostCapturingWakeID(t, client, url, "srcdeploy.apps.test.example", 30*time.Second)
+		if code != http.StatusOK || strings.TrimSpace(string(served)) != sourceDeployHelloBody {
+			t.Fatalf("uploaded deployment served status=%d body=%q, want %q", code, served, sourceDeployHelloBody)
+		}
+		t.Logf("resumable-upload-redeploy: dep=%s build=%s live and serving", uploadDepID, uploadBuildID)
+	})
+}
+
+// uploadSourceDeployment publishes source the way the CLI does by default:
+// POST /v1/uploads opens a session, PATCH appends the archive in the
+// server-chosen chunk size, and commit enqueues the deployment. It returns
+// the commit response body and status.
+func uploadSourceDeployment(t *testing.T, h *e2etest.Harness, bearer, slug string, source []byte) ([]byte, int) {
+	t.Helper()
+	sum := sha256.Sum256(source)
+	start, err := json.Marshal(map[string]any{"app_slug": slug, "total_size": len(source), "sha256_hex": hex.EncodeToString(sum[:])})
+	if err != nil {
+		t.Fatal(err)
+	}
+	send := func(method, path, contentType string, body []byte, headers map[string]string) ([]byte, int) {
+		t.Helper()
+		req, err := http.NewRequest(method, h.APIDURL+path, bytes.NewReader(body))
+		if err != nil {
+			t.Fatalf("NewRequest %s %s: %v", method, path, err)
+		}
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		if contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
+		for name, value := range headers {
+			req.Header.Set(name, value)
+		}
+		resp, err := h.HTTPClient().Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		defer func() { _ = resp.Body.Close() }()
+		raw, _ := io.ReadAll(resp.Body)
+		return raw, resp.StatusCode
+	}
+	raw, status := send(http.MethodPost, "/v1/uploads", "application/json", start, nil)
+	if status != http.StatusCreated {
+		t.Fatalf("upload start: status=%d body=%s", status, raw)
+	}
+	var session struct {
+		UploadID  string `json:"upload_id"`
+		ChunkSize int64  `json:"chunk_size"`
+	}
+	if err := json.Unmarshal(raw, &session); err != nil || session.UploadID == "" || session.ChunkSize <= 0 {
+		t.Fatalf("upload start response: %v body=%s", err, raw)
+	}
+	for offset := int64(0); offset < int64(len(source)); offset += session.ChunkSize {
+		end := min(offset+session.ChunkSize, int64(len(source)))
+		chunk, status := send(http.MethodPatch, "/v1/uploads/"+session.UploadID, "application/offset+octet-stream",
+			source[offset:end], map[string]string{"Upload-Offset": strconv.FormatInt(offset, 10)})
+		if status != http.StatusOK && status != http.StatusNoContent {
+			t.Fatalf("upload chunk at %d: status=%d body=%s", offset, status, chunk)
+		}
+	}
+	return send(http.MethodPost, "/v1/uploads/"+session.UploadID+"/commit", "", nil, nil)
 }
 
 // waitForSourceAppParked requires zero resident instances. An older parked row

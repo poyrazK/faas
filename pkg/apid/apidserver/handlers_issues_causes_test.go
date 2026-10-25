@@ -85,7 +85,7 @@ func TestIssueCauseSDKEndToEndPostgres(t *testing.T) {
 		t.Fatal("Python SDK acceptance requires Python")
 	}
 	script = `import os
-from faas_sdk.issues import IssueReporter
+from faas_sdk.preview.issues import IssueReporter
 r=IssueReporter(os.environ['GREGALE_ISSUE_API'],'issue-sdk',os.environ['GREGALE_ISSUE_TOKEN'],grouping_strategy='cause-chain-v1')
 try:
  raise ValueError('Python SDK failure')

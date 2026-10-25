@@ -1,11 +1,11 @@
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
-import {GregaleOperationClient} from '@gregale/sdk-node/operations';
+import {GregaleOperationClient} from '@gregale/sdk-node/preview/operations';
 import {UUID} from './contract.mjs';
 
 const publicRoot = new URL('./public/', import.meta.url);
-const sdkRoot = new URL('./', import.meta.resolve('@gregale/sdk-node/operations'));
+const sdkRoot = new URL('./', import.meta.resolve('@gregale/sdk-node/preview/operations'));
 const files = new Map([
   ['/', [new URL('index.html', publicRoot), 'text/html']],
   ['/app.mjs', [new URL('app.mjs', publicRoot), 'text/javascript']],

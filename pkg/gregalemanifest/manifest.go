@@ -1493,6 +1493,9 @@ type Manifest struct {
 	Databases  []DatabaseDependency `yaml:"databases,omitempty"`
 	Buckets    []BucketDependency   `yaml:"buckets,omitempty"`
 	Worker     *WorkerSpec          `yaml:"worker,omitempty"`
+	// Realtime declares managed realtime endpoints by slug
+	// (ADR-20261019102657).
+	Realtime *RealtimeConfig `yaml:"realtime,omitempty"`
 }
 
 // ReleaseConfig declares a command that must succeed for the candidate
@@ -2162,6 +2165,9 @@ func (m *Manifest) ValidateForPlan(plan api.Plan) error {
 		return nil
 	}
 	if err := m.validateFunctions(plan); err != nil {
+		return err
+	}
+	if err := m.validateRealtime(); err != nil {
 		return err
 	}
 	if m.Profiling != nil {

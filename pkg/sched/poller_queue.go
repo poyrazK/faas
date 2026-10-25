@@ -371,6 +371,16 @@ func (q *queuePoller) Nack(ctx context.Context, t sqlc.Trigger, ids []string, re
 	return nil
 }
 
+// NackTerminalWithError dead-letters terminal items like Nack, keeping the
+// reason and the last attempt's error as each invocation's last_error.
+func (q *queuePoller) NackTerminalWithError(ctx context.Context, t sqlc.Trigger, ids []string, reason, lastError string) error {
+	if err := q.finishInvocations(ctx, t, ids, "dead_letter", "dead_letter", "dead_letter", queueDeadLetterError(reason, lastError), `{"trigger_dispatch":"dead_letter"}`); err != nil {
+		return err
+	}
+	q.forgetClaims(ids)
+	return nil
+}
+
 // NackTerminal is the queue-specific terminal disposition used when a
 // record is rejected before a trigger_records row exists (for example, a
 // wake-rate-limit denial). External brokers retain the older Ack-after-DLQ

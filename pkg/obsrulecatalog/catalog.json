@@ -4,7 +4,7 @@
   "sets": [
     {
       "id": "gregale-core-v1",
-      "revision": "bc26a69ba6eb047fb1bf868c4a0877c60e468644b541d670f3b347434df0c3f8",
+      "revision": "27603deb7b09b937f7f0369a63fbdef1af8e865c3744ad15de1f631c5ad34e3f",
       "files": [
         "faas.rules.yml"
       ],
@@ -1427,6 +1427,19 @@
           }
         },
         {
+          "id": "419cde4ce2c8b70d36031477e1f51aedd032d65bfd95b6c0a636c7082d85395a",
+          "file_name": "faas.rules.yml",
+          "group_name": "account_lifecycle",
+          "rule_name": "FaasDunningDeletionBlocked",
+          "definition": {
+            "expression_hash": "ff147c5f7a71d293cc5308b084824a214e56888bb4be6e9e3f7b9122b61d0413",
+            "labels_hash": "23ebf5cc4d2c985efa81156f34d01ecd12bc76e8545d06b91e02d3ca2ce8d175",
+            "for_seconds": 7200,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b092beee3328300ab3c80a7bb7ab6196af94415c6c8e9a68b1bdbfd227c33b0c"
+          }
+        },
+        {
           "id": "42b660896b0cb4e777cc6313f5803f48c973b5154a2ab4a248d183992ab544d1",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -2077,6 +2090,19 @@
           }
         },
         {
+          "id": "5e3fe926fe2267938282e1a8126229da061a4e3946737ea763e8939b92e2ed59",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteWorkersFailing",
+          "definition": {
+            "expression_hash": "85344917c26ecf4589f8c625b78a37aecda998c38f84eb2c7ce7f9e050fca64a",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c72cf35c46b19fc61a582e3d47f8b75f7a1f17a1441ef2fc1e6070e1de379054"
+          }
+        },
+        {
           "id": "6083c00049eb1c1503cdffbf9f631442b38f14d68dd07bc87e4c1941ab1233aa",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -2220,6 +2246,19 @@
           }
         },
         {
+          "id": "679f357803a69cbab3ebe4ffa1698f3d4c69c7e5de51f76d83eca91d7482ba05",
+          "file_name": "faas.rules.yml",
+          "group_name": "secret_unseals",
+          "rule_name": "FaasSecretUnsealFailures",
+          "definition": {
+            "expression_hash": "b9d4a6e438bc5da097e50555962f55439ae5083b0e814bc4a3c846ca927a53b7",
+            "labels_hash": "838e30e8d767ae0b9ccb7521a8e4dd45cb67d4efb1397a08663d6e6f7e2efc60",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9bd36df0594f5ceb4c7af2b59c0e72c0c5b9b6c19902fc8ff131918a5e033496"
+          }
+        },
+        {
           "id": "67ba118b316541f56fca360f4331e1c00803c967a01a56816004770f926d034f",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -2256,6 +2295,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "89f2cd10a76dd9578d7962dcf47e4d79d0bb46feaf578db42c39f42a80f53bba"
+          }
+        },
+        {
+          "id": "68e58a4fe74dde8d431391de2024879285d3a38f0e605d54a296640b241e722a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteInsightsStalled",
+          "definition": {
+            "expression_hash": "21b1758af54392c4816ca85ef33e27d7c64f33298a4ce335dc2f3c2694665e82",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f3c914bea51d30e1e32537169a13b0979434eb1104472caf96a4645707ea3461"
           }
         },
         {
@@ -3611,6 +3663,19 @@
           }
         },
         {
+          "id": "b3512cd3f3f9c73d504034a67e0de92eb915ec3a1a3b51c61dea3b6127c10b2c",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteInsightsFailing",
+          "definition": {
+            "expression_hash": "0862f843d6e63a5d1c748c26f6f0943f782b58cb504b978dd638d43d1d55a7da",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "cc838d2e28a4316ad1e392e93c2301c26a02e10f65563f18f46736c41c573974"
+          }
+        },
+        {
           "id": "b3801bf5a26c39c9da283065b77bdfa981a056db0c4e8d43e813ca43be319f59",
           "file_name": "faas.rules.yml",
           "group_name": "faas_host_resources",
@@ -3686,6 +3751,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "e856c9e562eff9a9f8f923eb518602c9a900fc9c60b9b1e3ab4e11fb6d715863"
+          }
+        },
+        {
+          "id": "b9523562dbfff2f5a0101b04b8d67cc9d4c7500ddbf46f05596ac66a20ff6709",
+          "file_name": "faas.rules.yml",
+          "group_name": "secret_unseals",
+          "rule_name": "FaasSecretUnsealSurge",
+          "definition": {
+            "expression_hash": "ae91f3e97a4ca7c28b081be5bb1130f3a6c70d1bc6e6702b7cc5dd5d60bb9d4f",
+            "labels_hash": "838e30e8d767ae0b9ccb7521a8e4dd45cb67d4efb1397a08663d6e6f7e2efc60",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e5254b8b29203e0c57696dea92ea82c30516e59ec9cba274efae17833421a614"
           }
         },
         {
@@ -3829,6 +3907,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "7acd1ea2f3af65c9e3fd59ebfd75fe0e50697b3b8c8c17ac9db8c06926e853c1"
+          }
+        },
+        {
+          "id": "c0ab13a1249ba1ce732179550c474f5842a1ee8b876f75bcd22694646a43099a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "GatewayRouteMetricsBudgetExhausted",
+          "definition": {
+            "expression_hash": "990de86d70974152b1cef4a3eb9c55df7ecaa2eb3833faf521e22484106144cd",
+            "labels_hash": "c7776338329c6d2afd364bbd6775f674bb4f181c18f37418d5622022af6ce069",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8de2bb5d535db6acee89be0b6284d56b4ccaa250b87340a41e04e8513e86826f"
           }
         },
         {
@@ -4076,6 +4167,19 @@
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
             "fingerprint": "bb14519fbdf2677522ef04fe68d37aaed58ee431ff764bc138cf4c1c8d2ba164"
+          }
+        },
+        {
+          "id": "d1145b4534b84afc782df3897af877a6d7cba6e60bf51f57b2bb0c098413cba1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteMonitorLagging",
+          "definition": {
+            "expression_hash": "209f912245fb93db20edf3dde8ba9f977a9fe52aeaa00086d43b8fe283aa560d",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8ed7e5b9fd1dc209fb31c22becde62a41c0217fb68f3ca050947e35891a0d7c5"
           }
         },
         {
@@ -5148,7 +5252,7 @@
     },
     {
       "id": "gregale-full-v1",
-      "revision": "7777576dbab3644ea2dd3a5bd9a29e8650131fed36339b78dafa3f37ca5da777",
+      "revision": "65fa7d083bf7b1313a7941bfe3553092638ee67abf54fc4bea156a51241497f5",
       "files": [
         "bridge.rules.yml",
         "data_placement.yaml",
@@ -6653,6 +6757,19 @@
           }
         },
         {
+          "id": "419cde4ce2c8b70d36031477e1f51aedd032d65bfd95b6c0a636c7082d85395a",
+          "file_name": "faas.rules.yml",
+          "group_name": "account_lifecycle",
+          "rule_name": "FaasDunningDeletionBlocked",
+          "definition": {
+            "expression_hash": "ff147c5f7a71d293cc5308b084824a214e56888bb4be6e9e3f7b9122b61d0413",
+            "labels_hash": "23ebf5cc4d2c985efa81156f34d01ecd12bc76e8545d06b91e02d3ca2ce8d175",
+            "for_seconds": 7200,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "b092beee3328300ab3c80a7bb7ab6196af94415c6c8e9a68b1bdbfd227c33b0c"
+          }
+        },
+        {
           "id": "42b660896b0cb4e777cc6313f5803f48c973b5154a2ab4a248d183992ab544d1",
           "file_name": "faas.rules.yml",
           "group_name": "faas_slo",
@@ -7329,6 +7446,19 @@
           }
         },
         {
+          "id": "5e3fe926fe2267938282e1a8126229da061a4e3946737ea763e8939b92e2ed59",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteWorkersFailing",
+          "definition": {
+            "expression_hash": "85344917c26ecf4589f8c625b78a37aecda998c38f84eb2c7ce7f9e050fca64a",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "c72cf35c46b19fc61a582e3d47f8b75f7a1f17a1441ef2fc1e6070e1de379054"
+          }
+        },
+        {
           "id": "6083c00049eb1c1503cdffbf9f631442b38f14d68dd07bc87e4c1941ab1233aa",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -7472,6 +7602,19 @@
           }
         },
         {
+          "id": "679f357803a69cbab3ebe4ffa1698f3d4c69c7e5de51f76d83eca91d7482ba05",
+          "file_name": "faas.rules.yml",
+          "group_name": "secret_unseals",
+          "rule_name": "FaasSecretUnsealFailures",
+          "definition": {
+            "expression_hash": "b9d4a6e438bc5da097e50555962f55439ae5083b0e814bc4a3c846ca927a53b7",
+            "labels_hash": "838e30e8d767ae0b9ccb7521a8e4dd45cb67d4efb1397a08663d6e6f7e2efc60",
+            "for_seconds": 300,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "9bd36df0594f5ceb4c7af2b59c0e72c0c5b9b6c19902fc8ff131918a5e033496"
+          }
+        },
+        {
           "id": "67ba118b316541f56fca360f4331e1c00803c967a01a56816004770f926d034f",
           "file_name": "faas.rules.yml",
           "group_name": "faas_billing",
@@ -7508,6 +7651,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "89f2cd10a76dd9578d7962dcf47e4d79d0bb46feaf578db42c39f42a80f53bba"
+          }
+        },
+        {
+          "id": "68e58a4fe74dde8d431391de2024879285d3a38f0e605d54a296640b241e722a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteInsightsStalled",
+          "definition": {
+            "expression_hash": "21b1758af54392c4816ca85ef33e27d7c64f33298a4ce335dc2f3c2694665e82",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 1800,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "f3c914bea51d30e1e32537169a13b0979434eb1104472caf96a4645707ea3461"
           }
         },
         {
@@ -8954,6 +9110,19 @@
           }
         },
         {
+          "id": "b3512cd3f3f9c73d504034a67e0de92eb915ec3a1a3b51c61dea3b6127c10b2c",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteInsightsFailing",
+          "definition": {
+            "expression_hash": "0862f843d6e63a5d1c748c26f6f0943f782b58cb504b978dd638d43d1d55a7da",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "cc838d2e28a4316ad1e392e93c2301c26a02e10f65563f18f46736c41c573974"
+          }
+        },
+        {
           "id": "b3801bf5a26c39c9da283065b77bdfa981a056db0c4e8d43e813ca43be319f59",
           "file_name": "faas.rules.yml",
           "group_name": "faas_host_resources",
@@ -9042,6 +9211,19 @@
             "for_seconds": 0,
             "keep_firing_for_seconds": 0,
             "fingerprint": "e856c9e562eff9a9f8f923eb518602c9a900fc9c60b9b1e3ab4e11fb6d715863"
+          }
+        },
+        {
+          "id": "b9523562dbfff2f5a0101b04b8d67cc9d4c7500ddbf46f05596ac66a20ff6709",
+          "file_name": "faas.rules.yml",
+          "group_name": "secret_unseals",
+          "rule_name": "FaasSecretUnsealSurge",
+          "definition": {
+            "expression_hash": "ae91f3e97a4ca7c28b081be5bb1130f3a6c70d1bc6e6702b7cc5dd5d60bb9d4f",
+            "labels_hash": "838e30e8d767ae0b9ccb7521a8e4dd45cb67d4efb1397a08663d6e6f7e2efc60",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "e5254b8b29203e0c57696dea92ea82c30516e59ec9cba274efae17833421a614"
           }
         },
         {
@@ -9198,6 +9380,19 @@
             "for_seconds": 120,
             "keep_firing_for_seconds": 0,
             "fingerprint": "7acd1ea2f3af65c9e3fd59ebfd75fe0e50697b3b8c8c17ac9db8c06926e853c1"
+          }
+        },
+        {
+          "id": "c0ab13a1249ba1ce732179550c474f5842a1ee8b876f75bcd22694646a43099a",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "GatewayRouteMetricsBudgetExhausted",
+          "definition": {
+            "expression_hash": "990de86d70974152b1cef4a3eb9c55df7ecaa2eb3833faf521e22484106144cd",
+            "labels_hash": "c7776338329c6d2afd364bbd6775f674bb4f181c18f37418d5622022af6ce069",
+            "for_seconds": 900,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8de2bb5d535db6acee89be0b6284d56b4ccaa250b87340a41e04e8513e86826f"
           }
         },
         {
@@ -9445,6 +9640,19 @@
             "for_seconds": 1800,
             "keep_firing_for_seconds": 0,
             "fingerprint": "bb14519fbdf2677522ef04fe68d37aaed58ee431ff764bc138cf4c1c8d2ba164"
+          }
+        },
+        {
+          "id": "d1145b4534b84afc782df3897af877a6d7cba6e60bf51f57b2bb0c098413cba1",
+          "file_name": "faas.rules.yml",
+          "group_name": "faas_spec12_operator_signals",
+          "rule_name": "FaasRouteMonitorLagging",
+          "definition": {
+            "expression_hash": "209f912245fb93db20edf3dde8ba9f977a9fe52aeaa00086d43b8fe283aa560d",
+            "labels_hash": "981b0c979bcdb87ca4841e0425796470df290a4a7da06fab5c6a3b84e90d58e7",
+            "for_seconds": 600,
+            "keep_firing_for_seconds": 0,
+            "fingerprint": "8ed7e5b9fd1dc209fb31c22becde62a41c0217fb68f3ca050947e35891a0d7c5"
           }
         },
         {

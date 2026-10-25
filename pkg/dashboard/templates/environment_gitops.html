@@ -19,7 +19,7 @@
   </style>
 </head>
 <body>
-  <header><strong>Gregale</strong><nav><a href="/dashboard/projects">Projects</a><a href="/dashboard/apps">Apps</a><a href="/dashboard/account">Account</a></nav></header>
+  <header><strong>Gregale</strong><nav>{{if $.On "projects"}}<a href="/dashboard/projects">Projects</a>{{end}}<a href="/dashboard/apps">Apps</a><a href="/dashboard/account">Account</a></nav></header>
   <main>
     {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>

@@ -34,7 +34,7 @@ func cmdPostgresLive(args []string) int {
 		return cmdPostgresLiveDisable(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown postgres live subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "postgres live", nestedCliCommand("postgres", "live"), args[0])
 	}
 }
 

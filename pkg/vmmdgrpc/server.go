@@ -413,7 +413,11 @@ func NewWithCPUAndNetAndActivity(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string
 		// never exported. Tests that don't assert metrics use this path.
 		ops = wire.NewOpsMetrics("vmmd_test")
 	}
-	return &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker(), streamBridges: newStreamBridgeManager(log)}
+	s := &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker(), streamBridges: newStreamBridgeManager(log)}
+	if j, ok := vmm.(instanceBridgeJournal); ok {
+		s.streamBridges.journal = j
+	}
+	return s
 }
 
 // WithEvents (issue #517 / PR-C / ADR-064) wires the wake-timeline
@@ -674,6 +678,7 @@ func (s *Server) CreateFromSnapshot(ctx context.Context, req *vmmdpb.CreateFromS
 		s.incWakeFailure(ctx, "snapshot_restore_err")
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wr.NodeID = s.nodeID
 	wakeCtx, wakeSpan := newWakeSpan(ctx, "restore", wr)
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_observed at
 	// the gRPC server boundary. Schedd is the canonical emit site;
@@ -740,6 +745,7 @@ func (s *Server) CreateColdBoot(ctx context.Context, req *vmmdpb.CreateColdBootR
 		s.incWakeFailure(ctx, "mem_backend_err")
 		return nil, grpcerr.ToStatus(toProblem(err))
 	}
+	wr.NodeID = s.nodeID
 	wakeCtx, wakeSpan := newWakeSpan(ctx, "cold_boot", wr)
 	// issue #517 / PR-C / ADR-064 — emit wake.boot_observed at
 	// the gRPC server boundary. Same canonical-site pairing as
@@ -1548,10 +1554,17 @@ func (s *Server) Stats(ctx context.Context, _ *vmmdpb.StatsRequest) (*vmmdpb.Sta
 			}
 		}
 		row.OpenConns = openConns[inst]
+		row.EgressCircuitEnforcement = s.egressCircuitEnforcement(inst)
+		row.HttpAdmissionEnforcement = s.httpAdmissionEnforcement(inst)
 		row.FlowSummaries = flowSummariesToProto(flowTelemetry.summaries[inst])
 		resp.Instances = append(resp.Instances, row)
 	}
 	resp.TotalResidentBytes = wrapperspb.Int64(total)
+	if InstanceBridgeUnitsEnabled() {
+		if b, ok := instanceBridgeResidentBytes(); ok {
+			resp.InstanceBridgeResidentBytes = wrapperspb.Int64(b)
+		}
+	}
 	return resp, nil
 }
 

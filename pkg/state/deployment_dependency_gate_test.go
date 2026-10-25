@@ -262,6 +262,10 @@ func TestProjectDependencyGateWaitsForDependencyRetirementCommit(t *testing.T) {
 	go func() { result <- f.store.MarkDeploymentLiveIfLatest(ctx, f.candidate.ID) }()
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
+	// ADR-570 traffic mutations take their locks with NOWAIT and retry, so a
+	// pending promotion may poll rather than queue on a lock. Either way it
+	// must not finish before the retirement commits.
+	pending := time.After(time.Second)
 	for {
 		var waiting bool
 		if err := f.pool.QueryRow(ctx, "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock' AND (query LIKE '%ReadDependencyGateTarget%' OR query LIKE '%LockRoutePolicyAccount%'))").Scan(&waiting); err != nil {
@@ -275,8 +279,11 @@ func TestProjectDependencyGateWaitsForDependencyRetirementCommit(t *testing.T) {
 			t.Fatalf("promotion bypassed uncommitted dependency retirement: %v", err)
 		case <-ctx.Done():
 			t.Fatal(ctx.Err())
+		case <-pending:
 		case <-ticker.C:
+			continue
 		}
+		break
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)

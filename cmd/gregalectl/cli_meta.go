@@ -285,13 +285,21 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchObjectStorage,
+		DocSlug: "object-storage",
+		Short:   "Reconcile the object bucket catalog with each provider after a database restore (ADR 20261025111015)",
+		Subcommands: []cliSub{
+			{Name: "reconcile", Short: "List each backend's Gregale buckets and report catalog disagreements, read-only (exit 4 on findings)", Flags: []cliFlag{{Name: "config", Short: "provider registry JSON"}, {Name: "provider-env", Short: "provider credential env file"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
 		Name:    dispatchSealDomain,
 		DocSlug: "seal-domain",
 		Short:   "Provision, verify, and migrate per-reader seal domains (ADR 20261022111812)",
 		Subcommands: []cliSub{
 			{Name: "init", Short: "Create <domain>.age and <domain>.age.pub", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
 			{Name: "verify", Short: "Prove this node's domain identity opens the domain probe", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "publish", Short: "write the probe when the domain has none"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "recipient-only", Short: "check the staged recipient against the published probe"}, {Name: "json", Short: "emit structured JSON"}}},
-			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime, source or build)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime, source, build or edge)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
 		},
 	},
 	{
@@ -752,13 +760,27 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchAudit,
 		DocSlug: "audit",
-		Short:   "Correlate durable operator intents and live events by trace ID",
+		Short:   "Correlate operator intents by trace ID; audit app layers before a base change",
 		Subcommands: []cliSub{{
 			Name:  "trace",
 			Short: "Look up one exact OTel trace ID through the operator API",
 			Flags: []cliFlag{
 				{Name: "trace-id", Short: "OTel 32-char lowercase hex trace id", Req: true},
 				{Name: "limit", Short: "maximum intents and events to return (1..500)"},
+			},
+		}, {
+			// ADR 20261023220532 rollout step 4: read-only; reads PostgreSQL
+			// and the layer store directly from a control-plane node.
+			Name:  auditBaseLibrariesSub,
+			Short: "List live base-minimal app layers that need a library the Debian 13 base drops",
+			Flags: []cliFlag{
+				{Name: "pg-dsn", Short: "PostgreSQL DSN (default: $FAAS_PG_DSN or $DATABASE_URL)"},
+				{Name: "db-env", Short: "systemd env file containing DATABASE_URL"},
+				{Name: "app", Short: "audit only this app slug"},
+				{Name: "include-superseded", Short: "also audit superseded deployments (rollback targets)"},
+				{Name: "work-dir", Short: "scratch directory for layer copies and dumps"},
+				{Name: "debugfs", Short: "debugfs binary (e2fsprogs)"},
+				{Name: "libraries", Short: "comma-separated sonames the new base drops"},
 			},
 		}},
 	},

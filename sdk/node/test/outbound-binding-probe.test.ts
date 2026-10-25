@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
 
-import { FaaSClient, OutboundService, type OutboundBindingProbePolicy } from '../src/index.js';
+import { FaaSClient, OutboundService, type OutboundBindingProbePolicy } from '../src/preview.js';
 
 test('outbound probe policy SDK methods preserve routing, credentials and responses', async (t) => {
   const integration = '01234567-89ab-cdef-0123-456789abcdef';

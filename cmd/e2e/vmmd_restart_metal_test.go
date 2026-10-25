@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -100,6 +101,22 @@ func TestVMMDRestartKeepsRunningAppMetal(t *testing.T) {
 	if pid == 0 || epoch < 1 {
 		t.Fatalf("running guest %s: firecracker pid %d, vmmd epoch %d", before.ID, pid, epoch)
 	}
+	// Connection-survival P1c: with bridge units on, the guest's bridge is
+	// a systemd unit the successor adopts instead of replacing. A raw
+	// upgrade runs as a session on it, before and after the restart.
+	unitsOn := os.Getenv("FAAS_INSTANCE_BRIDGE_UNIT") == "1"
+	gateway := strings.TrimPrefix(h.GatewayURL, "http://")
+	var bridgeUnit string
+	var bridgeRun map[string]string
+	if unitsOn {
+		upgradeEchoRound(t, gateway, host, "before the restart")
+		units := bridgeUnits(t, before.ID)
+		if len(units) != 1 {
+			t.Fatalf("guest %s has bridge units %v, want one", before.ID, units)
+		}
+		bridgeUnit = units[0]
+		bridgeRun = systemctlShow(t, bridgeUnit, "InvocationID", "MainPID", "ActiveState")
+	}
 
 	// Traffic through the whole restart. A running guest is proxied
 	// directly; nothing on the request path needs vmmd.
@@ -158,6 +175,15 @@ func TestVMMDRestartKeepsRunningAppMetal(t *testing.T) {
 	if n := countInstances(t, pool, appID, "failed"); n != 0 {
 		t.Fatalf("%d instance(s) failed across the restart", n)
 	}
+	if unitsOn {
+		upgradeEchoRound(t, gateway, host, "after the restart")
+		units := bridgeUnits(t, before.ID)
+		run := systemctlShow(t, bridgeUnit, "InvocationID", "MainPID", "ActiveState")
+		if len(units) != 1 || units[0] != bridgeUnit || run["InvocationID"] != bridgeRun["InvocationID"] ||
+			run["MainPID"] != bridgeRun["MainPID"] || run["ActiveState"] != "active" {
+			t.Fatalf("bridge after the restart: units %v run %v; before %s %v (the successor must adopt it)", units, run, bridgeUnit, bridgeRun)
+		}
+	}
 
 	// The successor serves the platform: park, then wake again. Parking
 	// also leaves no VM behind when the harness stops (adoption keeps
@@ -168,6 +194,11 @@ func TestVMMDRestartKeepsRunningAppMetal(t *testing.T) {
 	}
 	if got := firecrackerPID(t, before.ID); got != 0 {
 		t.Fatalf("adopted guest still running after park: pid %d", got)
+	}
+	if unitsOn {
+		if left := bridgeUnits(t, before.ID); len(left) != 0 {
+			t.Fatalf("adopted guest parked with bridge units %v", left)
+		}
 	}
 	// The successor finishes the adopted guest's teardown: a mount it did not
 	// know about would keep the jail, and the slot's lease, behind.
@@ -183,6 +214,20 @@ func TestVMMDRestartKeepsRunningAppMetal(t *testing.T) {
 		t.Fatalf("woken instance did not park: %v", err)
 	}
 	waitJailRemoved(t, woken[0].ID, 60*time.Second)
+}
+
+// upgradeEchoRound upgrades a connection through the gateway and echoes one
+// message over it.
+func upgradeEchoRound(t *testing.T, gateway, host, msg string) {
+	t.Helper()
+	conn, br := upgradeEchoConn(t, gateway, host)
+	defer func() { _ = conn.Close() }()
+	if _, err := io.WriteString(conn, msg+"\n"); err != nil {
+		t.Fatalf("upgrade echo write: %v", err)
+	}
+	if got, err := br.ReadString('\n'); err != nil || got != msg+"\n" {
+		t.Fatalf("upgrade echo of %q = %q, %v", msg, got, err)
+	}
 }
 
 func getOnce(client *http.Client, url, host string) error {

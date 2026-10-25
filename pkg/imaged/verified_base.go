@@ -314,6 +314,18 @@ func (h *Handler) finishVerifiedBase(ctx context.Context, r verifiedBaseRequest,
 // or a deferred child base (H10-95) then left the refusal on bytes that had
 // not changed, and every cold boot on that base returned 503 until a later
 // stage rewrote it (H10-103).
+//
+// The refusal names no generation. The scan sidecar is the commit marker
+// vmmd's ensureBaseGeneration reads before it pulls the base and digest
+// sidecar: one that named the new ref while the shared base still held the
+// previous bytes let a node on the new release commit those old bytes as the
+// new generation, and keep booting them once the scan completed. Only
+// finishVerifiedBase names the generation, after the base and its digest
+// sidecar are published (ADR-20261024191249).
 func invalidateScanBeforeRebuild(ctx context.Context, r verifiedBaseRequest) error {
-	return writeProducedBaseScanCompatibility(ctx, r.be, r.key, r.ref, r.out, state.BaseImageScan{})
+	return writeProducedBaseScanCompatibility(ctx, r.be, r.key, uncommittedBaseScanImage, r.out, state.BaseImageScan{})
 }
+
+// uncommittedBaseScanImage is the image a rebuild's fail-closed scan sidecar
+// names: no configured generation matches it.
+const uncommittedBaseScanImage = ""

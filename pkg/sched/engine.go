@@ -33,6 +33,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/prometheus/client_golang/prometheus"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -43,6 +44,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -426,6 +428,10 @@ type Engine struct {
 	// publication (WithNotifyInPublication).
 	notifyInPublication bool
 	fcVer               string // running Firecracker version — snapshots load only on a match (ADR-005)
+	// capabilities holds a capability's background work while its platform
+	// flag is off for the owning account (ADR-20261023115741); nil allows all.
+	capabilities       *capflags.Decider
+	capabilitySubjects capabilitySubjects
 	// sealCrashCaptures seals crash captures at the source (ADR-733,
 	// remote storage backends).
 	sealCrashCaptures bool
@@ -1348,7 +1354,7 @@ func (e *Engine) refuseExplicitDeployment(appID, deploymentID string, deployment
 		e.ops.AppAtCapacityTotal(appID, "admit").Inc()
 	}
 	e.log.Warn("sched: deployment smoke refused",
-		"app", appID, "deployment", deploymentID, "reason", reason, "status", status)
+		"app", logsanitize.Field(appID), "deployment", deploymentID, "reason", reason, "status", status)
 }
 
 // IncrementPressureSweepCounter (Tier A9 / ADR-087) bumps the
@@ -1637,6 +1643,15 @@ func (e *Engine) TelemetrySink() TelemetrySink {
 		e.telemetryCache.Replace(nodeID, sampledAt, receivedAt, rows)
 		return nil
 	}
+}
+
+// InstanceBridgeSink returns the callback scheddgrpc uses to record a node's
+// instance bridge memory (connection-survival ADR §2) with its telemetry.
+func (e *Engine) InstanceBridgeSink() InstanceBridgeSink {
+	if e == nil || e.telemetryCache == nil {
+		return func(string, time.Time, int64) {}
+	}
+	return e.telemetryCache.ReplaceInstanceBridge
 }
 
 // WithNodeKeyRegistry wires the ADR-053 signature-verification
@@ -2225,13 +2240,13 @@ func (e *Engine) destroyForRuntimeConfigRestart(ctx context.Context, instance st
 func (e *Engine) wakeInstanceModeMatchesApp(ctx context.Context, appID string, ins state.Instance) bool {
 	app, err := state.AppForInstance(ctx, e.store, ins)
 	if err != nil {
-		e.log.Warn("sched: wake: pinned app lookup for instance mode failed", "app", appID, "instance", ins.ID, "err", err)
+		e.log.Warn("sched: wake: pinned app lookup for instance mode failed", "app", logsanitize.Field(appID), "instance", ins.ID, "err", logsanitize.FieldAny(err))
 		return false
 	}
 	if instanceModeMatchesApp(app, ins) {
 		return true
 	}
-	e.log.Info("sched: wake: running instance mode does not match app; reconciling", "app", appID, "instance", ins.ID, "instance_mode", normalizedInstanceMode(ins.Mode), "app_mode", instanceModeForApp(app))
+	e.log.Info("sched: wake: running instance mode does not match app; reconciling", "app", logsanitize.Field(appID), "instance", ins.ID, "instance_mode", normalizedInstanceMode(ins.Mode), "app_mode", instanceModeForApp(app))
 	return false
 }
 
@@ -2367,8 +2382,8 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 		}
 		if err == nil && !e.ownsApp(app) {
 			return CoordOutcome{}, fmt.Errorf(
-				"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box)",
-				appID, app.NodeID, e.ownerNodeID,
+				"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box): %w",
+				appID, app.NodeID, e.ownerNodeID, ErrAppOwnedByAnotherNode,
 			)
 		}
 		if err == nil {
@@ -2426,7 +2441,7 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 		}
 		if hasWakeTransitions && wakeTransition.ID != "" {
 			if _, abortErr := wakeTransitions.AbortAppWakeTransition(context.WithoutCancel(leaderCtx), wakeTransition.ID); abortErr != nil {
-				e.log.Warn("sched: roll back failed app wake transition", "app", appID, "transition", wakeTransition.ID, "err", abortErr)
+				e.log.Warn("sched: roll back failed app wake transition", "app", logsanitize.Field(appID), "transition", wakeTransition.ID, "err", abortErr)
 			}
 			return
 		}
@@ -2516,19 +2531,19 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 				leaderCtx, wakeTransition.ID, out.Instance.InstanceID, out.Instance.WakeID,
 			)
 			if completeErr != nil {
-				e.log.Warn("sched: complete ready app wake transition", "app", appID, "transition", wakeTransition.ID, "err", completeErr)
+				e.log.Warn("sched: complete ready app wake transition", "app", logsanitize.Field(appID), "transition", wakeTransition.ID, "err", completeErr)
 			} else if completed {
 				eventRecorded = true
 				if outbox, ok := e.store.(state.AppWebhookEventOutboxStore); ok {
 					if _, relayErr := outbox.RelayAppWebhookEventOutboxSource(leaderCtx, state.AppWebhookEventAppWoken, wakeTransition.ID); relayErr != nil {
-						e.log.Warn("sched: relay app.woken webhook outbox", "app", appID, "transition", wakeTransition.ID, "err", relayErr)
+						e.log.Warn("sched: relay app.woken webhook outbox", "app", logsanitize.Field(appID), "transition", wakeTransition.ID, "err", relayErr)
 					}
 				}
 			} else {
-				e.log.Debug("sched: app wake transition no longer current at readiness", "app", appID, "transition", wakeTransition.ID)
+				e.log.Debug("sched: app wake transition no longer current at readiness", "app", logsanitize.Field(appID), "transition", wakeTransition.ID)
 			}
 		} else if err := webhook.Emit(leaderCtx, e.store, appID, state.AppWebhookEventAppWoken, payload); err != nil {
-			e.log.Warn("sched: enqueue app.woken webhook", "app", appID, "wake_id", out.Instance.WakeID, "err", err)
+			e.log.Warn("sched: enqueue app.woken webhook", "app", logsanitize.Field(appID), "wake_id", out.Instance.WakeID, "err", logsanitize.FieldAny(err))
 		} else {
 			eventRecorded = true
 		}
@@ -2830,6 +2845,11 @@ func (e *Engine) AdmitMirrorInstance(ctx context.Context, appID, mirrorRuleID, m
 // the customer's source response was already returned; mirror
 // is best-effort by design.
 var ErrMirrorSlotAtCapacity = errors.New("sched: mirror slot at capacity")
+
+// ErrAppOwnedByAnotherNode marks a wake refused because another node's
+// schedd owns the app. Every schedd hears an explicit app wake; the owner
+// serves it, so for the others this is expected, not a failure.
+var ErrAppOwnedByAnotherNode = errors.New("app owned by another node")
 
 // AdmitInstanceForDeployment is the floor-trigger entry point that
 // admits a specific deployment (issue #557 closure / ADR-074).
@@ -3281,7 +3301,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 				e.ops.WakeIDV4Fallback().Inc()
 			}
 			e.log.Warn("wake: uuid.NewV7 failed, fell back to v4 — partial index time-ordering broken",
-				"app", appID, "err", err)
+				"app", logsanitize.Field(appID), "err", err)
 		}
 		wakeID = wakeUUID.String()
 	}
@@ -3389,7 +3409,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// One line per cold wake of a snapshot-backed app. Without it the
 		// timeline says only tier=cold_boot_fallback, never why.
 		e.log.Info("wake: no usable snapshot; cold booting",
-			"app_id", appID, "deployment_id", dep.ID, "plan", string(acct.Plan),
+			"app_id", logsanitize.Field(appID), "deployment_id", dep.ID, "plan", string(acct.Plan),
 			"reason", coldReason, "snapshot_id", choice.rejected.ID,
 			"snapshot_tier", choice.rejected.Tier, "snapshot_fc_version", choice.rejected.FCVersion,
 			"fc_version", e.fcVer, "snapshot_created_at", choice.rejected.CreatedAt)
@@ -3460,7 +3480,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			preferredRegion, _, _ = upstreamAffinity.Score(appID, dep.ID)
 		} else {
 			// best-effort: log at debug, fall through to legacy
-			e.log.Debug("upstream affinity refresh failed; using legacy chooser", "app", appID, "err", rerr)
+			e.log.Debug("upstream affinity refresh failed; using legacy chooser", "app", logsanitize.Field(appID), "err", rerr)
 		}
 	}
 	configuredCPU := effectiveAppCPUMillicores(app)
@@ -3601,7 +3621,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			// attached — Admit's failure branch never inserted one).
 			if delErr := e.store.DeleteInstance(ctx, ins.ID); delErr != nil {
 				e.log.Warn("admit: delete unattached row after concurrency cap",
-					"app", appID, "instance", ins.ID, "err", delErr)
+					"app", logsanitize.Field(appID), "instance", ins.ID, "err", delErr)
 			}
 			e.releaseHostPortLeases(ctx, placement.NodeID, ins.ID)
 			release()
@@ -3761,7 +3781,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	prefetched := prefetch.wait()
 	privateNetwork := prefetched.privateNetwork
-	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCForApp(dep, app.AppProtocol)
 	pinnedBase, err := prefetched.baseKey, prefetched.baseKeyErr
 	ctx = withBootPrepared(ctx, bootPrepared{instanceID: ins.ID,
 		rehearsalRunID: prefetched.rehearsalRunID, haveRehearsal: prefetched.rehearsalErr == nil,
@@ -3959,7 +3979,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			var p *api.Problem
 			if errors.As(err, &p) && p.Code == api.CodeSigInvalid {
 				e.log.Warn("wake: rejecting tampered layer",
-					"app", appID, "layer", spec.LayerKey, "err", err)
+					"app", logsanitize.Field(appID), "layer", spec.LayerKey, "err", err)
 				e.transitionWithKind(ctx, bootInput.insID, appID, state.StateFailed, "wake_boot_error", "sig_invalid")
 				e.ledger.Release(bootInput.insID)
 				return WakeResult{}, err
@@ -3967,7 +3987,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			if errors.Is(err, storage.ErrNotFound) || errors.Is(err, storage.ErrInvalidKey) {
 				problem := e.markRuntimeArtifactMissing(ctx, dep.ID, spec.LayerKey, err)
 				e.log.Error("wake: live deployment artifact is unavailable",
-					"app", appID, "deployment", dep.ID, "layer", spec.LayerKey, "err", err)
+					"app", logsanitize.Field(appID), "deployment", dep.ID, "layer", spec.LayerKey, "err", err)
 				e.transitionWithKind(ctx, bootInput.insID, appID, state.StateFailed, "wake_boot_error", "artifact_missing")
 				e.ledger.Release(bootInput.insID)
 				return WakeResult{}, errors.Join(ErrPermanentWake, problem)
@@ -3983,7 +4003,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			// preserves the underlying storage error verbatim so
 			// log greps still find it.
 			e.log.Warn("wake: verifier i/o error",
-				"app", appID, "layer", spec.LayerKey, "err", err)
+				"app", logsanitize.Field(appID), "layer", spec.LayerKey, "err", err)
 			e.transitionWithKind(ctx, bootInput.insID, appID, state.StateFailed, "wake_boot_error", "sig_verify_io")
 			e.ledger.Release(bootInput.insID)
 			return WakeResult{}, api.NewProblem(503, api.CodeCapacity,
@@ -4244,10 +4264,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		// so our own cache retirement cannot reject a verified cold runtime.
 		defer func() {
 			if err := e.store.MarkSnapshotStale(ctx, bootInput.snapID); err != nil {
-				e.log.Warn("wake: mark snapshot stale", "snapshot", bootInput.snapID, "wake_id", bootInput.wakeID, "err", err)
+				e.log.Warn("wake: mark snapshot stale", "snapshot", bootInput.snapID, "wake_id", logsanitize.Field(bootInput.wakeID), "err", err)
 			}
 		}()
-		e.log.Info("wake: restore fell back to cold boot", "app", bootInput.appID, "instance", bootInput.insID, "wake_id", bootInput.wakeID)
+		e.log.Info("wake: restore fell back to cold boot", "app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID, "wake_id", logsanitize.Field(bootInput.wakeID))
 	}
 
 	// ── Phase 4: re-acquire the lock for the post-vmmd commit ────
@@ -4302,7 +4322,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			}
 		}
 		e.log.Warn("wake: state stolen during boot, aborting",
-			"app", bootInput.appID, "instance", bootInput.insID, "wake_id", bootInput.wakeID,
+			"app", logsanitize.Field(bootInput.appID), "instance", bootInput.insID, "wake_id", logsanitize.Field(bootInput.wakeID),
 			"expected", bootInput.initState, "got", actual)
 		return WakeResult{}, fmt.Errorf("sched: wake: state stolen by another transition: was %s, now %s", bootInput.initState, actual)
 	}
@@ -4365,11 +4385,11 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		observedClass := state.WorkloadClass(out.Characterization.ObservedClass)
 		if shouldPersistObservedClass(bootInput.appType, bootInput.spec.ExecutionMode, observedClass) {
 			if _, err := e.store.RecordObservedWorkloadClass(ctx, bootInput.accountID, bootInput.appID, bootInput.insID, observedClass); err != nil {
-				e.log.Warn("wake: record observed workload class", "app", bootInput.appID, "err", err)
+				e.log.Warn("wake: record observed workload class", "app", logsanitize.Field(bootInput.appID), "err", err)
 			}
 		} else {
 			e.log.Warn("wake: ignoring incompatible characterization",
-				"app", bootInput.appID, "app_type", bootInput.appType,
+				"app", logsanitize.Field(bootInput.appID), "app_type", bootInput.appType,
 				"execution_mode", bootInput.spec.ExecutionMode, "observed_class", observedClass)
 		}
 		// PR-D review finding #6: emit an `app.characterized` audit
@@ -4742,8 +4762,8 @@ func (e *Engine) bestEffortDestroy(ctx context.Context, nodeID, instanceID strin
 func (e *Engine) cleanupFailedMirrorAdmission(ctx context.Context, input bootInput) (context.Context, context.CancelFunc) {
 	cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 2*DestroyTimeout)
 	if err := e.timedDestroy(cleanupCtx, input.nodeID, input.insID, DestroyTimeout); err != nil {
-		e.log.Error("mirror: destroy instance after failed admission", "app_id", input.appID,
-			"instance_id", input.insID, "wake_id", input.wakeID, "err", err)
+		e.log.Error("mirror: destroy instance after failed admission", "app_id", logsanitize.Field(input.appID),
+			"instance_id", input.insID, "wake_id", logsanitize.Field(input.wakeID), "err", err)
 	}
 	return cleanupCtx, cancel
 }
@@ -5763,7 +5783,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: GitOps service bindings: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
-	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCForApp(dep, app.AppProtocol)
 	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, layerKey(dep.RootfsKey, dep.ID))
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, err
@@ -5774,6 +5794,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 	}
 	return AppSpec{
 		migrationRuntime: migrationInputs,
+		WakeID:           ins.WakeID,
 		BaseKey:          pinnedBase,
 		LayerKey:         layerKey(dep.RootfsKey, dep.ID),
 		VCPUCount:        int32(limits.VCPU),
@@ -6671,7 +6692,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 			TargetReleaseID: upgradeTarget.ID, BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, StartedAt: bootStartedAt,
 		}
 	}
-	primed, err := e.publishOwnedRuntimeWithStandards(ctx, out, publication)
+	primed, err := e.publishPrimeRuntime(ctx, out, publication)
 	if err != nil {
 		if errors.Is(err, state.ErrFinancialBudgetHeld) {
 			return errors.Join(err, e.retireFinancialBudgetRuntime(ctx, ins))
@@ -8810,7 +8831,7 @@ func (e *Engine) recordAppSecretDelivery(ctx context.Context, boot bootInput, st
 		Status: status, ErrorCode: errorCode, AttemptedAt: attemptedAt, Candidates: boot.secretDeliveries,
 	})
 	if err != nil {
-		e.log.Warn("sched: record app secret delivery", "app", boot.appID, "wake_id", boot.wakeID, "status", status, "err", err)
+		e.log.Warn("sched: record app secret delivery", "app", logsanitize.Field(boot.appID), "wake_id", logsanitize.Field(boot.wakeID), "status", status, "err", err)
 		return
 	}
 	refs := make([]string, 0, len(boot.secretDeliveries))
@@ -10084,7 +10105,7 @@ func (e *Engine) transitionWithKind(ctx context.Context, instanceID, appID strin
 // runtime identity and RUNNING state with one store CAS while preserving the
 // same observable transition contract as transitionWithKind.
 func (e *Engine) recordCommittedInstanceTransition(ctx context.Context, ins state.Instance, from, to state.State, appID, kind, reason string) {
-	e.emitInstanceChanged(ctx, ins.ID, appID, to, ins.WakeID)
+	e.emitInstanceChanged(ctx, ins.ID, appID, to, ins.WakeID, ins.NodeID)
 	e.reconcileAfterInstanceTransition(ctx, ins, to)
 	e.appendInstanceTransitionEvent(ctx, ins, from, to, kind, reason)
 }
@@ -10115,16 +10136,16 @@ func (e *Engine) appendInstanceTransitionEvent(ctx context.Context, ins state.In
 	}
 }
 
-func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID string, st state.State, wakeID string) {
+func (e *Engine) emitInstanceChanged(ctx context.Context, instanceID, appID string, st state.State, wakeID string, nodeIDs ...string) {
 	if e.notif == nil {
 		return
 	}
 	// transitionWithKind (the audit-log caller) loads wakeID from the row
 	// before emitting so every state-transition event carries the wake_id the
 	// row currently has; Wake and Prime pass the value they minted.
-	payload := instanceChangedPayload(instanceID, appID, st, wakeID)
+	payload := instanceChangedPayload(instanceID, appID, st, wakeID, nodeIDs...)
 	if err := e.notif.Notify(ctx, db.NotifyInstanceChanged, payload); err != nil {
-		e.log.Warn("emit instance_changed", "instance", instanceID, "wake_id", wakeID, "err", err)
+		e.log.Warn("emit instance_changed", "instance", instanceID, "wake_id", logsanitize.Field(wakeID), "err", err)
 	}
 }
 

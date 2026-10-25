@@ -302,7 +302,8 @@ type OpsMetrics struct {
 	// (≤50 per app), so {app_id, upstream_hash} is safe. upstream_hash is
 	// the §11-redacted identifier — the plaintext host must never reach a
 	// label.
-	egressCircuitState *prometheus.GaugeVec
+	egressCircuitState     *prometheus.GaugeVec
+	egressCircuitReconcile *prometheus.GaugeVec
 	// wakeSnapshotTier (issue #470 / PR C / ADR-074) — closed-set
 	// counter for the warm-vs-init-vs-cold-boot choice Engine.usableSnapshotForWake
 	// makes on every wake. Labels ∈ {warm, init, cold_boot_fallback}.
@@ -2051,6 +2052,10 @@ type OpsMetrics struct {
 	dbNotifyHubReconnects prometheus.Counter
 	dbNotifyHubDropped    *prometheus.CounterVec
 	dbNotifyHubDelivered  *prometheus.CounterVec
+	// secretUnseals (ADR 20261024014500): every decryption pkg/secretbox
+	// performs in this daemon, by the key that opened it. Installed via
+	// secretbox.SetUnsealObserver in RegisterDefaultOps.
+	secretUnseals *prometheus.CounterVec
 	// loopWork / loopWorkDuration (ADR-191): schedd's bounded off-loop
 	// work pool. kind is the closed task set (prime, restart,
 	// app_reconcile, deployment_reconcile, job_cancel); outcome is
@@ -2100,6 +2105,18 @@ func (m *OpsMetrics) HubReconnect() {
 		return
 	}
 	m.dbNotifyHubReconnects.Inc()
+}
+
+// SecretUnsealed implements secretbox.UnsealObserver. nil-safe.
+func (m *OpsMetrics) SecretUnsealed(identity string, ok bool) {
+	if m == nil || m.secretUnseals == nil {
+		return
+	}
+	result := "ok"
+	if !ok {
+		result = "failed"
+	}
+	m.secretUnseals.WithLabelValues(identity, result).Inc()
 }
 
 // HubDropped implements db.NotifyHubObserver. nil-safe.
@@ -4593,10 +4610,14 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// upstream cannot leave a stale gauge asserting a dependency is broken.
 	egressCircuitState := prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: prefix + "_egress_circuit_state",
-		Help: "ADR-201 §3 egress circuit state per declared upstream: 0=closed, 1=half_open, 2=open. While 2, the app's NEW connections to that upstream are rejected with a TCP reset instead of hanging. Labelled by {app_id, upstream_hash}; upstream_hash is the §11-redacted host identifier and the plaintext host never appears. Bounded by Limits.EgressCircuitBreakersPerApp (≤50/app).",
+		Help: "ADR-201 §3 egress circuit state per declared upstream: 0=closed, 1=half_open, 2=open. Logical probe state only; actual nft completion is reported separately by vmmd Stats.egress_circuit_enforcement. Labelled by {app_id, upstream_hash}; upstream_hash is the §11-redacted host identifier and the plaintext host never appears. Bounded by Limits.EgressCircuitBreakersPerApp (≤50/app).",
 	}, []string{"app_id", "upstream_hash"})
+	egressCircuitReconcile := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_egress_circuit_reconcile_success",
+		Help: "ADR-570: latest whole-app desired-policy reconciliation completed DNS resolution, durable commit and all applicable node acknowledgments (1), or remains pending (0). Distinct from logical probe state.",
+	}, []string{"app_id"})
 	commonCollectors = append(commonCollectors, gatewayDrainWaitSeconds, gatewayInflightRequests,
-		egressCircuitState)
+		egressCircuitState, egressCircuitReconcile)
 	// Issue #757 / ADR-118 commit 9: ESM metric collectors. All
 	// three are pre-instantiated at boot from the closed sets
 	// below so the rows surface in /metrics from process start —
@@ -4872,6 +4893,12 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_db_notify_hub_delivered_total",
 		Help: "Notifications this daemon's LISTEN hub handed to a subscriber, by channel. pg_notify carries no routing, so one emit fans out to every interested subscriber on every daemon on every node. Summed fleet-wide and divided by the emit rate this is the broadcast amplification factor; read next to schedd_app_ownership_checks_total{outcome=\"not_owned\"}, which counts the share of that fan-out the receiving schedd then discards. Together they price per-owner notify channels before anyone builds them.",
 	}, []string{"channel"})
+	// One name across daemons, so one alert covers every reader; the
+	// scrape's job label says which daemon.
+	secretUnseals := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "faas_secret_unseal_total",
+		Help: "Sealed values this daemon decrypted (ADR 20261024014500), by the key that opened them (a seal domain, fleet or host; none when no key did) and result. A daemon opening far more than its usual rate, or failing to open what it is given, may be in an attacker's hands.",
+	}, []string{"identity", "result"})
 	loopWork := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_loop_work_total",
 		Help: "Tasks schedd's notification loop handed to its bounded off-loop work pool (ADR-191), labelled by kind and outcome ∈ {queued, inline, dropped, coalesced, panicked}. `dropped` is benign in isolation (the durable table plus a safety ticker retries) but a sustained rate means the kind's slot budget is too small; any `panicked` is a bug.",
@@ -4900,6 +4927,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		dbNotifyHubReconnects,
 		dbNotifyHubDelivered,
 		dbNotifyHubDropped,
+		secretUnseals,
 		loopWork,
 		loopWorkDuration,
 		instanceDivergence,
@@ -5090,7 +5118,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	for _, mode := range []string{PathFilterModePaths, PathFilterModeFullFallback, PathFilterModeTruncated, PathFilterModeError, PathFilterModeBreakerOpen} {
 		githubdPathFilterTotal.WithLabelValues(mode)
 	}
-	for _, reason := range []string{PushSkippedReasonMarker} {
+	for _, reason := range []string{PushSkippedReasonMarker, PushSkippedReasonCapability} {
 		githubdPushSkippedTotal.WithLabelValues(reason)
 	}
 	// issue #299: pre-instantiate the closed `severity` label set
@@ -5493,6 +5521,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		gatewayDrainWaitSeconds:                    gatewayDrainWaitSeconds,
 		gatewayInflightRequests:                    gatewayInflightRequests,
 		egressCircuitState:                         egressCircuitState,
+		egressCircuitReconcile:                     egressCircuitReconcile,
 		wakeSnapshotTier:                           wakeSnapshotTier,
 		wakeColdReason:                             wakeColdReason,
 		executionActive:                            executionActive,
@@ -5739,6 +5768,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		loopStalled:                                         loopStalled,
 		loopLastBeatAgeSeconds:                              loopLastBeatAgeSeconds,
 		dbNotifyHubReconnects:                               dbNotifyHubReconnects,
+		secretUnseals:                                       secretUnseals,
 		dbNotifyHubDelivered:                                dbNotifyHubDelivered,
 		dbNotifyHubDropped:                                  dbNotifyHubDropped,
 		loopWork:                                            loopWork,
@@ -5792,6 +5822,17 @@ func (m *OpsMetrics) SetEgressCircuitState(appID, upstreamHash string, state flo
 		return
 	}
 	m.egressCircuitState.WithLabelValues(appID, upstreamHash).Set(state)
+}
+
+func (m *OpsMetrics) SetEgressCircuitReconcile(appID string, success bool) {
+	if m == nil || m.egressCircuitReconcile == nil {
+		return
+	}
+	value := float64(0)
+	if success {
+		value = 1
+	}
+	m.egressCircuitReconcile.WithLabelValues(appID).Set(value)
 }
 
 // ClearEgressCircuitState drops the series for a retired upstream, so a
@@ -9760,6 +9801,9 @@ const (
 	PathFilterModeError        = "error"
 	PathFilterModeBreakerOpen  = "breaker_open"
 	PushSkippedReasonMarker    = "marker"
+	// PushSkippedReasonCapability counts pushes ignored because the GitHub
+	// deploys capability flag is off for the account (ADR-20261023115741).
+	PushSkippedReasonCapability = "capability"
 )
 
 // ObserveGithubdPushSkipped increments githubd_push_skipped_total{reason}.
@@ -9769,14 +9813,14 @@ func (m *OpsMetrics) ObserveGithubdPushSkipped(reason string) {
 	if m == nil || m.githubdPushSkippedTotal == nil {
 		return
 	}
-	if reason == PushSkippedReasonMarker {
+	if reason == PushSkippedReasonMarker || reason == PushSkippedReasonCapability {
 		m.githubdPushSkippedTotal.WithLabelValues(reason).Inc()
 	}
 }
 
 // GithubdPushSkippedTotal returns the metric series for service-level tests.
 func (m *OpsMetrics) GithubdPushSkippedTotal(reason string) prometheus.Counter {
-	if m == nil || m.githubdPushSkippedTotal == nil || reason != PushSkippedReasonMarker {
+	if m == nil || m.githubdPushSkippedTotal == nil || (reason != PushSkippedReasonMarker && reason != PushSkippedReasonCapability) {
 		return nil
 	}
 	return m.githubdPushSkippedTotal.WithLabelValues(reason)

@@ -32,7 +32,7 @@ func cmdCanary(args []string) int {
 		return cmdCanarySimulate(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown canary subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "canary", nestedCliCommand("canary"), args[0])
 	}
 }
 

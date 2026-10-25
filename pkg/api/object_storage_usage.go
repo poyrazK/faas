@@ -121,6 +121,24 @@ type ObjectStoragePricing struct {
 	EgressMillicentsPerGiB       int64  `json:"egress_millicents_per_gib"`
 }
 
+// Chargeable reports usage whose priced meters are all measured. Provider
+// cost is never part of a customer charge, so its absence does not matter;
+// gateway-safety accounting never knows it (ADR-20261024132844).
+func (u ObjectStorageUsage) Chargeable() bool {
+	for _, m := range u.UnavailableMeters {
+		if m != "cost_millicents" {
+			return false
+		}
+	}
+	return true
+}
+
+// StorageOnly reports a rate card that charges stored bytes only, as
+// ADR-1430 prices object storage: requests and egress are free.
+func (p ObjectStoragePricing) StorageOnly() bool {
+	return p.RequestsMillicentsPerMillion == 0 && p.EgressMillicentsPerGiB == 0
+}
+
 func (p ObjectStoragePricing) Valid() bool {
 	if len(p.Currency) != 3 {
 		return false

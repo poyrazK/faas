@@ -84,31 +84,31 @@ type DevBridgeActivity struct {
 	Requests        []DevBridgeRequestRecord `json:"requests"`
 }
 
-func (c *Client) ListDevBridges(ctx context.Context) (ListDevBridgesResponse, error) {
+func (c *PreviewClient) ListDevBridges(ctx context.Context) (ListDevBridgesResponse, error) {
 	var out ListDevBridgesResponse
 	err := c.do(ctx, "GET", "/v1/dev/bridges", nil, &out)
 	return out, err
 }
 
-func (c *Client) GetDevBridgeActivity(ctx context.Context, id string) (DevBridgeActivity, error) {
+func (c *PreviewClient) GetDevBridgeActivity(ctx context.Context, id string) (DevBridgeActivity, error) {
 	var out DevBridgeActivity
 	err := c.do(ctx, "GET", "/v1/dev/bridges/"+url.PathEscape(id)+"/activity", nil, &out)
 	return out, err
 }
 
-func (c *Client) CreateDevBridge(ctx context.Context, request CreateDevBridgeRequest) (CreateDevBridgeResponse, error) {
+func (c *PreviewClient) CreateDevBridge(ctx context.Context, request CreateDevBridgeRequest) (CreateDevBridgeResponse, error) {
 	var out CreateDevBridgeResponse
 	err := c.do(ctx, "POST", "/v1/dev/bridges", request, &out)
 	return out, err
 }
 
-func (c *Client) GetDevBridge(ctx context.Context, id string) (DevBridgeSession, error) {
+func (c *PreviewClient) GetDevBridge(ctx context.Context, id string) (DevBridgeSession, error) {
 	var out DevBridgeSession
 	err := c.do(ctx, "GET", "/v1/dev/bridges/"+url.PathEscape(id), nil, &out)
 	return out, err
 }
 
-func (c *Client) RevokeDevBridge(ctx context.Context, id string) error {
+func (c *PreviewClient) RevokeDevBridge(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/dev/bridges/"+url.PathEscape(id), nil, nil)
 }
 
@@ -118,7 +118,7 @@ type ReplayDevBridgeWebhookRequest struct {
 	IdempotencyKey string `json:"idempotency_key"`
 }
 
-func (c *Client) ReplayDevBridgeWebhook(ctx context.Context, id string, request ReplayDevBridgeWebhookRequest) (DevBridgeWebhookReplay, error) {
+func (c *PreviewClient) ReplayDevBridgeWebhook(ctx context.Context, id string, request ReplayDevBridgeWebhookRequest) (DevBridgeWebhookReplay, error) {
 	var out DevBridgeWebhookReplay
 	client := *c.http
 	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
@@ -129,7 +129,7 @@ func (c *Client) ReplayDevBridgeWebhook(ctx context.Context, id string, request 
 	return out, err
 }
 
-func (c *Client) GetDevBridgeWebhookReplay(ctx context.Context, session, replay string) (DevBridgeWebhookReplay, error) {
+func (c *PreviewClient) GetDevBridgeWebhookReplay(ctx context.Context, session, replay string) (DevBridgeWebhookReplay, error) {
 	var out DevBridgeWebhookReplay
 	err := c.do(ctx, "GET", "/v1/dev/bridges/"+url.PathEscape(session)+"/webhook-replays/"+url.PathEscape(replay), nil, &out)
 	return out, err

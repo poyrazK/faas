@@ -1139,3 +1139,5 @@ func (r *standardLocalIntentFixture) Rotated() *ApplicationStandardLogDestinatio
 // Members of workflowOperationWindow
 func (r *workflowOperationWindow) Deadline() *time.Time { return &r.deadline }
 func (r *workflowOperationWindow) Lease() *time.Time    { return &r.lease }
+
+var LiveServiceProxyIdentities = liveServiceProxyIdentities

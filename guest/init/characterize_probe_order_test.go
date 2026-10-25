@@ -30,6 +30,9 @@ func TestCollectL7ProbesSendsPrefaceOnlyToSilentListeners(t *testing.T) {
 		{"an HTTP class wins without the preface", []func() probeResult{answer(probeResult{}), answer(probeResult{Class: classHTTP, HTTP1: true, OpenAPIDoc: []byte(`{"openapi":"3.1.0"}`)})}, probeResult{Class: classGRPC}, classHTTP, `{"openapi":"3.1.0"}`, 0},
 		{"a silent listener gets the preface", []func() probeResult{answer(probeResult{}), answer(probeResult{})}, probeResult{Class: classGRPC}, classGRPC, "", 1},
 		{"a silent non-gRPC listener has no class", []func() probeResult{answer(probeResult{}), answer(probeResult{})}, probeResult{}, "", "", 1},
+		// Production-us rc.294: gunicorn logged the preface again when its
+		// workers were still booting and the HTTP/1.1 probe timed out (Hunt 14 H14-21).
+		{"a stalled HTTP/1 listener skips the preface", []func() probeResult{answer(probeResult{Stalled: true})}, probeResult{Class: classGRPC}, "", "", 0},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

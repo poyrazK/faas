@@ -1,4 +1,4 @@
-"""faas_sdk.auth: application Auth token verification (ADR-1190)."""
+"""faas_sdk.preview.auth: application Auth token verification (ADR-1190)."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ ec = pytest.importorskip("cryptography.hazmat.primitives.asymmetric.ec")
 from cryptography.hazmat.primitives import hashes  # noqa: E402
 from cryptography.hazmat.primitives.asymmetric.utils import decode_dss_signature  # noqa: E402
 
-from faas_sdk.auth import (  # noqa: E402
+from faas_sdk.preview.auth import (  # noqa: E402
     AuthClient,
     AuthError,
     AuthUnavailableError,

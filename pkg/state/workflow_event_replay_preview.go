@@ -98,11 +98,11 @@ func validateWorkflowEventReplayPreviewQuery(accountID string, q *WorkflowEventR
 	return prior, nil
 }
 
-func newWorkflowEventReplayPreview(appSlug string, query WorkflowEventReplayPreviewQuery, c workflowEventReplayPreviewCursor, now time.Time, earliest *time.Time) api.WorkflowEventReplayPreviewResponse {
+func newWorkflowEventReplayPreview(appSlug string, query WorkflowEventReplayPreviewQuery, c workflowEventReplayPreviewCursor, now time.Time, earliest *time.Time, retention time.Duration) api.WorkflowEventReplayPreviewResponse {
 	return api.WorkflowEventReplayPreviewResponse{
 		AppSlug: appSlug, WorkflowName: query.WorkflowName, From: c.From, Until: c.Until, CutoffAt: c.CutoffAt,
 		ObservedAt: now, Coverage: "retained_envelopes", Retention: api.EventReplayPreviewRetention{
-			SettledRetentionSeconds: int64(PublishedEventIdentityRetention / time.Second), EarliestRetainedAt: earliest,
+			SettledRetentionSeconds: int64(retention / time.Second), EarliestRetainedAt: earliest,
 		}, Matches: []api.WorkflowEventReplayPreviewMatch{},
 	}
 }
@@ -235,7 +235,11 @@ func (s *PgStore) PreviewWorkflowEventReplay(ctx context.Context, accountID stri
 		candidates[i] = workflowEventReplayPreviewCandidate{r.ID, timeFromPgtype(r.CreatedAt), r.Source, r.EventID, r.EventType,
 			r.SchemaVersion, r.Payload, r.SnapshotCaptured, r.Recipient, r.RoutingState, r.AdmissionRecorded, r.WorkflowRunID, r.WorkflowRunStatus}
 	}
-	out, err := evaluateWorkflowEventReplayPreview(ctx, newWorkflowEventReplayPreview(target.Slug, query, c, now, earliest), accountID, c, candidates, query.Limit)
+	retention, err := eventSettledRetention(ctx, q, tx, accountID)
+	if err != nil {
+		return api.WorkflowEventReplayPreviewResponse{}, err
+	}
+	out, err := evaluateWorkflowEventReplayPreview(ctx, newWorkflowEventReplayPreview(target.Slug, query, c, now, earliest, retention), accountID, c, candidates, query.Limit)
 	if err != nil {
 		return out, err
 	}
@@ -327,7 +331,8 @@ func (m *MemStore) PreviewWorkflowEventReplay(ctx context.Context, accountID str
 		}
 	}
 	now := time.Now().UTC()
-	out, err := evaluateWorkflowEventReplayPreview(ctx, newWorkflowEventReplayPreview(app.Slug, query, c, now, earliest), accountID, c, candidates, query.Limit)
+	retention := m.eventSettledRetentionLocked(canonicalMemUUID(accountID))
+	out, err := evaluateWorkflowEventReplayPreview(ctx, newWorkflowEventReplayPreview(app.Slug, query, c, now, earliest, retention), accountID, c, candidates, query.Limit)
 	if err != nil {
 		return out, err
 	}

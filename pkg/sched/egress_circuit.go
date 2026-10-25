@@ -21,12 +21,14 @@ package sched
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sort"
 	"sync"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/wire"
@@ -40,10 +42,13 @@ import (
 // because the breaker runs inside schedd against the row it already holds,
 // and it MUST NOT reach a label, a log, or the wire.
 type EgressUpstream struct {
-	AppID string
-	Hash  string
-	Host  string
-	Port  int
+	AppID            string
+	Hash             string
+	Host             string
+	Port             int
+	FailureThreshold *float64
+	MinSamples       *int
+	OpenSeconds      *int
 }
 
 // key is the breaker-group key. Built from the hash, never the host, so a
@@ -70,25 +75,138 @@ type EgressCircuitApplier interface {
 // EgressResolver maps an upstream host to the address the guest would reach.
 // Injected so the breaker is testable without DNS, and so a future
 // per-node resolver can be swapped in.
-type EgressResolver func(ctx context.Context, host string) (string, error)
+type EgressResolver func(ctx context.Context, host string) ([]string, error)
+
+type egressCircuitGroup struct {
+	config circuit.Config
+	group  *circuit.Group
+}
+
+func egressUpstreamConfig(up EgressUpstream) circuit.Config {
+	cfg := circuit.EgressConfig()
+	if up.FailureThreshold != nil {
+		cfg.FailureThreshold = *up.FailureThreshold
+	}
+	if up.MinSamples != nil {
+		cfg.MinRequests = *up.MinSamples
+	}
+	if up.OpenSeconds != nil {
+		cfg.OpenDuration = time.Duration(*up.OpenSeconds) * time.Second
+	}
+	if cfg.MaxOpenDuration < cfg.OpenDuration {
+		cfg.MaxOpenDuration = cfg.OpenDuration
+	}
+	return cfg
+}
+
+func (b *EgressCircuitBreaker) groupFor(up EgressUpstream) *circuit.Group {
+	cfg := egressUpstreamConfig(up)
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	entry, ok := b.groups[up.key()]
+	if ok && entry.config == cfg {
+		return entry.group
+	}
+	g := circuit.NewGroup(cfg, b.now).WithTransitionObserver(func(_ string, from, to circuit.State) {
+		if b.onChange != nil {
+			b.onChange(up.AppID, up.Hash, from, to)
+		}
+	})
+	b.groups[up.key()] = egressCircuitGroup{config: cfg, group: g}
+	return g
+}
+
+func (b *EgressCircuitBreaker) observeProbe(up EgressUpstream, ok bool, sampled time.Time) {
+	b.groupFor(up).ObserveAt(up.key(), ok, sampled)
+}
+
+func (b *EgressCircuitBreaker) resolveTargets(ctx context.Context, up EgressUpstream) ([]netns.EgressCircuitTarget, error) {
+	addrs, err := b.resolve(ctx, up.Host)
+	if err != nil || len(addrs) == 0 {
+		return nil, fmt.Errorf("egress circuit address resolution failed")
+	}
+	if len(addrs) > api.EgressCircuitMaxResolvedAddresses {
+		return nil, fmt.Errorf("egress circuit address limit exceeded")
+	}
+	targets := make([]netns.EgressCircuitTarget, 0, len(addrs))
+	for _, addr := range addrs {
+		t, err := netns.ParseEgressCircuitTarget(addr, up.Port)
+		if err != nil {
+			return nil, fmt.Errorf("egress circuit address is invalid")
+		}
+		targets = append(targets, t)
+	}
+	return netns.CanonicalEgressCircuitTargets(targets)
+}
+
+// RefreshApp applies one complete desired set after folding all probe samples.
+// It also repushes unchanged policy, refreshes DNS and removes retired/stale
+// upstreams. Failures retain the last acknowledged view and retry next tick.
+func (b *EgressCircuitBreaker) RefreshApp(ctx context.Context, appID string, upstreams []EgressUpstream) (returnErr error) {
+	defer func() {
+		if b.onReconcile != nil {
+			b.onReconcile(appID, returnErr == nil)
+		}
+	}()
+	if b.applier == nil || b.resolve == nil {
+		return nil
+	}
+	b.mu.Lock()
+	prior := b.open[appID]
+	b.mu.Unlock()
+	next := make(map[string][]netns.EgressCircuitTarget)
+	var failures []error
+	for _, up := range upstreams {
+		if b.State(up) == circuit.StateClosed {
+			continue
+		}
+		targets, err := b.resolveTargets(ctx, up)
+		if err != nil {
+			failures = append(failures, err)
+			targets = prior[up.key()]
+		}
+		if len(targets) > 0 {
+			next[up.key()] = targets
+		}
+	}
+	if len(failures) > 0 {
+		// Preserve the durable whole-app policy too. After restart the local
+		// acknowledged map is empty; committing a partial resolution here
+		// would accidentally clear previously protected addresses.
+		return errors.Join(failures...)
+	}
+	b.mu.Lock()
+	b.open[appID] = next
+	targets := b.appTargetsLocked(appID)
+	b.mu.Unlock()
+	if err := b.applier.ApplyEgressCircuits(ctx, appID, targets); err != nil {
+		b.mu.Lock()
+		b.open[appID] = prior
+		b.mu.Unlock()
+		failures = append(failures, err)
+	}
+	return errors.Join(failures...)
+}
 
 // EgressCircuitBreaker drives circuit state for declared upstreams from probe
 // outcomes and applies the result to the data plane.
 type EgressCircuitBreaker struct {
-	group    *circuit.Group
-	applier  EgressCircuitApplier
-	resolve  EgressResolver
-	log      *slog.Logger
-	onChange func(appID, hash string, from, to circuit.State)
+	groups      map[string]egressCircuitGroup
+	now         func() time.Time
+	applier     EgressCircuitApplier
+	resolve     EgressResolver
+	log         *slog.Logger
+	onChange    func(appID, hash string, from, to circuit.State)
+	onForget    func(appID, hash string)
+	onReconcile func(appID string, success bool)
 
 	mu sync.Mutex
 	// open tracks the installed target per breaker key, grouped by app.
 	// Grouped because the applier takes an app's WHOLE set: a transition on
 	// one upstream has to re-push the union of that app's open circuits.
-	// Keeping the resolved target (rather than re-resolving at push time)
-	// means a DNS change mid-open cannot silently retarget a rule; the next
-	// half-open probe re-resolves.
-	open map[string]map[string]netns.EgressCircuitTarget
+	// DNS answers are refreshed by the reconciliation loop without counting
+	// another probe outcome.
+	open map[string]map[string][]netns.EgressCircuitTarget
 }
 
 // NewEgressCircuitBreaker builds a breaker over circuit.EgressConfig. A nil
@@ -102,9 +220,10 @@ func NewEgressCircuitBreaker(applier EgressCircuitApplier, resolve EgressResolve
 		applier: applier,
 		resolve: resolve,
 		log:     log,
-		open:    make(map[string]map[string]netns.EgressCircuitTarget),
+		open:    make(map[string]map[string][]netns.EgressCircuitTarget),
 	}
-	b.group = circuit.NewGroup(circuit.EgressConfig(), nil)
+	b.groups = make(map[string]egressCircuitGroup)
+	b.now = time.Now
 	return b
 }
 
@@ -120,6 +239,8 @@ func (b *EgressCircuitBreaker) WithMetrics(ops *wire.OpsMetrics) *EgressCircuitB
 		return b
 	}
 	prior := b.onChange
+	b.onForget = ops.ClearEgressCircuitState
+	b.onReconcile = ops.SetEgressCircuitReconcile
 	b.onChange = func(appID, hash string, from, to circuit.State) {
 		ops.SetEgressCircuitState(appID, hash, egressCircuitStateValue(to))
 		if prior != nil {
@@ -155,7 +276,8 @@ func (b *EgressCircuitBreaker) WithChangeObserver(fn func(appID, hash string, fr
 // leaves it unset. Must be called before the first Observe — it discards any
 // state the group already holds.
 func (b *EgressCircuitBreaker) WithClock(now func() time.Time) *EgressCircuitBreaker {
-	b.group = circuit.NewGroup(circuit.EgressConfig(), now)
+	b.groups = make(map[string]egressCircuitGroup)
+	b.now = now
 	return b
 }
 
@@ -167,24 +289,14 @@ func (b *EgressCircuitBreaker) WithClock(now func() time.Time) *EgressCircuitBre
 // but unusable, which is exactly the case an app cannot distinguish and would
 // otherwise retry against forever.
 func (b *EgressCircuitBreaker) Observe(ctx context.Context, up EgressUpstream, ok bool) error {
-	key := up.key()
-	before := b.group.State(key)
-	if ok {
-		b.group.Success(key)
-	} else {
-		b.group.Failure(key)
-	}
-	after := b.group.State(key)
-	if before != after && b.onChange != nil {
-		b.onChange(up.AppID, up.Hash, before, after)
-	}
-	return b.reconcile(ctx, up, after)
+	b.observeProbe(up, ok, b.now())
+	return b.reconcile(ctx, up, b.State(up))
 }
 
 // State reports the current circuit state for an upstream. Used by the API
 // surface so a customer can see why their dependency calls are failing fast.
 func (b *EgressCircuitBreaker) State(up EgressUpstream) circuit.State {
-	return b.group.State(up.key())
+	return b.groupFor(up).State(up.key())
 }
 
 // reconcile brings the data plane in line with the breaker state.
@@ -229,29 +341,19 @@ func (b *EgressCircuitBreaker) appTargetsLocked(appID string) []netns.EgressCirc
 	byKey := b.open[appID]
 	out := make([]netns.EgressCircuitTarget, 0, len(byKey))
 	for _, t := range byKey {
-		out = append(out, t)
+		out = append(out, t...)
 	}
 	sortEgressTargets(out)
 	return out
 }
 
 func (b *EgressCircuitBreaker) openCircuit(ctx context.Context, up EgressUpstream, key string) error {
-	addr, err := b.resolve(ctx, up.Host)
+	targetsForUpstream, err := b.resolveTargets(ctx, up)
 	if err != nil {
-		// Fail OPEN in the availability sense: if the host cannot be
-		// resolved we cannot write a correct rule, and writing a wrong one
-		// would reject traffic the customer needs. The circuit stays
-		// logically open (the state machine already moved) but nothing is
-		// enforced, and the next probe retries.
-		b.log.Warn("sched: egress circuit: resolve failed; not enforcing",
-			"app", up.AppID, "upstream", up.Hash, "err", err)
-		return nil
-	}
-	target, err := netns.ParseEgressCircuitTarget(addr, up.Port)
-	if err != nil {
-		b.log.Warn("sched: egress circuit: unusable target; not enforcing",
-			"app", up.AppID, "upstream", up.Hash, "err", err)
-		return nil
+		// Preserve previous enforcement and retry resolution on the next tick.
+		// DNS errors can contain the plaintext hostname; do not log the cause.
+		b.log.Warn("sched: egress circuit address resolution failed", "app", up.AppID, "upstream", up.Hash)
+		return nil //nolint:nilerr // Legacy Observe logs DNS failure; RefreshApp reports it. TestEgressBreakerDoesNotEnforceWhenResolveFails pins this contract.
 	}
 
 	// Record first, then push the union. On a push failure the entry is
@@ -259,9 +361,9 @@ func (b *EgressCircuitBreaker) openCircuit(ctx context.Context, up EgressUpstrea
 	// and silently believe a dependency is being blocked when it is not.
 	b.mu.Lock()
 	if b.open[up.AppID] == nil {
-		b.open[up.AppID] = make(map[string]netns.EgressCircuitTarget)
+		b.open[up.AppID] = make(map[string][]netns.EgressCircuitTarget)
 	}
-	b.open[up.AppID][key] = target
+	b.open[up.AppID][key] = targetsForUpstream
 	targets := b.appTargetsLocked(up.AppID)
 	b.mu.Unlock()
 
@@ -296,7 +398,7 @@ func (b *EgressCircuitBreaker) closeCircuit(ctx context.Context, up EgressUpstre
 		if had {
 			b.mu.Lock()
 			if b.open[up.AppID] == nil {
-				b.open[up.AppID] = make(map[string]netns.EgressCircuitTarget)
+				b.open[up.AppID] = make(map[string][]netns.EgressCircuitTarget)
 			}
 			b.open[up.AppID][key] = prior
 			b.mu.Unlock()
@@ -310,23 +412,21 @@ func (b *EgressCircuitBreaker) closeCircuit(ctx context.Context, up EgressUpstre
 
 // Forget drops all state for an upstream. Called when the data_upstreams row
 // is deleted so the breaker map cannot outlive its subject.
-func (b *EgressCircuitBreaker) Forget(ctx context.Context, up EgressUpstream) {
-	key := up.key()
+func (b *EgressCircuitBreaker) Forget(ctx context.Context, up EgressUpstream) error {
+	if err := b.closeCircuit(ctx, up, up.key()); err != nil {
+		return err
+	}
+	b.forgetProbeState(up)
+	return nil
+}
+
+func (b *EgressCircuitBreaker) forgetProbeState(up EgressUpstream) {
 	b.mu.Lock()
-	_, wasOpen := b.open[up.AppID][key]
-	delete(b.open[up.AppID], key)
-	if len(b.open[up.AppID]) == 0 {
-		delete(b.open, up.AppID)
-	}
-	targets := b.appTargetsLocked(up.AppID)
+	delete(b.groups, up.key())
 	b.mu.Unlock()
-	if wasOpen && b.applier != nil {
-		if err := b.applier.ApplyEgressCircuits(ctx, up.AppID, targets); err != nil {
-			b.log.Warn("sched: egress circuit: forget could not remove rule",
-				"app", up.AppID, "upstream", up.Hash, "err", err)
-		}
+	if b.onForget != nil {
+		b.onForget(up.AppID, up.Hash)
 	}
-	b.group.Forget(key)
 }
 
 // OpenCircuits returns the currently enforced circuits, sorted for stable
@@ -338,7 +438,7 @@ func (b *EgressCircuitBreaker) OpenCircuits() []netns.EgressCircuitTarget {
 	var out []netns.EgressCircuitTarget
 	for _, byKey := range b.open {
 		for _, t := range byKey {
-			out = append(out, t)
+			out = append(out, t...)
 		}
 	}
 	sortEgressTargets(out)

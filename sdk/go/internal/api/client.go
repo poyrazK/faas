@@ -327,44 +327,44 @@ func (c *Client) CreateApp(ctx context.Context, req CreateAppRequest) (AppRespon
 }
 
 // ListAPIConsumers returns the end-customer identities registered for an app.
-func (c *Client) ListAPIConsumers(ctx context.Context, slug string) (APIConsumerListResponse, error) {
+func (c *PreviewClient) ListAPIConsumers(ctx context.Context, slug string) (APIConsumerListResponse, error) {
 	var out APIConsumerListResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers", nil, &out)
 }
 
 // CreateAPIConsumer registers an end-customer identity for an app.
-func (c *Client) CreateAPIConsumer(ctx context.Context, slug string, req CreateAPIConsumerRequest) (APIConsumerResponse, error) {
+func (c *PreviewClient) CreateAPIConsumer(ctx context.Context, slug string, req CreateAPIConsumerRequest) (APIConsumerResponse, error) {
 	var out APIConsumerResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers", req, &out)
 }
 
 // GetAPIConsumer returns one end-customer identity by id.
-func (c *Client) GetAPIConsumer(ctx context.Context, slug, consumerID string) (APIConsumerResponse, error) {
+func (c *PreviewClient) GetAPIConsumer(ctx context.Context, slug, consumerID string) (APIConsumerResponse, error) {
 	var out APIConsumerResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID, nil, &out)
 }
 
 // ListAPIConsumerRateCards returns the versioned request prices for an app.
-func (c *Client) ListAPIConsumerRateCards(ctx context.Context, slug string) (APIConsumerRateCardListResponse, error) {
+func (c *PreviewClient) ListAPIConsumerRateCards(ctx context.Context, slug string) (APIConsumerRateCardListResponse, error) {
 	var out APIConsumerRateCardListResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/rate-cards", nil, &out)
 }
 
 // CreateAPIConsumerRateCard adds an immutable request price effective at a UTC minute.
-func (c *Client) CreateAPIConsumerRateCard(ctx context.Context, slug string, req CreateAPIConsumerRateCardRequest) (APIConsumerRateCardResponse, error) {
+func (c *PreviewClient) CreateAPIConsumerRateCard(ctx context.Context, slug string, req CreateAPIConsumerRateCardRequest) (APIConsumerRateCardResponse, error) {
 	var out APIConsumerRateCardResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/rate-cards", req, &out)
 }
 
 // GetAPIConsumerRateCard returns one app rate card by ID.
-func (c *Client) GetAPIConsumerRateCard(ctx context.Context, slug, rateCardID string) (APIConsumerRateCardResponse, error) {
+func (c *PreviewClient) GetAPIConsumerRateCard(ctx context.Context, slug, rateCardID string) (APIConsumerRateCardResponse, error) {
 	var out APIConsumerRateCardResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/rate-cards/"+rateCardID, nil, &out)
 }
 
 // GetAPIConsumerUsage returns the durable minute usage projection for one
 // stable API consumer. Empty bounds use the server's trailing-30d default.
-func (c *Client) GetAPIConsumerUsage(ctx context.Context, slug, consumerID string, since, until string) (APIConsumerUsageResponse, error) {
+func (c *PreviewClient) GetAPIConsumerUsage(ctx context.Context, slug, consumerID string, since, until string) (APIConsumerUsageResponse, error) {
 	var out APIConsumerUsageResponse
 	path := "/v1/apps/" + slug + "/consumers/" + consumerID + "/usage"
 	q := url.Values{}
@@ -381,7 +381,7 @@ func (c *Client) GetAPIConsumerUsage(ctx context.Context, slug, consumerID strin
 }
 
 // GetAPIConsumerUsageQuote returns the usage total under the app's versioned rate cards.
-func (c *Client) GetAPIConsumerUsageQuote(ctx context.Context, slug, consumerID, since, until string) (APIConsumerUsageQuoteResponse, error) {
+func (c *PreviewClient) GetAPIConsumerUsageQuote(ctx context.Context, slug, consumerID, since, until string) (APIConsumerUsageQuoteResponse, error) {
 	var out APIConsumerUsageQuoteResponse
 	path := "/v1/apps/" + slug + "/consumers/" + consumerID + "/usage/quote"
 	q := url.Values{}
@@ -398,25 +398,25 @@ func (c *Client) GetAPIConsumerUsageQuote(ctx context.Context, slug, consumerID,
 }
 
 // CreateAPIConsumerUsageStatement snapshots an immutable quote for a period.
-func (c *Client) CreateAPIConsumerUsageStatement(ctx context.Context, slug, consumerID string, req CreateAPIConsumerUsageStatementRequest) (APIConsumerUsageStatementResponse, error) {
+func (c *PreviewClient) CreateAPIConsumerUsageStatement(ctx context.Context, slug, consumerID string, req CreateAPIConsumerUsageStatementRequest) (APIConsumerUsageStatementResponse, error) {
 	var out APIConsumerUsageStatementResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements", req, &out)
 }
 
 // ListAPIConsumerUsageStatements returns durable statements newest period first.
-func (c *Client) ListAPIConsumerUsageStatements(ctx context.Context, slug, consumerID string) (APIConsumerUsageStatementListResponse, error) {
+func (c *PreviewClient) ListAPIConsumerUsageStatements(ctx context.Context, slug, consumerID string) (APIConsumerUsageStatementListResponse, error) {
 	var out APIConsumerUsageStatementListResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements", nil, &out)
 }
 
 // GetAPIConsumerUsageStatement returns one durable statement by ID.
-func (c *Client) GetAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementResponse, error) {
+func (c *PreviewClient) GetAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementResponse, error) {
 	var out APIConsumerUsageStatementResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID, nil, &out)
 }
 
 // FinalizeAPIConsumerUsageStatement marks a fully priced statement payable.
-func (c *Client) FinalizeAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementResponse, error) {
+func (c *PreviewClient) FinalizeAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementResponse, error) {
 	var out APIConsumerUsageStatementResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/finalize", struct{}{}, &out)
 }
@@ -424,38 +424,38 @@ func (c *Client) FinalizeAPIConsumerUsageStatement(ctx context.Context, slug, co
 // ClaimAPIConsumerUsageStatement records the customer's external invoice
 // reference for a finalized statement. Repeating the same claim is safe and
 // returns the original immutable handoff receipt.
-func (c *Client) ClaimAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string, req ClaimAPIConsumerUsageStatementRequest) (APIConsumerUsageStatementHandoffResponse, error) {
+func (c *PreviewClient) ClaimAPIConsumerUsageStatement(ctx context.Context, slug, consumerID, statementID string, req ClaimAPIConsumerUsageStatementRequest) (APIConsumerUsageStatementHandoffResponse, error) {
 	var out APIConsumerUsageStatementHandoffResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/handoff", req, &out)
 }
 
 // GetAPIConsumerUsageStatementHandoff returns the customer's immutable
 // invoice-handoff receipt for a finalized statement.
-func (c *Client) GetAPIConsumerUsageStatementHandoff(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementHandoffResponse, error) {
+func (c *PreviewClient) GetAPIConsumerUsageStatementHandoff(ctx context.Context, slug, consumerID, statementID string) (APIConsumerUsageStatementHandoffResponse, error) {
 	var out APIConsumerUsageStatementHandoffResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/usage-statements/"+statementID+"/handoff", nil, &out)
 }
 
 // RevokeAPIConsumer revokes an end-customer identity and all future key issuance for it.
-func (c *Client) RevokeAPIConsumer(ctx context.Context, slug, consumerID string) (APIConsumerResponse, error) {
+func (c *PreviewClient) RevokeAPIConsumer(ctx context.Context, slug, consumerID string) (APIConsumerResponse, error) {
 	var out APIConsumerResponse
 	return out, c.do(ctx, "DELETE", "/v1/apps/"+slug+"/consumers/"+consumerID, nil, &out)
 }
 
 // ListConsumerKeys returns credential metadata for an end-customer identity.
-func (c *Client) ListConsumerKeys(ctx context.Context, slug, consumerID string) (ConsumerKeyListResponse, error) {
+func (c *PreviewClient) ListConsumerKeys(ctx context.Context, slug, consumerID string) (ConsumerKeyListResponse, error) {
 	var out ConsumerKeyListResponse
 	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/consumers/"+consumerID+"/keys", nil, &out)
 }
 
 // CreateConsumerKey issues a credential. The plaintext is returned only in this response.
-func (c *Client) CreateConsumerKey(ctx context.Context, slug, consumerID string, req CreateConsumerKeyRequest) (ConsumerKeyResponse, error) {
+func (c *PreviewClient) CreateConsumerKey(ctx context.Context, slug, consumerID string, req CreateConsumerKeyRequest) (ConsumerKeyResponse, error) {
 	var out ConsumerKeyResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/consumers/"+consumerID+"/keys", req, &out)
 }
 
 // RevokeConsumerKey revokes a credential while retaining its audit metadata.
-func (c *Client) RevokeConsumerKey(ctx context.Context, slug, consumerID, keyID string) (ConsumerKeyResponse, error) {
+func (c *PreviewClient) RevokeConsumerKey(ctx context.Context, slug, consumerID, keyID string) (ConsumerKeyResponse, error) {
 	var out ConsumerKeyResponse
 	return out, c.do(ctx, "DELETE", "/v1/apps/"+slug+"/consumers/"+consumerID+"/keys/"+keyID, nil, &out)
 }
@@ -680,7 +680,7 @@ func (c *Client) DeleteDomain(ctx context.Context, domain string) error {
 // DomainDoctor (ADR-120) returns the 5-check doctor report for a
 // domain — see Client.DomainDoctor in pkg/api/client.go for the
 // full docstring. Backed by GET /v1/domains/{domain}/doctor.
-func (c *Client) DomainDoctor(ctx context.Context, domain string) (DomainDoctorReport, error) {
+func (c *PreviewClient) DomainDoctor(ctx context.Context, domain string) (DomainDoctorReport, error) {
 	var out DomainDoctorReport
 	return out, c.do(ctx, "GET", "/v1/domains/"+domain+"/doctor", nil, &out)
 }
@@ -815,13 +815,13 @@ func (c *Client) CreateJobRun(ctx context.Context, name string, req CreateJobRun
 	return out, c.do(ctx, "POST", "/v1/jobs/"+name+"/runs", req, &out)
 }
 
-func (c *Client) SubmitExclusiveJobOperation(ctx context.Context, name string, request ExclusiveJobOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+func (c *PreviewClient) SubmitExclusiveJobOperation(ctx context.Context, name string, request ExclusiveJobOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
 	var out ExclusiveOperationAccepted
 	path := "/v1/jobs/" + url.PathEscape(name) + "/operations"
 	return out, c.doWithIdempotencyKey(ctx, "POST", path, request, &out, idempotencyKey)
 }
 
-func (c *Client) SubmitExclusiveAppTaskOperation(ctx context.Context, slug string, request ExclusiveAppTaskOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+func (c *PreviewClient) SubmitExclusiveAppTaskOperation(ctx context.Context, slug string, request ExclusiveAppTaskOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
 	var out ExclusiveOperationAccepted
 	path := "/v1/apps/" + url.PathEscape(slug) + "/operations/tasks"
 	return out, c.doWithIdempotencyKey(ctx, "POST", path, request, &out, idempotencyKey)
@@ -922,12 +922,12 @@ func (c *Client) InvokeAppAsync(ctx context.Context, slug string, req InvokeRequ
 
 // QueueSend enqueues a payload on the per-app FIFO queue. Cap-checked
 // against the plan's MaxQueueDepth at the handler.
-func (c *Client) QueueSend(ctx context.Context, slug string, req QueueSendRequest) (QueueSendResponse, error) {
+func (c *PreviewClient) QueueSend(ctx context.Context, slug string, req QueueSendRequest) (QueueSendResponse, error) {
 	var out QueueSendResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/queues/send", req, &out)
 }
 
-func (c *Client) SendAppMessage(ctx context.Context, targetApp string, req SendAppMessageRequest) (SendAppMessageResponse, error) {
+func (c *PreviewClient) SendAppMessage(ctx context.Context, targetApp string, req SendAppMessageRequest) (SendAppMessageResponse, error) {
 	var out SendAppMessageResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+targetApp+"/inbox", req, &out)
 }
@@ -936,14 +936,14 @@ func (c *Client) SendAppMessage(ctx context.Context, targetApp string, req SendA
 // 30s server-side cap; on timeout returns (zero, ErrLongPollTimeout)
 // — caller is expected to retry. Stays open across the app's
 // dispatched rows until one lands or the cap elapses.
-func (c *Client) QueueReceive(ctx context.Context, slug string) (QueueReceiveResponse, error) {
+func (c *PreviewClient) QueueReceive(ctx context.Context, slug string) (QueueReceiveResponse, error) {
 	var out QueueReceiveResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/queues/receive", nil, &out)
 }
 
 // AckQueueRow is a no-op state change (the row is already completed
 // when invocation_done fires) — idempotent; a re-ack returns 204.
-func (c *Client) AckQueueRow(ctx context.Context, slug, id string) error {
+func (c *PreviewClient) AckQueueRow(ctx context.Context, slug, id string) error {
 	return c.do(ctx, "POST", "/v1/apps/"+slug+"/queues/"+id+"/ack", nil, nil)
 }
 
@@ -1013,29 +1013,29 @@ func (c *Client) GetInvocation(ctx context.Context, id string) (Invocation, erro
 	return out, c.do(ctx, "GET", "/v1/invocations/"+id, nil, &out)
 }
 
-func (c *Client) ListExclusiveWorkPolicies(ctx context.Context) (ExclusiveWorkPolicyList, error) {
+func (c *PreviewClient) ListExclusiveWorkPolicies(ctx context.Context) (ExclusiveWorkPolicyList, error) {
 	var out ExclusiveWorkPolicyList
 	return out, c.do(ctx, "GET", "/v1/account/operation-policies", nil, &out)
 }
-func (c *Client) UpsertExclusiveWorkPolicy(ctx context.Context, name string, policy ExclusiveOperationPolicy) (ExclusiveWorkPolicyRecord, error) {
+func (c *PreviewClient) UpsertExclusiveWorkPolicy(ctx context.Context, name string, policy ExclusiveOperationPolicy) (ExclusiveWorkPolicyRecord, error) {
 	var out ExclusiveWorkPolicyRecord
 	return out, c.do(ctx, "PUT", "/v1/account/operation-policies/"+url.PathEscape(name), policy, &out)
 }
-func (c *Client) UpsertExclusiveTriggerBinding(ctx context.Context, source, triggerID string, binding ExclusiveTriggerBindingRequest) (ExclusiveTriggerBindingRecord, error) {
+func (c *PreviewClient) UpsertExclusiveTriggerBinding(ctx context.Context, source, triggerID string, binding ExclusiveTriggerBindingRequest) (ExclusiveTriggerBindingRecord, error) {
 	var out ExclusiveTriggerBindingRecord
 	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
 	return out, c.do(ctx, "PUT", path, binding, &out)
 }
-func (c *Client) GetExclusiveTriggerBinding(ctx context.Context, source, triggerID string) (ExclusiveTriggerBindingRecord, error) {
+func (c *PreviewClient) GetExclusiveTriggerBinding(ctx context.Context, source, triggerID string) (ExclusiveTriggerBindingRecord, error) {
 	var out ExclusiveTriggerBindingRecord
 	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
 	return out, c.do(ctx, "GET", path, nil, &out)
 }
-func (c *Client) DeleteExclusiveTriggerBinding(ctx context.Context, source, triggerID string) error {
+func (c *PreviewClient) DeleteExclusiveTriggerBinding(ctx context.Context, source, triggerID string) error {
 	path := "/v1/account/operation-trigger-bindings/" + url.PathEscape(source) + "/" + url.PathEscape(triggerID)
 	return c.do(ctx, "DELETE", path, nil, nil)
 }
-func (c *Client) SubmitExclusiveOperation(ctx context.Context, slug, tenantID string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+func (c *PreviewClient) SubmitExclusiveOperation(ctx context.Context, slug, tenantID string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
 	var out ExclusiveOperationAccepted
 	path := "/v1/apps/" + url.PathEscape(slug) + "/operations"
 	if tenantID != "" {
@@ -1043,22 +1043,22 @@ func (c *Client) SubmitExclusiveOperation(ctx context.Context, slug, tenantID st
 	}
 	return out, c.doWithIdempotencyKey(ctx, "POST", path, request, &out, idempotencyKey)
 }
-func (c *Client) SubmitPlatformTenantExclusiveOperation(ctx context.Context, slug string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
+func (c *PreviewClient) SubmitPlatformTenantExclusiveOperation(ctx context.Context, slug string, request ExclusiveOperationRequest, idempotencyKey string) (ExclusiveOperationAccepted, error) {
 	var out ExclusiveOperationAccepted
 	return out, c.doWithIdempotencyKey(ctx, "POST", "/v1/platform-tenant-self/apps/"+url.PathEscape(slug)+"/operations", request, &out, idempotencyKey)
 }
-func (c *Client) GetExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
+func (c *PreviewClient) GetExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
 	var out ExclusiveOperationRecord
 	return out, c.do(ctx, "GET", "/v1/operations/"+url.PathEscape(id), nil, &out)
 }
-func (c *Client) CancelExclusiveOperation(ctx context.Context, id string) error {
+func (c *PreviewClient) CancelExclusiveOperation(ctx context.Context, id string) error {
 	return c.do(ctx, "POST", "/v1/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
 }
-func (c *Client) GetPlatformTenantExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
+func (c *PreviewClient) GetPlatformTenantExclusiveOperation(ctx context.Context, id string) (ExclusiveOperationRecord, error) {
 	var out ExclusiveOperationRecord
 	return out, c.do(ctx, "GET", "/v1/platform-tenant-self/operations/"+url.PathEscape(id), nil, &out)
 }
-func (c *Client) CancelPlatformTenantExclusiveOperation(ctx context.Context, id string) error {
+func (c *PreviewClient) CancelPlatformTenantExclusiveOperation(ctx context.Context, id string) error {
 	return c.do(ctx, "POST", "/v1/platform-tenant-self/operations/"+url.PathEscape(id)+"/cancel", nil, nil)
 }
 
@@ -1485,7 +1485,7 @@ func (c *Client) AccountUsage(ctx context.Context, month string) (AccountUsageRe
 // falls back to the server's default (24h). Issue #696 /
 // ADR-082. Distinct from GetAppMetrics (issue #273 /
 // ADR-042) which is the 5m-window dashboard panel.
-func (c *Client) GetAppSLO(ctx context.Context, slug, window string) (AppSLOResponse, error) {
+func (c *PreviewClient) GetAppSLO(ctx context.Context, slug, window string) (AppSLOResponse, error) {
 	var out AppSLOResponse
 	path := "/v1/apps/" + slug + "/slo"
 	if window != "" {
@@ -1498,7 +1498,7 @@ func (c *Client) GetAppSLO(ctx context.Context, slug, window string) (AppSLOResp
 // the named SLO window. Flat scalar response (no per-app
 // map). window follows the same closed vocabulary as the
 // per-app endpoint. Issue #696 / ADR-082.
-func (c *Client) GetAccountSLO(ctx context.Context, window string) (AccountSLOResponse, error) {
+func (c *PreviewClient) GetAccountSLO(ctx context.Context, window string) (AccountSLOResponse, error) {
 	var out AccountSLOResponse
 	path := "/v1/account/slo"
 	if window != "" {
@@ -1750,7 +1750,7 @@ func (c *Client) CreateAppWebhook(ctx context.Context, slug string, req CreateAp
 	return out, c.do(ctx, "POST", "/v1/apps/"+slug+"/webhooks", req, &out)
 }
 
-func (c *Client) DeliverAppEvent(ctx context.Context, sourceApp string, req DeliverAppEventRequest) (DeliverAppEventResponse, error) {
+func (c *PreviewClient) DeliverAppEvent(ctx context.Context, sourceApp string, req DeliverAppEventRequest) (DeliverAppEventResponse, error) {
 	var out DeliverAppEventResponse
 	return out, c.do(ctx, "POST", "/v1/apps/"+sourceApp+"/outbox", req, &out)
 }
@@ -1873,7 +1873,7 @@ func (c *Client) RetryAccountReleaseWebhookDelivery(ctx context.Context, id, del
 // GetTriggers lists every trigger owned by the calling account,
 // optionally filtered by app_id and/or kind. Newest-first by
 // created_at; the typical account has well under 200.
-func (c *Client) GetTriggers(ctx context.Context, appID string, kind TriggerKind) ([]Trigger, error) {
+func (c *PreviewClient) GetTriggers(ctx context.Context, appID string, kind TriggerKind) ([]Trigger, error) {
 	path := "/v1/triggers"
 	q := url.Values{}
 	if appID != "" {
@@ -1892,42 +1892,42 @@ func (c *Client) GetTriggers(ctx context.Context, appID string, kind TriggerKind
 // PostTriggers creates a new trigger. The Idempotency-Key header is
 // auto-minted for the POST (TestDo_MutatingCallsCarryIdempotencyKey),
 // so replays with identical bodies do not double-create.
-func (c *Client) PostTriggers(ctx context.Context, req CreateTriggerRequest) (Trigger, error) {
+func (c *PreviewClient) PostTriggers(ctx context.Context, req CreateTriggerRequest) (Trigger, error) {
 	var out Trigger
 	return out, c.do(ctx, "POST", "/v1/triggers", req, &out)
 }
 
 // GetTriggersId returns one trigger by id.
-func (c *Client) GetTriggersId(ctx context.Context, id string) (Trigger, error) {
+func (c *PreviewClient) GetTriggersId(ctx context.Context, id string) (Trigger, error) {
 	var out Trigger
 	return out, c.do(ctx, "GET", "/v1/triggers/"+id, nil, &out)
 }
 
 // PatchTriggersId is a partial PATCH; nil fields are left unchanged.
-func (c *Client) PatchTriggersId(ctx context.Context, id string, req UpdateTriggerRequest) (Trigger, error) {
+func (c *PreviewClient) PatchTriggersId(ctx context.Context, id string, req UpdateTriggerRequest) (Trigger, error) {
 	var out Trigger
 	return out, c.do(ctx, "PATCH", "/v1/triggers/"+id, req, &out)
 }
 
 // DeleteTriggersId removes the trigger; ON DELETE CASCADE drops the
 // trigger_records and trigger_dead_letter rows.
-func (c *Client) DeleteTriggersId(ctx context.Context, id string) error {
+func (c *PreviewClient) DeleteTriggersId(ctx context.Context, id string) error {
 	return c.do(ctx, "DELETE", "/v1/triggers/"+id, nil, nil)
 }
 
 // PostTriggersIdPause sets enabled=false and emits trigger_changed pg_notify.
-func (c *Client) PostTriggersIdPause(ctx context.Context, id string) error {
+func (c *PreviewClient) PostTriggersIdPause(ctx context.Context, id string) error {
 	return c.do(ctx, "POST", "/v1/triggers/"+id+"/pause", nil, nil)
 }
 
 // PostTriggersIdResume sets enabled=true and emits trigger_changed pg_notify.
-func (c *Client) PostTriggersIdResume(ctx context.Context, id string) error {
+func (c *PreviewClient) PostTriggersIdResume(ctx context.Context, id string) error {
 	return c.do(ctx, "POST", "/v1/triggers/"+id+"/resume", nil, nil)
 }
 
 // GetTriggersIdRecords returns records for one trigger, newest-first.
 // state filter is optional — passing "" omits the query param.
-func (c *Client) GetTriggersIdRecords(ctx context.Context, id, state string) (ListTriggerRecordsResponse, error) {
+func (c *PreviewClient) GetTriggersIdRecords(ctx context.Context, id, state string) (ListTriggerRecordsResponse, error) {
 	path := "/v1/triggers/" + id + "/records"
 	if state != "" {
 		path += "?state=" + state
@@ -1938,19 +1938,19 @@ func (c *Client) GetTriggersIdRecords(ctx context.Context, id, state string) (Li
 
 // PostTriggersIdRecordsRidRetry moves a single record from retry/
 // dead_letter back to pending. Operator-only scope on the server.
-func (c *Client) PostTriggersIdRecordsRidRetry(ctx context.Context, id, recordID string) error {
+func (c *PreviewClient) PostTriggersIdRecordsRidRetry(ctx context.Context, id, recordID string) error {
 	return c.do(ctx, "POST", "/v1/triggers/"+id+"/records/"+recordID+"/retry", nil, nil)
 }
 
 // PostTriggersIdRecordsRidDrop marks a dead-letter row routed_to=drop
 // (already the default; this is the explicit acknowledgement).
-func (c *Client) PostTriggersIdRecordsRidDrop(ctx context.Context, id, recordID string) error {
+func (c *PreviewClient) PostTriggersIdRecordsRidDrop(ctx context.Context, id, recordID string) error {
 	return c.do(ctx, "POST", "/v1/triggers/"+id+"/records/"+recordID+"/drop", nil, nil)
 }
 
 // GetTriggersIdDlq returns rows from trigger_dead_letter for the
 // given trigger, newest-first.
-func (c *Client) GetTriggersIdDlq(ctx context.Context, id, reason string) (ListTriggerDeadLetterResponse, error) {
+func (c *PreviewClient) GetTriggersIdDlq(ctx context.Context, id, reason string) (ListTriggerDeadLetterResponse, error) {
 	path := "/v1/triggers/" + id + "/dlq"
 	if reason != "" {
 		path += "?reason=" + reason
@@ -1961,7 +1961,7 @@ func (c *Client) GetTriggersIdDlq(ctx context.Context, id, reason string) (ListT
 
 // GetTriggersIdMetrics returns the per-state count roll-up. Not a
 // Prometheus surface; /v1/metrics is the metrics surface.
-func (c *Client) GetTriggersIdMetrics(ctx context.Context, id string) (TriggerMetricsResponse, error) {
+func (c *PreviewClient) GetTriggersIdMetrics(ctx context.Context, id string) (TriggerMetricsResponse, error) {
 	var out TriggerMetricsResponse
 	return out, c.do(ctx, "GET", "/v1/triggers/"+id+"/metrics", nil, &out)
 }
@@ -1971,7 +1971,7 @@ func (c *Client) GetTriggersIdMetrics(ctx context.Context, id string) (TriggerMe
 // responds with `{"batchItemFailures":[{"itemIdentifier":"..."}]}`;
 // empty / missing ⇒ full success. Internal-only route — schedd
 // uses this on dispatch tick closure.
-func (c *Client) PostInvocationsDispatchBatch(ctx context.Context, triggerID, appID string, kind TriggerKind, records []map[string]any) error {
+func (c *PreviewClient) PostInvocationsDispatchBatch(ctx context.Context, triggerID, appID string, kind TriggerKind, records []map[string]any) error {
 	body := map[string]any{
 		"trigger_id": triggerID,
 		"app_id":     appID,
@@ -1983,7 +1983,7 @@ func (c *Client) PostInvocationsDispatchBatch(ctx context.Context, triggerID, ap
 
 // PostTriggersBatchCreate applies a gregale.yaml triggers fragment in
 // one transaction (dashboard-only shortcut).
-func (c *Client) PostTriggersBatchCreate(ctx context.Context, req CreateTriggerBatchRequest) (map[string]any, error) {
+func (c *PreviewClient) PostTriggersBatchCreate(ctx context.Context, req CreateTriggerBatchRequest) (map[string]any, error) {
 	var out map[string]any
 	return out, c.do(ctx, "POST", "/v1/triggers:batch_create", req, &out)
 }

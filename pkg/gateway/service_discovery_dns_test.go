@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/miekg/dns"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
 )
 
@@ -214,6 +215,39 @@ func TestServiceDiscoveryDNSScenarioFaultsAndMatchEvidence(t *testing.T) {
 				t.Fatalf("delayed response = %#v, want ordinary private answer", w.msg)
 			}
 		})
+	}
+}
+
+// ADR-20261024230731: every guest's private lookups pass the chaos policy
+// read, so a store that does not answer delays one answer by at most the
+// lookup budget, and later answers skip the read during the backoff.
+func TestServiceDiscoveryDNSChaosBoundsUnavailablePolicyReads(t *testing.T) {
+	h, err := NewServiceDiscoveryDNSHandler(netip.MustParseAddr("10.100.0.1"), nil, nil, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var reads atomic.Int32
+	h.WithScenarioDNSChaos(func(ctx context.Context, _, _ string) (ServiceDiscoveryDNSChaosPolicy, error) {
+		reads.Add(1)
+		<-ctx.Done()
+		return ServiceDiscoveryDNSChaosPolicy{}, ctx.Err()
+	}, nil)
+	ask := func() (*dns.Msg, time.Duration) {
+		req := new(dns.Msg)
+		req.SetQuestion("cache.svc.gregale.", dns.TypeA)
+		w := &serviceDiscoveryResponseWriter{remote: &net.UDPAddr{IP: net.ParseIP("10.100.0.5"), Port: 54321}}
+		started := time.Now()
+		h.ServeDNS(w, req)
+		return w.msg, time.Since(started)
+	}
+	for i, maxElapsed := range []time.Duration{api.ServiceDNSChaosLookupTimeout + time.Second/2, time.Second / 2} {
+		msg, elapsed := ask()
+		if msg == nil || msg.Rcode != dns.RcodeSuccess || len(msg.Answer) != 1 || elapsed > maxElapsed {
+			t.Fatalf("lookup %d: response=%#v after %s, want the ordinary answer within %s", i, msg, elapsed, maxElapsed)
+		}
+	}
+	if reads.Load() != 1 {
+		t.Fatalf("policy reads = %d, want 1 (the second lookup is inside the backoff)", reads.Load())
 	}
 }
 

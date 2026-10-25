@@ -363,7 +363,7 @@ skips the callback. This Express-style example assumes `rawBody` is a Buffer
 and `authorizeOrder` checks the verified customer against the application's data:
 
 ```ts
-import { GregaleOperations } from '@gregale/sdk-node';
+import { GregaleOperations } from '@gregale/sdk-node/preview';
 
 const operations = new GregaleOperations({ apiURL: 'https://api.example.com' });
 
@@ -548,7 +548,7 @@ runtime reporting; configuring trust does not open admission.
 The Node `GregaleOperations.runRequest(headers, handler)` helper keeps this
 authority isolated per HTTP request and fetches fresh workload identity for each
 report. Its public `context()` omits the capability. Python provides the same
-request isolation through `faas_sdk.operations_runtime.GregaleOperations`.
+request isolation through `faas_sdk.preview.operations_runtime.GregaleOperations`.
 These HTTP helpers reject native Job and workflow contexts.
 
 Node handlers can opt into `runCancellableRequest(headers, async scope => ...)`.
@@ -1074,7 +1074,7 @@ tx.workflowBlockers('order-fulfillment', order.workflow_instance_id, order.statu
 ```
 
 Go uses `tx.WorkflowBlockers(workflow, instanceID, state,
-[]faas.OperationWorkflowBlocker{...})`; Python uses
+[]preview.OperationWorkflowBlocker{...})`; Python uses
 `tx.workflow_blockers(workflow, instance_id, state,
 [OperationWorkflowBlocker(code=..., description=..., operation=...)])`.
 Errors must propagate out of the transaction callback so business changes roll back.
@@ -1334,7 +1334,7 @@ tx.workflowBlockers('order-fulfillment', lockedOrder.workflow_instance_id, locke
   }]);
 ```
 
-Go accepts resolution facts as variadic `faas.OperationWorkflowBlockerResolution`
+Go accepts resolution facts as variadic `preview.OperationWorkflowBlockerResolution`
 arguments after the blocker list in `tx.WorkflowBlockers(...)`. Python accepts
 `resolutions=[OperationWorkflowBlockerResolution(...)]` as a keyword argument to
 `tx.workflow_blockers(...)`. Errors must propagate out of the transaction callback.
@@ -1583,7 +1583,7 @@ links are rejected; targets may be unreported or outside retention.
 Report dependencies in the same transaction as the business row change:
 
 ```go
-err := tx.WorkflowDependencies("fulfillment", orderID, "waiting", []faas.OperationWorkflowDependency{
+err := tx.WorkflowDependencies("fulfillment", orderID, "waiting", []preview.OperationWorkflowDependency{
     {SubjectType: "order", SubjectID: orderID, Workflow: "payment", InstanceID: paymentID, RequiredOutcomeCode: "paid"},
 })
 ```
@@ -1902,9 +1902,9 @@ tx.workflowTransition('order-approval', workflowRunID, 'reviewing', 'approved');
 // Perform the business write through tx after the usual row and authorization checks.
 ```
 
-Go provides `tx.BusinessDecision(name, faas.OperationBusinessDecision{...})`;
+Go provides `tx.BusinessDecision(name, preview.OperationBusinessDecision{...})`;
 Python provides `tx.business_decision(name, OperationBusinessDecision(...))`
-with the model from `faas_sdk.business_decisions`. Node exports
+with the model from `faas_sdk.preview.business_decisions`. Node exports
 `businessDecisionPayload(decision)` and Python offers `decision.to_payload()`;
 Go exports `OperationBusinessDecisionPayload`. These payloads can also be used as
 actual milestone facts in the transactional readiness guard.
@@ -2035,7 +2035,7 @@ Go exposes `tx.ReconcileWorkflowState(ctx, milestone, scope, subject, input, rea
 The reader receives `OperationMilestoneListOptions` and returns
 `OperationMilestonesResponse`, using the tenant-self feed. Python exposes
 `await tx.reconcile_workflow_state(milestone, scope, subject, input, read)` with
-`OperationWorkflowReconciliationInput` from `faas_sdk.workflow_reconciliation`;
+`OperationWorkflowReconciliationInput` from `faas_sdk.preview.workflow_reconciliation`;
 its async reader receives keyword options as a dictionary and returns the typed
 `OperationMilestonesResponse`. Adapt that dictionary to the generated tenant-self
 endpoint's UUID/keyword arguments. Reader/validation failures prevent commit even
@@ -2327,10 +2327,10 @@ const blockers = tx.reportBusinessInvariant('invariant-checked', {
 // Supply returned blockers to the next invariant helper call in this callback.
 ```
 
-Go exposes `tx.ReportBusinessInvariant(milestone, faas.OperationBusinessInvariant,
+Go exposes `tx.ReportBusinessInvariant(milestone, preview.OperationBusinessInvariant,
 currentBlockers)` and returns updated blockers plus an error. Python exposes
 `tx.report_business_invariant(milestone, OperationBusinessInvariant(...), current)`
-with the model from `faas_sdk.business_invariants`. Node also exports
+with the model from `faas_sdk.preview.business_invariants`. Node also exports
 `businessInvariantPayload` and `applyBusinessInvariant`; Go exports the payload
 model. Invariant codes are at most 54 lowercase slug bytes; opaque versions are
 at most 64 UTF-8 bytes; public descriptions at most 256; workflow instances at
@@ -2405,7 +2405,7 @@ missing. CLI emits `workflow-invariant-required` rows.
 SDK transactional guards derive planned invariants from the actual milestone
 payloads they queue, replacing caller-supplied plans. In Node use
 `businessInvariantPayload(report)`; Python uses `report.to_payload()`; Go uses
-`faas.OperationBusinessInvariantPayload{Kind: "gregale.business-invariant.v1",
+`preview.OperationBusinessInvariantPayload{Kind: "gregale.business-invariant.v1",
 Invariant: report}`. Evaluate the check on locked business rows for this proposed
 transition, and pass this payload as an actual fact to the guard. The report's
 `state` is the transition's source state. A passing fact does not automatically
@@ -2484,9 +2484,9 @@ await tx.guardedWorkflowTransition(readinessRequest,
 `tx.businessEffect(name, effect)` records an ordinary effect milestone without
 queuing a transition; it can be used for pending/failed observations or a
 completion fact alongside a separately queued transition. Go exposes
-`tx.BusinessEffect(name, faas.OperationBusinessEffect)` and its payload type.
+`tx.BusinessEffect(name, preview.OperationBusinessEffect)` and its payload type.
 Python exposes `tx.business_effect(name, OperationBusinessEffect(...))`, with the
-model from `faas_sdk.business_effects`; `effect.to_payload()` supplies a fact to
+model from `faas_sdk.preview.business_effects`; `effect.to_payload()` supplies a fact to
 its transactional guard. Node exports `businessEffectPayload`. Guards derive
 planned effects from the actual payloads they queue, replacing caller plans.
 Do not queue the same fact separately when the guard already queues it.
@@ -2568,10 +2568,10 @@ tx.businessCompensation('compensation-reported', {
 After verifying the reversal, report `confirmed` with its reference through the
 same application workflow instance in a new authorized Operation. Use a new run
 ID for a separate compensation attempt if the application distinguishes attempts.
-Go exposes `tx.BusinessCompensation(name, faas.OperationBusinessCompensation)`
+Go exposes `tx.BusinessCompensation(name, preview.OperationBusinessCompensation)`
 and `OperationBusinessEffectReference`; Python exposes
 `tx.business_compensation(name, OperationBusinessCompensation(...))`, with models
-from `faas_sdk.business_compensation`. Node exports `businessCompensationPayload`;
+from `faas_sdk.preview.business_compensation`. Node exports `businessCompensationPayload`;
 Python offers `report.to_payload()`; Go exports the payload type.
 
 Source IDs are canonical lowercase nonzero UUIDs. Workflow names are at most 63
@@ -3175,7 +3175,7 @@ their existing behavior and cannot receive named-path selections.
 
 For direct reporting, Node `tx.workflowTransition` accepts selections as its fifth
 argument; Go `tx.WorkflowTransition` accepts variadic
-`faas.OperationWorkflowPathSelection` values; Python `tx.workflow_transition`
+`preview.OperationWorkflowPathSelection` values; Python `tx.workflow_transition`
 accepts `selected_paths=[OperationWorkflowPathSelection(...)]`. Guards obtain
 choices from the readiness proposal. Direct reporting validates choices against
 the pinned contract, while retained-evidence readiness remains observational.

@@ -97,6 +97,15 @@
 # Default: false
 # disable_restore_prefetch = false
 
+# restore_reseed_thread: boot app VMs whose Node processes answer the restore
+# reseed barrier (ADR-680) from the preload addon's native thread instead of
+# their event loop (ADR-20261024105607). The resume hook still waits for every
+# process to reseed OpenSSL; Math.random and Node's RNG caches adopt the
+# restore before their next value. Only later cold boots and the snapshots
+# they capture change. FAAS_RESTORE_RESEED_THREAD overrides.
+# Default: false
+# restore_reseed_thread = false
+
 # quiet_pause: pause an eligible instance's vCPUs between requests and resume
 # it when the next one arrives (ADR-957). The instance stays RUNNING and
 # billed; a paused VM uses no host CPU. schedd decides which instances are
