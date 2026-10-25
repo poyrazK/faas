@@ -173,7 +173,9 @@ for letting chosen production services accept preview traffic.
 ## Cold starts and tracing
 
 Parked services wake on their first request, so a chain of cold services wakes
-one after another. `gregale wake-ahead <app> on` lets an app start restoring
-the services it usually calls while it is still waking itself; see
+one after another. Wake-ahead lets an app start restoring the services it
+usually calls while it is still waking itself. It is on by default for services
+under the `project` policy, once the gateways have measured which siblings an
+app calls after waking; `gregale wake-ahead <app> off` turns it off. See
 [wake-ahead](service-wake-ahead.md). Traces follow a request across services;
 see [tracing](tracing.md) and the [service map](service-map.md).
