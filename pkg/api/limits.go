@@ -11029,6 +11029,9 @@ const (
 	ObsAlertResponseTimesWindowMax                   = 30 * 24 * time.Hour
 	ObsAlertResponseTimesEpisodesMax                 = 1000
 	ObsAlertResponseTimesReceiptsMax                 = 10000
+	ObsWakeTimelineEventsMax                         = 1000 // events returned for one wake; more sets truncated
+	ObsWakeTimelineBudget                            = 5 * time.Second
+	ObsAppSnapshotDeploymentsMax                     = 4 // live deployments whose snapshots `obs app` reads (2 during a canary)
 	ObsAlertRecurrenceBudget                         = 5 * time.Second
 	ObsAlertRecurrenceWindowDefault                  = 24 * time.Hour
 	ObsAlertRecurrenceWindowMax                      = 30 * 24 * time.Hour
