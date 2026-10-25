@@ -79,7 +79,16 @@ type S3Client struct {
 	Secret      string
 	TokenSource oauth2.TokenSource
 	HTTP        *http.Client
+	// StreamHTTP serves OpenObject. Its body is read as fast as a log
+	// reader consumes it, so it has no whole-request timeout: the caller's
+	// context bounds the stream, and the transport bounds the wait for
+	// response headers. Nil falls back to HTTP.
+	StreamHTTP *http.Client
 }
+
+// streamResponseHeaderTimeout bounds how long OpenObject waits for the
+// object store to start answering.
+const streamResponseHeaderTimeout = 30 * time.Second
 
 const s3ErrorBodyMaxBytes = 64 << 10
 
@@ -100,6 +109,11 @@ func NewS3Client(endpoint, region, bucket, keyID, secret string, authMode ...str
 		KeyID:    keyID,
 		Secret:   secret,
 		HTTP:     &http.Client{Timeout: 30 * time.Second},
+	}
+	if transport, ok := http.DefaultTransport.(*http.Transport); ok {
+		stream := transport.Clone()
+		stream.ResponseHeaderTimeout = streamResponseHeaderTimeout
+		client.StreamHTTP = &http.Client{Transport: stream}
 	}
 	mode := ""
 	if len(authMode) > 0 {
@@ -226,6 +240,33 @@ func (c *S3Client) GetObject(ctx context.Context, key string, w io.Writer) (int6
 		return n, fmt.Errorf("logarchive: read body: %w", err)
 	}
 	return n, nil
+}
+
+// OpenObject starts fetching {bucket}/{key} and returns its body for the
+// caller to stream and close. Errors before the body (a *Permanent on 4xx,
+// a plain error on 5xx or network) are returned here; errors while reading
+// come from the body. Cancelling ctx ends the stream.
+func (c *S3Client) OpenObject(ctx context.Context, key string) (io.ReadCloser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.objectURL(key), nil)
+	if err != nil {
+		return nil, fmt.Errorf("logarchive: build request: %w", err)
+	}
+	if err := c.authorize(req, hexSHA256(nil)); err != nil {
+		return nil, err
+	}
+	client := c.StreamHTTP
+	if client == nil {
+		client = c.HTTP
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("logarchive: get: %w", err)
+	}
+	if err := checkS3Status(resp, "GET"); err != nil {
+		_ = resp.Body.Close()
+		return nil, err
+	}
+	return resp.Body, nil
 }
 
 func (c *S3Client) authorize(req *http.Request, payloadHash string) error {
