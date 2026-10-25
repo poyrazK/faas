@@ -425,6 +425,7 @@ export class DevService {
         401: `code: unauthorized`,
         404: `code: not_found`,
         409: `code: conflict`,
+        501: `code: rehearsal_not_enabled — a requested rehearsal capability is not enabled on this installation. Retrying will not help.`,
       },
     });
   }
@@ -582,6 +583,7 @@ export class DevService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        501: `code: rehearsal_not_enabled — a requested rehearsal capability is not enabled on this installation. Retrying will not help.`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
@@ -681,6 +683,7 @@ export class DevService {
         400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
         401: `code: unauthorized`,
         404: `code: not_found`,
+        501: `code: rehearsal_not_enabled — a requested rehearsal capability is not enabled on this installation. Retrying will not help.`,
         503: `Generic 503 envelope. Used by the apid capacity gate (e.g.
         host age recipient not loaded → registry credential PUT
         returns 503 instead of accepting plaintext).
