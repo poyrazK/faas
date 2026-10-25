@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -5098,36 +5099,7 @@ func cmdDomains(args []string) int {
 	case "setup":
 		return cmdDomainsSetup(args[1:])
 	case subList:
-		client, err := authedClient()
-		if err != nil {
-			return printErr("Not logged in", err)
-		}
-		var slugs map[string]string
-		if !jsonOutput {
-			slugs = appSlugsByID(client)
-		}
-		out, err := client.ListDomains(context.Background())
-		if err != nil {
-			return printErr("Could not list domains", err)
-		}
-		if jsonOutput {
-			return jsonOut(writeNDJSON(out))
-		}
-		for _, d := range out {
-			verified := statusPending
-			if d.Verified {
-				verified = statusVerified
-			}
-			marker := ""
-			if d.Default {
-				marker = " [default]"
-			}
-			if d.Environment != "" {
-				marker += " [" + d.Environment + "]"
-			}
-			_, _ = fmt.Fprintf(osStdout, "%-40s %-12s %s%s\n", d.Domain, verified, appLabel(slugs, d.AppID), marker)
-		}
-		return 0
+		return cmdDomainsList(args[1:])
 	case subAdd:
 		fs := newFlagSet("domains add", flag.ContinueOnError)
 		domain := fs.String("domain", "", "domain to attach (or pass it as the first argument)")
@@ -8345,4 +8317,69 @@ func warnDeployStreamInterrupted(quiet bool) {
 	if !quiet {
 		PrintWarn(os.Stderr, "build log stream interrupted; following deployment status…")
 	}
+}
+
+// cmdDomainsList lists the account's custom domains, or one app's with --app.
+// It ignored every argument, so `domains list --app h14-py` listed the whole
+// account, and printed nothing at all when there were none (Hunt 14 H14-50).
+func cmdDomainsList(args []string) int {
+	fs := newFlagSet("domains list", flag.ContinueOnError)
+	appSlug := fs.String("app", "", "only this app's domains")
+	if err := parseInterspersed(fs, args); err != nil {
+		return 1
+	}
+	if fs.NArg() != 0 {
+		PrintUsage(os.Stderr, "usage: gregale domains list [--app <slug>]", "domains")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	ctx := context.Background()
+	appID := ""
+	if slug := strings.TrimSpace(*appSlug); slug != "" {
+		app, err := client.GetApp(ctx, slug)
+		if err != nil {
+			return printErr("Could not find app", err)
+		}
+		appID = app.ID
+	}
+	var slugs map[string]string
+	if !jsonOutput {
+		slugs = appSlugsByID(client)
+	}
+	out, err := client.ListDomains(ctx)
+	if err != nil {
+		return printErr("Could not list domains", err)
+	}
+	if appID != "" {
+		out = slices.DeleteFunc(out, func(d api.CustomDomainResponse) bool { return d.AppID != appID })
+	}
+	if jsonOutput {
+		return jsonOut(writeNDJSON(out))
+	}
+	if len(out) == 0 {
+		scope := "this account"
+		if appID != "" {
+			scope = "app " + strings.TrimSpace(*appSlug)
+		}
+		_, _ = fmt.Fprintf(osStdout, "No custom domains for %s. Add one with `gregale domains setup <domain> --app <slug>`.\n", scope)
+		return 0
+	}
+	for _, d := range out {
+		verified := statusPending
+		if d.Verified {
+			verified = statusVerified
+		}
+		marker := ""
+		if d.Default {
+			marker = " [default]"
+		}
+		if d.Environment != "" {
+			marker += " [" + d.Environment + "]"
+		}
+		_, _ = fmt.Fprintf(osStdout, "%-40s %-12s %s%s\n", d.Domain, verified, appLabel(slugs, d.AppID), marker)
+	}
+	return 0
 }
