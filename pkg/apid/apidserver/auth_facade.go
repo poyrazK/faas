@@ -84,8 +84,8 @@ func (s *server) authorizeAppResource(next accountHandler) accountHandler {
 }
 
 func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account) {
-	if r.PathValue("slug") != "" && (strings.HasPrefix(r.URL.Path, "/dashboard/apps/") || strings.HasPrefix(r.URL.Path, "/v1/apps/")) {
-		s.authorizeDashboardApp(next, w, r, actor)
+	if slug := dashboardAppSlug(r); slug != "" {
+		s.authorizeDashboardApp(next, w, r, actor, slug)
 		return
 	}
 	if !strings.HasPrefix(r.URL.Path, "/dashboard/projects/") || r.PathValue("slug") == "" {
@@ -106,8 +106,8 @@ func (s *server) authorizeDashboardProject(next http.Handler, w http.ResponseWri
 // and then serves the original request: the handlers keep their
 // creator-scoped behaviour, now only for a creator who still holds the
 // route's permission.
-func (s *server) authorizeDashboardApp(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account) {
-	app, err := s.store.AppBySlug(r.Context(), r.PathValue("slug"))
+func (s *server) authorizeDashboardApp(next http.Handler, w http.ResponseWriter, r *http.Request, actor state.Account, slug string) {
+	app, err := s.store.AppBySlug(r.Context(), slug)
 	if err != nil {
 		// Missing and foreign apps keep the handlers' own not-found answer.
 		next.ServeHTTP(w, r)
@@ -119,6 +119,30 @@ func (s *server) authorizeDashboardApp(next http.Handler, w http.ResponseWriter,
 		return
 	}
 	next.ServeHTTP(w, r)
+}
+
+// dashboardAppSlug names the app a session-only app route addresses, or ""
+// for any other route. Most carry {slug} in their pattern (the MCP actions
+// under /dashboard/mcp/apps/ too), but the "GET /dashboard/" subtree
+// dispatches the app pages (detail, logs, env, debug, jobs, ...) by path in
+// dashboardHandler, so there the slug is the first segment under
+// /dashboard/apps/. /dashboard/apps/new is the deploy wizard, not an app's
+// page.
+func dashboardAppSlug(r *http.Request) string {
+	if slug := r.PathValue("slug"); slug != "" {
+		for _, prefix := range []string{"/dashboard/apps/", "/dashboard/mcp/apps/", "/v1/apps/"} {
+			if strings.HasPrefix(r.URL.Path, prefix) {
+				return slug
+			}
+		}
+		return ""
+	}
+	rest, ok := strings.CutPrefix(r.URL.Path, "/dashboard/apps/")
+	if !ok || !strings.HasSuffix(r.Pattern, "/") || rest == "new" {
+		return ""
+	}
+	slug, _, _ := strings.Cut(rest, "/")
+	return slug
 }
 
 // sameOriginSessionWrites refuses a state-changing /v1 request that is
