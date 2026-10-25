@@ -198,6 +198,9 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 		"2026/10/14 19:44:14 INFO api_env loaded count=10\n",
 		// Hunt 14 H14-27: first line of every cold boot on rc.294.
 		"2026/10/25 02:54:27 INFO fork exec listener started vsock_port=1034\n",
+		// Hunt 14 H14-28: a function runner's startup lines on every cold boot.
+		"2026/10/25 02:29:10 go124 runner: serving on :8080 (handler=/app/handler, h2c-capable for app_protocol∈{http2,grpc})\n",
+		"2026/10/25 02:29:10 h2c-listener: listening on :8080 (H2C-capable)\n",
 		"2026-10-14T07:14:45.514973340 [c26f50da-1f34-494c-9ecc-acd797734558:main] Vmm is stopping.\n",
 		"2026-10-14T07:14:45.515204584 [c26f50da-1f34-494c-9ecc-acd797734558:main] Killing vCPU threads\n",
 		"2026/10/14 00:58:51 INFO order created id=42\n",
@@ -205,6 +208,7 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 		"2026/10/14 09:23:13 INFO job-exit shipped exit_code=3 error_class=failed signal=0 attempt=1\n",
 		"[    2.497231] reboot: Power off not available: System halted instead\n",
 		"workload identity proxy started is fine from an app without the slog stamp\n",
+		"2026/10/25 02:30:00 go124 runner: handler error: exit status 2\n",
 		"hello-gregale listening on :3000\n",
 	} {
 		if _, err := w.Write([]byte(line)); err != nil {
@@ -218,6 +222,7 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 	want := []string{
 		"2026/10/14 00:58:51 INFO order created id=42",
 		"workload identity proxy started is fine from an app without the slog stamp",
+		"2026/10/25 02:30:00 go124 runner: handler error: exit status 2",
 		"hello-gregale listening on :3000",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {

@@ -482,7 +482,7 @@ func (w *customerConsoleWriter) Flush() error {
 
 // commitLocked filters one complete line and writes it to the ring.
 func (w *customerConsoleWriter) commitLocked(line []byte) error {
-	if w.dropInitPanicLocked(line) || firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) {
+	if w.dropInitPanicLocked(line) || firecrackerControlLine(line) || guestInitStageLine(line) || guestInitPlatformLine(line) || benignGuestKernelLine(line) || functionRunnerStartupLine(line) {
 		return nil
 	}
 	// The guest serial console's tty turns every '\n' into "\r\n"
@@ -494,6 +494,25 @@ func (w *customerConsoleWriter) commitLocked(line []byte) error {
 	}
 	_, err := w.ring.Write("stdout", line)
 	return err
+}
+
+// functionRunnerStartupLine matches the function runner shim's two startup
+// lines, e.g. "2026/10/25 02:29:10 go124 runner: serving on :8080 (handler=
+// /app/handler, ...)" and "... h2c-listener: listening on :8080 (H2C-capable)".
+// They opened every function cold boot's customer log on production-us rc.294
+// (Hunt 14 H14-28). The runner's handler errors stay customer-visible.
+func functionRunnerStartupLine(line []byte) bool {
+	text := strings.TrimSpace(string(line))
+	const stamp = len("2006/01/02 15:04:05 ")
+	if len(text) <= stamp || text[4] != '/' || text[7] != '/' || text[10] != ' ' || text[13] != ':' || text[16] != ':' || text[19] != ' ' {
+		return false
+	}
+	msg := text[stamp:]
+	if strings.HasPrefix(msg, "h2c-listener: listening on ") {
+		return true
+	}
+	runtime, rest, ok := strings.Cut(msg, " runner: serving on ")
+	return ok && rest != "" && runtime != "" && !strings.ContainsAny(runtime, " \t")
 }
 
 // dropInitPanicLocked drops the kernel's panic dump after guest-init (PID 1)
