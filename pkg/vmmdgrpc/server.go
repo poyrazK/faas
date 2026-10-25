@@ -413,7 +413,11 @@ func NewWithCPUAndNetAndActivity(vmm VmmdAPI, ops *wire.OpsMetrics, fcVer string
 		// never exported. Tests that don't assert metrics use this path.
 		ops = wire.NewOpsMetrics("vmmd_test")
 	}
-	return &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker(), streamBridges: newStreamBridgeManager(log)}
+	s := &Server{vmm: vmm, ops: ops, fcVer: fcVer, log: log, cpuCache: cpu, netCache: net, activity: act, migrations: newMigrationTracker(), streamBridges: newStreamBridgeManager(log)}
+	if j, ok := vmm.(instanceBridgeJournal); ok {
+		s.streamBridges.journal = j
+	}
+	return s
 }
 
 // WithEvents (issue #517 / PR-C / ADR-064) wires the wake-timeline

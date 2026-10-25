@@ -126,6 +126,11 @@ type streamBridgeManager struct {
 	units           sdunit.Manager
 	connectUnits    func(context.Context) (sdunit.Manager, error)
 	openUnitProcess unitProcessOpener
+	probeSocket     func(string, bridgeIdentity) error
+	// journal records unit runs for adoption (bridge_unit_adopt.go);
+	// keepUnits leaves units running at shutdown for a successor.
+	journal   instanceBridgeJournal
+	keepUnits bool
 
 	reaperOnce sync.Once
 	reaperCtx  context.Context
@@ -156,6 +161,7 @@ func newStreamBridgeManager(log *slog.Logger) *streamBridgeManager {
 		unitsOn:         InstanceBridgeUnitsEnabled,
 		connectUnits:    connectSystemd,
 		openUnitProcess: openUnitProcessReal,
+		probeSocket:     probeBridgeSocket,
 	}
 }
 
@@ -452,7 +458,7 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 	spawnNetns, guestIP := streamBridgeTarget(withPublicTarget(ctx, entry.target), entry.netns)
 	env := netns.PublicForwardEnv(streamBridgeStaticEnv(req), entry.target)
 	if m.useUnit(entry) {
-		if err := m.startEntryUnit(ctx, entry, bridgePath, spawnNetns, guestIP, port, deadline, env); err != nil {
+		if err := m.startEntryUnit(ctx, entry, bridgePath, spawnNetns, guestIP, port, deadline, env, req.GetAppProtocol()); err != nil {
 			return err
 		}
 		if err := m.waitSocket(entry.socket, streamBridgeSocketReadyTimeout); err != nil {
@@ -461,7 +467,11 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 		if !entry.alive() {
 			return fmt.Errorf("instance bridge unit %s exited before becoming ready", entry.unit.name)
 		}
-		return m.connectEntry(entry)
+		if err := m.connectEntry(entry); err != nil {
+			return err
+		}
+		m.recordUnit(entry)
+		return nil
 	}
 	if entry.identity.unprivileged() {
 		if err := entry.identity.prepareSocketDir(entry.socket); err != nil {
@@ -696,6 +706,10 @@ func (m *streamBridgeManager) close(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			if m.keepUnits && entry.unit != nil {
+				m.releaseForHandoff(entry)
+				return
+			}
 			m.closeEntry(ctx, entry)
 		}()
 	}
