@@ -1026,6 +1026,23 @@ const ScheduledReleaseStartGrace = time.Hour
 const ScheduledReleaseNotifyChannelsMax = 5
 const ScheduledReleaseListMax = 50
 
+// Database switches (ADR-20261023181931). apid advances active switches
+// every DatabaseSwitchCheckInterval, DatabaseSwitchBatch at a time, under a
+// DatabaseSwitchLease. A switch fails when its restored copy is not ready
+// within DatabaseSwitchRestoreTimeout, when in-flight members of the fenced
+// app have not settled within DatabaseSwitchSettleTimeout, or when its drain
+// has not retired every instance within DatabaseSwitchDrainTimeout; the two
+// fenced waits bound how long the app is unavailable before an abort. A
+// listing returns at most DatabaseSwitchListMax switches. Plan-independent:
+// these bound one operation, not what a plan may use.
+const DatabaseSwitchCheckInterval = 5 * time.Second
+const DatabaseSwitchBatch = 10
+const DatabaseSwitchLease = 2 * time.Minute
+const DatabaseSwitchRestoreTimeout = time.Hour
+const DatabaseSwitchSettleTimeout = 2 * time.Minute
+const DatabaseSwitchDrainTimeout = 10 * time.Minute
+const DatabaseSwitchListMax = 50
+
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
 // failed when it leaves activation without serving or when
@@ -9464,6 +9481,21 @@ func (p Plan) HealthPathWakesAllowed() bool {
 // is global, not per-tenant).
 const RouteMetricsPerAppCap = 50
 
+// Per-route series at fleet scale (ADR-20261024154324). Every Hobby+ app opts
+// into per-route metrics, so each gatewayd-internal bounds its own export: at
+// most RouteMetricsMaxRoutesPerGateway (app, route) pairs carry live
+// gateway_*_by_route series (FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES overrides
+// it), and an app's series are deleted once it has gone
+// RouteMetricsSeriesIdleTTL without a request on that gateway, checked every
+// RouteMetricsSweepInterval. Readers that list an app's routes look back
+// RouteMetricsObservedWindow, so an evicted app's routes stay listed.
+const (
+	RouteMetricsMaxRoutesPerGateway = 5000
+	RouteMetricsSeriesIdleTTL       = time.Hour
+	RouteMetricsSweepInterval       = 5 * time.Minute
+	RouteMetricsObservedWindow      = 7 * 24 * time.Hour
+)
+
 // RouteRequirementsMaxBytes and RouteRequirementsMaxRoutes bound local,
 // customer-owned requirements documents and read-only evaluation work. These
 // are input safety bounds, not a new hosting-plan quota (ADR-436).
@@ -12177,17 +12209,21 @@ const (
 )
 
 // RouteInsight bounds proactive route insights (ADR-1198): every
-// RouteInsightInterval apid evaluates at most RouteInsightMaxApps apps that
-// ran in the last RouteInsightWindow. An insight no evaluation has observed
-// for RouteInsightResolveAfter resolves. A kept_awake insight needs the app
-// awake for at least RouteInsightKeptAwakeMinShare of the window. Listings
-// show active insights and those resolved within RouteInsightResolvedListWindow,
+// RouteInsightInterval apid evaluates every app on a plan with request
+// telemetry that ran in the last RouteInsightWindow, least recently evaluated
+// first, reading RouteInsightBatchApps candidates at a time; an app evaluated
+// within half an interval is not due (ADR-20261024154324). An insight no
+// evaluation has observed for RouteInsightResolveAfter resolves, at most
+// RouteInsightResolveBatch per run. A kept_awake insight needs the app awake
+// for at least RouteInsightKeptAwakeMinShare of the window. Listings show
+// active insights and those resolved within RouteInsightResolvedListWindow,
 // at most RouteInsightListLimit rows.
 const (
 	RouteInsightInterval           = 6 * time.Hour
 	RouteInsightWindow             = 24 * time.Hour
 	RouteInsightResolveAfter       = 24 * time.Hour
-	RouteInsightMaxApps            = 500
+	RouteInsightBatchApps          = 500
+	RouteInsightResolveBatch       = 5000
 	RouteInsightKeptAwakeMinShare  = 0.5
 	RouteInsightListLimit          = 50
 	RouteInsightResolvedListWindow = 7 * 24 * time.Hour
@@ -12382,6 +12418,14 @@ const RouteHealthTransitionVersion = 1
 // error-budget incident must open within this long after the deployment
 // started serving all traffic.
 const RouteMonitorRollbackWindow = 30 * time.Minute
+
+// A route monitor drain reads RouteMonitorBatchSize monitors at a time until
+// none it has not taken is due or RouteMonitorDrainBudget passes, evaluating
+// RouteMonitorWorkerConcurrency at once (ADR-20261024154324).
+const (
+	RouteMonitorDrainBudget       = RouteMonitorEvaluationInterval
+	RouteMonitorWorkerConcurrency = 4
+)
 
 // Production route monitoring and bounded customer evidence (ADR-498/499).
 const (

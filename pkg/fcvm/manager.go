@@ -2987,6 +2987,18 @@ func (m *Manager) WorkloadTokenIdentity(ctx context.Context, instance string) (s
 	return booting.appID, booting.accountID, nil
 }
 
+// WorkloadTokenDeployment is the deployment a live or booting instance runs,
+// whose scope names the environment in its workload-identity tokens. Empty
+// when the instance is unknown or its wake carried no deployment.
+func (m *Manager) WorkloadTokenDeployment(instance string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if inst := m.live[instance]; inst != nil {
+		return inst.DeploymentID
+	}
+	return m.waking[instance].deploymentID
+}
+
 // workerProven reports whether a declared worker's deployment already
 // passed the full characterization window on this node, so its next cold
 // boot only has to show that the process started (ADR-20261018101500).

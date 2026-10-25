@@ -1,7 +1,12 @@
 [tool.poetry]
-name = "faas_sdk"
+# Distribution name is `gregale-sdk`; the import package stays `faas_sdk`
+# (like `pip install pillow` -> `import PIL`). Do NOT name or publish it
+# `faas_sdk`/`faas-sdk`: that PyPI project belongs to an unrelated company
+# (Sonra Intelligence Ltd), so the name would point customers at someone
+# else's code. tests/test_packaging.py pins this.
+name = "gregale-sdk"
 version = "0.1.0"
-description = "A client library for accessing one-box FaaS REST API"
+description = "Python SDK for Gregale applications"
 authors = []
 readme = "README.md"
 packages = [

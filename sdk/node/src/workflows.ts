@@ -90,7 +90,8 @@ export interface JournalEntry {
   seq: number;
   name: string;
   kind: Kind;
-  status: 'succeeded' | 'failed' | 'retrying' | 'waiting';
+  /** `scheduled` is a retrying step whose back-off has not elapsed yet. */
+  status: 'succeeded' | 'failed' | 'retrying' | 'scheduled' | 'waiting';
   attempt?: number;
   output?: unknown;
   error?: string;
@@ -171,7 +172,7 @@ class Invocation implements WorkflowContext {
   // claim assigns the next sequence number. A recorded operation that does
   // not match is reported as asked, so Gregale refuses the replay.
   private claim(name: string, kind: Kind, event?: string): { seq: number; name: string; entry?: JournalEntry; conflict: boolean } {
-    if (!OP_NAME.test(name)) throw new Error(`invalid workflow operation name "${name}": use 1-128 of A-Z a-z 0-9 _ . : # / - starting with a letter or digit`);
+    if (!OP_NAME.test(name) || name.includes('#')) throw new Error(`invalid workflow operation name "${name}": use 1-128 of A-Z a-z 0-9 _ . : / - starting with a letter or digit; "#" is reserved for repeated names (poll, poll#2, …)`);
     const count = (this.names.get(name) ?? 0) + 1;
     this.names.set(name, count);
     const opName = count === 1 ? name : `${name}#${count}`;
@@ -194,6 +195,8 @@ class Invocation implements WorkflowContext {
     }
     if (entry?.status === 'succeeded') return Promise.resolve(entry.output as T);
     if (entry?.status === 'failed') return Promise.reject(new WorkflowStepError(opName, entry.error ?? 'step failed', entry.attempt ?? 1));
+    // Its back-off has not elapsed; Gregale calls again when it is due.
+    if (entry?.status === 'scheduled') return suspended<T>();
     const attempt = (entry?.attempt ?? 0) + 1;
     const retry = options?.retry ? { max_attempts: options.retry.maxAttempts, ...(options.retry.backoff ? { backoff: options.retry.backoff } : {}) } : undefined;
     this.activity++;

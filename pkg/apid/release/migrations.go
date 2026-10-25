@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,6 +25,19 @@ func RollbackGuard(ctx context.Context, store any, appID string, target state.De
 	runs, err := history.ReleaseRunsCrossedBy(ctx, appID, target.ID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("list releases crossed by rollback: %w", err)
+	}
+	// ADR-20261023181931: a completed database switch restored the database
+	// to before the releases it undid. Their code cannot run on it, and
+	// their release commands no longer apply to the database.
+	if switches, ok := store.(state.DatabaseSwitchStore); ok {
+		undone, err := switches.ReleasesUndoneByDatabaseSwitches(ctx, appID, target.Scope)
+		if err != nil {
+			return nil, nil, fmt.Errorf("list releases undone by database switches: %w", err)
+		}
+		if slices.Contains(undone, target.ID) {
+			return nil, api.ErrRollbackTargetDatabaseRestored(deploymentRef(target)), nil
+		}
+		runs = slices.DeleteFunc(runs, func(r state.ReleaseRun) bool { return slices.Contains(undone, r.DeploymentID) })
 	}
 	if len(runs) == 0 || acknowledged {
 		return runs, nil, nil
@@ -63,6 +77,19 @@ func CrossingProblem(target state.Deployment, runs []state.ReleaseRun, databases
 		})
 	}
 	return api.ErrRollbackCrossesRelease(deploymentRef(target), crossed, restore)
+}
+
+// SwitchRestore is where a rollback that restores the database restores it
+// to (ADR-20261023181931): the start of the earliest crossed release,
+// truncated to the second, under ADR-1448's suggested copy name.
+func SwitchRestore(runs []state.ReleaseRun, database state.ReleaseDatabase) (time.Time, string) {
+	earliest := runs[0]
+	for _, r := range runs {
+		if r.StartedAt.Before(earliest.StartedAt) {
+			earliest = r
+		}
+	}
+	return earliest.StartedAt.UTC().Truncate(time.Second), restoreTargetName(database.Name, earliest)
 }
 
 // restoreTargetName suggests "<name>-before-v<rev>" within managed

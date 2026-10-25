@@ -322,25 +322,34 @@ func (s *server) listTenantSurfaces(w http.ResponseWriter, r *http.Request, acct
 }
 
 // getTenantSurface — GET /v1/apps/{slug}/tenant-surfaces/{id}.
-// Single surface + its hostnames. The id is a UUID; we
-// re-resolve through the store so we can apply the
-// AccountID == acct.ID check (the surface row carries
-// AccountID; we don't need to hop through the app again).
-// Soft-deleted surfaces return 404 — the route is read-only
-// for active surfaces; the cert history / audit trail stay
+// tenantSurfaceForSlug loads the active surface {id} of the {slug} app.
+// Matching AccountID alone is not enough: an organization's company apps
+// and their creator's personal apps share AccountID, and appaccess
+// authorized the caller for {slug} only, so a removed creator or an
+// app-bound key must not reach another app's surface through it.
+// Soft-deleted surfaces return 404 — the cert history / audit trail stay
 // in the DB but the API hides them.
+func (s *server) tenantSurfaceForSlug(w http.ResponseWriter, r *http.Request, acct state.Account) (state.TenantSurface, bool) {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
+		return state.TenantSurface{}, false
+	}
+	surf, err := s.store.GetTenantSurfaceByID(r.Context(), r.PathValue("id"))
+	if err != nil || surf.AccountID != acct.ID || surf.AppID != app.ID || surf.Status == state.SurfaceStatusDeleted {
+		s.notFound(w, "no such surface")
+		return state.TenantSurface{}, false
+	}
+	return surf, true
+}
+
+// Single surface + its hostnames.
 func (s *server) getTenantSurface(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.runtimeBool(runtimeConfigTenantSurfaces, api.TenantSurfacesEnabled()) {
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
-		return
-	}
-	id := r.PathValue("id")
-	surf, err := s.store.GetTenantSurfaceByID(r.Context(), id)
-	if err != nil || surf.AccountID != acct.ID || surf.Status == state.SurfaceStatusDeleted {
-		s.notFound(w, "no such surface")
+	surf, ok := s.tenantSurfaceForSlug(w, r, acct)
+	if !ok {
 		return
 	}
 	hostnames, herr := s.store.ListTenantHostnamesForSurface(r.Context(), surf.ID)
@@ -364,13 +373,8 @@ func (s *server) deleteTenantSurface(w http.ResponseWriter, r *http.Request, acc
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
-		return
-	}
-	id := r.PathValue("id")
-	surf, err := s.store.GetTenantSurfaceByID(r.Context(), id)
-	if err != nil || surf.AccountID != acct.ID || surf.Status == state.SurfaceStatusDeleted {
-		s.notFound(w, "no such surface")
+	surf, ok := s.tenantSurfaceForSlug(w, r, acct)
+	if !ok {
 		return
 	}
 	// Cascade hostnames first so a future re-add of the same
@@ -420,13 +424,8 @@ func (s *server) addTenantHostname(w http.ResponseWriter, r *http.Request, acct 
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
-		return
-	}
-	id := r.PathValue("id")
-	surf, err := s.store.GetTenantSurfaceByID(r.Context(), id)
-	if err != nil || surf.AccountID != acct.ID || surf.Status == state.SurfaceStatusDeleted {
-		s.notFound(w, "no such surface")
+	surf, ok := s.tenantSurfaceForSlug(w, r, acct)
+	if !ok {
 		return
 	}
 	var req api.AddTenantHostnameRequest
@@ -475,7 +474,8 @@ func (s *server) removeTenantHostname(w http.ResponseWriter, r *http.Request, ac
 		api.WriteProblem(w, api.ErrTenantSurfacesNotEnabled())
 		return
 	}
-	if _, ok := s.loadApp(w, r, acct, r.PathValue("slug")); !ok {
+	app, ok := s.loadApp(w, r, acct, r.PathValue("slug"))
+	if !ok {
 		return
 	}
 	surfID := r.PathValue("id")
@@ -490,7 +490,7 @@ func (s *server) removeTenantHostname(w http.ResponseWriter, r *http.Request, ac
 		return
 	}
 	surf, err := s.store.GetTenantSurfaceByID(r.Context(), surfID)
-	if err != nil || surf.AccountID != acct.ID {
+	if err != nil || surf.AccountID != acct.ID || surf.AppID != app.ID {
 		s.notFound(w, "no such hostname")
 		return
 	}
