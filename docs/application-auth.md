@@ -79,7 +79,8 @@ mux.Handle("/api/docs/", client.Require(http.HandlerFunc(func(w http.ResponseWri
 })))
 ```
 
-Python (`pip install 'faas_sdk[auth]'`), here as a FastAPI dependency:
+Python (install `gregale-sdk[auth]` as [Install the SDKs](sdks.md#python)
+shows; `faas_sdk` on PyPI is not Gregale's), here as a FastAPI dependency:
 
 ```python
 from fastapi import Header, HTTPException

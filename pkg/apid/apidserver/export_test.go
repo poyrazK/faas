@@ -1673,6 +1673,19 @@ func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.
 	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
 }
 
+// SetDatabaseSwitchDrain gives a test server's database switch worker drain
+// evidence the in-memory store lacks (ADR-20261023181931).
+func (e sourceRefTestEnv) SetDatabaseSwitchDrain(drain state.DatabaseSwitchDrainStore) {
+	e.srv.databaseSwitchDrainOverride = drain
+	e.srv.rollbackArtifactVerifier = stubRollbackArtifactVerifier{}
+}
+
+// DatabaseSwitchWorkerConfigured reports whether the server can run database
+// switches.
+func (e sourceRefTestEnv) DatabaseSwitchWorkerConfigured() bool {
+	return e.srv.databaseSwitchWorker() != nil
+}
+
 // PrepareGitOpsWorkloadCandidatesForTest runs the GitOps backend's candidate
 // preparation against s's runtime configuration (ADR 20261022140000).
 func (s *server) PrepareGitOpsWorkloadCandidatesForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore,

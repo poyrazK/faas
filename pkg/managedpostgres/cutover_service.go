@@ -103,7 +103,7 @@ func (s *CutoverService) Reconcile(ctx context.Context, account, id string) (Cut
 	if err != nil {
 		return Cutover{}, err
 	}
-	if c.State == CutoverPrepared || c.State == CutoverVerified || c.State == CutoverCancelled {
+	if c.State == CutoverPrepared || c.State == CutoverVerified || c.State.Closed() {
 		return c, nil
 	}
 	if c.State == CutoverCancelling {

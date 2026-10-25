@@ -16435,7 +16435,7 @@ BEGIN
  END IF;
  IF OLD.managed_postgres_admission_cutover_id IS NOT NULL THEN
   SELECT * INTO intent FROM managed_postgres_cutovers WHERE id=OLD.managed_postgres_admission_cutover_id FOR SHARE;
-  IF NEW.managed_postgres_admission_cutover_id IS NOT NULL OR intent.state IS DISTINCT FROM 'cancelled' THEN
+  IF NEW.managed_postgres_admission_cutover_id IS NOT NULL OR intent.state IS NULL OR intent.state NOT IN ('cancelled','activated') THEN
    RAISE EXCEPTION 'admission fence cannot be released' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
   END IF;
  ELSE
@@ -16524,7 +16524,7 @@ DECLARE pinned uuid;
 BEGIN
  IF TG_OP IN ('UPDATE','DELETE') AND OLD.cutover_id IS NOT NULL THEN
   IF TG_OP='DELETE' OR (to_jsonb(NEW)-'cutover_id') IS DISTINCT FROM (to_jsonb(OLD)-'cutover_id')
-   OR (NEW.cutover_id IS DISTINCT FROM OLD.cutover_id AND (NEW.cutover_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM managed_postgres_cutovers WHERE id=OLD.cutover_id AND state='cancelled'))) THEN
+   OR (NEW.cutover_id IS DISTINCT FROM OLD.cutover_id AND (NEW.cutover_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM managed_postgres_cutovers WHERE id=OLD.cutover_id AND state IN ('cancelled','activated')))) THEN
    RAISE EXCEPTION 'binding is pinned by a cutover' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
   END IF;
  END IF;
@@ -16551,7 +16551,7 @@ BEGIN
  IF OLD.cutover_id IS NOT NULL THEN
   IF TG_OP='DELETE' OR ROW(NEW.account_id,NEW.state,NEW.backend_id,NEW.backend_fingerprint,NEW.provider_resource_id,NEW.desired_generation,NEW.region,NEW.postgres_major,NEW.service_class,NEW.availability,NEW.scale_to_zero,NEW.storage_limit_bytes,NEW.restore_window_seconds)
      IS DISTINCT FROM ROW(OLD.account_id,OLD.state,OLD.backend_id,OLD.backend_fingerprint,OLD.provider_resource_id,OLD.desired_generation,OLD.region,OLD.postgres_major,OLD.service_class,OLD.availability,OLD.scale_to_zero,OLD.storage_limit_bytes,OLD.restore_window_seconds)
-     OR (NEW.cutover_id IS DISTINCT FROM OLD.cutover_id AND (NEW.cutover_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM managed_postgres_cutovers WHERE id=OLD.cutover_id AND state='cancelled'))) THEN
+     OR (NEW.cutover_id IS DISTINCT FROM OLD.cutover_id AND (NEW.cutover_id IS NOT NULL OR NOT EXISTS (SELECT 1 FROM managed_postgres_cutovers WHERE id=OLD.cutover_id AND state IN ('cancelled','activated')))) THEN
    RAISE EXCEPTION 'database is pinned by a cutover' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
   END IF;
  END IF;
@@ -16812,8 +16812,11 @@ BEGIN
   UPDATE managed_postgres_cutover_source_fences SET state='abandoning',lease_token=NULL,lease_until=NULL,
    retry_at=clock_timestamp(),updated_at=clock_timestamp() WHERE cutover_id=NEW.id AND state<>'released';
  END IF;
- IF NEW.state='cancelled' AND EXISTS(SELECT 1 FROM managed_postgres_cutover_source_fences WHERE cutover_id=NEW.id AND state<>'released') THEN
+ IF NEW.state IN ('cancelled','activated') AND EXISTS(SELECT 1 FROM managed_postgres_cutover_source_fences WHERE cutover_id=NEW.id AND state<>'released') THEN
   RAISE EXCEPTION 'source SQL fence cleanup is incomplete' USING ERRCODE='55000';
+ END IF;
+ IF OLD.state='activated' AND NEW.state<>'activated' THEN
+  RAISE EXCEPTION 'an activated cutover is final' USING ERRCODE='23514', CONSTRAINT='managed_postgres_cutover_conflict';
  END IF;
  RETURN NEW;
 END $$;
@@ -21974,7 +21977,7 @@ BEGIN
  IF EXISTS(SELECT 1 FROM data_pipelines p WHERE p.state<>'deleted' AND
   (NOT EXISTS(SELECT 1 FROM postgres_capacity_reservations h WHERE h.owner_kind='pipeline' AND h.owner_id=p.id AND h.endpoint='source') OR
    NOT EXISTS(SELECT 1 FROM postgres_capacity_reservations h WHERE h.owner_kind='pipeline' AND h.owner_id=p.id AND h.endpoint='target')))
- OR EXISTS(SELECT 1 FROM managed_postgres_cutovers c JOIN postgres_capacity_targets t ON t.database_id IN(c.source_database_id,c.target_database_id) WHERE t.resource_key=rk AND c.state<>'cancelled')
+ OR EXISTS(SELECT 1 FROM managed_postgres_cutovers c JOIN postgres_capacity_targets t ON t.database_id IN(c.source_database_id,c.target_database_id) WHERE t.resource_key=rk AND c.state NOT IN ('cancelled','activated'))
  OR EXISTS(SELECT 1 FROM managed_postgres_bindings b JOIN postgres_capacity_targets t ON t.database_id=b.database_id
   WHERE t.resource_key=rk AND b.state<>'deleted' AND b.connection_limit=0) THEN
   RAISE EXCEPTION 'existing consumers require qualification' USING ERRCODE='PCC02';
@@ -41677,9 +41680,9 @@ CREATE TABLE public.managed_postgres_cutover_credentials (
     verified_at timestamp with time zone,
     CONSTRAINT managed_postgres_cutover_cre_source_credential_generation_check CHECK ((source_credential_generation > 0)),
     CONSTRAINT managed_postgres_cutover_credentials_access_check CHECK ((access = ANY (ARRAY['read_write'::text, 'read_only'::text, 'migration'::text, 'data_api'::text, 'auth'::text]))),
-    CONSTRAINT managed_postgres_cutover_credentials_check CHECK ((((state = 'sealed'::text) AND (num_nonnulls(provider_identity_id, credential_ref, ciphertext, kid, value_hash) = 5) AND (length(provider_identity_id) > 0) AND (length(credential_ref) > 0) AND (length(ciphertext) > 0) AND (length(kid) > 0) AND (length(value_hash) > 0)) OR ((state = ANY (ARRAY['pending'::text, 'revoked'::text])) AND (provider_identity_id IS NULL) AND (credential_ref IS NULL) AND (ciphertext IS NULL) AND (kid IS NULL) AND (value_hash IS NULL)))),
+    CONSTRAINT managed_postgres_cutover_credentials_check CHECK ((((state = 'sealed'::text) AND (num_nonnulls(provider_identity_id, credential_ref, ciphertext, kid, value_hash) = 5) AND (length(provider_identity_id) > 0) AND (length(credential_ref) > 0) AND (length(ciphertext) > 0) AND (length(kid) > 0) AND (length(value_hash) > 0)) OR ((state = ANY (ARRAY['pending'::text, 'revoked'::text, 'published'::text])) AND (provider_identity_id IS NULL) AND (credential_ref IS NULL) AND (ciphertext IS NULL) AND (kid IS NULL) AND (value_hash IS NULL)))),
     CONSTRAINT managed_postgres_cutover_credentials_environment_key_check CHECK ((environment_key ~ '^[A-Z_][A-Z0-9_]{0,126}$'::text)),
-    CONSTRAINT managed_postgres_cutover_credentials_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sealed'::text, 'revoked'::text]))),
+    CONSTRAINT managed_postgres_cutover_credentials_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'sealed'::text, 'revoked'::text, 'published'::text]))),
     CONSTRAINT managed_postgres_cutover_credentials_verified_at_check CHECK (((verified_at IS NULL) OR (state = 'sealed'::text)))
 );
 
@@ -41887,7 +41890,7 @@ CREATE TABLE public.managed_postgres_cutovers (
     CONSTRAINT managed_postgres_cutovers_source_backend_fingerprint_check CHECK ((length(source_backend_fingerprint) = 64)),
     CONSTRAINT managed_postgres_cutovers_source_generation_check CHECK ((source_generation > 0)),
     CONSTRAINT managed_postgres_cutovers_source_resource_id_check CHECK ((length(source_resource_id) > 0)),
-    CONSTRAINT managed_postgres_cutovers_state_check CHECK ((state = ANY (ARRAY['preparing'::text, 'prepared'::text, 'verifying'::text, 'verified'::text, 'cancelling'::text, 'cancelled'::text]))),
+    CONSTRAINT managed_postgres_cutovers_state_check CHECK ((state = ANY (ARRAY['preparing'::text, 'prepared'::text, 'verifying'::text, 'verified'::text, 'cancelling'::text, 'cancelled'::text, 'activated'::text]))),
     CONSTRAINT managed_postgres_cutovers_target_backend_fingerprint_check CHECK ((length(target_backend_fingerprint) = 64)),
     CONSTRAINT managed_postgres_cutovers_target_generation_check CHECK ((target_generation > 0)),
     CONSTRAINT managed_postgres_cutovers_target_resource_id_check CHECK ((length(target_resource_id) > 0)),
@@ -51011,6 +51014,66 @@ CREATE TABLE public.release_bundles (
     applied_at timestamp with time zone,
     CONSTRAINT release_bundles_git_sha_shape CHECK ((git_sha ~ '^[a-f0-9]{40}$'::text)),
     CONSTRAINT release_bundles_manifest_shape CHECK ((manifest_hash ~ '^sha256:[a-f0-9]{64}$'::text))
+);
+
+
+--
+-- Name: release_database_switches; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.release_database_switches (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    app_id uuid NOT NULL,
+    scope text NOT NULL,
+    from_deployment_id uuid,
+    target_deployment_id uuid NOT NULL,
+    undone_deployment_ids uuid[] NOT NULL,
+    source_database_id uuid NOT NULL,
+    target_database_id uuid,
+    target_name text NOT NULL,
+    restore_point timestamp with time zone NOT NULL,
+    cutover_id uuid,
+    phase text NOT NULL,
+    failure_code text DEFAULT ''::text NOT NULL,
+    failure_detail text DEFAULT ''::text NOT NULL,
+    requested_by text DEFAULT ''::text NOT NULL,
+    cancel_requested_at timestamp with time zone,
+    fenced_at timestamp with time zone,
+    drain_requested_at timestamp with time zone,
+    release_switched_at timestamp with time zone,
+    activated_at timestamp with time zone,
+    finished_at timestamp with time zone,
+    phase_started_at timestamp with time zone NOT NULL,
+    drain_retired integer DEFAULT 0 NOT NULL,
+    drain_parked integer DEFAULT 0 NOT NULL,
+    drain_pending integer DEFAULT 0 NOT NULL,
+    drain_blocked integer DEFAULT 0 NOT NULL,
+    attempt_count integer DEFAULT 0 NOT NULL,
+    last_error_code text DEFAULT ''::text NOT NULL,
+    lease_token text,
+    lease_until timestamp with time zone,
+    retry_at timestamp with time zone NOT NULL,
+    created_at timestamp with time zone NOT NULL,
+    updated_at timestamp with time zone NOT NULL,
+    CONSTRAINT release_database_switches_attempt_count_check CHECK (((attempt_count >= 0) AND (attempt_count <= 1000000))),
+    CONSTRAINT release_database_switches_check CHECK (((lease_token IS NULL) = (lease_until IS NULL))),
+    CONSTRAINT release_database_switches_check1 CHECK (((phase = ANY (ARRAY['completed'::text, 'failed'::text, 'cancelled'::text])) = (finished_at IS NOT NULL))),
+    CONSTRAINT release_database_switches_check2 CHECK (((phase <> ALL (ARRAY['failed'::text, 'aborting'::text])) OR (failure_code <> ''::text))),
+    CONSTRAINT release_database_switches_check3 CHECK (((activated_at IS NULL) OR (phase = ANY (ARRAY['switching'::text, 'resuming'::text, 'completed'::text])))),
+    CONSTRAINT release_database_switches_check4 CHECK (((phase <> 'completed'::text) OR ((activated_at IS NOT NULL) AND (release_switched_at IS NOT NULL) AND (target_database_id IS NOT NULL) AND (cutover_id IS NOT NULL)))),
+    CONSTRAINT release_database_switches_drain_blocked_check CHECK ((drain_blocked >= 0)),
+    CONSTRAINT release_database_switches_drain_parked_check CHECK ((drain_parked >= 0)),
+    CONSTRAINT release_database_switches_drain_pending_check CHECK ((drain_pending >= 0)),
+    CONSTRAINT release_database_switches_drain_retired_check CHECK ((drain_retired >= 0)),
+    CONSTRAINT release_database_switches_failure_code_check CHECK ((failure_code ~ '^[a-z_]{0,63}$'::text)),
+    CONSTRAINT release_database_switches_failure_detail_check CHECK ((length(failure_detail) <= 500)),
+    CONSTRAINT release_database_switches_last_error_code_check CHECK ((last_error_code ~ '^[a-z_]{0,63}$'::text)),
+    CONSTRAINT release_database_switches_phase_check CHECK ((phase = ANY (ARRAY['restoring'::text, 'staging'::text, 'verifying'::text, 'fencing'::text, 'settling'::text, 'draining'::text, 'switching'::text, 'resuming'::text, 'aborting'::text, 'completed'::text, 'failed'::text, 'cancelled'::text]))),
+    CONSTRAINT release_database_switches_requested_by_check CHECK ((length(requested_by) <= 200)),
+    CONSTRAINT release_database_switches_scope_check CHECK ((scope ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text)),
+    CONSTRAINT release_database_switches_target_name_check CHECK (((length(target_name) >= 1) AND (length(target_name) <= 63))),
+    CONSTRAINT release_database_switches_undone_deployment_ids_check CHECK (((cardinality(undone_deployment_ids) >= 1) AND (cardinality(undone_deployment_ids) <= 64)))
 );
 
 
@@ -65326,6 +65389,14 @@ ALTER TABLE ONLY public.release_bundles
 
 
 --
+-- Name: release_database_switches release_database_switches_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_database_switches
+    ADD CONSTRAINT release_database_switches_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: release_freezes release_freezes_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -72546,17 +72617,17 @@ CREATE INDEX managed_postgres_cutover_source_fence_due ON public.managed_postgre
 
 
 --
--- Name: managed_postgres_cutovers_active_app_scope_idx; Type: INDEX; Schema: public; Owner: -
---
-
-CREATE UNIQUE INDEX managed_postgres_cutovers_active_app_scope_idx ON public.managed_postgres_cutovers USING btree (app_id, scope) WHERE (state <> 'cancelled'::text);
-
-
---
 -- Name: managed_postgres_cutovers_due_idx; Type: INDEX; Schema: public; Owner: -
 --
 
 CREATE INDEX managed_postgres_cutovers_due_idx ON public.managed_postgres_cutovers USING btree (retry_at, id) WHERE (state = ANY (ARRAY['preparing'::text, 'verifying'::text, 'cancelling'::text]));
+
+
+--
+-- Name: managed_postgres_cutovers_open_app_scope_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_postgres_cutovers_open_app_scope_idx ON public.managed_postgres_cutovers USING btree (app_id, scope) WHERE (state <> ALL (ARRAY['cancelled'::text, 'activated'::text]));
 
 
 --
@@ -75364,6 +75435,48 @@ CREATE INDEX release_bundles_applied_at_idx ON public.release_bundles USING btre
 --
 
 CREATE INDEX release_bundles_git_sha_idx ON public.release_bundles USING btree (git_sha);
+
+
+--
+-- Name: release_database_switches_account; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_database_switches_account ON public.release_database_switches USING btree (account_id);
+
+
+--
+-- Name: release_database_switches_active_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX release_database_switches_active_app ON public.release_database_switches USING btree (app_id) WHERE (phase <> ALL (ARRAY['completed'::text, 'failed'::text, 'cancelled'::text]));
+
+
+--
+-- Name: release_database_switches_app; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_database_switches_app ON public.release_database_switches USING btree (app_id, created_at DESC, id);
+
+
+--
+-- Name: release_database_switches_due; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_database_switches_due ON public.release_database_switches USING btree (retry_at, id) WHERE (phase <> ALL (ARRAY['completed'::text, 'failed'::text, 'cancelled'::text]));
+
+
+--
+-- Name: release_database_switches_from_deployment; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_database_switches_from_deployment ON public.release_database_switches USING btree (from_deployment_id) WHERE (from_deployment_id IS NOT NULL);
+
+
+--
+-- Name: release_database_switches_target_deployment; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX release_database_switches_target_deployment ON public.release_database_switches USING btree (target_deployment_id);
 
 
 --
@@ -96833,6 +96946,38 @@ ALTER TABLE ONLY public.release_approval_events
 
 ALTER TABLE ONLY public.release_approval_events
     ADD CONSTRAINT release_approval_events_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_database_switches release_database_switches_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_database_switches
+    ADD CONSTRAINT release_database_switches_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_database_switches release_database_switches_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_database_switches
+    ADD CONSTRAINT release_database_switches_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: release_database_switches release_database_switches_from_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_database_switches
+    ADD CONSTRAINT release_database_switches_from_deployment_id_fkey FOREIGN KEY (from_deployment_id) REFERENCES public.deployments(id) ON DELETE SET NULL;
+
+
+--
+-- Name: release_database_switches release_database_switches_target_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.release_database_switches
+    ADD CONSTRAINT release_database_switches_target_deployment_id_fkey FOREIGN KEY (target_deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

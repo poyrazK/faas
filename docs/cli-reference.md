@@ -16770,7 +16770,7 @@ Show bearer token rotation state
 
 Restore a previous deployment, or check an exact historical rollback
 
-`gregale rollback [<subcommand>] <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
+`gregale rollback [<subcommand>] <slug> [--interactive] [--to <deployment_id|vN>] [--expected-current <deployment_id|vN>] [--reason <TEXT>] [--acknowledge-releases] [--restore-databases] [--wait] [--no-wait] [--timeout <duration>] [--poll-interval <duration>] [--json]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -16779,6 +16779,7 @@ Restore a previous deployment, or check an exact historical rollback
 | `--expected-current <deployment_id|vN>` | exact completed serving deployment; requires --to |  |
 | `--reason <TEXT>` | one-line reason of at most 256 bytes; requires --expected-current |  |
 | `--acknowledge-releases` | roll back even though release commands ran after the target last served; rollback does not undo them |  |
+| `--restore-databases` | also restore the managed database the crossed releases migrated, and move the app to that copy; the app pauses while it switches |  |
 | `--wait` | wait until the rollback completes (default for a plain rollback; a checked rollback waits only with this flag) |  |
 | `--no-wait` | return once a plain rollback is requested instead of waiting for the previous release to serve |  |
 | `--timeout <duration>` | wait deadline (default 10m) |  |
@@ -16792,6 +16793,7 @@ gregale rollback my-api --interactive
 gregale rollback my-api
 gregale rollback my-api --to v41
 gregale rollback my-api --to v41 --expected-current v42 --wait
+gregale rollback my-api --to v41 --restore-databases
 ```
 
 ### rollback status
@@ -16809,6 +16811,38 @@ Read an exact rollback operation
 | `--json` | print the operation receipt |  |
 
 Waiting never submits another rollback.
+
+### rollback switches
+
+List rollbacks that restored or are restoring the database
+
+`gregale rollback switches [--json] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--json` | machine-readable output |  |
+
+### rollback switch
+
+Show, follow or cancel a rollback that restores the database
+
+`gregale rollback switch [--cancel] [--wait] [--timeout <duration>] [--poll-interval <duration>] [--json] <slug> <switch-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--cancel` | cancel the switch; the app keeps its current release and database |  |
+| `--wait` | follow the switch until it ends |  |
+| `--timeout <duration>` | wait deadline (default 60m) |  |
+| `--poll-interval <duration>` | poll interval (default 2s) |  |
+| `--json` | machine-readable output |  |
+
+Examples:
+
+```sh
+gregale rollback switch my-api 6f1c2b0e-7d2a-4f7e-9a51-3c8d2f0b9e41 --wait
+```
+
+A switch can be cancelled until it starts switching the release and the bindings.
 
 
 ## projects

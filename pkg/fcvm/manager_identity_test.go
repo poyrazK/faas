@@ -25,6 +25,20 @@ func TestManagerInstanceIdentity(t *testing.T) {
 	}
 }
 
+// A token names the deployment scope its instance runs (ADR-1141 amendment
+// 2026-10-25), for a live instance and for one still booting.
+func TestManagerWorkloadTokenDeployment(t *testing.T) {
+	m := &Manager{
+		live:   map[string]*Instance{"live-1": {AppID: "app-1", AccountID: "acct-1", DeploymentID: "dep-live"}},
+		waking: map[string]wakingInstance{"boot-1": {deploymentID: "dep-boot", appID: "app-2", accountID: "acct-2"}},
+	}
+	for instance, want := range map[string]string{"live-1": "dep-live", "boot-1": "dep-boot", "missing": ""} {
+		if got := m.WorkloadTokenDeployment(instance); got != want {
+			t.Errorf("WorkloadTokenDeployment(%q) = %q, want %q", instance, got, want)
+		}
+	}
+}
+
 // A booting guest's workload asks for queue tokens before readiness; the
 // wake already fixed its identity (ADR-1141 amendment 2026-10-17).
 func TestManagerWorkloadTokenIdentity(t *testing.T) {
