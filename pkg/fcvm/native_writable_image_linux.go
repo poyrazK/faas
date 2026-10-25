@@ -151,14 +151,7 @@ func populateNativeImageClone(ctx context.Context, source, clone *os.File, size 
 		if err := clone.Truncate(0); err != nil {
 			return err
 		}
-		if _, err := clone.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
-		if _, err := source.Seek(0, io.SeekStart); err != nil {
-			return err
-		}
-		reader := io.LimitReader(nativeImageCopyReader{ctx: ctx, source: source}, size+1)
-		if copied, err := io.CopyBuffer(clone, reader, make([]byte, 128*1024)); err != nil || copied != size {
+		if err := copyNativeImageExtents(ctx, source, clone, size); err != nil {
 			return errors.Join(err, errors.New("native image source: private image copy was incomplete or changed size"))
 		}
 	}
@@ -177,6 +170,51 @@ func populateNativeImageClone(ctx context.Context, source, clone *os.File, size 
 		return err
 	}
 	return ctx.Err()
+}
+
+// copyNativeImageExtents copies only the source's data extents and then sets
+// the clone's size, so holes stay holes. An app layer is a mostly empty sparse
+// image: on a filesystem without reflink a dense copy wrote and synced its
+// whole nominal size (1 GiB, about 2.4 s per n2 wake) instead of its data.
+// A filesystem without SEEK_DATA gets the dense copy.
+func copyNativeImageExtents(ctx context.Context, source, clone *os.File, size int64) error {
+	buffer := make([]byte, 128*1024)
+	copyRange := func(offset, length int64) error {
+		reader := nativeImageCopyReader{ctx: ctx, source: io.NewSectionReader(source, offset, length)}
+		copied, err := io.CopyBuffer(io.NewOffsetWriter(clone, offset), reader, buffer)
+		if err == nil && copied != length {
+			err = io.ErrUnexpectedEOF
+		}
+		return err
+	}
+	for offset := int64(0); offset < size; {
+		data, err := unix.Seek(int(source.Fd()), offset, unix.SEEK_DATA)
+		if errors.Is(err, unix.ENXIO) {
+			break // only a hole remains
+		}
+		if err != nil {
+			if offset != 0 || !errors.Is(err, unix.EINVAL) && !errors.Is(err, unix.EOPNOTSUPP) {
+				return err
+			}
+			if err := copyRange(0, size); err != nil {
+				return err
+			}
+			break
+		}
+		if data >= size {
+			break
+		}
+		hole, err := unix.Seek(int(source.Fd()), data, unix.SEEK_HOLE)
+		if err != nil {
+			return err
+		}
+		hole = min(hole, size)
+		if err := copyRange(data, hole-data); err != nil {
+			return err
+		}
+		offset = hole
+	}
+	return clone.Truncate(size)
 }
 
 type nativeImageCopyReader struct {

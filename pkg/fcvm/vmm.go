@@ -61,6 +61,7 @@ type JailerVMM struct {
 	nativeSnapshotPublicationRoot string                        // opt-in immutable capture intent; configure before native recovery
 	nativeRuntimeCapture          bool                          // ADR 20261022184951: native park/warm capture; requires native recovery
 	nativeRuntimeSnapshots        *storage.LocalStorageBackend  // ADR 20261022184951 amendment 1: the tree only vmmd writes
+	nativeLaunchOwners            bool                          // ADR-2026101710 amendment 1: version-three launch records name this vmmd
 	chrootBase                    string                        // /srv/fc/jail
 	fcName                        string                        // chroot dir name jailer derives from the exec-file basename
 	readyTimeout                  time.Duration                 // WAKING/cold-boot readiness budget (spec §6)

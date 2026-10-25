@@ -278,6 +278,14 @@ func TestFinancialComputeNativeOwnerProcess(t *testing.T) {
 	if err := financialPairOwnedPaths(cfg); err != nil {
 		t.Fatal(err)
 	}
+	// adr: 1750 — production pre-creates vmmd's private native staging roots
+	// (cmd/vmmd/config.go); recovery refuses a missing root, so the fixture
+	// creates its own.
+	for _, dir := range []string{"images", "publications"} {
+		if err := os.MkdirAll(filepath.Join(cfg.Root, dir), 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 8*time.Minute)
 	defer cancel()
 	poolCfg, err := financialNativePoolConfig(cfg)
@@ -294,7 +302,10 @@ func TestFinancialComputeNativeOwnerProcess(t *testing.T) {
 	v := newMetalVMM(t, 30*time.Second)
 	v.chrootBase = cfg.JailRoot
 	v.WithNativeImageStagingRoot(filepath.Join(cfg.Root, "images")).
-		WithNativeSnapshotPublicationRoot(filepath.Join(cfg.Root, "publications")).WithNativeProcessRecovery()
+		WithNativeSnapshotPublicationRoot(filepath.Join(cfg.Root, "publications")).WithNativeProcessRecovery().
+		// A replacement owner retires a killed one's VMs only through its
+		// owner record (ADR-2026101710 Amendment 1).
+		WithNativeLaunchOwners()
 	var failKill atomic.Bool
 	v.nativeRecovery.retirer.open = func(pid int) (nativeProcessHandle, error) {
 		if failKill.Load() {
