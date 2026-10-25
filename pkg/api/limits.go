@@ -347,6 +347,14 @@ const (
 	ApplicationStandardRuntimeLockAttempts   = 10
 	ApplicationStandardRuntimeLockRetry      = 5 * time.Millisecond
 	ApplicationStandardRuntimeLockMaxBackoff = 160 * time.Millisecond
+	// A snapshot prime has already booted its VM when it records the
+	// runtime, so it waits longer than the store's replay for the app's
+	// runtime fences before destroying the VM and failing the deploy: a
+	// deploy's own scan publication held them past the store's ~1 s on
+	// production-us rc.294 (Hunt 14 H14-31). About 7.5 s in all.
+	PrimeRuntimePublicationBusyAttempts   = 5
+	PrimeRuntimePublicationBusyBackoff    = 500 * time.Millisecond
+	PrimeRuntimePublicationBusyMaxBackoff = 4 * time.Second
 	// Bounded full streams for measured native snapshot lineage. This is a
 	// safety ceiling, not a tenant memory or disk entitlement.
 	ApplicationStandardSnapshotMaxArtifactBytes  int64 = 16 << 30

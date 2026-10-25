@@ -6678,7 +6678,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 			TargetReleaseID: upgradeTarget.ID, BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, StartedAt: bootStartedAt,
 		}
 	}
-	primed, err := e.publishOwnedRuntimeWithStandards(ctx, out, publication)
+	primed, err := e.publishPrimeRuntime(ctx, out, publication)
 	if err != nil {
 		if errors.Is(err, state.ErrFinancialBudgetHeld) {
 			return errors.Join(err, e.retireFinancialBudgetRuntime(ctx, ins))
