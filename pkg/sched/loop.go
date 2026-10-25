@@ -2729,7 +2729,6 @@ func (l *Loop) runReaper(ctx context.Context) {
 	// lifecycle decision if the audit write is unavailable.
 	l.recordRunningReasonObservations(ctx, apps, snapshot, now)
 	l.engine.publishPressureParkCandidates(SelectPressureParkCandidates(now, snapshot), now)
-	resident := l.engine.Ledger().ResidentRAM()
 	// instanceToApp (PR-C review fix): O(N) instance→app map shared
 	// between the idle and aggressive reaper branches. The pre-PR-C
 	// idle branch was O(N×M) (each parked ID linear-scanned the
@@ -2848,7 +2847,7 @@ func (l *Loop) runReaper(ctx context.Context) {
 
 	l.parkExpiredFrozen(ctx, snapshot, now)
 	l.evictForMeasuredMemory(ctx, snapshot, activityByInstance, now)
-	for _, id := range SelectEvictions(resident, now, snapshot) {
+	for _, id := range reservationEvictions(l.engine.Ledger(), now, snapshot) {
 		if err := l.engine.EvictUnderPressure(ctx, id); err != nil {
 			l.log.Warn("reaper: eviction", "instance", id, "err", err)
 			continue
@@ -5332,6 +5331,26 @@ func (l *Loop) runCronNowWithRequestID(ctx context.Context, cronID, accountID, r
 	// stamped succeeded on the row — a customer-visible
 	// disagreement. Propagate the real result.
 	return run, nil
+}
+
+// reservationEvictions is RAM-pressure eviction under reservation admission
+// (spec §4.3): each node in the snapshot evicts above 80% of its own admission
+// ceiling. Under measured admission it returns nothing. Reservations there may
+// reach twice the ceiling by design (ADR-909), and evictForMeasuredMemory owns
+// pressure eviction from the node's measured memory.
+func reservationEvictions(ledger *NodeLedger, now time.Time, snapshot []InstanceInfo) []string {
+	if ledger.MeasuredAdmissionEnabled() {
+		return nil
+	}
+	reserved, ceiling := map[string]int{}, map[string]int{}
+	for _, in := range snapshot {
+		if _, seen := reserved[in.NodeID]; seen {
+			continue
+		}
+		reserved[in.NodeID] = ledger.ResidentRAMForNode(in.NodeID)
+		ceiling[in.NodeID] = ledger.CeilingForNode(in.NodeID)
+	}
+	return SelectNodeEvictions(now, snapshot, reserved, ceiling)
 }
 
 // evictForMeasuredMemory evicts on nodes whose measured memory exceeds their

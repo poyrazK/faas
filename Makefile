@@ -1093,6 +1093,7 @@ ansible-syntax-check: ## Validate the bare-metal Ansible playbooks with the prod
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/postgres_promote.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/standby_takeover.yml --syntax-check
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/cp_state_restore.yml --syntax-check
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/object_storage_reconcile.yml --syntax-check
 
 .PHONY: ansible-lint
 ansible-lint: ## Lint deploy/ansible at the production profile (config: deploy/ansible/.ansible-lint) — ADR-143
@@ -1114,6 +1115,10 @@ env-contract-check: ## Every FAAS_* a daemon reads is declared + delivered; docs
 .PHONY: verify-fleet
 verify-fleet: ## Strict post-activation verification: every required daemon enabled, active, probe-answering; gregalectl doctor — ADR-143
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/verify.yml
+
+.PHONY: object-storage-reconcile
+object-storage-reconcile: ## After a PostgreSQL restore: compare the object bucket catalog with each provider, read-only; ACCEPT=1 once findings are handled (ADR 20261025111015)
+	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/object_storage_reconcile.yml $(if $(ACCEPT),-e faas_object_storage_reconcile_accept=true)
 
 .PHONY: bootstrap-observability
 bootstrap-observability: ## Deploy the off-host Loki backend and FaaS Promtail shippers
