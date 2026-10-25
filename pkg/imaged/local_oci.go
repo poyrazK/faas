@@ -431,11 +431,15 @@ func makeGoHandlerLayer(layers []io.ReadCloser, executable string) (io.ReadClose
 		return nil, func() {}, fmt.Errorf("create Go handler staging dir: %w", err)
 	}
 	cleanupStaging := func() { _ = os.RemoveAll(staging) }
+	// The tenant's build produced these layers; one budget across all of them
+	// keeps a compressed layer from filling the staging filesystem.
+	readers := make([]io.Reader, len(layers))
 	for i, layer := range layers {
-		if err := rootfs.ApplyLayerGz(staging, layer); err != nil {
-			cleanupStaging()
-			return nil, func() {}, fmt.Errorf("apply Go build layer %d: %w", i, err)
-		}
+		readers[i] = layer
+	}
+	if err := rootfs.ApplyLayersGzWithin(staging, readers, api.GoFunctionLayerExtractionMaxBytes); err != nil {
+		cleanupStaging()
+		return nil, func() {}, fmt.Errorf("apply Go build layers: %w", err)
 	}
 	src, info, err := openGoFunctionExecutable(staging, executable)
 	if err != nil {

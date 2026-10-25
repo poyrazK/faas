@@ -6553,6 +6553,17 @@ const (
 	// well above the §14 target (~130 MB) so it's not the limiting factor; it's
 	// the ceiling we refuse to copy past. See pkg/fcvm/vmm.go::exportBuildArtifacts.
 	MaxExportedLayerBytes int64 = 4 << 30
+	// MaxExportedTreeBytes and MaxExportedTreeEntries bound everything one
+	// export copies, not just each file. The untrusted build writes the drive:
+	// sparse files or hard links can each sit under MaxExportedLayerBytes and
+	// take no room on the drive, then expand to their full size on the host.
+	MaxExportedTreeBytes   int64 = MaxExportedLayerBytes
+	MaxExportedTreeEntries       = 100_000
+	// GoFunctionLayerExtractionMaxBytes bounds the files imaged unpacks from a
+	// built Go function image to find its executable. The layers come from the
+	// tenant's build, so a small compressed layer could otherwise expand
+	// without limit on the image staging filesystem.
+	GoFunctionLayerExtractionMaxBytes int64 = MaxExportedLayerBytes
 
 	// Edge request caps (spec §4.1).
 	MaxRequestBodyBytes = 25 * 1024 * 1024 // 25 MB either direction
