@@ -4132,7 +4132,7 @@ func (s *server) handler() http.Handler {
 	// implements billing.Provider.ReconcileUsage (Stripe today; Paddle
 	// returns ErrNotImplemented and maps to 501 via the handler).
 	mux.HandleFunc("GET /v1/admin/billing-paddle-catalog",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.listPaddleCatalog)))
+		s.authLimited(s.requireOperatorRead(s.listPaddleCatalog)))
 	mux.HandleFunc("POST /v1/admin/billing-paddle-catalog/sync",
 		s.authLimited(s.requireAdminMutation(s.syncPaddleCatalog)))
 	mux.HandleFunc("DELETE /v1/admin/billing-paddle-catalog",
@@ -4140,7 +4140,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("POST /v1/admin/billing-reconcile/{id}",
 		s.authLimited(s.requireAdminMutation(s.reconcileAccount)))
 	mux.HandleFunc("GET /v1/admin/billing-paddle-overage/preflight",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.paddleOveragePreflight)))
+		s.authLimited(s.requireOperatorRead(s.paddleOveragePreflight)))
 
 	// Operator observability backend (issue #777 / ADR-091). The
 	// /v1/admin/obs/* surface gives the platform owner read-only
@@ -4236,7 +4236,7 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("GET /v1/admin/obs/recording-coverage", s.authLimited(s.requireOperatorRead(s.obsRecordingCoverage)))
 	mux.HandleFunc("GET /v1/admin/obs/input-health", s.authLimited(s.requireOperatorRead(s.obsInputHealth)))
 	mux.HandleFunc("GET /v1/admin/ops/data-repairs",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getOperatorDataRepairHealth))))
+		s.authLimited(s.requireOperatorSessionRead(s.getOperatorDataRepairHealth)))
 	// Unified incident inbox. This is a read-only correlation projection over
 	// the existing deployment, job-run, compute-node, and alert surfaces;
 	// it keeps operator triage out of the deployment request path.
@@ -4286,7 +4286,7 @@ func (s *server) handler() http.Handler {
 	// closure — fleet-level intents with account_id=NULL are
 	// visible to any admin).
 	mux.HandleFunc("GET /v1/admin/operator-intents/{id}",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.getOperatorIntent))))
+		s.authLimited(s.requireOperatorSessionRead(s.getOperatorIntent)))
 	// P2c (reclaim-stuck-build) — fleet-level sweep that calls
 	// state.Store.SweepStuckRunningBuilds directly (per user
 	// decision, NO builderd gRPC server). ?older_than= is
@@ -4318,7 +4318,7 @@ func (s *server) handler() http.Handler {
 	// retry paths use the strict provider-mutation policy; apid never opens or
 	// writes githubd's queue tables directly.
 	mux.HandleFunc("GET /v1/admin/ops/github/recovery",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.getGithubRecoveryStatus))))
+		s.authLimited(s.requireOperatorSessionRead(s.getGithubRecoveryStatus)))
 	mux.Handle("POST /v1/admin/ops/github/deliveries/{id}/retry",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.postGithubDeliveryRetry))))
 	mux.Handle("POST /v1/admin/ops/github/check-updates/{id}/retry",
@@ -4348,24 +4348,24 @@ func (s *server) handler() http.Handler {
 	// Filesystem/bootstrap settings remain visible as deployment-managed
 	// entries.
 	mux.HandleFunc("GET /v1/admin/config",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigList))))
+		s.authLimited(s.requireOperatorSessionRead(s.adminRuntimeConfigList)))
 	mux.Handle("PATCH /v1/admin/config/{key}",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigPatch))))
 	mux.Handle("POST /v1/admin/config/{key}/rollback",
 		middleware.TraceID(s.authLimited(s.requireAdminMutation(s.adminRuntimeConfigRollback))))
 	mux.HandleFunc("GET /v1/admin/config-operations/{id}",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigOperationGet)))
+		s.authLimited(s.requireOperatorSessionRead(s.adminRuntimeConfigOperationGet)))
 	mux.HandleFunc("GET /v1/admin/config/{key}/revisions",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.adminRuntimeConfigRevisions)))
+		s.authLimited(s.requireOperatorSessionRead(s.adminRuntimeConfigRevisions)))
 	// ADR-1700 — platform flags. Reads join the catalog, the durable rows,
 	// apid's compiled snapshot and per-daemon apply receipts; writes go
 	// through PATCH /v1/admin/config/platform_flag.<key>.
 	mux.HandleFunc("GET /v1/admin/flags",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.List))))
+		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.List)))
 	mux.HandleFunc("GET /v1/admin/flags/{key}",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.Get))))
+		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.Get)))
 	mux.HandleFunc("GET /v1/admin/flags/{key}/decision",
-		s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.platformFlagAdmin.Decision))))
+		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.Decision)))
 	mux.HandleFunc("GET /v1/admin/accounts/{id}/flags",
 		s.authLimited(s.requireOperatorSessionRead(s.platformFlagAdmin.AccountFlags)))
 
@@ -4402,7 +4402,7 @@ func (s *server) handler() http.Handler {
 	// "feature is on and the table is empty". See
 	// handlers_rekey.go for the handler body.
 	mux.HandleFunc("GET /v1/admin/secrets/rekey-progress",
-		s.authLimited(s.requireScope(api.ScopesAdminOnly...)(s.getRekeyProgress)))
+		s.authLimited(s.requireOperatorRead(s.getRekeyProgress)))
 
 	// Issue #517 / PR-C / ADR-064: customer-facing wake-timeline
 	// surface. Sub-resource of /v1/apps/{slug} — same auth chain
@@ -5252,7 +5252,9 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusEvent)))
 	mux.HandleFunc("POST /v1/admin/status/incidents/{public_id}/updates", s.authLimited(s.requireAdminMutation(s.updateAdminStatusEvent)))
 	mux.HandleFunc("PATCH /v1/admin/status/incidents/{public_id}/updates/{update_id}", s.authLimited(s.requireAdminMutation(s.editAdminStatusUpdate)))
-	mux.HandleFunc("GET /v1/admin/status/incidents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireSessionPrincipal(s.listAdminStatusEvents)))))
+	// Session only with no FAAS_OPERATOR_BEARER_READS grace: this route was
+	// session-only before ADR 20261023214253 (its Migration section).
+	mux.HandleFunc("GET /v1/admin/status/incidents", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.requireOperator(s.requireSessionPrincipal(s.requireEnrolledOperatorSession(s.listAdminStatusEvents)))))))
 
 	// CLI auth device-code flow (spec §2.2). Code minting and exchange
 	// are anonymous because the CLI has no credential yet; the browser

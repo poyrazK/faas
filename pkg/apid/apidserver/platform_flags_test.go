@@ -59,7 +59,7 @@ func TestPlatformFlagsAdminLifecycle(t *testing.T) {
 	(*e.S()).EnableRuntimeConfigReceipts("apid")
 	account := (*e.Acct()).ID
 
-	list := e.Do(t, http.MethodGet, "/v1/admin/flags", nil, nil)
+	list := e.DoOperator(t, http.MethodGet, "/v1/admin/flags", nil, nil)
 	initial := decodeBody[api.OperatorPlatformFlagList](t, list.Code, list.Body.Bytes(), http.StatusOK)
 	if len(initial.Items) != len(platformflags.Catalog()) {
 		t.Fatalf("items = %d, want every catalogued flag", len(initial.Items))
@@ -97,7 +97,7 @@ func TestPlatformFlagsAdminLifecycle(t *testing.T) {
 		t.Fatalf("removing a group a flag uses = %d, want 409", code)
 	}
 
-	decision := e.Do(t, http.MethodGet, "/v1/admin/flags/ai_gateway/decision?account_id="+account, nil, nil)
+	decision := e.DoOperator(t, http.MethodGet, "/v1/admin/flags/ai_gateway/decision?account_id="+account, nil, nil)
 	got := decodeBody[api.OperatorPlatformFlagDecision](t, decision.Code, decision.Body.Bytes(), http.StatusOK)
 	if !got.Enabled || got.Reason != "rule_match" || got.RuleID != "partners" || got.Entitled == nil || !*got.Entitled || !got.Available || got.Version != 1 {
 		t.Fatalf("decision = %+v", got)
@@ -108,7 +108,7 @@ func TestPlatformFlagsAdminLifecycle(t *testing.T) {
 		t.Fatalf("account view = %+v", accountFlags)
 	}
 
-	detail := e.Do(t, http.MethodGet, "/v1/admin/flags/ai_gateway", nil, nil)
+	detail := e.DoOperator(t, http.MethodGet, "/v1/admin/flags/ai_gateway", nil, nil)
 	flag := decodeBody[api.OperatorPlatformFlag](t, detail.Code, detail.Body.Bytes(), http.StatusOK)
 	if flag.Source != "operator" || flag.Version != 1 || len(flag.Definition.Rules) != 1 {
 		t.Fatalf("flag detail = %+v", flag)
@@ -119,7 +119,7 @@ func TestPlatformFlagsAdminLifecycle(t *testing.T) {
 	if len(flag.Receipts) != 1 || flag.Receipts[0].Daemon != "apid" || flag.Receipts[0].Version != 1 || flag.Receipts[0].Status != "applied" {
 		t.Fatalf("receipts = %+v", flag.Receipts)
 	}
-	after := e.Do(t, http.MethodGet, "/v1/admin/flags", nil, nil)
+	after := e.DoOperator(t, http.MethodGet, "/v1/admin/flags", nil, nil)
 	groups := decodeBody[api.OperatorPlatformFlagList](t, after.Code, after.Body.Bytes(), http.StatusOK).Groups
 	if groups.Version != 1 || !slices.Equal(groups.References["partners"], []string{platformflags.AIGateway}) {
 		t.Fatalf("groups = %+v", groups)
