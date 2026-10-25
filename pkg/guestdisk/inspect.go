@@ -272,8 +272,8 @@ type DirEntry struct {
 func (s *Session) List(ctx context.Context, dirs []string, maxEntries int) (map[string][]DirEntry, error) {
 	var script bytes.Buffer
 	type probe struct {
-		dir         string
-		start, stop []byte
+		dir   string
+		start []byte
 	}
 	var probes []probe
 	for _, d := range dirs {

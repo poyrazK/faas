@@ -185,7 +185,7 @@ func TestRealDriveBuildExport(t *testing.T) {
 		}
 	})
 	exportDir := filepath.Join(realDriveRoot(t), "export")
-	if err := v.exportBuildArtifacts("builder", exportDir); err != nil {
+	if err := v.exportBuildArtifacts(context.Background(), "builder", exportDir); err != nil {
 		t.Fatal(err)
 	}
 	if got, err := os.ReadFile(filepath.Join(exportDir, "build-done.json")); err != nil || string(got) != `{"exit_code":0}` {

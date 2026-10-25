@@ -252,7 +252,7 @@ type superblock struct {
 }
 
 func readSuperblock(image string) (superblock, error) {
-	f, err := os.Open(image)
+	f, err := os.OpenFile(image, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 	if err != nil {
 		return superblock{}, fmt.Errorf("guestdisk: open image: %w", err)
 	}

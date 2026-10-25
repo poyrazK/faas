@@ -4371,12 +4371,12 @@ exited:
 		return exitCode, fmt.Errorf("vmm: process exit unconfirmed for %s: %w", l.Instance, waitErr)
 	}
 
-	// 2. Artifact export (build VMs only). Loopback-mount the chroot-local
-	//    drive1.ext4 and copy out /etc/faas/build-done.json + /build/out/*.
-	//    The mount uses root privileges (vmmd is the only root component, §11).
+	// 2. Artifact export (build VMs only). Read /etc/faas/build-done.json and
+	//    /build/out/* off the chroot-local drive1 in the vmmd-guestdisk
+	//    sandbox; the drive is never mounted (ADR-20261025090100).
 	var exportErr error
 	if exportDir != "" {
-		if err := v.exportBuildArtifacts(l.Instance, exportDir); err != nil {
+		if err := v.exportBuildArtifacts(ctx, l.Instance, exportDir); err != nil {
 			// Retain the export error, but release the dead VM's resources
 			// before returning it.
 			exportErr = fmt.Errorf("vmm: export build artifacts: %w", err)
@@ -4590,7 +4590,7 @@ func (v *JailerVMM) InstancePID(instance string) (int, bool) {
 // and wrote that drive, so it is read in the vmmd-guestdisk sandbox and never
 // mounted on the host (ADR-20261025090100). Files larger than exportMaxBytes
 // are skipped (best-effort — never blocks the caller).
-func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr error) {
+func (v *JailerVMM) exportBuildArtifacts(ctx context.Context, instance, exportDir string) (retErr error) {
 	if v.nativeRecovery != nil {
 		return errors.New("native recovery: artifact export producer provenance is not implemented")
 	}
@@ -4610,7 +4610,8 @@ func (v *JailerVMM) exportBuildArtifacts(instance, exportDir string) (retErr err
 	if err != nil {
 		return err
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), buildExportTimeout)
+	// The export outlives a cancelled caller: builderd waits for the files.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), buildExportTimeout)
 	defer cancel()
 	return v.editDrive(ctx, nativeLaunchRecord{}, instance, drive1, func(img driveImage) error {
 		return exportBuildDrive(ctx, img, exportDir, v.exportMax())

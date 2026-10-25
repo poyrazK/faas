@@ -317,7 +317,7 @@ func TestNativeStagingMethodsEditUnderTheOriginalOwner(t *testing.T) {
 	if err := v.StageWorkloadManifest(l.Instance, 0, WorkloadSpec{Name: "helper"}); err == nil || *sessions != 7 {
 		t.Fatal("native staging wrote a shared read-only image")
 	}
-	if err := v.exportBuildArtifacts(l.Instance, filepath.Join(t.TempDir(), "exports")); err == nil {
+	if err := v.exportBuildArtifacts(t.Context(), l.Instance, filepath.Join(t.TempDir(), "exports")); err == nil {
 		t.Fatal("native export borrowed unjournaled producers")
 	}
 	j := &nativeLoopMountJournal{owner: v.nativeRecovery.journal, backend: b}

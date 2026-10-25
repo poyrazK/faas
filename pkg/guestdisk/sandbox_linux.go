@@ -58,24 +58,26 @@ func SandboxMain(args []string) int {
 func parseHelperArgs(args []string) (helperSpec, error) {
 	var spec helperSpec
 	spec.uid, spec.gid = -1, -1
-	for i := 0; i < len(args); i++ {
-		flag := args[i]
+	rest := args
+	for len(rest) > 0 {
+		flag := rest[0]
+		rest = rest[1:]
 		if flag == "--" {
-			if i+1 >= len(args) {
+			if len(rest) == 0 {
 				return spec, errors.New("no tool after --")
 			}
-			spec.tool, spec.args = args[i+1], args[i+2:]
+			spec.tool, spec.args = rest[0], rest[1:]
 			break
 		}
 		if flag == "--require-landlock" {
 			spec.requireLandlock = true
 			continue
 		}
-		if i+1 >= len(args) {
+		if len(rest) == 0 {
 			return spec, fmt.Errorf("%s needs a value", flag)
 		}
-		i++
-		v := args[i]
+		v := rest[0]
+		rest = rest[1:]
 		var err error
 		switch flag {
 		case "--uid":
@@ -256,7 +258,7 @@ func restrictFilesystem(spec helperSpec) error {
 		attr.Scoped = unix.LANDLOCK_SCOPE_ABSTRACT_UNIX_SOCKET | unix.LANDLOCK_SCOPE_SIGNAL
 		size = unsafe.Sizeof(attr)
 	}
-	fd, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, uintptr(unsafe.Pointer(&attr)), size, 0)
+	fd, _, errno := unix.Syscall(unix.SYS_LANDLOCK_CREATE_RULESET, uintptr(unsafe.Pointer(&attr)), size, 0) //nolint:gosec // G103: Landlock takes a C struct by pointer; x/sys has no wrapper.
 	if errno != 0 {
 		return fmt.Errorf("landlock create ruleset: %w", errno)
 	}
@@ -328,7 +330,7 @@ func addLandlockRule(ruleset int, path string, access uint64) error {
 		access &= landlockFileRights
 	}
 	attr := unix.LandlockPathBeneathAttr{Allowed_access: access, Parent_fd: int32(fd)}
-	if _, _, errno := unix.Syscall6(unix.SYS_LANDLOCK_ADD_RULE, uintptr(ruleset), unix.LANDLOCK_RULE_PATH_BENEATH, uintptr(unsafe.Pointer(&attr)), 0, 0, 0); errno != 0 {
+	if _, _, errno := unix.Syscall6(unix.SYS_LANDLOCK_ADD_RULE, uintptr(ruleset), unix.LANDLOCK_RULE_PATH_BENEATH, uintptr(unsafe.Pointer(&attr)), 0, 0, 0); errno != 0 { //nolint:gosec // G103: see landlock_create_ruleset above.
 		return errno
 	}
 	return nil

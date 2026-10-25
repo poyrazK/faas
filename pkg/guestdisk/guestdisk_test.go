@@ -231,15 +231,12 @@ func TestPrepareReplaysJournal(t *testing.T) {
 	if sb, _ := readSuperblock(img); sb.incompat&incompatRecover != 0 {
 		t.Fatal("journal still needs recovery")
 	}
-	f, err := os.Open(img)
+	raw, err := os.ReadFile(img)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := make([]byte, 4096)
-	_, err = f.ReadAt(got, 3000*4096)
-	_ = f.Close()
-	if err != nil || !bytes.Equal(got, bytes.Repeat([]byte("Z"), 4096)) {
-		t.Fatalf("journalled block was not replayed: %v", err)
+	if !bytes.Equal(raw[3000*4096:3001*4096], bytes.Repeat([]byte("Z"), 4096)) {
+		t.Fatal("journalled block was not replayed")
 	}
 	if replayed, err := s.Prepare(ctx); err != nil || replayed {
 		t.Fatalf("second Prepare = %v, %v; want no replay", replayed, err)
@@ -391,5 +388,40 @@ func TestQuote(t *testing.T) {
 	}
 	if got := Quote(`/a b/c"d`); got != `"/a b/c""d"` {
 		t.Errorf("Quote(spaced) = %q", got)
+	}
+}
+
+// A guest controls its drive's superblock. With no kernel mount, the error
+// behaviour it chose (errors=panic) has nothing to act on; a superblock it
+// corrupted fails the session in userspace instead of reaching the host
+// kernel.
+func TestGuestControlledSuperblockStaysInUserspace(t *testing.T) {
+	img := mkImage(t, func(root string) { write(t, filepath.Join(root, "upper/app/a"), "a") })
+	if out, err := exec.Command(e2fsTool(t, "tune2fs"), "-e", "panic", img).CombinedOutput(); err != nil {
+		t.Fatalf("tune2fs: %v %s", err, out)
+	}
+	s := openSession(t, img)
+	ctx := context.Background()
+	if _, err := s.Prepare(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.WriteFiles(ctx, []File{{Path: "/upper/etc/faas/secrets.env", Data: []byte("s"), Mode: 0o400}}); err != nil {
+		t.Fatalf("errors=panic drive: %v", err)
+	}
+	fsckClean(t, img)
+
+	// An impossible block size: the magic still says ext4, but no tool can
+	// open the filesystem, so every lookup comes back unreadable.
+	raw, err := os.ReadFile(img)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw[superblockOffset+0x18] = 0x40 // s_log_block_size
+	if err := os.WriteFile(img, raw, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	corrupt := openSession(t, img)
+	if err := corrupt.WriteFiles(ctx, []File{{Path: "/upper/etc/faas/env.json", Data: []byte("{}"), Mode: 0o400}}); err == nil {
+		t.Fatal("a drive with a corrupt superblock was edited")
 	}
 }
