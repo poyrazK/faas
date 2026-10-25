@@ -183,3 +183,51 @@ test("does not impose document headers on frontend assets", async () => {
   assert.equal(response.headers.get("Content-Security-Policy"), null);
   assert.equal(response.headers.get("Access-Control-Allow-Origin"), "*");
 });
+
+// ADR-1343 pilot: listed app hosts resolve to the compute-node app edge's
+// tunnel; every other host keeps the control-plane origin.
+const appEdgeEnv = {
+  ORIGIN_HOSTNAME: "origin.gregale.dev",
+  APP_EDGE_ORIGIN_HOSTNAME: "app-edge.gregale.dev",
+  APP_EDGE_HOSTS: " Pilot.gregale.dev , other-pilot.gregale.dev",
+};
+
+for (const [name, url, env, want] of [
+  ["listed pilot host goes to the app edge", "https://pilot.gregale.dev/", appEdgeEnv, "app-edge.gregale.dev"],
+  ["second listed host goes to the app edge", "https://other-pilot.gregale.dev/x", appEdgeEnv, "app-edge.gregale.dev"],
+  ["unlisted app host stays on the control plane", "https://demo.gregale.dev/", appEdgeEnv, "origin.gregale.dev"],
+  ["platform host stays on the control plane", "https://api.gregale.dev/v1/apps", appEdgeEnv, "origin.gregale.dev"],
+  ["no app edge origin keeps every host on the control plane", "https://pilot.gregale.dev/",
+    { ORIGIN_HOSTNAME: "origin.gregale.dev", APP_EDGE_HOSTS: "pilot.gregale.dev" }, "origin.gregale.dev"],
+  ["no listed hosts keeps every host on the control plane", "https://pilot.gregale.dev/",
+    { ORIGIN_HOSTNAME: "origin.gregale.dev", APP_EDGE_ORIGIN_HOSTNAME: "app-edge.gregale.dev" }, "origin.gregale.dev"],
+]) {
+  test(`origin choice: ${name}`, async () => {
+    let resolved;
+    const response = await handleRequest(new Request(url), env, async (req, init) => {
+      resolved = init.cf.resolveOverride;
+      assert.equal(new URL(req.url).hostname, new URL(url).hostname, "the customer Host must survive the override");
+      return new Response("ok", { status: 200 });
+    });
+    assert.equal(response.status, 200);
+    assert.equal(resolved, want);
+  });
+}
+
+test("a pilot host still restores a transported 504 from the app edge", async () => {
+  const origin = new Response(JSON.stringify({ code: "request_budget_exceeded", status: 504 }), {
+    status: 409,
+    headers: {
+      "X-Faas-Edge-Original-Status": "504",
+      "X-Faas-Error-Code": "request_budget_exceeded",
+      "Content-Type": "application/problem+json",
+    },
+  });
+  const response = await handleRequest(new Request("https://pilot.gregale.dev/slow"), appEdgeEnv, async (_req, init) => {
+    assert.equal(init.cf.resolveOverride, "app-edge.gregale.dev");
+    return origin;
+  });
+  assert.equal(response.status, 504);
+  assert.equal(response.headers.get("X-Faas-Edge-Original-Status"), null);
+  assert.equal(response.headers.get("X-Faas-Error-Code"), "request_budget_exceeded");
+});
