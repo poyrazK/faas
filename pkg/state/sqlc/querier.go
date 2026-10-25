@@ -4773,6 +4773,11 @@ type Querier interface {
 	ProjectReleaseStages(ctx context.Context, db DBTX, arg ProjectReleaseStagesParams) ([]ProjectReleaseStage, error)
 	ProjectReleaseWorkerCandidateMatches(ctx context.Context, db DBTX, arg ProjectReleaseWorkerCandidateMatchesParams) (bool, error)
 	ProjectServiceAppIDs(ctx context.Context, db DBTX, arg ProjectServiceAppIDsParams) ([]pgtype.UUID, error)
+	// ReadProjectServiceGraph's owner requires this pin; without it the graph is
+	// unmanaged and the call routes normally. The graph query took 230-310 ms to
+	// plan on every project service call through the transaction pooler while no
+	// deployment on production-us was pinned (Hunt 14 H14-35).
+	ProjectServiceGraphCallerPinned(ctx context.Context, db DBTX, arg ProjectServiceGraphCallerPinnedParams) (bool, error)
 	ProjectStabilizationSuperseded(ctx context.Context, db DBTX, arg ProjectStabilizationSupersededParams) (bool, error)
 	ProjectWorkerGraphAdmission(ctx context.Context, db DBTX, arg ProjectWorkerGraphAdmissionParams) (bool, error)
 	PromotionControlBaselineUsable(ctx context.Context, db DBTX, releaseID string) (bool, error)
