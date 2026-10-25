@@ -787,7 +787,10 @@ until the app has more parked runs than its plan's parked allowance: 100, 1,000
 and 10,000 per app on Hobby, Pro and Scale (ADR-20261023215834). Parked runs
 beyond the allowance count as concurrent. A run woken by its event returns to
 `pending` and counts again, even when that takes the app over its quota; new
-runs are refused until the app is back under it.
+runs are refused until the app is back under it. An event that would start a
+run while the app is at its quota waits like a full delivery capacity (scope
+`app`): it is retried every few seconds without spending its routing attempts,
+and its configured delivery age limit still applies.
 
 Use `gregale events preview` before publishing; its samples include the workflow
 name, deployment ID, and stable recipient ID. Preview checks matching intent and
