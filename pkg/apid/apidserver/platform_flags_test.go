@@ -65,8 +65,14 @@ func TestPlatformFlagsAdminLifecycle(t *testing.T) {
 		t.Fatalf("items = %d, want every catalogued flag", len(initial.Items))
 	}
 	for _, item := range initial.Items {
-		if item.Source != "default_or_environment" || item.Definition.Enabled || item.ConfigKey != platformflags.ConfigKey(item.Key) {
-			t.Fatalf("fresh flag = %+v, want an off bootstrap value", item)
+		// Hand-written flags boot off; generated capability flags boot at their
+		// tier default (ADR-20261023115741).
+		spec, _ := platformflags.Lookup(item.Key)
+		if item.Source != "default_or_environment" || item.Definition.Enabled != spec.Default.Enabled || item.Definition.Default != spec.Default.Default || item.ConfigKey != platformflags.ConfigKey(item.Key) {
+			t.Fatalf("fresh flag = %+v, want its declared bootstrap value %+v", item, spec.Default)
+		}
+		if !spec.Generated && item.Definition.Enabled {
+			t.Fatalf("hand-written flag %s must boot off", item.Key)
 		}
 	}
 
@@ -335,6 +341,33 @@ func TestEnvGatesYieldToOperatorPlatformFlags(t *testing.T) {
 		apply(platformflags.LiveQueries, platformflags.Definition{Enabled: true, Default: true}.Marshal(), 2)
 		if gate := s.LiveGate(); !gate.Allows(other.ID) || gate.Hidden(livePath) {
 			t.Fatal("releasing to every account must stop hiding the routes")
+		}
+	})
+	// adr: 20261019102657
+	t.Run("realtime_preview", func(t *testing.T) {
+		if err := s.ConfigureRealtimePreviewForTest(func(key string) string {
+			if key == "FAAS_REALTIME_PREVIEW_ACCOUNTS" {
+				return other.ID
+			}
+			return ""
+		}); err != nil {
+			t.Fatal(err)
+		}
+		gate := s.RealtimePreviewGateForTest()
+		if !gate.Allows(other.ID) || gate.Allows(acct.ID) {
+			t.Fatal("FAAS_REALTIME_PREVIEW_ACCOUNTS must decide until an operator writes the flag")
+		}
+		apply(platformflags.RealtimePreview, only(acct.ID), 1)
+		if !gate.Allows(acct.ID) || gate.Allows(other.ID) || s.RealtimePreviewPublishedForTest() {
+			t.Fatal("the operator rule must release the preview to that account only and keep the spec hidden")
+		}
+		apply(platformflags.RealtimePreview, platformflags.Definition{Enabled: true, Default: true}.Marshal(), 2)
+		if !gate.Allows(other.ID) || !s.RealtimePreviewPublishedForTest() {
+			t.Fatal("releasing to every account must publish the preview")
+		}
+		apply(platformflags.RealtimePreview, platformflags.Definition{}.Marshal(), 3)
+		if off, ok := gate.(interface{ Off() bool }); !ok || !off.Off() || gate.Allows(acct.ID) {
+			t.Fatal("the kill switch must hide the preview from every account")
 		}
 	})
 }

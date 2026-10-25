@@ -24,9 +24,8 @@
 //   - gateway_pre_auth_rate_limit_total{app, outcome} counter
 //   - gateway_pre_auth_policy_shadow_total{app, policy, outcome} counter
 //   - gateway_ratelimit_degraded_total{scope}        counter (central-store
-//     requests decided locally after a central consume failed or while the
-//     consult breaker is open; scope is a
-//     closed app|account|rule|other set)
+//     admission refusals after a central consume failed or while the consult
+//     breaker is open; scope is a closed app|account|rule|preauth|other set)
 //   - gateway_ratelimit_lease_requests_total{scope, result}  counter
 //     (ADR-1520 lease statements: granted|partial|empty|failed)
 //   - gateway_ratelimit_lease_tokens_total{scope, outcome}   counter
@@ -255,9 +254,10 @@ type Metrics struct {
 	wafInspectionSeconds    prometheus.Histogram
 	preAuthPolicyShadow     *prometheus.CounterVec
 	// rateLimitDegraded counts every central-counter error that caused a
-	// process-local fallback. The closed scope label keeps cardinality fixed;
+	// refusal of unverified admission. The closed scope label keeps cardinality fixed;
 	// warning logs and audit events are separately cooled down by Handler.
 	rateLimitDegraded *prometheus.CounterVec
+	rateLimitShared   prometheus.Gauge
 	// ADR-1520 token leasing: lease statements, token outcomes, and requests
 	// that waited for Postgres. Scope is the closed app|account|rule|other set.
 	rateLimitLeaseRequests *prometheus.CounterVec
@@ -628,6 +628,11 @@ type Metrics struct {
 	// Same operator kill-switch + customer-opt-in gate as
 	// requestsByRoute.
 	failuresByRoute *prometheus.CounterVec
+	// routeSeries bounds the three per-route series above on this gateway
+	// and evicts idle apps' series (ADR-20261024154324).
+	routeSeries          *routeSeriesBudget
+	routeSeriesRejected  prometheus.Counter
+	routeSeriesEvictions prometheus.Counter
 	// coldBoot backs the renamed gateway_cold_boot_total counter
 	// (issue #273 / ADR-042). Renamed outright from coldWake —
 	// gateway_cold_wake_total had zero external consumers (no
@@ -898,6 +903,7 @@ func NewMetrics() *Metrics {
 		accountLabels:    newAccountLabelSet(),
 		hostnameLabels:   newHostnameLabelSet(),
 		deploymentLabels: newDeploymentLabelSet(),
+		routeSeries:      newRouteSeriesBudget(api.RouteMetricsMaxRoutesPerGateway, api.RouteMetricsSeriesIdleTTL),
 		hostKinds:        make(map[string]string),
 		requests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_requests_total",
@@ -1083,15 +1089,19 @@ func NewMetrics() *Metrics {
 		}, []string{"reason"}),
 		retryBudgetShared: prometheus.NewGauge(prometheus.GaugeOpts{
 			Name: "gateway_retry_budget_shared",
-			Help: "Whether this gateway uses the shared Redis retry budget (1) or a process-local budget (0).",
+			Help: "Whether this gateway uses the shared retry budget (1) or a process-local budget (0).",
+		}),
+		rateLimitShared: prometheus.NewGauge(prometheus.GaugeOpts{
+			Name: "gateway_rate_limit_shared",
+			Help: "Whether app/account/rule rate admission uses a shared authoritative backend (1) or explicit local counters (0).",
 		}),
 		retryBudgetBackendInfo: prometheus.NewGaugeVec(prometheus.GaugeOpts{
 			Name: "gateway_retry_budget_backend_info",
-			Help: "Shared retry-budget Redis endpoint identity, hashed from transport address and logical DB without credentials.",
+			Help: "Shared retry-budget endpoint identity, hashed without credentials.",
 		}, []string{"backend_id"}),
 		retryBudgetBackend: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_retry_budget_backend_operations_total",
-			Help: "Shared retry-budget Redis operations by observe/admit and ok/allowed/denied/error. A backend error denies retry admission.",
+			Help: "Shared retry-budget operations by observe/admit and ok/allowed/denied/error. A backend error denies retry admission.",
 		}, []string{"operation", "result"}),
 		circuitTransitions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_circuit_transitions_total",
@@ -1452,7 +1462,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "policy", "outcome"}),
 		rateLimitDegraded: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_degraded_total",
-			Help: "Requests the rate limiter decided with process-local counters because a central consume failed or recently failed (breaker open), labelled by closed scope (app|account|rule|preauth|other).",
+			Help: "Requests refused unverified shared admission because a central consume failed or recently failed (breaker open), labelled by closed scope (app|account|rule|preauth|other).",
 		}, []string{"scope"}),
 		rateLimitLeaseRequests: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_ratelimit_lease_requests_total",
@@ -2126,7 +2136,7 @@ func NewMetrics() *Metrics {
 	for _, result := range []string{"recorded", "failed"} {
 		m.requestIDJournalWrites.WithLabelValues(result)
 	}
-	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
@@ -2137,6 +2147,24 @@ func NewMetrics() *Metrics {
 	reg.MustRegister(m.serviceTCPEdgeSessions, m.serviceTCPEdgeWakes)
 	reg.MustRegister(m.serviceWakeAhead)
 	reg.MustRegister(m.routePriorityQueue, m.routePriorityWake, m.serviceWakeAheadEdgeShare, m.serviceWakeAheadCallerWakes, m.serviceWakeAheadEdgeTotal)
+	m.routeSeriesRejected = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "gateway_route_metrics_rejected_total",
+		Help: "Per-route observations not exported because this gateway already holds gateway_route_metrics_budget_routes live (app, route) pairs (ADR-20261024154324). The request still counts in the per-app series and request telemetry.",
+	})
+	m.routeSeriesEvictions = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "gateway_route_metrics_evictions_total",
+		Help: "Apps whose per-route series this gateway deleted after RouteMetricsSeriesIdleTTL without a request (ADR-20261024154324).",
+	})
+	reg.MustRegister(m.routeSeriesRejected, m.routeSeriesEvictions,
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "gateway_route_metrics_routes",
+			Help: "(app, route) pairs with live per-route series on this gateway (ADR-20261024154324).",
+		}, func() float64 { return float64(m.routeSeries.live()) }),
+		prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+			Name: "gateway_route_metrics_budget_routes",
+			Help: "Most (app, route) pairs this gateway exports per-route series for; FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES overrides the default (ADR-20261024154324).",
+		}, func() float64 { return float64(m.routeSeries.limit()) }),
+	)
 	reg.MustRegister(m.usageOutboxPending, m.usageOutboxBytes, m.usageOutboxFailures, m.usageCommitAborts, m.usageDelivered, m.usageDeliveryFailures)
 	// Issue #587 / PR-A: per-daemon graceful-shutdown drain
 	// observability. Same shape as the wire.OpsMetrics series,
@@ -2672,18 +2700,71 @@ func (m *Metrics) RequestFailureRoute(appID, plan, route, code string) {
 	m.failuresByRoute.WithLabelValues(appID, plan, route, code).Inc()
 }
 
+// AdmitRouteSeries reports whether this observation's per-route series may
+// be emitted under the gateway's series budget (ADR-20261024154324). The
+// first admission of a route pre-instantiates its histogram classes. A
+// rejected observation is counted and must not be emitted. nil-receiver
+// safe.
+func (m *Metrics) AdmitRouteSeries(appID, plan, route, code, class string, now time.Time) bool {
+	if m == nil || m.routeSeries == nil || appID == "" || route == "" {
+		return false
+	}
+	ok, fresh := m.routeSeries.admit(appID, routeSeriesKey{plan: plan, code: code, class: class}, route, now)
+	if !ok {
+		m.routeSeriesRejected.Inc()
+		return false
+	}
+	if fresh {
+		m.PreInstantiateAppRoute(appID, route)
+	}
+	return true
+}
+
+// SetRouteSeriesBudget overrides the per-gateway series bound; non-positive
+// values keep the defaults from pkg/api/limits.go.
+func (m *Metrics) SetRouteSeriesBudget(maxRoutes int, idleAfter time.Duration) {
+	if m != nil && m.routeSeries != nil {
+		m.routeSeries.configure(maxRoutes, idleAfter)
+	}
+}
+
+// SweepRouteSeries deletes the per-route series of every app idle since
+// now-RouteMetricsSeriesIdleTTL and returns how many apps it dropped.
+func (m *Metrics) SweepRouteSeries(now time.Time) int {
+	if m == nil || m.routeSeries == nil {
+		return 0
+	}
+	return m.routeSeries.sweep(now, m.dropRouteSeries)
+}
+
+func (m *Metrics) dropRouteSeries(appID string, routes map[string]map[routeSeriesKey]struct{}) {
+	for route, keys := range routes {
+		for _, class := range routeSeriesClasses {
+			m.durationByRoute.DeleteLabelValues(appID, route, class)
+		}
+		for k := range keys {
+			m.durationByRoute.DeleteLabelValues(appID, route, k.class)
+			m.requestsByRoute.DeleteLabelValues(appID, k.plan, route, k.code)
+			m.failuresByRoute.DeleteLabelValues(appID, k.plan, route, k.code)
+		}
+	}
+	m.routeSeriesEvictions.Inc()
+}
+
 // PreInstantiateAppRoute writes zero-valued series for the
 // closed (class) set under (appID, route) so dashboards surface
 // from the first request rather than after the first observation
 // (ADR-093 D4). The closed class set is the same as
 // PreInstantiateApp above (2xx/3xx/4xx/5xx). Caller-routed
 // through routeLabelSet — the route argument is post-admit, so
-// the cap is enforced before this is called. nil-receiver safe.
+// the cap is enforced before this is called. AdmitRouteSeries calls it
+// once per route the gateway's series budget admits, so eviction deletes
+// what it created. nil-receiver safe.
 func (m *Metrics) PreInstantiateAppRoute(appID, route string) {
 	if m == nil || appID == "" || route == "" {
 		return
 	}
-	for _, class := range []string{"2xx", "3xx", "4xx", "5xx"} {
+	for _, class := range routeSeriesClasses {
 		m.durationByRoute.WithLabelValues(appID, route, class)
 	}
 }
@@ -4266,7 +4347,7 @@ func (m *Metrics) SetRetryBudgetShared(shared bool) {
 	}
 }
 
-// SetRetryBudgetBackendID permits a fleet check for one common Redis endpoint.
+// SetRetryBudgetBackendID permits a fleet check for one common shared endpoint.
 func (m *Metrics) SetRetryBudgetBackendID(id string) {
 	if m == nil || m.retryBudgetBackendInfo == nil || id == "" {
 		return
@@ -4274,7 +4355,7 @@ func (m *Metrics) SetRetryBudgetBackendID(id string) {
 	m.retryBudgetBackendInfo.WithLabelValues(id).Set(1)
 }
 
-// RecordRetryBudgetOperation records Redis outcomes without tenant labels.
+// RecordRetryBudgetOperation records shared backend outcomes without tenant labels.
 func (m *Metrics) RecordRetryBudgetOperation(operation, result string) {
 	if m == nil || m.retryBudgetBackend == nil {
 		return

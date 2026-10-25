@@ -15,7 +15,7 @@ import {
   EventAcknowledgmentIntentHealthMetrics,
   formatEventAcknowledgmentIntentHealthMetrics,
   getEventAcknowledgmentIntentHealth,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const metrics = new EventAcknowledgmentIntentHealthMetrics(accountId, appId, {
   maxAgeMs: 30000,

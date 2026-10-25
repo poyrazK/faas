@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import pg from 'pg';
-import { operationRequestFromHeaders, withOperationTransaction, customerOperationReceiptRequestFromHeaders, withCustomerOperationReceiptTransaction } from '../../dist/index.js';
+import { operationRequestFromHeaders, withOperationTransaction, customerOperationReceiptRequestFromHeaders, withCustomerOperationReceiptTransaction } from '../../dist/preview.js';
 
 const fixture = JSON.parse(await readFile(process.env.OPERATION_REQUEST_FILE, 'utf8'));
 const customer = Object.keys(fixture.headers).some(name => name.toLowerCase() === 'x-gregale-customer-operation-receipt-version');

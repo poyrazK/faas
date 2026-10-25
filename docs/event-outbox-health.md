@@ -6,8 +6,8 @@ These helpers only read local metadata. They never publish, claim, reconcile,
 resume, install, or prune work.
 
 ```go
-health, err := faas.GetEventOutboxHealth(ctx, db, accountID, appID,
-    faas.EventOutboxHealthOptions{
+health, err := preview.GetEventOutboxHealth(ctx, db, accountID, appID,
+    preview.EventOutboxHealthOptions{
         ScanLimit: 1000,
         StallAfter: 5 * time.Minute,
     })
@@ -15,14 +15,14 @@ if err != nil { return err }
 // Export health.Complete and health.ObservedAt alongside counts and ages.
 _ = health
 
-return faas.WatchEventOutboxHealth(ctx, db, accountID, appID,
-    faas.EventOutboxWatchOptions{
+return preview.WatchEventOutboxHealth(ctx, db, accountID, appID,
+    preview.EventOutboxWatchOptions{
         DueThreshold: 100,
         StalledThreshold: 1,
         BlockedThreshold: 1,
         ExpiredThreshold: 1,
         Sustain: 30 * time.Second,
-    }, func(alert faas.EventOutboxAlert) {
+    }, func(alert preview.EventOutboxAlert) {
         // Record locally or hand off promptly to the application's alert system.
     })
 ```
@@ -109,7 +109,7 @@ recipient retry, ordering, replay and deduplication behavior does not change.
 
 ## Existing installations
 
-Explicitly re-run `faas.EventOutboxSchema` to install the partial
+Explicitly re-run `preview.EventOutboxSchema` to install the partial
 `gregale_event_outbox_health` index for unpublished rows. No columns, constraints,
 platform migrations, or clone registry entries change. Helpers do not perform DDL.
 Application permissions and retention remain operator-owned; deleting unresolved

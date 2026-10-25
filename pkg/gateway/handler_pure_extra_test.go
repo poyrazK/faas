@@ -751,7 +751,7 @@ func TestPreInstantiateApps_SecondSeenReturnsTrue(t *testing.T) {
 	}
 }
 
-// --- preInstantiateApp / preInstantiateAppRoute ------------------
+// --- preInstantiateApp / AdmitRouteSeries ------------------------
 
 func TestPreInstantiateApp_NilSafe(t *testing.T) {
 	var h *Handler
@@ -763,16 +763,21 @@ func TestPreInstantiateApp_NilSafe(t *testing.T) {
 	(&Handler{metrics: m}).preInstantiateApp("")
 }
 
-func TestPreInstantiateAppRoute_NilSafe(t *testing.T) {
-	var h *Handler
-	h.preInstantiateAppRoute("app-1", "/") // must not panic
+func TestAdmitRouteSeries_NilSafe(t *testing.T) {
+	var m *Metrics
+	if m.AdmitRouteSeries("app-1", "pro", "GET /", "200", "2xx", time.Now()) {
+		t.Fatal("nil Metrics admitted a route series")
+	}
 }
 
-func TestPreInstantiateAppRoute_EmptyFieldsSkipped(t *testing.T) {
+func TestAdmitRouteSeries_EmptyFieldsSkipped(t *testing.T) {
 	m := NewMetrics()
-	h := &Handler{metrics: m}
-	h.preInstantiateAppRoute("", "/foo")  // empty app
-	h.preInstantiateAppRoute("app-1", "") // empty route
+	if m.AdmitRouteSeries("", "pro", "GET /foo", "200", "2xx", time.Now()) {
+		t.Fatal("empty app admitted")
+	}
+	if m.AdmitRouteSeries("app-1", "pro", "", "200", "2xx", time.Now()) {
+		t.Fatal("empty route admitted")
+	}
 }
 
 // --- statusRecorder ---------------------------------------------

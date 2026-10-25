@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FaaSClient, ProjectsService } from '../src/index.js';
+import { FaaSClient, ProjectsService } from '../src/preview.js';
 
 test('environment clone preserves reference counts and accepts older server responses', async () => {
   const calls: Array<{ url: string; body: unknown; headers: Headers }> = [];

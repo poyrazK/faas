@@ -7,6 +7,71 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Routes at public scale — 2026-10-24
+
+[ADR-20261024154324](adr/20261024154324-route-subsystems-at-public-scale.md)
+removes the three limits a routes readiness review found and gives operators
+signals for the route workers:
+
+- Each `gatewayd-internal` exports per-route series for at most
+  `RouteMetricsMaxRoutesPerGateway` (5,000) (app, route) pairs and deletes an
+  app's series after an idle hour, so the export no longer grows with every
+  app a gateway has served. apid lists routes over a seven-day lookback.
+- The route insights evaluator walks every app on a telemetry plan, least
+  recently evaluated first, claiming each one (`route_insight_evaluations`),
+  instead of the first 500 app IDs; stale insights of apps no longer
+  evaluated resolve.
+- The production route monitor evaluates every due monitor, four at a time,
+  instead of 20 per 30 s.
+- Metrics and five warn alerts cover the series budget, the insights
+  evaluator, monitor lag and worker failures (runbooks
+  `GatewayRouteMetricsBudget.md`, `FaasRouteWorkers.md`).
+
+Verified with unit tests (series budget under `-race`, evaluator rotation past
+one batch, concurrent drain), a PostgreSQL test of the claim, candidate and
+batch-resolve queries, and promtool fixtures for every alert. Open: none of
+the routes capabilities has end-to-end coverage yet, and all remain `preview`.
+
+## Every capability behind a platform flag — 2026-10-23 (branch, not released)
+
+The product catalog now lists every customer capability (161, from the
+[GA inventory](ga-capability-inventory.md)) with its tier and the apid routes
+it owns, and every capability has a platform flag
+([ADR-20261023115741](adr/20261023115741-every-capability-behind-a-platform-flag.md)).
+GA and beta flags are on for every account; preview and internal flags are off
+by default and released per account. apid hides a capability whose flag is
+off: before authentication when its kill switch is off, per account after.
+Dashboard links and `GET /v1/capabilities` follow the same decision. Core
+capability flags need `--force` to turn off.
+
+Large capabilities are split into 90 sub-feature flags, each released only
+while its parent is; always-on capabilities have no flag; `gregalectl flags`
+writes by `--tier` or `--capability` in bulk and lists each flag's tier,
+parent and enforcement. Settings are gated too: app create/update fields, edge
+rule kinds, function runtimes, gregale.yaml blocks and wildcard domains are
+refused with `403 capability_not_released` while their capability is off.
+Flags also stop work outside apid: schedd defers crons, triggers, queued
+deliveries, jobs and workflows without spending attempts; githubd ignores
+pushes and PR previews; gatewayd-internal drops cache, async, retry and
+breaker rules and stops mirroring, session affinity and the wake page
+(restrictive edge rules keep enforcing); apid withdraws realtime endpoints
+from realtimed. The gregale CLI hides the commands and verbs of capabilities
+that are off for the account (help, completion, man pages, suggestions) from
+`hidden_capabilities` in `GET /v1/capabilities`, and logged-out CLIs follow
+tier defaults. The anonymous OpenAPI spec and `/docs` publish only what every
+account gets, and the SDKs are generated from `sdk/openapi.yaml` (GA and beta):
+`@gregale/sdk-node`, `faas_sdk` and `faas.Client` cover GA and beta, and
+`@gregale/sdk-node/preview`, `faas_sdk.preview` and `sdk/go/preview` add the
+preview capabilities, their helpers included. 236 of 246 flags are enforced; the rest are VM behavior
+or CLI-side.
+
+Portable tests cover the catalog, the generated flags, the gate, route
+coverage (`TestEveryApidRouteHasACapability`), the dashboard and the CLI, and
+ci-light's `make capability-coverage-check` fails any new customer entry point
+(route, command, manifest key, flag, SDK file, table, ...) that maps to no
+inventory row. Open: a production usage check of preview capabilities before
+rollout.
+
 ## Edge security release gate — 2026-10-24
 
 All five edge features sit behind platform flags that are off for every

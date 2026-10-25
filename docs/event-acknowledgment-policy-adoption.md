@@ -13,7 +13,7 @@ Every potential recovery host must understand stored policies before adoption is
 enabled. Updated Go, Node and Python recovery does; older workers ignore bindings.
 Adoption adds no worker compatibility fence.
 
-Explicitly apply `faas.EventAcknowledgmentIntentPolicyAdoptionSchema` in the
+Explicitly apply `preview.EventAcknowledgmentIntentPolicyAdoptionSchema` in the
 application database. It creates the optional
 `public.gregale_event_ack_intent_policy_adoptions` receipt table with a primary key
 on account, app and command UUID. This is additional DDL for both fresh and existing
@@ -37,16 +37,16 @@ Read the exact invocation, replay generation and attempt with
 Generate and durably retain a command UUID and all original inputs before calling:
 
 ```go
-options := faas.EventAcknowledgmentIntentAdoptRetryPolicyOptions{
+options := preview.EventAcknowledgmentIntentAdoptRetryPolicyOptions{
     CommandID: commandID,
     ExpectedUpdatedAt: selected.UpdatedAt,
     ExpectedDeliveryAttempts: selected.DeliveryAttempts,
-    Policy: faas.EventAcknowledgmentIntentRetryPolicy{
+    Policy: preview.EventAcknowledgmentIntentRetryPolicy{
         InitialBackoff: time.Second,
         MaxBackoff: 5 * time.Minute,
     },
 }
-receipt, err := faas.AdoptEventAcknowledgmentIntentRetryPolicy(ctx, db,
+receipt, err := preview.AdoptEventAcknowledgmentIntentRetryPolicy(ctx, db,
     accountID, appID, selected.InvocationID,
     selected.ReplayGeneration, selected.Attempt, options)
 ```
@@ -136,7 +136,7 @@ import {
   adoptEventAcknowledgmentIntentRetryPolicy,
   getEventAcknowledgmentIntentPolicyAdoptionCandidate,
   EventAcknowledgmentIntentPolicyAdoptionError,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const selected = await getEventAcknowledgmentIntentPolicyAdoptionCandidate(pool,
   accountId, appId, invocationId, replayGeneration, attempt, { signal });
@@ -200,7 +200,7 @@ strings and native int64 generations. Explicitly select the exact invocation,
 generation and attempt from that metadata. Preserve its timestamp string directly:
 
 ```python
-from faas_sdk import (
+from faas_sdk.preview import (
     EventAcknowledgmentIntentAdoptRetryPolicyOptions,
     EventAcknowledgmentIntentPolicyAdoptionError,
     EventAcknowledgmentIntentRetryPolicy,

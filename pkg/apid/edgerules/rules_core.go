@@ -17,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -56,7 +57,7 @@ func (s *Service) writeRuleMutation(ctx context.Context, w http.ResponseWriter, 
 // CreateRule creates an edge rule for app through the same path as
 // POST /v1/apps/{slug}/edge-rules, without an If-Match precondition.
 func (s *Service) CreateRule(ctx context.Context, acct state.Account, app state.App, req api.CreateEdgeRuleRequest) (api.EdgeRuleResponse, *api.Problem) {
-	if prob := planKindProblem(acct, req.Kind); prob != nil {
+	if prob := s.kindProblem(acct, req.Kind); prob != nil {
 		return api.EdgeRuleResponse{}, prob
 	}
 	m, prob := s.createRule(ctx, acct, app, req, nil)
@@ -101,6 +102,17 @@ func planKindProblem(acct state.Account, kind string) *api.Problem {
 		kind == string(state.EdgeRuleKindIP) && !limits.EdgeRulesIPAllowed,
 		kind == string(state.EdgeRuleKindAsync) && !limits.AsyncInvokeAllowed:
 		return api.ErrPlanEdgeRuleKindNotAllowed(acct.Plan, kind)
+	}
+	return nil
+}
+
+// kindProblem is the plan gate, then the capability gate, for a new rule's kind.
+func (s *Service) kindProblem(acct state.Account, kind string) *api.Problem {
+	if prob := planKindProblem(acct, kind); prob != nil {
+		return prob
+	}
+	if s.SettingCheck != nil {
+		return s.SettingCheck(acct, kind)
 	}
 	return nil
 }
@@ -224,7 +236,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		case errors.Is(err, state.ErrConflict):
 			return m, api.ErrEdgeRuleConflict(err.Error())
 		default:
-			return m, api.ErrCapacity("could not create edge rule")
+			return m, trafficproblem.Policy(err, api.ErrCapacity("could not create edge rule"))
 		}
 	}
 	s.Host.Logger().Info("edge rule created",
@@ -415,7 +427,7 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if errors.Is(err, state.ErrNotFound) {
 			return m, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such edge rule")
 		}
-		return m, api.ErrCapacity("could not update edge rule")
+		return m, trafficproblem.Policy(err, api.ErrCapacity("could not update edge rule"))
 	}
 	s.Host.Logger().Info("edge rule updated",
 		"rule", logsanitize.Field(updated.ID),

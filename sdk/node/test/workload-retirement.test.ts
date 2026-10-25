@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FaaSClient, ProjectsService } from '../src/index.js';
-import type { EnvironmentDefinition, EnvironmentWorkloadRetirement } from '../src/index.js';
+import { FaaSClient, ProjectsService } from '../src/preview.js';
+import type { EnvironmentDefinition, EnvironmentWorkloadRetirement } from '../src/preview.js';
 
 test('GitOps review transport preserves workload disposition and original recovery identity', async () => {
   const original = '11111111-2222-4333-8444-555555555555';

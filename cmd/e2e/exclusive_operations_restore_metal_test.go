@@ -314,7 +314,7 @@ http.createServer((req, res) => {
       finished_before_owner: finished
     }));
   });
-}).listen(8080, '0.0.0.0');`
+}).listen(Number(process.env.PORT || 8080), '0.0.0.0');`
 	return buildTarGz(t, map[string]string{
 		"package.json":     packageJSON,
 		"index.js":         indexJS,

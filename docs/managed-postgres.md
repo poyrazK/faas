@@ -678,7 +678,9 @@ Account deletion is fail-closed until all managed databases reach their
 provider-confirmed `deleted` tombstone. A self-service deletion that a live
 database blocks returns `409 account_deletion_managed_postgres_databases` with
 the number of databases; delete them with `gregale postgres list` and
-`gregale postgres delete`, then retry. The final GDPR deletion transaction
+`gregale postgres delete`, then retry. A non-payment deletion includes the
+account's databases and deletes them when the 30-day grace ends
+([ADR-20261024150500](adr/20261024150500-account-deletion-includes-managed-postgres.md)). The final GDPR deletion transaction
 then removes usage, binding, and database tombstones before deleting apps and
 the account, so a stale catalog row cannot block deletion or remain after the
 account is gone. Lifecycle actions emit audit events without credentials,
@@ -795,9 +797,14 @@ See [ADR-1335](adr/1335-managed-postgres-source-writer-isolation.md).
 fences, drain writers, publish credentials or resume workloads. See
 [ADR-1333](adr/1333-managed-postgres-activation-preflight.md).
 
-Preparation, verification and preflight keep bindings on the source. The current API has
-no activation operation; complete writer draining and atomic publication remain
-pending. Both databases and the selected source bindings stay pinned until
+Preparation, verification and preflight keep bindings on the source. The cutover API has
+no activation operation. Only a rollback that restores the database activates its
+own cutover: it fences and drains the app, then moves the bindings in one
+transaction, and the cutover becomes `activated`, which is final. It accepts the
+loss of writes made after the restore point, so it does not need the writer
+isolation above; see [Rollbacks that restore the database](deploys.md#rollbacks-that-restore-the-database)
+and [ADR-20261023181931](adr/20261023181931-rollbacks-that-restore-the-database.md).
+For other cutovers, both databases and the selected source bindings stay pinned until
 `gregale postgres cutover cancel CUTOVER_ID` finishes revoking every staged role.
 Cancellation and status remain available when provisioning is disabled. Required
 host age/HMAC keys must remain available while envelopes are staged; cancel and

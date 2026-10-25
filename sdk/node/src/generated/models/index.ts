@@ -592,6 +592,9 @@ export type { DataUpstreamHistoryBucket } from './DataUpstreamHistoryBucket.js';
 export type { DataUpstreamHistoryResponse } from './DataUpstreamHistoryResponse.js';
 export type { DataUpstreamListResponse } from './DataUpstreamListResponse.js';
 export type { DataUpstreamResponse } from './DataUpstreamResponse.js';
+export type { DatabaseSwitch } from './DatabaseSwitch.js';
+export type { DatabaseSwitchDrain } from './DatabaseSwitchDrain.js';
+export type { DatabaseSwitchList } from './DatabaseSwitchList.js';
 export type { DeadLetterEvent } from './DeadLetterEvent.js';
 export type { DeadLetterEventsResponse } from './DeadLetterEventsResponse.js';
 export type { DeadLetterPurgeResponse } from './DeadLetterPurgeResponse.js';
@@ -2498,6 +2501,7 @@ export type { QueueWorkloadProfileResponse } from './QueueWorkloadProfileRespons
 export type { QuotaBlock } from './QuotaBlock.js';
 export type { RaiseOverageCapRequest } from './RaiseOverageCapRequest.js';
 export type { RealtimeAcknowledgement } from './RealtimeAcknowledgement.js';
+export type { RealtimeChannelRule } from './RealtimeChannelRule.js';
 export type { RealtimeChannelWebhookFilter } from './RealtimeChannelWebhookFilter.js';
 export type { RealtimeConsumerGroup } from './RealtimeConsumerGroup.js';
 export type { RealtimeConsumerGroupBatch } from './RealtimeConsumerGroupBatch.js';
@@ -2982,6 +2986,8 @@ export type { ThrottleSuggestionsResponse } from './ThrottleSuggestionsResponse.
 export type { Trace } from './Trace.js';
 export type { TraceSpan } from './TraceSpan.js';
 export type { TracingConfig } from './TracingConfig.js';
+export type { TrafficRuntimeFeatureStatus } from './TrafficRuntimeFeatureStatus.js';
+export type { TrafficRuntimeStatus } from './TrafficRuntimeStatus.js';
 export type { TransferOwnershipRequest } from './TransferOwnershipRequest.js';
 export type { Trigger } from './Trigger.js';
 export type { TriggerDeadLetter } from './TriggerDeadLetter.js';

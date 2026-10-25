@@ -64,6 +64,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/daemonunitspec"
+	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/eventrecording"
 	"github.com/onebox-faas/faas/pkg/eventretention"
@@ -79,6 +80,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/promotionrollout"
 	"github.com/onebox-faas/faas/pkg/ratelimit/peraccount"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
@@ -753,7 +755,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	defer stopEventWriter()
-	deps.store = func() state.Store { return state.NewPgStore(pool) }
+	deps.store = func() state.Store {
+		return state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(deps.getenv)))
+	}
 	// Wire the canonical OpenAPI projector before any deployment can be
 	// promoted. state.MarkDeploymentLive invokes it inside the same Postgres
 	// transaction as the status flip and snapshot UPSERT.
@@ -796,6 +800,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		go srv.runConfigGuardWorker(ctx)
 		go srv.runPostReleaseWatchWorker(ctx)
 		go srv.runScheduledReleaseWorker(ctx)
+		go srv.runDatabaseSwitchWorker(ctx)
 		go srv.plainRollbacks().Run(ctx)
 		go srv.operation.RunOperationArtifactCleanup(ctx)
 		go srv.operation.RunScheduleFirer(ctx)
@@ -936,7 +941,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// count on the one box.
 		graceLoop := grace.New(grace.Params{
 			Store:               srv.store,
-			BeforeAccountDelete: srv.object.CleanupExpiredAccountObjectBuckets,
+			BeforeAccountDelete: srv.beforeAccountDelete,
 			Mailer:              graceSenderAdapter{m: srv.mailer},
 			Log:                 log,
 			Interval:            graceIntervalFromEnv(log),
@@ -989,6 +994,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// measured safe to cache; a trigger notifies subscribed app webhooks.
 		if insightStore, ok := srv.store.(routeinsights.Store); ok {
 			insights := &routeinsights.Evaluator{Store: insightStore, Log: log}
+			if srv.ops != nil {
+				insights.Metrics = routeinsights.NewMetrics(srv.ops.Registry(), srv.ops.MetricPrefix())
+			}
 			go func() { _ = insights.Run(ctx) }()
 		}
 		// Issue #562 / PR-A: log archive shipper. Walks the local
@@ -1677,6 +1685,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
+	if err := srv.configureRealtimePreview(deps.getenv); err != nil {
+		return fmt.Errorf("apid realtime preview: %w", err)
+	}
 	if err := srv.configureLiveQueries(deps.pool, deps.getenv); err != nil {
 		return fmt.Errorf("apid live queries configuration: %w", err)
 	}
@@ -1709,6 +1720,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := srv.runtimeConfig.reconcile(ctx, store); err != nil {
 		return fmt.Errorf("apid: reconcile runtime config: %w", err)
 	}
+	// ADR-20261023115741: every route is released by its capability's
+	// platform flag, decided from the snapshot reconciled above.
+	capGate, err := srv.newCapabilityGate()
+	if err != nil {
+		return fmt.Errorf("apid: build capability gate: %w", err)
+	}
+	srv.WithCapabilityGate(capGate)
+	dashboard.SetCapabilityDecider(func(accountID, plan, capability string) bool {
+		return capGate.Enabled(capability, platformflags.Subject{AccountID: accountID, Plan: plan})
+	})
+	ops.Registry().MustRegister(capGate.Collectors()...)
+	log.Info("apid: capability gate enabled")
 	srv.WithOAuthConfig(oauthCfg)
 
 	// Workload force-actions and provider compute-node lifecycle actions

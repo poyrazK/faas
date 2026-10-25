@@ -21,6 +21,32 @@ import (
 	"time"
 )
 
+// Shared traffic counters bound each admission round trip and aggregate replay.
+const (
+	TrafficCounterOperationTimeout = 100 * time.Millisecond
+	TrafficRetryBudgetWindow       = 10 * time.Second
+	// Readiness repair is independent of LISTEN. Batch reads and local leases
+	// bound recovery work and prevent indefinite use of an unverifiable gate.
+	TrafficReadinessReconcileInterval = time.Second
+	TrafficReadinessReadTimeout       = time.Second
+	TrafficReadinessBatchSize         = 128
+	TrafficReadinessLease             = 30 * time.Second
+	// Current placement repair includes probe-free and hot targets. Per-app
+	// overflow is detected with a sentinel and never interpreted as absence.
+	TrafficPlacementReconcileInterval = time.Second
+	TrafficPlacementReadTimeout       = time.Second
+	TrafficPlacementAppBatchSize      = 16
+	TrafficPlacementTargetsPerApp     = 128
+	TrafficPlacementLease             = 30 * time.Second
+	// A transport-proven stale VM lifetime cannot be immediately reinserted.
+	TrafficStaleTargetQuarantine = 30 * time.Second
+	// Reusable bridges acknowledge exchange cleanup before node capacity is
+	// released. Failure fences and reaps the bridge process instead.
+	TrafficBridgeCompletionTimeout    = 5 * time.Second
+	TrafficBridgeCompletionMaxEntries = 128
+	TrafficBridgeFenceDialTimeout     = 100 * time.Millisecond
+)
+
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
 const DeploymentAttemptIDBytes = 32
 
@@ -321,6 +347,14 @@ const (
 	ApplicationStandardRuntimeLockAttempts   = 10
 	ApplicationStandardRuntimeLockRetry      = 5 * time.Millisecond
 	ApplicationStandardRuntimeLockMaxBackoff = 160 * time.Millisecond
+	// A snapshot prime has already booted its VM when it records the
+	// runtime, so it waits longer than the store's replay for the app's
+	// runtime fences before destroying the VM and failing the deploy: a
+	// deploy's own scan publication held them past the store's ~1 s on
+	// production-us rc.294 (Hunt 14 H14-31). About 7.5 s in all.
+	PrimeRuntimePublicationBusyAttempts   = 5
+	PrimeRuntimePublicationBusyBackoff    = 500 * time.Millisecond
+	PrimeRuntimePublicationBusyMaxBackoff = 4 * time.Second
 	// Bounded full streams for measured native snapshot lineage. This is a
 	// safety ceiling, not a tenant memory or disk entitlement.
 	ApplicationStandardSnapshotMaxArtifactBytes  int64 = 16 << 30
@@ -1025,6 +1059,23 @@ const ScheduledReleaseBatch = 20
 const ScheduledReleaseStartGrace = time.Hour
 const ScheduledReleaseNotifyChannelsMax = 5
 const ScheduledReleaseListMax = 50
+
+// Database switches (ADR-20261023181931). apid advances active switches
+// every DatabaseSwitchCheckInterval, DatabaseSwitchBatch at a time, under a
+// DatabaseSwitchLease. A switch fails when its restored copy is not ready
+// within DatabaseSwitchRestoreTimeout, when in-flight members of the fenced
+// app have not settled within DatabaseSwitchSettleTimeout, or when its drain
+// has not retired every instance within DatabaseSwitchDrainTimeout; the two
+// fenced waits bound how long the app is unavailable before an abort. A
+// listing returns at most DatabaseSwitchListMax switches. Plan-independent:
+// these bound one operation, not what a plan may use.
+const DatabaseSwitchCheckInterval = 5 * time.Second
+const DatabaseSwitchBatch = 10
+const DatabaseSwitchLease = 2 * time.Minute
+const DatabaseSwitchRestoreTimeout = time.Hour
+const DatabaseSwitchSettleTimeout = 2 * time.Minute
+const DatabaseSwitchDrainTimeout = 10 * time.Minute
+const DatabaseSwitchListMax = 50
 
 // Verified rollback outcomes (ADR-1446). apid resolves each plain rollback
 // every RollbackOutcomeCheckInterval: complete once the target serves,
@@ -2689,6 +2740,15 @@ const (
 	RealtimeConnectionSyncInterval        = 5 * time.Second
 	RealtimeConnectionSyncStaleAfter      = 30 * time.Second
 	RealtimeConnectionSyncMaxAccounts     = 10_000
+)
+
+// Channel rules (ADR-20261019102657): realtimed authorizes channels from a
+// verified token's claims without the authorize callback. An endpoint holds at
+// most RealtimeChannelRulesMax rules of at most RealtimeChannelRulePatternMax
+// bytes each.
+const (
+	RealtimeChannelRulesMax       = 32
+	RealtimeChannelRulePatternMax = 256
 )
 
 // Channel occupancy (ADR-1324). One read covers at most
@@ -4420,6 +4480,13 @@ func (l Limits) LayerExtractionBudgetBytes() int64 {
 // goroutine budget under burst. Lives as a top-level constant (not
 // on the Limits struct) per ADR-098 §263.
 const UpstreamProbeMaxConcurrent = 64
+
+// ADR-570: bounds for resolved TCP circuit sets. Reject an oversized DNS
+// response rather than claiming protection for only a subset of its answers.
+const (
+	EgressCircuitMaxResolvedAddresses = 64
+	EgressCircuitMaxTargets           = 50 * EgressCircuitMaxResolvedAddresses // Scale's upstream cap.
+)
 
 // UpstreamFitMinDeltaMs (ADR-098 §D3) is the global threshold below
 // which schedd's chooser bias is suppressed (the legacy
@@ -7025,7 +7092,10 @@ const (
 	// sent. It is independent of the request budget: active sessions may
 	// outlive the 3/30-second request budget, but a silent session must not
 	// pin gateway resources forever.
-	StreamingIdleTimeoutDefault   = 60 * time.Minute
+	StreamingIdleTimeoutDefault = 60 * time.Minute
+	// HTTPForwardSessionTimeout preserves the bridge's complete exchange
+	// ceiling after a long-lived response detaches its handshake budget.
+	HTTPForwardSessionTimeout     = 910 * time.Second
 	StreamingFlushBytesDefault    = 256 * 1024 // 256 KiB flush window (ADR-047)
 	StreamingFlushIntervalDefault = 200 * time.Millisecond
 
@@ -7779,6 +7849,14 @@ const (
 	// Hard limits policy (CLAUDE.md): every limit is a constant
 	// here, never inlined.
 	GatewayDrainGraceSeconds = 25
+	// GatewayShutdownCleanupGraceSeconds is one shared allowance for egress,
+	// debugger and trace cleanup after HTTP drains. It also bounds startup-error
+	// cleanup. Its deadline is at most drain plus cleanup (30s) from drain start.
+	GatewayShutdownCleanupGraceSeconds = 5
+	// GatewayRequestTelemetryShutdownTimeoutSeconds caps the final debugger
+	// flush, including an interrupted RPC and every queued batch. It consumes
+	// the shared cleanup allowance rather than extending it.
+	GatewayRequestTelemetryShutdownTimeoutSeconds = 2
 	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
 	// sending new requests to a compute node whose gatewayd-internal stopped
 	// answering (for example while it restarts behind its durable socket)
@@ -8111,6 +8189,19 @@ const (
 	// Wake (pkg/fcvm/manager.go:236) and the nft rule that consumes
 	// it lives in pkg/netns/config.go::NftCommands.
 	DefaultConntrackCap = 4096
+
+	// Instance bridge unit limits (connection-survival ADR §8, slice 1c).
+	// With FAAS_INSTANCE_BRIDGE_UNIT=1 each instance's bridge is a systemd
+	// service in faas-tenant-ibridge.slice with these per-unit caps. One
+	// platform-wide number, not per plan: the bridge is platform overhead
+	// and is not billed (§4.7). The values are the ADR's proposals; the P0
+	// density measurement confirms them before the switch is turned on.
+	InstanceBridgeMemoryMaxMB = 32
+	InstanceBridgeTasksMax    = 64
+	// InstanceBridgeMaxConnections is the open-connection budget; the unit's
+	// LimitNOFILE allows two descriptors per connection (client and guest)
+	// plus the bridge's own.
+	InstanceBridgeMaxConnections = DefaultConntrackCap
 
 	// MaxPreparedNetworkCacheSize bounds unused host network namespaces.
 	// This is separate from admitted VMs, RAM, vCPUs, and per-app concurrency.
@@ -9466,6 +9557,21 @@ func (p Plan) HealthPathWakesAllowed() bool {
 // not make this per-plan without a separate ADR (the §12 budget math
 // is global, not per-tenant).
 const RouteMetricsPerAppCap = 50
+
+// Per-route series at fleet scale (ADR-20261024154324). Every Hobby+ app opts
+// into per-route metrics, so each gatewayd-internal bounds its own export: at
+// most RouteMetricsMaxRoutesPerGateway (app, route) pairs carry live
+// gateway_*_by_route series (FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES overrides
+// it), and an app's series are deleted once it has gone
+// RouteMetricsSeriesIdleTTL without a request on that gateway, checked every
+// RouteMetricsSweepInterval. Readers that list an app's routes look back
+// RouteMetricsObservedWindow, so an evicted app's routes stay listed.
+const (
+	RouteMetricsMaxRoutesPerGateway = 5000
+	RouteMetricsSeriesIdleTTL       = time.Hour
+	RouteMetricsSweepInterval       = 5 * time.Minute
+	RouteMetricsObservedWindow      = 7 * 24 * time.Hour
+)
 
 // RouteRequirementsMaxBytes and RouteRequirementsMaxRoutes bound local,
 // customer-owned requirements documents and read-only evaluation work. These
@@ -11012,6 +11118,39 @@ const (
 	// MaxServiceReliabilityTimeoutMS bounds a declared dependency's complete
 	// call, including a cold wake and all retries. The default remains unset.
 	MaxServiceReliabilityTimeoutMS = 300_000
+	// MaxTrafficDeadlineTokenBytes bounds the private managed-request carrier
+	// before decoding or authenticating any customer-supplied bytes (ADR-570).
+	MaxTrafficDeadlineTokenBytes = 2048
+	// TrafficServicePolicyReadTimeout bounds the complete read-only discovery
+	// and authorization snapshot; no transaction is retained during wake.
+	TrafficServicePolicyReadTimeout = 250 * time.Millisecond
+	TrafficPublicRoutingReadTimeout = 250 * time.Millisecond
+	TrafficPublicHostReadTimeout    = 250 * time.Millisecond
+	// Bound public policy host input and hostname expansion in environment
+	// overlays to the DNS name size accepted for custom domains (ADR-570).
+	TrafficPolicyMaxHostnameBytes = 253
+	// Contended policy writers return pool connections between lock attempts.
+	TrafficPolicyMutationLockRetry        = 25 * time.Millisecond
+	TrafficPolicyAnalysisTimeout          = 2 * time.Second
+	TrafficPolicyAnalysisSQLTimeout       = 1750 * time.Millisecond
+	TrafficPolicyMaxAnalysisInputs        = 100_000
+	TrafficPolicyMaxAnalysisMetadataBytes = 64 * 1024 * 1024
+	TrafficPolicyMaxAnalysisNodes         = 1_000_000
+	TrafficPolicyMaxAnalysisStates        = 100_000
+	TrafficPolicyMaxAnalysisStateBytes    = 64 * 1024 * 1024
+	TrafficPolicyAnalysisStateOverhead    = 128 // state slice and visited-map allowance
+	TrafficPolicyMaxAnalysisTransitions   = 2_000_000
+	// Every positive traffic share consumes at least one percentage point.
+	// Bound a verified routing roster even if corrupted rows exceed that sum.
+	TrafficPolicyMaxDeployments = 100
+	TrafficPolicyMaxWeight      = 100
+	// Canonical JSONB text can be larger than a valid 256 KiB OpenAPI import.
+	// Bound route-contract projections before transferring them to a gateway.
+	TrafficPolicyMaxContractBytes = 512 * 1024
+	// Scale's 100 deployed apps can each own 500 rules; reserve 20 more for
+	// an environment overlay. Also bound the aggregate wire projection.
+	TrafficPolicyMaxHostRules = 50_020
+	TrafficPolicyMaxHostBytes = 64 * 1024 * 1024
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a
@@ -11112,6 +11251,22 @@ const (
 	// Defends against a misconfiguration that would re-pin a 300 s stdlib
 	// WriteTimeout as the request budget.
 	RequestBudgetMax = 30 * time.Second
+	// RequestBudgetErrorWriteTimeout bounds best-effort delivery of a 504
+	// generated after a request deadline, before any response was committed.
+	RequestBudgetErrorWriteTimeout = 100 * time.Millisecond
+	// Traffic security generations independently fence admitted HTTP work.
+	TrafficSecurityRefreshInterval  = time.Second
+	TrafficSecurityStoreTimeout     = 250 * time.Millisecond
+	TrafficSecurityMaxExchanges     = 65_536
+	TrafficSecurityMaxScopes        = 4_096
+	TrafficSecurityMaxRequestScopes = 16
+	TrafficSecurityMaxHeaderBytes   = 4096
+	// Runtime feature observations are small fleet snapshots, independent of
+	// request accounting and policy-revision convergence.
+	TrafficRuntimeObservationInterval  = 2 * time.Second
+	TrafficRuntimeObservationTimeout   = 250 * time.Millisecond
+	TrafficRuntimeObservationFreshness = 10 * time.Second
+	TrafficRuntimeObservationMaxNodes  = 4096
 	// RequestBudgetPlanMax is the largest request budget any plan may allow
 	// (Scale's 15 minutes, ADR-1150). Every per-plan ceiling is clamped to
 	// it, edge-rule and route-requirement budgets are validated against it,
@@ -12180,17 +12335,21 @@ const (
 )
 
 // RouteInsight bounds proactive route insights (ADR-1198): every
-// RouteInsightInterval apid evaluates at most RouteInsightMaxApps apps that
-// ran in the last RouteInsightWindow. An insight no evaluation has observed
-// for RouteInsightResolveAfter resolves. A kept_awake insight needs the app
-// awake for at least RouteInsightKeptAwakeMinShare of the window. Listings
-// show active insights and those resolved within RouteInsightResolvedListWindow,
+// RouteInsightInterval apid evaluates every app on a plan with request
+// telemetry that ran in the last RouteInsightWindow, least recently evaluated
+// first, reading RouteInsightBatchApps candidates at a time; an app evaluated
+// within half an interval is not due (ADR-20261024154324). An insight no
+// evaluation has observed for RouteInsightResolveAfter resolves, at most
+// RouteInsightResolveBatch per run. A kept_awake insight needs the app awake
+// for at least RouteInsightKeptAwakeMinShare of the window. Listings show
+// active insights and those resolved within RouteInsightResolvedListWindow,
 // at most RouteInsightListLimit rows.
 const (
 	RouteInsightInterval           = 6 * time.Hour
 	RouteInsightWindow             = 24 * time.Hour
 	RouteInsightResolveAfter       = 24 * time.Hour
-	RouteInsightMaxApps            = 500
+	RouteInsightBatchApps          = 500
+	RouteInsightResolveBatch       = 5000
 	RouteInsightKeptAwakeMinShare  = 0.5
 	RouteInsightListLimit          = 50
 	RouteInsightResolvedListWindow = 7 * 24 * time.Hour
@@ -12385,6 +12544,14 @@ const RouteHealthTransitionVersion = 1
 // error-budget incident must open within this long after the deployment
 // started serving all traffic.
 const RouteMonitorRollbackWindow = 30 * time.Minute
+
+// A route monitor drain reads RouteMonitorBatchSize monitors at a time until
+// none it has not taken is due or RouteMonitorDrainBudget passes, evaluating
+// RouteMonitorWorkerConcurrency at once (ADR-20261024154324).
+const (
+	RouteMonitorDrainBudget       = RouteMonitorEvaluationInterval
+	RouteMonitorWorkerConcurrency = 4
+)
 
 // Production route monitoring and bounded customer evidence (ADR-498/499).
 const (

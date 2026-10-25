@@ -1,8 +1,8 @@
 from uuid import uuid4
 
-from faas_sdk.api.apps import bulk_act_on_issues, compare_issue_releases
-from faas_sdk.models.bulk_issue_action_request import BulkIssueActionRequest
-from faas_sdk.models.issue_release_comparison import IssueReleaseComparison
+from faas_sdk.preview.api.apps import bulk_act_on_issues, compare_issue_releases
+from faas_sdk.preview.models.bulk_issue_action_request import BulkIssueActionRequest
+from faas_sdk.preview.models.issue_release_comparison import IssueReleaseComparison
 
 
 def test_release_comparison_preserves_unknown_health_and_deployment_scope():

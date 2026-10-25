@@ -73,9 +73,7 @@ func cmdAlerts(args []string) int {
 		return cmdAlertsPreset(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown alerts subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "alerts", parent, args[0])
 }
 
 // cmdAlertList mirrors cmdWebhookList. The SDK returns a flat slice;
@@ -234,6 +232,30 @@ func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhook
 	}
 	if *slug == "" || *name == "" || *metric == "" || *comparison == "" ||
 		*windowSpec == "" || webhookMissing || math.IsNaN(*threshold) {
+		// The compacted usage line ends in "[flags]" and no longer shows the
+		// webhook secret rule, so say what is missing (Hunt 14 H14-8).
+		var missing []string
+		for _, f := range []struct {
+			flag  string
+			unset bool
+		}{
+			{"--app", *slug == ""}, {"--name", *name == ""}, {"--metric", *metric == ""},
+			{"--comparison", *comparison == ""}, {"--threshold", math.IsNaN(*threshold)}, {"--window-spec", *windowSpec == ""},
+		} {
+			if f.unset {
+				missing = append(missing, f.flag)
+			}
+		}
+		switch {
+		case !webhookMissing:
+		case *webhookURL != "" && *webhookSecret == "":
+			missing = append(missing, "--webhook-secret or --webhook-secret-stdin (required with --webhook-url)")
+		case *webhookSecret != "" && *webhookURL == "":
+			missing = append(missing, "--webhook-url (required with a webhook secret)")
+		default:
+			missing = append(missing, "--webhook-url with --webhook-secret, or --channel")
+		}
+		_, _ = fmt.Fprintf(os.Stderr, "missing: %s\n", strings.Join(missing, ", "))
 		PrintUsage(os.Stderr, "usage: gregale alerts add --app <slug> --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> (--webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) | --channel <id>...) [--failure-source <s>] [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false]", "alerts")
 		return 1, false
 	}

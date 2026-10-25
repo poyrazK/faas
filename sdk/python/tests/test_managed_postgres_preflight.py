@@ -2,12 +2,12 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.managed_postgres import (
+from faas_sdk.preview.api.managed_postgres import (
     get_managed_postgres_cutover_preflight,
     request_managed_postgres_cutover_preflight,
 )
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models.managed_postgres_cutover_preflight import ManagedPostgresCutoverPreflight
+from faas_sdk.preview.models.managed_postgres_cutover_preflight import ManagedPostgresCutoverPreflight
 
 
 def test_preflight_progress_preserves_disabled_gate_and_historical_findings() -> None:

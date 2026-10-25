@@ -125,6 +125,19 @@ func (s *incomingAckFailure) AcknowledgeMigrationAdoption(ctx context.Context, i
 	return nil
 }
 
+// ADR-570: the adopted instance keeps its destination node and the caller's
+// correlation, as a wake does, so routing and telemetry follow it.
+func TestIncomingMigrationAdoptionCarriesDestinationNodeAndCorrelation(t *testing.T) {
+	f := newIncomingMigrationFixture(t)
+	ctx := wire.WithContext(t.Context(), wire.CorrelationFields{AppID: f.req.AppSpec.AppId, WakeID: "caller-wake"})
+	if _, err := f.server.AdoptMigratedInstance(ctx, f.req); err != nil {
+		t.Fatal(err)
+	}
+	if f.vmm.wakeReq.NodeID != f.plan.DestinationNodeID || f.vmm.wakeCorrelation.WakeID != f.plan.DestinationWakeID || f.vmm.wakeCorrelation.AppID != f.req.AppSpec.AppId {
+		t.Fatalf("adopted routing lifetime: node=%q correlation=%+v", f.vmm.wakeReq.NodeID, f.vmm.wakeCorrelation)
+	}
+}
+
 func TestIncomingMigrationLostReplyReplaysOriginalAfterDaemonReplacement(t *testing.T) {
 	f := newIncomingMigrationFixture(t)
 	f.server.migrationAdmissions = &incomingAckFailure{MigrationAdmissionStore: f.store, after: true}

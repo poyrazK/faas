@@ -207,6 +207,7 @@ var StartupDeadlineForApp = startupDeadlineForApp
 var TaskObservationStore = taskObservationStore
 var TestLog = testLog
 var TriggerDispatchParent = triggerDispatchParent
+var TruncateCodeError = truncateCodeError
 var UntilNextMinuteTick = untilNextMinuteTick
 var ValidEnvironmentGitOpsJobVariables = validEnvironmentGitOpsJobVariables
 var ValidRuntimeSnapshot = validRuntimeSnapshot
@@ -255,6 +256,9 @@ func (r *DeploymentCounterWatcher) Resync(p0 context.Context) error { return r.r
 
 // Members of DiskDrift
 func (r *DiskDrift) Timeout() *time.Duration { return &r.timeout }
+
+// Members of EgressCircuitBreaker
+func (r *EgressCircuitBreaker) Resolve() *EgressResolver { return &r.resolve }
 
 // Members of Drain
 func (r *Drain) Engine() **Engine       { return &r.engine }
@@ -731,3 +735,8 @@ func RuntimeMainSecretEntries(snapshot state.RuntimeAppValuesSnapshot, intent st
 	}
 	return delivery.Entries, nil
 }
+
+var QueueDeadLetterError = queueDeadLetterError
+var PrimeRuntimeBusyBackoff = &primeRuntimeBusyBackoff
+var ApplicationStandardRuntimeProblem = applicationStandardRuntimeProblem
+var HealthcheckGRPCForApp = healthcheckGRPCForApp

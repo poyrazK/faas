@@ -1,0 +1,404 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { AppLogDrainAnalyticsResponse } from '../models/AppLogDrainAnalyticsResponse.js';
+import type { AppLogDrainHealthResponse } from '../models/AppLogDrainHealthResponse.js';
+import type { AppLogDrainResponse } from '../models/AppLogDrainResponse.js';
+import type { CreateAppLogDrainRequest } from '../models/CreateAppLogDrainRequest.js';
+import type { UpdateAppLogDrainRequest } from '../models/UpdateAppLogDrainRequest.js';
+import type { WakeTimelineResponse } from '../models/WakeTimelineResponse.js';
+import type { CancelablePromise } from '../../generated/core/CancelablePromise.js';
+import { OpenAPI } from '../../generated/core/OpenAPI.js';
+import { request as __request } from '../../generated/core/request.js';
+export class ObservabilityService {
+  /**
+   * List runtime log destinations for this app.
+   * @returns AppLogDrainResponse The configured log destinations. Authentication headers are always masked.
+   * @throws ApiError
+   */
+  public static listAppLogDrains({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<Array<AppLogDrainResponse>> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-drains',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Export runtime logs to an external HTTP or OTLP endpoint.
+   * The platform tails the existing per-instance runtime log ring and
+   * forwards each line through a bounded queue. `http_json` sends a
+   * provider-neutral JSON record; `otlp` sends an OTLP/HTTP JSON logs
+   * envelope suitable for a collector or vendor OTLP endpoint. The URL
+   * is SSRF-checked, and auth_header is sealed at rest and never echoed.
+   *
+   * @returns AppLogDrainResponse Log drain created.
+   * @throws ApiError
+   */
+  public static createAppLogDrain({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CreateAppLogDrainRequest,
+  }): CancelablePromise<AppLogDrainResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/log-drains',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: app_log_drain_invalid — malformed log-drain kind, URL, or auth header.`,
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        403: `code: plan_log_drain_quota — per-app or per-account runtime log destination limit reached.`,
+        404: `code: not_found`,
+        409: `code: app_log_drain_invalid — malformed log-drain kind, URL, or auth header.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Fetch one runtime log destination.
+   * @returns AppLogDrainResponse The log destination. Authentication headers are masked.
+   * @throws ApiError
+   */
+  public static getAppLogDrain({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<AppLogDrainResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-drains/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Update a runtime log destination.
+   * @returns AppLogDrainResponse The updated log destination.
+   * @throws ApiError
+   */
+  public static updateAppLogDrain({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    requestBody: UpdateAppLogDrainRequest,
+  }): CancelablePromise<AppLogDrainResponse> {
+    return __request(OpenAPI, {
+      method: 'PATCH',
+      url: '/v1/apps/{slug}/log-drains/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: app_log_drain_invalid — malformed log-drain kind, URL, or auth header.`,
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        404: `code: not_found`,
+        409: `code: app_log_drain_invalid — malformed log-drain kind, URL, or auth header.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Delete a runtime log destination.
+   * @returns void
+   * @throws ApiError
+   */
+  public static deleteAppLogDrain({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<void> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/log-drains/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Fetch durable delivery health for a runtime log destination.
+   * Returns a customer-safe delivery snapshot. Authentication headers and
+   * raw transport errors are never returned. Empty timestamps mean that
+   * the corresponding event has not happened yet.
+   *
+   * @returns AppLogDrainHealthResponse Durable log-drain delivery health.
+   * @throws ApiError
+   */
+  public static getAppLogDrainHealth({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+  }): CancelablePromise<AppLogDrainHealthResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-drains/{id}/health',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * Fetch hourly delivery analytics for a runtime log destination.
+   * Returns bounded, customer-safe hourly delivery history. The default
+   * window is 24 hours; supported windows are 1h, 24h, 7d, and 30d.
+   * Success rate is delivered records divided by delivered, failed, and
+   * dropped terminal outcomes. Average latency includes queue wait and
+   * endpoint time. The platform retains at least 30 days of samples.
+   *
+   * @returns AppLogDrainAnalyticsResponse Hourly customer-safe log-drain delivery analytics.
+   * @throws ApiError
+   */
+  public static getAppLogDrainAnalytics({
+    slug,
+    id,
+    window = '24h',
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * 32-hex-char opaque ID (NOT canonical UUID).
+     */
+    id: string,
+    /**
+     * History window. Defaults to 24h.
+     */
+    window?: '1h' | '24h' | '7d' | '30d',
+  }): CancelablePromise<AppLogDrainAnalyticsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/log-drains/{id}/analytics',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'window': window,
+      },
+      errors: {
+        400: `code: app_log_drain_invalid — malformed log-drain kind, URL, or auth header.`,
+        401: `code: unauthorized`,
+        402: `code: plan_log_drains_not_allowed — the plan does not include customer runtime log destinations.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+  /**
+   * List the canonical wake-timeline frames for one wake.
+   * Oldest-first (forward narrative). Returns every typed
+   * `wake.*` events row for the given wake_id: queue_accepted
+   * → admitted → boot_started → boot_completed →
+   * readiness_200 → proxy_first_byte. Build and deploy
+   * failures (`wake.build_failed`, `wake.deploy_failed`,
+   * `wake.boot_failed`) are joined in alongside the success
+   * path so a single GET shows the whole lifecycle.
+   *
+   * When an attempted restore falls back to a successful cold boot
+   * because the application's `after_restore` callback failed, the
+   * `wake.boot_completed` payload includes
+   * `data.restore_fallback_reason: after_restore_failed`. The field is
+   * absent on other wakes. This reason never contains callback URLs,
+   * response bodies, or raw error text.
+   *
+   * For `wake.proxy_first_byte`, `data.latency_ms` is measured from
+   * request/queue acceptance through the first upstream byte. New rows
+   * also include `data.proxy_latency_ms` for the final bridge hop. Rows
+   * written before this contract correction contain the former
+   * proxy-only value in `latency_ms` and omit `proxy_latency_ms`.
+   * Gateway rows may also include `data.gateway_phases_ms`, a per-wake
+   * map of integer-millisecond durations for `pre_admission`,
+   * `scheduler_wake`, `target_publication`, `post_publication`, and
+   * `internal_proxy`. This keeps phase attribution joinable to one
+   * `wake_id` without adding wake IDs as metric labels.
+   *
+   * The endpoint is a sub-resource of `/v1/apps/{slug}`;
+   * auth and rate-limit share the §12 per-app budget with
+   * logs/metrics/wake. Cross-account access 404s the
+   * same way unknown slugs do (forge-proof: every row's
+   * `data.app_id` is verified to match the resolved app).
+   * Wake narratives are a Hobby+ observability surface; Free
+   * accounts receive 402 before slug or wake lookup.
+   *
+   * @returns WakeTimelineResponse Wake-timeline frames.
+   * @throws ApiError
+   */
+  public static listWakeTimeline({
+    slug,
+    wakeId,
+    since,
+    limit = 200,
+    pagination,
+    cursor,
+  }: {
+    /**
+     * App slug (lowercase, kebab-case; per-account unique).
+     */
+    slug: string,
+    /**
+     * The per-wake correlation handle minted by the schedd
+     * engine (UUID v4 in production). The endpoint returns
+     * every `wake.*` events row whose `data.wake_id`
+     * matches — the partial index `events_wake_id_idx`
+     * (migrations/00113) serves the read in O(frames)
+     * regardless of the events table size.
+     *
+     */
+    wakeId: string,
+    /**
+     * Exclusive at > since lower bound (RFC3339). Omission reads from retained history. keyset_v1 normalizes to UTC/PostgreSQL microseconds.
+     */
+    since?: string,
+    /**
+     * Max frames to return. Values outside 1..1000 are rejected.
+     */
+    limit?: number,
+    /**
+     * Opt in to app-scoped timestamp/event-ID keyset pagination. Omit for the unchanged legacy timestamp-hint contract.
+     */
+    pagination?: 'keyset_v1',
+    /**
+     * Opaque page.next_cursor from keyset_v1. Requires pagination=keyset_v1 and the same account, immutable app, wake, normalized since and limit. Selection data, not authorization; pages are live retained reads, not a snapshot.
+     */
+    cursor?: string,
+  }): CancelablePromise<WakeTimelineResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/wakes/{wake_id}/timeline',
+      path: {
+        'slug': slug,
+        'wake_id': wakeId,
+      },
+      query: {
+        'since': since,
+        'limit': limit,
+        'pagination': pagination,
+        'cursor': cursor,
+      },
+      errors: {
+        400: `Malformed query parameter on the wake-timeline read — \`since\` not RFC 3339 or \`limit\` out of range.`,
+        401: `code: unauthorized`,
+        402: `code: plan_per_app_metrics_not_allowed — the account plan does not include per-app metrics or wake narratives; upgrade to Hobby or above.`,
+        404: `No such app (slug) or wake_id is unknown.`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+      },
+    });
+  }
+}

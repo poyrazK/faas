@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {AppsService, FaaSClient, type ProfileInvestigationResponse, type SaveProfileInvestigationRequest} from '../src/index.js';
+import {AppsService, FaaSClient, type ProfileInvestigationResponse, type SaveProfileInvestigationRequest} from '../src/preview.js';
 
 test('saved profiling investigation operations preserve revision, path and expired notes', async (t) => {
   const query = {deployment_id: '11111111-1111-4111-8111-111111111111', runtime: 'node24', start: '2026-10-07T11:00:00.123Z', end: '2026-10-07T12:00:00.123Z'};

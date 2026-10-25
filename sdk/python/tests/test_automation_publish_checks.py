@@ -1,7 +1,7 @@
-from faas_sdk.models.automation_publish_policy import AutomationPublishPolicy
-from faas_sdk.models.check_automation_publication_request import CheckAutomationPublicationRequest
-from faas_sdk.models.check_automation_publication_response import CheckAutomationPublicationResponse
-from faas_sdk.models.publish_automation_request import PublishAutomationRequest
+from faas_sdk.preview.models.automation_publish_policy import AutomationPublishPolicy
+from faas_sdk.preview.models.check_automation_publication_request import CheckAutomationPublicationRequest
+from faas_sdk.preview.models.check_automation_publication_response import CheckAutomationPublicationResponse
+from faas_sdk.preview.models.publish_automation_request import PublishAutomationRequest
 
 
 def test_server_checks_wire_roundtrip():

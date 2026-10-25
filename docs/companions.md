@@ -41,6 +41,18 @@ Every process receives loopback discovery variables such as
 available to the helper as `FAAS_WORKLOAD_MAIN_ADDR`. A helper without a port
 is valid for background processing.
 
+## Writable paths
+
+A companion's image filesystem is read-only. Its only writable path is
+`/tmp`, a private in-memory filesystem sized by `scratch_mb` (derived from
+`ram_mb` when omitted), plus the shared directory described below. An image
+that writes anywhere else at startup exits with a read-only filesystem
+error. The stock `nginx` image, for example, fails with
+`mkdir() "/var/cache/nginx/client_temp" failed (30: Read-only file system)`.
+Use an image built for a read-only root, or point the program's cache, PID
+and temporary paths at `/tmp` with `cmd` or `env`. Anything written to
+`/tmp` is lost when the instance stops.
+
 ## Public hostname for a companion port
 
 A companion that declares a `port` is also reachable from the internet. The
