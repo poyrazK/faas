@@ -68,8 +68,7 @@ func (s *Service) RegisterRealtimePush(ctx context.Context, store state.ManagedR
 	return store.PutManagedRealtimePushDevice(ctx, state.ManagedRealtimePushDevice{EndpointID: ep, Principal: principal, Device: device, Provider: registration.Provider, Enabled: true, Sealed: sealed, Fingerprint: hex.EncodeToString(fingerprint[:])})
 }
 func (s *Service) ManagedRealtimePush(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "push preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "push preview unavailable") {
 		return
 	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

@@ -224,13 +224,13 @@ func TestServedOpenAPIFollowsTheDefaultRelease(t *testing.T) {
 	if _, ok := got["/v1/apps"]; !ok {
 		t.Fatal("a GA path left the served spec")
 	}
-	for _, path := range []string{"/v1/usage/realtime", "/v1/admin/config"} {
+	for _, path := range []string{"/v1/apps/{slug}/tasks", "/v1/admin/config"} {
 		if _, ok := got[path]; ok {
 			t.Errorf("%s is served while it is preview or operator", path)
 		}
 	}
-	srv.SeedPlatformFlag(capabilityFlag(t, "realtime"), platformflags.Definition{Enabled: true, Default: true})
-	if _, ok := paths()["/v1/usage/realtime"]; !ok {
+	srv.SeedPlatformFlag(capabilityFlag(t, "app-tasks"), platformflags.Definition{Enabled: true, Default: true})
+	if _, ok := paths()["/v1/apps/{slug}/tasks"]; !ok {
 		t.Error("a preview released to every account must be served")
 	}
 }

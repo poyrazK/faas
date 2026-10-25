@@ -16550,18 +16550,6 @@ List managed realtime endpoints
 
 `gregale realtime list <app>`
 
-### realtime usage
-
-Show open connections against the fair-use limit and usage
-
-`gregale realtime usage [--hours <N>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--hours <N>` | UTC hours of usage to show (1-744, default 24) |  |
-
-Includes recent hourly usage.
-
 ### realtime get
 
 Show one endpoint and safe auth-rotation status
@@ -16650,12 +16638,6 @@ List live connections for an endpoint
 | `--limit <N>` | maximum connections to return (1-1000) |  |
 | `--cursor <TOKEN>` | continue from a previous response&#39;s next_cursor |  |
 
-### realtime occupancy
-
-Count subscribers and presence members on channels
-
-`gregale realtime occupancy <app> <endpoint-id> <channel>...`
-
 ### realtime drain
 
 Close a bounded, filtered set of live connections
@@ -16721,162 +16703,11 @@ Send a message to every connection of one principal
 | `--notification-collapse-key <KEY>` | replace queued alerts that share this key |  |
 | `--notification-not-before <TIME>` | earliest push delivery, RFC3339, at most 48 hours ahead |  |
 
-### realtime edit-message
-
-Replace a retained message&#39;s payload
-
-`gregale realtime edit-message [--channel <CHANNEL>] [--principal <ID>] --message-id <ID> --expected-version <N> [--data <DATA>] [--data-stdin] [--binary] <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--channel <CHANNEL>` | retained channel (or --principal) |  |
-| `--principal <ID>` | principal inbox (or --channel) |  |
-| `--message-id <ID>` | stable publisher message ID | required |
-| `--expected-version <N>` | current message version | required |
-| `--data <DATA>` | replacement payload (or --data-stdin) |  |
-| `--data-stdin` | read the replacement bytes from stdin |  |
-| `--binary` | the replacement is binary |  |
-
-### realtime delete-message
-
-Delete a retained message
-
-`gregale realtime delete-message [--channel <CHANNEL>] [--principal <ID>] --message-id <ID> --expected-version <N> <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--channel <CHANNEL>` | retained channel (or --principal) |  |
-| `--principal <ID>` | principal inbox (or --channel) |  |
-| `--message-id <ID>` | stable publisher message ID | required |
-| `--expected-version <N>` | current message version | required |
-
 ### realtime receipt
 
 Show client acknowledgements for one sent message
 
 `gregale realtime receipt <app> <endpoint-id> <message-id>`
-
-### realtime inbox
-
-Read a principal&#39;s retained inbox
-
-`gregale realtime inbox --principal <ID> [--consumer <DEVICE>] [--after <SEQUENCE>] [--limit <N>] <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified OIDC principal to inspect | required |
-| `--consumer <DEVICE>` | device checkpoint to inspect |  |
-| `--after <SEQUENCE>` | read after this sequence (default: the device checkpoint or zero) |  |
-| `--limit <N>` | messages to read, 1-100 |  |
-
-### realtime read-progress
-
-Show how far a principal has read
-
-`gregale realtime read-progress --principal <ID> [--channel <CHANNEL>] <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-| `--channel <CHANNEL>` | channel; omit for the principal inbox |  |
-
-### realtime mark-read
-
-Mark messages read through a sequence
-
-`gregale realtime mark-read --principal <ID> [--channel <CHANNEL>] --sequence <N> <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-| `--channel <CHANNEL>` | channel; omit for the principal inbox |  |
-| `--sequence <N>` | mark seen through this sequence | required |
-
-### realtime push
-
-Configure push providers, devices and preferences
-
-#### realtime push providers
-
-List configured push providers
-
-`gregale realtime push providers <app> <endpoint-id>`
-
-#### realtime push configure
-
-Set one push provider&#39;s configuration from JSON
-
-`gregale realtime push configure --provider <PROVIDER> [--file <PATH>] [--enabled[=true|false]] <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--provider <PROVIDER>` | push provider | required; one of `fcm` · `apns` · `webpush` |
-| `--file <PATH>` | request JSON file (default: stdin) |  |
-| `--enabled[=true|false]` | enable or disable the provider (default true) | one of `true` · `false` |
-
-#### realtime push devices
-
-List a principal&#39;s registered devices
-
-`gregale realtime push devices --principal <ID> <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-
-#### realtime push register
-
-Register a principal&#39;s device from JSON
-
-`gregale realtime push register --principal <ID> --device <NAME> [--file <PATH>] <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-| `--device <NAME>` | stable device name | required |
-| `--file <PATH>` | request JSON file (default: stdin) |  |
-
-#### realtime push unregister
-
-Remove a principal&#39;s registered device
-
-`gregale realtime push unregister --principal <ID> --device <NAME> <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-| `--device <NAME>` | stable device name | required |
-
-#### realtime push deliveries
-
-List recent push deliveries for a principal
-
-`gregale realtime push deliveries --principal <ID> <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-
-#### realtime push preferences
-
-Show a principal&#39;s notification preferences
-
-`gregale realtime push preferences --principal <ID> <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-
-#### realtime push set-preferences
-
-Replace a principal&#39;s notification preferences from JSON
-
-`gregale realtime push set-preferences --principal <ID> [--file <PATH>] <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-| `--file <PATH>` | request JSON file (default: stdin) |  |
 
 ### realtime close
 
@@ -16911,8 +16742,8 @@ Publish a message to a channel
 | `--data <DATA>` | message text (or --data-stdin) |  |
 | `--data-stdin` | read the message from stdin |  |
 | `--binary` | send as a binary frame |  |
-| `--delivery <MODE>` | live by default or preview-only retained (up to 4 KiB) | one of `live` · `retained` |
-| `--idempotency-key <KEY>` | stable retry key; required for retained delivery |  |
+| `--delivery <MODE>` | live (the default) | one of `live` |
+| `--idempotency-key <KEY>` | stable retry key |  |
 
 ### realtime auth
 

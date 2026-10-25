@@ -42,7 +42,7 @@ func OpenAPIYAML() []byte { return openapiYAML }
 // jail mount helper: eager YAML conversion added about 82 ms to every helper
 // process on the SSD compute node, even though it never serves this endpoint.
 // Indexed like publicSpecs.
-var openapiJSON [2]struct {
+var openapiJSON [4]struct {
 	once sync.Once
 	body []byte
 }
@@ -75,12 +75,12 @@ func mustMarshalJSON(yamlBytes []byte) []byte {
 	return body
 }
 
-func openAPIJSONBytes() []byte { return openAPIJSONBytesFor(false) }
+func openAPIJSONBytes() []byte { return openAPIJSONBytesFor(Visibility{}) }
 
-func openAPIJSONBytesFor(monetization bool) []byte {
-	spec := &openapiJSON[specIndex(monetization)]
+func openAPIJSONBytesFor(v Visibility) []byte {
+	spec := &openapiJSON[v.index()]
 	spec.once.Do(func() {
-		spec.body = mustMarshalJSON(PublicOpenAPIYAMLFor(monetization))
+		spec.body = mustMarshalJSON(PublicOpenAPIYAMLFor(v))
 	})
 	return spec.body
 }
@@ -88,25 +88,33 @@ func openAPIJSONBytesFor(monetization bool) []byte {
 // OpenAPIJSONSHA256 returns the hex SHA-256 checksum of the exact bytes served
 // by GET /v1/openapi.json. The docs page publishes this value so clients and
 // CI can verify that Swagger UI is rendering the deployed document.
-func OpenAPIJSONSHA256() string { return openAPIJSONSHA256For(false) }
+func OpenAPIJSONSHA256() string { return openAPIJSONSHA256For(Visibility{}) }
 
-func openAPIJSONSHA256For(monetization bool) string {
-	sum := sha256.Sum256(openAPIJSONBytesFor(monetization))
+func openAPIJSONSHA256For(v Visibility) string {
+	sum := sha256.Sum256(openAPIJSONBytesFor(v))
 	return hex.EncodeToString(sum[:])
 }
 
 // OpenAPI serves the anonymous spec and API reference. Monetization reports
-// whether API monetization is released (ADR-20261018090210) and is read per
-// request; nil keeps it hidden. Hidden returns the paths to leave out, those
-// of capabilities off by default (ADR-20261023115741), with a key naming
-// that set; nil hides none. ServeOpenAPISpec, ServeOpenAPISpecJSON and
-// ServeDocs are the variants with neither.
+// whether API monetization is released (ADR-20261018090210) and
+// RealtimePreview whether every account sees the realtime preview
+// (ADR-20261019102657); both are read per request, and nil keeps the feature
+// hidden. Hidden returns the paths to leave out, those of capabilities off by
+// default (ADR-20261023115741), with a key naming that set; nil hides none.
+// ServeOpenAPISpec, ServeOpenAPISpecJSON and ServeDocs are the variants that
+// publish none of these.
 type OpenAPI struct {
-	Monetization func() bool
-	Hidden       func() (key string, hide func(path string) bool)
+	Monetization    func() bool
+	RealtimePreview func() bool
+	Hidden          func() (key string, hide func(path string) bool)
 }
 
-func (o OpenAPI) monetization() bool { return o.Monetization != nil && o.Monetization() }
+func (o OpenAPI) visibility() Visibility {
+	return Visibility{
+		Monetization:    o.Monetization != nil && o.Monetization(),
+		RealtimePreview: o.RealtimePreview != nil && o.RealtimePreview(),
+	}
+}
 
 // servedSpec is one served variant of the spec.
 type servedSpec struct {
@@ -124,16 +132,16 @@ var servedSpecs struct {
 }
 
 func (o OpenAPI) spec() *servedSpec {
-	monetization := o.monetization()
+	v := o.visibility()
 	var key string
 	var hide func(string) bool
 	if o.Hidden != nil {
 		key, hide = o.Hidden()
 	}
 	if hide == nil {
-		return &servedSpec{yaml: PublicOpenAPIYAMLFor(monetization), json: openAPIJSONBytesFor(monetization), sha: openAPIJSONSHA256For(monetization)}
+		return &servedSpec{yaml: PublicOpenAPIYAMLFor(v), json: openAPIJSONBytesFor(v), sha: openAPIJSONSHA256For(v)}
 	}
-	cacheKey := fmt.Sprintf("%t\x00%s", monetization, key)
+	cacheKey := fmt.Sprintf("%d\x00%s", v.index(), key)
 	servedSpecs.Lock()
 	defer servedSpecs.Unlock()
 	if spec, ok := servedSpecs.byKey[cacheKey]; ok {
@@ -142,7 +150,7 @@ func (o OpenAPI) spec() *servedSpec {
 	if servedSpecs.byKey == nil || len(servedSpecs.byKey) >= maxServedSpecs {
 		servedSpecs.byKey = map[string]*servedSpec{}
 	}
-	spec := &servedSpec{yaml: FilterSpec(openapiYAML, hide, monetization)}
+	spec := &servedSpec{yaml: FilterSpec(openapiYAML, hide, v)}
 	spec.json = mustMarshalJSON(spec.yaml)
 	sum := sha256.Sum256(spec.json)
 	spec.sha = hex.EncodeToString(sum[:])

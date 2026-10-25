@@ -4215,6 +4215,9 @@
       ],
       "docs_url": "/docs/realtime",
       "acceptance_test": "cmd/gregale/commands_realtime_usage_test.go::TestPrintRealtimeUsage",
+      "settings": [
+        "manifest.realtime"
+      ],
       "routes": [
         "/dashboard/apps/{}/realtime",
         "/v1/account/realtime-history-usage",

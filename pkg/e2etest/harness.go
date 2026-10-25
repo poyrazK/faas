@@ -99,6 +99,8 @@ type Harness struct {
 	ScheddSock string
 	VMMDPath   string
 	VMMDSock   string
+	// RealtimeSock is realtimed's socket when the harness boots it.
+	RealtimeSock string
 	// VMMDMetricsURL is vmmd's /metrics endpoint, set only when the test
 	// starts the harness with VMMDMetrics.
 	VMMDMetricsURL string
@@ -291,11 +293,15 @@ func StartWithAPIDEnv(t *testing.T, pool *pgxpool.Pool, which Which, apidOnlyEnv
 	// gets the same key when schedd runs. This only writes the key: schedd
 	// itself still starts after vmmd (TestStart_BootsVMMDBeforeSchedd).
 	scheddVerifies := which&Schedd != 0
+	extraEnv = h.prepareRealtimed(which, extraEnv)
 	if which&APID != 0 {
 		if scheddVerifies {
 			h.ensureSignPub(t)
 		}
 		startAPID(t, h, bin, dbURL, append(append([]string(nil), extraEnv...), apidOnlyEnv...)...)
+	}
+	if which&Realtimed != 0 {
+		startRealtimed(t, h, bin, extraEnv)
 	}
 
 	// Both socket paths are fixed up front: vmmd's env carries schedd's target
@@ -511,6 +517,9 @@ const (
 	// the per-test Unix socket. It lets CI exercise the durable drain without
 	// pretending a missing vmmd bridge is a successful customer response.
 	GatewaySynthStub
+	// Realtimed boots the managed realtime daemon after apid; apid and the
+	// gateways get its socket (ADR-20261019102657 acceptance).
+	Realtimed
 	// VMMDMetrics gives vmmd a loopback /metrics listener (VMMDMetricsURL).
 	// It starts no daemon of its own. vmmd binds a fixed reserved port here,
 	// so only tests that read its counters opt in.
@@ -857,6 +866,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	// for the head value and bump history.
 	pgtest.WaitForMigration(t, pool, e2eMigrationTarget, 30*time.Second)
 
+	extraEnv = h.prepareRealtimed(which, extraEnv)
 	if which&APID != 0 {
 		addr := freeTCPAddr(t)
 		// Every daemon gets its own free metrics port — see
@@ -905,6 +915,9 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		// listener while still failing promptly on a crashed process.
 		waitTCP(t, addr, 30*time.Second)
 	}
+	if which&Realtimed != 0 {
+		startRealtimed(t, h, bin, extraEnv)
+	}
 	if which&Schedd != 0 {
 		sockPath := filepath.Join(h.SockDir, "schedd.sock")
 		vmmdSock := os.Getenv("FAAS_E2E_VMMD_SOCKET")
@@ -943,7 +956,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	// the rest SILENTLY: a test could ask for imaged, get no imaged, no error,
 	// and a deployment that simply never moved. Refuse instead, so the next
 	// caller learns in one second rather than after a three-minute poll.
-	if unsupported := which &^ (APID | Schedd | Imaged | Gatewayd | GatewaydPublic | Meterd | GatewaySynthStub); unsupported != 0 {
+	if unsupported := which &^ (APID | Schedd | Imaged | Gatewayd | GatewaydPublic | Meterd | GatewaySynthStub | Realtimed); unsupported != 0 {
 		t.Fatalf("e2etest: StartWithEnv cannot start daemon mask %b (VMMD and Builderd are Start-only); "+
 			"use Start, or teach StartWithEnv to boot them", unsupported)
 	}
@@ -1281,6 +1294,51 @@ func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ..
 // startGatewaydPublic boots the public edge next to gatewayd-internal. It is
 // opt-in because most metal tests only need the internal HTTP path; the raw
 // TCP acceptance test needs the real gatewayd-public/tcpd composition.
+// prepareRealtimed fixes realtimed's socket before any daemon starts, so
+// apid and gatewayd-internal reach it.
+func (h *Harness) prepareRealtimed(which Which, extraEnv []string) []string {
+	if which&Realtimed == 0 {
+		return extraEnv
+	}
+	h.RealtimeSock = filepath.Join(h.SockDir, "realtimed.sock")
+	return append([]string{"FAAS_REALTIME_SOCKET=" + h.RealtimeSock}, extraEnv...)
+}
+
+// startRealtimed boots realtimed after apid: on a single box it reads
+// retained history, tickets and fleet state from apid's request-telemetry
+// socket. Callers pass the preview flags they exercise in extraEnv.
+func startRealtimed(t *testing.T, h *Harness, bin string, extraEnv []string) {
+	t.Helper()
+	if err := ensureRealtimed(bin); err != nil {
+		t.Fatal(err)
+	}
+	outbox := filepath.Join(h.TmpDir, "realtime-outbox")
+	if err := os.MkdirAll(outbox, 0o700); err != nil {
+		t.Fatalf("e2etest: mkdir realtime outbox: %v", err)
+	}
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"FAAS_REALTIME_SOCKET=" + h.RealtimeSock,
+		"FAAS_REALTIME_CALLBACK_OUTBOX=" + outbox,
+		"FAAS_REALTIME_HEALTH_LISTEN=" + freeTCPAddr(t),
+		"FAAS_REALTIME_HISTORY_TARGET=" + filepath.Join(h.SockDir, "request_telemetry.sock"),
+	}
+	env = append(env, extraEnv...)
+	h.procs = append(h.procs, startProc(t, bin, "realtimed", env))
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if _, err := os.Stat(h.RealtimeSock); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			dumpProcs(t)
+			t.Fatalf("e2etest: realtimed did not create %s", h.RealtimeSock)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func startGatewaydPublic(t *testing.T, h *Harness, bin, dbURL string, extraEnv []string) {
 	t.Helper()
 	if h.ScheddSock == "" {
@@ -2227,6 +2285,41 @@ func EnsureSharedBinaries() (string, error) {
 		sharedBinDir = dir
 	})
 	return sharedBinDir, sharedBinErr
+}
+
+// realtimedBuild builds realtimed into the shared binary directory the first
+// time a test starts it. It stays out of DaemonBinaries because the native
+// acceptance gates stage exactly the binaries their contracts list, and only
+// realtime tests need this one.
+var realtimedBuild struct {
+	once sync.Once
+	err  error
+}
+
+func ensureRealtimed(dir string) error {
+	realtimedBuild.once.Do(func() {
+		if binaryPresent(filepath.Join(dir, "realtimed")) {
+			return
+		}
+		mod, err := moduleImportPath()
+		if err != nil {
+			realtimedBuild.err = err
+			return
+		}
+		args := []string{"build"}
+		if daemonBuildTags != "" {
+			args = append(args, "-tags", daemonBuildTags)
+		}
+		args = append(args, "-o", filepath.Join(dir, "realtimed"), mod+"/cmd/realtimed")
+		var out bytes.Buffer
+		cmd := exec.Command("go", args...)
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			realtimedBuild.err = fmt.Errorf("e2etest: go build realtimed: %w\n%s", err, out.String())
+		}
+	})
+	return realtimedBuild.err
 }
 
 // binaryPresent reports whether path is a non-empty executable regular file.

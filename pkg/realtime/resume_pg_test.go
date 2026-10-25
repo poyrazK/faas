@@ -27,7 +27,7 @@ func startPGResumeNode(t *testing.T, endpointID, appID, accountID string, reader
 		JWTAuthorizer: &recordingJWTAuthorizer{}, ResumePreview: true,
 		HistoryReader: reader, ResumePollInterval: 15 * time.Millisecond,
 	}, hooks)
-	if err := m.RegisterEndpoint(Endpoint{
+	if err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID: endpointID, AppID: appID, AccountID: accountID, CallbackURL: "https://app.example",
 		ClientAuth: AuthPolicy{
 			Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",

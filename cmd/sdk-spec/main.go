@@ -42,5 +42,5 @@ func render() ([]byte, error) {
 			hidden[capability.ID] = true
 		}
 	}
-	return apid.FilterSpec(apid.OpenAPIYAML(), func(path string) bool { return gate.SpecHidden(path, hidden) }, false), nil
+	return apid.FilterSpec(apid.OpenAPIYAML(), func(path string) bool { return gate.SpecHidden(path, hidden) }, apid.Visibility{}), nil
 }

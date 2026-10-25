@@ -119237,6 +119237,22 @@ components:
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,47}$'
+          description: "Name of the endpoint within its app, used by gregale.yaml. Absent for endpoints created without one."
+        channel_rules:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/RealtimeChannelRule' }
+
+    RealtimeChannelRule:
+      type: object
+      description: "Grants a channel to a verified token without the authorize callback. The pattern is literal text with {claim} placeholders that must equal the token's claims and an optional trailing * matching any suffix."
+      required: [pattern, read]
+      properties:
+        pattern: { type: string, minLength: 1, maxLength: 256, example: "org:{org_id}:room:*" }
+        read: { type: boolean, description: "Must be true: a rule grants read access." }
 
     CreateManagedRealtimeEndpointRequest:
       type: object
@@ -119272,6 +119288,15 @@ components:
         max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576, default: 0 }
         max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800, default: 0 }
         enabled: { type: boolean, default: true }
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,47}$'
+          description: "Optional name of the endpoint within its app, unique per app. gregale.yaml declares endpoints by slug."
+        channel_rules:
+          type: array
+          maxItems: 32
+          description: "Channels granted from verified token claims without the authorize callback. A matching channel trusts the token until it expires."
+          items: { $ref: '#/components/schemas/RealtimeChannelRule' }
 
     UpdateManagedRealtimeEndpointRequest:
       type: object
@@ -119306,6 +119331,15 @@ components:
         max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576 }
         max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
         enabled: { type: boolean }
+        slug:
+          type: string
+          pattern: '^$|^[a-z0-9][a-z0-9-]{0,47}$'
+          description: "Replace the endpoint's slug. An empty string removes it."
+        channel_rules:
+          type: array
+          maxItems: 32
+          description: "Replace the endpoint's channel rules. An empty list removes them."
+          items: { $ref: '#/components/schemas/RealtimeChannelRule' }
 
     RotateManagedRealtimeAuthRequest:
       type: object

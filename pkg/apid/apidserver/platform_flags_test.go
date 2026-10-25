@@ -343,6 +343,33 @@ func TestEnvGatesYieldToOperatorPlatformFlags(t *testing.T) {
 			t.Fatal("releasing to every account must stop hiding the routes")
 		}
 	})
+	// adr: 20261019102657
+	t.Run("realtime_preview", func(t *testing.T) {
+		if err := s.ConfigureRealtimePreviewForTest(func(key string) string {
+			if key == "FAAS_REALTIME_PREVIEW_ACCOUNTS" {
+				return other.ID
+			}
+			return ""
+		}); err != nil {
+			t.Fatal(err)
+		}
+		gate := s.RealtimePreviewGateForTest()
+		if !gate.Allows(other.ID) || gate.Allows(acct.ID) {
+			t.Fatal("FAAS_REALTIME_PREVIEW_ACCOUNTS must decide until an operator writes the flag")
+		}
+		apply(platformflags.RealtimePreview, only(acct.ID), 1)
+		if !gate.Allows(acct.ID) || gate.Allows(other.ID) || s.RealtimePreviewPublishedForTest() {
+			t.Fatal("the operator rule must release the preview to that account only and keep the spec hidden")
+		}
+		apply(platformflags.RealtimePreview, platformflags.Definition{Enabled: true, Default: true}.Marshal(), 2)
+		if !gate.Allows(other.ID) || !s.RealtimePreviewPublishedForTest() {
+			t.Fatal("releasing to every account must publish the preview")
+		}
+		apply(platformflags.RealtimePreview, platformflags.Definition{}.Marshal(), 3)
+		if off, ok := gate.(interface{ Off() bool }); !ok || !off.Off() || gate.Allows(acct.ID) {
+			t.Fatal("the kill switch must hide the preview from every account")
+		}
+	})
 }
 
 // Company targeting (ADR 20261021080640): an org rule releases a feature to

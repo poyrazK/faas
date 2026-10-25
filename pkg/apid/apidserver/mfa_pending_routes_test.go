@@ -90,6 +90,10 @@ func TestSessionRoutesRefuseMFAPendingCookies(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	// Outside the realtime preview rollout those routes answer the
+	// missing-route 404 before auth (ADR-20261019102657). Open it so their MFA
+	// enforcement stays covered.
+	(*e.Srv()).WithRealtimePreview(apidserver.RealtimePreviewEveryone())
 	// With the preview off, durable entity routes answer 404 before auth.
 	// Enable it so their MFA enforcement stays covered.
 	(*e.Srv()).Durable().Engine = &durableentity.Manager{}

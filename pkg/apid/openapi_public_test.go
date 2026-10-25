@@ -11,8 +11,11 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/apid/monetization"
+	"github.com/onebox-faas/faas/pkg/apid/realtimepreview"
 	"gopkg.in/yaml.v3"
 )
+
+var allVisible = Visibility{Monetization: true, RealtimePreview: true}
 
 type specShape struct {
 	Paths      map[string]any            `yaml:"paths" json:"paths"`
@@ -30,10 +33,11 @@ func decodeSpec(t *testing.T, raw []byte) specShape {
 
 // The anonymous spec must not advertise the durable entity preview, while the
 // embedded source keeps it for SDK generation and contract tooling. API
-// monetization is published here so only the preview filter is measured.
+// monetization and the realtime preview are published here so only the
+// durable entity filter is measured.
 func TestPublicOpenAPIHidesDurableEntityPaths(t *testing.T) {
 	full := decodeSpec(t, OpenAPIYAML())
-	public := decodeSpec(t, PublicOpenAPIYAMLFor(true))
+	public := decodeSpec(t, PublicOpenAPIYAMLFor(allVisible))
 	hidden := 0
 	for path := range full.Paths {
 		if hiddenPublicPath(path) {
@@ -88,8 +92,8 @@ func TestPublicOpenAPIPrunesExclusiveComponents(t *testing.T) {
 // is released they all return.
 func TestPublicOpenAPIFollowsMonetizationRelease(t *testing.T) {
 	full := decodeSpec(t, OpenAPIYAML())
-	hidden := decodeSpec(t, PublicOpenAPIYAMLFor(false))
-	shown := decodeSpec(t, PublicOpenAPIYAMLFor(true))
+	hidden := decodeSpec(t, PublicOpenAPIYAMLFor(Visibility{RealtimePreview: true}))
+	shown := decodeSpec(t, PublicOpenAPIYAMLFor(allVisible))
 	monetized := 0
 	for path := range full.Paths {
 		if !monetization.Path(path) || hiddenPublicPath(path) {
@@ -117,7 +121,7 @@ func TestPublicOpenAPIFollowsMonetizationRelease(t *testing.T) {
 			t.Errorf("released spec dropped %s", name)
 		}
 	}
-	hiddenYAML, shownYAML := string(PublicOpenAPIYAMLFor(false)), string(PublicOpenAPIYAMLFor(true))
+	hiddenYAML, shownYAML := string(PublicOpenAPIYAMLFor(Visibility{RealtimePreview: true})), string(PublicOpenAPIYAMLFor(allVisible))
 	for _, event := range monetization.WebhookEvents {
 		if strings.Contains(hiddenYAML, "- "+event+"\n") || strings.Contains(hiddenYAML, "["+event) {
 			t.Errorf("hidden spec still offers webhook event %s", event)
@@ -126,9 +130,108 @@ func TestPublicOpenAPIFollowsMonetizationRelease(t *testing.T) {
 			t.Errorf("released spec lacks webhook event %s", event)
 		}
 	}
-	if string(PublicOpenAPIYAML()) != hiddenYAML {
-		t.Error("PublicOpenAPIYAML must be the hidden variant")
+	if _, ok := decodeSpec(t, PublicOpenAPIYAML()).Paths["/v1/apps/{slug}/rate-cards"]; ok {
+		t.Error("PublicOpenAPIYAML must hide monetization")
 	}
+}
+
+// adr: 20261019102657 — until every account sees the realtime preview the
+// served spec lists none of its routes, the preview-only fields of released
+// schemas, the retained delivery value or the schemas only they use.
+func TestPublicOpenAPIFollowsRealtimePreview(t *testing.T) {
+	full := decodeSpec(t, OpenAPIYAML())
+	hidden := decodeSpec(t, PublicOpenAPIYAMLFor(Visibility{Monetization: true}))
+	shown := decodeSpec(t, PublicOpenAPIYAMLFor(allVisible))
+	routes := 0
+	for path, item := range full.Paths {
+		for method := range item.(map[string]any) {
+			if !realtimepreview.Route(method, path) {
+				continue
+			}
+			routes++
+			if op, _ := hidden.Paths[path].(map[string]any); op[method] != nil {
+				t.Errorf("hidden spec lists %s %s", method, path)
+			}
+			if op, _ := shown.Paths[path].(map[string]any); op[method] == nil {
+				t.Errorf("published spec dropped %s %s", method, path)
+			}
+		}
+	}
+	if want := len(realtimepreview.Routes()); routes != want {
+		t.Fatalf("embedded spec has %d of the %d preview routes", routes, want)
+	}
+	for schema, fields := range realtimepreview.Fields {
+		for _, field := range fields {
+			if !hasProperty(full, schema, field) {
+				t.Fatalf("embedded spec lacks %s.%s; update realtimepreview.Fields", schema, field)
+			}
+			if hasProperty(hidden, schema, field) {
+				t.Errorf("hidden spec still has %s.%s", schema, field)
+			}
+			if !hasProperty(shown, schema, field) {
+				t.Errorf("published spec dropped %s.%s", schema, field)
+			}
+		}
+	}
+	for _, component := range append([]string{"schemas/RealtimeChannelRule"}, realtimepreview.Components...) {
+		kind, name, _ := strings.Cut(component, "/")
+		if _, ok := full.Components[kind][name]; !ok {
+			t.Fatalf("embedded spec lacks %s; update realtimepreview.Components", component)
+		}
+		if _, ok := hidden.Components[kind][name]; ok {
+			t.Errorf("hidden spec still defines %s", component)
+		}
+		if _, ok := shown.Components[kind][name]; !ok {
+			t.Errorf("published spec dropped %s", component)
+		}
+	}
+	listed := func(spec, event string) bool {
+		return strings.Contains(spec, "- "+event+"\n") || strings.Contains(spec, "["+event) || strings.Contains(spec, ", "+event)
+	}
+	hiddenYAML, shownYAML := string(PublicOpenAPIYAMLFor(Visibility{Monetization: true})), string(PublicOpenAPIYAMLFor(allVisible))
+	for _, event := range realtimepreview.WebhookEvents {
+		if listed(hiddenYAML, event) {
+			t.Errorf("hidden spec still offers webhook event %s", event)
+		}
+		if !listed(shownYAML, event) {
+			t.Errorf("published spec does not offer webhook event %s", event)
+		}
+	}
+	if _, ok := hidden.Components["schemas"]["ManagedRealtimeEndpointResponse"]; !ok {
+		t.Error("hidden spec dropped the released endpoint schema")
+	}
+	method, path, _ := strings.Cut(realtimepreview.RetainedDeliveryRoute, " ")
+	for name, spec := range map[string]specShape{"hidden": hidden, "published": shown} {
+		values := deliveryValues(t, spec, strings.ToLower(method), path)
+		if got, want := strings.Contains(values, realtimepreview.RetainedDelivery), name == "published"; got != want {
+			t.Errorf("%s spec delivery values = %s", name, values)
+		}
+	}
+}
+
+func hasProperty(spec specShape, schema, field string) bool {
+	body, _ := spec.Components["schemas"][schema].(map[string]any)
+	properties, _ := body["properties"].(map[string]any)
+	_, ok := properties[field]
+	return ok
+}
+
+// deliveryValues returns the delivery query parameter's enum on a route.
+func deliveryValues(t *testing.T, spec specShape, method, path string) string {
+	t.Helper()
+	item, _ := spec.Paths[path].(map[string]any)
+	op, _ := item[method].(map[string]any)
+	params, _ := op["parameters"].([]any)
+	for _, raw := range params {
+		param, _ := raw.(map[string]any)
+		if param["name"] == "delivery" {
+			schema, _ := param["schema"].(map[string]any)
+			body, _ := json.Marshal(schema["enum"])
+			return string(body)
+		}
+	}
+	t.Fatalf("%s %s has no delivery parameter", method, path)
+	return ""
 }
 
 func TestOpenAPIHandlersFollowMonetization(t *testing.T) {
@@ -147,7 +250,7 @@ func TestOpenAPIHandlersFollowMonetization(t *testing.T) {
 		}
 		rec = httptest.NewRecorder()
 		o.ServeDocs(rec, httptest.NewRequest(http.MethodGet, "/docs", nil))
-		if !strings.Contains(rec.Body.String(), openAPIJSONSHA256For(release)) {
+		if !strings.Contains(rec.Body.String(), openAPIJSONSHA256For(Visibility{Monetization: release})) {
 			t.Errorf("released=%t: docs page names another document", release)
 		}
 	}
@@ -162,7 +265,7 @@ func TestPublicOpenAPIHasNoDanglingRefs(t *testing.T) {
 // path or component references, including components no path references.
 func TestFilterSpecLeavesNoDanglingRefs(t *testing.T) {
 	n := 0
-	assertNoDanglingRefs(t, FilterSpec(openapiYAML, func(string) bool { n++; return n%2 == 0 }, false))
+	assertNoDanglingRefs(t, FilterSpec(openapiYAML, func(string) bool { n++; return n%2 == 0 }, Visibility{}))
 }
 
 // adr: 20261023115741 — the served spec and API reference leave out the
@@ -242,7 +345,7 @@ func TestServeOpenAPISpecJSONHidesDurableEntityPaths(t *testing.T) {
 }
 
 func TestPublicSpecFailsClosed(t *testing.T) {
-	if got := string(publicSpec([]byte("paths: [unterminated"), false)); !strings.HasPrefix(got, "error:") {
+	if got := string(publicSpec([]byte("paths: [unterminated"), Visibility{})); !strings.HasPrefix(got, "error:") {
 		t.Errorf("malformed spec returned %q, want an error document", got)
 	}
 }

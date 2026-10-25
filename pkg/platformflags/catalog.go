@@ -43,6 +43,7 @@ const (
 	AnomalyAlerts        = "anomaly_alerts"
 	TriggerBatchDelivery = "trigger_batch_delivery"
 	APIMonetization      = "api_monetization"
+	RealtimePreview      = "realtime_preview"
 
 	OperationSchedules = "operation_schedules"
 	OperationChildren  = "operation_children"
@@ -380,6 +381,14 @@ var catalog = []Spec{
 		Consumers:  []string{"apid", "gatewayd-internal"},
 		Attributes: []Attribute{AttributePlan},
 		RetireBy:   "2027-03-31",
+	},
+	{
+		Key:         RealtimePreview,
+		Label:       "Realtime preview",
+		Description: "Release the realtime preview (retained history and what builds on it, tickets, access controls, occupancy, usage, endpoint slugs and channel rules, the v2 protocol and SSE) to accounts. Each feature also needs its daemon flag, and the v2 protocol, tickets, access controls and occupancy also need realtime_resume, realtime_tickets, realtime_access and realtime_occupancy. Decided by account only: plan rules never match. Unless every account is included, the served OpenAPI document leaves the preview out.",
+		ADR:         "ADR-20261019102657",
+		Consumers:   []string{"apid"},
+		LegacyEnv:   []string{"FAAS_REALTIME_PREVIEW_ACCOUNTS"},
 	},
 }
 
