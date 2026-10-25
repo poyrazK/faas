@@ -117,7 +117,10 @@ re-injects it into TAP ingress, classification is skipped and the mark is
 never cleared. So the packet leaves the public peer without reaching this
 table. On n2 (Linux 7.0, nft 1.1.3) a 4 MiB quota passed 8.79 MB of a
 guest TCP stream and counted 7 packets. Lane B's DaemonRecovery
-`remote_exhaustion` showed the same overrun.
+`remote_exhaustion` also overran. That test's outage also left vmmd's own
+database pool connected (`FAAS_VMMD_DBURL` bypassed the proxy), so vmmd kept
+buying credits as well; the test now cuts vmmd too, and with both fixes the
+attempt stays within its grant.
 
 Guest IP is now counted at an `inet faas_budget` postrouting chain that
 matches `oifname` of the public peer. IP hooks do not depend on tc state, and
