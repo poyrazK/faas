@@ -3,6 +3,7 @@
   "base_url": "https://gregale.dev/docs",
   "routes": [
     {"path": "", "source": "docs/quickstart.md"},
+    {"path": "abuse", "source": "docs/abuse.md"},
     {"path": "account", "source": "docs/account.md"},
     {"path": "alerts", "source": "docs/alerts.md"},
     {"path": "api-hosting", "source": "docs/api-hosting-roadmap.md"},
