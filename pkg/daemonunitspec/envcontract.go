@@ -544,6 +544,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_INTERNAL_SVC_KEY_SEALED_NAMESPACE", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_INTERNAL_SVC_PUBKEYS", Owners: []string{"gatewayd-internal"}, Source: EnvSourceDefault},
 	{Name: "FAAS_INTERNAL_TARGET", Owners: []string{"gatewayd-public", "shared"}, Source: EnvSourceUnit},
+	{Name: "FAAS_INVOKE_HOOK_BACKOFF", Owners: []string{"vmmd"}, Source: EnvSourceDefault, Note: "optional boolean switch: stop per-request invoke extension events to an instance for 30 s after its guest reports no extension endpoint (ADR-20261025150000); production default is off"},
 	{Name: "FAAS_ISSUE_SLACK_APP_ID", Owners: []string{"apid", "shared"}, Source: EnvSourceSecretsEnv, Note: "optional managed Issues Slack app identity; delivered by /etc/faas/sealed.env on apid (ADR-1497)"},
 	{Name: "FAAS_ISSUE_SLACK_CLIENT_ID", Owners: []string{"apid", "shared"}, Source: EnvSourceSecretsEnv, Note: "optional managed Issues Slack OAuth client; delivered by /etc/faas/sealed.env on apid (ADR-1497)"},
 	{Name: "FAAS_ISSUE_SLACK_CLIENT_SECRET", Owners: []string{"apid", "shared"}, Source: EnvSourceSecretsEnv, Note: "optional managed Issues Slack OAuth client secret; delivered by /etc/faas/sealed.env on apid (ADR-1497)"},

@@ -61,3 +61,16 @@ func (b *invokeHookBackoff) record(instance string, err error, now time.Time) {
 	}
 	b.until[instance] = now.Add(extension.InvokeUnavailableBackoff)
 }
+
+// invokeHookAllowed reports whether this request may send an invoke event.
+// With the backoff switched off every request sends one, as before.
+func (s *Server) invokeHookAllowed(instance string, now time.Time) bool {
+	return !s.invokeHookBackoffOn || s.invokeHooks.allow(instance, now)
+}
+
+// recordInvokeHook notes an invoke event's outcome while the backoff is on.
+func (s *Server) recordInvokeHook(instance string, err error, now time.Time) {
+	if s.invokeHookBackoffOn {
+		s.invokeHooks.record(instance, err, now)
+	}
+}

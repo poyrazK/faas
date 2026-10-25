@@ -71,3 +71,24 @@ func TestInvokeHookBackoffSweepsExpiredEntries(t *testing.T) {
 		t.Fatal("the instance recorded during the sweep lost its backoff")
 	}
 }
+
+func TestInvokeHookSwitch(t *testing.T) {
+	t0 := time.Date(2026, 10, 25, 15, 0, 0, 0, time.UTC)
+	cases := []struct {
+		name      string
+		on        bool
+		wantAllow bool
+	}{
+		{name: "switch off sends every event", on: false, wantAllow: true},
+		{name: "switch on holds back after no-extension", on: true, wantAllow: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			s := (&Server{}).WithInvokeHookBackoff(tc.on)
+			s.recordInvokeHook("i-1", extension.ErrUnavailable, t0)
+			if got := s.invokeHookAllowed("i-1", t0.Add(time.Second)); got != tc.wantAllow {
+				t.Fatalf("allowed = %v, want %v", got, tc.wantAllow)
+			}
+		})
+	}
+}

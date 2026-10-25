@@ -237,15 +237,16 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 	}
 	// Per-invocation extension hooks are deliberately asynchronous. A slow or
 	// absent extension must never add latency to the customer request path,
-	// and an instance without one gets no events for a while (ADR-20261025150000).
-	if hooker, ok := s.vmm.(extensionHookVMM); ok && s.invokeHooks.allow(reqInit.GetInstance(), time.Now()) {
+	// and with invoke_hook_backoff on, an instance without one gets no events
+	// for a while (ADR-20261025150000).
+	if hooker, ok := s.vmm.(extensionHookVMM); ok && s.invokeHookAllowed(reqInit.GetInstance(), time.Now()) {
 		if metadata := invocationExtensionMetadata(reqInit); len(metadata) > 0 {
 			instance := reqInit.GetInstance()
 			go func() {
 				hookCtx, cancel := context.WithTimeout(context.Background(), extension.DefaultTimeout)
 				defer cancel()
 				err := hooker.TriggerExtensionHook(hookCtx, instance, string(extension.PhaseInvoke), metadata)
-				s.invokeHooks.record(instance, err, time.Now())
+				s.recordInvokeHook(instance, err, time.Now())
 				if err != nil {
 					s.log.Debug("invocation extension hook unavailable", "instance", instance, "err", err)
 				}

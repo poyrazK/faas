@@ -112,6 +112,11 @@ type Config struct {
 	// Off by default; schedd decides which instances are eligible.
 	// FAAS_QUIET_PAUSE overrides TOML.
 	QuietPause bool `toml:"quiet_pause"`
+	// InvokeHookBackoff stops per-request invoke extension events to an
+	// instance for extension.InvokeUnavailableBackoff after its guest reports
+	// that no extension endpoint is listening (ADR-20261025150000). Off by
+	// default; FAAS_INVOKE_HOOK_BACKOFF overrides TOML.
+	InvokeHookBackoff bool `toml:"invoke_hook_backoff"`
 	// RequireSecretBinding refuses runtime secret envelopes that carry no
 	// account binding (ADR-20261023173624, contract step). Off by default;
 	// the seal_domains role turns it on once every stored envelope is
@@ -831,6 +836,13 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_BINDING_REQUIRED must be a boolean (got %q)", v)
 		}
 		c.RequireSecretBinding = required
+	}
+	if v := os.Getenv("FAAS_INVOKE_HOOK_BACKOFF"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_INVOKE_HOOK_BACKOFF must be a boolean (got %q)", v)
+		}
+		c.InvokeHookBackoff = enabled
 	}
 	if v := os.Getenv("FAAS_RESTORE_RESEED_THREAD"); v != "" {
 		enabled, perr := strconv.ParseBool(v)

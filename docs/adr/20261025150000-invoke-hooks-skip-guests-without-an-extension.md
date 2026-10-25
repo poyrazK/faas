@@ -5,6 +5,9 @@
 - **Amends:** the extension lifecycle contract in `pkg/extension` (wired for
   the invoke phase by #3003): one new guest acknowledgement value and a host
   backoff. No customer-facing change for apps without an extension.
+- **Switch:** vmmd `invoke_hook_backoff` / `FAAS_INVOKE_HOOK_BACKOFF`,
+  default off. The guest-side ack ships unconditionally; with the switch off
+  vmmd keeps sending every invoke event, as before.
 
 ## Context
 
@@ -54,7 +57,10 @@ The contract calls lifecycle events best-effort hints.
    instance for `extension.InvokeUnavailableBackoff` (30 s), then the next
    request sends one event as a probe. A transport failure or any other ack
    does not start a backoff.
-3. The backoff is in-memory in vmmd, keyed by instance id. A restart forgets
+3. The host backoff runs only while vmmd's `invoke_hook_backoff` switch is
+   on. Turning it on for one compute node and comparing it with the others
+   under the same load is the production check below.
+4. The backoff is in-memory in vmmd, keyed by instance id. A restart forgets
    it, which costs one probe per instance. A frozen and thawed instance keeps
    its entry, because the same guest-init process answers. The map is swept
    of expired entries once it holds 4,096.
@@ -84,7 +90,8 @@ The contract calls lifecycle events best-effort hints.
   `extension.ErrUnavailable` and other non-zero acks to plain errors; the
   vmmd backoff holds events inside the window, releases one after it, keeps
   other instances unaffected, and sweeps expired entries.
-- Production check after a release with both halves: repeat the 100 req/s
-  measurement on the same app. The VM cgroup should fall from ~5.7 to about
+- Production check after a release with both halves: turn the switch on for
+  one compute node (it takes effect when vmmd next restarts), then repeat the
+  100 req/s measurement on the same app with its instance on that node. The VM cgroup should fall from ~5.7 to about
   1.3 ms per request, KVM exits should drop by about 110 per request, and vmmd's
   CPU per request should drop by about 12%.
