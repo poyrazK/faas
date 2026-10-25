@@ -60,7 +60,9 @@ func (s *Server) WithInstanceBridgeHandoff(on bool) *Server {
 }
 
 // recordUnit journals a started unit run so a successor can adopt it. A
-// failed record only costs the bridge at the next restart.
+// bridge the wake's prewarm started is not live yet: the first lease after
+// the wake records it (needsRecordLocked). A failed record only costs the bridge
+// at the next restart.
 func (m *streamBridgeManager) recordUnit(entry *streamBridgeEntry) {
 	if m.journal == nil || entry.unit == nil {
 		return
@@ -68,9 +70,22 @@ func (m *streamBridgeManager) recordUnit(entry *streamBridgeEntry) {
 	u := entry.unit
 	err := m.journal.RecordInstanceBridge(entry.instance, fcvm.InstanceBridge{Unit: u.name, InvocationID: u.unit.InvocationID,
 		PID: u.unit.MainPID, Socket: entry.socket, Port: int(entry.port), AppProtocol: u.appProtocol})
-	if err != nil {
+	switch {
+	case err == nil:
+		m.mu.Lock()
+		u.recorded = true
+		m.mu.Unlock()
+	case errors.Is(err, fcvm.ErrInstanceNotLive):
+	default:
 		m.log.Warn("vmmd: instance bridge unit not recorded; a vmmd restart replaces it", "unit", u.name, "err", err)
 	}
+}
+
+// needsRecordLocked reports whether a leased entry's unit run is not in
+// the adoption record yet: the first lease of a prewarmed bridge comes after
+// its instance is live. The caller holds m.mu.
+func (m *streamBridgeManager) needsRecordLocked(entry *streamBridgeEntry) bool {
+	return m.journal != nil && entry.unit != nil && !entry.unit.recorded
 }
 
 // releaseForHandoff lets go of a unit bridge at shutdown without stopping it.
@@ -226,7 +241,7 @@ func (s *Server) adoptBridgeUnit(ctx context.Context, unit, instance string) (*s
 		protocol: streamBridgeProtocol(&vmmdpb.ForwardHTTPRequestInit{AppProtocol: rec.AppProtocol}),
 		identity: id,
 		socket:   rec.Socket,
-		unit:     &bridgeUnit{name: unit, unit: u, proc: proc, appProtocol: rec.AppProtocol},
+		unit:     &bridgeUnit{name: unit, unit: u, proc: proc, appProtocol: rec.AppProtocol, recorded: true},
 		ready:    ready,
 		lastUsed: m.now(),
 	}

@@ -272,7 +272,11 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 		}
 		entry.active++
 		entry.lastUsed = m.now()
+		record := m.needsRecordLocked(entry)
 		m.mu.Unlock()
+		if record {
+			m.recordUnit(entry)
+		}
 		return &streamBridgeLease{manager: m, entry: entry}, nil
 	}
 }
@@ -294,7 +298,11 @@ func (m *streamBridgeManager) acquireSession(ctx context.Context, instance, netn
 		samePublicTarget(entry.target, target) && entry.alive() {
 		entry.active++
 		entry.lastUsed = m.now()
+		record := m.needsRecordLocked(entry)
 		m.mu.Unlock()
+		if record {
+			m.recordUnit(entry)
+		}
 		return &streamBridgeLease{manager: m, entry: entry}, nil
 	}
 	req := &vmmdpb.ForwardHTTPRequestInit{Instance: instance, Port: port}

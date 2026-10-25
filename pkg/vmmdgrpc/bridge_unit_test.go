@@ -316,6 +316,8 @@ func TestBridgeUnitNames(t *testing.T) {
 
 type fakeBridgeJournal struct {
 	mu        sync.Mutex
+	notLive   bool
+	records   int
 	recorded  map[string]fcvm.InstanceBridge
 	forgotten []string
 	adopted   map[string]fcvm.InstanceBridge
@@ -325,6 +327,10 @@ type fakeBridgeJournal struct {
 func (j *fakeBridgeJournal) RecordInstanceBridge(instance string, b fcvm.InstanceBridge) error {
 	j.mu.Lock()
 	defer j.mu.Unlock()
+	j.records++
+	if j.notLive {
+		return fcvm.ErrInstanceNotLive
+	}
 	j.recorded[instance] = b
 	return nil
 }
@@ -462,5 +468,28 @@ func TestReconcileStopsWhatItCannotProve(t *testing.T) {
 				t.Fatalf("stopped %v", stopped)
 			}
 		})
+	}
+}
+
+// The wake's prewarm starts the bridge before the instance is live, so the
+// first record fails; the first lease after the wake records it, once.
+func TestInstanceBridgeUnitRecordedOnceItsInstanceIsLive(t *testing.T) {
+	f := newUnitFixture(t)
+	j := &fakeBridgeJournal{recorded: map[string]fcvm.InstanceBridge{}, notLive: true}
+	f.manager.journal = j
+	f.acquire(t, "a", bridgeUID(1)) // the start, then the lease in the same call
+	if _, ok := j.recorded["a"]; ok || j.records != 2 {
+		t.Fatalf("recorded %v after %d attempts, want two failed attempts", j.recorded, j.records)
+	}
+	j.notLive = false
+	f.acquire(t, "a", bridgeUID(1))
+	if lease, err := f.manager.acquireSession(context.Background(), "a", "fc-a", bridgeUID(1), 5432); err != nil {
+		t.Fatal(err)
+	} else {
+		lease.release()
+	}
+	started, _ := f.units.snapshot()
+	if j.recorded["a"].Unit != started[0] || j.records != 3 {
+		t.Fatalf("recorded %+v after %d attempts, want %s once more", j.recorded["a"], j.records, started[0])
 	}
 }

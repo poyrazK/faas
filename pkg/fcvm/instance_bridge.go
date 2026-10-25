@@ -110,6 +110,11 @@ func bridgeProcessIdentity(procDir string, pid int) (resourceProcessIdentity, re
 	return proc, exe, 0, errors.New("bridge process status has no Uid line")
 }
 
+// ErrInstanceNotLive is a bridge recorded before its instance is live: the
+// wake's prewarm starts the bridge beside the boot. Record it again once the
+// instance serves.
+var ErrInstanceNotLive = errors.New("instance not live yet")
+
 // RecordInstanceBridge records instance's bridge unit run in its adoption
 // block. A ready instance's block is rewritten now; one that is still waking
 // gets it with its first block. Without adoption records nothing adopts a
@@ -131,7 +136,7 @@ func (m *Manager) RecordInstanceBridge(instance string, b InstanceBridge) error 
 	inst := m.live[instance]
 	if inst == nil {
 		m.mu.Unlock()
-		return fmt.Errorf("fcvm: record bridge %s: instance %s not live", b.Unit, instance)
+		return fmt.Errorf("fcvm: record bridge %s: instance %s: %w", b.Unit, instance, ErrInstanceNotLive)
 	}
 	if err := rec.validate(inst.Lease); err != nil {
 		m.mu.Unlock()

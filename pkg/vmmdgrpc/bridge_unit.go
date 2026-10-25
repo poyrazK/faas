@@ -105,6 +105,9 @@ type bridgeUnit struct {
 	// appProtocol is the app protocol the bridge was started for; adoption
 	// restores the entry's start parameters from it.
 	appProtocol string
+	// recorded: the run is in the instance's adoption record. Guarded by
+	// the manager's mu.
+	recorded bool
 }
 
 // unitProcess is the bridge unit's main process, held by a pidfd so its
