@@ -913,8 +913,14 @@ func printLocalCommandHelpDetail(w io.Writer, command cliCommand, showAll bool) 
 	if len(command.Subcommands) > 0 && !command.SubcommandsAfterPositionals && command.Name != "logs" {
 		choice := " <" + command.subcommandChoice() + ">"
 		// Compact help stays within 80 columns; its Commands section lists
-		// the choices when they no longer fit on the usage line.
-		if command.CompactHelp && len("  "+usage+choice+" [flags]") > 80 {
+		// the choices when they no longer fit on the usage line. Full help
+		// lists them too, so it takes the bad-invocation synopsis limit:
+		// `events --help` put ~120 verbs on one line (Hunt 14 H14-48).
+		limit := usageSynopsisLimit
+		if command.CompactHelp {
+			limit = 80
+		}
+		if len("  "+usage+choice+" [flags]") > limit {
 			choice = " [command]"
 		}
 		usage += choice
