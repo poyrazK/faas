@@ -49,7 +49,7 @@ on:
         default: "[]"
         type: string
       compute_rollout_mode:
-        description: "Compute rollout path: phased for managed hosts, full after bootstrap-contract changes"
+        description: "Compute rollout path: phased prepares every managed host in parallel and activates one at a time, converging changed roles during activation (ADR-20261025095348); full is the serialized path for fresh hosts and recovery"
         required: false
         default: phased
         type: choice
