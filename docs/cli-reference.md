@@ -8797,12 +8797,13 @@ Open the account dashboard in your browser
 
 Check local source or an image for problems before deploying
 
-`gregale doctor [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--json]`
+`gregale doctor [--path <DIR>] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--json]`
 
 Checks local source or image metadata only; runtime checks are skipped.
 
 | Flag | Meaning | |
 |---|---|---|
+| `--path <DIR>` | source directory (default: current directory; a positional DIR also works) |  |
 | `--image <REF>` | inspect the Linux/amd64 image without downloading layers |  |
 | `--registry-user <USER>` | registry username; requires --registry-password-stdin |  |
 | `--registry-password-stdin` | read registry password/token from stdin; requires --image and --registry-user |  |
@@ -8814,6 +8815,7 @@ Examples:
 ```sh
 gregale doctor
 gregale doctor --strict
+gregale doctor --path packages/api
 ```
 
 

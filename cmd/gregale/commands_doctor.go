@@ -165,6 +165,9 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	setFlagOutput(fs, osStderr)
 	strict := fs.Bool("strict", false, "exit 1 on warn (default: exit 0 on warn)")
 	jsonOut := fs.Bool("json", false, "machine output (default: human prose)")
+	// deploy and scan take --path; doctor answered "unknown flag --path"
+	// (Hunt 14 H14-25). A positional directory still works.
+	pathFlag := fs.String("path", "", "source directory (default: current directory)")
 	imageFlags := registerDoctorImageFlags(fs)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
@@ -177,7 +180,13 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 		return runDoctorImageCommand(imageFlags, inspector, *strict, *jsonOut || jsonOutput)
 	}
 	path := "."
-	if fs.NArg() > 0 {
+	switch {
+	case *pathFlag != "" && fs.NArg() > 0 && fs.Arg(0) != *pathFlag:
+		PrintUsage(osStderr, "pass the directory once: --path and the positional DIR name different directories\n"+doctorUsage, "doctor")
+		return 1
+	case *pathFlag != "":
+		path = *pathFlag
+	case fs.NArg() > 0:
 		path = fs.Arg(0)
 	}
 	abs, err := filepath.Abs(path)

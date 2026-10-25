@@ -2597,8 +2597,9 @@ var cliCommands = []cliCommand{
 		DocSlug:   "doctor",
 		Short:     "Check local source or an image for problems before deploying",
 		HelpNotes: []string{"Checks local source or image metadata only; runtime checks are skipped."},
-		Examples:  []string{"gregale doctor", "gregale doctor --strict"},
+		Examples:  []string{"gregale doctor", "gregale doctor --strict", "gregale doctor --path packages/api"},
 		Flags: []cliFlag{
+			{Name: "path", Value: "DIR", Short: "source directory (default: current directory; a positional DIR also works)"},
 			{Name: "image", Value: "REF", Short: "inspect the Linux/amd64 image without downloading layers"},
 			{Name: "registry-user", Value: "USER", Short: "registry username; requires --registry-password-stdin"},
 			{Name: "registry-password-stdin", Short: "read registry password/token from stdin; requires --image and --registry-user"},
