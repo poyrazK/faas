@@ -31,6 +31,8 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresCapabilities(args[1:])
 	case "usage":
 		return cmdPostgresUsage(args[1:])
+	case "overage":
+		return cmdPostgresOverage(args[1:])
 	case "diagnostics":
 		return cmdPostgresDiagnostics(args[1:])
 	case "usage-import":
@@ -169,6 +171,45 @@ func (a *stringAlias) Set(value string) error {
 	}
 	*a.target = value
 	return nil
+}
+
+// cmdPostgresOverage shows or changes the account's compute overage
+// (ADR-20261025094915): with it on, databases keep running past the monthly
+// allowance until twice it; off, the default, suspends them at the allowance.
+func cmdPostgresOverage(args []string) int {
+	fs := newFlagSet("postgres overage", flag.ContinueOnError)
+	if err := fs.Parse(args); err != nil || fs.NArg() > 1 {
+		PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
+		return 1
+	}
+	client, err := authedClient()
+	if err != nil {
+		return printErr("Not logged in", err)
+	}
+	var result api.ManagedPostgresOverage
+	switch fs.Arg(0) {
+	case "":
+		result, err = client.GetManagedPostgresOverage(context.Background())
+	case "on", "off":
+		result, err = client.SetManagedPostgresOverage(context.Background(), fs.Arg(0) == "on")
+	default:
+		PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
+		return 1
+	}
+	if err != nil {
+		return printErr("Could not update managed PostgreSQL compute overage", err)
+	}
+	if jsonOutput {
+		return jsonOut(writeJSON(result))
+	}
+	state := "off: databases are suspended at the monthly allowance"
+	if result.Enabled {
+		state = "on: databases keep running past the allowance until the ceiling"
+	}
+	_, _ = fmt.Fprintf(osStdout, "compute overage %s\n", state)
+	_, _ = fmt.Fprintf(osStdout, "  compute_allowance:            %s\n", formatComputeUnitHours(result.ComputeAllowanceUnitSeconds))
+	_, _ = fmt.Fprintf(osStdout, "  compute_ceiling:              %s\n", formatComputeUnitHours(result.ComputeCeilingUnitSeconds))
+	return 0
 }
 
 func cmdPostgresUsage(args []string) int {

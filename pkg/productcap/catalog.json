@@ -3927,6 +3927,9 @@
       "parent": "managed-postgres",
       "routes": [
         "/v1/postgres/overage"
+      ],
+      "cli": [
+        "postgres overage"
       ]
     },
     {
