@@ -412,6 +412,12 @@ every apply and replace values set with `gregale app <slug> --ram` and the like;
 file does not declare keep the app's. Reservations and the other `deploy` keys
 are warned.
 
+A new service whose file declares no memory starts with 128 MB
+(`ProjectWorkloadDefaultRAMMB`), not the plan's RAM a standalone app gets. The
+project plan marks such services `memory=128MB (default)` and lists them under
+"Starts with the default 128 MB". Node and Python services often need more, so
+declare `memory`, or raise it with `gregale app <slug> --ram` after the deploy.
+
 `extends` and top-level `include` are resolved as Compose resolves them
 ([ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)):
 
