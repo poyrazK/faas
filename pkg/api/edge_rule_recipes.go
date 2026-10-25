@@ -44,13 +44,57 @@ const (
 	EdgeRuleRecipeRateLimitPath       = "rate-limit-path"
 	EdgeRuleRecipeAllowIPsOnly        = "allow-ips-only"
 	EdgeRuleRecipeBlockCountries      = "block-countries"
+	EdgeRuleRecipeBlockScannerPaths   = "block-scanner-paths"
+	EdgeRuleRecipeChallengePath       = "challenge-path"
+	EdgeRuleRecipeControlAICrawlers   = "control-ai-crawlers"
 )
+
+// EdgeRuleScannerPath is one path prefix vulnerability scanners probe.
+// Secret paths (credentials, version-control metadata) are never meant to
+// be public; the others belong to software an app could really run (a
+// WordPress site serves /wp-admin), so a suggestion leaves those out when
+// the app answers them successfully (ADR-20261020105000).
+type EdgeRuleScannerPath struct {
+	Prefix string
+	Secret bool
+}
+
+// EdgeRuleScannerPaths is block-scanner-paths' default list (ADR-986).
+var EdgeRuleScannerPaths = []EdgeRuleScannerPath{
+	{"/.env", true}, {"/.git/", true}, {"/.svn/", true}, {"/.hg/", true},
+	{"/.aws/", true}, {"/.ssh/", true}, {"/.DS_Store", true}, {"/vendor/phpunit/", true},
+	{"/wp-", false}, {"/xmlrpc.php", false}, {"/phpmyadmin", false}, {"/pma/", false},
+	{"/cgi-bin/", false}, {"/server-status", false},
+}
+
+// EdgeRuleScannerPrefixes returns the default scanner prefixes.
+func EdgeRuleScannerPrefixes() []string {
+	out := make([]string, len(EdgeRuleScannerPaths))
+	for i, p := range EdgeRuleScannerPaths {
+		out[i] = p.Prefix
+	}
+	return out
+}
 
 // Bounds on recipe inputs.
 const (
 	edgeRuleRecipeMaxPerMinute = 6000
 	edgeRuleRecipeMaxBurst     = 1000
 )
+
+// recipePenaltyParam boxes a client the recipe's rule keeps refusing
+// (ADR-20261022105846); empty leaves the rule without a penalty.
+// EdgeRuleRecipePenaltyParamName is the recipe parameter that sets a
+// penalty box (ADR-20261022105846).
+const EdgeRuleRecipePenaltyParamName = "penalty_minutes"
+
+var recipePenaltyParam = EdgeRuleRecipeParam{Name: EdgeRuleRecipePenaltyParamName, Label: "Penalty box (minutes)",
+	Help: "Optional: once the rule has refused a client, block that client from the whole app for this many minutes (1 to 1440)."}
+
+// recipePenaltyAfter is how many refusals box a client, by recipe: a
+// scanner path is suspect on the first hit, a rate limit only when the
+// client keeps going.
+var recipePenaltyAfter = map[string]int{EdgeRuleRecipeBlockScannerPaths: 1, EdgeRuleRecipeRateLimitPath: 3}
 
 var recipePathParam = EdgeRuleRecipeParam{Name: "path", Label: "Path", Help: "Path the rule covers: /** is every path, /shop/** is /shop and everything under it.", Default: "/**"}
 
@@ -76,6 +120,7 @@ var EdgeRuleRecipes = []EdgeRuleRecipe{
 			{Name: "methods", Label: "Methods", Help: "Comma-separated; empty means every method.", Default: "POST"},
 			{Name: "per_minute", Label: "Requests per minute", Help: "Sustained rate per client IP.", Default: "10"},
 			{Name: "burst", Label: "Burst", Help: "Requests allowed at once before the rate applies; empty uses the per-minute value.", Placeholder: "10"},
+			recipePenaltyParam,
 		},
 		build: buildRateLimitPath,
 	},
@@ -102,6 +147,43 @@ var EdgeRuleRecipes = []EdgeRuleRecipe{
 			{Name: "countries", Label: "Countries", Help: "ISO 3166-1 alpha-2 codes, comma- or space-separated.", Placeholder: "KP, IR", Required: true},
 		},
 		build: buildBlockCountries,
+	},
+	{
+		ID:      EdgeRuleRecipeBlockScannerPaths,
+		Kind:    "ip",
+		Title:   "Block vulnerability scanner paths",
+		Summary: "Answer 403 to requests for paths scanners probe on every public site, such as /.env, /.git/ and /wp-login.php. Remove any your app really serves.",
+		LogNote: "In log mode the match count is the requests it would block.",
+		Params: []EdgeRuleRecipeParam{
+			{Name: "paths", Label: "Path prefixes", Help: "Blocked when a request path starts with one of these; comma- or space-separated.", Default: strings.Join(EdgeRuleScannerPrefixes(), ", ")},
+			recipePenaltyParam,
+		},
+		build: buildBlockScannerPaths,
+	},
+	{
+		ID:      EdgeRuleRecipeChallengePath,
+		Kind:    "challenge",
+		Title:   "Challenge visitors on a path",
+		Summary: "Ask browsers on a path, such as a sign-in page or a whole site under attack, to solve a short proof of work before they reach your app. Verified search crawlers and requests with a verified API key or JWT pass straight through; scripts that cannot run JavaScript get 403.",
+		LogNote: "In log mode the match count is the requests it would challenge, including visitors who would already hold a pass.",
+		Params: []EdgeRuleRecipeParam{
+			{Name: "path", Label: "Path", Help: "Path to challenge: /** is the whole site, /login is one page and the form it posts to.", Default: "/**"},
+			{Name: "methods", Label: "Methods", Help: "Comma-separated; empty means every method, so a sign-in page and its form post are both covered."},
+		},
+		build: buildChallengePath,
+	},
+	{
+		ID:      EdgeRuleRecipeControlAICrawlers,
+		Kind:    "ip",
+		Title:   "Control AI crawlers",
+		Summary: "Block or challenge the crawlers AI companies run (GPTBot, ClaudeBot, CCBot, PerplexityBot, Bytespider and others) by what they fetch for: training models, AI search, or assistants answering a user. By default it blocks training crawlers only; search engines and people are unaffected.",
+		LogNote: "In log mode the match count is the AI crawler requests it would block or challenge.",
+		Params: []EdgeRuleRecipeParam{
+			{Name: "purposes", Label: "Purposes", Help: "Comma-separated: training (collects pages to train models), search (indexes pages for AI search), assistant (fetches a page a user asked about), or all.", Default: AICrawlerPurposeTraining},
+			{Name: "action", Label: "Action", Help: "block answers 403; challenge asks for the browser check, which crawlers cannot pass.", Default: "block"},
+			recipePathParam,
+		},
+		build: buildControlAICrawlers,
 	},
 }
 
@@ -148,6 +230,13 @@ func BuildEdgeRuleRecipe(id, host string, values map[string]string, enforce bool
 	req, err := recipe.build(v)
 	if err != nil {
 		return CreateEdgeRuleRequest{}, ErrValidation(fmt.Sprintf("recipe %s: %v", id, err))
+	}
+	if raw := v[recipePenaltyParam.Name]; raw != "" {
+		minutes, err := strconv.Atoi(raw)
+		if err != nil || minutes < 1 || minutes > MaxEdgePenaltySeconds/60 {
+			return CreateEdgeRuleRequest{}, ErrValidation(fmt.Sprintf("recipe %s: penalty_minutes must be a whole number from 1 to %d", id, MaxEdgePenaltySeconds/60))
+		}
+		req.Penalty = &EdgeRulePenalty{Seconds: minutes * 60, After: recipePenaltyAfter[recipe.ID], WithinSeconds: EdgePenaltyDefaultWithinSeconds}
 	}
 	req.MatchHost = host
 	req.Name = recipe.Title
@@ -280,7 +369,117 @@ func buildBlockCountries(v recipeValues) (CreateEdgeRuleRequest, error) {
 	}, nil
 }
 
+func buildBlockScannerPaths(v recipeValues) (CreateEdgeRuleRequest, error) {
+	prefixes := recipeSplit(v["paths"])
+	if len(prefixes) == 0 {
+		return CreateEdgeRuleRequest{}, fmt.Errorf("list at least one path prefix")
+	}
+	if len(prefixes) > EdgeRuleMatchMaxValues {
+		return CreateEdgeRuleRequest{}, fmt.Errorf("at most %d path prefixes", EdgeRuleMatchMaxValues)
+	}
+	for _, p := range prefixes {
+		if !strings.HasPrefix(p, "/") || len(p) < 2 {
+			return CreateEdgeRuleRequest{}, fmt.Errorf("%q is not a path prefix such as /.env", p)
+		}
+	}
+	return CreateEdgeRuleRequest{
+		MatchPath: "/**",
+		Kind:      "ip",
+		Action:    recipeDenyAll(),
+		Match:     &EdgeRuleMatchExpr{Field: "path", Op: "prefix", Values: prefixes},
+	}, nil
+}
+
+func buildChallengePath(v recipeValues) (CreateEdgeRuleRequest, error) {
+	var methods []string
+	for _, m := range recipeSplit(v["methods"]) {
+		methods = append(methods, strings.ToUpper(m))
+	}
+	action, _ := json.Marshal(EdgeRuleChallengeAction{})
+	return CreateEdgeRuleRequest{
+		MatchPath:    v["path"],
+		MatchMethods: methods,
+		Kind:         "challenge",
+		Action:       action,
+		Match:        &EdgeRuleMatchExpr{Field: "verified_bot", Op: "missing"},
+	}, nil
+}
+
+func buildControlAICrawlers(v recipeValues) (CreateEdgeRuleRequest, error) {
+	var purposes []string
+	for _, p := range recipeSplit(strings.ToLower(v["purposes"])) {
+		if p == "all" {
+			purposes = append([]string(nil), AICrawlerPurposes...)
+			break
+		}
+		if !containsMatchValue(AICrawlerPurposes, p) {
+			return CreateEdgeRuleRequest{}, fmt.Errorf("purposes: unknown purpose %q (%s, or all)", p, strings.Join(AICrawlerPurposes, ", "))
+		}
+		if !containsMatchValue(purposes, p) {
+			purposes = append(purposes, p)
+		}
+	}
+	if len(purposes) == 0 {
+		return CreateEdgeRuleRequest{}, fmt.Errorf("purposes: name at least one of %s, or all", strings.Join(AICrawlerPurposes, ", "))
+	}
+	req := CreateEdgeRuleRequest{
+		MatchPath: v["path"],
+		Match:     &EdgeRuleMatchExpr{Field: "ai_crawler_purpose", Op: "in", Values: purposes},
+	}
+	switch strings.ToLower(strings.TrimSpace(v["action"])) {
+	case "block":
+		req.Kind, req.Action = "ip", recipeDenyAll()
+	case "challenge":
+		req.Kind = "challenge"
+		req.Action, _ = json.Marshal(EdgeRuleChallengeAction{})
+	default:
+		return CreateEdgeRuleRequest{}, fmt.Errorf("action must be block or challenge (got %q)", v["action"])
+	}
+	return req, nil
+}
+
 // recipeSplit splits a comma- or whitespace-separated list.
 func recipeSplit(s string) []string {
 	return strings.FieldsFunc(s, func(r rune) bool { return r == ',' || r == ' ' || r == '\t' || r == '\n' || r == '\r' })
+}
+
+// Bounds on a recipe's "alert me" threshold (matches per hour).
+const (
+	EdgeRuleRecipeAlertDefaultPerHour = 100
+	edgeRuleRecipeAlertMaxPerHour     = 10_000_000
+)
+
+// EdgeRuleRecipeAlert builds the optional "alert me" rule for the edge rule a
+// recipe created (ADR-986 amendment): fire when the rule matches more than
+// perHour requests in an hour. It counts edge_rule_activity — matches in
+// either mode — so the alert keeps working when the rule moves from log mode
+// to enforce. Alerts deliver to a webhook only.
+func EdgeRuleRecipeAlert(recipeID, edgeRuleID string, perHour int, webhookURL, webhookSecret string) (CreateAlertRuleRequest, *Problem) {
+	recipe, ok := EdgeRuleRecipeByID(recipeID)
+	if !ok {
+		return CreateAlertRuleRequest{}, ErrValidation(fmt.Sprintf("unknown recipe %q", recipeID))
+	}
+	if edgeRuleID == "" {
+		return CreateAlertRuleRequest{}, ErrValidation("recipe alert needs the edge rule id")
+	}
+	if perHour < 1 || perHour > edgeRuleRecipeAlertMaxPerHour {
+		return CreateAlertRuleRequest{}, ErrValidation(fmt.Sprintf("alert threshold must be a whole number of matches per hour from 1 to %d", edgeRuleRecipeAlertMaxPerHour))
+	}
+	if strings.TrimSpace(webhookURL) == "" || webhookSecret == "" {
+		return CreateAlertRuleRequest{}, ErrValidation("recipe alert needs a webhook URL and secret")
+	}
+	suffix := edgeRuleID
+	if len(suffix) > 8 {
+		suffix = suffix[:8]
+	}
+	return CreateAlertRuleRequest{
+		Name:          fmt.Sprintf("%s spike (%s)", recipe.Title, suffix),
+		Metric:        AlertMetricEdgeRuleActivity,
+		Comparison:    "gt",
+		Threshold:     float64(perHour),
+		WindowSpec:    "1h",
+		EdgeRuleID:    edgeRuleID,
+		WebhookURL:    strings.TrimSpace(webhookURL),
+		WebhookSecret: webhookSecret,
+	}, nil
 }

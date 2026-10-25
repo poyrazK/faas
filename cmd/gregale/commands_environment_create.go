@@ -45,7 +45,7 @@ func envCreate(args []string) int {
 		Slug: positional[0], Protected: protected, FromEnvironment: *from, ShareResources: *shareResources, Full: *full,
 	})
 	if err != nil {
-		return printErr("Create failed", err)
+		return printErr("Could not create environment", err)
 	}
 	if *full {
 		if *wait {

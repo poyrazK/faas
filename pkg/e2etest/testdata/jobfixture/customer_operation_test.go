@@ -109,3 +109,57 @@ func TestCustomerOperationFixture(t *testing.T) {
 		})
 	}
 }
+
+func TestCustomerOperationFixtureFanoutStartsAndReplaysOneChild(t *testing.T) {
+	var mu sync.Mutex
+	var children []api.OperationChildRequest
+	var calls []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		defer mu.Unlock()
+		if r.Header.Get("Authorization") != "" || r.Header.Get(api.OperationJobCapabilityHeader) != "private" || r.Header.Get(api.OperationJobInstanceHeader) != "instance" {
+			t.Error("fixture omitted native proof or sent a bearer")
+		}
+		calls = append(calls, r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/control"):
+			_ = json.NewEncoder(w).Encode(api.OperationJobControlResponse{})
+		case strings.HasSuffix(r.URL.Path, "/children"):
+			var child api.OperationChildRequest
+			_ = json.NewDecoder(r.Body).Decode(&child)
+			children = append(children, child)
+			replayed := len(children) > 1
+			if !replayed {
+				w.WriteHeader(http.StatusCreated)
+			}
+			_ = json.NewEncoder(w).Encode(api.OperationChildStartResponse{OperationChild: api.OperationChild{Key: child.Key, Operation: api.OperationResponse{ID: "child"}}, Replayed: replayed})
+		case strings.HasSuffix(r.URL.Path, "/artifacts"):
+			_ = json.NewEncoder(w).Encode(api.OperationJobArtifactResponse{Available: true, Artifact: &api.OperationResultArtifact{ID: "file"}})
+		default:
+			_ = json.NewEncoder(w).Encode(api.OperationResponse{ID: "operation"})
+		}
+	}))
+	defer server.Close()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	artifact := &api.OperationArtifactRequest{ReportID: "file", Name: "export.csv", SizeBytes: 3, SHA256: fmt.Sprintf("sha256:%x", sha256.Sum256([]byte("csv")))}
+	if err := runCustomerOperation(ctx, api.NewClient(server.URL, ""), "operation", api.OperationJobRuntimeProof{RunID: "run", InstanceID: "instance", Generation: 1, Attempt: 1, Capability: "private"}, customerOperationInput{Mode: "fanout", Artifact: artifact}); err != nil {
+		t.Fatal(err)
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(children) != 2 || children[0].Operation != "export" || children[0].Key != customerOperationChildKey || string(children[0].Input) != string(children[1].Input) {
+		t.Fatalf("children = %+v", children)
+	}
+	var input struct {
+		Mode     string                        `json:"mode"`
+		Artifact *api.OperationArtifactRequest `json:"artifact"`
+	}
+	if err := json.Unmarshal(children[0].Input, &input); err != nil || input.Mode != "complete" || input.Artifact == nil || *input.Artifact != *artifact {
+		t.Fatalf("child input %s: %v", children[0].Input, err)
+	}
+	if !strings.Contains(strings.Join(calls, " "), "/result") {
+		t.Fatalf("fanout parent prepared no result: %v", calls)
+	}
+}

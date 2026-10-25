@@ -39,6 +39,8 @@ type InvocationsRetention struct {
 	store state.Store
 	now   func() time.Time
 	log   *slog.Logger
+
+	operationTelemetry *OperationTelemetry // ADR-20261016123221; nil reads nothing
 }
 
 // deadlineBreachDetailsStore is implemented by the production stores. The
@@ -64,6 +66,13 @@ func NewInvocationsRetention(store state.Store, log *slog.Logger) *InvocationsRe
 		now:   time.Now,
 		log:   log,
 	}
+}
+
+// WithOperationTelemetry refreshes the Customer Operations gauges after each
+// sweep, so they read the state the sweep left (ADR-20261016123221).
+func (r *InvocationsRetention) WithOperationTelemetry(t *OperationTelemetry) *InvocationsRetention {
+	r.operationTelemetry = t
+	return r
 }
 
 // WithClock injects a frozen time source for tests. Same shape as
@@ -176,6 +185,12 @@ func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) 
 	if err != nil {
 		return 0, 0, err
 	}
+	// ADR-20261022105723: pending queue messages past their plan's
+	// retention move to the dead letter before stamping, so the stamp
+	// below gives them their result retention in the same pass.
+	if expiry, ok := r.store.(state.QueueMessageExpiryStore); ok {
+		r.expireQueueMessages(ctx, expiry)
+	}
 	// Stamp after reaping: rows stamped with an already-past horizon are
 	// pruned on the next tick, and a stamping failure cannot hold up the
 	// reaper or the deadline sweep below.
@@ -227,5 +242,39 @@ func (r *InvocationsRetention) SweepOnce(ctx context.Context) (int, int, error) 
 			r.log.Info("operation deadline sweep", "settled", settled)
 		}
 	}
+	// Telemetry is best effort: a failed read keeps the last snapshot, whose
+	// refresh timestamp then shows its age.
+	if err := r.operationTelemetry.Refresh(ctx, r.now()); err != nil {
+		r.log.Warn("operation telemetry refresh failed", "err", err)
+	}
 	return retentionDeleted, deadlineForced, nil
+}
+
+// A sweep expires up to queueExpiryBatches batches of queueExpiryBatch
+// messages, each its own transaction: at the 60 s cadence that clears a
+// million-message backlog in under two hours without one long transaction.
+const (
+	queueExpiryBatch   = 1000
+	queueExpiryBatches = 10
+)
+
+// expireQueueMessages moves pending queue messages past their plan's
+// retention to the dead letter (ADR-20261022105723). A failure is logged
+// and retried next sweep; it never holds up the reaper.
+func (r *InvocationsRetention) expireQueueMessages(ctx context.Context, expiry state.QueueMessageExpiryStore) {
+	expired := 0
+	for range queueExpiryBatches {
+		n, err := expiry.ExpirePendingQueueMessages(ctx, r.now(), queueExpiryBatch)
+		expired += n
+		if err != nil {
+			r.log.Warn("invocations retention: queue message expiry failed", "err", err)
+			break
+		}
+		if n < queueExpiryBatch {
+			break
+		}
+	}
+	if expired > 0 {
+		r.log.Info("invocations retention: queue messages expired to the dead letter", "messages", expired)
+	}
 }

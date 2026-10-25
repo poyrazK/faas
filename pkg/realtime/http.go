@@ -497,29 +497,32 @@ func (m *Manager) HTTPHandler() http.Handler {
 }
 
 type endpointRequest struct {
-	ID                         string            `json:"id"`
-	AppID                      string            `json:"app_id"`
-	AccountID                  string            `json:"account_id"`
-	CallbackURL                string            `json:"callback_url"`
-	ConnectPath                string            `json:"connect_path"`
-	MessagePath                string            `json:"message_path"`
-	DisconnectPath             string            `json:"disconnect_path"`
-	CallbackAuthToken          string            `json:"callback_auth_token,omitempty"`
-	AuthToken                  string            `json:"auth_token,omitempty"`
-	AuthTokenPrevious          string            `json:"auth_token_previous,omitempty"`
-	AuthTokenPreviousExpiresAt *time.Time        `json:"auth_token_previous_expires_at,omitempty"`
-	AuthMode                   AuthMode          `json:"auth_mode,omitempty"`
-	AuthIssuer                 string            `json:"auth_issuer,omitempty"`
-	AuthJWKSURL                string            `json:"auth_jwks_url,omitempty"`
-	AuthAudience               []string          `json:"auth_audience,omitempty"`
-	AuthAlgorithms             []string          `json:"auth_algorithms,omitempty"`
-	AuthRequiredClaims         map[string]string `json:"auth_required_claims,omitempty"`
-	AllowedOrigins             []string          `json:"allowed_origins,omitempty"`
-	MaxConnections             int               `json:"max_connections,omitempty"`
-	MaxMessageBytes            int64             `json:"max_message_bytes,omitempty"`
-	MaxConnectionAgeSeconds    int64             `json:"max_connection_age_seconds,omitempty"`
-	AccountMaxConnections      int               `json:"account_max_connections,omitempty"`
-	LiveRoutes                 []LiveRoute       `json:"live_routes,omitempty"`
+	ID                         string                    `json:"id"`
+	AppID                      string                    `json:"app_id"`
+	AccountID                  string                    `json:"account_id"`
+	CallbackURL                string                    `json:"callback_url"`
+	ConnectPath                string                    `json:"connect_path"`
+	MessagePath                string                    `json:"message_path"`
+	DisconnectPath             string                    `json:"disconnect_path"`
+	CallbackAuthToken          string                    `json:"callback_auth_token,omitempty"`
+	AuthToken                  string                    `json:"auth_token,omitempty"`
+	AuthTokenPrevious          string                    `json:"auth_token_previous,omitempty"`
+	AuthTokenPreviousExpiresAt *time.Time                `json:"auth_token_previous_expires_at,omitempty"`
+	AuthMode                   AuthMode                  `json:"auth_mode,omitempty"`
+	AuthIssuer                 string                    `json:"auth_issuer,omitempty"`
+	AuthJWKSURL                string                    `json:"auth_jwks_url,omitempty"`
+	AuthAudience               []string                  `json:"auth_audience,omitempty"`
+	AuthAlgorithms             []string                  `json:"auth_algorithms,omitempty"`
+	AuthRequiredClaims         map[string]string         `json:"auth_required_claims,omitempty"`
+	AllowedOrigins             []string                  `json:"allowed_origins,omitempty"`
+	MaxConnections             int                       `json:"max_connections,omitempty"`
+	MaxMessageBytes            int64                     `json:"max_message_bytes,omitempty"`
+	MaxConnectionAgeSeconds    int64                     `json:"max_connection_age_seconds,omitempty"`
+	AccountMaxConnections      int                       `json:"account_max_connections,omitempty"`
+	Preview                    bool                      `json:"preview,omitempty"`
+	ChannelRules               []api.RealtimeChannelRule `json:"channel_rules,omitempty"`
+	LiveRoutes                 []LiveRoute               `json:"live_routes,omitempty"`
+	Previews                   *EndpointPreviews         `json:"previews,omitempty"`
 }
 
 func (r endpointRequest) endpoint() Endpoint {
@@ -546,8 +549,11 @@ func (r endpointRequest) endpoint() Endpoint {
 		MaxMessageBytes:  r.MaxMessageBytes,
 		MaxConnectionAge: time.Duration(r.MaxConnectionAgeSeconds) * time.Second,
 		LiveRoutes:       append([]LiveRoute(nil), r.LiveRoutes...),
+		Previews:         clonePreviews(r.Previews),
 
 		AccountMaxConnections: r.AccountMaxConnections,
+		Preview:               r.Preview,
+		ChannelRules:          append([]api.RealtimeChannelRule(nil), r.ChannelRules...),
 	}
 }
 

@@ -2,6 +2,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -23,6 +24,9 @@ const workflowFixtureCSV = "id,count\nalice,1\n"
 type workflowFixtureInput struct {
 	Mode string `json:"mode"`
 	Rows int    `json:"rows,omitempty"`
+	// OrderID is the business subject of the ADR-20261017102231 wait scenarios; the
+	// steps ignore it.
+	OrderID string `json:"order_id,omitempty"`
 }
 
 type workflowFixtureServer struct {
@@ -82,13 +86,13 @@ func (f workflowFixtureServer) ServeHTTP(w http.ResponseWriter, r *http.Request)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 		return
 	}
-	if r.Method != http.MethodPost || (r.URL.Path != "/collect" && r.URL.Path != "/transform" && r.URL.Path != "/finish") {
+	if r.Method != http.MethodPost || (r.URL.Path != "/collect" && r.URL.Path != "/transform" && r.URL.Path != "/finish" && r.URL.Path != "/fan") {
 		http.NotFound(w, r)
 		return
 	}
 	id, proof, err := workflowFixtureProof(r)
 	if err != nil {
-		http.Error(w, "trusted workflow proof required", http.StatusBadRequest)
+		http.Error(w, "trusted workflow proof required: "+err.Error(), http.StatusBadRequest)
 		return
 	}
 	var input workflowFixtureInput
@@ -111,13 +115,23 @@ func workflowFixtureProof(r *http.Request) (string, api.OperationWorkflowRuntime
 	p := api.OperationWorkflowRuntimeProof{RunID: r.Header.Get(api.OperationWorkflowRunHeader), StepName: r.Header.Get(api.OperationWorkflowStepHeader), Capability: r.Header.Get(api.OperationWorkflowCapabilityHeader)}
 	p.Generation, _ = strconv.Atoi(r.Header.Get(api.OperationGenerationHeader))
 	p.Attempt, _ = strconv.Atoi(r.Header.Get(api.OperationAttemptHeader))
-	for _, value := range []string{id, p.RunID, p.Capability} {
+	for name, value := range map[string]string{"operation id": id, "run id": p.RunID, "capability": p.Capability} {
 		if _, err := uuid.Parse(value); err != nil {
-			return "", p, fmt.Errorf("invalid native identity")
+			return "", p, fmt.Errorf("invalid native identity: %s", name)
 		}
 	}
-	if r.Header.Get(api.OperationExecutionKindHeader) != "workflow" || r.Header.Get(api.InvocationIDHeader) != "" || p.StepName != strings.TrimPrefix(r.URL.Path, "/") || p.Generation < 1 || p.Attempt < 1 {
-		return "", p, fmt.Errorf("invalid native proof")
+	// Name the failing check (never a value): the acceptance run reports it.
+	switch {
+	case r.Header.Get(api.OperationExecutionKindHeader) != "workflow":
+		return "", p, fmt.Errorf("invalid native proof: execution kind")
+	case isHTTPInvocationID(r.Header.Get(api.InvocationIDHeader)):
+		// gatewayd names every synthetic delivery (workflow-...); an HTTP
+		// Operation claim carries a UUID invocation instead.
+		return "", p, fmt.Errorf("invalid native proof: HTTP invocation id present")
+	case p.StepName != strings.TrimPrefix(r.URL.Path, "/"):
+		return "", p, fmt.Errorf("invalid native proof: step does not match path")
+	case p.Generation < 1 || p.Attempt < 1:
+		return "", p, fmt.Errorf("invalid native proof: generation or attempt")
 	}
 	return id, p, nil
 }
@@ -147,6 +161,11 @@ func (f workflowFixtureServer) run(ctx context.Context, id string, proof api.Ope
 	defer cancel()
 	if _, err := f.fixtureEvent(ctx, id, proof, "entered"); err != nil {
 		return nil, err
+	}
+	if proof.StepName == "fan" {
+		if err := f.fanout(ctx, id, proof); err != nil {
+			return nil, err
+		}
 	}
 	if proof.StepName != "finish" {
 		return workflowFixtureInput{Mode: input.Mode, Rows: 1}, nil
@@ -261,4 +280,67 @@ func (f workflowFixtureServer) fixtureEvent(ctx context.Context, id string, proo
 		return response.StatusCode, fmt.Errorf("fixture barrier unavailable")
 	}
 	return response.StatusCode, nil
+}
+
+func isHTTPInvocationID(value string) bool {
+	_, err := uuid.Parse(value)
+	return value != "" && err == nil
+}
+
+// workflowFixtureChildKeys name the children a fan step starts.
+var workflowFixtureChildKeys = []string{"child-a", "child-b"}
+
+// fanout starts every child with this step's proof, then starts the first
+// again to prove the key replays the same child (ADR-20261018183000). A
+// retried step replays its earlier starts. Child routes are gated and outside
+// the SDK, so the fixture sends the workflow proof headers itself.
+func (f workflowFixtureServer) fanout(ctx context.Context, id string, proof api.OperationWorkflowRuntimeProof) error {
+	var first api.OperationChildStartResponse
+	for i, key := range workflowFixtureChildKeys {
+		started, err := f.startChild(ctx, id, proof, key)
+		if err != nil {
+			return err
+		}
+		if i == 0 {
+			first = started
+		}
+	}
+	replay, err := f.startChild(ctx, id, proof, workflowFixtureChildKeys[0])
+	if err != nil {
+		return err
+	}
+	if !replay.Replayed || replay.Operation.ID != first.Operation.ID {
+		return fmt.Errorf("child start did not replay by key")
+	}
+	return nil
+}
+
+func (f workflowFixtureServer) startChild(ctx context.Context, id string, proof api.OperationWorkflowRuntimeProof, key string) (api.OperationChildStartResponse, error) {
+	var out api.OperationChildStartResponse
+	client, err := f.client(ctx)
+	if err != nil {
+		return out, err
+	}
+	body, _ := json.Marshal(api.OperationChildRequest{Operation: "export", Key: key, Input: json.RawMessage(`{"mode":"complete"}`)})
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, client.BaseURL()+"/v1/runtime/workflow-operations/"+id+"/children", bytes.NewReader(body))
+	if err != nil {
+		return out, err
+	}
+	request.Header.Set("Authorization", "Bearer "+client.Token())
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set(api.OperationExecutionKindHeader, "workflow")
+	request.Header.Set(api.OperationWorkflowRunHeader, proof.RunID)
+	request.Header.Set(api.OperationWorkflowStepHeader, proof.StepName)
+	request.Header.Set(api.OperationWorkflowCapabilityHeader, proof.Capability)
+	request.Header.Set(api.OperationGenerationHeader, strconv.Itoa(proof.Generation))
+	request.Header.Set(api.OperationAttemptHeader, strconv.Itoa(proof.Attempt))
+	response, err := client.HTTPClient().Do(request)
+	if err != nil {
+		return out, err
+	}
+	defer func() { _ = response.Body.Close() }()
+	if response.StatusCode != http.StatusCreated && response.StatusCode != http.StatusOK {
+		return out, fmt.Errorf("child start answered %d", response.StatusCode)
+	}
+	return out, json.NewDecoder(response.Body).Decode(&out)
 }

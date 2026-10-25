@@ -53,7 +53,7 @@ func TestDashboardAuthSettingsWriteValidatedSecrets(t *testing.T) {
 		sort.Strings(names)
 		return names
 	}
-	settings := url.Values{"csrf_token": {token}, "signup": {"off"}, "password_min_length": {"12"}, "password_require": {"lower,digit"}, "mfa": {"off"}, "mfa_phone": {"on"}, "recovery_codes": {"on"}, "self_deletion": {"on"}, "org_claims": {"on"}}
+	settings := url.Values{"csrf_token": {token}, "signup": {"off"}, "password_min_length": {"12"}, "password_require": {"lower,digit"}, "mfa": {"off"}, "mfa_phone": {"on"}, "recovery_codes": {"on"}, "self_deletion": {"on"}, "org_claims": {"on"}, "org_domains": {"on"}, "service_accounts": {"on"}, "session_max_age": {"30d"}, "single_session": {"on"}, "signup_access": {"waitlist"}, "signup_domains": {"acme.com\nacme.io"}, "block_disposable": {"on"}, "impersonation": {"on"}, "web3": {"ethereum,solana"}}
 	if rec := authSettingsPost(e, cookie, nil, base+"/settings", settings); rec.Code != http.StatusBadRequest || len(keys()) != 0 {
 		t.Fatalf("missing CSRF cookie = %d, secrets %v", rec.Code, keys())
 	}
@@ -62,7 +62,7 @@ func TestDashboardAuthSettingsWriteValidatedSecrets(t *testing.T) {
 		t.Fatalf("invalid settings = %d %q, secrets %v", rec.Code, rec.Header().Get("Location"), keys())
 	}
 	rec := authSettingsPost(e, cookie, csrf, base+"/settings", settings)
-	want := []string{"AUTH_DISABLE_SIGNUP", "AUTH_ORG_CLAIMS", "AUTH_SELF_DELETION", "GOTRUE_MFA_PHONE_ENROLL_ENABLED", "GOTRUE_MFA_PHONE_VERIFY_ENABLED", "GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED", "GOTRUE_MFA_RECOVERY_CODES_VERIFY_ENABLED", "GOTRUE_MFA_TOTP_ENROLL_ENABLED", "GOTRUE_MFA_TOTP_VERIFY_ENABLED", "GOTRUE_PASSWORD_MIN_LENGTH", "GOTRUE_PASSWORD_REQUIRED_CHARACTERS"}
+	want := []string{"AUTH_DISABLE_SIGNUP", "AUTH_IMPERSONATION", "AUTH_ORG_CLAIMS", "AUTH_ORG_DOMAINS", "AUTH_SELF_DELETION", "AUTH_SERVICE_ACCOUNTS", "AUTH_SESSION_MAX_AGE_MINUTES", "AUTH_SIGNUP_ACCESS", "AUTH_SIGNUP_ALLOWED_DOMAINS", "AUTH_SIGNUP_BLOCK_DISPOSABLE", "AUTH_SINGLE_SESSION", "GOTRUE_EXTERNAL_WEB3_ETHEREUM_ENABLED", "GOTRUE_EXTERNAL_WEB3_SOLANA_ENABLED", "GOTRUE_MFA_PHONE_ENROLL_ENABLED", "GOTRUE_MFA_PHONE_VERIFY_ENABLED", "GOTRUE_MFA_RECOVERY_CODES_ENROLL_ENABLED", "GOTRUE_MFA_RECOVERY_CODES_VERIFY_ENABLED", "GOTRUE_MFA_TOTP_ENROLL_ENABLED", "GOTRUE_MFA_TOTP_VERIFY_ENABLED", "GOTRUE_PASSWORD_MIN_LENGTH", "GOTRUE_PASSWORD_REQUIRED_CHARACTERS"}
 	if rec.Code != http.StatusSeeOther || strings.Join(keys(), ",") != strings.Join(want, ",") {
 		t.Fatalf("settings = %d %q, secrets %v\n%s", rec.Code, rec.Header().Get("Location"), keys(), rec.Body)
 	}

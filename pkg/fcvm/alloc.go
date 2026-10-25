@@ -3,6 +3,7 @@ package fcvm
 import (
 	"fmt"
 	"net/netip"
+	"sort"
 	"sync"
 	"time"
 
@@ -23,7 +24,25 @@ const (
 	// The uid range is the binding constraint (10000); tenant RAM caps real
 	// concurrency far below this (47600/128 ≈ 372).
 	MaxSlots = JailUIDMax - JailUIDBase + 1
+
+	// BridgeUIDBase is the start of the instance-bridge uid range
+	// (connection-survival ADR, slice 1a). An instance's bridge runs as
+	// BridgeUIDBase + slot, so it never shares a uid with its own Firecracker
+	// process or with any other tenant's bridge, and the range keeps the slot
+	// recoverable for the restart inventory.
+	BridgeUIDBase = JailUIDBase + 10000
+	BridgeUIDMax  = BridgeUIDBase + MaxSlots - 1
 )
+
+// BridgeUIDForJailUID maps a lease's jail uid to its bridge uid. It reports
+// false for a uid outside the jail range, so a caller never runs a bridge as
+// a uid it did not derive from a lease.
+func BridgeUIDForJailUID(jailUID int) (int, bool) {
+	if jailUID < JailUIDBase || jailUID > JailUIDMax {
+		return 0, false
+	}
+	return jailUID - JailUIDBase + BridgeUIDBase, true
+}
 
 // hostIPBase is the /16 the veth host-side addresses live in (spec §7,
 // 10.100.x.y/16). Slot 0 maps to hostIPBase + hostIPOffset so the bridge address
@@ -133,6 +152,10 @@ type Lease struct {
 	// lease still owns a unique slot, uid, cgroup, and vsock identity, but it
 	// deliberately has no tenant netns/veth/tap resources to tear down.
 	Networkless bool
+	// Quarantine marks a production fork (ADR-732). A restore scrubs the
+	// captured secrets files from the fork's private drive1 copy before the
+	// guest resumes.
+	Quarantine bool
 }
 
 // Allocator hands out unique Leases and recycles slots on release. Safe for
@@ -146,6 +169,49 @@ type Allocator struct {
 	// map. An ID can own several slots if the previous process had duplicates.
 	// These holdings confer no CID/readiness authority and survive scan errors.
 	recovered map[int]string
+	// leased records every instance given a new slot while tracking is on
+	// (adoption ADR §3): the adoption report's fence between survivors and
+	// guests this vmmd created. nil means tracking is off.
+	leased map[string]struct{}
+}
+
+// maxTrackedLeases bounds the adoption report's lease set; past it the
+// report says it is incomplete and the scheduler does not act on absence.
+const maxTrackedLeases = 65536
+
+// trackLeases starts recording every new instance lease.
+func (a *Allocator) trackLeases() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.leased = make(map[string]struct{})
+}
+
+// leasedSinceTracking returns every instance leased since trackLeases, and
+// false when tracking is off or overflowed (overflow turns it off for good).
+func (a *Allocator) leasedSinceTracking() ([]string, bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.leased == nil {
+		return nil, false
+	}
+	out := make([]string, 0, len(a.leased))
+	for id := range a.leased {
+		out = append(out, id)
+	}
+	sort.Strings(out)
+	return out, true
+}
+
+// noteLeaseLocked records instance for the adoption report. Caller holds a.mu.
+func (a *Allocator) noteLeaseLocked(instance string) {
+	if a.leased == nil {
+		return
+	}
+	if _, ok := a.leased[instance]; !ok && len(a.leased) >= maxTrackedLeases {
+		a.leased = nil // Overflowed: free it; the report is now incomplete.
+		return
+	}
+	a.leased[instance] = struct{}{}
 }
 
 // reserveNetwork takes a slot without claiming a running VM. The cache must
@@ -204,6 +270,7 @@ func (a *Allocator) adoptNetwork(reservation, instance string) (Lease, error) {
 	}
 	delete(a.reserved, reservation)
 	a.byInstance[instance] = slot
+	a.noteLeaseLocked(instance)
 	return leaseForSlot(instance, slot), nil
 }
 
@@ -238,6 +305,51 @@ func (a *Allocator) quarantine(slots map[int]struct{}) {
 	a.free = free
 }
 
+// adoptQuarantined leases a slot that startup quarantined to the instance a
+// successor vmmd proved it owns (vmmd restart adoption ADR §2 "Maps"). The
+// slot must be out of the free pool and held by nothing else, so a slot is
+// never issued twice. Release later returns it to the free pool, after the
+// adopted guest's verified teardown.
+func (a *Allocator) adoptQuarantined(instance string, slot int) (Lease, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if instance == "" || slot < 0 || slot >= MaxSlots {
+		return Lease{}, fmt.Errorf("fcvm: adopt slot: invalid instance or slot %d", slot)
+	}
+	if _, ok := a.byInstance[instance]; ok {
+		return Lease{}, fmt.Errorf("fcvm: adopt slot: instance %q already holds a lease", instance)
+	}
+	for _, free := range a.free {
+		if free == slot {
+			return Lease{}, fmt.Errorf("fcvm: adopt slot: slot %d was not quarantined", slot)
+		}
+	}
+	for other, held := range a.byInstance {
+		if held == slot {
+			return Lease{}, fmt.Errorf("fcvm: adopt slot: slot %d is leased to %q", slot, other)
+		}
+	}
+	for id, held := range a.reserved {
+		if held == slot {
+			return Lease{}, fmt.Errorf("fcvm: adopt slot: slot %d is reserved for %q", slot, id)
+		}
+	}
+	if _, ok := a.recovered[slot]; ok {
+		return Lease{}, fmt.Errorf("fcvm: adopt slot: slot %d is held for native recovery", slot)
+	}
+	a.byInstance[instance] = slot
+	return leaseForSlot(instance, slot), nil
+}
+
+// unadopt undoes adoptQuarantined for a guest whose adoption failed before
+// it was registered: the slot goes back to quarantine, never to the free
+// pool, because the guest still holds it.
+func (a *Allocator) unadopt(instance string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.byInstance, instance)
+}
+
 // InUse reports how many slots are currently leased.
 func (a *Allocator) InUse() int {
 	a.mu.Lock()
@@ -270,6 +382,7 @@ func (a *Allocator) Acquire(instance string) (Lease, error) {
 	slot := a.free[len(a.free)-1]
 	a.free = a.free[:len(a.free)-1]
 	a.byInstance[instance] = slot
+	a.noteLeaseLocked(instance)
 	return leaseForSlot(instance, slot), nil
 }
 

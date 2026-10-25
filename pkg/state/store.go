@@ -14,6 +14,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/chaos"
+	"github.com/onebox-faas/faas/pkg/netns"
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
 )
@@ -355,6 +356,12 @@ var ErrRolloutNotStuck = errors.New("state: rollout is not stuck; use promote in
 // to api.ErrRolloutStateInvalid (409 Conflict) so the CLI's
 // post-condition check is loud.
 var ErrRolloutStateInvalid = errors.New("state: rollout state does not permit recovery")
+
+// ErrRolloutAmbiguous is returned by an app-level RecoverRollout when rollouts
+// are in flight in more than one environment of the app. Recovery without a
+// deployment selector would otherwise act on whichever environment's rollout
+// is newest, which may not be the one the operator meant.
+var ErrRolloutAmbiguous = errors.New("state: rollouts are in progress in more than one environment")
 
 // CanaryAdvanceParams is the state-owned portion of one canary stage
 // transition. The API layer resolves the preset stage and supplies the audit
@@ -935,6 +942,10 @@ type ProjectReconcileMutation struct {
 	Op                        string
 	App                       App
 	SetPlatformTenantRequired bool
+	// SetResources writes App's positive RAMMB, CPUMillicores and
+	// MaxConcurrency on an update or a restored app, because the source
+	// declares Compose resources (ADR-20261023120000). A zero keeps the app's.
+	SetResources bool
 }
 
 // ProjectReconcileCron is the desired cron attached to a scanned workload.
@@ -1310,7 +1321,10 @@ type Store interface {
 	// rollup; PgStore runs a SELECT … WHERE account_id = $1 AND minute >= $2.
 	// Empty since means "every row" — used by the GDPR export bundle.
 	UsageByAccount(ctx context.Context, accountID string, since time.Time) ([]Usage, error)
-	MarkAccountDeletionPending(ctx context.Context, id string) error
+	// MarkAccountDeletionPending with IncludingManagedPostgres(true) lets the
+	// account into deleted_pending while it owns live personal managed
+	// PostgreSQL databases; the grace sweep deletes them (ADR-20261024150500).
+	MarkAccountDeletionPending(ctx context.Context, id string, opts ...AccountDeletionOption) error
 	RestoreAccount(ctx context.Context, id string) error
 
 	// Dunning + quota warning (spec §4.7). These three are the load-
@@ -1334,8 +1348,9 @@ type Store interface {
 	// destination is past_due. Returns ErrNotFound when the row is
 	// missing OR its status didn't match `from` (the latter is the
 	// redelivery race: two ticks firing close together on the same
-	// overdue row, the second must not double-transition).
-	MarkDunningStep(ctx context.Context, accountID string, from, to AccountStatus) error
+	// overdue row, the second must not double-transition). Options apply
+	// only when `to` is deleted_pending.
+	MarkDunningStep(ctx context.Context, accountID string, from, to AccountStatus, opts ...AccountDeletionOption) error
 
 	// Mail suppression (issue #246 acceptance item 7, ADR-115 §D.3).
 	// RecordMailSuppression writes a row for a hard-bounce or
@@ -2650,14 +2665,17 @@ type Store interface {
 	//
 	// Returns the (upgraded_at, upgraded_by) stamp so the apid
 	// admin route can echo the row back without a follow-up
-	// SELECT.
-	UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret []byte, upgradedBy string) (time.Time, string, error)
-	// GetGithubWebhookSecret returns the raw bytes for the per-tenant
-	// row, or ErrNotFound if the install hasn't been migrated off the
+	// SELECT. secret.Sealed is the copy sealed for githubd (ADR
+	// 20261022111812); secret.Value stays written for the previous
+	// release, which reads only the plaintext column.
+	UpsertGithubWebhookSecret(ctx context.Context, installationID int64, secret GithubWebhookSecret, upgradedBy string) (time.Time, string, error)
+	// GetGithubWebhookSecret returns the per-tenant row, or
+	// ErrNotFound if the install hasn't been migrated off the
 	// platform secret yet. Used by pkg/githubd's resolver cache;
 	// the resolver treats ErrNotFound as a fall-through to
-	// FAAS_GITHUB_WEBHOOK_SECRET rather than as an error.
-	GetGithubWebhookSecret(ctx context.Context, installationID int64) ([]byte, error)
+	// FAAS_GITHUB_WEBHOOK_SECRET rather than as an error. Readers
+	// prefer Sealed when it is present.
+	GetGithubWebhookSecret(ctx context.Context, installationID int64) (GithubWebhookSecret, error)
 
 	// Deployments.
 	// CreateDeployment atomically inserts a new pending deployment row
@@ -2813,7 +2831,11 @@ type Store interface {
 	// deployment_id returns (0, nil) — the SQL planner cannot fail
 	// a count(*) on a WHERE clause with no matching rows.
 	CountLiveInstancesByDeployment(ctx context.Context, deploymentID string) (int, error)
-	LatestSupersededDeployment(ctx context.Context, appID string) (Deployment, error)
+	// LatestSupersededDeployment returns the implicit rollback target of one
+	// environment: the deployment in scope that most recently stopped serving.
+	// Weights, live rows and rollbacks are per environment, so a target from
+	// another scope is never returned.
+	LatestSupersededDeployment(ctx context.Context, appID, scope string) (Deployment, error)
 	// GetDeploymentByIDScopedToSuperseded keeps its historical name but also
 	// accepts a live revision with zero traffic: it is not the current serving
 	// release and is eligible for readiness-gated rollback. A serving live
@@ -3017,6 +3039,11 @@ type Store interface {
 	AppendDeploymentLog(ctx context.Context, deploymentID, stream, line string) (seq int64, err error)
 	ListDeploymentLogs(ctx context.Context, deploymentID string, beforeSeq int64, limit int) (rows []LogEntry, hasMore bool, err error)
 	LogEventStore
+	LogProjectionStore
+	LogSavedSearchStore
+	DashboardStore
+	IncidentSourceStore
+	IncidentNoteStore
 	UpdateDeploymentStatus(ctx context.Context, id string, status DeploymentStatus, errMsg string) error
 	MarkDeploymentSuperseded(ctx context.Context, id string) error
 	MarkDeploymentLive(ctx context.Context, id string) error
@@ -3613,6 +3640,14 @@ type Store interface {
 	// This stays separate from ExecutionStore because app tasks inherit the
 	// app's artifact, scoped configuration, bindings, and network policy.
 	AppTaskStore
+
+	// Production fork intent (ADR-732): quarantined, non-serving restores of
+	// an app's newest capture. apid admits; schedd owns the lifecycle.
+	AppForkStore
+	AppForkLifecycleStore
+	AppForkExecStore
+	// ADR-733 crash snapshots: captures of running instances, opened as forks.
+	CrashCaptureStore
 
 	// Sanitized runtime snapshot catalog (ADR-171 follow-up). Publication is
 	// trusted and insert-only; scheduler reads may observe retired rows and
@@ -6711,6 +6746,9 @@ type Store interface {
 	// distinguishable to the loop. Postgres-only — MemStore returns the
 	// ADR-098 sentinel.
 	ListEgressCircuitCandidates(ctx context.Context, since time.Time) ([]EgressCircuitCandidate, error)
+	PutAppEgressCircuits(context.Context, string, []netns.EgressCircuitTarget) (netns.EgressCircuitSnapshot, error)
+	GetAppEgressCircuits(context.Context, string) (netns.EgressCircuitSnapshot, error)
+	ListAppEgressCircuitAppIDs(context.Context) ([]string, error)
 
 	// UpdateDataUpstreamCircuitBreaker (ADR-201 §3) applies a partial
 	// per-upstream egress-breaker policy update. Scoped by (id, app_id) so
@@ -6940,11 +6978,13 @@ type CustomerEventLister interface {
 
 // IdempotencyReservation is the outcome of ReserveIdempotent. Exactly one of
 // Reserved (the caller owns the key and must complete it with
-// PutIdempotent), InFlight (another request holds the key), or a completed
-// response (Status/Body to replay) applies.
+// PutIdempotent), InFlight (another request holds the key), Conflict (the key
+// is bound to a different request fingerprint, ADR-20261022204036), or a
+// completed response (Status/Body to replay) applies.
 type IdempotencyReservation struct {
 	Reserved bool
 	InFlight bool
+	Conflict bool
 	Status   int
 	Body     []byte
 }

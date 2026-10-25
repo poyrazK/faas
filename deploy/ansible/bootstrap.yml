@@ -38,7 +38,11 @@
   pre_tasks:
     - name: End managed-host bootstrap discovery on the release-only fast path
       ansible.builtin.meta: end_host
-      when: faas_join_bootstrap_contract_current | default(false) | bool
+      # A node_join.yml prepare runs in parallel across serving nodes, so it
+      # never converges roles; activation does that before the drain (ADR-20261025095348).
+      when: >-
+        (faas_join_bootstrap_contract_current | default(false) | bool) or
+        (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Gather facts for hosts requiring bootstrap convergence
       ansible.builtin.setup:
@@ -71,7 +75,11 @@
   pre_tasks:
     - name: End managed control-plane bootstrap on the release-only fast path
       ansible.builtin.meta: end_host
-      when: faas_join_bootstrap_contract_current | default(false) | bool
+      # A node_join.yml prepare runs in parallel across serving nodes, so it
+      # never converges roles; activation does that before the drain (ADR-20261025095348).
+      when: >-
+        (faas_join_bootstrap_contract_current | default(false) | bool) or
+        (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Gather facts for control-plane bootstrap convergence
       ansible.builtin.setup:
@@ -148,6 +156,10 @@
         - faas_cp_converge_roles | default(none) is none or 'cp_state_backup' in faas_cp_converge_roles
     - role: control_plane_service
       when: faas_cp_converge_roles | default(none) is none or 'control_plane_service' in faas_cp_converge_roles
+    - role: seal_domains
+      when:
+        - faas_seal_domains_managed | default(false) | bool
+        - faas_cp_converge_roles | default(none) is none or 'seal_domains' in faas_cp_converge_roles
     - role: internal_mail_service
       when:
         - faas_internal_mail_managed | default(false) | bool
@@ -189,7 +201,11 @@
   pre_tasks:
     - name: End managed compute bootstrap on the release-only fast path
       ansible.builtin.meta: end_host
-      when: faas_join_bootstrap_contract_current | default(false) | bool
+      # A node_join.yml prepare runs in parallel across serving nodes, so it
+      # never converges roles; activation does that before the drain (ADR-20261025095348).
+      when: >-
+        (faas_join_bootstrap_contract_current | default(false) | bool) or
+        (faas_join_rollout_phase | default('full')) == 'prepare'
 
     - name: Gather facts for compute bootstrap convergence
       ansible.builtin.setup:
@@ -228,6 +244,10 @@
     - role: internal_pki_renewal
     - role: canary_artifact_retention
     # Compute-only:
+    # ADR 20261022111812: stage the runtime seal-domain identity before
+    # vmmd_service so a vmmd (re)start in this run loads it.
+    - role: seal_domains
+      when: faas_seal_domains_managed | default(false) | bool
     - role: vmmd_service
     # M9: every compute node owns a node-local schedd for heartbeat and
     # recovery decisions. The shared database is remote on this host.

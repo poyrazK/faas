@@ -149,11 +149,11 @@ func eventReplayPreviewPgBoundary(t time.Time) pgtype.Timestamptz {
 	return pgtype.Timestamptz{Time: boundary, Valid: true}
 }
 
-func newEventReplayPreview(sub EventSubscription, slug string, c eventReplayPreviewCursor, now time.Time, earliest *time.Time) api.EventReplayPreviewResponse {
+func newEventReplayPreview(sub EventSubscription, slug string, c eventReplayPreviewCursor, now time.Time, earliest *time.Time, retention time.Duration) api.EventReplayPreviewResponse {
 	return api.EventReplayPreviewResponse{
 		AppSlug: slug, Subscription: api.EventSubscriptionResponse{SchemaVersions: append([]string(nil), sub.SchemaVersions...), ID: sub.ID, AppID: sub.AppID, Source: sub.Source, Type: sub.Type, Filter: append(json.RawMessage(nil), sub.Filter...), Enabled: sub.Enabled, CreatedAt: sub.CreatedAt, UpdatedAt: sub.UpdatedAt},
 		SubscriptionRevision: c.Revision, From: c.From, Until: c.Until, CutoffAt: c.CutoffAt, ObservedAt: now, Coverage: "retained_envelopes",
-		Retention: api.EventReplayPreviewRetention{SettledRetentionSeconds: int64(PublishedEventIdentityRetention / time.Second), EarliestRetainedAt: earliest},
+		Retention: api.EventReplayPreviewRetention{SettledRetentionSeconds: int64(retention / time.Second), EarliestRetainedAt: earliest},
 		Matches:   []api.EventReplayPreviewMatch{},
 	}
 }
@@ -271,7 +271,11 @@ func (s *PgStore) PreviewEventReplay(ctx context.Context, accountID string, quer
 	for i, r := range rows {
 		candidates[i] = retainedEventCandidate{r.ID, timeFromPgtype(r.CreatedAt), r.Payload, r.OriginalRecipient}
 	}
-	out, err := evaluateEventReplayPreview(ctx, newEventReplayPreview(sub, row.AppSlug, c, now, earliest), sub, c, candidates, query.Limit)
+	retention, err := eventSettledRetention(ctx, q, tx, accountID)
+	if err != nil {
+		return api.EventReplayPreviewResponse{}, err
+	}
+	out, err := evaluateEventReplayPreview(ctx, newEventReplayPreview(sub, row.AppSlug, c, now, earliest, retention), sub, c, candidates, query.Limit)
 	if err != nil {
 		return out, err
 	}
@@ -350,5 +354,6 @@ func (m *MemStore) PreviewEventReplay(ctx context.Context, accountID string, que
 			candidates = candidates[:query.Limit+1]
 		}
 	}
-	return evaluateEventReplayPreview(ctx, newEventReplayPreview(sub, app.Slug, c, now, earliest), sub, c, candidates, query.Limit)
+	retention := m.eventSettledRetentionLocked(canonicalMemUUID(accountID))
+	return evaluateEventReplayPreview(ctx, newEventReplayPreview(sub, app.Slug, c, now, earliest, retention), sub, c, candidates, query.Limit)
 }

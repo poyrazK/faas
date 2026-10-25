@@ -239,7 +239,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 		// EgressAllowlistAllowed/MaxSize default to false/0 (Go zero), so
 		// Free/Hobby rows below omit them intentionally — mirrors the
 		// MinInstancesAllowed row shape.
-		PlanFree: {Plan: PlanFree, DeployedApps: 1, PreviewApps: 1, OutboundRequestsPerDayMax: 100_000, OutboundRatePerSecondMax: 10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, DeploysPerHour: 10, DeveloperApps: 1, DeveloperLeaseMaxHours: 24, MaxConcurrency: 1, RAMMB: 256, AppLayerMaxMB: 256, SourceTarballMaxMB: 100, VCPU: 2, RequestBudgetMaxMs: 30_000, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 20, ObjectStorage: ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, IncludedBytes: 1 << 30}, PriceMillicents: 0, RateLimitRPS: 5, RateLimitBurst: 20, EgressMbit: 10, EgressNewConnPerSecond: 10, EgressNewConnBurst: 40, EgressNewDestinationsPerMinute: 120, EgressNewConnPerDestPerSecond: 5, EgressNewConnPerDestBurst: 20, EgressFloodDropsPerMinute: 120, EgressExtraPortsMax: 0, ServiceTCPSessionsPerAccount: 16, SecretCountMax: 8, SecretValueMaxBytes: 4096, MaxMinInstances: 0,
+		PlanFree: {Plan: PlanFree, DeployedApps: 1, PreviewApps: 1, OutboundRequestsPerDayMax: 100_000, OutboundRatePerSecondMax: 10, OutboundBurstMax: 20, OutboundMaxInFlightMax: 10, OutboundRequestTimeoutMSMax: 30_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 60, DeploysPerHour: 10, DeveloperApps: 1, DeveloperLeaseMaxHours: 24, MaxConcurrency: 1, RAMMB: 256, AppLayerMaxMB: 256, SourceTarballMaxMB: 100, VCPU: 2, RequestBudgetMaxMs: 30_000, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 20, ObjectStorage: ObjectStoragePlanLimits{MaxAccountBytes: 1 << 30, IncludedBytes: 1 << 30}, PriceMillicents: 0, RateLimitRPS: 5, RateLimitBurst: 20, EgressMbit: 10, EgressNewConnPerSecond: 10, EgressNewConnBurst: 40, EgressNewDestinationsPerMinute: 120, EgressNewConnPerDestPerSecond: 5, EgressNewConnPerDestBurst: 20, EgressFloodDropsPerMinute: 120, EgressExtraPortsMax: 0, ServiceTCPSessionsPerAccount: 16, SecretCountMax: 8, ProjectSecretCountMax: 8, SecretValueMaxBytes: 4096, MaxMinInstances: 0,
 			// Issue #559: Free = 4 — enough listener concurrency for
 			// small demo bursts while MaxConcurrency remains one VM.
 			ConcurrencyPerVMBound: 4,
@@ -257,7 +257,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxQueueAttempts: 0,
 			// ADR-134 PR-B: Free's per-account cap ladder.
 			EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
-			EventStorage:                      EventStorageLimits{4096, 8 << 20},
+			EventStorage:                      EventStorageLimits{4096, 8 << 20, 86400},
 			MaxAsyncInvocationsPerAccount:     100,
 			MaxAsyncInvocationDeadlineSeconds: 300,
 			MaxAsyncResultRetentionSeconds:    86400,
@@ -290,7 +290,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// plan-gated to Hobby+. The limits surface reflects only
 			// what the create handler will accept (5 rules total).
 			EdgeRulesPerApp: 5, EdgeRuleEventsWindowHours: 24, EdgeRuleListsPerAccount: 0, EdgeRuleListMaxItems: 0, EdgeRulesJWTAllowed: false, EdgeRulesIPAllowed: false, EdgeRulesGeoPerApp: 1, EdgeRulesThrottlePerApp: 1, EdgeRulesCachePerApp: 0,
-			EdgeRulesRetryPerApp: 0, EdgeRulesCircuitBreakerPerApp: 0, EgressCircuitBreakersPerApp: 0, EdgeRulesWAFPerApp: 0,
+			EdgeRulesRetryPerApp: 0, EdgeRulesCircuitBreakerPerApp: 0, EgressCircuitBreakersPerApp: 0, EdgeRulesWAFPerApp: 0, EdgeRulesChallengePerApp: 0,
 			// issue #975 #4 / Mega-Foundation #979-b — Free is the abuse-floor tier;
 			// the abstraction is the upsell. PR-B (#979-c) wires the writer.
 			CorsPresetsPerAccount: 0, CorsPresetsPerApp: 0, CorsPresetMaxOrigins: 0, CorsPresetMaxAllowMethods: 0, CorsPresetMaxNameLength: 64,
@@ -300,7 +300,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// `custom_domains` path. Allowed=false means the create
 			// handler returns 402 CodeTenantSurfaceQuotaReached before
 			// the store is touched.
-			TenantSurfacesPerAccount: 0, TenantHostnamesPerSurface: 0, TenantSurfacesAllowed: false, WildcardDomainsAllowed: false,
+			TenantSurfacesPerAccount: 0, TenantHostnamesPerSurface: 0, TenantHostnamesPendingPerSurface: 0, TenantSurfacesAllowed: false, WildcardDomainsAllowed: false,
 			DataPlacementHintsPerApp: 0,
 			// ADR-076 (#476): outbound webhooks — Free gated to 402
 			// (CodePlanWebhooksNotAllowed), same fail-closed shape.
@@ -395,9 +395,9 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-124: Free keeps cancel + clear-obsolete; reorder
 			// stays plan-gated (Free=false).
 			QueueControlsAllowed: false, MaxQueuedDeploysPerApp: 2, MaxCancelOpsPerHour: 0, MaxReorderOpsPerHour: 0},
-		PlanHobby: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60}, Plan: PlanHobby, DeployedApps: 5, PreviewApps: 2, OutboundRequestsPerDayMax: 1_000_000, OutboundRatePerSecondMax: 20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, DeploysPerHour: 50, DeveloperApps: 2, DeveloperLeaseMaxHours: 72, MaxConcurrency: 2, RAMMB: 512, AppLayerMaxMB: 512, SourceTarballMaxMB: 100, VCPU: 2, RequestBudgetMaxMs: 60_000, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 200, ObjectStorage: ObjectStoragePlanLimits{IncludedBytes: 10 << 30}, PriceMillicents: 1_000_000, RateLimitRPS: 20, RateLimitBurst: 100, EgressMbit: 25, EgressNewConnPerSecond: 20, EgressNewConnBurst: 80, EgressNewDestinationsPerMinute: 240, EgressNewConnPerDestPerSecond: 10, EgressNewConnPerDestBurst: 40, EgressFloodDropsPerMinute: 240, EgressExtraPortsMax: 0, ServiceTCPSessionsPerAccount: 64, SecretCountMax: 25, SecretValueMaxBytes: 8192, MaxMinInstances: 1,
+		PlanHobby: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 3, UploadsPerMinute: 60}, Plan: PlanHobby, DeployedApps: 5, PreviewApps: 2, OutboundRequestsPerDayMax: 1_000_000, OutboundRatePerSecondMax: 20, OutboundBurstMax: 100, OutboundMaxInFlightMax: 50, OutboundRequestTimeoutMSMax: 60_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 120, DeploysPerHour: 50, DeveloperApps: 2, DeveloperLeaseMaxHours: 72, MaxConcurrency: 2, RAMMB: 512, AppLayerMaxMB: 512, SourceTarballMaxMB: 100, VCPU: 2, RequestBudgetMaxMs: 60_000, IdleTimeoutS: 60, CertExpiryWarningDays: 30, IncludedGBHours: 200, ObjectStorage: ObjectStoragePlanLimits{IncludedBytes: 10 << 30}, PriceMillicents: 1_000_000, RateLimitRPS: 20, RateLimitBurst: 100, EgressMbit: 25, EgressNewConnPerSecond: 20, EgressNewConnBurst: 80, EgressNewDestinationsPerMinute: 240, EgressNewConnPerDestPerSecond: 10, EgressNewConnPerDestBurst: 40, EgressFloodDropsPerMinute: 240, EgressExtraPortsMax: 0, ServiceTCPSessionsPerAccount: 64, SecretCountMax: 25, ProjectSecretCountMax: 25, SecretValueMaxBytes: 8192, MaxMinInstances: 1,
 			// ADR-521: pin the Operations policy alongside the existing plan contract.
-			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7 * 24 * 60 * 60, EventRetentionSeconds: 24 * 60 * 60, IdempotencyRetentionSeconds: 30 * 24 * 60 * 60, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256, DeadlineSecondsMax: 86400, AttemptsMax: 3, ExecutionSecondsMax: 3600},
+			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 10, PendingPerAccount: 1000, ReportsPerOperation: 1024, RecoveriesPerOperation: 32, ReportBytes: 4096, SchemaBytes: 65536, ProgressStages: 16, SubscriptionsPerAccount: 100, ReportMinIntervalMS: 100, ResultRetentionSeconds: 7 * 24 * 60 * 60, EventRetentionSeconds: 24 * 60 * 60, IdempotencyRetentionSeconds: 30 * 24 * 60 * 60, ArtifactsPerOperation: 8, ArtifactMaxBytes: 8 << 20, ArtifactTotalMaxBytes: 32 << 20, RetainedArtifactBytesPerAccount: 256 << 20, RetainedArtifactsPerAccount: 256, DeadlineSecondsMax: 86400, AttemptsMax: 3, ExecutionSecondsMax: 3600, SchedulesPerAccount: 10, ScheduleMinIntervalSeconds: 300, ChildrenPerOperation: 10, ConcurrencyPoliciesPerApp: 10, ApprovalFormsPerApp: 10},
 			// Issue #559: Hobby = 5 (smallest paid tier — one Node
 			// event loop comfortably handles 5 concurrent requests).
 			ConcurrencyPerVMBound: 5,
@@ -410,14 +410,16 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-044: see PlanFree. Hobby's tight quota is the
 			// load-bearing signal in the cpu-fairness e2e (cmd/e2e/cpu_fairness_test.go).
 			CPUWeight: 4, CPUQuotaUS: 200_000, CPUPeriodUS: 200_000,
-			MaxQueueDepth: 5, MaxDelayedTasksPerApp: 5, MaxSourceBytesPerInvocation: 64 * 1024, AsyncInvokeAllowed: true,
+			MaxQueueDepth: 10_000, MaxDelayedTasksPerApp: 5, MaxSourceBytesPerInvocation: 64 * 1024, AsyncInvokeAllowed: true,
+			// ADR-20261022105723: 100 MiB of pending queue messages per account, kept 1 day.
+			MaxQueueBacklogBytesPerAccount: 100 << 20, QueueMessageRetentionSeconds: 86_400,
 			// Issue #394: Hobby gets 3 retries before dead-letter — a
 			// poisoned row exits within ~15s at the default 5s backoff
 			// without thrashing the worker for long.
 			MaxQueueAttempts: 3,
 			// ADR-134 PR-B: Hobby 1k / 1h / 7d.
 			EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
-			EventStorage:                      EventStorageLimits{16384, 64 << 20},
+			EventStorage:                      EventStorageLimits{131072, 256 << 20, 259200},
 			MaxAsyncInvocationsPerAccount:     1000,
 			MaxAsyncInvocationDeadlineSeconds: 3600,
 			MaxAsyncResultRetentionSeconds:    604800,
@@ -457,14 +459,14 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// (EdgeRulesJWTAllowed / EdgeRulesIPAllowed) feeds the
 			// 402 response in handlers_edge_rules.go for Free.
 			EdgeRulesPerApp: 25, EdgeRuleEventsWindowHours: 72, EdgeRuleListsPerAccount: 5, EdgeRuleListMaxItems: 100, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 5, EdgeRulesThrottlePerApp: 5, EdgeRulesCachePerApp: 1,
-			EdgeRulesRetryPerApp: 3, EdgeRulesCircuitBreakerPerApp: 3, EgressCircuitBreakersPerApp: 3, EdgeRulesWAFPerApp: 0,
+			EdgeRulesRetryPerApp: 3, EdgeRulesCircuitBreakerPerApp: 3, EgressCircuitBreakersPerApp: 3, EdgeRulesWAFPerApp: 0, EdgeRulesChallengePerApp: 3,
 			// issue #975 #4 / Mega-Foundation #979-b — Hobby is the entry paid tier.
 			CorsPresetsPerAccount: 10, CorsPresetsPerApp: 5, CorsPresetMaxOrigins: 25, CorsPresetMaxAllowMethods: 8, CorsPresetMaxNameLength: 64,
 			// ADR-099 (#879): tenant surfaces — Hobby is the entry
 			// paid tier. 1 surface with up to 10 verified hostnames.
 			// The "single SaaS customer, handful of end-customer
 			// subdomains" use case is the Hobby use case.
-			TenantSurfacesPerAccount: 1, TenantHostnamesPerSurface: 10, TenantSurfacesAllowed: true, WildcardDomainsAllowed: false,
+			TenantSurfacesPerAccount: 1, TenantHostnamesPerSurface: 10, TenantHostnamesPendingPerSurface: 10, TenantSurfacesAllowed: true, WildcardDomainsAllowed: false,
 			DataPlacementHintsPerApp: 3,
 			// IAM-6 / ADR-061 PR-2 (issue #190): Hobby tracks KeysMax
 			// (10) one-to-one. Pending invitations = members/2
@@ -559,13 +561,13 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// retention (matches log-archive retention), 1000
 			// req/min ingest, 10 deployments max in the histogram
 			// (small Hobby app), 50 spans per trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 3, DebugTelemetryRequestsPerMinute: 1000, DebugTelemetryDeploymentsPerApp: 10, DebugTelemetrySpansPerTrace: 50, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 3, WorkflowMaxConcurrent: 10, WorkflowStepMaxTimeout: 10 * time.Minute, WorkflowMaxWaitDays: 30,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 3, DebugTelemetryRequestsPerMinute: 1000, DebugTelemetryDeploymentsPerApp: 10, DebugTelemetrySpansPerTrace: 50, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 3, WorkflowMaxConcurrent: 10, WorkflowMaxParked: 100, WorkflowStepMaxTimeout: 10 * time.Minute, WorkflowMaxWaitDays: 30,
 			// ADR-124 queue controls — Hobby unlocks the gated surface.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 5, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Pro opt-in for per-app egress allowlist with a 16-CIDR cap.
-		PlanPro: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180}, Plan: PlanPro, DeployedApps: 25, PreviewApps: 5, OutboundRequestsPerDayMax: 10_000_000, OutboundRatePerSecondMax: 100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, DeploysPerHour: 250, DeveloperApps: 5, DeveloperLeaseMaxHours: 168, MaxConcurrency: 5, RAMMB: 1024, AppLayerMaxMB: 1024, SourceTarballMaxMB: 250, VCPU: 2, RequestBudgetMaxMs: 300_000, IdleTimeoutS: 300, CertExpiryWarningDays: 30, IncludedGBHours: 1000, ObjectStorage: ObjectStoragePlanLimits{IncludedBytes: 50 << 30}, PriceMillicents: 3_000_000, RateLimitRPS: 100, RateLimitBurst: 500, EgressMbit: 100, EgressNewConnPerSecond: 50, EgressNewConnBurst: 200, EgressNewDestinationsPerMinute: 1200, EgressNewConnPerDestPerSecond: 25, EgressNewConnPerDestBurst: 100, EgressFloodDropsPerMinute: 600, EgressExtraPortsMax: 8, ServiceTCPSessionsPerAccount: 256, SecretCountMax: 50, SecretValueMaxBytes: 16384, MaxMinInstances: 3,
+		PlanPro: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 7, UploadsPerMinute: 180}, Plan: PlanPro, DeployedApps: 25, PreviewApps: 5, OutboundRequestsPerDayMax: 10_000_000, OutboundRatePerSecondMax: 100, OutboundBurstMax: 500, OutboundMaxInFlightMax: 250, OutboundRequestTimeoutMSMax: 120_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 600, DeploysPerHour: 250, DeveloperApps: 5, DeveloperLeaseMaxHours: 168, MaxConcurrency: 5, RAMMB: 1024, AppLayerMaxMB: 1024, SourceTarballMaxMB: 250, VCPU: 2, RequestBudgetMaxMs: 300_000, IdleTimeoutS: 300, CertExpiryWarningDays: 30, IncludedGBHours: 1000, ObjectStorage: ObjectStoragePlanLimits{IncludedBytes: 50 << 30}, PriceMillicents: 3_000_000, RateLimitRPS: 100, RateLimitBurst: 500, EgressMbit: 100, EgressNewConnPerSecond: 50, EgressNewConnBurst: 200, EgressNewDestinationsPerMinute: 1200, EgressNewConnPerDestPerSecond: 25, EgressNewConnPerDestBurst: 100, EgressFloodDropsPerMinute: 600, EgressExtraPortsMax: 8, ServiceTCPSessionsPerAccount: 256, SecretCountMax: 50, ProjectSecretCountMax: 50, SecretValueMaxBytes: 16384, MaxMinInstances: 3,
 			// ADR-521: pin the Operations policy alongside the existing plan contract.
-			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 30 * 24 * 60 * 60, EventRetentionSeconds: 7 * 24 * 60 * 60, IdempotencyRetentionSeconds: 90 * 24 * 60 * 60, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024, DeadlineSecondsMax: 604800, AttemptsMax: 10, ExecutionSecondsMax: 86400},
+			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 50, PendingPerAccount: 10000, ReportsPerOperation: 4096, RecoveriesPerOperation: 128, ReportBytes: 8192, SchemaBytes: 65536, ProgressStages: 32, SubscriptionsPerAccount: 1000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 30 * 24 * 60 * 60, EventRetentionSeconds: 7 * 24 * 60 * 60, IdempotencyRetentionSeconds: 90 * 24 * 60 * 60, ArtifactsPerOperation: 16, ArtifactMaxBytes: 32 << 20, ArtifactTotalMaxBytes: 128 << 20, RetainedArtifactBytesPerAccount: 1024 << 20, RetainedArtifactsPerAccount: 1024, DeadlineSecondsMax: 604800, AttemptsMax: 10, ExecutionSecondsMax: 86400, SchedulesPerAccount: 100, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 100, ConcurrencyPoliciesPerApp: 100, ApprovalFormsPerApp: 100},
 			// Issue #559: Pro = 25 (typical SaaS-tier workload
 			// envelope — one Node/Python service handling fan-out).
 			ConcurrencyPerVMBound: 25,
@@ -579,14 +581,16 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MinInstancesAllowed: true, CustomMetricsAllowed: true, MaxInstancesAllowed: true,
 			// ADR-044: see PlanFree.
 			CPUWeight: 8, CPUQuotaUS: 500_000, CPUPeriodUS: 500_000,
-			MaxQueueDepth: 25, MaxDelayedTasksPerApp: 50, MaxSourceBytesPerInvocation: 256 * 1024, AsyncInvokeAllowed: true,
+			MaxQueueDepth: 100_000, MaxDelayedTasksPerApp: 50, MaxSourceBytesPerInvocation: 256 * 1024, AsyncInvokeAllowed: true,
+			// ADR-20261022105723: 1 GiB of pending queue messages per account, kept 4 days.
+			MaxQueueBacklogBytesPerAccount: 1 << 30, QueueMessageRetentionSeconds: 4 * 86_400,
 			// Issue #394: Pro gets 10 retries — 5× Hobby's budget.
 			// Tolerates a transient downstream flap while still bounding
 			// the "permanently bad payload" worker cost.
 			MaxQueueAttempts: 10,
 			// ADR-134 PR-B: Pro 10k / 6h / 30d.
 			EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
-			EventStorage:                      EventStorageLimits{131072, 512 << 20},
+			EventStorage:                      EventStorageLimits{1048576, 2 << 30, 604800},
 			MaxAsyncInvocationsPerAccount:     10000,
 			MaxAsyncInvocationDeadlineSeconds: 21600,
 			MaxAsyncResultRetentionSeconds:    2592000,
@@ -601,9 +605,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Cron: Pro gets 20 per-app and 50 per-account.
 			CronLimitPerApp: 20, CronLimitPerAccount: 50,
 			// M-2 / ADR-137+138: Pro doubles Hobby (60 s grace,
-			// 60 s deadline, 10 retries). 3 workers, 5 service
+			// 10 retries); the startup deadline is the 30 s cold-boot
+			// window (ADR-138 amendment). 3 workers, 5 service
 			// replicas, 30-min job runtime.
-			DefaultStopGracePeriodS: 60, DefaultStartupDeadlineS: 60, DefaultMaxRetries: 10,
+			DefaultStopGracePeriodS: 60, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 10,
 			WorkerReplicasMax: 3, ServiceReplicasMax: 5, JobMaxRuntimeS: 1800,
 			// Issue #475: Pro gets 2 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 2,
@@ -617,14 +622,14 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// AND jwt|ip. Same surface as Hobby; the gate only
 			// flips the Free arm of the kind-switch.
 			EdgeRulesPerApp: 100, EdgeRuleEventsWindowHours: 168, EdgeRuleListsPerAccount: 20, EdgeRuleListMaxItems: 1000, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 25, EdgeRulesThrottlePerApp: 25, EdgeRulesCachePerApp: 5,
-			EdgeRulesRetryPerApp: 10, EdgeRulesCircuitBreakerPerApp: 10, EgressCircuitBreakersPerApp: 10, EdgeRulesWAFPerApp: 5,
+			EdgeRulesRetryPerApp: 10, EdgeRulesCircuitBreakerPerApp: 10, EgressCircuitBreakersPerApp: 10, EdgeRulesWAFPerApp: 5, EdgeRulesChallengePerApp: 10,
 			// issue #975 #4 / Mega-Foundation #979-b — Pro is the typical SaaS tier.
 			CorsPresetsPerAccount: 50, CorsPresetsPerApp: 15, CorsPresetMaxOrigins: 100, CorsPresetMaxAllowMethods: 8, CorsPresetMaxNameLength: 64,
 			// ADR-099 (#879): tenant surfaces — Pro gets 5 surfaces
 			// with up to 50 verified hostnames each. Each surface
 			// still binds to one app (the multi-app variant is the
 			// deferred footgun).
-			TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 50, TenantSurfacesAllowed: true, WildcardDomainsAllowed: true,
+			TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 50, TenantHostnamesPendingPerSurface: 50, TenantSurfacesAllowed: true, WildcardDomainsAllowed: true,
 			DataPlacementHintsPerApp: 10,
 			// IAM-6 / ADR-061 PR-2 (issue #190): Pro tracks KeysMax
 			// (50) one-to-one — every team member can hold a key
@@ -719,14 +724,14 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-127: Pro = "this month" debugger surface — 7-day
 			// retention, 10000 req/min ingest, 50 deployments in
 			// the histogram, 200 spans per trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 7, DebugTelemetryRequestsPerMinute: 10000, DebugTelemetryDeploymentsPerApp: 50, DebugTelemetrySpansPerTrace: 200, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 10, WorkflowMaxConcurrent: 50, WorkflowStepMaxTimeout: 30 * time.Minute, WorkflowMaxWaitDays: 90,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 7, DebugTelemetryRequestsPerMinute: 10000, DebugTelemetryDeploymentsPerApp: 50, DebugTelemetrySpansPerTrace: 200, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 10, WorkflowMaxConcurrent: 50, WorkflowMaxParked: 1000, WorkflowStepMaxTimeout: 30 * time.Minute, WorkflowMaxWaitDays: 90,
 			// ADR-124: Pro mirrors Hobby for queue controls.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 10, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Scale double-up to 64 CIDR cap (2× Pro, tracks 2×
 		// DeployedApps).
-		PlanScale: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600}, Plan: PlanScale, DeployedApps: 100, PreviewApps: 20, OutboundRequestsPerDayMax: 100_000_000, OutboundRatePerSecondMax: 500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, DeploysPerHour: 1000, DeveloperApps: 10, DeveloperLeaseMaxHours: 336, MaxConcurrency: 20, RAMMB: 2048, AppLayerMaxMB: 2048, SourceTarballMaxMB: 250, VCPU: 4, RequestBudgetMaxMs: 900_000, IdleTimeoutS: 600, CertExpiryWarningDays: 30, IncludedGBHours: 3000, ObjectStorage: ObjectStoragePlanLimits{IncludedBytes: 200 << 30}, PriceMillicents: 9_900_000, RateLimitRPS: 500, RateLimitBurst: 2000, EgressMbit: 250, EgressNewConnPerSecond: 100, EgressNewConnBurst: 400, EgressNewDestinationsPerMinute: 3000, EgressNewConnPerDestPerSecond: 50, EgressNewConnPerDestBurst: 200, EgressFloodDropsPerMinute: 1200, EgressExtraPortsMax: 32, ServiceTCPSessionsPerAccount: 1024, SecretCountMax: 100, SecretValueMaxBytes: 32768, MaxMinInstances: 10,
+		PlanScale: {Profiling: ProfilingLimits{Enabled: true, RetentionDays: 14, UploadsPerMinute: 600}, Plan: PlanScale, DeployedApps: 100, PreviewApps: 20, OutboundRequestsPerDayMax: 100_000_000, OutboundRatePerSecondMax: 500, OutboundBurstMax: 2000, OutboundMaxInFlightMax: 1000, OutboundRequestTimeoutMSMax: 300_000, OutboundMaxRetriesMax: MaxOutboundRetries, OutboundResponseCacheTTLSecondsMax: MaxOutboundResponseCacheTTLSeconds, OutboundRetryBudgetPerMinuteMax: 3000, DeploysPerHour: 1000, DeveloperApps: 10, DeveloperLeaseMaxHours: 336, MaxConcurrency: 20, RAMMB: 2048, AppLayerMaxMB: 2048, SourceTarballMaxMB: 250, VCPU: 4, RequestBudgetMaxMs: 900_000, IdleTimeoutS: 600, CertExpiryWarningDays: 30, IncludedGBHours: 3000, ObjectStorage: ObjectStoragePlanLimits{IncludedBytes: 200 << 30}, PriceMillicents: 9_900_000, RateLimitRPS: 500, RateLimitBurst: 2000, EgressMbit: 250, EgressNewConnPerSecond: 100, EgressNewConnBurst: 400, EgressNewDestinationsPerMinute: 3000, EgressNewConnPerDestPerSecond: 50, EgressNewConnPerDestBurst: 200, EgressFloodDropsPerMinute: 1200, EgressExtraPortsMax: 32, ServiceTCPSessionsPerAccount: 1024, SecretCountMax: 100, ProjectSecretCountMax: 100, SecretValueMaxBytes: 32768, MaxMinInstances: 10,
 			// ADR-521: pin the Operations policy alongside the existing plan contract.
-			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 90 * 24 * 60 * 60, EventRetentionSeconds: 30 * 24 * 60 * 60, IdempotencyRetentionSeconds: 180 * 24 * 60 * 60, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096, DeadlineSecondsMax: 2592000, AttemptsMax: 25, ExecutionSecondsMax: 604800},
+			Operations: OperationPlanLimits{Allowed: true, DefinitionsPerApp: 200, PendingPerAccount: 100000, ReportsPerOperation: 16384, RecoveriesPerOperation: 256, ReportBytes: 16384, SchemaBytes: 65536, ProgressStages: 64, SubscriptionsPerAccount: 10000, ReportMinIntervalMS: 100, ResultRetentionSeconds: 90 * 24 * 60 * 60, EventRetentionSeconds: 30 * 24 * 60 * 60, IdempotencyRetentionSeconds: 180 * 24 * 60 * 60, ArtifactsPerOperation: 32, ArtifactMaxBytes: 64 << 20, ArtifactTotalMaxBytes: 256 << 20, RetainedArtifactBytesPerAccount: 4096 << 20, RetainedArtifactsPerAccount: 4096, DeadlineSecondsMax: 2592000, AttemptsMax: 25, ExecutionSecondsMax: 604800, SchedulesPerAccount: 1000, ScheduleMinIntervalSeconds: 60, ChildrenPerOperation: 1000, ConcurrencyPoliciesPerApp: 1000, ApprovalFormsPerApp: 1000},
 			// Issue #559: Scale = 80 (matches Cloud Run's
 			// `80 × vCPU` default per the issue body).
 			ConcurrencyPerVMBound: 80,
@@ -742,14 +747,16 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// upper bound — 10 vCPU worth of compute at the per-instance
 			// level, gated by the §1 56 GB hard fence at the slice level.
 			CPUWeight: 16, CPUQuotaUS: 1_000_000, CPUPeriodUS: 1_000_000,
-			MaxQueueDepth: 100, MaxDelayedTasksPerApp: 1_000_000, MaxSourceBytesPerInvocation: 1024 * 1024, AsyncInvokeAllowed: true,
+			MaxQueueDepth: 1_000_000, MaxDelayedTasksPerApp: 1_000_000, MaxSourceBytesPerInvocation: 1024 * 1024, AsyncInvokeAllowed: true,
+			// ADR-20261022105723: 10 GiB of pending queue messages per account, kept 14 days.
+			MaxQueueBacklogBytesPerAccount: 10 << 30, QueueMessageRetentionSeconds: 14 * 86_400,
 			// Issue #394: Scale gets 25 retries — 2.5× Pro's budget, but
 			// capped so a genuinely-bad payload still terminates within
 			// the worker's hourly budget window.
 			MaxQueueAttempts: 25,
 			// ADR-134 PR-B: Scale 100k / 24h / 90d.
 			EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
-			EventStorage:                      EventStorageLimits{1048576, 4 << 30},
+			EventStorage:                      EventStorageLimits{8388608, 16 << 30, 1209600},
 			MaxAsyncInvocationsPerAccount:     100000,
 			MaxAsyncInvocationDeadlineSeconds: 86400,
 			MaxAsyncResultRetentionSeconds:    7776000,
@@ -767,9 +774,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Cron: Scale gets 100 per-app and 500 per-account.
 			CronLimitPerApp: 100, CronLimitPerAccount: 500,
 			// M-2 / ADR-137+138: Scale doubles Pro (120 s grace,
-			// 120 s deadline, 20 retries). 10 workers, 20
-			// service replicas, 1-h job runtime.
-			DefaultStopGracePeriodS: 120, DefaultStartupDeadlineS: 120, DefaultMaxRetries: 20,
+			// 20 retries); the startup deadline is the 30 s cold-boot
+			// window (ADR-138 amendment). 10 workers, 20 service
+			// replicas, 1-h job runtime.
+			DefaultStopGracePeriodS: 120, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 20,
 			WorkerReplicasMax: 10, ServiceReplicasMax: 20, JobMaxRuntimeS: 3600,
 			// Issue #475: Scale gets 4 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 4,
@@ -782,7 +790,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// bound the LRU + per-host matcher budget tolerates before
 			// per-host invalidation becomes load-bearing.
 			EdgeRulesPerApp: 500, EdgeRuleEventsWindowHours: 168, EdgeRuleListsPerAccount: 100, EdgeRuleListMaxItems: 10000, EdgeRulesJWTAllowed: true, EdgeRulesIPAllowed: true, EdgeRulesGeoPerApp: 100, EdgeRulesThrottlePerApp: 100, EdgeRulesCachePerApp: 20,
-			EdgeRulesRetryPerApp: 25, EdgeRulesCircuitBreakerPerApp: 25, EgressCircuitBreakersPerApp: 50, EdgeRulesWAFPerApp: 20,
+			EdgeRulesRetryPerApp: 25, EdgeRulesCircuitBreakerPerApp: 25, EgressCircuitBreakersPerApp: 50, EdgeRulesWAFPerApp: 20, EdgeRulesChallengePerApp: 25,
 			// issue #975 #4 / Mega-Foundation #979-b — Scale is the large-fleet tier.
 			CorsPresetsPerAccount: 250, CorsPresetsPerApp: 50, CorsPresetMaxOrigins: 500, CorsPresetMaxAllowMethods: 8, CorsPresetMaxNameLength: 64,
 			// ADR-099 (#879): tenant surfaces — Scale gets 25 surfaces
@@ -790,7 +798,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// bounded by LE's 100-SAN-per-cert limit (per_host_san
 			// falls back to per_host above ~100, surfaced via the
 			// cert engine, not quota).
-			TenantSurfacesPerAccount: 25, TenantHostnamesPerSurface: 250, TenantSurfacesAllowed: true, WildcardDomainsAllowed: true,
+			TenantSurfacesPerAccount: 25, TenantHostnamesPerSurface: 250, TenantHostnamesPendingPerSurface: 250, TenantSurfacesAllowed: true, WildcardDomainsAllowed: true,
 			DataPlacementHintsPerApp: 50,
 			// IAM-6 / ADR-061 PR-2 (issue #190): Scale tracks KeysMax
 			// (200) one-to-one — SaaS-scale multi-team + rotating-CI.
@@ -890,7 +898,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// cap, a fleet with thousands of historical deployments
 			// would blow up Prometheus cardinality), 1000 spans per
 			// trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 14, DebugTelemetryRequestsPerMinute: 50000, DebugTelemetryDeploymentsPerApp: 200, DebugTelemetrySpansPerTrace: 1000, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 50, WorkflowMaxConcurrent: 200, WorkflowStepMaxTimeout: 2 * time.Hour, WorkflowMaxWaitDays: 365,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 14, DebugTelemetryRequestsPerMinute: 50000, DebugTelemetryDeploymentsPerApp: 200, DebugTelemetrySpansPerTrace: 1000, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 50, WorkflowMaxConcurrent: 200, WorkflowMaxParked: 10000, WorkflowStepMaxTimeout: 2 * time.Hour, WorkflowMaxWaitDays: 365,
 			// ADR-124: Scale gets the highest queue depth (25) and
 			// the same 60/h reorder budget as Hobby/Pro.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 25, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
@@ -1072,6 +1080,7 @@ func TestPlansAreMonotonic(t *testing.T) {
 			{"CronLimitPerApp", lo.CronLimitPerApp, hi.CronLimitPerApp},
 			{"CronLimitPerAccount", lo.CronLimitPerAccount, hi.CronLimitPerAccount},
 			{"EdgeRulesWAFPerApp", lo.EdgeRulesWAFPerApp, hi.EdgeRulesWAFPerApp},
+			{"EdgeRulesChallengePerApp", lo.EdgeRulesChallengePerApp, hi.EdgeRulesChallengePerApp},
 			// Issue #475: per-account reserved-tier cap must be
 			// monotonic across plans (Free 0 < Hobby 1 < Pro 2 < Scale 4).
 			// apid's updateApp path reads this directly.

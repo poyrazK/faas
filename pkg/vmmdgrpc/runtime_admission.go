@@ -95,19 +95,25 @@ func (s *Server) CreateAdmittedRuntime(ctx context.Context, req *vmmdpb.CreateAd
 // Remote grants require the scheduler's verified daemon certificate. The
 // existing default-local Unix socket uses its filesystem access boundary.
 func authorizeRuntimeAdmissionPeer(ctx context.Context) error {
+	return authorizeSchedulerPeer(ctx, "runtime admission")
+}
+
+// authorizeSchedulerPeer admits a local unix-socket peer or a verified
+// schedd certificate; what names the call in the refusal.
+func authorizeSchedulerPeer(ctx context.Context, what string) error {
 	p, ok := peer.FromContext(ctx)
 	if !ok || p == nil {
-		return status.Error(codes.Unauthenticated, "runtime admission requires a scheduler peer")
+		return status.Error(codes.Unauthenticated, what+" requires a scheduler peer")
 	}
 	if p.AuthInfo == nil && p.Addr != nil && p.Addr.Network() == "unix" {
 		return nil
 	}
 	cn, err := wire.PeerCN(ctx)
 	if err != nil {
-		return status.Error(codes.Unauthenticated, "runtime admission requires verified daemon credentials")
+		return status.Error(codes.Unauthenticated, what+" requires verified daemon credentials")
 	}
 	if cn != "schedd.faas" {
-		return status.Error(codes.PermissionDenied, "only schedd may issue runtime admission grants")
+		return status.Error(codes.PermissionDenied, "only schedd may call "+what)
 	}
 	return nil
 }
@@ -246,7 +252,7 @@ func (s *Server) wakeAdmittedWithBridge(ctx context.Context, vmm admittedRuntime
 			s.streamBridges = newStreamBridgeManager(s.log)
 		}
 		hook = func(ready fcvm.WakeNetworkReady) {
-			s.streamBridges.prewarm(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{Instance: ready.Instance, Port: uint32(req.Request.Port), AppProtocol: protocol}, ready.Netns)
+			s.prewarmStreamBridge(withPublicTarget(ctx, ready.PublicTarget), &vmmdpb.ForwardHTTPRequestInit{Instance: ready.Instance, Port: uint32(req.Request.Port), AppProtocol: protocol}, ready)
 		}
 	}
 	inst, receipt, err := vmm.WakeAdmitted(ctx, req, hook)
@@ -259,6 +265,8 @@ func (s *Server) wakeAdmittedWithBridge(ctx context.Context, vmm admittedRuntime
 func admissionStatus(err error) error {
 	var code codes.Code
 	switch {
+	case errors.Is(err, fcvm.ErrFunctionWarmCapture):
+		return grpcerr.ToStatus(toProblem(err))
 	case errors.Is(err, runtimeadmission.ErrUnavailable):
 		code = codes.Unimplemented
 	case errors.Is(err, runtimeadmission.ErrInvalid):

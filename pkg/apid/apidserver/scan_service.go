@@ -47,9 +47,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/apidsource"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/deploystaging"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectmigration"
 	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
+	"github.com/onebox-faas/faas/pkg/apid/serviceadditions"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/cronexpr"
 	"github.com/onebox-faas/faas/pkg/githubd"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
@@ -67,6 +70,7 @@ import (
 // source bytes (hex). TS is informational — the hash is the load-
 // bearing field.
 type planTokenWire struct {
+	SafeReleaseID          string            `json:"safe_release_id,omitempty"`
 	PublicAppsDomain       string            `json:"public_apps_domain,omitempty"`
 	AppSlugs               map[string]string `json:"app_slugs,omitempty"`
 	Migration              bool              `json:"migration,omitempty"`
@@ -87,10 +91,14 @@ type planTokenWire struct {
 // /apply. The handler builds this from the multipart stream before
 // dispatching to the scan service.
 type scanPlanRequest struct {
-	AppSlugs     map[string]string
-	Migration    bool
-	SourcePath   string // spool path after validateAndSpool + extractTarGzToDir
-	SourceSHA256 string // hex digest of the original compressed bytes
+	MigrationContractCommand string
+	ReleaseConfig            json.RawMessage
+	SafeRelease              *api.ProjectSafeRelease
+	RetryTargets             map[string]string
+	AppSlugs                 map[string]string
+	Migration                bool
+	SourcePath               string // spool path after validateAndSpool + extractTarGzToDir
+	SourceSHA256             string // hex digest of the original compressed bytes
 	// ScanDir is the extracted source tree. Cleaned up by scanService's
 	// defer (task #19 fix; pre-fix was "cleaned up by caller" but no
 	// caller ever removed it, so every successful scan leaked the dir).
@@ -119,9 +127,13 @@ type scanPlanRequest struct {
 	// the suppression decision made during preview.
 	NoTriggers             bool
 	PlatformTenantRequired *bool
-	Environment            string // registered project environment; resolved to deployment scope
-	ApprovalToken          string // exact-plan approval credential for protected applies
+	Environment            string            // registered project environment; resolved to deployment scope
+	ApprovalToken          string            // exact-plan approval credential for protected applies
+	Secrets                map[string]string // apply-only; sealed before any build admission
 	InitialSecrets         api.ProjectInitialSecrets
+	// OverrideFreeze releases frozen apps anyway, audited
+	// (ADR-20261019071733).
+	OverrideFreeze string
 }
 
 func validProjectRepoFullName(repo string) bool {
@@ -152,6 +164,7 @@ func validProjectRepoFullName(repo string) bool {
 // `plan.workloads[i].tier` serialize as "compose" instead of
 // `8`. The conversion lives in toPlanWorkload below.
 type scanPlanResponse struct {
+	SafeRelease           *api.ProjectSafeRelease `json:"safe_release,omitempty"`
 	ProjectSlug           string                  `json:"project_slug"`
 	RepoFullName          string                  `json:"repo_full_name,omitempty"`
 	Environment           string                  `json:"environment,omitempty"`
@@ -239,60 +252,7 @@ type scanPlanResponse struct {
 // a typed int (1/3/5/8) and the wire shape is the .String()
 // representation ("single"/"convention"/"workspace"/"compose"/
 // "unknown"), matching the OpenAPI PlanWorkload.tier enum.
-func toPlanWorkload(w reposcan.Workload) api.PlanWorkload {
-	policy := api.ServiceBindingPolicy(w.ServiceBindingPolicy).Effective()
-	if w.ServiceBindingPolicy == "" {
-		policy = api.ServiceBindingPolicyDeclared
-	}
-	return api.PlanWorkload{
-		Name:                w.Name,
-		AppSlug:             w.AppSlug,
-		RootDir:             w.RootDir,
-		Dockerfile:          w.Dockerfile,
-		Image:               w.Image,
-		ImageHealthcheck:    w.ImageHealthcheck.Clone(),
-		ImageProcess:        w.ImageProcess.Clone(),
-		BuildTarget:         w.DockerfileBuild.TargetStage(),
-		BuildArgs:           w.DockerfileBuild.ArgNames(),
-		Command:             w.Command,
-		DependsOn:           w.DependsOn,
-		DependsOnConditions: maps.Clone(w.DependsOnConditions),
-
-		ServiceBindingPolicy:      policy,
-		ServiceBindingTransport:   api.ServiceBindingTransport(w.ServiceBindingTransport),
-		ServiceReliability:        w.ServiceReliability,
-		PreviewServiceCallsPolicy: api.PreviewServiceCallsPolicy(w.PreviewServiceCallsPolicy).Effective(),
-		AllowedServiceCallers:     w.AllowedServiceCallers,
-		AllowedServiceCallScopes:  w.AllowedServiceCallScopes,
-		PlatformTenantRequired:    w.PlatformTenantRequired,
-
-		Class:      string(w.Class),
-		Schedule:   w.Schedule,
-		Ports:      append([]int{}, w.Ports...),
-		EnvKeys:    w.EnvKeys,
-		Source:     w.Source,
-		Tier:       w.Tier.String(),
-		DetectedBy: toPlanDetectedBy(w.DetectedBy),
-	}
-}
-
-// toPlanDetectedBy translates the reposcan detection trace into the
-// wire DTO (issue #742). Returns nil for the zero Detection so the
-// `detected_by` key is omitted entirely rather than serialising an
-// empty object — a scan produced before the trace existed, or by a
-// caller that constructed Workload directly, stays byte-identical
-// on the wire.
-func toPlanDetectedBy(d reposcan.Detection) *api.PlanDetectedBy {
-	if d.Detector == "" {
-		return nil
-	}
-	return &api.PlanDetectedBy{
-		Detector:   d.Detector,
-		Marker:     d.Marker,
-		Priority:   int(d.Priority),
-		MergedFrom: d.MergedFrom,
-	}
-}
+func toPlanWorkload(w reposcan.Workload) api.PlanWorkload { return reposcan.PlanWorkload(w) }
 
 func toPlanDetectionWarnings(warnings []reposcan.DetectionWarning) []api.PlanDetectionWarning {
 	if len(warnings) == 0 {
@@ -703,80 +663,6 @@ func toPlanManaged(m reposcan.Managed) api.PlanManaged {
 	}
 }
 
-// evaluateQuotaGate computes the can_apply triple for the given
-// (workloads, limits, observedApps, observedCrons). The function
-// derives the cron count from workloads (any workload with a
-// non-empty Schedule is also a cron — see scan_service.go:714-727
-// for the equivalent inline loop) so callers can evaluate the gate
-// on both pre-filter and post-filter workloads without sharing
-// scan-internal state.
-//
-// Returns:
-//
-//	canApply    — true when the plan fits under the plan caps AND
-//	               crons are allowed by the plan.
-//	notAllowed  — true when crons are forbidden by the plan (the
-//	               special hard-block Free plan sees on Hobby/Pro/
-//	               Scale cron workloads). The flag is independent
-//	               of canApply: a Free-plan operator who uploaded
-//	               a cron sees both canApply=false AND
-//	               notAllowed=true.
-//	reasons     — human-readable list of why can_apply is false.
-//	               Empty when can_apply is true. The dashboard
-//	               renders these verbatim in the gate card;
-//	               CanApplyReasons on PlanResponse carries this
-//	               same slice.
-//	cronCount   — the count derived from workloads (returned so
-//	               the caller can size the partition's
-//	               observed_crons wire field without re-walking
-//	               workloads).
-//
-// Pure function; no I/O. Tests pin the three failure-mode shapes
-// (apps-over, crons-not-allowed, crons-over) plus the rescue
-// invariant (preCanApply=false → postCanApply=true after exclude).
-func evaluateQuotaGate(
-	workloads []reposcan.Workload,
-	limits api.Limits,
-	observedApps int,
-	observedCrons int,
-) (canApply bool, notAllowed bool, reasons []string, cronCount int) {
-	for _, wl := range workloads {
-		workloadCronCount := len(wl.CronSchedules())
-		cronCount += workloadCronCount
-		if limits.CronLimitPerApp > 0 && workloadCronCount > limits.CronLimitPerApp {
-			canApply = false
-			reasons = append(reasons, fmt.Sprintf(
-				"crons over per-app limit for %s: %d > %d",
-				wl.Name, workloadCronCount, limits.CronLimitPerApp,
-			))
-		}
-	}
-
-	if len(reasons) == 0 {
-		canApply = true
-	}
-	if observedApps+len(workloads) > limits.DeployedApps {
-		canApply = false
-		reasons = append(reasons, fmt.Sprintf(
-			"apps over plan limit: %d + %d > %d",
-			observedApps, len(workloads), limits.DeployedApps,
-		))
-	}
-	if cronCount > 0 && limits.CronLimitPerAccount == 0 {
-		canApply = false
-		notAllowed = true
-		reasons = append(reasons, "crons not allowed on this plan")
-	}
-	if observedCrons+cronCount > limits.CronLimitPerAccount {
-		canApply = false
-		reasons = append(reasons, fmt.Sprintf(
-			"crons over plan limit: %d + %d > %d",
-			observedCrons, cronCount, limits.CronLimitPerAccount,
-		))
-	}
-	return
-}
-
 func evaluateProjectedQuotaGate(
 	desiredCrons []planCron,
 	limits api.Limits,
@@ -973,9 +859,18 @@ type appliedBuild = api.AppliedBuild
 func (s *server) applyBuildsForAddedChangedOrdered(
 	ctx context.Context, r *http.Request, acct state.Account, project state.Project,
 	scanDir string, workloads []reposcan.Workload, managed []reposcan.Managed, added, changed []state.App,
-	environment string,
+	environment, overrideFreeze string,
+	cronPlans map[string]projectDeploymentCronPlan,
 	references ...[]reposcan.Workload,
 ) []appliedBuild {
+	tracker := deploystaging.ProjectSubmissionFromContext(ctx)
+	safe := tracker != nil && tracker.Receipt.Apply.SafeRelease != nil
+	if safe {
+		environment = "production"
+	}
+	if environment == "production" && !safe {
+		environment = state.DefaultEnvScope
+	}
 	workloadByName := make(map[string]reposcan.Workload, len(workloads))
 	for _, workload := range workloads {
 		workloadByName[strings.ToLower(workload.Name)] = workload
@@ -985,6 +880,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 	touched = append(touched, changed...)
 	if order, orderErr := reposcan.DependencyOrder(workloads, managed, references...); orderErr == nil {
 		touched = orderAppsByWorkload(touched, order)
+	}
+	if tracker != nil {
+		if err := tracker.Select(ctx, project, touched); err != nil {
+			out := make([]appliedBuild, 0, len(touched))
+			for _, app := range touched {
+				out = append(out, appliedBuild{Slug: app.Slug, AppID: app.ID, Error: "project submission selection could not be recorded"})
+			}
+			return out
+		}
 	}
 	out := make([]appliedBuild, 0, len(touched))
 	selected, accepted := reconcile.ProjectDeploymentSelection(touched), make(map[string]bool, len(touched))
@@ -1004,12 +908,39 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			out = append(out, res)
 			continue
 		}
+		if prob := s.releaseFreezeProblem(r, acct, app, environment, overrideFreeze); prob != nil {
+			res.Error = prob.Detail
+			out = append(out, res)
+			continue
+		}
 		// New services install their pinned company intent before staging or
 		// consuming deploy rate. The ordinary deployment fence still applies.
 		var standardError string
 		app, standardError = s.prepareProjectApplicationStandard(ctx, app)
 		if standardError != "" {
 			res.Error = standardError
+			out = append(out, res)
+			continue
+		}
+		cronPlan, managedCrons := cronPlans[app.ID]
+		if managedCrons && cronPlan.err != nil {
+			res.Error = "cron planning failed (server logs carry the detail)"
+			s.log.Warn("apid: project cron planning failed", "app_id", app.ID, "err", cronPlan.err)
+			out = append(out, res)
+			continue
+		}
+		if managedCrons && cronPlan.plan.Reuse != nil {
+			if tracker != nil {
+				_, err := s.store.(state.DeploymentSubmissionStore).AttachDeploymentSubmission(ctx, app.ID, state.ProjectWorkloadAttempt(tracker.Receipt.AttemptID, app.ID), cronPlan.plan.Reuse.ID)
+				if err != nil {
+					res.Error = "reused deployment acceptance could not be recorded"
+					out = append(out, res)
+					continue
+				}
+			}
+			res.DeploymentID, res.BuildID = cronPlan.plan.Reuse.ID, cronPlan.plan.Reuse.BuildID
+			res.Configuration = s.readProjectDeploymentConfiguration(ctx, acct.ID, res.DeploymentID)
+			accepted[strings.ToLower(app.WorkloadName)] = true
 			out = append(out, res)
 			continue
 		}
@@ -1089,13 +1020,44 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 		// + NotifyBuildQueued + (optional) NotifyDeploymentChanged for
 		// the prior row. Source="tarball" keeps the build_queued
 		// payload's kind field aligned with the deployment's kind.
+		deployCtx := ctx
+		if tracker != nil {
+			attempt := state.ProjectWorkloadAttempt(tracker.Receipt.AttemptID, app.ID)
+			deployCtx = state.ContextWithDeploymentSubmission(ctx, attempt)
+			if safe && tracker.Receipt.Apply.SafeRelease.Worker != nil && tracker.Receipt.Apply.SafeRelease.Worker.AppID == app.ID {
+				deployCtx = state.ContextWithProjectReleaseWorkerAttempt(deployCtx, tracker.Receipt.AttemptID)
+			}
+			if safe && tracker.Receipt.Apply.SafeRelease.Configuration != nil {
+				deployCtx = state.ContextWithProjectReleaseConfigurationAttempt(deployCtx, tracker.Receipt.AttemptID)
+			}
+			if managedCrons {
+				cronPlan.plan.Request.SessionID = attempt
+			}
+		}
+		if managedCrons {
+			if err := s.prepareProjectDeploymentCrons(ctx, acct, app.ID, cronPlan); err != nil {
+				_ = os.Remove(staged)
+				res.Error = "cron preparation failed (server logs carry the detail)"
+				s.log.Warn("apid: project cron preparation failed", "app_id", app.ID, "err", err)
+				out = append(out, res)
+				continue
+			}
+			deployCtx = state.ContextWithDeploymentSubmission(ctx, cronPlan.plan.Request.SessionID)
+		}
+		if safe && (!safeProjectCommandMatches(tracker.Receipt.Apply.SafeRelease, app.ID, releaseCommand) || len(operationDefinitions) > 0) {
+			res.Error = "release command differs from the atomic plan, or operation changes are unsupported"
+			_ = os.Remove(staged)
+			out = append(out, res)
+			continue
+		}
 		operationID := ""
 		var buildDependencies []state.DeploymentDependencyPin
 		if run := projectmigration.FromContext(ctx); run != nil {
 			operationID = run.OperationID(app.ID)
 			buildDependencies = run.BuildDependencies(app.ID)
 		}
-		enqRes, enqErr := apidsource.Enqueue(ctx, s.store, s.notif, apidsource.EnqueueParams{
+		enqRes, enqErr := apidsource.Enqueue(deployCtx, s.store, s.notif, apidsource.EnqueueParams{
+			TrafficPercentExplicit:    safe,
 			OperationID:               operationID,
 			BuildDependencies:         buildDependencies,
 			OperationDefinitions:      operationDefinitions,
@@ -1133,12 +1095,20 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			ActorFromIP:         middleware.ClientIP(r),
 			ReleaseCommand:      releaseCommand.command,
 			ReleaseCommandShell: releaseCommand.shell,
-			ServiceRollout:      app.Manifest.ExecutionMode == api.ExecutionModeService,
+			ServiceRollout:      !safe && app.Manifest.ExecutionMode == api.ExecutionModeService,
 		})
 		if app.Manifest.ProjectImage != "" {
 			_ = os.Remove(staged)
 		}
 		if enqErr != nil {
+			if managedCrons {
+				cancel := cronPlan.plan.Request
+				cancel.Operation = "cancel"
+				_, cancelErr := s.store.(state.DeploymentCronStagingStore).ApplyDeploymentCronStaging(context.WithoutCancel(ctx), app.ID, state.DeploymentCronStagingParams{AccountID: acct.ID, Request: cancel})
+				if cancelErr != nil {
+					s.log.Warn("apid: cancel rejected project cron intent", "app_id", app.ID, "err", cancelErr)
+				}
+			}
 			// Same wire/server split as the stage branch
 			// above: surface a generic message to the
 			// customer, log the full error (which can carry
@@ -1150,12 +1120,15 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			continue
 		}
 		res.DeploymentID = enqRes.DeploymentID
+		if managedCrons {
+			res.Configuration = s.readProjectDeploymentConfiguration(ctx, acct.ID, res.DeploymentID)
+		}
 		accepted[strings.ToLower(app.WorkloadName)] = true
 		res.BuildID = enqRes.BuildID
 		// Enqueue is the acceptance boundary for the source. Checkpoint the
 		// per-workload digest only after the deployment and build rows exist;
 		// failed staging/admission/enqueue attempts therefore remain retryable.
-		if workload, ok := workloadByName[strings.ToLower(app.WorkloadName)]; ok {
+		if workload, ok := workloadByName[strings.ToLower(app.WorkloadName)]; ok && !safe {
 			manifest := app.Manifest
 			manifest.ProjectSourceSHA256 = workload.SourceSHA256
 			if _, checkpointErr := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: &manifest}); checkpointErr != nil {
@@ -1164,6 +1137,9 @@ func (s *server) applyBuildsForAddedChangedOrdered(
 			}
 		}
 		out = append(out, res)
+	}
+	if tracker != nil {
+		tracker.Complete(out)
 	}
 	return out
 }
@@ -1296,15 +1272,34 @@ func (s *server) scanService(
 	if prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
+	defer func() { _ = os.Remove(req.SourcePath); _ = os.RemoveAll(req.ScanDir) }()
 	if prob := projectaccess.ValidateScan(r, s.store, acct, req.ProjectSlug); prob != nil {
-		_ = os.Remove(req.SourcePath)
-		_ = os.RemoveAll(req.ScanDir)
 		return nil, state.Project{}, nil, nil, nil, nil, prob
 	}
 	if _, shared := projectaccess.From(r.Context()); shared && (req.InstallID != 0 || req.RepoFullName != "") {
-		_ = os.Remove(req.SourcePath)
-		_ = os.RemoveAll(req.ScanDir)
 		return nil, state.Project{}, nil, nil, nil, nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Repository ownership migration required", "upload project source without a personal GitHub installation binding")
+	}
+	if prob := s.prepareSafeProjectRelease(r, acct, req, apply); prob != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, prob
+	}
+	if apply {
+		if prob := s.prepareProjectRetry(r, acct, req); prob != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, prob
+		}
+		if len(req.RetryTargets) > 0 {
+			r = r.WithContext(state.ContextWithDeploymentRetry(r.Context(), req.RetryTargets))
+		}
+		if prob := s.beginProjectSubmission(r.Context(), req); prob != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, prob
+		}
+		if tracker := deploystaging.ProjectSubmissionFromContext(r.Context()); tracker != nil {
+			defer s.finishProjectSubmission(r.Context(), tracker)
+		}
+	}
+	if len(req.Secrets) > 0 {
+		if prob := projectDeploySecretsPermission(r, apply); prob != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, prob
+		}
 	}
 	if prob := s.validateProjectDeploymentEnvironment(r.Context(), acct, req.ProjectSlug, req.Environment); prob != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, prob
@@ -1419,18 +1414,6 @@ func (s *server) scanService(
 				fmt.Sprintf("duplicate: %s", strings.Join(clash, ", ")))
 		}
 	}
-	// Cleanup the spooled upload. Best-effort: a failure here just
-	// means the original tarball lingers under FAAS_SCAN_SPOOL_ROOT
-	// until the next sweep.
-	defer func() { _ = os.Remove(req.SourcePath) }() //nolint:errcheck // best-effort
-	// Cleanup the extracted dir on every return path. Pre-task #19
-	// this was documented "cleaned up by caller" but no caller ever
-	// removed it, so every successful scan leaked the extracted dir
-	// under FAAS_SCAN_SPOOL_ROOT. The defer fires AFTER all the
-	// in-function staging reads (applyBuildsForAddedChanged runs
-	// synchronously and walks req.ScanDir before the return at the
-	// bottom), so the staging sees a still-live tree.
-	defer func() { _ = os.RemoveAll(req.ScanDir) }() //nolint:errcheck // best-effort
 
 	// If a plan_token was passed (apply path), validate it BEFORE
 	// running the scan. Mismatch -> 409 plan_token_stale. This
@@ -1448,6 +1431,11 @@ func (s *server) scanService(
 				"plan_token_stale",
 				"plan_token does not match uploaded source",
 				"re-run scan and apply in one flow")
+		}
+		if req.SafeRelease == nil || !req.SafeRelease.AddServices {
+			if pt.SafeReleaseID != safeProjectReleaseID(req.SafeRelease) {
+				return nil, state.Project{}, nil, nil, nil, nil, api.ErrValidation("safe release baseline changed after scan")
+			}
 		}
 		// Older multipart clients know only the plan token. Omission reuses
 		// its reviewed allocations; an explicitly different map is stale.
@@ -1534,6 +1522,17 @@ func (s *server) scanService(
 	appSlugs, slugProblem := projectsetup.AppSlugs(result.Workloads, acctApps, projectID, req.ProjectSlug, req.AppSlugs, req.Migration)
 	if slugProblem != nil {
 		return nil, state.Project{}, nil, nil, nil, nil, slugProblem
+	}
+	projectsetup.SetAppSlugs(result.Workloads, appSlugs)
+	allocated, allocErr := reconcile.AllocateAppSlugs(r.Context(), s.store.AppBySlugIncludingDeleted, result.Workloads, acctApps, acct.ID, projectID, req.ProjectSlug)
+	if allocErr != nil {
+		return nil, state.Project{}, nil, nil, nil, nil, customerInternalProblem(s.log, "allocate project app names",
+			"Gregale could not check app name availability.", "Retry the scan before deploying.", allocErr)
+	}
+	for _, w := range allocated {
+		if _, chosen := appSlugs[w.Name]; !chosen && w.AppSlug != "" {
+			appSlugs[w.Name] = w.AppSlug
+		}
 	}
 	req.AppSlugs = appSlugs
 	projectsetup.SetAppSlugs(result.Workloads, appSlugs)
@@ -1756,6 +1755,9 @@ func (s *server) scanService(
 	if routeWarning := projectAsyncRoutePlanWarning(resolvedManifest.AsyncRoutes, resolvedManifest.AsyncRoutesPresent, req.NoTriggers); routeWarning != "" {
 		warnings = append(warnings, routeWarning)
 	}
+	if routeWarning := projectPathRoutePlanWarning(resolvedManifest.Routes, resolvedManifest.RoutesPresent, req.NoTriggers); routeWarning != "" {
+		warnings = append(warnings, routeWarning)
+	}
 	if req.NoTriggers {
 		if len(crons) > 0 {
 			warnings = append(warnings, "triggers skipped by request (--no-triggers); existing trigger state left unchanged")
@@ -1807,6 +1809,11 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
 		if problem := projectAsyncRoutesPlanProblem(acct.Plan, resolvedManifest.AsyncRoutes, filteredW, projectApps); problem != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, problem
+		}
+	}
+	if resolvedManifest.RoutesPresent && !req.NoTriggers {
+		if problem := validateProjectManifestPathRoutes(resolvedManifest.Routes, result.Workloads, filteredW, projectApps, req.Exclude); problem != nil {
 			return nil, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}
@@ -1935,10 +1942,32 @@ func (s *server) scanService(
 	// the JSON marshal sees string Tier (matching OpenAPI enum +
 	// pkg/api.PlanWorkload.Tier) instead of the raw int the
 	// reposcan type carries. See toPlanWorkload / toPlanManaged.
+	// The Compose environment's values are read apart from the scan so they
+	// never enter a plan; an unreadable one only means nothing is imported.
+	composeEnv, composeEnvErr := reposcan.ReadComposeEnv(os.DirFS(req.ScanDir))
+	if composeEnvErr != nil {
+		composeEnv = reposcan.ComposeEnv{}
+	}
 	respWorkloads := make([]api.PlanWorkload, len(filteredW))
 	for i, w := range filteredW {
 		pw := toPlanWorkload(w)
-		if s.domain != "" && (string(w.Class) == "http" || string(w.Class) == "graphql") {
+		pw.Action = partition.WillDeploy[i].Action
+		pw.ExistingAppID = partition.WillDeploy[i].ID
+		var existing *state.App
+		for j := range acctApps {
+			if pw.ExistingAppID != "" && acctApps[j].ID == pw.ExistingAppID {
+				existing = &acctApps[j]
+				break
+			}
+		}
+		if existing != nil {
+			// Visibility is create-only; the plan shows what the app has.
+			pw.Visibility = ""
+			if api.NormalizeAppVisibility(existing.Visibility) == api.AppVisibilityInternal {
+				pw.Visibility = api.AppVisibilityInternal
+			}
+		}
+		if s.domain != "" && pw.Visibility != api.AppVisibilityInternal && (string(w.Class) == "http" || string(w.Class) == "graphql") {
 			slug := w.AppSlug
 			if slug == "" {
 				slug = w.Name
@@ -1950,17 +1979,17 @@ func (s *server) scanService(
 			return nil, state.Project{}, nil, nil, nil, nil, api.ErrValidation("invalid required-secret declaration for a selected workload")
 		}
 		pw.RequiredEnvKeys = required
-		pw.Action = partition.WillDeploy[i].Action
-		pw.ExistingAppID = partition.WillDeploy[i].ID
-		if w.ServiceBindingPolicy == "" {
-			if pw.ExistingAppID != "" {
-				for _, existing := range acctApps {
-					if existing.ID == pw.ExistingAppID {
-						pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
-						break
-					}
-				}
-			}
+		envScope := req.Environment
+		if envScope == "" {
+			envScope = api.DefaultEnvScope
+		}
+		unset, err := projectsetup.UnsetEnvKeys(r.Context(), s.store, acct.ID, envScope, existing, w.EnvKeys, required)
+		if err != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, api.ErrCapacity("could not read the configuration of a selected workload")
+		}
+		pw.UnsetEnvKeys, pw.ImportedEnvKeys, pw.UnsetEnvKeyReasons = projectsetup.SplitEnvImport(unset, projectsetup.PlanEnvImport(composeEnv, w.Name, limits))
+		if w.ServiceBindingPolicy == "" && existing != nil {
+			pw.ServiceBindingPolicy = existing.Manifest.EffectiveServiceBindingPolicy()
 		}
 		respWorkloads[i] = pw
 	}
@@ -1969,6 +1998,7 @@ func (s *server) scanService(
 		respManaged[i] = toPlanManaged(m)
 	}
 	resp := &scanPlanResponse{
+		SafeRelease:           req.SafeRelease,
 		ProjectSlug:           req.ProjectSlug,
 		RepoFullName:          req.RepoFullName,
 		Environment:           req.Environment,
@@ -2038,6 +2068,14 @@ func (s *server) scanService(
 		resp.WorkloadNames[reconcile.AppSlug(workload)] = workload.Name
 	}
 
+	if req.SafeRelease != nil {
+		if _, _, prob := s.safeProjectSourceApps(r, acct, req, reposcan.Result{Workloads: filteredW, Managed: filteredMc, Tier: result.Tier}); prob != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, prob
+		}
+		if err := serviceadditions.ValidatePlanToken(planToken, safeProjectReleaseID(req.SafeRelease)); err != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, api.ErrValidation(err.Error())
+		}
+	}
 	// Mint a fresh plan_token unless one was supplied (apply path
 	// keeps the caller's; minting a new one would be confusing).
 	if planToken == "" {
@@ -2047,7 +2085,7 @@ func (s *server) scanService(
 				reviewedSlugs[workload.Name] = workload.AppSlug
 			}
 		}
-		names := planNameOptions{AppSlugs: reviewedSlugs, Migration: req.Migration}
+		names := planNameOptions{AppSlugs: reviewedSlugs, Migration: req.Migration, SafeReleaseID: safeProjectReleaseID(req.SafeRelease)}
 		if req.Migration {
 			names.PublicAppsDomain = s.domain
 		}
@@ -2128,6 +2166,25 @@ func (s *server) scanService(
 		return resp, state.Project{}, nil, nil, nil, nil, prob
 	}
 
+	if req.SafeRelease != nil {
+		project, apps, prob := s.safeProjectSourceApps(r, acct, req, reposcan.Result{Workloads: filteredW, Managed: filteredMc, Tier: result.Tier})
+		if prob != nil {
+			return nil, state.Project{}, nil, nil, nil, nil, prob
+		}
+		if problem := s.stageSafeProjectCommand(r.Context(), acct.ID, project.ID, req); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+		if problem := s.stageSafeProjectConfiguration(r.Context(), acct.ID, project.ID, req); problem != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, problem
+		}
+		apps, prob = s.stageSafeProjectAdditions(r.Context(), acct, project.ID, req.SafeRelease, apps)
+		if prob != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, nil, apps, req.Environment, req.OverrideFreeze, nil)
+		added, serving := serviceadditions.Partition(apps, req.SafeRelease)
+		return resp, project, added, serving, nil, builds, nil
+	}
 	project := state.Project{
 		AccountID:        acct.ID,
 		OrgID:            projectaccess.OrganizationID(r.Context()),
@@ -2329,22 +2386,10 @@ func (s *server) scanService(
 			excludeSeen[name] = true
 		}
 	}
-	var cronSpecs []reconcile.CronSpec
-	if !req.NoTriggers {
-		cronSpecs = make([]reconcile.CronSpec, 0, len(desiredCrons))
-		for _, cron := range desiredCrons {
-			cronSpecs = append(cronSpecs, reconcile.CronSpec{
-				WorkloadName: cron.WorkloadName,
-				Schedule:     cron.Schedule,
-				Path:         cron.Path,
-				Enabled:      cron.Enabled,
-			})
-		}
-	}
 	rec, recErr := s.reconcileSvc.ReconcileWithCrons(
 		r.Context(), project, filteredScan,
 		reconcileInputs.CommitSHA, reconcileInputs.Branch,
-		excludeList, cronSpecs)
+		excludeList, nil)
 	if recErr != nil {
 		// Map reconcile-package errors into the existing RFC 7807
 		// problem shapes so the handler can use a single dispatch
@@ -2356,7 +2401,7 @@ func (s *server) scanService(
 			if mapped.Quota != nil {
 				prob = quotaProblem(acct.Plan, limits, mapped.Quota)
 			} else {
-				prob = api.NewProblem(mapped.Status, mapped.Code, mapped.Msg, "")
+				prob = trafficproblem.Policy(recErr, api.NewProblem(mapped.Status, mapped.Code, mapped.Msg, ""))
 			}
 			capturedProb = prob
 			return resp, state.Project{}, nil, nil, nil, nil, prob
@@ -2384,7 +2429,7 @@ func (s *server) scanService(
 			removedSlugs = append(removedSlugs, slug)
 		}
 	}
-	needsProjectApps := len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers)
+	needsProjectApps := len(req.RetryTargets) > 0 || (!req.NoTriggers && reconcileProductionEnvironment(req.Environment)) || len(req.Secrets) > 0 || len(resolvedManifest.PostgresBindings) > 0 || (resolvedManifest.AsyncRoutesPresent && !req.NoTriggers) || (resolvedManifest.RoutesPresent && !req.NoTriggers)
 	var currentProjectApps []state.App
 	if needsProjectApps {
 		// Reconcile has already committed the project/app rows. A binding
@@ -2412,12 +2457,17 @@ func (s *server) scanService(
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
 	}
+	if resolvedManifest.RoutesPresent && !req.NoTriggers {
+		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
+		if prob := s.applyProjectManifestPathRoutes(r.Context(), acct, resolvedManifest.Routes, true, false, selectedApps); prob != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+	}
 
 	// Fold the reconcile Result into the legacy return shape. The
 	// handler reads the third slot (added) and fourth slot
 	// (changed) to:
 	//
-	//  - build the slug→ID map for cron stamping (added ∪ changed)
 	//  - emit per-app NotifyAppChanged with kind=created for
 	//    rec.Added entries and kind=updated for rec.Changed entries
 	//  - soft-delete crons whose workload_name is in removedSlugs
@@ -2443,6 +2493,17 @@ func (s *server) scanService(
 	// cleanup into this func must keep staging reads ahead of
 	// the cleanup.
 	buildChanged := rec.Changed
+	if len(req.RetryTargets) > 0 {
+		seen := make(map[string]bool)
+		for _, app := range buildChanged {
+			seen[app.ID] = true
+		}
+		for _, app := range currentProjectApps {
+			if _, retry := req.RetryTargets[app.ID]; retry && !seen[app.ID] {
+				buildChanged = append(buildChanged, app)
+			}
+		}
+	}
 	if !reconcileProductionEnvironment(req.Environment) {
 		apps, appsErr := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
 		if appsErr != nil {
@@ -2451,14 +2512,35 @@ func (s *server) scanService(
 				"Retry the deployment in a moment; if it continues, contact support.", appsErr)
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
-		firstBuilds, firstErr := environmentAppsWithoutLiveDeployment(r.Context(), s.store, selectedProjectManifestApps(filteredW, apps), req.Environment, rec.Added, rec.Changed)
+		firstBuilds, firstErr := environmentAppsWithoutLiveDeployment(r.Context(), s.store, selectedProjectManifestApps(filteredW, apps), req.Environment, rec.Added, buildChanged)
 		if firstErr != nil {
 			prob := customerInternalProblem(s.log, "inspect environment deployments",
 				"Gregale could not check which workloads this environment still needs to deploy.",
 				"Retry the deployment in a moment; if it continues, contact support.", firstErr)
 			return resp, state.Project{}, nil, nil, nil, nil, prob
 		}
-		buildChanged = append(append([]state.App(nil), rec.Changed...), firstBuilds...)
+		buildChanged = append(append([]state.App(nil), buildChanged...), firstBuilds...)
+	}
+	if len(req.Secrets) > 0 {
+		selectedApps := selectedProjectManifestApps(filteredW, currentProjectApps)
+		if prob := s.applyProjectDeploySecrets(r, acct, selectedApps, req.Environment, req.Secrets); prob != nil {
+			return resp, state.Project{}, nil, nil, nil, nil, prob
+		}
+		// Secret-only redeploys also need a build, even if source reconciliation
+		// left app metadata unchanged. Avoid duplicating newly added/changed apps.
+		touched := make(map[string]bool, len(rec.Added)+len(buildChanged))
+		for _, app := range rec.Added {
+			touched[app.ID] = true
+		}
+		for _, app := range buildChanged {
+			touched[app.ID] = true
+		}
+		for _, app := range selectedApps {
+			if !touched[app.ID] {
+				buildChanged = append(buildChanged, app)
+				touched[app.ID] = true
+			}
+		}
 	}
 	if len(req.InitialSecrets) > 0 {
 		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
@@ -2477,6 +2559,15 @@ func (s *server) scanService(
 			return resp, state.Project{}, nil, nil, nil, nil, problem
 		}
 	}
+	// Opted-in Compose values fill what is still unset, after the secrets
+	// above, so a key configured either way keeps that value.
+	importScope := req.Environment
+	if importScope == "" {
+		importScope = api.DefaultEnvScope
+	}
+	if problem := s.importComposeEnv(r, acct, project.ID, importScope, composeEnv, filteredW, limits); problem != nil {
+		return resp, state.Project{}, nil, nil, nil, nil, problem
+	}
 	buildAdded := rec.Added
 	if run := projectmigration.FromContext(r.Context()); run != nil {
 		apps, err := s.store.AppsForProject(r.Context(), acct.ID, project.ID)
@@ -2493,7 +2584,11 @@ func (s *server) scanService(
 		}
 		buildAdded = nil
 	}
-	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, buildAdded, buildChanged, req.Environment, dependencyReferences)
+	var cronPlans map[string]projectDeploymentCronPlan
+	if !req.NoTriggers && reconcileProductionEnvironment(req.Environment) {
+		buildChanged, cronPlans = s.planProjectDeploymentCrons(r.Context(), acct, selectedProjectManifestApps(filteredW, currentProjectApps), buildAdded, buildChanged, desiredCrons)
+	}
+	builds := s.applyBuildsForAddedChangedOrdered(r.Context(), r, acct, project, req.ScanDir, filteredW, filteredMc, buildAdded, buildChanged, req.Environment, req.OverrideFreeze, cronPlans, dependencyReferences)
 	// ADR-124: surface the destructive subset on the response so the
 	// apply handler can render Removed in the same blast-radius
 	// envelope the preview offered. SoftDeleteAppCascade runs
@@ -2519,7 +2614,7 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 	// Multipart cap before parsing — mirrors createDeployment.
 	// Leave bounded room for multipart headers and the small metadata fields;
 	// validateAndSpool independently enforces the exact source-file limit.
-	max := int64(limits.SourceTarballMaxMB)*1024*1024 + 1*1024*1024
+	max := int64(limits.SourceTarballMaxMB)*1024*1024 + 1*1024*1024 + api.ProjectSecretsMaxJSONBytes(limits)
 	r.Body = http.MaxBytesReader(nil, r.Body, max)
 	mr, err := r.MultipartReader()
 	if err != nil {
@@ -2542,7 +2637,12 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		platformTenantRequired *bool
 		environment            string
 		approvalToken          string
+		overrideFreeze         string
 		projectSlugSet         bool
+		secrets                map[string]string
+		secretsSet             bool
+		releaseConfig          json.RawMessage
+		releaseConfigSet       bool
 		initialSecrets         api.ProjectInitialSecrets
 		initialSecretsSet      bool
 	)
@@ -2686,6 +2786,35 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 				return nil, api.ErrSourceInvalid("environment is too long")
 			}
 			environment = strings.TrimSpace(string(b))
+		case "release_config":
+			if releaseConfigSet {
+				return nil, api.ErrValidation("release_config must appear only once")
+			}
+			releaseConfigSet = true
+			raw, err := io.ReadAll(io.LimitReader(part, api.ProjectReleaseConfigMaxBytes+1))
+			if err != nil {
+				return nil, api.ErrValidation("release configuration could not be read")
+			}
+			releaseConfig, _, err = api.NormalizeProjectReleaseConfig(raw)
+			if err != nil {
+				return nil, api.ErrValidation(err.Error())
+			}
+		case "secrets":
+			if secretsSet {
+				return nil, api.ErrValidation("secrets must appear only once")
+			}
+			secretsSet = true
+			var secretProblem *api.Problem
+			secrets, secretProblem = readProjectDeploySecrets(part, limits)
+			if secretProblem != nil {
+				return nil, secretProblem
+			}
+		case "override_freeze":
+			b, readErr := io.ReadAll(io.LimitReader(part, 4*api.ReleaseFreezeReasonMax+1))
+			if readErr != nil || len(b) > 4*api.ReleaseFreezeReasonMax {
+				return nil, api.ErrValidation("override_freeze must be a reason of at most 200 characters")
+			}
+			overrideFreeze = strings.TrimSpace(string(b))
 		case "approval_token":
 			b, readErr := io.ReadAll(io.LimitReader(part, 512))
 			if readErr != nil {
@@ -2759,6 +2888,9 @@ func parseScanMultipart(r *http.Request, acct state.Account, limits api.Limits) 
 		PlatformTenantRequired: platformTenantRequired,
 		Environment:            environment,
 		ApprovalToken:          approvalToken,
+		Secrets:                secrets,
+		ReleaseConfig:          releaseConfig,
+		OverrideFreeze:         overrideFreeze,
 	}, nil
 }
 
@@ -2785,6 +2917,8 @@ type planNameOptions struct {
 	PublicAppsDomain string
 	AppSlugs         map[string]string
 	Migration        bool
+	// SafeReleaseID binds an atomic project release's baseline and policy.
+	SafeReleaseID string
 }
 
 // mintPlanToken produces the base64-JSON blob. The hash is the
@@ -2808,6 +2942,7 @@ func mintPlanToken(accountID, slug, repoFullName, productionBranch string, insta
 		pt.AppSlugs = names[0].AppSlugs
 		pt.Migration = names[0].Migration
 		pt.PublicAppsDomain = names[0].PublicAppsDomain
+		pt.SafeReleaseID = names[0].SafeReleaseID
 	}
 	b, err := json.Marshal(pt)
 	if err != nil {

@@ -85,6 +85,18 @@ export type CreateDeploymentRequest = {
    */
   mcp_task_migration_override?: boolean;
   /**
+   * Release this deployment to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733).
+   */
+  override_freeze?: string;
+  /**
+   * Build this deployment now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time (ADR-20261021152201).
+   */
+  release_at?: string;
+  /**
+   * Slack or email notification channels told when this deployment, scheduled with release_at, starts or cannot start.
+   */
+  release_notify?: Array<string>;
+  /**
    * Opt this deployment out of temporary startup CPU headroom. Omitted or null preserves the default boost.
    */
   disable_startup_cpu_boost?: boolean | null;

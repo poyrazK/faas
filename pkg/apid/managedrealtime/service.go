@@ -69,6 +69,10 @@ type Service struct {
 	// channel grants and the versioned reconnect protocol are ready.
 	HistoryPreviewEnabled bool
 	HistoryMetrics        *ManagedRealtimeHistoryMetrics
+	// Preview decides which accounts see realtime preview features
+	// (ADR-20261019102657); nil shows them to nobody. The *Enabled flags only
+	// say the daemon is ready for a feature.
+	Preview PreviewGate
 	// OccupancyPreviewEnabled serves channel occupancy (ADR-1324).
 	OccupancyPreviewEnabled bool
 	// UsageEnabled serves the account's realtime usage (ADR-1323), recorded
@@ -80,6 +84,18 @@ type Service struct {
 	// LiveRoutes lists the live-query keys an app's endpoints route
 	// (ADR-20261016151947): those of live databases bound to the app. Nil routes none.
 	LiveRoutes func(ctx context.Context, accountID, appID string) ([]realtime.LiveRoute, error)
+	// PreviewReleased decides a realtime preview platform flag for a request
+	// (ADR 20261021080640); legacy is the environment gate that decides until
+	// an operator writes the flag. Nil uses legacy.
+	PreviewReleased func(r *http.Request, acct state.Account, flagKey string, legacy bool) bool
+	// EndpointPreviews are the per-account preview decisions sent with an
+	// endpoint's registration. A nil result sends none, so realtimed's own
+	// switches decide.
+	EndpointPreviews func(ctx context.Context, accountID, appID string) (*realtime.EndpointPreviews, error)
+	// RealtimeReleased decides the realtime capability flag for an
+	// endpoint's account (ADR-20261023115741). An endpoint without it, and
+	// without live routes, is withdrawn from realtimed. Nil releases it.
+	RealtimeReleased func(ctx context.Context, accountID, appID string) bool
 
 	publishIdempotencySweep atomic.Uint64
 }

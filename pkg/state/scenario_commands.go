@@ -23,7 +23,9 @@ type ScenarioCommandStore interface {
 
 func commandTaskSpec(task AppTask, identity rehearsalrecorder.Identity) (rehearsalcommand.Spec, error) {
 	spec, err := rehearsalcommand.Decode(task.Command)
-	if err != nil || task.AccountID != identity.AccountID || task.AppID != identity.AppID || task.ID != identity.InstanceID || task.DeploymentID != identity.DeploymentID || spec.DeploymentID != task.DeploymentID || spec.RunID != identity.RunID || task.CommandShell || task.Kind != AppTaskKindManual || task.MaxOutputBytes != rehearsalcommand.MaxReceiptBytes || task.Status != AppTaskRestoring && task.Status != AppTaskRunning {
+	// A contained release task is the deployment's pinned release command;
+	// admission already proved it equals the deployment's (ADR-20261020150000).
+	if err != nil || task.AccountID != identity.AccountID || task.AppID != identity.AppID || task.ID != identity.InstanceID || task.DeploymentID != identity.DeploymentID || spec.DeploymentID != canonicalMemUUID(task.DeploymentID) || spec.RunID != identity.RunID || task.CommandShell || task.Kind != AppTaskKindManual && task.Kind != AppTaskKindRelease || task.MaxOutputBytes != rehearsalcommand.MaxReceiptBytes || task.Status != AppTaskRestoring && task.Status != AppTaskRunning {
 		return rehearsalcommand.Spec{}, ErrConflict
 	}
 	return spec, nil
@@ -114,7 +116,12 @@ func (m *MemStore) admitRehearsalCommandLocked(params CreateAppTaskParams) error
 		return nil
 	}
 	spec, err := rehearsalcommand.Decode(params.Command)
-	if err != nil || !contained || p.Member.AccountID != params.AccountID || spec.RunID != p.Member.RunID || spec.DeploymentID != params.DeploymentID || p.Member.SimulationJSON == "" || p.RecorderClosing || !p.SealedAt.IsZero() || p.SimulationFailed || params.Kind != AppTaskKindManual || params.CommandShell || params.Interactive != nil || params.MaxOutputBytes != rehearsalcommand.MaxReceiptBytes || m.deployments[params.DeploymentID].Status != DeployLive {
+	dep := m.deployments[params.DeploymentID]
+	// A recipe command targets the live deployment; a release command is the
+	// snapshotting deployment's own pinned release (ADR-20261020150000).
+	kindAllowed := params.Kind == AppTaskKindManual && dep.Status == DeployLive ||
+		params.Kind == AppTaskKindRelease && dep.Status == DeploySnapshotting && rehearsalcommand.IsContainedReleaseFor(params.Command, dep.ID, dep.ReleaseCommand, dep.ReleaseCommandShell)
+	if err != nil || !contained || p.Member.AccountID != params.AccountID || spec.RunID != p.Member.RunID || spec.DeploymentID != canonicalMemUUID(params.DeploymentID) || p.Member.SimulationJSON == "" || p.RecorderClosing || !p.SealedAt.IsZero() || p.SimulationFailed || !kindAllowed || params.CommandShell || params.Interactive != nil || params.MaxOutputBytes != rehearsalcommand.MaxReceiptBytes {
 		return fmt.Errorf("%w: contained command admission unavailable", ErrAppTaskInvalid)
 	}
 	count := 0

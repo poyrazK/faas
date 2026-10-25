@@ -390,7 +390,7 @@ jobs:
 
       - name: Check out and validate the declarative node claim
         if: inputs.claim_file != ''
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.release_tag }}
           path: claim-source
@@ -398,7 +398,7 @@ jobs:
 
       - name: Check out release source for signed bundle validation
         if: inputs.fleet_bundle_url != ''
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.release_tag }}
           path: bundle-source
@@ -407,7 +407,7 @@ jobs:
       - id: fleet_bundle_auth
         name: Authenticate fleet bundle reader with GitHub OIDC
         if: startsWith(inputs.fleet_bundle_url, 'https://storage.googleapis.com/')
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_FLEET_BUNDLE_READER_PROVIDER }}
@@ -417,7 +417,7 @@ jobs:
 
       - name: Set up Go for claim validation
         if: inputs.claim_file != ''
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: claim-source/go.mod
           cache: true
@@ -425,7 +425,7 @@ jobs:
 
       - name: Set up Go for signed bundle validation
         if: inputs.fleet_bundle_url != ''
-        uses: actions/setup-go@v7
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version-file: bundle-source/go.mod
           cache: true
@@ -662,7 +662,9 @@ jobs:
     if: needs.preflight.result == 'success'
     environment: ${{ inputs.deploy_environment }}
     runs-on: ${{ fromJSON(inputs.deploy_environment == 'production-us' && '["self-hosted","linux","faas-fleet-us"]' || '["self-hosted","linux","faas-fleet"]') }}
-    timeout-minutes: 45
+    # Above the 70-minute join budget below, so gregalectl's own timeout
+    # fires (and records the node state) before GitHub kills the job.
+    timeout-minutes: 80
     env:
       RELEASE_TAG: ${{ inputs.release_tag }}
       NODE: ${{ needs.preflight.outputs.node }}
@@ -699,10 +701,16 @@ jobs:
       COMPUTE_ARCHIVE_ENVELOPE_B64: ${{ secrets.COMPUTE_ARCHIVE_ENVELOPE_B64 }}
       FLEET_AGE_KEY: ${{ secrets.FLEET_AGE_KEY }}
       FLEET_AGE_RECIPIENT: ${{ secrets.FLEET_AGE_RECIPIENT }}
+      SEAL_DOMAIN_RUNTIME_AGE_KEY: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_KEY }}
+      SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_RUNTIME_AGE_RECIPIENT }}
+      SEAL_DOMAIN_BUILD_AGE_KEY: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_KEY }}
+      SEAL_DOMAIN_BUILD_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_BUILD_AGE_RECIPIENT }}
+      SEAL_DOMAIN_EDGE_AGE_KEY: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_KEY }}
+      SEAL_DOMAIN_EDGE_AGE_RECIPIENT: ${{ secrets.SEAL_DOMAIN_EDGE_AGE_RECIPIENT }}
 
     steps:
       - name: Check out the release source and Ansible roles
-        uses: actions/checkout@v7
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           ref: ${{ inputs.release_tag }}
           # Only the tag's tree and the tag ref are used (git rev-list -n1 on
@@ -712,7 +720,7 @@ jobs:
       - id: fleet_bundle_auth
         name: Authenticate fleet bundle reader with GitHub OIDC
         if: startsWith(inputs.fleet_bundle_url, 'https://storage.googleapis.com/')
-        uses: google-github-actions/auth@v3
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093 # v3
         with:
           project_id: ${{ env.GCP_PROJECT }}
           workload_identity_provider: ${{ env.GCP_FLEET_BUNDLE_READER_PROVIDER }}
@@ -1029,6 +1037,10 @@ jobs:
             printf '%s' "$COMPUTE_ANSIBLE_VARS_B64" | base64 --decode > "$ARTIFACT_DIR/ansible-vars.yml"
             chmod 0600 "$ARTIFACT_DIR/ansible-vars.yml"
           fi
+          # ADR 20261022111812: the join's seal_domains role stages the compute
+          # seal-domain identities (runtime, build, edge) held as SEAL_DOMAIN_*
+          # secrets and proves them before the node is activated.
+          scripts/ci/seal_domain_vars.sh compute "$ARTIFACT_DIR/seal-domains" "$ARTIFACT_DIR/ansible-vars.yml"
           if [[ -n "${COMPUTE_BOX_AGE_KEY:-}" ]]; then
             printf '%s\n' "$COMPUTE_BOX_AGE_KEY" > "$ARTIFACT_DIR/box-age-key"
           fi
@@ -1124,7 +1136,7 @@ jobs:
               --artifact-dir "$ARTIFACT_DIR"
               --repo-root "$GITHUB_WORKSPACE"
               --max-parallel 2
-              --timeout 40m
+              --timeout 70m
               --lease-ttl 5m
               --prepare-only
               --resume
@@ -1151,7 +1163,11 @@ jobs:
             --release-tarball "$ARTIFACT_DIR/release.tar.gz"
             --artifact-dir "$ARTIFACT_DIR"
             --repo-root "$GITHUB_WORKSPACE"
-            --timeout 40m
+            # ADR-20261024191249: the first node to roll a changed runtime
+            # base generation builds and scans every changed base behind its
+            # drain barrier (about 2.5 minutes each). rc.293's fsn-2 join
+            # used its full 40 minutes before any base was built.
+            --timeout 70m
             # The CLI refreshes this lease every third of the TTL while it is
             # alive. Keep the abandoned-worker recovery window short so a
             # cancelled rollout can be retried without manual database repair.

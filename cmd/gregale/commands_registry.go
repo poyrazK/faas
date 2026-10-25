@@ -58,9 +58,7 @@ func cmdRegistry(args []string) int {
 		return cmdRegistryPublished(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown registry subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "registry", parent, args[0])
 }
 
 // cmdRegistryList implements `gregale registry list --app <slug>`
@@ -200,7 +198,7 @@ func cmdRegistryRm(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	if err := client.DeleteAppRegistryCredential(context.Background(), *slug, registryAPI); err != nil {
-		return printErr("Delete failed", err)
+		return printErr("Could not delete registry credential", err)
 	}
 	if jsonOutput {
 		return jsonOut(writeJSON(map[string]any{"registry": *registry, "deleted": true}))

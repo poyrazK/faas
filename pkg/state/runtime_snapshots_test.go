@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 171 — durable sanitized runtime snapshot publication and retirement.
 
@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func validRuntimeSnapshotRecord() RuntimeSnapshotRecord {
-	record := RuntimeSnapshotRecord{
+func validRuntimeSnapshotRecord() state.RuntimeSnapshotRecord {
+	record := state.RuntimeSnapshotRecord{
 		Runtime:             api.ExecutionRuntimeNode22,
 		Architecture:        "amd64",
 		KernelDigest:        strings.Repeat("a", 64),
@@ -28,15 +29,15 @@ func validRuntimeSnapshotRecord() RuntimeSnapshotRecord {
 		VMStateBytes:        4096,
 		Sanitized:           true,
 		PayloadFree:         true,
-		State:               RuntimeSnapshotStateReady,
+		State:               state.RuntimeSnapshotStateReady,
 		CreatedAt:           time.Unix(1, 0).UTC(),
 	}
-	record.CatalogKey = record.identityKey()
+	record.CatalogKey = record.IdentityKey()
 	return record
 }
 
 func TestMemStoreRuntimeSnapshotPublicationIsImmutable(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	record := validRuntimeSnapshotRecord()
 	got, err := store.PublishRuntimeSnapshot(context.Background(), record)
 	if err != nil {
@@ -45,14 +46,14 @@ func TestMemStoreRuntimeSnapshotPublicationIsImmutable(t *testing.T) {
 	if got.ID == "" || got.PublishedAt.IsZero() {
 		t.Fatalf("publication metadata missing: %#v", got)
 	}
-	if _, err := store.PublishRuntimeSnapshot(context.Background(), record); !errors.Is(err, ErrConflict) {
+	if _, err := store.PublishRuntimeSnapshot(context.Background(), record); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("duplicate publication = %v, want ErrConflict", err)
 	}
 	copy, err := store.LookupRuntimeSnapshot(context.Background(), record.CatalogKey)
 	if err != nil {
 		t.Fatalf("LookupRuntimeSnapshot: %v", err)
 	}
-	if copy.StorageKey != record.StorageKey || copy.State != RuntimeSnapshotStateReady {
+	if copy.StorageKey != record.StorageKey || copy.State != state.RuntimeSnapshotStateReady {
 		t.Fatalf("lookup = %#v", copy)
 	}
 	copy.RetiredAt = nil
@@ -66,7 +67,7 @@ func TestMemStoreRuntimeSnapshotPublicationIsImmutable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("retired lookup: %v", err)
 	}
-	if retired.State != RuntimeSnapshotStateRetired || retired.RetiredAt == nil || !retired.RetiredAt.Equal(time.Unix(2, 0).UTC()) {
+	if retired.State != state.RuntimeSnapshotStateRetired || retired.RetiredAt == nil || !retired.RetiredAt.Equal(time.Unix(2, 0).UTC()) {
 		t.Fatalf("retired row = %#v", retired)
 	}
 }
@@ -74,19 +75,19 @@ func TestMemStoreRuntimeSnapshotPublicationIsImmutable(t *testing.T) {
 func TestRuntimeSnapshotRecordValidationRejectsUnsafePublication(t *testing.T) {
 	tests := []struct {
 		name   string
-		mutate func(*RuntimeSnapshotRecord)
+		mutate func(*state.RuntimeSnapshotRecord)
 	}{
-		{"catalog key mismatch", func(record *RuntimeSnapshotRecord) { record.CatalogKey = "wrong" }},
-		{"payload-bearing", func(record *RuntimeSnapshotRecord) { record.PayloadFree = false }},
-		{"unsafe storage key", func(record *RuntimeSnapshotRecord) { record.StorageKey = "../tenant-source" }},
-		{"uppercase digest", func(record *RuntimeSnapshotRecord) { record.SnapshotDigest = strings.Repeat("A", 64) }},
-		{"retired on publication", func(record *RuntimeSnapshotRecord) { record.State = RuntimeSnapshotStateRetired }},
+		{"catalog key mismatch", func(record *state.RuntimeSnapshotRecord) { record.CatalogKey = "wrong" }},
+		{"payload-bearing", func(record *state.RuntimeSnapshotRecord) { record.PayloadFree = false }},
+		{"unsafe storage key", func(record *state.RuntimeSnapshotRecord) { record.StorageKey = "../tenant-source" }},
+		{"uppercase digest", func(record *state.RuntimeSnapshotRecord) { record.SnapshotDigest = strings.Repeat("A", 64) }},
+		{"retired on publication", func(record *state.RuntimeSnapshotRecord) { record.State = state.RuntimeSnapshotStateRetired }},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			record := validRuntimeSnapshotRecord()
 			test.mutate(&record)
-			if _, err := NewMemStore().PublishRuntimeSnapshot(context.Background(), record); !errors.Is(err, ErrRuntimeSnapshotInvalid) {
+			if _, err := state.NewMemStore().PublishRuntimeSnapshot(context.Background(), record); !errors.Is(err, state.ErrRuntimeSnapshotInvalid) {
 				t.Fatalf("PublishRuntimeSnapshot = %v, want ErrRuntimeSnapshotInvalid", err)
 			}
 		})
@@ -94,11 +95,11 @@ func TestRuntimeSnapshotRecordValidationRejectsUnsafePublication(t *testing.T) {
 }
 
 func TestMemStoreRuntimeSnapshotNotFound(t *testing.T) {
-	store := NewMemStore()
-	if _, err := store.LookupRuntimeSnapshot(context.Background(), "missing"); !errors.Is(err, ErrNotFound) {
+	store := state.NewMemStore()
+	if _, err := store.LookupRuntimeSnapshot(context.Background(), "missing"); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("LookupRuntimeSnapshot = %v, want ErrNotFound", err)
 	}
-	if err := store.RetireRuntimeSnapshot(context.Background(), "missing", time.Now()); !errors.Is(err, ErrNotFound) {
+	if err := store.RetireRuntimeSnapshot(context.Background(), "missing", time.Now()); !errors.Is(err, state.ErrNotFound) {
 		t.Fatalf("RetireRuntimeSnapshot = %v, want ErrNotFound", err)
 	}
 }

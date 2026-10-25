@@ -48,7 +48,13 @@ func applySourceProfile(manifest api.AppManifest, dep state.Deployment) api.AppM
 // safe fallback for a valid source tree whose exporter leaves both OCI command
 // fields empty.
 func manifestFromLocalOCIConfig(config oci.Config, dep state.Deployment) (api.AppManifest, error) {
-	if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
+	if command, ok := configuredStartCommand(dep); ok {
+		// gregale.yaml's hosting.start is the customer's explicit command, so
+		// it replaces whatever the image carries; a Railpack build with no
+		// detected start keeps the base image's CMD (python3), which exits at
+		// once on an empty stdin (Hunt 12 H12-29).
+		config.Entrypoint, config.Cmd = nil, command
+	} else if len(config.Entrypoint) == 0 && len(config.Cmd) == 0 {
 		if command, ok := profileStartCommand(dep); ok {
 			config.Cmd = command
 		}
@@ -164,6 +170,15 @@ func profileStartCommand(dep state.Deployment) ([]string, bool) {
 		return nil, false
 	}
 	return shellCommand(profile.StartCommand), true
+}
+
+// configuredStartCommand is the deployment's explicit hosting.start command.
+func configuredStartCommand(dep state.Deployment) ([]string, bool) {
+	profile, ok := persistedProfile(dep)
+	if !ok || !profile.StartFromConfig || strings.TrimSpace(profile.StartCommand) == "" {
+		return nil, false
+	}
+	return shellCommand(strings.TrimSpace(profile.StartCommand)), true
 }
 
 func shellCommand(command string) []string {

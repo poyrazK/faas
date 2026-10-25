@@ -31,6 +31,7 @@ func seedWarmEnabledApp(t *testing.T, e apidserver.TestEnv, slug string) {
 		Type:                state.AppTypeApp,
 		Status:              state.AppActive,
 		WarmSnapshotEnabled: true,
+		MaxConcurrency:      1,
 	})
 	if err != nil {
 		t.Fatalf("seed warm-enabled app %s: %v", slug, err)

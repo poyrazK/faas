@@ -194,7 +194,7 @@ func (s *server) exportAccount(w http.ResponseWriter, r *http.Request, acct stat
 // returns the same envelope (status + scheduled_at + restore_until)
 // without re-stamping the timestamp or re-sending the email.
 func (s *server) deleteAccount(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	fresh, err := s.scheduleDeletion(r.Context(), acct, "rest")
+	fresh, err := s.scheduleDeletion(r.Context(), acct, "rest", r.URL.Query().Get(includeManagedPostgresParam) == "true")
 	if err != nil {
 		api.WriteProblem(w, err)
 		return
@@ -212,7 +212,13 @@ func (s *server) deleteAccount(w http.ResponseWriter, r *http.Request, acct stat
 // "dashboard"); it's threaded through so the IAM-4 audit emit can
 // attribute the action to the right caller (the dashboard form vs
 // the REST DELETE).
-func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via string) (state.Account, *api.Problem) {
+//
+// includeDatabases is the customer's explicit request that the deletion include
+// their managed PostgreSQL databases (ADR-20261024150500). It is honoured only
+// for accounts in FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS; for any other
+// account it is ignored like the unknown option it is to them.
+func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via string, includeDatabases bool) (state.Account, *api.Problem) {
+	includeDatabases = includeDatabases && api.AccountDeletionManagedPostgresEnabled(acct.ID)
 	if acct.Status != state.AccountDeletedPending {
 		// The store only schedules an active account (a past_due one
 		// must not be re-armed into a self-service deletion). That
@@ -224,17 +230,9 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 		if prob := s.sharedOrgOwnershipBlocksDeletion(ctx, acct.ID); prob != nil {
 			return acct, prob
 		}
-		outboxed, err := s.markDeletionPendingWithMail(ctx, acct.ID)
+		outboxed, err := s.markDeletionPendingWithMail(ctx, acct.ID, state.IncludingManagedPostgres(includeDatabases))
 		if err != nil {
-			if errors.Is(err, state.ErrOrgAppOwnershipPending) {
-				return acct, api.NewProblem(http.StatusConflict, api.CodeConflict,
-					"Company app ownership migration required",
-					"company applications still depend on this account; contact support to complete their ownership transfer before deleting your account")
-			}
-			if errors.Is(err, state.ErrNotFound) {
-				return acct, accountDeletionBlocked()
-			}
-			return acct, api.ErrCapacity("could not mark for deletion")
+			return acct, deletionRefusedProblem(err)
 		}
 		s.notifyAccountLifecycle(ctx, acct.ID, "account_deleted_pending")
 		fresh, err := s.store.AccountByID(ctx, acct.ID)
@@ -272,9 +270,13 @@ func (s *server) scheduleDeletion(ctx context.Context, acct state.Account, via s
 			// form submission from a CLI/API DELETE — useful when
 			// a customer's session cookie was stolen and the
 			// attacker prefers the dashboard surface.
-			s.audit.Emit(ctx, "account.deletion_scheduled", &fresh.ID, map[string]any{
-				"via": via,
-			})
+			data := map[string]any{"via": via}
+			if includeDatabases {
+				// Only set when chosen, so the dark option never shows up
+				// in a customer's audit log before launch.
+				data["includes_managed_postgres"] = true
+			}
+			s.audit.Emit(ctx, "account.deletion_scheduled", &fresh.ID, data)
 		}
 		return fresh, nil
 	}
@@ -397,6 +399,29 @@ func (s *server) sharedOrgOwnershipBlocksDeletion(ctx context.Context, accountID
 	}
 	return nil
 }
+
+// deletionRefusedProblem explains why the store refused to schedule the
+// deletion. Each guard is something the customer must resolve first, so it is
+// a 409, never the 503 a client would retry forever.
+func deletionRefusedProblem(err error) *api.Problem {
+	var databases *state.AccountManagedPostgresDatabasesError
+	switch {
+	case errors.Is(err, state.ErrOrgAppOwnershipPending):
+		return api.NewProblem(http.StatusConflict, api.CodeConflict,
+			"Company app ownership migration required",
+			"company applications still depend on this account; contact support to complete their ownership transfer before deleting your account")
+	case errors.As(err, &databases):
+		return api.ErrAccountDeletionManagedPostgres(databases.Live)
+	case errors.Is(err, state.ErrNotFound):
+		return accountDeletionBlocked()
+	}
+	return api.ErrCapacity("could not mark for deletion")
+}
+
+// includeManagedPostgresParam asks a self-service deletion to include the
+// account's managed PostgreSQL databases. Dark until launch: kept out of
+// OpenAPI, the SDKs and CLI help (ADR-20261024150500).
+const includeManagedPostgresParam = "include_managed_postgres_databases"
 
 func accountDeletionBlocked() *api.Problem {
 	return api.NewProblem(http.StatusConflict, api.CodeConflict,

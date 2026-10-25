@@ -1,4 +1,4 @@
-package state
+package state_test
 
 import (
 	"errors"
@@ -8,27 +8,28 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMCPReadinessPolicyHistoryAndRestore(t *testing.T) {
-	check := func(t *testing.T, s Store) {
+	check := func(t *testing.T, s state.Store) {
 		ctx := t.Context()
 		account, e := s.CreateAccount(ctx, "history@example.com", api.PlanPro)
 		if e != nil {
 			t.Fatal(e)
 		}
-		app, e := s.CreateApp(ctx, App{AccountID: account.ID, Slug: "policy-history", Type: AppTypeApp, Status: AppActive})
+		app, e := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "policy-history", Type: state.AppTypeApp, Status: state.AppActive})
 		if e != nil {
 			t.Fatal(e)
 		}
-		d, e := s.CreateDeployment(ctx, Deployment{AppID: app.ID, Kind: DeploymentKindImage, ImageDigest: "sha256:history", TrafficPercentExplicit: true})
+		d, e := s.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage, ImageDigest: "sha256:history", TrafficPercentExplicit: true})
 		if e != nil {
 			t.Fatal(e)
 		}
 		if e = s.MarkDeploymentLive(ctx, d.ID); e != nil {
 			t.Fatal(e)
 		}
-		h := s.(MCPReadinessPolicyHistoryStore)
+		h := s.(state.MCPReadinessPolicyHistoryStore)
 		request := api.SetMCPReadinessPolicyRequest{Enabled: true, Endpoint: "/mcp", MaxAgeSeconds: 300, Reason: "original reviewed policy", Roles: []api.MCPReadinessRole{{Name: "reader", ProtocolVersion: api.MCPProtocolVersion, CatalogFormat: 1, CatalogSHA256: strings.Repeat("a", 64)}}}
 		old, e := h.SetMCPReadinessPolicy(ctx, account.ID, app.ID, request)
 		if e != nil {
@@ -61,12 +62,12 @@ func TestMCPReadinessPolicyHistoryAndRestore(t *testing.T) {
 			t.Fatal(e)
 		}
 		restore := api.RestoreMCPReadinessPolicyRequest{ExpectedRevision: current.Revision, Reason: "restore reviewed original catalog"}
-		if _, e = h.RestoreMCPReadinessPolicy(ctx, account.ID, app.ID, staging.Revision, restore); !errors.Is(e, ErrNotFound) {
+		if _, e = h.RestoreMCPReadinessPolicy(ctx, account.ID, app.ID, staging.Revision, restore); !errors.Is(e, state.ErrNotFound) {
 			t.Fatal("cross-scope restore", e)
 		}
 		stale := restore
 		stale.ExpectedRevision = old.Revision
-		if _, e = h.RestoreMCPReadinessPolicy(ctx, account.ID, app.ID, old.Revision, stale); !errors.Is(e, ErrConflict) {
+		if _, e = h.RestoreMCPReadinessPolicy(ctx, account.ID, app.ID, old.Revision, stale); !errors.Is(e, state.ErrConflict) {
 			t.Fatal("stale CAS restore", e)
 		}
 		restored, e := h.RestoreMCPReadinessPolicy(ctx, account.ID, app.ID, old.Revision, restore)
@@ -80,19 +81,19 @@ func TestMCPReadinessPolicyHistoryAndRestore(t *testing.T) {
 		if e != nil || after.Revision != staging.Revision {
 			t.Fatal("restore changed staging", after, e)
 		}
-		if _, e = h.RecordMCPReadiness(ctx, subject, proof); !errors.Is(e, ErrConflict) {
+		if _, e = h.RecordMCPReadiness(ctx, subject, proof); !errors.Is(e, state.ErrConflict) {
 			t.Fatal("pre-restore in-flight proof accepted", e)
 		}
 		// Prior evidence and an unused emergency approval must not admit traffic.
-		if pg, ok := s.(*PgStore); ok {
-			_, e = pg.pool.Exec(ctx, `UPDATE deployments SET traffic_percent=10 WHERE id=$1`, d.ID)
+		if pg, ok := s.(*state.PgStore); ok {
+			_, e = (*pg.Pool()).Exec(ctx, `UPDATE deployments SET traffic_percent=10 WHERE id=$1`, d.ID)
 		} else {
-			m := s.(*MemStore)
-			m.mu.Lock()
-			e = m.checkMCPReadinessLocked(m.deployments[d.ID], 10)
-			m.mu.Unlock()
+			m := s.(*state.MemStore)
+			(*m.Mu()).Lock()
+			e = m.CheckMCPReadinessLocked((*m.Deployments())[d.ID], 10)
+			(*m.Mu()).Unlock()
 		}
-		if !IsMCPReadinessRequired(e) {
+		if !state.IsMCPReadinessRequired(e) {
 			t.Fatal("restore reused evidence or emergency override", override.ID, e)
 		}
 		historical, e := h.GetMCPReadinessPolicyRevision(ctx, account.ID, app.ID, "default", old.Revision)
@@ -115,33 +116,33 @@ func TestMCPReadinessPolicyHistoryAndRestore(t *testing.T) {
 		if e != nil || len(last.Policies) != 1 || last.Policies[0].Revision != old.Revision || last.NextBeforeRevision != "" {
 			t.Fatal("last page", last, e)
 		}
-		if _, e = h.ListMCPReadinessPolicyHistory(ctx, account.ID, app.ID, "default", staging.Revision, 1); !errors.Is(e, ErrNotFound) {
+		if _, e = h.ListMCPReadinessPolicyHistory(ctx, account.ID, app.ID, "default", staging.Revision, 1); !errors.Is(e, state.ErrNotFound) {
 			t.Fatal("cross-scope cursor accepted", e)
 		}
-		if _, e = h.GetMCPReadinessPolicyRevision(ctx, account.ID, app.ID, "staging", old.Revision); !errors.Is(e, ErrNotFound) {
+		if _, e = h.GetMCPReadinessPolicyRevision(ctx, account.ID, app.ID, "staging", old.Revision); !errors.Is(e, state.ErrNotFound) {
 			t.Fatal("cross-scope read", e)
 		}
 		foreign, e := s.CreateAccount(ctx, "history-foreign@example.com", api.PlanPro)
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, e = h.ListMCPReadinessPolicyHistory(ctx, foreign.ID, app.ID, "default", "", 10); !errors.Is(e, ErrNotFound) {
+		if _, e = h.ListMCPReadinessPolicyHistory(ctx, foreign.ID, app.ID, "default", "", 10); !errors.Is(e, state.ErrNotFound) {
 			t.Fatal("foreign history leaked", e)
 		}
-		if _, e = h.RestoreMCPReadinessPolicy(ctx, foreign.ID, app.ID, old.Revision, restore); !errors.Is(e, ErrNotFound) {
+		if _, e = h.RestoreMCPReadinessPolicy(ctx, foreign.ID, app.ID, old.Revision, restore); !errors.Is(e, state.ErrNotFound) {
 			t.Fatal("foreign restore", e)
 		}
-		other, e := s.CreateApp(ctx, App{AccountID: account.ID, Slug: "other-history", Type: AppTypeApp, Status: AppActive})
+		other, e := s.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "other-history", Type: state.AppTypeApp, Status: state.AppActive})
 		if e != nil {
 			t.Fatal(e)
 		}
-		if _, e = h.GetMCPReadinessPolicyRevision(ctx, account.ID, other.ID, "default", old.Revision); !errors.Is(e, ErrNotFound) {
+		if _, e = h.GetMCPReadinessPolicyRevision(ctx, account.ID, other.ID, "default", old.Revision); !errors.Is(e, state.ErrNotFound) {
 			t.Fatal("cross-app history", e)
 		}
-		if _, e = h.ListMCPReadinessPolicyHistory(ctx, account.ID, app.ID, "default", "", 51); !errors.Is(e, ErrInvalidArgument) {
+		if _, e = h.ListMCPReadinessPolicyHistory(ctx, account.ID, app.ID, "default", "", 51); !errors.Is(e, state.ErrInvalidArgument) {
 			t.Fatal("unbounded history", e)
 		}
-		if _, e = h.GetMCPReadinessPolicyRevision(ctx, account.ID, app.ID, "default", uuid.NewString()); !errors.Is(e, ErrNotFound) {
+		if _, e = h.GetMCPReadinessPolicyRevision(ctx, account.ID, app.ID, "default", uuid.NewString()); !errors.Is(e, state.ErrNotFound) {
 			t.Fatal("unknown revision", e)
 		}
 		fresh, e := h.MCPReadinessSubject(ctx, account.ID, d.ID)
@@ -152,19 +153,19 @@ func TestMCPReadinessPolicyHistoryAndRestore(t *testing.T) {
 		if _, e = h.RecordMCPReadiness(ctx, fresh, proof); e != nil {
 			t.Fatal("fresh restored proof rejected", e)
 		}
-		if pg, ok := s.(*PgStore); ok {
-			_, e = pg.pool.Exec(ctx, `UPDATE deployments SET traffic_percent=10 WHERE id=$1`, d.ID)
+		if pg, ok := s.(*state.PgStore); ok {
+			_, e = (*pg.Pool()).Exec(ctx, `UPDATE deployments SET traffic_percent=10 WHERE id=$1`, d.ID)
 		} else {
-			m := s.(*MemStore)
-			m.mu.Lock()
-			e = m.checkMCPReadinessLocked(m.deployments[d.ID], 10)
-			m.mu.Unlock()
+			m := s.(*state.MemStore)
+			(*m.Mu()).Lock()
+			e = m.CheckMCPReadinessLocked((*m.Deployments())[d.ID], 10)
+			(*m.Mu()).Unlock()
 		}
 		if e != nil {
 			t.Fatal("fresh restored proof did not admit traffic", e)
 		}
 
 	}
-	t.Run("memory", func(t *testing.T) { check(t, NewMemStore()) })
-	t.Run("postgres", func(t *testing.T) { check(t, NewPgStore(pgtest.OpenMigrated(t))) })
+	t.Run("memory", func(t *testing.T) { check(t, state.NewMemStore()) })
+	t.Run("postgres", func(t *testing.T) { check(t, state.NewPgStore(pgtest.OpenMigrated(t))) })
 }

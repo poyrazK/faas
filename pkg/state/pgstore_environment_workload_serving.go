@@ -491,6 +491,15 @@ func loadEnvironmentWorkloadServingReceipt(ctx context.Context, tx sqlc.DBTX, gr
 		servedAt := row.ServedAt.Time
 		receipt.ServedAt = &servedAt
 	}
+
+	first, historyErr := q.ReadEnvironmentRecoveryServingHistory(ctx, tx, graphID)
+	if historyErr != nil && !errors.Is(historyErr, pgx.ErrNoRows) {
+		return receipt, false, mapErr(historyErr)
+	}
+	if historyErr == nil && first.Valid {
+		at := first.Time
+		receipt.FirstServedAt = &at
+	}
 	receiptRows, err := q.EnvironmentWorkloadServingRoutes(ctx, tx, graphID)
 	if err != nil {
 		return EnvironmentWorkloadServingReceipt{}, false, mapErr(err)

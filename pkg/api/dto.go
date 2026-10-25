@@ -969,9 +969,21 @@ type ScenarioTestChaosMatch struct {
 }
 
 // UpdateAppRequest is the partial-update payload for PATCH /v1/apps/{slug}.
+// AppDeploySettingsCondition is a precondition for a single-app settings PATCH.
+// ExpectedSettings includes every targeted field, including fields that already
+// match the desired value and are therefore omitted from the partial update.
+type AppDeploySettingsCondition struct {
+	ExpectedAppID        string                     `json:"expected_app_id"`
+	ExpectedDeploymentID string                     `json:"expected_deployment_id"`
+	ExpectedSettings     map[string]json.RawMessage `json:"expected_settings"`
+}
+
 // All fields are pointers so the wire form can distinguish "not set" from
 // "set to zero".
 type UpdateAppRequest struct {
+	// DeploySettingsCondition makes single-app recovery settings updates
+	// conditional on the app, deployment and observed targeted fields.
+	DeploySettingsCondition *AppDeploySettingsCondition `json:"deploy_settings_condition,omitempty"`
 	// ExpectedServiceBindingFingerprint guards service-only updates atomically.
 	ExpectedServiceBindingFingerprint *string `json:"expected_service_binding_fingerprint,omitempty"`
 	// Visibility changes the app's edge exposure. Nil leaves it unchanged;
@@ -1763,6 +1775,11 @@ type ScalingPolicy struct {
 	// WakeMaxQueueWaitSeconds overrides the per-app cold-wake wait budget. Zero
 	// uses the plan default; positive values are capped at 60 seconds.
 	WakeMaxQueueWaitSeconds int `json:"wake_max_queue_wait_seconds,omitempty"`
+	// PerInstanceConcurrency is how many requests one instance of the app
+	// serves at once (ADR-20261022203523). The gateway admits at most this
+	// many to an instance and scales out on the next one. Zero uses the
+	// plan's concurrency_per_vm; the handler bounds positive values to it.
+	PerInstanceConcurrency int `json:"per_instance_concurrency,omitempty"`
 	// Timezone is the IANA zone every schedule's cron is evaluated in
 	// (ADR-195). Empty means UTC.
 	Timezone string `json:"timezone,omitempty"`
@@ -1853,6 +1870,7 @@ func (s *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		"max_queue_depth":             {},
 		"wake_max_queue_depth":        {},
 		"wake_max_queue_wait_seconds": {},
+		"per_instance_concurrency":    {},
 		"timezone":                    {},
 		"schedules":                   {},
 	}
@@ -2039,13 +2057,15 @@ type AppResponse struct {
 	Manifest AppManifest `json:"manifest"`
 	// ServiceBindings are declared same-account app
 	// dependencies currently injected into this workload. They are a read-only
-	// discovery projection; authorization applies them only when
-	// ServiceBindingPolicy is "declared".
+	// discovery projection; authorization applies them when
+	// ServiceBindingPolicy is "declared", and to targets outside the caller's
+	// project when it is "project".
 	ServiceBindings    []AppServiceBinding                 `json:"service_bindings,omitempty"`
 	ServiceReliability map[string]ServiceReliabilityPolicy `json:"service_reliability,omitempty"`
 	// ServiceBindingPolicy is the caller-side authorization policy applied to
 	// internal service requests. "account" preserves legacy same-account
-	// reachability; "declared" permits only ServiceBindings targets.
+	// reachability; "declared" permits only ServiceBindings targets; "project"
+	// also permits every service in the caller's project.
 	ServiceBindingPolicy ServiceBindingPolicy `json:"service_binding_policy,omitempty"`
 	// ServiceBindingTransport selects the scheme used by the canonical
 	// GREGALE_SERVICE_<NAME>_URL environment variable. The HTTPS alias remains
@@ -2505,6 +2525,17 @@ type CreateDeploymentRequest struct {
 	// the final worker for a queued MCP task handler version. The grant is
 	// one-use and consumed atomically with the stable cutover.
 	MCPTaskMigrationOverride bool `json:"mcp_task_migration_override,omitempty"`
+	// OverrideFreeze releases to production while a freeze is active
+	// (ADR-20261019071733). It is the reason, 1-200 characters; apid audits
+	// it with the freezes it overrode.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
+	// ReleaseAt schedules the production release (ADR-20261021152201): it is
+	// built now, waits live without traffic, and starts its rollout at this
+	// RFC 3339 time. Freezes are checked at that time.
+	ReleaseAt string `json:"release_at,omitempty"`
+	// ReleaseNotify names Slack or email channels told when a scheduled
+	// release starts or cannot start.
+	ReleaseNotify []string `json:"release_notify,omitempty"`
 	// Overrides is the Fargate-shaped deploy-time override object
 	// (issue #460 / ADR-053). Lets a customer redeploy the same
 	// digest-pinned image with a different entrypoint/cmd/env/port
@@ -3312,12 +3343,20 @@ type DeploymentWorkerDrainStatus struct {
 }
 
 type DeploymentResponse struct {
+	Configuration *DeploymentConfigurationStatus `json:"configuration,omitempty"`
 	// StagedReview is the intent snapshot committed with a reviewed candidate.
 	StagedReview           *AppReleaseReview                     `json:"staged_review,omitempty"`
 	WorkerDrain            *DeploymentWorkerDrainStatus          `json:"worker_drain,omitempty"`
 	PromotionHold          *DeploymentPromotionHold              `json:"promotion_hold,omitempty"`
 	DurableEntityValidator *DurableEntityValidatorDeploymentInfo `json:"durable_entity_validator,omitempty"`
 	StageState             json.RawMessage                       `json:"stage_state,omitempty"`
+	// ScheduledRelease is the schedule of a release built ahead of time:
+	// pending while it waits, or how its latest schedule ended
+	// (ADR-20261021152201).
+	ScheduledRelease *ScheduledRelease `json:"scheduled_release,omitempty"`
+	// DatabaseSwitch is set on the response to a rollback that restores the
+	// database (ADR-20261023181931).
+	DatabaseSwitch *DatabaseSwitch `json:"database_switch,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
 	// (`gregale dev`). It reports whether the sync could have been applied as
 	// a live source patch (ADR-740 phase 1, measurement only).
@@ -4038,6 +4077,12 @@ type RollbackRequest struct {
 	// rollback is refused with rollback_crosses_release. Automated rollbacks
 	// never set it.
 	AcknowledgeReleases bool `json:"acknowledge_releases,omitempty"`
+
+	// RestoreDatabases also restores the app's managed PostgreSQL database
+	// to just before the earliest crossed release and switches the app to
+	// that copy (ADR-20261023181931). It requires AcknowledgeReleases; the
+	// response carries the switch, and the code rollback happens inside it.
+	RestoreDatabases bool `json:"restore_databases,omitempty"`
 }
 
 // CapabilityStatus is a customer-visible catalog row with the account's
@@ -4066,6 +4111,11 @@ type CapabilitiesResponse struct {
 	RegistryVersion    int                `json:"registry_version"`
 	Plan               string             `json:"plan"`
 	Capabilities       []CapabilityStatus `json:"capabilities"`
+	// HiddenCapabilities are the catalog capabilities, internal ones
+	// included, whose platform flag is off for this account
+	// (ADR-20261023115741). Clients hide their commands and links. Omitted
+	// when nothing is hidden, and by servers without the capability gate.
+	HiddenCapabilities []string `json:"hidden_capabilities,omitempty"`
 }
 
 // AccountAbuseHold is the customer view of an ADR-361 account abuse hold.
@@ -5151,6 +5201,14 @@ type AccountUsageResponse struct {
 func ValidateAppConfig(l Limits, ramMB, maxConcurrency int, guestVCPU ...int) *Problem {
 	if ramMB > l.RAMMB {
 		return ErrPlanLimitRAM(l, ramMB)
+	}
+	// apps.max_concurrency has CHECK (max_concurrency >= 1). An update
+	// with 0 or less reached the store and came back as a 503 "Briefly at
+	// capacity" (Hunt 11 H11-41), so clients retried a request that can
+	// never succeed. Create maps an omitted 0 to 1 before it gets here.
+	if maxConcurrency < 1 {
+		return ErrValidation(fmt.Sprintf("max_concurrency must be 1..%d on the %s plan; got %d", l.MaxConcurrency, l.Plan, maxConcurrency)).
+			WithLimit(int64(l.MaxConcurrency), int64(maxConcurrency))
 	}
 	if maxConcurrency > l.MaxConcurrency {
 		return NewProblem(403, CodePlanLimitConcur,
@@ -6546,6 +6604,10 @@ type PreAuthPolicyObservation struct {
 // All percentage fields are clamped to [0, 100]; all latency
 // fields are milliseconds ≥ 0. NaN/Inf come back as zero — see
 // the server handler for the guard order.
+// FleetWakeP95MinSamples is the fewest wakes a fleet wake p95 is quoted
+// from; the public status page's wake query uses the same floor.
+const FleetWakeP95MinSamples = 20
+
 type AppMetricsResponse struct {
 	AppID  string `json:"app_id"`
 	Range  string `json:"range"`  // echoed window, e.g. "5m"
@@ -6576,6 +6638,11 @@ type AppMetricsResponse struct {
 	// as such in the UI; here it's named plainly because the
 	// dashboard copy does the labelling.
 	WakeP95MS float64 `json:"wake_p95_ms"`
+	// WakeSamples is the number of fleet wakes WakeP95MS was computed from.
+	// Below FleetWakeP95MinSamples the p95 is not meaningful (one slow wake
+	// in four made it 18 s) and clients show it as unavailable, as the
+	// status page does (Hunt 12 H12-40). Nil when the count is unknown.
+	WakeSamples *int64 `json:"wake_samples,omitempty"`
 	// QueueDepth (issue #1233 / ADR-123) is the current waiters
 	// in the per-app wake gate queue, sourced from
 	// gateway_queue_depth{app}. Bounded by per-plan MaxQueueDepth
@@ -7240,6 +7307,11 @@ type SourceRefDeployRequest struct {
 	RollbackOn5xx            *bool                  `json:"rollback_on_5xx,omitempty"`
 	DisableStartupCPUBoost   *bool                  `json:"disable_startup_cpu_boost,omitempty"`
 	Healthcheck              *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
+	// ReleaseAt and ReleaseNotify are CreateDeploymentRequest's.
+	ReleaseAt     string   `json:"release_at,omitempty"`
+	ReleaseNotify []string `json:"release_notify,omitempty"`
 }
 
 // SourceTarballDeployRequest is the CLI-uploaded tarball sidecar for
@@ -7271,6 +7343,11 @@ type SourceTarballDeployRequest struct {
 	RollbackOn5xx          *bool                  `json:"rollback_on_5xx,omitempty"`
 	DisableStartupCPUBoost *bool                  `json:"disable_startup_cpu_boost,omitempty"`
 	Healthcheck            *DeploymentHealthcheck `json:"healthcheck,omitempty"`
+	// OverrideFreeze is CreateDeploymentRequest.OverrideFreeze.
+	OverrideFreeze string `json:"override_freeze,omitempty"`
+	// ReleaseAt and ReleaseNotify are CreateDeploymentRequest's.
+	ReleaseAt     string   `json:"release_at,omitempty"`
+	ReleaseNotify []string `json:"release_notify,omitempty"`
 }
 
 // PlanWorkload mirrors reposcan.Workload (Phase 3 wire shape).
@@ -7292,8 +7369,14 @@ type PlanWorkload struct {
 	ImageProcess     *ComposeProcess     `json:"image_process,omitempty"`
 	// BuildTarget and BuildArgs show a source-built service's Compose build
 	// options (ADR-20261019142544); argument values stay out of plans.
-	BuildTarget         string            `json:"build_target,omitempty"`
-	BuildArgs           []string          `json:"build_args,omitempty"`
+	BuildTarget string   `json:"build_target,omitempty"`
+	BuildArgs   []string `json:"build_args,omitempty"`
+	// SecretFiles are the Compose secrets written to /run/secrets
+	// (ADR-20261023090000); they name app secrets, never values.
+	SecretFiles []SecretFile `json:"secret_files,omitempty"`
+	// Resources are the Compose deploy.replicas and resource limits the
+	// service declares (ADR-20261023120000).
+	Resources           *ComposeResources `json:"resources,omitempty"`
 	Command             []string          `json:"command"`
 	DependsOn           []string          `json:"depends_on,omitempty"`
 	DependsOnConditions map[string]string `json:"depends_on_conditions,omitempty"`
@@ -7307,12 +7390,28 @@ type PlanWorkload struct {
 	AllowedServiceCallers     *[]string                           `json:"allowed_service_callers,omitempty"`
 	AllowedServiceCallScopes  *ServiceCallerScopes                `json:"allowed_service_call_scopes,omitempty"`
 	PlatformTenantRequired    *bool                               `json:"platform_tenant_required,omitempty"`
+	// Visibility is "internal" when the app is or will be hidden from the
+	// public edge: an existing internal app, or a new Compose service without
+	// `ports:` (ADR-20261022131852). Omitted means public.
+	Visibility AppVisibility `json:"visibility,omitempty"`
 
 	Class           string   `json:"class,omitempty"`
 	Schedule        string   `json:"schedule,omitempty"`
 	Ports           []int    `json:"ports"`
 	EnvKeys         []string `json:"env_keys,omitempty"`
 	RequiredEnvKeys []string `json:"required_env_keys,omitempty"`
+	// UnsetEnvKeys are the keys from EnvKeys and RequiredEnvKeys that will
+	// have no value in the selected environment: not configured on the app
+	// and not provided by the platform. Names only, never values.
+	UnsetEnvKeys []string `json:"unset_env_keys,omitempty"`
+	// UnsetEnvKeyReasons says why a Compose value for an UnsetEnvKeys name
+	// is not imported (ADR-20261023085230): not_opted_in, secret,
+	// service_address, local_address, interpolated, host_value, empty or
+	// invalid. Names and reasons only, never values.
+	UnsetEnvKeyReasons map[string]string `json:"unset_env_key_reasons,omitempty"`
+	// ImportedEnvKeys are the Compose environment names whose plain values
+	// apply will write, because the project opted in and they are unset.
+	ImportedEnvKeys []string `json:"imported_env_keys,omitempty"`
 	Source          string   `json:"source,omitempty"`
 	Tier            string   `json:"tier,omitempty"`
 	Action          string   `json:"action,omitempty"`          // ADR-124: "create" | "update"
@@ -7453,6 +7552,7 @@ type QuotaBlock struct {
 // creates (WillDeploy.Action == "create"). Removed is a flat slug
 // list — removal has no per-row editable metadata worth surfacing.
 type PlanResponse struct {
+	SafeRelease           *ProjectSafeRelease    `json:"safe_release,omitempty"`
 	ProjectSlug           string                 `json:"project_slug"`
 	RepoFullName          string                 `json:"repo_full_name,omitempty"`
 	Environment           string                 `json:"environment,omitempty"`
@@ -7522,6 +7622,7 @@ type PlanResponse struct {
 // stable; the field is only populated when the apply path actually
 // enqueued builds (i.e. when at least one app was added or changed).
 type ApplyResponse struct {
+	SubmissionAttemptID string `json:"submission_attempt_id,omitempty"`
 	PlanResponse
 	ProjectID string             `json:"project_id"`
 	Apps      []ApplyResponseApp `json:"apps"`
@@ -7546,10 +7647,11 @@ type ApplyResponseApp struct {
 // On staging or enqueue failure, Error is non-empty and the
 // deployment/build IDs are empty. Partial failure is by design.
 type AppliedBuild struct {
-	Slug         string `json:"slug"`
-	AppID        string `json:"app_id"`
-	DeploymentID string `json:"deployment_id,omitempty"`
-	BuildID      string `json:"build_id,omitempty"`
+	Configuration *DeploymentConfigurationStatus `json:"configuration,omitempty"`
+	Slug          string                         `json:"slug"`
+	AppID         string                         `json:"app_id"`
+	DeploymentID  string                         `json:"deployment_id,omitempty"`
+	BuildID       string                         `json:"build_id,omitempty"`
 	// DeploymentStatus and BuildStatus are populated by clients that wait for
 	// project readiness. They are omitted in the immediate server enqueue
 	// response, preserving the original apply wire shape for --no-wait users.
@@ -8623,7 +8725,16 @@ func ApplyEdgeRuleRewritePath(requestPath, from, to string) (rewrittenPath strin
 	if !strings.HasPrefix(requestPath, from) {
 		return requestPath, false
 	}
-	return NormalizeEdgeRuleRewriteTarget(to) + requestPath[len(from):], true
+	rest := requestPath[len(from):]
+	if target := NormalizeEdgeRuleRewriteTarget(to); target != "/" {
+		return target + rest, true
+	}
+	// Stripping a prefix to the root (ADR-20261021223225): /api/items with
+	// From=/api becomes /items, and /api itself becomes /, never //items.
+	if !strings.HasPrefix(rest, "/") {
+		rest = "/" + rest
+	}
+	return rest, true
 }
 
 // NormalizeEdgeRuleRewriteTarget canonicalizes a configured rewrite prefix to
@@ -10085,13 +10196,19 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 // The hot-path applier is
 // pkg/gateway.(*Handler).applyEdgeRuleBudget (§4.1.2.8d).
 type EdgeRuleBudgetAction struct {
-	BudgetMs            int    `json:"budget_ms"`
+	BudgetMs int `json:"budget_ms"`
+	// TotalDeadlineMs includes upload/wake/admission from trusted public ingress.
+	// Zero leaves the existing execution-only budget unchanged (ADR-570).
+	TotalDeadlineMs     int    `json:"total_deadline_ms,omitempty"`
 	AllowOverrideHeader string `json:"allow_override_header,omitempty"`
 }
 
 func (a *EdgeRuleBudgetAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("budget action is required")
+	}
+	if a.TotalDeadlineMs < 0 || a.TotalDeadlineMs > int(RequestBudgetPlanMax.Milliseconds()) {
+		return ErrValidation("budget action: total_deadline_ms must be zero (unset) or within the platform request budget ceiling")
 	}
 	if a.BudgetMs <= 0 {
 		return ErrValidation(fmt.Sprintf(
@@ -10354,9 +10471,19 @@ type EdgeRuleResponse struct {
 	// Match (ADR-962) is the optional condition ANDed with the selectors.
 	Match *EdgeRuleMatchExpr `json:"match,omitempty"`
 	// Mode (ADR-960) is "enforce" or "log"; log-mode rules only count matches.
-	Mode      string    `json:"mode"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	Mode string `json:"mode"`
+	// Penalty is the rule's penalty box (ADR-20261022105846), if any.
+	Penalty *EdgeRulePenalty `json:"penalty,omitempty"`
+	// ManagedBy names the switch that owns the rule: "attack_mode" for
+	// the app's attack-mode rule (ADR-20261021220456), which PATCH refuses.
+	// Empty for every other rule.
+	ManagedBy string `json:"managed_by,omitempty"`
+	// UnreleasedFeatures names the gated features the rule uses that are
+	// not yet released to the account (EdgeFeature*, ADR-20261023113721);
+	// the gateway does not enforce them.
+	UnreleasedFeatures []string  `json:"unreleased_features,omitempty"`
+	CreatedAt          time.Time `json:"created_at"`
+	UpdatedAt          time.Time `json:"updated_at"`
 }
 
 // Edge-rule metadata bounds; the edge_rules CHECK constraints mirror them.
@@ -10405,6 +10532,9 @@ type CreateEdgeRuleRequest struct {
 	ExpiresAt    *time.Time         `json:"expires_at,omitempty"`
 	Match        *EdgeRuleMatchExpr `json:"match,omitempty"`
 	Mode         string             `json:"mode,omitempty"`
+	// Penalty boxes a client this rule keeps rejecting
+	// (ADR-20261022105846); ip, geo, throttle and waf (block) rules only.
+	Penalty *EdgeRulePenalty `json:"penalty,omitempty"`
 }
 
 // UpdateEdgeRuleRequest is the wire shape for PATCH /v1/edge-rules/{id}.
@@ -10435,6 +10565,11 @@ type UpdateEdgeRuleRequest struct {
 	Match      *EdgeRuleMatchExpr `json:"match,omitempty"`
 	ClearMatch bool               `json:"clear_match,omitempty"`
 	Mode       *string            `json:"mode,omitempty"`
+	// Penalty sets the rule's penalty box (ADR-20261022105846);
+	// ClearPenalty removes it, which also releases the clients it holds.
+	// Setting both is rejected.
+	Penalty      *EdgeRulePenalty `json:"penalty,omitempty"`
+	ClearPenalty bool             `json:"clear_penalty,omitempty"`
 }
 
 // Edge-rule modes (ADR-960).
@@ -10453,10 +10588,13 @@ func ValidateEdgeRuleMode(mode string) *Problem {
 }
 
 // EdgeRuleHitStatsResponse is one rule's match counts over a window (ADR-960).
+// Series (ADR-20261020105001, with ?series=true) is matched plus logged per hour, the
+// first value for the hour starting at the response's Since.
 type EdgeRuleHitStatsResponse struct {
-	RuleID  string `json:"rule_id"`
-	Matched int64  `json:"matched"`
-	Logged  int64  `json:"logged"`
+	RuleID  string  `json:"rule_id"`
+	Matched int64   `json:"matched"`
+	Logged  int64   `json:"logged"`
+	Series  []int64 `json:"series,omitempty"`
 }
 
 // EdgeRuleStatsResponse is GET /v1/apps/{slug}/edge-rules/stats.
@@ -10466,11 +10604,13 @@ type EdgeRuleStatsResponse struct {
 	Rules  []EdgeRuleHitStatsResponse `json:"rules"`
 }
 
-// EdgeRuleEventResponse (ADR-964) is one sampled rule match or kind=waf
-// detection. RuleName and RuleKind are empty once the rule has been deleted.
-// Detections (outcome detected, warned or blocked; ADR-831 amendment 5) also
-// carry the CRS rule IDs that scored, their attack categories and the
-// anomaly score.
+// EdgeRuleEventResponse (ADR-964) is one sampled rule match, kind=waf
+// detection or kind=challenge outcome. RuleName and RuleKind are empty once
+// the rule has been deleted. Detections (outcome detected, warned or
+// blocked; ADR-831 amendment 5) also carry the CRS rule IDs that scored,
+// their attack categories and the anomaly score. Challenge outcomes
+// (challenged, rejected, solved or failed; amendment 7 follow-up) carry the
+// request fields only.
 type EdgeRuleEventResponse struct {
 	ID         string    `json:"id"`
 	RuleID     string    `json:"rule_id"`
@@ -10524,11 +10664,12 @@ type EdgeRuleEventsResponse struct {
 // EdgeRuleEventsQuery filters GET /v1/apps/{slug}/edge-rules/events. Since
 // is a duration such as 1h, 24h or 7d (default 24h).
 type EdgeRuleEventsQuery struct {
-	RuleID  string
-	Outcome string
-	Since   string
-	Limit   int
-	Cursor  string
+	RuleID    string
+	Outcome   string
+	RequestID string
+	Since     string
+	Limit     int
+	Cursor    string
 }
 
 // EdgeRuleListResponse (ADR-963) is one account-level list. Items is
@@ -11250,6 +11391,13 @@ type DebugTelemetryRequestItem struct {
 	DeploymentCreatedAt string                       `json:"deployment_created_at,omitempty"`
 	ImageDigest         string                       `json:"image_digest,omitempty"`
 	Guest               *DebugGuestExecutionEvidence `json:"guest,omitempty"`
+	// ProfileCaptureID names the stack snapshot taken while this request was
+	// in flight (ADR-1155 slow_request capture), when one exists.
+	ProfileCaptureID string `json:"profile_capture_id,omitempty"`
+	// TraceInferred is true when Gregale linked this service call to its
+	// caller's trace because the caller sent no traceparent and was serving
+	// exactly one request (ADR-1138): the trace id is inferred, not propagated.
+	TraceInferred bool `json:"trace_inferred,omitempty"`
 }
 
 // DebugGuestExecutionEvidence is the bounded execution signal emitted by a
@@ -13474,6 +13622,67 @@ type EventRecoveryNotificationRetryBacklogTotals struct {
 	PendingCount            int `json:"pending_count"`
 	InconclusiveCount       int `json:"inconclusive_count"`
 	IncompleteEvidenceCount int `json:"incomplete_evidence_count"`
+}
+
+// DeploymentSubmissionReceipt is immutable acceptance evidence for a saved attempt.
+type DeploymentSubmissionReceipt struct {
+	AttemptID    string    `json:"attempt_id"`
+	AppID        string    `json:"app_id"`
+	DeploymentID string    `json:"deployment_id"`
+	AcceptedAt   time.Time `json:"accepted_at"`
+}
+
+// DeploymentStagingSnapshot binds the app policy group to a monotonic revision.
+type DeploymentStagingSnapshot struct {
+	AppID              string                     `json:"app_id"`
+	Revision           int64                      `json:"revision"`
+	LatestDeploymentID string                     `json:"latest_deployment_id"`
+	Settings           map[string]json.RawMessage `json:"settings"`
+}
+
+type DeploymentStagingRequest struct {
+	SessionID            string                     `json:"session_id"`
+	Operation            string                     `json:"operation"`
+	ExpectedAppID        string                     `json:"expected_app_id"`
+	ExpectedDeploymentID string                     `json:"expected_deployment_id"`
+	ExpectedRevision     int64                      `json:"expected_revision"`
+	Before               map[string]json.RawMessage `json:"before"`
+	Desired              map[string]json.RawMessage `json:"desired"`
+}
+
+type DeploymentStagingReceipt struct {
+	SessionID string `json:"session_id"`
+	AppID     string `json:"app_id"`
+	Status    string `json:"status"`
+	Revision  int64  `json:"revision"`
+}
+
+// DeploymentCronConfig is the closed, non-secret scheduling intent for an HTTP cron.
+type DeploymentCronConfig struct {
+	ID            string `json:"id"`
+	Schedule      string `json:"schedule"`
+	Path          string `json:"path"`
+	Enabled       bool   `json:"enabled"`
+	Timezone      string `json:"timezone"`
+	SkipIfRunning bool   `json:"skip_if_running"`
+}
+
+type DeploymentCronStagingSnapshot struct {
+	AppID              string                 `json:"app_id"`
+	Revision           int64                  `json:"revision"`
+	LatestDeploymentID string                 `json:"latest_deployment_id"`
+	Crons              []DeploymentCronConfig `json:"crons"`
+}
+
+type DeploymentCronStagingRequest struct {
+	UploadID             string                 `json:"upload_id,omitempty"`
+	SessionID            string                 `json:"session_id"`
+	Operation            string                 `json:"operation"`
+	ExpectedAppID        string                 `json:"expected_app_id"`
+	ExpectedDeploymentID string                 `json:"expected_deployment_id"`
+	ExpectedRevision     int64                  `json:"expected_revision"`
+	Before               []DeploymentCronConfig `json:"before"`
+	Desired              []DeploymentCronConfig `json:"desired"`
 }
 
 // EventRoutingRecoveryExpectation pins a reviewed automation routing attempt.

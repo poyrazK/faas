@@ -117,6 +117,8 @@ func realtimeEndpointResponse(e state.ManagedRealtimeEndpoint) api.ManagedRealti
 	if len(e.AuthTokenSealed) == 0 {
 		out.AuthTokenMasked = ""
 	}
+	out.Slug = e.Slug
+	out.ChannelRules = e.ChannelRules
 	return out
 }
 
@@ -209,6 +211,19 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 			return fmt.Errorf("live routes for endpoint %s: %w", row.ID, err)
 		}
 	}
+	// ADR-20261023115741: realtimed has no flag source, so apid withdraws an
+	// endpoint whose account has realtime off; its connections end and new
+	// ones find no endpoint. Live routes keep it registered, since live
+	// queries are their own capability.
+	if len(liveRoutes) == 0 && s.RealtimeReleased != nil && !s.RealtimeReleased(ctx, row.AccountID, row.AppID) {
+		return s.Registrar.RemoveEndpoint(ctx, row.ID)
+	}
+	var previews *realtime.EndpointPreviews
+	if s.EndpointPreviews != nil {
+		if previews, err = s.EndpointPreviews(ctx, row.AccountID, row.AppID); err != nil {
+			return fmt.Errorf("preview decisions for endpoint %s: %w", row.ID, err)
+		}
+	}
 	authMode := row.AuthMode
 	if authMode == "" {
 		if len(authToken) > 0 {
@@ -235,9 +250,25 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 		MaxMessageBytes:  row.MaxMessageBytes,
 		MaxConnectionAge: time.Duration(row.MaxConnectionAgeSeconds) * time.Second,
 		LiveRoutes:       liveRoutes,
+		Previews:         previews,
 
 		AccountMaxConnections: accountMaxConnections,
+		// Channel rules are a preview field (ADR-20261019102657): an
+		// account that leaves the rollout falls back to the callback.
+		ChannelRules: previewChannelRules(s.PreviewVisible(row.AccountID), row.ChannelRules),
+		// Live queries ride the v2 protocol, so an endpoint with live routes
+		// (FAAS_LIVE_QUERIES_ACCOUNTS) is marked too.
+		Preview: s.PreviewVisible(row.AccountID) || len(liveRoutes) > 0,
 	})
+}
+
+// previewOn decides one realtime preview for a request: the platform flag
+// once an operator wrote it, otherwise the environment gate.
+func (s *Service) previewOn(r *http.Request, acct state.Account, flagKey string, legacy bool) bool {
+	if s.PreviewReleased == nil {
+		return legacy
+	}
+	return s.PreviewReleased(r, acct, flagKey, legacy)
 }
 
 // realtimeAccountConnectionLimit is the account's plan allowance of concurrent
@@ -336,9 +367,22 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
 		return
 	}
+	if s.hiddenEndpointField(w, acct.ID, req.Slug != "", req.ChannelRules != nil) {
+		return
+	}
 	limits, allowed := s.realtimePlanLimits(acct)
 	if !allowed {
 		api.WriteProblem(w, api.ErrPlanRealtimeNotAllowed(acct.Plan))
+		return
+	}
+	if req.Slug != "" {
+		if err := api.ValidateRealtimeEndpointSlug(req.Slug); err != nil {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+			return
+		}
+	}
+	if err := api.ValidateRealtimeChannelRules(req.ChannelRules); err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
 		return
 	}
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
@@ -422,7 +466,8 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		AuthRequiredClaims: cloneRealtimeClaims(req.AuthRequiredClaims),
 		AllowedOrigins:     append([]string(nil), req.AllowedOrigins...),
 		MaxConnections:     req.MaxConnections, MaxMessageBytes: req.MaxMessageBytes,
-		MaxConnectionAgeSeconds: req.MaxConnectionAgeSeconds, Enabled: enabled,
+		MaxConnectionAgeSeconds: req.MaxConnectionAgeSeconds, Enabled: enabled, Slug: req.Slug,
+		ChannelRules: append([]api.RealtimeChannelRule(nil), req.ChannelRules...),
 	}, limits.EndpointsPerApp, limits.EndpointsPerAccount)
 	if err != nil {
 		var quotaErr *state.ManagedRealtimeEndpointQuotaError
@@ -431,6 +476,10 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
+			if req.Slug != "" {
+				api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("the app already has an endpoint with slug %q", req.Slug)))
+				return
+			}
 			api.WriteProblem(w, api.ErrRealtimeInvalid("managed realtime endpoint already exists"))
 			return
 		}
@@ -460,6 +509,9 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 	var req api.UpdateManagedRealtimeEndpointRequest
 	if err := httpkit.DecodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	if s.hiddenEndpointField(w, acct.ID, req.Slug != nil, req.ChannelRules != nil) {
 		return
 	}
 	if _, ok := s.realtimePlanLimits(acct); !ok {
@@ -634,10 +686,28 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		params.MaxConnectionAgeSeconds = req.MaxConnectionAgeSeconds
 	}
 	params.Enabled = req.Enabled
+	if req.Slug != nil && *req.Slug != "" {
+		if err := api.ValidateRealtimeEndpointSlug(*req.Slug); err != nil {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+			return
+		}
+	}
+	params.Slug = req.Slug
+	if req.ChannelRules != nil {
+		if err := api.ValidateRealtimeChannelRules(*req.ChannelRules); err != nil {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+			return
+		}
+		params.ChannelRules = req.ChannelRules
+	}
 	row, err := store.UpdateManagedRealtimeEndpoint(r.Context(), existing.ID, params)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			httpkit.NotFound(w, "managed realtime endpoint not found")
+			return
+		}
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("the app already has an endpoint with slug %q", *req.Slug)))
 			return
 		}
 		s.Host.Logger().WarnContext(r.Context(), "update managed realtime endpoint", "err", err)

@@ -247,6 +247,9 @@ func (r *Replayer) Run(
 	cursor string,
 	progress func(RekeyProgress),
 ) error {
+	if store, ok := r.store.(state.SecretRekeyStore); ok {
+		return r.runSecretDocuments(ctx, store, progress)
+	}
 	if progress == nil {
 		progress = func(RekeyProgress) {}
 	}
@@ -332,7 +335,7 @@ func (r *Replayer) Run(
 			openCtx, cancel := context.WithTimeout(ctx, r.cfg.OpenTimeout)
 			_ = openCtx // Open doesn't accept a ctx; cancel()
 			// is the only handle we have today.
-			env, openErr := secretbox.OpenMulti(r.identities, row.Ciphertext)
+			env, binding, openErr := secretbox.OpenMultiBound(r.identities, row.Ciphertext)
 			cancel()
 			if openErr != nil {
 				p.Failed++
@@ -385,8 +388,9 @@ func (r *Replayer) Run(
 				continue
 			}
 
-			// Re-seal under current identity.
-			sealed, sealErr := secretbox.Seal(r.active, env)
+			// Re-seal under current identity, keeping the envelope's
+			// account binding (ADR-20261023173624).
+			sealed, sealErr := secretbox.SealBound([]*age.X25519Recipient{r.active}, binding, env)
 			if sealErr != nil {
 				p.Failed++
 				if pinnedCursor == "" {

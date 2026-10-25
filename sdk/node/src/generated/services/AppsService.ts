@@ -7,6 +7,10 @@ import type { AppChangeTimelineResponse } from '../models/AppChangeTimelineRespo
 import type { AppErrorRequestsResponse } from '../models/AppErrorRequestsResponse.js';
 import type { AppErrorSampleResponse } from '../models/AppErrorSampleResponse.js';
 import type { AppErrorsSummaryResponse } from '../models/AppErrorsSummaryResponse.js';
+import type { AppForkExecListResponse } from '../models/AppForkExecListResponse.js';
+import type { AppForkExecResponse } from '../models/AppForkExecResponse.js';
+import type { AppForkListResponse } from '../models/AppForkListResponse.js';
+import type { AppForkResponse } from '../models/AppForkResponse.js';
 import type { AppHealthHistoryPage } from '../models/AppHealthHistoryPage.js';
 import type { AppHealthResponse } from '../models/AppHealthResponse.js';
 import type { AppMetricsResponse } from '../models/AppMetricsResponse.js';
@@ -35,6 +39,12 @@ import type { BulkIssueActionResponse } from '../models/BulkIssueActionResponse.
 import type { CanaryRouteGate } from '../models/CanaryRouteGate.js';
 import type { CheckProfileRegressionRequest } from '../models/CheckProfileRegressionRequest.js';
 import type { CheckRouteRequirementsRequest } from '../models/CheckRouteRequirementsRequest.js';
+import type { CrashCaptureListResponse } from '../models/CrashCaptureListResponse.js';
+import type { CrashCaptureResponse } from '../models/CrashCaptureResponse.js';
+import type { CrashSnapshotSettingsRequest } from '../models/CrashSnapshotSettingsRequest.js';
+import type { CrashSnapshotSettingsResponse } from '../models/CrashSnapshotSettingsResponse.js';
+import type { CreateAppForkExecRequest } from '../models/CreateAppForkExecRequest.js';
+import type { CreateAppForkRequest } from '../models/CreateAppForkRequest.js';
 import type { CreateAppRequest } from '../models/CreateAppRequest.js';
 import type { CreateBindingVerificationRunRequest } from '../models/CreateBindingVerificationRunRequest.js';
 import type { CreateDeployTokenRequest } from '../models/CreateDeployTokenRequest.js';
@@ -43,6 +53,7 @@ import type { CreateMigrationCutoverRequest } from '../models/CreateMigrationCut
 import type { CreateMigrationVerificationRequest } from '../models/CreateMigrationVerificationRequest.js';
 import type { CreateNativeIssueTicketRequest } from '../models/CreateNativeIssueTicketRequest.js';
 import type { CreateNativeLinearIssueTicketRequest } from '../models/CreateNativeLinearIssueTicketRequest.js';
+import type { CreateProfileCaptureRequest } from '../models/CreateProfileCaptureRequest.js';
 import type { CreateQueueBindingCanaryRequest } from '../models/CreateQueueBindingCanaryRequest.js';
 import type { CreateSLORequest } from '../models/CreateSLORequest.js';
 import type { CreateSyntheticCheckRequest } from '../models/CreateSyntheticCheckRequest.js';
@@ -123,10 +134,15 @@ import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
 import type { Problem } from '../models/Problem.js';
 import type { ProfileCanaryHistoryPage } from '../models/ProfileCanaryHistoryPage.js';
+import type { ProfileCapture } from '../models/ProfileCapture.js';
+import type { ProfileCaptureDiff } from '../models/ProfileCaptureDiff.js';
+import type { ProfileCaptureList } from '../models/ProfileCaptureList.js';
+import type { ProfileCaptureView } from '../models/ProfileCaptureView.js';
 import type { ProfileCompareRequest } from '../models/ProfileCompareRequest.js';
 import type { ProfileCompareResponse } from '../models/ProfileCompareResponse.js';
 import type { ProfileDeploymentCheck } from '../models/ProfileDeploymentCheck.js';
 import type { ProfileDeploymentPolicy } from '../models/ProfileDeploymentPolicy.js';
+import type { ProfileHeapResponse } from '../models/ProfileHeapResponse.js';
 import type { ProfileInvestigationResponse } from '../models/ProfileInvestigationResponse.js';
 import type { ProfileResponse } from '../models/ProfileResponse.js';
 import type { PublishIssueSourceMapsRequest } from '../models/PublishIssueSourceMapsRequest.js';
@@ -151,6 +167,8 @@ import type { RouteHealthHistoryEntry } from '../models/RouteHealthHistoryEntry.
 import type { RouteHealthHistoryPage } from '../models/RouteHealthHistoryPage.js';
 import type { RouteHealthInvestigation } from '../models/RouteHealthInvestigation.js';
 import type { RouteHealthReport } from '../models/RouteHealthReport.js';
+import type { RouteInsightFixRequest } from '../models/RouteInsightFixRequest.js';
+import type { RouteInsightFixResponse } from '../models/RouteInsightFixResponse.js';
 import type { RouteInsightsResponse } from '../models/RouteInsightsResponse.js';
 import type { RouteLifecycleApproval } from '../models/RouteLifecycleApproval.js';
 import type { RouteLifecycleHistoryPage } from '../models/RouteLifecycleHistoryPage.js';
@@ -964,6 +982,580 @@ export class AppsService {
     });
   }
   /**
+   * Read whether 5xx crash snapshots are on for an app.
+   * @returns CrashSnapshotSettingsResponse The app's crash snapshot setting.
+   * @throws ApiError
+   */
+  public static getCrashSnapshotSettings({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<CrashSnapshotSettingsResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/crash-snapshots/settings',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Turn 5xx crash snapshots on or off for an app.
+   * When on, the first 5xx answered by one of the app's instances
+   * captures that instance's memory (ADR-733), at most one in flight and
+   * none within 10 minutes of the last. Pro and Scale only. Answers 501
+   * `crash_snapshots_not_enabled` until the operator enables the feature.
+   *
+   * @returns CrashSnapshotSettingsResponse The saved setting.
+   * @throws ApiError
+   */
+  public static putCrashSnapshotSettings({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody: CrashSnapshotSettingsRequest,
+  }): CancelablePromise<CrashSnapshotSettingsResponse> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/apps/{slug}/crash-snapshots/settings',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * List an app's crash snapshots, newest first.
+   * @returns CrashCaptureListResponse The app's crash snapshots.
+   * @throws ApiError
+   */
+  public static listCrashSnapshots({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<CrashCaptureListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/crash-snapshots',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Capture the app's newest running instance now.
+   * Requests a crash snapshot of the app's newest running instance,
+   * whether or not 5xx captures are on. Refused with 409
+   * `crash_capture_refused` while another capture is in flight, within
+   * 10 minutes of the last, or when no instance is running.
+   *
+   * @returns CrashCaptureResponse Capture requested.
+   * @throws ApiError
+   */
+  public static createCrashSnapshot({
+    slug,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<CrashCaptureResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/crash-snapshots',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Read one crash snapshot.
+   * @returns CrashCaptureResponse The crash snapshot.
+   * @throws ApiError
+   */
+  public static getCrashSnapshot({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a crash snapshot.
+     */
+    id: string,
+  }): CancelablePromise<CrashCaptureResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/crash-snapshots/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Open a ready crash snapshot as a production fork.
+   * Creates an ADR-732 fork restored from this capture instead of the
+   * deployment's newest snapshot. Same rules as `POST /v1/apps/{slug}/forks`:
+   * the key needs `deploy:write` and `secrets:read`, the response carries
+   * the one-time `access_token`, and the fork counts against the fork
+   * limits. 409 `crash_capture_not_ready` unless the capture is ready and
+   * unexpired.
+   *
+   * @returns AppForkResponse Fork of the crash snapshot admitted and queued.
+   * @throws ApiError
+   */
+  public static forkCrashSnapshot({
+    slug,
+    id,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a crash snapshot.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    requestBody?: CreateAppForkRequest,
+  }): CancelablePromise<AppForkResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/crash-snapshots/{id}/fork',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * List production forks for an app.
+   * Returns the app's production forks, newest first (ADR-732). Answers
+   * 501 `app_forks_not_enabled` until the operator enables forks.
+   *
+   * @returns AppForkListResponse The app's forks, newest first.
+   * @throws ApiError
+   */
+  public static listAppForks({
+    slug,
+    limit = 100,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Maximum number of forks to return.
+     */
+    limit?: number,
+  }): CancelablePromise<AppForkListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/forks',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Fork the app's live deployment into a quarantined debug copy.
+   * Queues a production fork (ADR-732): a restore of the app's newest
+   * capture of its live deployment into an instance that never serves
+   * traffic, cannot reach the network, and is destroyed at its TTL.
+   * The fork holds a copy of production memory, secrets included, so
+   * the key needs `secrets:read` as well as `deploy:write`, and every
+   * create is audited. Pro and Scale only; one active fork per app and
+   * two per account. Answers 501 `app_forks_not_enabled` until the
+   * operator enables forks.
+   *
+   * @returns AppForkResponse Fork admitted and queued.
+   * @throws ApiError
+   */
+  public static createAppFork({
+    slug,
+    idempotencyKey,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+    requestBody?: CreateAppForkRequest,
+  }): CancelablePromise<AppForkResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/forks',
+      path: {
+        'slug': slug,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `An active-fork limit is full (\`app_fork_limit\`, with \`limit\` and \`observed\`), or the app has no live deployment (\`app_fork_unavailable\`).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Read one production fork.
+   * @returns AppForkResponse The fork.
+   * @throws ApiError
+   */
+  public static getAppFork({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+  }): CancelablePromise<AppForkResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/forks/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Cancel a production fork.
+   * Cancels a queued fork immediately. For a restoring or running fork
+   * it records the request; the scheduler destroys the instance. A fork
+   * that has already ended is returned unchanged.
+   *
+   * @returns AppForkResponse Cancellation recorded.
+   * @throws ApiError
+   */
+  public static cancelAppFork({
+    slug,
+    id,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AppForkResponse> {
+    return __request(OpenAPI, {
+      method: 'DELETE',
+      url: '/v1/apps/{slug}/forks/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * List the commands run in a production fork.
+   * Newest first. Output can contain production data, so this needs `secrets:read` as well as `deploy:write`.
+   * @returns AppForkExecListResponse The fork's commands.
+   * @throws ApiError
+   */
+  public static listAppForkExecs({
+    slug,
+    id,
+    limit,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+    /**
+     * Maximum number of commands to return (default 100).
+     */
+    limit?: number,
+  }): CancelablePromise<AppForkExecListResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/forks/{id}/execs',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'limit': limit,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Run a command inside a running production fork.
+   * Queues one command to run inside the running fork (ADR-732), in the
+   * app's working directory and user, with its manifest environment and
+   * no secrets. The fork cannot reach the network. Poll the returned
+   * command for its exit code and the tail of its output. A command never
+   * runs in a serving instance. Needs `secrets:read` as well as
+   * `deploy:write`; every request is audited (without its arguments).
+   *
+   * @returns AppForkExecResponse Command queued.
+   * @throws ApiError
+   */
+  public static createAppForkExec({
+    slug,
+    id,
+    requestBody,
+    idempotencyKey,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+    requestBody: CreateAppForkExecRequest,
+    /**
+     * Idempotency key for the POST. Stored for 24h. On replay the server
+     * returns the original response with `Idempotent-Replayed: true`.
+     *
+     */
+    idempotencyKey?: string,
+  }): CancelablePromise<AppForkExecResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/forks/{id}/execs',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      headers: {
+        'Idempotency-Key': idempotencyKey,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The fork is not running, or already has 4 commands pending (\`app_fork_exec_refused\`).`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
+   * Read one command run in a production fork, with its result.
+   * @returns AppForkExecResponse The command.
+   * @throws ApiError
+   */
+  public static getAppForkExec({
+    slug,
+    id,
+    execId,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Canonical UUID for a production fork.
+     */
+    id: string,
+    /**
+     * Canonical UUID for a fork command.
+     */
+    execId: string,
+  }): CancelablePromise<AppForkExecResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/forks/{id}/execs/{exec_id}',
+      path: {
+        'slug': slug,
+        'id': id,
+        'exec_id': execId,
+      },
+      errors: {
+        401: `code: unauthorized`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        501: `code: not_implemented — this optional capability is not enabled on the serving daemon.`,
+      },
+    });
+  }
+  /**
    * List apps on the account.
    * @returns AppResponse Apps on the account.
    * @throws ApiError
@@ -1110,7 +1702,7 @@ export class AppsService {
         401: `code: unauthorized`,
         403: `code: plan_limit_apps | plan_limit_ram | plan_limit_concurrency | plan_min_instances_not_allowed | plan_limit_secrets | plan_cron_quota | app_layer_too_large | image_egress_denied`,
         404: `code: not_found`,
-        409: `code: conflict`,
+        409: `Conflict; deploy_settings_conflict means the guarded app, deployment or targeted settings changed and no settings were updated.`,
         422: `code: invalid_min_instances — must be in [0, plan max_concurrency].`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
@@ -1169,6 +1761,11 @@ export class AppsService {
    * reached. This does not attest host-level firewall policy or guest
    * configuration.
    * `unverified` means no revision or no relevant serving fleet can be observed.
+   * Gateway policy acknowledgements belong to the current process generation
+   * and require a fresh serving report. Replacement clears convergence until
+   * the new consumers replay. `traffic_runtime` reports compute gateway wiring
+   * separately; fresh wiring does not prove request enforcement. The optional
+   * `wait` applies to policy convergence only.
    *
    * @returns RuntimePolicyStatusResponse Current application state; pending remains possible after wait expires.
    * @throws ApiError
@@ -6595,6 +7192,357 @@ export class AppsService {
     });
   }
   /**
+   * Query the continuous live heap near a window end (ADR-1155).
+   * Requires profiling.kinds to include heap. The query is narrowed to the last collection window before end so merged snapshots are not summed. Values are live heap bytes.
+   * @returns ProfileHeapResponse Live heap functions and call paths.
+   * @throws ApiError
+   */
+  public static getAppHeapProfile({
+    slug,
+    deploymentId,
+    runtime,
+    start,
+    end,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment whose live heap to read.
+     */
+    deploymentId: string,
+    /**
+     * Runtime the heap snapshots were collected under.
+     */
+    runtime: string,
+    /**
+     * Earliest acceptable snapshot time.
+     */
+    start: string,
+    /**
+     * Point in time to inspect.
+     */
+    end: string,
+  }): CancelablePromise<ProfileHeapResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/heap',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'runtime': runtime,
+        'start': start,
+        'end': end,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List the app's on-demand profile captures, newest first.
+   * @returns ProfileCaptureList Up to 50 captures retained for 7 days.
+   * @throws ApiError
+   */
+  public static listProfileCaptures({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ProfileCaptureList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Capture CPU and/or heap profiles from a running instance now (ADR-1155).
+   * Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an account can start 60 per hour. Gregale also queues a heap capture automatically (trigger memory_pressure) when an instance runs low on memory, at most once per hour per app.
+   * @returns ProfileCapture Capture queued.
+   * @throws ApiError
+   */
+  public static createProfileCapture({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody?: CreateProfileCaptureRequest,
+  }): CancelablePromise<ProfileCapture> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/profiles/captures',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read one on-demand profile capture.
+   * @returns ProfileCapture Capture status and collected profile summary.
+   * @throws ApiError
+   */
+  public static getProfileCapture({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Profile capture id.
+     */
+    id: string,
+  }): CancelablePromise<ProfileCapture> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Merged functions and call paths of one capture kind.
+   * @returns ProfileCaptureView CPU nanoseconds or live heap bytes merged across the instance's processes.
+   * @throws ApiError
+   */
+  public static getProfileCaptureView({
+    slug,
+    id,
+    kind,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Capture whose merged view to read.
+     */
+    id: string,
+    /**
+     * cpu, heap, stacks, block or mutex; defaults to the capture's first kind.
+     */
+    kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
+  }): CancelablePromise<ProfileCaptureView> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures/{id}/view',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'kind': kind,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Download one capture kind as a merged gzip pprof profile.
+   * @returns binary gzip-compressed pprof protobuf for go tool pprof, speedscope or Pyroscope.
+   * @throws ApiError
+   */
+  public static downloadProfileCapture({
+    slug,
+    id,
+    kind,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Capture to download.
+     */
+    id: string,
+    /**
+     * Kind to download as pprof: cpu, heap, stacks, block or mutex; defaults to the capture's first kind.
+     */
+    kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
+  }): CancelablePromise<Blob> {
+    return __request(OpenAPI, {
+      responseType: 'blob',
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures/{id}/pprof',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'kind': kind,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare one capture kind with an earlier capture of the same app.
+   * Merges both captures and returns every call path and function with its baseline value, candidate value and difference, largest growth first. Values are not rescaled; captures of different durations or deployments carry warnings.
+   * @returns ProfileCaptureDiff Differential view in the kind's unit.
+   * @throws ApiError
+   */
+  public static diffProfileCaptures({
+    slug,
+    id,
+    base,
+    kind,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Candidate capture id.
+     */
+    id: string,
+    /**
+     * Baseline capture id of the same app.
+     */
+    base: string,
+    /**
+     * cpu, heap, stacks, block or mutex; defaults to a kind both captures collected, preferring heap.
+     */
+    kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
+  }): CancelablePromise<ProfileCaptureDiff> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures/{id}/diff',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'base': base,
+        'kind': kind,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
    * Observed debugger signal coverage (ADR-127 follow-up).
    * Returns bounded, weighted coverage for the debugger signals
    * attached to retained request telemetry in the requested window.
@@ -8005,6 +8953,72 @@ export class AppsService {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Apply a route insight's fix.
+   * Applies the edge-rule change the insight's `fix` describes
+   * (ADR-20261020161310): `create_cache_rule` creates an enabled `@app`
+   * cache rule with the measured safe max-age, `set_cache_max_age` and
+   * `disable_cache_rule` change the cache rule serving exactly this route,
+   * and `add_cache_override` adds a narrower rule ahead of a rule that also
+   * covers other routes. A `cache_stale` fix then purges the route's cached
+   * responses. Rules are written through the same path as the edge-rules
+   * API, so plan quotas, validation and fleet convergence apply.
+   *
+   * `fix_id` must be the `fix.id` the insight lists now; if the insight or
+   * the app's edge rules changed, the request fails with 409
+   * `route_insight_fix_changed` and nothing is written. An insight that is
+   * resolved or has no fix fails with 409 `route_insight_no_fix`. On
+   * success the route's affected insights resolve with `fix_action` and
+   * `fixed_at`, and stay resolved for at least one evidence window. Uses
+   * the deploy-write scopes, completed MFA, the DebugTelemetryEnabled plan
+   * gate and Idempotency-Key replay.
+   *
+   * @returns RouteInsightFixResponse The fix was applied.
+   * @throws ApiError
+   */
+  public static fixRouteInsight({
+    slug,
+    id,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * The insight id from GET /v1/apps/{slug}/routes/insights.
+     */
+    id: string,
+    requestBody: RouteInsightFixRequest,
+  }): CancelablePromise<RouteInsightFixResponse> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/routes/insights/{id}/fix',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `The insight has no fix to apply (\`route_insight_no_fix\`), or the fix changed since it was read (\`route_insight_fix_changed\`).`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

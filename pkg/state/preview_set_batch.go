@@ -33,6 +33,83 @@ var (
 	_ PRPreviewSetBatchStore = (*MemStore)(nil)
 )
 
+// PreviewTombstoneStore frees a preview slug that a deleted row of the same
+// preview still holds. Teardown soft-deletes a preview, and the tombstone
+// keeps its globally unique slug for the seven-day restore window, so a push
+// to an expired PR's branch, or a PR reopened after its close grace, could
+// not re-create its preview at the same pr-<n>-<slug> host until the purge.
+type PreviewTombstoneStore interface {
+	ReleaseDeletedPreviewSlug(ctx context.Context, desired App) (bool, error)
+}
+
+var (
+	_ PreviewTombstoneStore = (*PgStore)(nil)
+	_ PreviewTombstoneStore = (*MemStore)(nil)
+)
+
+// releasesPreviewTombstone reports whether existing is a deleted row of the
+// preview desired re-creates: same account, organization, project, parent and
+// pull request. Any other holder keeps the slug.
+func releasesPreviewTombstone(existing, desired App) bool {
+	return existing.Status == AppDeleted && existing.PreviewOfSlug != "" && samePRPreview(existing, desired)
+}
+
+// previewTombstoneSlug is the ID-derived slug a released tombstone moves to,
+// the one retired PR set members already use.
+func previewTombstoneSlug(id string) string {
+	return "retired-pr-" + strings.ReplaceAll(id, "-", "")
+}
+
+func releasePreviewTombstoneTx(ctx context.Context, tx pgx.Tx, id string) error {
+	tag, err := tx.Exec(ctx, `update apps set slug = 'retired-pr-' || replace(id::text, '-', '')
+		where id = $1 and status = 'deleted'`, id)
+	if err != nil {
+		return fmt.Errorf("state: release deleted preview slug: %w", err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (s *PgStore) ReleaseDeletedPreviewSlug(ctx context.Context, desired App) (bool, error) {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return false, fmt.Errorf("state: begin preview slug release: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	existing, err := scanApp(tx.QueryRow(ctx, `select `+appsSelectColumns+` from apps where slug = $1 for update`, desired.Slug))
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !releasesPreviewTombstone(existing, desired) {
+		return false, nil
+	}
+	if err := releasePreviewTombstoneTx(ctx, tx, existing.ID); err != nil {
+		return false, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("state: commit preview slug release: %w", err)
+	}
+	return true, nil
+}
+
+func (m *MemStore) ReleaseDeletedPreviewSlug(_ context.Context, desired App) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for id, existing := range m.apps {
+		if existing.Slug == desired.Slug && releasesPreviewTombstone(existing, desired) {
+			existing.Slug = previewTombstoneSlug(id)
+			m.apps[id] = existing
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 func validatePRPreviewHead(head PRPreviewHead, apps []App) error {
 	if err := validatePRPreviewBatch(apps); err != nil {
 		return err
@@ -72,11 +149,11 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 			}
 		}
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAccountAppTrafficMutation(ctx, apps[0].AccountID, "")
 	if err != nil {
 		return nil, fmt.Errorf("state: begin PR preview replacement: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }() //nolint:errcheck // no-op after Commit
 	var locked int
 	if err := tx.QueryRow(ctx, `select 1 from accounts where id = $1 for update`, apps[0].AccountID).Scan(&locked); err != nil {
 		return nil, fmt.Errorf("state: lock PR preview account: %w", mapErr(err))
@@ -102,7 +179,13 @@ func (s *PgStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, a
 		// A deleted row still owns its globally unique slug. Detect it before
 		// INSERT; a uniqueness error would abort the whole PostgreSQL transaction.
 		app, lookupErr := scanApp(tx.QueryRow(ctx,
-			`select `+appsSelectColumns+` from apps where slug = $1`, desired.Slug))
+			`select `+appsSelectColumns+` from apps where slug = $1 for update`, desired.Slug))
+		if lookupErr == nil && releasesPreviewTombstone(app, desired) {
+			if err := releasePreviewTombstoneTx(ctx, tx, app.ID); err != nil {
+				return nil, err
+			}
+			lookupErr = ErrNotFound
+		}
 		switch {
 		case lookupErr == nil:
 			if app.Status == AppDeleted || !samePRPreview(app, desired) ||
@@ -237,7 +320,7 @@ func retireReplacedPreviewMembersTx(ctx context.Context, tx pgx.Tx, head PRPrevi
 	return nil
 }
 
-func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, apps []App, limits api.Limits) ([]App, error) {
+func (m *MemStore) ReservePRPreviewSet(ctx context.Context, head PRPreviewHead, apps []App, limits api.Limits) ([]App, error) {
 	if err := validatePRPreviewHead(head, apps); err != nil {
 		return nil, err
 	}
@@ -258,29 +341,13 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 			return nil, ErrConflict
 		}
 	}
-	original := make(map[string]App)
-	addressIndexBefore := maps.Clone(m.serviceAddressIndex)
-	addressCursorsBefore := maps.Clone(m.serviceAddressCursors)
-	var inserted []string
-	rollback := func(err error) ([]App, error) {
-		for _, id := range inserted {
-			delete(m.apps, id)
-			delete(m.applicationStandardEnrollments, id)
-			m.eraseStandardAppExceptionsLocked(id)
-			m.deleteStandardMaterializationControlsLocked(id)
-		}
-		m.serviceAddressIndex, m.serviceAddressCursors = addressIndexBefore, addressCursorsBefore
-		for id, app := range original {
-			m.apps[id] = app
-		}
-		return nil, err
-	}
+	stagedApps := maps.Clone(m.apps)
 	desiredSlugs := make(map[string]bool, len(apps))
 	for _, app := range apps {
 		desiredSlugs[app.Slug] = true
 	}
 	for _, id := range previous.MemberAppIDs {
-		old, ok := m.apps[id]
+		old, ok := stagedApps[id]
 		if !ok || old.AccountID != apps[0].AccountID || old.ProjectID != apps[0].ProjectID ||
 			old.PreviewPrNumber != head.PRNumber || old.PreviewOfSlug == "" || old.Status == AppDeleted || desiredSlugs[old.Slug] ||
 			old.PreviewPrState == PreviewPrStateTearingDown || old.PreviewPrState == PreviewPrStateTornDown {
@@ -300,10 +367,9 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		}
 		for _, bucket := range m.objectBuckets {
 			if bucket.AppID == id && bucket.State != "deleted" {
-				return rollback(ErrConflict)
+				return nil, ErrConflict
 			}
 		}
-		original[id] = old
 		now := time.Now().UTC()
 		deadline := now.Add(AppDeleteGraceDuration())
 		old.Slug = "retired-pr-" + strings.ReplaceAll(old.ID, "-", "")
@@ -314,36 +380,40 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		if old.DeleteGraceUntil == nil {
 			old.DeleteGraceUntil = &deadline
 		}
-		m.apps[id] = old
+		stagedApps[id] = old
 	}
 	reserved := make([]App, 0, len(apps))
+	var inserted []App
 	for _, desired := range apps {
 		var row App
 		found := false
-		for _, existing := range m.apps {
+		for id, existing := range stagedApps {
 			if existing.Slug != desired.Slug {
+				continue
+			}
+			if releasesPreviewTombstone(existing, desired) {
+				existing.Slug = previewTombstoneSlug(id)
+				stagedApps[id] = existing
 				continue
 			}
 			if existing.Status == AppDeleted || !samePRPreview(existing, desired) ||
 				existing.PreviewPrState == PreviewPrStateTearingDown || existing.PreviewPrState == PreviewPrStateTornDown {
-				return rollback(ErrConflict)
+				return nil, ErrConflict
 			}
 			row, found = existing, true
 			break
 		}
 		if !found {
 			var err error
-			row, err = m.createAppIfUnderQuotaLocked(desired, limits)
+			row, err = m.prepareAppIfUnderQuotaLocked(desired, limits, stagedApps)
 			if err != nil {
-				return rollback(err)
+				return nil, err
 			}
-			inserted = append(inserted, row.ID)
-		} else {
-			original[row.ID] = row
+			inserted = append(inserted, row)
 		}
 		row.PreviewPrState = PreviewPrStateOpen
 		row.PreviewExpiresAt = desired.PreviewExpiresAt
-		m.apps[row.ID] = row
+		stagedApps[row.ID] = row
 		reserved = append(reserved, row)
 	}
 	set := PRPreviewSet{InstallationID: head.InstallationID, RepoFullName: head.RepoFullName,
@@ -352,7 +422,17 @@ func (m *MemStore) ReservePRPreviewSet(_ context.Context, head PRPreviewHead, ap
 		set.MemberAppIDs = append(set.MemberAppIDs, app.ID)
 	}
 	if err := validatePRPreviewSet(set); err != nil {
-		return rollback(err)
+		return nil, err
+	}
+	if err := appTrafficBindingError(m.checkMemTrafficBindingLocked(ctx, apps[0].AccountID, nil, "", memTrafficPolicyChange{Apps: stagedApps})); err != nil {
+		return nil, err
+	}
+	if err := m.enrollNewAppsLocked(inserted); err != nil {
+		return nil, err
+	}
+	m.apps = stagedApps
+	for _, app := range inserted {
+		m.ensureServiceAddressIndexLocked(&app)
 	}
 	if m.previewSets == nil {
 		m.previewSets = make(map[string]PRPreviewSet)

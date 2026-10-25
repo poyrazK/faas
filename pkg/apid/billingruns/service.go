@@ -41,6 +41,12 @@ type Host interface {
 	DraftTenantStatement(ctx context.Context, acct state.Account, tenantID string, start, end time.Time) (state.PlatformTenantStatement, *api.Problem)
 	FinalizeTenantStatement(ctx context.Context, acct state.Account, tenantID, statementID string) (state.PlatformTenantStatement, *api.Problem)
 	ExportTenantStatement(ctx context.Context, acct state.Account, tenant state.PlatformTenant, statement state.PlatformTenantStatement, provider string) (state.StatementInvoiceExport, *api.Problem)
+
+	// ProductControlEnabled reports FAAS_PRODUCT_CONTROL_ENABLED; runs bill
+	// Product Control customers only while it is on (ADR-20261018212918).
+	ProductControlEnabled() bool
+	FinalizeProductStatement(ctx context.Context, acct state.Account, scope state.ProductBillingScope, reviewHash string) (api.ProductBillingDocument, *api.Problem)
+	ExportProductStatement(ctx context.Context, acct state.Account, scope state.ProductBillingScope, documentID, provider string) (api.StatementInvoiceExportResponse, *api.Problem)
 	// SendEmail sends a plain-text notification (ADR-1504); messageID is the
 	// provider idempotency key.
 	SendEmail(ctx context.Context, to, subject, body, messageID string) error
@@ -55,7 +61,14 @@ type Service struct {
 	// monetization is released by a runtime setting (ADR-20261018090210).
 	// Nil runs it.
 	Enabled func() bool
+	// Released reports whether API monetization is released to an account
+	// (ADR-20261020170649); the worker skips accounts it is not. Nil
+	// releases every account.
+	Released func(accountID string) bool
 }
+
+// released reports whether the worker serves an account's monetization.
+func (s *Service) released(accountID string) bool { return s.Released == nil || s.Released(accountID) }
 
 // tick runs one background tick unless Enabled pauses the worker; paused,
 // nothing starts, advances or notifies.
@@ -121,6 +134,15 @@ func runOptions(sources []string, finalize *bool, export string, holdOnGaps *boo
 	return opts, nil
 }
 
+// requireProductControl rejects the product_customers source while Product
+// Control is disabled (ADR-20261018212918).
+func (s *Service) requireProductControl(opts state.BillingRunOptions) *api.Problem {
+	if opts.Includes(state.BillingRunSourceProductCustomers) && !s.Host.ProductControlEnabled() {
+		return validationProblem("Product Control is disabled", "the product_customers source needs Product Control to be enabled")
+	}
+	return nil
+}
+
 // requireExportTarget rejects an export to a provider with no connected
 // key (ADR-1507).
 func (s *Service) requireExportTarget(ctx context.Context, acct state.Account, opts state.BillingRunOptions) *api.Problem {
@@ -169,6 +191,9 @@ func (s *Service) requestedRun(ctx context.Context, acct state.Account, req api.
 	}
 	opts, problem := runOptions(req.Sources, req.Finalize, req.Export, req.HoldOnGaps)
 	if problem != nil {
+		return state.BillingRun{}, problem
+	}
+	if problem := s.requireProductControl(opts); problem != nil {
 		return state.BillingRun{}, problem
 	}
 	if problem := s.requireExportTarget(ctx, acct, opts); problem != nil {
@@ -306,9 +331,12 @@ func itemResponse(item state.BillingRunItem) api.BillingRunItemResponse {
 		StatementID: item.StatementID, Revision: item.Revision, Currency: item.Currency, Completeness: item.Completeness,
 		InvoiceID: item.InvoiceID, ExportedInvoices: item.ExportedCount, Reason: item.Reason, Attempts: item.Attempts,
 		UpdatedAt: item.UpdatedAt.UTC(), PaymentStatus: item.PaymentStatus}
-	if item.SourceKind == state.StatementSourceAppConsumer {
+	switch item.SourceKind {
+	case state.StatementSourceAppConsumer:
 		out.AppID, out.ConsumerID = item.AppID, item.SourceID
-	} else {
+	case state.StatementSourceProductControl:
+		out.AppID, out.PlatformTenantID = item.AppID, item.SourceID
+	default:
 		out.PlatformTenantID = item.SourceID
 	}
 	if item.StatementID != "" {

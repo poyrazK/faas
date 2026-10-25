@@ -298,49 +298,57 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	if !ok {
 		return
 	}
-	safeAppSlug := logsanitize.Field(app.Slug)
-	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\n", "")
-	safeAppSlug = strings.ReplaceAll(safeAppSlug, "\r", "")
 	scope, _, prob := scopeFromQuery(r, false /* allowAll */)
 	if prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
-	safeScope := logsanitize.Field(scope)
-	safeScope = strings.ReplaceAll(safeScope, "\n", "")
-	safeScope = strings.ReplaceAll(safeScope, "\r", "")
 	var req api.PutAppSecretRequest
 	if err := decodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrValidation("invalid JSON body"))
 		return
 	}
+	receipt, prob := s.setAppSecret(r, acct, app, scope, key, req)
+	if prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		Key          string                   `json:"key"`
+		ConfigChange *api.ConfigChangeReceipt `json:"config_change,omitempty"`
+	}{Key: key, ConfigChange: receipt})
+}
+
+// setAppSecret is shared by the secret PUT route and project apply. Both paths
+// enforce quota, seal at rest, record a config revision, invalidate snapshots,
+// and emit runtime/audit events.
+func (s *server) setAppSecret(r *http.Request, acct state.Account, app state.App, scope, key string, req api.PutAppSecretRequest) (*api.ConfigChangeReceipt, *api.Problem) {
+	ctx := r.Context()
+	safeAppSlug := strings.NewReplacer("\n", "", "\r", "").Replace(logsanitize.Field(app.Slug))
+	safeScope := strings.NewReplacer("\n", "", "\r", "").Replace(logsanitize.Field(scope))
 	limits := api.MustLimitsFor(acct.Plan)
 	// Byte cap: enforced here AND inside secretbox.SealOne. Defense in
 	// depth — if a future refactor drops one of the two, the other still
 	// protects.
 	if prob := req.Validate(limits.SecretValueMaxBytes); prob != nil {
-		api.WriteProblem(w, prob)
-		return
+		return nil, prob
 	}
-	if prob := s.checkSecretQuota(r.Context(), acct, app, scope, key, limits); prob != nil {
-		api.WriteProblem(w, prob)
-		return
+	if prob := s.checkSecretQuota(ctx, acct, app, scope, key, limits); prob != nil {
+		return nil, prob
 	}
 	change := s.beginConfigChange(r, acct, app, scope, key)
-	if prob := s.sealAndPersist(r.Context(), acct, app, scope, key, req.Value, req.SecretClass, limits); prob != nil {
-		s.abandonConfigChange(r.Context(), change)
-		api.WriteProblem(w, prob)
-		return
+	if prob := s.sealAndPersist(ctx, acct, app, scope, key, req.Value, req.SecretClass, limits); prob != nil {
+		s.abandonConfigChange(ctx, change)
+		return nil, prob
 	}
-	revision := s.finishConfigChange(r.Context(), change, state.ConfigSourceSecretSet, key, false)
-	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
+	revision := s.finishConfigChange(ctx, change, state.ConfigSourceSecretSet, key, false)
+	invalidated, err := s.invalidateAppSnapshots(ctx, app.ID)
 	if err != nil {
 		s.log.Error("secret set: invalidate snapshots", "app", safeAppSlug, "err", err)
-		s.audit.Emit(r.Context(), "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
+		s.audit.Emit(ctx, "secret.snapshot_invalidation_failed", &acct.ID, map[string]any{
 			"app_id": app.ID, "scope": scope, "name": key, "operation": "set",
 		})
-		api.WriteProblem(w, api.ErrCapacity("could not invalidate application snapshots"))
-		return
+		return nil, api.ErrCapacity("could not invalidate application snapshots")
 	}
 	// Audit + log. VALUE never reaches slog. logsanitize.RedactValue is
 	// used defensively even though we never log req.Value directly — a
@@ -357,18 +365,15 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// data.app_id lets the audit log filter by app; data.name is
 	// the secret key (not the value); data.scope is the env-scope
 	// the row was written to (ADR-092 PR-B).
-	s.audit.Emit(r.Context(), "secret.set", &acct.ID, map[string]any{
+	s.audit.Emit(ctx, "secret.set", &acct.ID, map[string]any{
 		"app_id":                 app.ID,
 		"name":                   key,
 		"scope":                  scope,
 		"secret_class_requested": req.SecretClass,
 		"snapshots_invalidated":  invalidated,
 	})
-	s.notifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, app, "set", scope, key)
-	writeJSON(w, http.StatusOK, struct {
-		Key          string                   `json:"key"`
-		ConfigChange *api.ConfigChangeReceipt `json:"config_change,omitempty"`
-	}{Key: key, ConfigChange: configChangeReceipt(change, revision)})
+	s.notifyRuntimeConfigChange(ctx, db.NotifySecretRotated, acct, app, "set", scope, key)
+	return configChangeReceipt(change, revision), nil
 }
 
 // sealAndPersist runs the "no-recipient / seal / persist" portion of
@@ -395,8 +400,8 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 // is the only one that produces the "same hash across scopes =
 // same plaintext" property the env-diff endpoint relies on.
 //
-// The kid is computed from mfaIdentities()[0] (the current host
-// identity). If identities are not loaded we refuse to seal (same
+// The kid is the string form of the recipient the value is sealed to
+// (ADR 20261022111812); without a recipient we refuse to seal (same
 // posture as the rotate handler — a typo'd env var shouldn't
 // silently degrade to "no kid, no problem"). Same refuses-to-start
 // posture for the host HMAC key — apid boots without one ONLY in
@@ -404,69 +409,9 @@ func (s *server) setSecret(w http.ResponseWriter, r *http.Request, acct state.Ac
 // HMAC key is a misconfiguration that must surface as a 5xx, not
 // a silently empty value_hash.
 func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, scope, key, value, secretClass string, limits api.Limits) *api.Problem {
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		return customerCapacityProblem(s.log, "store app secret", "Secret storage temporarily unavailable",
-			"Gregale could not securely store this value.",
-			"Retry in a few seconds; if it still fails, contact support.", nil)
-	}
-	hmacKey := hostHMACKeyBytes()
-	if len(hmacKey) == 0 {
-		// ADR-117 PR-C: defensible refuse-to-seal for the case where
-		// env-driven secrets are enabled but the per-host HMAC key
-		// didn't load. apid startup catches this earlier (503 at boot),
-		// but a unit test that bypasses main's loader must not be
-		// able to silently write a row with value_hash = ''.
-		return customerCapacityProblem(s.log, "store app secret", "Secret storage temporarily unavailable",
-			"Gregale could not securely store this value.",
-			"Retry in a few seconds; if it still fails, contact support.", nil)
-	}
-	// mfaIdentities is nil in unit-test harnesses that only install
-	// the single-key package level (see withTestRecipient in
-	// handlers_secrets_test.go); the same nil-guard pattern lives in
-	// handlers_mfa.go:600-602. We fall back to mfaIdentity so tests
-	// that haven't migrated to the rotation-aware accessor stamp a
-	// kid without a separate setup helper.
-	var idents []*age.X25519Identity
-	if mfaIdentities != nil {
-		idents = mfaIdentities()
-	}
-	if len(idents) == 0 && mfaIdentity != nil {
-		if single := mfaIdentity(); single != nil {
-			idents = []*age.X25519Identity{single}
-		}
-	}
-	if len(idents) == 0 {
-		return customerCapacityProblem(s.log, "store app secret", "Secret storage temporarily unavailable",
-			"Gregale could not securely store this value.",
-			"Retry in a few seconds; if it still fails, contact support.", nil)
-	}
-	kid, err := secretbox.IdentityFingerprint(idents)
-	if err != nil {
-		return customerCapacityProblem(s.log, "fingerprint app secret identity", "Secret storage temporarily unavailable",
-			"Gregale could not securely store this value.",
-			"Retry in a few seconds; if it still fails, contact support.", err)
-	}
-	valueHash, err := secretbox.ValueFingerprint([]byte(value), hmacKey)
-	if err != nil {
-		// Empty plaintext is a 400 from the handler chain (limits /
-		// SecretValueMaxBytes >= 1) — ValueFingerprint's empty-input
-		// error only fires for the empty-string edge case the
-		// handler didn't catch. Treat as a 5xx capacity problem
-		// (misconfiguration: handler let an empty value through).
-		return customerCapacityProblem(s.log, "fingerprint app secret value", "Secret storage temporarily unavailable",
-			"Gregale could not securely store this value.",
-			"Retry in a few seconds; if it still fails, contact support.", err)
-	}
-	ciphertext, err := secretbox.SealOne(recipient, key, value, limits.SecretValueMaxBytes)
-	if err != nil {
-		// SealOne may return an api.Problem (over-cap) — surface it directly.
-		if prob := api.AsProblem(err); prob != nil {
-			return prob
-		}
-		return customerCapacityProblem(s.log, "encrypt app secret", "Secret storage temporarily unavailable",
-			"Gregale could not securely store this value.",
-			"Retry in a few seconds; if it still fails, contact support.", err)
+	ciphertext, kid, valueHash, problem := s.sealSecretValue("app secret", app.AccountID, key, value, limits.SecretValueMaxBytes)
+	if problem != nil {
+		return problem
 	}
 	// ADR-092 PR-B: scope-aware upsert. PK is now (app_id, scope, key)
 	// (PR-A migration 00217). The flat UpsertAppSecretWithKid is kept
@@ -484,6 +429,53 @@ func (s *server) sealAndPersist(c stdctx, acct state.Account, app state.App, sco
 		return api.ErrCapacity("could not persist secret")
 	}
 	return nil
+}
+
+// sealSecretValue seals one key's value to the fleet recipient as a
+// single-key envelope and returns it with its kid and value fingerprint.
+// noun names the secret kind in logs ("app secret", "project secret").
+// accountID is the account whose workloads receive the value; the envelope
+// is bound to it once runtime binding is on (ADR-20261023173624).
+func (s *server) sealSecretValue(noun, accountID, key, value string, maxBytes int) ([]byte, string, string, *api.Problem) {
+	unavailable := func(operation string, err error) *api.Problem {
+		return customerCapacityProblem(s.log, operation, "Secret storage temporarily unavailable",
+			"Gregale could not securely store this value.",
+			"Retry in a few seconds; if it still fails, contact support.", err)
+	}
+	recipient := runtimeSecretRecipient()
+	if recipient == nil {
+		return nil, "", "", unavailable("store "+noun, nil)
+	}
+	hmacKey := hostHMACKeyBytes()
+	if len(hmacKey) == 0 {
+		// ADR-117 PR-C: defensible refuse-to-seal for the case where
+		// env-driven secrets are enabled but the per-host HMAC key
+		// didn't load. apid startup catches this earlier (503 at boot),
+		// but a unit test that bypasses main's loader must not be
+		// able to silently write a row with value_hash = ''.
+		return nil, "", "", unavailable("store "+noun, nil)
+	}
+	// The kid names the recipient the value is sealed to (ADR 20261022111812):
+	// it is a property of the public key, so sealing needs no private identity.
+	kid := recipient.String()
+	valueHash, err := secretbox.ValueFingerprint([]byte(value), hmacKey)
+	if err != nil {
+		// Empty plaintext is a 400 from the handler chain (limits /
+		// SecretValueMaxBytes >= 1) — ValueFingerprint's empty-input
+		// error only fires for the empty-string edge case the
+		// handler didn't catch. Treat as a 5xx capacity problem
+		// (misconfiguration: handler let an empty value through).
+		return nil, "", "", unavailable("fingerprint "+noun+" value", err)
+	}
+	ciphertext, err := secretbox.SealOneBound(recipient, runtimeSecretBinding(accountID), key, value, maxBytes)
+	if err != nil {
+		// SealOne may return an api.Problem (over-cap) — surface it directly.
+		if prob := api.AsProblem(err); prob != nil {
+			return nil, "", "", prob
+		}
+		return nil, "", "", unavailable("encrypt "+noun, err)
+	}
+	return ciphertext, kid, valueHash, nil
 }
 
 // checkSecretQuota returns nil when a PUT for (app, scope, key) is
@@ -561,6 +553,9 @@ func (s *server) deleteSecret(w http.ResponseWriter, r *http.Request, acct state
 	}
 	// ADR-1451: deletion is revocation; a guard never restores it.
 	s.finishConfigChange(r.Context(), change, state.ConfigSourceSecretDelete, key, true)
+	if key == "DATA_API_USAGE_URL" {
+		s.forgetDataAPIAccess(r.Context(), acct.ID, app.ID)
+	}
 	invalidated, err := s.invalidateAppSnapshots(r.Context(), app.ID)
 	if err != nil {
 		s.log.Error("secret delete: invalidate snapshots", "app", safeAppSlug, "err", err)
@@ -647,6 +642,11 @@ func secretRevocationResponse(revocation state.AppSecretRevocation) api.AppSecre
 }
 
 func (s *server) managedSecretConflictProblem(ctx stdctx, accountID, appID, scope, key string) *api.Problem {
+	if pinned, ok := s.store.(state.ProjectReleaseSecretsStore); ok {
+		if yes, err := pinned.ReleaseSecretsPinned(ctx, accountID, appID, scope); err == nil && yes {
+			return api.NewProblem(http.StatusConflict, "project_release_secrets_pinned", "Secret versions are release-bound", "Change these secrets through an atomic verified project release.")
+		}
+	}
 	row, err := s.store.GetAppSecretInScope(ctx, accountID, appID, scope, key)
 	if err == nil && row != nil && row.ManagedObjectStorageCredentialID != "" {
 		return api.ErrManagedObjectStorageSecretConflict()

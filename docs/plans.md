@@ -47,6 +47,19 @@ Realtime is included on every paid plan at no extra charge: Gregale bills comput
 
 The connection limit counts open WebSocket and SSE connections across all of an account's endpoints. One account may also hold at most 50% of a single realtime node's connections; see [realtime fair use](realtime.md#fair-use-limits).
 
+## Object storage
+
+Object storage bills the bytes it holds. Each plan includes an average amount of stored data per month; storage beyond it costs $0.03 per GiB-month. Requests and egress are not charged. Free stops at its included storage.
+
+| Plan | Included storage | Beyond the included storage |
+|---|---:|---|
+| **Free** | 1 GiB | stops at 1 GiB |
+| **Hobby** | 10 GiB | $0.03 per GiB-month |
+| **Pro** | 50 GiB | $0.03 per GiB-month |
+| **Scale** | 200 GiB | $0.03 per GiB-month |
+
+Included storage is the average over the month, so 20 GiB held for half a month uses 10 GiB of it. See [object storage](object-storage.md).
+
 ## Choose a plan
 
 Start on **Free** for a small public API or a trial. **Hobby** unlocks the paid observability, async, and data surfaces. **Pro** is the normal production tier for teams, while **Scale** raises the app, concurrency, RAM, and usage ceilings. Feature maturity and entitlement are listed in the [capability matrix](capabilities.md).

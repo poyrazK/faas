@@ -44,7 +44,17 @@ func (p *environmentQualificationServiceProxy) ServeHTTP(w http.ResponseWriter, 
 		serviceProxyProblem(w, http.StatusForbidden, "private service caller identity is unavailable")
 		return
 	}
-	nodeID, err := p.config.ResolveNode(r.Context(), ip.String())
+	// Every service request passes this gate, so its identity reads share the
+	// service policy read bound: a stalled database answers 503 promptly.
+	lookup, cancel := context.WithTimeout(r.Context(), api.TrafficServicePolicyReadTimeout)
+	defer cancel()
+	nodeID, err := p.config.ResolveNode(lookup, ip.String())
+	if errors.Is(err, state.ErrConflict) || errors.Is(err, state.ErrInvalidArgument) {
+		// An address naming several live instances identifies no caller. Deny
+		// it like any other authority failure; it is not a lookup outage.
+		serviceProxyProblem(w, http.StatusForbidden, "private service caller identity is ambiguous")
+		return
+	}
 	if err != nil {
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "private service caller lookup is unavailable")
 		return
@@ -58,7 +68,7 @@ func (p *environmentQualificationServiceProxy) ServeHTTP(w http.ResponseWriter, 
 		serviceProxyProblem(w, http.StatusForbidden, "private service caller identity is unknown")
 		return
 	}
-	held, err := p.config.Store.EnvironmentQualificationNetworkCaller(r.Context(), nodeID, ip.String())
+	held, err := p.config.Store.EnvironmentQualificationNetworkCaller(lookup, nodeID, ip.String())
 	if err != nil {
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "private service authority is unavailable")
 		return
@@ -112,7 +122,9 @@ func (p *environmentQualificationServiceProxy) servePrivate(w http.ResponseWrite
 	target := route.Target
 	observed := &qualificationExchangeWriter{ResponseWriter: w}
 	p.config.Forward(Target{AppID: target.AppID, NodeID: target.NodeID, InstanceID: target.InstanceID, DeploymentID: target.DeploymentID, WakeID: target.WakeID, Port: route.Port}).ServeHTTP(observed, request)
-	if route.RequireHTTPS && route.Caller.CaptureInstanceID != "" && route.Target.CaptureInstanceID != "" && observed.status >= 200 && observed.status <= 299 && !observed.failed && ctx.Err() == nil {
+	// ADR-20261019200059: an HTTP caller's exchange is evidence too; the
+	// receipt keeps RequireHTTPS so activation can match the caller transport.
+	if route.Caller.CaptureInstanceID != "" && route.Target.CaptureInstanceID != "" && observed.status >= 200 && observed.status <= 299 && !observed.failed && ctx.Err() == nil {
 		if receipts, ok := p.config.Store.(state.EnvironmentQualificationServiceReceiptStore); ok {
 			if err := receipts.RecordEnvironmentQualificationServiceExchange(ctx, state.EnvironmentQualificationServiceRequest{NodeID: nodeID, HostIP: hostIP, GraphID: graphID, Binding: binding}, route); err != nil {
 				slog.WarnContext(ctx, "candidate service exchange evidence was not recorded", "graph_id", graphID, "binding", binding, "error", err)

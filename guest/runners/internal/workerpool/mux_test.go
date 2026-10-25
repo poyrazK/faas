@@ -35,6 +35,8 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 	}
 	slots, _ := strconv.Atoi(os.Getenv("HELPER_CONCURRENCY"))
 	ackDelay, _ := strconv.Atoi(os.Getenv("HELPER_CANCEL_ACK_DELAY_MS"))
+	completionVersion, _ := strconv.Atoi(os.Getenv("HELPER_COMPLETION_VERSION"))
+	resourceVersion, _ := strconv.Atoi(os.Getenv("HELPER_RESOURCE_VERSION"))
 	var mu sync.Mutex
 	write := func(v any) {
 		body, _ := json.Marshal(v)
@@ -42,7 +44,7 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 		_, _ = os.Stdout.Write(append(body, '\n'))
 		mu.Unlock()
 	}
-	write(map[string]any{"__faas_ready": true, "concurrency": slots})
+	write(map[string]any{"__faas_ready": true, "concurrency": slots, "completion_version": completionVersion, "resource_lifecycle_version": resourceVersion})
 	reader := bufio.NewReader(os.Stdin)
 	for {
 		line, err := reader.ReadBytes('\n')
@@ -50,9 +52,10 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 			os.Exit(0)
 		}
 		var req struct {
-			ID     string  `json:"__faas_id"`
-			Cancel *string `json:"__faas_cancel"`
-			Value  string  `json:"value"`
+			ID         string  `json:"__faas_id"`
+			Cancel     *string `json:"__faas_cancel"`
+			Value      string  `json:"value"`
+			Completion bool    `json:"completion"`
 		}
 		if err := json.Unmarshal(line, &req); err != nil {
 			os.Exit(2)
@@ -90,6 +93,9 @@ func TestWorkerpoolMuxHelperProcess(t *testing.T) {
 			}()
 		default:
 			write(muxLine{ID: req.ID, Value: value, PID: os.Getpid()})
+			if completionVersion == 1 && req.Completion && value != "hold" {
+				write(map[string]string{"__faas_id": req.ID, "frame": "complete"})
+			}
 		}
 	}
 }

@@ -51,3 +51,12 @@ delivers signed webhooks.
 - A throttle rule's hits are the requests it applies to, not only those
   it rejected; a rejection-only signal would need its own counter.
 - Sub-hour windows are not available until hit counts gain finer buckets.
+
+## Amendment (2026-10-14): `edge_rule_activity`
+
+A third metric, `edge_rule_activity`, counts a rule's matches in either
+mode (enforced + log-mode). A rule is in one mode at a time, so for a
+scoped alert it is simply "how often this rule matched", and it keeps
+working when the rule moves from log mode to enforce — which the two
+mode-specific metrics do not. Same shape rules as the others: app-scoped,
+webhook-only, 1h/6h/24h/7d windows (`alert_rules_edge_rule_chk`).

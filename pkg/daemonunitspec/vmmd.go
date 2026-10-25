@@ -16,6 +16,16 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //     can remove or hide gatewayd/schedd sockets during a vmmd restart.
 //     schedd + gatewayd-internal + imaged write into the shared host path
 //     via ReadWritePaths=/run/faas.
+//   - RuntimeDirectory=faas-ibridge (mode 0711, preserved) is one socket
+//     directory per unprivileged instance bridge (connection-survival ADR
+//     slice 1a). It sits under /run, which only root can write, not under
+//     /run/faas, which group faas can: no other daemon can swap the
+//     directory vmmd creates and chowns inside. Preserved so bridges can
+//     outlive vmmd (P1c).
+//   - FileDescriptorStoreMax=4096: vmmd keeps every job's exit listener in
+//     systemd's fd store, so a guest that reports its exit while vmmd
+//     restarts waits in the backlog for the successor (vmmd restart
+//     adoption ADR, guest channels).
 //   - PrivateTmp MUST be `=no` — `=yes` makes /run/faas land inside
 //     vmmd's per-mount-namespace tmpfs and become invisible from the
 //     host, breaking every other daemon's dial of /run/faas/vmmd.sock
@@ -64,11 +74,16 @@ func UnitVmmd() daemonunit.Unit {
 		// ADR-471/399: private failure reports and resource intent survive restart.
 		StateDirectory:     "faas/vmmd-failures faas/vmmd-resources",
 		StateDirectoryMode: "0700",
+		// Connection-survival slice 1a: the bridges' socket directory.
+		RuntimeDirectory:         "faas-ibridge",
+		RuntimeDirectoryMode:     "0711",
+		RuntimeDirectoryPreserve: "yes",
 		// No User=/Group=: vmmd is root by design.
 		ExecStart: `/opt/faas/current/bin/vmmd --config /etc/faas/vmmd.toml`,
 		ExecStartPre: []string{
 			`/usr/bin/install -d -o root -g faas -m 0775 /run/faas`,
 			`/usr/bin/chmod 0775 /run/faas`,
+			`/usr/bin/install -d -o root -g root -m 0700 /run/faas/stream`,
 			`/usr/bin/install -d -o root -g faas -m 0750 /var/log/faas/vmmd-archive`,
 		},
 		// Re-assert the shared host-directory ownership after startup.
@@ -79,6 +94,10 @@ func UnitVmmd() daemonunit.Unit {
 			`/usr/bin/chmod 0775 /run/faas`,
 		},
 		Restart: "on-failure",
+		// HTTP forwarding permits die with vmmd. Reap its bridge processes and
+		// compatibility shell children before a replacement permit owner starts.
+		// Jailer VMs live in their separate delegated tenant/build scopes.
+		KillMode: "control-group",
 		// vmmd opens Postgres before it binds its serving sockets so a
 		// compute node never advertises itself without a durable identity.
 		// During a simultaneous fleet boot, the control-plane database can
@@ -92,7 +111,8 @@ func UnitVmmd() daemonunit.Unit {
 		// budget; the watchdog waits a further 120 s without pings.
 		// Firecracker children survive a vmmd restart and are adopted
 		// or reaped by ReapOrphanedJails on the next boot.
-		WatchdogSec: "120s",
+		WatchdogSec:            "120s",
+		FileDescriptorStoreMax: "4096",
 		// Startup walks the log-archive spool before sd_notify(READY=1). After
 		// a boot storm the walk over tens of thousands of instance
 		// directories took 137 s on a cold cache during a rollout, past the

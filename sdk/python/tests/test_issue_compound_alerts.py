@@ -1,10 +1,10 @@
-from faas_sdk.api.apps import (
+from faas_sdk.preview.api.apps import (
     get_issue_compound_alert_policy,
     preview_issue_compound_alert,
     set_issue_compound_alert_policy,
 )
-from faas_sdk.models.preview_issue_compound_alert_request import PreviewIssueCompoundAlertRequest
-from faas_sdk.models.update_issue_compound_alert_policy_request import UpdateIssueCompoundAlertPolicyRequest
+from faas_sdk.preview.models.preview_issue_compound_alert_request import PreviewIssueCompoundAlertRequest
+from faas_sdk.preview.models.update_issue_compound_alert_policy_request import UpdateIssueCompoundAlertPolicyRequest
 
 
 def test_compound_policy_and_preview_keep_both_thresholds_and_one_window():

@@ -133,6 +133,9 @@ func LoadHostKey(path string) (*age.X25519Identity, error) {
 	if err != nil {
 		return nil, fmt.Errorf("secretbox: parse host key %q: %w", path, err)
 	}
+	// Decryptions under this key are counted under the file's label
+	// (ADR 20261024014500).
+	labelIdentity(path, id)
 	return id, nil
 }
 
@@ -311,6 +314,7 @@ func LoadFleetAndHostKeys(dir string) ([]*age.X25519Identity, error) {
 	seen := map[string]struct{}{fleet.Recipient().String(): {}}
 
 	for _, names := range [][]string{
+		{"fleet.age.previous", "faas_fleet_age_identity_previous"},
 		{"host.age", "faas_host_age_identity"},
 		{"host.age.previous", "faas_host_age_identity_previous"},
 	} {

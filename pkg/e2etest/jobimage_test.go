@@ -61,3 +61,18 @@ func TestCustomerWorkflowImageUsesServingFixture(t *testing.T) {
 		t.Fatal("workflow image does not serve native HTTP actions")
 	}
 }
+
+func TestCustomerHTTPImageUsesServingFixture(t *testing.T) {
+	image, _ := CustomerHTTPImage("test/http")
+	var config struct {
+		Config struct {
+			Cmd []string `json:"Cmd"`
+		} `json:"config"`
+	}
+	if err := json.Unmarshal(image.configBytes, &config); err != nil {
+		t.Fatal(err)
+	}
+	if len(config.Config.Cmd) != 2 || config.Config.Cmd[0] != "/job-fixture" || config.Config.Cmd[1] != "customer-http" {
+		t.Fatal("HTTP operation image does not serve the operation handler")
+	}
+}

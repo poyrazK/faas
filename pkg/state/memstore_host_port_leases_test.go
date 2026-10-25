@@ -1,4 +1,4 @@
-package state
+package state_test
 
 // adr: 177
 
@@ -7,10 +7,11 @@ import (
 	"testing"
 
 	"github.com/onebox-faas/faas/pkg/hostport"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 func TestMemStoreHostPortLeasesAreDurableUntilRelease(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	got, err := store.AcquireHostPortLeases(ctx, "node-a", "instance-a", []hostport.Request{
 		{Name: "http", Protocol: hostport.TCP, GuestPort: 8080},
@@ -42,7 +43,7 @@ func TestMemStoreHostPortLeasesAreDurableUntilRelease(t *testing.T) {
 }
 
 func TestMemStoreHostPortLeasesIsolateNodes(t *testing.T) {
-	store := NewMemStore()
+	store := state.NewMemStore()
 	ctx := context.Background()
 	left, err := store.AcquireHostPortLeases(ctx, "node-a", "instance-a", []hostport.Request{{Protocol: hostport.TCP, GuestPort: 80}})
 	if err != nil {

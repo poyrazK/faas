@@ -1,6 +1,6 @@
 // commands_ai.go — `gregale ai`: AI gateway settings, prices, per-app
 // limits, usage and fallback routes on managed outbound integrations
-// (ADR-988, ADR-989, ADR-990). Money is entered and shown in euros and sent
+// (ADR-988, ADR-989, ADR-990). Money is entered and shown in US dollars (ADR 20261019123822) and sent
 // to the API as integer millicents; no floating point is involved.
 
 package main
@@ -17,7 +17,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-const aiUsageText = "usage: gregale ai <policy|content-policy|app-limit|guardrails|prices|catalog|usage|users|tags|tag-limits|routes|keys|alerts|logs|replay|evaluate|tokens> ..."
+const aiUsageText = "usage: gregale ai <policy|content-policy|app-limit|guardrails|prices|catalog|usage|users|tags|tag-limits|traces|feedback|quality-alerts|deployments|routes|keys|alerts|logs|replay|evaluate|tokens> ..."
 
 func cmdAI(args []string) int {
 	parent, _ := lookupCliCommand("ai")
@@ -44,6 +44,14 @@ func cmdAI(args []string) int {
 		return cmdAITags(args[1:])
 	case "tag-limits":
 		return cmdAITagLimits(args[1:])
+	case "traces":
+		return cmdAITraces(args[1:])
+	case "feedback":
+		return cmdAIFeedback(args[1:])
+	case "quality-alerts":
+		return cmdAIQualityAlerts(args[1:])
+	case "deployments":
+		return cmdAIDeployments(args[1:])
 	case "routes":
 		return cmdAIRoutes(args[1:])
 	case "guardrails":
@@ -74,26 +82,26 @@ func boolToExit(failed bool) int {
 	return 0
 }
 
-// parseEuroMillicents reads a non-negative euro amount with at most five
+// parseUSDMillicents reads a non-negative US-dollar amount with at most five
 // decimals ("12.5" is 1,250,000 millicents) using integer arithmetic only.
-func parseEuroMillicents(value string) (int64, error) {
+func parseUSDMillicents(value string) (int64, error) {
 	whole, fraction, _ := strings.Cut(strings.TrimSpace(value), ".")
 	if whole == "" && fraction == "" || len(fraction) > 5 || strings.HasPrefix(whole, "-") || strings.HasPrefix(whole, "+") {
-		return 0, fmt.Errorf("%q is not a euro amount with at most 5 decimals", value)
+		return 0, fmt.Errorf("%q is not a dollar amount with at most 5 decimals", value)
 	}
 	if whole == "" {
 		whole = "0"
 	}
-	euros, err := strconv.ParseInt(whole, 10, 64)
-	if err != nil || euros > api.MaxOutboundAICostMillicents/100_000 {
-		return 0, fmt.Errorf("%q is not a supported euro amount", value)
+	dollars, err := strconv.ParseInt(whole, 10, 64)
+	if err != nil || dollars > api.MaxOutboundAICostMillicents/100_000 {
+		return 0, fmt.Errorf("%q is not a supported dollar amount", value)
 	}
 	fraction += strings.Repeat("0", 5-len(fraction))
 	fractionMillicents, err := strconv.ParseInt(fraction, 10, 64)
 	if err != nil {
-		return 0, fmt.Errorf("%q is not a euro amount", value)
+		return 0, fmt.Errorf("%q is not a dollar amount", value)
 	}
-	return euros*100_000 + fractionMillicents, nil
+	return dollars*100_000 + fractionMillicents, nil
 }
 
 // optionalLimit applies a limit flag to a current value: "" keeps it,
@@ -136,9 +144,11 @@ func findOutboundIntegration(client *api.Client, integrationID string) (api.Outb
 }
 
 const aiPolicyUsage = "usage: gregale ai policy <integration-id> [--provider openai|anthropic|gemini|azure_openai|bedrock|vertex|off] " +
-	"[--daily-tokens N|none] [--daily-cost EUR|none] [--monthly-cost EUR|none] [--request-log on|off] " +
-	"[--request-log-content on|off] [--user-daily-tokens N|none] [--user-daily-cost EUR|none] [--log-export on|off] " +
-	"[--allow-unmetered on|off] [--prompt-cache on|off]"
+	"[--daily-tokens N|none] [--daily-cost USD|none] [--monthly-cost USD|none] [--request-log on|off] " +
+	"[--request-log-content on|off] [--user-daily-tokens N|none] [--user-daily-cost USD|none] [--log-export on|off] " +
+	"[--allow-unmetered on|off] [--prompt-cache on|off] [--trace-max-calls N|none] [--trace-max-cost USD|none] " +
+	"[--trace-max-repeated-tool-calls N|none] [--online-eval-percent N|none] [--online-eval-judge INTEGRATION-ID] " +
+	"[--online-eval-model MODEL] [--online-eval-rubric TEXT|none] [--quality-alerts on|off]"
 
 func cmdAIPolicy(args []string) int {
 	fs := newFlagSet("ai policy", flag.ContinueOnError)
@@ -146,13 +156,21 @@ func cmdAIPolicy(args []string) int {
 	requestLog := fs.String("request-log", "", "log per-call metadata for 7 days: on or off")
 	requestLogContent := fs.String("request-log-content", "", "also keep the first 32 KiB of each logged call's bodies for 3 days: on or off")
 	dailyTokens := fs.String("daily-tokens", "", "UTC-day input+output token limit, or none")
-	dailyCost := fs.String("daily-cost", "", "UTC-day cost limit in EUR, or none")
-	monthlyCost := fs.String("monthly-cost", "", "calendar-month cost limit in EUR, or none")
+	dailyCost := fs.String("daily-cost", "", "UTC-day cost limit in USD, or none")
+	monthlyCost := fs.String("monthly-cost", "", "calendar-month cost limit in USD, or none")
 	userDailyTokens := fs.String("user-daily-tokens", "", "each end user's UTC-day token limit, or none")
-	userDailyCost := fs.String("user-daily-cost", "", "each end user's UTC-day cost limit in EUR, or none")
+	userDailyCost := fs.String("user-daily-cost", "", "each end user's UTC-day cost limit in USD, or none")
 	logExport := fs.String("log-export", "", "send each app call's metadata to the app's log drains: on or off")
 	allowUnmetered := fs.String("allow-unmetered", "", "let through calls the gateway cannot meter, outside the caps: on or off")
 	promptCache := fs.String("prompt-cache", "", "add prompt-cache breakpoints to Claude requests that carry none: on or off")
+	traceCalls := fs.String("trace-max-calls", "", "calls each AI trace may make, or none")
+	traceCost := fs.String("trace-max-cost", "", "cost each AI trace may reach in USD, or none")
+	traceRepeats := fs.String("trace-max-repeated-tool-calls", "", "consecutive identical tool requests a trace may make, or none")
+	evalPercent := fs.String("online-eval-percent", "", "share of answered app calls a judge model scores, 1 to 100, or none")
+	evalJudge := fs.String("online-eval-judge", "", "the AI integration that runs the judge model")
+	evalModel := fs.String("online-eval-model", "", "the judge model")
+	evalRubric := fs.String("online-eval-rubric", "", "what a good answer does for this app, or none")
+	qualityAlerts := fs.String("quality-alerts", "", "alert when a model's quality drifts from its previous 7 days: on or off")
 	if err := parseInterspersed(fs, args); err != nil || fs.NArg() != 1 {
 		return printErr("Invalid ai policy arguments", errors.New(aiPolicyUsage))
 	}
@@ -168,7 +186,10 @@ func cmdAIPolicy(args []string) int {
 		DailyCostLimitMillicents: current.AIDailyCostLimitMillicents, MonthlyCostLimitMillicents: current.AIMonthlyCostLimitMillicents,
 		RequestLogEnabled: current.AIRequestLogEnabled, UserDailyTokenLimit: current.AIUserDailyTokenLimit,
 		UserDailyCostLimitMillicents: current.AIUserDailyCostLimitMillicents, RequestLogContent: current.AIRequestLogContent,
-		LogExport: current.AILogExport, AllowUnmetered: current.AIAllowUnmetered, AutoPromptCache: current.AIAutoPromptCache}
+		LogExport: current.AILogExport, AllowUnmetered: current.AIAllowUnmetered, AutoPromptCache: current.AIAutoPromptCache,
+		TraceMaxCalls: current.AITraceMaxCalls, TraceMaxCostMillicents: current.AITraceMaxCostMillicents,
+		TraceMaxRepeatedToolCalls: current.AITraceMaxRepeatedToolCalls, OnlineEvaluation: current.AIOnlineEvaluation,
+		QualityAlerts: current.AIQualityAlerts}
 	switch *provider {
 	case "":
 	case "off":
@@ -222,17 +243,23 @@ func cmdAIPolicy(args []string) int {
 		return printErr("Invalid --prompt-cache", errors.New("use on or off"))
 	}
 	if req.DailyTokenLimit, err = optionalLimit(*dailyTokens, req.DailyTokenLimit, parseTokenCount); err == nil {
-		if req.DailyCostLimitMillicents, err = optionalLimit(*dailyCost, req.DailyCostLimitMillicents, parseEuroMillicents); err == nil {
-			req.MonthlyCostLimitMillicents, err = optionalLimit(*monthlyCost, req.MonthlyCostLimitMillicents, parseEuroMillicents)
+		if req.DailyCostLimitMillicents, err = optionalLimit(*dailyCost, req.DailyCostLimitMillicents, parseUSDMillicents); err == nil {
+			req.MonthlyCostLimitMillicents, err = optionalLimit(*monthlyCost, req.MonthlyCostLimitMillicents, parseUSDMillicents)
 		}
 	}
 	if err == nil {
 		if req.UserDailyTokenLimit, err = optionalLimit(*userDailyTokens, req.UserDailyTokenLimit, parseTokenCount); err == nil {
-			req.UserDailyCostLimitMillicents, err = optionalLimit(*userDailyCost, req.UserDailyCostLimitMillicents, parseEuroMillicents)
+			req.UserDailyCostLimitMillicents, err = optionalLimit(*userDailyCost, req.UserDailyCostLimitMillicents, parseUSDMillicents)
 		}
 	}
+	if err == nil {
+		err = applyTraceLimits(&req, *traceCalls, *traceCost, *traceRepeats)
+	}
+	if err == nil {
+		err = applyQualityPolicy(&req, *evalPercent, *evalJudge, *evalModel, *evalRubric, *qualityAlerts)
+	}
 	if err != nil || !req.Valid() {
-		return printErr("Invalid AI policy", errors.Join(err, errors.New("limits, log export, allow-unmetered and prompt-cache need a provider; tokens 1..1e11, costs up to EUR 10,000,000; content capture needs the request log")))
+		return printErr("Invalid AI policy", errors.Join(err, errors.New("limits, log export, allow-unmetered and prompt-cache need a provider; tokens 1..1e11, costs up to USD 10,000,000; trace calls 1..1,000,000 and repeated tool calls 1..1,000; content capture needs the request log; online evaluations need content capture, a judge integration and model")))
 	}
 	if err := client.SetOutboundIntegrationAIPolicy(context.Background(), fs.Arg(0), req); err != nil {
 		return printErr("Could not update AI policy", err)
@@ -254,15 +281,16 @@ func formatSaved(millicents int64) string {
 }
 
 // formatMediaUsage lists a rollup's images, audio seconds and characters
-// (ADR-997), video seconds (ADR-1432) and built-in tool uses (ADR-1433),
-// or "-".
+// (ADR-997), video seconds (ADR-1432), built-in tool uses (ADR-1433) and
+// audio tokens (ADR 20261019072722), or "-".
 func formatMediaUsage(item api.OutboundAIUsageItem) string {
 	var parts []string
 	for _, count := range []struct {
 		value int64
 		unit  string
 	}{{item.Images, "images"}, {item.AudioSeconds, "audio s"}, {item.Characters, "chars"}, {item.VideoSeconds, "video s"},
-		{item.WebSearches, "web searches"}, {item.FileSearches, "file searches"}, {item.CodeSessionGB, "GB code sessions"}} {
+		{item.WebSearches, "web searches"}, {item.FileSearches, "file searches"}, {item.CodeSessionGB, "GB code sessions"},
+		{item.InputAudioTokens, "audio in tokens"}, {item.OutputAudioTokens, "audio out tokens"}} {
 		if count.value > 0 {
 			parts = append(parts, strconv.FormatInt(count.value, 10)+" "+count.unit)
 		}
@@ -345,14 +373,14 @@ func cmdAIUsage(args []string) int {
 	_, _ = fmt.Fprintf(osStdout, "Cost today: %s / %s   %s month to date: %s / %s\n", financialMoney(usage.DailyCostMillicents),
 		formatOptionalMoney(usage.DailyCostLimitMillicents), usage.Month, financialMoney(usage.MonthlyCostMillicents), formatOptionalMoney(usage.MonthlyCostLimitMillicents))
 	tw := tabwriter.NewWriter(osStdout, 0, 0, 2, ' ', 0)
-	_, _ = fmt.Fprintln(tw, "CALLER\tMODEL\tREQUESTS\tCACHE HITS\tERRORS\tINPUT\tCACHED\tOUTPUT\tMEDIA\tCOST\tSAVED")
+	_, _ = fmt.Fprintln(tw, "CALLER\tMODEL\tREQUESTS\tCACHE HITS\tERRORS\tINPUT\tCACHED\tOUTPUT\tMEDIA\tCOST\tSAVED\tQUALITY\tSCORE")
 	var saved int64
 	for _, item := range usage.Items {
 		itemSaved := item.CacheSavedMillicents + item.PromptCacheSavedMillicents
 		saved += itemSaved
-		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\n", item.Caller, item.Model, item.Requests, item.CachedRequests,
-			item.ErrorRequests, item.InputTokens, item.CachedInputTokens, item.OutputTokens, formatMediaUsage(item),
-			financialMoney(item.CostMillicents), formatSaved(itemSaved))
+		_, _ = fmt.Fprintf(tw, "%s\t%s\t%d\t%d\t%d\t%d\t%d\t%d\t%s\t%s\t%s\t%s\t%s\n", item.Caller, item.Model, item.Requests,
+			item.CachedRequests, item.ErrorRequests, item.InputTokens, item.CachedInputTokens, item.OutputTokens, formatMediaUsage(item),
+			financialMoney(item.CostMillicents), formatSaved(itemSaved), formatQuality(item), formatScore(item))
 	}
 	_ = tw.Flush()
 	if saved != 0 {

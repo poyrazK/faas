@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/githubdgrpc"
 	"github.com/onebox-faas/faas/pkg/reconcile"
 	"github.com/onebox-faas/faas/pkg/role"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/trace"
@@ -162,6 +163,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("githubd: load host age identity: %w", err)
 	}
+	// ADR 20261022111812: once the seal_domains role stages the source
+	// domain, its identity opens install tokens and webhook secrets ahead
+	// of the fleet identity, and new install tokens follow its write mode.
+	sourceDomain, err := loadSourceSealDomain(os.Getenv)
+	if err != nil {
+		return err
+	}
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Source, sourceDomain.staged())
+	log.Info("source seal domain", "write_mode", string(sourceDomain.mode), "domain_identity", sourceDomain.staged())
 
 	// PR-H: per-daemon audit + reconcile services. The auditor
 	// carries actor="githubd" so every project.reconcile.* /
@@ -170,7 +180,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reconcile service shares the same state.Store as the
 	// apid-side reconcile (one PgStore per daemon — no
 	// cross-process shared state).
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.AppsDomain))
 	wire.BootStamps(ctx, "githubd", ops)
 	wire.RegisterDefaultOps(ops)
 	// ADR-190 follow-up: export this pool's live statistics so the
@@ -192,7 +202,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	gitFetcher := gitfetch.NewHTTPWithLimits(workDir, api.MustLimitsFor(api.PlanScale))
 	installsAdapter := newStateInstallsAdapter(pool)
 	storeAdapter := newStateBindingsAdapter(pool)
-	source := newInstallationSourceFetcher(installsAdapter, gitFetcher, identity, log)
+	source := newInstallationSourceFetcher(installsAdapter, gitFetcher, identity, log).WithIdentities(sourceDomain.readers(identity))
 	webhookSecret := loadGithubWebhookSecret(os.Getenv)
 	deliveryStore := githubd.NewPGWebhookDeliveryStore(pool)
 	ops.Registry().MustRegister(githubd.NewRecoveryCollector(pool))
@@ -209,7 +219,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// The janitor (1m tick) evicts expired entries so the map
 	// stays bounded across the daemon's lifetime. Mirrors
 	// TokenCache.StartJanitor.
-	secretResolver := githubd.NewPGWebhookSecretResolver(newStateSecretStoreAdapter(pool), log, 60*time.Second)
+	// ADR 20261022111812: the webhook secret's sealed copy opens with the
+	// source domain identity once staged, then the fleet identity (and the
+	// host identities for legacy rows).
+	keyDir := filepath.Dir(hostKeyPath())
+	webhookIdentities, err := sealdomain.LoadReaderIdentities("", hostKeyPath(), filepath.Join(keyDir, "faas_host_age_identity"))
+	if err != nil {
+		return fmt.Errorf("githubd: load webhook secret identities: %w", err)
+	}
+	webhookIdentities = sourceDomain.readers(webhookIdentities...)
+	secretResolver := githubd.NewPGWebhookSecretResolver(newStateSecretStoreAdapter(pool, webhookIdentities), log, 60*time.Second)
 	stopJanitor := secretResolver.StartJanitor(ctx)
 	defer stopJanitor()
 
@@ -268,6 +287,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	webhookSvc.Installs = installsAdapter
 	webhookSvc.Source = source
 	webhookSvc.Reconcile = ghReconcile
+	capabilityAllowed, err := startCapabilityFlags(ctx, store, pool, log)
+	if err != nil {
+		return err
+	}
+	webhookSvc.CapabilityAllowed = capabilityAllowed
 	// Issue #432 phase 5: workDir is the root under which
 	// the per-app source tarballs land during the dispatch
 	// loop (pkg/githubd/staging.go). Same value as the
@@ -377,9 +401,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				realSvc.CIChanges = githubd.NewHTTPCIChangedFiles(tokens, deps.httpClient())
 				realSvc.ProtectedBranches = githubd.NewHTTPProtectedBranches(tokens, deps.httpClient())
 				realSvc.ReviewedMerges = githubd.NewHTTPReviewedMerges(tokens, deps.httpClient())
-				if identities != nil {
-					realSvc.Identities = identities
+				readers := identities
+				if readers == nil {
+					readers = []*age.X25519Identity{identity}
 				}
+				realSvc.Identities = sourceDomain.readers(readers...)
+				tokenRecipients, terr := sourceDomain.recipients(recipient)
+				if terr != nil {
+					return fmt.Errorf("githubd: source seal domain: %w", terr)
+				}
+				realSvc.Recipients = tokenRecipients
 				// Path-filtered build fan-out (ADR-050 §103-109).
 				// Token resolution is per-call via the TokenCache
 				// (Option A from the plan review) so the daemon

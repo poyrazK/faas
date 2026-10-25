@@ -283,6 +283,12 @@ func (l *Loop) Run(ctx context.Context) error {
 	} else {
 		sampler = NewSampler(l.store, l.cpu, l.now)
 	}
+	if mode, err := ParseQuietPauseMode(l.cfg.QuietPauseUnbilled); err != nil {
+		l.log.Warn("meter: quiet pause billing stays off", "err", err)
+	} else if mode != QuietPauseOff {
+		sampler.WithQuietPause(mode, l.ops.Registry())
+		l.log.Info("meter: quiet pause billing (ADR-20261023171905)", "mode", mode)
+	}
 	pusher := NewPusher(l.store, l.pusher, l.log, l.now, l.ops)
 	// One result slot per possible worker, including monitoring and delivery;
 	// a cancelled Run must not strand workers trying to report their exit.

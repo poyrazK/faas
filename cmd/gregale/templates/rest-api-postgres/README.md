@@ -5,12 +5,25 @@ migration connections. The Procfile release command creates the notes schema
 before activation; serving instances use a small connection pool and perform
 no schema changes on startup.
 
-The included `gregale.yaml` declares a two-second `after_restore` hook. Before
-readiness, its loopback-only callback closes captured SQL sessions, opens a new
-pool, and reads the existing notes table within a 1.5-second budget. A failure
-rejects snapshot restoration so Gregale can cold-boot the deployment. Cold boot
-uses `/healthz`; an empty notes table is valid, a missing schema is not. Existing
-apps must deploy the new source and lifecycle configuration to adopt this hook.
+The included `gregale.yaml` declares two-second `before_checkpoint` and
+`after_restore` hooks. Before capture, the loopback-only callback stops SQL
+admission, cancels unfinished work and drains all sessions. After snapshot
+restore or frozen thaw, the second callback opens a fresh pool and reads the
+existing notes table. Each callback has a total 1.5-second budget. A failed
+snapshot restore falls back to cold boot; a failed thaw discards the frozen
+instance and uses the ordinary wake path. A failed checkpoint prevents capture
+under the normal lifecycle contract.
+Cold boot uses `/healthz`; an empty notes table is valid, a missing schema is
+not. Existing apps must deploy the new source and lifecycle configuration to
+adopt both hooks. The pre-checkpoint hook disables warm-tier captures, whose
+process would otherwise resume after closing its pool.
+
+`runtime/postgres-pool-runtime.js` is generated from the SDK's
+`@gregale/sdk-node/postgres/runtime` module. From `sdk/node`, run
+`npm run build && npm run starter:sync` to refresh it; CI rejects drift. The
+starter keeps only its application-table probe and log mapping in `database.js`.
+The SDK exposes diagnostics (state, generation, requests and pools) and fixed
+events without SQL, connection strings or provider error details.
 
 It also declares a two-second `before_checkpoint` hook. Before each capture, the
 callback closes admission, cancels unfinished work and waits until every SQL

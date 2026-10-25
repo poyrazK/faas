@@ -190,12 +190,30 @@ with a different event or payload is `409 operation_signal_conflict`.
 - A signal that arrives before its wait is held and used when the wait starts.
 - A subject signal reaches at most 16 active operations of that definition,
   matched by the [subject](#business-references) fixed at acceptance.
-- History records each delivery as a `signal_received` event.
+- History records each delivery as a `signal_received` event, with its
+  `source`: `account`, `customer` or `webhook`.
 - A wait that times out settles `failed` with `event_timeout`.
 - Native workflow event injection is refused for operation runs, so every event
   appears in the operation's history.
 
 See [ADR-1197](adr/1197-operation-event-waits-and-signals.md).
+
+A customer resumes its own operations with its tenant credentials and the
+`platform_tenant:operations:manage` scope, without the account's token:
+
+```sh
+gregale customer-operations signal OP_ID --self --event payment.succeeded --signal-id evt_3Nx
+gregale customer-operations signal --self --definition DEF_ID --subject order:ord_42 \
+  --event payment.succeeded --signal-id evt_3Nx
+```
+
+The routes are `POST /v1/platform-tenant-self/customer-operations/{id}/signals`
+and `POST /v1/platform-tenant-self/customer-operation-signals`. The subject
+route names the definition, which fixes the app, environment and operation, and
+reaches only the customer's own operations; another customer's operation about
+the same subject ID is never signalled. A `signal_id` is per operation whichever
+route delivers it. See
+[ADR-20261017100853](adr/20261017100853-customer-self-service-operation-signals.md).
 
 ## Deadlines and budgets
 
@@ -219,7 +237,7 @@ accepted work.
   deadline_exceeded` when its deadline passes, whether it is queued, retrying,
   running or waiting for a timer or approval. Its completion callback fires.
   An HTTP attempt still running at the deadline is cut. Unless the definition
-  declares `recovery: safe_to_retry`, that attempt needs reconciliation,
+  declares `recovery: safe_retry`, that attempt needs reconciliation,
   because Gregale cannot know whether it took effect. Workflow Operations
   settle within one minute of the deadline.
 - **Attempts.** `max_attempts` becomes the HTTP execution's retry policy.
@@ -230,10 +248,17 @@ accepted work.
   once a deadline has passed or the budget is spent. Recording an outcome is
   still allowed.
 
-Workflow definitions accept only `deadline_seconds`; their steps carry their own
-retries and timeouts. Job definitions accept no limits. Reads return `limits`,
-`deadline_at` and `usage {execution_ms, attempts}`, and
-`gregale customer-operations get` prints the deadline and budget. See
+Workflow definitions accept `deadline_seconds` and `max_execution_seconds`
+([ADR-20261016110803](adr/20261016110803-workflow-operation-execution-budget.md)). The budget sums
+the runtime of the HTTP step attempts; timer, approval and event waits do not
+count. Each attempt is cut at the earlier of its step timeout and the budget
+still unspent. A cut step, like any failed workflow step, needs reconciliation,
+and `safe_to_retry` recovery is refused once the budget is spent. Workflow steps
+never retry automatically, so `max_attempts` is HTTP-only.
+
+Job definitions accept no limits. Reads return `limits`, `deadline_at` and
+`usage {execution_ms, attempts}`, and `gregale customer-operations get` prints
+the deadline and budget. See
 [ADR-1196](adr/1196-operation-deadlines-and-budgets.md).
 
 ## Contract
@@ -338,7 +363,7 @@ skips the callback. This Express-style example assumes `rawBody` is a Buffer
 and `authorizeOrder` checks the verified customer against the application's data:
 
 ```ts
-import { GregaleOperations } from '@gregale/sdk-node';
+import { GregaleOperations } from '@gregale/sdk-node/preview';
 
 const operations = new GregaleOperations({ apiURL: 'https://api.example.com' });
 
@@ -493,6 +518,13 @@ Customer bearer tokens use a separate namespace:
   is exposed through `X-Gregale-Artifact-SHA256`. Results can expire independently
   of the operation's successful business outcome.
 
+While the owning account suspends a customer, that customer's reads close at
+once: listing, status, events, milestones, identity, submission lookup and
+artifact downloads return `403`, and an open event stream ends with
+`auth_expired` at its next credential recheck. Suspension does not cancel
+admitted work, and the account keeps reading every outcome. Resuming the
+customer reopens its reads.
+
 Runtime `POST /v1/runtime/operations/{id}/progress` and `.../{id}/artifacts`
 require a fresh workload JWT for audience `gregale:operations`, plus the current
 invocation ID, attempt and ephemeral capability. Customer and account tokens do
@@ -516,7 +548,7 @@ runtime reporting; configuring trust does not open admission.
 The Node `GregaleOperations.runRequest(headers, handler)` helper keeps this
 authority isolated per HTTP request and fetches fresh workload identity for each
 report. Its public `context()` omits the capability. Python provides the same
-request isolation through `faas_sdk.operations_runtime.GregaleOperations`.
+request isolation through `faas_sdk.preview.operations_runtime.GregaleOperations`.
 These HTTP helpers reject native Job and workflow contexts.
 
 Node handlers can opt into `runCancellableRequest(headers, async scope => ...)`.
@@ -686,7 +718,8 @@ Update every API and gateway binary before native rollout; older binaries fail
 closed on the new field. See [ADR-666](adr/666-operation-execution-preview-admission.md).
 
 The policy is capped at 64 KiB, ten cohorts, ten customers per cohort and a
-one-hour window. Each admission reads the file again. Missing, unreadable,
+30-day window (raised from one hour so a pilot can run without hourly file
+rotation). Each admission reads the file again. Missing, unreadable,
 malformed, expired or group/world-writable files close admission, without a
 cached open fallback. Changes use atomic file replacement and require no daemon
 restart. The allowed cohort covers definition registration and source deployment;
@@ -705,7 +738,9 @@ closure on every serving node and inspect accepted work separately.
 No production cohort is enabled and no replacement PR is open. Native lifecycle
 and fleet rollout qualification remain required before a customer preview. The
 [preview runbook](ops/operations-http-preview.md) describes preparation,
-admission verification and rollback.
+admission verification and rollback. The proposed
+[ADR-20261017102231](adr/20261017102231-operations-preview-exit.md) sets the evidence for the first
+cohort, for each native execution kind and for general admission per kind.
 
 Owning accounts can observe submission prerequisites with
 `gregale customer-operations doctor --app SLUG --deployment DEPLOYMENT_UUID
@@ -779,6 +814,41 @@ binding with its `expected_version` returns the endpoint to ordinary delivery;
 admitted operations and their receipts are retained. An endpoint has one
 delivery mode: remove an automation or exclusive operation binding first. See
 [ADR-1193](adr/1193-webhook-submitted-customer-operations.md).
+
+### Resume waiting Operations from a webhook
+
+A binding with `"mode":"signal"` starts nothing. It delivers provider events as
+signals to Operations already waiting on a `wait_for_event` step:
+
+```sh
+curl -X PUT "$GREGALE_API/v1/apps/shop/inbound-webhooks/$ENDPOINT/operation-binding" \
+  -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' \
+  -d '{"expected_version":0,"operation":"fulfil","platform_tenant_id":"'$TENANT'",
+       "take_over_delivery":true,"mode":"signal",
+       "subject":{"type":"order","id_from":"/data/object/metadata/order_id"},
+       "signals":[{"provider_event":"payment_intent.succeeded","event":"payment.succeeded"}]}'
+```
+
+`subject.id_from` points into the provider payload, and `subject.type` must
+match the type the operation declares. Each `signals` entry maps a provider
+event type to the event a wait step names. When you bind, the operation must be
+a workflow that waits for every mapped event. Leave `event_types` empty;
+`signals` is the filter.
+
+A mapped event reaches the bound customer's active Operations of that
+definition about that subject, at most 16. Other customers' Operations with the
+same subject ID are never reached. The provider body becomes the wait step's
+output, so it must be at most 64 KiB.
+
+| Answer | Meaning |
+|---|---|
+| `202 signaled` | At least one Operation received the signal. A provider retry is the same signal, so it lands once and returns `duplicate: true`. |
+| `202 unmatched` | No active Operation is waiting on that subject. The event is dropped. |
+| `202 ignored` | The event type is unmapped, or the payload lacks the subject. |
+| non-2xx | Any other refusal. The provider retries the event. |
+
+Operations whose pinned workflow does not wait for the event are skipped. See
+[ADR-20261016100929](adr/20261016100929-webhook-delivered-operation-signals.md).
 
 ## Batch Job Operations (closed preview)
 
@@ -1004,7 +1074,7 @@ tx.workflowBlockers('order-fulfillment', order.workflow_instance_id, order.statu
 ```
 
 Go uses `tx.WorkflowBlockers(workflow, instanceID, state,
-[]faas.OperationWorkflowBlocker{...})`; Python uses
+[]preview.OperationWorkflowBlocker{...})`; Python uses
 `tx.workflow_blockers(workflow, instance_id, state,
 [OperationWorkflowBlocker(code=..., description=..., operation=...)])`.
 Errors must propagate out of the transaction callback so business changes roll back.
@@ -1264,7 +1334,7 @@ tx.workflowBlockers('order-fulfillment', lockedOrder.workflow_instance_id, locke
   }]);
 ```
 
-Go accepts resolution facts as variadic `faas.OperationWorkflowBlockerResolution`
+Go accepts resolution facts as variadic `preview.OperationWorkflowBlockerResolution`
 arguments after the blocker list in `tx.WorkflowBlockers(...)`. Python accepts
 `resolutions=[OperationWorkflowBlockerResolution(...)]` as a keyword argument to
 `tx.workflow_blockers(...)`. Errors must propagate out of the transaction callback.
@@ -1513,7 +1583,7 @@ links are rejected; targets may be unreported or outside retention.
 Report dependencies in the same transaction as the business row change:
 
 ```go
-err := tx.WorkflowDependencies("fulfillment", orderID, "waiting", []faas.OperationWorkflowDependency{
+err := tx.WorkflowDependencies("fulfillment", orderID, "waiting", []preview.OperationWorkflowDependency{
     {SubjectType: "order", SubjectID: orderID, Workflow: "payment", InstanceID: paymentID, RequiredOutcomeCode: "paid"},
 })
 ```
@@ -1832,9 +1902,9 @@ tx.workflowTransition('order-approval', workflowRunID, 'reviewing', 'approved');
 // Perform the business write through tx after the usual row and authorization checks.
 ```
 
-Go provides `tx.BusinessDecision(name, faas.OperationBusinessDecision{...})`;
+Go provides `tx.BusinessDecision(name, preview.OperationBusinessDecision{...})`;
 Python provides `tx.business_decision(name, OperationBusinessDecision(...))`
-with the model from `faas_sdk.business_decisions`. Node exports
+with the model from `faas_sdk.preview.business_decisions`. Node exports
 `businessDecisionPayload(decision)` and Python offers `decision.to_payload()`;
 Go exports `OperationBusinessDecisionPayload`. These payloads can also be used as
 actual milestone facts in the transactional readiness guard.
@@ -1965,7 +2035,7 @@ Go exposes `tx.ReconcileWorkflowState(ctx, milestone, scope, subject, input, rea
 The reader receives `OperationMilestoneListOptions` and returns
 `OperationMilestonesResponse`, using the tenant-self feed. Python exposes
 `await tx.reconcile_workflow_state(milestone, scope, subject, input, read)` with
-`OperationWorkflowReconciliationInput` from `faas_sdk.workflow_reconciliation`;
+`OperationWorkflowReconciliationInput` from `faas_sdk.preview.workflow_reconciliation`;
 its async reader receives keyword options as a dictionary and returns the typed
 `OperationMilestonesResponse`. Adapt that dictionary to the generated tenant-self
 endpoint's UUID/keyword arguments. Reader/validation failures prevent commit even
@@ -2257,10 +2327,10 @@ const blockers = tx.reportBusinessInvariant('invariant-checked', {
 // Supply returned blockers to the next invariant helper call in this callback.
 ```
 
-Go exposes `tx.ReportBusinessInvariant(milestone, faas.OperationBusinessInvariant,
+Go exposes `tx.ReportBusinessInvariant(milestone, preview.OperationBusinessInvariant,
 currentBlockers)` and returns updated blockers plus an error. Python exposes
 `tx.report_business_invariant(milestone, OperationBusinessInvariant(...), current)`
-with the model from `faas_sdk.business_invariants`. Node also exports
+with the model from `faas_sdk.preview.business_invariants`. Node also exports
 `businessInvariantPayload` and `applyBusinessInvariant`; Go exports the payload
 model. Invariant codes are at most 54 lowercase slug bytes; opaque versions are
 at most 64 UTF-8 bytes; public descriptions at most 256; workflow instances at
@@ -2335,7 +2405,7 @@ missing. CLI emits `workflow-invariant-required` rows.
 SDK transactional guards derive planned invariants from the actual milestone
 payloads they queue, replacing caller-supplied plans. In Node use
 `businessInvariantPayload(report)`; Python uses `report.to_payload()`; Go uses
-`faas.OperationBusinessInvariantPayload{Kind: "gregale.business-invariant.v1",
+`preview.OperationBusinessInvariantPayload{Kind: "gregale.business-invariant.v1",
 Invariant: report}`. Evaluate the check on locked business rows for this proposed
 transition, and pass this payload as an actual fact to the guard. The report's
 `state` is the transition's source state. A passing fact does not automatically
@@ -2414,9 +2484,9 @@ await tx.guardedWorkflowTransition(readinessRequest,
 `tx.businessEffect(name, effect)` records an ordinary effect milestone without
 queuing a transition; it can be used for pending/failed observations or a
 completion fact alongside a separately queued transition. Go exposes
-`tx.BusinessEffect(name, faas.OperationBusinessEffect)` and its payload type.
+`tx.BusinessEffect(name, preview.OperationBusinessEffect)` and its payload type.
 Python exposes `tx.business_effect(name, OperationBusinessEffect(...))`, with the
-model from `faas_sdk.business_effects`; `effect.to_payload()` supplies a fact to
+model from `faas_sdk.preview.business_effects`; `effect.to_payload()` supplies a fact to
 its transactional guard. Node exports `businessEffectPayload`. Guards derive
 planned effects from the actual payloads they queue, replacing caller plans.
 Do not queue the same fact separately when the guard already queues it.
@@ -2498,10 +2568,10 @@ tx.businessCompensation('compensation-reported', {
 After verifying the reversal, report `confirmed` with its reference through the
 same application workflow instance in a new authorized Operation. Use a new run
 ID for a separate compensation attempt if the application distinguishes attempts.
-Go exposes `tx.BusinessCompensation(name, faas.OperationBusinessCompensation)`
+Go exposes `tx.BusinessCompensation(name, preview.OperationBusinessCompensation)`
 and `OperationBusinessEffectReference`; Python exposes
 `tx.business_compensation(name, OperationBusinessCompensation(...))`, with models
-from `faas_sdk.business_compensation`. Node exports `businessCompensationPayload`;
+from `faas_sdk.preview.business_compensation`. Node exports `businessCompensationPayload`;
 Python offers `report.to_payload()`; Go exports the payload type.
 
 Source IDs are canonical lowercase nonzero UUIDs. Workflow names are at most 63
@@ -3105,7 +3175,7 @@ their existing behavior and cannot receive named-path selections.
 
 For direct reporting, Node `tx.workflowTransition` accepts selections as its fifth
 argument; Go `tx.WorkflowTransition` accepts variadic
-`faas.OperationWorkflowPathSelection` values; Python `tx.workflow_transition`
+`preview.OperationWorkflowPathSelection` values; Python `tx.workflow_transition`
 accepts `selected_paths=[OperationWorkflowPathSelection(...)]`. Guards obtain
 choices from the readiness proposal. Direct reporting validates choices against
 the pinned contract, while retained-evidence readiness remains observational.

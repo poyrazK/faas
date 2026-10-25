@@ -2,6 +2,8 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { EdgeAttackModeStatus } from './EdgeAttackModeStatus.js';
+import type { EdgeProtectionAICrawler } from './EdgeProtectionAICrawler.js';
 /**
  * Edge rejection counts for one app over a range.
  */
@@ -34,7 +36,7 @@ export type EdgeProtectionResponse = {
    * Requests answered by an edge gate, largest count first; zero counts are omitted.
    */
   rejections: Array<{
-    gate: 'jwt' | 'ip_allowlist' | 'internal_only' | 'ip' | 'geo' | 'limit' | 'body_limit' | 'throttle' | 'waf';
+    gate: 'jwt' | 'ip_allowlist' | 'internal_only' | 'ip' | 'geo' | 'limit' | 'body_limit' | 'throttle' | 'waf' | 'challenge' | 'penalty';
     status: '401' | '403' | '413' | '429' | '503' | 'other';
     count: number;
   }>;
@@ -84,5 +86,56 @@ export type EdgeProtectionResponse = {
       count: number;
     }>;
   };
+  /**
+   * kind=challenge decisions (ADR-831 amendment 7); its 403s also appear in rejections under gate challenge.
+   */
+  challenge: {
+    /**
+     * Challenge pages served to browser navigations.
+     */
+    issued: number;
+    /**
+     * Passes earned by solving the proof of work.
+     */
+    solved: number;
+    /**
+     * Non-navigation requests answered 403 challenge_required.
+     */
+    rejected: number;
+    /**
+     * Requests let through on a pass from an earlier solve.
+     */
+    passed: number;
+    /**
+     * Requests let through on a verified API key, consumer key or JWT.
+     */
+    bypassed: number;
+    /**
+     * Solutions refused: wrong work or an expired token.
+     */
+    invalid: number;
+    /**
+     * The part of issued served at a difficulty raised under attack (ADR-831 amendment 8).
+     */
+    raised?: number;
+  };
+  /**
+   * Penalty boxes (ADR-20261022105846); refusals also appear in rejections under gate penalty.
+   */
+  penalty: {
+    /**
+     * Clients a rule's penalty boxed.
+     */
+    boxed: number;
+    /**
+     * Requests refused from boxed clients.
+     */
+    rejected: number;
+  };
+  attack_mode: EdgeAttackModeStatus;
+  /**
+   * Requests whose User-Agent names an AI crawler (ADR-20261022083601), largest first, counted before any edge rule acted on them.
+   */
+  ai_crawlers: Array<EdgeProtectionAICrawler>;
 };
 

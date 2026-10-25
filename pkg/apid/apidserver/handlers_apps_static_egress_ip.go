@@ -25,7 +25,9 @@
 //     dashboard can render the "another app on this account already
 //     pins that IP" copy without round-tripping the conflict log.
 //
-// Feature flag: api.StaticEgressIPEnabled() (env FAAS_STATIC_EGRESS_IP_ENABLED).
+// Feature flag: the static_egress_ip platform flag (ADR 20261021080640);
+// until an operator writes it, api.StaticEgressIPEnabled() (env
+// FAAS_STATIC_EGRESS_IP_ENABLED) decides.
 // The flag is checked inside each handler so a misconfigured rollout
 // surfaces as 402 (not 404) and the route table can be left wired
 // during the dark-launch window — same posture as
@@ -58,7 +60,7 @@ func staticEgressIPNotEnabled() *api.Problem {
 // without a separate plan lookup. Customer-scoped (no admin
 // required).
 func (s *server) getAppStaticEgressIP(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !api.StaticEgressIPEnabled() {
+	if !s.staticEgressIPFor(flagSubject(r, acct)) {
 		api.WriteProblem(w, staticEgressIPNotEnabled())
 		return
 	}
@@ -75,7 +77,7 @@ func (s *server) getAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 // pin (mirrors the DELETE wire shape so the same handler covers all
 // three verbs in a single body type).
 func (s *server) setAppStaticEgressIP(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !api.StaticEgressIPEnabled() {
+	if !s.staticEgressIPFor(flagSubject(r, acct)) {
 		api.WriteProblem(w, staticEgressIPNotEnabled())
 		return
 	}
@@ -205,7 +207,7 @@ func (s *server) setAppStaticEgressIP(w http.ResponseWriter, r *http.Request, ac
 // and the reservation will be re-released on the next SIGHUP-
 // triggered reconcile).
 func (s *server) clearAppStaticEgressIP(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !api.StaticEgressIPEnabled() {
+	if !s.staticEgressIPFor(flagSubject(r, acct)) {
 		api.WriteProblem(w, staticEgressIPNotEnabled())
 		return
 	}

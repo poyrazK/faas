@@ -59,6 +59,10 @@ export type AppMetricsResponse = {
    */
   wake_p95_ms: number;
   /**
+   * Number of fleet wakes wake_p95_ms was computed from. Below 20 the p95 is not meaningful and clients show it as unavailable. Omitted when the count is unknown.
+   */
+  wake_samples?: number;
+  /**
    * Current wake-queue depth
    * (`gateway_queue_depth{app, account_id}` — `account_id`
    * admitted via accountLabelSet, overflow=`__other__`,

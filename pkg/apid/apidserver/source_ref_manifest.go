@@ -17,6 +17,7 @@ import (
 	"io"
 	"net/http"
 	"path"
+	"reflect"
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -42,6 +43,7 @@ type sourceRefManifestStaged struct {
 	appID                 string
 	edgeRuleChanges       []sourceRefManifestEdgeRuleChange
 	cronIDs               []string
+	cronIntent            *api.DeploymentCronStagingRequest
 	triggerIDs            []string
 	triggerWorkChanges    []sourceRefTriggerWorkBindingChange
 	eventSubscriptionIDs  []string
@@ -56,6 +58,8 @@ type sourceRefManifestStaged struct {
 	retryPolicyChanged    bool
 	previousRetryPolicy   json.RawMessage
 	appliedRetryPolicy    json.RawMessage
+	lifecycleChanged      bool
+	previousLifecycle     state.AppManifest
 }
 
 type sourceRefEventWorkBindingChange struct {
@@ -74,7 +78,7 @@ type sourceRefWorkPolicyChange struct {
 }
 
 func sourceRefManifestNeedsRollback(staged sourceRefManifestStaged) bool {
-	return staged.scalingChanged || staged.retryPolicyChanged || len(staged.edgeRuleChanges) > 0 ||
+	return staged.cronIntent != nil || staged.scalingChanged || staged.retryPolicyChanged || staged.lifecycleChanged || len(staged.edgeRuleChanges) > 0 ||
 		len(staged.cronIDs) > 0 || len(staged.triggerIDs) > 0 || len(staged.triggerWorkChanges) > 0 ||
 		len(staged.eventSubscriptionIDs) > 0 || len(staged.eventWorkChanges) > 0 || len(staged.eventRetryChanges) > 0 || len(staged.eventVersionChanges) > 0 ||
 		len(staged.workPolicyChanges) > 0 || len(staged.bindingIDs) > 0
@@ -130,6 +134,9 @@ func (s *server) applyManifestWorkloads(
 	if manifest == nil {
 		return nil, false, nil
 	}
+	if problem := s.manifestSettingsProblem(acct, manifest); problem != nil {
+		return nil, false, problem
+	}
 	dependencies := manifest.MainWorkloadDependencies()
 	if len(manifest.Companions) == 0 && len(manifest.Extensions) == 0 && len(dependencies) == 0 {
 		return nil, false, nil
@@ -167,7 +174,7 @@ func (s *server) applyManifestWorkloads(
 // selected source root's Procfile release: process is used. Both forms are
 // stored as a single shell command, matching Heroku's Procfile semantics.
 func resolveSourceReleaseCommand(sourcePath string, app state.App, manifest *gregalemanifest.Manifest) (deploymentReleaseCommand, *api.Problem) {
-	if manifest != nil && manifest.Release != nil {
+	if manifest != nil && manifest.Release != nil && manifest.Release.Command != "" {
 		return validateDeploymentReleaseCommand(manifest.Release.Command)
 	}
 	body, found, err := readSourceRefProcfileBytes(sourcePath, app.RootDir)
@@ -373,6 +380,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","scaling_changed":true}`, app.Slug, app.ID))
 		}
 	}
+	if req, ok := m.LifecycleRequest(); ok {
+		if problem := s.applySourceRefLifecycle(ctx, acct, app, req, &staged); problem != nil {
+			return staged, problem
+		}
+	}
 	if len(m.WorkPolicies) > 0 {
 		policyStore, ok := s.store.(state.AppWorkPolicyStore)
 		if !ok {
@@ -416,6 +428,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 				return staged, problem
 			}
 		}
+		if m.Routes != nil {
+			if problem := s.applySourceRefManifestPathRoutes(ctx, acct, app, m.Routes, &staged); problem != nil {
+				return staged, problem
+			}
+		}
 		return staged, nil
 	}
 	limits, ok := api.LimitsFor(acct.Plan)
@@ -441,11 +458,24 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 	for _, trigger := range triggers {
 		triggerKeys[trigger.Kind+"\x00"+trigger.Slug] = trigger
 	}
+	deferredCrons, _ := ctx.Value(sourceManifestSkipCronsKey{}).(bool)
+	if store, ok := s.store.(state.PreparedDeploymentCronStore); ok {
+		var err error
+		prepared, checkErr := store.PreparedDeploymentCrons(ctx, app.ID)
+		err = checkErr
+		deferredCrons = deferredCrons || prepared
+		if err != nil {
+			return staged, api.ErrCapacity("could not check pending deployment crons")
+		}
+	}
 	for _, declaration := range m.Triggers {
 		if declaration.App != app.Slug {
 			continue
 		}
 		if declaration.Kind == gregalemanifest.TriggerKindCron {
+			if deferredCrons {
+				continue
+			}
 			key := declaration.Schedule + "\x00" + declaration.Path
 			if _, exists := cronKeys[key]; exists {
 				continue
@@ -506,7 +536,7 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 		if problem := applyTriggerRetryPolicy(&createReq); problem != nil {
 			return staged, problem
 		}
-		delivery, deliveryProblem := s.requestedTriggerDelivery(acct, kind, nonEmptyStringPointer(declaration.Delivery))
+		delivery, deliveryProblem := s.requestedTriggerDelivery(appFlagSubject(acct, app), kind, nonEmptyStringPointer(declaration.Delivery))
 		if deliveryProblem != nil {
 			return staged, deliveryProblem
 		}
@@ -662,6 +692,11 @@ func (s *server) applySourceRefManifest(ctx context.Context, acct state.Account,
 			return staged, problem
 		}
 	}
+	if m.Routes != nil {
+		if problem := s.applySourceRefManifestPathRoutes(ctx, acct, app, m.Routes, &staged); problem != nil {
+			return staged, problem
+		}
+	}
 	return staged, nil
 }
 
@@ -686,6 +721,86 @@ func sourceRefEventSubscriptionProblem(err error) *api.Problem {
 		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
 	}
 	return api.ErrCapacity("could not apply manifest event subscription")
+}
+
+// applySourceRefLifecycle applies a manifest's lifecycle and worker blocks with
+// the same validation and merge as PATCH /v1/apps/{slug}, so an API, git or
+// tarball deploy honours after_restore and before_checkpoint hooks declared in
+// gregale.yaml, as `gregale deploy` already did. It runs before the deployment
+// row exists, and imaged bakes the app's hooks into the deployment artifact.
+func (s *server) applySourceRefLifecycle(ctx context.Context, acct state.Account, app state.App, req api.UpdateAppRequest, staged *sourceRefManifestStaged) *api.Problem {
+	limits, ok := api.LimitsFor(acct.Plan)
+	if !ok {
+		return api.ErrCapacity("could not resolve account plan limits")
+	}
+	if prob := validateUpdateApp(&req, acct, limits, app); prob != nil {
+		return prob
+	}
+	updated, changed := stateManifestForUpdate(app, &req)
+	if !changed || reflect.DeepEqual(sourceLifecycleFields(*updated), sourceLifecycleFields(app.Manifest)) {
+		return nil
+	}
+	if _, err := s.store.UpdateApp(ctx, app.ID, state.UpdateAppParams{Manifest: updated}); err != nil {
+		if errors.Is(err, state.ErrNotFound) {
+			return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such app")
+		}
+		return api.ErrCapacity("could not apply manifest lifecycle")
+	}
+	staged.lifecycleChanged = true
+	staged.previousLifecycle = sourceLifecycleFields(app.Manifest)
+	if !reflect.DeepEqual(updated.BeforeCheckpoint, app.Manifest.BeforeCheckpoint) ||
+		!reflect.DeepEqual(updated.Profiling, app.Manifest.Profiling) || !reflect.DeepEqual(updated.Tracing, app.Manifest.Tracing) {
+		// As PATCH /v1/apps/{slug} does: existing process snapshots were
+		// captured with the previous checkpoint setting.
+		if _, err := state.InvalidateAppSnapshots(ctx, s.store, app.ID); err != nil {
+			return api.ErrCapacity("could not invalidate application snapshots")
+		}
+	}
+	_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+		fmt.Sprintf(`{"kind":"updated","slug":"%s","app_id":"%s","lifecycle_changed":true}`, app.Slug, app.ID))
+	return nil
+}
+
+// rollbackSourceRefLifecycle restores only the fields a lifecycle or worker
+// block can set, so a concurrent change to other manifest fields survives.
+func (s *server) rollbackSourceRefLifecycle(ctx context.Context, staged sourceRefManifestStaged) error {
+	current, err := s.store.AppByID(ctx, staged.appID)
+	if err != nil {
+		return fmt.Errorf("rollback manifest lifecycle: read app: %w", err)
+	}
+	restored := current.Manifest
+	copySourceLifecycleFields(&restored, staged.previousLifecycle)
+	if _, err := s.store.UpdateApp(ctx, staged.appID, state.UpdateAppParams{Manifest: &restored}); err != nil {
+		return fmt.Errorf("rollback manifest lifecycle: %w", err)
+	}
+	_ = s.notif.Notify(ctx, db.NotifyAppChanged,
+		fmt.Sprintf(`{"kind":"updated","app_id":"%s","lifecycle_changed":true}`, staged.appID))
+	return nil
+}
+
+// sourceLifecycleFields projects the manifest fields that
+// gregalemanifest.(*Manifest).LifecycleRequest can set.
+func sourceLifecycleFields(m state.AppManifest) state.AppManifest {
+	var fields state.AppManifest
+	copySourceLifecycleFields(&fields, m)
+	return fields
+}
+
+func copySourceLifecycleFields(dst *state.AppManifest, src state.AppManifest) {
+	dst.ExecutionMode = src.ExecutionMode
+	dst.RestartPolicy = src.RestartPolicy
+	dst.AfterRestore = src.AfterRestore
+	dst.BeforeCheckpoint = src.BeforeCheckpoint
+	dst.Pause = src.Pause
+	dst.Profiling = src.Profiling
+	dst.Tracing = src.Tracing
+	dst.StartupDeadlineS = src.StartupDeadlineS
+	dst.MaxRetries = src.MaxRetries
+	dst.RequestTimeoutS = src.RequestTimeoutS
+	dst.StopGracePeriodS = src.StopGracePeriodS
+	dst.StopSignal = src.StopSignal
+	dst.ServiceReplicas = src.ServiceReplicas
+	dst.WorkerReplicas = src.WorkerReplicas
 }
 
 func sourceRefScalingStoreProblem(err error) *api.Problem {
@@ -741,7 +856,8 @@ func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
 		left.ScaleOutCooldownS != right.ScaleOutCooldownS || left.ScaleInCooldownS != right.ScaleInCooldownS ||
 		left.ConcurrencyOverflow != right.ConcurrencyOverflow || left.MaxQueueWaitMS != right.MaxQueueWaitMS ||
 		left.MaxQueueDepth != right.MaxQueueDepth || left.WakeMaxQueueDepth != right.WakeMaxQueueDepth ||
-		left.WakeMaxQueueWaitSeconds != right.WakeMaxQueueWaitSeconds {
+		left.WakeMaxQueueWaitSeconds != right.WakeMaxQueueWaitSeconds ||
+		left.PerInstanceConcurrency != right.PerInstanceConcurrency {
 		return false
 	}
 	if left.Target == nil || right.Target == nil {
@@ -751,6 +867,9 @@ func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
 }
 
 func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Problem {
+	if errors.Is(err, state.ErrDeploymentCronConflict) {
+		return api.NewProblem(http.StatusConflict, api.CodeDeploymentCronConflict, "Deployment cron staging changed", "cron configuration changed while preparing this deployment; retry with a new deployment attempt")
+	}
 	if cron {
 		var quota *state.CronQuotaError
 		if errors.As(err, &quota) {
@@ -770,6 +889,9 @@ func sourceRefManifestStoreProblem(err error, plan api.Plan, cron bool) *api.Pro
 
 func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRefManifestStaged) error {
 	var errs []error
+	if err := s.cancelSourceManifestCrons(ctx, staged); err != nil {
+		errs = append(errs, err)
+	}
 	if staged.scalingChanged {
 		// apps.scaling_policy is NOT NULL in PostgreSQL. A nil prior
 		// policy is the legacy empty-policy projection, so restore it as
@@ -787,6 +909,11 @@ func (s *server) rollbackSourceRefManifest(ctx context.Context, staged sourceRef
 		} else {
 			_ = s.notif.Notify(ctx, db.NotifyAppChanged,
 				fmt.Sprintf(`{"kind":"updated","app_id":"%s","scaling_changed":true}`, staged.appID))
+		}
+	}
+	if staged.lifecycleChanged {
+		if err := s.rollbackSourceRefLifecycle(ctx, staged); err != nil {
+			errs = append(errs, err)
 		}
 	}
 	if staged.retryPolicyChanged {

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{.Title}} — Gregale</title>
+  <style nonce="{{.Nonce}}">
+    :root { color-scheme: light dark; --muted: #666; }
+    @media (prefers-color-scheme: dark) { :root { --muted: #aaa; } }
+    body { font: 16px/1.5 system-ui, sans-serif; max-width: 1100px; margin: auto; padding: 0 1.5rem; }
+    header { padding: 1rem 0; border-bottom: 1px solid #8886; } nav { display: flex; gap: 1rem; flex-wrap: wrap; }
+    table { border-collapse: collapse; width: 100%; } th, td { text-align: left; padding: .45rem; border-bottom: 1px solid #8884; }
+    .muted { color: var(--muted); } .warn { padding: .6rem; background: #d4900022; } code { font-size: .9em; }
+  </style>
+</head>
+<body>
+<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a><a href="/dashboard/dashboards">Dashboards</a></nav></header>
+<main>
+{{template "email-verification-banner" .}}
+<h1>Dashboards</h1>
+{{with .Data}}
+{{if not .Enabled}}
+  <p>Custom dashboards are not enabled for this deployment.</p>
+{{else}}
+  {{if .Error}}<p class="warn" role="alert">{{.Error}}</p>{{end}}
+  {{if .Dashboards}}
+  <table><thead><tr><th>Name</th><th>Widgets</th><th>Updated</th></tr></thead><tbody>
+  {{range .Dashboards}}<tr><td><a href="/dashboard/dashboards/{{.ID}}">{{.Name}}</a></td><td>{{len .Widgets}}</td><td><time datetime="{{.UpdatedAt.Format "2006-01-02T15:04:05Z07:00"}}">{{.UpdatedAt.Format "2006-01-02 15:04 UTC"}}</time></td></tr>{{end}}
+  </tbody></table>
+  {{else}}
+  <p class="muted">No dashboards yet. Create one with <code>gregale dashboards create NAME --file widgets.json</code>; see the <a href="/docs/dashboards">dashboards docs</a>.</p>
+  {{end}}
+{{end}}
+{{end}}
+</main>
+</body>
+</html>

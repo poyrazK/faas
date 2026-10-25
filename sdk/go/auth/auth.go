@@ -97,8 +97,27 @@ type Claims struct {
 	// has organization claims on; nil otherwise. A changed membership
 	// shows at the next token, within its lifetime.
 	Organization *Organization
+	// Actor is set while the app's support staff use the session as the
+	// user (impersonation): who opened it, such as "admin:0A1B2C3D".
+	// Refuse actions the person must take themselves.
+	Actor string
+	// ServiceAccount is set when the token belongs to an organization's
+	// service account (the client-credentials grant), not a person; nil
+	// otherwise. Subject is then the account's ID, Organization the
+	// account's, and Scopes the permissions the token was narrowed to.
+	// Authorize applies the account's role and refuses as soon as the
+	// account or its secret is revoked; Verify alone accepts the token
+	// until it expires.
+	ServiceAccount *ServiceAccount
 	// Raw holds every claim, including ones this type does not name.
 	Raw map[string]json.RawMessage
+}
+
+// ServiceAccount names a service account's token: the account and the
+// secret it was issued for.
+type ServiceAccount struct {
+	ID       string
+	SecretID string
 }
 
 // Organization is a session's active organization, the user's role in it
@@ -241,26 +260,31 @@ func (c *Client) Verify(ctx context.Context, token string) (*Claims, error) {
 func (c *Client) claims(segment string) (*Claims, error) {
 	var raw map[string]json.RawMessage
 	var p struct {
-		Iss          string          `json:"iss"`
-		Aud          json.RawMessage `json:"aud"`
-		Exp          *float64        `json:"exp"`
-		Nbf          *float64        `json:"nbf"`
-		Iat          *float64        `json:"iat"`
-		Sub          string          `json:"sub"`
-		SessionID    string          `json:"session_id"`
-		Role         string          `json:"role"`
-		Email        string          `json:"email"`
-		Phone        string          `json:"phone"`
-		AAL          string          `json:"aal"`
-		IsAnonymous  bool            `json:"is_anonymous"`
-		ClientID     string          `json:"client_id"`
-		Scope        string          `json:"scope"`
-		OrgID        string          `json:"org_id"`
-		OrgSlug      string          `json:"org_slug"`
-		OrgRole      string          `json:"org_role"`
-		OrgPerms     []string        `json:"org_permissions"`
-		AppMetadata  map[string]any  `json:"app_metadata"`
-		UserMetadata map[string]any  `json:"user_metadata"`
+		Iss         string          `json:"iss"`
+		Aud         json.RawMessage `json:"aud"`
+		Exp         *float64        `json:"exp"`
+		Nbf         *float64        `json:"nbf"`
+		Iat         *float64        `json:"iat"`
+		Sub         string          `json:"sub"`
+		SessionID   string          `json:"session_id"`
+		Role        string          `json:"role"`
+		Email       string          `json:"email"`
+		Phone       string          `json:"phone"`
+		AAL         string          `json:"aal"`
+		IsAnonymous bool            `json:"is_anonymous"`
+		ClientID    string          `json:"client_id"`
+		Scope       string          `json:"scope"`
+		OrgID       string          `json:"org_id"`
+		OrgSlug     string          `json:"org_slug"`
+		OrgRole     string          `json:"org_role"`
+		OrgPerms    []string        `json:"org_permissions"`
+		Act         struct {
+			Sub string `json:"sub"`
+		} `json:"act"`
+		ServiceAccount bool           `json:"service_account"`
+		SecretID       string         `json:"secret_id"`
+		AppMetadata    map[string]any `json:"app_metadata"`
+		UserMetadata   map[string]any `json:"user_metadata"`
 	}
 	if decodeSegment(segment, &raw) != nil || decodeSegment(segment, &p) != nil {
 		return nil, fmt.Errorf("%w: malformed claims", ErrInvalidToken)
@@ -284,6 +308,10 @@ func (c *Client) claims(segment string) (*Claims, error) {
 		IsAnonymous: p.IsAnonymous, ExpiresAt: unix(*p.Exp), ClientID: p.ClientID, Scopes: strings.Fields(p.Scope), AppMetadata: p.AppMetadata, UserMetadata: p.UserMetadata, Raw: raw}
 	if p.Iat != nil {
 		claims.IssuedAt = unix(*p.Iat)
+	}
+	claims.Actor = p.Act.Sub
+	if p.ServiceAccount && p.SecretID != "" {
+		claims.ServiceAccount = &ServiceAccount{ID: p.Sub, SecretID: p.SecretID}
 	}
 	if p.OrgID != "" && p.OrgSlug != "" && p.OrgRole != "" {
 		claims.Organization = &Organization{ID: p.OrgID, Slug: p.OrgSlug, Role: p.OrgRole, Permissions: p.OrgPerms}

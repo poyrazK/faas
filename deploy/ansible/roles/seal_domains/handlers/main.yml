@@ -1,0 +1,39 @@
+---
+- name: seal_domains — daemon-reload
+  ansible.builtin.systemd_service:
+    daemon_reload: true
+  listen:
+    - restart faas-outboundd for seal domains
+    - restart faas-githubd for seal domains
+    - restart faas-imaged for seal domains
+    - restart faas-gatewayd-internal for seal domains
+    - restart faas-apid for seal domains
+    - daemon-reload for seal domains
+
+- name: seal_domains — try-restart faas-outboundd
+  ansible.builtin.command: systemctl try-restart faas-outboundd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-outboundd for seal domains
+
+- name: seal_domains — try-restart faas-githubd
+  ansible.builtin.command: systemctl try-restart faas-githubd.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-githubd for seal domains
+
+- name: seal_domains — try-restart faas-imaged
+  ansible.builtin.command: systemctl try-restart faas-imaged.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-imaged for seal domains
+
+# A node join defers service handlers: the node starts drained and its
+# daemons start later with the drop-in in place.
+- name: seal_domains — try-restart faas-gatewayd-internal
+  ansible.builtin.command: systemctl try-restart faas-gatewayd-internal.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-gatewayd-internal for seal domains
+  when: not (faas_join_defer_service_handlers | default(false) | bool)
+
+- name: seal_domains — try-restart faas-apid
+  ansible.builtin.command: systemctl try-restart faas-apid.service  # noqa: command-instead-of-module
+  changed_when: true
+  listen: restart faas-apid for seal domains

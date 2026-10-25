@@ -1,15 +1,18 @@
-package state
+package state_test
 
 // adr: 595. Standards configuration needs isolation; runtime authority resets.
 
-import "testing"
+import (
+	"github.com/onebox-faas/faas/pkg/state"
+	"testing"
+)
 
 func TestApplicationStandardCloneSchemaPreservesConfigurationAndAuthorityBoundaries(t *testing.T) {
-	policies, err := ProjectEnvironmentCloneSchemaPolicies()
+	policies, err := state.ProjectEnvironmentCloneSchemaPolicies()
 	if err != nil {
 		t.Fatal(err)
 	}
-	report, err := cloneSchemaCoverage(policies)
+	report, err := state.CloneSchemaCoverage(policies)
 	if err != nil || !report.Known {
 		t.Fatalf("standards schema is unknown: %v", err)
 	}
@@ -21,12 +24,12 @@ func TestApplicationStandardCloneSchemaPreservesConfigurationAndAuthorityBoundar
 		blocked[b.Table] = true
 	}
 	for _, table := range []string{"app_application_standards", "application_standard_assignments", "application_standard_exceptions", "application_standard_control_bindings", "application_standard_control_backups", "application_standard_log_destinations", "application_standard_publishers", "application_standard_versions", "application_standards"} {
-		if kinds[table] != CloneSchemaConfiguration || !blocked[table] {
+		if kinds[table] != state.CloneSchemaConfiguration || !blocked[table] {
 			t.Fatalf("%s silently became copyable configuration", table)
 		}
 	}
 	for _, table := range []string{"instance_application_standard_admissions", "instance_application_standard_boots", "instance_application_standard_promotions", "application_standard_snapshot_captures", "application_standard_native_incarnations", "application_standard_log_consumer_sessions", "deployment_registry_rootfs", "deployment_runtime_scans", "base_image_producers", "source_build_rootfs", "build_export_publications"} {
-		if kinds[table] != CloneSchemaOperational {
+		if kinds[table] != state.CloneSchemaOperational {
 			t.Fatalf("%s would transfer source runtime authority", table)
 		}
 	}

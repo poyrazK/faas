@@ -94,7 +94,7 @@ func (s *PgStore) AdmitScheduledWorkflow(ctx context.Context, appID, deploymentI
 	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return WorkflowScheduleCursor{}, false, fmt.Errorf("state: get workflow schedule cursor: %w", err)
 	}
-	active, err := queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(appID)})
+	active, err := queries.CountActiveWorkflowRunsForAdmission(ctx, tx, sqlc.CountActiveWorkflowRunsForAdmissionParams{AppID: mustPgUUID(appID), ParkedMax: int64(plan.WorkflowMaxParkedRuns())})
 	if err != nil {
 		return WorkflowScheduleCursor{}, false, err
 	}

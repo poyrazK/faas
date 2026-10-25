@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -101,7 +102,7 @@ func (n *rolloutHeldNotice) maybeWarn(w io.Writer, d api.DeploymentResponse, now
 		if key != n.held {
 			n.held, n.notified = key, true
 			_, _ = fmt.Fprintf(w, "Rollout held at %d%% traffic (step %d/%d): %s\n",
-				d.TrafficPercent, d.CanaryStep+1, d.CanaryTotalSteps, describeRolloutDecision(d.RolloutHold))
+				d.TrafficPercent, d.CanaryStep+1, d.CanaryTotalSteps, strings.ReplaceAll(describeRolloutDecision(d.RolloutHold), "<deployment>", d.ID))
 		}
 		return
 	}

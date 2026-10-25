@@ -59,6 +59,71 @@ const db = createDataClient<Database>({
 Anonymous requests through `expectedSchemaFingerprint` reach the API on a
 contract-pinned path, so the Data API does not mark them for the edge cache.
 
+### File storage
+
+When the owner turns on [file storage](../../docs/data-api.md#file-storage),
+`createStorageClient` takes the same options as `createDataClient`. The
+owner's policies on `storage_objects` decide each upload, download and
+removal:
+
+```ts
+import { createStorageClient, StorageError } from '@gregale/data'
+
+const files = createStorageClient({ url: 'https://my-data.gregale.dev', accessToken: () => session.accessToken }).from('uploads')
+const stored = await files.upload(`${userId}/report.pdf`, file)   // { bucket, name, owner, size, content_type, ... }
+const response = await files.download(`${userId}/report.pdf`, { range: { start: 0, end: 1023 } })
+const { url, expiresAt } = await files.signedUrl(`${userId}/report.pdf`)
+await files.remove(`${userId}/report.pdf`)
+```
+
+Refusals throw `StorageError` with the Data API's `code`, such as
+`storage_forbidden` or `storage_not_found`. List files by querying
+`storage_objects` with `createDataClient`, or follow the list with a live
+read.
+
+### Live reads
+
+A live read is a Data API read whose result stays current: it arrives once,
+then changes as rows are written. Row-level security decides each row, as it
+does for REST reads. Set it up once with
+[`gregale data-api live enable`](../../docs/data-api.md#live-reads), which
+prints the WebSocket URL and the database ID:
+
+```ts
+import { LiveConnection, liveRead, liveSocket } from '@gregale/data/live'
+
+const connection = new LiveConnection({ connect: liveSocket('wss://my-data.gregale.dev/__gregale/realtime/ENDPOINT_ID') })
+const feed = connection.query({
+  database: DATABASE_ID,
+  token: () => session.accessToken,
+  ...liveRead(db.from('messages').select('id,body,author(name)').eq('channel_id', 7).order('id', { ascending: false }).limit(50)),
+})
+feed.subscribe(() => render(feed.getSnapshot().rows))
+```
+
+`liveRead` takes the read's rows type from the generated contract, and rows
+decode as the REST API returns them. Each read carries exactly one
+credential:
+
+- `token`, the signed-in user's token, called again before it expires;
+- `anonymous: true`, for relations in the Data API's public-read allowlist;
+- `serverKey` (with an optional `subject`) for trusted backends. Server keys
+  are refused from browsers.
+
+React components use the hook from `@gregale/data/live/react` (React 18 or
+later):
+
+```tsx
+import { useLiveRead } from '@gregale/data/live/react'
+
+const { rows, status } = useLiveRead(connection, { database: DATABASE_ID, anonymous: true, ...liveRead(visitor.from('products').select('id,name')) })
+```
+
+The connection reconnects with backoff and resumes each read, keeping the
+last rows meanwhile. `status` is `connecting` (also while reconnecting),
+`live`, `stale` (the result could not be kept current, for example after a
+credential expired) or `closed`.
+
 ### Pin requests to the generated contract
 
 Regenerated TypeScript files also export a runtime `schemaFingerprint` value.

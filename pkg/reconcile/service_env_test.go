@@ -2,12 +2,34 @@ package reconcile
 
 import (
 	"reflect"
+	"slices"
 	"testing"
+	"testing/fstest"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// ADR-20261025093331: a project created before the project default, from a
+// repository without Compose, moves over by declaring it in its project file.
+func TestProjectConfigMovesAnExistingDeclaredAppToProject(t *testing.T) {
+	scan, err := reposcan.Scan(fstest.MapFS{
+		"services/api/package.json": {Data: []byte(`{"name":"api","scripts":{"start":"node index.js"}}`)},
+		".gregale/project.yaml":     {Data: []byte("service_policy: project\n")},
+	})
+	if err != nil || len(scan.Workloads) != 1 {
+		t.Fatalf("scan = %+v, %v", scan.Workloads, err)
+	}
+	app := state.App{WorkloadName: "api", WorkloadClass: state.WorkloadClassHTTP,
+		Manifest: state.AppManifest{ServiceBindingPolicy: api.ServiceBindingPolicyDeclared}}
+	if got := serviceBindingPolicyForExistingWorkload(scan.Workloads[0], app.Manifest.ServiceBindingPolicy); got != api.ServiceBindingPolicyProject {
+		t.Fatalf("reapplied policy = %q, want project", got)
+	}
+	if got := diffFieldsChanged(app, scan.Workloads[0], ""); !slices.Contains(got, "service_binding_policy") {
+		t.Fatalf("changed fields = %v, want service_binding_policy", got)
+	}
+}
 
 func TestPartialMigrationPreservesOnlyOwnedProductionServiceReferences(t *testing.T) {
 	scan := reposcan.Result{Workloads: []reposcan.Workload{{Name: "web", DependsOn: []string{"api", "external"}}}, DependencyReferences: []reposcan.Workload{{Name: "api"}, {Name: "external"}}}
@@ -159,6 +181,37 @@ func TestDiffFieldsChangedPreservesLegacyServiceBindingPolicy(t *testing.T) {
 	}
 	if got := serviceBindingPolicyForExistingWorkload(workload, app.Manifest.ServiceBindingPolicy); got != api.ServiceBindingPolicyAccount {
 		t.Fatalf("legacy policy = %q, want account", got)
+	}
+}
+
+func TestServiceBindingPolicyProjectIsKeptAndPolicyFromNewerReleaseSurvivesReapply(t *testing.T) {
+	workload := reposcan.Workload{Name: "api"}
+	app := state.App{WorkloadName: "api", WorkloadClass: state.WorkloadClassHTTP,
+		Manifest: state.AppManifest{ServiceBindingPolicy: api.ServiceBindingPolicyProject}}
+	if got := diffFieldsChanged(app, workload, ""); len(got) != 0 {
+		t.Fatalf("project reapply changed fields = %v, want none", got)
+	}
+	if got := serviceBindingPolicyForExistingWorkload(workload, app.Manifest.ServiceBindingPolicy); got != api.ServiceBindingPolicyProject {
+		t.Fatalf("existing project policy = %q, want project", got)
+	}
+
+	// A rolled-back control plane must not rewrite a newer release's policy
+	// as declared: the narrowing would outlive the rollback.
+	app.Manifest.ServiceBindingPolicy = "future-policy"
+	if got := serviceBindingPolicyForExistingWorkload(workload, app.Manifest.ServiceBindingPolicy); got != "future-policy" {
+		t.Fatalf("unknown stored policy = %q, want it kept", got)
+	}
+	if got := diffFieldsChanged(app, workload, ""); len(got) != 0 {
+		t.Fatalf("unknown stored policy changed fields = %v, want none", got)
+	}
+
+	workload.ServiceBindingPolicy = reposcan.ServiceBindingPolicyProject
+	if got := serviceBindingPolicyForNewWorkload(workload); got != api.ServiceBindingPolicyProject {
+		t.Fatalf("new workload opting into project = %q", got)
+	}
+	app.Manifest.ServiceBindingPolicy = api.ServiceBindingPolicyDeclared
+	if got := diffFieldsChanged(app, workload, ""); !reflect.DeepEqual(got, []string{"service_binding_policy"}) {
+		t.Fatalf("declared to project changed fields = %v", got)
 	}
 }
 

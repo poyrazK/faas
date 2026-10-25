@@ -164,7 +164,7 @@ func (m *MemStore) CountTenantSurfacesForAccount(_ context.Context, accountID st
 // UpdateTenantSurfaceStatus — mirrors the status flip but doesn't
 // touch updated_at at the time.Now() level; we update it so the
 // (apiserver) audit + dashboard see the change.
-func (m *MemStore) UpdateTenantSurfaceStatus(_ context.Context, id string, status SurfaceStatus) error {
+func (m *MemStore) UpdateTenantSurfaceStatus(ctx context.Context, id string, status SurfaceStatus) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	s, ok := m.tenantSurfaces[id]
@@ -173,6 +173,9 @@ func (m *MemStore) UpdateTenantSurfaceStatus(_ context.Context, id string, statu
 	}
 	s.Status = status
 	s.UpdatedAt = nextTenantSurfaceTime(s.UpdatedAt)
+	if err := m.checkMemTrafficTenantBindingLocked(ctx, s.AccountID, nil, memTrafficPolicyChange{TenantSurfaces: map[string]TenantSurface{id: s}}); err != nil {
+		return err
+	}
 	m.tenantSurfaces[id] = s
 	return nil
 }
@@ -194,11 +197,11 @@ func (m *MemStore) UpdateTenantSurfaceCert(_ context.Context, in UpdateSurfaceCe
 	if !ok {
 		return ErrNotFound
 	}
-	if s.CertState == in.CertState {
-		// No-op: the row's cert_state already matches the
-		// requested value. Writes are skipped so the
-		// production pg_notify trigger doesn't fire on
-		// idempotent re-entries.
+	if s.CertState == in.CertState && s.CertNotAfter.Equal(in.NotAfter) {
+		// No-op: the row's cert_state and expiry already match.
+		// Writes are skipped so the production pg_notify trigger
+		// doesn't fire on idempotent re-entries; a changed
+		// last_error alone is not written (see PgStore).
 		return nil
 	}
 	s.CertState = in.CertState
@@ -322,7 +325,7 @@ func (m *MemStore) TenantSurfaceByHostname(_ context.Context, hostname string) (
 
 // CreateTenantHostnameIfUnderQuota — locks on the parent surface (m.mu
 // here is process-wide), counts, enforces the UQ on hostname, inserts.
-func (m *MemStore) CreateTenantHostnameIfUnderQuota(_ context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error) {
+func (m *MemStore) CreateTenantHostnameIfUnderQuota(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
@@ -331,24 +334,80 @@ func (m *MemStore) CreateTenantHostnameIfUnderQuota(_ context.Context, in Create
 	if !ok || s.Status == SurfaceStatusDeleted {
 		return TenantHostname{}, ErrNotFound
 	}
-	observed := 0
+	if err := m.tenantHostnameQuotaLocked(ctx, in.SurfaceID, limits); err != nil {
+		return TenantHostname{}, err
+	}
+	return m.insertTenantHostnameLocked(ctx, s.AccountID, in)
+}
+
+// TakeOverTenantHostnameClaim mirrors PgStore.TakeOverTenantHostnameClaim.
+func (m *MemStore) TakeOverTenantHostnameClaim(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	defer m.invalidateChangedLifecycleSuccessorsLocked()
+
+	s, ok := m.tenantSurfaces[in.SurfaceID]
+	if !ok || s.Status == SurfaceStatusDeleted {
+		return TenantHostname{}, ErrNotFound
+	}
+	if err := m.tenantHostnameQuotaLocked(ctx, in.SurfaceID, limits); err != nil {
+		return TenantHostname{}, err
+	}
+	released := map[string]TenantHostname{}
+	for _, key := range []string{in.Hostname, strings.ToLower(in.Hostname)} {
+		current, exists := m.tenantHostnames[key]
+		if !exists {
+			continue
+		}
+		holder := m.tenantSurfaces[current.SurfaceID]
+		if holder.Status != SurfaceStatusDeleted && (current.Verified() || holder.AccountID == s.AccountID) {
+			return TenantHostname{}, ErrConflict
+		}
+		for _, alias := range []string{current.Hostname, strings.ToLower(current.Hostname)} {
+			if row, found := m.tenantHostnames[alias]; found {
+				released[alias] = row
+				delete(m.tenantHostnames, alias)
+			}
+		}
+	}
+	host, err := m.insertTenantHostnameLocked(ctx, s.AccountID, in)
+	if err != nil {
+		// A refused claim leaves the released rows where they were.
+		for alias, row := range released {
+			m.tenantHostnames[alias] = row
+		}
+	}
+	return host, err
+}
+
+func (m *MemStore) tenantHostnameQuotaLocked(ctx context.Context, surfaceID string, limits api.Limits) error {
+	verified, pending := 0, 0
 	// Per-surface cap counts VERIFIED hostnames only. See
-	// pgstore_tenant_surface.go:CreateTenantHostnameIfUnderQuota
-	// for the rationale (verified-only floors the customer out of
-	// a lock-by-unverified-tail; the doc at limits.go:449-450 says
-	// "verified hostnames one surface may hold").
-	for _, h := range m.tenantHostnames {
-		if h.SurfaceID == in.SurfaceID && h.Verified() {
-			observed++
+	// pgstore_tenant_surface.go:createTenantHostname for the rationale;
+	// unverified rows have their own cap (ADR-20261020090500).
+	if err := visitMemTrafficTenantHostnames(ctx, m.tenantHostnames, nil, func(h TenantHostname) error {
+		if h.SurfaceID != surfaceID {
+			return nil
 		}
-	}
-	if observed >= limits.TenantHostnamesPerSurface {
-		return TenantHostname{}, &TenantHostnameQuotaError{
-			Limit:     limits.TenantHostnamesPerSurface,
-			Observed:  observed,
-			SurfaceID: in.SurfaceID,
+		if h.Verified() {
+			verified++
+		} else {
+			pending++
 		}
+		return nil
+	}); err != nil {
+		return err
 	}
+	if verified >= limits.TenantHostnamesPerSurface {
+		return &TenantHostnameQuotaError{Limit: limits.TenantHostnamesPerSurface, Observed: verified, SurfaceID: surfaceID}
+	}
+	if limit := limits.PendingTenantHostnamesPerSurface(); pending >= limit {
+		return &TenantHostnameQuotaError{Limit: limit, Observed: pending, SurfaceID: surfaceID, Pending: true}
+	}
+	return nil
+}
+
+func (m *MemStore) insertTenantHostnameLocked(ctx context.Context, account string, in CreateTenantHostnameParams) (TenantHostname, error) {
 	if _, exists := m.tenantHostnames[in.Hostname]; exists {
 		return TenantHostname{}, ErrConflict
 	}
@@ -367,6 +426,9 @@ func (m *MemStore) CreateTenantHostnameIfUnderQuota(_ context.Context, in Create
 		Hostname:       in.Hostname,
 		ChallengeToken: in.ChallengeToken,
 		CreatedAt:      now,
+	}
+	if err := m.checkMemTrafficTenantBindingLocked(ctx, account, []string{h.Hostname}, memTrafficPolicyChange{TenantHostnames: map[string]TenantHostname{h.ID: h}}); err != nil {
+		return TenantHostname{}, err
 	}
 	m.tenantHostnames[h.Hostname] = h
 	m.tenantHostnames[strings.ToLower(h.Hostname)] = h
@@ -444,19 +506,11 @@ func (m *MemStore) CountTenantHostnamesForSurface(_ context.Context, surfaceID s
 
 // MarkTenantHostnameVerified — sets VerifiedAt + LastCheckAt, clears
 // LastError.
-func (m *MemStore) MarkTenantHostnameVerified(_ context.Context, hostname string) error {
+func (m *MemStore) MarkTenantHostnameVerified(ctx context.Context, hostname string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	h, ok := m.tenantHostnames[hostname]
-	if !ok {
-		return ErrNotFound
-	}
-	now := time.Now().UTC()
-	h.VerifiedAt = now
-	h.LastCheckAt = now
-	h.LastError = ""
-	m.tenantHostnames[hostname] = h
-	return nil
+	_, err := m.markTrafficTenantHostnameVerifiedLocked(ctx, hostname, "", false)
+	return err
 }
 
 // MarkTenantHostnameCheckFailed — dns_poller path; preserves
@@ -514,19 +568,11 @@ func (m *MemStore) ListPendingTenantHostnames(_ context.Context, olderThan time.
 }
 
 // DeleteTenantHostname — for tests + the apid path.
-func (m *MemStore) DeleteTenantHostname(_ context.Context, hostname string) error {
+func (m *MemStore) DeleteTenantHostname(ctx context.Context, hostname string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
-	if _, ok := m.tenantHostnames[hostname]; !ok {
-		return ErrNotFound
-	}
-	// Mirror the case-insensitive indexing we wrote under
-	// CreateTenantHostnameIfUnderQuota. Mcase variants of the
-	// same row coexist in the map and both must be removed.
-	delete(m.tenantHostnames, hostname)
-	delete(m.tenantHostnames, strings.ToLower(hostname))
-	return nil
+	return m.deleteTrafficTenantHostnameLocked(ctx, hostname, "")
 }
 
 // GetTenantHostnameByName — pgRouter.ResolveHost's tenant-surface

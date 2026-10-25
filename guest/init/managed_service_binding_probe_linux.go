@@ -19,12 +19,22 @@ func executeManagedServiceBindingProbe(ctx context.Context, req apptaskproto.Req
 		report.Error = "invalid managed service probe context"
 		return writeServiceBindingProbeReport(stdout, report)
 	}
-	report.ManagedService, report.Service, report.TargetDeploymentID, report.URL = &spec, spec.Service, spec.TargetDeploymentID, "https://"+spec.Service+".internal"
+	transport := spec.ProbeTransport()
+	report.ManagedService, report.Service, report.TargetDeploymentID, report.URL = &spec, spec.Service, spec.TargetDeploymentID, api.ServiceBindingCanonicalURL(spec.Service, transport)
+	if transport == api.ServiceBindingTransportHTTP {
+		report.Transport = transport
+	}
 	actualURL := appTaskEnvValue(BuildEnvWithSecrets(os.Environ(), manifest, secrets, apiEnv), spec.Binding)
+	// The staged canonical URL is transport-specific, so it also pins the
+	// caller's transport to the spec's.
 	if apiEnv[api.PlatformDeploymentIDEnv] != spec.CallerDeploymentID || apiEnv[spec.Binding] != report.URL || actualURL != report.URL {
 		report.Authorization = api.ServiceBindingProbeCheck{Status: "failed"}
 		report.Error = "frozen service binding or caller deployment was not staged in this task guest"
 		return writeServiceBindingProbeReport(stdout, report)
+	}
+	if transport == api.ServiceBindingTransportHTTP {
+		// ADR-20261019200059: an HTTP edge is probed over the plaintext proxy.
+		return writeServiceBindingProbeReport(stdout, runServiceBindingHTTPProbe(ctx, spec.Service, spec.TargetDeploymentID, &spec, net.DefaultResolver, nil))
 	}
 	trust, err := prepareServiceProxyTrust("/", "/")
 	if err != nil || trust.bundle == "" {

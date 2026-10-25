@@ -26,20 +26,19 @@ func (h outboundAIHost) SealCredential(w http.ResponseWriter, authorization stri
 	return sealOutboundCredential(w, authorization)
 }
 
-// sealOutboundCredential seals a provider credential for outboundd only.
+// sealOutboundCredential seals a provider credential for outboundd only: to
+// the fleet recipient, then the outbound seal domain as it is rolled out
+// (ADR 20261022111812). apid never holds an identity that opens it.
 func sealOutboundCredential(w http.ResponseWriter, authorization string) ([]byte, bool) {
 	unavailable := func() ([]byte, bool) {
 		outboundBindingProblem(w, http.StatusServiceUnavailable, "outbound_credential_seal_unavailable", "Credential encryption is unavailable")
 		return nil, false
 	}
-	if outboundCredentialRecipient == nil {
+	recipients, err := outboundCredentialRecipients()
+	if err != nil {
 		return unavailable()
 	}
-	recipient := outboundCredentialRecipient()
-	if recipient == nil {
-		return unavailable()
-	}
-	sealed, err := secretbox.SealBytes(recipient, outbound.ManagedAuthorizationSealNamespace, []byte(authorization), outbound.ManagedAuthorizationMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, outbound.ManagedAuthorizationSealNamespace, []byte(authorization), outbound.ManagedAuthorizationMaxBytes)
 	if err != nil {
 		return unavailable()
 	}

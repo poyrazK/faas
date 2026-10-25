@@ -37,6 +37,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // RequestTelemetryPublisherConfig bundles the knobs the publisher
@@ -59,6 +60,10 @@ type RequestTelemetryPublisherConfig struct {
 	// errors before dropping the batch. 3 matches
 	// app_errors_publisher.go default.
 	MaxRetries int
+
+	// ShutdownTimeout is one budget for joining an interrupted RPC and flushing
+	// all remaining evidence. Values above the API ceiling are clamped.
+	ShutdownTimeout time.Duration
 
 	// Now is injectable for tests. nil ⇒ time.Now.
 	Now func() time.Time
@@ -83,6 +88,10 @@ func (c *RequestTelemetryPublisherConfig) setDefaults() {
 	if c.MaxRetries <= 0 {
 		c.MaxRetries = 3
 	}
+	maximumShutdown := time.Duration(api.GatewayRequestTelemetryShutdownTimeoutSeconds) * time.Second
+	if c.ShutdownTimeout <= 0 || c.ShutdownTimeout > maximumShutdown {
+		c.ShutdownTimeout = maximumShutdown
+	}
 	if c.Now == nil {
 		c.Now = time.Now
 	}
@@ -94,7 +103,7 @@ func (c *RequestTelemetryPublisherConfig) setDefaults() {
 // streams the rows. Test implementation: appends the rows to a
 // slice for assertion.
 //
-// Returning a non-nil error tells the publisher to retry with
+// The callback must honor context cancellation. Returning a non-nil error tells the publisher to retry with
 // exponential backoff. After MaxRetries retries, the batch is
 // dropped with a warn log + droppedTotal counter increment.
 type ShipFn func(ctx context.Context, rows []RequestTelemetryRow) error
@@ -125,12 +134,18 @@ type requestTelemetryPublisher struct {
 	// wakes early.
 	wakeCh chan struct{}
 
-	// startOnce / stopOnce / stopCh guard lifecycle. Start must
-	// be called exactly once; Stop must be called exactly once.
-	startOnce sync.Once
-	stopOnce  sync.Once
-	stopCh    chan struct{}
-	doneCh    chan struct{}
+	// Only the actor owns pending, including its final flush. A canceled RPC
+	// retains the exact collapsed payload and event IDs for receiver deduplication.
+	pending []RequestTelemetryRow
+
+	lifecycleMu      sync.Mutex
+	started, stopped bool
+	parentCtx        context.Context
+	cancel           context.CancelFunc
+	finalCtx         context.Context
+	finalCancel      context.CancelFunc
+	stopCh           chan struct{}
+	doneCh           chan struct{}
 }
 
 // NewRequestTelemetryPublisher wires a publisher. The recorder +
@@ -148,27 +163,8 @@ func NewRequestTelemetryPublisher(cfg RequestTelemetryPublisherConfig, recorder 
 		log:      log,
 		wakeCh:   make(chan struct{}, 1),
 		stopCh:   make(chan struct{}),
-		doneCh:   make(chan struct{}, 1),
+		doneCh:   make(chan struct{}),
 	}
-}
-
-// Start launches the publisher goroutine. Safe to call once;
-// subsequent calls are no-ops.
-func (p *requestTelemetryPublisher) Start(ctx context.Context) {
-	p.startOnce.Do(func() {
-		p.reportCoverage(ctx)
-		go p.run(ctx)
-	})
-}
-
-// Stop signals the publisher goroutine to halt, drains the
-// recorder one final time, and waits for the goroutine to exit.
-// Safe to call once; subsequent calls are no-ops.
-func (p *requestTelemetryPublisher) Stop() {
-	p.stopOnce.Do(func() {
-		close(p.stopCh)
-		<-p.doneCh
-	})
 }
 
 // Wake nudges the publisher to drain immediately (non-blocking).
@@ -194,16 +190,13 @@ func (p *requestTelemetryPublisher) ShippedTotal() int64 {
 }
 
 // run is the goroutine loop. Drains on FlushInterval (or on Wake)
-// until stopCh closes. Drains one final batch synchronously on
-// the way out so Stop() returns "nothing left to ship".
+// until stopCh closes. Its bounded final flush ships remaining evidence or
+// accounts for loss before every Stop caller returns.
 func (p *requestTelemetryPublisher) run(ctx context.Context) {
 	defer func() {
-		// Final drain on the way out so Stop() blocks until every
-		// pending row has been attempted, not just one batch.
-		for p.recorder.PendingCount() > 0 {
-			p.tick(ctx)
-		}
-		p.doneCh <- struct{}{}
+		p.drainFinal()
+		p.finalCancel()
+		close(p.doneCh)
 	}()
 
 	ticker := time.NewTicker(p.cfg.FlushInterval)
@@ -212,6 +205,11 @@ func (p *requestTelemetryPublisher) run(ctx context.Context) {
 	for {
 		select {
 		case <-p.stopCh:
+			return
+		case <-ctx.Done():
+			// HTTP producers can finish after daemon cancellation. Quiesce
+			// ordinary shipping until their owner calls Stop after draining.
+			<-p.stopCh
 			return
 		case <-ticker.C:
 			p.tick(ctx)
@@ -228,50 +226,73 @@ func (p *requestTelemetryPublisher) run(ctx context.Context) {
 // Errors are logged + retried with exponential backoff up to
 // MaxRetries; final failure increments droppedTotal.
 func (p *requestTelemetryPublisher) tick(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	defer p.reportCoverage(ctx)
-	rows := p.recorder.DrainBatch(p.cfg.FlushBatchSize)
-	if len(rows) == 0 {
+	if len(p.pending) == 0 {
+		p.pending = collapseRequestTelemetry(p.recorder.DrainBatch(p.cfg.FlushBatchSize))
+	}
+	if len(p.pending) == 0 {
 		return
 	}
-	pending := collapseRequestTelemetry(rows)
 	if p.ship == nil {
-		p.recordDroppedRows(pending)
+		p.dropPending("request telemetry ship unavailable; dropping batch")
 		return
 	}
+	if p.shipPending(ctx) {
+		p.pending = nil
+	} else if ctx.Err() == nil {
+		p.dropPending("request telemetry ship exhausted retries; dropping batch")
+	}
+}
+
+// shipPending records every acknowledged row as shipped. A partial response
+// keeps only the rejected rows pending, with their original event IDs.
+func (p *requestTelemetryPublisher) shipPending(ctx context.Context) bool {
 	for attempt := 0; attempt < p.cfg.MaxRetries; attempt++ {
 		if attempt > 0 {
 			select {
 			case <-ctx.Done():
-				p.recordDroppedRows(pending)
-				return
+				return false
 			case <-time.After(time.Duration(1<<attempt) * 100 * time.Millisecond):
 			}
 		}
-		err := p.ship(ctx, pending)
+		if ctx.Err() != nil {
+			return false
+		}
+		err := p.ship(ctx, p.pending)
 		if err == nil {
-			p.recordShipped(requestTelemetryCount(pending))
-			return
+			p.recordShipped(requestTelemetryCount(p.pending))
+			return true
 		}
 		var partial *RequestTelemetryDeliveryError
 		if errors.As(err, &partial) {
-			remaining := make([]RequestTelemetryRow, 0, len(pending))
-			var shipped int64
-			for _, row := range pending {
-				if partial.Accepted[row.EventID] {
-					shipped += int64(normalizedRequestTelemetryCount(row.Count))
-				} else {
-					remaining = append(remaining, row)
-				}
+			p.acceptPartialDelivery(partial)
+			if len(p.pending) == 0 {
+				return true
 			}
-			p.recordShipped(shipped)
-			pending = remaining
-			if len(pending) == 0 {
-				return
-			}
+		}
+		if ctx.Err() != nil {
+			return false
 		}
 		p.log.Warn("request telemetry delivery incomplete", "attempt", attempt+1, "err", err)
 	}
-	p.recordDroppedRows(pending)
+	return false
+}
+
+func (p *requestTelemetryPublisher) acceptPartialDelivery(partial *RequestTelemetryDeliveryError) {
+	remaining := make([]RequestTelemetryRow, 0, len(p.pending))
+	var shipped int64
+	for _, row := range p.pending {
+		if partial.Accepted[row.EventID] {
+			shipped += int64(normalizedRequestTelemetryCount(row.Count))
+		} else {
+			remaining = append(remaining, row)
+		}
+	}
+	p.recordShipped(shipped)
+	p.pending = remaining
 }
 
 // Partial responses preserve accepted rows when another app is rejected.
@@ -415,6 +436,7 @@ func collapseRequestTelemetry(rows []RequestTelemetryRow) []RequestTelemetryRow 
 			ReferrerHost:                         row.ReferrerHost,
 			Country:                              row.Country,
 			WakeID:                               row.WakeID,
+			TraceInferred:                        row.TraceInferred,
 			GuestRuntime:                         row.GuestRuntime,
 			GuestOutcome:                         row.GuestOutcome,
 			GuestErrorClass:                      row.GuestErrorClass,
@@ -476,6 +498,7 @@ type bucketKey struct {
 	ReferrerHost                         string
 	Country                              string
 	WakeID                               string
+	TraceInferred                        bool
 	GuestRuntime                         string
 	GuestOutcome                         string
 	GuestErrorClass                      string

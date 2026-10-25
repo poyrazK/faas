@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import http from 'node:http'
 import { once } from 'node:events'
 import { createHash } from 'node:crypto'
-import { createAuthzHandler, hashToken, HTTPError } from '../authz.mjs'
+import { createAuthzHandler, hashToken, HTTPError, liveSessions, sessionLive } from '../authz.mjs'
 import { createServer } from '../server.mjs'
 
 const org = '6f1c1a52-34c0-4a8e-9c55-2f5d7c0e4a11'
@@ -27,8 +27,8 @@ function fakePool(respond) {
   }
 }
 
-async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows, teamEnabled = false, deleteAccount = null, orgClaims = false } = {}) {
-  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows, teamEnabled, deleteAccount, orgClaims }) })
+async function serve(t, pool, { authenticate = async () => ({ sub: member, session_id: 'session' }), origins = ['https://app.example.test'], invitations, storage, workflows, teamEnabled = false, deleteAccount = null, orgClaims = false, sessions = null } = {}) {
+  const server = createServer({ upstreamPort: 1, authz: createAuthzHandler({ pool, authenticate, origins, invitations, storage, workflows, teamEnabled, deleteAccount, orgClaims, sessions }) })
   server.listen(0, '127.0.0.1')
   await once(server, 'listening')
   t.after(() => server.close())
@@ -75,6 +75,22 @@ test('team reads use verified claims and a scoped transaction and hide upstream 
   assert.equal(response.headers.get('cache-control'), 'no-store')
   const bad = await serve(t, fakePool(() => { throw new Error('database password and token') }), { teamEnabled: true })
   assert.deepEqual((await bad('GET', `/orgs/${org}/team`)).body, { status: 500, code: 'internal_error' })
+})
+
+test('serves the organization audit log a page at a time, cursor at full precision', async t => {
+  const id = i => `0b5f2f0e-7a51-4d8f-8a3a-5c1b9d2e6f7${i}`
+  const entry = i => ({ id: id(i), occurred_at: '2026-10-19T10:00:00.123Z', position: `2026-10-19 10:00:00.12345${i}+00`, action: 'member.added' })
+  const pool = fakePool((sql, args) => sql.includes('org_audit_entries') ? { rows: Array.from({ length: Math.min(args[3], 3) }, (_, i) => entry(i)) } : { rows: [] })
+  const call = await serve(t, pool)
+  const first = await call('GET', `/orgs/${org}/audit-log?limit=2`)
+  assert.deepEqual(first.body.entries.map(e => Object.keys(e).includes('position')), [false, false], 'positions stay internal')
+  assert.deepEqual(pool.log.find(q => q.sql.includes('org_audit_entries')).args, [org, null, null, 2])
+  const last = await call('GET', `/orgs/${org}/audit-log?cursor=${first.body.next}`)
+  assert.equal(last.body.next, null, 'a short page is the last')
+  assert.deepEqual(pool.log.filter(q => q.sql.includes('org_audit_entries')).at(-1).args, [org, '2026-10-19 10:00:00.123451+00', id(1), 50])
+  for (const query of ['limit=0', 'limit=101', 'limit=x', 'cursor=nope', `cursor=${Buffer.from('["x","y"]').toString('base64url')}`]) {
+    assert.equal((await call('GET', `/orgs/${org}/audit-log?${query}`)).status, 400, query)
+  }
 })
 
 test('authenticates before any database work', async t => {
@@ -273,6 +289,27 @@ test('deletes the caller own account only when the app allows it', async t => {
   assert.equal((await client('DELETE', '/account')).body.code, 'oauth_client_token')
 })
 
+test('requires a second factor for an organization and tells members refused for lacking one', async t => {
+  let blocked = true
+  const pool = fakePool((sql, args) => {
+    if (sql.includes('set_organization_mfa')) return { rows: [{ id: args[0], slug: 'acme', name: 'Acme', mfa_required: args[1] }] }
+    if (sql.includes('list_members')) throw Object.assign(new Error('forbidden'), { code: '42501' })
+    if (sql.includes('mfa_blocks')) return { rows: [{ blocked }] }
+    if (sql.includes('list_organizations')) return { rows: [{ id: org, slug: 'acme', mfa_required: true }] }
+    return { rows: [] }
+  })
+  const call = await serve(t, pool)
+  assert.deepEqual((await call('PATCH', `/orgs/${org}`, { body: { mfa_required: true } })).body, { id: org, slug: 'acme', name: 'Acme', mfa_required: true })
+  for (const body of [{}, { mfa_required: 'yes' }, { mfa_required: null }]) assert.equal((await call('PATCH', `/orgs/${org}`, { body })).body.code, 'invalid_mfa_required')
+  assert.equal((await call('GET', '/orgs')).body.organizations[0].mfa_required, true)
+  assert.match(pool.log.find(q => q.sql.includes('list_organizations')).sql, /mfa_required FROM gregale_auth\.list_organizations/)
+  assert.deepEqual((await call('GET', `/orgs/${org}/members`)).body, { status: 403, code: 'mfa_required' })
+  assert.deepEqual(pool.log.find(q => q.sql.includes('mfa_blocks')).args, [org])
+  blocked = false
+  assert.deepEqual((await call('GET', `/orgs/${org}/members`)).body, { status: 403, code: 'forbidden' }, 'a refusal for another reason stays forbidden')
+  assert.equal((await call('GET', `/orgs/${org}/nowhere`)).status, 404)
+})
+
 test('chooses the session organization only when organization claims are on', async t => {
   const pool = fakePool((sql, args) => sql.includes('set_active_organization') ? { rows: args[0] ? [{ id: args[0], slug: 'acme', role: 'member' }] : [] } : { rows: [] })
   const off = await serve(t, pool)
@@ -283,4 +320,37 @@ test('chooses the session organization only when organization claims are on', as
   assert.deepEqual(pool.log.filter(q => q.sql.includes('set_active_organization')).map(q => q.args), [[org], [null]])
   assert.equal((await on('POST', '/active-organization', { body: { org: 'acme' } })).status, 400)
   assert.equal((await on('POST', '/active-organization', { body: {} })).status, 400)
+})
+
+test('leaves sessions past the app limits out of the list', async t => {
+  const now = Date.parse('2026-10-18T12:00:00Z')
+  const policy = { maxAgeMinutes: 60, idleMinutes: 30 }
+  const session = (created, active) => ({ created_at: new Date(now - created * 60000).toISOString(), last_active_at: new Date(now - active * 60000).toISOString() })
+  assert.equal(sessionLive(session(50, 10), policy, now), true)
+  assert.equal(sessionLive(session(70, 10), policy, now), false, 'older than the maximum age')
+  assert.equal(sessionLive(session(50, 40), policy, now), false, 'idle too long')
+  assert.equal(sessionLive(session(5000, 5000), null, now), true, 'no limits')
+  const old = { id: 'o', created_at: '2020-01-01T00:00:00Z', last_active_at: '2020-01-01T00:00:00Z', current: false }
+  const mine = { ...old, id: 'm', current: true }
+  const pool = fakePool(sql => sql.includes('list_sessions') ? { rows: [old, mine] } : { rows: [] })
+  const call = await serve(t, pool, { sessions: { maxAgeMinutes: 60, idleMinutes: null } })
+  assert.deepEqual((await call('GET', '/sessions')).body.sessions.map(s => s.id), ['m'], 'the caller\'s own session always shows')
+})
+
+test('with one session per user, lists only the most recently active session and the caller\'s', async t => {
+  const now = Date.parse('2026-10-20T12:00:00Z')
+  const at = minutes => new Date(now - minutes * 60000).toISOString()
+  const session = (id, active, current = false) => ({ id, created_at: at(active + 1), last_active_at: at(active), current })
+  const newest = session('n', 1), older = session('o', 5), oldest = session('x', 9)
+  const single = { maxAgeMinutes: null, idleMinutes: null, singlePerUser: true }
+  assert.deepEqual(liveSessions([newest, older, oldest], single, now).map(s => s.id), ['n'])
+  assert.deepEqual(liveSessions([oldest, newest, older], single, now).map(s => s.id), ['n'], 'whatever order the rows come in')
+  assert.deepEqual(liveSessions([newest, { ...older, current: true }, oldest], single, now).map(s => s.id), ['n', 'o'], 'the caller\'s revoked session still shows')
+  assert.deepEqual(liveSessions([newest, older], { ...single, singlePerUser: false }, now).map(s => s.id), ['n', 'o'])
+  // A newer session past the idle limit is not the one that lives.
+  assert.deepEqual(liveSessions([newest, older], { ...single, idleMinutes: 3 }, now).map(s => s.id), ['n'])
+  assert.deepEqual(liveSessions([session('i', 10), older], { ...single, idleMinutes: 8 }, now).map(s => s.id), ['o'])
+  const pool = fakePool(sql => sql.includes('list_sessions') ? { rows: [newest, older, { ...oldest, current: true }] } : { rows: [] })
+  const call = await serve(t, pool, { sessions: single })
+  assert.deepEqual((await call('GET', '/sessions')).body.sessions.map(s => s.id), ['n', 'x'])
 })

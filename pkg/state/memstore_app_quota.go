@@ -36,8 +36,14 @@ func (m *MemStore) resolveAppQuotaLocked(app *App, limits api.Limits) (api.Limit
 }
 
 func (m *MemStore) countAppQuotaLocked(app App, personal bool, kind QuotaErrorKind) int {
+	return countAppQuotaIn(app, personal, kind, m.apps)
+}
+
+// countAppQuotaIn counts against a proposed app map, so staged batches are
+// checked with the same tenant rules before they are published.
+func countAppQuotaIn(app App, personal bool, kind QuotaErrorKind, apps map[string]App) int {
 	observed := 0
-	for _, existing := range m.apps {
+	for _, existing := range apps {
 		matches := app.OrgID != "" && existing.OrgID == app.OrgID || personal && existing.OrgID == "" && existing.AccountID == app.AccountID
 		if !matches || existing.Status != AppActive && existing.Status != AppEvictedCold {
 			continue
@@ -55,12 +61,16 @@ func (m *MemStore) checkAppQuotaLocked(app App, limits api.Limits) error {
 }
 
 func (m *MemStore) checkAppQuotaDeltaLocked(app App, limits api.Limits, delta int) error {
+	return m.checkAppQuotaDeltaInLocked(app, limits, delta, m.apps)
+}
+
+func (m *MemStore) checkAppQuotaDeltaInLocked(app App, limits api.Limits, delta int, apps map[string]App) error {
 	limits, personal, err := m.resolveAppQuotaLocked(&app, limits)
 	if err != nil {
 		return err
 	}
 	limit, kind := appQuotaLimit(app, limits)
-	observed := m.countAppQuotaLocked(app, personal, kind)
+	observed := countAppQuotaIn(app, personal, kind, apps)
 	if observed+delta > limit {
 		if delta != 1 {
 			observed += delta

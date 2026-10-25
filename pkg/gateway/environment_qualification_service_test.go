@@ -192,6 +192,26 @@ func TestEnvironmentQualificationServiceDenialsNeverWakeOrFallBack(t *testing.T)
 	}
 }
 
+func TestEnvironmentQualificationServiceAmbiguousCallerIsDenied(t *testing.T) {
+	for _, tc := range []struct {
+		err  error
+		want int
+	}{{state.ErrConflict, http.StatusForbidden}, {state.ErrInvalidArgument, http.StatusForbidden}, {errors.New("database offline"), http.StatusServiceUnavailable}} {
+		s, graph := privateServiceFixture()
+		h := NewEnvironmentQualificationServiceProxy(EnvironmentQualificationServiceProxyConfig{Store: s, ResolveNode: func(context.Context, string) (string, error) { return "", tc.err },
+			Next: http.HandlerFunc(func(http.ResponseWriter, *http.Request) { t.Fatal("unidentified caller fell back") }), Forward: func(Target) http.Handler { t.Fatal("unidentified caller was forwarded"); return nil }})
+		for _, path := range []string{EnvironmentQualificationServicePrefix + graph + "/backend/health", "/v1/internal/services/production/health"} {
+			r := httptest.NewRequest(http.MethodGet, path, nil)
+			r.RemoteAddr = "10.100.0.3:45000"
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, r)
+			if w.Code != tc.want {
+				t.Fatalf("%v %s: status=%d want=%d", tc.err, path, w.Code, tc.want)
+			}
+		}
+	}
+}
+
 func TestEnvironmentQualificationServiceAllowsHTTPSAndCancelsRevokedStream(t *testing.T) {
 	s, graph := privateServiceFixture()
 	s.route.RequireHTTPS = true
@@ -234,19 +254,23 @@ func TestEnvironmentQualificationRecordsOnlyCompleteRestoredHTTPSExchange(t *tes
 		name                              string
 		status                            int
 		tls, restored, cancel, writeError bool
+		httpCaller                        bool
 		want                              int
 	}{
 		{name: "restored HTTPS", status: 204, tls: true, restored: true, want: 1},
 		{name: "failed handler", status: 503, tls: true, restored: true},
 		{name: "redirect", status: 302, tls: true, restored: true},
-		{name: "plain HTTP", status: 204, restored: true},
+		{name: "plain HTTP from an HTTPS caller", status: 204, restored: true},
+		// ADR-20261019200059: an HTTP caller's exchange is evidence too.
+		{name: "restored HTTP caller", status: 204, restored: true, httpCaller: true, want: 1},
+		{name: "HTTP caller capture producer", status: 204, httpCaller: true},
 		{name: "capture producer", status: 204, tls: true},
 		{name: "cancelled stream", status: 204, tls: true, restored: true, cancel: true},
 		{name: "short write", status: 200, tls: true, restored: true, writeError: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			base, graph := privateServiceFixture()
-			base.route.RequireHTTPS = true
+			base.route.RequireHTTPS = !test.httpCaller
 			if test.restored {
 				base.route.Caller.CaptureInstanceID = uuid.NewString()
 				base.route.Target.CaptureInstanceID = uuid.NewString()

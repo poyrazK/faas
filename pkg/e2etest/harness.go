@@ -51,8 +51,12 @@ package e2etest
 import (
 	"bytes"
 	"context"
+	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/x509"
 	"encoding/hex"
+	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -95,6 +99,11 @@ type Harness struct {
 	ScheddSock string
 	VMMDPath   string
 	VMMDSock   string
+	// RealtimeSock is realtimed's socket when the harness boots it.
+	RealtimeSock string
+	// VMMDMetricsURL is vmmd's /metrics endpoint, set only when the test
+	// starts the harness with VMMDMetrics.
+	VMMDMetricsURL string
 
 	// startedAt bounds which guest consoles belong to this harness: only files
 	// modified after it are dumped on failure (see DumpLogs).
@@ -157,17 +166,35 @@ type Harness struct {
 	// Per-daemon state. nil for a daemon not started (e.g. quota test skips
 	// the metal-only daemons).
 	procs []*exec.Cmd
+	// Controlled fault stops remain reaped until their explicit restart.
+	expectedStops map[*exec.Cmd]bool
 	// scheddEnv/config retain the launch recipe so metal acceptance tests can
 	// fault-inject a schedd restart without reaching into this package's
 	// private process list.
 	scheddEnv        []string
 	scheddConfigPath string
 	vmmdLaunchEnv    []string
+	// nativeRuntimeSnapshotRoot is vmmd's private tree for native runtime
+	// snapshots when the run enables them (ADR 20261022184951 amendment 1).
+	nativeRuntimeSnapshotRoot string
+
+	// retired are daemons PlannedRestartVMMD replaced; DumpLogs still
+	// prints them.
+	retired []*exec.Cmd
 	// apidEnv/listen/socket retain the launch recipe for restart durability
 	// tests that exercise persistent control-plane state across apid lifetimes.
 	apidEnv              []string
 	apidListen           string
 	requestTelemetrySock string
+	// killed holds daemons stopped on purpose by KillAPID or KillSchedd.
+	killed map[*exec.Cmd]bool
+}
+
+func (h *Harness) markKilled(proc *exec.Cmd) {
+	if h.killed == nil {
+		h.killed = map[*exec.Cmd]bool{}
+	}
+	h.killed[proc] = true
 }
 
 // currentHarness points at the most recently booted Harness. Used by
@@ -194,6 +221,14 @@ func snapshotProcs() []*exec.Cmd {
 // buffer (logged on teardown so a flaky failure has the daemon's last words).
 func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *Harness {
 	t.Helper()
+	return StartWithAPIDEnv(t, pool, which, nil, extraEnv...)
+}
+
+// StartWithAPIDEnv confines provider proxies, trust roots and OAuth keys to
+// apid. Builder and image downloads retain their own normal transport trust.
+// APID restarts reuse the same scoped launch environment.
+func StartWithAPIDEnv(t *testing.T, pool *pgxpool.Pool, which Which, apidOnlyEnv []string, extraEnv ...string) *Harness {
+	t.Helper()
 
 	tmp := harnessTempDir(t)
 	// Daemon binaries are built once per process and shared across tests;
@@ -206,6 +241,7 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 	// imaged, schedd's signature verifier and vmmd must resolve the same
 	// app artifacts. Keep explicit caller overrides last, as for other env.
 	extraEnv = append([]string{"FAAS_APPS_ROOT=" + appsRoot}, extraEnv...)
+	extraEnv = append(internalSvcKeyEnv(t, tmp, extraEnv), extraEnv...)
 
 	// Socket dir lives outside t.TempDir() because macOS's t.TempDir() is
 	// under /var/folders/.../T/<random> and a test name + random suffix
@@ -216,6 +252,15 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
+	// Stop is registered with t.Cleanup only once every daemon is up. A
+	// t.Fatal part-way through (a daemon that never listens or subscribes)
+	// must not leave the daemons already started running on the host.
+	booted := false
+	defer func() {
+		if !booted {
+			h.stop()
+		}
+	}()
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
 		// APID starts first, but its probes must target this reserved control
@@ -248,11 +293,15 @@ func Start(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv ...string) *H
 	// gets the same key when schedd runs. This only writes the key: schedd
 	// itself still starts after vmmd (TestStart_BootsVMMDBeforeSchedd).
 	scheddVerifies := which&Schedd != 0
+	extraEnv = h.prepareRealtimed(which, extraEnv)
 	if which&APID != 0 {
 		if scheddVerifies {
 			h.ensureSignPub(t)
 		}
-		startAPID(t, h, bin, dbURL, extraEnv...)
+		startAPID(t, h, bin, dbURL, append(append([]string(nil), extraEnv...), apidOnlyEnv...)...)
+	}
+	if which&Realtimed != 0 {
+		startRealtimed(t, h, bin, extraEnv)
 	}
 
 	// Both socket paths are fixed up front: vmmd's env carries schedd's target
@@ -306,17 +355,40 @@ failure_report_dir = %q
 				}
 			}
 			cfg += fmt.Sprintf("native_process_recovery = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
+			// Strict budgets need the native owner; their apps must still park
+			// and wake from snapshots (ADR 20261022184951).
+			if os.Getenv("FAAS_FINANCIAL_SYSTEM_ACCEPTANCE") == "1" {
+				// They publish into a tree only vmmd writes (amendment 1);
+				// vmmd refuses a root with group write or other access.
+				snapshots := filepath.Join(tmp, "native-snap")
+				if err := os.Mkdir(snapshots, 0o750); err != nil {
+					t.Fatalf("e2etest: create native runtime snapshot root: %v", err)
+				}
+				if err := os.Chmod(snapshots, 0o750); err != nil {
+					t.Fatalf("e2etest: restrict native runtime snapshot root: %v", err)
+				}
+				h.nativeRuntimeSnapshotRoot = snapshots
+				cfg += fmt.Sprintf("native_runtime_capture = true\nnative_runtime_snapshot_root = %q\n", snapshots)
+			}
+		}
+		if which&VMMDMetrics != 0 {
+			addr := freeTCPAddr(t)
+			cfg += fmt.Sprintf("metrics_addr = %q\n", addr)
+			h.VMMDMetricsURL = "http://" + addr + "/metrics"
 		}
 		if ca := os.Getenv("FAAS_E2E_SERVICE_HTTPS_CA"); ca != "" {
 			cfg += fmt.Sprintf("service_proxy_ca_path = %q\n", ca)
 		}
+		cfg += os.Getenv(vmmdExtraConfigEnv)
 		if err := os.WriteFile(cfgPath, []byte(cfg), 0o600); err != nil {
 			t.Fatalf("e2etest: write vmmd.toml: %v", err)
 		}
 		env := append(vmmdEnv(dbURL, cfgPath, h.ScheddSock), extraEnv...)
 		h.vmmdLaunchEnv = append([]string(nil), env...)
 		h.procs = append(h.procs, startProc(t, bin, "vmmd", env))
-		waitUnix(t, sockPath, 10*time.Second)
+		// vmmd reconciles netns, jails and its journal before it listens;
+		// on a loaded shared acceptance host that took longer than 10s.
+		waitUnix(t, sockPath, time.Minute)
 	}
 
 	// Start the gateway before imaged when the reference-node acceptance opts
@@ -331,6 +403,7 @@ failure_report_dir = %q
 		env := append(testEnvCommon(dbURL),
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
 			"FAAS_SIGN_PUB="+signPubPath,
+			h.nativeRuntimeSnapshotEnv(tmp),
 		)
 		env = append(env, extraEnv...)
 		h.scheddConfigPath = cfgPath
@@ -422,6 +495,7 @@ failure_report_dir = %q
 	}
 
 	h.requireDaemonsAlive(t)
+	booted = true
 	t.Cleanup(h.stop)
 	return h
 }
@@ -443,6 +517,13 @@ const (
 	// the per-test Unix socket. It lets CI exercise the durable drain without
 	// pretending a missing vmmd bridge is a successful customer response.
 	GatewaySynthStub
+	// Realtimed boots the managed realtime daemon after apid; apid and the
+	// gateways get its socket (ADR-20261019102657 acceptance).
+	Realtimed
+	// VMMDMetrics gives vmmd a loopback /metrics listener (VMMDMetricsURL).
+	// It starts no daemon of its own. vmmd binds a fixed reserved port here,
+	// so only tests that read its counters opt in.
+	VMMDMetrics
 )
 
 // DeployWake is the daemon set the image deploy → snapshot → park → wake
@@ -748,11 +829,21 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	}
 	// Match Start: share imaged's app store with every harness daemon.
 	extraEnv = append([]string{"FAAS_APPS_ROOT=" + appsRoot}, extraEnv...)
+	extraEnv = append(internalSvcKeyEnv(t, tmp, extraEnv), extraEnv...)
 	// See Start for why sockDir lives outside t.TempDir() — macOS sun_path
 	// limit, and `/tmp/faas-e2e-sock-*` is short and stable everywhere.
 	sockDir := newHarnessSocketDir(t)
 	h := &Harness{T: t, Pool: pool, TmpDir: tmp, BinDir: bin, ImagedTmp: appsRoot, SockDir: sockDir, RecoveryHMACKeyHex: newRecoveryHMACKeyHex(t), HostHMACKeyPath: newHostHMACKeyFile(t, tmp)}
 	currentHarness = h
+	// Stop is registered with t.Cleanup only once every daemon is up. A
+	// t.Fatal part-way through (a daemon that never listens or subscribes)
+	// must not leave the daemons already started running on the host.
+	booted := false
+	defer func() {
+		if !booted {
+			h.stop()
+		}
+	}()
 	if which&Gatewayd != 0 {
 		reserveGatewayAddresses(t, h)
 		extraEnv = append([]string{"FAAS_GATEWAYD_CONTROL_URL=http://" + h.gatewayControlAddr}, extraEnv...)
@@ -775,6 +866,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	// for the head value and bump history.
 	pgtest.WaitForMigration(t, pool, e2eMigrationTarget, 30*time.Second)
 
+	extraEnv = h.prepareRealtimed(which, extraEnv)
 	if which&APID != 0 {
 		addr := freeTCPAddr(t)
 		// Every daemon gets its own free metrics port — see
@@ -823,6 +915,9 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		// listener while still failing promptly on a crashed process.
 		waitTCP(t, addr, 30*time.Second)
 	}
+	if which&Realtimed != 0 {
+		startRealtimed(t, h, bin, extraEnv)
+	}
 	if which&Schedd != 0 {
 		sockPath := filepath.Join(h.SockDir, "schedd.sock")
 		vmmdSock := os.Getenv("FAAS_E2E_VMMD_SOCKET")
@@ -836,6 +931,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		env := append(testEnvCommon(dbURL),
 			"FAAS_SCHEDD_CONFIG="+cfgPath,
 			"FAAS_SIGN_PUB="+signPubPath,
+			h.nativeRuntimeSnapshotEnv(tmp),
 		)
 		env = append(env, extraEnv...)
 		h.scheddConfigPath = cfgPath
@@ -860,7 +956,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 	// the rest SILENTLY: a test could ask for imaged, get no imaged, no error,
 	// and a deployment that simply never moved. Refuse instead, so the next
 	// caller learns in one second rather than after a three-minute poll.
-	if unsupported := which &^ (APID | Schedd | Imaged | Gatewayd | GatewaydPublic | Meterd | GatewaySynthStub); unsupported != 0 {
+	if unsupported := which &^ (APID | Schedd | Imaged | Gatewayd | GatewaydPublic | Meterd | GatewaySynthStub | Realtimed); unsupported != 0 {
 		t.Fatalf("e2etest: StartWithEnv cannot start daemon mask %b (VMMD and Builderd are Start-only); "+
 			"use Start, or teach StartWithEnv to boot them", unsupported)
 	}
@@ -880,6 +976,7 @@ func StartWithEnv(t *testing.T, pool *pgxpool.Pool, which Which, extraEnv []stri
 		startGatewaydPublic(t, h, bin, dbURL, extraEnv)
 	}
 	h.requireDaemonsAlive(t)
+	booted = true
 	t.Cleanup(h.stop)
 	return h
 }
@@ -1093,6 +1190,13 @@ func startGatewayd(t *testing.T, h *Harness, bin, dbURL string, extraEnv []strin
 	// test-only override scoped to gatewayd-internal.
 	for _, entry := range extraEnv {
 		if nodeName, ok := strings.CutPrefix(entry, "FAAS_E2E_GATEWAY_NODE_NAME="); ok {
+			// The process captures its registration baseline at boot. Publish
+			// the named serving node first, as fleet bootstrap does in production.
+			result, err := h.Pool.Exec(t.Context(), `UPDATE compute_nodes
+			 SET role='compute-node', gateway_target_url=$2 WHERE name=$1`, nodeName, "tcp://"+addr)
+			if err != nil || result.RowsAffected() != 1 {
+				t.Fatalf("e2etest: register named gateway %q before boot: rows=%d err=%v", nodeName, result.RowsAffected(), err)
+			}
 			env = append(env, "FAAS_NODE_NAME="+nodeName)
 		}
 	}
@@ -1190,6 +1294,51 @@ func (h *Harness) startAdditionalGatewayWithControl(nodeName string, extraEnv ..
 // startGatewaydPublic boots the public edge next to gatewayd-internal. It is
 // opt-in because most metal tests only need the internal HTTP path; the raw
 // TCP acceptance test needs the real gatewayd-public/tcpd composition.
+// prepareRealtimed fixes realtimed's socket before any daemon starts, so
+// apid and gatewayd-internal reach it.
+func (h *Harness) prepareRealtimed(which Which, extraEnv []string) []string {
+	if which&Realtimed == 0 {
+		return extraEnv
+	}
+	h.RealtimeSock = filepath.Join(h.SockDir, "realtimed.sock")
+	return append([]string{"FAAS_REALTIME_SOCKET=" + h.RealtimeSock}, extraEnv...)
+}
+
+// startRealtimed boots realtimed after apid: on a single box it reads
+// retained history, tickets and fleet state from apid's request-telemetry
+// socket. Callers pass the preview flags they exercise in extraEnv.
+func startRealtimed(t *testing.T, h *Harness, bin string, extraEnv []string) {
+	t.Helper()
+	if err := ensureRealtimed(bin); err != nil {
+		t.Fatal(err)
+	}
+	outbox := filepath.Join(h.TmpDir, "realtime-outbox")
+	if err := os.MkdirAll(outbox, 0o700); err != nil {
+		t.Fatalf("e2etest: mkdir realtime outbox: %v", err)
+	}
+	env := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"HOME=" + os.Getenv("HOME"),
+		"FAAS_REALTIME_SOCKET=" + h.RealtimeSock,
+		"FAAS_REALTIME_CALLBACK_OUTBOX=" + outbox,
+		"FAAS_REALTIME_HEALTH_LISTEN=" + freeTCPAddr(t),
+		"FAAS_REALTIME_HISTORY_TARGET=" + filepath.Join(h.SockDir, "request_telemetry.sock"),
+	}
+	env = append(env, extraEnv...)
+	h.procs = append(h.procs, startProc(t, bin, "realtimed", env))
+	deadline := time.Now().Add(15 * time.Second)
+	for {
+		if _, err := os.Stat(h.RealtimeSock); err == nil {
+			return
+		}
+		if time.Now().After(deadline) {
+			dumpProcs(t)
+			t.Fatalf("e2etest: realtimed did not create %s", h.RealtimeSock)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+}
+
 func startGatewaydPublic(t *testing.T, h *Harness, bin, dbURL string, extraEnv []string) {
 	t.Helper()
 	if h.ScheddSock == "" {
@@ -1336,6 +1485,9 @@ func testEnvCommon(dbURL string) []string {
 	env := []string{
 		"DATABASE_URL=" + dbURL,
 		"FAAS_SKIP_SOCKET_GROUP=1",
+		// ADR-20261023115741: e2e suites exercise preview capabilities, and
+		// apid, schedd, githubd and gatewayd-internal all decide the flags.
+		"FAAS_CAPABILITY_FLAGS_RELEASE_ALL=1",
 		"FAAS_APP_ERRORS_ENABLED=false",
 		// The retained spans writer is production-default-on, but ordinary
 		// E2E daemons run unprivileged and do not need its /run/faas socket.
@@ -1442,6 +1594,7 @@ func vmmdEnv(dbURL, cfgPath, scheddSock string) []string {
 	// (prepared networks, restore concurrency/prefetch, a private resource
 	// journal on a shared host). Unset keeps vmmd's own defaults.
 	for _, name := range []string{
+		"FAAS_BRIDGE_UNPRIVILEGED",
 		"FAAS_PREPARED_NETWORKS",
 		"FAAS_RESTORE_CONCURRENCY",
 		"FAAS_RESTORE_PREFETCH",
@@ -1509,6 +1662,42 @@ func newRecoveryHMACKeyHex(t *testing.T) string {
 // (crypto/rand) so two parallel tests don't share a key, and
 // so a leaked key from one test's debug output is useless for
 // the next test's value_hash discriminator.
+// internalSvcKeyEnv gives this harness its own internal-service signing key:
+// schedd mints workflow and exclusive-operation tokens with the private half
+// and gatewayd-internal verifies them with the public half. Without it
+// gatewayd-internal has no verifier and answers every workflow step with 500,
+// and schedd falls back to whatever key the host has at
+// /etc/faas/secrets/internal-svc. A caller that sets either variable keeps it.
+func internalSvcKeyEnv(t *testing.T, dir string, extraEnv []string) []string {
+	t.Helper()
+	for _, entry := range extraEnv {
+		if strings.HasPrefix(entry, "FAAS_INTERNAL_SVC_KEY_PATH=") || strings.HasPrefix(entry, "FAAS_INTERNAL_SVC_PUBKEYS=") {
+			return nil
+		}
+	}
+	public, private, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc key: %v", err)
+	}
+	privateDER, err := x509.MarshalPKCS8PrivateKey(private)
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc key: %v", err)
+	}
+	publicDER, err := x509.MarshalPKIXPublicKey(public)
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc key: %v", err)
+	}
+	keyPath := filepath.Join(dir, "internal-svc-schedd.ed25519")
+	if err := os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: privateDER}), 0o600); err != nil {
+		t.Fatalf("e2etest: write internal-svc key: %v", err)
+	}
+	pubkeys, err := json.Marshal(map[string]string{"schedd": string(pem.EncodeToMemory(&pem.Block{Type: "PUBLIC KEY", Bytes: publicDER}))})
+	if err != nil {
+		t.Fatalf("e2etest: internal-svc pubkeys: %v", err)
+	}
+	return []string{"FAAS_INTERNAL_SVC_KEY_PATH=" + keyPath, "FAAS_INTERNAL_SVC_PUBKEYS=" + string(pubkeys)}
+}
+
 func newHostHMACKeyFile(t *testing.T, dir string) string {
 	t.Helper()
 	var b [32]byte
@@ -1764,7 +1953,9 @@ func (h *Harness) killChild(name string) error {
 					return fmt.Errorf("e2etest: reap %s: %w", name, err)
 				}
 			}
+			h.markKilled(proc)
 		}
+		h.markDaemonStopped(proc)
 		return nil
 	}
 	return fmt.Errorf("e2etest: %s process not found", name)
@@ -1803,6 +1994,63 @@ func (h *Harness) RestartSchedd() error {
 	return nil
 }
 
+// vmmdExtraConfigEnv carries extra vmmd.toml lines from OverrideVMMDConfig.
+const vmmdExtraConfigEnv = "FAAS_E2E_VMMD_EXTRA_TOML"
+
+// OverrideVMMDConfig appends lines to the harness's vmmd.toml for one test,
+// e.g. the vmmd restart adoption switches.
+func OverrideVMMDConfig(t *testing.T, lines string) {
+	t.Helper()
+	t.Setenv(vmmdExtraConfigEnv, lines)
+}
+
+// PlannedRestartVMMD stops vmmd as its service manager does on a release
+// (SIGTERM, a planned stop) and starts a fresh one with the retained config
+// and env. With adoption configured, the guests outlive the first process
+// and the second adopts them (vmmd restart adoption ADR). RestartVMMD is the
+// crash form.
+func (h *Harness) PlannedRestartVMMD(stopTimeout time.Duration) error {
+	if h == nil || h.T == nil || h.VMMDSock == "" || len(h.vmmdLaunchEnv) == 0 {
+		return fmt.Errorf("e2etest: vmmd launch recipe unavailable")
+	}
+	var old *exec.Cmd
+	for _, proc := range h.procs {
+		if proc != nil && proc.Process != nil && filepath.Base(proc.Path) == "vmmd" && proc.ProcessState == nil {
+			old = proc
+		}
+	}
+	if old == nil {
+		return fmt.Errorf("e2etest: vmmd process not found")
+	}
+	if err := old.Process.Signal(syscall.SIGTERM); err != nil {
+		return fmt.Errorf("e2etest: stop vmmd: %w", err)
+	}
+	exited := make(chan error, 1)
+	go func() { exited <- old.Wait() }()
+	select {
+	case err := <-exited:
+		var exitErr *exec.ExitError
+		if err != nil && !errors.As(err, &exitErr) {
+			return fmt.Errorf("e2etest: reap vmmd: %w", err)
+		}
+	case <-time.After(stopTimeout):
+		return fmt.Errorf("e2etest: vmmd did not stop within %s", stopTimeout)
+	}
+	procs := h.procs[:0]
+	for _, candidate := range h.procs {
+		if candidate != old {
+			procs = append(procs, candidate)
+		}
+	}
+	h.procs = procs
+	h.retired = append(h.retired, old)
+	_ = os.Remove(h.VMMDSock)
+	h.procs = append(h.procs, startProc(h.T, h.BinDir, "vmmd", append([]string(nil), h.vmmdLaunchEnv...)))
+	waitUnix(h.T, h.VMMDSock, 30*time.Second)
+	h.requireDaemonsAlive(h.T)
+	return nil
+}
+
 // SetAPIDEnv updates the retained apid launch recipe without exposing private
 // runtime settings to other daemons or guests. RestartAPID applies the change.
 func (h *Harness) SetAPIDEnv(key, value string) error {
@@ -1824,6 +2072,18 @@ func (h *Harness) SetAPIDEnv(key, value string) error {
 		h.apidEnv = append(h.apidEnv, entry)
 	}
 	return nil
+}
+
+// APIDPID identifies the live child for peer-credential checks in fault tests.
+func (h *Harness) APIDPID() (int, error) {
+	if h != nil {
+		for _, proc := range h.procs {
+			if proc != nil && proc.Process != nil && proc.ProcessState == nil && filepath.Base(proc.Path) == "apid" {
+				return proc.Process.Pid, nil
+			}
+		}
+	}
+	return 0, fmt.Errorf("e2etest: live apid process not found")
 }
 
 // KillAPID terminates and reaps the apid child while leaving the rest of the
@@ -1848,7 +2108,9 @@ func (h *Harness) KillAPID() error {
 					return fmt.Errorf("e2etest: reap apid: %w", err)
 				}
 			}
+			h.markKilled(proc)
 		}
+		h.markDaemonStopped(proc)
 		return nil
 	}
 	return fmt.Errorf("e2etest: apid process not found")
@@ -1975,6 +2237,13 @@ func EnsureSharedBinaries() (string, error) {
 				sharedBinErr = fmt.Errorf("e2etest: mkdir shared bin dir: %w", err)
 				return
 			}
+			// MkdirTemp makes the directory 0700. Unprivileged bridges
+			// (FAAS_BRIDGE_UNPRIVILEGED=1) exec their binary from here as a
+			// bridge uid, as production bridges do from /opt/faas.
+			if err = os.Chmod(dir, 0o755); err != nil {
+				sharedBinErr = fmt.Errorf("e2etest: open shared bin dir to bridge uids: %w", err)
+				return
+			}
 		}
 		for _, d := range DaemonBinaries {
 			// Already built by a previous phase into a shared FAAS_E2E_BIN_DIR.
@@ -2016,6 +2285,41 @@ func EnsureSharedBinaries() (string, error) {
 		sharedBinDir = dir
 	})
 	return sharedBinDir, sharedBinErr
+}
+
+// realtimedBuild builds realtimed into the shared binary directory the first
+// time a test starts it. It stays out of DaemonBinaries because the native
+// acceptance gates stage exactly the binaries their contracts list, and only
+// realtime tests need this one.
+var realtimedBuild struct {
+	once sync.Once
+	err  error
+}
+
+func ensureRealtimed(dir string) error {
+	realtimedBuild.once.Do(func() {
+		if binaryPresent(filepath.Join(dir, "realtimed")) {
+			return
+		}
+		mod, err := moduleImportPath()
+		if err != nil {
+			realtimedBuild.err = err
+			return
+		}
+		args := []string{"build"}
+		if daemonBuildTags != "" {
+			args = append(args, "-tags", daemonBuildTags)
+		}
+		args = append(args, "-o", filepath.Join(dir, "realtimed"), mod+"/cmd/realtimed")
+		var out bytes.Buffer
+		cmd := exec.Command("go", args...)
+		cmd.Stdout = &out
+		cmd.Stderr = &out
+		if err := cmd.Run(); err != nil {
+			realtimedBuild.err = fmt.Errorf("e2etest: go build realtimed: %w\n%s", err, out.String())
+		}
+	})
+	return realtimedBuild.err
 }
 
 // binaryPresent reports whether path is a non-empty executable regular file.
@@ -2162,7 +2466,7 @@ func (h *Harness) requireDaemonsAlive(t *testing.T) {
 	// scheduled. One sleep for the whole set, not one per daemon.
 	time.Sleep(150 * time.Millisecond)
 
-	if name, out, dead := firstDeadDaemon(h.procs); dead {
+	if name, out, dead := firstDeadDaemon(h.watchedDaemons()); dead {
 		t.Fatalf("e2etest: %s exited during startup; nothing it owns will happen, "+
 			"and the failure would otherwise surface much later as an unrelated "+
 			"timeout.\n%s", name, out)
@@ -2199,6 +2503,11 @@ func firstDeadDaemon(procs []*exec.Cmd) (name, output string, dead bool) {
 // Intended for debugging — production tests don't call this.
 func (h *Harness) DumpLogs(t *testing.T) {
 	t.Helper()
+	for _, p := range h.retired {
+		if buf, ok := p.Stdout.(*safeBuffer); ok && buf.String() != "" {
+			t.Logf("e2etest: replaced %s captured output:\n%s", filepath.Base(p.Path), buf.String())
+		}
+	}
 	for _, p := range h.procs {
 		if buf, ok := p.Stdout.(*safeBuffer); ok {
 			s := buf.String()
@@ -3040,6 +3349,7 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 		env = append(env, "FAAS_API_HOSTING_SMOKE_URL="+h.GatewayURL)
 		env = append(env, "FAAS_APPS_DOMAIN="+testDomain)
 	}
+	env = append(env, h.nativeRuntimeSnapshotEnv(tmp))
 	// extraEnv last so a caller can override a harness default — a test
 	// that needs FAAS_STORAGE_ROOT somewhere writable, for instance.
 	env = append(env, extraEnv...)
@@ -3051,9 +3361,11 @@ func startImaged(t *testing.T, h *Harness, bin, dbURL, tmp, appsRoot string, ext
 	// did not exist yet, and imaged's catch-up sweep only looks at
 	// deployments older than two hours: the image deploy sat in `pending`
 	// until the test gave up, in every image-deploy test. Wait for the
-	// subscription itself, not the process.
+	// subscription itself, not the process. Restaging a base whose guest init
+	// changed takes close to three minutes on a two-vCPU shared host, so the
+	// wait leaves headroom beyond that.
 	imagedStart := time.Now()
-	if err := h.waitImagedListens(3 * time.Minute); err != nil {
+	if err := h.waitImagedListens(10 * time.Minute); err != nil {
 		// Say why: an imaged that exited (metrics port taken, base
 		// staging failed) is otherwise reported only as "never
 		// subscribed", with its last words lost — smoke run
@@ -3078,4 +3390,15 @@ func harnessGuestInit(tmp, configured, kernel string) (string, error) {
 		return "", err
 	}
 	return path, nil
+}
+
+// nativeRuntimeSnapshotEnv points imaged and schedd at this run's native
+// runtime snapshot tree. Runs without one get a path that never exists, so a
+// host's own /srv/fc/native-snap never enters a test.
+func (h *Harness) nativeRuntimeSnapshotEnv(tmp string) string {
+	root := h.nativeRuntimeSnapshotRoot
+	if root == "" {
+		root = filepath.Join(tmp, "native-snap")
+	}
+	return "FAAS_NATIVE_RUNTIME_SNAPSHOT_ROOT=" + root
 }

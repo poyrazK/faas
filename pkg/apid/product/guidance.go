@@ -51,6 +51,9 @@ func populateCustomerGuidance(ctx context.Context, store state.ProductControlSto
 	if err != nil {
 		return err
 	}
+	if view.OverdueHold != nil {
+		productcontrol.HoldGuidance(&guidance)
+	}
 	current, err := store.GetProductCustomer(ctx, view.AccountID, view.AppID, view.Customer.TenantID)
 	if err != nil {
 		return err

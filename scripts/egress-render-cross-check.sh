@@ -55,7 +55,9 @@ render_go() {
 # render_jinja: dump the Jinja2 renderer's stdout for the given env.
 # Mirrors the Go renderer's input shape via the template's variable
 # names. The template's `if defined` guards keep the overlay + v6
-# branches quiet when their variables are empty.
+# branches quiet when their variables are empty. trim_blocks=True matches
+# ansible.builtin.template, which renders the production file: without it a
+# `{#- #}` comment passed here and broke the rc.291 converge (2026-10-24).
 render_jinja() {
   local iface="$1"
   local cidr="$2"
@@ -69,7 +71,7 @@ render_jinja() {
 from jinja2 import Template
 overlay = '$overlay'
 o_list = [c.strip() for c in overlay.split(',')] if overlay else []
-print(Template(open('$JINJA2').read()).render(
+print(Template(open('$JINJA2').read(), trim_blocks=True).render(
     public_iface='$iface',
     masquerade_cidr='$cidr',
     overlay_cidrs=o_list,

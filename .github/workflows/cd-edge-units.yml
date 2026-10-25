@@ -22,7 +22,7 @@
 # binaries it ran before and stops the lane.
 #
 # deployctl restarts each service, or reloads it into a second generation
-# when the running and the new binary both support the hand-off (ADR-1580);
+# when the running and the new binary both support the hand-off (ADR-20261018072701);
 # that choice is deployctl's, not this workflow's.
 #
 # Compute targets: edge_targets, or the environment variable
@@ -126,7 +126,7 @@ jobs:
           github-token: ${{ github.token }}
           path: ${{ runner.temp }}/gregale-units
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           path: workflow-src
           sparse-checkout: scripts/ci/verify_unit_release.sh
@@ -141,10 +141,15 @@ jobs:
           echo "UNITS_DIR=$RUNNER_TEMP/gregale-units/unpacked" >> "$GITHUB_ENV"
           echo "UNITS_SHA=$git_sha" >> "$GITHUB_ENV"
 
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
+          # Main's history and the release tags, not every branch
+          # (scripts/ci/fetch_release_history.sh).
           ref: ${{ steps.verify.outputs.git_sha }}
-          fetch-depth: 0
+          filter: blob:none
+
+      - name: Fetch main's history and release tags
+        run: scripts/ci/fetch_release_history.sh
 
       - name: Select the edge hosts
         id: lanes
@@ -281,7 +286,9 @@ jobs:
   # The other nodes, one at a time with the follower gate; a failed node is
   # rolled back and stops the rest.
   nodes:
-    name: Edge followers
+    # Name the job after its node: without a matrix value in the name, GitHub
+    # appends the whole target object, host-key fingerprint included.
+    name: Edge follower ${{ matrix.target.node }}
     needs: [plan, canary-node, control-plane]
     if: >-
       always() && needs.plan.result == 'success' && needs.plan.outputs.edge == 'true' &&

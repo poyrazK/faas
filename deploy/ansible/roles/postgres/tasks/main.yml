@@ -157,6 +157,48 @@
   become_user: postgres
   when: not (faas_postgres_standby_mode | default(false) | bool)
 
+# ADR-20261023104734: `faas` owns the schema and is the migration role. Each
+# daemon can instead log in as its own member of faas_runtime, which holds row
+# DML and owns nothing. Compute nodes authenticate with a password, so their
+# role exists only once the operator provides one.
+- name: postgres — require a strong compute runtime password when set — ADR-20261023104734
+  ansible.builtin.assert:
+    that:
+      - faas_postgres_compute_password | string | length >= 16
+    fail_msg: >-
+      faas_postgres_compute_password must be at least 16 characters (Ansible
+      Vault); it authenticates every compute node's faas_compute login.
+    quiet: true
+  when:
+    - faas_postgres_compute_password is defined
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+- name: postgres — create compute runtime role `faas_compute` — ADR-20261023104734
+  community.postgresql.postgresql_user:
+    name: faas_compute
+    password: "{{ faas_postgres_compute_password }}"
+    role_attr_flags: LOGIN
+    state: present
+  become: true
+  become_user: postgres
+  no_log: true
+  when:
+    - faas_postgres_compute_password is defined
+    - not (faas_postgres_standby_mode | default(false) | bool)
+
+# Creates faas_runtime and the per-daemon roles, grants row DML on every table
+# and sequence, and sets default privileges for the objects later migrations
+# create. The script prints a fingerprint of the result before and after.
+- name: postgres — converge runtime roles and grants — ADR-20261023104734
+  ansible.builtin.command:
+    argv: [psql, -X, -d, faas, -f, "-"]
+    stdin: "{{ lookup('ansible.builtin.file', role_path + '/files/runtime-roles.sql') }}"
+  become: true
+  become_user: postgres
+  register: faas_runtime_roles
+  changed_when: (faas_runtime_roles.stdout_lines | first) != (faas_runtime_roles.stdout_lines | last)
+  when: not (faas_postgres_standby_mode | default(false) | bool)
+
 - name: postgres — make /run/postgresql writable for faas (peer auth)
   ansible.builtin.file:
     path: /run/postgresql
@@ -211,6 +253,15 @@
       {% for cidr in (faas_postgres_allowed_cidrs | default([])) %}
       host    faas            faas                                    {{ cidr }}                scram-sha-256
       {% endfor %}
+      # ADR-20261023104734: daemons on their own faas_runtime member role.
+      # Per-daemon roles have no password and log in over the socket only;
+      # faas_compute authenticates over TCP.
+      local   faas            +faas_runtime                           peer map=faas_map
+      host    faas            +faas_runtime                           127.0.0.1/32            scram-sha-256
+      host    faas            +faas_runtime                           ::1/128                  scram-sha-256
+      {% for cidr in (faas_postgres_allowed_cidrs | default([])) %}
+      host    faas            +faas_runtime                           {{ cidr }}                scram-sha-256
+      {% endfor %}
       {% if faas_postgres_standby_address | default('') %}
       # ADR-1344 §8: the warm standby streams WAL from this address only, over
       # TLS (the standby verifies the certificate issued below).
@@ -243,6 +294,16 @@
       faas_map faas-githubd faas
       faas_map faas-outboundd faas
       faas_map faas-bridged faas
+      # ADR-20261023104734: each daemon user may also log in as its own
+      # faas_runtime member (FAAS_DB_ROLE). The lines mapping it to the owner
+      # above are removed once every unit has moved.
+      faas_map faas         faas_shared
+      faas_map faas-apid    faas_apid
+      faas_map faas-schedd  faas_schedd
+      faas_map faas-meterd  faas_meterd
+      faas_map faas-githubd faas_githubd
+      faas_map faas-outboundd faas_outboundd
+      faas_map faas-bridged faas_bridged
   register: pg_ident
   failed_when: false
   notify: reload postgresql
@@ -330,6 +391,58 @@
   register: pg_archive_timeout
   failed_when: false
   notify: reload postgresql
+
+# Statement statistics (2026-10-21). Without pg_stat_statements the only view
+# of where the control plane's Postgres CPU goes was sampling pg_stat_activity,
+# whose query text stopped at 1 kB. shared_preload_libraries and
+# track_activity_query_size are PGC_POSTMASTER (restart); track_io_timing is
+# reload-only. The extension is created in the `postgres` maintenance database
+# so the `faas` schema stays byte-identical to schema.sql; the view still
+# reports statements from every database.
+- name: postgres — preload pg_stat_statements (restart-needed)
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?shared_preload_libraries\\s*="
+    line: "shared_preload_libraries = 'pg_stat_statements'"
+    create: false
+  failed_when: false
+  # Host-configuration lane (ADR 20261018133100): never restart the
+  # postmaster outside a full release; only report the change.
+  check_mode: "{{ not (faas_stateful_restart_allowed | default(true) | bool) }}"
+  notify: restart postgresql
+
+- name: postgres — keep 4 kB of query text in pg_stat_activity (restart-needed)
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?track_activity_query_size\\s*="
+    line: "track_activity_query_size = 4096"
+    create: false
+  failed_when: false
+  # Host-configuration lane (ADR 20261018133100): never restart the
+  # postmaster outside a full release; only report the change.
+  check_mode: "{{ not (faas_stateful_restart_allowed | default(true) | bool) }}"
+  notify: restart postgresql
+
+- name: postgres — time block I/O in statement statistics (reload-only)
+  ansible.builtin.lineinfile:
+    path: "{{ postgres_config_dir }}/postgresql.conf"
+    regexp: "^#?track_io_timing\\s*="
+    line: "track_io_timing = on"
+    create: false
+  failed_when: false
+  notify: reload postgresql
+
+- name: postgres — create pg_stat_statements in the maintenance database
+  community.postgresql.postgresql_ext:
+    name: pg_stat_statements
+    # community.postgresql 5.0.0 (requirements.yml) takes login_db; the
+    # removed `db` alias failed rc.284's control-plane convergence.
+    login_db: postgres
+    state: present
+  become: true
+  become_user: postgres
+  # A warm standby is read-only; CREATE EXTENSION runs on the primary.
+  when: not (faas_postgres_standby_mode | default(false) | bool)
 
 # `ALTER SYSTEM` writes postgresql.auto.conf, which PostgreSQL reads after
 # postgresql.conf. A stale value there silently shadows the role-managed
@@ -718,4 +831,23 @@
     - /etc/systemd/system/postgresql@.service.d/99-faas-off-host-backup.conf
     - "/etc/systemd/system/postgresql@{{ postgres_major_version }}-main.service.d/99-faas-off-host-backup.conf"
   failed_when: false
+  notify: daemon-reload postgres
+
+# CPU priority (2026-10-21). On the split-box control plane PostgreSQL shares
+# two vCPUs with Prometheus, Grafana and the GitHub runners; deploy jobs pushed
+# the load average to 13-17 and a trivial `select 1` to 65 ms. A cgroup weight
+# on PostgreSQL's slice keeps the database ahead of those siblings under
+# contention and costs nothing when the host is idle. The runner and
+# Prometheus roles lower their own units' weights.
+- name: postgres — weight the PostgreSQL slice for CPU contention
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/system-postgresql.slice.d/50-faas-cpu-weight.conf
+    content: |
+      # Managed by Ansible (roles/postgres). See the task comment for the reason.
+      [Slice]
+      CPUWeight={{ faas_postgres_cpu_weight | default(1000) }}
+    owner: root
+    group: root
+    mode: "0644"
+  failed_when: false  # chroot/CI may not have systemd
   notify: daemon-reload postgres

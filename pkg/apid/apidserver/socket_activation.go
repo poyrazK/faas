@@ -48,12 +48,17 @@ func apidListener(network, addr string) (net.Listener, error) {
 	if err != nil {
 		return nil, err
 	}
-	wire.Share(listener)
-	// The listener returned by FileListener is close-on-exec. Clear the
-	// activation variables as well so helpers cannot mistake fd 3 for theirs.
+	// The listener returned by FileListener is close-on-exec and fd 3 is now
+	// closed. Clear the activation variables before anything reaches pkg/wire:
+	// its first call loads the activation set from them, and with fd 3 gone
+	// that load fails and every later wire.ListenInherited (apid's metrics
+	// listener) returns "inspect inherited fd 3: bad file descriptor". This is
+	// what stopped apid from starting in rc.278's rollout. gatewayd-public's
+	// publicListener has always cleared them first.
 	_ = os.Unsetenv("LISTEN_PID")
 	_ = os.Unsetenv("LISTEN_FDS")
 	_ = os.Unsetenv("LISTEN_FDNAMES")
+	wire.Share(listener) // a hand-off passes it to the successor
 	return listener, nil
 }
 

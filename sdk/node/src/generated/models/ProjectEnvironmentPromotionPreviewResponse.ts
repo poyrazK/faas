@@ -5,11 +5,19 @@
 import type { ProjectEnvironmentConfigDiffResponse } from './ProjectEnvironmentConfigDiffResponse.js';
 import type { ProjectEnvironmentPromotionChange } from './ProjectEnvironmentPromotionChange.js';
 import type { ProjectEnvironmentQualificationResponse } from './ProjectEnvironmentQualificationResponse.js';
+import type { ProjectPromotionHealthPolicy } from './ProjectPromotionHealthPolicy.js';
+import type { ProjectReleaseSecretConfiguration } from './ProjectReleaseSecretConfiguration.js';
 import type { ProjectReleaseSetResponse } from './ProjectReleaseSetResponse.js';
 /**
  * Read-only promotion preview between two registered project environments.
  */
 export type ProjectEnvironmentPromotionPreviewResponse = {
+  secrets?: ProjectReleaseSecretConfiguration;
+  /**
+   * Hash of the configuration resolved with destination service bindings; included in the promotion identity.
+   */
+  destination_config_hash?: string;
+  health?: ProjectPromotionHealthPolicy;
   project_slug: string;
   from_environment: string;
   to_environment: string;

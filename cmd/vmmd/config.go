@@ -6,6 +6,7 @@ package main
 
 import (
 	"crypto/tls"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/netip"
@@ -40,9 +41,37 @@ type Config struct {
 	// directory for native image and snapshot output claims. Configure it
 	// before native recovery; it does not enable qualification capture.
 	NativeImageStagingRoot string `toml:"native_image_staging_root"`
+	// NativeRuntimeCapture runs ordinary park and warm captures through the
+	// native producer instead of refusing them (ADR 20261022184951). It
+	// requires native process recovery and both private roots above, and
+	// stays off until native capture acceptance passes.
+	NativeRuntimeCapture bool `toml:"native_runtime_capture"`
+	// NativeRuntimeSnapshotRoot is the pre-created tree native runtime
+	// captures publish to (ADR 20261022184951 amendment 1): owned by vmmd's
+	// uid, no group write and no access for others (production
+	// /srv/fc/native-snap, 2750 root:faas). NativeRuntimeCapture requires it.
+	// Keep it configured after turning capture off: restores and collection
+	// still read the snapshots it holds.
+	NativeRuntimeSnapshotRoot string `toml:"native_runtime_snapshot_root"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
+	// AdoptionRecord writes version-7 adoption blocks into the resource
+	// journal (vmmd restart adoption ADR, slice 1). Older vmmd binaries
+	// refuse to open a journal holding version 7, so turn it on only after
+	// every compute node, and any rollback target, runs a version-7 reader.
+	// Ignored with native_process_recovery.
+	AdoptionRecord bool `toml:"adoption_record"`
+	// AdoptRunningVMs adopts restart survivors whose records prove ownership
+	// instead of quarantining them (vmmd restart adoption ADR, slice 2).
+	// Requires adoption_record, so the next restart can adopt too.
+	// Experimental until the fsn-4 adoption acceptance (slice 5) passes.
+	AdoptRunningVMs bool `toml:"adopt_running_vms"`
+	// AdoptAdmittedRuntimes also adopts guests booted under an ADR-595
+	// runtime-admission receipt; schedd then re-binds their admission to
+	// this process (docs/adr/20261018-runtime-admission-rebind.md). Off,
+	// they are refused and re-admitted. Requires adopt_running_vms.
+	AdoptAdmittedRuntimes bool `toml:"adopt_admitted_runtimes"`
 	// FailureReportDir is persistent root-owned storage for liveness/OOM
 	// reports (ADR-471). Keep it outside /run and the Firecracker jail tmpfs.
 	FailureReportDir string `toml:"failure_report_dir"`
@@ -67,11 +96,21 @@ type Config struct {
 	// returns guest-freed pages to the host. It is on by default on
 	// Firecracker 1.14+; FAAS_FREE_PAGE_REPORTING=0 overrides TOML.
 	DisableFreePageReporting bool `toml:"disable_free_page_reporting"`
+	// RestoreReseedThread boots app VMs whose Node processes answer the
+	// restore reseed barrier from a native thread instead of their event
+	// loop (ADR-20261024105607). Off by default; FAAS_RESTORE_RESEED_THREAD
+	// overrides TOML.
+	RestoreReseedThread bool `toml:"restore_reseed_thread"`
 	// QuietPause enables ADR-1151 quiet pause: vmmd pauses an eligible
 	// instance's vCPUs between requests and resumes it on the next one.
 	// Off by default; schedd decides which instances are eligible.
 	// FAAS_QUIET_PAUSE overrides TOML.
 	QuietPause bool `toml:"quiet_pause"`
+	// RequireSecretBinding refuses runtime secret envelopes that carry no
+	// account binding (ADR-20261023173624, contract step). Off by default;
+	// the seal_domains role turns it on once every stored envelope is
+	// bound. FAAS_RUNTIME_SECRET_BINDING_REQUIRED overrides TOML.
+	RequireSecretBinding bool `toml:"require_secret_binding"`
 	// PmemBaseDir enables per-account pmem bases (ADR-908): app VMs map a
 	// reflinked per-account copy of their base with DAX instead of reading
 	// it over virtio-blk. "auto" (the default) keeps each copy on the mount
@@ -140,7 +179,7 @@ type Config struct {
 	// #116). The local backend's Get resolves it to the same file the
 	// legacy KernelPath config used (so single-box behaviour is
 	// preserved); the OCI backend fetches over HTTP. Derived from
-	// sched.KernelKey(fcVersion) at startup once the running FC version
+	// storagekey.Kernel(fcVersion) at startup once the running FC version
 	// is detected (cmd/vmmd/main.go). Overridable via toml for tests
 	// that pin a specific kernel key.
 	KernelKey string `toml:"kernel_key"`
@@ -515,7 +554,7 @@ func LoadConfig(path string) (*Config, error) {
 		// reflink and native recovery all keep virtio-blk.
 		PmemBaseDir: fcvm.PmemBaseDirAuto,
 		// KernelPath is the deprecated host-path default; main.go
-		// resolves KernelKey from sched.KernelKey(fcVersion) after FC
+		// resolves KernelKey from storagekey.Kernel(fcVersion) after FC
 		// detection. The default here keeps pre-#116 vmmd.toml
 		// fixtures working until operators migrate.
 		KernelPath: "/srv/fc/base/vmlinux-6.1",
@@ -581,10 +620,19 @@ func LoadConfig(path string) (*Config, error) {
 	if c.NativeProcessRecovery && !preparedNetworksSet {
 		c.PreparedNetworks = 0
 	}
+	if c.AdoptAdmittedRuntimes && !c.AdoptRunningVMs {
+		return nil, errors.New("vmmd: adopt_admitted_runtimes requires adopt_running_vms = true")
+	}
+	if err := validateAdoptionConfig(c.AdoptionRecord, c.AdoptRunningVMs, c.NativeProcessRecovery); err != nil {
+		return nil, err
+	}
 	if err := validateNativeSnapshotPublicationConfig(c.NativeProcessRecovery, c.NativeSnapshotPublicationRoot); err != nil {
 		return nil, err
 	}
 	if err := validateNativeImageStagingConfig(c.NativeProcessRecovery, c.NativeImageStagingRoot); err != nil {
+		return nil, err
+	}
+	if err := validateNativeRuntimeCaptureConfig(c); err != nil {
 		return nil, err
 	}
 	// Gate-B: resolve Role AFTER toml.Unmarshal so the post-decode
@@ -751,6 +799,20 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.QuietPause = enabled
 	}
+	if v := os.Getenv("FAAS_RUNTIME_SECRET_BINDING_REQUIRED"); v != "" {
+		required, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_BINDING_REQUIRED must be a boolean (got %q)", v)
+		}
+		c.RequireSecretBinding = required
+	}
+	if v := os.Getenv("FAAS_RESTORE_RESEED_THREAD"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_RESTORE_RESEED_THREAD must be a boolean (got %q)", v)
+		}
+		c.RestoreReseedThread = enabled
+	}
 	if v, ok := os.LookupEnv("FAAS_PMEM_BASE_DIR"); ok {
 		c.PmemBaseDir = v
 	}
@@ -895,8 +957,33 @@ func LoadConfig(path string) (*Config, error) {
 	return c, nil
 }
 
+func validateAdoptionConfig(record, adopt, nativeRecovery bool) error {
+	if adopt && !record {
+		return errors.New("vmmd: adopt_running_vms requires adoption_record = true")
+	}
+	if adopt && nativeRecovery {
+		return errors.New("vmmd: adopt_running_vms is not available with native_process_recovery")
+	}
+	return nil
+}
+
 func validateNativeSnapshotPublicationConfig(nativeRecovery bool, root string) error {
 	return validateNativePrivateRootConfig(nativeRecovery, root, "native_snapshot_publication_root")
+}
+
+// The native producer needs its publication journal and persistent output
+// staging; without them every capture would refuse at preflight.
+func validateNativeRuntimeCaptureConfig(c *Config) error {
+	if root := c.NativeRuntimeSnapshotRoot; root != "" && (!filepath.IsAbs(root) || filepath.Clean(root) != root || root == string(filepath.Separator)) {
+		return errors.New("vmmd: native_runtime_snapshot_root must be a clean absolute non-root path")
+	}
+	if !c.NativeRuntimeCapture {
+		return nil
+	}
+	if !c.NativeProcessRecovery || c.NativeSnapshotPublicationRoot == "" || c.NativeImageStagingRoot == "" || c.NativeRuntimeSnapshotRoot == "" {
+		return errors.New("vmmd: native_runtime_capture requires native_process_recovery = true, native_snapshot_publication_root, native_image_staging_root and native_runtime_snapshot_root")
+	}
+	return nil
 }
 
 func validateNativeImageStagingConfig(nativeRecovery bool, root string) error {

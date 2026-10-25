@@ -121,9 +121,9 @@ func (c *Client) AppendUpload(ctx context.Context, uploadID string, offset int64
 // id to retrieve the original deployment without re-uploading.
 func (c *Client) CommitUpload(ctx context.Context, uploadID string) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	_, _, err := c.doResumableUpload(ctx, http.MethodPost,
+	_, _, err := c.doResumableUpload(deploymentSubmissionContext(ctx), http.MethodPost,
 		"/v1/uploads/"+url.PathEscape(uploadID)+"/commit", nil,
-		"", nil, &out, false)
+		"", deploymentAttemptHeaders(ctx), &out, false)
 	return out, err
 }
 
@@ -182,6 +182,10 @@ func (c *Client) doResumableUpload(ctx context.Context, method, path string, bod
 		defer cancel()
 		req = req.WithContext(newCtx)
 	}
+	preventDeploymentReplay(req)
+	if err := recordDeploymentSubmissionBoundary(req); err != nil {
+		return nil, nil, err
+	}
 	resp, err := cli.Do(req)
 	if err != nil {
 		return nil, nil, fmt.Errorf("could not reach the API: %w", err)
@@ -191,6 +195,13 @@ func (c *Client) doResumableUpload(ctx context.Context, method, path string, bod
 	data, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if resp.StatusCode >= 300 {
 		if start && resp.StatusCode == http.StatusNotFound {
+			return nil, nil, ErrResumableUploadUnsupported
+		}
+		// An apid from before deploy tokens could open upload sessions
+		// answers them 403 (their scope was /v1/apps/* only). Fall back to
+		// the legacy endpoint, which authorizes the token as before; a
+		// refusal there is reported as usual.
+		if start && resp.StatusCode == http.StatusForbidden && ValidDeployTokenFormat(c.token) {
 			return nil, nil, ErrResumableUploadUnsupported
 		}
 		return nil, nil, apiErrorFromResponse(resp, data)

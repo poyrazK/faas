@@ -34,7 +34,7 @@ func TestObsAuditLogSearchPaginatesWithCompoundCursor(t *testing.T) {
 		}
 	}
 
-	first := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?limit=2", nil, nil)
+	first := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search?limit=2", nil, nil)
 	if first.Code != http.StatusOK {
 		t.Fatalf("first page: got %d, body=%s", first.Code, first.Body.String())
 	}
@@ -49,7 +49,7 @@ func TestObsAuditLogSearchPaginatesWithCompoundCursor(t *testing.T) {
 		t.Fatalf("first page order: got %q, %q", firstBody.Items[0].ID, firstBody.Items[1].ID)
 	}
 
-	second := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?limit=2&before="+firstBody.NextBefore, nil, nil)
+	second := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search?limit=2&before="+firstBody.NextBefore, nil, nil)
 	if second.Code != http.StatusOK {
 		t.Fatalf("second page: got %d, body=%s", second.Code, second.Body.String())
 	}
@@ -67,7 +67,7 @@ func TestObsAuditLogSearchPaginatesWithCompoundCursor(t *testing.T) {
 
 func TestObsAuditLogSearchRejectsMalformedBeforeCursor(t *testing.T) {
 	e := apidserver.NewObsPR3Env(t, api.ScopesAdminOnly, apidserver.Pr3AdminEmail, apidserver.Pr3AdminEmail)
-	rec := e.Do(t, "GET", "/v1/admin/obs/audit-log/search?before=not-a-cursor", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/audit-log/search?before=not-a-cursor", nil, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("malformed before: got %d, want 400", rec.Code)
 	}

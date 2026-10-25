@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -40,6 +42,9 @@ type StatementInvoiceLine struct {
 	Fee string
 	// Unit is what the line's units are when not requests (ADR-1317).
 	Unit string
+	// Label names the units of a line without a rate card, such as a
+	// Product Control feature's successful runs (ADR-20261018212918).
+	Label string
 }
 
 // StatementInvoice is a statement converted to invoice items. RoundingMinor
@@ -75,7 +80,7 @@ func (inv StatementInvoice) In(unit MinorUnit) StatementInvoice {
 type invoiceLineKey struct {
 	rateCardID, tenantCardID string
 	price                    int64
-	fee, unit                string
+	fee, unit, label         string
 }
 
 func (inv *StatementInvoice) add(key invoiceLineKey, units int64, lines map[invoiceLineKey]*StatementInvoiceLine) error {
@@ -89,7 +94,7 @@ func (inv *StatementInvoice) add(key invoiceLineKey, units int64, lines map[invo
 	line := lines[key]
 	if line == nil {
 		line = &StatementInvoiceLine{RateCardID: key.rateCardID, PlatformTenantRateCardID: key.tenantCardID, PriceMillicentsPerUnit: key.price,
-			Unit: key.unit}
+			Unit: key.unit, Label: key.label}
 		lines[key] = line
 	}
 	if !addsWithinInt64(line.Units, units) || !addsWithinInt64(line.AmountMillicents, amount) {
@@ -217,6 +222,46 @@ func TenantStatementInvoice(statement state.PlatformTenantStatement, cards ...st
 	return withCreditLine(inv, statement.CreditAppliedMillicents, statement.AmountDueMillicents())
 }
 
+// ProductControlStatementInvoice groups a finalized Product Control
+// statement's charged successes by feature, plan and admitted unit price
+// (ADR-20261018212918). Catalog revisions at the same price share a line;
+// waived, failed, cancelled and unresolved runs are never invoiced. Runs
+// admitted at price 0, such as included starts, keep a line of their own,
+// the month's plan fee is its own base fee item, and a statement that
+// charges nothing is not invoiced (ADR-20261021154511).
+func ProductControlStatementInvoice(doc api.ProductBillingDocument) (StatementInvoice, error) {
+	inv := StatementInvoice{Currency: doc.Currency}
+	if doc.Kind != "statement" || doc.Snapshot == nil {
+		return inv, fmt.Errorf("%w: only finalized Product Control statements export; credit notes keep their recorded handoff", ErrStatementNotInvoiceable)
+	}
+	if doc.AmountMillicents == 0 {
+		return inv, fmt.Errorf("%w: the statement charges nothing", ErrStatementNotInvoiceable)
+	}
+	lines := map[invoiceLineKey]*StatementInvoiceLine{}
+	for _, line := range doc.Snapshot.Lines {
+		key := invoiceLineKey{price: line.UnitPriceMillicents, label: fmt.Sprintf("successful %s runs on plan %s", line.Feature, line.Plan)}
+		if err := inv.add(key, line.Succeeded, lines); err != nil {
+			return inv, err
+		}
+	}
+	for _, fee := range doc.Snapshot.Fees {
+		label := "Monthly fee for plan " + fee.Plan
+		if fee.ProratedFrom != nil {
+			label += ", prorated from " + fee.ProratedFrom.UTC().Format(time.DateOnly)
+		}
+		// The trial's minutes owe no fee (ADR-20261021195901).
+		if fee.TrialStartsAt != nil && fee.TrialEndsAt != nil {
+			label += ", excluding the free trial from " + fee.TrialStartsAt.UTC().Format(time.DateOnly) + " to " + fee.TrialEndsAt.UTC().Format(time.DateOnly)
+		}
+		key := invoiceLineKey{fee: state.StatementFeeBase, label: label}
+		if lines[key] != nil || fee.AmountMillicents <= 0 {
+			continue
+		}
+		lines[key] = &StatementInvoiceLine{Fee: state.StatementFeeBase, Label: label, AmountMillicents: fee.AmountMillicents}
+	}
+	return finishStatementInvoice(inv, lines, doc.AmountMillicents)
+}
+
 func finishStatementInvoice(inv StatementInvoice, lines map[invoiceLineKey]*StatementInvoiceLine, total int64) (StatementInvoice, error) {
 	unit, err := ISOMinorUnit(inv.Currency)
 	if err != nil {
@@ -242,6 +287,9 @@ func finishStatementInvoice(inv StatementInvoice, lines map[invoiceLineKey]*Stat
 		a, b := inv.Lines[i], inv.Lines[j]
 		if a.PlatformTenantRateCardID+a.RateCardID != b.PlatformTenantRateCardID+b.RateCardID {
 			return a.PlatformTenantRateCardID+a.RateCardID < b.PlatformTenantRateCardID+b.RateCardID
+		}
+		if a.Label != b.Label {
+			return a.Label < b.Label
 		}
 		if a.Fee != b.Fee {
 			return a.Fee < b.Fee

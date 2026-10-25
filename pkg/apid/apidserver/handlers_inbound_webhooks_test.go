@@ -411,3 +411,19 @@ func TestInboundWebhookRefusedForInactiveAccountOrDeletedApp(t *testing.T) {
 		t.Fatalf("deleted app ingress = %d %s, want 404", rec.Code, rec.Body)
 	}
 }
+
+// An apid started without an age recipient refuses to seal the signing secret
+// with 503; it must not panic the request (found by the native Operations run).
+func TestInboundWebhookCreateWithoutRecipientIsUnavailable(t *testing.T) {
+	e := setupWebhookTest(t, api.PlanPro)
+	apidserver.MustSeedApp(t, e, "inbound-no-recipient")
+	saved := *apidserver.SetSecretRecipient
+	*apidserver.SetSecretRecipient = nil
+	t.Cleanup(func() { *apidserver.SetSecretRecipient = saved })
+	rec := e.Do(t, http.MethodPost, "/v1/apps/inbound-no-recipient/inbound-webhooks", api.CreateInboundWebhookEndpointRequest{
+		Name: "stripe-primary", Provider: "stripe", SigningSecret: inboundWebhookTestSecret, DeliveryPath: "/internal/stripe",
+	}, nil)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("create without recipient: HTTP %d %s, want 503", rec.Code, rec.Body.String())
+	}
+}

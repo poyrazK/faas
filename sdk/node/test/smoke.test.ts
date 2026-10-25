@@ -18,7 +18,7 @@ import {
   ErrNotFound,
   FaaSClient,
   UsageService,
-} from '../src/index.js';
+} from '../src/preview.js';
 import { spawnFakeApid, type SpawnedFakeApid } from './helpers/spawn-fakeapid.js';
 
 // Build the fixture binary ONCE before the suite runs. The CI job's

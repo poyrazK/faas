@@ -392,8 +392,13 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 				"managed job runtime intent could not be verified; retry the run")
 			return JobWakeResult{}, fmt.Errorf("sched: WakeJob workload intent: %w", intentErr)
 		}
+		if errors.Is(intentErr, state.ErrNotFound) && strings.HasPrefix(job.ImageRef, "gregale-source://") {
+			e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
+				"job_gitops_source_binding_missing", "source Job no longer has a reviewed workload binding")
+			return JobWakeResult{}, state.ErrConflict
+		}
 		if intentErr == nil {
-			if !environmentGitOpsJobBindingIntentMatches(job, run, accountID, intent) {
+			if !environmentGitOpsJobBindingIntentMatches(job, run, accountID, intent) || e.validateEnvironmentGitOpsSourceJob(ctx, job, run, intent) != nil {
 				e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt,
 					effectiveJobRetryMax(job, run), "job_gitops_binding_contract_mismatch",
 					"managed job service bindings no longer match the reviewed workload; reconcile the environment")
@@ -432,6 +437,11 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 				}
 			}
 		}
+	}
+	if strings.HasPrefix(job.ImageRef, "gregale-source://") && !startHeld {
+		e.rollbackUnbootedJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0,
+			"job_gitops_source_binding_unavailable", "source Job requires a verified workload binding and held-start gate")
+		return JobWakeResult{}, state.ErrConflict
 	}
 	command := run.Command
 	if command == nil { // existing runs created before command snapshots
@@ -533,6 +543,19 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	if err != nil || !hostIP.Is4() || hostIP.String() != strings.TrimSpace(out.HostIP) {
 		e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, 0, "job_vmm_runtime_identity_invalid", "job VM returned an invalid runtime network identity; retry the run")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob vmmd returned invalid host IP %q", out.HostIP)
+	}
+	if strings.HasPrefix(job.ImageRef, "gregale-source://") {
+		if err := e.recheckEnvironmentGitOpsSourceJob(ctx, job, run); err != nil {
+			// A changed binding, artifact or release is final for this run. A
+			// store read failure is not evidence of staleness; keep the run's
+			// retry budget so the next attempt revalidates before booting.
+			retryMax, reason, message := 0, "job_gitops_source_artifact_stale", "source Job artifact or release changed during boot"
+			if !errors.Is(err, state.ErrConflict) && !errors.Is(err, state.ErrNotFound) {
+				retryMax, reason, message = effectiveJobRetryMax(job, run), "job_gitops_source_recheck_unavailable", "source Job artifact could not be rechecked during boot; retry the run"
+			}
+			e.rollbackJobAdmission(ctx, runID, taskIndex, instanceID, tok, task.Attempt, retryMax, reason, message)
+			return JobWakeResult{}, err
+		}
 	}
 	if runtimeInputs != nil {
 		receipts, ok := e.store.(interface {
@@ -1265,6 +1288,13 @@ func (e *Engine) DispatchJobsTick(ctx context.Context) error {
 		account, err := e.store.AccountByID(ctx, run.AccountID)
 		if err != nil {
 			return fmt.Errorf("sched: dispatchJobsTick resolve account: %w", err)
+		}
+		// ADR-20261023115741: jobs switched off for the account stay queued.
+		if !e.accountCapabilityAllowed(account, "jobs") {
+			if err := e.store.JobTaskDeferQueued(ctx, t.RunID, t.TaskIndex, t.Attempt, time.Now().Add(capabilityDeferral)); err != nil && !errors.Is(err, state.ErrNotFound) {
+				return fmt.Errorf("sched: defer capability-held job task: %w", err)
+			}
+			continue
 		}
 		plan := account.Plan
 		if plan == api.PlanFree {

@@ -1,17 +1,29 @@
 from typing import Literal
 
 EdgeProtectionResponseRejectionsItemGate = Literal[
-    "body_limit", "geo", "internal_only", "ip", "ip_allowlist", "jwt", "limit", "throttle", "waf"
-]
-
-EDGE_PROTECTION_RESPONSE_REJECTIONS_ITEM_GATE_VALUES: set[EdgeProtectionResponseRejectionsItemGate] = {
     "body_limit",
+    "challenge",
     "geo",
     "internal_only",
     "ip",
     "ip_allowlist",
     "jwt",
     "limit",
+    "penalty",
+    "throttle",
+    "waf",
+]
+
+EDGE_PROTECTION_RESPONSE_REJECTIONS_ITEM_GATE_VALUES: set[EdgeProtectionResponseRejectionsItemGate] = {
+    "body_limit",
+    "challenge",
+    "geo",
+    "internal_only",
+    "ip",
+    "ip_allowlist",
+    "jwt",
+    "limit",
+    "penalty",
     "throttle",
     "waf",
 }

@@ -28,7 +28,7 @@ and authorize the internal delivery before constructing the worker: headers and
 the opaque token do not establish application authority by themselves.
 
 ```python
-from faas_sdk import AsyncEventAcknowledgmentWorker, FaaSClient
+from faas_sdk.preview import AsyncEventAcknowledgmentWorker, FaaSClient
 
 client = FaaSClient(base_url=api_url, token=worker_api_token)
 worker = AsyncEventAcknowledgmentWorker.from_headers(

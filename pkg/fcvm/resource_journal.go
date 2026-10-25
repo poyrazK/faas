@@ -16,7 +16,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"syscall"
 )
 
@@ -31,12 +30,16 @@ var errResourceJournalClosed = errors.New("resource journal closed")
 // or physical deletion by a replacement Manager.
 // No environment, command, credential or artifact contents are stored.
 type ResourceJournal struct {
-	mu            sync.Mutex
-	dir           *os.Root
-	lock          *os.File
-	records       map[string]resourceJournalRecord
-	closed        bool
-	directorySync func() error
+	mu      journalMutex
+	dir     *os.Root
+	lock    *os.File
+	records map[string]resourceJournalRecord
+	closed  bool
+	// commitSync makes a record write durable. Persists whose assets cannot
+	// outlive a host reboot pass durable=false and skip the directory fsync
+	// (see persist); tests replace it to fail either kind of commit.
+	commitSync func(durable bool) error
+	timing     map[string]resourceJournalTiming // see resource_journal_timing.go
 }
 
 type resourceProcessIdentity struct {
@@ -51,6 +54,8 @@ type resourceJournalRecord struct {
 	Process  *resourceProcessIdentity `json:"process,omitempty"`
 	Assets   []resourceAsset          `json:"assets,omitempty"`
 	Prepared *resourcePreparedNetwork `json:"prepared,omitempty"`
+	// Adoption is the version-7 adoption block (resource_adoption.go).
+	Adoption *resourceAdoption `json:"adoption,omitempty"`
 }
 
 func resourceRecordName(id string) string {
@@ -115,9 +120,14 @@ func OpenResourceJournal(path string) (*ResourceJournal, error) {
 		return nil, fmt.Errorf("resource journal: exclusive lock: %w", err)
 	}
 	j.lock = f
-	j.directorySync = func() error { return journalSyncDirectory(dir) }
+	j.commitSync = func(durable bool) error {
+		if !durable {
+			return nil
+		}
+		return journalSyncDirectory(dir)
+	}
 	if err = j.load(); err == nil {
-		err = j.directorySync()
+		err = j.commitSync(true)
 	}
 	if err == nil {
 		var parent *os.Root
@@ -163,8 +173,8 @@ func (j *ResourceJournal) load() error {
 	identities := make(map[string]bool)
 	for _, entry := range entries {
 		name := entry.Name()
-		if name == ".lock" {
-			continue
+		if name == ".lock" || name == resourceEpochFile {
+			continue // The epoch claim is read separately (resource_epoch.go).
 		}
 		if strings.HasPrefix(name, ".pending-") && entry.Type().IsRegular() {
 			if err := j.dir.Remove(name); err != nil {
@@ -234,7 +244,7 @@ func (j *ResourceJournal) readRecord(name string) (resourceJournalRecord, error)
 
 func (r resourceJournalRecord) validate() error {
 	l := r.Lease
-	if (r.Version < 1 || r.Version > 6) || !restartResourceID(l.Instance) || len(l.Instance) > 64 || l.Slot < 0 || l.Slot >= MaxSlots || (!r.preparedSpare() && (!l.Plan.Valid() || l.MemoryMaxMiB <= 0)) {
+	if (r.Version < 1 || r.Version > resourceAdoptionVersion) || !restartResourceID(l.Instance) || len(l.Instance) > 64 || l.Slot < 0 || l.Slot >= MaxSlots || (!r.preparedSpare() && (!l.Plan.Valid() || l.MemoryMaxMiB <= 0)) {
 		return errors.New("invalid resource journal lease/version")
 	}
 	want := leaseForSlot(l.Instance, l.Slot)
@@ -245,6 +255,9 @@ func (r resourceJournalRecord) validate() error {
 		return errors.New("invalid resource journal process incarnation")
 	}
 	if err := r.validatePrepared(); err != nil {
+		return err
+	}
+	if err := r.validateAdoption(); err != nil {
 		return err
 	}
 	return r.validateAssets()
@@ -271,7 +284,7 @@ func (j *ResourceJournal) beginRecord(r resourceJournalRecord) error {
 			return errors.New("resource journal: slot already recorded")
 		}
 	}
-	return j.persist(r)
+	return j.persist(r, false)
 }
 
 func (j *ResourceJournal) recordProcess(l Lease, process resourceProcessIdentity) error {
@@ -288,18 +301,54 @@ func (j *ResourceJournal) recordProcess(l Lease, process resourceProcessIdentity
 	if err := r.validate(); err != nil {
 		return err
 	}
-	return j.persist(r)
+	return j.persist(r, false)
 }
 
 // persist publishes the cache after rename, even if directory fsync fails.
 // The caller still fails closed; cleanup can then retire that uncertain write.
-func (j *ResourceJournal) persist(r resourceJournalRecord) error {
+//
+// The record file is always fsynced before the rename, so the name never
+// points at partial content. Only a durable persist also fsyncs the directory
+// (ADR-20261024135625). A volatile one is visible to a restarted vmmd at once,
+// because a daemon crash keeps the page cache; after a power loss it may come
+// back as the record's previous complete version, or not at all for a new
+// record, which is safe because every asset such a write adds is gone after a
+// reboot too (mounts, tmpfs placeholders, namespaces, links, processes). Any
+// write that names a reboot-surviving asset is durable, and so is the whole
+// record it writes. On production-us these commits were ~60 fsyncs, ~85 ms,
+// of every restore's staging.
+func (j *ResourceJournal) persist(r resourceJournalRecord, durable bool) error {
 	b, err := json.Marshal(r)
 	if err != nil {
 		return err
 	}
 	if len(b) > resourceRecordLimit {
 		return errors.New("oversized resource journal record")
+	}
+	key := r.timingKey()
+	j.noteCommit(key)
+	return j.persistFile(resourceRecordName(r.storageIdentity()), b, key, durable, func() {
+		if r.Prepared != nil {
+			delete(j.records, r.Prepared.Source)
+			if r.Prepared.Source != key {
+				delete(j.timing, r.Prepared.Source) // the spare's own, off any wake's path
+			}
+		}
+		j.records[r.Lease.Instance] = r
+	})
+}
+
+// persistFile replaces one journal file: private temporary file, fsync,
+// atomic rename, then, when durable, directory fsync. published runs once the
+// rename has replaced the target and before the directory fsync, even when
+// that fsync then fails. A non-empty key accounts the fsyncs to that record's
+// commit (noteCommit first). The caller holds j.mu.
+func (j *ResourceJournal) persistFile(target string, b []byte, key string, durable bool, published func()) error {
+	synced := func(fn func() error) error {
+		if key == "" {
+			return fn()
+		}
+		return j.timedSync(key, fn)
 	}
 	name := ".pending-" + rand.Text()
 	f, err := j.dir.OpenFile(name, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
@@ -312,20 +361,19 @@ func (j *ResourceJournal) persist(r resourceJournalRecord) error {
 		err = io.ErrShortWrite
 	}
 	if err == nil {
-		err = f.Sync()
+		err = synced(f.Sync)
 	}
 	err = errors.Join(err, f.Close())
 	if err != nil {
 		return err
 	}
-	if err = j.dir.Rename(name, resourceRecordName(r.storageIdentity())); err != nil {
+	if err = j.dir.Rename(name, target); err != nil {
 		return err
 	}
-	if r.Prepared != nil {
-		delete(j.records, r.Prepared.Source)
+	if published != nil {
+		published()
 	}
-	j.records[r.Lease.Instance] = r
-	return j.directorySync()
+	return synced(func() error { return j.commitSync(durable) })
 }
 
 // forget is called after physical cleanup, before allocator release. An
@@ -338,6 +386,7 @@ func (j *ResourceJournal) forget(l Lease) error {
 	}
 	r, ok := j.recordForInstance(l.Instance)
 	if !ok {
+		delete(j.timing, l.Instance) // a commit that failed before its record existed
 		return nil
 	} // Validation failures can precede journal intent.
 	if !resourceLeaseMatches(r.Lease, l) && !pendingPreparedLeaseMatches(r, l) {
@@ -347,13 +396,17 @@ func (j *ResourceJournal) forget(l Lease) error {
 }
 
 func (j *ResourceJournal) forgetRecord(r resourceJournalRecord) error {
+	key := r.timingKey()
+	j.noteCommit(key)
 	if err := j.dir.Remove(resourceRecordName(r.storageIdentity())); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err := j.directorySync(); err != nil {
+	if err := j.timedSync(key, func() error { return j.commitSync(true) }); err != nil {
 		return err
 	}
 	delete(j.records, r.Lease.Instance)
+	delete(j.timing, key)
+	delete(j.timing, r.Lease.Instance)
 	return nil
 }
 
@@ -374,6 +427,7 @@ func (j *ResourceJournal) snapshot() ([]resourceJournalRecord, error) {
 			p := *r.Process
 			r.Process = &p
 		}
+		r.Adoption = r.Adoption.clone()
 		items = append(items, r)
 	}
 	return items, nil
@@ -409,6 +463,7 @@ func (j *ResourceJournal) lookup(instance string) (resourceJournalRecord, bool, 
 		p := *r.Process
 		r.Process = &p
 	}
+	r.Adoption = r.Adoption.clone()
 	return r, ok, nil
 }
 

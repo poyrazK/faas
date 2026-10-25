@@ -74,9 +74,12 @@ func TestDirectOCIAutoscaleScaleToZeroMetal(t *testing.T) {
 		t.Fatalf("create deployment: status=%d body=%s", status, body)
 	}
 	depID := parseImageDeployment(t, body)
-	deployCtx, deployCancel := context.WithTimeout(context.Background(), 90*time.Second)
+	// This file sorts first in the containers lane, so its deployment is the
+	// lane's first full-rootfs image: on a native host its imaging phases ran
+	// about 2.5x slower than the warm direct-OCI tests' (~45 s to live).
+	deployCtx, deployCancel := context.WithTimeout(context.Background(), 165*time.Second)
 	defer deployCancel()
-	dep, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, 75*time.Second)
+	dep, err := e2etest.WaitForDeploymentLive(deployCtx, t, pool, depID, 150*time.Second)
 	if err != nil {
 		h.DumpLogs(t)
 		t.Fatalf("direct OCI deployment did not reach live: %v", err)

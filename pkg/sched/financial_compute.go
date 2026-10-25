@@ -20,7 +20,8 @@ func (e *Engine) reconcileStrictCompute(ctx context.Context, app state.App, now 
 	if err != nil {
 		return err
 	}
-	held := false
+	// A held environment cap retires only its environment's instances.
+	held, heldEnvironments := false, map[string]bool{}
 	for _, p := range policies {
 		if !p.Spec.Enabled || !financial.StrictCompute(p.Spec) {
 			continue
@@ -29,18 +30,38 @@ func (e *Engine) reconcileStrictCompute(ctx context.Context, app state.App, now 
 		if err != nil {
 			return err
 		}
+		if balance.Held && p.Spec.Scope.Kind == "environment" {
+			heldEnvironments[p.Spec.Scope.ID] = true
+			continue
+		}
 		held = held || balance.Held
 	}
-	rows, err := e.store.ListInstancesForApp(ctx, app.ID)
+	rows, err := e.liveInstancesForApp(ctx, app.ID)
 	if err != nil {
 		return err
 	}
 	var failures []error
+	environments := map[string]string{}
 	for _, ins := range rows {
 		if !state.State(ins.State).CountsForRAM() {
 			continue
 		}
 		retire := held
+		if !retire && len(heldEnvironments) > 0 && ins.DeploymentID != "" {
+			environment, known := environments[ins.DeploymentID]
+			if !known {
+				environment, err = compute.FinancialComputeDeploymentEnvironment(ctx, app.AccountID, app.ID, ins.DeploymentID)
+				if errors.Is(err, state.ErrNotFound) {
+					environment, err = "", nil
+				}
+				if err != nil {
+					failures = append(failures, err)
+					continue
+				}
+				environments[ins.DeploymentID] = environment
+			}
+			retire = heldEnvironments[environment]
+		}
 		if !retire && state.State(ins.State) != state.StateWaking && state.State(ins.State) != state.StateColdBooting {
 			lease, known, err := compute.FinancialComputeInstanceLease(ctx, app.AccountID, app.ID, ins.ID)
 			if err != nil {

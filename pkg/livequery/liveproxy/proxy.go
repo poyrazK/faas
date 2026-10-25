@@ -41,6 +41,9 @@ type Route struct {
 	URL         string // the hub's WebSocket, ws://host/live
 	SealedRole  string
 	DataAPIRole string
+	// Access is what the app's Data API runtime reported for reads without a
+	// user token; nil refuses them.
+	Access *api.DataAPIAccessConfig
 }
 
 // ErrNoRoute means no database is known for a seal's key.
@@ -198,6 +201,14 @@ func (s *Session) subscribe(ctx context.Context, f liveproto.ClientFrame) {
 	if code == "" {
 		f.Role, code, msg = loginFor(route, f)
 	}
+	switch {
+	case code == "" && keyless(f):
+		code, msg = admitKeyless(route, &f, f.Rest, f.Schema, time.Now())
+	case code == "" && f.RLS():
+		// A renewal keeps the schema it subscribed, so subscribe is the
+		// only place a token read chooses one.
+		code, msg = admitTokenSchema(route, &f)
+	}
 	if code != "" {
 		s.refuse(f.Subscription, code, msg, true)
 		return
@@ -248,8 +259,14 @@ func (s *Session) renew(ctx context.Context, f liveproto.ClientFrame) {
 	if code == "" {
 		f.Role, code, msg = loginFor(route, f)
 	}
-	if f.RLS() != (sb.cred.Sealed == "") {
+	switch {
+	case f.RLS() != (sb.cred.Sealed == ""):
 		code, msg = liveproto.CodeRenewMismatch, "a renewal keeps the subscription's mode"
+	case keyless(f) != (sb.cred.Access != "") || keyless(f) && keylessKind(f) != sb.cred.Access:
+		code, msg = liveproto.CodeRenewMismatch, "a renewal keeps the subscription's access kind"
+	case code == "" && keyless(f):
+		f.Database = ""
+		code, msg = admitKeyless(route, &f, sb.cred.Rest, sb.cred.Schema, time.Now())
 	}
 	if code != "" {
 		s.refuse(f.Subscription, code, msg, false)
@@ -295,7 +312,7 @@ func loginFor(route Route, f liveproto.ClientFrame) (string, string, string) {
 // credential keeps what a subscribe or renew frame authorizes with.
 func credential(f liveproto.ClientFrame) liveproto.ClientFrame {
 	return liveproto.ClientFrame{Sealed: f.Sealed, Database: f.Database, Rest: f.Rest, Schema: f.Schema,
-		Claims: f.Claims, ClaimsExpires: f.ClaimsExpires, Role: f.Role}
+		Claims: f.Claims, ClaimsExpires: f.ClaimsExpires, Role: f.Role, Access: f.Access}
 }
 
 // upstream returns the database's upstream, dialing it when new.
@@ -405,7 +422,7 @@ func (u *upstream) attach(sb *sub) {
 func (u *upstream) renew(sb *sub, f liveproto.ClientFrame) {
 	u.mu.Lock()
 	if f.RLS() {
-		sb.cred.Claims, sb.cred.ClaimsExpires = f.Claims, f.ClaimsExpires
+		sb.cred.Claims, sb.cred.ClaimsExpires, sb.cred.Access = f.Claims, f.ClaimsExpires, f.Access
 	} else {
 		sb.cred.Sealed = f.Sealed
 	}
@@ -418,7 +435,7 @@ func (u *upstream) renew(sb *sub, f liveproto.ClientFrame) {
 		// Kept for the resubscription.
 	case attached:
 		u.write(liveproto.ClientFrame{Type: liveproto.TypeRenew, Subscription: sb.upstreamID(), Sealed: f.Sealed,
-			Claims: f.Claims, ClaimsExpires: f.ClaimsExpires, Role: f.Role})
+			Claims: f.Claims, ClaimsExpires: f.ClaimsExpires, Role: f.Role, Access: f.Access})
 	default:
 		// The upstream refused the last seal (it had expired across a
 		// reconnect): subscribe with the fresh one.

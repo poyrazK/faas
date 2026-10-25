@@ -101,9 +101,8 @@ func (s *Server) prepareMigrationSource(ctx context.Context, m *activeMigration,
 	}
 	// Keep the cache useful after a partial capture too. Recovery reads the
 	// durable lease if this daemon dies before publishing snapshot completion.
-	s.migrations.mu.Lock()
 	m.memKey, m.vmstateKey = spec.StorageKey, spec.VMStateStorageKey
-	s.migrations.mu.Unlock()
+	s.migrations.recordKeys(m.leaseToken, spec.StorageKey, spec.VMStateStorageKey)
 	_, err = vmm.SnapshotMigrationSource(ctx, b, spec)
 	return err
 }

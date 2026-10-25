@@ -10,7 +10,7 @@ import (
 
 var _ ObjectStorageProviderUsageStore = (*PgStore)(nil)
 
-func (s *PgStore) RecordObjectStorageProviderRequest(ctx context.Context, bucketID string, at time.Time) error {
+func (s *pgCore) RecordObjectStorageProviderRequest(ctx context.Context, bucketID string, at time.Time) error {
 	if bucketID == "" || at.IsZero() || at.After(time.Now().UTC().Add(time.Minute)) {
 		return ErrConflict
 	}
@@ -19,7 +19,7 @@ func (s *PgStore) RecordObjectStorageProviderRequest(ctx context.Context, bucket
 	})
 }
 
-func (s *PgStore) RecordObjectStorageProviderEgress(ctx context.Context, bucketID string, bytes int64, at time.Time) error {
+func (s *pgCore) RecordObjectStorageProviderEgress(ctx context.Context, bucketID string, bytes int64, at time.Time) error {
 	if bucketID == "" || bytes < 0 || bytes > api.MaxObjectStoragePolicyValue || at.IsZero() || at.After(time.Now().UTC().Add(time.Minute)) {
 		return ErrConflict
 	}
@@ -28,7 +28,7 @@ func (s *PgStore) RecordObjectStorageProviderEgress(ctx context.Context, bucketI
 	})
 }
 
-func (s *PgStore) ListObjectStorageProviderRequestMetrics(ctx context.Context, backendID, fingerprint string, periodStart time.Time) ([]ObjectStorageProviderRequestMetric, error) {
+func (s *pgCore) ListObjectStorageProviderRequestMetrics(ctx context.Context, backendID, fingerprint string, periodStart time.Time) ([]ObjectStorageProviderRequestMetric, error) {
 	rows, err := sqlc.New().ObjectStorageProviderRequestMetrics(ctx, s.pool, sqlc.ObjectStorageProviderRequestMetricsParams{
 		BackendID: backendID, BackendFingerprint: fingerprint, PeriodStart: objectUsageTime(ObjectStoragePeriod(periodStart)),
 	})
@@ -46,7 +46,7 @@ func (s *PgStore) ListObjectStorageProviderRequestMetrics(ctx context.Context, b
 	return out, nil
 }
 
-func (s *PgStore) ListObjectStorageProviderBuckets(ctx context.Context, backendID, fingerprint string) ([]ObjectBucket, error) {
+func (s *pgCore) ListObjectStorageProviderBuckets(ctx context.Context, backendID, fingerprint string) ([]ObjectBucket, error) {
 	rows, err := sqlc.New().ObjectStorageProviderBuckets(ctx, s.pool, sqlc.ObjectStorageProviderBucketsParams{BackendID: backendID, BackendFingerprint: fingerprint, PeriodStart: objectUsageTime(objectUsagePeriod(ctx))})
 	if err != nil {
 		return nil, err

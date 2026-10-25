@@ -64,7 +64,9 @@ type EdgeRuleEvent struct {
 	Country   string
 	UserAgent string
 	// Outcome, when set, overrides Logged: a kind=waf detection
-	// (EdgeRuleEventDetected, EdgeRuleEventWarned or EdgeRuleEventBlocked).
+	// (EdgeRuleEventDetected, EdgeRuleEventWarned or EdgeRuleEventBlocked)
+	// or a kind=challenge outcome (EdgeRuleEventChallenged, Rejected, Solved
+	// or Failed).
 	Outcome string
 	// WAF* describe a kind=waf detection (ADR-831 amendment 5).
 	WAFRuleIDs    []int
@@ -107,6 +109,15 @@ type EdgeRuleMatchContext struct {
 	verifiedBot func() string
 	botOnce     sync.Once
 	bot         string
+
+	// ADR-20261022083601: verified AI crawler, resolved at most once and
+	// only when a verified_ai_crawler condition is evaluated.
+	verifiedAICrawler func() string
+	aiOnce            sync.Once
+	aiCrawler         string
+	// aiCrawlersUnreleased is set once the app is known and the
+	// edge_ai_crawlers flag leaves its account out (amendment 1).
+	aiCrawlersUnreleased bool
 
 	// ADR-960: hit recording, deduplicated per request (a kind can be looked
 	// up more than once while serving one request).
@@ -187,7 +198,8 @@ func ObserveEdgeRuleMatch[T any](ctx context.Context, enforced, logged *T) *T {
 	if c, ok := any(enforced).(edgeRuleConditional); ok && enforced != nil {
 		id, app := c.edgeRuleIdentity()
 		_, quiet := any(enforced).(edgeRuleMatchEventsSuppressed)
-		m.recordHit(id, app, false, !quiet)
+		_, outcomes := any(enforced).(edgeRuleEnforcedMatchEventsSuppressed)
+		m.recordHit(id, app, false, !quiet && !outcomes)
 	}
 	if c, ok := any(logged).(edgeRuleConditional); ok && logged != nil {
 		id, app := c.edgeRuleIdentity()
@@ -338,6 +350,8 @@ func edgeRuleMatchInputFor(ctx context.Context, requestPath, method string) api.
 		input.Country = m.resolvedCountry()
 		input.ASN = m.resolvedASN()
 		input.VerifiedBot = m.verifiedBot
+		input.VerifiedAICrawler = m.verifiedAICrawler
+		input.AICrawlersUnreleased = m.aiCrawlersUnreleased
 	}
 	return input
 }

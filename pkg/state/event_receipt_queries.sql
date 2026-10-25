@@ -132,19 +132,23 @@ WHERE account_id=sqlc.arg(account_id)::uuid AND source=sqlc.arg(source)::text AN
 FOR SHARE;
 
 -- name: EventStorageUsage :one
-SELECT count(*)::bigint AS retained_events, coalesce(sum(customer_storage_bytes),0)::bigint AS retained_bytes
-FROM event_fanout_outbox WHERE account_id=sqlc.arg(account_id)::uuid AND customer_storage_bytes>0;
+-- ADR-20261023215834: the trigger-kept counts, not a scan of every
+-- retained receipt under the account's admission lock.
+SELECT coalesce(max(retained_events),0)::bigint AS retained_events, coalesce(max(retained_bytes),0)::bigint AS retained_bytes
+FROM event_receipt_usage WHERE account_id=sqlc.arg(account_id)::uuid;
 
 -- name: EventStoragePublicUsage :one
-SELECT a.plan, coalesce(u.retained_events,0)::bigint AS retained_events,
-       coalesce(u.retained_bytes,0)::bigint AS retained_bytes, coalesce(u.pending_events,0)::bigint AS pending_events,
+-- Pending receipts are read through the pending and lease indexes, so the
+-- account's settled history is not scanned.
+SELECT a.plan, coalesce(r.retained_events,0)::bigint AS retained_events,
+       coalesce(r.retained_bytes,0)::bigint AS retained_bytes, coalesce(u.pending_events,0)::bigint AS pending_events,
        u.oldest_pending_at::timestamptz AS oldest_pending_at
 FROM accounts a
+LEFT JOIN event_receipt_usage r ON r.account_id=a.id
 LEFT JOIN LATERAL (
-    SELECT count(*)::bigint AS retained_events, coalesce(sum(o.customer_storage_bytes),0)::bigint AS retained_bytes,
-           count(*) FILTER (WHERE o.state <> 'delivered')::bigint AS pending_events,
-           min(o.created_at) FILTER (WHERE o.state <> 'delivered') AS oldest_pending_at
+    SELECT count(*)::bigint AS pending_events, min(o.created_at) AS oldest_pending_at
     FROM event_fanout_outbox o WHERE o.account_id=a.id AND o.customer_storage_bytes>0
+     AND (o.state='pending' OR o.state='processing')
 ) u ON true WHERE a.id=sqlc.arg(account_id)::uuid;
 
 -- name: EventStorageAppend :exec

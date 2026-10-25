@@ -21,8 +21,10 @@ package e2e_test
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +54,53 @@ func nativePlatformWorkflow(t *testing.T) []byte {
 		t.Fatal(err)
 	}
 	return body
+}
+
+// nativeJobTimeout returns the platform job's timeout-minutes for one matrix
+// group. The value is a plain number or the per-group expression
+// `${{ (matrix.group == 'a' || matrix.group == 'b') && N || M }}`: the listed
+// groups get N minutes and every other group gets M.
+func nativeJobTimeout(t *testing.T, group string) time.Duration {
+	t.Helper()
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var workflow struct {
+		Jobs map[string]struct {
+			Timeout string `yaml:"timeout-minutes"`
+		}
+	}
+	if err := yaml.Unmarshal(body, &workflow); err != nil {
+		t.Fatal(err)
+	}
+	value := strings.TrimSpace(workflow.Jobs["e2e-native"].Timeout)
+	if value == "" {
+		t.Fatal("no job timeout-minutes in the workflow; a wedged run would hold the node until GitHub's 6h default")
+	}
+	minutes := value
+	if _, err := strconv.Atoi(value); err != nil {
+		expr := regexp.MustCompile(`^\$\{\{\s*\(([^()]*)\)\s*&&\s*(\d+)\s*\|\|\s*(\d+)\s*\}\}$`).FindStringSubmatch(value)
+		if expr == nil {
+			t.Fatalf("unrecognised job timeout-minutes %q", value)
+		}
+		minutes = expr[3]
+		groupRe := regexp.MustCompile(`^\s*matrix\.group\s*==\s*'([\w-]+)'\s*$`)
+		for _, condition := range strings.Split(expr[1], "||") {
+			m := groupRe.FindStringSubmatch(condition)
+			if m == nil {
+				t.Fatalf("unrecognised job timeout condition %q", condition)
+			}
+			if m[1] == group {
+				minutes = expr[2]
+			}
+		}
+	}
+	n, err := strconv.Atoi(minutes)
+	if err != nil {
+		t.Fatalf("job timeout-minutes %q: %v", minutes, err)
+	}
+	return time.Duration(n) * time.Minute
 }
 
 func phaseOuterBudgets(t *testing.T) map[string]time.Duration {
@@ -161,11 +210,6 @@ func TestSourceBuildingPhasesHaveABuildSizedBudget(t *testing.T) {
 // verdict, and the node billed until the next dispatch happened to find it.
 func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 	body := nativePlatformWorkflow(t)
-	m := regexp.MustCompile(`(?m)^\s*timeout-minutes:\s*(\d+)`).FindStringSubmatch(string(body))
-	if m == nil {
-		t.Fatal("no job timeout-minutes in the workflow; a wedged run would hold the node until GitHub's 6h default")
-	}
-	jobTimeout, _ := time.ParseDuration(m[1] + "m")
 
 	// A lane never runs in the same job as the phases (the steps are gated on
 	// inputs.lane either way), so it must not be added to their sum — but it
@@ -177,36 +221,72 @@ func TestJobTimeoutCoversEveryPhaseCap(t *testing.T) {
 		"managed-operation-only":            true,
 		"customer-job-operations-only":      true,
 		"customer-workflow-operations-only": true,
+		"project-worker-release-only":       true,
+		"project-progressive-release-only":  true,
+		"project-migration-contract-only":   true,
+		"project-migration-sql-only":        true,
+		"customer-http-operations-only":     true,
 		"financial-system":                  true, // separate sequential job on the same host
 	}
-	var sum, laneMax time.Duration
-	for phase, d := range phaseOuterBudgets(t) {
-		if lanes[phase] {
-			if d > laneMax {
-				laneMax = d
-			}
-			continue
-		}
-		sum += d
-	}
-	if sum < laneMax {
-		sum = laneMax
+
+	if !strings.Contains(string(body), "max-parallel: 1") || !strings.Contains(string(body), "fail-fast: false") {
+		t.Fatal("native groups must be serialized without cancelling recovery/cleanup")
 	}
 	// Staging, source transfer, log collection and the node stop itself.
 	const overhead = 20 * time.Minute
-	if jobTimeout < sum+overhead {
-		t.Errorf("job timeout-minutes=%s does not cover the phase caps (%s) plus %s overhead. "+
-			"A run that uses its budgets is killed before Verdict and before the node is stopped.",
-			jobTimeout, sum, overhead)
+	// Each matrix group is its own job with its own timeout, so each group's
+	// caps must fit inside that group's timeout.
+	covers := func(group, what string, caps time.Duration) {
+		jobTimeout := nativeJobTimeout(t, group)
+		if jobTimeout < caps+overhead {
+			t.Errorf("group %s job timeout-minutes=%s does not cover %s caps (%s) plus %s overhead. "+
+				"A run that uses its budgets is killed before Verdict and before the node is stopped.",
+				group, jobTimeout, what, caps, overhead)
+		}
+		// GitHub-hosted runners cap a job at 6h; a larger value is silently clamped.
+		if jobTimeout > 6*time.Hour {
+			t.Errorf("group %s job timeout-minutes=%s exceeds GitHub's 6h job ceiling and would be clamped", group, jobTimeout)
+		}
 	}
-	// GitHub-hosted runners cap a job at 6h; a larger value is silently clamped.
-	if jobTimeout > 6*time.Hour {
-		t.Errorf("job timeout-minutes=%s exceeds GitHub's 6h job ceiling and would be clamped", jobTimeout)
+	outer := phaseOuterBudgets(t)
+	for _, group := range []string{"source", "runtime"} {
+		output, err := exec.Command("bash", "-c", `source ../../scripts/ci/native-e2e-phases.sh; native_e2e_group_phases "$1"`, "budget", group).Output()
+		if err != nil {
+			t.Fatal("read shared native group partition")
+		}
+		var budget time.Duration
+		for _, phase := range strings.Fields(string(output)) {
+			budget += outer[phase]
+		}
+		covers(group, "its phase", budget)
+	}
+	// A targeted lane runs alone, as the single matrix group.
+	for phase, d := range outer {
+		if lanes[phase] {
+			covers("single", "lane "+phase, d)
+		}
 	}
 }
 
 func TestFinancialJobBudgetIncludesProviderAndNativeCleanup(t *testing.T) {
-	outer := phaseOuterBudgets(t)["financial-system"]
+	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, financialJob, found := strings.Cut(string(workflow), "\n  financial-system:\n")
+	if !found || !strings.Contains(financialJob, "needs: e2e-native") {
+		t.Fatal("financial job must serialize behind the platform job on the shared host")
+	}
+	// The financial phase runs in its own job, so its systemd unit budget is
+	// that job's RuntimeMaxSec, not one of the platform job's phases.
+	unitMatch := regexp.MustCompile(`RuntimeMaxSec=(\w+)`).FindStringSubmatch(financialJob)
+	if unitMatch == nil {
+		t.Fatal("financial job's systemd unit has no RuntimeMaxSec")
+	}
+	outer, err := time.ParseDuration(unitMatch[1])
+	if err != nil {
+		t.Fatal(err)
+	}
 	native := phaseInnerBudgets(t)["financial-system"]
 	body, err := os.ReadFile(filepath.Join("..", "..", "scripts", "ci", "run-native-e2e.sh"))
 	if err != nil {
@@ -222,14 +302,6 @@ func TestFinancialJobBudgetIncludesProviderAndNativeCleanup(t *testing.T) {
 	}
 	if native == 0 || outer <= native+provider {
 		t.Fatalf("financial system unit %s must outlast native %s + provider %s, compilation and cleanup", outer, native, provider)
-	}
-	workflow, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, financialJob, found := strings.Cut(string(workflow), "\n  financial-system:\n")
-	if !found || !strings.Contains(financialJob, "needs: e2e-native") {
-		t.Fatal("financial job must serialize behind the platform job on the shared host")
 	}
 	match := regexp.MustCompile(`timeout-minutes:\s*(\d+)`).FindStringSubmatch(financialJob)
 	if match == nil {
@@ -300,5 +372,28 @@ func TestFullLaneRunsFullAPIHostingRuntimeCatalog(t *testing.T) {
 	}
 	if !strings.Contains(buildPhase, "--setenv=FAAS_E2E_API_HOSTING_CATALOG='$CATALOG_MODE'") {
 		t.Error("native build phase does not forward its selected catalog mode to the remote runner")
+	}
+}
+
+func TestProjectMigrationContractLaneBudgets(t *testing.T) {
+	const lane = "project-migration-contract-only"
+	inner, outer := phaseInnerBudgets(t)[lane], phaseOuterBudgets(t)[lane]
+	if inner != 210*time.Minute || outer <= inner {
+		t.Fatalf("contract test/systemd budgets = %s/%s", inner, outer)
+	}
+	body, err := os.ReadFile(filepath.Join("..", "..", ".github", "workflows", "e2e-native.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A targeted lane runs alone, as the single matrix group.
+	job := nativeJobTimeout(t, "single")
+	if job < outer+20*time.Minute || job > 6*time.Hour {
+		t.Fatalf("job %s cannot contain standalone contract lane %s and cleanup", job, outer)
+	}
+	if strings.Count(string(body), "inputs.lane != '"+lane+"'") != 9 {
+		t.Fatal("contract lane would also execute platform phases")
+	}
+	if !strings.Contains(string(body), "project_migration_contract_only=${{ steps.phase_project_migration_contract_only.outcome }}") {
+		t.Fatal("contract runner failure omitted from verdict")
 	}
 }

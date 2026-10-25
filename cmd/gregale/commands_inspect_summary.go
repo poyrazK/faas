@@ -42,6 +42,9 @@ type inspectAppSummary struct {
 	Runtime                string                        `json:"runtime,omitempty"`
 	WorkloadClass          string                        `json:"workload_class,omitempty"`
 	Protocol               string                        `json:"protocol,omitempty"`
+	// ExecutionMode is the app's lifecycle mode (worker, service, job);
+	// empty for request mode.
+	ExecutionMode string `json:"execution_mode,omitempty"`
 }
 
 type inspectRuntimeSummary struct {
@@ -79,6 +82,10 @@ type inspectResourceSummary struct {
 	MinInstances  int                `json:"min_instances"`
 	MaxInstances  int                `json:"max_instances"`
 	Target        *api.ScalingTarget `json:"target,omitempty"`
+	// Mode and ModeMetric describe a worker, service or job app's own
+	// replica policy (empty for request mode).
+	Mode       string `json:"mode,omitempty"`
+	ModeMetric string `json:"mode_metric,omitempty"`
 	// AutoscaleTargetRPS and AutoscaleTargetCPUPct are the legacy reactive
 	// scale-up targets returned by GET /v1/apps/{slug}. They remain effective
 	// when the newer ScalingPolicy.Target is unset, so inspect must not infer
@@ -241,6 +248,7 @@ func buildInspectSummary(app api.AppResponse, in inspectSummaryInputs) inspectSu
 			ParkedReason:           inspectParkedReason(app),
 			DeploymentAvailability: app.DeploymentAvailability,
 			Type:                   app.Type, Runtime: app.Runtime, WorkloadClass: app.WorkloadClass, Protocol: app.AppProtocol,
+			ExecutionMode: inspectExecutionMode(app),
 		},
 		Resources:   inspectResources(app),
 		API:         inspectOpenAPI(in.OpenAPIRaw),
@@ -281,8 +289,30 @@ func inspectResources(app api.AppResponse) inspectResourceSummary {
 		out.ScaleOutCooldownS = app.ScalingPolicy.ScaleOutCooldownS
 		out.ScaleInCooldownS = app.ScalingPolicy.ScaleInCooldownS
 	}
+	// A worker or service runs its own replica policy, not request-driven
+	// scaling: inspect called a running worker "0→1 instances ·
+	// request-driven" (Hunt 14 H14-1).
+	switch out.Mode = inspectExecutionMode(app); out.Mode {
+	case api.ExecutionModeWorker:
+		if replicas := app.Manifest.WorkerReplicas; replicas != nil {
+			out.MinInstances, out.MaxInstances, out.ModeMetric = replicas.Min, replicas.Max, replicas.Metric
+		}
+	case api.ExecutionModeService:
+		if replicas := app.Manifest.ServiceReplicas; replicas != nil {
+			out.MinInstances, out.MaxInstances = replicas.Min, replicas.Max
+		}
+	}
 	out.ScaleToZero = out.MinInstances == 0
 	return out
+}
+
+// inspectExecutionMode returns the app's non-request execution mode, or "".
+func inspectExecutionMode(app api.AppResponse) string {
+	switch mode := app.Manifest.ExecutionMode; mode {
+	case api.ExecutionModeWorker, api.ExecutionModeService, api.ExecutionModeJob:
+		return mode
+	}
+	return ""
 }
 
 func inspectRuntime(app api.AppResponse, dep *api.DeploymentResponse, unavailable *[]string) inspectRuntimeSummary {
@@ -506,13 +536,29 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 	// hunt #8 (H8-23): a parked worker showed only "evicted_cold" and advice
 	// to redeploy, which never restarts a parked app.
 	if summary.App.Status == "evicted_cold" && summary.App.ParkedReason != "security_scan_regressed" {
-		message := "This app is parked; it does not run or wake on its own."
-		next := "Run `gregale wake " + summary.App.Slug + "` to start it again."
-		if summary.App.ParkedReason == "liveness_exhausted" {
-			message = "This app is parked because its instances repeatedly failed liveness checks or crashed."
+		// The next request wakes a parked app (gregale park: "until its next
+		// request"); "does not run or wake on its own" read as if requests
+		// were refused (Hunt 12 H12-60).
+		// A parked request app is scale to zero working, so it is info, not
+		// an error: h14-img read "Needs attention" after a plain `gregale
+		// park` (Hunt 14 H14-43). A crash-looped app, or a worker, service
+		// or job that no request wakes, still needs attention.
+		message := "This app is parked: its instances are stopped until the next request wakes it."
+		next := "Send a request, or run `gregale wake " + summary.App.Slug + "` to start it now."
+		severity := "info"
+		switch {
+		case summary.App.ParkedReason == "liveness_exhausted":
+			message = "This app is parked because its instances repeatedly failed liveness checks or crashed; the next request starts it again."
 			next = "Fix the failure (see `gregale logs " + summary.App.Slug + " --since 1h`), deploy, then run `gregale wake " + summary.App.Slug + "`."
+			severity = "error"
+		case summary.App.ExecutionMode == api.ExecutionModeWorker:
+			message = "This worker is parked: requests do not wake a worker, so it stays stopped until you wake it."
+			next = "Run `gregale wake " + summary.App.Slug + "` to start it."
+			severity = "error"
+		case summary.App.ExecutionMode != "":
+			severity = "error"
 		}
-		add("app_parked", "error", message, next)
+		add("app_parked", severity, message, next)
 	}
 	if summary.App.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
 		add("no_live_deployment", "error", "This app has no live deployment, so requests, wakes, and app-backed workflows cannot run.", "Redeploy from current source with `gregale deploy`; if the latest attempt failed, inspect it with `gregale inspect "+summary.App.Slug+" --errors`. Restore an old revision only after its artifact and rollout history have been verified.")
@@ -520,6 +566,13 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		add("deploy_required", "warning", "No deployment was found for this app.", "Run `gregale deploy` from the application source directory.")
 	} else if summary.Release.Status == "failed" {
 		add("deployment_failed", "error", "The latest deployment failed.", "Run `gregale inspect "+summary.App.Slug+" --errors` for the persisted explanation.")
+	} else if summary.Release.Status == "live" && summary.Release.TrafficPercent == 0 {
+		// selectInspectDeployments prefers a traffic-bearing release, so a
+		// live release at 0% means none serves: h12-mcp's deploy stopped
+		// before promotion and inspect led with a profile warning while every
+		// request got 404 (Hunt 12 H12-59).
+		add("no_traffic", "error", "No deployment receives traffic, so requests to this app fail.",
+			"Check why deployment "+summary.Release.DeploymentID+" was not promoted, then run `gregale traffic promote --app "+summary.App.Slug+" --deployment "+summary.Release.DeploymentID+"`.")
 	} else if summary.Release.Status == "live" && (summary.Runtime.Health == nil || summary.Runtime.Health.Status != apihostingreceipt.SmokeVerified) {
 		if summary.Runtime.Health != nil && (summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorNotConfigured || summary.Runtime.Health.ErrorCode == apihostingreceipt.SmokeErrorVerifierNotConfigured) {
 			add("health_verifier_unconfigured", "error", "The public smoke verifier is not configured, so this deployment is not externally verified.", "External health verification is not available on this Gregale installation right now; contact support.")
@@ -602,7 +655,11 @@ func renderInspectSummaryHuman(w io.Writer, summary inspectSummary) {
 
 func renderInspectApp(w io.Writer, app inspectAppSummary) {
 	_, _ = fmt.Fprintf(w, "%s\n", app.Slug)
-	_, _ = fmt.Fprintf(w, "  app:       %s · %s · %s", fallback(app.Status), fallback(app.Type), fallback(app.WorkloadClass))
+	class := app.WorkloadClass
+	if app.ExecutionMode != "" {
+		class = app.ExecutionMode
+	}
+	_, _ = fmt.Fprintf(w, "  app:       %s · %s · %s", fallback(app.Status), fallback(app.Type), fallback(class))
 	if app.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
 		_, _ = fmt.Fprint(w, " · NO LIVE DEPLOYMENT")
 	}
@@ -641,6 +698,17 @@ func renderInspectResources(w io.Writer, resources inspectResourceSummary) {
 }
 
 func inspectScalingTargetLabel(resources inspectResourceSummary) string {
+	switch resources.Mode {
+	case api.ExecutionModeWorker:
+		if resources.ModeMetric != "" {
+			return "worker pool · scaled by " + resources.ModeMetric
+		}
+		return "worker pool"
+	case api.ExecutionModeService:
+		return "service replicas"
+	case api.ExecutionModeJob:
+		return "runs to completion"
+	}
 	labels := make([]string, 0, 3)
 	if resources.Target != nil && resources.Target.Metric != "" {
 		labels = append(labels, fmt.Sprintf("%s=%g", resources.Target.Metric, resources.Target.Value))

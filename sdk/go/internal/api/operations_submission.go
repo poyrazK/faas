@@ -29,7 +29,7 @@ type OperationSubmissionLookupResponse struct {
 	IdempotencyExpiresAt *time.Time                 `json:"idempotency_expires_at,omitempty"`
 }
 
-func (c *Client) LookupPlatformTenantSelfOperationSubmission(ctx context.Context, req OperationSubmissionLookupRequest) (OperationSubmissionLookupResponse, error) {
+func (c *PreviewClient) LookupPlatformTenantSelfOperationSubmission(ctx context.Context, req OperationSubmissionLookupRequest) (OperationSubmissionLookupResponse, error) {
 	var out OperationSubmissionLookupResponse
 	err := c.doOperation(ctx, http.MethodPost, "/v1/platform-tenant-self/customer-operations/submissions/lookup", req, &out)
 	return out, err

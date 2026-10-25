@@ -4,10 +4,10 @@ import httpx
 import pytest
 
 from faas_sdk import AuthenticatedClient
-from faas_sdk.api.workflows import simulate_automation
-from faas_sdk.models.automation_simulation_step import AutomationSimulationStep
-from faas_sdk.models.simulate_automation_request import SimulateAutomationRequest
-from faas_sdk.models.simulate_automation_response import SimulateAutomationResponse
+from faas_sdk.preview.api.workflows import simulate_automation
+from faas_sdk.preview.models.automation_simulation_step import AutomationSimulationStep
+from faas_sdk.preview.models.simulate_automation_request import SimulateAutomationRequest
+from faas_sdk.preview.models.simulate_automation_response import SimulateAutomationResponse
 from faas_sdk.types import UNSET
 
 REQUEST = {

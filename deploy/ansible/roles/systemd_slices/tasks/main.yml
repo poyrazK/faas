@@ -80,6 +80,26 @@
     label: "faas-tenant-{{ item.plan }}.slice"
   register: plan_slices
 
+# Connection-survival ADR §2 (slice 1c): with FAAS_INSTANCE_BRIDGE_UNIT=1 each
+# instance's bridge is a transient service in this slice. The dash-qualified
+# name makes it a child of faas-tenant.slice, so bridges sit inside the tenant
+# hard fence and a bridge leak cannot exhaust the control plane. Per-bridge
+# MemoryMax and TasksMax come from vmmd (pkg/api InstanceBridge*), not here.
+- name: systemd_slices — write faas-tenant-ibridge.slice (instance bridges)
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-tenant-ibridge.slice
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=onebox-faas instance bridges (inside the tenant fence, connection-survival ADR)
+
+      [Slice]
+      MemoryAccounting=yes
+      TasksAccounting=yes
+  register: ibridge_slice
+
 - name: systemd_slices — remove invalid detached per-plan slice units
   ansible.builtin.file:
     path: "/etc/systemd/system/tenant-{{ item }}.slice"
@@ -174,7 +194,7 @@
 - name: systemd_slices — daemon-reload
   ansible.builtin.systemd:
     daemon_reload: true
-  when: cp_slice is changed or build_slice is changed or tenant_slice is changed or plan_slices is changed or legacy_plan_slices is changed or legacy_build_slice is changed or fence_slices is changed
+  when: cp_slice is changed or build_slice is changed or tenant_slice is changed or plan_slices is changed or legacy_plan_slices is changed or legacy_build_slice is changed or fence_slices is changed or ibridge_slice is changed
 
 - name: systemd_slices — start cgroup parents before jailer can attach VMs
   ansible.builtin.systemd:
@@ -187,6 +207,7 @@
     - faas-tenant-hobby.slice
     - faas-tenant-pro.slice
     - faas-tenant-scale.slice
+    - faas-tenant-ibridge.slice
 
 - name: systemd_slices — start per-VM fence pin slices
   ansible.builtin.systemd:

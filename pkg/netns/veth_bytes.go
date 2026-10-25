@@ -4,9 +4,10 @@
 // future schedd-side paths read the cumulative byte counter on
 // root-side `vethHost` at
 // `/sys/class/net/<vethHost>/statistics/rx_bytes`. The file is
-// maintained by the kernel for every network device; the
-// counter is the same one the per-plan `tc tbf` qdisc uses, so
-// the cap and the meter are consistent (ADR-046 §1).
+// maintained by the kernel for every network device. The
+// per-plan `tc tbf` qdisc on vethPeer shapes these same packets
+// before they arrive here, so the cap and the meter cover the
+// same traffic (ADR-046 §1).
 //
 // The read is intentionally a thin shim around os.ReadFile —
 // there is no /sys API richer than "read the file", and adding

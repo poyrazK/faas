@@ -5,6 +5,7 @@
 import type { EdgeRuleAsyncAction } from './EdgeRuleAsyncAction.js';
 import type { EdgeRuleBudgetAction } from './EdgeRuleBudgetAction.js';
 import type { EdgeRuleCacheAction } from './EdgeRuleCacheAction.js';
+import type { EdgeRuleChallengeAction } from './EdgeRuleChallengeAction.js';
 import type { EdgeRuleCircuitBreakerAction } from './EdgeRuleCircuitBreakerAction.js';
 import type { EdgeRuleCORSAction } from './EdgeRuleCORSAction.js';
 import type { EdgeRuleGeoAction } from './EdgeRuleGeoAction.js';
@@ -14,6 +15,7 @@ import type { EdgeRuleJWTAction } from './EdgeRuleJWTAction.js';
 import type { EdgeRuleLimitAction } from './EdgeRuleLimitAction.js';
 import type { EdgeRuleMaintenanceAction } from './EdgeRuleMaintenanceAction.js';
 import type { EdgeRuleMatchExpr } from './EdgeRuleMatchExpr.js';
+import type { EdgeRulePenalty } from './EdgeRulePenalty.js';
 import type { EdgeRuleRedirectAction } from './EdgeRuleRedirectAction.js';
 import type { EdgeRuleRespondAction } from './EdgeRuleRespondAction.js';
 import type { EdgeRuleRetryAction } from './EdgeRuleRetryAction.js';
@@ -38,7 +40,7 @@ export type CreateEdgeRuleRequest = {
   match_headers?: Record<string, string>;
   priority?: number;
   enabled?: boolean;
-  kind: 'route' | 'rewrite' | 'redirect' | 'headers' | 'cors' | 'jwt' | 'ip' | 'validate' | 'limit' | 'maintenance' | 'geo' | 'throttle' | 'budget' | 'cache' | 'respond' | 'retry' | 'circuit_breaker' | 'async' | 'waf';
+  kind: 'route' | 'rewrite' | 'redirect' | 'headers' | 'cors' | 'jwt' | 'ip' | 'validate' | 'limit' | 'maintenance' | 'geo' | 'throttle' | 'budget' | 'cache' | 'respond' | 'retry' | 'circuit_breaker' | 'async' | 'waf' | 'challenge';
   /**
    * Top-level source of truth for kind=validate (ADR-128).
    * Omitted == 'block' (the SQL-side default).
@@ -48,7 +50,7 @@ export type CreateEdgeRuleRequest = {
   /**
    * Kind-tagged action body — shape depends on `kind`.
    */
-  action: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleCacheAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction | EdgeRuleWAFAction);
+  action: (EdgeRuleRouteAction | EdgeRuleRewriteAction | EdgeRuleRedirectAction | EdgeRuleHeadersAction | EdgeRuleCORSAction | EdgeRuleJWTAction | EdgeRuleIPAction | EdgeRuleValidateAction | EdgeRuleLimitAction | EdgeRuleMaintenanceAction | EdgeRuleGeoAction | EdgeRuleThrottleAction | EdgeRuleBudgetAction | EdgeRuleCacheAction | EdgeRuleRespondAction | EdgeRuleRetryAction | EdgeRuleCircuitBreakerAction | EdgeRuleAsyncAction | EdgeRuleWAFAction | EdgeRuleChallengeAction);
   /**
    * Optional operator-facing name for the new rule.
    */
@@ -66,5 +68,6 @@ export type CreateEdgeRuleRequest = {
    * Start the rule enforced (default) or in log mode, where it is only matched and counted.
    */
   mode?: 'enforce' | 'log';
+  penalty?: EdgeRulePenalty;
 };
 

@@ -278,6 +278,7 @@ func productBillingCreditsAndHandoffs(t *testing.T, s productBillingTestStore, f
 	if _, err := s.CreditProductReceipt(ctx, f.other, req); !errors.Is(err, ErrInvalidArgument) {
 		t.Fatalf("customer credit confused: %v", err)
 	}
+	productBillingDocumentLookups(t, s, f, statement, credit)
 	handoff, err := s.HandoffProductBilling(ctx, scope, statement.ID, "pilot-invoice-001")
 	if err != nil || handoff.AmountMillicents != 35000 {
 		t.Fatalf("invoice handoff: %+v %v", handoff, err)
@@ -331,3 +332,38 @@ func productBillingCreditsAndHandoffs(t *testing.T, s productBillingTestStore, f
 
 var _ ProductBillingStore = (*MemStore)(nil)
 var _ ProductBillingStore = (*PgStore)(nil)
+
+// productBillingDocumentLookups pins the document read and handoff check that
+// statement invoice exports use (ADR-20261018212918).
+func productBillingDocumentLookups(t *testing.T, s productBillingTestStore, f productBillingFixture, statement, credit api.ProductBillingDocument) {
+	t.Helper()
+	ctx := t.Context()
+	scope := f.scope
+	got, err := s.GetProductBillingDocument(ctx, scope, statement.ID)
+	if err != nil || got.Kind != "statement" || got.Snapshot == nil || got.Snapshot.ReviewHash != statement.Snapshot.ReviewHash ||
+		len(got.Snapshot.Lines) != len(statement.Snapshot.Lines) || got.AmountMillicents != statement.AmountMillicents {
+		t.Fatalf("statement lookup: %+v %v", got, err)
+	}
+	if got, err := s.GetProductBillingDocument(ctx, scope, credit.ID); err != nil || got.Kind != "credit_note" || got.AmountMillicents != credit.AmountMillicents {
+		t.Fatalf("credit note lookup: %+v %v", got, err)
+	}
+	if _, err := s.GetProductBillingDocument(ctx, f.other, statement.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("statement read through another customer: %v", err)
+	}
+	if _, err := s.GetProductBillingDocument(ctx, scope, "not-a-uuid"); !errors.Is(err, ErrInvalidArgument) {
+		t.Fatalf("malformed document ID: %v", err)
+	}
+	checker, ok := s.(StatementHandoffChecker)
+	if !ok {
+		t.Fatal("store cannot check statement handoffs")
+	}
+	if blocked, err := checker.StatementHandoffBlocked(ctx, scope.AccountID, StatementSourceProductControl, statement.ID); err != nil || blocked {
+		t.Fatalf("product statement handoff check: blocked=%v %v", blocked, err)
+	}
+	if _, err := checker.StatementHandoffBlocked(ctx, scope.AccountID, StatementSourceProductControl, credit.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("credit note checked as an exportable statement: %v", err)
+	}
+	if _, err := checker.StatementHandoffBlocked(ctx, uuid.NewString(), StatementSourceProductControl, statement.ID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("statement handoff check crossed accounts: %v", err)
+	}
+}

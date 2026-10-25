@@ -62,6 +62,14 @@ running any daemon with the hub disabled needs materially more direct
 connections than the table above; re-derive before enabling that mode on more
 than one node.
 
+ADR-570 reserves three direct connections for hub-enabled apid when a separate
+`FAAS_DATABASE_URL_DIRECT` is configured: the notification hub, outer edge
+mutation convergence lock and guarded policy transaction. The deployed pooler
+role targets compute nodes, so the control plane keeps the ordinary direct
+pool budget above. If the control plane is explicitly given a separate session
+pool, include that sibling pool in `faas_postgres_control_plane_pool_budget`;
+the default 40 assumes the existing control-plane pool topology.
+
 The per-daemon maxima come from `pkg/db.DaemonMaxConnections`, which applies
 while the ADR-190 notify hub is active — the supported configuration. Setting
 `FAAS_DB_NOTIFY_HUB=0` selects `DaemonMaxConnectionsNotifyHubDisabled`
@@ -69,3 +77,9 @@ instead, which keeps the larger pre-hub sizing because every subscriber then
 parks its own connection. A fleet running any daemon with the hub disabled
 therefore needs more connections than the figures above; re-derive the
 ceiling before enabling that mode on more than one node.
+
+`pkg/db.DaemonMinConnections` keeps a small warm floor of each listed
+daemon's connections open while idle (schedd: 4 per process), so wakes reuse
+backends that have already compiled the instance triggers. A floor never
+exceeds the daemon's maximum: it raises the idle session count, not the
+ceiling this role derives.

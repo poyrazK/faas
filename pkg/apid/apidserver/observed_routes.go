@@ -172,7 +172,10 @@ func (s *server) collectFleetObservedRoutes(ctx context.Context, appID string) o
 
 	queryCtx, cancel := context.WithTimeout(ctx, routesDialTimeout)
 	defer cancel()
-	routeQuery := fmt.Sprintf(`max by (node_id, route) (gateway_requests_by_route_total{app=%s})`, strconv.Quote(appID))
+	// Gateways drop an idle app's per-route series (ADR-20261024154324), so
+	// look back over the observed window rather than at current series only.
+	routeQuery := fmt.Sprintf(`max by (node_id, route) (last_over_time(gateway_requests_by_route_total{app=%s}[%ds]))`,
+		strconv.Quote(appID), int(api.RouteMetricsObservedWindow.Seconds()))
 	healthQuery := `max by (node_id) (up{job="gatewayd-internal"})`
 
 	var routeSamples, healthSamples []promql.VectorSample
@@ -258,12 +261,13 @@ func (s *server) collectFleetObservedRoutes(ctx context.Context, appID string) o
 }
 
 func (s *server) collectLegacyObservedRoutes(ctx context.Context, appID, slug string) observedRoutesSnapshot {
-	if s.gatewaydControlURL == "" {
+	controlURL := s.gatewayControlURL(ctx)
+	if controlURL == "" {
 		return unavailableObservedRoutes(0)
 	}
 	dialCtx, cancel := context.WithTimeout(ctx, routesDialTimeout)
 	defer cancel()
-	endpoint, err := url.JoinPath(s.gatewaydControlURL, "v1", "internal", "apps", slug, "routes")
+	endpoint, err := url.JoinPath(controlURL, "v1", "internal", "apps", slug, "routes")
 	if err != nil {
 		return unavailableObservedRoutes(1)
 	}

@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -41,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -390,6 +392,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := deps.migrate(ctx, pool); err != nil {
 		return err
 	}
+	invocationTrafficRegistry, err := newInvocationTrafficRegistry(ctx, pool)
+	if err != nil {
+		return err
+	}
+	defer runInvocationTrafficRegistry(ctx, invocationTrafficRegistry)()
 
 	// ADR-056: handshake-layer NodeVerifier. Gated on cfg.NodeName
 	// (the multi-box gate, mirroring vmmd's cfg.ComputeNode.NodeName
@@ -449,7 +456,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load vmmd TLS: %w", err)
 	}
 	vmmRotator.Set(vmmTLS)
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(os.Getenv)))
 	stopEventWriter, err := eventrecording.Start(ctx, store, "schedd", cfg.EventAcknowledgmentWriterSlot, cfg.EventAcknowledgmentWriterRoster, log)
 	if err != nil {
 		return err
@@ -634,6 +641,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		return fmt.Errorf("schedd: init engine: %w", err)
 	}
+	// vmmd restart adoption ADR §3: creates retry through a planned vmmd
+	// restart instead of failing.
+	vmmRouter.WithRestartNotices(engine.RestartNotices())
 	validatorArtifacts, artifactErr := validatorbundle.OpenArtifacts(os.Getenv)
 	if artifactErr != nil {
 		return artifactErr
@@ -668,6 +678,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// vmmd confirms attempt-bound native retirement.
 	startEnvironmentQualificationRecovery(ctx, engine, store, ownerNodeID, log)
 	startManagedPostgresDrainRecovery(ctx, engine, store, ownerNodeID, log)
+	startDatabaseSwitchDrainCapture(ctx, engine, store, store, ownerNodeID, log)
 	// ADR-098 PR-D: connection-aware upstream affinity. The
 	// FAAS_UPSTREAM_AFFINITY environment value is the bootstrap
 	// fallback; the durable data-placement flag can switch the
@@ -697,7 +708,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// atomically when the acknowledged runtime value changes.
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	defer runtimeCancel()
-	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyDataPlacement},
+	// ADR-20261023115741: schedd holds a capability's background work
+	// (crons, triggers, queued deliveries, jobs, workflows) while its
+	// platform flag is off for the owning account. The flags ride the same
+	// runtime-config watcher and report apply receipts as schedd.
+	capabilityFlags := platformflags.NewSet(capflags.Bootstrap(os.Getenv))
+	capabilities, err := capflags.Load(capabilityFlags.Snapshot)
+	if err != nil {
+		return fmt.Errorf("schedd: load capability catalog: %w", err)
+	}
+	engine.WithCapabilities(capabilities)
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
@@ -712,7 +733,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}
 			return nil
-		}, log)
+		}, capabilityFlags)
+	watcher := runtimeconfig.New(store, pool, runtimeKeys, runtimeApply, log)
 	watcher.Daemon = "schedd" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("schedd: initial runtime config reconcile failed", "err", err)
@@ -729,7 +751,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// health signal at all, so enabling one without the other would be a
 	// silent no-op that looks like protection. That combination is a
 	// startup error rather than a warning, per the ADR's rollout section.
-	if os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER") != "" {
+	egressCircuitEnabled, err := api.EgressCircuitBreakerEnabled(os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER"))
+	if err != nil {
+		return err
+	}
+	if egressCircuitEnabled {
 		if os.Getenv("FAAS_UPSTREAM_PROBE") == "" {
 			log.Error("schedd: FAAS_EGRESS_CIRCUIT_BREAKER is set but FAAS_UPSTREAM_PROBE is not; " +
 				"the breaker has no health signal without the ADR-098 probe")
@@ -738,20 +764,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		applier := sched.NewRoutedEgressCircuitApplier(
 			vmmRouter,
 			sched.NewStoreEgressCircuitNodeLister(store),
-		)
+		).WithDesiredStore(store)
 		// The resolver is the node's own DNS. schedd resolves the upstream
 		// locally so the plaintext host never crosses the vmmd wire — the
 		// RPC carries a resolved address, and every label and log line
 		// carries only host_redacted_hash (ADR-098 §11).
-		resolver := func(ctx context.Context, host string) (string, error) {
+		resolver := func(ctx context.Context, host string) ([]string, error) {
 			addrs, err := net.DefaultResolver.LookupHost(ctx, host)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			if len(addrs) == 0 {
-				return "", fmt.Errorf("schedd: egress circuit: no address for upstream")
+				return nil, fmt.Errorf("schedd: egress circuit: no address for upstream")
 			}
-			return addrs[0], nil
+			return addrs, nil
 		}
 		egressBreaker := sched.NewEgressCircuitBreaker(applier, resolver, log).WithMetrics(ops)
 		egressLoop := sched.NewEgressCircuitLoop(
@@ -760,7 +786,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			api.UpstreamAffinityTTL, // one probe cadence
 			0,                       // default: four intervals
 			log,
-		)
+		).WithAppLister(store.ListAppEgressCircuitAppIDs)
 		// One pass before the first tick so a schedd restart re-derives
 		// breaker state from the probe history instead of starting blind
 		// with every circuit closed.
@@ -881,6 +907,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load sign pub %q: %w (run `faas sign-keys init` on imaged's host if missing)", signPubPath, err)
 	}
 	log.Info("schedd: build attestation verifier ready", "pub", signPubPath)
+	// ADR-038 amendment (2026-10-24): remember verified layers across
+	// restarts, so the first wakes after a restart do not wait for whole
+	// layers to be read and hashed again.
+	recordsPath := envOr("FAAS_LAYER_ATTESTATION_RECORDS", cosign.DefaultAttestationRecordsPath)
+	if err := verifier.RememberVerifications(recordsPath, time.Duration(api.LayerAttestationRecordMaxAgeHours)*time.Hour); err != nil {
+		log.Warn("schedd: layer verifications stay in memory only", "path", recordsPath, "err", err)
+	}
 	engine.WithVerifier(verifier)
 	attestationWarmCtx, cancelAttestationWarm := context.WithCancel(ctx)
 	defer cancelAttestationWarm()
@@ -935,9 +968,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	recoveryArbiter := sched.NewArbiter(
 		sched.MigrationDispatcherFunc(engine.MigrateRecoveryInstance),
 		engine,
-	)
+	).WithParkDispatcher(engine)
 	engine.WithRecoveryArbiter(recoveryArbiter)
-	recoveryRunner := sched.NewRecoveryRunner(store, recoveryArbiter, eventsPlatform, log)
+	recoveryRunner := sched.NewRecoveryRunner(store, recoveryArbiter, eventsPlatform, log).
+		WithNodeObserver(engine.ObserveNodeLifecycles)
 	go func() {
 		if err := recoveryRunner.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			log.Warn("schedd: recovery runner: run returned", "err", err)
@@ -985,9 +1019,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if leaser := sched.NewPgLeaserFromPool(pool, ownerNodeID, nil); leaser != nil {
 		engine.WithJobLeaser(sched.AdaptJobLeaser(leaser))
 	}
+	// adr: 1578
+	// Reconstruct measured destination work before ledger seeding and serving.
+	// Failures retain durable capacity/ownership for the fenced expiry path.
+	migrationRecoveryReady := true
+	if recovered, err := engine.RecoverFunctionMigrations(ctx); err != nil {
+		migrationRecoveryReady = false
+		log.Warn("recover function migrations at startup", "recovered", recovered, "err", err)
+	}
 	// Rebuild admission accounting from any instances still live from a prior
 	// run before we start admitting new wakes.
-	seedLedgerReady := true
+	seedLedgerReady := migrationRecoveryReady
 	if err := engine.SeedLedger(ctx); err != nil {
 		seedLedgerReady = false
 		log.Warn("seed ledger", "err", err)
@@ -1009,7 +1051,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if qualificationDispatchEnabled {
 		log.Info("schedd: environment GitOps qualification dispatch enabled by explicit gate")
 	} else if qualificationDispatchRequested {
-		log.Warn("schedd: environment GitOps qualification dispatch withheld because admission ledger seeding failed")
+		log.Warn("schedd: environment GitOps qualification dispatch withheld because migration recovery or admission ledger seeding failed")
 	} else {
 		log.Info("schedd: environment GitOps qualification dispatch disabled; native acceptance is still required")
 	}
@@ -1592,6 +1634,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// interval through runDeps.heartbeatInterval.
 	hb := sched.NewHeartbeat(store, sched.HeartbeatDialerFunc(deps.dialVMM), vmmTLS, log).
 		WithOwnerNodeID(ownerNodeID).
+		WithRestartNotices(engine.RestartNotices()).
 		WithStalePeerObserver(ownerNodeID != "").
 		WithStoreOutageAtStartup(storeOutageAtStartup).
 		WithNodeRegistry(nodeRegistry).
@@ -1645,12 +1688,24 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithEgressAbuseHandler(func(ctx context.Context, row instancestats.InstanceStat, reason sched.EgressAbuseReason, observed, limit int64) error {
 			return engine.RecycleForEgressAbuse(ctx, row.InstanceID, reason, observed, limit)
 		})
+	if os.Getenv("FAAS_PROFILING_ON_DEMAND") == "1" {
+		statsPoller.WithCPUSaturationHandler(cpuSaturationCaptures{engine: engine, log: log})
+		log.Info("automatic CPU captures on CPU saturation enabled (ADR-1155)")
+	}
 	if cfg.MeasuredAdmission {
 		engine.Ledger().EnableMeasuredAdmission(func(nodeID string) (int, time.Time, bool) {
 			return reader.MeasuredMB(nodeID, time.Now())
 		})
 		log.Info("measured admission enabled (ADR-909)",
 			"max_overcommit_percent", api.MeasuredAdmissionMaxOvercommitPercent)
+	}
+	if cfg.QuietPauseLedger {
+		ledger := instancestats.NewPauseLedger(store,
+			time.Duration(api.QuietPauseLedgerFlushSeconds)*time.Second, log,
+			instancestats.NewPauseLedgerMetrics(ops.Registry()))
+		statsPoller.WithPauseLedger(ledger)
+		log.Info("quiet pause ledger enabled (ADR-20261023171905)",
+			"flush_seconds", api.QuietPauseLedgerFlushSeconds)
 	}
 	if cfg.QuietPauseAdmission {
 		engine.Ledger().EnableQuietPauseAdmission(func(nodeID string) (map[string]struct{}, time.Time, bool) {
@@ -1664,7 +1719,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if cfg.FrozenTierApps {
 			engine.EnableFrozenTierApps()
 		}
-		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps,
+		if cfg.FrozenTierWorkers {
+			engine.EnableFrozenTierWorkers()
+		}
+		if cfg.FrozenTierEarlyFreezeAfterS > 0 {
+			engine.EnableEarlyFreeze(time.Duration(cfg.FrozenTierEarlyFreezeAfterS) * time.Second)
+		}
+		log.Info("frozen tier enabled (ADR-1151)", "apps", cfg.FrozenTierApps, "workers", cfg.FrozenTierWorkers,
+			"early_freeze_after_s", cfg.FrozenTierEarlyFreezeAfterS,
 			"frozen_ttl_seconds", api.FrozenTTLSeconds, "frozen_max_per_node", api.FrozenMaxPerNode)
 	}
 	if cfg.FrozenFastPath {
@@ -1801,7 +1863,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			WithOpsMetrics(ops)).
 		// ADR-134 PR-B / EPIC #1278: expire async invocations and route
 		// deadline-breached rows through their configured failure destination.
-		WithInvocationsRetention(sched.NewInvocationsRetention(store, log)).
+		WithInvocationsRetention(sched.NewInvocationsRetention(store, log).
+			WithOperationTelemetry(sched.NewOperationTelemetry(ops.Registry(), ops.MetricPrefix(), operationTelemetryStore(store)))).
 		// Terminal trigger_records past their explicit retention or the
 		// default ages in pkg/api (TriggerRecordRetention and
 		// TriggerDeadLetterRetention). Off until
@@ -1826,7 +1889,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// /srv/fc/snap. The byte-comparison path stays in
 			// place for the local backend; a remote backend (OCI)
 			// degrades to a presence check.
-			WithStorage(storageBackend)).
+			WithStorage(storageBackend).
+			// ADR 20261022184951 amendment 1: native runtime snapshots
+			// sit in vmmd's private tree under the same snap/ keys.
+			WithNativeRuntimeSnapshots(nativeRuntimeSnapshotLister(log))).
 		// Audit seam (lifted from cmd/apid/audit.go into pkg/audit
 		// for cross-daemon reuse). schedd uses actor="schedd" so the
 		// cron-fire path can emit a `cron.fired` events row after
@@ -1932,6 +1998,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	log.Info("schedd: instance divergence sweep wired",
 		"interval_s", api.InstanceDivergenceIntervalSeconds,
 		"enforce", sched.DivergenceEnforceEnabled())
+	// vmmd restart adoption ADR §3: after a vmmd restart, fail the rows
+	// whose guests the new vmmd did not adopt. A node whose vmmd does not
+	// adopt never claims an epoch, so this stays idle there.
+	adoptionReports := sched.NewAdoptionReportReconciler(engine, log)
+	loop.WithAdoptionReports(sched.NewDeadNodeReconciler(
+		adoptionReports.Reconcile,
+		time.Duration(api.AdoptionReportIntervalSeconds)*time.Second,
+		log))
 	// Issue #171: share a single HTTPPromScraper between the gateway
 	// scrape path for the RPS scale-up trigger and the aggressive-
 	// reaper signal mirror.
@@ -2268,6 +2342,19 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}, log)
 		log.Info("schedd: app task dispatch enabled", "owner", owner, "max_concurrent", appTaskDispatchConcurrency)
 	}
+	crashForkMetrics := wire.NewCrashForkMetrics(ops.Registry())
+	var forkCoordinator *sched.ForkCoordinator
+	if appForksEnabled(os.Getenv("FAAS_APP_FORKS")) {
+		// ADR-732: the lease owner scopes TTL teardown to this scheduler,
+		// so it must name this process's node.
+		owner := strings.TrimSpace(ownerNodeID)
+		if owner == "" {
+			owner = "schedd"
+		}
+		forkCoordinator = sched.NewForkCoordinator(store, engine, sched.ForkCoordinatorConfig{Owner: owner, Metrics: crashForkMetrics}, log).
+			WithForkExecs(store, engine)
+		log.Info("schedd: production forks enabled", "owner", owner)
+	}
 	loopErr := make(chan error, 1)
 	loopDone := make(chan struct{})
 	go func() {
@@ -2321,6 +2408,18 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}()
 	}
+	if forkCoordinator != nil {
+		go forkCoordinator.Run(ctx)
+	}
+	if strings.TrimSpace(os.Getenv("FAAS_CRASH_SNAPSHOTS")) == "1" {
+		// ADR-733: captures pause a serving instance, so one coordinator
+		// runs them one at a time. vmmd seals every capture at the source,
+		// so plaintext never reaches storage (local or remote) or a node's
+		// read-through cache.
+		engine.WithSealedCrashCaptures(true)
+		go sched.NewCrashCaptureCoordinator(store, engine, 0, log).WithMetrics(crashForkMetrics).Run(ctx)
+		log.Info("schedd: crash snapshots enabled", "sealed_at_source", true)
+	}
 
 	// Issue #757 / ADR-0NN (commit #16): trigger dispatch
 	// wakeups. Subscribe to the trigger_ready + trigger_changed
@@ -2336,6 +2435,16 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// missed until the trigger re-fires. Pair the boot-fatal
 	// (sibling to the dial above) with a 5s retry ticker so a
 	// transient Postgres blip recovers without a daemon restart.
+	// A queue message also wakes its app's idle worker pool now rather than
+	// at the next targets tick (ADR-20261018101500).
+	onTriggerNotification := func(n db.Notification) {
+		if triggerWakeNotification(n) {
+			loop.WakeupTriggers()
+		}
+		if appID, ok := queueInvocationApp(n); ok {
+			targetsTrigger.WakeWorkerPool(ctx, appID)
+		}
+	}
 	triggerNotifC, triggerSubErr := db.SubscribeWithReconnect(ctx, pool,
 		[]string{db.NotifyTriggerReady, db.NotifyTriggerChanged, db.NotifyInvocationDue}, log)
 	if triggerSubErr != nil {
@@ -2371,9 +2480,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 							if !ok {
 								break
 							}
-							if triggerWakeNotification(n) {
-								loop.WakeupTriggers()
-							}
+							onTriggerNotification(n)
 						}
 					}
 				}
@@ -2389,9 +2496,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					if !ok {
 						return
 					}
-					if triggerWakeNotification(n) {
-						loop.WakeupTriggers()
-					}
+					onTriggerNotification(n)
 				}
 			}
 		}()
@@ -2434,6 +2539,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	drain := sched.NewDrain(engine.Store(), engine,
 		sched.WithDrainGatewaySynth(drainGateway),
+		sched.WithDrainTrafficRevocations(invocationTrafficRegistry),
 		sched.WithDrainAppTaskCoordinator(appTaskCoordinator),
 		sched.WithDrainNotifier(engine.Notifier()),
 		sched.WithDrainLogger(log),
@@ -2534,6 +2640,22 @@ func triggerWakeNotification(n db.Notification) bool {
 		return false
 	}
 	return payload.Source == string(state.InvocationQueue) || payload.Source == string(state.InvocationDelayedTask)
+}
+
+// queueInvocationApp returns the app of an invocation_due notification for a
+// queue message.
+func queueInvocationApp(n db.Notification) (string, bool) {
+	if n.Channel != db.NotifyInvocationDue {
+		return "", false
+	}
+	var payload struct {
+		AppID  string `json:"app_id"`
+		Source string `json:"source"`
+	}
+	if json.Unmarshal([]byte(n.Payload), &payload) != nil || payload.Source != string(state.InvocationQueue) {
+		return "", false
+	}
+	return payload.AppID, payload.AppID != ""
 }
 
 // eventRecipientClaimsEnabled defaults to independent routing. Explicit values
@@ -2923,4 +3045,11 @@ type schedTargetsLedger struct {
 // ledger's Concurrency accessor (pkg/sched/admission.go).
 func (s schedTargetsLedger) Concurrency(appID string) int {
 	return s.ledger.Concurrency(appID)
+}
+
+// operationTelemetryStore is the store's Customer Operations reader, or nil
+// for a store without one (ADR-20261016123221).
+func operationTelemetryStore(store state.Store) state.OperationTelemetryStore {
+	reader, _ := store.(state.OperationTelemetryStore)
+	return reader
 }

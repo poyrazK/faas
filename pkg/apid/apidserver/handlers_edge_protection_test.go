@@ -51,6 +51,27 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 			return `{"status":"success","data":{"resultType":"vector","result":[
 				{"metric":{"rule_id":"941100"},"value":[0,"2"]},
 				{"metric":{"rule_id":"942100"},"value":[0,"5"]}]}}`
+		case strings.Contains(query, "gateway_edge_challenge_total"):
+			return `{"status":"success","data":{"resultType":"vector","result":[
+				{"metric":{"outcome":"issued"},"value":[0,"12"]},
+				{"metric":{"outcome":"solved"},"value":[0,"9"]},
+				{"metric":{"outcome":"rejected"},"value":[0,"30"]},
+				{"metric":{"outcome":"passed"},"value":[0,"40"]},
+				{"metric":{"outcome":"bypassed"},"value":[0,"5"]},
+				{"metric":{"outcome":"invalid"},"value":[0,"2"]},
+				{"metric":{"outcome":"expired"},"value":[0,"1"]}]}}`
+		case strings.Contains(query, "gateway_ai_crawler_requests_total"):
+			return `{"status":"success","data":{"resultType":"vector","result":[
+				{"metric":{"crawler":"chatgpt-user"},"value":[0,"3"]},
+				{"metric":{"crawler":"gptbot"},"value":[0,"20"]},
+				{"metric":{"crawler":"retired-bot"},"value":[0,"7"]}]}}`
+		case strings.Contains(query, "gateway_edge_challenge_raised_total"):
+			return `{"status":"success","data":{"resultType":"vector","result":[
+				{"metric":{"app":"app-1"},"value":[0,"4"]}]}}`
+		case strings.Contains(query, "gateway_edge_penalty_total"):
+			return `{"status":"success","data":{"resultType":"vector","result":[
+				{"metric":{"outcome":"boxed"},"value":[0,"4"]},
+				{"metric":{"outcome":"rejected"},"value":[0,"31"]}]}}`
 		case strings.Contains(query, "gateway_validate_failures_total"):
 			return `{"status":"success","data":{"resultType":"vector","result":[
 				{"metric":{"mode":"observe"},"value":[0,"4"]},
@@ -87,6 +108,22 @@ func TestAppEdgeProtectionSummarizesPerAppCounters(t *testing.T) {
 	if len(out.WAF.Categories) != 2 || out.WAF.Categories[0].Name != "sqli" ||
 		len(out.WAF.TopRules) != 2 || out.WAF.TopRules[0] != (api.EdgeProtectionCount{Name: "942100", Count: 5}) {
 		t.Fatalf("waf breakdown = %+v, want largest first", out.WAF)
+	}
+	// adr: 831 — amendment 7: challenge outcomes, expired solutions counted as invalid;
+	// amendment 8: pages served at a raised difficulty.
+	if want := (api.EdgeProtectionChallenge{Issued: 12, Solved: 9, Rejected: 30, Passed: 40, Bypassed: 5, Invalid: 3, Raised: 4}); out.Challenge != want {
+		t.Fatalf("challenge = %+v, want %+v", out.Challenge, want)
+	}
+	// adr: 20261022083601 — AI crawler requests by crawler, largest first,
+	// with the catalog's operator and purpose; unknown names are skipped.
+	if len(out.AICrawlers) != 2 ||
+		out.AICrawlers[0] != (api.EdgeProtectionAICrawler{Name: "gptbot", Operator: "OpenAI", Purpose: "training", Count: 20}) ||
+		out.AICrawlers[1].Name != "chatgpt-user" || out.AICrawlers[1].Purpose != "assistant" {
+		t.Fatalf("ai crawlers = %+v", out.AICrawlers)
+	}
+	// adr: 20261022105846 — penalty box counts.
+	if out.Penalty != (api.EdgeProtectionPenalty{Boxed: 4, Rejected: 31}) {
+		t.Fatalf("penalty = %+v", out.Penalty)
 	}
 	if rec := e.Do(t, "GET", "/v1/apps/shielded/edge-protection?range=30d", nil, nil); rec.Code != http.StatusBadRequest {
 		t.Fatalf("invalid range = %d", rec.Code)

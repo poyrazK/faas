@@ -51,6 +51,7 @@ type gitOpsIntentResource struct {
 }
 
 type gitOpsIntentSnapshot struct {
+	GitSource      EnvironmentGitSourceSpec        `json:"-"`
 	Retirements    []EnvironmentWorkloadRetirement `json:"retirements"`
 	ExternalOwners []environmentExternalFieldOwner `json:"external_owners"`
 	Plan           api.Plan                        `json:"plan"`
@@ -92,6 +93,7 @@ func readEnvironmentGitOpsIntent(ctx context.Context, db sqlc.DBTX, source Envir
 		return EnvironmentGitOpsObservation{}, snapshot, err
 	}
 	snapshot.Repository = source.Spec.Repository
+	snapshot.GitSource = source.Spec
 	observation, err := compileGitOpsObservation(snapshot, desired)
 	return observation, snapshot, err
 }

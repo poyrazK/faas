@@ -120,6 +120,9 @@ func (s *Service) startDueSchedules(ctx context.Context, store state.BillingRunS
 		return fmt.Errorf("list due billing run schedules: %w", err)
 	}
 	for _, sched := range due {
+		if !s.released(sched.AccountID) {
+			continue // starts once the account has API monetization again
+		}
 		start := sched.NextPeriodStart
 		next := sched
 		next.NextPeriodStart = start.AddDate(0, 1, 0)
@@ -147,6 +150,15 @@ func (s *Service) advanceRun(ctx context.Context, store state.BillingRunStore) e
 	if err != nil {
 		return fmt.Errorf("claim billing run: %w", err)
 	}
+	if !s.released(run.AccountID) {
+		// Hold the run aside without billing anyone, so it neither runs nor
+		// keeps other accounts' runs waiting (ADR-20261020170649).
+		if err := store.RenewBillingRunLease(ctx, run.ID, owner, s.now().Add(api.APIMonetizationUnreleasedRetry)); err != nil &&
+			!errors.Is(err, state.ErrBillingRunLeaseLost) {
+			return fmt.Errorf("set aside billing run: %w", err)
+		}
+		return nil
+	}
 	if err := s.processBatch(ctx, store, run, owner); err != nil {
 		if errors.Is(err, state.ErrBillingRunLeaseLost) {
 			return nil
@@ -168,7 +180,7 @@ func (s *Service) advanceRun(ctx context.Context, store state.BillingRunStore) e
 }
 
 func (s *Service) processBatch(ctx context.Context, store state.BillingRunStore, run state.BillingRun, owner string) error {
-	if run.DiscoveredAt == nil {
+	if !run.Discovered() {
 		if err := store.DiscoverBillingRunItems(ctx, run.ID, owner, tenantSkipReason, s.now()); err != nil {
 			return fmt.Errorf("discover billing run items: %w", err)
 		}
@@ -185,6 +197,11 @@ func (s *Service) processBatch(ctx context.Context, store state.BillingRunStore,
 		if err := ctx.Err(); err != nil {
 			return err
 		}
+		// Each customer can take several provider calls; keep the lease so
+		// no other worker bills the same customers meanwhile.
+		if err := store.RenewBillingRunLease(ctx, run.ID, owner, s.now().Add(api.BillingRunLeaseTTL)); err != nil {
+			return fmt.Errorf("renew billing run lease: %w", err)
+		}
 		if err := store.UpdateBillingRunItem(ctx, owner, s.processItem(ctx, acct, run, item)); err != nil {
 			return fmt.Errorf("record billing run item: %w", err)
 		}
@@ -198,9 +215,12 @@ func (s *Service) processItem(ctx context.Context, acct state.Account, run state
 	item.Attempts++
 	item.Reason = ""
 	var transient *api.Problem
-	if item.SourceKind == state.StatementSourceAppConsumer {
+	switch item.SourceKind {
+	case state.StatementSourceAppConsumer:
 		transient = s.billConsumer(ctx, acct, run, &item)
-	} else {
+	case state.StatementSourceProductControl:
+		transient = s.billProductCustomer(ctx, acct, run, &item)
+	default:
 		transient = s.billTenant(ctx, acct, run, &item)
 	}
 	if transient == nil {
@@ -223,9 +243,10 @@ func problemDetail(p *api.Problem) string {
 }
 
 // settle records a deterministic problem as the item's outcome and passes
-// a transient one (status 500 or above) back for a retry.
+// a transient one (status 500 or above, or an export another attempt is
+// still running) back for a retry.
 func settle(item *state.BillingRunItem, outcome string, p *api.Problem) *api.Problem {
-	if p.Status >= 500 {
+	if p.Status >= 500 || p.Code == api.CodeStatementInvoiceExportInProgress {
 		return p
 	}
 	item.Outcome, item.Reason = outcome, problemDetail(p)

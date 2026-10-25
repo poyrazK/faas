@@ -1,0 +1,95 @@
+name: blast-radius
+
+# Report which release binaries a pull request rebuilds, so a per-unit
+# rollout (docs/adr/1650-per-unit-control-plane-releases.md) can be judged
+# before merge: the binaries whose import closure the change touches (what
+# a per-unit release ships today) and, of those, the ones whose code
+# actually changes (scripts/ci/blast_radius.py builds them at the merge base
+# and at the head and compares the bytes).
+#
+# Report-only: the job never fails a pull request on what it finds, and no
+# branch protection requires it. It writes the job summary and keeps one
+# sticky comment on the pull request up to date.
+
+on:
+  pull_request:
+
+concurrency:
+  group: blast-radius-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  # The sticky report comment.
+  pull-requests: write
+
+env:
+  # Keep in lock-step with ci-light.yml (its lint job saves the cache below).
+  GO_VERSION: "1.26.10"
+
+jobs:
+  report:
+    name: release binary blast radius
+    runs-on: ubuntu-latest
+    # A change to go.mod or a package every binary links builds all of them
+    # twice; a warm cache keeps the common case to a few minutes.
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          # The merge base with the target branch.
+          fetch-depth: 0
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+
+      - id: cache-date
+        run: echo "date=$(date -u +%F)" >> "$GITHUB_OUTPUT"
+      # Read-only: the light tier's main-branch cache holds the modules and
+      # most compiled dependencies.
+      - name: Restore main-branch Go build cache
+        uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: |
+            ~/.cache/go-build
+            ~/go/pkg/mod
+          key: go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-${{ steps.cache-date.outputs.date }}
+          restore-keys: |
+            go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-${{ hashFiles('go.sum') }}-
+            go-lint-${{ runner.os }}-go${{ env.GO_VERSION }}-
+
+      - name: Measure
+        id: measure
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          OUT_DIR: ${{ runner.temp }}/blast-radius
+        run: |
+          set -euo pipefail
+          mkdir -p "$OUT_DIR"
+          python3 scripts/ci/blast_radius.py --base "$BASE_SHA" --head "$HEAD_SHA" \
+            --workdir "$RUNNER_TEMP" --output "$OUT_DIR/report.json" --markdown "$OUT_DIR/report.md"
+          cat "$OUT_DIR/report.md" >> "$GITHUB_STEP_SUMMARY"
+          echo "closure=$(jq '.closure | length' "$OUT_DIR/report.json")" >> "$GITHUB_OUTPUT"
+
+      - name: Update the pull request comment
+        # A fork's token cannot comment; the job summary still has the report.
+        if: github.event.pull_request.head.repo.full_name == github.repository
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR: ${{ github.event.pull_request.number }}
+          CLOSURE: ${{ steps.measure.outputs.closure }}
+          BODY: ${{ runner.temp }}/blast-radius/report.md
+        run: |
+          set -euo pipefail
+          marker="$(head -n 1 "$BODY")"
+          id="$(gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$PR/comments" \
+            --jq ".[] | select(.user.login == \"github-actions[bot]\" and (.body | startswith(\"$marker\"))) | .id" | head -n 1)"
+          if [[ -n "$id" ]]; then
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/issues/comments/$id" -F "body=@$BODY" > /dev/null
+          elif [[ "$CLOSURE" != 0 ]]; then
+            # A change no release binary reads gets no comment.
+            gh api --method POST "repos/$GITHUB_REPOSITORY/issues/$PR/comments" -F "body=@$BODY" > /dev/null
+          fi

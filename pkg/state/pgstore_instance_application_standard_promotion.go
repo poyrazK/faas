@@ -74,7 +74,9 @@ func (s *PgStore) IssueInstanceApplicationStandardPromotion(ctx context.Context,
 }
 
 func (s *PgStore) issueInstanceApplicationStandardPromotionOnce(ctx context.Context, p runtimeadmission.Promotion) (runtimeadmission.Promotion, error) {
-	if p.Validate(time.Now()) != nil {
+	// Well-formed, whether or not the parent turns out to be held (ADR-595
+	// extension); the lock decides which.
+	if p.Held(p.Parent.Binding.Incarnation).Validate(time.Now()) != nil {
 		return runtimeadmission.Promotion{}, ErrInvalidArgument
 	}
 	tx, err := s.pool.Begin(ctx)
@@ -86,7 +88,9 @@ func (s *PgStore) issueInstanceApplicationStandardPromotionOnce(ctx context.Cont
 	if err != nil {
 		return runtimeadmission.Promotion{}, err
 	}
-	if !input.Parent.Equal(p.Parent) {
+	held := heldPromotionIssuer(input.Parent, input.Incarnation)
+	p = p.Held(held)
+	if !input.Parent.Equal(p.Parent) || p.Binding.Incarnation != input.Incarnation || p.Validate(time.Now()) != nil {
 		return runtimeadmission.Promotion{}, ErrApplicationStandardRuntimeStale
 	}
 	now := time.Unix(0, input.ClockUnixNano).UTC()
@@ -99,7 +103,7 @@ func (s *PgStore) issueInstanceApplicationStandardPromotionOnce(ctx context.Cont
 		}
 		copy := p
 		copy.Binding.IssuedAtUnixNano, copy.Binding.ExpiresAtUnixNano = old.Grant.Binding.IssuedAtUnixNano, old.Grant.Binding.ExpiresAtUnixNano
-		if !copy.Equal(old.Grant) || old.Grant.Validate(now) != nil || !standardNativeGrantWithinArtifactLease(old.Grant.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {
+		if !copy.Equal(old.Grant) || old.Grant.Held(held).Validate(now) != nil || !standardNativeGrantWithinArtifactLease(old.Grant.Binding.ExpiresAtUnixNano, input.artifactDeadline()) {
 			return runtimeadmission.Promotion{}, ErrConflict
 		}
 		return old.Grant, tx.Commit(ctx)
@@ -193,6 +197,7 @@ func publishStandardPromotionTx(ctx context.Context, tx pgx.Tx, r runtimeadmissi
 }
 
 func checkStandardPromotionPublication(input nativePromotionLockedInputs, p instanceStandardPromotion, r runtimeadmission.Receipt) error {
+	p.Grant = p.Grant.Held(heldPromotionIssuer(input.Parent, input.Incarnation))
 	if !p.Grant.Parent.Equal(input.Parent) || p.Grant.CheckReceipt(r, time.Unix(0, r.CompletedAtUnixNano)) != nil {
 		return ErrApplicationStandardRuntimeStale
 	}

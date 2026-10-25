@@ -69,7 +69,9 @@ const integrationPolicySQL = `
 	       ARRAY(SELECT tag_limit.tag FROM outbound_ai_tag_limits tag_limit
 	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag),
 	       ARRAY(SELECT tag_limit.daily_cost_limit_millicents FROM outbound_ai_tag_limits tag_limit
-	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag)
+	              WHERE tag_limit.integration_id = integration.id ORDER BY tag_limit.tag),
+	       COALESCE(integration.ai_trace_max_calls, 0), COALESCE(integration.ai_trace_max_cost_millicents, 0),
+	       COALESCE(integration.ai_trace_max_repeated_tool_calls, 0), COALESCE(integration.ai_online_eval_percent, 0)
 	  FROM outbound_integrations integration
 	  JOIN accounts account ON account.id = integration.account_id
 	 WHERE integration.id = $1`
@@ -100,7 +102,9 @@ const currentAIPricesSQL = `
 	       entry.cache_write_millicents_per_mtok, entry.output_millicents_per_mtok,
 	       entry.input_image_millicents_per_mtok, entry.output_image_millicents_per_mtok, entry.millicents_per_image,
 	       entry.millicents_per_audio_minute, entry.millicents_per_million_characters, entry.millicents_per_video_second,
-	       entry.millicents_per_web_search, entry.millicents_per_file_search, entry.millicents_per_code_session_gb
+	       entry.millicents_per_web_search, entry.millicents_per_file_search, entry.millicents_per_code_session_gb,
+	       entry.input_audio_millicents_per_mtok, entry.cached_input_audio_millicents_per_mtok,
+	       entry.output_audio_millicents_per_mtok
 	  FROM outbound_ai_price_entries entry
 	 WHERE entry.price_list_id = (
 	       SELECT list.id FROM outbound_ai_price_lists list
@@ -133,6 +137,8 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 	var aiUserTokenLimitValue, aiUserCostLimitValue int64
 	var tagLimitTags []string
 	var tagLimitCosts []int64
+	var traceLimits aiTraceLimits
+	var onlineEvalPercent int
 	err := results.QueryRow().
 		Scan(&accountID, &name, &plan, &origin, &tokenHash, &rate, &burst, &maxInFlight, &timeoutMS, &maxRetries, &responseCacheTTLSeconds,
 			&circuitBreakerFailureThreshold, &circuitBreakerOpenSeconds, &retryBudgetPerMinute, &policyUpdatedAt, &enabled, &providerAuthMode,
@@ -145,7 +151,7 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 			&aiAutoPromptCache,
 			&contentPolicy.Response.Email, &contentPolicy.Response.PaymentCard, &contentPolicy.Response.IBAN,
 			&contentPolicy.Response.Secret, &contentPolicy.Response.BlockedTerms, &contentPolicy.Response.Moderation,
-			&tagLimitTags, &tagLimitCosts)
+			&tagLimitTags, &tagLimitCosts, &traceLimits.calls, &traceLimits.cost, &traceLimits.repeats, &onlineEvalPercent)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return Integration{}, ErrIntegrationNotFound
@@ -277,7 +283,9 @@ func scanIntegration(id string, results pgx.BatchResults) (Integration, error) {
 		AIAutoPromptCache: aiAutoPromptCache,
 		DailyAITokenLimit: positiveLimit(aiDailyTokenLimitValue), DailyAICostLimit: positiveLimit(aiDailyCostLimitValue),
 		MonthlyAICostLimit: positiveLimit(aiMonthlyCostLimitValue), AIUserDailyTokenLimit: positiveLimit(aiUserTokenLimitValue),
-		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue)}
+		AIUserDailyCostLimit: positiveLimit(aiUserCostLimitValue),
+		AITraceMaxCalls:      positiveLimit(traceLimits.calls), AITraceMaxCostMillicents: positiveLimit(traceLimits.cost),
+		AITraceMaxRepeatedToolCalls: positiveLimit(traceLimits.repeats), AIOnlineEvalPercent: onlineEvalPercent}
 	// ADR-1436: the integration's tag limits.
 	for index, tag := range tagLimitTags {
 		if index < len(tagLimitCosts) {
@@ -303,7 +311,8 @@ func scanAIPrices(rows pgx.Rows) ([]AIPrice, error) {
 			&entry.CacheWriteMillicentsPerMTok, &entry.OutputMillicentsPerMTok, &entry.InputImageMillicentsPerMTok,
 			&entry.OutputImageMillicentsPerMTok, &entry.MillicentsPerImage, &entry.MillicentsPerAudioMinute,
 			&entry.MillicentsPerMillionCharacters, &entry.MillicentsPerVideoSecond, &entry.MillicentsPerWebSearch,
-			&entry.MillicentsPerFileSearch, &entry.MillicentsPerCodeSessionGB); err != nil {
+			&entry.MillicentsPerFileSearch, &entry.MillicentsPerCodeSessionGB, &entry.InputAudioMillicentsPerMTok,
+			&entry.CachedInputAudioMillicentsPerMTok, &entry.OutputAudioMillicentsPerMTok); err != nil {
 			return nil, err
 		}
 		entries = append(entries, entry)
