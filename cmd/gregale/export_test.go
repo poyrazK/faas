@@ -2412,3 +2412,13 @@ func AppArgumentPaths() [][]string {
 	}
 	return paths
 }
+
+var ValidateMCPProtocolResponseHeaders = validateMCPProtocolResponseHeaders
+
+// SavedDeployRecovery returns the resume command and hint a saved deploy
+// session with no staged settings offers after the given submission outcome.
+func SavedDeployRecovery(outcome string) (resume, hint string) {
+	s := &savedDeploySession{record: deploySessionRecord{ID: "sess-1", AppSlug: "probe-app", Outcome: deploySubmissionOutcome(outcome)}}
+	r := s.recovery("submission")
+	return r.ResumeCommand, r.Hint
+}

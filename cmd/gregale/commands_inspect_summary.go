@@ -42,6 +42,9 @@ type inspectAppSummary struct {
 	Runtime                string                        `json:"runtime,omitempty"`
 	WorkloadClass          string                        `json:"workload_class,omitempty"`
 	Protocol               string                        `json:"protocol,omitempty"`
+	// ExecutionMode is the app's lifecycle mode (worker, service, job);
+	// empty for request mode.
+	ExecutionMode string `json:"execution_mode,omitempty"`
 }
 
 type inspectRuntimeSummary struct {
@@ -79,6 +82,10 @@ type inspectResourceSummary struct {
 	MinInstances  int                `json:"min_instances"`
 	MaxInstances  int                `json:"max_instances"`
 	Target        *api.ScalingTarget `json:"target,omitempty"`
+	// Mode and ModeMetric describe a worker, service or job app's own
+	// replica policy (empty for request mode).
+	Mode       string `json:"mode,omitempty"`
+	ModeMetric string `json:"mode_metric,omitempty"`
 	// AutoscaleTargetRPS and AutoscaleTargetCPUPct are the legacy reactive
 	// scale-up targets returned by GET /v1/apps/{slug}. They remain effective
 	// when the newer ScalingPolicy.Target is unset, so inspect must not infer
@@ -241,6 +248,7 @@ func buildInspectSummary(app api.AppResponse, in inspectSummaryInputs) inspectSu
 			ParkedReason:           inspectParkedReason(app),
 			DeploymentAvailability: app.DeploymentAvailability,
 			Type:                   app.Type, Runtime: app.Runtime, WorkloadClass: app.WorkloadClass, Protocol: app.AppProtocol,
+			ExecutionMode: inspectExecutionMode(app),
 		},
 		Resources:   inspectResources(app),
 		API:         inspectOpenAPI(in.OpenAPIRaw),
@@ -281,8 +289,30 @@ func inspectResources(app api.AppResponse) inspectResourceSummary {
 		out.ScaleOutCooldownS = app.ScalingPolicy.ScaleOutCooldownS
 		out.ScaleInCooldownS = app.ScalingPolicy.ScaleInCooldownS
 	}
+	// A worker or service runs its own replica policy, not request-driven
+	// scaling: inspect called a running worker "0→1 instances ·
+	// request-driven" (Hunt 14 H14-1).
+	switch out.Mode = inspectExecutionMode(app); out.Mode {
+	case api.ExecutionModeWorker:
+		if replicas := app.Manifest.WorkerReplicas; replicas != nil {
+			out.MinInstances, out.MaxInstances, out.ModeMetric = replicas.Min, replicas.Max, replicas.Metric
+		}
+	case api.ExecutionModeService:
+		if replicas := app.Manifest.ServiceReplicas; replicas != nil {
+			out.MinInstances, out.MaxInstances = replicas.Min, replicas.Max
+		}
+	}
 	out.ScaleToZero = out.MinInstances == 0
 	return out
+}
+
+// inspectExecutionMode returns the app's non-request execution mode, or "".
+func inspectExecutionMode(app api.AppResponse) string {
+	switch mode := app.Manifest.ExecutionMode; mode {
+	case api.ExecutionModeWorker, api.ExecutionModeService, api.ExecutionModeJob:
+		return mode
+	}
+	return ""
 }
 
 func inspectRuntime(app api.AppResponse, dep *api.DeploymentResponse, unavailable *[]string) inspectRuntimeSummary {
@@ -612,7 +642,11 @@ func renderInspectSummaryHuman(w io.Writer, summary inspectSummary) {
 
 func renderInspectApp(w io.Writer, app inspectAppSummary) {
 	_, _ = fmt.Fprintf(w, "%s\n", app.Slug)
-	_, _ = fmt.Fprintf(w, "  app:       %s · %s · %s", fallback(app.Status), fallback(app.Type), fallback(app.WorkloadClass))
+	class := app.WorkloadClass
+	if app.ExecutionMode != "" {
+		class = app.ExecutionMode
+	}
+	_, _ = fmt.Fprintf(w, "  app:       %s · %s · %s", fallback(app.Status), fallback(app.Type), fallback(class))
 	if app.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
 		_, _ = fmt.Fprint(w, " · NO LIVE DEPLOYMENT")
 	}
@@ -651,6 +685,17 @@ func renderInspectResources(w io.Writer, resources inspectResourceSummary) {
 }
 
 func inspectScalingTargetLabel(resources inspectResourceSummary) string {
+	switch resources.Mode {
+	case api.ExecutionModeWorker:
+		if resources.ModeMetric != "" {
+			return "worker pool · scaled by " + resources.ModeMetric
+		}
+		return "worker pool"
+	case api.ExecutionModeService:
+		return "service replicas"
+	case api.ExecutionModeJob:
+		return "runs to completion"
+	}
 	labels := make([]string, 0, 3)
 	if resources.Target != nil && resources.Target.Metric != "" {
 		labels = append(labels, fmt.Sprintf("%s=%g", resources.Target.Metric, resources.Target.Value))

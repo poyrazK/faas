@@ -109,6 +109,14 @@ func internalMCPInstanceProtocolProbeHandler(
 		if token != "" {
 			guestRequest.Header.Set("Authorization", "Bearer "+token)
 		}
+		// The forwarder sends vmmd the instance named by x-faas-instance, not
+		// target.InstanceID. Without the platform identity headers vmmd
+		// refused every probe ("instance is required"), the probe answered
+		// 502, and no MCP deployment passed qualification on production-us
+		// (Hunt 14 H14-3). The deployment response check stamps them the
+		// same way.
+		api.PlatformIdentity{AppID: target.AppID, DeploymentID: target.DeploymentID, InstanceID: target.InstanceID, NodeID: target.NodeID}.ApplyGuestHeaders(guestRequest.Header)
+		guestRequest.Header.Set("x-faas-wake-id", target.WakeID)
 		guestResponse := &boundedMCPProbeResponseWriter{header: make(http.Header), cancel: cancel, maxBytes: api.MCPProbeMaxResponseBytes}
 		forward(target).ServeHTTP(guestResponse, guestRequest)
 		if guestResponse.status == 0 {
