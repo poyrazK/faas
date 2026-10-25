@@ -285,6 +285,14 @@ var cliCommands = []cliCommand{
 		},
 	},
 	{
+		Name:    dispatchObjectStorage,
+		DocSlug: "object-storage",
+		Short:   "Reconcile the object bucket catalog with each provider after a database restore (ADR 20261025090000)",
+		Subcommands: []cliSub{
+			{Name: "reconcile", Short: "List each backend's Gregale buckets and report catalog disagreements, read-only (exit 4 on findings)", Flags: []cliFlag{{Name: "config", Short: "provider registry JSON"}, {Name: "provider-env", Short: "provider credential env file"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+		},
+	},
+	{
 		Name:    dispatchSealDomain,
 		DocSlug: "seal-domain",
 		Short:   "Provision, verify, and migrate per-reader seal domains (ADR 20261022111812)",

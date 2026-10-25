@@ -1,0 +1,53 @@
+---
+# ADR 20261025090000: after PostgreSQL is restored (a control-plane rebuild
+# or a point-in-time restore), compare the object bucket catalog with each
+# provider. Read-only. Findings stop the play so an operator reviews them
+# (docs/runbooks/ObjectStorageRestoreReconcile.md); rerun with
+# -e faas_object_storage_reconcile_accept=true (make ... ACCEPT=1) once they
+# are handled.
+- name: Reconcile object storage with the restored catalog
+  hosts: control_plane
+  gather_facts: false
+  become: true
+  serial: 1
+  max_fail_percentage: 0
+  vars:
+    faas_object_storage_reconcile_db_env: /etc/faas/sealed.env
+    faas_object_storage_reconcile_accept: false
+  tasks:
+    - name: Find the object storage provider registry
+      ansible.builtin.stat:
+        path: /etc/faas/object-storage.json
+      register: faas_object_storage_registry
+
+    - name: Compare every backend with the catalog
+      ansible.builtin.command:
+        argv:
+          - /usr/local/bin/gregalectl
+          - object-storage
+          - reconcile
+          - --db-env
+          - "{{ faas_object_storage_reconcile_db_env }}"
+          - --json
+      register: faas_object_storage_reconcile
+      changed_when: false
+      failed_when: faas_object_storage_reconcile.rc not in [0, 4]
+      when: faas_object_storage_registry.stat.exists
+
+    - name: Show the catalog disagreements
+      ansible.builtin.debug:
+        var: (faas_object_storage_reconcile.stdout | from_json).findings
+      when:
+        - faas_object_storage_registry.stat.exists
+        - faas_object_storage_reconcile.rc == 4
+
+    - name: Stop for operator review
+      ansible.builtin.fail:
+        msg: >-
+          The object bucket catalog disagrees with a provider after the restore.
+          Follow docs/runbooks/ObjectStorageRestoreReconcile.md, then rerun with
+          ACCEPT=1 (-e faas_object_storage_reconcile_accept=true).
+      when:
+        - faas_object_storage_registry.stat.exists
+        - faas_object_storage_reconcile.rc == 4
+        - not (faas_object_storage_reconcile_accept | bool)

@@ -206,6 +206,7 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 		if host.Role == roleControlPlane {
 			body += renderCustomDomainEdgeVars(m.PublicEdge.CustomDomains)
 			body += renderScheddListenVars(m)
+			body += renderObjectStorageGatewayVars(m.ObjectStorage)
 			if standby := m.PostgreSQL.Standby; standby != nil {
 				// ADR-1344 §8: the primary admits replication from the
 				// standby's address and keeps its slot.
@@ -272,6 +273,22 @@ func renderManifestAnsibleFiles(m *manifest.Manifest, outputDir string) ([]manif
 // control_plane_service role, which renders it into both schedd's
 // FAAS_SCHEDD_LISTEN_ADDR and faas-schedd.socket (ADR-1736). The renderer
 // writes the same bind into schedd.toml, so the three cannot disagree.
+// renderObjectStorageGatewayVars places s3-gatewayd under the playbooks when
+// the manifest manages it (ADR 20261025090000). Unmanaged emits nothing, so
+// an existing hand-run gateway is never started or stopped by a converge.
+func renderObjectStorageGatewayVars(o manifest.ObjectStorage) string {
+	if !o.Managed() {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("faas_object_storage_gateway_managed: true\n")
+	fmt.Fprintf(&b, "faas_object_storage_config_src: %q\n", o.ConfigSrc)
+	if o.ProviderEnvSrc != "" {
+		fmt.Fprintf(&b, "faas_object_storage_provider_env_src: %q\n", o.ProviderEnvSrc)
+	}
+	return b.String()
+}
+
 func renderScheddListenVars(m *manifest.Manifest) string {
 	if m.Daemons.Schedd == nil || m.Daemons.Schedd.Bind == "" {
 		return ""
