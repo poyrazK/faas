@@ -546,7 +546,7 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven",
-      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestAsyncInvoke_FreeRejected",
+      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestAsyncInvoke_AcceptedWithId",
       "consumers": [
         "schedd"
       ],
@@ -1261,7 +1261,7 @@
         "scale"
       ],
       "docs_url": "/docs/queue-pull-leases",
-      "acceptance_test": "pkg/webhook/dispatcher_test.go::TestDispatcher_Attempt7DLQs",
+      "acceptance_test": "pkg/apid/apidserver/handlers_dead_letter_test.go::TestUnifiedDeadLetter_QueueListInspectAndReplay",
       "parent": "queues",
       "routes": [
         "/dashboard/apps/{}/queues/dead_letter",
@@ -2198,7 +2198,7 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven",
-      "acceptance_test": "pkg/objectstorage/gcs_features_test.go::TestGCSTrackedWriteLostAcknowledgment",
+      "acceptance_test": "pkg/apid/apidserver/event_acknowledgment_acceptance_test.go::TestEventAcknowledgmentLifecycle",
       "parent": "events",
       "routes": [
         "/v1/apps/{}/event-deliveries/{}/acknowledgment",
@@ -2218,7 +2218,7 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven",
-      "acceptance_test": "pkg/internalmail/control_pg_test.go::TestPGDeliveryControlPersistenceCASAndReplay",
+      "acceptance_test": "pkg/apid/apidserver/event_delivery_controls_acceptance_test.go::TestEventDeliveryControlsPauseAndResume",
       "parent": "events",
       "routes": [
         "/v1/apps/{}/event-subscriptions/{}/circuit-breaker",
@@ -2357,7 +2357,7 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven",
-      "acceptance_test": "pkg/apid/apidserver/handlers_event_subscriptions_test.go::TestListEventSubscriptions_ReturnsReconciledManifestRows",
+      "acceptance_test": "cmd/e2e/events_fanout_e2e_test.go::TestE2E_EventFanout_MatchesFiltersAndIsolatesAccounts",
       "routes": [
         "/dashboard/apps/{}/event-deliveries",
         "/dashboard/apps/{}/events",
@@ -3768,7 +3768,7 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven",
-      "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_webhooks_test.go::TestParseAppWebhooksPath",
+      "acceptance_test": "pkg/webhook/dispatcher_test.go::TestDispatch_HeaderShape",
       "routes": [
         "/dashboard/apps/{}/webhooks",
         "=/v1/apps/{}/webhooks",

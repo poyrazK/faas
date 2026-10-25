@@ -18,6 +18,15 @@ test('the default entry leaves preview services and helpers out', () => {
   }
 });
 
+test('the preview entry publishes events', () => {
+  // The default entry's EventsService is the beta workflow-recovery subset;
+  // publishing is a preview operation.
+  const preview = previewEntry as Record<string, Record<string, unknown>>;
+  for (const name of ['publishEvent', 'publishEventBatch', 'publishAppEvent', 'getEventReceipt']) {
+    assert.equal(typeof preview.EventsService?.[name], 'function', `EventsService.${name} must be in the preview entry`);
+  }
+});
+
 test('only the preview client runs disposable executions', () => {
   assert.equal((publicEntry.FaaSClient.prototype as unknown as Record<string, unknown>).runExecution, undefined);
   assert.equal(typeof (previewEntry.FaaSClient.prototype as unknown as Record<string, unknown>).runExecution, 'function');
