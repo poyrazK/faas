@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net/netip"
 	"regexp"
+	"strings"
 	"time"
 )
 
@@ -99,5 +100,12 @@ func (s Service) validate() error {
 			return errors.New("sdunit: invalid IPAddressAllow prefix")
 		}
 	}
+	for _, kv := range s.Environment {
+		if name, _, ok := strings.Cut(kv, "="); !ok || !envNameRe.MatchString(name) {
+			return fmt.Errorf("sdunit: invalid environment assignment %q", kv)
+		}
+	}
 	return nil
 }
+
+var envNameRe = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)

@@ -3,6 +3,7 @@ package sdunit
 import (
 	"net/netip"
 	"strconv"
+	"strings"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -76,8 +77,8 @@ func (s Service) properties() []property {
 		prop("SystemCallArchitectures", []string{"native"}),
 		prop("SystemCallFilter", nameList{Allow: true, Names: []string{"@system-service"}}),
 	}
-	if len(s.Environment) > 0 {
-		props = append(props, prop("Environment", s.Environment))
+	if env := envBlock(s.Environment); len(env) > 0 {
+		props = append(props, prop("Environment", env))
 	}
 	if s.NetworkNamespacePath != "" {
 		props = append(props, prop("NetworkNamespacePath", s.NetworkNamespacePath))
@@ -116,6 +117,28 @@ func (s Service) properties() []property {
 		props = append(props, prop("TimeoutStopUSec", uint64(s.TimeoutStop.Microseconds())))
 	}
 	return props
+}
+
+// envBlock keeps the last assignment of each variable, in first-seen order:
+// systemd rejects a transient Environment that assigns a name twice
+// ("Invalid environment block"), where exec takes the last one.
+func envBlock(env []string) []string {
+	last := make(map[string]int, len(env))
+	for i, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		last[name] = i
+	}
+	out := make([]string, 0, len(last))
+	seen := make(map[string]bool, len(last))
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if seen[name] {
+			continue
+		}
+		seen[name] = true
+		out = append(out, env[last[name]])
+	}
+	return out
 }
 
 func ipPrefixOf(p netip.Prefix) ipPrefix {

@@ -5,6 +5,7 @@ package sdunit
 import (
 	"errors"
 	"net/netip"
+	"strings"
 	"testing"
 	"time"
 
@@ -99,8 +100,28 @@ func TestPropertiesValues(t *testing.T) {
 	}
 }
 
+// systemd rejects an Environment that assigns a name twice; the last
+// assignment wins, as it would for exec.
+func TestEnvironmentAssignsEachNameOnce(t *testing.T) {
+	s := bridgeService()
+	s.Environment = []string{"PATH=/a", "FAAS_BRIDGE_EXPECT_UID=30001", "PATH=/b", "FAAS_BRIDGE_PROTOCOL=h1", "EMPTY="}
+	var env []string
+	for _, p := range s.properties() {
+		if p.Name == "Environment" {
+			env = p.Value.Value().([]string)
+		}
+	}
+	want := []string{"PATH=/b", "FAAS_BRIDGE_EXPECT_UID=30001", "FAAS_BRIDGE_PROTOCOL=h1", "EMPTY="}
+	if strings.Join(env, "|") != strings.Join(want, "|") {
+		t.Fatalf("Environment = %q, want %q", env, want)
+	}
+}
+
 func TestServiceValidation(t *testing.T) {
 	for name, mutate := range map[string]func(*Service){
+		"no assignment": func(s *Service) { s.Environment = []string{"PATH"} },
+		"bad name":      func(s *Service) { s.Environment = []string{"1PATH=/x"} },
+		"empty name":    func(s *Service) { s.Environment = []string{"=/x"} },
 		"relative exec": func(s *Service) { s.ExecStart = []string{"vmmd-stream-bridge"} },
 		"no exec":       func(s *Service) { s.ExecStart = nil },
 		"root":          func(s *Service) { s.UID, s.GID = 0, 0 },
