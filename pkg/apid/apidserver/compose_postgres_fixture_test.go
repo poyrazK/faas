@@ -14,12 +14,23 @@ var AttachTestManagedPostgres = attachTestManagedPostgres
 // apidserver_test package.
 var ComposePostgresMajor = composePostgresMajor
 
+// composeTestProvider is the source-ref test provider with point-in-time
+// restore, which every production backend offers and the plan's default
+// restore window needs.
+type composeTestProvider struct{ sourceRefManagedPostgresProvider }
+
+func (p composeTestProvider) Capabilities() managedpostgres.Capabilities {
+	capabilities := p.sourceRefManagedPostgresProvider.Capabilities()
+	capabilities.PointInTimeRestore = true
+	return capabilities
+}
+
 // attachTestManagedPostgres gives srv a provisioning-enabled managed
 // PostgreSQL service and binding service backed by the source-ref test
 // provider, and returns their store so tests can inspect what apply created.
 func attachTestManagedPostgres(t *testing.T, srv *server, maxDatabases int) *managedpostgres.MemoryStore {
 	t.Helper()
-	provider := sourceRefManagedPostgresProvider{}
+	provider := composeTestProvider{}
 	registry, err := managedpostgres.NewRegistry(managedpostgres.Config{
 		DefaultRegion: "eu", Defaults: map[string]string{"eu": "test"},
 		MaxDatabasesPerAccount: maxDatabases, ProvisioningEnabled: true,

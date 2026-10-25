@@ -4111,6 +4111,9 @@ from .plan_detection_warning_detector import PlanDetectionWarningDetector
 from .plan_detection_warning_outcome import PlanDetectionWarningOutcome
 from .plan_durable_entity_quota_migration_response_200 import PlanDurableEntityQuotaMigrationResponse200
 from .plan_managed import PlanManaged
+from .plan_managed_not_provisioned_reason import PlanManagedNotProvisionedReason
+from .plan_managed_provision import PlanManagedProvision
+from .plan_managed_provision_bindings_item import PlanManagedProvisionBindingsItem
 from .plan_platform_tenant_reconciliation_request import PlanPlatformTenantReconciliationRequest
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
@@ -10045,6 +10048,9 @@ __all__ = (
     "PlanDetectionWarningOutcome",
     "PlanDurableEntityQuotaMigrationResponse200",
     "PlanManaged",
+    "PlanManagedNotProvisionedReason",
+    "PlanManagedProvision",
+    "PlanManagedProvisionBindingsItem",
     "PlanPlatformTenantReconciliationRequest",
     "PlanResponse",
     "PlanResponseScanSource",
