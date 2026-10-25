@@ -361,7 +361,7 @@ func TestInstanceBridgeUnitRunIsRecordedAndForgotten(t *testing.T) {
 	lease.release()
 	started, _ := f.units.snapshot()
 	rec := j.recorded["a"]
-	if rec.Unit != started[0] || rec.PID != 4242 || rec.InvocationID == "" || rec.Socket != bridgeUID(1).streamBridgeSocket("a") || rec.Port != 8080 || rec.AppProtocol != "http2" {
+	if rec.Unit != started[0] || rec.PID != 4242 || rec.InvocationID == "" || rec.Socket != f.units.svcs[started[0]].ExecStart[1] || rec.Port != 8080 || rec.AppProtocol != "http2" {
 		t.Fatalf("recorded %+v", rec)
 	}
 	f.manager.forget(context.Background(), "a")
@@ -385,7 +385,8 @@ func TestInstanceBridgeUnitsKeptForTheSuccessor(t *testing.T) {
 	if !f.proc(0).closed.Load() {
 		t.Fatal("pidfd left open at handoff")
 	}
-	if _, err := os.Stat(filepath.Dir(bridgeUID(1).streamBridgeSocket("a"))); err != nil {
+	started, _ := f.units.snapshot()
+	if _, err := os.Stat(filepath.Dir(f.units.svcs[started[0]].ExecStart[1])); err != nil {
 		t.Fatalf("socket directory removed at handoff: %v", err)
 	}
 }
@@ -491,5 +492,45 @@ func TestInstanceBridgeUnitRecordedOnceItsInstanceIsLive(t *testing.T) {
 	started, _ := f.units.snapshot()
 	if j.recorded["a"].Unit != started[0] || j.records != 3 {
 		t.Fatalf("recorded %+v after %d attempts, want %s once more", j.recorded["a"], j.records, started[0])
+	}
+}
+
+func TestIsInstanceBridgeSocket(t *testing.T) {
+	saved := bridgeRunRoot
+	t.Cleanup(func() { bridgeRunRoot = saved })
+	bridgeRunRoot = "/run/faas-ibridge"
+	for socket, ok := range map[string]bool{
+		"/run/faas-ibridge/a-77-1/http.sock":      true,
+		"/run/faas-ibridge/a/http.sock":           false, // not a run directory
+		"/run/faas-ibridge/a-77-1/other.sock":     false,
+		"/run/faas-ibridge/ab-77-1/http.sock":     false, // another instance
+		"/run/faas-ibridge/a-b-77-1/http.sock":    false,
+		"/run/faas/a-77-1/http.sock":              false,
+		"/run/faas-ibridge/x/../a-77-1/http.sock": false,
+	} {
+		if got := isInstanceBridgeSocket(socket, "a"); got != ok {
+			t.Errorf("isInstanceBridgeSocket(%q) = %v", socket, got)
+		}
+	}
+}
+
+// Reconcile keeps the adopted run's socket directory and removes the rest.
+func TestReconcileRemovesStaleSocketDirectories(t *testing.T) {
+	f, s, j, _ := adoptFixture(t)
+	adoptedDir := filepath.Dir(j.adopted["a"].Socket)
+	stale := filepath.Join(bridgeRunRoot, "b-77-2")
+	for _, dir := range []string{adoptedDir, stale} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if adopted, _, err := f.manager.reconcileUnits(context.Background(), s.adoptBridgeUnit); err != nil || adopted != 1 {
+		t.Fatalf("adopted %d: %v", adopted, err)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale socket directory kept: %v", err)
+	}
+	if _, err := os.Stat(adoptedDir); err != nil {
+		t.Fatalf("adopted run's socket directory removed: %v", err)
 	}
 }
