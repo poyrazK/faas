@@ -2,16 +2,15 @@ package fcvm
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
-	"path/filepath"
+
+	"github.com/onebox-faas/faas/pkg/guestdisk"
 )
 
 // forkScrubPaths are the drive1 paths that can hold secret values from the
 // capture's original boot (ADR-732): the sealed env projection guest-init
 // loads at start, and the ADR-505 reload projection directory. Sidecar env
-// overrides are removed per sidecar (scrubSidecarEnvs).
+// overrides are removed per sidecar (scrubDriveSecrets).
 var forkScrubPaths = []string{
 	secretsEnvPath,
 	"upper/tmp/gregale-secret-reload",
@@ -24,62 +23,52 @@ func (v *JailerVMM) scrubForkSecrets(ctx context.Context, owner nativeLaunchReco
 	if err != nil {
 		return err
 	}
-	return v.driveStagingSession(ctx, owner, instance, drive1, "faas-vmm-fork-scrub-", scrubDriveSecrets)
+	return v.editDrive(ctx, owner, instance, drive1, func(img driveImage) error {
+		return scrubDriveSecrets(ctx, img)
+	}, nil)
 }
 
-// scrubDriveSecrets is the mounted-drive half of scrubForkSecrets, split out
-// so it is testable against a plain directory.
-func scrubDriveSecrets(mountRoot string) error {
-	for _, path := range forkScrubPaths {
-		target, err := stagedDrivePath(mountRoot, path)
-		if err != nil {
-			return err
-		}
-		root, rel, err := openDriveRoot(mountRoot, target)
-		if err != nil {
-			return err
-		}
-		err = root.RemoveAll(rel)
-		_ = root.Close()
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("remove %s: %w", path, err)
-		}
-	}
-	return scrubSidecarEnvs(mountRoot)
-}
+// maxSidecarScrubEntries bounds the workloads directory listing.
+const maxSidecarScrubEntries = 1024
 
-// scrubSidecarEnvs removes each sidecar's env overrides
-// (workloads/<name>/env.json). vmmd writes them to the main workload's drive1
+// scrubDriveSecrets is the drive half of scrubForkSecrets. Besides
+// forkScrubPaths it removes each sidecar's env overrides
+// (workloads/<name>/env.json): vmmd writes them to the main workload's drive1
 // with the sidecar's unsealed env and app secrets, so a restarted sidecar in
 // the fork would reload them like secrets.env. The sidecar's workload.json
 // beside them is its non-secret contract and stays. Only real directories
-// are sidecars: a link the tenant planted under workloads is skipped, and
-// os.Root keeps every path inside the drive.
-func scrubSidecarEnvs(mountRoot string) error {
-	base, err := stagedDrivePath(mountRoot, workloadEnvPath)
+// with a valid workload name are sidecars vmmd wrote; a link or other entry
+// the tenant planted under workloads is skipped.
+func scrubDriveSecrets(ctx context.Context, img driveImage) error {
+	layout, err := inspectDrive(ctx, img, append(append([]string(nil), forkScrubPaths...), workloadEnvPath), nil)
 	if err != nil {
 		return err
 	}
-	root, rel, err := openDriveRoot(mountRoot, base)
-	if err != nil {
-		return err
+	var paths []string
+	for _, p := range forkScrubPaths {
+		paths = append(paths, driveImagePath(layout.fullRootfs, p))
 	}
-	defer func() { _ = root.Close() }()
-	entries, err := fs.ReadDir(root.FS(), rel)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read %s: %w", workloadEnvPath, err)
-	}
-	for _, entry := range entries {
-		if !entry.IsDir() {
-			continue
+	base := driveImagePath(layout.fullRootfs, workloadEnvPath)
+	reachable := true
+	for _, dir := range imageComponents(base) {
+		if layout.entries[dir].Kind != guestdisk.Directory {
+			reachable = false
+			break
 		}
-		env := filepath.Join(rel, entry.Name(), "env.json")
-		if err := root.RemoveAll(env); err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return fmt.Errorf("remove %s/%s/env.json: %w", workloadEnvPath, entry.Name(), err)
+	}
+	if reachable {
+		listing, err := img.List(ctx, []string{base}, maxSidecarScrubEntries)
+		if err != nil {
+			return fmt.Errorf("read %s: %w", workloadEnvPath, err)
 		}
+		for _, e := range listing[base] {
+			if e.Kind == guestdisk.Directory && validWorkloadName(e.Name) {
+				paths = append(paths, base+"/"+e.Name+"/env.json")
+			}
+		}
+	}
+	if err := img.RemoveAll(ctx, paths); err != nil {
+		return fmt.Errorf("remove secrets: %w", err)
 	}
 	return nil
 }

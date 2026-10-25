@@ -392,11 +392,11 @@ func TestCopyFile(t *testing.T) {
 	}
 }
 
-// TestCopyTreeCopiesRealTreeAndDropsSymlinks — copyTree exports untrusted
+// TestMoveTreeMovesRealTreeAndDropsSymlinks — moveTree exports untrusted
 // builder output as root. Real directories and regular files keep their
 // layout and modes; a symlink is dropped rather than recreated, because a
 // recreated link hands builderd a path into the host.
-func TestCopyTreeCopiesRealTreeAndDropsSymlinks(t *testing.T) {
+func TestMoveTreeMovesRealTreeAndDropsSymlinks(t *testing.T) {
 	src := t.TempDir()
 	dst := filepath.Join(t.TempDir(), "out")
 	if err := os.MkdirAll(filepath.Join(src, "usr", "bin"), 0o755); err != nil {
@@ -412,8 +412,8 @@ func TestCopyTreeCopiesRealTreeAndDropsSymlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := copyTree(src, dst, 0); err != nil {
-		t.Fatalf("copyTree: %v", err)
+	if err := moveTree(src, dst, 0); err != nil {
+		t.Fatalf("moveTree: %v", err)
 	}
 	info, err := os.Stat(filepath.Join(dst, "usr", "bin", "node"))
 	if err != nil || info.Mode().Perm() != 0o755 {
