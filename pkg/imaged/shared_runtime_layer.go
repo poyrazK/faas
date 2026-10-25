@@ -37,7 +37,10 @@ func sharedRuntimeClaim(app state.App, source *sourceBuildRootfsBinding) string 
 // the base it built on). Only a node without a build publisher takes this
 // path; a signed build's runner base comes from its export claim.
 func (h *Handler) sharedRuntimeFromProvenance(ctx context.Context, app state.App, dep state.Deployment) (string, error) {
-	if dep.BuildID == "" || app.Type == state.AppTypeFunction || app.Runtime != "" {
+	// builderd never builds a job on a runner base. When the minimal base is
+	// itself a runner image (the e2e override collapses every base onto one
+	// ref), its provenance must not turn the job's layer into a runner layer.
+	if dep.BuildID == "" || !state.SharedSourceAppCandidate(app) {
 		return "", nil
 	}
 	prov, err := h.store.BuildProvenanceByBuildID(ctx, dep.BuildID)

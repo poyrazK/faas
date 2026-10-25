@@ -202,11 +202,13 @@ func (j *nativeSourceJobJourney) assertSourceArtifact(t *testing.T, deploymentID
 	}
 	if nativeBuild {
 		done := readBuildDone(t, j.h, dep.BuildID)
-		tool := "railpack"
+		tool, marker := "railpack", "railpack"
 		if j.kind == "dockerfile" {
-			tool = "buildctl"
+			// guest-init runs buildctl without a shell trace; BuildKit's
+			// Dockerfile frontend reports the definition it executed.
+			tool, marker = "buildctl", "load build definition from"
 		}
-		if done.ExitCode != 0 || !strings.Contains(strings.ToLower(done.LogTail), tool) {
+		if done.ExitCode != 0 || !strings.Contains(strings.ToLower(done.LogTail), marker) {
 			t.Fatalf("native builder did not prove %s execution", tool)
 		}
 	}

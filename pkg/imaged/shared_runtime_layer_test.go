@@ -239,6 +239,9 @@ func TestSharedRuntimeFromProvenance(t *testing.T) {
 		{name: "container app on runner", app: state.App{Type: state.AppTypeApp}, ref: runner, want: "node24"},
 		{name: "container app on minimal", app: state.App{Type: state.AppTypeApp}, ref: "ghcr.io/poyrazk/base-minimal@sha256:" + strings.Repeat("d", 64)},
 		{name: "container app with own runtime", app: state.App{Type: state.AppTypeApp, Runtime: "go124"}, ref: runner},
+		// Job boots use the minimal base; a runner-image minimal base must
+		// not make the job's layer a runner layer.
+		{name: "job app on runner", app: state.App{Type: state.AppTypeApp, Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeJob}}, ref: runner},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

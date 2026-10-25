@@ -139,6 +139,13 @@ var sharedSourceAppRuntimes = map[string]bool{"node22": true, "node24": true}
 // source-built container app may claim.
 func SharedSourceAppRuntime(runtime string) bool { return sharedSourceAppRuntimes[runtime] }
 
+// SharedSourceAppCandidate reports whether a source build of app may run on a
+// shared runner base at all: a container app without its own runtime. Job-mode
+// boots still assume the minimal base, so jobs never qualify.
+func SharedSourceAppCandidate(app App) bool {
+	return app.Type != AppTypeFunction && app.Runtime == "" && app.Manifest.ExecutionMode != api.ExecutionModeJob
+}
+
 // SourceRuntimeClaimAllowed reports whether a signed build export may claim
 // runtime for app: the app's own runtime, or a shared runner base for a
 // container app that declares none.

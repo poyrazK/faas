@@ -31,8 +31,7 @@ const SharedRuntimeEnv = "FAAS_SOURCE_APP_SHARED_RUNTIME"
 // base. nodeSpec is the source's Node declaration as written (.nvmrc or
 // engines.node): the parsed source version drops bare majors such as "22".
 func sharedSourceAppRuntime(app state.App, fw Framework, nodeSpec, dockerfilePath string, env func(string) string) string {
-	if env(SharedRuntimeEnv) != "1" || app.Type == state.AppTypeFunction || app.Runtime != "" ||
-		fw != FrameworkNode || dockerfilePath != "" || app.Manifest.ExecutionMode == api.ExecutionModeJob {
+	if env(SharedRuntimeEnv) != "1" || !state.SharedSourceAppCandidate(app) || fw != FrameworkNode || dockerfilePath != "" {
 		return ""
 	}
 	return sharedruntime.NodeRuntimeForSpec(nodeSpec)
