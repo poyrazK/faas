@@ -511,6 +511,25 @@ func (r *fakeNotifier) Mu() *sync.Mutex        { return &r.mu }
 func (r *fakeNotifier) Count(p0 string) int    { return r.count(p0) }
 
 // Members of fakeVMM
+// SetPingResult sets what Ping returns for target: err when non-nil, else
+// a success carrying bases (ADR-20261022184531).
+func (h *heartbeatFakeDialer) SetPingResult(target string, bases []BaseGenerationReadiness, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.pingErr == nil {
+		h.pingErr = map[string]error{}
+	}
+	if h.baseGenerations == nil {
+		h.baseGenerations = map[string][]BaseGenerationReadiness{}
+	}
+	h.pingErr[target], h.baseGenerations[target] = err, bases
+	if err == nil {
+		delete(h.pingErr, target)
+	}
+}
+
+var EvaluateNodeReadiness = evaluateNodeReadiness
+
 func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
 func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
 func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }

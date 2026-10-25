@@ -2675,7 +2675,9 @@ type ComputeNode struct {
 	// Firecracker CPU template vmmd boots guests with; empty for none (ADR-20261024225612).
 	CpuTemplate string
 	// Host CPU signature <class>/<vendor>-<family>-<model>-<stepping>/<flags hash>; empty before vmmd reports it.
-	CpuModel string
+	CpuModel        string
+	Readiness       string
+	ReadinessReason pgtype.Text
 }
 
 type ComputeNodeHeartbeat struct {
