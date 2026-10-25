@@ -45,14 +45,15 @@ func TestTransientServiceOnSystemdMetal(t *testing.T) {
 	}
 	defer func() { _ = m.Close() }()
 
-	const uid = 39998 // top of the bridge uid range, which must be free of accounts
+	// A bridge uid has no account, which User= refuses, so a bridge unit
+	// starts as root with only the bounding set and drops itself
+	// (pkg/bridgeproc). sleep cannot drop, so this one keeps root with an
+	// empty bounding set: no capability at all.
 	name := fmt.Sprintf("faas-ibridge-sdunit-test-%08x.service", os.Getpid())
 	svc := Service{
 		Description:             "sdunit metal test",
 		ExecStart:               []string{"/bin/sleep", "60"},
 		Environment:             []string{"PATH=/usr/bin", "FAAS_TEST=1", "PATH=/usr/bin:/bin"},
-		UID:                     uid,
-		GID:                     uid,
 		NetworkNamespacePath:    filepath.Join("/run/netns", ns),
 		Slice:                   "faas-tenant-ibridge.slice",
 		MemoryMaxBytes:          32 << 20,
@@ -72,7 +73,8 @@ func TestTransientServiceOnSystemdMetal(t *testing.T) {
 		t.Fatalf("started unit = %+v", u)
 	}
 	status, err := os.ReadFile(fmt.Sprintf("/proc/%d/status", u.MainPID))
-	if err != nil || !strings.Contains(string(status), fmt.Sprintf("Uid:\t%d\t%d\t%d\t%d", uid, uid, uid, uid)) {
+	if err != nil || !strings.Contains(string(status), "CapEff:\t0000000000000000") || !strings.Contains(string(status), "CapBnd:\t0000000000000000") ||
+		!strings.Contains(string(status), "NoNewPrivs:\t1") {
 		t.Fatalf("main process status: %v\n%s", err, status)
 	}
 	var want, got syscall.Stat_t

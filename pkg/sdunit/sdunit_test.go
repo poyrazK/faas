@@ -124,7 +124,8 @@ func TestServiceValidation(t *testing.T) {
 		"empty name":    func(s *Service) { s.Environment = []string{"=/x"} },
 		"relative exec": func(s *Service) { s.ExecStart = []string{"vmmd-stream-bridge"} },
 		"no exec":       func(s *Service) { s.ExecStart = nil },
-		"root":          func(s *Service) { s.UID, s.GID = 0, 0 },
+		"negative uid":  func(s *Service) { s.UID, s.GID = -1, -1 },
+		"half root":     func(s *Service) { s.UID = 0 },
 		"invalid ip":    func(s *Service) { s.IPAddressAllow = []netip.Prefix{{}} },
 	} {
 		s := bridgeService()
@@ -149,6 +150,26 @@ func TestServiceNames(t *testing.T) {
 	} {
 		if ValidServiceName(name) != ok {
 			t.Errorf("ValidServiceName(%q) = %v", name, !ok)
+		}
+	}
+}
+
+// A uid with no account cannot be named in User=: the service starts as
+// root holding only its bounding set and drops itself.
+func TestRootServiceHoldsOnlyItsBoundingSet(t *testing.T) {
+	s := bridgeService()
+	s.UID, s.GID, s.Capabilities = 0, 0, CapSetUID|CapSetGID
+	if err := s.validate(); err != nil {
+		t.Fatal(err)
+	}
+	for _, p := range s.properties() {
+		switch p.Name {
+		case "User", "Group":
+			t.Fatalf("root service sets %s", p.Name)
+		case "CapabilityBoundingSet":
+			if p.Value.Value() != uint64(1<<6|1<<7) {
+				t.Fatalf("bounding set %v, want CAP_SETGID|CAP_SETUID", p.Value.Value())
+			}
 		}
 	}
 }

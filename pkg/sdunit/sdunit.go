@@ -26,8 +26,13 @@ type Service struct {
 	// ExecStart is the argv; ExecStart[0] is an absolute path.
 	ExecStart   []string
 	Environment []string
-	// UID and GID are numeric; a bridge uid has no passwd entry.
+	// UID and GID set User= and Group=. systemd resolves them through the
+	// user database and refuses a uid with no account, so a service whose
+	// uid has none leaves both 0, starts as root and drops to it itself;
+	// Capabilities is then all it holds until it does.
 	UID, GID int
+	// Capabilities is the capability bounding set (a CAP_* bit mask).
+	Capabilities uint64
 	// NetworkNamespacePath joins the service to a bound network namespace.
 	NetworkNamespacePath string
 	Slice                string
@@ -79,6 +84,12 @@ type Manager interface {
 	Close() error
 }
 
+// Capability bits for Service.Capabilities.
+const (
+	CapSetGID uint64 = 1 << 6
+	CapSetUID uint64 = 1 << 7
+)
+
 // ErrStartFailed is a service that did not reach the running state.
 var ErrStartFailed = errors.New("transient service did not start")
 
@@ -92,8 +103,8 @@ func (s Service) validate() error {
 	if len(s.ExecStart) == 0 || len(s.ExecStart[0]) == 0 || s.ExecStart[0][0] != '/' {
 		return errors.New("sdunit: ExecStart needs an absolute path")
 	}
-	if s.UID <= 0 || s.GID <= 0 {
-		return fmt.Errorf("sdunit: refusing to run a service as uid %d gid %d", s.UID, s.GID)
+	if s.UID < 0 || s.GID < 0 || (s.UID == 0) != (s.GID == 0) {
+		return fmt.Errorf("sdunit: invalid credentials uid %d gid %d", s.UID, s.GID)
 	}
 	for _, p := range s.IPAddressAllow {
 		if !p.IsValid() {

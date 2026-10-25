@@ -55,13 +55,11 @@ func (s Service) properties() []property {
 		prop("Description", s.Description),
 		prop("Type", "exec"),
 		prop("ExecStart", []execCommand{{Path: s.ExecStart[0], Args: s.ExecStart}}),
-		prop("User", strconv.Itoa(s.UID)),
-		prop("Group", strconv.Itoa(s.GID)),
 		// A failed or stopped run is unloaded at once, so its name, cgroup and
 		// state never linger.
 		prop("CollectMode", "inactive-or-failed"),
 		prop("NoNewPrivileges", true),
-		prop("CapabilityBoundingSet", uint64(0)),
+		prop("CapabilityBoundingSet", s.Capabilities),
 		prop("AmbientCapabilities", uint64(0)),
 		prop("ProtectSystem", "strict"),
 		prop("ProtectHome", "yes"),
@@ -76,6 +74,9 @@ func (s Service) properties() []property {
 		prop("RestrictSUIDSGID", true),
 		prop("SystemCallArchitectures", []string{"native"}),
 		prop("SystemCallFilter", nameList{Allow: true, Names: []string{"@system-service"}}),
+	}
+	if s.UID > 0 {
+		props = append(props, prop("User", strconv.Itoa(s.UID)), prop("Group", strconv.Itoa(s.GID)))
 	}
 	if env := envBlock(s.Environment); len(env) > 0 {
 		props = append(props, prop("Environment", env))

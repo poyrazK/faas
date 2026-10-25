@@ -168,7 +168,7 @@ func TestInstanceBridgeUnitLivesAsLongAsItsInstance(t *testing.T) {
 	}
 	svc := f.units.svcs[name]
 	socket := bridgeUID(1).streamBridgeSocket("a")
-	if svc.UID != fcvm.BridgeUIDBase+1 || svc.GID != svc.UID || svc.NetworkNamespacePath != filepath.Join(netnsRunDir, "fc-a") ||
+	if svc.UID != 0 || svc.Capabilities != sdunit.CapSetUID|sdunit.CapSetGID || svc.NetworkNamespacePath != filepath.Join(netnsRunDir, "fc-a") ||
 		svc.Slice != instanceBridgeSlice || svc.ExecStart[1] != socket || svc.ExecStart[2] != "10.0.0.2" || svc.ExecStart[3] != "8080" ||
 		!slices.Equal(svc.ReadWritePaths, []string{filepath.Dir(socket)}) || svc.MemoryMaxBytes != api.InstanceBridgeMemoryMaxMB<<20 ||
 		len(svc.IPAddressAllow) != 1 || svc.IPAddressAllow[0].String() != "10.0.0.2/32" {
@@ -179,7 +179,8 @@ func TestInstanceBridgeUnitLivesAsLongAsItsInstance(t *testing.T) {
 			t.Fatalf("unit bridge told to die with vmmd: %v", svc.Environment)
 		}
 	}
-	if !slices.Contains(svc.Environment, bridgeproc.ExpectUIDEnv+"="+strconv.Itoa(fcvm.BridgeUIDBase+1)) {
+	if !slices.Contains(svc.Environment, bridgeproc.ExpectUIDEnv+"="+strconv.Itoa(fcvm.BridgeUIDBase+1)) ||
+		!slices.Contains(svc.Environment, bridgeproc.DropToUIDEnv+"="+strconv.Itoa(fcvm.BridgeUIDBase+1)) {
 		t.Fatalf("unit bridge not told its uid: %v", svc.Environment)
 	}
 

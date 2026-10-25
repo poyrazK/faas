@@ -691,6 +691,15 @@ its own.
       it holds a pidfd on the main pid and checks that pid's cgroup is the
       unit's and its netns is the binding vmmd named. A run it cannot prove
       is stopped.
+    - The unit does not set `User=`/`Group=`: systemd resolves them through
+      the user database and refuses a uid with no account (`217/USER`), and
+      bridge uids must have none (`checkBridgeUIDRange`). The unit starts
+      the bridge as root with `CapabilityBoundingSet=CAP_SETUID CAP_SETGID`
+      and `NoNewPrivileges`; the bridge drops to its uid (supplementary
+      groups, then every gid, then every uid) before it reads anything, and
+      its existing check then refuses to run unless every uid and gid is the
+      bridge uid and it holds no capability (`pkg/bridgeproc`,
+      `FAAS_BRIDGE_DROP_TO_UID`).
     - Lifetime: the wake's prewarm starts the unit, the idle reaper leaves
       it, and park, destroy, stop, a failed wake and a freeze stop it and
       wait until systemd has unloaded it before the RPC answers (invariant

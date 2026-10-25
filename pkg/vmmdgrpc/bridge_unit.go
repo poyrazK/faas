@@ -144,14 +144,18 @@ func connectSystemd(ctx context.Context) (sdunit.Manager, error) { return sdunit
 
 // bridgeService is the unit definition for entry's bridge.
 func bridgeService(entry *streamBridgeEntry, bridgePath, netnsPath, guestIP string, port uint32, deadline string, env []string) sdunit.Service {
-	// No parent pid: the unit must not die with vmmd.
-	base := []string{bridgeEnvPATH, bridgeproc.ExpectUIDEnv + "=" + strconv.Itoa(entry.identity.uid)}
+	// No parent pid: the unit must not die with vmmd. systemd's User=
+	// refuses a uid with no account, and bridge uids have none, so the unit
+	// starts the bridge as root holding only CAP_SETUID and CAP_SETGID; the
+	// bridge drops to its uid before it reads anything and then verifies
+	// every uid and that it holds no capability (pkg/bridgeproc).
+	uid := strconv.Itoa(entry.identity.uid)
+	base := []string{bridgeEnvPATH, bridgeproc.DropToUIDEnv + "=" + uid, bridgeproc.ExpectUIDEnv + "=" + uid}
 	return sdunit.Service{
 		Description:             "onebox-faas instance bridge " + entry.instance,
 		ExecStart:               []string{bridgePath, entry.socket, guestIP, strconv.FormatUint(uint64(port), 10), deadline},
 		Environment:             append(base, env...),
-		UID:                     entry.identity.uid,
-		GID:                     entry.identity.gid,
+		Capabilities:            sdunit.CapSetUID | sdunit.CapSetGID,
 		NetworkNamespacePath:    netnsPath,
 		Slice:                   instanceBridgeSlice,
 		MemoryMaxBytes:          api.InstanceBridgeMemoryMaxMB << 20,

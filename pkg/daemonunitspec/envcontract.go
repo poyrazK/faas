@@ -159,6 +159,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_BILLING_PORTAL_URL", Owners: []string{"apid"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_BILLING_PROVIDER", Owners: []string{"shared"}, Source: EnvSourceSecretsEnv, Note: "delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid)"},
 	{Name: "FAAS_BRIDGED_ROLE", Owners: []string{"bridged", "shared"}, Source: EnvSourceEnvFile, Note: "optional control-plane relay; delivered by dev-bridge.env"},
+	{Name: "FAAS_BRIDGE_DROP_TO_UID", Owners: []string{"vmmd-stream-bridge", "shared"}, Source: EnvSourceInternal, Note: "set by vmmd for a bridge unit (FAAS_INSTANCE_BRIDGE_UNIT=1), which systemd starts as root because User= refuses a uid with no account; the bridge drops to this uid before reading anything (pkg/bridgeproc)"},
 	{Name: "FAAS_BRIDGE_EXPECT_UID", Owners: []string{"vmmd-stream-bridge", "shared"}, Source: EnvSourceInternal, Note: "set by vmmd for an unprivileged bridge; the bridge exits unless it runs as this uid with no capability (pkg/bridgeproc)"},
 	{Name: "FAAS_BRIDGE_HEADERS", Owners: []string{"vmmd-stream-bridge"}, Source: EnvSourceInternal, Note: "set by vmmd for the per-request stream-bridge subprocess"},
 	{Name: "FAAS_BRIDGE_HOST", Owners: []string{"vmmd-stream-bridge"}, Source: EnvSourceInternal, Note: "set by vmmd for the per-request stream-bridge subprocess"},
