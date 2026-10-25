@@ -9,7 +9,7 @@ from attrs import field as _attrs_field
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
-    from ..models.plan_managed_provision_bindings_item import PlanManagedProvisionBindingsItem
+    from ..models.plan_managed_binding import PlanManagedBinding
 
 
 T = TypeVar("T", bound="PlanManagedProvision")
@@ -23,7 +23,7 @@ class PlanManagedProvision:
     """
 
     database: str
-    bindings: list[PlanManagedProvisionBindingsItem]
+    bindings: list[PlanManagedBinding]
     existing: bool | Unset = UNSET
     """True when a database with this name already exists and is reused."""
     postgres_major: int | Unset = UNSET
@@ -59,7 +59,7 @@ class PlanManagedProvision:
 
     @classmethod
     def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
-        from ..models.plan_managed_provision_bindings_item import PlanManagedProvisionBindingsItem
+        from ..models.plan_managed_binding import PlanManagedBinding
 
         d = dict(src_dict)
         database = d.pop("database")
@@ -67,7 +67,7 @@ class PlanManagedProvision:
         bindings = []
         _bindings = d.pop("bindings")
         for bindings_item_data in _bindings:
-            bindings_item = PlanManagedProvisionBindingsItem.from_dict(bindings_item_data)
+            bindings_item = PlanManagedBinding.from_dict(bindings_item_data)
 
             bindings.append(bindings_item)
 

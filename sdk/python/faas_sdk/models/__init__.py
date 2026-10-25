@@ -1642,9 +1642,9 @@ from .plan_detection_warning import PlanDetectionWarning
 from .plan_detection_warning_detector import PlanDetectionWarningDetector
 from .plan_detection_warning_outcome import PlanDetectionWarningOutcome
 from .plan_managed import PlanManaged
+from .plan_managed_binding import PlanManagedBinding
 from .plan_managed_not_provisioned_reason import PlanManagedNotProvisionedReason
 from .plan_managed_provision import PlanManagedProvision
-from .plan_managed_provision_bindings_item import PlanManagedProvisionBindingsItem
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
 from .plan_workload import PlanWorkload
@@ -3957,9 +3957,9 @@ __all__ = (
     "PlanDetectionWarningDetector",
     "PlanDetectionWarningOutcome",
     "PlanManaged",
+    "PlanManagedBinding",
     "PlanManagedNotProvisionedReason",
     "PlanManagedProvision",
-    "PlanManagedProvisionBindingsItem",
     "PlanResponse",
     "PlanResponseScanSource",
     "PlanWorkload",

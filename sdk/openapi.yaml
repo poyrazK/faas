@@ -30298,11 +30298,14 @@ components:
         bindings:
           type: array
           items:
-            type: object
-            required: [workload, env_key]
-            properties:
-              workload: {type: string}
-              env_key: {type: string, example: DATABASE_URL}
+            $ref: '#/components/schemas/PlanManagedBinding'
+    PlanManagedBinding:
+      description: "One service key bound to the database a project apply provides (ADR-20261025111824)."
+      type: object
+      required: [workload, env_key]
+      properties:
+        workload: {type: string}
+        env_key: {type: string, example: DATABASE_URL}
     PlanAffectedApp:
       description: |
         One row of the ADR-124 blast-radius partition. action is closed-

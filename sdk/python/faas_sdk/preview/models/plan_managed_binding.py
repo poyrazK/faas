@@ -6,11 +6,13 @@ from typing import Any, TypeVar
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 
-T = TypeVar("T", bound="PlanManagedProvisionBindingsItem")
+T = TypeVar("T", bound="PlanManagedBinding")
 
 
 @_attrs_define
-class PlanManagedProvisionBindingsItem:
+class PlanManagedBinding:
+    """One service key bound to the database a project apply provides (ADR-20261025111824)."""
+
     workload: str
     env_key: str
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -38,13 +40,13 @@ class PlanManagedProvisionBindingsItem:
 
         env_key = d.pop("env_key")
 
-        plan_managed_provision_bindings_item = cls(
+        plan_managed_binding = cls(
             workload=workload,
             env_key=env_key,
         )
 
-        plan_managed_provision_bindings_item.additional_properties = d
-        return plan_managed_provision_bindings_item
+        plan_managed_binding.additional_properties = d
+        return plan_managed_binding
 
     @property
     def additional_keys(self) -> list[str]:

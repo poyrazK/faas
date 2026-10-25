@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { PlanManagedBinding } from './PlanManagedBinding.js';
 /**
  * The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the service keys it binds (ADR-20261025111824).
  */
@@ -15,9 +16,6 @@ export type PlanManagedProvision = {
    * The database's PostgreSQL major: the Compose image's, or the nearest newer one the platform offers.
    */
   postgres_major?: number;
-  bindings: Array<{
-    workload: string;
-    env_key: string;
-  }>;
+  bindings: Array<PlanManagedBinding>;
 };
 
