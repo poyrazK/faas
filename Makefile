@@ -426,6 +426,12 @@ shell-quoting-check-test: ## Exercise the shell-quoting gate against fixture tre
 deploy-action-head-check: ## Verify stale branch and invalid release-tag pushes cannot submit Action deployments
 	@bash scripts/ci/test_deploy_action_head.sh
 
+.PHONY: cli-install-check
+cli-install-check: ## Hermetic curl installer tests and the cli-channel pointer job (ADR-20261025092617)
+	@bash scripts/install_test.sh
+	@python3 scripts/ci/cli_channel_test.py
+	@bash scripts/ci/advance-cli-channel_test.sh
+
 .PHONY: deploy-action-cli-check
 deploy-action-cli-check: ## Verify the deploy Action unpacks and checks the gzip-compressed vendored CLI
 	@bash scripts/ci/deploy_action_cli_test.sh
