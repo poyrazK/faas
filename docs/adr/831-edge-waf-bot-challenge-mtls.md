@@ -1183,3 +1183,44 @@ Decision:
    cross-compiled binaries, a portable Postgres and an `unshare` launcher.
    It refuses to start while `/var/lock/faas-deploy.lock` is held and waits
    for a 1-minute load at or under 0.6.
+
+## Amendment 15 (2026-10-25): the challenge solver hashes the token once
+
+ADR-20261024082000 criterion H3 asks that a 2020 mid-range Android phone
+solve the challenge at the default difficulty within 2 s at the 95th
+percentile. Before the device test, the page ran in headless Chrome under
+CPU throttling (`docs/ops/evidence/20261025-edge-challenge-solve-time/`).
+That run used the page the gateway serves, fresh 225-byte tokens, and a
+local server that checked every solution. The solver needed 2.03 us of
+renderer CPU per hash on an Apple M3 Pro. Geekbench 6 puts a 2020 mid-range
+phone about 9x slower (11.5x on its slowest runs), which gives an estimated
+p95 of 3.8-4.9 s. Chrome's own 10x throttle measured a p95 of 6.4 s. The
+solver would have missed H3.
+
+The cause is the solver, not the difficulty. `token + ":" + counter` spans
+four 64-byte SHA-256 blocks, and only the last changes from one attempt to
+the next. The solver hashed all four, and allocated a new buffer, on every
+attempt.
+
+Decision:
+
+1. **The page hashes the token's whole blocks once.** `solve` computes the
+   SHA-256 state after the whole 64-byte blocks of `token + ":"`, then for
+   each counter pads and hashes only the last one or two blocks, in buffers
+   it reuses. The message, the hash and the counter it finds are unchanged,
+   so the gateway's check and old pages are unaffected.
+   `TestChallengeSolverJS` checks against Go that `solve` returns the first
+   valid counter, for token lengths 1-140 and starts where the counter
+   gains a digit.
+2. **Measured after the change**, on the same machine and method: 0.39 us
+   per hash (5.2x faster), Chrome 10x throttle p95 0.68 s, and an estimated
+   p95 of 0.88-1.12 s on a 2020 mid-range phone. The upper end of 2020
+   mid-range (Pixel 4a class, about 5.5x slower than the M3 Pro) is about
+   0.5 s.
+3. **The default difficulty stays at 16.** Lowering it would also have met
+   H3, but it would halve the work for every visitor, attackers included.
+   At difficulty 22 (about 4 million hashes on average), such a phone needs
+   about 15-20 s, which is acceptable only as a response to an attack.
+4. **H3 stays open** until a real phone is measured and recorded in
+   `docs/STATUS.md`. The estimate cannot see a phone's thermal state, or
+   whether Chrome runs the page on a big or a little core.

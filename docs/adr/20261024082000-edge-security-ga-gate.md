@@ -70,7 +70,7 @@ Browser challenge (GA):
 |---|---|---|---|---|
 | H1 | A browser solves and passes, a script is refused, verified credentials and crawlers pass | all pass | `TestEdgeRulesChallenge_E2E`, `TestApplyEdgeRuleChallenge`, `TestChallengeSolveRoundTrip` | met |
 | H2 | The page's solver agrees with the gateway | all pass | `TestChallengeSolverJS` | met |
-| H3 | Solve time at the default difficulty on a low-end phone (2020 mid-range Android, current Chrome) | p95 at most 2 s | manual measurement, recorded in `docs/STATUS.md` | open |
+| H3 | Solve time at the default difficulty on a low-end phone (2020 mid-range Android, current Chrome) | p95 at most 2 s | manual measurement, recorded in `docs/STATUS.md` | open: estimated at p95 0.88-1.12 s from throttled Chrome after ADR-831 amendment 15 (3.8-4.9 s before); the device measurement is pending |
 | H4 | Raised difficulty is capped and falls back | all pass | `TestChallengeLoadRaisesAndLowers` | met |
 | H5 | Browser navigations that get the page go on to solve it, on real traffic | at least 90% over 14 days | `gateway_edge_challenge_total` solved / issued | open |
 
@@ -172,3 +172,12 @@ amendment 14.
 Criteria now: W1 and W2 met. Still open: H3 (solve time on a low-end
 phone); the 14-day reviews that need flags on in production (W4, H5);
 P2's production timing; and the stage reviews (P4, A3, I3, C4).
+
+## Amendment 3 (2026-10-25): H3 estimated before the device test
+
+Before anyone measures H3 on a phone, it was estimated in throttled
+Chrome (`docs/ops/evidence/20261025-edge-challenge-solve-time/`). The
+estimate showed the solver as it stood would miss: about 3.8 s at p95 on a
+2020 mid-range phone. ADR-831 amendment 15 made the solver about 5x faster,
+for an estimated p95 of 0.88-1.12 s. The device measurement still decides
+H3.

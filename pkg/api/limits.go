@@ -6920,11 +6920,12 @@ const (
 	// --- ADR-831 amendment 7: kind=challenge bounds -------------------
 
 	// EdgeChallengeDefaultDifficulty is how many leading zero bits the
-	// browser must find in a SHA-256 hash: about 65,000 hashes, tens to a
-	// few hundred milliseconds in a browser. Each extra bit doubles the
-	// work; MaxEdgeChallengeDifficulty (about 4 million hashes) keeps slow
-	// phones within seconds, and MinEdgeChallengeDifficulty keeps the work
-	// above trivial.
+	// browser must find in a SHA-256 hash: about 65,000 hashes on average
+	// and 196,000 at the 95th percentile, which a 2020 mid-range phone does
+	// in about a second (estimated, ADR-831 amendment 15). Each extra bit
+	// doubles the work: MaxEdgeChallengeDifficulty (about 4 million hashes)
+	// costs such a phone 15-20 s, so it is for attacks, and
+	// MinEdgeChallengeDifficulty keeps the work above trivial.
 	EdgeChallengeDefaultDifficulty = 16
 	MinEdgeChallengeDifficulty     = 10
 	MaxEdgeChallengeDifficulty     = 22

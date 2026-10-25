@@ -91,7 +91,10 @@ gateways (in tests); attack mode and its two-flag gate; AI crawler matching,
 range refresh and gating.
 
 Open:
-- Challenge solve time on a low-end phone (no measurement yet).
+- Challenge solve time on a low-end phone: estimated at p95 0.88-1.12 s on a
+  2020 mid-range phone from throttled Chrome, after ADR-831 amendment 15
+  made the solver about 5x faster (3.8-4.9 s before); the device
+  measurement is still needed.
 - The 14-day reviews at the internal and design-partner stages (penalties,
   attack mode, AI crawler controls), and the WAF production false-positive
   review (the review tool and procedure exist: ADR-831 amendment 13,
