@@ -58,9 +58,7 @@ func cmdRegistry(args []string) int {
 		return cmdRegistryPublished(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown registry subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "registry", parent, args[0])
 }
 
 // cmdRegistryList implements `gregale registry list --app <slug>`

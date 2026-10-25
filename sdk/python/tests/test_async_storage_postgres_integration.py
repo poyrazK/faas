@@ -17,9 +17,9 @@ pytest.importorskip("fastapi")
 import psycopg
 from async_storage_fixture import SignedS3, finish_stream, load_example, open_stream, projection
 from botocore.exceptions import ClientError
-from faas_sdk.async_postgres_pool_runtime import AsyncPostgresPoolBinding
-from faas_sdk.object_storage_runtime import ObjectStorageBindingError
-from faas_sdk.postgres_pool_runtime import PostgresPoolBindingError
+from faas_sdk.preview.async_postgres_pool_runtime import AsyncPostgresPoolBinding
+from faas_sdk.preview.object_storage_runtime import ObjectStorageBindingError
+from faas_sdk.preview.postgres_pool_runtime import PostgresPoolBindingError
 from faas_sdk.secret_reload_runtime import SecretReloadError
 from psycopg import sql
 from psycopg.conninfo import conninfo_to_dict

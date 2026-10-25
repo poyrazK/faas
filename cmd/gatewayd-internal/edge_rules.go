@@ -94,6 +94,9 @@ type gatewaydEdgeRules struct {
 	// pin the cached compiled host policy instead of a per-request snapshot.
 	cachedHostPolicy bool
 	loadedGeneration atomic.Int64
+	// capabilityAllowed drops the rules of an off capability per request
+	// (ADR-20261023115741); nil keeps every rule.
+	capabilityAllowed func(capability, accountID string) bool
 }
 
 // edgeRuleFenceKey scopes a fence to the account whose mutation raised it;
@@ -911,6 +914,7 @@ func (g *gatewaydEdgeRules) MatchCache(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Cache
 	}
+	rules = capabilityRules(g.capabilityAllowed, capabilityResponseCaching, rules, func(r *gateway.EdgeRuleCacheResolved) string { return r.AccountID })
 	enforced := gateway.PickFirstCacheMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCacheResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 	logged := gateway.PickFirstCacheMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleCacheResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)
@@ -958,6 +962,7 @@ func (g *gatewaydEdgeRules) MatchAsync(ctx context.Context, host, requestPath, m
 		g.warnPathGlobErrs(host, entry.PathGlobErrs)
 		rules = entry.Async
 	}
+	rules = capabilityRules(g.capabilityAllowed, capabilityAsyncRoutes, rules, func(r *gateway.EdgeRuleAsyncResolved) string { return r.AccountID })
 	enforced := gateway.PickFirstAsyncMatch(gateway.ApplicableEdgeRules(ctx, rules, func(r *gateway.EdgeRuleAsyncResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 	logged := gateway.PickFirstAsyncMatch(gateway.LoggedEdgeRules(ctx, rules, func(r *gateway.EdgeRuleAsyncResolved) string { return r.AccountID }, requestPath, method), requestPath, method, gateway.EdgeRuleRequestHeaders(ctx))
 	return gateway.ObserveEdgeRuleMatch(ctx, enforced, logged)

@@ -52,3 +52,33 @@ func AccountDeletionGuardError(err error) error {
 	}
 	return err
 }
+
+// AccountDeletionOption changes what an account deletion includes.
+type AccountDeletionOption func(*accountDeletion)
+
+type accountDeletion struct{ managedPostgres bool }
+
+// IncludingManagedPostgres makes a move to deleted_pending include the
+// account's personal managed PostgreSQL databases (ADR-20261024150500): the
+// guard lets the account in, and apid's grace sweep deletes the databases when
+// the grace ends. A repeat request never withdraws an inclusion already
+// recorded for the pending deletion. MemStore models no databases, so there it
+// changes nothing.
+func IncludingManagedPostgres(include bool) AccountDeletionOption {
+	return func(d *accountDeletion) { d.managedPostgres = d.managedPostgres || include }
+}
+
+func accountDeletionOptions(opts []AccountDeletionOption) accountDeletion {
+	var d accountDeletion
+	for _, opt := range opts {
+		opt(&d)
+	}
+	return d
+}
+
+// DeletionIncludesManagedPostgres reports whether opts include the account's
+// managed PostgreSQL databases, for writers that move accounts to
+// deleted_pending in their own transaction (apid's mail outbox).
+func DeletionIncludesManagedPostgres(opts ...AccountDeletionOption) bool {
+	return accountDeletionOptions(opts).managedPostgres
+}

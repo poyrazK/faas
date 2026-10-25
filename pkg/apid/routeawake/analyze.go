@@ -129,11 +129,22 @@ func Analyze(in Inputs) api.RouteAwakeResponse {
 			awakeMinutes++
 		}
 	}
-	for _, m := range in.Awake {
+	// Wakes are the requests that woke the app, the same count as the route
+	// rows. usage_minutes only counts restore-to-cold-boot fallbacks
+	// (ADR-048), so with snapshots working the header read "0 wakes" above
+	// routes that woke it (Hunt 14 H14-18); it still wins when larger.
+	var requestWakes, meteredColdBoots int64
+	for _, m := range in.Routes {
 		if _, ok := t.index(m.At); ok {
-			out.Wakes += m.ColdBoots
+			requestWakes += m.ColdBoots
 		}
 	}
+	for _, m := range in.Awake {
+		if _, ok := t.index(m.At); ok {
+			meteredColdBoots += m.ColdBoots
+		}
+	}
+	out.Wakes = max(requestWakes, meteredColdBoots)
 	unattributed := t.attribute()
 	out.Sources = []api.RouteAwakeSource{}
 	for _, src := range t.sources {

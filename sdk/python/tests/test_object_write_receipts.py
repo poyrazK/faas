@@ -4,9 +4,9 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.storage import get_object_write_receipt, list_object_write_receipts
+from faas_sdk.preview.api.storage import get_object_write_receipt, list_object_write_receipts
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models import ObjectWriteReceipt, ObjectWriteReceiptList
+from faas_sdk.preview.models import ObjectWriteReceipt, ObjectWriteReceiptList
 
 
 def test_receipt_status_and_pending_page() -> None:

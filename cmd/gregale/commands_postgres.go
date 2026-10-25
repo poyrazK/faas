@@ -63,7 +63,7 @@ func cmdPostgres(args []string) int {
 		return cmdPostgresLive(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown postgres subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "postgres", nestedCliCommand("postgres"), args[0])
 	}
 }
 
@@ -426,7 +426,7 @@ func cmdPostgresBindings(args []string) int {
 		return cmdPostgresBindingsDelete(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown postgres bindings subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "postgres bindings", nestedCliCommand("postgres", "bindings"), args[0])
 	}
 }
 

@@ -2,13 +2,13 @@ from uuid import UUID
 
 
 def test_reminder_defaults_wire_contract():
-    from faas_sdk.api.mcp import (
+    from faas_sdk.preview.api.mcp import (
         get_mcp_readiness_reminder_defaults,
         set_mcp_readiness_reminder_defaults,
     )
-    from faas_sdk.models.mcp_readiness_incident_attention import MCPReadinessIncidentAttention
-    from faas_sdk.models.mcp_readiness_reminder_defaults import MCPReadinessReminderDefaults
-    from faas_sdk.models.set_mcp_readiness_reminder_defaults_request import SetMCPReadinessReminderDefaultsRequest
+    from faas_sdk.preview.models.mcp_readiness_incident_attention import MCPReadinessIncidentAttention
+    from faas_sdk.preview.models.mcp_readiness_reminder_defaults import MCPReadinessReminderDefaults
+    from faas_sdk.preview.models.set_mcp_readiness_reminder_defaults_request import SetMCPReadinessReminderDefaultsRequest
 
     rule = UUID("00000000-0000-0000-0000-000000000001")
     off = dict(interval_seconds=0, max_reminders=0)

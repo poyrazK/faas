@@ -335,6 +335,11 @@ func (s *Supervisor) shouldRestart(err error) bool {
 // value-receiver; this change is the canonical fix.
 func (s *Supervisor) Run() error {
 	restarts := 0
+	// A snapshot captures this restart count, so a crash before a snapshot
+	// was taken used up part of the restart budget of every instance later
+	// restored from it (Hunt 14 H14-19: a restored instance's first crash
+	// read "restart 2/3"). A restored copy starts with the full budget.
+	generation := restoreGeneration.current()
 	for {
 		if s.stopRequested.Load() {
 			s.trackExit(0)
@@ -354,6 +359,9 @@ func (s *Supervisor) Run() error {
 			s.trackExit(supervisorExitCode(err))
 			s.trackRunErr(err)
 			return err
+		}
+		if current := restoreGeneration.current(); current != generation {
+			generation, restarts = current, 0
 		}
 		if restarts >= s.Max {
 			if err == nil {

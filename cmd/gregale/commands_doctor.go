@@ -165,6 +165,9 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	setFlagOutput(fs, osStderr)
 	strict := fs.Bool("strict", false, "exit 1 on warn (default: exit 0 on warn)")
 	jsonOut := fs.Bool("json", false, "machine output (default: human prose)")
+	// deploy and scan take --path; doctor answered "unknown flag --path"
+	// (Hunt 14 H14-25). A positional directory still works.
+	pathFlag := fs.String("path", "", "source directory (default: current directory)")
 	imageFlags := registerDoctorImageFlags(fs)
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
@@ -177,7 +180,13 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 		return runDoctorImageCommand(imageFlags, inspector, *strict, *jsonOut || jsonOutput)
 	}
 	path := "."
-	if fs.NArg() > 0 {
+	switch {
+	case *pathFlag != "" && fs.NArg() > 0 && fs.Arg(0) != *pathFlag:
+		PrintUsage(osStderr, "pass the directory once: --path and the positional DIR name different directories\n"+doctorUsage, "doctor")
+		return 1
+	case *pathFlag != "":
+		path = *pathFlag
+	case fs.NArg() > 0:
 		path = fs.Arg(0)
 	}
 	abs, err := filepath.Abs(path)
@@ -377,6 +386,13 @@ func doctorCheckEnvRequired(path string) doctorCheck {
 	missing := []string{}
 	for _, r := range refs {
 		if _, ok := platformInjectedEnvVars[r]; ok {
+			continue
+		}
+		// FAAS_ is the platform's reserved namespace: guest-init stamps the
+		// identity and runtime variables (FAAS_APP_ID, FAAS_INSTANCE_ID, …)
+		// and overrides customer values. Fresh mcp-go and customer-operation
+		// templates failed doctor on them (Hunt 14 H14-52).
+		if strings.HasPrefix(r, "FAAS_") {
 			continue
 		}
 		if _, ok := declared[r]; !ok {
@@ -921,7 +937,13 @@ func renderDoctorHuman(w io.Writer, rep doctorReport) {
 			if rep.Profile.StartCommand != "" {
 				_, _ = fmt.Fprintf(w, " · start=%s", rep.Profile.StartCommand)
 			}
-			_, _ = fmt.Fprintf(w, " · port=%d · health=%s\n", rep.Profile.Port, rep.Profile.HealthPath)
+			// A worker: manifest has no listener; the framework's default
+			// port and health path described it as HTTP (Hunt 14 H14-42).
+			if manifestDeployExecutionMode(rep.Path) == api.ExecutionModeWorker {
+				_, _ = fmt.Fprintln(w, " · worker (no HTTP listener)")
+			} else {
+				_, _ = fmt.Fprintf(w, " · port=%d · health=%s\n", rep.Profile.Port, rep.Profile.HealthPath)
+			}
 		}
 	}
 	_, _ = fmt.Fprintln(w, strings.Repeat("─", 60))

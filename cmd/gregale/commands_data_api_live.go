@@ -49,7 +49,7 @@ func cmdDataAPILive(args []string) int {
 		return cmdDataAPILiveRun(args[1:], false)
 	default:
 		printCommandValidation(os.Stderr, "unknown data-api live subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "data-api live", nestedCliCommand("data-api", "live"), args[0])
 	}
 }
 

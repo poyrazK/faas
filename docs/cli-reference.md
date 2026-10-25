@@ -5078,7 +5078,7 @@ RAM/CPU: use --size SIZE (--profile SIZE after the command is deprecated). Conne
 | `--profile <SIZE>` | deprecated: use --size |  |
 | `--ram <MB>` | set RAM in MB |  |
 | `--cpu-millicores <250|500|1000>` | set sustained CPU allowance | one of `250` · `500` · `1000` |
-| `--max-concurrency <N>` | set maximum concurrent requests |  |
+| `--max-concurrency <N>` | set the maximum instances (replicas) the app scales to |  |
 | `--concurrency-overflow <value>` | set saturated concurrency behavior | one of `queue` · `drop` |
 | `--max-queue-depth <N>` | set maximum queued requests (0 uses plan default) |  |
 | `--max-queue-wait <DURATION>` | set queue wait, e.g. 750ms (0 uses plan default); excludes --max-queue-wait-ms |  |
@@ -5199,7 +5199,7 @@ Preview or change resources and settings
 | `--profile <SIZE>` | deprecated: use --size |  |
 | `--ram <MB>` | RAM in MB |  |
 | `--cpu-millicores <250|500|1000>` | sustained CPU allowance | one of `250` · `500` · `1000` |
-| `--max-concurrency <N>` | maximum concurrent requests |  |
+| `--max-concurrency <N>` | maximum instances (replicas) the app scales to |  |
 | `--concurrency-overflow <POLICY>` | saturated concurrency behavior | one of `queue` · `drop` |
 | `--max-queue-depth <N>` | maximum queued requests at warm saturation |  |
 | `--max-queue-wait <DURATION>` | maximum warm-saturation wait |  |
@@ -8803,12 +8803,13 @@ Open the account dashboard in your browser
 
 Check local source or an image for problems before deploying
 
-`gregale doctor [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--json]`
+`gregale doctor [--path <DIR>] [--image <REF>] [--registry-user <USER>] [--registry-password-stdin] [--strict] [--json]`
 
 Checks local source or image metadata only; runtime checks are skipped.
 
 | Flag | Meaning | |
 |---|---|---|
+| `--path <DIR>` | source directory (default: current directory; a positional DIR also works) |  |
 | `--image <REF>` | inspect the Linux/amd64 image without downloading layers |  |
 | `--registry-user <USER>` | registry username; requires --registry-password-stdin |  |
 | `--registry-password-stdin` | read registry password/token from stdin; requires --image and --registry-user |  |
@@ -8820,6 +8821,7 @@ Examples:
 ```sh
 gregale doctor
 gregale doctor --strict
+gregale doctor --path packages/api
 ```
 
 
@@ -9516,6 +9518,12 @@ Offers a default-domain change at the end.
 ### domains list
 
 List custom domain bindings
+
+`gregale domains list [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | only this app&#39;s domains |  |
 
 ### domains add
 
@@ -10422,34 +10430,47 @@ Roll out feature flags to selected customers
 
 Read current flag configuration
 
+`gregale flags get --project <slug> [--environment <slug>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
+
 ### flags apply
 
 Publish a versioned configuration
 
-`gregale flags apply --file <path>`
+`gregale flags apply --project <slug> [--environment <slug>] --file <path>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--file <path>` | JSON update bundle | required |
 
 ### flags history
 
 List immutable configuration versions
 
-`gregale flags history [--before-version <number>]`
+`gregale flags history --project <slug> [--environment <slug>] [--before-version <number>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--before-version <number>` | page before this version |  |
 
 ### flags inspect
 
 Explain a customer&#39;s decision
 
-`gregale flags inspect --key <key> [--customer-id <UUID>] [--subject-id <ID>] [--fallback-variant <NAME>] [--version <number>]`
+`gregale flags inspect --project <slug> [--environment <slug>] --key <key> [--customer-id <UUID>] [--subject-id <ID>] [--fallback-variant <NAME>] [--version <number>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--key <key>` | flag key | required |
 | `--customer-id <UUID>` | customer UUID |  |
 | `--subject-id <ID>` | authenticated application subject (requires --customer-id) |  |
@@ -10460,10 +10481,12 @@ Explain a customer&#39;s decision
 
 Publish an earlier configuration
 
-`gregale flags rollback --version <number> --expected-version <number>`
+`gregale flags rollback --project <slug> [--environment <slug>] --version <number> --expected-version <number>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--version <number>` | version to restore | required |
 | `--expected-version <number>` | current version | required |
 
@@ -10471,10 +10494,12 @@ Publish an earlier configuration
 
 Inspect request evidence by flag value
 
-`gregale flags requests --key <key> [--customer-id <UUID>] [--value <bool>] [--variant <NAME>] [--used <bool>] [--since <duration>] [--cursor <cursor>]`
+`gregale flags requests --project <slug> [--environment <slug>] --key <key> [--customer-id <UUID>] [--value <bool>] [--variant <NAME>] [--used <bool>] [--since <duration>] [--cursor <cursor>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--key <key>` | flag key | required |
 | `--customer-id <UUID>` | customer UUID |  |
 | `--value <bool>` | true or false |  |
@@ -10487,10 +10512,12 @@ Inspect request evidence by flag value
 
 Inspect flag decision outcomes
 
-`gregale flags outcomes --key <key> [--customer-id <UUID>] [--rule-id <ID>] [--config-version <number>] [--since <duration>]`
+`gregale flags outcomes --project <slug> [--environment <slug>] --key <key> [--customer-id <UUID>] [--rule-id <ID>] [--config-version <number>] [--since <duration>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--key <key>` | flag key | required |
 | `--customer-id <UUID>` | customer UUID |  |
 | `--rule-id <ID>` | filter to a targeting rule |  |
@@ -10501,10 +10528,12 @@ Inspect flag decision outcomes
 
 Promote a targeting rule rollout
 
-`gregale flags promote --key <key> --rule-id <ID> --expected-version <number>`
+`gregale flags promote --project <slug> [--environment <slug>] --key <key> --rule-id <ID> --expected-version <number>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--project <slug>` | project slug | required |
+| `--environment <slug>` | named environment (default production) |  |
 | `--key <key>` | flag key | required |
 | `--rule-id <ID>` | targeting rule ID | required |
 | `--expected-version <number>` | current configuration version | required |
@@ -10804,11 +10833,11 @@ Delete a list no rule references
 
 Route, rewrite, protect or rate-limit an app&#39;s requests at the edge
 
-`gregale edge-rules [<subcommand>] --app <slug> [--kind <value>]`
+`gregale edge-rules [<subcommand>] [--app <slug>] [--kind <value>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <slug>` | app slug | required |
+| `--app <slug>` | app slug (for subcommands that take one) |  |
 | `--kind <value>` | rule kind | one of `route` · `rewrite` · `redirect` · `headers` · `cors` · `jwt` · `ip` · `validate` · `limit` · `geo` · `maintenance` · `throttle` · `budget` · `cache` · `respond` · `retry` · `circuit_breaker` · `waf` · `async` · `challenge` |
 
 ### edge-rules list
@@ -16299,16 +16328,21 @@ Inspect queues and manage queue bindings
 
 Tail the wake queue
 
-`gregale queue tail <slug>`
+`gregale queue tail [--app <SLUG>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 
 ### queue send
 
 Enqueue a wake request
 
-`gregale queue send [--payload <J>] [--queue-name <QUEUE>] [--environment <ENV>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] <slug>`
+`gregale queue send [--app <SLUG>] [--payload <J>] [--queue-name <QUEUE>] [--environment <ENV>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 | `--payload <J>` | JSON payload (inline \| @file \| -) |  |
 | `--queue-name <QUEUE>` | logical queue name |  |
 | `--environment <ENV>` | registered project environment with an enabled queue binding |  |
@@ -16320,28 +16354,41 @@ Enqueue a wake request
 
 Wait for the next queue row the platform delivers
 
-`gregale queue receive <slug>`
+`gregale queue receive [--app <SLUG>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 
 ### queue state
 
 Show queue state
 
-`gregale queue state <slug>`
+`gregale queue state [--app <SLUG>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 
 ### queue status
 
 Show queue depth, scaling, bindings, and liveness
 
-`gregale queue status <slug>`
+`gregale queue status [--app <SLUG>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 
 ### queue peek
 
 Peek at the next wake
 
-`gregale queue peek [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] <slug>`
+`gregale queue peek [--app <SLUG>] [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 | `--limit <N>` | page size (1..100, default 50) |  |
 | `--cursor <CURSOR>` | opaque continuation cursor |  |
 | `--before <CURSOR>` | alias for --cursor |  |
@@ -16351,10 +16398,11 @@ Peek at the next wake
 
 Inspect the dead-letter queue
 
-`gregale queue dead-letter [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] <slug>`
+`gregale queue dead-letter [--app <SLUG>] [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 | `--limit <N>` | page size (1..100, default 50) |  |
 | `--cursor <CURSOR>` | opaque continuation cursor |  |
 | `--before <CURSOR>` | alias for --cursor |  |
@@ -16364,7 +16412,11 @@ Inspect the dead-letter queue
 
 Ack a wake
 
-`gregale queue ack <slug> <row-id>`
+`gregale queue ack [--app <SLUG>] <slug> <row-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 
 ### queue setup
 
@@ -16550,18 +16602,6 @@ List managed realtime endpoints
 
 `gregale realtime list <app>`
 
-### realtime usage
-
-Show open connections against the fair-use limit and usage
-
-`gregale realtime usage [--hours <N>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--hours <N>` | UTC hours of usage to show (1-744, default 24) |  |
-
-Includes recent hourly usage.
-
 ### realtime get
 
 Show one endpoint and safe auth-rotation status
@@ -16650,12 +16690,6 @@ List live connections for an endpoint
 | `--limit <N>` | maximum connections to return (1-1000) |  |
 | `--cursor <TOKEN>` | continue from a previous response&#39;s next_cursor |  |
 
-### realtime occupancy
-
-Count subscribers and presence members on channels
-
-`gregale realtime occupancy <app> <endpoint-id> <channel>...`
-
 ### realtime drain
 
 Close a bounded, filtered set of live connections
@@ -16721,162 +16755,11 @@ Send a message to every connection of one principal
 | `--notification-collapse-key <KEY>` | replace queued alerts that share this key |  |
 | `--notification-not-before <TIME>` | earliest push delivery, RFC3339, at most 48 hours ahead |  |
 
-### realtime edit-message
-
-Replace a retained message&#39;s payload
-
-`gregale realtime edit-message [--channel <CHANNEL>] [--principal <ID>] --message-id <ID> --expected-version <N> [--data <DATA>] [--data-stdin] [--binary] <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--channel <CHANNEL>` | retained channel (or --principal) |  |
-| `--principal <ID>` | principal inbox (or --channel) |  |
-| `--message-id <ID>` | stable publisher message ID | required |
-| `--expected-version <N>` | current message version | required |
-| `--data <DATA>` | replacement payload (or --data-stdin) |  |
-| `--data-stdin` | read the replacement bytes from stdin |  |
-| `--binary` | the replacement is binary |  |
-
-### realtime delete-message
-
-Delete a retained message
-
-`gregale realtime delete-message [--channel <CHANNEL>] [--principal <ID>] --message-id <ID> --expected-version <N> <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--channel <CHANNEL>` | retained channel (or --principal) |  |
-| `--principal <ID>` | principal inbox (or --channel) |  |
-| `--message-id <ID>` | stable publisher message ID | required |
-| `--expected-version <N>` | current message version | required |
-
 ### realtime receipt
 
 Show client acknowledgements for one sent message
 
 `gregale realtime receipt <app> <endpoint-id> <message-id>`
-
-### realtime inbox
-
-Read a principal&#39;s retained inbox
-
-`gregale realtime inbox --principal <ID> [--consumer <DEVICE>] [--after <SEQUENCE>] [--limit <N>] <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified OIDC principal to inspect | required |
-| `--consumer <DEVICE>` | device checkpoint to inspect |  |
-| `--after <SEQUENCE>` | read after this sequence (default: the device checkpoint or zero) |  |
-| `--limit <N>` | messages to read, 1-100 |  |
-
-### realtime read-progress
-
-Show how far a principal has read
-
-`gregale realtime read-progress --principal <ID> [--channel <CHANNEL>] <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-| `--channel <CHANNEL>` | channel; omit for the principal inbox |  |
-
-### realtime mark-read
-
-Mark messages read through a sequence
-
-`gregale realtime mark-read --principal <ID> [--channel <CHANNEL>] --sequence <N> <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-| `--channel <CHANNEL>` | channel; omit for the principal inbox |  |
-| `--sequence <N>` | mark seen through this sequence | required |
-
-### realtime push
-
-Configure push providers, devices and preferences
-
-#### realtime push providers
-
-List configured push providers
-
-`gregale realtime push providers <app> <endpoint-id>`
-
-#### realtime push configure
-
-Set one push provider&#39;s configuration from JSON
-
-`gregale realtime push configure --provider <PROVIDER> [--file <PATH>] [--enabled[=true|false]] <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--provider <PROVIDER>` | push provider | required; one of `fcm` · `apns` · `webpush` |
-| `--file <PATH>` | request JSON file (default: stdin) |  |
-| `--enabled[=true|false]` | enable or disable the provider (default true) | one of `true` · `false` |
-
-#### realtime push devices
-
-List a principal&#39;s registered devices
-
-`gregale realtime push devices --principal <ID> <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-
-#### realtime push register
-
-Register a principal&#39;s device from JSON
-
-`gregale realtime push register --principal <ID> --device <NAME> [--file <PATH>] <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-| `--device <NAME>` | stable device name | required |
-| `--file <PATH>` | request JSON file (default: stdin) |  |
-
-#### realtime push unregister
-
-Remove a principal&#39;s registered device
-
-`gregale realtime push unregister --principal <ID> --device <NAME> <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-| `--device <NAME>` | stable device name | required |
-
-#### realtime push deliveries
-
-List recent push deliveries for a principal
-
-`gregale realtime push deliveries --principal <ID> <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-
-#### realtime push preferences
-
-Show a principal&#39;s notification preferences
-
-`gregale realtime push preferences --principal <ID> <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-
-#### realtime push set-preferences
-
-Replace a principal&#39;s notification preferences from JSON
-
-`gregale realtime push set-preferences --principal <ID> [--file <PATH>] <app> <endpoint-id>`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--principal <ID>` | verified principal | required |
-| `--file <PATH>` | request JSON file (default: stdin) |  |
 
 ### realtime close
 
@@ -16911,8 +16794,8 @@ Publish a message to a channel
 | `--data <DATA>` | message text (or --data-stdin) |  |
 | `--data-stdin` | read the message from stdin |  |
 | `--binary` | send as a binary frame |  |
-| `--delivery <MODE>` | live by default or preview-only retained (up to 4 KiB) | one of `live` · `retained` |
-| `--idempotency-key <KEY>` | stable retry key; required for retained delivery |  |
+| `--delivery <MODE>` | live (the default) | one of `live` |
+| `--idempotency-key <KEY>` | stable retry key |  |
 
 ### realtime auth
 

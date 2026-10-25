@@ -55,7 +55,7 @@ func TestRealtimeUsageHandler(t *testing.T) {
 	if _, err := store.SyncRealtimeNodeConnections(ctx, "node-a", []state.RealtimeAccountConnections{{AccountID: acct.ID, Connections: 4}}); err != nil {
 		t.Fatal(err)
 	}
-	svc := &Service{Host: &usageTestHost{pg: store}}
+	svc := &Service{Host: &usageTestHost{pg: store}, Preview: everyonePreview(t)}
 	get := func(query string) *httptest.ResponseRecorder {
 		rec := httptest.NewRecorder()
 		svc.RealtimeUsage(rec, httptest.NewRequest(http.MethodGet, "/v1/usage/realtime"+query, nil), acct)

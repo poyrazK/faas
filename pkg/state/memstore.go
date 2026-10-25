@@ -25582,7 +25582,7 @@ func (m *MemStore) UsageByAccount(_ context.Context, accountID string, since tim
 // MarkAccountDeletionPending flips the account into deleted_pending.
 // Idempotent: if already pending, the original timestamp survives so
 // the grace window's anchor stays at the customer's first ask.
-func (m *MemStore) MarkAccountDeletionPending(_ context.Context, id string) error {
+func (m *MemStore) MarkAccountDeletionPending(_ context.Context, id string, _ ...AccountDeletionOption) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	a, ok := m.accounts[id]
@@ -25840,7 +25840,7 @@ func (m *MemStore) ClearQuotaWarning(_ context.Context, id string) error {
 // backfill-stamp path used by pkg/meter.Dunning to plant a stamp on
 // a legacy row that entered past_due before the migration column
 // existed.
-func (m *MemStore) MarkDunningStep(_ context.Context, id string, from, to AccountStatus) error {
+func (m *MemStore) MarkDunningStep(_ context.Context, id string, from, to AccountStatus, _ ...AccountDeletionOption) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if org, ok := m.orgs[id]; ok && !org.Personal {

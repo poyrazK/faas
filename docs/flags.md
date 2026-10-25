@@ -151,7 +151,7 @@ relies on the gateway replacing reserved headers. It does not authenticate an
 arbitrary public request by itself.
 
 ```ts
-import { createGregaleFetch, GregaleFlags, GREGALE_FLAG_EVIDENCE_HEADER } from '@gregale/sdk-node';
+import { createGregaleFetch, GregaleFlags, GREGALE_FLAG_EVIDENCE_HEADER } from '@gregale/sdk-node/preview';
 
 const flags = new GregaleFlags({ apiURL: 'https://api.gregale.dev' });
 await flags.start();
@@ -220,7 +220,7 @@ decision headers from Gregale's gateway, pins one bundle for the request, and
 replaces the response evidence header before response headers are sent:
 
 ~~~python
-from faas_sdk import GregaleFlags, GregaleFlagsMiddleware
+from faas_sdk.preview import GregaleFlags, GregaleFlagsMiddleware
 
 flags = GregaleFlags(api_url="https://api.gregale.dev")
 async def on_startup():
@@ -264,7 +264,7 @@ or proof of a business side effect.
 
 ~~~python
 import httpx
-from faas_sdk import AsyncGregaleFlagsTransport
+from faas_sdk.preview import AsyncGregaleFlagsTransport
 
 service_client = httpx.AsyncClient(transport=AsyncGregaleFlagsTransport(flags))
 ~~~
@@ -276,7 +276,7 @@ as the Node and Python clients. Start it with Gregale's HTTPS API URL and apply
 its middleware to handlers served behind the Gregale gateway:
 
 ```go
-flags, err := faas.NewGregaleFlags(faas.GregaleFlagsOptions{
+flags, err := preview.NewGregaleFlags(preview.GregaleFlagsOptions{
     APIURL: "https://api.gregale.dev",
 })
 if err != nil {
@@ -328,7 +328,7 @@ Pass the request context through the standard `net/http` client to carry only
 decisions marked used into managed service calls:
 
 ```go
-serviceHTTP := &http.Client{Transport: faas.GregaleFlagsTransport{Flags: flags}}
+serviceHTTP := &http.Client{Transport: preview.GregaleFlagsTransport{Flags: flags}}
 request, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
     "http://billing.svc.gregale/exports", body)
 ```

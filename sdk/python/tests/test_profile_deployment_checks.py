@@ -1,11 +1,11 @@
-from faas_sdk.api.apps import (
+from faas_sdk.preview.api.apps import (
     get_profile_deployment_check,
     list_profile_deployment_checks,
     save_profile_deployment_policy,
 )
-from faas_sdk.models.profile_deployment_check import ProfileDeploymentCheck
-from faas_sdk.models.profile_deployment_policy import ProfileDeploymentPolicy
-from faas_sdk.models.save_profile_deployment_policy_request import SaveProfileDeploymentPolicyRequest
+from faas_sdk.preview.models.profile_deployment_check import ProfileDeploymentCheck
+from faas_sdk.preview.models.profile_deployment_policy import ProfileDeploymentPolicy
+from faas_sdk.preview.models.save_profile_deployment_policy_request import SaveProfileDeploymentPolicyRequest
 
 
 def test_automatic_policy_and_pending_receipt_preserve_settings():

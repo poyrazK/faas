@@ -101,6 +101,9 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			traceContext := *traceInput
 			traceContext.AppMaintenanceLoaded = true
 			traceContext.AppMaintenanceMode = app.MaintenanceMode
+			traceContext.EdgeAnswersLoaded = true
+			traceContext.AppHealthPath = edgeruletrace.EdgeAnswerHealthPath(app.Manifest.HealthPath, app.Manifest.Healthz)
+			traceContext.AppHealthPathWakes = app.Manifest.HealthPathWakes
 			effectiveLimits := appEffectiveLimits(app, acct.Plan)
 			traceContext.AppRequestBudgetLoaded = effectiveLimits.RequestBudgetMS > 0 && effectiveLimits.RequestBudgetMaxMS > 0
 			traceContext.RequestBudgetMS = effectiveLimits.RequestBudgetMS

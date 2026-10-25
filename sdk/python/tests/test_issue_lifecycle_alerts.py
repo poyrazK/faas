@@ -1,12 +1,12 @@
-from faas_sdk.api.apps import (
+from faas_sdk.preview.api.apps import (
     get_issue_lifecycle_alert_policy,
     preview_issue_lifecycle_alert,
     set_issue_lifecycle_alert_policy,
 )
-from faas_sdk.models.issue_lifecycle_alert_policy import IssueLifecycleAlertPolicy
-from faas_sdk.models.issue_lifecycle_alert_preview import IssueLifecycleAlertPreview
-from faas_sdk.models.preview_issue_lifecycle_alert_request import PreviewIssueLifecycleAlertRequest
-from faas_sdk.models.update_issue_lifecycle_alert_policy_request import UpdateIssueLifecycleAlertPolicyRequest
+from faas_sdk.preview.models.issue_lifecycle_alert_policy import IssueLifecycleAlertPolicy
+from faas_sdk.preview.models.issue_lifecycle_alert_preview import IssueLifecycleAlertPreview
+from faas_sdk.preview.models.preview_issue_lifecycle_alert_request import PreviewIssueLifecycleAlertRequest
+from faas_sdk.preview.models.update_issue_lifecycle_alert_policy_request import UpdateIssueLifecycleAlertPolicyRequest
 
 
 def test_lifecycle_policy_retains_revision_and_empty_environment_selection():

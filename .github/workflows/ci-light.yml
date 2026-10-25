@@ -406,6 +406,15 @@ jobs:
         run: make memstore-stubs-check
       - name: daemon environment contract
         run: make env-contract-check
+      # ADR-20261023115741: every customer entry point (route, CLI command,
+      # manifest key, flag, SDK file, table, ...) maps to a row of
+      # docs/ga-capability-inventory.md, so nothing ships without a tier and
+      # a platform flag; the catalog's generated artefacts stay in sync.
+      - name: capability coverage, catalog matrix and SDK spec
+        run: |
+          make capability-coverage-check
+          make capabilities-check
+          make sdk-spec-check
       - name: restore-drill script contract
         run: make lint-drill
       - name: forbid mutating SQL in normal runbooks

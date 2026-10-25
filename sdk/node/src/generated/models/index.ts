@@ -2501,6 +2501,7 @@ export type { QueueWorkloadProfileResponse } from './QueueWorkloadProfileRespons
 export type { QuotaBlock } from './QuotaBlock.js';
 export type { RaiseOverageCapRequest } from './RaiseOverageCapRequest.js';
 export type { RealtimeAcknowledgement } from './RealtimeAcknowledgement.js';
+export type { RealtimeChannelRule } from './RealtimeChannelRule.js';
 export type { RealtimeChannelWebhookFilter } from './RealtimeChannelWebhookFilter.js';
 export type { RealtimeConsumerGroup } from './RealtimeConsumerGroup.js';
 export type { RealtimeConsumerGroupBatch } from './RealtimeConsumerGroupBatch.js';

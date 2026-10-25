@@ -196,6 +196,11 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 		"2026/10/14 19:44:14 INFO framework_ready stream proxy started vsock_port=1027\n",
 		"2026/10/14 19:44:14 INFO secrets loaded count=3\n",
 		"2026/10/14 19:44:14 INFO api_env loaded count=10\n",
+		// Hunt 14 H14-27: first line of every cold boot on rc.294.
+		"2026/10/25 02:54:27 INFO fork exec listener started vsock_port=1034\n",
+		// Hunt 14 H14-28: a function runner's startup lines on every cold boot.
+		"2026/10/25 02:29:10 go124 runner: serving on :8080 (handler=/app/handler, h2c-capable for app_protocol∈{http2,grpc})\n",
+		"2026/10/25 02:29:10 h2c-listener: listening on :8080 (H2C-capable)\n",
 		"2026-10-14T07:14:45.514973340 [c26f50da-1f34-494c-9ecc-acd797734558:main] Vmm is stopping.\n",
 		"2026-10-14T07:14:45.515204584 [c26f50da-1f34-494c-9ecc-acd797734558:main] Killing vCPU threads\n",
 		"2026/10/14 00:58:51 INFO order created id=42\n",
@@ -203,6 +208,7 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 		"2026/10/14 09:23:13 INFO job-exit shipped exit_code=3 error_class=failed signal=0 attempt=1\n",
 		"[    2.497231] reboot: Power off not available: System halted instead\n",
 		"workload identity proxy started is fine from an app without the slog stamp\n",
+		"2026/10/25 02:30:00 go124 runner: handler error: exit status 2\n",
 		"hello-gregale listening on :3000\n",
 	} {
 		if _, err := w.Write([]byte(line)); err != nil {
@@ -216,6 +222,7 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 	want := []string{
 		"2026/10/14 00:58:51 INFO order created id=42",
 		"workload identity proxy started is fine from an app without the slog stamp",
+		"2026/10/25 02:30:00 go124 runner: handler error: exit status 2",
 		"hello-gregale listening on :3000",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
@@ -274,5 +281,44 @@ func TestCustomerConsoleWriterBoundsPartialLine(t *testing.T) {
 	lines := ring.Snapshot(1)
 	if len(lines) == 0 || lines[len(lines)-1].Line != "after" {
 		t.Fatalf("an over-long partial line blocked later output: %d lines", len(lines))
+	}
+}
+
+// Production-us rc.294: when h14-py crash-looped, guest-init exited and the
+// kernel's "Attempted to kill init" panic dump (25 lines of registers and
+// call trace) reached the customer log (Hunt 14 H14-26).
+func TestCustomerConsoleDropsTheInitPanicDump(t *testing.T) {
+	ring := logbuf.New(64 << 10)
+	w := &customerConsoleWriter{ring: ring}
+	for _, line := range []string{
+		"[2026-10-25 02:42:34 +0000] [658] [ERROR] Reason: Worker failed to boot.",
+		"guest-init: app crash-looped after 3 restart(s): run [/bin/bash -c gunicorn --workers 2 handler:app]: exit status 3",
+		"[ 6744.209731] Kernel panic - not syncing: Attempted to kill init! exitcode=0x00000100",
+		"[ 6744.213399] CPU: 0 UID: 0 PID: 626 Comm: init Not tainted 6.18.54 #1 PREEMPT(none) ",
+		"[ 6744.216609] Call Trace:",
+		"[ 6744.218838]  dump_stack_lvl+0x27/0x70",
+		"[ 6744.266399] R13: 00001819d52a5008 R14: 00001819d52a6f00 R15: ffffffffffffffff",
+		"[ 6744.271859] Kernel Offset: disabled",
+		"[ 6744.273445] Rebooting in 1 seconds..",
+		"[    0.000000] Linux version 6.18.54 (after reboot, not part of the dump)",
+	} {
+		if _, err := w.Write([]byte(line + "\r\n")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var got []string
+	for _, l := range ring.Snapshot(1) {
+		got = append(got, strings.TrimSpace(l.Line))
+	}
+	joined := strings.Join(got, "\n")
+	for _, keep := range []string{"Worker failed to boot", "guest-init: app crash-looped after 3 restart(s)", "Linux version 6.18.54"} {
+		if !strings.Contains(joined, keep) {
+			t.Errorf("customer line %q was lost:\n%s", keep, joined)
+		}
+	}
+	for _, drop := range []string{"Kernel panic", "Call Trace", "dump_stack_lvl", "R13:", "Rebooting in"} {
+		if strings.Contains(joined, drop) {
+			t.Errorf("panic dump line %q reached the customer log:\n%s", drop, joined)
+		}
 	}
 }

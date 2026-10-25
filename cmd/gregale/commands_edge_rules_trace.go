@@ -127,6 +127,9 @@ func cmdEdgeRulesTrace(args []string) int {
 	}
 	input.AppMaintenanceLoaded = true
 	input.AppMaintenanceMode = app.MaintenanceMode
+	input.EdgeAnswersLoaded = true
+	input.AppHealthPath = edgeruletrace.EdgeAnswerHealthPath(app.Manifest.HealthPath, app.Manifest.Healthz)
+	input.AppHealthPathWakes = app.Manifest.HealthPathWakes
 	input.AsyncWorkloadContextLoaded = true
 	input.AsyncRequestInvocationsEnabled = app.WorkloadClass != "worker" && app.WorkloadClass != "job" && app.Manifest.ExecutionMode != api.ExecutionModeWorker && app.Manifest.ExecutionMode != api.ExecutionModeJob
 	input.AsyncAppRetryPolicyLoaded = true

@@ -18,7 +18,7 @@ import (
 func (s *server) devBridgeStore(w http.ResponseWriter) (state.DevBridgeStore, bool) {
 	store, ok := s.store.(state.DevBridgeStore)
 	if !ok || !s.devBridgeEnabled {
-		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "dev_bridge_unavailable", "Dev Bridge unavailable", "the development bridge preview is not enabled"))
+		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "dev_bridge_unavailable", "Dev Bridge unavailable", "the development bridge preview is not enabled").WithHint(api.PreviewNotEnabledHint))
 		return nil, false
 	}
 	return store, true

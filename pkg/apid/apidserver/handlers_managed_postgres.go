@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -483,4 +484,21 @@ func (s *server) deleteManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 		"binding_id": binding.ID, "database_id": binding.DatabaseID, "app_id": binding.AppID,
 	})
 	writeJSON(w, http.StatusOK, managedPostgresBindingView(binding))
+}
+
+// beforeAccountDelete removes an account's external resources before the
+// grace sweep deletes its row: object buckets, then the managed PostgreSQL
+// databases its deletion includes (ADR-20261024150500).
+func (s *server) beforeAccountDelete(ctx context.Context, acct state.Account) error {
+	if err := s.object.CleanupExpiredAccountObjectBuckets(ctx, acct); err != nil {
+		return err
+	}
+	erasure := managedpostgresapi.AccountErasure{Audit: s.audit.Emit, Log: s.log}
+	if s.managedPostgres != nil {
+		erasure.Databases = s.managedPostgres
+	}
+	if s.managedPostgresBindings != nil {
+		erasure.Bindings = s.managedPostgresBindings
+	}
+	return erasure.BeforeAccountDelete(ctx, acct)
 }

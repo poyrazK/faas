@@ -38,28 +38,8 @@ type (
 	DeclaredRoute             = api.DeclaredRoute
 	RetryPolicyDTO            = api.RetryPolicyDTO
 
-	// End-customer consumers and credentials (ADR-120).
-	CreateAPIConsumerRequest                 = api.CreateAPIConsumerRequest
-	APIConsumerResponse                      = api.APIConsumerResponse
-	APIConsumerListResponse                  = api.APIConsumerListResponse
-	CreateConsumerKeyRequest                 = api.CreateConsumerKeyRequest
-	ConsumerKeyResponse                      = api.ConsumerKeyResponse
-	ConsumerKeyListResponse                  = api.ConsumerKeyListResponse
-	APIConsumerUsageBucketResponse           = api.APIConsumerUsageBucketResponse
-	APIConsumerUsageResponse                 = api.APIConsumerUsageResponse
-	CreateAPIConsumerRateCardRequest         = api.CreateAPIConsumerRateCardRequest
-	APIConsumerRateCardResponse              = api.APIConsumerRateCardResponse
-	APIConsumerRateCardListResponse          = api.APIConsumerRateCardListResponse
-	APIConsumerUsageQuoteBucketResponse      = api.APIConsumerUsageQuoteBucketResponse
-	APIConsumerUsageQuoteResponse            = api.APIConsumerUsageQuoteResponse
-	CreateAPIConsumerUsageStatementRequest   = api.CreateAPIConsumerUsageStatementRequest
-	APIConsumerUsageStatementBucketResponse  = api.APIConsumerUsageStatementBucketResponse
-	APIConsumerUsageStatementResponse        = api.APIConsumerUsageStatementResponse
-	APIConsumerUsageStatementListResponse    = api.APIConsumerUsageStatementListResponse
-	ClaimAPIConsumerUsageStatementRequest    = api.ClaimAPIConsumerUsageStatementRequest
-	APIConsumerUsageStatementHandoffResponse = api.APIConsumerUsageStatementHandoffResponse
-	ResourceProfile                          = api.ResourceProfile
-	ResourceProfileSpec                      = api.ResourceProfileSpec
+	ResourceProfile     = api.ResourceProfile
+	ResourceProfileSpec = api.ResourceProfileSpec
 
 	// Deployments.
 	CreateDeploymentRequest          = api.CreateDeploymentRequest
@@ -138,39 +118,10 @@ type (
 	ObjectStorageUsageResponse    = api.ObjectStorageUsageResponse
 	ManagedPostgresUsageResponse  = api.ManagedPostgresUsageResponse
 
-	// Disposable agent executions. Source and input are accepted only by
-	// CreateExecutionRequest and are never returned in execution receipts.
-	ExecutionRuntime                     = api.ExecutionRuntime
-	ExecutionProfile                     = api.ExecutionProfile
-	ExecutionNetworkMode                 = api.ExecutionNetworkMode
-	ExecutionNetworkPolicy               = api.ExecutionNetworkPolicy
-	ExecutionLimitRequest                = api.ExecutionLimitRequest
-	ExecutionFile                        = api.ExecutionFile
-	ExecutionArtifactInput               = api.ExecutionArtifactInput
-	ExecutionArtifact                    = api.ExecutionArtifact
-	CreateExecutionArtifactGrantRequest  = api.CreateExecutionArtifactGrantRequest
-	ExecutionArtifactGrantResponse       = api.ExecutionArtifactGrantResponse
-	RevokeExecutionArtifactGrantResponse = api.RevokeExecutionArtifactGrantResponse
-	CreateExecutionRequest               = api.CreateExecutionRequest
-	ResolvedExecutionLimits              = api.ResolvedExecutionLimits
-	ExecutionProfileCapability           = api.ExecutionProfileCapability
-	ExecutionCapabilityLimits            = api.ExecutionCapabilityLimits
-	ExecutionCapabilitiesResponse        = api.ExecutionCapabilitiesResponse
-	ExecutionUsage                       = api.ExecutionUsage
-	ExecutionFailure                     = api.ExecutionFailure
-	ExecutionStatus                      = api.ExecutionStatus
-	ExecutionResponse                    = api.ExecutionResponse
-	ExecutionListResponse                = api.ExecutionListResponse
-	ExecutionWorkflowResponse            = api.ExecutionWorkflowResponse
-	ExecutionWorkflowStatusCounts        = api.ExecutionWorkflowStatusCounts
-	ExecutionWorkflowUsage               = api.ExecutionWorkflowUsage
-	ExecutionEventType                   = api.ExecutionEventType
-	ExecutionEventData                   = api.ExecutionEventData
-	ExecutionEvent                       = api.ExecutionEvent
-	ExecutionEventParseError             = api.ExecutionEventParseError
-	WatchExecutionOptions                = api.WatchExecutionOptions
-	ExecutionWatcher                     = api.ExecutionWatcher
-	RunOptions                           = api.RunOptions
+	ExecutionWorkflowResponse     = api.ExecutionWorkflowResponse
+	ExecutionWorkflowStatusCounts = api.ExecutionWorkflowStatusCounts
+	ExecutionWorkflowUsage        = api.ExecutionWorkflowUsage
+	ExecutionEventParseError      = api.ExecutionEventParseError
 
 	// Auth (password).
 	PasswordLoginRequest  = api.PasswordLoginRequest
@@ -187,37 +138,16 @@ type (
 	CliAuthExchangeRequest  = api.CliAuthExchangeRequest
 	CliAuthExchangeResponse = api.CliAuthExchangeResponse
 
-	// Async + queues + delayed tasks.
-	CreateAppTaskRequest               = api.CreateAppTaskRequest
-	AppTaskKind                        = api.AppTaskKind
-	AppTaskStatus                      = api.AppTaskStatus
-	AppTaskFailure                     = api.AppTaskFailure
-	AppTaskResponse                    = api.AppTaskResponse
-	AppTaskListResponse                = api.AppTaskListResponse
 	AsyncInvokeResponse                = api.AsyncInvokeResponse
 	InvokeResponse                     = api.InvokeResponse
 	InvokeRequest                      = api.InvokeRequest
-	ExclusiveOperationRequest          = api.ExclusiveOperationRequest
-	ExclusiveJobOperationRequest       = api.ExclusiveJobOperationRequest
-	ExclusiveAppTaskOperationRequest   = api.ExclusiveAppTaskOperationRequest
-	ExclusiveTriggerBindingRequest     = api.ExclusiveTriggerBindingRequest
-	ExclusiveTriggerBindingRecord      = api.ExclusiveTriggerBindingRecord
-	ExclusiveOperationAccepted         = api.ExclusiveOperationAccepted
-	ExclusiveOperationPolicy           = api.ExclusiveOperationPolicy
-	ExclusiveWorkPolicyRecord          = api.ExclusiveWorkPolicyRecord
-	ExclusiveWorkPolicyList            = api.ExclusiveWorkPolicyList
-	ExclusiveOperationRecord           = api.ExclusiveOperationRecord
 	ManagedOperationResult             = api.ManagedOperationResult
 	ManagedOperationEffect             = api.ManagedOperationEffect
-	OperationEffectRecord              = api.OperationEffectRecord
 	OperationEffectPayload             = api.OperationEffectPayload
 	InvocationDestinations             = api.InvocationDestinations
 	QueueSendRequest                   = api.QueueSendRequest
 	QueueSendResponse                  = api.QueueSendResponse
 	QueueReceiveResponse               = api.QueueReceiveResponse
-	SendAppMessageRequest              = api.SendAppMessageRequest
-	SendAppMessageResponse             = api.SendAppMessageResponse
-	DeliverAppEventRequest             = api.DeliverAppEventRequest
 	CreateAppWebhookRequest            = api.CreateAppWebhookRequest
 	UpdateAppWebhookRequest            = api.UpdateAppWebhookRequest
 	AppWebhookResponse                 = api.AppWebhookResponse
@@ -230,7 +160,6 @@ type (
 	CreateAccountReleaseWebhookRequest = api.CreateAccountReleaseWebhookRequest
 	UpdateAccountReleaseWebhookRequest = api.UpdateAccountReleaseWebhookRequest
 	AccountReleaseWebhookResponse      = api.AccountReleaseWebhookResponse
-	DeliverAppEventResponse            = api.DeliverAppEventResponse
 	DelayedTaskRequest                 = api.DelayedTaskRequest
 	DelayedTaskResponse                = api.DelayedTaskResponse
 	ListDelayedTasksResponse           = api.ListDelayedTasksResponse
@@ -373,16 +302,6 @@ type (
 	UpdateQueueBindingRequest  = api.UpdateQueueBindingRequest
 	InvokeWork                 = api.InvokeWork
 )
-type CommitEventPublication = api.CommitEventPublication
-type CommitSourceResponse = api.CommitSourceResponse
-type CommitReceiptResponse = api.CommitReceiptResponse
-type CommitOperationResponse = api.CommitOperationResponse
-type CommitEventRequest = api.CommitEventRequest
-type CommitRouting = api.CommitRouting
-type CreateCommitSourceRequest = api.CreateCommitSourceRequest
-
-type CommitBlockedEventResponse = api.CommitBlockedEventResponse
-type CommitBlockedEventsResponse = api.CommitBlockedEventsResponse
 
 type IssueSplitMatcher = api.IssueSplitMatcher
 type IssueSplitPreview = api.IssueSplitPreview
@@ -391,145 +310,9 @@ type IssueSplitRule = api.IssueSplitRule
 type IssueSplitRuleUndoRequest = api.IssueSplitRuleUndoRequest
 type IssueSplitRuleUpdate = api.IssueSplitRuleUpdate
 
-type CommitPublicationHistoryItem = api.CommitPublicationHistoryItem
-type CommitPublicationHistoryResponse = api.CommitPublicationHistoryResponse
-
-type CommitSubscriberWaitResult = api.CommitSubscriberWaitResult
-
-type CommitDeliveryReport = api.CommitDeliveryReport
-type CommitDeliveryReportItem = api.CommitDeliveryReportItem
-
-type CommitDeliveryReportChange = api.CommitDeliveryReportChange
-
-// Commit delivery report recovery evidence aliases.
-type CommitDeliveryReportSubscriber = api.CommitDeliveryReportSubscriber
-type CommitDeliveryReportRecovery = api.CommitDeliveryReportRecovery
-
-// CommitRecoveryPlan describes current read-only recovery eligibility.
-type CommitRecoveryPlan = api.CommitRecoveryPlan
-type CommitRecoveryPlanItem = api.CommitRecoveryPlanItem
-type CommitRecoveryPlanAction = api.CommitRecoveryPlanAction
-
-type CommitRecoveryApplyResult = api.CommitRecoveryApplyResult
-type CommitRecoveryApplyItem = api.CommitRecoveryApplyItem
-
-type EventRoutingRecoveryExpectation = api.EventRoutingRecoveryExpectation
-type ReplayEventFanoutFailureRequest = api.ReplayEventFanoutFailureRequest
-type ReplayEventFanoutFailureResponse = api.ReplayEventFanoutFailureResponse
-
-// CommitRecoveryStatusResult keeps current delivery evidence separate from saved attempts.
-type CommitRecoveryStatusResult = api.CommitRecoveryStatusResult
-type CommitRecoveryStatusItem = api.CommitRecoveryStatusItem
-type CommitRecoveryDiagnostics = api.CommitRecoveryDiagnostics
-
-type CommitRecoveryStatusSelection = api.CommitRecoveryStatusSelection
-
-type CommitRecoveryStatusObservation = api.CommitRecoveryStatusObservation
-type CommitRecoveryStatusChange = api.CommitRecoveryStatusChange
-
-// CommitRecoveryStatusSettled reports terminal acknowledged execution coverage.
-func CommitRecoveryStatusSettled(out CommitRecoveryStatusResult) bool {
-	return api.CommitRecoveryStatusSettled(out)
-}
-
-// CommitRecoveryMonitoring describes a bounded watch invocation.
-type CommitRecoveryMonitoring = api.CommitRecoveryMonitoring
-
-// CommitRecoveryWatchOptions controls retries and optional observation freshness.
-type CommitRecoveryWatchOptions = api.CommitRecoveryWatchOptions
-
-type EventBacklogRecipient = api.EventBacklogRecipient
-type EventBacklogResponse = api.EventBacklogResponse
-type EventBacklogConsumer = api.EventBacklogConsumer
-type EventOrderingBlocker = api.EventOrderingBlocker
-type EventBacklogOptions = api.EventBacklogOptions
-type EventBacklogFilters = api.EventBacklogFilters
-
-type EventRecipientBlockerQuery = api.EventRecipientBlockerQuery
-type EventRecipientBlockerResponse = api.EventRecipientBlockerResponse
-
-type CommitRecoveryDiagnosticProgress = api.CommitRecoveryDiagnosticProgress
-
-type EventRecipientBlockerBatchRequest = api.EventRecipientBlockerBatchRequest
-type EventRecipientBlockerBatchItem = api.EventRecipientBlockerBatchItem
-type EventRecipientBlockerBatchResponse = api.EventRecipientBlockerBatchResponse
-
-type CommitRecoveryDiagnosticsOptions = api.CommitRecoveryDiagnosticsOptions
-
-type CommitRecoveryDiagnosticObservation = api.CommitRecoveryDiagnosticObservation
-type CommitRecoveryDiagnosticRouting = api.CommitRecoveryDiagnosticRouting
-type CommitRecoveryDiagnosticOrdering = api.CommitRecoveryDiagnosticOrdering
-type CommitRecoveryDiagnosticChange = api.CommitRecoveryDiagnosticChange
-
-type CommitRecoveryDiagnosticEstimate = api.CommitRecoveryDiagnosticEstimate
-
-type CommitRecoveryDiagnosticConsumer = api.CommitRecoveryDiagnosticConsumer
-type CommitRecoveryDiagnosticWaiting = api.CommitRecoveryDiagnosticWaiting
-
-type CommitRecoveryConsumerStall = api.CommitRecoveryConsumerStall
-type CommitRecoveryPersistentBlocker = api.CommitRecoveryPersistentBlocker
-
-type CommitRecoveryBlockerIncident = api.CommitRecoveryBlockerIncident
-type CommitRecoveryBlockerTransition = api.CommitRecoveryBlockerTransition
-
-type CommitRecoveryAlertOutbox = api.CommitRecoveryAlertOutbox
-type CommitRecoveryAlertAcknowledgement = api.CommitRecoveryAlertAcknowledgement
-
-// AcknowledgeCommitRecoveryAlerts removes exact pending alerts without live reads.
-func AcknowledgeCommitRecoveryAlerts(status CommitRecoveryStatusResult, acks []CommitRecoveryAlertAcknowledgement) (CommitRecoveryStatusResult, error) {
-	return api.AcknowledgeCommitRecoveryAlerts(status, acks)
-}
-
-// EventConsumerDeliveryHealth combines independent delivery health reads.
-type EventConsumerDeliveryHealth = api.EventConsumerDeliveryHealth
-type EventConsumerPendingSample = api.EventConsumerPendingSample
-
-type EventConsumerHealth = api.EventConsumerHealth
-type EventConsumerExecutionHealth = api.EventConsumerExecutionHealth
-type EventSubscriptionDeliveryControl = api.EventSubscriptionDeliveryControl
-type EventSubscriptionCapacityRequest = api.EventSubscriptionCapacityRequest
-type EventSubscriptionCapacityGuard = api.EventSubscriptionCapacityGuard
-type EventSubscriptionCapacityCommandReceipt = api.EventSubscriptionCapacityCommandReceipt
-type EventCircuitBreakerResponse = api.EventCircuitBreakerResponse
-type EventCircuitBreakerPolicy = api.EventCircuitBreakerPolicy
-
-// EventDeliveryHealthWatchOptions configures health alerts and optional checkpointing.
-type EventDeliveryHealthWatchOptions = api.EventDeliveryHealthWatchOptions
-type EventDeliveryHealthWatchResult = api.EventDeliveryHealthWatchResult
-type EventDeliveryHealthCondition = api.EventDeliveryHealthCondition
-type EventDeliveryHealthAlert = api.EventDeliveryHealthAlert
-
-type EventConsumerCapacityWaits = api.EventConsumerCapacityWaits
-type EventConsumerCapacityPressure = api.EventConsumerCapacityPressure
-type EventConsumerCapacityScope = api.EventConsumerCapacityScope
-
-type EventConsumerWaitingReasons = api.EventConsumerWaitingReasons
-
 // EventPendingWaitingReasonCountsComplete verifies an exact known-reason partition.
 func EventPendingWaitingReasonCountsComplete(counts map[string]int64, pending int64) bool {
 	return api.EventPendingWaitingReasonCountsComplete(counts, pending)
-}
-
-// EventDeliveryHealthCheckpoint stores historical watch evidence and pending alerts.
-type EventDeliveryHealthCheckpoint = api.EventDeliveryHealthCheckpoint
-
-// EventDeliveryHealthAcknowledgement selects an exact pending notification.
-type EventDeliveryHealthAcknowledgement = api.EventDeliveryHealthAcknowledgement
-
-func ValidateEventDeliveryHealthCheckpoint(saved EventDeliveryHealthCheckpoint) error {
-	return api.ValidateEventDeliveryHealthCheckpoint(saved)
-}
-
-func AcknowledgeEventDeliveryHealthAlerts(saved EventDeliveryHealthCheckpoint, acks []EventDeliveryHealthAcknowledgement) (EventDeliveryHealthCheckpoint, error) {
-	return api.AcknowledgeEventDeliveryHealthAlerts(saved, acks)
-}
-
-// EventDeliveryHealthSLOOptions configures sustained window targets.
-type EventDeliveryHealthSLOOptions = api.EventDeliveryHealthSLOOptions
-type EventDeliveryHealthSLOObservation = api.EventDeliveryHealthSLOObservation
-
-func EvaluateEventConsumerDeliverySLO(h EventConsumerDeliveryHealth, options EventDeliveryHealthSLOOptions) ([]EventDeliveryHealthSLOObservation, error) {
-	return api.EvaluateEventConsumerDeliverySLO(h, options)
 }
 
 // Deployment-bound source-map artifact publication and verified occurrence metadata.
@@ -566,57 +349,11 @@ type IssueTrackerProviderStatus = api.IssueTrackerProviderStatus
 type NativeIssueTrackerStatus = api.NativeIssueTrackerStatus
 type UpdateNativeIssueTrackerStatusRequest = api.UpdateNativeIssueTrackerStatusRequest
 
-type CreateNativeIssueTicketRequest = api.CreateNativeIssueTicketRequest
-type NativeIssueTicketResult = api.NativeIssueTicketResult
-
 type IssueTrackerAutoSync = api.IssueTrackerAutoSync
 type UpdateIssueTrackerAutoSyncRequest = api.UpdateIssueTrackerAutoSyncRequest
 
-type IssueTrackerLinearConnection = api.IssueTrackerLinearConnection
-type UpdateIssueTrackerLinearConnectionRequest = api.UpdateIssueTrackerLinearConnectionRequest
-
-type CreateNativeLinearIssueTicketRequest = api.CreateNativeLinearIssueTicketRequest
-
 type NativeLinearIssueTrackerStatus = api.NativeLinearIssueTrackerStatus
 type UpdateNativeLinearIssueTrackerStatusRequest = api.UpdateNativeLinearIssueTrackerStatusRequest
-
-type EventExecutionReconciliation = api.EventExecutionReconciliation
-
-type EventExecutionLineageCase = api.EventExecutionLineageCase
-type EventExecutionLineageCases = api.EventExecutionLineageCases
-type RetryEventExecutionLineageCaseRequest = api.RetryEventExecutionLineageCaseRequest
-
-type EventExecutionLineageRetrySelection = api.EventExecutionLineageRetrySelection
-type CreateEventExecutionLineageRetryJobRequest = api.CreateEventExecutionLineageRetryJobRequest
-type EventExecutionLineageRetryJobItem = api.EventExecutionLineageRetryJobItem
-type EventExecutionLineageRetryJob = api.EventExecutionLineageRetryJob
-type EventExecutionLineageRetryJobHealth = api.EventExecutionLineageRetryJobHealth
-type EventExecutionLineageRetryJobHealthSample = api.EventExecutionLineageRetryJobHealthSample
-
-type CancelEventExecutionLineageRetryJobRequest = api.CancelEventExecutionLineageRetryJobRequest
-
-type EventExecutionLineageCaseBackfill = api.EventExecutionLineageCaseBackfill
-type RequestEventExecutionLineageCaseBackfillRequest = api.RequestEventExecutionLineageCaseBackfillRequest
-
-type ControlEventExecutionLineageCaseBackfillRequest = api.ControlEventExecutionLineageCaseBackfillRequest
-
-type EventExecutionLineageRetryJobSummary = api.EventExecutionLineageRetryJobSummary
-type EventExecutionLineageRetryJobs = api.EventExecutionLineageRetryJobs
-type EventExecutionLineageRetryJobAttentionOptions = api.EventExecutionLineageRetryJobAttentionOptions
-type EventExecutionLineageRetryJobAttentionPage = api.EventExecutionLineageRetryJobAttentionPage
-
-type ControlEventExecutionLineageRetryJobRequest = api.ControlEventExecutionLineageRetryJobRequest
-
-type EventExecutionLineageRetryJobControlReceipt = api.EventExecutionLineageRetryJobControlReceipt
-type EventExecutionLineageRetryJobControls = api.EventExecutionLineageRetryJobControls
-type EventExecutionLineageRetryJobControlFilters = api.EventExecutionLineageRetryJobControlFilters
-
-type EventSubscriptionCapacityCommands = api.EventSubscriptionCapacityCommands
-type EventSubscriptionCapacityCommandsQuery = api.EventSubscriptionCapacityCommandsQuery
-
-type EventSubscriptionCapacityCommandBudget = api.EventSubscriptionCapacityCommandBudget
-
-type EventDeliveryHealthConfirmation = api.EventDeliveryHealthConfirmation
 
 // Subscription token-bucket controls and retained command evidence.
 type (
@@ -634,10 +371,6 @@ type (
 )
 
 // Opt-in Go SDK consumer pacing and deadline-risk watch diagnostics.
-type (
-	EventDeliveryRateRiskOptions = api.EventDeliveryRateRiskOptions
-	EventDeliveryRateEvidence    = api.EventDeliveryRateEvidence
-)
 
 // Complete retained pending-recipient observations.
 type EventSubscriptionPendingSummary = api.EventSubscriptionPendingSummary
@@ -651,9 +384,7 @@ type (
 
 // Full, disjoint deadline-window counts and opt-in sustained count alerts.
 type (
-	EventSubscriptionDeadlineWindow    = api.EventSubscriptionDeadlineWindow
-	EventDeliveryDeadlineWindowOptions = api.EventDeliveryDeadlineWindowOptions
-	EventDeliveryDeadlineRatioOptions  = api.EventDeliveryDeadlineRatioOptions
+	EventSubscriptionDeadlineWindow = api.EventSubscriptionDeadlineWindow
 )
 
 // EventSubscriptionDeadlineWindowCountsComplete checks complete known cohort partitions.
@@ -665,15 +396,6 @@ func EventSubscriptionDeadlineWindowCountsComplete(v EventSubscriptionDeadlineWi
 const EventDeliveryDeadlineRatioBasisPointsMax = api.EventDeliveryDeadlineRatioBasisPointsMax
 
 // Read-only alert-to-current-triage correlation helpers.
-type (
-	EventDeadlineInvestigationOptions = api.EventDeadlineInvestigationOptions
-	EventDeadlineAlertReference       = api.EventDeadlineAlertReference
-	EventDeadlineInvestigation        = api.EventDeadlineInvestigation
-	EventDeadlineExplanations         = api.EventDeadlineExplanations
-	EventDeadlineExplanation          = api.EventDeadlineExplanation
-	EventDeadlineRoutingExplanation   = api.EventDeadlineRoutingExplanation
-	EventDeadlineOrderingExplanation  = api.EventDeadlineOrderingExplanation
-)
 
 // Lifecycle alert policy and draft preview types.
 type (

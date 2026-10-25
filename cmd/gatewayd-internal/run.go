@@ -61,6 +61,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/audit"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/chaos"
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -268,14 +269,16 @@ func egressBreakerGroup(source gateway.CircuitRuleSource, log *slog.Logger) *cir
 // tuning.
 func circuitRuleSource(store interface {
 	ListEdgeRulesForApp(context.Context, string) ([]state.EdgeRule, error)
-}) gateway.CircuitRuleSource {
+}, capabilityAllowed func(capability, accountID string) bool) gateway.CircuitRuleSource {
 	return func(ctx context.Context, appID string) ([]gateway.EdgeRuleCircuitBreakerResolved, error) {
 		rules, err := store.ListEdgeRulesForApp(ctx, appID)
 		if err != nil {
 			return nil, err
 		}
 		compiled, _ := compileCircuitBreakerRules(rules)
-		return compiled, nil
+		// ADR-20261023115741: with circuit breaking off, the app keeps the
+		// platform default tuning.
+		return capabilityRules(capabilityAllowed, capabilityCircuitBreaking, compiled, func(r *gateway.EdgeRuleCircuitBreakerResolved) string { return r.AccountID }), nil
 	}
 }
 
@@ -1147,9 +1150,14 @@ type runDeps struct {
 	// setting. Nil keeps monetization off.
 	apiMonetization func() bool
 	// platformFlags is every platform flag gatewayd-internal decides (the
-	// api_monetization flag, ADR-20261020170649, and the edge feature flags,
-	// ADR-20261023113721), kept current by the runtime-config watcher.
+	// api_monetization flag, ADR-20261020170649, the edge feature flags,
+	// ADR-20261023113721, and the product capability flags,
+	// ADR-20261023115741), kept current by the runtime-config watcher.
 	platformFlags *platformflags.Set
+	// capabilityAllowed decides product capability flags per account
+	// (ADR-20261023115741) from platformFlags. Nil releases every
+	// capability; runOnPool sets it.
+	capabilityAllowed func(capability, accountID string) bool
 	// Private identity is built only with the process-wide drain tracker.
 	runtimeIngressIdentity http.Handler
 	// cachedHostPolicy is set unless FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY
@@ -1649,7 +1657,12 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
 	apiMonetizationFlag := runtimeconfig.NewBoolFlag(api.APIMonetizationEnabled())
 	deps.apiMonetization = apiMonetizationFlag.Load
-	deps.platformFlags = platformflags.NewSet(nil)
+	deps.platformFlags = platformflags.NewSet(capflags.Bootstrap(osGetenv))
+	capabilityAllowed, err := capabilityDecision(deps.platformFlags)
+	if err != nil {
+		return err
+	}
+	deps.capabilityAllowed = capabilityAllowed
 	hstsFlag := runtimeconfig.NewBoolFlag(httpsec.HSTSEnabledFromEnv(osGetenv))
 	httpsec.SetHSTSEnabled(hstsFlag.Load())
 	authoritativeHostPolicy, err := api.TrafficAuthoritativeHostPolicyEnabled(osGetenv("FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY"))
@@ -2339,6 +2352,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// db.NotifyEdgeRuleChanged is wired via PGBackend.WithEdgeRules
 	// below.
 	deps.edgeRulesMatcher = newGatewaydEdgeRules(pgStore, log, deps.edgeValidateAdapter, deps.metrics).withPublicHostRouter(router)
+	deps.edgeRulesMatcher.capabilityAllowed = deps.capabilityAllowed
 	// The backend is constructed before the production matcher so the
 	// dependency graph can be assembled in one pass. Re-attach the concrete
 	// matcher here (rather than leaving a typed-nil interface in PGBackend),
@@ -2917,6 +2931,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	handler.WithAPIMonetization(deps.apiMonetization)
 	handler.WithAPIMonetizationFlags(deps.platformFlags)
 	handler.WithEdgeFeatureFlags(deps.platformFlags)
+	handler.WithCapabilities(deps.capabilityAllowed)
 	// ADR-978: order the warm-capacity queue by route priority. Rules are
 	// read only for requests that have to queue, through a 30 s cache.
 	if pgStore := deps.pgStore; pgStore != nil {
@@ -4044,7 +4059,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		guestServiceAliasAllowed = newServiceAliasAllowed(pgStore)
 		// ADR-201 §2: one instance-health breaker for the service proxy and
 		// the public path (H4-68), tuned per app by kind=circuit_breaker.
-		breaker := egressBreakerGroup(circuitRuleSource(pgStore), log)
+		breaker := egressBreakerGroup(circuitRuleSource(pgStore, deps.capabilityAllowed), log)
 		handler.WithCircuitBreaker(breaker)
 		// ADR-977: opt-in wake-ahead along service edges measured by this
 		// gateway. A prediction restores through the same wake path as a

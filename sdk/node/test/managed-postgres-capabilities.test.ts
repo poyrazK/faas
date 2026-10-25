@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, ManagedPostgresService, type ManagedPostgresCapabilities, type ManagedPostgresResize, type ManagedPostgresComputePolicyChange } from '../src/index.js';
+import { FaaSClient, ManagedPostgresService, type ManagedPostgresCapabilities, type ManagedPostgresResize, type ManagedPostgresComputePolicyChange } from '../src/preview.js';
 
 test('PostgreSQL capabilities preserve reader support with a closed rollout gate', async (t) => {
   const capabilities: ManagedPostgresCapabilities = {

@@ -380,7 +380,9 @@ func cmdAddPostgres(args []string) int {
 			return printErr("Could not find managed PostgreSQL database", fmt.Errorf("no managed database named or identified %q", reference))
 		}
 		if strings.TrimSpace(*region) == "" {
-			PrintUsage(os.Stderr, usage, "add")
+			// The compacted usage line drops the optional --region, so a bare
+			// usage here never named the missing flag (Hunt 14 H14-41).
+			printCommandValidation(os.Stderr, "add postgres: no managed database named %q exists yet; pass --region REGION to create it, or --database REF to attach an existing one\n", name)
 			return 1
 		}
 		createCtx := api.ContextWithIdempotencyKey(ctx, addResourceIdempotencyKey("database", appName, name, *scope, *environmentKey))

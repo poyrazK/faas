@@ -113,12 +113,20 @@ func (q *Queries) LockOwner(ctx context.Context, db DBTX, orgID pgtype.UUID) err
 
 const markDeletion = `-- name: MarkDeletion :execrows
 UPDATE accounts SET status = 'deleted_pending',
-       deletion_requested_at = coalesce(deletion_requested_at, now())
-WHERE id = $1 AND status IN ('active', 'deleted_pending')
+       deletion_requested_at = coalesce(deletion_requested_at, now()),
+       deletion_includes_managed_postgres = deletion_includes_managed_postgres OR $1::boolean
+WHERE id = $2 AND status IN ('active', 'deleted_pending')
 `
 
-func (q *Queries) MarkDeletion(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error) {
-	result, err := db.Exec(ctx, markDeletion, id)
+type MarkDeletionParams struct {
+	IncludeManagedPostgres bool
+	ID                     pgtype.UUID
+}
+
+// A repeat request never withdraws an inclusion already recorded for this
+// pending deletion (ADR-20261024150500).
+func (q *Queries) MarkDeletion(ctx context.Context, db DBTX, arg MarkDeletionParams) (int64, error) {
+	result, err := db.Exec(ctx, markDeletion, arg.IncludeManagedPostgres, arg.ID)
 	if err != nil {
 		return 0, err
 	}

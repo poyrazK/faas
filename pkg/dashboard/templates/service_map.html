@@ -16,7 +16,7 @@
   </style>
 </head>
 <body>
-<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a><a href="/dashboard/projects">Projects</a><a href="/dashboard/service-map">Service map</a></nav></header>
+<header><nav><strong>Gregale</strong><a href="/dashboard/">Overview</a>{{if $.On "projects"}}<a href="/dashboard/projects">Projects</a>{{end}}{{if $.On "service-map"}}<a href="/dashboard/service-map">Service map</a>{{end}}</nav></header>
 <main>
 {{template "email-verification-banner" .}}
 <h1>Service map</h1>

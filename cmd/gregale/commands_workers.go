@@ -605,6 +605,9 @@ func cmdWorkersScale(args []string) int {
 			policy.Targets = nil
 			policy.Target = &api.ScalingTarget{Metric: newScaling.Metric, Name: newScaling.Name, Value: newScaling.Target}
 		}
+		// An app deployed without a scaling policy has none to copy; the
+		// zero cooldowns were rejected (Hunt 14 H14-20).
+		fillScalingPolicyCooldowns(&policy)
 		req.ScalingPolicy = &policy
 	}
 

@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
 import {once} from 'node:events';
-import {AppsService, FaaSClient, type IssueLifecycleAlertPolicy} from '../src/index.js';
+import {AppsService, FaaSClient, type IssueLifecycleAlertPolicy} from '../src/preview.js';
 
 test('lifecycle policy and draft preview preserve scope, revision and cooldown evidence', async t => {
   const policy: IssueLifecycleAlertPolicy = {revision: 3, environments: ['production'], cooldown_seconds: 1800};

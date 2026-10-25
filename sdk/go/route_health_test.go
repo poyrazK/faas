@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -16,7 +18,7 @@ func TestRouteHealthClient(t *testing.T) {
 		case "GET /v1/apps/demo/route-health/gate":
 			_, _ = w.Write([]byte(`{"app_id":"app","mode":"report","revision":0,"routes":[]}`))
 		case "PUT /v1/apps/demo/route-health/gate":
-			var req faas.SetRouteHealthGateRequest
+			var req preview.SetRouteHealthGateRequest
 			if json.NewDecoder(r.Body).Decode(&req) != nil || req.ExpectedRevision == nil || *req.ExpectedRevision != 0 || len(req.Routes) != 1 || req.OnRegression != "abort" || !req.Routes[0].CheckLatency || req.Routes[0].MaxP95MS != 300 {
 				t.Error("intent binding")
 			}
@@ -32,15 +34,15 @@ func TestRouteHealthClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	g, err := client.GetRouteHealthGate(context.Background(), "demo")
+	g, err := preview.Wrap(client).GetRouteHealthGate(context.Background(), "demo")
 	if err != nil || g.Mode != "report" {
 		t.Fatal(err)
 	}
-	g, err = client.SetRouteHealthGate(context.Background(), "demo", faas.SetRouteHealthGateRequest{Mode: "enforce", OnRegression: "abort", ExpectedRevision: &g.Revision, Routes: []faas.RouteHealthRoute{{Method: "POST", Path: "/checkout", CheckLatency: true, MaxP95MS: 300}}})
+	g, err = preview.Wrap(client).SetRouteHealthGate(context.Background(), "demo", preview.SetRouteHealthGateRequest{Mode: "enforce", OnRegression: "abort", ExpectedRevision: &g.Revision, Routes: []preview.RouteHealthRoute{{Method: "POST", Path: "/checkout", CheckLatency: true, MaxP95MS: 300}}})
 	if err != nil || len(g.Routes) != 1 || g.OnRegression != "abort" || !g.Routes[0].CheckLatency || g.Routes[0].MaxP95MS != 300 {
 		t.Fatal(err)
 	}
-	r, err := client.GetRouteHealthReport(context.Background(), "demo", "candidate")
+	r, err := preview.Wrap(client).GetRouteHealthReport(context.Background(), "demo", "candidate")
 	if err != nil || r.Status != "regressed" || r.DeploymentID != "candidate" || r.MinimumLatencyRequests != 100 || len(r.Routes) != 1 || r.Routes[0].LatencyStatus != "regressed" {
 		t.Fatal(err)
 	}
