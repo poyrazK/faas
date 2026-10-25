@@ -1031,6 +1031,15 @@ const (
 	// the operator rebuilds the base.
 	CodeScanCritical = "scan_critical"
 
+	// Titles of the scan_critical refusals vmmd's boot gate returns before
+	// it starts a VM. These depend on the node (its configured base
+	// generation and its cache), not on the artifact, so schedd re-places
+	// such a wake on another node (ADR-20261022184531). pkg/fcvm's tests
+	// pin the boot gate to these titles.
+	ScanCriticalTitleGenerationUnavailable = "runtime base generation unavailable"
+	ScanCriticalTitleGenerationMismatch    = "scan sidecar generation mismatch"
+	ScanCriticalTitleSidecarMissing        = "scan sidecar missing"
+
 	// CodeBuildSBOMUnavailable is returned by the SBOM GET handler
 	// when no SBOM populator has run for this build (pre-PR build, or
 	// the imaged syft populator in pkg/imaged/loop.go has not yet

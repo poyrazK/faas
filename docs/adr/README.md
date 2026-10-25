@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Per-key object deletion fences](20261025115958-object-storage-per-key-deletion.md) — one active deletion per key, not per bucket; writes are fenced only by a deletion of their key; deletions yield to inventory; bulk deletes run eight entries at once (amends ADR-547)
 - [ADR-20261025094915: Managed PostgreSQL compute caps hold on running databases](20261025094915-managed-postgres-compute-caps-on-running-databases.md) — proposed; Free suspends at its allowance, paid plans suspend at it unless the customer turns overage on (then at 2×); Neon project quotas, never a deletion (amends ADR-1430, ADR-155)
 - [Each Compose include interpolates with its own .env](20261025090000-compose-include-env-files.md)
 - [Image runs read registry credentials from a Docker config](20261025110000-image-run-docker-config.md)
@@ -35,6 +36,7 @@
 - [ADR-20261023104734: Daemons log in as runtime roles, not the schema owner](20261023104734-database-runtime-roles.md) — faas_runtime group, per-daemon roles, opt-in FAAS_DB_ROLE
 - [Product Control trial-to-paid conversion](20261022180921-product-control-trial-conversion.md)
 - [Native runtime snapshot capture for park and warm](20261022184951-native-runtime-snapshot-capture.md)
+- [ADR-20261022184531: Wake failover away from a node that is up but not ready](20261022184531-node-wake-failover.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
 - [ADR-20261024014500: Honeytokens and unseal telemetry](20261024014500-honeytokens-and-unseal-telemetry.md)

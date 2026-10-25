@@ -156,7 +156,7 @@ func deployPrivateTCPApp(t *testing.T, ctx context.Context, h *e2etest.Harness, 
 	if got := postOK(t, h, key, "/v1/apps", create); got != http.StatusCreated {
 		t.Fatalf("create app %q: status=%d", create.Slug, got)
 	}
-	raw, status := postMultipartDeploymentWithOverrides(t, h, key, create.Slug, source, false, nil, "")
+	raw, status := postMultipartDeploymentWithFields(t, h, key, create.Slug, source, false, nil, "")
 	if status != http.StatusAccepted {
 		t.Fatalf("deploy %s: status=%d body=%s", create.Slug, status, raw)
 	}

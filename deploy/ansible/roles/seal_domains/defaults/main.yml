@@ -113,5 +113,25 @@ faas_seal_domain_edge_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_edge_readers_verified: false
 
+# Operator-local files from `gregalectl seal-domain init --domain alerting`.
+# Control-plane hosts stage both: meterd opens alert rule webhook secrets,
+# notification channel destinations and MCP readiness provider keys with the
+# identity, and apid seals them to the recipient.
+faas_seal_domain_alerting_identity_src: ""
+faas_seal_domain_alerting_recipient_src: ""
+
+# Who apid seals alerting values to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose meterd holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_alerting_readers_verified
+faas_seal_domain_alerting_writes: ""
+
+# Set true only after every meterd reports
+# faas_seal_domain_loaded{domain="alerting"} 1 and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_alerting_readers_verified: false
+
 faas_seal_domain_db_env: /etc/faas/compute-db.env
 faas_seal_domain_textfile_dir: /var/lib/node_exporter/textfile_collector

@@ -297,6 +297,11 @@ var BuildDomainRecipient = &buildDomainRecipient
 var BuildWriteMode = &buildWriteMode
 var EdgeDomainRecipient = &edgeDomainRecipient
 var EdgeWriteMode = &edgeWriteMode
+var AlertingDomainRecipient = &alertingDomainRecipient
+var AlertingWriteMode = &alertingWriteMode
+var SealPresetWebhookSecret = sealPresetWebhookSecret
+var SealMCPFallbackSecret = sealMCPFallbackSecret
+var SealMCPPagerDutyKey = sealMCPPagerDutyKey
 var SealAppLogDrainAuthHeader = sealAppLogDrainAuthHeader
 var SourceWriteMode = &sourceWriteMode
 var SseChannels = &sseChannels
@@ -1715,3 +1720,5 @@ func (s *server) DashboardWidgetAppForTest(ctx context.Context, acct state.Accou
 func (s *server) IncidentAppVisibleForTest(ctx context.Context, acct state.Account, app state.App) bool {
 	return incidentsHost{s}.AppVisible(ctx, acct, app)
 }
+
+var ValidateAndPlanSidecars = validateAndPlanSidecars

@@ -1,11 +1,13 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strconv"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -38,6 +40,96 @@ func accountDeadLetterNotFound(id string) *api.Problem {
 		"Dead-letter event not found", "no dead-letter event with id "+strconv.Quote(id)+" belongs to this account.")
 }
 
+// deadLetterAccess decides, once per app and request, whether the account
+// view may show an app's dead letters. Rows are keyed by the creating
+// account, so it applies the account inventories' rule (appaccess.VisibleApps):
+// a company app is hidden from a creator who left the company and from a key
+// bound to another one. Account-owned job events carry no app, and an app
+// whose row is gone keeps the account scope it had.
+type deadLetterAccess struct {
+	s     *server
+	acct  state.Account
+	actor state.Account
+	seen  map[string]bool
+}
+
+func (s *server) deadLetterAccess(r *http.Request, acct state.Account) *deadLetterAccess {
+	return &deadLetterAccess{s: s, acct: acct, actor: actorAccount(r, acct), seen: map[string]bool{"": true}}
+}
+
+// visible takes the request's context, which carries the principal whose
+// key binding appaccess checks.
+func (a *deadLetterAccess) visible(ctx context.Context, appID string) (bool, error) {
+	if v, ok := a.seen[appID]; ok {
+		return v, nil
+	}
+	app, err := a.s.store.AppByID(ctx, appID)
+	if errors.Is(err, state.ErrNotFound) {
+		a.seen[appID] = true
+		return true, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	shown, err := appaccess.VisibleAppsContext(ctx, a.s.store, a.actor, []state.App{app})
+	if err != nil {
+		return false, err
+	}
+	a.seen[appID] = len(shown) == 1
+	return a.seen[appID], nil
+}
+
+// visibleEvent reads one account event and refuses one this principal may not
+// see with ErrNotFound, the same answer as another account's event.
+func (a *deadLetterAccess) visibleEvent(ctx context.Context, eventID string) (state.DeadLetterEvent, error) {
+	ev, err := a.s.store.DeadLetterEventByAccountID(ctx, a.acct.ID, eventID)
+	if err != nil {
+		return state.DeadLetterEvent{}, err
+	}
+	if ok, err := a.visible(ctx, ev.AppID); err != nil || !ok {
+		if err == nil {
+			err = state.ErrNotFound
+		}
+		return state.DeadLetterEvent{}, err
+	}
+	return ev, nil
+}
+
+// visibleEvents pages the account's dead letters and returns up to limit this
+// principal may see (only unreplayed ones when unreplayed is set). Collecting
+// before acting keeps the keyset cursor on rows a purge has not removed.
+func (a *deadLetterAccess) visibleEvents(ctx context.Context, limit int, unreplayed bool) ([]state.DeadLetterEvent, error) {
+	var out []state.DeadLetterEvent
+	before := ""
+	for range deadLetterAccountScanPages {
+		page, err := a.s.store.ListDeadLetterEventsForAccount(ctx, a.acct.ID, deadLetterEventsMaxLimit, before)
+		if err != nil {
+			return nil, err
+		}
+		for _, ev := range page {
+			if unreplayed && ev.ReplayedAt != nil {
+				continue
+			}
+			if ok, err := a.visible(ctx, ev.AppID); err != nil {
+				return nil, err
+			} else if ok {
+				if out = append(out, ev); len(out) == limit {
+					return out, nil
+				}
+			}
+		}
+		if len(page) < deadLetterEventsMaxLimit {
+			return out, nil
+		}
+		before = page[len(page)-1].ID
+	}
+	return out, nil
+}
+
+// deadLetterAccountScanPages bounds how far a batch looks past events it may
+// not touch.
+const deadLetterAccountScanPages = 50
+
 func parseAccountDeadLetterLimit(w http.ResponseWriter, r *http.Request, operation string) (int, bool) {
 	limit := 20
 	if raw := r.URL.Query().Get("limit"); raw != "" {
@@ -68,10 +160,17 @@ func (s *server) listAccountDeadLetterEvents(w http.ResponseWriter, r *http.Requ
 		api.WriteProblem(w, api.ErrInternal("account dead-letter apps"))
 		return
 	}
+	access := s.deadLetterAccess(r, acct)
 	out := api.AccountDeadLetterEventsResponse{Events: make([]api.DeadLetterEvent, 0, len(events))}
 	for _, ev := range events {
-		out.Events = append(out.Events, accountDeadLetterEventResponse(ev, appSlugs))
+		if ok, err := access.visible(r.Context(), ev.AppID); err != nil {
+			api.WriteProblem(w, api.ErrInternal("account dead-letter app access"))
+			return
+		} else if ok {
+			out.Events = append(out.Events, accountDeadLetterEventResponse(ev, appSlugs))
+		}
 	}
+	// The cursor follows the page read, so hidden rows never end paging.
 	if len(events) == limit && len(events) > 0 {
 		out.NextBefore = events[len(events)-1].ID
 	}
@@ -80,7 +179,7 @@ func (s *server) listAccountDeadLetterEvents(w http.ResponseWriter, r *http.Requ
 
 func (s *server) getAccountDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	eventID := r.PathValue("id")
-	ev, err := s.store.DeadLetterEventByAccountID(r.Context(), acct.ID, eventID)
+	ev, err := s.deadLetterAccess(r, acct).visibleEvent(r.Context(), eventID)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, accountDeadLetterNotFound(eventID))
@@ -99,7 +198,11 @@ func (s *server) getAccountDeadLetterEvent(w http.ResponseWriter, r *http.Reques
 
 func (s *server) replayAccountDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	eventID := r.PathValue("id")
-	ev, err := s.store.ReplayDeadLetterEventForAccount(r.Context(), acct.ID, eventID)
+	_, err := s.deadLetterAccess(r, acct).visibleEvent(r.Context(), eventID)
+	var ev state.DeadLetterEvent
+	if err == nil {
+		ev, err = s.store.ReplayDeadLetterEventForAccount(r.Context(), acct.ID, eventID)
+	}
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.ops.ObserveDLQReplay("account", "not_found")
@@ -124,7 +227,7 @@ func (s *server) replayAllAccountDeadLetterEvents(w http.ResponseWriter, r *http
 	if !ok {
 		return
 	}
-	replayed, err := s.store.ReplayDeadLetterEventsForAccount(r.Context(), acct.ID, limit)
+	replayed, err := s.replayVisibleAccountDeadLetters(r, acct, limit)
 	if err != nil {
 		s.ops.ObserveDLQReplay("account", "error")
 		api.WriteProblem(w, appevents.EventDeliveryReplayProblem(err, "account dead-letter replay"))
@@ -143,7 +246,11 @@ func (s *server) replayAllAccountDeadLetterEvents(w http.ResponseWriter, r *http
 
 func (s *server) deleteAccountDeadLetterEvent(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	eventID := r.PathValue("id")
-	if err := s.store.DeleteDeadLetterEventForAccount(r.Context(), acct.ID, eventID); err != nil {
+	_, err := s.deadLetterAccess(r, acct).visibleEvent(r.Context(), eventID)
+	if err == nil {
+		err = s.store.DeleteDeadLetterEventForAccount(r.Context(), acct.ID, eventID)
+	}
+	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			s.ops.ObserveDLQPurge("account", "not_found")
 			api.WriteProblem(w, accountDeadLetterNotFound(eventID))
@@ -165,7 +272,7 @@ func (s *server) purgeAccountDeadLetterEvents(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	purged, err := s.store.DeleteDeadLetterEventsForAccount(r.Context(), acct.ID, limit)
+	purged, err := s.purgeVisibleAccountDeadLetters(r, acct, limit)
 	if err != nil {
 		s.ops.ObserveDLQPurge("account", "error")
 		api.WriteProblem(w, api.ErrInternal("account dead-letter purge"))
@@ -180,4 +287,45 @@ func (s *server) purgeAccountDeadLetterEvents(w http.ResponseWriter, r *http.Req
 		})
 	}
 	writeJSON(w, http.StatusOK, api.AccountDeadLetterPurgeResponse{Purged: purged})
+}
+
+// replayVisibleAccountDeadLetters replays up to limit unreplayed events this
+// principal may see, one at a time. A row another request replayed or purged
+// meanwhile is skipped.
+func (s *server) replayVisibleAccountDeadLetters(r *http.Request, acct state.Account, limit int) (int, error) {
+	events, err := s.deadLetterAccess(r, acct).visibleEvents(r.Context(), limit, true)
+	if err != nil {
+		return 0, err
+	}
+	replayed := 0
+	for _, ev := range events {
+		if _, err := s.store.ReplayDeadLetterEventForAccount(r.Context(), acct.ID, ev.ID); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				continue
+			}
+			return replayed, err
+		}
+		replayed++
+	}
+	return replayed, nil
+}
+
+// purgeVisibleAccountDeadLetters purges up to limit events this principal may
+// see, one at a time.
+func (s *server) purgeVisibleAccountDeadLetters(r *http.Request, acct state.Account, limit int) (int, error) {
+	events, err := s.deadLetterAccess(r, acct).visibleEvents(r.Context(), limit, false)
+	if err != nil {
+		return 0, err
+	}
+	purged := 0
+	for _, ev := range events {
+		if err := s.store.DeleteDeadLetterEventForAccount(r.Context(), acct.ID, ev.ID); err != nil {
+			if errors.Is(err, state.ErrNotFound) {
+				continue
+			}
+			return purged, err
+		}
+		purged++
+	}
+	return purged, nil
 }

@@ -277,6 +277,8 @@ type Server struct {
 	ops   *wire.OpsMetrics
 	fcVer string
 	log   *slog.Logger
+	// baseReadiness answers Ping's base generation report (ADR-20261022184531).
+	baseReadiness *CachedBaseGenerationReadiness
 	// diverged (ADR-740) lists instances that were served a developer live
 	// patch; their snapshot captures are refused. nil disables the guard.
 	diverged *DivergedInstances
@@ -1758,17 +1760,26 @@ func buildInstanceStatsRow(
 // both gRPC socket reachability and that vmmd's goroutine
 // scheduler is responsive enough to schedule this handler. Idempotent
 // + side-effect free; no backing Manager call.
-func (s *Server) Ping(_ context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingResponse, error) {
+func (s *Server) Ping(ctx context.Context, _ *vmmdpb.PingRequest) (*vmmdpb.PingResponse, error) {
 	const op = "Ping"
 	start := time.Now()
 	defer func() { s.ops.Observe(op, time.Since(start), nil) }()
-	return &vmmdpb.PingResponse{
+	resp := &vmmdpb.PingResponse{
 		FcVersion:                          s.fcVer,
 		ServerTime:                         timestamppb.Now(),
 		SupportsSecretAliases:              true,
 		SupportsImageHealthcheck:           true,
 		SupportsImageHealthcheckMonitoring: true,
-	}, nil
+	}
+	// ADR-20261022184531: schedd's heartbeat marks a node that cannot adopt
+	// its configured base generation degraded. The report is cached; Ping
+	// never waits for shared storage.
+	for _, base := range s.baseReadiness.Report(ctx) {
+		resp.BaseGenerations = append(resp.BaseGenerations, &vmmdpb.BaseGenerationReadiness{
+			BaseKey: base.BaseKey, Generation: base.Generation, Adoptable: base.Adoptable, Reason: base.Reason,
+		})
+	}
+	return resp, nil
 }
 
 // UpdateEgressAllowlist (ADR-031 + ADR-033, tier-2 PR-B) walks the

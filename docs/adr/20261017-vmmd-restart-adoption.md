@@ -1118,6 +1118,12 @@ Each slice is one reviewable change on a branch. Slices 2–4 are behind
      host; its next rollout still drains (the serving vmmd wrote no adoption
      blocks) and starts vmmd with both on; the rollout after that skips the
      drain when the check allows it.
+   - **Production step 1 (2026-10-25).** `group_vars/compute_nodes/
+     vmmd_adoption.yml` turns `vmmd_adoption_record` on for every compute
+     node; adoption stays off, so rollouts still drain and each vmmd start
+     runs the dry run. Step 2, after one release whose dry run refuses
+     nothing (`vmmd_adoption_refused_total`), turns `vmmd_adopt_running_vms`
+     on for one canary host.
 5. **fsn-4 acceptance** (§5), then flip `adopt_running_vms` to true by default.
 
 ## Risks
