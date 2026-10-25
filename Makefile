@@ -708,6 +708,7 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-pg-wal-prune_test.sh
 	bash deploy/scripts/faas-pg-backup-contract-preflight_test.sh
 	bash deploy/scripts/faas-check-compute-edges_test.sh
+	bash deploy/scripts/cloudflare-app-edge-tunnel_test.sh
 	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
 .PHONY: m8-evidence-check

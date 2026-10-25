@@ -91,9 +91,45 @@ func TestControlPlaneStandbyTakeover(t *testing.T) {
 		t.Errorf("takeover must first refuse a host whose database is still a standby: %v", first)
 	}
 	var install map[string]any
-	for _, task := range takeover {
-		if name, _ := task.body["name"].(string); name == "control_plane_standby — install the files with the primary's ownership" {
+	pathCheck, firstRootWrite := -1, -1
+	for i, task := range takeover {
+		name, _ := task.body["name"].(string)
+		if name == "control_plane_standby — install the files with the primary's ownership" {
 			install = task.body
+		}
+		if name == "control_plane_standby — refuse staged paths outside the control-plane state list" {
+			pathCheck = i
+		}
+		_, group := task.body["ansible.builtin.group"]
+		_, user := task.body["ansible.builtin.user"]
+		_, file := task.body["ansible.builtin.file"]
+		_, shell := task.body["ansible.builtin.shell"]
+		if firstRootWrite < 0 && (group || user || file || shell) {
+			firstRootWrite = i
+		}
+	}
+	// A restored bundle is encrypted, not signed: its index must not choose
+	// arbitrary root-owned paths (CodeQL triage 2026-10-25).
+	if pathCheck < 0 || firstRootWrite < 0 || pathCheck > firstRootWrite {
+		t.Errorf("takeover must refuse unlisted staged paths before creating users or installing files (check at %d, first write at %d)", pathCheck, firstRootWrite)
+	} else {
+		check := takeover[pathCheck].body
+		vars, _ := check["vars"].(map[string]any)
+		expr, _ := vars["control_plane_standby_unlisted"].(string)
+		for _, want := range []string{"faas_standby_sync_files", "faas_standby_sync_trees", "faas_standby_sync_exclude", "control_plane_standby_index.directories", `\.\.?(/|$)`} {
+			if !strings.Contains(expr, want) {
+				t.Errorf("path check does not consider %q:\n%s", want, expr)
+			}
+		}
+		loaded := false
+		for _, task := range takeover[:pathCheck] {
+			args, _ := task.body["ansible.builtin.include_vars"].(map[string]any)
+			if f, _ := args["file"].(string); strings.HasSuffix(f, "/vars/cp_state_files.yml") {
+				loaded = true
+			}
+		}
+		if !loaded {
+			t.Error("takeover must load vars/cp_state_files.yml before checking staged paths")
 		}
 	}
 	script, _ := install["ansible.builtin.shell"].(string)

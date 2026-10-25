@@ -1,12 +1,15 @@
 # seal_domains
 
-Stages per-reader seal-domain identities (ADR 20261022111812). Five domains
+Stages per-reader seal-domain identities (ADR 20261022111812). Six domains
 are wired, each opened by one daemon:
 - `outbound`: customer AI provider and other outbound credentials (outboundd);
 - `runtime`: customer env vars and secrets (vmmd);
 - `source`: GitHub install tokens and webhook secrets (githubd);
 - `build`: app and job private-registry passwords (imaged);
-- `edge`: app basic-auth credentials and log drain headers (gatewayd-internal).
+- `edge`: app basic-auth credentials and log drain headers (gatewayd-internal);
+- `alerting`: alert rule webhook secrets, notification channel destinations
+  and MCP readiness provider keys (meterd, on the control plane like
+  `outbound`).
 
 The `outbound` steps:
 

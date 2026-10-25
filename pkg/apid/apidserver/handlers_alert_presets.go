@@ -258,11 +258,11 @@ func validateAndDeriveEnablePresetOpts(req api.EnableAlertPresetRequest, default
 // The 1 KiB plaintext ceiling is enforced by the secretbox layer
 // (api.AlertRuleWebhookSecretMaxBytes).
 func sealPresetWebhookSecret(ctx context.Context, plaintext string) (sealed []byte, prob *api.Problem) {
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		return nil, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret")
+	recipients, err := alertingCredentialRecipients()
+	if err != nil {
+		return nil, api.ErrCapacity("alerting recipient not loaded — refusing to seal webhook secret")
 	}
-	out, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(plaintext), api.AlertRuleWebhookSecretMaxBytes)
+	out, err := secretbox.SealBytesTo(recipients, alertRuleSecretSealLabel, []byte(plaintext), api.AlertRuleWebhookSecretMaxBytes)
 	if err != nil {
 		if p := api.AsProblem(err); p != nil {
 			return nil, p
@@ -427,19 +427,14 @@ func (s *server) sendTestAlertPresetCore(ctx context.Context, acct state.Account
 	if rule.WebhookURL == "" {
 		return api.TestAlertPresetResponse{}, api.ErrAlertPresetInvalid("this preset rule delivers only to notification channels; test them with POST /v1/notification-channels/{id}/test")
 	}
-	plaintext, prob := unsealAlertRuleWebhookSecret(ctx, rule.WebhookSecretSealed)
-	if prob != nil {
-		return api.TestAlertPresetResponse{}, prob
-	}
 	deliveryID, evt, observed, prob := buildTestAlertEvent(acct, app, rule, preset)
 	if prob != nil {
 		return api.TestAlertPresetResponse{}, prob
 	}
-	disp := webhookout.NewDispatcher(webhookout.DispatcherOptions{HeaderSet: webhookout.HeaderSetAlert})
-	result := disp.DispatchTest(ctx, webhookout.Target{
-		URL:    rule.WebhookURL,
-		Signer: webhookout.NewSigner(plaintext),
-	}, evt)
+	result, prob := s.dispatchRuleWebhookTest(ctx, acct, rule, evt)
+	if prob != nil {
+		return api.TestAlertPresetResponse{}, prob
+	}
 	// ADR-123 PR-D: stamp an alert_deliveries row with IsTest=true so
 	// operators can reach it via the `?include_test=true` toggle on
 	// the deliveries endpoint. The production fire path
@@ -514,6 +509,33 @@ func (s *server) sendTestAlertPresetCore(ctx context.Context, acct state.Account
 		DeliveryID: deliveryID,
 		Attempts:   result.Attempts,
 	}, nil
+}
+
+// dispatchRuleWebhookTest sends evt to the rule's webhook. A secret apid
+// cannot open is sealed to the alerting domain: meterd sends it and reports
+// the result (ADR 20261022111812, section 3).
+func (s *server) dispatchRuleWebhookTest(ctx context.Context, acct state.Account, rule state.AlertRule, evt webhookout.Event) (webhookout.Result, *api.Problem) {
+	plaintext, prob := unsealAlertRuleWebhookSecret(ctx, rule.WebhookSecretSealed)
+	if prob == nil {
+		disp := webhookout.NewDispatcher(webhookout.DispatcherOptions{HeaderSet: webhookout.HeaderSetAlert})
+		return disp.DispatchTest(ctx, webhookout.Target{URL: rule.WebhookURL, Signer: webhookout.NewSigner(plaintext)}, evt), nil
+	}
+	body, err := json.Marshal(evt)
+	if err != nil {
+		return webhookout.Result{}, api.ErrCapacity("could not encode the test alert")
+	}
+	res, relayProb := s.relayTestSend(ctx, acct.ID, state.AlertTestSendRuleWebhook, rule.ID, body, webhookTestRelayWait)
+	switch {
+	case relayProb != nil:
+		return webhookout.Result{}, relayProb
+	case res.Failure != "":
+		return webhookout.Result{}, prob
+	}
+	out := webhookout.Result{StatusCode: res.StatusCode, Attempts: res.Attempts}
+	if !res.Delivered {
+		out.Err = errors.New(res.Error)
+	}
+	return out, nil
 }
 
 // unsealAlertRuleWebhookSecret pulls the host X25519 identity slice

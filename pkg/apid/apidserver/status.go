@@ -157,6 +157,11 @@ type statusEvaluation struct {
 	dataStatus         string
 	updatedAt          time.Time
 	telemetryAvailable bool
+	// deploymentFailedAccounts is the number of distinct accounts behind the
+	// durable aggregate's platform failures. deploymentTenantsCounted is false
+	// when the percentage came from Prometheus, which cannot tell them apart.
+	deploymentFailedAccounts int
+	deploymentTenantsCounted bool
 }
 
 type deploymentOutcomeCounter interface {
@@ -164,6 +169,14 @@ type deploymentOutcomeCounter interface {
 }
 
 const statusDeploymentOutcomeWindow = 24 * time.Hour
+
+// statusDeploymentBreachMinFailedAccounts is how many distinct accounts must
+// have platform-attributed deployment failures in the window before deployment
+// success can degrade public status. One tenant's failing apps, for example
+// apps that never become ready, point at that tenant rather than the
+// platform: at ~16 deploys a day a single failure is already below the 99%
+// target (Hunt 14 H14-22).
+const statusDeploymentBreachMinFailedAccounts = 2
 
 // newStatusCache builds a cache. promURL is the local Prometheus base
 // (e.g. "http://10.0.0.1:9090"); empty string disables the cache and
@@ -334,6 +347,7 @@ func (c *statusCache) fetch(ctx context.Context) (statusEvaluation, error) {
 			queryPrometheusBuild = false
 			buildAvailable = true
 			snap.legacy.BuildSuccessPct = float64(counts.Succeeded) / float64(counts.Succeeded+counts.Failed) * 100
+			snap.deploymentFailedAccounts, snap.deploymentTenantsCounted = counts.FailedAccounts, true
 		case countErr != nil:
 			queryPrometheusBuild = false
 			c.log.Warn("status: deployment outcome aggregate failed", "err", countErr)
@@ -425,6 +439,10 @@ func applyStatusIndicatorBreaches(snap *statusEvaluation) {
 	}
 	for _, current := range indicators {
 		if !current.available || current.value == nil || !current.breached(*current.value, current.target) {
+			continue
+		}
+		if current.component == publicstatus.ComponentDeployments &&
+			snap.deploymentTenantsCounted && snap.deploymentFailedAccounts < statusDeploymentBreachMinFailedAccounts {
 			continue
 		}
 		snap.states[current.component] = publicstatus.Worse(snap.states[current.component], publicstatus.StateDegraded)

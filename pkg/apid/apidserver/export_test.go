@@ -253,6 +253,8 @@ var CapsDecl = &capsDecl
 var CertDialContextFunc = &certDialContextFunc
 var CertLookupIPFunc = &certLookupIPFunc
 var ChannelSender = &channelSender
+var TestRelayPoll = &testRelayPoll
+var ChannelTestRelayWait = &channelTestRelayWait
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
@@ -295,6 +297,11 @@ var BuildDomainRecipient = &buildDomainRecipient
 var BuildWriteMode = &buildWriteMode
 var EdgeDomainRecipient = &edgeDomainRecipient
 var EdgeWriteMode = &edgeWriteMode
+var AlertingDomainRecipient = &alertingDomainRecipient
+var AlertingWriteMode = &alertingWriteMode
+var SealPresetWebhookSecret = sealPresetWebhookSecret
+var SealMCPFallbackSecret = sealMCPFallbackSecret
+var SealMCPPagerDutyKey = sealMCPPagerDutyKey
 var SealAppLogDrainAuthHeader = sealAppLogDrainAuthHeader
 var SourceWriteMode = &sourceWriteMode
 var SseChannels = &sseChannels
@@ -1712,4 +1719,12 @@ func (s *server) DashboardWidgetAppForTest(ctx context.Context, acct state.Accou
 // app's incidents (ADR-20261022193512).
 func (s *server) IncidentAppVisibleForTest(ctx context.Context, acct state.Account, app state.App) bool {
 	return incidentsHost{s}.AppVisible(ctx, acct, app)
+}
+
+var ValidateAndPlanSidecars = validateAndPlanSidecars
+
+// StatusPageFromStore evaluates the public status page against a Prometheus
+// URL and a store with the durable deployment-outcome aggregate.
+func StatusPageFromStore(ctx context.Context, promURL string, store state.Store) (StatusPage, error) {
+	return newStatusCacheWithStore(promURL, store, slog.Default()).Get(ctx)
 }

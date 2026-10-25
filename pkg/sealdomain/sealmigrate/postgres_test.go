@@ -431,3 +431,69 @@ func TestPostgresMigrateEdge(t *testing.T) {
 		t.Fatalf("second run = %+v, %v; want nothing re-sealed", again, err)
 	}
 }
+
+// TestPostgresMigrateAlerting runs the alerting re-seal against PostgreSQL
+// (ADR 20261022111812): an alert rule's webhook secret and a Slack channel's
+// destination move to the domain alone, keeping their namespaces, and a
+// second run finds them current.
+func TestPostgresMigrateAlerting(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	fleet, domain := mustIdentity(t), mustIdentity(t)
+	suffix := strconv.FormatInt(rand.Int64N(1<<40), 36)
+	account, err := store.CreateAccount(ctx, "alerting-domain-"+suffix+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "alerting-domain-" + suffix, Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secret, err := secretbox.SealBytes(fleet.Recipient(), "alert_rule_secret", []byte("whsec-alerting"), api.AlertRuleWebhookSecretMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rule, err := store.CreateAlertRule(ctx, state.AlertRule{AccountID: account.ID, AppID: app.ID, Name: "alerting-" + suffix, Enabled: true,
+		Metric: state.AlertMetricErrorRate, Comparison: state.AlertGt, Threshold: 5, WindowSpec: state.AlertWindow5m,
+		WebhookURL: "https://example.com/hook", WebhookSecretSealed: secret, CooldownMinutes: 30})
+	if err != nil {
+		t.Fatal(err)
+	}
+	target, err := secretbox.SealBytes(fleet.Recipient(), "alert_channel_target", []byte("https://hooks.slack.com/services/T/B/x"), 512)
+	if err != nil {
+		t.Fatal(err)
+	}
+	channel, err := store.CreateNotificationChannel(ctx, state.NotificationChannel{AccountID: account.ID, Name: "ops-" + suffix, Kind: "slack", TargetSealed: target, TargetHint: "hooks.slack.com"}, api.MaxNotificationChannelsPerAccount)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := sealmigrate.MigrateAlerting(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Scanned < 2 || report.Resealed < 2 {
+		t.Fatalf("report = %+v, want the webhook secret and the channel destination re-sealed", report)
+	}
+	gotRule, err := store.AlertRuleByID(ctx, rule.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ns, plain, err := secretbox.OpenBytes(domain, gotRule.WebhookSecretSealed); err != nil || ns != "alert_rule_secret" || string(plain) != "whsec-alerting" {
+		t.Fatalf("rule secret domain open = %q %q, %v", ns, plain, err)
+	}
+	if _, _, err := secretbox.OpenBytes(fleet, gotRule.WebhookSecretSealed); err == nil {
+		t.Fatal("the fleet identity still opens the re-sealed webhook secret")
+	}
+	gotChannel, err := store.GetNotificationChannel(ctx, account.ID, channel.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ns, _, err := secretbox.OpenBytes(domain, gotChannel.TargetSealed); err != nil || ns != "alert_channel_target" {
+		t.Fatalf("channel destination domain open = %q, %v", ns, err)
+	}
+	again, err := sealmigrate.MigrateAlerting(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil || again.Resealed != 0 {
+		t.Fatalf("second run = %+v, %v; want nothing re-sealed", again, err)
+	}
+}

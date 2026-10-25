@@ -4,6 +4,7 @@
 package fcvm
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -244,6 +245,38 @@ func TestNativeWritableCloneFallbackAndFatalErrors(t *testing.T) {
 				t.Fatal("clone producer changed its original input")
 			}
 		})
+	}
+}
+
+// The fallback keeps a sparse layer sparse: only its data extents are copied.
+func TestNativeWritableCloneFallbackKeepsHoles(t *testing.T) {
+	const size = 4 << 20
+	source := nativeWritableFileFixture(t, "sparse-source.img", "head")
+	if _, err := source.WriteAt([]byte("middle"), 1<<20); err != nil {
+		t.Fatal(err)
+	}
+	if err := source.Truncate(size); err != nil {
+		t.Fatal(err)
+	}
+	var sourceStat unix.Stat_t
+	if err := unix.Fstat(int(source.Fd()), &sourceStat); err != nil || sourceStat.Blocks*512 >= size/2 {
+		t.Skipf("test filesystem does not keep the source sparse: %v", err)
+	}
+	clone := nativeWritableFileFixture(t, "sparse-clone.img", "stale")
+	if err := populateNativeImageClone(t.Context(), source, clone, size, func(int, int) error { return unix.EOPNOTSUPP }); err != nil {
+		t.Fatal(err)
+	}
+	want, err := io.ReadAll(io.NewSectionReader(source, 0, size))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := io.ReadAll(io.NewSectionReader(clone, 0, size+1))
+	if err != nil || !bytes.Equal(got, want) {
+		t.Fatalf("sparse clone content differs: %d bytes, %v", len(got), err)
+	}
+	var cloneStat unix.Stat_t
+	if err := unix.Fstat(int(clone.Fd()), &cloneStat); err != nil || cloneStat.Blocks > sourceStat.Blocks+16 {
+		t.Fatalf("clone allocated %d blocks for a source of %d: %v", cloneStat.Blocks, sourceStat.Blocks, err)
 	}
 }
 

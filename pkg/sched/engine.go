@@ -2946,18 +2946,22 @@ func (e *Engine) admitAndDispatch(ctx context.Context, appID, trigger string, li
 // RPC and no Phase 4 commit. Explicit deployment callers still bypass the
 // request wake gates as before, but now share the complete boot lifecycle.
 func (e *Engine) admitAndDispatchWithOptions(ctx context.Context, appID, deploymentID, mode, trigger string, liftCapacityToResult, bypassGates bool) (WakeResult, error) {
-	used := new(bool)
-	result, err := e.admitAndDispatchOnce(withOwnerCacheUse(ctx, used), appID, deploymentID, mode, trigger, liftCapacityToResult, bypassGates)
-	if *used && errors.Is(err, state.ErrConflict) {
-		// ADR-1741: an admission decided from the owner cache found its
-		// entry stale: the admission insert refused the moved generation, or
-		// a read checked against the entry (the runtime values' owner)
-		// disagreed first. Nothing was admitted; decide again from fresh reads.
-		e.owners.invalidate(appID, 0)
-		e.observeOwnerCache("refused")
-		return e.admitAndDispatchOnce(withoutOwnerCache(ctx), appID, deploymentID, mode, trigger, liftCapacityToResult, bypassGates)
-	}
-	return result, err
+	// ADR-20261022184531: a wake its node refuses before starting the VM is
+	// re-placed on another node.
+	return e.admitWithWakeFailover(ctx, appID, mode, func(ctx context.Context) (WakeResult, error) {
+		used := new(bool)
+		result, err := e.admitAndDispatchOnce(withOwnerCacheUse(ctx, used), appID, deploymentID, mode, trigger, liftCapacityToResult, bypassGates)
+		if *used && errors.Is(err, state.ErrConflict) {
+			// ADR-1741: an admission decided from the owner cache found its
+			// entry stale: the admission insert refused the moved generation, or
+			// a read checked against the entry (the runtime values' owner)
+			// disagreed first. Nothing was admitted; decide again from fresh reads.
+			e.owners.invalidate(appID, 0)
+			e.observeOwnerCache("refused")
+			return e.admitAndDispatchOnce(withoutOwnerCache(ctx), appID, deploymentID, mode, trigger, liftCapacityToResult, bypassGates)
+		}
+		return result, err
+	})
 }
 
 func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, mode, trigger string, liftCapacityToResult, bypassGates bool) (WakeResult, error) {
@@ -3154,7 +3158,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	// Per-plan ceiling: api.Limits.WakeBurstPerApp / WakeBurstPerAccount
 	// (Free 1/1, Hobby 5/10, Pro 20/30, Scale 100/150 per minute).
 	// Fail-closed on unknown plan — mirrors pkg/gateway.Limiter.Allow.
-	if !bypassGates && e.wakeLimiter != nil {
+	if !bypassGates && e.wakeLimiter != nil && !isWakeFailoverAlternate(ctx) {
 		if !e.wakeLimiter.AllowWakeApp(appID, acct.Plan) || !e.wakeLimiter.AllowWakeAccount(string(acct.ID), acct.Plan) {
 			release()
 			e.IncAtCapacity(appID, "rate_limit")
@@ -3353,7 +3357,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		backoff, backoffActive = snapshotReads.backoff, snapshotReads.backoffActive
 		if backoffErr := snapshotReads.backoffErr; backoffErr != nil {
 			e.log.Warn("wake: snapshot backoff gate lookup failed; proceeding without gate", "deployment_id", dep.ID, "err", backoffErr)
-		} else if backoffActive && !bypassGates && usesSnapshots {
+		} else if backoffActive && !bypassGates && usesSnapshots && !isWakeFailoverAlternate(ctx) {
 			if e.ops != nil {
 				e.ops.WakeSnapshotTier("cold_boot_fallback").Inc()
 				e.ops.SnapshotBackoffGateOutcome("gated").Inc()
@@ -3404,7 +3408,10 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 				// stale (or is being deleted) before this wake.
 				coldReason = ColdReasonSnapshotsStale
 			}
-			_, _, _ = e.RecordSnapshotMiss(ctx, dep.ID, backoff.SnapshotMissCount)
+			// A re-placed wake already counted its miss.
+			if !isWakeFailoverAlternate(ctx) {
+				_, _, _ = e.RecordSnapshotMiss(ctx, dep.ID, backoff.SnapshotMissCount)
+			}
 		}
 		// One line per cold wake of a snapshot-backed app. Without it the
 		// timeline says only tier=cold_boot_fallback, never why.
@@ -3499,6 +3506,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		PreferredNodeIDs:           snapshotNodes,
 		PrioritizeSnapshotLocality: deploymentSmoke && snapshotLocalityKnown,
 		PreferredRegion:            preferredRegion,
+		ExcludeNodeIDs:             excludedWakeNodes(ctx),
 		ownerApp:                   &app,
 	}
 	var placement Placement
@@ -3530,6 +3538,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		}
 		return WakeResult{}, fmt.Errorf("sched: wake: create instance: %w", applicationStandardRuntimeProblem(err))
 	}
+	noteWakePlacement(ctx, placement.NodeID)
 	admitted := time.Now()
 	if !recovery.Bound() {
 		if err := e.bindSnapshotRecovery(ctx, ins, snap.ID); err != nil {
@@ -4224,6 +4233,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 			e.ops.WakeFailure("", bootInput.appID, "vmm_boot_failed").Inc()
 		}
 		e.transitionWithKind(transitionCtx, bootInput.insID, bootInput.appID, state.StateFailed, "wake_boot_error", "vmm_boot_failed")
+		noteWakeBootError(ctx, bootInput.nodeID, err)
 		return WakeResult{}, err
 	}
 	configuredBootCPU := int(bootInput.spec.CPUMillicores)
@@ -10387,7 +10397,7 @@ func (e *Engine) admitGateForEnvironment(ctx context.Context, app *state.App, li
 		}
 		return wakeRejectAtCap, 0, 0, have, false, limit
 	}
-	if !isScaleOutBurstContinuation(ctx) && e.isOnScaleOutCooldown(app, concurrency) {
+	if !isScaleOutBurstContinuation(ctx) && !isWakeFailoverAlternate(ctx) && e.isOnScaleOutCooldown(app, concurrency) {
 		if e.ops != nil {
 			e.ops.ObserveScaleUp(app.ID, "cooldown_held")
 		}

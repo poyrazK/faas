@@ -161,9 +161,17 @@ func TestEverySettingHasACapability(t *testing.T) {
 			missing = append(missing, "manifest."+key)
 		}
 	}
-	for _, kind := range []gregalemanifest.TriggerKind{gregalemanifest.TriggerKindCron, gregalemanifest.TriggerKindKafka, gregalemanifest.TriggerKindNATS, gregalemanifest.TriggerKindRedisStreams, gregalemanifest.TriggerKindSQSCompat} {
-		if !owned("manifest.triggers." + string(kind)) {
-			missing = append(missing, "manifest.triggers."+string(kind))
+	manifest, err := os.ReadFile(filepath.Join("..", "..", "gregalemanifest", "manifest.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	kinds := regexp.MustCompile(`TriggerKind[A-Za-z]+\s+TriggerKind = "([a-z_]+)"`).FindAllStringSubmatch(string(manifest), -1)
+	if len(kinds) == 0 {
+		t.Fatal("no gregale.yaml trigger kinds found in pkg/gregalemanifest/manifest.go")
+	}
+	for _, m := range kinds {
+		if !owned("manifest.triggers." + m[1]) {
+			missing = append(missing, "manifest.triggers."+m[1])
 		}
 	}
 	slices.Sort(missing)

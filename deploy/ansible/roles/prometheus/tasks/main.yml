@@ -39,6 +39,24 @@
       prom_exemplar_max_size must be a positive integer so the bounded
       exemplar buffer cannot be accidentally disabled or rendered invalid.
 
+# ADR-20261023124955 §3: the faas_slo_monthly ratios read 30 d windows, so a
+# shorter time retention silently turns them into partial months. The size
+# cap uses Prometheus's own unit syntax; the memory bounds use systemd's and
+# Go's.
+- name: prometheus — assert retention and memory bounds
+  ansible.builtin.assert:
+    that:
+      - prom_retention_days | int >= 31
+      - prom_retention_size | string is match('^[0-9]+(B|KB|MB|GB|TB|PB)$')
+      - prom_memory_high | string is match('^[0-9]+[KMG]$')
+      - prom_gomemlimit | string is match('^[0-9]+(KiB|MiB|GiB)$')
+    fail_msg: >-
+      prom_retention_days must be at least 31 (got {{ prom_retention_days }}) so
+      the monthly SLO window fits; prom_retention_size must look like 40GB (got
+      {{ prom_retention_size }}); prom_memory_high a systemd size such as 2304M
+      (got {{ prom_memory_high }}); prom_gomemlimit a Go size such as 2048MiB
+      (got {{ prom_gomemlimit }}).
+
 # Loopback bind discipline (CLAUDE.md §Component ownership). The
 # alertmanager target must not be reachable off-box: alert payloads
 # contain operational labels (component, family, severity) that the
