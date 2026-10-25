@@ -41,6 +41,15 @@ Every process receives loopback discovery variables such as
 available to the helper as `FAAS_WORKLOAD_MAIN_ADDR`. A helper without a port
 is valid for background processing.
 
+The application and its helpers share one network namespace, so each port
+must be unique. The application's port is the one it actually listens on:
+the deploy's explicit port, otherwise the image's single exposed port,
+`hosting.port` in `gregale.yaml`, or the detected framework's port (for
+example 8000 for gunicorn). Without an explicit port, Gregale compares the
+application's port with the helpers' once the build has decided it. A
+collision then fails the deployment with
+`workloads "main" and "<name>" both claim port <port>`.
+
 ## Writable paths
 
 A companion's image filesystem is read-only. Its only writable path is

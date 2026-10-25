@@ -65,6 +65,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
+	"github.com/onebox-faas/faas/pkg/gateway/grpcproblem"
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/oauthmetadata"
@@ -699,6 +700,10 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// Outermost, so every layer below sees the canonical client address.
 		publicHandler = cloudflareClientIP(publicHandler, trustedIngressCIDRs)
 	}
+	// Hunt 14 H14-56: outermost, so a refusal from any layer (app auth, rate
+	// limits, the request budget, gatewayd-internal) reaches gRPC callers as a
+	// gRPC status, while the layers below still record the HTTP status.
+	publicHandler = grpcproblem.Middleware(publicHandler)
 
 	// Control mux + listeners. Combine opsMetrics.Registry() with
 	// budgetReg into a prometheus.Gatherers so /metrics exposes

@@ -149,11 +149,11 @@ func (m *Manager) serveSSE(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer m.release(node)
-	if !m.reserveResume() {
+	if !m.reserveResume(node.account) {
 		http.Error(w, "subscription limit reached", http.StatusTooManyRequests)
 		return
 	}
-	defer m.resumeCount.Add(-1)
+	defer m.releaseResume(node.account)
 	read := func() (state.ManagedRealtimeChannelHistory, error) {
 		readCtx, stop := context.WithTimeout(ctx, resumeHistoryReadTimeout)
 		defer stop()

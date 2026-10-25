@@ -121,5 +121,18 @@ func TestFinancialBudgetPreviewStopMetal(t *testing.T) {
 	if _, err := s.UpdateFinancialBudget(ctx, account, p.ID, p.Revision, "native-acceptance", p.Spec); err != nil {
 		t.Fatal(err)
 	}
-	request("budget-preview", http.StatusOK)
+	// Gateways reuse a warm-traffic decision for FinancialBudgetAdmissionCacheTTL,
+	// so disabling the policy resumes the preview within that window, not at
+	// once (lane B eaedb-20261023T214830 asked 5 ms after a held answer).
+	resumeBy := time.Now().Add(api.FinancialBudgetAdmissionCacheTTL + 2*time.Second)
+	for {
+		body, status := doGetWithHost(t, &http.Client{}, h.GatewayURL+"/", "budget-preview.apps.test.example", 30*time.Second)
+		if status == http.StatusOK {
+			break
+		}
+		if status != http.StatusPaymentRequired || time.Now().After(resumeBy) {
+			t.Fatalf("budget-preview after disable: status=%d body=%s", status, body)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
 }
