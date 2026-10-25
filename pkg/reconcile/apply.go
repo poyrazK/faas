@@ -327,6 +327,7 @@ func (s *Service) applyUpdate(
 	manifest.Ports = portsWithInternal(manifest.Ports, a.Workload.InternalPorts)
 	manifest.BuildDockerfile = a.Workload.Dockerfile
 	manifest.DockerfileBuild = a.Workload.DockerfileBuild.Clone()
+	manifest.BuildGoCommand = a.Workload.GoCommand
 	applyProjectImage(&manifest, a.Workload)
 	resourced := a.App
 	resourced.Manifest = manifest
@@ -415,6 +416,7 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 
 			BuildDockerfile: w.Dockerfile,
 			DockerfileBuild: w.DockerfileBuild.Clone(),
+			BuildGoCommand:  w.GoCommand,
 		},
 		RequireAuthn:           plan.RequireAuthnDefault(),
 		PublicAuthMode:         plan.PublicAuthModeDefault(),
@@ -453,6 +455,7 @@ func ApplyScannedWorkloadToApp(app state.App, w reposcan.Workload, available map
 	app.Manifest.Ports = portsWithInternal(app.Manifest.Ports, w.InternalPorts)
 	app.Manifest.BuildDockerfile = w.Dockerfile
 	app.Manifest.DockerfileBuild = w.DockerfileBuild.Clone()
+	app.Manifest.BuildGoCommand = w.GoCommand
 	applyProjectImage(&app.Manifest, w)
 	applyComposeResources(&app, w)
 	return app

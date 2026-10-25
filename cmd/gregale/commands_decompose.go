@@ -831,6 +831,8 @@ func printPlanTextWithExplain(w io.Writer, plan api.PlanResponse, excludeSet []s
 			imageSuffix := ""
 			if wl.Image != "" {
 				imageSuffix = "  image=" + wl.Image
+			} else if wl.GoCommand != "" {
+				imageSuffix = "  builds=cmd/" + wl.GoCommand
 			}
 			visibilitySuffix := ""
 			if wl.Visibility == api.AppVisibilityInternal {
