@@ -25,13 +25,29 @@ Alerts for the running edge: [FaasComputeEdge](FaasComputeEdge.md).
   node, the control plane's private listener on port 8090, and the nftables
   rules. It also holds back 1,000 millicores and 256 MB per compute node
   from tenants (`gregalectl compute-nodes sizing --edge`). The connector stays
-  stopped until its token exists, so no app traffic moves yet.
+  stopped until its token exists, so no app traffic moves yet. Steps 1–3 may
+  run before that release: the staged token waits, and the release starts
+  the connector.
 - No test app with a synthetic check or cron is pinned to a node: a rollout's
   drain waits for them (rc.290, 2026-10-22).
 - You have a Cloudflare API token for the account with
   `Cloudflare Tunnel:Edit` and `DNS:Edit` on the zone, and Wrangler access
   for the Worker. These stay on your workstation; nodes only ever get the
   connector token.
+
+## Steps 1–3 in one command
+
+`deploy/scripts/cloudflare-app-edge-tunnel.sh` does steps 1–3 from your
+workstation and is safe to re-run. It pipes the connector token from the
+Cloudflare API straight into each node's root-only file over SSH, so the
+token is never printed or stored locally. It asks for the API token without
+echo when `CF_API_TOKEN` is unset:
+
+```bash
+CF_ACCOUNT_ID=<account id> CF_ZONE_ID=<gregale.dev zone id> deploy/scripts/cloudflare-app-edge-tunnel.sh
+```
+
+The sections below are what it does, for doing it by hand.
 
 ## 1. Create the tunnel without touching DNS
 
