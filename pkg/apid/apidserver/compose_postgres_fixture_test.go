@@ -17,7 +17,9 @@ var ComposePostgresMajor = composePostgresMajor
 // composeTestProvider is the source-ref test provider with point-in-time
 // restore, which every production backend offers and the plan's default
 // restore window needs.
-type composeTestProvider struct{ sourceRefManagedPostgresProvider }
+type composeTestProvider struct {
+	sourceRefManagedPostgresProvider
+}
 
 func (p composeTestProvider) Capabilities() managedpostgres.Capabilities {
 	capabilities := p.sourceRefManagedPostgresProvider.Capabilities()
