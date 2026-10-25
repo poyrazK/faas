@@ -33,6 +33,7 @@
     "vmmd-tcp-bridge",
     "vmmd-udp-bridge",
     "vmmd-jail-helper",
+    "vmmd-guestdisk",
     "guest_init",
     "kernel",
     "builder_base",

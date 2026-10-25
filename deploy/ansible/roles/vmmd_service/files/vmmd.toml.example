@@ -106,6 +106,16 @@
 # Default: false
 # restore_reseed_thread = false
 
+# cpu_template: the Firecracker CPU template every guest boots with
+# (ADR-20261024225612). Use one value for the whole cell. "T2CL" lets a cell
+# mix Intel Cascade Lake and Ice Lake nodes and restore snapshots across them;
+# "T2S" covers Skylake + Cascade Lake, "C3"/"T2" Skylake through Ice Lake,
+# "T2A" AMD Milan. vmmd refuses to start on a CPU the template does not list.
+# Turning a template on or off makes every app cold-boot once. Empty boots
+# with the host's CPUID. FAAS_CPU_TEMPLATE overrides.
+# Default: ""
+# cpu_template = "T2CL"
+
 # quiet_pause: pause an eligible instance's vCPUs between requests and resume
 # it when the next one arrives (ADR-957). The instance stays RUNNING and
 # billed; a paused VM uses no host CPU. schedd decides which instances are

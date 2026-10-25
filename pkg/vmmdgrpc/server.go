@@ -319,6 +319,11 @@ type Server struct {
 	// inflightTraces holds each in-flight HTTP forward's traceparent for
 	// InflightRequestTrace (ADR-1138).
 	inflightTraces inflightTraces
+	// invokeHooks skips per-request invoke events for instances whose guest
+	// has no extension endpoint (ADR-20261025150000) while
+	// invokeHookBackoffOn is set (vmmd invoke_hook_backoff, default off).
+	invokeHooks         invokeHookBackoff
+	invokeHookBackoffOn bool
 	// identitySigner mints execution-only assertions for the scheduler's
 	// outbound relay. Tokens are sent only over the vmmd↔schedd stream.
 	identitySigner *workloadidentity.Signer
@@ -503,6 +508,16 @@ func (s *Server) MigrationLeaser() leaser.Leaser[any] {
 		return nil
 	}
 	return NewMigrationLeaser(s.migrations)
+}
+
+// WithInvokeHookBackoff turns on the ADR-20261025150000 backoff: an instance
+// whose guest answered that no extension endpoint is listening gets no
+// per-request invoke events for extension.InvokeUnavailableBackoff.
+func (s *Server) WithInvokeHookBackoff(on bool) *Server {
+	if s != nil {
+		s.invokeHookBackoffOn = on
+	}
+	return s
 }
 
 // WithFlowCounter wires the compute-side conntrack reader used by Stats.

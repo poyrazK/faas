@@ -20,6 +20,7 @@ var supportBinaryNames = []string{
 	"schedd-brokerq-apply",
 	"s3-gatewayd",
 	"vmmd-jail-helper",
+	"vmmd-guestdisk",
 	"vmmd-raw-bridge",
 	"vmmd-tcp-bridge",
 	"vmmd-udp-bridge",

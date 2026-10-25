@@ -193,6 +193,10 @@ func (s *server) createAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		}
 		req.EdgeRuleID = id
 	}
+	if prob := s.alertMetricCapabilityProblem(appFlagSubject(acct, app), req.Metric); prob != nil {
+		api.WriteProblem(w, prob)
+		return
+	}
 	if prob := validateCustomMetricAlert(req.Metric, req.CustomMetricName, req.WindowSpec, req.Action, s.customMetricHistoryEnabled); prob != nil {
 		api.WriteProblem(w, prob)
 		return
@@ -438,6 +442,12 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, prob)
 		return
 	}
+	if req.Metric != nil {
+		if prob := s.alertMetricCapabilityProblem(flagSubject(r, acct), *req.Metric); prob != nil {
+			api.WriteProblem(w, prob)
+			return
+		}
+	}
 	// Metric-family swap rejection. "Family" = the xor_chk partition:
 	// failed_invocations needs failure_source set; everything else
 	// needs it empty. Crossing that line in PATCH silently drops
@@ -466,12 +476,12 @@ func (s *server) updateAlertRule(w http.ResponseWriter, r *http.Request, acct st
 	// Optional secret re-seal.
 	var sealedPtr *[]byte
 	if req.WebhookSecret != nil {
-		recipient := hostSecretRecipient()
-		if recipient == nil {
-			api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
+		recipients, recipientErr := alertingCredentialRecipients()
+		if recipientErr != nil {
+			api.WriteProblem(w, api.ErrCapacity("alerting recipient not loaded — refusing to seal webhook secret"))
 			return
 		}
-		sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(*req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
+		sealed, err := secretbox.SealBytesTo(recipients, alertRuleSecretSealLabel, []byte(*req.WebhookSecret), api.AlertRuleWebhookSecretMaxBytes)
 		if err != nil {
 			if prob := api.AsProblem(err); prob != nil {
 				api.WriteProblem(w, prob)
@@ -640,12 +650,12 @@ func (s *server) rotateAlertRuleSecret(w http.ResponseWriter, r *http.Request, a
 		return
 	}
 	plaintext := []byte(req.WebhookSecret)
-	recipient := hostSecretRecipient()
-	if recipient == nil {
-		api.WriteProblem(w, api.ErrCapacity("host age recipient not loaded — refusing to seal webhook secret"))
+	recipients, recipientErr := alertingCredentialRecipients()
+	if recipientErr != nil {
+		api.WriteProblem(w, api.ErrCapacity("alerting recipient not loaded — refusing to seal webhook secret"))
 		return
 	}
-	sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, plaintext, api.AlertRuleWebhookSecretMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, alertRuleSecretSealLabel, plaintext, api.AlertRuleWebhookSecretMaxBytes)
 	if err != nil {
 		if prob := api.AsProblem(err); prob != nil {
 			api.WriteProblem(w, prob)
@@ -805,6 +815,24 @@ func alertRuleActionFrom(p *string) state.AlertAction {
 // trimmed name. The same trim-non-empty check is mirrored on the
 // update path via state.AlertRule.Name (the DB schema enforces
 // non-empty via CHECK).
+// alertMetricCapabilities names the capability an alert metric needs beyond
+// alerts' own (ADR-20261023115741).
+var alertMetricCapabilities = map[string]string{
+	api.AlertRuleMetricCustomMetric:     "custom-metric-history",
+	api.AlertRuleMetricLogSearchMatches: "log-search",
+}
+
+// alertMetricCapabilityProblem refuses an alert on a metric whose capability
+// is not released to the subject, so an operator switch turned on to test one
+// account does not open the feature to every account.
+func (s *server) alertMetricCapabilityProblem(subject platformflags.Subject, metric string) *api.Problem {
+	capability, ok := alertMetricCapabilities[metric]
+	if !ok || s.capGate == nil || s.capGate.Enabled(capability, subject) {
+		return nil
+	}
+	return api.ErrCapabilityNotReleased("alert metric "+metric, s.capGate.Name(capability))
+}
+
 // anomalyAlertsGate keeps baseline comparisons (ADR-744) dark until the
 // operator enables FAAS_ANOMALY_ALERTS_ENABLED, or releases the
 // anomaly_alerts platform flag (ADR-1700) to the account.

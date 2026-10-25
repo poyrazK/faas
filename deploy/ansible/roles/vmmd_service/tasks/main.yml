@@ -109,6 +109,23 @@
     mode: "0644"
   notify: restart faas-vmmd
 
+- name: vmmd_service — install the cell's Firecracker CPU template (ADR-20261024225612)
+  ansible.builtin.template:
+    src: 99-faas-cpu-template.conf.j2
+    dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-cpu-template.conf
+    owner: root
+    group: root
+    mode: "0644"
+  when: vmmd_cpu_template | default('') | length > 0
+  notify: restart faas-vmmd
+
+- name: vmmd_service — remove the CPU template drop-in when the cell sets none
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-vmmd.service.d/99-faas-cpu-template.conf
+    state: absent
+  when: vmmd_cpu_template | default('') | length == 0
+  notify: restart faas-vmmd
+
 - name: vmmd_service — validate the restart adoption switches
   ansible.builtin.assert:
     that:
@@ -123,6 +140,23 @@
   ansible.builtin.template:
     src: 99-faas-adoption.conf.j2
     dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-adoption.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-vmmd
+
+- name: vmmd_service — validate the instance bridge switches
+  ansible.builtin.assert:
+    that:
+      - not (vmmd_instance_bridge_unit | bool) or (vmmd_bridge_unprivileged | bool)
+    fail_msg: >-
+      vmmd_instance_bridge_unit needs vmmd_bridge_unprivileged
+      (roles/vmmd_service/defaults/main.yml).
+
+- name: vmmd_service — install the instance bridge drop-in
+  ansible.builtin.template:
+    src: 99-faas-bridge.conf.j2
+    dest: /etc/systemd/system/faas-vmmd.service.d/99-faas-bridge.conf
     owner: root
     group: root
     mode: "0644"

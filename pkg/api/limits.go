@@ -2474,6 +2474,16 @@ const (
 // parallel uploads leave room for others (ADR-20261023223000).
 const ObjectUploadAccountSlotSharePercent = 50
 
+// A request body holds an upload slot while the gateway reads it. It may go
+// ObjectUploadIdleTimeout without a byte and, after ObjectUploadMinRateGrace,
+// must average ObjectUploadMinBytesPerSecond, so a client trickling bytes
+// cannot keep a slot for the whole ObjectTransferTimeout.
+const (
+	ObjectUploadIdleTimeout       = 30 * time.Second
+	ObjectUploadMinRateGrace      = time.Minute
+	ObjectUploadMinBytesPerSecond = 8 << 10
+)
+
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
 // Keep the first release deliberately small: it lets customers right-size
 // CPU-bound behavior without changing plan capacity or billing semantics.
