@@ -234,36 +234,40 @@ func TestReleaseGuardsDrillMetal(t *testing.T) {
 
 	t.Run("release waits for another admin's approval; a rejection aborts it", func(t *testing.T) {
 		const app = "rg-approve"
-		approverKey := g.orgWithApprover(t, ctx, app)
-		d.deployLive(t, app, api.CreateDeploymentRequest{Image: v1})
-		d.waitServing(t, app, time.Minute)
-		g.mustStatus(t, d.key, http.MethodPut, "/v1/apps/"+app+"/release-approval-policy",
+		// Org apps answer only to keys bound to their org.
+		deployerKey, approverKey := g.orgWithApprover(t, ctx, app)
+		od := *d
+		od.key = deployerKey
+		og := &guardsDrill{d: &od, pool: store}
+		od.deployLive(t, app, api.CreateDeploymentRequest{Image: v1})
+		od.waitServing(t, app, time.Minute)
+		og.mustStatus(t, od.key, http.MethodPut, "/v1/apps/"+app+"/release-approval-policy",
 			api.SetReleaseApprovalPolicyRequest{RequiredApprovals: 1, AfterStage: 1, NotifyChannels: []string{channel}}, http.StatusOK, nil)
 
-		candidate := d.deployLive(t, app, api.CreateDeploymentRequest{Image: v2, Canary: customCanary("1", "30s")})
-		waiting := g.waitApproval(t, candidate.ID, 3*time.Minute, api.ReleaseApprovalStateWaiting)
+		candidate := od.deployLive(t, app, api.CreateDeploymentRequest{Image: v2, Canary: customCanary("1", "30s")})
+		waiting := og.waitApproval(t, candidate.ID, 3*time.Minute, api.ReleaseApprovalStateWaiting)
 		// Well past the 30 s stage, the release must still be held at 1%.
 		time.Sleep(45 * time.Second)
 		held, _ := store.DeploymentByID(ctx, candidate.ID)
 		if held.TrafficPercent != 1 || held.RolloutState == "complete" {
 			t.Fatalf("waiting release = traffic:%d rollout:%q, want held at 1%%", held.TrafficPercent, held.RolloutState)
 		}
-		if rules := d.holdRules(t, candidate.ID); !slices.Contains(rules, api.RolloutRuleHoldAwaitingApproval) {
+		if rules := od.holdRules(t, candidate.ID); !slices.Contains(rules, api.RolloutRuleHoldAwaitingApproval) {
 			t.Fatalf("hold rules = %v, want %s", rules, api.RolloutRuleHoldAwaitingApproval)
 		}
 		t.Logf("DRILL approval_waiting since=%s expires=%s", waiting.WaitingSince, waiting.ExpiresAt)
 
 		// The deployer's own approval does not count.
 		var own api.ReleaseApprovalStatus
-		g.mustStatus(t, d.key, http.MethodPost, "/v1/deployments/"+candidate.ID+"/approvals",
+		og.mustStatus(t, od.key, http.MethodPost, "/v1/deployments/"+candidate.ID+"/approvals",
 			api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove}, http.StatusOK, &own)
 		if own.State != api.ReleaseApprovalStateWaiting || own.Approvals != 0 || len(own.Decisions) != 1 || own.Decisions[0].Counted {
 			t.Fatalf("self approval = %+v, want recorded, not counted, still waiting", own)
 		}
 		approvedAt := time.Now()
-		g.mustStatus(t, approverKey, http.MethodPost, "/v1/deployments/"+candidate.ID+"/approvals",
+		og.mustStatus(t, approverKey, http.MethodPost, "/v1/deployments/"+candidate.ID+"/approvals",
 			api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionApprove, Comment: "looks good"}, http.StatusOK, nil)
-		done := d.waitDeployment(t, candidate.ID, 4*time.Minute, func(dep state.Deployment) bool {
+		done := od.waitDeployment(t, candidate.ID, 4*time.Minute, func(dep state.Deployment) bool {
 			return dep.RolloutState == "complete" || dep.RolloutState == "aborted"
 		})
 		if done.RolloutState != "complete" || done.TrafficPercent != 100 {
@@ -271,22 +275,22 @@ func TestReleaseGuardsDrillMetal(t *testing.T) {
 		}
 		t.Logf("DRILL approval_to_complete seconds=%.0f", time.Since(approvedAt).Seconds())
 
-		rejected := d.deployLive(t, app, api.CreateDeploymentRequest{Image: v3, Canary: customCanary("1", "30s")})
-		g.waitApproval(t, rejected.ID, 3*time.Minute, api.ReleaseApprovalStateWaiting)
-		g.mustStatus(t, approverKey, http.MethodPost, "/v1/deployments/"+rejected.ID+"/approvals",
+		rejected := od.deployLive(t, app, api.CreateDeploymentRequest{Image: v3, Canary: customCanary("1", "30s")})
+		og.waitApproval(t, rejected.ID, 3*time.Minute, api.ReleaseApprovalStateWaiting)
+		og.mustStatus(t, approverKey, http.MethodPost, "/v1/deployments/"+rejected.ID+"/approvals",
 			api.DecideReleaseApprovalRequest{Decision: api.ReleaseApprovalDecisionReject, Comment: "not this week"}, http.StatusOK, nil)
-		aborted := d.waitDeployment(t, rejected.ID, 3*time.Minute, func(dep state.Deployment) bool { return dep.RolloutState == "aborted" })
-		if why := d.decisionRule(t, aborted); why != api.RolloutRuleAbortApprovalReject {
+		aborted := od.waitDeployment(t, rejected.ID, 3*time.Minute, func(dep state.Deployment) bool { return dep.RolloutState == "aborted" })
+		if why := od.decisionRule(t, aborted); why != api.RolloutRuleAbortApprovalReject {
 			t.Fatalf("rejected release rule = %s, want %s", why, api.RolloutRuleAbortApprovalReject)
 		}
-		d.waitDeployment(t, candidate.ID, 2*time.Minute, func(dep state.Deployment) bool {
+		od.waitDeployment(t, candidate.ID, 2*time.Minute, func(dep state.Deployment) bool {
 			return dep.Status == state.DeployLive && dep.TrafficPercent == 100
 		})
 
 		// Requested, approved and rejected notices reached the email channel.
 		for _, subject := range []string{"Approval needed: release v2 of " + app, "Approved: release v2 of " + app,
 			"Approval needed: release v3 of " + app, "Rejected: release v3 of " + app} {
-			g.waitMail(t, subject, 2*time.Minute)
+			og.waitMail(t, subject, 2*time.Minute)
 		}
 		g.waitChannelDelivered(t, channel, approvedAt.Add(-time.Minute))
 	})
@@ -403,11 +407,12 @@ func (g *guardsDrill) waitAudit(t *testing.T, kind, text string) {
 }
 
 // orgWithApprover puts the drill account and a second person in an org,
-// creates app there, and returns the second person's key.
-func (g *guardsDrill) orgWithApprover(t *testing.T, ctx context.Context, app string) string {
+// creates app there, and returns keys bound to the org for both: an
+// account's own keys cannot reach an app it shares through an org.
+func (g *guardsDrill) orgWithApprover(t *testing.T, ctx context.Context, app string) (deployerKey, approverKey string) {
 	t.Helper()
 	h, store := g.d.h, g.pool
-	approverKey := h.SeedAccount(ctx, api.PlanHobby, "guards-approver")
+	h.SeedAccount(ctx, api.PlanHobby, "guards-approver")
 	deployer, err := store.AccountByEmail(ctx, guardsDeployerEmail)
 	if err != nil {
 		t.Fatal(err)
@@ -428,16 +433,31 @@ func (g *guardsDrill) orgWithApprover(t *testing.T, ctx context.Context, app str
 	if err := store.AddOrgMember(ctx, org.ID, approver.ID, state.OrgRoleAdmin, &deployer.ID); err != nil {
 		t.Fatal(err)
 	}
+	deployerKey, approverKey = g.orgKey(t, ctx, org.ID, deployer.ID), g.orgKey(t, ctx, org.ID, approver.ID)
 	falsy := false
-	g.mustStatus(t, g.d.key, http.MethodPost, "/v1/orgs/rg-org/apps",
+	g.mustStatus(t, deployerKey, http.MethodPost, "/v1/orgs/rg-org/apps",
 		api.CreateAppRequest{Slug: app, Type: "app", RequireAuthn: &falsy}, http.StatusCreated, nil)
-	key := g.d.key
+	key := deployerKey
 	g.d.t.Cleanup(func() {
 		if raw, status := doReq(g.d.t, h, key, http.MethodPost, "/v1/apps/"+app+"/park", nil); status != http.StatusNoContent {
 			g.d.t.Errorf("cleanup park %s: status=%d body=%s", app, status, raw)
 		}
 	})
-	return approverKey
+	return deployerKey, approverKey
+}
+
+// orgKey mints an admin key bound to org for account, as `gregale keys
+// create --org` does after its step-up.
+func (g *guardsDrill) orgKey(t *testing.T, ctx context.Context, orgID, accountID string) string {
+	t.Helper()
+	plaintext, hash, err := api.GenerateAPIKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := g.pool.CreateOrgAPIKey(ctx, orgID, accountID, hash, "e2e-org", api.ScopesAdminOnly, nil); err != nil {
+		t.Fatalf("org key for %s: %v", accountID, err)
+	}
+	return plaintext
 }
 
 func (g *guardsDrill) waitApproval(t *testing.T, deploymentID string, timeout time.Duration, want string) api.ReleaseApprovalStatus {
