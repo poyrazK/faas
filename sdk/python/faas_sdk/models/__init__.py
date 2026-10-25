@@ -419,10 +419,6 @@ from .custom_metric_list_response import CustomMetricListResponse
 from .custom_metric_request import CustomMetricRequest
 from .custom_metric_response import CustomMetricResponse
 from .custom_metric_response_kind import CustomMetricResponseKind
-from .custom_metric_series_point import CustomMetricSeriesPoint
-from .custom_metric_series_response import CustomMetricSeriesResponse
-from .custom_metric_series_response_kind import CustomMetricSeriesResponseKind
-from .custom_metric_series_response_range import CustomMetricSeriesResponseRange
 from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
@@ -804,7 +800,6 @@ from .get_app_wake_timeline_pagination import GetAppWakeTimelinePagination
 from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
 from .get_builds_status import GetBuildsStatus
-from .get_custom_metric_series_range import GetCustomMetricSeriesRange
 from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_runtime_policy_status_edge_rules_scope import GetRuntimePolicyStatusEdgeRulesScope
@@ -1673,8 +1668,6 @@ from .platform_tenant_surface_deployment_changed_webhook_payload_deployment_stat
     PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus,
 )
 from .post_account_sessions_revoke_all_body import PostAccountSessionsRevokeAllBody
-from .post_otlp_metrics_json_body import PostOTLPMetricsJsonBody
-from .post_otlp_metrics_response_200 import PostOTLPMetricsResponse200
 from .pre_auth_enforcement_suggestion import PreAuthEnforcementSuggestion
 from .pre_auth_enforcement_suggestion_status import PreAuthEnforcementSuggestionStatus
 from .pre_auth_failed_response_limit import PreAuthFailedResponseLimit
@@ -2859,10 +2852,6 @@ __all__ = (
     "CustomMetricRequest",
     "CustomMetricResponse",
     "CustomMetricResponseKind",
-    "CustomMetricSeriesPoint",
-    "CustomMetricSeriesResponse",
-    "CustomMetricSeriesResponseKind",
-    "CustomMetricSeriesResponseRange",
     "CustomStage",
     "DailyUsageListResponse",
     "DailyUsagePoint",
@@ -3232,7 +3221,6 @@ __all__ = (
     "GetAppWakeTimelinePagination",
     "GetBuildSbomResponse200",
     "GetBuildsStatus",
-    "GetCustomMetricSeriesRange",
     "GetEdgeRuleStatsWindow",
     "GetOpenAPISpecJSONResponse200",
     "GetRuntimePolicyStatusEdgeRulesScope",
@@ -3975,8 +3963,6 @@ __all__ = (
     "PlatformTenantSurfaceDeploymentChangedWebhookPayload",
     "PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus",
     "PostAccountSessionsRevokeAllBody",
-    "PostOTLPMetricsJsonBody",
-    "PostOTLPMetricsResponse200",
     "PreAuthEnforcementSuggestion",
     "PreAuthEnforcementSuggestionStatus",
     "PreAuthFailedResponseLimit",

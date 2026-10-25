@@ -4380,6 +4380,8 @@ CREATE TABLE public.snapshots (
     delete_pending boolean DEFAULT false NOT NULL,
     application_standard_capture_token uuid,
     recovery_generation bigint DEFAULT 0 NOT NULL,
+    cpu_template text DEFAULT ''::text NOT NULL,
+    cpu_model text DEFAULT ''::text NOT NULL,
     CONSTRAINT snapshots_recovery_generation_check CHECK ((recovery_generation >= 0)),
     CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
     CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
@@ -4405,6 +4407,20 @@ COMMENT ON COLUMN public.snapshots.base_image_version IS 'Runner base-image comp
 --
 
 COMMENT ON COLUMN public.snapshots.application_standard_capture_token IS 'Immutable historical capture reference. A fresh restore grant and current artifact approval are still required.';
+
+
+--
+-- Name: COLUMN snapshots.cpu_template; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.cpu_template IS 'CPU template of the capturing node; a templated snapshot restores on any node class the template supports.';
+
+
+--
+-- Name: COLUMN snapshots.cpu_model; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.cpu_model IS 'Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.';
 
 
 --
@@ -32383,6 +32399,8 @@ CREATE TABLE public.compute_nodes (
     vmmd_epoch_incarnation uuid,
     vmmd_predecessor_incarnation uuid,
     vmmd_restart_notice_until timestamp with time zone,
+    cpu_template text DEFAULT ''::text NOT NULL,
+    cpu_model text DEFAULT ''::text NOT NULL,
     readiness text DEFAULT 'ready'::text NOT NULL,
     readiness_reason text,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
@@ -32463,6 +32481,20 @@ COMMENT ON COLUMN public.compute_nodes.generation IS 'monotonic counter bumped b
 --
 
 COMMENT ON COLUMN public.compute_nodes.overlay_ip IS 'vmmd-registered IPv4 address on the operator-managed regional overlay';
+
+
+--
+-- Name: COLUMN compute_nodes.cpu_template; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.compute_nodes.cpu_template IS 'Firecracker CPU template vmmd boots guests with; empty for none (ADR-20261024225612).';
+
+
+--
+-- Name: COLUMN compute_nodes.cpu_model; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.compute_nodes.cpu_model IS 'Host CPU signature <class>/<vendor>-<family>-<model>-<stepping>/<flags hash>; empty before vmmd reports it.';
 
 
 --
@@ -76745,10 +76777,14 @@ CREATE INDEX snapshots_deployment_idx ON public.snapshots USING btree (deploymen
 
 
 --
--- Name: snapshots_deployment_tier_key; Type: INDEX; Schema: public; Owner: -
+-- Name: snapshots_deployment_tier_platform_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX snapshots_deployment_tier_key ON public.snapshots USING btree (deployment_id, tier) WHERE (stale = false);
+CREATE UNIQUE INDEX snapshots_deployment_tier_platform_key ON public.snapshots USING btree (deployment_id, tier, (
+CASE
+    WHEN (cpu_template <> ''::text) THEN ('template:'::text || cpu_template)
+    ELSE cpu_model
+END)) WHERE (stale = false);
 
 
 --

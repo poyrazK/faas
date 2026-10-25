@@ -2672,8 +2672,12 @@ type ComputeNode struct {
 	VmmdEpochIncarnation       pgtype.UUID
 	VmmdPredecessorIncarnation pgtype.UUID
 	VmmdRestartNoticeUntil     pgtype.Timestamptz
-	Readiness                  string
-	ReadinessReason            pgtype.Text
+	// Firecracker CPU template vmmd boots guests with; empty for none (ADR-20261024225612).
+	CpuTemplate string
+	// Host CPU signature <class>/<vendor>-<family>-<model>-<stepping>/<flags hash>; empty before vmmd reports it.
+	CpuModel        string
+	Readiness       string
+	ReadinessReason pgtype.Text
 }
 
 type ComputeNodeHeartbeat struct {
@@ -14213,6 +14217,10 @@ type Snapshot struct {
 	// Immutable historical capture reference. A fresh restore grant and current artifact approval are still required.
 	ApplicationStandardCaptureToken pgtype.UUID
 	RecoveryGeneration              int64
+	// CPU template of the capturing node; a templated snapshot restores on any node class the template supports.
+	CpuTemplate string
+	// Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.
+	CpuModel string
 }
 
 type SnapshotFanoutEvent struct {

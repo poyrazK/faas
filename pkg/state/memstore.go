@@ -5582,6 +5582,7 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out DeploymentOutcomeCounts
+	failedTenants := map[string]struct{}{}
 	for _, d := range m.deployments {
 		switch d.Status {
 		case DeployLive, DeploySuperseded:
@@ -5603,9 +5604,15 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 			}
 			if !m.customerCausedFailureLocked(d) {
 				out.Failed++
+				tenant := d.AppID
+				if app, ok := m.apps[d.AppID]; ok && app.AccountID != "" {
+					tenant = app.AccountID
+				}
+				failedTenants[tenant] = struct{}{}
 			}
 		}
 	}
+	out.FailedAccounts = len(failedTenants)
 	return out, nil
 }
 
@@ -16879,12 +16886,15 @@ func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
 		snap.CreatedAt = time.Now()
 	}
 	for _, existing := range m.snapshots {
-		// Mirror the (deployment_id, tier) unique index from migration
-		// 00110: a non-stale row with the same (deployment_id, tier)
+		// Mirror the (deployment_id, tier, cpu platform) unique index
+		// (migration 00110, widened by ADR-20261024225612 amendment 1): a
+		// non-stale row with the same deployment, tier and CPU platform
 		// is a duplicate — surface ErrConflict so callers fall through
 		// to the existing-imaged semantic. Different-tier rows on the
-		// same deployment are allowed (warm + init coexist).
-		if existing.DeploymentID == snap.DeploymentID && existing.Tier == snap.Tier && !existing.Stale {
+		// same deployment are allowed (warm + init coexist), and so are
+		// rows of different CPU platforms.
+		if existing.DeploymentID == snap.DeploymentID && existing.Tier == snap.Tier && !existing.Stale &&
+			existing.CPUPlatform() == snap.CPUPlatform() {
 			return Snapshot{}, ErrConflict
 		}
 	}

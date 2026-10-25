@@ -13,6 +13,8 @@
 #     value below as the effective fence on a compute node.
 #   faas-cp.slice     : MemoryMax=faas_cp_slice_memory_max (default 6144M; postgres + daemons; spec §13 budget row)
 #   faas-cp-build.slice : MemoryMax=5120M (one 2 GiB builder plus full-snapshot headroom)
+#   faas-obs.slice    : MemoryMax=faas_obs_slice_memory_max (default 3584M; Prometheus,
+#                       Alertmanager, Grafana, Loki, Promtail; ADR-20261023124955)
 #
 # Per-plan sub-slices (issue #301, ADR-044):
 #   faas-tenant.slice/faas-tenant-free.slice  : CPUWeight=2
@@ -134,6 +136,44 @@
       CPUQuota={{ faas_cp_slice_cpu_quota }}
   register: cp_slice
 
+- name: systemd_slices — validate faas-obs.slice limits
+  ansible.builtin.assert:
+    that:
+      - faas_obs_slice_memory_max | string is match('^[0-9]+[KMGT]?$')
+      - faas_obs_slice_cpu_quota | string is match('^[0-9]+%$')
+      - faas_obs_slice_cpu_weight | string is match('^[0-9]+$')
+      - faas_obs_slice_cpu_weight | int >= 1 and faas_obs_slice_cpu_weight | int <= 10000
+      - faas_obs_slice_io_weight | string is match('^[0-9]+$')
+      - faas_obs_slice_io_weight | int >= 1 and faas_obs_slice_io_weight | int <= 10000
+    fail_msg: >-
+      faas_obs_slice_memory_max must be a systemd byte size such as 3584M
+      (got {{ faas_obs_slice_memory_max }}), faas_obs_slice_cpu_quota a
+      percentage such as 100% (got {{ faas_obs_slice_cpu_quota }}), and
+      faas_obs_slice_cpu_weight / faas_obs_slice_io_weight integers in
+      1..10000 (got {{ faas_obs_slice_cpu_weight }} / {{ faas_obs_slice_io_weight }}).
+
+# ADR-20261023124955 §1: the observability stack shares the control plane
+# with PostgreSQL. The cap keeps a Prometheus head spike or a heavy dashboard
+# query from taking memory PostgreSQL needs; the weights let PostgreSQL and
+# the control-plane daemons win CPU and IO under contention.
+- name: systemd_slices — write faas-obs.slice
+  ansible.builtin.copy:
+    dest: /etc/systemd/system/faas-obs.slice
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      [Unit]
+      Description=onebox-faas observability (Prometheus, Alertmanager, Grafana, Loki, Promtail)
+      # spec §13 budget row; sized per host through faas_obs_slice_*.
+
+      [Slice]
+      MemoryMax={{ faas_obs_slice_memory_max }}
+      CPUWeight={{ faas_obs_slice_cpu_weight }}
+      CPUQuota={{ faas_obs_slice_cpu_quota }}
+      IOWeight={{ faas_obs_slice_io_weight }}
+  register: obs_slice
+
 - name: systemd_slices — write faas-cp-build.slice
   ansible.builtin.copy:
     dest: /etc/systemd/system/faas-cp-build.slice
@@ -194,7 +234,7 @@
 - name: systemd_slices — daemon-reload
   ansible.builtin.systemd:
     daemon_reload: true
-  when: cp_slice is changed or build_slice is changed or tenant_slice is changed or plan_slices is changed or legacy_plan_slices is changed or legacy_build_slice is changed or fence_slices is changed or ibridge_slice is changed
+  when: cp_slice is changed or obs_slice is changed or build_slice is changed or tenant_slice is changed or plan_slices is changed or legacy_plan_slices is changed or legacy_build_slice is changed or fence_slices is changed or ibridge_slice is changed
 
 - name: systemd_slices — start cgroup parents before jailer can attach VMs
   ansible.builtin.systemd:
