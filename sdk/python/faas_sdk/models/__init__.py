@@ -1831,17 +1831,6 @@ from .queue_release_requirements import QueueReleaseRequirements
 from .queue_release_requirements_additional_property import QueueReleaseRequirementsAdditionalProperty
 from .quota_block import QuotaBlock
 from .raise_overage_cap_request import RaiseOverageCapRequest
-from .realtime_consumer_group_message import RealtimeConsumerGroupMessage
-from .realtime_consumer_group_message_metadata import RealtimeConsumerGroupMessageMetadata
-from .realtime_dead_letter_export_manifest import RealtimeDeadLetterExportManifest
-from .realtime_dead_letter_export_manifest_format_version import RealtimeDeadLetterExportManifestFormatVersion
-from .realtime_dead_letter_export_manifest_type import RealtimeDeadLetterExportManifestType
-from .realtime_dead_letter_export_record import RealtimeDeadLetterExportRecord
-from .realtime_dead_letter_export_record_type import RealtimeDeadLetterExportRecordType
-from .realtime_replay_job_webhook_payload import RealtimeReplayJobWebhookPayload
-from .realtime_replay_job_webhook_payload_state import RealtimeReplayJobWebhookPayloadState
-from .realtime_schedule_completion_webhook_payload import RealtimeScheduleCompletionWebhookPayload
-from .realtime_schedule_completion_webhook_payload_outcome import RealtimeScheduleCompletionWebhookPayloadOutcome
 from .realtime_trigger_config import RealtimeTriggerConfig
 from .receive_inbound_webhook_body import ReceiveInboundWebhookBody
 from .recover_rollout_request import RecoverRolloutRequest
@@ -4142,17 +4131,6 @@ __all__ = (
     "QueueReleaseRequirementsAdditionalProperty",
     "QuotaBlock",
     "RaiseOverageCapRequest",
-    "RealtimeConsumerGroupMessage",
-    "RealtimeConsumerGroupMessageMetadata",
-    "RealtimeDeadLetterExportManifest",
-    "RealtimeDeadLetterExportManifestFormatVersion",
-    "RealtimeDeadLetterExportManifestType",
-    "RealtimeDeadLetterExportRecord",
-    "RealtimeDeadLetterExportRecordType",
-    "RealtimeReplayJobWebhookPayload",
-    "RealtimeReplayJobWebhookPayloadState",
-    "RealtimeScheduleCompletionWebhookPayload",
-    "RealtimeScheduleCompletionWebhookPayloadOutcome",
     "RealtimeTriggerConfig",
     "ReceiveInboundWebhookBody",
     "RecoverRolloutRequest",
