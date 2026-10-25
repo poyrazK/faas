@@ -318,13 +318,22 @@ Start in `observe`, look for false positives, then switch to `block`:
 
 ```sh
 gregale edge-rules create --app my-api --kind waf --match-host my-api.example.com --match-path '/*'
-gregale edge-rules summary --app my-api --range 24h   # detections, categories, top CRS rule IDs
-gregale edge-rules update <rule-id> --kind waf --waf-exclude-rules 942100   # silence a false positive
+gregale edge-rules waf-review --app my-api            # detections grouped by CRS rule and path, each assessed
+gregale edge-rules waf-exclude <rule-id> --add 942100  # silence a false positive, keeping the rest of the rule
 gregale edge-rules update <rule-id> --kind waf --waf-mode block --waf-exclude-rules 942100
 ```
 
-`edge-rules update --kind waf` replaces the whole WAF action, so repeat every
-setting you want to keep (mode, exclusions, thresholds) in each update.
+`edge-rules waf-review` groups the last 7 days of detections (your plan's
+event window caps it) by WAF rule, CRS rule and path, with IDs in paths
+grouped together (`/orders/{id}`). Each group says `likely_false_positive`
+(a known false positive from the table below, or several unrelated clients
+flagged on one path), `likely_attack` (clients flagged across many paths, as
+scanners are), `excluded`, or `review` (too few clients to tell), with an
+example request ID to look up. The dashboard's Edge rules page shows the same
+review with an Exclude button. `edge-rules waf-exclude` adds or removes CRS
+rule IDs and keeps the rest of the rule; `edge-rules update --kind waf`
+replaces the whole WAF action, so repeat every setting you want to keep
+(mode, exclusions, thresholds) when you use it.
 
 Each detection is also a security event, so you can see which request was
 flagged and why. `gregale edge-rules events --app my-api --outcome blocked`
@@ -386,8 +395,10 @@ gregale edge-rules update <rule-id> --mode enforce
 ```
 
 `--challenge-difficulty` (10 to 22, default 16) sets how much work a browser
-does; each step doubles it. `--challenge-pass-ttl` (300 to 86400 seconds)
-sets how long a pass lasts.
+does; each step doubles it. At the default, a laptop solves the page in a
+fraction of a second, and an older mid-range phone in about a second. At
+22, that phone takes 15-20 seconds, so keep high values for attacks.
+`--challenge-pass-ttl` (300 to 86400 seconds) sets how long a pass lasts.
 
 Under attack the difficulty can rise on its own. Set
 `--challenge-max-difficulty` above the difficulty, and while the rule serves

@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from aiobotocore.config import AioConfig
 from aiobotocore.session import get_session
-from faas_sdk.async_object_storage_runtime import AsyncObjectStorageBinding
+from faas_sdk.preview.async_object_storage_runtime import AsyncObjectStorageBinding
 from faas_sdk.async_secret_reload_runtime import AsyncSecretReloadCancellation
 from starlette.responses import Response
 

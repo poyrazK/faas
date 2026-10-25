@@ -13882,6 +13882,11 @@ paths:
         reached. This does not attest host-level firewall policy or guest
         configuration.
         `unverified` means no revision or no relevant serving fleet can be observed.
+        Gateway policy acknowledgements belong to the current process generation
+        and require a fresh serving report. Replacement clears convergence until
+        the new consumers replay. `traffic_runtime` reports compute gateway wiring
+        separately; fresh wiring does not prove request enforcement. The optional
+        `wait` applies to policy convergence only.
       parameters:
         - name: wait
           in: query
@@ -20361,6 +20366,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '501': { $ref: '#/components/responses/RehearsalNotEnabled' }
     delete:
       tags: [dev]
       operationId: deleteScenarioTest
@@ -20466,6 +20472,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/RehearsalNotEnabled' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       tags: [dev]
@@ -20531,6 +20538,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/RehearsalNotEnabled' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       tags: [dev]
@@ -28026,6 +28034,77 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { $ref: '#/components/responses/CapacityUnavailable' }
 
+  /v1/apps/{slug}/database-switches:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [deployments]
+      operationId: listDatabaseSwitches
+      summary: List rollbacks that restore the database.
+      description: An app's database switches, newest first (ADR-20261023181931).
+      responses:
+        '200':
+          description: The app's switches.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseSwitchList' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/database-switches/{id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: Database switch UUID.
+        schema: { type: string, format: uuid }
+    get:
+      tags: [deployments]
+      operationId: getDatabaseSwitch
+      summary: Read a rollback that restores the database.
+      description: The switch's phase, restore point, databases, drain counts and outcome.
+      responses:
+        '200':
+          description: The switch.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseSwitch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
+  /v1/apps/{slug}/database-switches/{id}/cancel:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: id
+        in: path
+        required: true
+        description: UUID of the database switch to cancel.
+        schema: { type: string, format: uuid }
+    post:
+      tags: [deployments]
+      operationId: cancelDatabaseSwitch
+      summary: Cancel a rollback that restores the database.
+      description: "Unwinds the switch; the app keeps its current release and database. Refused with database_switch_not_cancellable once the switch started switching the release and the bindings."
+      responses:
+        '202':
+          description: Cancellation recorded; the worker unwinds the switch.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DatabaseSwitch' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/Conflict' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { $ref: '#/components/responses/CapacityUnavailable' }
+
   /v1/apps/{slug}/rollouts/recover:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -28437,7 +28516,7 @@ paths:
 
         Once current-month overage meets/exceeds the cap, schedd refuses
         new wakes with `code: admission_refused` (HTTP 402). The cap is
-        account-self-scoped (no admin scope required) and the response
+        account-self-scoped (admin scope required) and the response
         is the post-update account state. Audit row
         `overage.cap_changed` is emitted on every successful call.
       requestBody:
@@ -40105,6 +40184,39 @@ paths:
         '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
         '429': { $ref: '#/components/responses/TooManyRequests' }
 
+  /v1/edge-rules/{id}/waf-exclusions:
+    parameters:
+      - $ref: '#/components/parameters/Id32'
+    post:
+      tags: [edge_rules]
+      operationId: updateEdgeWAFExclusions
+      summary: Add or remove CRS rule IDs on a kind=waf rule's exclusions.
+      description: |
+        ADR-831 amendment 13. Changes exclude_rule_ids and keeps the rest of
+        the rule's action and its penalty, so silencing a false positive does
+        not mean restating the whole action. Recorded as a new rule-set
+        version like any PATCH.
+      parameters:
+        - $ref: '#/components/parameters/EdgeRuleSetIfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/EdgeWAFExclusionsRequest' }
+      responses:
+        '200':
+          description: The updated rule.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeRuleResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '409': { $ref: '#/components/responses/EdgeRuleConflict' }
+        '412': { $ref: '#/components/responses/EdgeRulesVersionMismatch' }
+        '422': { $ref: '#/components/responses/ValidationFailed' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
   /v1/apps/{slug}/edge-rules/versions:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -40204,6 +40316,47 @@ paths:
           content:
             application/json:
               schema: { $ref: '#/components/schemas/EdgeRuleEventsResponse' }
+        '400': { $ref: '#/components/responses/ValidationFailed' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+
+  /v1/apps/{slug}/edge-rules/waf-review:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+    get:
+      tags: [edge_rules]
+      operationId: getEdgeWAFReview
+      summary: The app's WAF detections grouped for a false-positive review.
+      description: |
+        ADR-831 amendment 13. Reads the app's sampled kind=waf detections
+        (detected, warned and blocked events, ADR-831 amendment 5) and groups
+        them by edge rule, CRS rule and path, with id-like path segments read
+        as {id}. Each group is assessed: likely_false_positive (a documented
+        false positive, or at least 3 clients flagged on the path with none
+        sending most of the detections), likely_attack (most detections from
+        clients flagged on 5 or more paths), excluded (the rule already
+        excludes the CRS rule) or review. The newest 5,000 detections of each
+        outcome are read and at most 50 groups returned, largest first.
+        Detections are sampled, so counts are lower bounds. The window
+        defaults to 7 days and is clamped to the plan's event window.
+      parameters:
+        - name: rule
+          in: query
+          required: false
+          description: Only detections of this kind=waf edge rule id.
+          schema: { type: string, format: uuid }
+        - name: since
+          in: query
+          required: false
+          description: Duration such as 24h or 7d.
+          schema: { type: string, default: '7d' }
+      responses:
+        '200':
+          description: The review.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/EdgeWAFReviewResponse' }
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
@@ -82189,7 +82342,7 @@ components:
         target_database_id: { type: string, format: uuid }
         app_id: { type: string, format: uuid }
         scope: { type: string, pattern: '^[a-z0-9]([a-z0-9-]{0,38}[a-z0-9])?$' }
-        state: { type: string, enum: [preparing, prepared, verifying, verified, cancelling, cancelled] }
+        state: { type: string, enum: [preparing, prepared, verifying, verified, cancelling, cancelled, activated] }
         verification_fresh: { type: boolean, description: All staged members have SQL evidence no older than verification_max_age_seconds. }
         verification_max_age_seconds: { type: integer, format: int64, minimum: 1 }
         verified_at: { type: string, format: date-time }
@@ -83190,6 +83343,7 @@ components:
         version: { type: integer, format: int64, minimum: 1 }
         reason: { type: string, minLength: 3, maxLength: 500 }
         expected_version: { type: integer, format: int64, minimum: 0 }
+        force: { type: boolean, description: "Confirms restoring a revision that turns a core capability flag off for every account (ADR-20261023115741)." }
 
     # ─── Platform flags (ADR-1700) ───────────────────────────────────────
 
@@ -83349,6 +83503,10 @@ components:
           items: { $ref: '#/components/schemas/OperatorRuntimeConfigApplyReceipt' }
         convergence: { $ref: '#/components/schemas/OperatorPlatformFlagConvergence' }
         opt_ins: { $ref: '#/components/schemas/OperatorPlatformFlagOptIns' }
+        maturity: { type: string, enum: [ga, beta, preview, internal], description: "Tier of the capability the flag releases (ADR-20261023115741)." }
+        parent: { type: string, description: "Parent capability flag; a sub-feature is released only while its parent is." }
+        core: { type: boolean, description: "Core capability flag: turning it off for every account needs force." }
+        enforcement: { type: string, description: "What the flag gates today, joined with +: routes, settings, daemons; or handler or none." }
 
     OperatorPlatformFlagGroups:
       description: "Shared named account sets referenced by platform-flag rules."
@@ -83813,6 +83971,10 @@ components:
         capabilities:
           type: array
           items: { $ref: '#/components/schemas/CapabilityStatus' }
+        hidden_capabilities:
+          type: array
+          items: { type: string }
+          description: Catalog capabilities, internal ones included, whose platform flag is off for this account (ADR-20261023115741). Clients hide their commands and links. Omitted when nothing is hidden and by servers without the capability gate.
 
     AccountResponse:
       description: "Account profile: id, email verification state, plan, status, limits snapshot, current-month usage, deployed-app count, and developer-environment count."
@@ -85780,7 +85942,7 @@ components:
         app_request_rate_rps: { type: integer, description: "Effective per-app edge token-bucket refill rate, in requests per second, after any app-level runtime override." }
         app_request_burst: { type: integer, description: "Effective per-app edge token-bucket burst capacity after any app-level runtime override." }
         account_request_rate_rpm: { type: integer, description: "Account-wide edge token-bucket refill rate across all apps, in requests per minute." }
-        request_budget_ms: { type: integer, format: int64, description: "Default end-to-end request budget before a route override, in milliseconds." }
+        request_budget_ms: { type: integer, format: int64, description: "Default execution budget after upload, wake and admission, before a route override, in milliseconds." }
         request_budget_max_ms: { type: integer, format: int64, description: "Maximum end-to-end request budget allowed through route overrides, in milliseconds." }
         response_write_timeout_s: { type: integer, format: int64, description: "Maximum response write window for the plan, in seconds." }
         request_body_max_bytes: { type: integer, format: int64, description: "Maximum inbound request body accepted for this app's plan, in bytes." }
@@ -85993,7 +86155,7 @@ components:
       enum: [allow, deny]
 
     RuntimePolicyStatusResponse:
-      description: Runtime policy status across gateway replicas, the owning scheduler, and live VM consumers. Each component reports its scoped desired revision. Gateway request policy filters app-row changes from the combined app-cache and traffic projection; consumers use their existing acknowledged cursor.
+      description: Runtime policy status across gateway replicas, the owning scheduler, and live VM consumers. Each component reports its scoped desired revision. Gateway request policy filters app-row changes from the combined app-cache and traffic projection. Gateway acknowledgements require the current process generation and a fresh serving report. Traffic runtime reports wiring independently of convergence and enforcement; older API servers may omit it.
       type: object
       required: [app_id, desired_revision, state, coverage, serving_gateways, applied_gateways, pending_gateways, stale_gateways, request_policy, edge_rules, cors_presets, response_cache, egress_allowlist, cpu_limit, scheduler_scaling]
       properties:
@@ -86013,6 +86175,36 @@ components:
         egress_allowlist: { $ref: '#/components/schemas/RuntimePolicyNodeStatus' }
         cpu_limit: { $ref: '#/components/schemas/RuntimePolicyNodeStatus' }
         scheduler_scaling: { $ref: '#/components/schemas/RuntimePolicySchedulerStatus' }
+        traffic_runtime: { $ref: '#/components/schemas/TrafficRuntimeStatus' }
+
+    TrafficRuntimeStatus:
+      description: Fresh compute gateway wiring observations for the active serving roster. Reports expire after 10 seconds; replacement, missing reports and readiness failure remove observations. Wiring does not prove backend health or request enforcement. Node identities and process tokens are not exposed.
+      type: object
+      required: [scope, state, enforcement_status, serving_gateways, fresh_gateways, stale_gateways, missing_gateways, public_retry, rate_counter, retry_counter, deadline_signing, policy_snapshot, security_revocation, managed_http, managed_circuit]
+      properties:
+        scope: { type: string, enum: [compute_gateway_wiring] }
+        state: { type: string, enum: [observed, partial, unverified] }
+        enforcement_status: { type: string, enum: [unverified] }
+        serving_gateways: { type: integer, minimum: 0 }
+        fresh_gateways: { type: integer, minimum: 0 }
+        stale_gateways: { type: integer, minimum: 0 }
+        missing_gateways: { type: integer, minimum: 0 }
+        public_retry: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        rate_counter: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        retry_counter: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        deadline_signing: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        policy_snapshot: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        security_revocation: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        managed_http: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+        managed_circuit: { $ref: '#/components/schemas/TrafficRuntimeFeatureStatus' }
+
+    TrafficRuntimeFeatureStatus:
+      description: Observed wiring mode when every serving member has a fresh report. Disagreement reports mixed, including shared retry backend endpoint disagreement. Missing or stale members leave the feature unverified.
+      type: object
+      required: [state, mode]
+      properties:
+        state: { type: string, enum: [observed, mixed, unverified] }
+        mode: { type: string, enum: [enabled, disabled, central, local, shared, redis, mixed, unwired] }
 
     RuntimePolicyComponentStatus:
       description: Fresh serving-gateway status for a policy component with explicit scope. Its desired revision is meaningful within that component's ledger or filtered projection.
@@ -92141,6 +92333,9 @@ components:
         scheduled_release:
           $ref: '#/components/schemas/ScheduledRelease'
           description: The schedule of a release that waits live without traffic for its scheduled start, or how its latest schedule ended (ADR-20261021152201).
+        database_switch:
+          $ref: '#/components/schemas/DatabaseSwitch'
+          description: The switch a rollback with restore_databases started (ADR-20261023181931).
         durable_entity_validator:
           $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
@@ -92874,6 +93069,9 @@ components:
         acknowledge_releases:
           type: boolean
           description: "Roll back although release commands ran after the target last served (ADR-1448). Rollback does not undo them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks never set it."
+        restore_databases:
+          type: boolean
+          description: "Also restore the managed PostgreSQL database the crossed release commands migrated to just before the earliest of them, and switch the app to that copy (ADR-20261023181931). Requires acknowledge_releases and the postgres:manage scope; cannot be combined with expected_current_deployment_id. The response carries database_switch; the code rollback happens inside it while the app is fenced."
 
     RollbackCrossedRelease:
       description: "A release command that ran after a rollback target last served (ADR-1448). A rollback does not undo it."
@@ -107219,6 +107417,62 @@ components:
           items: { type: string }
         waf_score: { type: integer, minimum: 0, maximum: 10000, description: CRS inbound anomaly score of a kind=waf detection. }
 
+    EdgeWAFReviewResponse:
+      description: An app's sampled kind=waf detections grouped for a false-positive review (ADR-831 amendment 13).
+      type: object
+      required: [since, scanned, truncated, groups]
+      properties:
+        since: { type: string, format: date-time, description: Start of the reviewed window, after the plan clamp. }
+        scanned: { type: integer, minimum: 0, description: Detection events read. }
+        truncated: { type: boolean, description: 'The window held more detections than a review reads (5,000 per outcome, newest first), so the oldest were left out.' }
+        groups:
+          type: array
+          maxItems: 50
+          items: { $ref: '#/components/schemas/EdgeWAFReviewGroup' }
+
+    EdgeWAFReviewGroup:
+      description: One edge rule's detections by one CRS rule on one path (ADR-831 amendment 13).
+      type: object
+      required: [rule_id, crs_rule_id, category, path, events, detected, warned, blocked, clients, top_client_percent, scanner_percent, first_seen, last_seen, request_ids, excluded, assessment, reason]
+      properties:
+        rule_id: { type: string }
+        rule_name: { type: string }
+        rule_mode: { type: string, enum: [observe, warn, block] }
+        crs_rule_id: { type: integer }
+        category: { type: string, description: 'CRS attack category of the rule (sqli, xss, rce, lfi, rfi, php, java, generic, protocol, multipart, scanner, session_fixation, other).' }
+        path: { type: string, description: 'Request path with id-like segments (numbers, UUIDs, long hex or tokens) read as {id}.' }
+        events: { type: integer, minimum: 0 }
+        detected: { type: integer, minimum: 0, description: Detections in sampled requests. }
+        warned: { type: integer, minimum: 0 }
+        blocked: { type: integer, minimum: 0 }
+        clients: { type: integer, minimum: 0, description: Distinct client IPs. }
+        top_client_percent: { type: integer, minimum: 0, maximum: 100, description: Share of the group's detections from its busiest client. }
+        scanner_percent: { type: integer, minimum: 0, maximum: 100, description: Share of the group's detections from clients flagged on 5 or more paths in the window. }
+        first_seen: { type: string, format: date-time }
+        last_seen: { type: string, format: date-time }
+        request_ids:
+          type: array
+          maxItems: 3
+          description: The newest example request IDs; look them up with the events listing.
+          items: { type: string }
+        known_false_positive: { type: string, description: The documented legitimate traffic this CRS rule flags. }
+        excluded: { type: boolean, description: The rule excludes this CRS rule now. }
+        assessment: { type: string, enum: [likely_false_positive, likely_attack, review, excluded] }
+        reason: { type: string, description: Why the group got its assessment. }
+
+    EdgeWAFExclusionsRequest:
+      description: CRS rule IDs to add to and remove from a kind=waf rule's exclude_rule_ids (ADR-831 amendment 13).
+      type: object
+      properties:
+        add:
+          type: array
+          maxItems: 50
+          items: { type: integer, minimum: 900000, maximum: 999999 }
+        remove:
+          type: array
+          maxItems: 50
+          items: { type: integer, minimum: 900000, maximum: 999999 }
+
     EdgeRuleStatsResponse:
       description: Per-rule match counts over a window (ADR-960).
       type: object
@@ -108499,42 +108753,23 @@ components:
 
     EdgeRuleBudgetAction:
       description: |
-        Per-route end-to-end request budget (ADR-093 / §4.1.2.16).
-        The primitive for "POST /payment → 3 s, POST /signup → 10 s"
-        without writing timeout-propagation code in the customer's
-        app. The hot-path applier (cmd/gatewayd-public/main.go:PR-B
-        + pkg/gateway/handler_apply_edge_rule_budget.go) installs a
-        per-request `Budget` onto `r.Context()` via
-        `reqbudget.WithRemaining`; every downstream hop (DB, gRPC,
-        HTTP) tightens itself against the budget via
-        `reqbudget.WithOverhead` / `WithCeiling`.
+        Per-route execution budget plus an optional total deadline (ADR-570).
+        budget_ms starts after upload, wake and capacity admission. Its
+        configured override header (default x-faas-budget-ms) may alter the
+        execution allowance within the plan ceiling.
 
-        On expiry the platform returns 504 + RFC 7807 problem
-        envelope (`code: request_budget_exceeded`) BEFORE the
-        customer's handler runs — the goal is bounded resource
-        pin per request, not customer-visible timer logic. Customer
-        code can read `reqbudget.FromContext(r.Context()).Remaining`
-        if it wants to short-circuit its own work early.
-
-        Field-by-field:
-          * `budget_ms` — required wall-clock budget. Must be > 0
-            and ≤ 15 min (`RequestBudgetPlanMax`). The plan's ceiling
-            (`Plan.RequestBudgetMaxMs`: Free 30 s, Hobby 60 s, Pro
-            5 min, Scale 15 min; ADR-1150) clamps it at request time.
-            A 0 or negative value is rejected at create-time with 422.
-          * `allow_override_header` — optional HTTP request header
-            that lets a customer set a per-request override
-            (default `x-faas-budget-ms`). Empty (default) =
-            no override accepted; the edge-rule value is the
-            authoritative budget. The header is parsed as a
-            decimal integer in `[1, math.MaxInt32]`; out-of-range
-            values are ignored and the edge-rule value wins
-            (silent clamp, no 400 — the budget is a quality
-            primitive, not a security gate).
-
-        Rejections never reach the wake gate, the auth chain, or
-        the rate limiter — same posture as the other kind=budget
-        edge-rule appliers. Free-and-above (no plan gate).
+        total_deadline_ms starts when the public proxy receives the request
+        and includes upload, routing, auth, queueing, wake, retries and the
+        ordinary response exchange. It cannot be increased by an execution
+        override. Zero or omission leaves existing execution semantics.
+        Both values are at most 15 min (`RequestBudgetPlanMax`); the plan
+        ceiling (`Plan.RequestBudgetMaxMs`: Free 30 s, Hobby 60 s, Pro 5 min,
+        Scale 15 min; ADR-1150) caps them at request time. Expiry returns a 504 problem with code
+        request_budget_exceeded before response commitment; a committed
+        ordinary response is terminated on expiry. Streaming and upgrades
+        use their idle/session contract after successful response headers.
+        Detached work and unmediated guest sockets are excluded. Nested
+        managed-service deadline transport remains pending acceptance.
       type: object
       required: [budget_ms]
       properties:
@@ -108543,12 +108778,19 @@ components:
           format: int64
           minimum: 1
           maximum: 900000
-          description: "Per-request wall-clock budget in milliseconds (1 ms – 15 min; the plan's ceiling applies at request time)."
+          description: "Execution allowance in milliseconds, after upload/wake/admission (1 ms – 15 min; the plan's ceiling applies at request time)."
+        total_deadline_ms:
+          type: integer
+          format: int64
+          minimum: 0
+          maximum: 900000
+          default: 0
+          description: "Optional total deadline from trusted public ingress; zero leaves it unset."
         allow_override_header:
           type: string
           maxLength: 128
           pattern: '^[A-Za-z][A-Za-z0-9-]*$'
-          description: "Optional RFC 7230 token header name for per-request override (default `x-faas-budget-ms`). Empty = no override."
+          description: "Header for the execution override; default x-faas-budget-ms. It never increases total_deadline_ms."
 
     # ─── Mirror (issue #72 / ADR-125 / ADR-124 PR-A2) ──────────────────────
 
@@ -109813,6 +110055,65 @@ components:
         comment: { type: string }
         counted: { type: boolean, description: "Whether the approval counts toward the policy; the deployer's own approval does not unless self-approval is allowed." }
         decided_at: { type: string, format: date-time }
+    DatabaseSwitch:
+      description: "A rollback that restores the app's managed PostgreSQL database with the code (ADR-20261023181931). The database is restored to restore_point as a new database, and the app moves to it and to the target release while it is fenced."
+      type: object
+      required: [id, app_id, scope, phase, target_deployment_id, undone_deployment_ids, source_database_id, target_name, restore_point, drain, phase_started_at, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        app_id: { type: string, format: uuid }
+        scope: { type: string, description: "The deployment scope the rollback restores." }
+        phase:
+          type: string
+          enum: [restoring, staging, verifying, fencing, settling, draining, switching, resuming, aborting, completed, failed, cancelled]
+          description: "From fencing until completed the app does not serve. aborting unwinds everything done before the bindings switched."
+        from_deployment_id: { type: string, format: uuid, description: "The release serving when the switch was requested; the switch aborts if another one serves before it switches." }
+        from_revision: { type: integer, minimum: 0 }
+        target_deployment_id: { type: string, format: uuid, description: "The rollback target." }
+        target_revision: { type: integer, minimum: 0 }
+        undone_deployment_ids:
+          type: array
+          items: { type: string, format: uuid }
+          description: "Deployments whose release commands the restore undoes; rolling back to them is refused afterwards."
+        source_database_id: { type: string, format: uuid, description: "The database the app leaves. It keeps every write." }
+        source_database_name: { type: string }
+        target_database_id: { type: string, format: uuid, description: "The restored copy, once its restore has started." }
+        target_name: { type: string, description: "Name of the restored copy." }
+        restore_point: { type: string, format: date-time, description: "Writes after this moment stay only in the source database." }
+        drain:
+          $ref: '#/components/schemas/DatabaseSwitchDrain'
+        failure_code: { type: string, description: "Why a switch failed or was cancelled, or why it is aborting." }
+        failure_detail: { type: string }
+        last_error_code: { type: string, description: "The latest transient error the switch is retrying." }
+        requested_by: { type: string }
+        cancel_requested_at: { type: string, format: date-time }
+        fenced_at: { type: string, format: date-time }
+        release_switched_at: { type: string, format: date-time }
+        activated_at: { type: string, format: date-time, description: "When the bindings moved to the copy; there is no way back after it." }
+        finished_at: { type: string, format: date-time }
+        phase_started_at: { type: string, format: date-time }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    DatabaseSwitchDrain:
+      description: "A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot invalidated), still pending, or blocking the switch."
+      type: object
+      required: [retired, parked, pending, blocked]
+      properties:
+        retired: { type: integer, minimum: 0 }
+        parked: { type: integer, minimum: 0 }
+        pending: { type: integer, minimum: 0 }
+        blocked: { type: integer, minimum: 0 }
+
+    DatabaseSwitchList:
+      description: "An app's database switches, newest first."
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/DatabaseSwitch' }
+
     ScheduledRelease:
       description: "A release built ahead of time that starts its rollout at release_at (ADR-20261021152201)."
       type: object
@@ -118939,6 +119240,22 @@ components:
         enabled: { type: boolean }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,47}$'
+          description: "Name of the endpoint within its app, used by gregale.yaml. Absent for endpoints created without one."
+        channel_rules:
+          type: array
+          maxItems: 32
+          items: { $ref: '#/components/schemas/RealtimeChannelRule' }
+
+    RealtimeChannelRule:
+      type: object
+      description: "Grants a channel to a verified token without the authorize callback. The pattern is literal text with {claim} placeholders that must equal the token's claims and an optional trailing * matching any suffix."
+      required: [pattern, read]
+      properties:
+        pattern: { type: string, minLength: 1, maxLength: 256, example: "org:{org_id}:room:*" }
+        read: { type: boolean, description: "Must be true: a rule grants read access." }
 
     CreateManagedRealtimeEndpointRequest:
       type: object
@@ -118974,6 +119291,15 @@ components:
         max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576, default: 0 }
         max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800, default: 0 }
         enabled: { type: boolean, default: true }
+        slug:
+          type: string
+          pattern: '^[a-z0-9][a-z0-9-]{0,47}$'
+          description: "Optional name of the endpoint within its app, unique per app. gregale.yaml declares endpoints by slug."
+        channel_rules:
+          type: array
+          maxItems: 32
+          description: "Channels granted from verified token claims without the authorize callback. A matching channel trusts the token until it expires."
+          items: { $ref: '#/components/schemas/RealtimeChannelRule' }
 
     UpdateManagedRealtimeEndpointRequest:
       type: object
@@ -119008,6 +119334,15 @@ components:
         max_message_bytes: { type: integer, format: int64, minimum: 0, maximum: 1048576 }
         max_connection_age_seconds: { type: integer, format: int64, minimum: 0, maximum: 604800 }
         enabled: { type: boolean }
+        slug:
+          type: string
+          pattern: '^$|^[a-z0-9][a-z0-9-]{0,47}$'
+          description: "Replace the endpoint's slug. An empty string removes it."
+        channel_rules:
+          type: array
+          maxItems: 32
+          description: "Replace the endpoint's channel rules. An empty list removes them."
+          items: { $ref: '#/components/schemas/RealtimeChannelRule' }
 
     RotateManagedRealtimeAuthRequest:
       type: object
@@ -130842,6 +131177,12 @@ components:
 
     NotFound:
       description: 'code: not_found'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    RehearsalNotEnabled:
+      description: 'code: rehearsal_not_enabled — a requested rehearsal capability is not enabled on this installation. Retrying will not help.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

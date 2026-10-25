@@ -3302,6 +3302,8 @@ const (
 type CustomDomain struct {
 	Domain string
 	AppID  string
+	// RedirectAppID mirrors the legacy redirect FK used by app purge.
+	RedirectAppID string `json:"-"`
 	// EnvironmentID is empty for the legacy application-wide route. A
 	// non-empty value binds the hostname to one project environment.
 	EnvironmentID    string
@@ -4284,6 +4286,12 @@ type ManagedRealtimeEndpoint struct {
 	Enabled                    bool
 	CreatedAt                  time.Time
 	UpdatedAt                  time.Time
+	// Slug names the endpoint within its app so gregale.yaml can declare it
+	// (ADR-20261019102657). Empty for endpoints created without one.
+	Slug string
+	// ChannelRules authorize channels from verified token claims without the
+	// authorize callback (ADR-20261019102657).
+	ChannelRules []api.RealtimeChannelRule
 }
 
 type UpdateManagedRealtimeEndpointParams struct {
@@ -4307,6 +4315,10 @@ type UpdateManagedRealtimeEndpointParams struct {
 	MaxMessageBytes                 *int64
 	MaxConnectionAgeSeconds         *int64
 	Enabled                         *bool
+	// Slug replaces the endpoint's slug; an empty value removes it.
+	Slug *string
+	// ChannelRules replaces the endpoint's channel rules.
+	ChannelRules *[]api.RealtimeChannelRule
 }
 
 type ManagedRealtimeEndpointQuotaScope string
@@ -8322,6 +8334,7 @@ type EdgeRuleGeoAction struct {
 // apid-Validate.
 type EdgeRuleBudgetAction struct {
 	BudgetMs            int    `json:"budget_ms"`
+	TotalDeadlineMs     int    `json:"total_deadline_ms,omitempty"`
 	AllowOverrideHeader string `json:"allow_override_header,omitempty"`
 }
 

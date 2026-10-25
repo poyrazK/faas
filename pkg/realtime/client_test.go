@@ -21,7 +21,7 @@ func TestClientManagementAPI(t *testing.T) {
 	server := httptest.NewServer(m.HTTPHandler())
 	defer server.Close()
 	client := &Client{BaseURL: server.URL, HTTPClient: server.Client()}
-	if err := client.RegisterEndpoint(context.Background(), Endpoint{ID: "notifications"}); err != nil {
+	if err := client.RegisterEndpoint(context.Background(), Endpoint{Preview: true, ID: "notifications"}); err != nil {
 		t.Fatalf("register endpoint: %v", err)
 	}
 	endpoints, err := client.Endpoints(context.Background())

@@ -3,10 +3,12 @@ package faas_test
 import (
 	"context"
 	"encoding/json"
-	faas "github.com/poyrazK/faas/sdk/go"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 // adr: 687
@@ -17,7 +19,7 @@ func TestObjectVersionsClient(t *testing.T) {
 		if r.Method != "GET" || r.URL.Path != "/v1/apps/demo/buckets/bucket/objects/versions" || q.Get("prefix") != "目录" || q.Get("delimiter") != "/" || q.Get("key_marker") != key || q.Get("version_id_marker") != version || q.Get("limit") != "1" || r.Header.Get("Authorization") != "Bearer token" {
 			t.Error("query identity changed", r.URL)
 		}
-		_ = json.NewEncoder(w).Encode(faas.ObjectVersionList{Items: []faas.ObjectVersion{{Key: key, VersionID: version}}, CommonPrefixes: []string{}, NextKeyMarker: key, NextVersionIDMarker: version})
+		_ = json.NewEncoder(w).Encode(preview.ObjectVersionList{Items: []preview.ObjectVersion{{Key: key, VersionID: version}}, CommonPrefixes: []string{}, NextKeyMarker: key, NextVersionIDMarker: version})
 	}))
 	defer srv.Close()
 	client, err := faas.NewClient(srv.URL, "token")
@@ -26,7 +28,7 @@ func TestObjectVersionsClient(t *testing.T) {
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	out, err := client.ListObjectBucketVersions(ctx, "demo", "bucket", faas.ObjectVersionListRequest{Prefix: "目录", Delimiter: "/", KeyMarker: key, VersionIDMarker: version, Limit: 1})
+	out, err := preview.Wrap(client).ListObjectBucketVersions(ctx, "demo", "bucket", preview.ObjectVersionListRequest{Prefix: "目录", Delimiter: "/", KeyMarker: key, VersionIDMarker: version, Limit: 1})
 	if err != nil || len(out.Items) != 1 || out.Items[0].Key != key || out.Items[0].VersionID != version || out.NextKeyMarker != key || out.NextVersionIDMarker != version || out.CommonPrefixes == nil {
 		t.Fatal(out, err)
 	}

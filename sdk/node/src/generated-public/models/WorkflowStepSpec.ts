@@ -1,0 +1,67 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { WorkflowConditionSpec } from './WorkflowConditionSpec.js';
+import type { WorkflowForEachSpec } from './WorkflowForEachSpec.js';
+import type { WorkflowGuardSpec } from './WorkflowGuardSpec.js';
+import type { WorkflowJoinSpec } from './WorkflowJoinSpec.js';
+import type { WorkflowOutboundSpec } from './WorkflowOutboundSpec.js';
+import type { WorkflowRetrySpec } from './WorkflowRetrySpec.js';
+/**
+ * One workflow step. The canonical ADR-081 target is `run`; `path`
+ * and `method` remain accepted for the existing HTTP wake executor
+ * during the runtime migration. Exactly one of `run`, `path`,
+ * `wait_for_event`, `wait_for_callback`, `wait_for_duration`,
+ * `wait_for_condition`, `outbound`, `join`, or `for_each` must be supplied.
+ * Set `managed_operation` on an executable HTTP step to persist its business
+ * result transactionally and replay it safely when the workflow retries
+ * after an uncertain response.
+ *
+ */
+export type WorkflowStepSpec = {
+  name: string;
+  /**
+   * Named platform operation to invoke.
+   */
+  run?: string;
+  /**
+   * Opt into the managed PostgreSQL operation result protocol for this executable HTTP step. The handler must use the transactional operation SDK.
+   */
+  managed_operation?: boolean;
+  for_each?: WorkflowForEachSpec;
+  join?: WorkflowJoinSpec;
+  outbound?: WorkflowOutboundSpec;
+  /**
+   * JSON input passed to the named operation.
+   */
+  input?: (Record<string, any> | string | number | boolean | null);
+  /**
+   * HTTP wake path, retained for compatibility with the existing executor.
+   */
+  path?: string;
+  method?: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE' | 'HEAD' | 'OPTIONS';
+  when?: WorkflowGuardSpec;
+  depends_on?: Array<string>;
+  wait_for_event?: string;
+  /**
+   * Park for one account-authorized callback completion. Requires a wait timeout.
+   */
+  wait_for_callback?: boolean;
+  /**
+   * Durable timer, from 1s up to the plan's 7-day workflow wait limit. Fixed day suffixes such as `3d` mean 24-hour days; no compute is held while waiting.
+   */
+  wait_for_duration?: string;
+  wait_for_condition?: WorkflowConditionSpec;
+  /**
+   * Step or wait timeout in time.ParseDuration form, for example `30s`; workflow also accepts fixed 24-hour day suffixes such as `7d`.
+   */
+  timeout?: string;
+  on_timeout?: string;
+  /**
+   * Name of the handler step to run after this step reaches a terminal failure.
+   */
+  on_failure?: string;
+  retry?: (WorkflowRetrySpec | null);
+};
+

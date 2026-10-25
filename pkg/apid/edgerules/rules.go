@@ -472,7 +472,7 @@ func (s *Service) CreateEdgeRule(w http.ResponseWriter, r *http.Request, acct st
 	// The per-kind cap is enforced inside the store's
 	// CreateEdgeRuleIfUnderQuota FOR UPDATE lock and surfaced
 	// below via qe.PerKind / ErrPlanEdgeRuleKindQuotaReached.
-	if prob := planKindProblem(acct, req.Kind); prob != nil {
+	if prob := s.kindProblem(acct, req.Kind); prob != nil {
 		api.WriteProblem(w, prob)
 		return
 	}
@@ -720,6 +720,7 @@ func ActionFromBody(kind string, raw json.RawMessage) state.EdgeRuleAction {
 			// apid-Validate.
 			out.Budget = &state.EdgeRuleBudgetAction{
 				BudgetMs:            a.BudgetMs,
+				TotalDeadlineMs:     a.TotalDeadlineMs,
 				AllowOverrideHeader: a.AllowOverrideHeader,
 			}
 		}

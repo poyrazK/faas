@@ -1,5 +1,10 @@
 # Jobs
 
+For multi-step work that waits for time or events between steps, use durable
+workflows: [code-first](code-workflows.md) (ordinary async functions) or
+[declarative](event-driven.md#durable-workflow-waits) (steps in
+`gregale.yaml`).
+
 Jobs are bounded run-to-completion workloads. Create a job from an OCI image
 reference, then dispatch one or more tasks; each run retains task status and
 logs. A newly-created or image-updated job is `pending` until imaged resolves
@@ -375,6 +380,20 @@ the prompt:
 ```sh
 printf '%s' "$GHCR_TOKEN" | gregale run --registry-username ci --registry-password-stdin ghcr.io/acme/tool:1.4 --version
 ```
+
+If you already ran `docker login`, `--docker-config` uses those credentials
+instead
+([ADR-20261025110000](adr/20261025110000-image-run-docker-config.md)):
+
+```sh
+gregale run --docker-config ~/.docker ghcr.io/acme/tool:1.4 --version
+```
+
+It reads the image registry's entry from that `config.json` (or the
+directory holding it), or asks the credential helper Docker is configured
+with, such as the macOS keychain or Docker Desktop. Identity tokens are
+not supported; use `--registry-username` with an access token for those
+registries.
 
 The credential is stored sealed on the image's runner job and is used for
 that image's registry only. Every run that passes it refreshes it, so it

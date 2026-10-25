@@ -131,6 +131,16 @@ egress:
   overlay_exceptions:
     - 10.10.0.0/20
 
+# Branded S3 gateway (ADR 20261025111015). `managed` installs and health-gates
+# s3-gatewayd on the control-plane node from these operator-local files; leave
+# it unset only when no backend is configured. Strict `verify-fleet` fails when
+# the gateway runs without this.
+# object_storage:
+#   gateway: managed
+#   config_src: /operator/config/object-storage.json
+#   # S3/R2/OVH only; GCS with attached ADC has no provider env file.
+#   provider_env_src: /operator/secrets/object-storage.env
+
 dns:
   apps_domain: gregale.dev
   mode: cloudflare

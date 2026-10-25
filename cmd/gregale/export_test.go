@@ -1190,6 +1190,7 @@ var DeployOptionsFingerprint = deployOptionsFingerprint
 var DeployPreflightListener = deployPreflightListener
 var DeployPreflightListenerWith = deployPreflightListenerWith
 var DeployPreflightRepoSource = deployPreflightRepoSource
+var DeployPreflightScheduled = deployPreflightScheduled
 var DeployPreflightSource = deployPreflightSource
 var DeployPreviewRequested = deployPreviewRequested
 var DeploymentAliasRevisionLabel = deploymentAliasRevisionLabel
@@ -1287,6 +1288,7 @@ var FindLatestFailedDeployment = findLatestFailedDeployment
 var FindPreviewReportRoute = findPreviewReportRoute
 var FindProjectContext = findProjectContext
 var FindSecretStatus = findSecretStatus
+var FinishMCPDeploy = finishMCPDeploy
 var FinishPreviewRequestComparison = finishPreviewRequestComparison
 var FinishPreviewSecurityComparison = finishPreviewSecurityComparison
 var FinishTestRunReports = finishTestRunReports
@@ -1626,6 +1628,7 @@ var RecoveryReportDuration = recoveryReportDuration
 var RecoveryTrendReceipt = recoveryTrendReceipt
 var RedactErrorText = redactErrorText
 var RedactTestDiagnosticText = redactTestDiagnosticText
+var RehearsalTestGit = rehearsalTestGit
 var RehearsalTestRepo = rehearsalTestRepo
 var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
 var ReleaseDiffLines = releaseDiffLines
@@ -1897,6 +1900,7 @@ var TestLatencySelection = testLatencySelection
 var TestManagedWorkDigest = testManagedWorkDigest
 var TestPhaseRecoveryEvidence = testPhaseRecoveryEvidence
 var TestRecoveryDeadlineSpec = testRecoveryDeadlineSpec
+var TestRehearsalLocalExecution = testRehearsalLocalExecution
 var TestStabilityMinimizationOutcome = testStabilityMinimizationOutcome
 var TestStabilitySelection = testStabilitySelection
 var TokenFingerprint = tokenFingerprint
@@ -2375,6 +2379,15 @@ func (r validateParamFlags) Resolve(p0 map[string]bool) (*api.EdgeRuleValidatePa
 func (r *zeroConfigStubServer) GotCalls() *map[string]int { return &r.gotCalls }
 func (r *zeroConfigStubServer) Srv() **httptest.Server    { return &r.srv }
 
+// Realtime preview (ADR-20261019102657).
+type ManifestCronTransaction = manifestCronTransaction
+
+var ErrRealtimeManifestHidden = errRealtimeManifestHidden
+var ReconcileManifestRealtimeEndpoints = reconcileManifestRealtimeEndpoints
+var RealtimePreviewVerbs = realtimePreviewVerbs
+var RealtimeUsage = realtimeUsage
+var RealtimePublishUsage = realtimePublishUsage
+
 var PrintEdgeRuleEvents = printEdgeRuleEvents
 var ResolveArchiveInstance = resolveArchiveInstance
 var RequestLatencyMS = requestLatencyMS
@@ -2412,3 +2425,34 @@ func AppArgumentPaths() [][]string {
 	}
 	return paths
 }
+
+// Capability hiding (ADR-20261023115741).
+var CliPathCapability = cliPathCapability
+var CommandCapabilityPath = commandCapabilityPath
+
+var ValidateMCPProtocolResponseHeaders = validateMCPProtocolResponseHeaders
+
+// SavedDeployRecovery returns the resume command and hint a saved deploy
+// session with no staged settings offers after the given submission outcome.
+func SavedDeployRecovery(outcome string) (resume, hint string) {
+	s := &savedDeploySession{record: deploySessionRecord{ID: "sess-1", AppSlug: "probe-app", Outcome: deploySubmissionOutcome(outcome)}}
+	r := s.recovery("submission")
+	return r.ResumeCommand, r.Hint
+}
+
+var RoutesAppFlagAsPositional = routesAppFlagAsPositional
+
+var RenderProject = renderProject
+var InspectAttention = inspectAttention
+var RemoveCLITestSandbox = removeCLITestSandbox
+var WorkerScalingMetrics = workerScalingMetrics
+var WorkerMetricLabel = workerMetricLabel
+
+// ADR-20261025110000: registry credentials from a Docker config.
+type DockerCredentialHelper = dockerCredentialHelper
+
+func DockerConfigRegistryAuth(ctx context.Context, configPath, image string, helper DockerCredentialHelper) (*api.ImageRunRegistryAuth, error) {
+	return dockerConfigRegistryAuth(ctx, configPath, image, helper)
+}
+
+var RenderRouteMonitorReport = renderRouteMonitorReport

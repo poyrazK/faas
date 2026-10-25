@@ -362,3 +362,72 @@ func TestPostgresGithubWebhookSecretWithoutPlaintext(t *testing.T) {
 		t.Fatal("the database accepted a row with neither copy of the secret")
 	}
 }
+
+// TestPostgresMigrateEdge runs the edge re-seal against PostgreSQL (ADR
+// 20261022111812): an app's basic-auth credential and a customer log drain's
+// header move to the domain alone, through the apps and app_log_drains
+// guards, and a second run finds them current.
+func TestPostgresMigrateEdge(t *testing.T) {
+	store := openStore(t)
+	ctx := context.Background()
+	fleet, domain := mustIdentity(t), mustIdentity(t)
+	suffix := strconv.FormatInt(rand.Int64N(1<<40), 36)
+	account, err := store.CreateAccount(ctx, "edge-domain-"+suffix+"@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: "edge-domain-" + suffix, Type: state.AppTypeApp, Status: state.AppActive, RAMMB: 256, MaxConcurrency: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	basic, err := secretbox.SealBytes(fleet.Recipient(), api.AppPublicAuthBasicSealNamespace, []byte("editor\npass"), api.AppPublicAuthBasicMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpdateApp(ctx, app.ID, state.UpdateAppParams{SetPublicAuth: true, PublicAuth: &state.AppPublicAuthUpdate{Mode: api.AppPublicAuthModeBasic, Sealed: basic}}); err != nil {
+		t.Fatal(err)
+	}
+	header, err := secretbox.SealBytes(fleet.Recipient(), "APP_LOG_DRAIN_AUTH_HEADER", []byte("Authorization: Bearer d"), api.AppLogDrainAuthHeaderMaxBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	drain, err := store.CreateAppLogDrain(ctx, state.AppLogDrain{AppID: app.ID, AccountID: account.ID, Kind: state.AppLogDrainKind("http_json"), TargetURL: "https://logs.example.com/" + suffix, AuthHeaderSealed: header, Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	report, err := sealmigrate.MigrateEdge(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if report.Scanned < 2 || report.Resealed < 2 {
+		t.Fatalf("report = %+v, want the basic-auth credential and the drain header re-sealed", report)
+	}
+	gotApp, err := store.AppByID(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ns, plain, err := secretbox.OpenBytes(domain, gotApp.PublicAuthBasicSealed); err != nil || ns != api.AppPublicAuthBasicSealNamespace || string(plain) != "editor\npass" {
+		t.Fatalf("basic auth domain open = %q %q, %v", ns, plain, err)
+	}
+	if _, _, err := secretbox.OpenBytes(fleet, gotApp.PublicAuthBasicSealed); err == nil {
+		t.Fatal("the fleet identity still opens the re-sealed basic-auth credential")
+	}
+	drains, err := store.ListAppLogDrainsForApp(ctx, app.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var gotHeader []byte
+	for _, d := range drains {
+		if d.ID == drain.ID {
+			gotHeader = d.AuthHeaderSealed
+		}
+	}
+	if ns, plain, err := secretbox.OpenBytes(domain, gotHeader); err != nil || ns != "APP_LOG_DRAIN_AUTH_HEADER" || string(plain) != "Authorization: Bearer d" {
+		t.Fatalf("drain header domain open = %q %q, %v", ns, plain, err)
+	}
+	again, err := sealmigrate.MigrateEdge(ctx, store, domain, []*age.X25519Identity{fleet})
+	if err != nil || again.Resealed != 0 {
+		t.Fatalf("second run = %+v, %v; want nothing re-sealed", again, err)
+	}
+}

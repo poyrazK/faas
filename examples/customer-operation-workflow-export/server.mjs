@@ -1,11 +1,11 @@
 import http from 'node:http';
 import {readFile} from 'node:fs/promises';
 import {fileURLToPath} from 'node:url';
-import {GregaleOperationClient} from '@gregale/sdk-node/operations';
+import {GregaleOperationClient} from '@gregale/sdk-node/preview/operations';
 import {finishExport} from './artifact.mjs';
 
 const publicRoot = new URL('./public/', import.meta.url);
-const sdkRoot = new URL('./', import.meta.resolve('@gregale/sdk-node/operations'));
+const sdkRoot = new URL('./', import.meta.resolve('@gregale/sdk-node/preview/operations'));
 const files = new Map([
   ['/', [new URL('index.html', publicRoot), 'text/html']],
   ...['app.mjs', 'customer-auth.mjs', 'progress.mjs'].map(name => [`/${name}`, [new URL(name, publicRoot), 'text/javascript']]),
@@ -99,7 +99,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
   validateExportConfig(config);
   let runtime;
   if (process.env.FAAS_WORKLOAD_IDENTITY_ENDPOINT) {
-    const {GregaleWorkflowOperations} = await import('@gregale/sdk-node/operations/runtime');
+    const {GregaleWorkflowOperations} = await import('@gregale/sdk-node/preview/operations/runtime');
     runtime = new GregaleWorkflowOperations({apiURL: config.apiURL});
   }
   createExportServer({config, runtime}).listen(Number(process.env.PORT ?? 8080), process.env.HOST ?? '127.0.0.1');

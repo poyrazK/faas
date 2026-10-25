@@ -9,7 +9,7 @@
 #
 #   control-plane  identities of the domains read there (outbound, source)
 #                  and the recipient of every domain (apid seals to it)
-#   compute        identities of the domains read there (runtime, build)
+#   compute        identities of the domains read there (runtime, build, edge)
 #
 # Secrets, per domain: SEAL_DOMAIN_<DOMAIN>_AGE_KEY and
 # SEAL_DOMAIN_<DOMAIN>_AGE_RECIPIENT, from `gregalectl seal-domain init`. Set
@@ -53,7 +53,7 @@ stage() { # KIND DOMAIN VALUE
   added+="faas_seal_domain_${domain}_${kind}_src: \"$file\""$'\n'
 }
 
-for domain in outbound source runtime build; do
+for domain in outbound source runtime build edge; do
   upper=$(printf '%s' "$domain" | tr '[:lower:]' '[:upper:]')
   key_var="SEAL_DOMAIN_${upper}_AGE_KEY"
   pub_var="SEAL_DOMAIN_${upper}_AGE_RECIPIENT"
@@ -71,10 +71,10 @@ for domain in outbound source runtime build; do
       stage identity "$domain" "$key"
       stage recipient "$domain" "$pub"
       ;;
-    control-plane/runtime | control-plane/build)
+    control-plane/runtime | control-plane/build | control-plane/edge)
       stage recipient "$domain" "$pub"
       ;;
-    compute/runtime | compute/build)
+    compute/runtime | compute/build | compute/edge)
       stage identity "$domain" "$key"
       ;;
   esac

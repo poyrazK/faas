@@ -293,6 +293,9 @@ var SourceDomainRecipient = &sourceDomainRecipient
 var HostHMACKeyBytes = hostHMACKeyBytes
 var BuildDomainRecipient = &buildDomainRecipient
 var BuildWriteMode = &buildWriteMode
+var EdgeDomainRecipient = &edgeDomainRecipient
+var EdgeWriteMode = &edgeWriteMode
+var SealAppLogDrainAuthHeader = sealAppLogDrainAuthHeader
 var SourceWriteMode = &sourceWriteMode
 var SseChannels = &sseChannels
 var TimeNow = &timeNow
@@ -651,8 +654,10 @@ var StoreAsSessionLookup = storeAsSessionLookup
 var StorePlanCache = storePlanCache
 var StripeWebhookHarness = stripeWebhookHarness
 var SummarizeDevSyncHistory = summarizeDevSyncHistory
+var SummarizeRuntimePolicyComponent = summarizeRuntimePolicyComponent
 var SummarizeRuntimePolicySchedulerStatus = summarizeRuntimePolicySchedulerStatus
 var SummarizeRuntimePolicyStatus = summarizeRuntimePolicyStatus
+var SummarizeTrafficRuntime = summarizeTrafficRuntime
 var SuspectedDependency = suspectedDependency
 var SuspectedDependencyFor = suspectedDependencyFor
 var SweepExpiredCacheEntries = sweepExpiredCacheEntries
@@ -905,6 +910,9 @@ func (r *server) Log() **slog.Logger                                 { return &r
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
+func (r *server) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
+	return r.beforeAccountDelete(ctx, acct)
+}
 func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 	return &r.managedPostgresBindings
 }
@@ -1596,6 +1604,36 @@ func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string)
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
 
+// RealtimePreviewEveryone shows realtime preview features to every account
+// (ADR-20261019102657).
+func RealtimePreviewEveryone() managedrealtime.PreviewRollout {
+	r, err := managedrealtime.ParsePreviewRollout("*")
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
+// AppWebhookEventsForTest is the app webhook vocabulary accountID may choose.
+func (s *server) AppWebhookEventsForTest(accountID string) []string {
+	return s.appWebhookEvents(accountID)
+}
+
+// ConfigureRealtimePreviewForTest reads FAAS_REALTIME_PREVIEW_ACCOUNTS from
+// getenv, seeding the realtime_preview platform flag.
+func (s *server) ConfigureRealtimePreviewForTest(getenv func(string) string) error {
+	return s.configureRealtimePreview(getenv)
+}
+
+// RealtimePreviewGateForTest is the gate the realtime handlers consult.
+func (s *server) RealtimePreviewGateForTest() managedrealtime.PreviewGate {
+	return s.realtime.Preview
+}
+
+// RealtimePreviewPublishedForTest reports whether the served spec lists the
+// realtime preview.
+func (s *server) RealtimePreviewPublishedForTest() bool { return s.realtimePreviewPublished() }
+
 // GatewayControlURL exposes gatewayControlURL (ADR-20261022004500).
 func (s *server) GatewayControlURL(ctx context.Context) string { return s.gatewayControlURL(ctx) }
 
@@ -1641,6 +1679,19 @@ func VerifyCandidateObjectStorageCredentialsForTest(ctx context.Context, intent 
 func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.EnvironmentQualificationObjectStorageCheck, identities []*age.X25519Identity,
 	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
 	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
+}
+
+// SetDatabaseSwitchDrain gives a test server's database switch worker drain
+// evidence the in-memory store lacks (ADR-20261023181931).
+func (e sourceRefTestEnv) SetDatabaseSwitchDrain(drain state.DatabaseSwitchDrainStore) {
+	e.srv.databaseSwitchDrainOverride = drain
+	e.srv.rollbackArtifactVerifier = stubRollbackArtifactVerifier{}
+}
+
+// DatabaseSwitchWorkerConfigured reports whether the server can run database
+// switches.
+func (e sourceRefTestEnv) DatabaseSwitchWorkerConfigured() bool {
+	return e.srv.databaseSwitchWorker() != nil
 }
 
 // PrepareGitOpsWorkloadCandidatesForTest runs the GitOps backend's candidate

@@ -3354,6 +3354,9 @@ type DeploymentResponse struct {
 	// pending while it waits, or how its latest schedule ended
 	// (ADR-20261021152201).
 	ScheduledRelease *ScheduledRelease `json:"scheduled_release,omitempty"`
+	// DatabaseSwitch is set on the response to a rollback that restores the
+	// database (ADR-20261023181931).
+	DatabaseSwitch *DatabaseSwitch `json:"database_switch,omitempty"`
 	// DevPatch is set only on the response to a developer source upload
 	// (`gregale dev`). It reports whether the sync could have been applied as
 	// a live source patch (ADR-740 phase 1, measurement only).
@@ -4074,6 +4077,12 @@ type RollbackRequest struct {
 	// rollback is refused with rollback_crosses_release. Automated rollbacks
 	// never set it.
 	AcknowledgeReleases bool `json:"acknowledge_releases,omitempty"`
+
+	// RestoreDatabases also restores the app's managed PostgreSQL database
+	// to just before the earliest crossed release and switches the app to
+	// that copy (ADR-20261023181931). It requires AcknowledgeReleases; the
+	// response carries the switch, and the code rollback happens inside it.
+	RestoreDatabases bool `json:"restore_databases,omitempty"`
 }
 
 // CapabilityStatus is a customer-visible catalog row with the account's
@@ -4102,6 +4111,11 @@ type CapabilitiesResponse struct {
 	RegistryVersion    int                `json:"registry_version"`
 	Plan               string             `json:"plan"`
 	Capabilities       []CapabilityStatus `json:"capabilities"`
+	// HiddenCapabilities are the catalog capabilities, internal ones
+	// included, whose platform flag is off for this account
+	// (ADR-20261023115741). Clients hide their commands and links. Omitted
+	// when nothing is hidden, and by servers without the capability gate.
+	HiddenCapabilities []string `json:"hidden_capabilities,omitempty"`
 }
 
 // AccountAbuseHold is the customer view of an ADR-361 account abuse hold.
@@ -10182,13 +10196,19 @@ func validateThrottleMaxKeys(maxKeys, planMax int) *Problem {
 // The hot-path applier is
 // pkg/gateway.(*Handler).applyEdgeRuleBudget (§4.1.2.8d).
 type EdgeRuleBudgetAction struct {
-	BudgetMs            int    `json:"budget_ms"`
+	BudgetMs int `json:"budget_ms"`
+	// TotalDeadlineMs includes upload/wake/admission from trusted public ingress.
+	// Zero leaves the existing execution-only budget unchanged (ADR-570).
+	TotalDeadlineMs     int    `json:"total_deadline_ms,omitempty"`
 	AllowOverrideHeader string `json:"allow_override_header,omitempty"`
 }
 
 func (a *EdgeRuleBudgetAction) Validate() *Problem {
 	if a == nil {
 		return ErrValidation("budget action is required")
+	}
+	if a.TotalDeadlineMs < 0 || a.TotalDeadlineMs > int(RequestBudgetPlanMax.Milliseconds()) {
+		return ErrValidation("budget action: total_deadline_ms must be zero (unset) or within the platform request budget ceiling")
 	}
 	if a.BudgetMs <= 0 {
 		return ErrValidation(fmt.Sprintf(

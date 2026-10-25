@@ -1,0 +1,7 @@
+# Managed by the seal_domains role (ADR 20261022111812): gatewayd-internal
+# opens app basic-auth credentials and log drain authentication headers with
+# the edge seal-domain identity. The fleet identity stays in the base unit
+# until the domain re-seal completes.
+[Service]
+LoadCredential=faas_seal_domain_edge:/etc/faas/secrets/domains/edge.age
+Environment=FAAS_SEAL_DOMAIN_EDGE_IDENTITY_PATH=%d/faas_seal_domain_edge

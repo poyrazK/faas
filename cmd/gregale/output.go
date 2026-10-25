@@ -23,6 +23,7 @@ import (
 	"io"
 	"os"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -287,7 +288,72 @@ func printUnknownSubcommand(w io.Writer, path string, command cliCommand, got st
 	if ok && !jsonOutput {
 		maybeSuggestSub(suggestion)
 	}
+	if !ok && !jsonOutput && len(command.Subcommands) > 0 {
+		printSubcommandChoices(w, path, command, got)
+	}
 	return 1
+}
+
+// unknownSubcommandChoices follows a dispatcher's own "unknown … subcommand"
+// line: a typo gets "Did you mean", anything else the verbs and, for an app
+// slug, the verb-first form. `alerts get` named no verb on production-us
+// rc.294 (Hunt 14 H14-51). It returns the dispatcher's exit code, 1.
+func unknownSubcommandChoices(w io.Writer, path string, command cliCommand, got string) int {
+	if jsonOutput {
+		return 1
+	}
+	if suggestion, ok := suggestSubcommand(got, command); ok {
+		_, _ = fmt.Fprintf(w, "  Did you mean %q?\n", suggestion)
+		return 1
+	}
+	if len(command.Subcommands) > 0 {
+		printSubcommandChoices(w, path, command, got)
+	}
+	return 1
+}
+
+// printSubcommandChoices lists the verbs a dispatcher accepts. An app slug in
+// the verb position gets the verb-first form: `projects environments h14p`
+// and `debug requests h14-py` named neither (Hunt 14 H14-42).
+func printSubcommandChoices(w io.Writer, path string, command cliCommand, got string) {
+	names := make([]string, 0, len(command.Subcommands))
+	hasList := false
+	for _, sub := range command.Subcommands {
+		names = append(names, sub.Name)
+		hasList = hasList || sub.Name == subList
+	}
+	_, _ = fmt.Fprintf(w, "  Subcommands: %s\n", strings.Join(names, ", "))
+	if hasList && api.ValidAppSlug(got) && !commonVerbWord(got) {
+		_, _ = fmt.Fprintf(w, "  If %s is an app, the subcommand comes first: gregale %s list %s\n", got, path, got)
+	}
+}
+
+// commonVerbWord is a verb another CLI would accept here (`alerts get`); it
+// is a mistyped verb, not an app slug in the verb position.
+func commonVerbWord(word string) bool {
+	switch word {
+	case "get", "show", "describe", "view", "ls", "delete", "del", "remove", "create", "new", "edit", "set", "help", "status", "logs":
+		return true
+	}
+	return false
+}
+
+// nestedCliCommand returns the subcommands under `name path...` (for example
+// `projects environments`) in the shape printUnknownSubcommand takes.
+func nestedCliCommand(name string, path ...string) cliCommand {
+	top, _ := lookupCliCommand(name)
+	subs := top.Subcommands
+	for _, step := range path {
+		var next []cliSub
+		for _, sub := range subs {
+			if sub.Name == step || slices.Contains(sub.Aliases, step) {
+				next = sub.Subcommands
+				break
+			}
+		}
+		subs = next
+	}
+	return cliCommand{Name: name, Subcommands: subs}
 }
 
 // PrintUsage emits a one-line "usage:" hint followed by a "Docs:" line

@@ -111,7 +111,10 @@ func NewAuthorizer(store AuthorizationStore) gateway.ServiceProxyAuthorizer {
 				return gateway.ServiceCaller{}, err
 			}
 			if projectID != "" {
-				policyStore, ok := store.(state.GitHubDeployPolicyStore)
+				// Pinned policy views carry only the read half of the store.
+				policyStore, ok := store.(interface {
+					GetGitHubDeployPolicy(context.Context, string, string) (state.GitHubDeployPolicy, error)
+				})
 				if !ok {
 					return gateway.ServiceCaller{}, errors.New("preview service policy storage is unavailable")
 				}

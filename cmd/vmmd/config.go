@@ -626,6 +626,26 @@ func LoadConfig(path string) (*Config, error) {
 		preparedNetworksSet = md.IsDefined("prepared_networks")
 	}
 	c.PreparedNetworksExplicit = preparedNetworksSet
+	// The restart adoption switches can also come from the unit environment,
+	// so a rollout turns them on per node without editing vmmd.toml
+	// (ansible vmmd_adoption_record, vmmd_adopt_running_vms,
+	// vmmd_adopt_admitted_runtimes). A set variable overrides the TOML.
+	for _, sw := range []struct {
+		env string
+		dst *bool
+	}{
+		{"FAAS_VMMD_ADOPTION_RECORD", &c.AdoptionRecord},
+		{"FAAS_VMMD_ADOPT_RUNNING_VMS", &c.AdoptRunningVMs},
+		{"FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES", &c.AdoptAdmittedRuntimes},
+	} {
+		if v := os.Getenv(sw.env); v != "" {
+			on, perr := strconv.ParseBool(v)
+			if perr != nil {
+				return nil, fmt.Errorf("vmmd: %s must be a boolean (got %q)", sw.env, v)
+			}
+			*sw.dst = on
+		}
+	}
 	// Native recovery refuses the cache until its claims are journaled
 	// (ADR-568), so the default must not stop such a node from starting.
 	if c.NativeProcessRecovery && !preparedNetworksSet {

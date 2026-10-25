@@ -955,7 +955,9 @@ jobs:
           # Recovery with an actual serving receipt requires local database authority.
           scripts/ci/with-pg16-unix.sh bash -euo pipefail <<'STATE_TESTS'
           STATE_RUN=$(go run ./scripts/ci/e2eshard -package=./pkg/state -all-tests -shards=8 -shard=${{ matrix.shard }})
-          go test -race -count=1 -v -p 4 -timeout=20m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
+          # 30m: ADR-570's PostgreSQL contracts (#4153) took shards 1 and 4 past
+          # 20m on 2026-10-25; the 45-minute job bound still catches a hang.
+          go test -race -count=1 -v -p 4 -timeout=30m -run="$STATE_RUN" -coverpkg=./pkg/state -covermode=atomic -coverprofile=coverage/cover-shard-state-${{ matrix.shard }}.out ./pkg/state
           STATE_TESTS
       - name: upload state coverage
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -1273,6 +1275,105 @@ jobs:
           python3 .claude/ci/coverage_floor.py --state-only coverage/cover-shard-state-1.out coverage/cover-shard-state-2.out coverage/cover-shard-state-3.out coverage/cover-shard-state-4.out coverage/cover-shard-state-5.out coverage/cover-shard-state-6.out coverage/cover-shard-state-7.out coverage/cover-shard-state-8.out coverage/cover-shard2a.out coverage/cover-shard1.out coverage/cover-shard1-pgclone-1.out coverage/cover-shard1-pgclone-2.out coverage/cover-shard1-pgclone-3.out coverage/cover-shard1-pgclone-4.out
       - name: coverage floor (ship-blocking packages)
         run: make coverage-floor COVERDIR=coverage
+
+  # ADR-570: the pure gateway shard skips pgtest fixtures. Preserve its scope
+  # and additionally execute all traffic PG requirements against a real store.
+  traffic-platform:
+    name: traffic platform (unit + PostgreSQL evidence)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: bash
+    permissions:
+      contents: read
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: faas
+          POSTGRES_PASSWORD: faas
+          POSTGRES_DB: faas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faas -d faas"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+    env:
+      CGO_ENABLED: "0"
+      GOMAXPROCS: "2"
+      GOGC: "50"
+      PYTHONDONTWRITEBYTECODE: "1"
+      GOTOOLCHAIN: local
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Prepare traffic evidence
+        run: |
+          mkdir -p "$RUNNER_TEMP/traffic-evidence/binaries"
+          # Keep test temp directories short: tests bind unix sockets under
+          # them, and a path over 107 bytes fails with EINVAL.
+          printf 'GOTMPDIR=%s\n' "$(mktemp -d /tmp/tgo.XXXXXX)" >> "$GITHUB_ENV"
+          python3 scripts/ci/traffic-platform-checks_test.py
+          test "$(go env GOOS)/$(go env GOARCH)" = linux/amd64
+          go version > "$RUNNER_TEMP/traffic-evidence/go-version.txt"
+          git rev-parse HEAD > "$RUNNER_TEMP/traffic-evidence/source-commit.txt"
+      - name: Verify isolated PostgreSQL source and durability
+        run: |
+          probe=$(docker exec '${{ job.services.postgres.id }}' psql -U faas -d faas -Atc "SELECT current_setting('fsync'),current_setting('synchronous_commit'),current_setting('full_page_writes'),(SELECT count(*) FROM information_schema.tables WHERE table_schema='public');")
+          printf '%s\n' "$probe" > "$RUNNER_TEMP/traffic-evidence/postgres-before.txt"
+          test "$probe" = 'on|on|on|0'
+      - name: Complete fourteen-package traffic unit scope
+        run: python3 scripts/ci/traffic-platform-checks.py unit --output "$RUNNER_TEMP/traffic-evidence"
+      - name: Additive fourteen-package PostgreSQL scope
+        if: ${{ !cancelled() }}
+        env:
+          DATABASE_URL: postgres://faas:faas@localhost:5432/faas?sslmode=disable
+          FAAS_PGTEST_TEMPLATE_DATABASE: "1"
+        run: python3 scripts/ci/traffic-platform-checks.py postgres --output "$RUNNER_TEMP/traffic-evidence"
+      - name: Refuse incomplete or skipped PostgreSQL evidence
+        if: ${{ !cancelled() }}
+        run: python3 scripts/ci/traffic-platform-checks.py verify --output "$RUNNER_TEMP/traffic-evidence"
+      - name: Linux amd64 compilation (no native execution)
+        run: |
+          go test -c -p=1 -vet=off -gcflags='all=-l -dwarf=false' -ldflags='-s -w' -o "$RUNNER_TEMP/traffic-evidence/binaries/vmmd-linux.test" ./cmd/vmmd
+          go test -c -tags=metal -p=1 -vet=off -gcflags='all=-l -dwarf=false' -ldflags='-s -w' -o "$RUNNER_TEMP/traffic-evidence/binaries/fcvm-metal-linux.test" ./pkg/fcvm
+          sha256sum "$RUNNER_TEMP/traffic-evidence/binaries/"*.test > "$RUNNER_TEMP/traffic-evidence/linux-compilation-sha256.txt"
+          file "$RUNNER_TEMP/traffic-evidence/binaries/"*.test > "$RUNNER_TEMP/traffic-evidence/linux-compilation-types.txt"
+      - name: SQLC reproducibility and traffic policy gates
+        run: |
+          make sqlc-check runbook-sql-check text-encoding-check shell-quoting-check adr-number-uniqueness-check 2>&1 | tee "$RUNNER_TEMP/traffic-evidence/static-gates.log"
+      - name: Verify PostgreSQL source remains isolated
+        if: ${{ !cancelled() }}
+        run: |
+          probe=$(docker exec '${{ job.services.postgres.id }}' psql -U faas -d faas -Atc "SELECT current_setting('fsync'),current_setting('synchronous_commit'),current_setting('full_page_writes'),(SELECT count(*) FROM information_schema.tables WHERE table_schema='public');")
+          printf '%s\n' "$probe" > "$RUNNER_TEMP/traffic-evidence/postgres-after.txt"
+          test "$probe" = 'on|on|on|0'
+      - name: Verify final source hashes
+        run: |
+          python3 - "$RUNNER_TEMP/traffic-evidence" <<'PY'
+          import hashlib, importlib.util, json, pathlib, sys
+          spec = importlib.util.spec_from_file_location('traffic_checks', 'scripts/ci/traffic-platform-checks.py')
+          checks = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(checks)
+          output = pathlib.Path(sys.argv[1])
+          freeze = json.loads((output / 'source-freeze.json').read_text())
+          assert checks.source_snapshot(pathlib.Path.cwd()) == freeze
+          checks.write_json(output / 'final-source-check.json', {'commit': freeze['commit'], 'source_files': len(freeze['files']), 'source_unchanged': True, 'source_freeze_sha256': hashlib.sha256((output / 'source-freeze.json').read_bytes()).hexdigest(), 'native_executions': 0})
+          PY
+      - name: Retain traffic logs, source freeze and verdict
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: traffic-platform-${{ github.sha }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/traffic-evidence
+          if-no-files-found: error
+          retention-days: 14
 
   # Branch protection matches this historical name exactly. Keep it stable
   # while its original state/PostgreSQL inventory runs in parallel above.
@@ -2179,7 +2280,7 @@ jobs:
         working-directory: sdk/node
         run: |
           npm run gen:check || {
-            echo "::error::sdk/node/src/generated is out of sync with api/openapi.yaml."
+            echo "::error::sdk/node/src/generated or src/generated-public is out of sync with api/openapi.yaml or sdk/openapi.yaml."
             echo "::error::Run 'make sdk-gen-node-check' locally and commit the result."
             exit 1
           }

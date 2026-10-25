@@ -10,7 +10,7 @@ import (
 )
 
 // ReuseJobOperationUpload looks up a verified private receipt without bytes.
-func (c *Client) ReuseJobOperationUpload(ctx context.Context, id string, proof OperationJobRuntimeProof, req OperationArtifactUploadRequest) (OperationJobArtifactResponse, error) {
+func (c *PreviewClient) ReuseJobOperationUpload(ctx context.Context, id string, proof OperationJobRuntimeProof, req OperationArtifactUploadRequest) (OperationJobArtifactResponse, error) {
 	var out OperationJobArtifactResponse
 	if err := c.validateJobOperationClient(); err != nil {
 		return out, err

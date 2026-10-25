@@ -31,6 +31,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/ci"
 	"github.com/onebox-faas/faas/pkg/cosign"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
@@ -41,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/heartbeatretention"
 	mirrorRollup "github.com/onebox-faas/faas/pkg/mirror"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/privatenetwork"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
@@ -390,6 +392,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err := deps.migrate(ctx, pool); err != nil {
 		return err
 	}
+	invocationTrafficRegistry, err := newInvocationTrafficRegistry(ctx, pool)
+	if err != nil {
+		return err
+	}
+	defer runInvocationTrafficRegistry(ctx, invocationTrafficRegistry)()
 
 	// ADR-056: handshake-layer NodeVerifier. Gated on cfg.NodeName
 	// (the multi-box gate, mirroring vmmd's cfg.ComputeNode.NodeName
@@ -449,7 +456,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("schedd: load vmmd TLS: %w", err)
 	}
 	vmmRotator.Set(vmmTLS)
-	store := state.NewPgStore(pool)
+	store := state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(os.Getenv)))
 	stopEventWriter, err := eventrecording.Start(ctx, store, "schedd", cfg.EventAcknowledgmentWriterSlot, cfg.EventAcknowledgmentWriterRoster, log)
 	if err != nil {
 		return err
@@ -684,6 +691,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// vmmd confirms attempt-bound native retirement.
 	startEnvironmentQualificationRecovery(ctx, engine, store, ownerNodeID, log)
 	startManagedPostgresDrainRecovery(ctx, engine, store, ownerNodeID, log)
+	startDatabaseSwitchDrainCapture(ctx, engine, store, store, ownerNodeID, log)
 	// ADR-098 PR-D: connection-aware upstream affinity. The
 	// FAAS_UPSTREAM_AFFINITY environment value is the bootstrap
 	// fallback; the durable data-placement flag can switch the
@@ -713,7 +721,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// atomically when the acknowledged runtime value changes.
 	runtimeCtx, runtimeCancel := context.WithCancel(ctx)
 	defer runtimeCancel()
-	watcher := runtimeconfig.New(store, pool, []string{runtimeconfig.KeyDataPlacement},
+	// ADR-20261023115741: schedd holds a capability's background work
+	// (crons, triggers, queued deliveries, jobs, workflows) while its
+	// platform flag is off for the owning account. The flags ride the same
+	// runtime-config watcher and report apply receipts as schedd.
+	capabilityFlags := platformflags.NewSet(capflags.Bootstrap(os.Getenv))
+	capabilities, err := capflags.Load(capabilityFlags.Snapshot)
+	if err != nil {
+		return fmt.Errorf("schedd: load capability catalog: %w", err)
+	}
+	engine.WithCapabilities(capabilities)
+	runtimeKeys, runtimeApply := runtimeconfig.WithPlatformFlags([]string{runtimeconfig.KeyDataPlacement},
 		func(ctx context.Context, key string, value json.RawMessage, _ int64) error {
 			enabled, err := runtimeconfig.Bool(value)
 			if err != nil {
@@ -728,7 +746,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 				}
 			}
 			return nil
-		}, log)
+		}, capabilityFlags)
+	watcher := runtimeconfig.New(store, pool, runtimeKeys, runtimeApply, log)
 	watcher.Daemon = "schedd" // ADR-1700 apply receipts
 	if err := watcher.Reconcile(runtimeCtx); err != nil {
 		log.Warn("schedd: initial runtime config reconcile failed", "err", err)
@@ -745,7 +764,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// health signal at all, so enabling one without the other would be a
 	// silent no-op that looks like protection. That combination is a
 	// startup error rather than a warning, per the ADR's rollout section.
-	if os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER") != "" {
+	egressCircuitEnabled, err := api.EgressCircuitBreakerEnabled(os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER"))
+	if err != nil {
+		return err
+	}
+	if egressCircuitEnabled {
 		if os.Getenv("FAAS_UPSTREAM_PROBE") == "" {
 			log.Error("schedd: FAAS_EGRESS_CIRCUIT_BREAKER is set but FAAS_UPSTREAM_PROBE is not; " +
 				"the breaker has no health signal without the ADR-098 probe")
@@ -754,20 +777,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		applier := sched.NewRoutedEgressCircuitApplier(
 			vmmRouter,
 			sched.NewStoreEgressCircuitNodeLister(store),
-		)
+		).WithDesiredStore(store)
 		// The resolver is the node's own DNS. schedd resolves the upstream
 		// locally so the plaintext host never crosses the vmmd wire — the
 		// RPC carries a resolved address, and every label and log line
 		// carries only host_redacted_hash (ADR-098 §11).
-		resolver := func(ctx context.Context, host string) (string, error) {
+		resolver := func(ctx context.Context, host string) ([]string, error) {
 			addrs, err := net.DefaultResolver.LookupHost(ctx, host)
 			if err != nil {
-				return "", err
+				return nil, err
 			}
 			if len(addrs) == 0 {
-				return "", fmt.Errorf("schedd: egress circuit: no address for upstream")
+				return nil, fmt.Errorf("schedd: egress circuit: no address for upstream")
 			}
-			return addrs[0], nil
+			return addrs, nil
 		}
 		egressBreaker := sched.NewEgressCircuitBreaker(applier, resolver, log).WithMetrics(ops)
 		egressLoop := sched.NewEgressCircuitLoop(
@@ -776,7 +799,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			api.UpstreamAffinityTTL, // one probe cadence
 			0,                       // default: four intervals
 			log,
-		)
+		).WithAppLister(store.ListAppEgressCircuitAppIDs)
 		// One pass before the first tick so a schedd restart re-derives
 		// breaker state from the probe history instead of starting blind
 		// with every circuit closed.
@@ -2529,6 +2552,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	drain := sched.NewDrain(engine.Store(), engine,
 		sched.WithDrainGatewaySynth(drainGateway),
+		sched.WithDrainTrafficRevocations(invocationTrafficRegistry),
 		sched.WithDrainAppTaskCoordinator(appTaskCoordinator),
 		sched.WithDrainNotifier(engine.Notifier()),
 		sched.WithDrainLogger(log),

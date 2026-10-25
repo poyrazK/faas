@@ -1,11 +1,11 @@
 import httpx
 
 from faas_sdk import AuthenticatedClient
-from faas_sdk.api.workflows import (
+from faas_sdk.preview.api.workflows import (
     get_platform_tenant_self_workflow_run_diagnostics,
     get_workflow_run_diagnostics,
 )
-from faas_sdk.models.workflow_run_diagnostics_response import WorkflowRunDiagnosticsResponse
+from faas_sdk.preview.models.workflow_run_diagnostics_response import WorkflowRunDiagnosticsResponse
 
 
 def test_workflow_diagnostics_account_and_tenant_read_routes():

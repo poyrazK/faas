@@ -24,6 +24,8 @@ const (
 	envSealDomainSourceWrites      = "FAAS_SEAL_DOMAIN_SOURCE_WRITES"
 	envSealDomainBuildRecipient    = "FAAS_SEAL_DOMAIN_BUILD_RECIPIENT_PATH"
 	envSealDomainBuildWrites       = "FAAS_SEAL_DOMAIN_BUILD_WRITES"
+	envSealDomainEdgeRecipient     = "FAAS_SEAL_DOMAIN_EDGE_RECIPIENT_PATH"
+	envSealDomainEdgeWrites        = "FAAS_SEAL_DOMAIN_EDGE_WRITES"
 	// envRuntimeSecretBinding turns on account-bound runtime envelopes
 	// (ADR-20261023173624): off (the default) or account. Unit
 	// configuration, like the write modes: a database writer must not be
@@ -80,6 +82,14 @@ var buildDomainRecipient func() *age.X25519Recipient
 // passwords, which imaged opens.
 var buildWriteMode sealdomain.WriteMode
 
+// edgeDomainRecipient is the edge domain's recipient once the seal_domains
+// role stages it; nil until then.
+var edgeDomainRecipient func() *age.X25519Recipient
+
+// edgeWriteMode picks the recipients of app basic-auth credentials and log
+// drain authentication headers, which gatewayd-internal opens.
+var edgeWriteMode sealdomain.WriteMode
+
 // runtimeDomainRecipient is the runtime domain's recipient once the
 // seal_domains role stages it; nil until then.
 var runtimeDomainRecipient func() *age.X25519Recipient
@@ -121,6 +131,15 @@ func loadSealDomains(getenv func(string) string, log *slog.Logger) error {
 		return fmt.Errorf("apid: build seal domain: %w", err)
 	}
 	log.Info("build seal domain", "write_mode", string(buildWriteMode), "domain_recipient_staged", buildDomainRecipient != nil, "recipients", len(buildRecipients))
+
+	if edgeDomainRecipient, edgeWriteMode, err = loadDomainWriter(getenv, envSealDomainEdgeRecipient, envSealDomainEdgeWrites); err != nil {
+		return err
+	}
+	edgeRecipients, err := edgeCredentialRecipients()
+	if err != nil && edgeWriteMode != sealdomain.WriteAuto && edgeWriteMode != sealdomain.WriteFleet {
+		return fmt.Errorf("apid: edge seal domain: %w", err)
+	}
+	log.Info("edge seal domain", "write_mode", string(edgeWriteMode), "domain_recipient_staged", edgeDomainRecipient != nil, "recipients", len(edgeRecipients))
 
 	if runtimeDomainRecipient, runtimeWriteMode, err = loadDomainWriter(getenv, envSealDomainRuntimeRecipient, envSealDomainRuntimeWrites); err != nil {
 		return err
@@ -175,6 +194,14 @@ func githubWebhookSecretRecipients() ([]*age.X25519Recipient, error) {
 // staged, then the domain and the fleet recipient, then the domain alone.
 func registryCredentialRecipients() ([]*age.X25519Recipient, error) {
 	return sealdomain.Recipients(buildWriteMode, recipientOrNil(buildDomainRecipient), hostSecretRecipient())
+}
+
+// edgeCredentialRecipients returns who an app's basic-auth credential or a
+// log drain's authentication header is sealed to: the fleet recipient alone
+// until the edge domain is staged, then the domain and the fleet recipient,
+// then the domain alone.
+func edgeCredentialRecipients() ([]*age.X25519Recipient, error) {
+	return sealdomain.Recipients(edgeWriteMode, recipientOrNil(edgeDomainRecipient), hostSecretRecipient())
 }
 
 // runtimeSecretRecipient is who app, project, release and binding secrets,

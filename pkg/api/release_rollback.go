@@ -47,6 +47,28 @@ type DeploymentRelease struct {
 	MigrationDatabases []ReleaseDatabaseRef `json:"migration_databases,omitempty"`
 }
 
+// ErrRollbackTargetDatabaseRestored refuses a rollback to a deployment whose
+// own release command a database switch undid (ADR-20261023181931). It
+// cannot be acknowledged.
+func ErrRollbackTargetDatabaseRestored(target string) *Problem {
+	return NewProblem(http.StatusConflict, CodeRollbackTargetDatabaseRestored,
+		"Rollback target's database changes were undone",
+		fmt.Sprintf("A database switch restored the app's database to before %s's release command ran, so %s's code would run against a schema it does not expect.", target, target)).
+		WithHint("Deploy that code again; its release command runs before it serves.").
+		WithDocs(docsBase + "/deploys#rollbacks-that-restore-the-database")
+}
+
+// ErrDatabaseSwitchUnavailable refuses a rollback that asked to restore the
+// database (ADR-20261023181931).
+func ErrDatabaseSwitchUnavailable(detail, hint string) *Problem {
+	p := NewProblem(http.StatusConflict, CodeDatabaseSwitchUnavailable, "Database switch unavailable", detail).
+		WithDocs(docsBase + "/deploys#rollbacks-that-restore-the-database")
+	if hint != "" {
+		p = p.WithHint(hint)
+	}
+	return p
+}
+
 // ErrRollbackCrossesRelease refuses an unacknowledged rollback over release
 // commands that ran after its target last served (ADR-1448).
 func ErrRollbackCrossesRelease(target string, crossed []RollbackCrossedRelease, restore []ReleaseRestorePoint) *Problem {

@@ -5,11 +5,11 @@ server Retry-After guidance, and a lifetime recovery-attempt limit. Existing
 callers without `RetryPolicy` retain fixed Backoff behavior.
 
 ```go
-status, err := faas.RecoverNextEventOutbox(ctx, db, client, accountID, appID,
-    faas.EventOutboxRecoveryOptions{
+status, err := preview.RecoverNextEventOutbox(ctx, db, client, accountID, appID,
+    preview.EventOutboxRecoveryOptions{
         ClaimDuration: 30 * time.Second,
         RequestTimeout: 10 * time.Second,
-        RetryPolicy: &faas.EventOutboxRetryPolicy{
+        RetryPolicy: &preview.EventOutboxRetryPolicy{
             InitialBackoff: time.Second,
             MaxBackoff: 5 * time.Minute,
             MaxAttempts: 20,
@@ -102,8 +102,8 @@ Recovery attempts are not control-command history entries.
 
 ## Existing installation upgrade
 
-Fresh installs use the updated `faas.EventOutboxSchema`. For an existing outbox,
-apply `faas.EventOutboxRetryPolicySchema` explicitly inside an application migration
+Fresh installs use the updated `preview.EventOutboxSchema`. For an existing outbox,
+apply `preview.EventOutboxRetryPolicySchema` explicitly inside an application migration
 transaction before enabling a policy. It replaces the original SDK-named
 `gregale_event_outbox_last_code_check` constraint to allow `attempts_exhausted`.
 It adds no columns or platform tables and never rewrites publication identity,

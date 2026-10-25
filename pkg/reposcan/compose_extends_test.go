@@ -124,7 +124,6 @@ func TestComposeIncludeWarnsWhatItCannotApply(t *testing.T) {
   - https://example.com/compose.yaml
   - path: db/compose.yaml
     project_directory: db
-    env_file: db/db.env
 services:
   web:
     image: nginx:1.27
@@ -137,12 +136,71 @@ services:
 	}
 	for _, want := range []string{
 		"WARNING include https://example.com/compose.yaml not loaded: remote Compose files are not supported",
-		"include db/compose.yaml: project_directory and env_file not applied",
-		"include db/compose.yaml: db/.env is not read; variables come from the root .env",
+		"include db/compose.yaml: project_directory not applied; paths and the default .env resolve from the included file's directory",
 	} {
 		if !containsWarning(result.Warnings, want) {
 			t.Errorf("warnings %q lack %q", result.Warnings, want)
 		}
+	}
+	if containsWarning(result.Warnings, "is not read") || containsWarning(result.Warnings, "env_file not applied") {
+		t.Errorf("warnings %q still report the included .env as unread", result.Warnings)
+	}
+}
+
+// Each included project interpolates with its own values, as Compose does
+// (ADR-20261025090000): the including project's, overlaid by the include's
+// env_file list, or else by the .env beside the included file.
+func TestComposeIncludeEnvFiles(t *testing.T) {
+	body := `include:
+  - db/compose.yaml
+  - path: api/compose.yaml
+    env_file: [api/base.env, api/local.env]
+services:
+  web:
+    image: nginx:1.27
+    command: ["serve", "${MODE}", "${SHARED}"]
+`
+	result, err := scanCompose(t, body,
+		".env", "MODE=root\nSHARED=from-root\n",
+		"db/compose.yaml", "include: [cache/compose.yaml]\nservices:\n  db-admin:\n    image: nginx:1.27\n    command: [\"serve\", \"${MODE}\", \"${SHARED}\"]\n",
+		"db/.env", "MODE=db\n",
+		"db/cache/compose.yaml", "services:\n  cache-admin:\n    image: nginx:1.27\n    command: [\"serve\", \"${MODE}\", \"${SHARED}\"]\n",
+		"db/cache/.env", "SHARED=from-cache\n",
+		"api/compose.yaml", "services:\n  api:\n    image: nginx:1.27\n    command: [\"serve\", \"${MODE}\", \"${SHARED}\"]\n",
+		"api/.env", "MODE=ignored-when-env_file-is-set\n",
+		"api/base.env", "MODE=api-base\nSHARED=from-api\n",
+		"api/local.env", "MODE=api-local\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		service string
+		want    []string
+	}{
+		{"web", []string{"serve", "root", "from-root"}},
+		{"db-admin", []string{"serve", "db", "from-root"}},
+		{"cache-admin", []string{"serve", "db", "from-cache"}},
+		{"api", []string{"serve", "api-local", "from-api"}},
+	} {
+		if got := composeBuildWorkload(t, result, tc.service).Command; !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("%s command = %q, want %q", tc.service, got, tc.want)
+		}
+	}
+
+	for _, tc := range []struct {
+		name, include, want string
+	}{
+		{"missing env_file", "  - path: api/compose.yaml\n    env_file: api/missing.env\n", "env file api/missing.env does not exist in the source"},
+		{"env_file outside the source", "  - path: api/compose.yaml\n    env_file: ../secret.env\n", `include env_file "../secret.env": must be a path inside the source`},
+		{"env_file not a string", "  - path: api/compose.yaml\n    env_file: [1]\n", "include env_file entries must be strings"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := scanCompose(t, "include:\n"+tc.include+"services:\n  web:\n    image: nginx:1.27\n",
+				"api/compose.yaml", "services:\n  api:\n    image: nginx:1.27\n")
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("err = %v, want %q", err, tc.want)
+			}
+		})
 	}
 }
 
@@ -198,8 +256,8 @@ func TestComposeLinkedFilesAreBounded(t *testing.T) {
 
 func TestComposeWithoutLinksIsUnchanged(t *testing.T) {
 	body := "services:\n  web:\n    image: nginx:1.27\n    environment: [A=1]\n"
-	resolved, sources, warnings, err := resolveComposeLinks(nil, []byte(body), []string{"compose.yaml"})
-	if err != nil || string(resolved) != body || !reflect.DeepEqual(sources, []string{"compose.yaml"}) || warnings != nil {
-		t.Fatalf("resolved=%q sources=%q warnings=%q err=%v", resolved, sources, warnings, err)
+	links, err := resolveComposeLinks(nil, []byte(body), []string{"compose.yaml"}, nil)
+	if err != nil || string(links.body) != body || !reflect.DeepEqual(links.sources, []string{"compose.yaml"}) || links.warnings != nil || links.serviceEnv != nil {
+		t.Fatalf("links=%+v err=%v", links, err)
 	}
 }

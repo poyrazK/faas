@@ -38,8 +38,9 @@ func TestDunningNonpaymentDeletionBlockedIsCounted(t *testing.T) {
 		command   error // nil: the direct store path (durable command off)
 		reason    string
 		log       string
+		killed    bool // FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES=off
 	}{
-		{name: "store guard", databases: 2, reason: api.NonpaymentDeletionBlockedManagedPostgres, log: "non-payment deletion blocked"},
+		{name: "store guard with the kill switch off", databases: 2, killed: true, reason: api.NonpaymentDeletionBlockedManagedPostgres, log: "non-payment deletion blocked"},
 		{name: "command managed postgres", command: &api.InternalMailNonpaymentDeletionBlocked{Reason: api.NonpaymentDeletionBlockedManagedPostgres, ManagedPostgresDatabases: 2}, reason: api.NonpaymentDeletionBlockedManagedPostgres, log: "non-payment deletion blocked"},
 		{name: "command shared ownership", command: &api.InternalMailNonpaymentDeletionBlocked{Reason: api.NonpaymentDeletionBlockedSharedAppOwnership}, reason: api.NonpaymentDeletionBlockedSharedAppOwnership, log: "non-payment deletion blocked"},
 		{name: "command reason from a newer apid", command: &api.InternalMailNonpaymentDeletionBlocked{Reason: "retention_hold"}, reason: "unknown", log: "non-payment deletion blocked"},
@@ -48,6 +49,9 @@ func TestDunningNonpaymentDeletionBlockedIsCounted(t *testing.T) {
 	reasons := []string{api.NonpaymentDeletionBlockedManagedPostgres, api.NonpaymentDeletionBlockedSharedAppOwnership, "unknown"}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			if tt.killed {
+				t.Setenv("FAAS_NONPAYMENT_DELETION_MANAGED_POSTGRES", "off")
+			}
 			ctx := t.Context()
 			pool := pgtest.OpenMigrated(t)
 			store := state.NewPgStore(pool)
@@ -112,5 +116,40 @@ VALUES($1,$2,$3,'eu',17,'development','single_zone','test',$4)`, uuid.NewString(
 				}
 			}
 		})
+	}
+}
+
+// ADR-20261024150500: by default the direct dunning step includes the
+// account's managed PostgreSQL databases, so the account reaches
+// deleted_pending with them and nothing is counted as blocked.
+func TestDunningNonpaymentDeletionIncludesManagedPostgres(t *testing.T) {
+	ctx := t.Context()
+	pool := pgtest.OpenMigrated(t)
+	store := state.NewPgStore(pool)
+	acct, err := store.CreateAccount(ctx, strings.ReplaceAll(uuid.NewString(), "-", "")+"@example.com", api.PlanHobby)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE accounts SET status='suspended',past_due_at=clock_timestamp()-interval '22 days' WHERE id=$1`, acct.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `INSERT INTO managed_postgres_databases(id,account_id,name,region,postgres_major,service_class,availability,backend_id,backend_fingerprint)
+VALUES($1,$2,'orders','eu',17,'development','single_zone','test',$3)`, uuid.NewString(), acct.ID, strings.Repeat("a", 64)); err != nil {
+		t.Fatal(err)
+	}
+	d := meter.NewDunning(meter.DunningParams{Store: store, Parker: &fakeParker{}, Notif: &fakeNotifier{}, Mailer: &recordingSender{}, Log: discardLog()})
+	if err := d.RunOnce(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var status string
+	var included bool
+	if err := pool.QueryRow(ctx, `SELECT status, deletion_includes_managed_postgres FROM accounts WHERE id=$1`, acct.ID).Scan(&status, &included); err != nil {
+		t.Fatal(err)
+	}
+	if status != "deleted_pending" || !included {
+		t.Fatalf("status %s, includes databases %v", status, included)
+	}
+	if v := testutil.ToFloat64(d.BlockedGauge().WithLabelValues(api.NonpaymentDeletionBlockedManagedPostgres)); v != 0 {
+		t.Fatalf("blocked = %v", v)
 	}
 }

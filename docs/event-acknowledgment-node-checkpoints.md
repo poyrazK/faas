@@ -15,7 +15,7 @@ typed metadata and context cancellation; its checkpoint kind is distinct.
 import {
   watchEventAcknowledgmentIntentHealthWithCheckpoint,
   validateEventAcknowledgmentIntentCheckpoint,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const saved = await loadOwnedCheckpoint();
 const result = await watchEventAcknowledgmentIntentHealthWithCheckpoint(pool, accountId, appId, {
@@ -147,7 +147,7 @@ accepts `parkedThreshold` with invocation-local notifications.
 ## Exact acknowledgments and capacity
 
 ```js
-import { acknowledgeEventAcknowledgmentIntentAlerts } from '@gregale/sdk-node';
+import { acknowledgeEventAcknowledgmentIntentAlerts } from '@gregale/sdk-node/preview';
 
 const updated = acknowledgeEventAcknowledgmentIntentAlerts(savedCheckpoint, [
   { incidentId: delivered.incidentId, sequence: delivered.sequence },

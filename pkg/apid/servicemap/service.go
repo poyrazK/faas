@@ -55,7 +55,7 @@ func (s *Service) enabledFor(r *http.Request, acct state.Account) bool {
 func (s *Service) Get(w http.ResponseWriter, r *http.Request, acct state.Account) {
 	if !s.enabledFor(r, acct) {
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable, "service_map_unavailable",
-			"Service map unavailable", "the service map preview is not enabled"))
+			"Service map unavailable", "the service map preview is not enabled").WithHint(api.PreviewNotEnabledHint))
 		return
 	}
 	if !acct.Plan.PerAppMetricsAllowed() {

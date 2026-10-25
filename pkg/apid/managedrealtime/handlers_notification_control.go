@@ -10,8 +10,7 @@ import (
 )
 
 func (s *Service) ManagedRealtimeNotificationControl(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "notification control preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "notification control preview unavailable") {
 		return
 	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

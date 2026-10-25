@@ -230,7 +230,10 @@ func (d *Dunning) RunOnce(ctx context.Context) error {
 				}
 				continue
 			}
-			if err := d.p.Store.MarkDunningStep(ctx, acct.ID, state.AccountSuspended, state.AccountDeletedPending); err != nil {
+			// ADR-20261024150500: the deletion includes the account's managed
+			// PostgreSQL databases unless the operator kill switch is off.
+			includeDatabases := state.IncludingManagedPostgres(api.NonpaymentDeletionIncludesManagedPostgres())
+			if err := d.p.Store.MarkDunningStep(ctx, acct.ID, state.AccountSuspended, state.AccountDeletedPending, includeDatabases); err != nil {
 				if errors.Is(err, state.ErrNotFound) || d.deletionBlocked(acct, err, blocked) {
 					continue
 				}

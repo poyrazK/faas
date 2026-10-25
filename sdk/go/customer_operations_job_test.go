@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -31,15 +33,15 @@ func TestJobOperationRuntimeUsesTaskProofWithoutAccountCredentials(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof := faas.OperationJobRuntimeProof{RunID: "run", InstanceID: "instance", Generation: 1, Attempt: 1, Capability: strings.Repeat("a", 64)}
-	if _, err := client.GetJobOperationExecutionControl(context.Background(), "operation", proof); err != nil {
+	proof := preview.OperationJobRuntimeProof{RunID: "run", InstanceID: "instance", Generation: 1, Attempt: 1, Capability: strings.Repeat("a", 64)}
+	if _, err := preview.Wrap(client).GetJobOperationExecutionControl(context.Background(), "operation", proof); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.PrepareJobOperationResult(context.Background(), "operation", proof, faas.OperationJobReportRequest{ReportID: "result", Result: json.RawMessage(`{"file":"export.csv"}`)}); err != nil {
+	if _, err := preview.Wrap(client).PrepareJobOperationResult(context.Background(), "operation", proof, preview.OperationJobReportRequest{ReportID: "result", Result: json.RawMessage(`{"file":"export.csv"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	client.SetToken("account-token")
-	if _, err := client.GetJobOperationExecutionControl(context.Background(), "operation", proof); err == nil {
+	if _, err := preview.Wrap(client).GetJobOperationExecutionControl(context.Background(), "operation", proof); err == nil {
 		t.Fatal("account client used as task runtime")
 	}
 	if calls != 2 {
@@ -62,38 +64,38 @@ func TestJobOperationRuntimeDoesNotFollowRedirects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = client.GetJobOperationExecutionControl(context.Background(), "operation", faas.OperationJobRuntimeProof{RunID: "run", InstanceID: "instance", Generation: 1, Attempt: 1, Capability: strings.Repeat("a", 64)})
+	_, err = preview.Wrap(client).GetJobOperationExecutionControl(context.Background(), "operation", preview.OperationJobRuntimeProof{RunID: "run", InstanceID: "instance", Generation: 1, Attempt: 1, Capability: strings.Repeat("a", 64)})
 	if err == nil || leaked != 0 {
 		t.Fatal("runtime capability followed redirect")
 	}
 }
 
 func TestJobOperationFileClientsUseTokenlessNativeProof(t *testing.T) {
-	declaration := faas.OperationArtifactRequest{ReportID: "csv", Name: "export.csv", URI: "obj://app/bucket/export.csv", SizeBytes: 3, SHA256: "sha256:" + strings.Repeat("a", 64)}
+	declaration := preview.OperationArtifactRequest{ReportID: "csv", Name: "export.csv", URI: "obj://app/bucket/export.csv", SizeBytes: 3, SHA256: "sha256:" + strings.Repeat("a", 64)}
 	paths := []string{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		paths = append(paths, r.URL.Path)
 		if r.Method != http.MethodPost || r.Header.Get("Authorization") != "" || r.Header.Get("X-Gregale-Operation-Job-Capability") != strings.Repeat("b", 64) {
 			t.Error("wrong artifact authority")
 		}
-		var body faas.OperationArtifactRequest
+		var body preview.OperationArtifactRequest
 		if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body != declaration {
 			t.Error("declaration changed", err)
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(faas.OperationJobArtifactResponse{Available: true, Artifact: &faas.OperationResultArtifact{ID: "file", Name: body.Name, URI: body.URI, SizeBytes: body.SizeBytes, SHA256: body.SHA256}})
+		_ = json.NewEncoder(w).Encode(preview.OperationJobArtifactResponse{Available: true, Artifact: &preview.OperationResultArtifact{ID: "file", Name: body.Name, URI: body.URI, SizeBytes: body.SizeBytes, SHA256: body.SHA256}})
 	}))
 	defer server.Close()
 	client, err := faas.NewClient(server.URL, "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	proof := faas.OperationJobRuntimeProof{RunID: "run", InstanceID: "instance", Generation: 1, Attempt: 1, Capability: strings.Repeat("b", 64)}
-	prepared, err := client.PrepareJobOperationArtifact(context.Background(), "operation", proof, declaration)
+	proof := preview.OperationJobRuntimeProof{RunID: "run", InstanceID: "instance", Generation: 1, Attempt: 1, Capability: strings.Repeat("b", 64)}
+	prepared, err := preview.Wrap(client).PrepareJobOperationArtifact(context.Background(), "operation", proof, declaration)
 	if err != nil || !prepared.Available || prepared.Artifact.ID != "file" {
 		t.Fatal("prepare", err)
 	}
-	reused, err := client.ReuseJobOperationArtifact(context.Background(), "operation", proof, declaration)
+	reused, err := preview.Wrap(client).ReuseJobOperationArtifact(context.Background(), "operation", proof, declaration)
 	if err != nil || !reused.Available || reused.Artifact.ID != prepared.Artifact.ID {
 		t.Fatal("replay", err)
 	}
@@ -101,10 +103,10 @@ func TestJobOperationFileClientsUseTokenlessNativeProof(t *testing.T) {
 		t.Fatal("wrong endpoints", paths)
 	}
 	client.SetToken("account-token")
-	if _, err := client.PrepareJobOperationArtifact(context.Background(), "operation", proof, declaration); err == nil {
+	if _, err := preview.Wrap(client).PrepareJobOperationArtifact(context.Background(), "operation", proof, declaration); err == nil {
 		t.Fatal("account credential accepted")
 	}
-	if _, err := client.ReuseJobOperationArtifact(context.Background(), "operation", proof, declaration); err == nil {
+	if _, err := preview.Wrap(client).ReuseJobOperationArtifact(context.Background(), "operation", proof, declaration); err == nil {
 		t.Fatal("account credential accepted")
 	}
 	if len(paths) != 2 {
