@@ -25299,6 +25299,52 @@ SELECT (
     )
 )::boolean AS owned;
 
+-- name: LogArchiveErasureRequestedAt :one
+-- The deletion request the account's archived-log snapshot was taken for.
+SELECT deletion_requested_at FROM log_archive_erasures
+WHERE account_id = sqlc.arg(account_id)::uuid
+FOR UPDATE;
+
+-- name: DeleteLogArchiveErasure :exec
+DELETE FROM log_archive_erasures WHERE account_id = sqlc.arg(account_id)::uuid;
+
+-- name: InsertLogArchiveErasure :execrows
+INSERT INTO log_archive_erasures (account_id, deletion_requested_at)
+VALUES (sqlc.arg(account_id)::uuid, sqlc.arg(deletion_requested_at)::timestamptz)
+ON CONFLICT (account_id) DO NOTHING;
+
+-- name: SnapshotLogArchiveErasureInstances :execrows
+-- Every instance whose archived logs go with the account: the instances and
+-- billing rows DeleteAccount removes, that is apps with no org or a personal
+-- org. Billing rows outlive instance rows, so they cover parked history.
+INSERT INTO log_archive_erasure_instances (account_id, instance_id)
+SELECT sqlc.arg(account_id)::uuid, s.instance_id
+FROM (
+    SELECT i.id AS instance_id
+    FROM instances i
+    JOIN apps a ON a.id = i.app_id
+    WHERE a.account_id = sqlc.arg(account_id)::uuid
+      AND (a.org_id IS NULL OR a.org_id IN (SELECT id FROM orgs WHERE personal_org))
+    UNION
+    SELECT u.instance_id
+    FROM usage_minutes u
+    WHERE u.account_id = sqlc.arg(account_id)::uuid
+      AND (u.org_id IS NULL OR u.org_id IN (SELECT id FROM orgs WHERE personal_org))
+) s
+ON CONFLICT (account_id, instance_id) DO NOTHING;
+
+-- name: PendingLogArchiveErasureInstances :many
+SELECT instance_id FROM log_archive_erasure_instances
+WHERE account_id = sqlc.arg(account_id)::uuid AND erased_at IS NULL
+ORDER BY instance_id
+LIMIT sqlc.arg(row_limit)::int;
+
+-- name: MarkLogArchiveInstanceErased :exec
+UPDATE log_archive_erasure_instances SET erased_at = now()
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND instance_id = sqlc.arg(instance_id)::uuid
+  AND erased_at IS NULL;
+
 -- name: JobTaskLogTarget :one
 -- ADR-1163: the job task a live log stream follows, scoped to the account
 -- and job name, with the node of its current instance (if any).
