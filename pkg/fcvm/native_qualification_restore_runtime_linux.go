@@ -22,7 +22,7 @@ func (v *JailerVMM) RestoreNativeQualification(ctx context.Context, frame state.
 	target, ok := ctx.Value(nativeQualificationRestoreContextKey{}).(nativeQualificationRestoreRecord)
 	if r == nil || r.journal == nil || !ok || target.Execution != frame || frame.InstanceID != lease.Instance ||
 		lease.MemoryMaxMiB != frame.RAMMB || lease.Networkless || lease.IsBuilder || !lease.Plan.Valid() ||
-		len(req.Sidecars) != 0 || len(req.MainDependsOn) != 0 || !req.qualificationRestoreReceipt.valid() {
+		len(req.Sidecars) != 0 || len(req.MainDependsOn) != 0 || !req.qualificationRestoreReceipt.valid() || req.qualificationRestoreReceiptWaiter == nil {
 		return fmt.Errorf("native qualification restore: original target capability and single-workload lease are required: %w", state.ErrConflict)
 	}
 	if err := validateNativeQualificationRunningFCVersion(runningFCVersion); err != nil {
@@ -134,6 +134,12 @@ func (v *JailerVMM) RestoreNativeQualification(ctx context.Context, frame state.
 	defer channels.Close()
 	if err := v.waitReadyWithProbe(ctx, lease, req.HealthcheckPath, req.HealthcheckGRPC, req.HealthcheckGRPCService, req.StartupDeadlineS); err != nil {
 		return fmt.Errorf("qualification restore readiness: %w", err)
+	}
+	// The guest sends its receipt over the private guest-event channel, which
+	// closes when this returns. A restored app is ready almost at once, so
+	// waiting after return would drop a receipt still in flight.
+	if err := req.qualificationRestoreReceiptWaiter.wait(ctx, lease.Instance); err != nil {
+		return fmt.Errorf("qualification restore configuration receipt: %w", err)
 	}
 	if trackStartupCPU {
 		if startupCPU.StartupMillicores > startupCPU.ConfiguredMillicores {

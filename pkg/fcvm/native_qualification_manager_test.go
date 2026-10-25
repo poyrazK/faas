@@ -367,14 +367,19 @@ func TestNativeQualificationManagerRestoresPrivatelyAndRetiresFromRestoreJournal
 		m.mu.Unlock()
 		// The captured layer is verified byte-for-byte, so restore stages no
 		// file and the fresh control travels only with the resume hook.
-		if req.qualificationRestoreReceipt.token != token || !req.qualificationRestoreReceipt.valid() ||
+		if req.qualificationRestoreReceipt.token != token || !req.qualificationRestoreReceipt.valid() || req.qualificationRestoreReceiptWaiter != waiter ||
 			len(req.preparedAPIEnvJSON) != 0 || len(req.preparedSecretsEnvJSON) != 0 || len(req.APIEnvEntries) != len(sourceReq.APIEnvEntries) {
 			return errors.New("fixture: restore staged files or lost its fresh receipt control")
 		}
-		return m.MarkEnvironmentQualificationConfigApplied(target.InstanceID, EnvironmentQualificationConfigReceipt{
+		if err := m.MarkEnvironmentQualificationConfigApplied(target.InstanceID, EnvironmentQualificationConfigReceipt{
 			Token: token, Workload: WorkloadNameMain, APIEnvSHA256: expected.apiEnvSHA256,
 			SecretsFileRead: expected.secretsRead, SecretKeysMAC: expected.secretKeysMAC, ConfigMAC: expected.configMAC,
-		})
+		}); err != nil {
+			return err
+		}
+		// The real restorer consumes the receipt before its channels close;
+		// the manager no longer waits after the restorer returns.
+		return req.qualificationRestoreReceiptWaiter.wait(context.Background(), target.InstanceID)
 	}
 	req := sourceReq
 	req.Instance, req.BaseKey = target.InstanceID, basePath

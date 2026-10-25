@@ -165,6 +165,7 @@ func (m *Manager) prepareQualificationRestoreConfigReceipt(req WakeRequest) (Wak
 	}
 	defer clear(secretKeysKey)
 	req.qualificationRestoreReceipt = qualificationRestoreReceiptControl{token: token, macKey: hex.EncodeToString(secretKeysKey)}
+	req.qualificationRestoreReceiptWaiter = waiter
 	return req, waiter, nil
 }
 
@@ -369,6 +370,15 @@ func (m *Manager) MarkEnvironmentQualificationConfigApplied(instance string, rec
 }
 
 func (m *Manager) waitForQualificationConfigReceipt(ctx context.Context, instance string, waiter *qualificationConfigReceiptWaiter) error {
+	return waiter.wait(ctx, instance)
+}
+
+// wait is usable without the Manager: a native qualification restore must
+// consume its receipt before its private guest channels close.
+func (waiter *qualificationConfigReceiptWaiter) wait(ctx context.Context, instance string) error {
+	if waiter == nil {
+		return fmt.Errorf("qualification guest configuration receipt was not registered for %s: %w", instance, state.ErrConflict)
+	}
 	ctx, cancel := context.WithTimeout(ctx, qualificationConfigReceiptWait)
 	defer cancel()
 	select {

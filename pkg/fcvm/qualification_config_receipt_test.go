@@ -96,7 +96,7 @@ func TestQualificationRestoreConfigReceiptStagesNoControls(t *testing.T) {
 	}
 	defer m.clearQualificationConfigReceipt(request.Instance, waiter)
 	control := prepared.qualificationRestoreReceipt
-	if !slices.Equal(prepared.APIEnvEntries, request.APIEnvEntries) || control.token != waiter.token || !control.valid() {
+	if !slices.Equal(prepared.APIEnvEntries, request.APIEnvEntries) || control.token != waiter.token || !control.valid() || prepared.qualificationRestoreReceiptWaiter != waiter {
 		t.Fatalf("restore receipt staged env controls or lost its control: %+v %+v", prepared.APIEnvEntries, control)
 	}
 	macKey, err := hex.DecodeString(control.macKey)
@@ -119,6 +119,18 @@ func TestQualificationRestoreConfigReceiptStagesNoControls(t *testing.T) {
 		if bad.valid() {
 			t.Fatalf("malformed restore receipt control accepted: %+v", bad)
 		}
+	}
+	// The restorer consumes the receipt itself, without the Manager.
+	var missing *qualificationConfigReceiptWaiter
+	if err := missing.wait(context.Background(), request.Instance); !errors.Is(err, state.ErrConflict) {
+		t.Fatalf("restore without a registered receipt waiter = %v", err)
+	}
+	if err := m.MarkEnvironmentQualificationConfigApplied(request.Instance, EnvironmentQualificationConfigReceipt{Token: waiter.token, Workload: WorkloadNameMain,
+		APIEnvSHA256: expected.apiEnvSHA256, SecretsFileRead: true, SecretKeysMAC: wantMAC}); err != nil {
+		t.Fatal(err)
+	}
+	if err := prepared.qualificationRestoreReceiptWaiter.wait(context.Background(), request.Instance); err != nil {
+		t.Fatal(err)
 	}
 }
 

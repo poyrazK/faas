@@ -284,11 +284,9 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 		return nil, fmt.Errorf("native qualification restore: prepare config receipt: %w", err)
 	}
 	defer m.clearQualificationConfigReceipt(frame.InstanceID, waiter)
+	// The restorer consumes the receipt while its private channels are open.
 	if err := restorer.RestoreNativeQualification(bootCtx, frame, lease, req, [2]string{kernelPath, basePath}, m.fcVersion); err != nil {
 		return nil, fmt.Errorf("native qualification restore: dedicated native restore: %w", err)
-	}
-	if err := m.waitForQualificationConfigReceipt(bootCtx, frame.InstanceID, waiter); err != nil {
-		return nil, err
 	}
 	inst := &Instance{Lease: lease, Net: nc, Method: WakeRestore, QualificationOnly: true, AppID: req.AppID, AccountID: req.AccountID,
 		DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath,

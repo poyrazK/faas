@@ -3766,7 +3766,10 @@ type WakeRequest struct {
 	preparedAPIEnvJSON     []byte
 	// qualificationRestoreReceipt is a native qualification restore's fresh
 	// guest receipt control. It is sent with the resume hook, never staged.
-	qualificationRestoreReceipt qualificationRestoreReceiptControl
+	// The restore consumes the waiter's receipt before its private guest
+	// channels close.
+	qualificationRestoreReceipt       qualificationRestoreReceiptControl
+	qualificationRestoreReceiptWaiter *qualificationConfigReceiptWaiter
 	// EgressAllowlist (ADR-031, tier-2 of the network roadmap): per-app
 	// outbound IPv4/v6 allowlist. Each entry is a CIDR string (e.g.
 	// "1.2.3.0/24"); empty slice = current behaviour (no allowlist rule

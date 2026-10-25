@@ -92,6 +92,13 @@ ADR-568 requires.
   - A guest without a boot basis withholds the receipt.
   - A malformed control is ignored.
   - Both cases fail closed on the host.
+- **The host waits while the channels are open.** The restore's private
+  guest channels close when the native restore returns. A restored app is
+  ready almost at once, so vmmd consumes the receipt inside the restore,
+  after readiness and before the channels close. The first n2 run with this
+  amendment (`bindq-0d1f6f3315`) showed the receipt leaving the guest
+  113 ms after resume. vmmd then cancelled the stream when the channels
+  closed, because it only waited after the restore had returned.
 - **What the receipt proves.** A capture made from different inputs cannot
   satisfy the restore request's expectation. Restore still refuses sidecars,
   so only the main workload re-attests.
@@ -102,7 +109,12 @@ ADR-568 requires.
 
 - 2026-10-23, n2 `bindq-e1837337bf`: capture passed; restore failed at the
   layer verification described in amendment 1.
-- Pending: the n2 native GitOps journey with amendment 1.
+- 2026-10-24/25, n2 `bindq-0d1f6f3315`:
+  - The Linux unit tests passed.
+  - The restore loaded the capture with the strict layer check, and the
+    resume hook was acknowledged.
+  - The receipt was dropped as described above.
+- Pending: the n2 native GitOps journey with the in-restore receipt wait.
 
 ## Rejected alternatives
 
