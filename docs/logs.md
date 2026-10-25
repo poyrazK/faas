@@ -40,8 +40,9 @@ says so instead of skipping silently.
 | Pro | 30 days | 7 days | 10 per app, 30 per account |
 | Scale | 90 days | 14 days | 25 per app, 100 per account |
 
-Archived logs are stored for at most 90 days and are deleted with your
-account. Lines still in a running instance's memory are lost if the node
+The archive deletes logs 90 days after they are written, whatever your plan,
+and deletes all of them when your account is deleted. Lines still in a
+running instance's memory are lost if the node
 running it fails before they are archived; use a [log drain](#log-drains) when
 every line matters.
 
