@@ -425,6 +425,9 @@ func workloadToDraftApp(project state.Project, w reposcan.Workload, startCmd str
 	}
 	applyProjectImage(&app.Manifest, w)
 	applyComposeResources(&app, w)
+	if app.RAMMB == 0 {
+		app.RAMMB = api.ProjectWorkloadDefaultRAMMB
+	}
 	return app
 }
 
