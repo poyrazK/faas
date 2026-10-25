@@ -96,7 +96,9 @@ CROSS JOIN LATERAL (
 ) latest;
 
 -- name: EventReceiptReplayTarget :one
-SELECT a.id AS app_id FROM event_fanout_outbox o
+SELECT a.id AS app_id,
+       coalesce(o.recipient_progress -> (s.recipient->>'id') ->> 'delivery_id', '')::text AS delivery_id
+FROM event_fanout_outbox o
 CROSS JOIN LATERAL (
     SELECT recipient FROM jsonb_array_elements(coalesce(o.recipient_snapshot, '[]'::jsonb)) captured(recipient)
     UNION ALL
