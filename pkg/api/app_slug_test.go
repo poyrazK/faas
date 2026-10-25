@@ -22,9 +22,9 @@ func TestValidAppSlug(t *testing.T) {
 
 func TestReservedAppSlugs(t *testing.T) {
 	for _, slug := range []string{
-		"account", "admin", "api", "assets", "billing", "cdn", "console",
+		"account", "admin", "api", "app-edge", "assets", "billing", "cdn", "console",
 		"dashboard", "docs", "help", "login", "logout", "mail", "ns",
-		"operations", "security", "signup", "static", "status", "support", "www",
+		"operations", "origin", "security", "signup", "static", "status", "support", "www",
 	} {
 		// "ns" is reserved even though it is shorter than the public slug
 		// grammar, so callers can return the specific platform-reservation
