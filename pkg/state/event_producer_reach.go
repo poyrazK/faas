@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -90,4 +91,16 @@ func (m *MemStore) eventCompanyReachableLocked(account, company string) bool {
 		return member.Role == OrgRoleOwner || member.Role == OrgRoleAdmin || member.Role == OrgRoleDeveloper
 	}
 	return false
+}
+
+// eventAppInProducerReachLocked mirrors event_app_in_producer_reach: replays
+// and their previews offer an app only the retained events fanout would route
+// to it now.
+func (m *MemStore) eventAppInProducerReachLocked(account string, payload []byte, appID string) bool {
+	var event publishedEventIdentity
+	if json.Unmarshal(payload, &event) != nil {
+		return false
+	}
+	kept, err := m.recipientsInProducerReachLocked(account, event.Producer, []PublishedEventRecipient{{AppID: appID}})
+	return err == nil && len(kept) == 1
 }

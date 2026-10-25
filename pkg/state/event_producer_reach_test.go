@@ -42,18 +42,22 @@ func TestEventFanoutKeepsCompanyBoundary(t *testing.T) {
 		if err := store.AddOrgMember(ctx, org.ID, creator.ID, state.OrgRoleDeveloper, &owner.ID); err != nil {
 			t.Fatal(err)
 		}
-		newApp := func(slug, orgID string) state.App {
+		newApp := func(slug, orgID string) (state.App, string) {
 			app, err := store.CreateApp(ctx, state.App{ID: uuid.NewString(), AccountID: creator.ID, OrgID: orgID, Slug: slug + "-" + uuid.NewString()[:8],
 				Type: state.AppTypeApp, RAMMB: 512, MaxConcurrency: 5, IdleTimeoutS: 60})
 			if err != nil {
 				t.Fatal(err)
 			}
-			if _, _, err := store.UpsertEventSubscription(ctx, creator.ID, app.ID, "*", "*", nil); err != nil {
+			sub, _, err := store.UpsertEventSubscription(ctx, creator.ID, app.ID, "*", "*", nil)
+			if err != nil {
 				t.Fatal(err)
 			}
-			return app
+			return app, sub.ID
 		}
-		company, personal := newApp("company", org.ID), newApp("personal", "")
+		company, companySub := newApp("company", org.ID)
+		personal, personalSub := newApp("personal", "")
+		start := time.Now().UTC().Add(-time.Second)
+		published := map[string]string{}
 		both, onlyCompany, onlyPersonal := []string{company.ID, personal.ID}, []string{company.ID}, []string{personal.ID}
 		slices.Sort(both)
 
@@ -70,6 +74,7 @@ func TestEventFanoutKeepsCompanyBoundary(t *testing.T) {
 			if err := store.AppendEvent(ctx, "apid", "event.published", &creator.ID, payload); err != nil {
 				return nil, err
 			}
+			published[envelope.ID] = producer
 			work, err := store.ClaimDuePublishedEvent(ctx, time.Now().UTC())
 			if err != nil {
 				t.Fatal(err)
@@ -117,6 +122,38 @@ func TestEventFanoutKeepsCompanyBoundary(t *testing.T) {
 
 		if _, err := publish("app:not-a-uuid"); err == nil {
 			t.Fatal("an unrecognized producer was routed")
+		}
+
+		// Replays offer an app only the retained events fanout would route
+		// to it now, whenever they were published.
+		for _, c := range []struct {
+			app       state.App
+			sub       string
+			producers []string
+		}{
+			{personal, personalSub, []string{eventcontract.AppProducer(personal.ID), eventcontract.ProducerPersonal, ""}},
+			{company, companySub, []string{eventcontract.AppProducer(company.ID), eventcontract.OrgProducer(org.ID), ""}},
+		} {
+			var want []string
+			for id, producer := range published {
+				if slices.Contains(c.producers, producer) {
+					want = append(want, id)
+				}
+			}
+			slices.Sort(want)
+			preview, err := store.PreviewEventReplay(ctx, creator.ID, state.EventReplayPreviewQuery{AppID: c.app.ID, SubscriptionID: c.sub,
+				EventReplayPreviewOptions: api.EventReplayPreviewOptions{From: start, Until: time.Now().UTC().Add(time.Minute), Limit: 50}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			got := make([]string, 0, len(preview.Matches))
+			for _, match := range preview.Matches {
+				got = append(got, match.EventID)
+			}
+			slices.Sort(got)
+			if !slices.Equal(got, want) {
+				t.Fatalf("replay preview for %s offered %v, want %v", c.app.Slug, got, want)
+			}
 		}
 	})
 }

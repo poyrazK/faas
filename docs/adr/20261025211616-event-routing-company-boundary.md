@@ -50,6 +50,9 @@ Event routing names no app, which leaves two holes:
 4. **The check runs in fanout**, in the statement that snapshots recipients
    (`event_recipients_in_producer_reach`), so a membership change applies to
    events accepted after it. Accepted events keep their snapshot.
+   Subscription and workflow replays, and their previews, apply the same rule
+   at replay time (`event_app_in_producer_reach`): a replay offers an app only
+   the retained events fanout would route to it now.
 5. **Company keys on account routes.** A key bound to a company publishes on
    `/v1/events:publish` and `:publish-batch` only while its holder is an
    owner, admin or developer there; otherwise the route answers 403
@@ -67,11 +70,10 @@ Event routing names no app, which leaves two holes:
   creator's personal apps, in both directions at once.
 - Fanout reads `apps`, `orgs` and `org_memberships` per recipient for stamped
   events: indexed primary-key lookups, a few per published event.
-- Still open, as follow-ups: subscription and workflow replays select past
-  events by account and do not yet apply the rule; the account read routes
-  (`/v1/events/receipt`, attempts, replays, recipient blockers) still show a
-  company's events to the creator; and the account routes still accept
-  `app.<id>` sources, which the app producer route uses for its identities.
+- Still open, as follow-ups: the account read routes (`/v1/events/receipt`,
+  attempts, replays, recipient blockers) still show a company's events to the
+  creator, and the account routes still accept `app.<id>` sources, which the
+  app producer route uses for its identities.
 
 ## Alternatives
 

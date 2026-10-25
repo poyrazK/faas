@@ -53,6 +53,14 @@ BEGIN
 END;
 $$;
 
+-- Replays and their previews select past events by account; a recipient app
+-- gets only the events fanout would have routed to it now.
+CREATE FUNCTION event_app_in_producer_reach(target_account uuid, producer text, target_app text) RETURNS boolean
+LANGUAGE sql STABLE AS $$
+    SELECT jsonb_array_length(event_recipients_in_producer_reach(target_account, producer,
+        jsonb_build_array(jsonb_build_object('app_id', target_app)))) = 1
+$$;
+
 CREATE OR REPLACE FUNCTION public.enqueue_event_fanout() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
@@ -244,6 +252,7 @@ BEGIN
     RETURN NEW;
 END;
 $$;
+DROP FUNCTION event_app_in_producer_reach(uuid, text, text);
 DROP FUNCTION event_recipients_in_producer_reach(uuid, text, jsonb);
 DROP FUNCTION event_company_reachable(uuid, uuid);
 DROP FUNCTION event_app_company(uuid);
