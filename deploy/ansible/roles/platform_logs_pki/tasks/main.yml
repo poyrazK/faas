@@ -115,11 +115,15 @@
           else (['promtail/loki-client'] if (faas_platform_logs_installed is changed) else [])) }}
 
 # A service reads its certificate at start. try-restart leaves a service that
-# is not running alone, so a first bootstrap starts it later with the leaf.
+# is not running alone, so a first bootstrap starts it later with the leaf. On
+# that first converge the unit is not installed yet (its role runs after this
+# one), and systemctl exits 5, "unit not found": nothing to restart.
 - name: platform_logs_pki — restart the services whose leaf changed
   ansible.builtin.command:
     argv: [systemctl, try-restart, "{{ item.unit }}"]
   loop: "{{ faas_platform_logs_leaves | selectattr('path', 'in', faas_platform_logs_changed) | list }}"
   loop_control:
     label: "{{ item.unit }}"
-  changed_when: true
+  register: faas_platform_logs_restart
+  changed_when: faas_platform_logs_restart.rc == 0
+  failed_when: faas_platform_logs_restart.rc not in [0, 5]

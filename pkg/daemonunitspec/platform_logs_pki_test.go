@@ -1,6 +1,7 @@
 package daemonunitspec
 
 import (
+	"os"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -62,5 +63,30 @@ func TestPlatformLogsTLSPathsMatchTheIssuedLeaves(t *testing.T) {
 	sort.Strings(issued)
 	if strings.Join(listed, ",") != strings.Join(issued, ",") {
 		t.Errorf("faas_platform_logs_leaves = %v, pkg/pki issues %v", listed, issued)
+	}
+}
+
+// TestPlatformLogsRestartToleratesUninstalledUnits pins the fix the first
+// obs-stack-smoke run found: on the first converge with logs on, this role
+// runs before loki, alloy and prometheus are installed, and `systemctl
+// try-restart` exits 5 ("unit not found"). That must not fail the play.
+func TestPlatformLogsRestartToleratesUninstalledUnits(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join(repoRoot(t), "deploy", "ansible", "roles", "platform_logs_pki", "tasks", "main.yml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	tasks := string(body)
+	i := strings.Index(tasks, "- name: platform_logs_pki — restart the services whose leaf changed")
+	if i < 0 {
+		t.Fatal("restart task is missing")
+	}
+	task := tasks[i:]
+	if j := strings.Index(task[1:], "\n- name:"); j >= 0 {
+		task = task[:j+1]
+	}
+	for _, want := range []string{"try-restart", "register: faas_platform_logs_restart", "failed_when: faas_platform_logs_restart.rc not in [0, 5]"} {
+		if !strings.Contains(task, want) {
+			t.Errorf("restart task lacks %q:\n%s", want, task)
+		}
 	}
 }
