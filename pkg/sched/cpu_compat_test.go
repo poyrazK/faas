@@ -217,3 +217,78 @@ func TestSnapshotWrittenCarriesCapturingNodeCPU(t *testing.T) {
 		t.Fatalf("an unknown node must leave a legacy row, got %v", payload)
 	}
 }
+
+const milanSig = "milan/AuthenticAMD-25-1-1/dddddddddddd"
+
+// Amendment 1: a park reuses a live row only when it restores on the node the
+// instance runs on, so a new CPU platform captures its own snapshot.
+func TestParkReuseIsPerNodePlatform(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	intelNode, amdNode := seedTwoNodes(t, store)
+	setNodeCPU(t, store, intelNode, "T2CL", cascadeSig, 0)
+	setNodeCPU(t, store, amdNode, "", milanSig, 0)
+	_, _, dep := seedApp(t, store, api.PlanPro, 256, 5)
+	create := func(name, template, model string) {
+		t.Helper()
+		if _, err := store.CreateSnapshot(ctx, state.Snapshot{
+			DeploymentID: dep.ID, FCVersion: "1.10.0", Tier: state.SnapshotTierInit,
+			StorageKey:  state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, name),
+			CPUTemplate: template, CPUModel: model,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	create("intel", "T2CL", iceSig)
+	e := newEngine(t, store, &fakeVMM{}, &fakeNotifier{}, "1.10.0")
+	if _, ok := e.reusableSnapshotOn(ctx, dep.ID, state.SnapshotTierInit, intelNode); !ok {
+		t.Fatal("a T2CL row must be reusable on a T2CL Cascade Lake node")
+	}
+	if _, ok := e.reusableSnapshotOn(ctx, dep.ID, state.SnapshotTierInit, amdNode); ok {
+		t.Fatal("the AMD node must capture its own snapshot, not reuse the Intel one")
+	}
+	create("amd", "", milanSig)
+	snap, ok := e.reusableSnapshotOn(ctx, dep.ID, state.SnapshotTierInit, amdNode)
+	if !ok || snap.CPUModel != milanSig {
+		t.Fatalf("after its capture the AMD node reuses its own row, got %+v %v", snap, ok)
+	}
+	rows, err := store.LiveSnapshotsForTier(ctx, dep.ID, state.SnapshotTierInit)
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("both platforms keep a live row, got %d rows, %v", len(rows), err)
+	}
+}
+
+// Amendment 1: when every node that can restore the newest row is full, the
+// wake restores another platform's row on a node that has room.
+func TestWakeRestoresAnotherPlatformsSnapshotWhenTheFirstIsFull(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	intelNode, amdNode := seedTwoNodes(t, store)
+	setNodeCPU(t, store, intelNode, "T2CL", iceSig, 1024)
+	setNodeCPU(t, store, amdNode, "", milanSig, 0)
+	_, app, dep := seedApp(t, store, api.PlanPro, 256, 5)
+	base := time.Now().Add(-time.Hour)
+	for _, row := range []struct {
+		name, template, model string
+		at                    time.Time
+	}{{"amd", "", milanSig, base}, {"intel", "T2CL", cascadeSig, base.Add(time.Minute)}} {
+		if _, err := store.CreateSnapshot(ctx, state.Snapshot{
+			DeploymentID: dep.ID, FCVersion: "1.10.0", Tier: state.SnapshotTierInit, CreatedAt: row.at,
+			StorageKey:  state.SnapshotCaptureMemKey(dep.ID, state.SnapshotTierInit, row.name),
+			CPUTemplate: row.template, CPUModel: row.model,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	vmm := &fakeVMM{}
+	e := newEngine(t, store, vmm, &fakeNotifier{}, "1.10.0")
+	e.capacityTable.Replace(CapacityReport{NodeID: intelNode, UsedMB: 1024})
+	got, err := e.Wake(ctx, app.ID, "", "", "gateway")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.NodeID != amdNode || vmm.restores != 1 || vmm.coldBoots != 0 {
+		t.Fatalf("wake node=%s restores=%d cold boots=%d; want a restore of the AMD row on the AMD node",
+			got.NodeID, vmm.restores, vmm.coldBoots)
+	}
+}

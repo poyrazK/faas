@@ -51801,6 +51801,54 @@ func (q *Queries) LiveEnvironmentWorkloadDeploymentsForServing(ctx context.Conte
 	return items, nil
 }
 
+const liveSnapshotsForTier = `-- name: LiveSnapshotsForTier :many
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
+ORDER BY created_at DESC
+`
+
+type LiveSnapshotsForTierParams struct {
+	DeploymentID pgtype.UUID
+	Tier         string
+}
+
+func (q *Queries) LiveSnapshotsForTier(ctx context.Context, db DBTX, arg LiveSnapshotsForTierParams) ([]Snapshot, error) {
+	rows, err := db.Query(ctx, liveSnapshotsForTier, arg.DeploymentID, arg.Tier)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Snapshot{}
+	for rows.Next() {
+		var i Snapshot
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.FcVersion,
+			&i.MemBytes,
+			&i.DiskBytes,
+			&i.Stale,
+			&i.CreatedAt,
+			&i.StorageKey,
+			&i.Tier,
+			&i.StoredBytes,
+			&i.BaseImageVersion,
+			&i.DeletePending,
+			&i.ApplicationStandardCaptureToken,
+			&i.RecoveryGeneration,
+			&i.CpuTemplate,
+			&i.CpuModel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const loadApplicationStandardLogConsumerSnapshot = `-- name: LoadApplicationStandardLogConsumerSnapshot :one
 SELECT jsonb_build_object('drains',coalesce((SELECT jsonb_agg(jsonb_build_object('spec',
  jsonb_build_object('ID',d.id::text,'AppID',d.app_id::text,'AccountID',d.account_id::text,

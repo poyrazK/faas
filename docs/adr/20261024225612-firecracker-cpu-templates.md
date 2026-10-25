@@ -103,6 +103,45 @@ only changes what its *new* captures carry.
 - Firecracker does not promise cross-host restore even with a template; the
   check in rollout step 4 is the evidence, not this ADR.
 
+## Amendment 1 (2026-10-25): one live snapshot per CPU platform
+
+**Context.** Decision 4 keeps snapshots on compatible nodes, but a
+deployment still had one live row per tier (`snapshots_deployment_tier_key`).
+In a cell whose nodes cannot share snapshots (an AMD node joining Intel
+nodes, or template-less nodes on different CPUs) an app that cold-booted on
+the other side either reused the incompatible row at park and never captured,
+or its capture was discarded as a duplicate. That app cold-booted on that
+side on every wake. The owner asked for the scheduler to know which platform
+each snapshot belongs to and to have a new platform produce its own.
+
+**Decision.**
+
+1. **A platform is a snapshot slot.** The platform is the capturing node's
+   template (`template:T2CL`), or its host signature when it has none
+   (`state.SnapshotCPUPlatform`). The unique index becomes
+   `snapshots_deployment_tier_platform_key` on (deployment, tier, platform)
+   for live rows, so each platform keeps its own live row per tier. Rows
+   from before the ADR share the empty platform.
+2. **A park captures for its node's platform.** Park reuse and the freeze
+   decision count a live row only if it restores on the instance's own node.
+   The first idle period of an app on a new platform parks and captures; the
+   capture lands in that platform's slot and the other platforms keep theirs.
+3. **A wake tries each platform.** The wake takes the newest live row that
+   passes its checks, warm before init. If every node that can restore it is
+   full, it tries the other platforms' rows on their nodes, then cold-boots
+   wherever there is room (decision 4).
+4. **imaged keeps per-platform rows.** A capture conflicts only with its own
+   platform's live row; the drive and Firecracker-version replacement rules
+   apply to that row alone.
+5. **Invalidation covers every platform.** Liveness, image-healthcheck,
+   force-restart, OOM, disk-pressure and egress-abuse paths mark every live
+   row of the tier stale, not only the newest.
+
+**Consequences.** A deployment can hold up to one row per tier per platform:
+more stored bytes in a mixed cell, none in a uniform one. The migration is
+`contract` (it drops the old unique index): a binary from before the ADR
+would not choose between two platforms' rows.
+
 ## Evidence
 
 - 2026-10-25, `gregale-internal-test-1` (n2, nested KVM, Intel Cascade Lake

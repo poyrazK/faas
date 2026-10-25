@@ -8,6 +8,7 @@ package statetest
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -205,6 +206,7 @@ var memDispatched = map[string]bool{
 	"JobRetryLegacyArtifactVerification":                      true,
 	"LatestAppEgressPolicyRevision":                           true,
 	"LatestSnapshotForTier":                                   true,
+	"LiveSnapshotsForTier":                                    true,
 	"ListAppDeploymentAuditBetween":                           true,
 	"ListMCPReadinessMonitoring":                              true,
 	"ListPendingApplicationStandardEgress":                    true,
@@ -3915,6 +3917,29 @@ func (s *Mem) LatestSnapshotForTier(p0 context.Context, p1 string, p2 string) (s
 		return o.LatestSnapshotForTier(p0, p1, p2)
 	}
 	return s.MemStore.LatestSnapshotForTier(p0, p1, p2)
+}
+
+// LiveSnapshotsForTier keeps a fake that overrides only LatestSnapshotForTier
+// consistent: it then lists that one row (ADR-20261024225612 amendment 1).
+func (s *Mem) LiveSnapshotsForTier(p0 context.Context, p1 string, p2 string) ([]state.Snapshot, error) {
+	if o, ok := s.over.(interface {
+		LiveSnapshotsForTier(context.Context, string, string) ([]state.Snapshot, error)
+	}); ok {
+		return o.LiveSnapshotsForTier(p0, p1, p2)
+	}
+	if _, ok := s.over.(interface {
+		LatestSnapshotForTier(context.Context, string, string) (state.Snapshot, error)
+	}); ok {
+		snap, err := s.LatestSnapshotForTier(p0, p1, p2)
+		switch {
+		case err == nil:
+			return []state.Snapshot{snap}, nil
+		case errors.Is(err, state.ErrNotFound):
+			return nil, nil
+		}
+		return nil, err
+	}
+	return s.MemStore.LiveSnapshotsForTier(p0, p1, p2)
 }
 
 func (s *Mem) ListAppDeploymentAuditBetween(p0 context.Context, p1 string, p2 string, p3 time.Time, p4 time.Time, p5 int) ([]state.AppChangeRow, error) {

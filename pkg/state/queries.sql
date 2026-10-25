@@ -10344,6 +10344,11 @@ SELECT * FROM snapshots WHERE deployment_id=sqlc.arg(deployment_id)::uuid AND ti
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid)
 ORDER BY created_at DESC LIMIT 1;
 
+-- name: LiveSnapshotsForTier :many
+SELECT * FROM snapshots WHERE deployment_id=sqlc.arg(deployment_id)::uuid AND tier=sqlc.arg(tier)::text AND stale=false
+AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid)
+ORDER BY created_at DESC;
+
 -- name: LockInstanceApplicationStandardBoot :one
 SELECT application_standard_lock_native_boot(sqlc.arg(instance_id)::uuid,sqlc.arg(expected_state)::text)::jsonb AS inputs;
 

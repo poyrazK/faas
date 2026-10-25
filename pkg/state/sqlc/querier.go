@@ -3506,6 +3506,7 @@ type Querier interface {
 	ListWorkflowScheduleCursors(ctx context.Context, db DBTX, appID pgtype.UUID) ([]WorkflowScheduleCursor, error)
 	ListWorkflowScheduleOccurrences(ctx context.Context, db DBTX, arg ListWorkflowScheduleOccurrencesParams) ([]WorkflowScheduleOccurrence, error)
 	LiveEnvironmentWorkloadDeploymentsForServing(ctx context.Context, db DBTX, arg LiveEnvironmentWorkloadDeploymentsForServingParams) ([]LiveEnvironmentWorkloadDeploymentsForServingRow, error)
+	LiveSnapshotsForTier(ctx context.Context, db DBTX, arg LiveSnapshotsForTierParams) ([]Snapshot, error)
 	// Both collections come from one statement snapshot, including empty drain sets.
 	LoadApplicationStandardLogConsumerSnapshot(ctx context.Context, db DBTX) ([]byte, error)
 	// ADR-732: production fork intent (app_forks). apid admits forks under a

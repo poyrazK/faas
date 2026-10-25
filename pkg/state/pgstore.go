@@ -18456,6 +18456,25 @@ func (s *PgStore) LatestSnapshotForTier(ctx context.Context, deploymentID, tier 
 	return snapshotFromSQLC(row), nil
 }
 
+// LiveSnapshotsForTier returns every live snapshot of the deployment's tier,
+// one per CPU platform, newest first (ADR-20261024225612 amendment 1).
+func (s *PgStore) LiveSnapshotsForTier(ctx context.Context, deploymentID, tier string) ([]Snapshot, error) {
+	if tier == "" {
+		tier = SnapshotTierInit
+	}
+	rows, err := sqlc.New().LiveSnapshotsForTier(ctx, s.pool, sqlc.LiveSnapshotsForTierParams{
+		DeploymentID: mustPgUUID(deploymentID), Tier: tier,
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]Snapshot, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, snapshotFromSQLC(row))
+	}
+	return out, nil
+}
+
 // MarkSnapshotStale flags a snapshot unusable after a failed restore (ADR-005):
 // the next wake cold-boots and the next park re-snapshots. Idempotent.
 func (s *PgStore) MarkSnapshotStale(ctx context.Context, snapshotID string) error {

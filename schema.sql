@@ -76096,10 +76096,14 @@ CREATE INDEX snapshots_deployment_idx ON public.snapshots USING btree (deploymen
 
 
 --
--- Name: snapshots_deployment_tier_key; Type: INDEX; Schema: public; Owner: -
+-- Name: snapshots_deployment_tier_platform_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX snapshots_deployment_tier_key ON public.snapshots USING btree (deployment_id, tier) WHERE (stale = false);
+CREATE UNIQUE INDEX snapshots_deployment_tier_platform_key ON public.snapshots USING btree (deployment_id, tier, (
+CASE
+    WHEN (cpu_template <> ''::text) THEN ('template:'::text || cpu_template)
+    ELSE cpu_model
+END)) WHERE (stale = false);
 
 
 --
