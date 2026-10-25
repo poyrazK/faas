@@ -8,6 +8,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
+	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/realtime"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -130,4 +131,35 @@ func (r *server) ApplyRuntimeConfig(key string, value json.RawMessage, version i
 		r.runtimeConfig = newRuntimeConfigManager(nil)
 	}
 	return r.runtimeConfig.applyVersion(key, value, version)
+}
+
+// InstallCapabilityGate installs the production capability route gate
+// (ADR-20261023115741) on a test server.
+func (r *server) InstallCapabilityGate() error {
+	gate, err := r.newCapabilityGate()
+	if err != nil {
+		return err
+	}
+	r.WithCapabilityGate(gate)
+	return nil
+}
+
+// CheckPlatformFlagWrite runs the operator write validation for a platform
+// flag value, as PATCH /v1/admin/config/platform_flag.<key> does.
+func (r *server) CheckPlatformFlagWrite(flagKey string, value json.RawMessage, force bool) *api.Problem {
+	if r.runtimeConfig == nil {
+		r.runtimeConfig = newRuntimeConfigManager(nil)
+	}
+	def, ok := r.runtimeConfig.Definition(platformflags.ConfigKey(flagKey))
+	if !ok {
+		return api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Unknown configuration key", flagKey)
+	}
+	_, prob := r.checkRuntimeConfigChange(def, value, force)
+	return prob
+}
+
+// CheckManifestSettings runs the gregale.yaml capability check that a source
+// deploy applies before staging its workloads.
+func (r *server) CheckManifestSettings(acct state.Account, manifest *gregalemanifest.Manifest) *api.Problem {
+	return r.manifestSettingsProblem(acct, manifest)
 }

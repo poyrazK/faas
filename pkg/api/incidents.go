@@ -200,7 +200,7 @@ func ErrIncidentNotesLimit(limit, observed int) *Problem {
 // ErrIncidentsUnavailable is the FAAS_INCIDENTS_ENABLED gate's answer.
 func ErrIncidentsUnavailable() *Problem {
 	return NewProblem(http.StatusServiceUnavailable, "incidents_unavailable", "Incidents unavailable",
-		"the unified incidents preview is not enabled")
+		"the unified incidents preview is not enabled").WithHint(PreviewNotEnabledHint)
 }
 
 // ErrIncidentNotFound names an incident the account cannot see.

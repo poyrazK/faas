@@ -1,6 +1,21 @@
 # faas_sdk
 A client library for accessing one-box FaaS REST API
 
+## Default and preview packages
+
+`faas_sdk` covers generally available and beta capabilities: the client
+generated from `sdk/openapi.yaml` under `faas_sdk.api` and `faas_sdk.models`
+and the helpers for those capabilities (ADR-20261023115741). Preview and
+internal capabilities (realtime, operations, events, durable entities,
+queues, object storage, managed Postgres, disposable runs, issues, commit,
+data repair, AI gateway, flags and more) are in `faas_sdk.preview`: the
+complete generated client under `faas_sdk.preview.api` and
+`faas_sdk.preview.models`, and their helpers such as
+`faas_sdk.preview.operations_runtime`. `faas_sdk.preview` re-exports
+`faas_sdk`, and its `FaaSClient` adds the disposable Runs helpers. apid serves
+a preview capability only to the accounts it is released to; elsewhere its
+calls answer `404 no such API route`.
+
 ## Usage
 First, create a client:
 
@@ -52,7 +67,7 @@ delivery mode, decoded payload, and binary flag:
 ```python
 import base64
 
-from faas_sdk.api.realtime.publish_managed_realtime_channel import sync_detailed
+from faas_sdk.preview.api.realtime.publish_managed_realtime_channel import sync_detailed
 from faas_sdk.models import ManagedRealtimeMessageRequest
 
 payload = b'{"job_id":"job-42","progress":100}'
@@ -131,7 +146,7 @@ record in delivery order and returns the response body; a record whose handler
 raises is retried, the rest are complete:
 
 ```python
-from faas_sdk.trigger_batch import handle_trigger_batch, is_trigger_batch
+from faas_sdk.preview.trigger_batch import handle_trigger_batch, is_trigger_batch
 
 def handler(request):
     # record.is_json, record.data, record.payload, record.text(), record.metadata
@@ -183,7 +198,7 @@ path and query bytes:
 
 ```python
 from fastapi import HTTPException, Request, Response
-from faas_sdk import CustomerOperationPublicationError
+from faas_sdk.preview import CustomerOperationPublicationError
 
 
 async def fulfill_order(request: Request, connection, operations):
@@ -273,7 +288,7 @@ routing context on each outbound request and redirect hop:
 import httpx
 import os
 from fastapi import Response
-from faas_sdk import DevBridgeMiddleware, AsyncDevBridgeTransport
+from faas_sdk.preview import DevBridgeMiddleware, AsyncDevBridgeTransport
 
 app.add_middleware(DevBridgeMiddleware)
 service_client = httpx.AsyncClient(transport=AsyncDevBridgeTransport())
@@ -298,7 +313,7 @@ See [the Dev Bridge guide](../../docs/dev-bridge.md) for local execution.
 
 Install `gregale-sdk[auth]` as [Install the SDKs](../../docs/sdks.md#python)
 shows (never `faas_sdk` from PyPI: that is another company's package), then verify application Auth access tokens and
-check permissions with `faas_sdk.auth.AuthClient` (`verify`, `authorize` and
+check permissions with `faas_sdk.preview.auth.AuthClient` (`verify`, `authorize` and
 their `_async` forms). See
 [Application Auth](../../docs/application-auth.md#in-your-backend).
 
@@ -311,7 +326,7 @@ decisions to managed Gregale services:
 
 ~~~python
 import httpx
-from faas_sdk import (
+from faas_sdk.preview import (
     AsyncGregaleFlagsTransport,
     GregaleFlags,
     GregaleFlagsMiddleware,
@@ -423,7 +438,7 @@ can safely repeat. A separate `recover_operation` request can provide the return
 `inspection_revision` as `expected_inspection_revision` to fence changed evidence.
 
 HTTP handlers can import `GregaleOperations` from
-`faas_sdk.operations_runtime` and use its `bind_request(headers)` context
+`faas_sdk.preview.operations_runtime` and use its `bind_request(headers)` context
 manager around a trusted Gregale guest request. Call `progress(report)` or
 `artifact(report)` with the generated request models and a stable `report_id`.
 The helper fetches fresh workload identity for each report, rejects native
@@ -732,14 +747,14 @@ state, positive locked state revision, and contract version. `check` is an async
 callable returning `OperationWorkflowReadinessResponse` through the self readiness
 endpoint, authenticated as the transaction's customer.
 
-`CustomerOperationReadinessError` from `faas_sdk.customer_operations` exposes
+`CustomerOperationReadinessError` from `faas_sdk.preview.customer_operations` exposes
 `.response`. All guard failures prevent commit even if caught. Await guards
 sequentially in the callback. Existing contract and actual payload validation still
 runs before commit.
 
 ### Business decision evidence
 
-`tx.business_decision("approval-decided", OperationBusinessDecision(workflow="order-approval", instance_id=run_id, code="manual-review-approved", description="An authorized reviewer approved the order.", rule_id="manual-approval", rule_version="2026-10"))` (import the model from `faas_sdk.business_decisions`) queues a bounded explanation with the business transaction. Declare the milestone payload schema and bind its workflow step to `/decision/instance_id`. It uses existing precommit validation and outbox replay; no schema installation is needed. See [business decision evidence](../../docs/operations.md#business-decision-evidence) for declaration and history details.
+`tx.business_decision("approval-decided", OperationBusinessDecision(workflow="order-approval", instance_id=run_id, code="manual-review-approved", description="An authorized reviewer approved the order.", rule_id="manual-approval", rule_version="2026-10"))` (import the model from `faas_sdk.preview.business_decisions`) queues a bounded explanation with the business transaction. Declare the milestone payload schema and bind its workflow step to `/decision/instance_id`. It uses existing precommit validation and outbox replay; no schema installation is needed. See [business decision evidence](../../docs/operations.md#business-decision-evidence) for declaration and history details.
 
 ### Versioned policy requirements
 
@@ -808,7 +823,7 @@ result or explicit account success recovery publishes it. An approved Job
 retry clears old receipts; reconcile uncertain uploads before writing again.
 
 Dead-letter export is available through
-`faas_sdk.api.realtime.export_realtime_consumer_group_dead_letters` as a binary JSONL
+`faas_sdk.preview.api.realtime.export_realtime_consumer_group_dead_letters` as a binary JSONL
 file. `sync_detailed`/`asyncio_detailed` expose pagination headers and the response
 content. The first JSONL line is a manifest with `group_id`, `through_sequence`,
 `snapshot_at`, `next_after_sequence` and `has_more`; pass these cursor fields back
@@ -836,7 +851,7 @@ Completion and cancellation notify once per transition. The processing warning n
 
 ### Reviewed dead-letter recovery
 
-Use `faas_sdk.api.realtime.create_realtime_replay_dry_run` with the existing filter/rate request model. Poll `list_realtime_replay_jobs` for a completed dry run, review eligible/skipped outcomes and timestamps, then call `control_realtime_replay_job` with the report UUID and the `start` action. The returned job is the linked real replay. Start retries return the same job while retained; actual replay rechecks identity, deadlines and ordering. A dry run changes report records only, shares job quotas and emits no replay lifecycle webhooks.
+Use `faas_sdk.preview.api.realtime.create_realtime_replay_dry_run` with the existing filter/rate request model. Poll `list_realtime_replay_jobs` for a completed dry run, review eligible/skipped outcomes and timestamps, then call `control_realtime_replay_job` with the report UUID and the `start` action. The returned job is the linked real replay. Start retries return the same job while retained; actual replay rechecks identity, deadlines and ordering. A dry run changes report records only, shares job quotas and emits no replay lifecycle webhooks.
 
 ### Async realtime workers
 
@@ -848,7 +863,7 @@ import os
 import signal
 
 import httpx
-from faas_sdk import (
+from faas_sdk.preview import (
     AuthenticatedClient,
     RealtimeWorkerOptions,
     consume_realtime_consumer_group_with_credential,
@@ -898,7 +913,7 @@ The local lease/deadline watcher remains active: expiry stops the worker and no 
 Optional lifecycle monitoring uses `RealtimeWorkerOptions(on_event=record_event)`, where `record_event(event: RealtimeWorkerEvent) -> None` is a synchronous, nonblocking callback. The immutable event reports `claimed`, `settled`, `lease_lost`, `handler_timeout`, `draining` or `shutdown`. Per-claim events include group UUID, sequence and delivery attempt; settlements/loss include monotonic `duration_seconds` since the helper began processing that claim, including settlement waiting/transport. Settlements include confirmed action and status. Shutdown includes `stopped`, `cancelled`, `failed`, `blocked` or `drained` and the observed group UUID when available. No payload, metadata, worker identity, fencing token, claim token, credentials or exception details are included.
 
 ```python
-from faas_sdk import RealtimeWorkerEvent, RealtimeWorkerOptions
+from faas_sdk.preview import RealtimeWorkerEvent, RealtimeWorkerOptions
 
 def record_event(event: RealtimeWorkerEvent) -> None:
     # Use your application's bounded, nonblocking monitoring queue.
@@ -937,7 +952,7 @@ Set `stop_event` for normal shutdown. Cancelling the worker task also signals ha
 Gregale already supports presence snapshots/change events, principal-scoped grouping of multiple sessions, and transient named signals. `RealtimeActivityTracker` adds Python-side expiry and ordering for signals delivered by your authenticated realtime transport; it does not open a WebSocket, join a channel or grant access. Construct it inside a running asyncio loop and use it only on that loop.
 
 ```python
-from faas_sdk import RealtimeActivity, RealtimeActivityTracker
+from faas_sdk.preview import RealtimeActivity, RealtimeActivityTracker
 
 # Called inside your async client lifecycle.
 tracker = RealtimeActivityTracker(on_change=render_activity, max_entries=1024)
@@ -966,7 +981,7 @@ Use principal-scoped subscriptions consistently to group sessions by the verifie
 `RealtimePresenceDirectory` combines authenticated presence events with expiring named signals. It owns an activity tracker and calls one synchronous, nonblocking `on_change(summary)` callback when presence or activity changes. Construct/use it on one running asyncio loop. It opens no connection; wire it to your transport's presence/signal callbacks.
 
 ```python
-from faas_sdk import (
+from faas_sdk.preview import (
     RealtimeActivity, RealtimePresenceDirectory,
     RealtimePresenceEvent, RealtimePresenceMember,
 )
@@ -1011,7 +1026,7 @@ Presence state is limited to a 512-byte UTF-8 JSON object, and connection counts
 `RealtimeActivityPublisher` coalesces frequent updates and refreshes the latest value at half its TTL until explicitly cleared or its optional idle timeout elapses. Construct/use it on one running asyncio loop. Supply `async send(name, data, ttl_ms)` using your existing authenticated transport; await the write and raise on rejection. The helper creates no connection and cannot impersonate another member.
 
 ```python
-from faas_sdk import RealtimeActivityPublisher
+from faas_sdk.preview import RealtimeActivityPublisher
 
 publisher = RealtimeActivityPublisher(
     send_authenticated_signal, name="typing",
@@ -1043,7 +1058,7 @@ For account-authenticated **backend** activity, use `create_managed_realtime_act
 `summarize_realtime_activity` projects a `RealtimePresenceSummary` into sorted `viewers` and `active` members with display labels. Filter by activity names and exclude the current verified member ID. Returned data is isolated; expired activities are omitted even if the input snapshot was captured earlier. Filters affect activity, not viewer membership; exclusion removes the member from both lists and their counts.
 
 ```python
-from faas_sdk import summarize_realtime_activity, format_realtime_typing_summary
+from faas_sdk.preview import summarize_realtime_activity, format_realtime_typing_summary
 
 def render_summary(presence):
     summary = summarize_realtime_activity(
@@ -1068,7 +1083,7 @@ Labels default to member IDs and must be strings at most 512 characters. The lab
 Use `realtime_activity_scope_channel(parent_channel, scope)` to build the canonical channel for document- or thread-specific activity. It matches the server's unpadded base64url encoding of UTF-8 values. Your authenticated transport subscribes to that channel; publishing through the scoped HTTP route still takes the original parent channel and scope separately.
 
 ```python
-from faas_sdk import (
+from faas_sdk.preview import (
     realtime_activity_scope_channel, parse_realtime_activity_scope,
     create_managed_realtime_activity_publisher,
 )
@@ -1098,7 +1113,7 @@ Parents/scopes must be nonempty valid UTF-8 without leading/trailing Unicode whi
 `RealtimeReadProgressTracker` maintains bounded, monotonic local views of authenticated server receipts. It does not mark messages as read, subscribe, estimate unread counts or write server state. Feed the server's confirmed values and hashed principal key unchanged. Multiple sessions share that reader identity.
 
 ```python
-from faas_sdk import RealtimeReadProgress, RealtimeReadProgressTracker
+from faas_sdk.preview import RealtimeReadProgress, RealtimeReadProgressTracker
 
 tracker = RealtimeReadProgressTracker(on_change=render_read_badges)
 
@@ -1128,7 +1143,7 @@ Default capacity is 1024 stream/reader entries, configurable 1–8192. Overflow 
 `RealtimeReadProgressPublisher` coalesces explicitly viewed sequences for one reader/stream. Supply an authenticated async `send(sequence)` that awaits its write and raises on failure; the helper owns no connection. Receiving or ACKing a message alone must not call mark_read.
 
 ```python
-from faas_sdk import RealtimeReadProgressPublisher
+from faas_sdk.preview import RealtimeReadProgressPublisher
 
 publisher = RealtimeReadProgressPublisher(send_authenticated_read, interval_milliseconds=250)
 try:
@@ -1151,7 +1166,7 @@ Transport failure stops publication and exposes a sanitized error plus optional 
 `summarize_realtime_unread` filters confirmed receipts to one hashed reader ID and optional channels/inbox, then exposes per-stream counts and retention gaps without fetching or estimating anything. Use receipts from one endpoint only.
 
 ```python
-from faas_sdk import summarize_realtime_unread
+from faas_sdk.preview import summarize_realtime_unread
 
 def render_read_badges(receipts):
     summary = summarize_realtime_unread(
@@ -1206,7 +1221,7 @@ Freshness is evaluated when snapshots/refresh_stale are called; no background ti
 `RealtimeReadRefreshCoordinator` bounds and coalesces read-state fetches through an application-owned authenticated transport. Its fetch callback takes the requested confirmed receipt and returns a fresh `RealtimeReadProgress` with the same reader/stream. Bind the tracker/fetcher to one endpoint/account, and construct/use on one running asyncio loop.
 
 ```python
-from faas_sdk import RealtimeReadProgressTracker, RealtimeReadRefreshCoordinator
+from faas_sdk.preview import RealtimeReadProgressTracker, RealtimeReadRefreshCoordinator
 
 tracker = RealtimeReadProgressTracker(
     on_change=render_read_badges, stale_after_seconds=30,
@@ -1235,7 +1250,7 @@ Validate confirmed response identity and nonregressing bounds before applying it
 `format_realtime_unread_badge(summary, max_count=99, show_zero=False)` returns immutable `RealtimeUnreadBadge` presentation data.
 
 ```python
-from faas_sdk import format_realtime_unread_badge
+from faas_sdk.preview import format_realtime_unread_badge
 
 badge = format_realtime_unread_badge(summary, max_count=99)
 # badge.text: "12", "99+", "Updating…", or "" for confirmed zero
@@ -1253,7 +1268,7 @@ Retention gaps are independent: expose history_unavailable and explain that coun
 `RealtimeConnectionStatusTracker` observes your existing transport; it does not open sockets, retry, poll or own network tasks. Use from one execution context and feed readiness/failure callbacks with the attempt ID returned by begin_connect.
 
 ```python
-from faas_sdk import RealtimeConnectionStatusTracker
+from faas_sdk.preview import RealtimeConnectionStatusTracker
 
 def invalidate_views():
     read_tracker.mark_stale()  # retain counts, mark them unverified
@@ -1279,7 +1294,7 @@ views_stale is a transport-level warning whenever disconnected/connecting; conne
 `RealtimeConnectionQualityTracker` observes your authenticated transport's frames and correlated heartbeat responses. It sends no heartbeat or retry and owns no timer/task. Use on one execution context; call snapshot periodically from an existing UI/transport tick to detect silence even without new frames.
 
 ```python
-from faas_sdk import RealtimeConnectionQualityTracker
+from faas_sdk.preview import RealtimeConnectionQualityTracker
 
 quality = RealtimeConnectionQualityTracker(
     on_change=render_quality, degraded_latency_milliseconds=1000,
@@ -1308,7 +1323,7 @@ Callbacks fire on quality transitions, new attempts and valid latency samples; c
 `summarize_realtime_health` builds one immutable UI view from current connection status, optional quality/unread summaries and presence snapshots, without opening transport or driving refresh.
 
 ```python
-from faas_sdk import summarize_realtime_health
+from faas_sdk.preview import summarize_realtime_health
 
 def render_health():
     health = summarize_realtime_health(
@@ -1337,7 +1352,7 @@ Supply observations from one account/endpoint and regenerate freshness/quality o
 RealtimeCatchUpTracker observes one channel or principal inbox against an explicit replay target. It does not fetch, replay, ACK, advance read state or perform resync. The subscribed acknowledgement supplies a resume cursor, not a target: obtain a target from an authoritative retained-history/read-state snapshot or your transport.
 
 ```python
-from faas_sdk import RealtimeCatchUpTracker, summarize_realtime_health
+from faas_sdk.preview import RealtimeCatchUpTracker, summarize_realtime_health
 
 catch_up = RealtimeCatchUpTracker(channel="room-a", on_change=render_catch_up)
 generation = catch_up.begin(
@@ -1383,7 +1398,7 @@ Detection applies only when a target is known and processing remains below it. B
 `RealtimeSubscriptionTracker` observes your transport's requested channel/inbox set separately from connection readiness. It sends no subscription, retry or authorization requests.
 
 ```python
-from faas_sdk import RealtimeSubscriptionTracker, summarize_realtime_health
+from faas_sdk.preview import RealtimeSubscriptionTracker, summarize_realtime_health
 
 subscriptions = RealtimeSubscriptionTracker(
     on_change=render_subscriptions, acknowledgement_timeout_seconds=10,
@@ -1414,7 +1429,7 @@ Health shows Subscription failed for explicit denial, Resync required for gaps, 
 Await `subscriptions.wait_ready(generation)` after the application issues its required subscriptions. The helper observes tracker updates; it never subscribes or retries.
 
 ```python
-from faas_sdk import RealtimeSubscriptionWaitError
+from faas_sdk.preview import RealtimeSubscriptionWaitError
 
 try:
     ready = await subscriptions.wait_ready(
@@ -1441,7 +1456,7 @@ Trackers support max_waiters=128 by default (1–8192); overflow raises before r
 Await `catch_up.wait_caught_up(generation)` after subscription readiness to gate actions on successfully processed replay. It sends no ACK or replay request.
 
 ```python
-from faas_sdk import RealtimeCatchUpWaitError
+from faas_sdk.preview import RealtimeCatchUpWaitError
 
 try:
     caught_up = await catch_up.wait_caught_up(generation, timeout_seconds=30)
@@ -1463,7 +1478,7 @@ Timeout accepts finite 0–86400 seconds or None (default indefinite). Already c
 `wait_realtime_ready` combines current connection readiness, selected subscription acknowledgements and processed replay targets under one deadline.
 
 ```python
-from faas_sdk import RealtimeCatchUpRequirement, RealtimeReadinessError, wait_realtime_ready
+from faas_sdk.preview import RealtimeCatchUpRequirement, RealtimeReadinessError, wait_realtime_ready
 
 try:
     ready = await wait_realtime_ready(
@@ -1491,7 +1506,7 @@ Only bounded waiter futures/deadlines are owned; no network/poll/replay task is 
 `export_realtime_diagnostics` returns versioned JSON from captured health and optional confirmed unread summaries. It does not upload, read files/environment variables or inspect a transport.
 
 ```python
-from faas_sdk import export_realtime_diagnostics
+from faas_sdk.preview import export_realtime_diagnostics
 
 report_json = export_realtime_diagnostics(
     current_health_summary, unread=current_unread_summary, max_entries=256,
@@ -1510,7 +1525,7 @@ Each array is capped at max_entries (default 256, range 1–8192), with omitted 
 `RealtimeIncidentTimeline` records safe connection/subscription/catch-up transition observations from existing callbacks. It does not subscribe to trackers automatically or record payloads.
 
 ```python
-from faas_sdk import RealtimeIncidentTimeline, export_realtime_diagnostics
+from faas_sdk.preview import RealtimeIncidentTimeline, export_realtime_diagnostics
 
 timeline = RealtimeIncidentTimeline(capacity=256, max_identities=1024)
 # Wire these calls into your existing callbacks:
@@ -1537,7 +1552,7 @@ messages. Cancel its `run()` task to stop and join session cleanup. Read
 `processed_sequence` to obtain the latest local completed position.
 
 ```python
-from faas_sdk import RealtimeRecoveryCoordinator, RealtimeIncidentTimeline
+from faas_sdk.preview import RealtimeRecoveryCoordinator, RealtimeIncidentTimeline
 
 timeline = RealtimeIncidentTimeline()
 recovery = RealtimeRecoveryCoordinator(
@@ -1591,7 +1606,7 @@ Install the optional transport dependency with the `realtime` extra,
 needed for retained channel events or principal inbox notifications.
 
 ```python
-from faas_sdk import RealtimeRecoveryCoordinator, RealtimeWebSocketClient
+from faas_sdk.preview import RealtimeRecoveryCoordinator, RealtimeWebSocketClient
 
 async def access_token():
     return await identity_provider.current_token()
@@ -1655,7 +1670,7 @@ and unsubscribe dynamically; each channel has its own processor, completed
 cursor, replay/snapshot recovery, bounded queue, retry budget and incident timeline.
 
 ```python
-from faas_sdk import RealtimeMultiChannelClient, RealtimeWebSocketClient
+from faas_sdk.preview import RealtimeMultiChannelClient, RealtimeWebSocketClient
 
 transport = RealtimeWebSocketClient(
     url="wss://realtime.example.com/ws", token=access_token, buffer_size=256,
@@ -1713,7 +1728,7 @@ members, verified member IDs, connection counts, state and unexpired named
 activities. Snapshot chunks become ready only when their final chunk arrives.
 
 ```python
-from faas_sdk import RealtimeWebSocketPresence
+from faas_sdk.preview import RealtimeWebSocketPresence
 
 presence = RealtimeWebSocketPresence(
     state={"display_name": "Ada"},
@@ -1842,7 +1857,7 @@ at most eight ASCII keys (`[a-z0-9_.-]`, 1–64 characters), string values withi
 128 UTF-8 bytes without NUL/CR/LF, and total encoded JSON within 4096 bytes.
 
 ```python
-from faas_sdk import RealtimeEventFilter
+from faas_sdk.preview import RealtimeEventFilter
 
 selected = RealtimeEventFilter({"project_id": "123", "event_type": "job.completed"})
 jobs = client.subscribe(
@@ -1910,7 +1925,7 @@ identity from the first frame. The key must belong to the same endpoint/principa
 as the socket. Raw account/user identifiers are not accepted.
 
 ```python
-from faas_sdk import RealtimeWebSocketReadProgress, format_realtime_unread_badge
+from faas_sdk.preview import RealtimeWebSocketReadProgress, format_realtime_unread_badge
 
 reads = RealtimeWebSocketReadProgress(
     reader_id=verified_reader_key,
@@ -1980,7 +1995,7 @@ Enable it on the native transport; a shared client uses the handler once per
 physical socket rather than once per channel.
 
 ```python
-from faas_sdk import RealtimeWebSocketDirectMessages
+from faas_sdk.preview import RealtimeWebSocketDirectMessages
 
 async def handle_direct(message):
     await handle_ui_command(message.data, binary=message.binary)
@@ -2035,7 +2050,7 @@ when delivery must survive disconnects or process restarts.
 ### Receive-only SSE fallback
 
 ```python
-from faas_sdk import RealtimeFallbackClient, RealtimeWebSocketClient
+from faas_sdk.preview import RealtimeFallbackClient, RealtimeWebSocketClient
 
 transport = RealtimeFallbackClient(
     websocket=RealtimeWebSocketClient(url=realtime_url, token=get_token),
@@ -2084,7 +2099,7 @@ WebSocket or SSE recovery coordinator, use `await recovery.pause()`, then start
 ### Backpressure observations
 
 ```python
-from faas_sdk import RealtimeBackpressureMonitor
+from faas_sdk.preview import RealtimeBackpressureMonitor
 
 monitor = RealtimeBackpressureMonitor(
     on_change=show_queue_status,  # fast synchronous callback; no payloads
@@ -2616,7 +2631,7 @@ Binding verification review endpoints return an executable plan and opaque diges
 Use the configured `FaaSClient` or its generated `inner` client after explicit review and receipt creation:
 
 ```python
-from faas_sdk import run_binding_verification, arun_project_binding_verification
+from faas_sdk.preview import run_binding_verification, arun_project_binding_verification
 run = run_binding_verification(client, "api", saved_run_id, concurrency=2,
                                on_progress=lambda progress: print(progress))
 graph = await arun_project_binding_verification(client, "project", "production",
@@ -2675,7 +2690,7 @@ release, and invalidate before waiting for retirement at shutdown. See the
 
 ### Async PostgreSQL pool runtime
 
-Use `faas_sdk.async_postgres_pool_runtime.AsyncPostgresPoolBinding` and
+Use `faas_sdk.preview.async_postgres_pool_runtime.AsyncPostgresPoolBinding` and
 `faas_sdk.async_secret_reload_runtime.AsyncSecretReloadCoordinator` for async
 drivers. Factory, validation and retirement hooks run on the same owning event
 loop. Await coordinator startup before serving, hold `async with database.acquire()`
@@ -2699,7 +2714,7 @@ covers managed bindings, verified TLS, restore failure and cold-boot fallback.
 
 ### Async object-storage runtime
 
-`faas_sdk.async_object_storage_runtime.AsyncObjectStorageBinding` supplies async
+`faas_sdk.preview.async_object_storage_runtime.AsyncObjectStorageBinding` supplies async
 factories, application validation and retirement on one event loop. Register its
 secret consumer alongside PostgreSQL with one `AsyncSecretReloadCoordinator`;
 the coordinator ACKs only after all consumers validate and invalidates them all

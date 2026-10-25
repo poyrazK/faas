@@ -74,6 +74,18 @@ JOIN project_environment_promotion_workload_specs pin ON pin.deployment_id=d.id 
 JOIN project_environment_promotions p ON p.id=pin.promotion_id
 WHERE p.id=sqlc.arg(promotion_id)::text::uuid AND p.account_id=sqlc.arg(account_id)::text::uuid AND pin.app_id=sqlc.arg(app_id)::text::uuid;
 
+-- name: ProjectServiceGraphCallerPinned :one
+-- ReadProjectServiceGraph's owner requires this pin; without it the graph is
+-- unmanaged and the call routes normally. The graph query took 230-310 ms to
+-- plan on every project service call through the transaction pooler while no
+-- deployment on production-us was pinned (Hunt 14 H14-35).
+SELECT EXISTS(
+  SELECT 1 FROM project_environment_workload_deployment_specs pin
+  JOIN deployments d ON d.id=pin.deployment_id
+  WHERE d.id=sqlc.arg(caller_deployment_id)::text::uuid AND d.app_id=sqlc.arg(caller_app_id)::text::uuid
+  AND d.environment_workload_runtime IS NULL
+)::boolean AS pinned;
+
 -- name: ReadProjectServiceGraph :one
 WITH owner AS MATERIALIZED (
  SELECT a.id,a.account_id,a.project_id,d.scope FROM apps a JOIN deployments d ON d.app_id=a.id

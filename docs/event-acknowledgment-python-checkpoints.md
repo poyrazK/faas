@@ -13,7 +13,7 @@ typed metadata and context cancellation; its checkpoint kind is distinct.
 ## Start or resume
 
 ```python
-from faas_sdk import (
+from faas_sdk.preview import (
     EventAcknowledgmentIntentCheckpointWatchOptions,
     EventAcknowledgmentIntentCheckpointWatchCancelled,
     awatch_event_acknowledgment_intent_health_with_checkpoint,
@@ -154,7 +154,7 @@ accepts `parked_threshold` with in-memory lifecycle notifications.
 ## Exact acknowledgments and capacity
 
 ```python
-from faas_sdk import acknowledge_event_acknowledgment_intent_alerts
+from faas_sdk.preview import acknowledge_event_acknowledgment_intent_alerts
 
 updated = acknowledge_event_acknowledgment_intent_alerts(saved, [{
     "incident_id": delivered["incident_id"], "sequence": delivered["sequence"],

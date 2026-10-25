@@ -60,7 +60,7 @@ func TestRevokeRealtimeTicketHandlers(t *testing.T) {
 		t.Fatal(err)
 	}
 	host := &ticketTestHost{store: store, app: app}
-	svc := &Service{Host: host, TicketsPreviewEnabled: true}
+	svc := &Service{Host: host, TicketsPreviewEnabled: true, Preview: everyonePreview(t)}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/apps/{slug}/realtime/endpoints/{id}/tickets", func(w http.ResponseWriter, r *http.Request) { svc.IssueRealtimeTicket(w, r, acct) })
 	mux.HandleFunc("DELETE /v1/apps/{slug}/realtime/endpoints/{id}/tickets", func(w http.ResponseWriter, r *http.Request) { svc.RevokeRealtimeTickets(w, r, acct) })

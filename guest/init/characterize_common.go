@@ -237,6 +237,10 @@ type probeResult struct {
 	OpenAPIDoc          []byte
 	OpenAPIDocTruncated bool
 	HTTP1               bool
+	// Stalled: the listener accepted the request but sent nothing before the
+	// probe's timeout. An HTTP/1 app still importing its code does that on a
+	// cold boot; a prior-knowledge gRPC server rejects HTTP/1.1 at once.
+	Stalled bool
 }
 
 // collectL7Probes runs the HTTP/1.1 probes concurrently and returns the
@@ -266,7 +270,10 @@ func collectL7Probes(ctx context.Context, http1Probes []func() probeResult, h2Pr
 			if r.Class != "" {
 				return r.Class, openAPIDoc, truncated
 			}
-			spokeHTTP1 = spokeHTTP1 || r.HTTP1
+			// A stalled listener is not a gRPC server either: the preface
+			// reached gunicorn while its workers were still booting (Hunt
+			// 14 H14-21).
+			spokeHTTP1 = spokeHTTP1 || r.HTTP1 || r.Stalled
 		}
 	}
 	if spokeHTTP1 || h2Probe == nil {

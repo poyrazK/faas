@@ -1,0 +1,75 @@
+/* generated using openapi-typescript-codegen -- do not edit */
+/* istanbul ignore file */
+/* tslint:disable */
+/* eslint-disable */
+import type { DeploymentHealthcheck } from './DeploymentHealthcheck.js';
+import type { Sidecar } from './Sidecar.js';
+import type { WorkflowSpec } from './WorkflowSpec.js';
+/**
+ * Deployment metadata persisted with the upload session and applied at commit.
+ */
+export type UploadDeployOptions = {
+  /**
+   * Startup readiness for this resumable upload. Select exactly one HTTP path or standard gRPC health probe; omitted preserves source inference.
+   */
+  healthcheck?: DeploymentHealthcheck;
+  runtime?: string;
+  handler?: string;
+  dockerfile?: boolean;
+  source_root?: string;
+  /**
+   * Named environment scope applied when the upload is committed; omitted uses default.
+   */
+  scope?: string;
+  /**
+   * Informational repository provenance URL; never fetched by apid.
+   */
+  source_url?: string;
+  /**
+   * Lowercase hexadecimal Git commit identifier.
+   */
+  commit_sha?: string;
+  /**
+   * Registered project environment to resolve at upload commit.
+   */
+  environment?: string;
+  reason?: string;
+  tag?: string;
+  deployed_by?: string;
+  pr_number?: number;
+  workflows?: Array<WorkflowSpec>;
+  /**
+   * Preferred field for up to five helpers carried across the resumable upload session (one init helper and up to four long-running companions).
+   */
+  companions?: Array<Sidecar>;
+  /**
+   * Deprecated spelling of companions.
+   * @deprecated
+   */
+  sidecars?: Array<Sidecar>;
+  /**
+   * Resumable deploy policy persisted with deploy_options; Pro/Scale may enable first-wake 5xx auto-rollback, while omitted or null keeps the default false.
+   */
+  rollback_on_5xx?: boolean | null;
+  /**
+   * Create this deployment without temporary startup CPU headroom; omitted or null keeps the default boost.
+   */
+  disable_startup_cpu_boost?: boolean | null;
+  /**
+   * Skip reconciling trigger declarations from the uploaded gregale manifest at commit time.
+   */
+  no_triggers?: boolean;
+  /**
+   * Commit this upload to production while a deploy freeze is active; the reason is audited with the freezes it overrode (ADR-20261019071733).
+   */
+  override_freeze?: string;
+  /**
+   * Build this upload now, keep it live without traffic, and start its production rollout at this time; deploy freezes are checked at that time (ADR-20261021152201).
+   */
+  release_at?: string;
+  /**
+   * Slack or email notification channels told when this upload, scheduled with release_at, starts or cannot start.
+   */
+  release_notify?: Array<string>;
+};
+

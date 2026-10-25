@@ -44,6 +44,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -427,6 +428,10 @@ type Engine struct {
 	// publication (WithNotifyInPublication).
 	notifyInPublication bool
 	fcVer               string // running Firecracker version — snapshots load only on a match (ADR-005)
+	// capabilities holds a capability's background work while its platform
+	// flag is off for the owning account (ADR-20261023115741); nil allows all.
+	capabilities       *capflags.Decider
+	capabilitySubjects capabilitySubjects
 	// sealCrashCaptures seals crash captures at the source (ADR-733,
 	// remote storage backends).
 	sealCrashCaptures bool
@@ -2368,8 +2373,8 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 		}
 		if err == nil && !e.ownsApp(app) {
 			return CoordOutcome{}, fmt.Errorf(
-				"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box)",
-				appID, app.NodeID, e.ownerNodeID,
+				"sched: EnsureWake: app %q owned by node %q, this schedd owns %q — refusing (run on the owning box): %w",
+				appID, app.NodeID, e.ownerNodeID, ErrAppOwnedByAnotherNode,
 			)
 		}
 		if err == nil {
@@ -2831,6 +2836,11 @@ func (e *Engine) AdmitMirrorInstance(ctx context.Context, appID, mirrorRuleID, m
 // the customer's source response was already returned; mirror
 // is best-effort by design.
 var ErrMirrorSlotAtCapacity = errors.New("sched: mirror slot at capacity")
+
+// ErrAppOwnedByAnotherNode marks a wake refused because another node's
+// schedd owns the app. Every schedd hears an explicit app wake; the owner
+// serves it, so for the others this is expected, not a failure.
+var ErrAppOwnedByAnotherNode = errors.New("app owned by another node")
 
 // AdmitInstanceForDeployment is the floor-trigger entry point that
 // admits a specific deployment (issue #557 closure / ADR-074).
@@ -3762,7 +3772,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 	}
 	prefetched := prefetch.wait()
 	privateNetwork := prefetched.privateNetwork
-	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCForApp(dep, app.AppProtocol)
 	pinnedBase, err := prefetched.baseKey, prefetched.baseKeyErr
 	ctx = withBootPrepared(ctx, bootPrepared{instanceID: ins.ID,
 		rehearsalRunID: prefetched.rehearsalRunID, haveRehearsal: prefetched.rehearsalErr == nil,
@@ -5764,7 +5774,7 @@ func (e *Engine) buildAppSpecForMigrationWithValues(ctx context.Context, instanc
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, fmt.Errorf("sched: build app spec: GitOps service bindings: %w", err)
 	}
 	privateNetwork := e.privateNetworkProjection(ctx, app)
-	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCFromDep(dep)
+	healthcheckGRPC, healthcheckGRPCService := healthcheckGRPCForApp(dep, app.AppProtocol)
 	pinnedBase, err := e.deploymentBaseKey(ctx, app, dep, layerKey(dep.RootfsKey, dep.ID))
 	if err != nil {
 		return AppSpec{}, state.RuntimeAppValuesSnapshot{}, err
@@ -6673,7 +6683,7 @@ func (e *Engine) Prime(ctx context.Context, appID, deploymentID string) error {
 			TargetReleaseID: upgradeTarget.ID, BaseKey: spec.BaseKey, LayerKey: spec.LayerKey, StartedAt: bootStartedAt,
 		}
 	}
-	primed, err := e.publishOwnedRuntimeWithStandards(ctx, out, publication)
+	primed, err := e.publishPrimeRuntime(ctx, out, publication)
 	if err != nil {
 		if errors.Is(err, state.ErrFinancialBudgetHeld) {
 			return errors.Join(err, e.retireFinancialBudgetRuntime(ctx, ins))

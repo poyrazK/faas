@@ -3,10 +3,12 @@ package faas_test
 import (
 	"context"
 	"fmt"
-	faas "github.com/poyrazK/faas/sdk/go"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 func TestOwnedEncryptionDiscoveryClient(t *testing.T) {
@@ -21,7 +23,7 @@ func TestOwnedEncryptionDiscoveryClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	out, err := c.GetObjectBucketEncryptionCapabilities(context.Background(), "demo/x", "bucket/x")
+	out, err := preview.Wrap(c).GetObjectBucketEncryptionCapabilities(context.Background(), "demo/x", "bucket/x")
 	if err != nil || len(out.KeyIDs) != 1 || out.KeyIDs[0] != "owned-key" || len(out.Algorithms) != 2 {
 		t.Fatal(out, err)
 	}

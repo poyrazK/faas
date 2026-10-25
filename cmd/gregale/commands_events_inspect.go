@@ -62,6 +62,11 @@ func writeEventReceipt(receipt api.EventReceiptResponse) {
 	if receipt.RetainUntil != nil {
 		_, _ = fmt.Fprintf(osStdout, "Receipt retained until: %s\n", receipt.RetainUntil.Format(time.RFC3339))
 	}
+	if len(receipt.Recipients) == 0 && receipt.NextAfter == "" {
+		// A bare table header followed "Recipients: 0" (Hunt 14 H14-47).
+		_, _ = fmt.Fprintln(osStdout, "No subscription matched this event; list an app's subscriptions with `gregale events subscriptions <app>`.")
+		return
+	}
 	_, _ = fmt.Fprintln(osStdout, "APP\tSUBSCRIPTION\tROUTING\tROUTE ATTEMPTS\tHANDLER\tHANDLER ATTEMPTS\tNEXT RETRY\tRECOVERY\tERROR")
 	for _, entry := range receipt.Recipients {
 		writeEventReceiptRecipient(receipt, entry)

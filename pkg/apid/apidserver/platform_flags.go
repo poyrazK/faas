@@ -109,7 +109,8 @@ func (s *server) platformFlagOn(flagKey string) bool {
 // and returns the form to store. Platform-flag values are normalized and
 // cross-checked against the live snapshot: a rule cannot reference a group
 // that does not exist, and a group cannot be removed while a flag uses it.
-func (s *server) checkRuntimeConfigChange(def runtimeConfigDefinition, value json.RawMessage) (json.RawMessage, *api.Problem) {
+// Turning a core capability flag off for every account needs force.
+func (s *server) checkRuntimeConfigChange(def runtimeConfigDefinition, value json.RawMessage, force bool) (json.RawMessage, *api.Problem) {
 	if err := validateRuntimeConfigValue(def, value); err != nil {
 		return nil, api.NewProblem(http.StatusBadRequest, api.CodeValidation, "Invalid configuration value", err.Error())
 	}
@@ -127,6 +128,10 @@ func (s *server) checkRuntimeConfigChange(def runtimeConfigDefinition, value jso
 				}
 				if err := platformflags.ValidateRamps(spec, flag); err != nil {
 					return nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Flag cannot ramp automatically", err.Error())
+				}
+				if spec.Core && !force && (!flag.Enabled || !flag.Default) {
+					return nil, api.NewProblem(http.StatusConflict, api.CodeConflict, "Core capability flag",
+						fmt.Sprintf("%s releases the core %s capability; turning it off hides it from every account. Resend with force to confirm", spec.Key, spec.Capability))
 				}
 			}
 		}
@@ -230,6 +235,15 @@ func (s *server) seedEnvPlatformFlags(getenv func(string) string) {
 	s.seedPlatformFlag(platformflags.RealtimeTickets, platformflags.FromAccountList(s.realtime.TicketsPreviewEnabled, true, nil))
 	s.seedPlatformFlag(platformflags.RealtimeAccess, platformflags.FromAccountList(s.realtime.AccessPreviewEnabled, true, nil))
 	s.seedPlatformFlag(platformflags.RealtimeOccupancy, platformflags.FromAccountList(s.realtime.OccupancyPreviewEnabled, true, nil))
+	// ADR-20261023115741: test and acceptance environments release every
+	// generated capability flag at boot. A durable operator value still wins.
+	if envTruthy(getenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL")) {
+		for _, spec := range platformflags.Catalog() {
+			if spec.Generated {
+				s.seedPlatformFlag(spec.Key, platformflags.Definition{Enabled: true, Default: true})
+			}
+		}
+	}
 }
 
 // realtimeEndpointPreviews decides the realtime preview flags for one

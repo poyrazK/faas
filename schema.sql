@@ -13331,14 +13331,19 @@ CREATE FUNCTION public.guard_account_managed_postgres_databases() RETURNS trigge
     AS $$
 DECLARE live bigint;
 BEGIN
-    IF NEW.status = 'deleted_pending' THEN
-        SELECT count(*) INTO live FROM managed_postgres_databases d JOIN orgs o ON o.id=d.org_id
-        WHERE d.account_id=NEW.id AND d.state<>'deleted'
-          AND (o.personal_org OR NOT o.resource_ownership_enabled);
-        IF live > 0 THEN
-            RAISE EXCEPTION 'account has managed postgres databases'
-                USING ERRCODE = '23514', CONSTRAINT = 'account_has_managed_postgres_databases', DETAIL = live::text;
-        END IF;
+    IF NEW.status <> 'deleted_pending' THEN
+        NEW.deletion_includes_managed_postgres := false;
+        RETURN NEW;
+    END IF;
+    IF NEW.deletion_includes_managed_postgres THEN
+        RETURN NEW;
+    END IF;
+    SELECT count(*) INTO live FROM managed_postgres_databases d JOIN orgs o ON o.id=d.org_id
+    WHERE d.account_id=NEW.id AND d.state<>'deleted'
+      AND (o.personal_org OR NOT o.resource_ownership_enabled);
+    IF live > 0 THEN
+        RAISE EXCEPTION 'account has managed postgres databases'
+            USING ERRCODE = '23514', CONSTRAINT = 'account_has_managed_postgres_databases', DETAIL = live::text;
     END IF;
     RETURN NEW;
 END;
@@ -19374,6 +19379,7 @@ CREATE TABLE public.accounts (
     subscription_mail_revision bigint DEFAULT 1 NOT NULL,
     deployment_mail_revision bigint DEFAULT 1 NOT NULL,
     mfa_totp_last_step bigint,
+    deletion_includes_managed_postgres boolean DEFAULT false NOT NULL,
     CONSTRAINT accounts_abuse_hold_valid CHECK ((((abuse_hold_at IS NULL) = (abuse_hold_reason IS NULL)) AND ((abuse_hold_reason IS NULL) OR (abuse_hold_reason = ANY (ARRAY['egress_fanout'::text, 'egress_flood'::text, 'operator'::text]))))),
     CONSTRAINT accounts_billing_address_length_chk CHECK (((billing_address IS NULL) OR ((char_length(billing_address) >= 1) AND (char_length(billing_address) <= 1000)))),
     CONSTRAINT accounts_billing_mail_revision_check CHECK ((billing_mail_revision > 0)),
@@ -42962,9 +42968,13 @@ CREATE TABLE public.managed_realtime_endpoints (
     max_connection_age_seconds bigint DEFAULT 0 NOT NULL,
     auth_token_previous_sealed bytea DEFAULT '\x'::bytea NOT NULL,
     auth_token_previous_expires_at timestamp with time zone,
+    slug text,
+    channel_rules jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT managed_realtime_callback_url_len_chk CHECK (((length(callback_url) >= 8) AND (length(callback_url) <= 2048))),
     CONSTRAINT managed_realtime_endpoint_auth_chk CHECK (((auth_mode = ANY (ARRAY['none'::text, 'static_bearer'::text, 'oidc_jwt'::text])) AND (cardinality(auth_audience) <= 16) AND ((cardinality(auth_algorithms) >= 0) AND (cardinality(auth_algorithms) <= 16)) AND (jsonb_typeof(auth_required_claims) = 'object'::text))),
     CONSTRAINT managed_realtime_endpoint_policy_chk CHECK ((((max_connections >= 0) AND (max_connections <= 10000)) AND ((max_message_bytes >= 0) AND (max_message_bytes <= 1048576)) AND ((max_connection_age_seconds >= 0) AND (max_connection_age_seconds <= 604800)) AND (cardinality(allowed_origins) <= 16))),
+    CONSTRAINT managed_realtime_endpoints_channel_rules_check CHECK (((jsonb_typeof(channel_rules) = 'array'::text) AND (jsonb_array_length(channel_rules) <= 32))),
+    CONSTRAINT managed_realtime_endpoints_slug_check CHECK (((slug IS NULL) OR (slug ~ '^[a-z0-9][a-z0-9-]{0,47}$'::text))),
     CONSTRAINT managed_realtime_paths_len_chk CHECK ((((length(connect_path) >= 1) AND (length(connect_path) <= 256)) AND ((length(message_path) >= 1) AND (length(message_path) <= 256)) AND ((length(disconnect_path) >= 1) AND (length(disconnect_path) <= 256)))),
     CONSTRAINT managed_realtime_paths_shape_chk CHECK ((("left"(connect_path, 1) = '/'::text) AND ("left"(message_path, 1) = '/'::text) AND ("left"(disconnect_path, 1) = '/'::text))),
     CONSTRAINT managed_realtime_tokens_len_chk CHECK (((octet_length(callback_auth_token_sealed) <= 4096) AND (octet_length(auth_token_sealed) <= 4096) AND (octet_length(auth_token_previous_sealed) <= 4096)))
@@ -73215,6 +73225,13 @@ CREATE INDEX managed_realtime_endpoints_app_idx ON public.managed_realtime_endpo
 
 
 --
+-- Name: managed_realtime_endpoints_app_slug; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_realtime_endpoints_app_slug ON public.managed_realtime_endpoints USING btree (app_id, slug) WHERE (slug IS NOT NULL);
+
+
+--
 -- Name: managed_realtime_inbox_cursors_expiry_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -77733,7 +77750,7 @@ CREATE TRIGGER aa_project_workload_owner BEFORE INSERT OR UPDATE OF project_id, 
 -- Name: accounts account_managed_postgres_databases_guard; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER account_managed_postgres_databases_guard BEFORE UPDATE OF status ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.guard_account_managed_postgres_databases();
+CREATE TRIGGER account_managed_postgres_databases_guard BEFORE UPDATE OF status, deletion_includes_managed_postgres ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.guard_account_managed_postgres_databases();
 
 
 --

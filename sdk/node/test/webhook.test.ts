@@ -9,8 +9,8 @@ import {
   WEBHOOK_SIGNATURE_HEADER,
   WEBHOOK_TIMESTAMP_HEADER,
   WebhookVerificationError,
-} from '../src/index.js';
-import type { CreateAppWebhookRequest, WorkflowFinishedWebhookPayload } from '../src/index.js';
+} from '../src/preview.js';
+import type { CreateAppWebhookRequest, WorkflowFinishedWebhookPayload } from '../src/preview.js';
 
 const secret = 'whsec_test_123';
 const timestamp = 1_712_345_678;

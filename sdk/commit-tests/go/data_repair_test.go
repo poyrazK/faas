@@ -11,9 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
-	faas "github.com/poyrazK/faas/sdk/go"
 )
 
 // ADR-20261016: the SDK capture belongs to the same transaction as the
@@ -35,20 +36,20 @@ func TestDataRepairOperationTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := operationInput(t)
-	config := faas.DataRepairCapture{Table: "public.products", Environment: "production", Release: "go-import-v1"}
-	first, err := faas.WithOperationTransaction(ctx, db, input, func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
-		return faas.WithDataRepairCapture(ctx, tx, input, config, func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+	config := preview.DataRepairCapture{Table: "public.products", Environment: "production", Release: "go-import-v1"}
+	first, err := preview.WithOperationTransaction(ctx, db, input, func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
+		return preview.WithDataRepairCapture(ctx, tx, input, config, func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 			_, err := tx.ExecContext(ctx, `UPDATE public.products SET category='new'`)
-			return faas.OperationOutcome{Result: json.RawMessage(`{"changed":2}`)}, err
+			return preview.OperationOutcome{Result: json.RawMessage(`{"changed":2}`)}, err
 		})
 	})
 	if err != nil || first.Replayed {
 		t.Fatalf("capture: %+v %v", first, err)
 	}
 	input.Generation++
-	replay, err := faas.WithOperationTransaction(ctx, db, input, func(faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+	replay, err := preview.WithOperationTransaction(ctx, db, input, func(preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 		t.Fatal("committed callback reran")
-		return faas.OperationOutcome{}, nil
+		return preview.OperationOutcome{}, nil
 	})
 	if err != nil || !replay.Replayed || string(replay.Body) != string(first.Body) {
 		t.Fatalf("receipt replay: %+v %v", replay, err)
@@ -57,12 +58,12 @@ func TestDataRepairOperationTransaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantErr := errors.New("validation failed")
-	_, err = faas.WithOperationTransaction(ctx, db, input, func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
-		return faas.WithDataRepairCapture(ctx, tx, input, config, func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+	_, err = preview.WithOperationTransaction(ctx, db, input, func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
+		return preview.WithDataRepairCapture(ctx, tx, input, config, func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 			if _, err := tx.ExecContext(ctx, `UPDATE public.products SET category='failed'`); err != nil {
-				return faas.OperationOutcome{}, err
+				return preview.OperationOutcome{}, err
 			}
-			return faas.OperationOutcome{}, wantErr
+			return preview.OperationOutcome{}, wantErr
 		})
 	})
 	if !errors.Is(err, wantErr) {
@@ -134,10 +135,10 @@ func TestDataRepairCaptureReadinessRestrictedWriter(t *testing.T) {
 	}
 	application := writer("")
 	input := operationInput(t)
-	o := faas.DataRepairCaptureReadinessOptions{Scope: faas.DataRepairCaptureScope{AccountID: input.AccountID, AppID: input.AppID, PlatformTenantID: input.PlatformTenantID, Environment: "production"}, Table: "public.products", Release: "go-writer-v1"}
-	check := func(pool *sql.DB, status, code string) faas.DataRepairCaptureReadinessReport {
+	o := preview.DataRepairCaptureReadinessOptions{Scope: preview.DataRepairCaptureScope{AccountID: input.AccountID, AppID: input.AppID, PlatformTenantID: input.PlatformTenantID, Environment: "production"}, Table: "public.products", Release: "go-writer-v1"}
+	check := func(pool *sql.DB, status, code string) preview.DataRepairCaptureReadinessReport {
 		t.Helper()
-		r, err := faas.CheckDataRepairCapture(ctx, pool, o)
+		r, err := preview.CheckDataRepairCapture(ctx, pool, o)
 		if err != nil || !r.Valid() || r.Status != status || r.Profile != "capture" {
 			t.Fatalf("capture readiness: %+v %v", r, err)
 		}
@@ -162,11 +163,11 @@ func TestDataRepairCaptureReadinessRestrictedWriter(t *testing.T) {
 	if err := db.QueryRowContext(ctx, `SELECT (SELECT count(*) FROM gregale_repair.plans),(SELECT count(*) FROM gregale_repair.operations),(SELECT count(*) FROM gregale_repair.changes),(SELECT count(*) FROM public.gregale_operation_inbox)`).Scan(&plans, &operations, &changes, &receipts); err != nil || plans+operations+changes+receipts != 0 {
 		t.Fatal("diagnostics wrote durable state", err)
 	}
-	config := faas.DataRepairCapture{Table: o.Table, Environment: o.Scope.Environment, Release: o.Release}
-	result, err := faas.WithOperationTransaction(ctx, application, input, func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
-		return faas.WithDataRepairCapture(ctx, tx, input, config, func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+	config := preview.DataRepairCapture{Table: o.Table, Environment: o.Scope.Environment, Release: o.Release}
+	result, err := preview.WithOperationTransaction(ctx, application, input, func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
+		return preview.WithDataRepairCapture(ctx, tx, input, config, func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
 			_, err := tx.ExecContext(ctx, `UPDATE products SET category='new'`)
-			return faas.OperationOutcome{Result: json.RawMessage(`{"changed":2}`)}, err
+			return preview.OperationOutcome{Result: json.RawMessage(`{"changed":2}`)}, err
 		})
 	})
 	if err != nil || result.Replayed {

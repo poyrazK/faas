@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -60,6 +61,12 @@ type CreateManagedRealtimeEndpointRequest struct {
 	MaxMessageBytes         int64             `json:"max_message_bytes,omitempty"`
 	MaxConnectionAgeSeconds int64             `json:"max_connection_age_seconds,omitempty"`
 	Enabled                 *bool             `json:"enabled,omitempty"`
+	// Slug names the endpoint within its app for gregale.yaml
+	// (ADR-20261019102657); optional.
+	Slug string `json:"slug,omitempty"`
+	// ChannelRules authorize channels from verified token claims without the
+	// authorize callback (ADR-20261019102657).
+	ChannelRules []RealtimeChannelRule `json:"channel_rules,omitempty"`
 }
 
 type UpdateManagedRealtimeEndpointRequest struct {
@@ -80,6 +87,10 @@ type UpdateManagedRealtimeEndpointRequest struct {
 	MaxMessageBytes         *int64             `json:"max_message_bytes,omitempty"`
 	MaxConnectionAgeSeconds *int64             `json:"max_connection_age_seconds,omitempty"`
 	Enabled                 *bool              `json:"enabled,omitempty"`
+	// Slug replaces the endpoint's slug; an empty string removes it.
+	Slug *string `json:"slug,omitempty"`
+	// ChannelRules replaces the endpoint's channel rules; [] removes them.
+	ChannelRules *[]RealtimeChannelRule `json:"channel_rules,omitempty"`
 }
 
 // RotateManagedRealtimeAuthRequest starts a bounded overlap window for a new
@@ -211,6 +222,27 @@ type ManagedRealtimePrincipalReceiptResponse struct {
 
 // ValidateRealtimePrincipal reports whether a request identifies one bounded
 // principal value without silently normalizing the identity.
+// RealtimeChannelRule grants channels to verified tokens without the
+// authorize callback (ADR-20261019102657). Pattern is literal text,
+// {claim} placeholders that must equal the token's claim, and an optional
+// trailing "*" matching any suffix. "sub" is the token subject.
+type RealtimeChannelRule struct {
+	Pattern string `json:"pattern"`
+	Read    bool   `json:"read"`
+}
+
+// realtimeEndpointSlug matches the migration's CHECK on
+// managed_realtime_endpoints.slug.
+var realtimeEndpointSlug = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,47}$`)
+
+// ValidateRealtimeEndpointSlug checks an endpoint slug (ADR-20261019102657).
+func ValidateRealtimeEndpointSlug(slug string) error {
+	if !realtimeEndpointSlug.MatchString(slug) {
+		return fmt.Errorf("slug must be 1-48 lowercase letters, digits and hyphens, starting with a letter or digit")
+	}
+	return nil
+}
+
 func ValidateRealtimePrincipal(principal string) error {
 	if strings.TrimSpace(principal) == "" || len(principal) > RealtimePrincipalMaxBytes ||
 		strings.ContainsAny(principal, "\x00\r\n") {
@@ -378,29 +410,31 @@ type ManagedRealtimeDrainResponse struct {
 }
 
 type ManagedRealtimeEndpointResponse struct {
-	ID                         string            `json:"id"`
-	AppID                      string            `json:"app_id"`
-	AccountID                  string            `json:"account_id"`
-	CallbackURL                string            `json:"callback_url"`
-	ConnectPath                string            `json:"connect_path"`
-	MessagePath                string            `json:"message_path"`
-	DisconnectPath             string            `json:"disconnect_path"`
-	CallbackAuthTokenMasked    string            `json:"callback_auth_token_masked"`
-	AuthTokenMasked            string            `json:"auth_token_masked"`
-	AuthTokenPreviousExpiresAt *string           `json:"auth_token_previous_expires_at,omitempty"`
-	AuthMode                   string            `json:"auth_mode"`
-	AuthIssuer                 string            `json:"auth_issuer,omitempty"`
-	AuthJWKSURL                string            `json:"auth_jwks_url,omitempty"`
-	AuthAudience               []string          `json:"auth_audience,omitempty"`
-	AuthAlgorithms             []string          `json:"auth_algorithms,omitempty"`
-	AuthRequiredClaims         map[string]string `json:"auth_required_claims,omitempty"`
-	AllowedOrigins             []string          `json:"allowed_origins"`
-	MaxConnections             int               `json:"max_connections"`
-	MaxMessageBytes            int64             `json:"max_message_bytes"`
-	MaxConnectionAgeSeconds    int64             `json:"max_connection_age_seconds"`
-	Enabled                    bool              `json:"enabled"`
-	CreatedAt                  string            `json:"created_at"`
-	UpdatedAt                  string            `json:"updated_at"`
+	ID                         string                `json:"id"`
+	AppID                      string                `json:"app_id"`
+	AccountID                  string                `json:"account_id"`
+	CallbackURL                string                `json:"callback_url"`
+	ConnectPath                string                `json:"connect_path"`
+	MessagePath                string                `json:"message_path"`
+	DisconnectPath             string                `json:"disconnect_path"`
+	CallbackAuthTokenMasked    string                `json:"callback_auth_token_masked"`
+	AuthTokenMasked            string                `json:"auth_token_masked"`
+	AuthTokenPreviousExpiresAt *string               `json:"auth_token_previous_expires_at,omitempty"`
+	AuthMode                   string                `json:"auth_mode"`
+	AuthIssuer                 string                `json:"auth_issuer,omitempty"`
+	AuthJWKSURL                string                `json:"auth_jwks_url,omitempty"`
+	AuthAudience               []string              `json:"auth_audience,omitempty"`
+	AuthAlgorithms             []string              `json:"auth_algorithms,omitempty"`
+	AuthRequiredClaims         map[string]string     `json:"auth_required_claims,omitempty"`
+	AllowedOrigins             []string              `json:"allowed_origins"`
+	MaxConnections             int                   `json:"max_connections"`
+	MaxMessageBytes            int64                 `json:"max_message_bytes"`
+	MaxConnectionAgeSeconds    int64                 `json:"max_connection_age_seconds"`
+	Enabled                    bool                  `json:"enabled"`
+	CreatedAt                  string                `json:"created_at"`
+	UpdatedAt                  string                `json:"updated_at"`
+	Slug                       string                `json:"slug,omitempty"`
+	ChannelRules               []RealtimeChannelRule `json:"channel_rules,omitempty"`
 }
 
 func ManagedRealtimeEndpointResponseFromRow(id, appID, accountID, callbackURL, connectPath, messagePath, disconnectPath, authMode, authIssuer, authJWKSURL string, authAudience, authAlgorithms []string, authRequiredClaims map[string]string, authTokenPreviousExpiresAt *time.Time, allowedOrigins []string, maxConnections int, maxMessageBytes, maxConnectionAgeSeconds int64, enabled bool, createdAt, updatedAt time.Time) ManagedRealtimeEndpointResponse {

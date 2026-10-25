@@ -1226,14 +1226,20 @@ func readUntilBlankLine(r *bufio.Reader) ([]byte, error) {
 	const headCap = 64 * 1024
 	var out []byte
 	for {
-		line, err := r.ReadString('\n')
-		out = append(out, line...)
-		if line == "\n" {
+		// ReadSlice returns at most a buffer's worth, so one endless line
+		// is refused at the cap instead of being read whole first.
+		lineStart := len(out) == 0 || out[len(out)-1] == '\n'
+		frag, err := r.ReadSlice('\n')
+		if lineStart && len(frag) == 1 && frag[0] == '\n' {
 			// terminator line — return everything before it.
-			return out[:len(out)-1], nil
+			return out, nil
 		}
-		if len(out) > headCap {
+		if len(out)+len(frag) > headCap {
 			return nil, fmt.Errorf("bridge head exceeds %d bytes", headCap)
+		}
+		out = append(out, frag...)
+		if errors.Is(err, bufio.ErrBufferFull) {
+			continue
 		}
 		if errors.Is(err, io.EOF) {
 			return out, io.EOF

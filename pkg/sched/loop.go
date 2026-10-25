@@ -275,8 +275,17 @@ func (l *Loop) WithWorkflowsDispatched(enabled bool) *Loop {
 
 // WithWorkflowOrchestrator sets the orchestrator instance for workflow dispatch.
 func (l *Loop) WithWorkflowOrchestrator(o *WorkflowOrchestrator) *Loop {
+	if o != nil {
+		o.capabilityAllowed = l.workflowCapabilityAllowed
+	}
 	l.workflowOrch = o
 	return l
+}
+
+// workflowCapabilityAllowed decides the workflows capability for an app's
+// account (ADR-20261023115741).
+func (l *Loop) workflowCapabilityAllowed(ctx context.Context, appID string) bool {
+	return l.engine.appIDCapabilityAllowed(ctx, appID, "workflows")
 }
 
 // WithWorkflowRetention attaches the workflow retention cleaner.
@@ -826,6 +835,11 @@ func (l *Loop) Run(ctx context.Context) error {
 		db.NotifyInstanceFailureRelayed, // issue #3359: vmmd reports relayed by the hosting schedd to the app's owner.
 	}, l.log)
 	if err != nil {
+		if ctx.Err() != nil {
+			// Stopped before the first LISTEN came up: a clean drain,
+			// not a failed start.
+			return nil
+		}
 		return err
 	}
 	// SubscribeWithReconnect owns its own cancel via the deferred
@@ -1220,6 +1234,13 @@ func (l *Loop) Run(ctx context.Context) error {
 			}
 			if n.Channel == db.NotifyAppWake {
 				if err := l.handleAppWake(ctx, n); err != nil {
+					// Every schedd hears the wake and the owner serves it; the
+					// others logged a WARN for each explicit wake on a two-node
+					// production-us (Hunt 14 H14-30).
+					if errors.Is(err, ErrAppOwnedByAnotherNode) {
+						l.log.Debug("sched: explicit app wake left to the owning node", "err", err)
+						continue
+					}
 					l.log.Warn("sched: explicit app wake failed; leaving durable request pending", "err", err)
 					continue
 				}
@@ -2221,6 +2242,10 @@ func (l *Loop) handleNotification(ctx context.Context, n db.Notification) {
 	switch n.Channel {
 	case db.NotifyAppWake:
 		if err := l.handleAppWake(ctx, n); err != nil {
+			if errors.Is(err, ErrAppOwnedByAnotherNode) {
+				l.log.Debug("sched: explicit app wake left to the owning node", "err", err)
+				return
+			}
 			l.log.Warn("sched: explicit app wake failed", "err", err)
 		}
 	case db.NotifyAppChanged:
@@ -4274,6 +4299,7 @@ func (l *Loop) runWorkflowsDispatchTick(ctx context.Context) {
 			orch := l.workflowOrch
 			if orch == nil {
 				orch = NewWorkflowOrchestrator(l.engine.Store(), nil, l.audit, nil, l.log)
+				orch.capabilityAllowed = l.workflowCapabilityAllowed
 			}
 			if err := orch.DispatchBatch(ctx); err != nil && l.log != nil {
 				l.log.Warn("schedd: workflow dispatch tick failed", "err", err)
@@ -4932,6 +4958,12 @@ func (l *Loop) dispatchCronLocked(ctx context.Context, c state.Cron, now time.Ti
 		// don't want to surface suspended-account crons in the
 		// per-account audit list (and §5.1's 4xx-invariant covers
 		// the "we didn't fire" semantic too).
+		return CronRun{}, false
+	}
+	// ADR-20261023115741: crons switched off for the account do not fire,
+	// the same no-fire, no-audit outcome as a suspended account.
+	if !l.engine.appCapabilityAllowed(ctx, app, "crons") {
+		l.log.Debug("cron: capability off; skipped", "cron_id", c.ID, "app_id", app.ID)
 		return CronRun{}, false
 	}
 	acct = acctRec

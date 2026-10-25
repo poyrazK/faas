@@ -1,6 +1,6 @@
 import pytest
 
-from faas_sdk.models.workflow_recovery_overview import WorkflowRecoveryOverview
+from faas_sdk.preview.models.workflow_recovery_overview import WorkflowRecoveryOverview
 
 
 @pytest.mark.parametrize("delivery", ["no_receivers", "relay_pending", "pending", "delivered", "failed", "unknown"])

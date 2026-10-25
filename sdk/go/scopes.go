@@ -11,9 +11,6 @@ import "github.com/poyrazK/faas/sdk/go/internal/api"
 // any quota change there is canonical, and the SDK's Limits type
 // is the wire form.
 type (
-	// Plan wraps api.Plan — identity-preserving alias so a customer
-	// can use faas.Plan anywhere an api.Plan is expected.
-	Plan = api.Plan
 	// Limits wraps api.Limits — same identity guarantee as Plan.
 	Limits = api.Limits
 )

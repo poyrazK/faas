@@ -1190,6 +1190,7 @@ var DeployOptionsFingerprint = deployOptionsFingerprint
 var DeployPreflightListener = deployPreflightListener
 var DeployPreflightListenerWith = deployPreflightListenerWith
 var DeployPreflightRepoSource = deployPreflightRepoSource
+var DeployPreflightScheduled = deployPreflightScheduled
 var DeployPreflightSource = deployPreflightSource
 var DeployPreviewRequested = deployPreviewRequested
 var DeploymentAliasRevisionLabel = deploymentAliasRevisionLabel
@@ -2378,6 +2379,15 @@ func (r validateParamFlags) Resolve(p0 map[string]bool) (*api.EdgeRuleValidatePa
 func (r *zeroConfigStubServer) GotCalls() *map[string]int { return &r.gotCalls }
 func (r *zeroConfigStubServer) Srv() **httptest.Server    { return &r.srv }
 
+// Realtime preview (ADR-20261019102657).
+type ManifestCronTransaction = manifestCronTransaction
+
+var ErrRealtimeManifestHidden = errRealtimeManifestHidden
+var ReconcileManifestRealtimeEndpoints = reconcileManifestRealtimeEndpoints
+var RealtimePreviewVerbs = realtimePreviewVerbs
+var RealtimeUsage = realtimeUsage
+var RealtimePublishUsage = realtimePublishUsage
+
 var PrintEdgeRuleEvents = printEdgeRuleEvents
 var ResolveArchiveInstance = resolveArchiveInstance
 var RequestLatencyMS = requestLatencyMS
@@ -2416,6 +2426,10 @@ func AppArgumentPaths() [][]string {
 	return paths
 }
 
+// Capability hiding (ADR-20261023115741).
+var CliPathCapability = cliPathCapability
+var CommandCapabilityPath = commandCapabilityPath
+
 var ValidateMCPProtocolResponseHeaders = validateMCPProtocolResponseHeaders
 
 // SavedDeployRecovery returns the resume command and hint a saved deploy
@@ -2425,3 +2439,9 @@ func SavedDeployRecovery(outcome string) (resume, hint string) {
 	r := s.recovery("submission")
 	return r.ResumeCommand, r.Hint
 }
+
+var RoutesAppFlagAsPositional = routesAppFlagAsPositional
+
+var RenderProject = renderProject
+var InspectAttention = inspectAttention
+var RemoveCLITestSandbox = removeCLITestSandbox

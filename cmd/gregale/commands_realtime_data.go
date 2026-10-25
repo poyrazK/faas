@@ -298,10 +298,13 @@ func cmdRealtimePublish(args []string) int {
 	dataStdin := fs.Bool("data-stdin", false, "read message bytes from stdin")
 	binary := fs.Bool("binary", false, "publish as a binary WebSocket frame")
 	idempotencyKey := fs.String("idempotency-key", "", "stable key for retrying this exact message")
-	delivery := fs.String("delivery", "live", "delivery mode: live or retained")
+	delivery := fs.String("delivery", "live", "delivery mode: live (or retained in the realtime preview)")
 	if err := fs.Parse(args); err != nil || fs.NArg() != 3 || !realtime.ValidateChannel(fs.Arg(2)) {
-		PrintUsage(osStderr, "usage: gregale realtime publish APP_SLUG ENDPOINT_ID CHANNEL (--data-stdin|--data DATA) [--binary] [--delivery live|retained] [--idempotency-key KEY]", "realtime")
+		PrintUsage(osStderr, realtimePublishUsage(), "realtime")
 		return 1
+	}
+	if *delivery == string(api.ManagedRealtimeDeliveryRetained) && !realtimePreviewCLI() {
+		return printErr("Could not publish realtime message", fmt.Errorf("--delivery must be live"))
 	}
 	if *delivery != string(api.ManagedRealtimeDeliveryLive) && *delivery != string(api.ManagedRealtimeDeliveryRetained) {
 		return printErr("Could not publish realtime message", fmt.Errorf("--delivery must be live or retained"))

@@ -55,13 +55,13 @@ same operations. For example, a Go worker with a configured SDK client calls:
 
 ```go
 status, err := client.RenewEventAcknowledgment(ctx, app, invocationID,
-    faas.EventAcknowledgmentRequest{Token: deliveryToken})
+    preview.EventAcknowledgmentRequest{Token: deliveryToken})
 // Handle err; never log deliveryToken. status contains no secret.
 _ = status
 
 // After the business transaction and durable consumer receipt commit:
 status, err = client.CompleteEventAcknowledgment(ctx, app, invocationID,
-    faas.EventAcknowledgmentRequest{
+    preview.EventAcknowledgmentRequest{
         Token: deliveryToken,
         Result: json.RawMessage(`{"processed":true}`),
     })

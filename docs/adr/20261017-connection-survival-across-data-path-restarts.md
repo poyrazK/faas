@@ -681,6 +681,43 @@ its own.
       with forwardd (P2).
   - 1c: transient unit, journal kind, adoption, and lifetime equal to the
     instance's.
+    **Unit and lifetime built** behind `FAAS_INSTANCE_BRIDGE_UNIT=1` (vmmd,
+    default off): `pkg/sdunit`, `pkg/vmmdgrpc/bridge_unit.go`.
+    - The persistent bridge of a namespace instance with a bridge uid (1a)
+      is `faas-ibridge-<instance>-<gen>.service`, created with
+      `StartTransientUnit` (`Type=exec`) and the unit properties above.
+      `<gen>` is random per run, not the incarnation, so a run whose stop
+      is still settling never blocks the next one. vmmd then proves the run:
+      it holds a pidfd on the main pid and checks that pid's cgroup is the
+      unit's and its netns is the binding vmmd named. A run it cannot prove
+      is stopped.
+    - The unit does not set `User=`/`Group=`: systemd resolves them through
+      the user database and refuses a uid with no account (`217/USER`), and
+      bridge uids must have none (`checkBridgeUIDRange`). The unit starts
+      the bridge as root with `CapabilityBoundingSet=CAP_SETUID CAP_SETGID`
+      and `NoNewPrivileges`; the bridge drops to its uid (supplementary
+      groups, then every gid, then every uid) before it reads anything, and
+      its existing check then refuses to run unless every uid and gid is the
+      bridge uid and it holds no capability (`pkg/bridgeproc`,
+      `FAAS_BRIDGE_DROP_TO_UID`).
+    - Lifetime: the wake's prewarm starts the unit, the idle reaper leaves
+      it, and park, destroy, stop, a failed wake and a freeze stop it and
+      wait until systemd has unloaded it before the RPC answers (invariant
+      4). A thaw starts a new run.
+    - Until adoption lands, vmmd stops its bridge units at shutdown and,
+      before serving, stops every `faas-ibridge-*` unit it finds (a crash
+      leaves them; nothing routes to them). `make leakcheck` reports any
+      left behind.
+    - `faas-tenant-ibridge.slice` (ansible `systemd_slices`) sits inside the
+      tenant fence. Admission does not count it yet (ADR-909 amendment,
+      below).
+    - Not yet: the bridge keeps the `vmmd-stream-bridge` binary and path
+      until P5 launches from the release directory, and a failed bridge start
+      does not fail the wake (`bridge_start_failed`): the first request
+      still starts the bridge, as before.
+    - Still owed in 1c: the bridge group of the v7 adoption record and
+      adoption across a vmmd restart, then the slice's measured memory in
+      node stats for admission.
   - 1d: gate and counters move to the bridge, with ADR-1151 property tests.
 
   After P1, bridges survive vmmd, but streams are still cut, because the

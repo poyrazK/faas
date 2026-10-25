@@ -347,6 +347,14 @@ const (
 	ApplicationStandardRuntimeLockAttempts   = 10
 	ApplicationStandardRuntimeLockRetry      = 5 * time.Millisecond
 	ApplicationStandardRuntimeLockMaxBackoff = 160 * time.Millisecond
+	// A snapshot prime has already booted its VM when it records the
+	// runtime, so it waits longer than the store's replay for the app's
+	// runtime fences before destroying the VM and failing the deploy: a
+	// deploy's own scan publication held them past the store's ~1 s on
+	// production-us rc.294 (Hunt 14 H14-31). About 7.5 s in all.
+	PrimeRuntimePublicationBusyAttempts   = 5
+	PrimeRuntimePublicationBusyBackoff    = 500 * time.Millisecond
+	PrimeRuntimePublicationBusyMaxBackoff = 4 * time.Second
 	// Bounded full streams for measured native snapshot lineage. This is a
 	// safety ceiling, not a tenant memory or disk entitlement.
 	ApplicationStandardSnapshotMaxArtifactBytes  int64 = 16 << 30
@@ -2729,6 +2737,15 @@ const (
 	RealtimeConnectionSyncInterval        = 5 * time.Second
 	RealtimeConnectionSyncStaleAfter      = 30 * time.Second
 	RealtimeConnectionSyncMaxAccounts     = 10_000
+)
+
+// Channel rules (ADR-20261019102657): realtimed authorizes channels from a
+// verified token's claims without the authorize callback. An endpoint holds at
+// most RealtimeChannelRulesMax rules of at most RealtimeChannelRulePatternMax
+// bytes each.
+const (
+	RealtimeChannelRulesMax       = 32
+	RealtimeChannelRulePatternMax = 256
 )
 
 // Channel occupancy (ADR-1324). One read covers at most
@@ -8169,6 +8186,19 @@ const (
 	// Wake (pkg/fcvm/manager.go:236) and the nft rule that consumes
 	// it lives in pkg/netns/config.go::NftCommands.
 	DefaultConntrackCap = 4096
+
+	// Instance bridge unit limits (connection-survival ADR §8, slice 1c).
+	// With FAAS_INSTANCE_BRIDGE_UNIT=1 each instance's bridge is a systemd
+	// service in faas-tenant-ibridge.slice with these per-unit caps. One
+	// platform-wide number, not per plan: the bridge is platform overhead
+	// and is not billed (§4.7). The values are the ADR's proposals; the P0
+	// density measurement confirms them before the switch is turned on.
+	InstanceBridgeMemoryMaxMB = 32
+	InstanceBridgeTasksMax    = 64
+	// InstanceBridgeMaxConnections is the open-connection budget; the unit's
+	// LimitNOFILE allows two descriptors per connection (client and guest)
+	// plus the bridge's own.
+	InstanceBridgeMaxConnections = DefaultConntrackCap
 
 	// MaxPreparedNetworkCacheSize bounds unused host network namespaces.
 	// This is separate from admitted VMs, RAM, vCPUs, and per-app concurrency.
