@@ -2949,7 +2949,7 @@ var cliCommands = []cliCommand{
 				{Name: "timeout", Short: "verification wait deadline (default 10m, maximum 1h)", Value: "DURATION"},
 				{Name: "poll-interval", Short: "verification interval (5s..1m, default 10s)", Value: "DURATION"},
 			}},
-			{Name: subList, Short: "List custom domain bindings"},
+			{Name: subList, Short: "List custom domain bindings", Flags: []cliFlag{{Name: "app", Short: "only this app's domains", Value: "SLUG"}}},
 			{Name: subAdd, Short: "Bind a custom domain to an app or project environment", Positionals: []string{"[<domain>]"}, Flags: []cliFlag{
 				{Name: "domain", Short: "domain to attach (or the first argument)", Value: "DOMAIN"},
 				{Name: "app", Short: "app slug to attach to", Req: true, Value: "SLUG"},

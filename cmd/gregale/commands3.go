@@ -91,9 +91,7 @@ func cmdSecrets(args []string) int {
 		return cmdSecretReferences(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown secrets subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "secrets", parent, args[0])
 }
 
 // --- list ------------------------------------------------------------------

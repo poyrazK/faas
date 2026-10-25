@@ -9519,6 +9519,12 @@ Offers a default-domain change at the end.
 
 List custom domain bindings
 
+`gregale domains list [--app <SLUG>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | only this app&#39;s domains |  |
+
 ### domains add
 
 Bind a custom domain to an app or project environment

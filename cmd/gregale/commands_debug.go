@@ -100,7 +100,7 @@ func cmdDebug(args []string) int {
 		return cmdDebugBundle(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown debug subcommand %q\n", args[0])
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "debug", nestedCliCommand("debug"), args[0])
 }
 
 // cmdDebugCoverage renders the observed debugger signal coverage for a slug.

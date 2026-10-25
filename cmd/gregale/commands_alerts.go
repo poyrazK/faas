@@ -73,9 +73,7 @@ func cmdAlerts(args []string) int {
 		return cmdAlertsPreset(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown alerts subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "alerts", parent, args[0])
 }
 
 // cmdAlertList mirrors cmdWebhookList. The SDK returns a flat slice;
