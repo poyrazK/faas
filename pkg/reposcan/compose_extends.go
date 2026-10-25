@@ -28,15 +28,37 @@ type composeLinker struct {
 	resolved map[string]map[string]any
 	sources  []string
 	warnings []string
+	// serviceEnv holds the interpolation values of each service an include
+	// brought in (ADR-20261025090000); root services use the root .env.
+	serviceEnv map[string]map[string]string
+}
+
+// composeLinks is the root document with include and extends applied.
+type composeLinks struct {
+	body     []byte
+	sources  []string
+	warnings []string
+	// serviceEnv maps each included service to the values its own Compose
+	// file interpolates with; a service absent here uses the root .env.
+	serviceEnv map[string]map[string]string
+}
+
+// envFor returns the interpolation values for one service.
+func (l composeLinks) envFor(service string, root map[string]string) map[string]string {
+	if env, ok := l.serviceEnv[service]; ok {
+		return env
+	}
+	return root
 }
 
 // resolveComposeLinks applies include and extends to the merged root
 // document. sources names the files already merged (the root file and its
-// override); files loaded here are appended to it.
-func resolveComposeLinks(fsys fs.FS, body []byte, sources []string) ([]byte, []string, []string, error) {
+// override); files loaded here are appended to it. rootEnv is the root .env,
+// the base every included project's values extend.
+func resolveComposeLinks(fsys fs.FS, body []byte, sources []string, rootEnv map[string]string) (composeLinks, error) {
 	var doc map[string]any
 	if err := yaml.Unmarshal(body, &doc); err != nil {
-		return nil, nil, nil, fmt.Errorf("reposcan: parse %s: %w", strings.Join(sources, " + "), err)
+		return composeLinks{}, fmt.Errorf("reposcan: parse %s: %w", strings.Join(sources, " + "), err)
 	}
 	container := doc
 	if _, ok := doc["services"]; !ok {
@@ -46,33 +68,34 @@ func resolveComposeLinks(fsys fs.FS, body []byte, sources []string) ([]byte, []s
 	}
 	_, hasInclude := container["include"]
 	if !hasInclude && !composeServicesExtend(container) {
-		return body, sources, nil, nil
+		return composeLinks{body: body, sources: sources}, nil
 	}
 	linker := &composeLinker{
-		fsys:     fsys,
-		files:    map[string]map[string]any{},
-		resolved: map[string]map[string]any{},
-		sources:  append([]string(nil), sources...),
+		fsys:       fsys,
+		files:      map[string]map[string]any{},
+		resolved:   map[string]map[string]any{},
+		sources:    append([]string(nil), sources...),
+		serviceEnv: map[string]map[string]string{},
 	}
 	root := sources[0]
 	services, err := linker.resolveServices(root, composeServices(container))
 	if err != nil {
-		return nil, nil, nil, err
+		return composeLinks{}, err
 	}
 	origin := make(map[string]string, len(services))
 	for name := range services {
 		origin[name] = root
 	}
-	if err := linker.include(root, container["include"], services, origin, []string{root}); err != nil {
-		return nil, nil, nil, err
+	if err := linker.include(root, container["include"], services, origin, []string{root}, rootEnv); err != nil {
+		return composeLinks{}, err
 	}
 	delete(container, "include")
 	container["services"] = services
 	out, err := yaml.Marshal(doc)
 	if err != nil {
-		return nil, nil, nil, fmt.Errorf("reposcan: resolve include and extends in %s: %w", root, err)
+		return composeLinks{}, fmt.Errorf("reposcan: resolve include and extends in %s: %w", root, err)
 	}
-	return out, linker.sources, linker.warnings, nil
+	return composeLinks{body: out, sources: linker.sources, warnings: linker.warnings, serviceEnv: linker.serviceEnv}, nil
 }
 
 func composeServices(container map[string]any) map[string]any {
@@ -234,8 +257,9 @@ func composeLinkedPath(file, written string) (string, error) {
 }
 
 // include adds the services of each included file. Like Compose, a service
-// name defined by two files is an error rather than a merge.
-func (l *composeLinker) include(file string, raw any, services map[string]any, origin map[string]string, chain []string) error {
+// name defined by two files is an error rather than a merge. env is the
+// including project's interpolation values.
+func (l *composeLinker) include(file string, raw any, services map[string]any, origin map[string]string, chain []string, env map[string]string) error {
 	if raw == nil {
 		return nil
 	}
@@ -244,7 +268,7 @@ func (l *composeLinker) include(file string, raw any, services map[string]any, o
 		return fmt.Errorf("reposcan: %s: include must be a list", file)
 	}
 	for _, entry := range entries {
-		paths, options, err := composeIncludeEntry(entry)
+		paths, envFiles, projectDirectory, err := composeIncludeEntry(entry)
 		if err != nil {
 			return fmt.Errorf("reposcan: %s: %w", file, err)
 		}
@@ -268,16 +292,20 @@ func (l *composeLinker) include(file string, raw any, services map[string]any, o
 		if remote {
 			continue
 		}
-		if len(options) > 0 {
-			l.warnings = append(l.warnings, fmt.Sprintf("reposcan: %s: include %s: %s not applied; paths resolve from the included file and variables come from the root .env",
-				file, strings.Join(targets, ", "), strings.Join(options, " and ")))
+		if projectDirectory {
+			l.warnings = append(l.warnings, fmt.Sprintf("reposcan: %s: include %s: project_directory not applied; paths and the default .env resolve from the included file's directory",
+				file, strings.Join(targets, ", ")))
 		}
 		for _, target := range targets {
 			if slices.Contains(chain, target) {
 				return fmt.Errorf("reposcan: Compose include cycle: %s", strings.Join(append(chain, target), " -> "))
 			}
 		}
-		included, err := l.includedProject(targets, chain)
+		projectEnv, err := l.includeEnv(file, targets[0], envFiles, env)
+		if err != nil {
+			return err
+		}
+		included, err := l.includedProject(targets, chain, projectEnv)
 		if err != nil {
 			return err
 		}
@@ -287,14 +315,49 @@ func (l *composeLinker) include(file string, raw any, services map[string]any, o
 			}
 			origin[name] = targets[0]
 			services[name] = included[name]
+			// A nested include already recorded its own project's values.
+			if _, nested := l.serviceEnv[name]; !nested {
+				l.serviceEnv[name] = projectEnv
+			}
 		}
 	}
 	return nil
 }
 
+// includeEnv returns the values an included project interpolates with, as
+// Compose builds them (ADR-20261025090000): the including project's values,
+// overlaid by the entry's env_file list in order, which must exist, or else
+// by the .env beside the included file when there is one.
+func (l *composeLinker) includeEnv(file, target string, envFiles []string, parent map[string]string) (map[string]string, error) {
+	env := maps.Clone(parent)
+	if env == nil {
+		env = map[string]string{}
+	}
+	if len(envFiles) == 0 {
+		values, err := readComposeEnvFile(l.fsys, path.Join(path.Dir(target), ".env"), false)
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(env, values)
+		return env, nil
+	}
+	for _, written := range envFiles {
+		name, err := composeLinkedPath(file, written)
+		if err != nil {
+			return nil, fmt.Errorf("reposcan: %s: include env_file %q: %w", file, written, err)
+		}
+		values, err := readComposeEnvFile(l.fsys, name, true)
+		if err != nil {
+			return nil, err
+		}
+		maps.Copy(env, values)
+	}
+	return env, nil
+}
+
 // includedProject loads one include entry: its files merged in order, its
 // own includes, and its extends, with paths rebased to the repository root.
-func (l *composeLinker) includedProject(targets []string, chain []string) (map[string]any, error) {
+func (l *composeLinker) includedProject(targets []string, chain []string, env map[string]string) (map[string]any, error) {
 	var merged map[string]any
 	for _, target := range targets {
 		doc, err := l.load(target)
@@ -308,11 +371,6 @@ func (l *composeLinker) includedProject(targets []string, chain []string) (map[s
 		merged = mergeComposeMap(merged, doc, "")
 	}
 	first := targets[0]
-	if dir := path.Dir(first); dir != "." {
-		if info, err := fs.Stat(l.fsys, path.Join(dir, ".env")); err == nil && !info.IsDir() {
-			l.warnings = append(l.warnings, fmt.Sprintf("reposcan: include %s: %s is not read; variables come from the root .env", first, path.Join(dir, ".env")))
-		}
-	}
 	services, err := l.resolveServices(first, composeServices(merged))
 	if err != nil {
 		return nil, err
@@ -321,43 +379,57 @@ func (l *composeLinker) includedProject(targets []string, chain []string) (map[s
 	for name := range services {
 		origin[name] = first
 	}
-	if err := l.include(first, merged["include"], services, origin, append(chain, targets...)); err != nil {
+	if err := l.include(first, merged["include"], services, origin, append(chain, targets...), env); err != nil {
 		return nil, err
 	}
 	return services, nil
 }
 
-// composeIncludeEntry reads a short (path) or long ({path, ...}) include. It
-// returns the options Gregale does not apply.
-func composeIncludeEntry(entry any) ([]string, []string, error) {
+// composeIncludeEntry reads a short (path) or long ({path, env_file,
+// project_directory}) include: its paths, its env files, and whether it sets
+// project_directory, which Gregale does not apply.
+func composeIncludeEntry(entry any) ([]string, []string, bool, error) {
 	switch typed := entry.(type) {
 	case string:
-		return []string{typed}, nil, nil
+		return []string{typed}, nil, false, nil
 	case map[string]any:
-		var paths []string
-		switch value := typed["path"].(type) {
-		case string:
-			paths = []string{value}
-		case []any:
-			for _, item := range value {
-				written, ok := item.(string)
-				if !ok {
-					return nil, nil, errors.New("include path entries must be strings")
-				}
-				paths = append(paths, written)
-			}
-		default:
-			return nil, nil, errors.New("include entries need a path")
+		paths, err := composeIncludeStrings(typed["path"], "path")
+		if err != nil {
+			return nil, nil, false, err
 		}
-		var options []string
-		for _, option := range []string{"project_directory", "env_file"} {
-			if _, set := typed[option]; set {
-				options = append(options, option)
-			}
+		if len(paths) == 0 {
+			return nil, nil, false, errors.New("include entries need a path")
 		}
-		return paths, options, nil
+		envFiles, err := composeIncludeStrings(typed["env_file"], "env_file")
+		if err != nil {
+			return nil, nil, false, err
+		}
+		_, projectDirectory := typed["project_directory"]
+		return paths, envFiles, projectDirectory, nil
 	}
-	return nil, nil, errors.New("include entries must be a path or a mapping with a path")
+	return nil, nil, false, errors.New("include entries must be a path or a mapping with a path")
+}
+
+// composeIncludeStrings reads an include option written as one string or a
+// list of strings.
+func composeIncludeStrings(raw any, option string) ([]string, error) {
+	switch value := raw.(type) {
+	case nil:
+		return nil, nil
+	case string:
+		return []string{value}, nil
+	case []any:
+		out := make([]string, 0, len(value))
+		for _, item := range value {
+			written, ok := item.(string)
+			if !ok {
+				return nil, fmt.Errorf("include %s entries must be strings", option)
+			}
+			out = append(out, written)
+		}
+		return out, nil
+	}
+	return nil, fmt.Errorf("include %s must be a string or a list of strings", option)
 }
 
 // normalizeComposeService writes the short forms Compose normalizes before

@@ -534,3 +534,26 @@ func TestReconcileRemovesStaleSocketDirectories(t *testing.T) {
 		t.Fatalf("adopted run's socket directory removed: %v", err)
 	}
 }
+
+// The node's bridge memory is the slice's memory.current; a slice systemd
+// has not created yet holds no bridge.
+func TestInstanceBridgeResidentBytes(t *testing.T) {
+	saved := instanceBridgeSliceDir
+	t.Cleanup(func() { instanceBridgeSliceDir = saved })
+	instanceBridgeSliceDir = filepath.Join(t.TempDir(), instanceBridgeSlice)
+	if b, ok := instanceBridgeResidentBytes(); !ok || b != 0 {
+		t.Fatalf("absent slice = %d %v, want 0", b, ok)
+	}
+	if err := os.MkdirAll(instanceBridgeSliceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for body, want := range map[string]int64{"50331648\n": 50331648, "garbage\n": -1, "-4\n": -1} {
+		if err := os.WriteFile(filepath.Join(instanceBridgeSliceDir, "memory.current"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b, ok := instanceBridgeResidentBytes()
+		if (want < 0 && ok) || (want >= 0 && (!ok || b != want)) {
+			t.Errorf("memory.current %q = %d %v, want %d", body, b, ok, want)
+		}
+	}
+}

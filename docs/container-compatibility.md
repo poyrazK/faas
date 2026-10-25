@@ -429,10 +429,14 @@ A service is merged onto its base with the override-file rules: mappings merge,
 other values are replaced. Build contexts and `env_file` paths in another
 directory stay relative to their own file. Included services join the project;
 a service defined in two files, an unknown base, a cycle or a missing file fails
-the scan, as in Compose. Remote includes are not loaded and warn. Variables are
-read from the root `.env` only, so an include's `project_directory` and
-`env_file` options, and a `.env` beside an included file, warn. At most 32 files
-are linked in one scan.
+the scan, as in Compose. Remote includes are not loaded and warn. An included
+file is interpolated with its own values
+([ADR-20261025090000](adr/20261025090000-compose-include-env-files.md)): the
+including project's, overlaid by the files its `env_file` option names (from
+the including file's directory; a missing one fails the scan), or else by the
+`.env` beside the included file. `COMPOSE_PROFILES` is read from the root `.env`
+only. An include's `project_directory` is not applied and warns; paths resolve
+from the included file's directory. At most 32 files are linked in one scan.
 
 A service with `profiles:` is deployed only when one of its profiles is active
 ([ADR-20261022190000](adr/20261022190000-compose-profiles-from-dotenv.md)).

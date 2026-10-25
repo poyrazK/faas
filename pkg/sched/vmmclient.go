@@ -328,8 +328,11 @@ type StatsSnapshot struct {
 	LiveCount          int32
 	LeasedCount        int32
 	TotalResidentBytes *int64
-	Instances          []VMInstanceStat
-	SampledAt          time.Time
+	// InstanceBridgeResidentBytes is the node's instance bridge units'
+	// memory (connection-survival ADR §2); nil when vmmd reports none.
+	InstanceBridgeResidentBytes *int64
+	Instances                   []VMInstanceStat
+	SampledAt                   time.Time
 }
 
 // VMInstanceStat is the sched-side view of vmmdpb.InstanceStats —
@@ -1768,6 +1771,10 @@ func (c *VMMClient) Stats(ctx context.Context) (*StatsSnapshot, error) {
 	if v := resp.GetTotalResidentBytes(); v != nil {
 		b := v.GetValue()
 		out.TotalResidentBytes = &b
+	}
+	if v := resp.GetInstanceBridgeResidentBytes(); v != nil {
+		b := v.GetValue()
+		out.InstanceBridgeResidentBytes = &b
 	}
 	for _, in := range resp.GetInstances() {
 		row := vmInstanceStatFromProto(in)

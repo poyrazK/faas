@@ -29,7 +29,7 @@ func TestContainedCommandEnrollmentRequiresOperatorGateAndAcknowledgement(t *tes
 	plan := api.ScenarioSimulationPlan{Version: 1, Fixtures: []api.ScenarioSimulationFixture{{Workload: "primary", Name: "notify", Integration: "email", Adapter: "resend", Method: "POST", Path: "/emails", Responses: []api.ScenarioSimulationResponse{{Status: 200}}}}}
 	req := api.RegisterScenarioTestRequest{CommandVersion: 1, WebhookMode: "capture", NetworkMode: "contained", ActionEvidenceVersion: 2, Simulation: &plan, Members: []api.ScenarioTestWorkload{{Workload: "primary", AppSlug: session.App.Slug}}}
 	r = e.Do(t, "PUT", "/v1/dev/test-runs/"+run, req, nil)
-	if r.Code != http.StatusServiceUnavailable {
+	if r.Code != http.StatusNotImplemented {
 		t.Fatalf("unqualified command enrollment: %d %s", r.Code, r.Body.String())
 	}
 	*s.RehearsalCommandsEnabled() = true
@@ -60,7 +60,7 @@ func TestContainedCommandTaskCannotBypassDisabledOperatorGate(t *testing.T) {
 		t.Fatal(err)
 	}
 	r = e.Do(t, "POST", "/v1/apps/"+session.App.Slug+"/tasks", api.CreateAppTaskRequest{Command: argv, MaxOutputBytes: rehearsalcommand.MaxReceiptBytes}, nil)
-	if r.Code != http.StatusServiceUnavailable {
+	if r.Code != http.StatusNotImplemented {
 		t.Fatalf("disabled runner admitted a command: %d %s", r.Code, r.Body.String())
 	}
 }

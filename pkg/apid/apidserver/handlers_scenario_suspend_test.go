@@ -32,7 +32,7 @@ func TestSuspendResumeEnrollmentQualificationAndAccountOwnedReceipts(t *testing.
 	sim := api.ScenarioSimulationPlan{Version: 1, Fixtures: []api.ScenarioSimulationFixture{{Workload: "primary", Name: "notify", Integration: "email", Adapter: "resend", Method: "POST", Path: "/emails", Responses: []api.ScenarioSimulationResponse{{Status: 200}}}}}
 	req := api.RegisterScenarioTestRequest{SuspendResume: &rehearsalresume.Spec{Version: 1, Checkpoint: "after_setup", Workloads: []string{"primary"}, PauseMS: 10, WithinMS: 1000}, CommandVersion: 1, NetworkMode: "contained", WebhookMode: "capture", ActionEvidenceVersion: 2, Simulation: &sim, Members: []api.ScenarioTestWorkload{{Workload: "primary", AppSlug: session.App.Slug}}}
 	path := "/v1/dev/test-runs/" + run
-	if r = e.Do(t, "PUT", path, req, nil); r.Code != http.StatusServiceUnavailable {
+	if r = e.Do(t, "PUT", path, req, nil); r.Code != http.StatusNotImplemented {
 		t.Fatalf("unqualified enrollment: %d %s", r.Code, r.Body.String())
 	}
 	*s.RehearsalSuspendResumeEnabled() = true
@@ -86,7 +86,7 @@ func TestRunningSuspendEnrollmentRequiresIndependentQualification(t *testing.T) 
 	plan := rehearsalwork.Plan{Version: 1, Primary: "primary", Participants: []rehearsalwork.Participant{{Workload: "primary"}, {Workload: "worker", Async: true}}}
 	req := api.RegisterScenarioTestRequest{Members: members, CommandVersion: 1, NetworkMode: "contained", WebhookMode: "capture", ActionEvidenceVersion: 2, Simulation: &simulation, ManagedWork: &plan, SuspendResume: &rehearsalresume.Spec{Version: 1, Checkpoint: "managed_job", Workloads: []string{"worker"}, WorkerCheckpoint: "after-commit", PauseMS: 10, WithinMS: 1000}}
 	path := "/v1/dev/test-runs/" + run
-	if response := e.Do(t, "PUT", path, req, nil); response.Code != http.StatusServiceUnavailable {
+	if response := e.Do(t, "PUT", path, req, nil); response.Code != http.StatusNotImplemented {
 		t.Fatalf("running-job gate did not refuse: %d %s", response.Code, response.Body.String())
 	}
 	*s.RehearsalRunningSuspendEnabled() = true

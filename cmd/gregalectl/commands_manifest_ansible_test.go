@@ -627,3 +627,49 @@ func TestRenderManifestAnsibleFiles_PostgresStandby(t *testing.T) {
 		})
 	}
 }
+
+// ADR 20261025111015: the manifest, not a hand edit, decides whether the
+// playbooks own s3-gatewayd.
+func TestRenderManifestAnsibleFiles_ObjectStorageGateway(t *testing.T) {
+	base := strings.Replace(validManifestYAML,
+		"    - name: fsn-1\n      role: control-plane\n",
+		"    - name: fsn-1\n      role: control-plane\n      address: 10.42.0.1:7100\n    - name: fsn-2\n      role: compute-only\n      address: 10.42.0.2:50051\n", 1)
+	render := func(t *testing.T, yaml string) (string, string) {
+		t.Helper()
+		m, err := manifest.Parse([]byte(yaml))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if errs := m.Validate(); errs != nil {
+			t.Fatal(errs)
+		}
+		files, err := renderManifestAnsibleFiles(m, t.TempDir())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var cp, compute string
+		for _, f := range files {
+			switch {
+			case strings.HasSuffix(f.Path, "fsn-1.yml"):
+				cp = string(f.Body)
+			case strings.HasSuffix(f.Path, "fsn-2.yml"):
+				compute = string(f.Body)
+			}
+		}
+		return cp, compute
+	}
+	cp, _ := render(t, base)
+	if strings.Contains(cp, "faas_object_storage") {
+		t.Fatalf("unmanaged manifest rendered gateway vars:\n%s", cp)
+	}
+	managed := base + "object_storage:\n  gateway: managed\n  config_src: /operator/object-storage.json\n  provider_env_src: /operator/provider.env\n"
+	cp, compute := render(t, managed)
+	for _, want := range []string{"faas_object_storage_gateway_managed: true\n", `faas_object_storage_config_src: "/operator/object-storage.json"`, `faas_object_storage_provider_env_src: "/operator/provider.env"`} {
+		if !strings.Contains(cp, want) {
+			t.Errorf("control-plane vars missing %q:\n%s", want, cp)
+		}
+	}
+	if strings.Contains(compute, "faas_object_storage") {
+		t.Errorf("compute node got gateway vars:\n%s", compute)
+	}
+}

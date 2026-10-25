@@ -1902,6 +1902,11 @@ remain open; production admission is disabled.
   (2026-10-22): a built service's `entrypoint` joins its start command, and
   `user`, `working_dir`, `stop_signal` and `stop_grace_period` are frozen per
   deployment and applied to the built image. Unit tests pass; no native run.
+- **Compose include env files.**
+  [ADR-20261025090000](adr/20261025090000-compose-include-env-files.md)
+  (2026-10-25): an included Compose file interpolates with its own values (the
+  including project's, overlaid by its `env_file` list or the `.env` beside it);
+  environment import now honors `COMPOSE_PROFILES`. Unit tests pass.
 - **Image runs read a Docker config.**
   [ADR-20261025110000](adr/20261025110000-image-run-docker-config.md)
   (2026-10-25): `gregale run --docker-config PATH` takes the image registry's
