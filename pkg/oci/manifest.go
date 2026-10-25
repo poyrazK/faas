@@ -53,7 +53,7 @@ func (c *RegistryClient) PullManifestWithAuth(ctx context.Context, ref string, a
 	if err != nil {
 		return Manifest{}, err
 	}
-	resolved, err := viaDockerHubMirrors(ctx, c, r, auth, func(at Reference) (resolvedImageManifest, error) {
+	resolved, err := pullFrom(ctx, c, r, auth, func(at Reference, auth *BasicAuth) (resolvedImageManifest, error) {
 		return c.resolveImageManifest(ctx, at, auth)
 	})
 	if err != nil {
@@ -117,7 +117,7 @@ func (c *RegistryClient) PullBlobWithAuth(ctx context.Context, repo, digest stri
 	if err != nil {
 		return nil, err
 	}
-	return viaDockerHubMirrors(ctx, c, r, auth, func(at Reference) (io.ReadCloser, error) {
+	return pullFrom(ctx, c, r, auth, func(at Reference, auth *BasicAuth) (io.ReadCloser, error) {
 		_, body, err := c.openBlobWithAuth(ctx, at, digest, auth)
 		return body, err
 	})
