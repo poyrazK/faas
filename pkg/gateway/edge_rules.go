@@ -464,16 +464,18 @@ type HostEntry struct {
 	// none expire). The entry is neither served as current nor used as the
 	// last-known fallback past it, so a time-boxed rule stops applying on
 	// schedule even while cached or while Postgres is unreachable.
-	NotAfter time.Time
-	Host     string
-	Route    []EdgeRuleResolved
-	Rewrite  []EdgeRuleRewriteResolved
-	Redirect []EdgeRuleRedirectResolved
-	Headers  []EdgeRuleHeadersResolved
-	CORS     []EdgeRuleCORSResolved
-	JWT      []EdgeRuleJWTResolved
-	IP       []EdgeRuleIPResolved
-	Validate []EdgeRuleValidateResolved
+	NotAfter             time.Time
+	snapshot             *edgePolicySnapshot
+	Host                 string
+	PublicSourceRevision string `json:",omitempty"`
+	Route                []EdgeRuleResolved
+	Rewrite              []EdgeRuleRewriteResolved
+	Redirect             []EdgeRuleRedirectResolved
+	Headers              []EdgeRuleHeadersResolved
+	CORS                 []EdgeRuleCORSResolved
+	JWT                  []EdgeRuleJWTResolved
+	IP                   []EdgeRuleIPResolved
+	Validate             []EdgeRuleValidateResolved
 	// Limit carries the kind=limit subset (ADR-091 D24). Same
 	// shape as Validate above; the applier
 	// (handler.go::applyEdgeRuleLimit) installs MaxBytesReader on
@@ -540,7 +542,11 @@ type HostEntry struct {
 	Async          []EdgeRuleAsyncResolved
 	WAF            []EdgeRuleWAFResolved
 	Challenge      []EdgeRuleChallengeResolved
-	PathGlobErrs   []PathGlobError
+	// Penalties maps each enforced rule with a penalty box to it
+	// (ADR-20261022105846), whatever its kind.
+	Penalties        map[string]api.EdgeRulePenalty
+	PathGlobErrs     []PathGlobError
+	PolicyRuleOwners map[string]string
 }
 
 // NewEdgeRuleCache returns a cache holding up to `capacity` host
@@ -977,6 +983,17 @@ func (c *EdgeRuleCache) GetWAF(host string) ([]EdgeRuleWAFResolved, bool) {
 }
 
 // GetChallenge returns a defensive copy of the compiled kind=challenge rules.
+// GetPenalty returns ruleID's penalty box for host. hit reports a cached
+// entry; found reports that the rule has an enforced penalty there.
+func (c *EdgeRuleCache) GetPenalty(host, ruleID string) (p api.EdgeRulePenalty, found, hit bool) {
+	entry, ok := c.getEntry(host)
+	if !ok {
+		return api.EdgeRulePenalty{}, false, false
+	}
+	p, found = entry.Penalties[ruleID]
+	return p, found, true
+}
+
 func (c *EdgeRuleCache) GetChallenge(host string) ([]EdgeRuleChallengeResolved, bool) {
 	entry, ok := c.getEntry(host)
 	if !ok {
@@ -1446,6 +1463,9 @@ func (noOpEdgeRuleMatcher) Reset() {}
 // time same-account guarantee at
 // `cmd/apid/handlers_edge_rules.go:184-201`).
 type ResolveTargetApp func(ctx context.Context, slug string) (App, bool)
+
+// ResolveTargetAppPolicy retains authoritative read failures for production.
+type ResolveTargetAppPolicy func(ctx context.Context, slug string) (App, bool, error)
 
 // PickFirstRouteMatch is the pure-Go filter used by
 // cmd/gatewayd-internal/edge_rules.go::gatewaydEdgeRules.MatchRoute

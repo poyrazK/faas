@@ -1,5 +1,5 @@
-from faas_sdk.models.event_recovery_request import EventRecoveryRequest
-from faas_sdk.models.workflow_initial_recovery_preview import WorkflowInitialRecoveryPreview
+from faas_sdk.preview.models.event_recovery_request import EventRecoveryRequest
+from faas_sdk.preview.models.workflow_initial_recovery_preview import WorkflowInitialRecoveryPreview
 
 
 def test_initial_failure_preview_target_survives_recovery_submission():

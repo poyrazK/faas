@@ -3,7 +3,9 @@
 Use this when someone may have read sealed customer material: environment
 variables, AI provider and other outbound keys, registry passwords,
 integration tokens. That includes a host or daemon compromise that exposed an
-identity able to open them. It is a SEV1: follow
+identity able to open them. A [FaasHoneytokenPresented](FaasHoneytokenPresented.md)
+page is such evidence: a decoy key planted with the secrets was used. It is a
+SEV1: follow
 [breach-notification.md](breach-notification.md) for evidence, roles and the
 72-hour notice, and this page for the order of technical steps.
 
@@ -37,13 +39,14 @@ while apid is down or untrusted (ADR 20261022140000).
    ```
 
    Then revoke. Everyone, operators included, signs in again, and CI needs new
-   API keys:
+   API keys, deploy tokens and hosting automation credentials:
 
    ```bash
    sudo gregalectl break-glass revoke-credentials --db-env /etc/faas/compute-db.env --yes --reason "SEV1 <ticket>"
    ```
 
    `--kinds` narrows the revocation to some of `sessions`, `api_keys`,
+   `deploy_tokens`, `hosting_automation_credentials`,
    `outbound_ai_access_tokens` and `platform_tenant_access_tokens`.
 
 4. Isolate the entry point: drain the compute node, stop the daemon, or block

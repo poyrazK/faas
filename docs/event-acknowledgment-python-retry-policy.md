@@ -7,7 +7,7 @@ capped exponential full jitter and database-clock due-time contract as
 [Node](event-acknowledgment-node-retry-policy.md).
 
 ```python
-from faas_sdk import (
+from faas_sdk.preview import (
     EventAcknowledgmentIntentRecoveryPassOptions,
     EventAcknowledgmentIntentRetryPolicy,
     arecover_event_acknowledgment_intents,

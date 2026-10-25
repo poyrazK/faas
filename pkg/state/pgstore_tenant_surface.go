@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // tenantSurfaceCols is the canonical SELECT column list for a
@@ -275,16 +276,7 @@ func (s *PgStore) CountTenantSurfacesForAccount(ctx context.Context, accountID s
 // UpdateTenantSurfaceStatus — apid sets status (pending/active/suspended/deleted).
 // Returns ErrNotFound if the row is gone.
 func (s *PgStore) UpdateTenantSurfaceStatus(ctx context.Context, id string, status SurfaceStatus) error {
-	tag, err := s.pool.Exec(ctx,
-		`update tenant_surfaces set status = $1, updated_at = now() where id = $2`,
-		string(status), id)
-	if err != nil {
-		return mapErr(err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.setTrafficTenantSurfaceStatus(ctx, id, status)
 }
 
 // UpdateTenantSurfaceCert — the cert engine's only writer to cert_*
@@ -318,7 +310,7 @@ func (s *PgStore) UpdateTenantSurfaceCert(ctx context.Context, in UpdateSurfaceC
 		        cert_last_error = $3,
 		        updated_at = now()
 		  where id = $4
-		    and cert_state is distinct from $1`,
+		    and (cert_state, cert_not_after) is distinct from ($1::text, $2::timestamptz)`,
 		string(in.CertState), notAfter, in.LastError, in.SurfaceID)
 	if err != nil {
 		return mapErr(err)
@@ -329,6 +321,9 @@ func (s *PgStore) UpdateTenantSurfaceCert(ctx context.Context, in UpdateSurfaceC
 		// so this is rare), or (b) the row's cert_state already
 		// matches the new value (the load-bearing no-op path
 		// that suppresses the re-entry notify storm). We
+		// (only last_error would change: a CA error text may differ
+		// on every attempt, and writing it would re-arm the remint
+		// that produced it). We
 		// disambiguate via a follow-up existence check so the
 		// wrapper can still distinguish missing-row from
 		// idempotent flip.
@@ -453,17 +448,44 @@ func (s *PgStore) TenantSurfaceByHostname(ctx context.Context, hostname string) 
 //   - (TenantHostname{}, ErrNotFound) when the parent surface is missing
 //   - (TenantHostname{}, ErrConflict) on UQ violation
 func (s *PgStore) CreateTenantHostnameIfUnderQuota(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error) {
-	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
+	return s.createTenantHostname(ctx, in, limits, false)
+}
+
+// TakeOverTenantHostnameClaim attaches in.Hostname to in.SurfaceID over
+// another account's unverified row. The caller must first have observed
+// in.ChallengeToken, the claimant's ClaimTakeoverToken, at
+// _faas-verify.<hostname>; the poller then verifies the new row as usual. The
+// old row is deleted rather than reassigned, so nothing keyed by its id
+// crosses accounts. A row on a deleted surface is released whatever its
+// state. A verified row, or one on a live surface of the claimant's own
+// account, returns ErrConflict (ADR-20261020090500).
+func (s *PgStore) TakeOverTenantHostnameClaim(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error) {
+	return s.createTenantHostname(ctx, in, limits, true)
+}
+
+func (s *PgStore) createTenantHostname(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits, takeover bool) (TenantHostname, error) {
+	account, err := sqlc.New().ReadTenantSurfaceTrafficAccount(ctx, s.pool, uuidToPgtype(in.SurfaceID))
+	if err != nil {
+		return TenantHostname{}, mapErr(err)
+	}
+	tx, err := s.beginTrafficTenantBinding(ctx, account.String(), []string{in.Hostname})
 	if err != nil {
 		return TenantHostname{}, fmt.Errorf("state: begin create tenant hostname tx: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // no-op after Commit
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
+	fresh, err := sqlc.New().ReadTenantSurfaceTrafficAccount(ctx, tx, uuidToPgtype(in.SurfaceID))
+	if err != nil || fresh != account {
+		if err == nil {
+			err = ErrNotFound
+		}
+		return TenantHostname{}, mapErr(err)
+	}
 
-	var locked int
+	var accountID string
 	if err := tx.QueryRow(ctx,
-		`select 1 from tenant_surfaces where id = $1 and status <> 'deleted' for update`,
+		`select account_id::text from tenant_surfaces where id = $1 and status <> 'deleted' for update`,
 		in.SurfaceID,
-	).Scan(&locked); err != nil {
+	).Scan(&accountID); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return TenantHostname{}, ErrNotFound
 		}
@@ -490,6 +512,34 @@ func (s *PgStore) CreateTenantHostnameIfUnderQuota(ctx context.Context, in Creat
 			Limit:     limits.TenantHostnamesPerSurface,
 			Observed:  observed,
 			SurfaceID: in.SurfaceID,
+		}
+	}
+	// Unverified rows reserve their names globally and never expire, so
+	// they get their own cap (ADR-20261020090500).
+	if err := tx.QueryRow(ctx,
+		`select count(*) from tenant_hostnames where surface_id = $1 and verified_at is null`,
+		in.SurfaceID,
+	).Scan(&observed); err != nil {
+		return TenantHostname{}, fmt.Errorf("state: count pending tenant_hostnames for surface %s: %w", in.SurfaceID, err)
+	}
+	if limit := limits.PendingTenantHostnamesPerSurface(); observed >= limit {
+		return TenantHostname{}, &TenantHostnameQuotaError{Limit: limit, Observed: observed, SurfaceID: in.SurfaceID, Pending: true}
+	}
+	if takeover {
+		// Another account's unverified row, or any row left on a deleted
+		// surface (it routes nothing), is released. A row verified
+		// meanwhile, or held by the claimant's own account, survives; the
+		// insert below then reports the conflict.
+		if _, err := tx.Exec(ctx,
+			`delete from tenant_hostnames h
+			  where h.hostname = $1
+			    and exists (select 1 from tenant_surfaces holder
+			                 where holder.id = h.surface_id
+			                   and (holder.status = 'deleted'
+			                        or (h.verified_at is null and holder.account_id <> $2::uuid)))`,
+			in.Hostname, accountID,
+		); err != nil {
+			return TenantHostname{}, fmt.Errorf("state: release pending tenant hostname %s: %w", in.Hostname, err)
 		}
 	}
 
@@ -581,21 +631,22 @@ func (s *PgStore) CountTenantHostnamesForSurface(ctx context.Context, surfaceID 
 // last_error. Idempotent: a second call with last_error stays
 // unchanged.
 func (s *PgStore) MarkTenantHostnameVerified(ctx context.Context, hostname string) error {
-	tag, err := s.pool.Exec(ctx,
-		`update tenant_hostnames
-		    set verified_at = now(),
-		        last_check_at = now(),
-		        last_error = ''
-		  where hostname = $1`,
-		hostname)
-	if err != nil {
-		return mapErr(err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	_, err := s.markTrafficTenantHostnameVerified(ctx, hostname, "", false)
+	return err
 }
+
+var _ TenantHostnameChallengeVerifier = (*PgStore)(nil)
+var _ TenantHostnameChallengeVerifier = (*MemStore)(nil)
+
+// TenantHostnameClaimTakeover attaches a hostname over another account's
+// unverified row once the claimant proved control of its DNS
+// (ADR-20261020090500).
+type TenantHostnameClaimTakeover interface {
+	TakeOverTenantHostnameClaim(ctx context.Context, in CreateTenantHostnameParams, limits api.Limits) (TenantHostname, error)
+}
+
+var _ TenantHostnameClaimTakeover = (*PgStore)(nil)
+var _ TenantHostnameClaimTakeover = (*MemStore)(nil)
 
 // MarkTenantHostnameCheckFailed — the dns_poller path. Preserves
 // verified_at (a previously-verified hostname stays verified across
@@ -643,15 +694,7 @@ func (s *PgStore) ListPendingTenantHostnames(ctx context.Context, olderThan time
 // DeleteTenantHostname — apid path; cascades nothing (hostnames have
 // no children).
 func (s *PgStore) DeleteTenantHostname(ctx context.Context, hostname string) error {
-	tag, err := s.pool.Exec(ctx,
-		`delete from tenant_hostnames where hostname = $1`, hostname)
-	if err != nil {
-		return mapErr(err)
-	}
-	if tag.RowsAffected() == 0 {
-		return ErrNotFound
-	}
-	return nil
+	return s.deleteTrafficTenantHostname(ctx, hostname, "")
 }
 
 // GetTenantHostnameByName — pgRouter.ResolveHost's tenant-surface

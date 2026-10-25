@@ -35,6 +35,27 @@ Three consequences:
   no live snapshot carries a guest-init that reads it. Record that check in
   the allowlist entry (below).
 
+## Runtime base generations during a compute rollout
+
+A runtime base (`base/base-<arch>.ext4`, `base/runner-<runtime>-<arch>.ext4`)
+is one logical key in shared storage, and each node's cache commits one
+generation of it. A release-N-1 vmmd refuses every guest on a base whose
+cached generation is not the one in its environment. So a node must not
+adopt release N's generation while it still serves on N-1. `node_join.yml`
+runs `vmmd base-generation-check` and, when a release changes a generation,
+pre-stages it only behind the drain barrier and never re-activates a node
+whose cache has moved
+([ADR 20261024085817](adr/20261024085817-rollout-base-generation-and-drain-completion.md)).
+That pre-stage publishes every base the release configures that the node
+could not adopt, whoever owns the apps on it, and the play keeps the node
+drained until `vmmd base-adoption-check` confirms that its installed vmmd
+can adopt every configured base
+([ADR 20261024191249](adr/20261024191249-rollout-publishes-release-bases-and-gates-activation.md)).
+So the first node to roll publishes each changed base: from then on an N-1
+node refuses a changed base it has not cached, until it rolls, and a compute
+rollback across a generation change is not covered yet. Both wait for
+generation-addressed base keys.
+
 ## No downtime, no exceptions
 
 **No migration and no release may require stopping writers or a
@@ -78,6 +99,14 @@ Roll a release out in this order, and roll back in the reverse order:
 
 A contract migration (a drop, or tightening a constraint) is the data step of
 a *later* release, after every unit that read the old shape has moved past it.
+
+The public edge's Caddy follows the same rule for a new upstream protocol.
+gatewayd-public accepts HTTP/2 cleartext (h2c) for gRPC on its loopback
+listener; Caddy only starts sending gRPC that way when the operator sets
+`faas_public_edge_grpc_h2c`, which is safe once every gatewayd-public in the
+fleet runs that release. Rolling back past it means turning the variable off
+first. Every other request stays on HTTP/1.1, so an older gatewayd-public
+behind an h2c-enabled Caddy fails gRPC only.
 
 ## Gate 1: version skew (CI, every pull request)
 

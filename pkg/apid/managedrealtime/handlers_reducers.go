@@ -10,8 +10,7 @@ import (
 )
 
 func (s *Service) ManagedRealtimeReducer(w http.ResponseWriter, r *http.Request, acct state.Account) {
-	if !s.HistoryPreviewEnabled {
-		httpkit.NotFound(w, "channel reducers preview unavailable")
+	if s.previewUnavailable(w, acct.ID, s.HistoryPreviewEnabled, "channel reducers preview unavailable") {
 		return
 	}
 	ep, _, ok := s.loadManagedRealtimeEndpoint(w, r, acct)

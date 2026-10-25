@@ -103,6 +103,8 @@ type contractTestStore interface {
 	state.PlatformTenantReconciliationStore
 	state.PlatformTenantStore
 	state.PlatformTenantWebhookStore
+	state.ProfileCaptureQueue
+	state.ProfileCaptureStore
 	state.ProjectEnvironmentCloneBindingCaptureStore
 	state.ProjectEnvironmentCloneLeasedObjectManifestStore
 	state.ProjectEnvironmentCloneObjectBucketStore

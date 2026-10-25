@@ -66,6 +66,97 @@ runtime-configuration row, `platform_flag.<key>`. Its value is a definition:
 A flag decides **release, never entitlement**. A Free account included by a
 flag still cannot use a capability its plan lacks; the inspector reports both.
 
+## Capability flags
+
+Every product capability has a flag (ADR-20261023115741). The hand-written
+flags in the table below release their capability; every other capability in
+`pkg/productcap/catalog.json` gets a generated flag whose key is its id with
+`-` replaced by `_` (`realtime`, `managed_postgres`, `route_insights`, …).
+`gregalectl flags list` shows them all.
+
+- **Default from the tier.** GA and beta capabilities are on for every
+  account. Preview and internal capabilities keep the kill switch on and are
+  off by default, so you release one with an `accounts`, `orgs`, `group`,
+  `plans` or `rollout` rule.
+- **What off means.** apid answers the capability's routes as if they did
+  not exist: `404 no such API route` under `/v1`, a plain 404 elsewhere, and
+  404 instead of 405 for a wrong method. With the kill switch off this happens
+  before authentication; otherwise it is decided per account. Dashboard links
+  to the capability disappear, and `GET /v1/capabilities` lists it as
+  unavailable.
+- **Core capabilities.** Sign-in, API keys, apps, billing, GDPR export and
+  deletion, the status page, docs, the CLI, the dashboard, the OpenAPI spec
+  and notification emails are core. Turning a core flag's kill switch or
+  default off is refused unless the write carries `--force`.
+- **Sub-features.** Large capabilities are split into sub-features with
+  their own flags (`parent=` in `gregalectl flags list`): for example
+  `realtime` has `realtime_channels`, `realtime_push`, `realtime_workers`,
+  `realtime_access`, `realtime_tickets` and more. A sub-feature is released
+  only while its parent is released too, so switching a parent off hides every
+  sub-feature under it.
+- **Always-on capabilities** (Firecracker isolation, scale-to-zero, the CLI,
+  the SDKs) have no flag.
+- **Enforcement.** `enforcement=routes` means apid hides the capability's
+  routes; `settings` means apid refuses the app fields, edge rule kinds,
+  runtimes, gregale.yaml blocks or wildcard domains that turn it on (with
+  `403 capability_not_released`); `daemons` means schedd, githubd or
+  gatewayd-internal also stop its work outside apid (below); `handler` means
+  the flag's consumers decide it in code; `none` means the flag is not
+  enforced yet (VM behavior, or a CLI-side tool).
+- **Work outside apid.** Daemons follow the same decision, tier defaults
+  included, within a few seconds of a write:
+  - schedd defers the work of crons, delayed execution, async invocations,
+    durable inbound webhooks, queues, event triggers, jobs, workflows and
+    managed exclusive operations a minute at a time, without spending a
+    delivery attempt. The backlog runs when the flag is back on, so cancel
+    the work as well if the capability is off for good.
+  - githubd ignores pushes (`github_deploys`) and pull-request previews
+    (`pr_previews`) and does not replay them later; closing a pull request
+    still tears its preview down.
+  - gatewayd-internal drops cache, async, retry and circuit-breaker edge rules
+    and stops traffic mirroring, session affinity and the wake page.
+    Restrictive edge rules (WAF, challenge, IP, JWT, geo, limits,
+    maintenance, headers, routing) keep enforcing while `edge_rules` or
+    `edge_protection` is off, so switching those off never opens an app.
+  - apid withdraws a realtime endpoint from realtimed while `realtime` is off
+    for its account, unless the endpoint carries live routes. Live queries
+    stop for clients through the `live_queries` flag; livequeryd keeps its
+    replication slot consumed.
+
+  Rules on a flag a daemon decides can target accounts only (schedd also
+  matches plans and organizations), because those daemons know only the
+  account. `gregalectl flags show --key <flag>` prints its consumers and
+  attributes.
+- **CLI.** The gregale CLI leaves a hidden capability's commands out of help,
+  completion, man pages and suggestions, using `hidden_capabilities` from
+  `GET /v1/capabilities` (cached for an hour per credential), and answers
+  them as unknown commands. Logged-out CLIs follow tier defaults. A customer
+  who was just released a preview sees it within the hour, or at once by
+  running the command, which reads the view again before refusing.
+- **Release a preview to one account:**
+
+  ```bash
+  gregalectl flags allow --key realtime --account-id <account-uuid> --reason "design partner" --yes
+  ```
+
+- **Bulk writes.** Use `--tier` or `--capability` in place of `--key` with
+  `enable`, `disable`, `allow`, `deny`, `revoke` and `default`. Each matching
+  flag is written separately; the summary line reports written and failed
+  writes.
+
+  ```bash
+  gregalectl flags allow --tier preview --account-id <account-uuid> --reason "design partner" --yes
+  gregalectl flags disable --capability realtime --reason "incident 412" --yes
+  gregalectl flags deny --capability object-protection --org-id <org-uuid> --reason "not yet" --yes
+  ```
+
+- **New routes.** A route must belong to a capability: add its path to that
+  capability's `routes` in `pkg/productcap/catalog.json`.
+  `TestEveryApidRouteHasACapability` fails until you do.
+- **Metrics.** `apid_capability_hidden_requests_total{capability,stage}` counts
+  hidden requests; `apid_capability_unmapped_requests_total` counts requests
+  to routes no capability owns (a catalog gap, released by default).
+
 ## Current flags
 
 | Key | Releases | Consumers | Boot fallback |
@@ -88,7 +179,13 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | `realtime_tickets` | Realtime subscription tickets (ADR-1117) | apid → realtimed | `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED` |
 | `realtime_access` | Realtime principal access revocation (ADR-1113) | apid → realtimed | `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED` |
 | `realtime_occupancy` | Realtime channel occupancy (ADR-1324) | apid → realtimed | `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` |
+| `realtime_preview` | Realtime preview: retained history and what builds on it, tickets, access controls, occupancy, usage, endpoint slugs and channel rules, the v2 protocol and SSE (ADR-20261019102657). The v2 protocol, tickets, access controls and occupancy also need their own flag above | apid → realtimed | `FAAS_REALTIME_PREVIEW_ACCOUNTS` |
 | `strict_budgets` | Strict compute and egress budgets (ADR-1750) | apid | none (off until an operator writes it) |
+| `edge_waf_blocking` | Warn and block modes of WAF edge rules (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
+| `edge_challenge` | Challenge edge rules, with difficulty escalation (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
+| `edge_penalty_box` | Edge rule penalties (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
+| `edge_attack_mode` | Attack mode, an app-wide managed challenge rule (ADR-20261021220456); switching it on also needs `edge_challenge` | apid, gatewayd-internal | none (off until an operator writes it) |
+| `edge_ai_crawlers` | The `ai_crawler`, `ai_crawler_purpose` and `verified_ai_crawler` conditions and the `control-ai-crawlers` recipe (ADR-20261022083601) | apid, gatewayd-internal | none (off until an operator writes it) |
 
 The environment and TOML values seed the flag at boot. Once an operator has
 written the flag, they are ignored, including after a restart.
@@ -99,12 +196,15 @@ Until an operator writes one of them, its existing gate still decides, and
 `FAAS_APPLICATION_AUTH_*` is still re-read on every call. The first operator
 write hands the decision to the flag.
 
-Two of these flags have limits:
+`live_queries` and `realtime_preview` have limits:
 
-- `live_queries` is decided by account only, because the realtime path knows
-  only the account. Plan rules never match it.
+- `live_queries` and `realtime_preview` are decided by account only, because
+  the realtime path knows only the account. Plan rules never match them.
 - Unless `live_queries` includes every account, the live-query routes stay
-  hidden from accounts outside it.
+  hidden from accounts outside it. Unless `realtime_preview` includes every
+  account, the served OpenAPI document leaves the realtime preview out.
+  realtimed applies a change to an account's endpoints within the 30 s
+  endpoint resync.
 
 The four realtime flags are decided by apid, which has no realtime node
 database pool to share.
@@ -135,6 +235,28 @@ Strict budgets that are already enabled keep enforcing and stay editable, and
 disabling or deleting one always works. Monitored budgets and alerts are not
 gated. To release it to one account, run `flags enable` (the kill switch, with
 the default still off) and then `flags allow` for that account.
+
+`edge_waf_blocking`, `edge_challenge` and `edge_penalty_box` are off until an
+operator writes them, and unlike `strict_budgets` they are kill switches at
+the edge too. While one is off for an account:
+
+- apid refuses creating a rule that uses the feature (any challenge rule, a
+  WAF rule in warn or block mode, a rule with a penalty), and an update that
+  switches the feature on for a rule that did not already enforce it
+  (enabling the rule, leaving log mode, moving WAF to warn or block, adding a
+  penalty), with 422 `edge_feature_unavailable`. Other edits, disabling and
+  deleting always work.
+- gatewayd-internal stops enforcing rules that already exist: challenge rules
+  serve no page and the solve path goes to the app, warn and block WAF rules
+  are inspected as observe, and penalties neither box nor refuse anyone. The
+  rest of each rule keeps working (an `ip` rule with a penalty still refuses).
+
+The gateway decides per request, so turning a flag on or off takes effect as
+soon as the runtime-config watcher applies it (within its five-second repair
+interval if a notification is missed), without an edge-rule cache reset.
+Turning one on for an account that has inert rules makes them enforce at
+once. Release them the same way: `flags enable`, then `flags allow` per
+account, or `default` for everyone at launch.
 
 ## Day-to-day commands
 

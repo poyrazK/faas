@@ -84,3 +84,24 @@ end to end; with every flag off, realtimed and apid behave as before this ADR.
   only the per-connection queue limits apply.
 - `FAAS_REALTIME_USAGE_ENABLED` (apid and realtimed): usage recording, and
   `GET /v1/usage/realtime`, which answers 404 while off.
+
+## Amendment (2026-10-24): the per-node account share is a floor
+
+A security review found that with `FAAS_REALTIME_FAIR_USE_ENABLED` off, which
+is how realtime is deployed, one endpoint could hold every connection slot on
+a node. Endpoint caps equal the node cap, and an `auth_mode=none` endpoint
+admits any client, so a single account (or an anonymous client against any
+open endpoint) left every other tenant on the node with 429s. Likewise the
+node-wide callback outbox (64 MiB) had no per-tenant share: one endpoint with
+a slow callback filled it and every other tenant's message and disconnect
+callbacks on the node failed.
+
+- The per-node account share (`RealtimeAccountNodeSharePercent`, 50 %) now
+  applies with or without the flag. The flag still controls the plan
+  allowances, the fleet-wide count and the 6,000 node default.
+- The callback outbox gives each endpoint at most an eighth of its capacity
+  (`CallbackOutboxConfig.MaxEndpointBytes`); the offending endpoint gets
+  `ErrCallbackOutboxFull`, the others keep their callbacks.
+
+With the flag off, realtimed therefore refuses an account at half of a node,
+not only at the node and endpoint caps.

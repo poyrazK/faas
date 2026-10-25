@@ -12,6 +12,18 @@ TARGETS = {
     "object-storage-python": ["async_object_storage_runtime", "async_secret_reload_runtime"],
 }
 HEADER = "# Generated from sdk/python; run python sdk/python/scripts/sync_binding_starters.py.\n"
+# Preview runtimes live in faas_sdk.preview and import the package's shared
+# helpers with `..` (ADR-20261023115741); starters vendor one flat directory.
+PREVIEW = SOURCE / "preview"
+
+
+def module_source(name):
+    path = SOURCE / (name + ".py")
+    if not path.exists():
+        path = PREVIEW / (name + ".py")
+    return path, path.read_text()
+
+
 EXTERNAL = {"httpx"}
 
 
@@ -24,7 +36,10 @@ def runtime_closure(entries):
             continue
         if not name.isidentifier():
             raise ValueError("Unsupported starter runtime module")
-        source = (SOURCE / (name + ".py")).read_text()
+        path, source = module_source(name)
+        in_preview = path.parent == PREVIEW
+        if in_preview:
+            source = source.replace("from ..", "from .")
         modules[name + ".py"] = HEADER + source
         # Include imports inside TYPE_CHECKING, functions and methods too. A
         # regenerated helper must never depend on the repository's SDK barrel.

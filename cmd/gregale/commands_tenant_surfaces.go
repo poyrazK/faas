@@ -183,7 +183,7 @@ func cmdTenantSurfacesHostname(args []string) int {
 		return cmdTenantSurfacesHostnameRm(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown tenant-surfaces hostname subcommand %q\n", args[0])
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "tenant-surfaces hostname", nestedCliCommand("tenant-surfaces", "hostname"), args[0])
 }
 
 // cmdTenantSurfacesHostnameAdd — `tenant-surfaces hostname add

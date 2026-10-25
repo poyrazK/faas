@@ -134,6 +134,9 @@ func (s *server) applyManifestWorkloads(
 	if manifest == nil {
 		return nil, false, nil
 	}
+	if problem := s.manifestSettingsProblem(acct, manifest); problem != nil {
+		return nil, false, problem
+	}
 	dependencies := manifest.MainWorkloadDependencies()
 	if len(manifest.Companions) == 0 && len(manifest.Extensions) == 0 && len(dependencies) == 0 {
 		return nil, false, nil
@@ -853,7 +856,8 @@ func scalingPoliciesEqual(left, right *state.ScalingPolicy) bool {
 		left.ScaleOutCooldownS != right.ScaleOutCooldownS || left.ScaleInCooldownS != right.ScaleInCooldownS ||
 		left.ConcurrencyOverflow != right.ConcurrencyOverflow || left.MaxQueueWaitMS != right.MaxQueueWaitMS ||
 		left.MaxQueueDepth != right.MaxQueueDepth || left.WakeMaxQueueDepth != right.WakeMaxQueueDepth ||
-		left.WakeMaxQueueWaitSeconds != right.WakeMaxQueueWaitSeconds {
+		left.WakeMaxQueueWaitSeconds != right.WakeMaxQueueWaitSeconds ||
+		left.PerInstanceConcurrency != right.PerInstanceConcurrency {
 		return false
 	}
 	if left.Target == nil || right.Target == nil {

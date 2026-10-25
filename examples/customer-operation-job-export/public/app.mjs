@@ -11,7 +11,7 @@ if (!bootstrap.ok) {
   throw new Error('Exports unavailable');
 }
 const config = await bootstrap.json();
-/** @type {import('@gregale/sdk-node/operations').CustomerOperationFeature<CustomerExportInput, CustomerExportOutput> | undefined} */
+/** @type {import('@gregale/sdk-node/preview/operations').CustomerOperationFeature<CustomerExportInput, CustomerExportOutput> | undefined} */
 let feature;
 let sessionEpoch = 0;
 let demoCredential = '';
@@ -24,7 +24,7 @@ const run = action => async event => {
   event?.preventDefault(); const epoch = sessionEpoch; element('error').textContent = '';
   try { await action(); } catch (error) { if (epoch === sessionEpoch) showError(error); }
 };
-/** @param {import('@gregale/sdk-node/operations').OperationSessionUpdate<CustomerExportOutput>} update */
+/** @param {import('@gregale/sdk-node/preview/operations').OperationSessionUpdate<CustomerExportOutput>} update */
 function render(update) {
   if (update.error) element('error').textContent = update.error;
   if (update.history) {

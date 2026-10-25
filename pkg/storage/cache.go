@@ -576,6 +576,21 @@ func (c *LocalCacheBackend) Refresh(ctx context.Context, key string) (io.ReadClo
 	return c.get(ctx, key, true)
 }
 
+// GetCanonical reads key from the canonical parent and leaves this node's
+// cache untouched: it neither serves a cached copy nor installs or replaces
+// one. A caller that only inspects a shared publication uses it, so that a
+// live daemon on this node keeps reading what it last adopted.
+func (c *LocalCacheBackend) GetCanonical(ctx context.Context, key string) (io.ReadCloser, error) {
+	if err := validateKey(key); err != nil {
+		return nil, err
+	}
+	rc, err := c.parent.Get(ctx, key)
+	if err != nil {
+		return nil, fmt.Errorf("storage: cache: get canonical %q: %w", key, err)
+	}
+	return rc, nil
+}
+
 func (c *LocalCacheBackend) get(ctx context.Context, key string, refresh bool) (io.ReadCloser, error) {
 	if err := validateKey(key); err != nil {
 		return nil, err

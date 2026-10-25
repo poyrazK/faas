@@ -90,6 +90,12 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 					State: "ESTABLISHED", Direction: "outbound", Count: 2,
 				}},
 				LastRequestAt: timestamppb.New(time.Unix(123, 0)),
+				// ADR-20261023171905: the quiet pause record rides the stream.
+				QuietPaused:             true,
+				QuietPausedSince:        timestamppb.New(time.Unix(200, 0)),
+				QuietLastPauseStartedAt: timestamppb.New(time.Unix(150, 0)),
+				QuietLastPauseEndedAt:   timestamppb.New(time.Unix(160, 0)),
+				QuietPausedNsTotal:      wrapperspb.Int64(int64(10 * time.Second)),
 			}},
 		}, nil
 	})
@@ -110,6 +116,13 @@ func TestBuildCapacityReport_BatchesLocalTelemetry(t *testing.T) {
 	}
 	if row.GetEgressNewDestinationsPerMin().GetValue() != 42 || row.GetEgressNewDestinationsLimitPerMin() != 120 {
 		t.Fatalf("egress fan-out = %v/%d, want 42/120", row.GetEgressNewDestinationsPerMin(), row.GetEgressNewDestinationsLimitPerMin())
+	}
+	if !row.GetQuietPaused() || row.GetQuietPausedSince().AsTime().Unix() != 200 ||
+		row.GetQuietLastPauseStartedAt().AsTime().Unix() != 150 || row.GetQuietLastPauseEndedAt().AsTime().Unix() != 160 ||
+		row.GetQuietPausedNsTotal().GetValue() != int64(10*time.Second) {
+		t.Fatalf("quiet pause record = paused %v since %v last [%v, %v] total %v",
+			row.GetQuietPaused(), row.GetQuietPausedSince(), row.GetQuietLastPauseStartedAt(),
+			row.GetQuietLastPauseEndedAt(), row.GetQuietPausedNsTotal())
 	}
 }
 
@@ -304,3 +317,22 @@ func TestRunCapacityPublish_CtxCancelExitsPromptly(t *testing.T) {
 
 // noResident is a residentBytesFn that reports empty/non-Linux.
 func noResident() (map[string]int64, bool) { return nil, false }
+
+// The node's instance bridge memory rides the capacity stream beside the
+// instance rows (connection-survival ADR §2).
+func TestBuildCapacityReport_CarriesInstanceBridgeMemory(t *testing.T) {
+	resident := func() (map[string]int64, bool) { return nil, false }
+	stats := telemetryReader(func(context.Context) (*vmmdpb.StatsResponse, error) {
+		return &vmmdpb.StatsResponse{TotalResidentBytes: wrapperspb.Int64(0), InstanceBridgeResidentBytes: wrapperspb.Int64(48 << 20)}, nil
+	})
+	got := buildCapacityReport(context.Background(), nil, nil, "node-a", ComputeNodeConfig{MemMB: 1024}, resident, silentLogger(), stats)
+	if v := got.GetInstanceBridgeResidentBytes(); v == nil || v.GetValue() != 48<<20 {
+		t.Fatalf("instance bridge bytes = %v, want 48 MiB", v)
+	}
+	none := telemetryReader(func(context.Context) (*vmmdpb.StatsResponse, error) {
+		return &vmmdpb.StatsResponse{TotalResidentBytes: wrapperspb.Int64(0)}, nil
+	})
+	if got := buildCapacityReport(context.Background(), nil, nil, "node-a", ComputeNodeConfig{MemMB: 1024}, resident, silentLogger(), none); got.GetInstanceBridgeResidentBytes() != nil {
+		t.Fatal("bridge memory reported with bridge units off")
+	}
+}

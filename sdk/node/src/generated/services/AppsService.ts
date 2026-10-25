@@ -53,6 +53,7 @@ import type { CreateMigrationCutoverRequest } from '../models/CreateMigrationCut
 import type { CreateMigrationVerificationRequest } from '../models/CreateMigrationVerificationRequest.js';
 import type { CreateNativeIssueTicketRequest } from '../models/CreateNativeIssueTicketRequest.js';
 import type { CreateNativeLinearIssueTicketRequest } from '../models/CreateNativeLinearIssueTicketRequest.js';
+import type { CreateProfileCaptureRequest } from '../models/CreateProfileCaptureRequest.js';
 import type { CreateQueueBindingCanaryRequest } from '../models/CreateQueueBindingCanaryRequest.js';
 import type { CreateSLORequest } from '../models/CreateSLORequest.js';
 import type { CreateSyntheticCheckRequest } from '../models/CreateSyntheticCheckRequest.js';
@@ -133,10 +134,15 @@ import type { PrewarmIntentResponse } from '../models/PrewarmIntentResponse.js';
 import type { PrewarmRequest } from '../models/PrewarmRequest.js';
 import type { Problem } from '../models/Problem.js';
 import type { ProfileCanaryHistoryPage } from '../models/ProfileCanaryHistoryPage.js';
+import type { ProfileCapture } from '../models/ProfileCapture.js';
+import type { ProfileCaptureDiff } from '../models/ProfileCaptureDiff.js';
+import type { ProfileCaptureList } from '../models/ProfileCaptureList.js';
+import type { ProfileCaptureView } from '../models/ProfileCaptureView.js';
 import type { ProfileCompareRequest } from '../models/ProfileCompareRequest.js';
 import type { ProfileCompareResponse } from '../models/ProfileCompareResponse.js';
 import type { ProfileDeploymentCheck } from '../models/ProfileDeploymentCheck.js';
 import type { ProfileDeploymentPolicy } from '../models/ProfileDeploymentPolicy.js';
+import type { ProfileHeapResponse } from '../models/ProfileHeapResponse.js';
 import type { ProfileInvestigationResponse } from '../models/ProfileInvestigationResponse.js';
 import type { ProfileResponse } from '../models/ProfileResponse.js';
 import type { PublishIssueSourceMapsRequest } from '../models/PublishIssueSourceMapsRequest.js';
@@ -1755,6 +1761,11 @@ export class AppsService {
    * reached. This does not attest host-level firewall policy or guest
    * configuration.
    * `unverified` means no revision or no relevant serving fleet can be observed.
+   * Gateway policy acknowledgements belong to the current process generation
+   * and require a fresh serving report. Replacement clears convergence until
+   * the new consumers replay. `traffic_runtime` reports compute gateway wiring
+   * separately; fresh wiring does not prove request enforcement. The optional
+   * `wait` applies to policy convergence only.
    *
    * @returns RuntimePolicyStatusResponse Current application state; pending remains possible after wait expires.
    * @throws ApiError
@@ -7168,6 +7179,357 @@ export class AppsService {
         402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
         403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
         404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Query the continuous live heap near a window end (ADR-1155).
+   * Requires profiling.kinds to include heap. The query is narrowed to the last collection window before end so merged snapshots are not summed. Values are live heap bytes.
+   * @returns ProfileHeapResponse Live heap functions and call paths.
+   * @throws ApiError
+   */
+  public static getAppHeapProfile({
+    slug,
+    deploymentId,
+    runtime,
+    start,
+    end,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Deployment whose live heap to read.
+     */
+    deploymentId: string,
+    /**
+     * Runtime the heap snapshots were collected under.
+     */
+    runtime: string,
+    /**
+     * Earliest acceptable snapshot time.
+     */
+    start: string,
+    /**
+     * Point in time to inspect.
+     */
+    end: string,
+  }): CancelablePromise<ProfileHeapResponse> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/heap',
+      path: {
+        'slug': slug,
+      },
+      query: {
+        'deployment_id': deploymentId,
+        'runtime': runtime,
+        'start': start,
+        'end': end,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * List the app's on-demand profile captures, newest first.
+   * @returns ProfileCaptureList Up to 50 captures retained for 7 days.
+   * @throws ApiError
+   */
+  public static listProfileCaptures({
+    slug,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+  }): CancelablePromise<ProfileCaptureList> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures',
+      path: {
+        'slug': slug,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Capture CPU and/or heap profiles from a running instance now (ADR-1155).
+   * Queues a bounded capture on the requested or earliest-started RUNNING instance; parked apps are not woken. Poll the capture until status is ready or failed. One capture per app runs at a time; an account can start 60 per hour. Gregale also queues a heap capture automatically (trigger memory_pressure) when an instance runs low on memory, at most once per hour per app.
+   * @returns ProfileCapture Capture queued.
+   * @throws ApiError
+   */
+  public static createProfileCapture({
+    slug,
+    requestBody,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    requestBody?: CreateProfileCaptureRequest,
+  }): CancelablePromise<ProfileCapture> {
+    return __request(OpenAPI, {
+      method: 'POST',
+      url: '/v1/apps/{slug}/profiles/captures',
+      path: {
+        'slug': slug,
+      },
+      body: requestBody,
+      mediaType: 'application/json',
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Read one on-demand profile capture.
+   * @returns ProfileCapture Capture status and collected profile summary.
+   * @throws ApiError
+   */
+  public static getProfileCapture({
+    slug,
+    id,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Profile capture id.
+     */
+    id: string,
+  }): CancelablePromise<ProfileCapture> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures/{id}',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Merged functions and call paths of one capture kind.
+   * @returns ProfileCaptureView CPU nanoseconds or live heap bytes merged across the instance's processes.
+   * @throws ApiError
+   */
+  public static getProfileCaptureView({
+    slug,
+    id,
+    kind,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Capture whose merged view to read.
+     */
+    id: string,
+    /**
+     * cpu, heap, stacks, block or mutex; defaults to the capture's first kind.
+     */
+    kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
+  }): CancelablePromise<ProfileCaptureView> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures/{id}/view',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'kind': kind,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Download one capture kind as a merged gzip pprof profile.
+   * @returns binary gzip-compressed pprof protobuf for go tool pprof, speedscope or Pyroscope.
+   * @throws ApiError
+   */
+  public static downloadProfileCapture({
+    slug,
+    id,
+    kind,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Capture to download.
+     */
+    id: string,
+    /**
+     * Kind to download as pprof: cpu, heap, stacks, block or mutex; defaults to the capture's first kind.
+     */
+    kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
+  }): CancelablePromise<Blob> {
+    return __request(OpenAPI, {
+      responseType: 'blob',
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures/{id}/pprof',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'kind': kind,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
+        429: `429 application/problem+json response. Authentication throttling uses
+        \`auth_rate_limited\`; plan and usage limits use their specific stable
+        codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and
+        \`profile_investigation_limit\`.
+        `,
+        503: `code: capacity_unavailable — no host headroom.
+        Resource increases can return service_recovery_capacity_unavailable
+        when enabled bare-metal service protection needs more recovery headroom.
+        `,
+      },
+    });
+  }
+  /**
+   * Compare one capture kind with an earlier capture of the same app.
+   * Merges both captures and returns every call path and function with its baseline value, candidate value and difference, largest growth first. Values are not rescaled; captures of different durations or deployments carry warnings.
+   * @returns ProfileCaptureDiff Differential view in the kind's unit.
+   * @throws ApiError
+   */
+  public static diffProfileCaptures({
+    slug,
+    id,
+    base,
+    kind,
+  }: {
+    /**
+     * App slug. Lowercase letters, digits, hyphens; must start and end with alnum.
+     */
+    slug: string,
+    /**
+     * Candidate capture id.
+     */
+    id: string,
+    /**
+     * Baseline capture id of the same app.
+     */
+    base: string,
+    /**
+     * cpu, heap, stacks, block or mutex; defaults to a kind both captures collected, preferring heap.
+     */
+    kind?: 'cpu' | 'heap' | 'stacks' | 'block' | 'mutex',
+  }): CancelablePromise<ProfileCaptureDiff> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/apps/{slug}/profiles/captures/{id}/diff',
+      path: {
+        'slug': slug,
+        'id': id,
+      },
+      query: {
+        'base': base,
+        'kind': kind,
+      },
+      errors: {
+        400: `code: validation_failed | source_invalid | build_undetected | handler_missing | image_required | cron_invalid | secret_invalid_key`,
+        401: `code: unauthorized`,
+        402: `code: billing_past_due — account is suspended; pay invoice to resume.`,
+        403: `code: forbidden — caller is authenticated but lacks the required scope, OR plan_limit_trusted_signers / plan_limit_secret / etc. when the resource count would exceed the plan cap.`,
+        404: `code: not_found`,
+        409: `code: conflict`,
         429: `429 application/problem+json response. Authentication throttling uses
         \`auth_rate_limited\`; plan and usage limits use their specific stable
         codes such as \`plan_limit_concurrency\`, \`quota_exhausted\` and

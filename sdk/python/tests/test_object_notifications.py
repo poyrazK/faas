@@ -5,13 +5,13 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.storage import (
+from faas_sdk.preview.api.storage import (
     delete_object_bucket_notifications,
     get_object_bucket_notifications,
     put_object_bucket_notifications,
 )
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models import ObjectBucketNotifications, ObjectBucketNotificationsRequest
+from faas_sdk.preview.models import ObjectBucketNotifications, ObjectBucketNotificationsRequest
 
 
 def test_notification_configuration():
@@ -55,8 +55,8 @@ def test_notification_configuration():
 
 
 def test_managed_compute_trigger_reconciliation():
-    from faas_sdk.api.storage import reconcile_object_storage_compute_triggers
-    from faas_sdk.models import DevBucketRequest, ReconcileObjectStorageComputeTriggersRequest
+    from faas_sdk.preview.api.storage import reconcile_object_storage_compute_triggers
+    from faas_sdk.preview.models import DevBucketRequest, ReconcileObjectStorageComputeTriggersRequest
 
     bucket = UUID("11111111-1111-4111-8111-111111111111")
     calls = []

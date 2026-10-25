@@ -13,6 +13,10 @@ export type EventStorageUsageResponse = {
   limits: {
     retained_events: number;
     retained_bytes: number;
+    /**
+     * How long a settled receipt is kept on the plan (ADR-20261023215834); it bounds duplicate acceptance, recovery and replay ranges. Absent from servers that predate per-plan windows.
+     */
+    settled_retention_seconds?: number;
   };
 };
 

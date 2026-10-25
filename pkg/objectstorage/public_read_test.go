@@ -129,7 +129,8 @@ func publicReadServesWithoutNext(t *testing.T, mode string) {
 		registry.Accounting.AccountingMode = mode
 		registry.Accounting.GatewayMeteringSince = &since
 		registry.Accounting.MaxMonthlyCostMillicents = 0
-		registry.Accounting.MaxMonthlyEgressBytes = 3
+		// Anonymous reads get 75% of the ceiling (H9-S137): exactly 3 bytes.
+		registry.Accounting.MaxMonthlyEgressBytes = 4
 	}
 	nextCalled := false
 	h, err := NewPublicReadHandler(PublicReadConfig{
@@ -148,7 +149,7 @@ func publicReadServesWithoutNext(t *testing.T, mode string) {
 	if nextCalled {
 		t.Fatal("public asset fell through to app handler")
 	}
-	if got := res.Header().Get("Cache-Control"); got != publicImmutableCacheControl {
+	if got := res.Header().Get("Cache-Control"); got != publicCacheControl {
 		t.Fatalf("Cache-Control = %q", got)
 	}
 	metrics, err := store.ListObjectStorageProviderRequestMetrics(context.Background(), backend.ID, backend.Fingerprint, time.Now().UTC())
@@ -158,7 +159,7 @@ func publicReadServesWithoutNext(t *testing.T, mode string) {
 	if mode != "" {
 		blocked := httptest.NewRecorder()
 		h.ServeHTTP(blocked, req.Clone(t.Context()))
-		if blocked.Code != 503 || blocked.Header().Get("Cache-Control") == publicImmutableCacheControl {
+		if blocked.Code != http.StatusTooManyRequests || blocked.Header().Get("Cache-Control") == publicCacheControl {
 			t.Fatal("public asset bypassed consumed egress budget", blocked.Code)
 		}
 	}

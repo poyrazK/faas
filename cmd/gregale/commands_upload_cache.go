@@ -25,7 +25,7 @@ func cmdUploadCache(args []string) int {
 		return cmdUploadCacheCleanup(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown upload-cache subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "upload-cache", nestedCliCommand("upload-cache"), args[0])
 	}
 }
 

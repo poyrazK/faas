@@ -1,7 +1,7 @@
 import {
   adoptEventAcknowledgmentIntentRetryBudget,
   getEventAcknowledgmentIntentBudgetAdoptionCandidate,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 // Select precise metadata for an explicit authorized operator decision.
 // This acquires no claim/row lock and changes no intent or command.

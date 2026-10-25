@@ -47,6 +47,29 @@ Managed Go workloads can use the runtime Flags client, request middleware, and
 service transport. See [the Go Flags guide](../../docs/flags.md#use-flags-in-a-go-http-application)
 for customer targeting, decision evidence, and propagation examples.
 
+## Default and preview clients
+
+`faas.Client` exposes generally available and beta capabilities only
+(ADR-20261023115741). The methods of preview and internal capabilities
+(realtime, operations, events, queues, object storage, managed Postgres,
+disposable runs, issues, commit, data repair and more) are on
+`preview.Client`, which embeds a `faas.Client`:
+
+```go
+import "github.com/poyrazK/faas/sdk/go/preview"
+
+client, err := preview.NewClient("https://api.gregale.dev", token)
+// or, for an existing *faas.Client: client := preview.Wrap(c)
+```
+
+The helpers for preview capabilities are in `preview` too: operation
+handlers and transactions, the event outbox, acknowledgment and consumer
+libraries, durable entities, data repair, commit, feature flags, issue
+reporting, and the object storage and Postgres binding runtimes. apid serves a
+preview capability only to the accounts it is released to; elsewhere its
+calls answer `404 no such API route`. The examples below that use preview
+capabilities import `preview` and use a `preview.Client`.
+
 ## Quick start
 
 ```go
@@ -79,6 +102,26 @@ func main() {
 }
 ```
 
+## Request tracing
+
+The `preview/tracing` package (tracing is a preview capability) sends
+request, HTTP client and `database/sql` spans to the Gregale debugger when
+the app sets `tracing.enabled`, using only the standard library:
+
+```go
+import "github.com/poyrazK/faas/sdk/go/preview/tracing"
+
+shutdown := tracing.Start() // does nothing unless tracing is enabled
+defer shutdown(context.Background())
+
+http.DefaultTransport = tracing.Transport(http.DefaultTransport)
+db, err := tracing.Open("pgx", os.Getenv("DATABASE_URL"), "postgresql")
+log.Fatal(http.ListenAndServe(":"+os.Getenv("PORT"), tracing.Handler(mux)))
+```
+
+Pass the request's context to outgoing calls so they appear under the
+request. See [`docs/tracing.md`](../../docs/tracing.md#go).
+
 ## Gregale Issues exception reporting
 
 Create a deployment-bound issue ingest token with `gregale issues create-token`
@@ -87,7 +130,7 @@ evidence and sends it independently of trace sampling:
 
 ```go
 // Also import context, os, time, and faas "github.com/poyrazK/faas/sdk/go".
-issues, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+issues, err := preview.NewIssueReporter(preview.IssueReporterOptions{
     BaseURL: os.Getenv("GREGALE_API_URL"),
     App:     "exports",
     Token:   os.Getenv("GREGALE_ISSUE_TOKEN"),
@@ -100,7 +143,7 @@ defer cancel()
 defer issues.Close(shutdownCtx)
 
 if err := generateExport(); err != nil {
-    issues.CaptureException(err, faas.IssueContext{
+    issues.CaptureException(err, preview.IssueContext{
         RequestID: requestID,
         TraceID:   traceID,
         Route:     "/exports",
@@ -109,7 +152,7 @@ if err := generateExport(); err != nil {
 }
 ```
 
-Use `defer issues.RecoverAndRepanic(faas.IssueContext{SourceKind: "worker", InvocationID: invocationID})`
+Use `defer issues.RecoverAndRepanic(preview.IssueContext{SourceKind: "worker", InvocationID: invocationID})`
 for a worker boundary that should report a panic while preserving normal panic behavior. Standard Go errors do
 not retain creation-time stacks; capture records the current goroutine stack.
 Call `Flush(ctx)` or `Close(ctx)` during graceful shutdown, and inspect
@@ -130,13 +173,13 @@ scratch space. The SDK can reconnect an event stream from its last cursor and
 return the terminal receipt in one call:
 
 ```go
-receipt, err := c.Run(ctx, faas.CreateExecutionRequest{
+receipt, err := c.Run(ctx, preview.CreateExecutionRequest{
     WorkflowID: "incident-42",
     StepLabel:  "collect logs",
     Runtime: faas.ExecutionRuntimeNode22,
     Source:  "console.log('hello')",
-}, faas.RunOptions{
-    OnEvent: func(event faas.ExecutionEvent) error {
+}, preview.RunOptions{
+    OnEvent: func(event preview.ExecutionEvent) error {
         if event.Type == faas.ExecutionEventStdout {
             fmt.Print(event.Data.Chunk)
         }
@@ -187,7 +230,7 @@ Use this path only for requests delivered by Gregale's guest listener; the
 reserved headers are context, not authentication.
 
 ```go
-operations, err := faas.NewCustomerOperationRuntime(faas.CustomerOperationRuntimeOptions{
+operations, err := preview.NewCustomerOperationRuntime(preview.CustomerOperationRuntimeOptions{
     APIURL: os.Getenv("GREGALE_API_URL"),
 })
 if err != nil {
@@ -206,7 +249,7 @@ if err := authorizeOrder(r.Context(), orderID); err != nil {
 }
 
 receipt, err := operations.Transaction(r.Context(), db, r, rawBody,
-    func(tx *faas.CustomerOperationTransaction) (any, error) {
+    func(tx *preview.CustomerOperationTransaction) (any, error) {
         var currentStatus string
         if err := tx.QueryRowContext(r.Context(),
             "SELECT status FROM orders WHERE id = $1 FOR UPDATE", orderID).Scan(&currentStatus); err != nil {
@@ -231,7 +274,7 @@ receipt, err := operations.Transaction(r.Context(), db, r, rawBody,
         return map[string]string{"order_id": orderID, "status": "fulfilled"}, nil
     })
 if err != nil {
-    var publicationErr *faas.CustomerOperationPublicationError
+    var publicationErr *preview.CustomerOperationPublicationError
     if errors.As(err, &publicationErr) && publicationErr.Committed {
         // Return a retryable response. Retrying the same Operation replays the
         // saved result and publishes pending facts without running the callback.
@@ -278,8 +321,8 @@ intent, err := call.WebhookIntent(webhookID, "reservation.confirmed", map[string
 })
 if err != nil { return err }
 next := json.RawMessage(`{"status":"reserved","quantity":2}`)
-body, err := call.EncodeTransition(faas.DurableEntityTransition{
-    Data: next, Result: next, Outbox: []faas.DurableEntityWebhookIntent{intent},
+body, err := call.EncodeTransition(preview.DurableEntityTransition{
+    Data: next, Result: next, Outbox: []preview.DurableEntityWebhookIntent{intent},
 })
 if err != nil { return err }
 // Send body unchanged as application/json; Gregale performs the fenced commit.
@@ -500,15 +543,15 @@ mutation APIs remain gated pending runtime acceptance.
 The public client exposes `GetObjectBucketLifecycle`,
 `PutObjectBucketLifecycle`, `DeleteObjectBucketLifecycle`,
 `CreateObjectLifecycleScan` and `GetObjectLifecycleScan`. Requests and responses
-use exported `faas.ObjectLifecycle*` and `faas.ObjectBucketLifecycle*` types.
+use exported `faas.ObjectLifecycle*` and `preview.ObjectBucketLifecycle*` types.
 Configuration requires storage manage scope and a bucket write grant.
 
 ```go
 days := int32(7)
 policy, err := c.PutObjectBucketLifecycle(ctx, "demo", bucketID,
-    faas.ObjectBucketLifecycleRequest{Rules: []faas.ObjectLifecycleRule{{
+    preview.ObjectBucketLifecycleRequest{Rules: []preview.ObjectLifecycleRule{{
         ID: "temporary", Status: "Enabled",
-        Filter: faas.ObjectLifecycleFilter{Prefix: "tmp/"},
+        Filter: preview.ObjectLifecycleFilter{Prefix: "tmp/"},
         AbortIncompleteMultipartDays: &days,
     }}},
 )
@@ -602,7 +645,7 @@ See [parent-scoped retries](../../docs/event-driven.md#retry-failures-from-one-r
 Application-scoped producer keys:
 
 ```go
-receipt, err := client.PublishAppEvent(ctx, "my-app", faas.AppPublishEventRequest{
+receipt, err := client.PublishAppEvent(ctx, "my-app", preview.AppPublishEventRequest{
     Key: "order-123-created",
     Type: "order.created",
     Data: json.RawMessage(`{"order_id":"123"}`),
@@ -614,7 +657,7 @@ The result includes `Duplicate` and the original durable `Receipt`. Preserve app
 Read-only producer-key reconciliation:
 
 ```go
-status, err := client.GetAppEventPublishStatus(ctx, "my-app", faas.AppEventPublishStatusQuery{
+status, err := client.GetAppEventPublishStatus(ctx, "my-app", preview.AppEventPublishStatusQuery{
     Key: "order-123-created",
 })
 ```
@@ -623,10 +666,10 @@ status, err := client.GetAppEventPublishStatus(ctx, "my-app", faas.AppEventPubli
 
 Read-only content verification: `client.VerifyAppEventPublication(ctx, "my-app", originalRequest)` compares the original `AppPublishEventRequest` without publishing. Status is match/conflict/unavailable; match and conflict include the retained original receipt from the same snapshot. Comparison uses normalized type/schema version and semantic JSON data, excluding occurrence time and trace metadata. Matching acceptance does not prove consumer execution, and unavailable must not automatically trigger a publish.
 
-Acceptance guards: parse the saved `accepted_at` with `time.RFC3339Nano` and pass its pointer as `AppEventPublishStatusQuery.ExpectedAcceptedAt`, or pass one optional `faas.AppEventAcceptanceGuard{ExpectedAcceptedAt: &savedTime}` to `VerifyAppEventPublication`. `Acceptance` reports same_acceptance/replacement_acceptance/unavailable independently of content/routing status. Comparison uses exact instants, without rounding; returned evidence describes the current retained acceptance even when it is a replacement. Existing unguarded calls remain supported.
+Acceptance guards: parse the saved `accepted_at` with `time.RFC3339Nano` and pass its pointer as `AppEventPublishStatusQuery.ExpectedAcceptedAt`, or pass one optional `preview.AppEventAcceptanceGuard{ExpectedAcceptedAt: &savedTime}` to `VerifyAppEventPublication`. `Acceptance` reports same_acceptance/replacement_acceptance/unavailable independently of content/routing status. Comparison uses exact instants, without rounding; returned evidence describes the current retained acceptance even when it is a replacement. Existing unguarded calls remain supported.
 ### Workflow blockers
 
-Inside the customer Operation transaction callback, use `tx.WorkflowBlockers(workflow, instanceID, lockedRowState, []faas.OperationWorkflowBlocker{...})` to replace
+Inside the customer Operation transaction callback, use `tx.WorkflowBlockers(workflow, instanceID, lockedRowState, []preview.OperationWorkflowBlocker{...})` to replace
 the public blockers while preserving the current state. Check customer authorization
 and read that state from the locked business row. An empty list clears blockers;
 a later normal state report without blockers also clears them. Propagate errors
@@ -640,7 +683,7 @@ for bounds, replacement, revision, and publication semantics.
 
 ### Workflow attention queue
 
-Use `client.ListAccountWorkflowAttention(ctx, "orders", faas.OperationWorkflowAttentionOptions{Scope: "production", Reason: "blocked"})` to read one page of current retained blocked or stale workflows.
+Use `client.ListAccountWorkflowAttention(ctx, "orders", preview.OperationWorkflowAttentionOptions{Scope: "production", Reason: "blocked"})` to read one page of current retained blocked or stale workflows.
 The response includes public business references, workflow snapshots, blocker
 reasons and a continuation cursor. Workflow and target Operation filters narrow
 the queue; customer routes use identity from credentials. Continue with the same
@@ -666,8 +709,8 @@ for bounds, source retention, publication recovery, and history reads.
 #### Attention summaries and blocker age
 
 ```go
-summary, err := client.SummarizePlatformTenantSelfWorkflowAttention(ctx, faas.OperationWorkflowAttentionSummaryOptions{
-    OperationWorkflowAttentionOptions: faas.OperationWorkflowAttentionOptions{AppID: appID, Scope: "production"},
+summary, err := client.SummarizePlatformTenantSelfWorkflowAttention(ctx, preview.OperationWorkflowAttentionSummaryOptions{
+    OperationWorkflowAttentionOptions: preview.OperationWorkflowAttentionOptions{AppID: appID, Scope: "production"},
     GroupBy: "blocker_code",
 })
 ```
@@ -712,7 +755,7 @@ with an explicit outcome counts once; these are not lifetime completion totals.
 
 ### Workflow prerequisites
 
-Use `tx.WorkflowDependencies(workflow, instanceID, state, []faas.OperationWorkflowDependency{...})` inside the business transaction to replace up to 16 direct workflow dependencies. Pass an empty list to clear them. Links stay within the same customer/application/environment; an optional required outcome distinguishes successful prerequisites from other terminal results. Other reports inherit current links. Apply the updated customer schema and upgrade all writers first. The existing workflow instance response includes `related_workflows` with retained states and explicit resolution statuses. See [workflow dependencies](../../docs/operations.md#workflow-dependencies) for complete examples and retention semantics.
+Use `tx.WorkflowDependencies(workflow, instanceID, state, []preview.OperationWorkflowDependency{...})` inside the business transaction to replace up to 16 direct workflow dependencies. Pass an empty list to clear them. Links stay within the same customer/application/environment; an optional required outcome distinguishes successful prerequisites from other terminal results. Other reports inherit current links. Apply the updated customer schema and upgrade all writers first. The existing workflow instance response includes `related_workflows` with retained states and explicit resolution statuses. See [workflow dependencies](../../docs/operations.md#workflow-dependencies) for complete examples and retention semantics.
 
 ### Dependency attention
 
@@ -731,8 +774,8 @@ Business milestones responses include typed `workflow_instance.dependency_trace`
 Use an authenticated operations reader to check a proposed transition:
 
 ```go
-result, err := client.CheckPlatformTenantSelfWorkflowReadiness(ctx, faas.OperationWorkflowReadinessRequest{
-    AppID: appID, Scope: "production", Subject: faas.OperationSubject{Type: "order", ID: orderID},
+result, err := client.CheckPlatformTenantSelfWorkflowReadiness(ctx, preview.OperationWorkflowReadinessRequest{
+    AppID: appID, Scope: "production", Subject: preview.OperationSubject{Type: "order", ID: orderID},
     Workflow: "fulfillment", InstanceID: runID, Operation: "ship-order",
     FromState: "waiting", ToState: "shipping", Milestones: []string{"shipment-created"},
     StateRevision: revision, ContractVersion: 1,
@@ -744,12 +787,12 @@ Inspect `readiness.ready`, denial reasons, missing milestones, unmet prerequisit
 ### Guard a transition inside the business transaction
 
 After locking and reading the business row, call `tx.GuardedWorkflowTransition(ctx,
-request, []faas.CustomerOperationPlannedMilestone{{Name: "approved", Payload: payload}},
+request, []preview.CustomerOperationPlannedMilestone{{Name: "approved", Payload: payload}},
 client.CheckPlatformTenantSelfWorkflowReadiness)` before writing. Set the request's
 `AppID`, scope, subject, operation, workflow instance, locked `FromState`, proposed
 `ToState`, positive `StateRevision`, and `ContractVersion`. The checker must use
 credentials for the transaction's customer. Return the error; use `errors.As` with
-`*faas.CustomerOperationReadinessError` to inspect its `Response`.
+`*preview.CustomerOperationReadinessError` to inspect its `Response`.
 
 The helper derives milestone names from actual payloads, checks readiness, and
 queues the transition and evidence. Any guard error prevents commit even if caught.
@@ -757,7 +800,7 @@ Existing contract and payload validation still runs before commit.
 
 ### Business decision evidence
 
-`tx.BusinessDecision("approval-decided", faas.OperationBusinessDecision{Workflow: "order-approval", InstanceID: runID, Code: "manual-review-approved", Description: "An authorized reviewer approved the order.", RuleID: "manual-approval", RuleVersion: "2026-10"})` queues a bounded explanation with the business transaction. Declare the milestone payload schema and bind its workflow step to `/decision/instance_id`. It uses existing precommit validation and outbox replay; no schema installation is needed. See [business decision evidence](../../docs/operations.md#business-decision-evidence) for declaration and history details.
+`tx.BusinessDecision("approval-decided", preview.OperationBusinessDecision{Workflow: "order-approval", InstanceID: runID, Code: "manual-review-approved", Description: "An authorized reviewer approved the order.", RuleID: "manual-approval", RuleVersion: "2026-10"})` queues a bounded explanation with the business transaction. Declare the milestone payload schema and bind its workflow step to `/decision/instance_id`. It uses existing precommit validation and outbox replay; no schema installation is needed. See [business decision evidence](../../docs/operations.md#business-decision-evidence) for declaration and history details.
 
 ### Versioned policy requirements
 
@@ -1024,7 +1067,7 @@ It requires account `apps:read` or admin permission and preview app enablement.
 Missing delivery history is `unknown`; an empty queue does not prove delivery.
 
 ```go
-inspection, err := client.InspectDurableEntity(ctx, "reservations", faas.DurableEntityInspectRequest{
+inspection, err := client.InspectDurableEntity(ctx, "reservations", preview.DurableEntityInspectRequest{
     Namespace: "reservations", Key: "reservation:123",
 })
 ```
@@ -1044,7 +1087,7 @@ inspect again before deciding whether to submit another recovery.
 
 ```go
 if inspection.Outbox.Exhausted {
-    recovery, err := client.RetryDurableEntity(ctx, "reservations", faas.DurableEntityRetryRequest{
+    recovery, err := client.RetryDurableEntity(ctx, "reservations", preview.DurableEntityRetryRequest{
         Namespace: "reservations", Key: "reservation:123", Target: "outbox",
         ExpectedVersion: inspection.Version,
         ExpectedRecoveryRevision: inspection.RecoveryRevision,
@@ -1062,7 +1105,7 @@ omitting `HeadID`. Preserve any environment/customer selectors used for inspecti
 
 ```go
 type CounterResult struct { Count int `json:"count"` }
-handle, err := faas.NewDurableEntityHandle[map[string]int, CounterResult](client, "counter", faas.DurableEntityInspectRequest{
+handle, err := preview.NewDurableEntityHandle[map[string]int, CounterResult](client, "counter", preview.DurableEntityInspectRequest{
     Namespace: "counters", Key: "customer:456", Environment: "staging",
 })
 if err != nil { return err }
@@ -1082,7 +1125,7 @@ Inside the existing trusted guest handler, use typed calls and a pure builder:
 ```go
 type Counter struct { Count int `json:"count"` }
 type Input struct { Delta int `json:"delta"` }
-call, err := faas.DecodeDurableEntityCall[Counter, Input](body, Counter{})
+call, err := preview.DecodeDurableEntityCall[Counter, Input](body, Counter{})
 if err != nil { return nil, err }
 if call.Entity.Namespace != "counters" { return nil, errors.New("unexpected entity namespace") }
 if call.Event == "alarm" { return call.Transition(call.State, nil).ClearAlarm().Encode() }
@@ -1113,7 +1156,7 @@ have not been tested or built in this workspace.
 Schema versions are uint32 values independent of the entity's commit version.
 
 ```go
-schema := faas.DurableEntityStateSchema[Counter]{
+schema := preview.DurableEntityStateSchema[Counter]{
     Version: 2,
     Initial: func() Counter { return Counter{} },
     Validate: func(state Counter) error {
@@ -1129,7 +1172,7 @@ schema := faas.DurableEntityStateSchema[Counter]{
         },
     },
 }
-call, err := faas.DecodeDurableEntitySchemaCall[Counter, Input](body, schema)
+call, err := preview.DecodeDurableEntitySchemaCall[Counter, Input](body, schema)
 if err != nil { return nil, err }
 return call.Transition(call.State, call.State).Encode()
 ```
@@ -1426,7 +1469,7 @@ errors. It preserves committed settlements even when their callbacks return
 uncertainty. See the [Go recovery pass contract](../../docs/event-acknowledgment-go-recovery-pass.md)
 and [buildable host example](examples/event-acknowledgment-recovery/README.md).
 
-Set `RetryPolicy: &faas.EventAcknowledgmentIntentRetryPolicy{}` on the pass for
+Set `RetryPolicy: &preview.EventAcknowledgmentIntentRetryPolicy{}` on the pass for
 capped exponential full jitter based on persisted recovery claims. Single-intent
 recovery and claims expose `WithRetryPolicy` variants. Leave `Backoff` zero when
 enabling the policy; omitted policies retain fixed delays. See the

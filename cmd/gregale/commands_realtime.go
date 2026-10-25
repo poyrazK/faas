@@ -18,8 +18,12 @@ import (
 
 func cmdRealtime(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale realtime <list|usage|get|create|update|delete|connections|drain|drain-status|send|send-principal|edit-message|delete-message|receipt|inbox|push|read-progress|mark-read|close|subscribe|unsubscribe|publish|auth>", "realtime")
+		PrintUsage(os.Stderr, realtimeUsage(), "realtime")
 		return 1
+	}
+	if hiddenRealtimeVerb(args[0]) {
+		printCommandValidation(os.Stderr, "unknown realtime subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "realtime", nestedCliCommand("realtime"), args[0])
 	}
 	switch args[0] {
 	case "push":
@@ -72,7 +76,7 @@ func cmdRealtime(args []string) int {
 		return cmdRealtimeAuth(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown realtime subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "realtime", nestedCliCommand("realtime"), args[0])
 	}
 }
 
@@ -122,7 +126,7 @@ func cmdRealtimeAuth(args []string) int {
 		return cmdRealtimeEndpointRead("realtime auth status", "usage: gregale realtime auth status APP_SLUG ENDPOINT_ID", args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown realtime auth subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "realtime auth", nestedCliCommand("realtime", "auth"), args[0])
 	}
 }
 

@@ -1,8 +1,8 @@
 # Route insights
 
-Every six hours Gregale looks at apps that ran in the last day and records
-what it noticed about their routes, so you don't have to run a report to find
-out. Most insights come with a fix you can apply in one step:
+Every six hours Gregale looks at every app on a paid plan that ran in the last
+day and records what it noticed about their routes, so you don't have to run a
+report to find out. Apps evaluated least recently go first. Most insights come with a fix you can apply in one step:
 
 | Kind | Recorded when | Fix |
 | --- | --- | --- |
@@ -21,7 +21,8 @@ The app's dashboard page lists the same insights under **Route insights**,
 each with an **Apply fix** button.
 
 An insight stays active while evaluations keep observing it and resolves
-after a day without being seen. The API is
+after a day without being seen, including when the app stops running or moves
+to the Free plan. The API is
 `GET /v1/apps/{slug}/routes/insights`; it lists active insights, then those
 resolved in the last seven days.
 

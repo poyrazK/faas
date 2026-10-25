@@ -1980,6 +1980,10 @@ type AppManifest struct {
 	// stop contract for the image (ADR-1337); nil inherits the image's.
 	ProjectImageProcess         *api.ComposeProcess `json:"project_image_process,omitempty"`
 	ProjectDependencyConditions map[string]string   `json:"project_dependency_conditions,omitempty"`
+	// ProjectSecretFiles are a Compose service's secrets, written to
+	// /run/secrets in its main workload (ADR-20261023090000). imaged copies
+	// them into the guest manifest; they name app secrets, never values.
+	ProjectSecretFiles []api.SecretFile `json:"project_secret_files,omitempty"`
 	// ServiceBindings is the authoritative declared projection of Compose
 	// depends_on edges or standalone service_binding_targets. Keeping it beside
 	// generated service URLs makes it inspectable without parsing env text.
@@ -2084,7 +2088,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2108,6 +2112,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectImageHealthcheck = desired.ProjectImageHealthcheck.Clone()
 	existing.ProjectImageProcess = desired.ProjectImageProcess.Clone()
 	existing.ProjectDependencyConditions = maps.Clone(desired.ProjectDependencyConditions)
+	existing.ProjectSecretFiles = api.CloneSecretFiles(desired.ProjectSecretFiles)
 	existing.ServiceBindings = append([]api.AppServiceBinding(nil), desired.ServiceBindings...)
 	existing.ServiceReliability = desired.ServiceReliability
 	existing.ServiceBindingPolicy = desired.ServiceBindingPolicy
@@ -2217,6 +2222,11 @@ type ScalingPolicy struct {
 	// WakeMaxQueueWaitSeconds is an optional per-app cold-wake wait budget.
 	// Zero means the gateway uses the plan-derived default.
 	WakeMaxQueueWaitSeconds int
+	// PerInstanceConcurrency is how many requests one instance serves at
+	// once (ADR-20261022203523). Zero means the plan's concurrency_per_vm;
+	// readers resolve it through api.Limits.PerInstanceConcurrency, which
+	// also clamps a value a plan downgrade left above the bound.
+	PerInstanceConcurrency int
 	// Timezone is the IANA zone every schedule's cron is evaluated in
 	// (ADR-198). Empty means UTC. One zone per app rather than one per
 	// schedule: a business has a working day, not a working day per rule.
@@ -2345,6 +2355,7 @@ func (p ScalingPolicy) MarshalJSON() ([]byte, error) {
 		MaxQueueDepth           int               `json:"max_queue_depth,omitempty"`
 		WakeMaxQueueDepth       int               `json:"wake_max_queue_depth,omitempty"`
 		WakeMaxQueueWaitSeconds int               `json:"wake_max_queue_wait_seconds,omitempty"`
+		PerInstanceConcurrency  int               `json:"per_instance_concurrency,omitempty"`
 		Timezone                string            `json:"timezone,omitempty"`
 		Schedules               []ScalingSchedule `json:"schedules,omitempty"`
 	}
@@ -2372,6 +2383,7 @@ func (p *ScalingPolicy) UnmarshalJSON(data []byte) error {
 		MaxQueueDepth           int               `json:"max_queue_depth,omitempty"`
 		WakeMaxQueueDepth       int               `json:"wake_max_queue_depth,omitempty"`
 		WakeMaxQueueWaitSeconds int               `json:"wake_max_queue_wait_seconds,omitempty"`
+		PerInstanceConcurrency  int               `json:"per_instance_concurrency,omitempty"`
 		Timezone                string            `json:"timezone,omitempty"`
 		Schedules               []ScalingSchedule `json:"schedules,omitempty"`
 	}
@@ -3290,6 +3302,8 @@ const (
 type CustomDomain struct {
 	Domain string
 	AppID  string
+	// RedirectAppID mirrors the legacy redirect FK used by app purge.
+	RedirectAppID string `json:"-"`
 	// EnvironmentID is empty for the legacy application-wide route. A
 	// non-empty value binds the hostname to one project environment.
 	EnvironmentID    string
@@ -3315,6 +3329,15 @@ type CustomDomain struct {
 
 // Verified reports whether the TXT challenge has been satisfied.
 func (d CustomDomain) Verified() bool { return !d.VerifiedAt.IsZero() }
+
+// ClaimLive reports whether the row still reserves its hostname: it is
+// verified, or its verification deadline has not passed. An expired challenge
+// is not an ownership record; it must not shadow a broader route, deny a
+// certificate or block another reservation. A zero deadline predates the
+// column and never expires.
+func (d CustomDomain) ClaimLive(now time.Time) bool {
+	return d.Verified() || d.VerificationExpiresAt.IsZero() || d.VerificationExpiresAt.After(now)
+}
 
 // DomainDoctorObservation (ADR-120) is the dns_poller's
 // view of a per-domain probe pass. The struct mirrors the
@@ -3624,6 +3647,9 @@ const (
 	// AlertMetricCustomMetric watches one ADR-202 pushed metric, named by
 	// AlertRule.CustomMetricName (ADR-745).
 	AlertMetricCustomMetric AlertMetric = "custom_metric"
+	// AlertMetricLogSearchMatches counts an app's log events matching
+	// AlertRule.LogQuery within the window (ADR-20261018083536).
+	AlertMetricLogSearchMatches AlertMetric = "log_search_matches"
 	// ADR-747: rules on one customer SLO, named by AlertRule.SLOID.
 	AlertMetricSLOBudgetBurn      AlertMetric = "slo_budget_burn"
 	AlertMetricSLOBudgetRemaining AlertMetric = "slo_budget_remaining_pct"
@@ -3840,6 +3866,7 @@ type AlertRule struct {
 	WindowSpec                      AlertWindowSpec
 	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
 	CustomMetricName                string             // empty unless Metric == custom_metric (ADR-745)
+	LogQuery                        string             // canonical log search filters; set only for log_search_matches
 	SLOID                           string             // set only for the ADR-747 SLO metrics
 	SyntheticCheckID                string             // set only for the ADR-748 synthetic check metrics
 	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
@@ -4011,6 +4038,8 @@ const (
 	AppWebhookEventRouteHealthResumed                      AppWebhookEvent = "routes.health.resumed"
 	AppWebhookEventProfileRouteRegressed                   AppWebhookEvent = "profile.route_regressed"
 	AppWebhookEventProfileRouteRecovered                   AppWebhookEvent = "profile.route_recovered"
+	AppWebhookEventProfileCaptureReady                     AppWebhookEvent = "profile.capture_ready"
+	AppWebhookEventProfileCaptureOOMLinked                 AppWebhookEvent = "profile.capture_oom_linked"
 	AppWebhookEventRouteRequirementsChanged                AppWebhookEvent = "routes.requirements.changed"
 	AppWebhookEventRouteRequirementsViolated               AppWebhookEvent = "routes.requirements.violated"
 	AppWebhookEventRouteRequirementsRecovered              AppWebhookEvent = "routes.requirements.recovered"
@@ -4027,6 +4056,7 @@ const (
 	AppWebhookEventRecoveryExecutionFinished               AppWebhookEvent = "event_recovery.execution_finished"
 	AppWebhookEventWorkflowFinished                        AppWebhookEvent = "workflow.finished"
 	AppWebhookEventOutboundAIBudgetThreshold               AppWebhookEvent = "outbound.ai_budget.threshold"
+	AppWebhookEventOutboundAIQualityDrift                  AppWebhookEvent = "outbound.ai_quality.drift"
 	AppWebhookEventRecoveryQueueBlocked                    AppWebhookEvent = "automation.recovery_queue_blocked"
 	AppWebhookEventRecoveryHealthAlert                     AppWebhookEvent = "automation.recovery_health_alert"
 	AppWebhookEventRecoveryHealthRecovered                 AppWebhookEvent = "automation.recovery_health_recovered"
@@ -4059,6 +4089,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventRealtimeInboxAcknowledged,
 	AppWebhookEventRealtimeInboxGap,
 	AppWebhookEventProfileRouteRegressed, AppWebhookEventProfileRouteRecovered,
+	AppWebhookEventProfileCaptureReady, AppWebhookEventProfileCaptureOOMLinked,
 	AppWebhookEventCronFired,
 	AppWebhookEventCronFiredManually,
 	AppWebhookEventAppCreated,
@@ -4085,6 +4116,7 @@ var AllAppWebhookEvents = []AppWebhookEvent{
 	AppWebhookEventConsumerPlanChanged,
 	AppWebhookEventConsumerClosed,
 	AppWebhookEventOutboundAIBudgetThreshold,
+	AppWebhookEventOutboundAIQualityDrift,
 	AppWebhookEventPlatformTenantStatementFinalized,
 	AppWebhookEventDebugRegressionDetected,
 	AppWebhookEventDebugRegressionResolved,
@@ -4254,6 +4286,12 @@ type ManagedRealtimeEndpoint struct {
 	Enabled                    bool
 	CreatedAt                  time.Time
 	UpdatedAt                  time.Time
+	// Slug names the endpoint within its app so gregale.yaml can declare it
+	// (ADR-20261019102657). Empty for endpoints created without one.
+	Slug string
+	// ChannelRules authorize channels from verified token claims without the
+	// authorize callback (ADR-20261019102657).
+	ChannelRules []api.RealtimeChannelRule
 }
 
 type UpdateManagedRealtimeEndpointParams struct {
@@ -4277,6 +4315,10 @@ type UpdateManagedRealtimeEndpointParams struct {
 	MaxMessageBytes                 *int64
 	MaxConnectionAgeSeconds         *int64
 	Enabled                         *bool
+	// Slug replaces the endpoint's slug; an empty value removes it.
+	Slug *string
+	// ChannelRules replaces the endpoint's channel rules.
+	ChannelRules *[]api.RealtimeChannelRule
 }
 
 type ManagedRealtimeEndpointQuotaScope string
@@ -4575,6 +4617,10 @@ type Invocation struct {
 	// this Source, enforced inside the enqueue transaction (0 = uncapped).
 	// It is admission input only, never persisted or customer-authored.
 	AdmissionMaxPending int `json:"-"`
+	// AdmissionMaxBacklogBytes is the producer's per-account cap on pending
+	// queue payload bytes (ADR-20261022105723; 0 = uncapped). Like
+	// AdmissionMaxPending it is admission input only.
+	AdmissionMaxBacklogBytes int64 `json:"-"`
 	// Host-to-host operation metadata is trusted protocol state, never persisted or guest-authored.
 	OperationResultVersion     int    `json:"-"`
 	ManagedOperationID         string `json:"-"`
@@ -8335,6 +8381,7 @@ type EdgeRuleGeoAction struct {
 // apid-Validate.
 type EdgeRuleBudgetAction struct {
 	BudgetMs            int    `json:"budget_ms"`
+	TotalDeadlineMs     int    `json:"total_deadline_ms,omitempty"`
 	AllowOverrideHeader string `json:"allow_override_header,omitempty"`
 }
 
@@ -8458,7 +8505,11 @@ type EdgeRuleAsyncAction struct {
 // gatewayd matcher only reads Kind + the kind-specific subset it
 // needs.
 type EdgeRuleAction struct {
-	Kind     EdgeRuleKind            `json:"kind"`
+	Kind EdgeRuleKind `json:"kind"`
+	// Penalty is the rule's penalty box (ADR-20261022105846). It is
+	// kind-independent, so it sits beside the kind payloads; ip, geo,
+	// throttle and waf (block) rules may carry one.
+	Penalty  *EdgeRulePenalty        `json:"penalty,omitempty"`
 	Route    *EdgeRuleRouteAction    `json:"route,omitempty"`
 	Rewrite  *EdgeRuleRewriteAction  `json:"rewrite,omitempty"`
 	Redirect *EdgeRuleRedirectAction `json:"redirect,omitempty"`
@@ -8543,11 +8594,22 @@ type EdgeRuleAction struct {
 	Challenge *EdgeRuleChallengeAction `json:"challenge,omitempty"`
 }
 
+// EdgeRulePenalty is the stored penalty box; values are the effective ones
+// api.EdgeRulePenalty.Validate wrote.
+type EdgeRulePenalty struct {
+	Seconds       int `json:"seconds"`
+	After         int `json:"after"`
+	WithinSeconds int `json:"within_seconds"`
+}
+
 // EdgeRuleChallengeAction is the stored kind=challenge payload. Values are
 // the effective ones written by api.EdgeRuleChallengeAction.Validate.
 type EdgeRuleChallengeAction struct {
 	Difficulty     int `json:"difficulty,omitempty"`
 	PassTTLSeconds int `json:"pass_ttl_seconds,omitempty"`
+	// MaxDifficulty caps raising the difficulty under attack (ADR-831
+	// amendment 8); zero keeps it fixed.
+	MaxDifficulty int `json:"max_difficulty,omitempty"`
 }
 
 // EdgeRuleWAFAction is the stored kind=waf payload (ADR-831 step 1). Values
@@ -8602,7 +8664,8 @@ type EdgeRule struct {
 	AccountID string
 	AppID     string
 	// ManifestKey is a private stable ownership key for edge rules applied
-	// from deployment manifests. It is empty for manually managed rules.
+	// from deployment manifests, or EdgeRuleAttackModeKey for the app's
+	// attack-mode rule. It is empty for manually managed rules.
 	ManifestKey  string
 	MatchHost    string
 	MatchPath    string
@@ -8658,6 +8721,18 @@ const (
 // EdgeRuleExpired reports whether the rule's expiry has passed at now.
 func (r EdgeRule) EdgeRuleExpired(now time.Time) bool {
 	return r.ExpiresAt != nil && !now.Before(*r.ExpiresAt)
+}
+
+// EdgeRuleAttackModeKey is the ownership key (manifest_key) of an app's
+// attack-mode rule (ADR-20261021220456): one app-wide challenge rule the
+// attack-mode switch creates, extends and removes. The unique (app_id,
+// manifest_key) index keeps it to one per app. It is outside the plan's
+// rule quotas and a rule-set rollback leaves it as it is.
+const EdgeRuleAttackModeKey = "attack-mode"
+
+// AttackMode reports whether r is its app's attack-mode rule.
+func (r EdgeRule) AttackMode() bool {
+	return r.ManifestKey == EdgeRuleAttackModeKey
 }
 
 // CorsPreset is the in-memory row mirrored from cors_presets (issue

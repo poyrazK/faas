@@ -5,9 +5,9 @@ from uuid import UUID
 import httpx
 import pytest
 
-from faas_sdk.api.storage import create_object_deletion, get_object_deletion
+from faas_sdk.preview.api.storage import create_object_deletion, get_object_deletion
 from faas_sdk.client import AuthenticatedClient
-from faas_sdk.models import ObjectDeletion, ObjectDeletionRequest
+from faas_sdk.preview.models import ObjectDeletion, ObjectDeletionRequest
 
 
 @pytest.mark.parametrize("selector", ["null", "12345678-1234-4234-8234-123456789abc"])

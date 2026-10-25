@@ -640,10 +640,22 @@ func (c *Client) StreamAccountExport(ctx context.Context, includeSecrets bool, r
 // idempotent under Idempotency-Key; callers may pass an explicit
 // stable key (CI retries) or "" to auto-mint a UUIDv4 per call.
 func (c *Client) DeleteAccount(ctx context.Context, idempotencyKey string) (AccountDeletionResponse, error) {
+	return c.deleteAccount(ctx, idempotencyKey, "/v1/account")
+}
+
+// DeleteAccountIncludingManagedPostgres schedules the deletion and asks it to
+// include the account's managed PostgreSQL databases, which are deleted when
+// the 30-day grace ends (ADR-20261024150500). Dark until launch: apid ignores
+// the request for accounts outside FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS.
+func (c *Client) DeleteAccountIncludingManagedPostgres(ctx context.Context, idempotencyKey string) (AccountDeletionResponse, error) {
+	return c.deleteAccount(ctx, idempotencyKey, "/v1/account?include_managed_postgres_databases=true")
+}
+
+func (c *Client) deleteAccount(ctx context.Context, idempotencyKey, path string) (AccountDeletionResponse, error) {
 	if idempotencyKey == "" {
 		idempotencyKey = newUUIDv4()
 	}
-	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+"/v1/account", nil)
+	req, err := http.NewRequestWithContext(ctx, "DELETE", c.baseURL+path, nil)
 	if err != nil {
 		return AccountDeletionResponse{}, err
 	}
@@ -1626,7 +1638,8 @@ func (c *Client) GetApp(ctx context.Context, slug string) (AppResponse, error) {
 // traffic weights, and edge-rule changes. Edge rules have their own revision
 // sequence in the response. wait may be zero for a snapshot or up to 10
 // seconds for a bounded server-side wait; a pending result remains possible
-// on timeout.
+// on timeout. TrafficRuntime reports fresh compute gateway wiring separately
+// from convergence; it does not attest request enforcement or backend health.
 func (c *Client) GetAppsSlugPolicyStatus(ctx context.Context, slug string, wait time.Duration) (RuntimePolicyStatusResponse, error) {
 	var out RuntimePolicyStatusResponse
 	if wait < 0 || wait > 10*time.Second {
@@ -3729,7 +3742,7 @@ func (c *Client) GetEdgeRuleStatsWithSeries(ctx context.Context, slug, window st
 // first (ADR-964). Pass the response's NextCursor to continue.
 func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRuleEventsQuery) (EdgeRuleEventsResponse, error) {
 	v := url.Values{}
-	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "since": q.Since, "cursor": q.Cursor} {
+	for k, val := range map[string]string{"rule": q.RuleID, "outcome": q.Outcome, "request_id": q.RequestID, "since": q.Since, "cursor": q.Cursor} {
 		if val != "" {
 			v.Set(k, val)
 		}
@@ -3743,6 +3756,32 @@ func (c *Client) ListEdgeRuleEvents(ctx context.Context, slug string, q EdgeRule
 	}
 	var out EdgeRuleEventsResponse
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetEdgeWAFReview returns an app's WAF detections grouped for a
+// false-positive review (ADR-831 amendment 13). ruleID and since are
+// optional; since defaults to 7d.
+func (c *Client) GetEdgeWAFReview(ctx context.Context, slug, ruleID, since string) (EdgeWAFReviewResponse, error) {
+	v := url.Values{}
+	if ruleID != "" {
+		v.Set("rule", ruleID)
+	}
+	if since != "" {
+		v.Set("since", since)
+	}
+	path := "/v1/apps/" + slug + "/edge-rules/waf-review"
+	if len(v) > 0 {
+		path += "?" + v.Encode()
+	}
+	var out EdgeWAFReviewResponse
+	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// UpdateEdgeWAFExclusions adds and removes CRS rule IDs on a kind=waf rule's
+// exclusions, keeping the rest of its action (ADR-831 amendment 13).
+func (c *Client) UpdateEdgeWAFExclusions(ctx context.Context, id string, req EdgeWAFExclusionsRequest) (EdgeRuleResponse, error) {
+	var out EdgeRuleResponse
+	return out, c.do(ctx, "POST", "/v1/edge-rules/"+url.PathEscape(id)+"/waf-exclusions", req, &out)
 }
 
 // ListEdgeRuleLists returns the account's reusable edge-rule lists, without
@@ -5117,6 +5156,27 @@ func (c *Client) GetAppEdgeProtection(ctx context.Context, slug, rng string) (Ed
 		path += "?" + q.Encode()
 	}
 	return out, c.do(ctx, "GET", path, nil, &out)
+}
+
+// GetAppEdgeAttackMode reads slug's attack mode (ADR-20261021220456).
+func (c *Client) GetAppEdgeAttackMode(ctx context.Context, slug string) (EdgeAttackModeStatus, error) {
+	var out EdgeAttackModeStatus
+	return out, c.do(ctx, "GET", "/v1/apps/"+slug+"/edge-protection/attack-mode", nil, &out)
+}
+
+// EnableAppEdgeAttackMode switches slug's attack mode on for
+// durationSeconds from now, or moves the end of an active one. Zero applies
+// the server's default.
+func (c *Client) EnableAppEdgeAttackMode(ctx context.Context, slug string, durationSeconds int) (EdgeAttackModeStatus, error) {
+	var out EdgeAttackModeStatus
+	return out, c.do(ctx, "PUT", "/v1/apps/"+slug+"/edge-protection/attack-mode",
+		EnableEdgeAttackModeRequest{DurationSeconds: durationSeconds}, &out)
+}
+
+// DisableAppEdgeAttackMode switches slug's attack mode off.
+func (c *Client) DisableAppEdgeAttackMode(ctx context.Context, slug string) (EdgeAttackModeStatus, error) {
+	var out EdgeAttackModeStatus
+	return out, c.do(ctx, "DELETE", "/v1/apps/"+slug+"/edge-protection/attack-mode", nil, &out)
 }
 
 // AppWakeTimelineOptions controls the optional query params for

@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 // ControlPlaneChange is one durable broadcast event for a cache-backed
@@ -88,34 +92,11 @@ func (s *PgStore) PruneControlPlaneChangeLog(ctx context.Context, before time.Ti
 	if before.IsZero() {
 		return 0, fmt.Errorf("state: control-plane change log prune requires cutoff")
 	}
-	tag, err := s.pool.Exec(ctx, `
-		DELETE FROM control_plane_change_log
-		WHERE created_at < $1
-		  AND id <= COALESCE((
-		      SELECT MIN(COALESCE(w.last_change_id, 0))
-		      FROM compute_nodes n
-		      LEFT JOIN gateway_control_plane_watermarks w ON w.node_name = n.name
-		      WHERE n.active = true
-		        AND n.role IN ('compute-only', 'compute-node')
-		        AND n.gateway_target_url IS NOT NULL
-		        AND btrim(n.gateway_target_url) <> ''
-		  ), 9223372036854775807::bigint)
-		  AND (
-		      NOT EXISTS (
-		          SELECT 1 FROM apps a
-		          WHERE a.id = control_plane_change_log.app_id
-		      )
-		      OR EXISTS (
-		          SELECT 1
-		          FROM control_plane_change_log newer
-		          WHERE newer.app_id = control_plane_change_log.app_id
-		            AND newer.resource_type = control_plane_change_log.resource_type
-		            AND newer.id > control_plane_change_log.id
-		      )
-		  )
-	`, before.UTC())
+	n, err := sqlc.New().PruneFencedControlPlaneChangeLog(ctx, s.pool, sqlc.PruneFencedControlPlaneChangeLogParams{
+		Before: pgtype.Timestamptz{Time: before.UTC(), Valid: true}, FreshnessSeconds: api.TrafficRuntimeObservationFreshness.Seconds(),
+	})
 	if err != nil {
 		return 0, fmt.Errorf("state: prune control-plane change log: %w", err)
 	}
-	return tag.RowsAffected(), nil
+	return n, nil
 }

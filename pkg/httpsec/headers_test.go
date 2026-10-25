@@ -269,8 +269,8 @@ func TestCSP_HeaderMatchesDashboardSpec(t *testing.T) {
 	const nonce = "abc123XYZ-_abc123XYZ" // 22 chars, URL-safe
 	got := httpsec.BuildCSPForTest(nonce)
 	want := "default-src 'self'; " +
-		"script-src 'self' 'nonce-" + nonce + "' https://unpkg.com; " +
-		"style-src 'self' 'nonce-" + nonce + "' https://unpkg.com; " +
+		"script-src 'self' 'nonce-" + nonce + "'; " +
+		"style-src 'self' 'nonce-" + nonce + "'; " +
 		"img-src 'self' data:; " +
 		"connect-src 'self'; " +
 		"frame-ancestors 'none'; " +

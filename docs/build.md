@@ -6,6 +6,11 @@ or `pyproject.toml`), Go (`go.mod`), and a `Dockerfile`. The inferred profile
 records the package manager, start command, port, and health path in the
 deployment receipt.
 
+Go apps compile with the Go release named by the `go` line in `go.mod`;
+Go functions always compile with Gregale's patched Go release. See
+[Go toolchain](runtimes/go124.md#go-toolchain) for how to move an existing
+Go deployment onto a release that still gets security fixes.
+
 Inspect the decision without changing remote state:
 
 ```bash

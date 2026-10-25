@@ -37,12 +37,12 @@ func TestObsNotificationSuppressionExactEpisode(t *testing.T) {
 	if err := operatorobs.CollectAlertsOnce(t.Context(), store, promql.NewClient(srv.URL, srv.Client()), now); err != nil {
 		t.Fatal(err)
 	}
-	rec := e.Do(t, "GET", "/v1/admin/obs/incidents?type=platform_alert", nil, nil)
+	rec := e.DoOperator(t, "GET", "/v1/admin/obs/incidents?type=platform_alert", nil, nil)
 	var inbox api.ObsIncidentListResponse
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &inbox) != nil || len(inbox.Items) != 1 {
 		t.Fatalf("inbox: %d %s", rec.Code, rec.Body)
 	}
-	rec = e.Do(t, "GET", inbox.Items[0].EvidencePath, nil, nil)
+	rec = e.DoOperator(t, "GET", inbox.Items[0].EvidencePath, nil, nil)
 	var evidence api.ObsIncidentEvidenceResponse
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &evidence) != nil || evidence.Suppression == nil || evidence.Suppression.State != "suppressed" || evidence.Suppression.Silenced == nil || !*evidence.Suppression.Silenced || evidence.Suppression.Inhibited == nil || *evidence.Suppression.Inhibited || len(evidence.UnavailableSources) != 0 {
 		t.Fatalf("suppression: %d %s", rec.Code, rec.Body)
@@ -74,7 +74,7 @@ func TestObsNotificationHealthReadAndAuthorization(t *testing.T) {
 	}
 	now := time.Now().UTC().Add(-time.Second)
 	episode := seedObsAlert(t, *(*e.S()).Store(), now, true)
-	rec = e.Do(t, "GET", "/v1/admin/obs/incidents/platform_alert/"+episode.ID+"/evidence", nil, nil)
+	rec = e.DoOperator(t, "GET", "/v1/admin/obs/incidents/platform_alert/"+episode.ID+"/evidence", nil, nil)
 	var evidence api.ObsIncidentEvidenceResponse
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &evidence) != nil || evidence.Suppression == nil || evidence.Suppression.Silenced != nil || evidence.Suppression.State != "unavailable" {
 		t.Fatalf("retained evidence: %d %s", rec.Code, rec.Body)

@@ -2,7 +2,6 @@ package rehearsal
 
 import (
 	"github.com/onebox-faas/faas/pkg/api"
-	"net/http"
 )
 
 func ValidateColdStart(req api.RegisterScenarioTestRequest, enabled bool) *api.Problem {
@@ -13,7 +12,7 @@ func ValidateColdStart(req api.RegisterScenarioTestRequest, enabled bool) *api.P
 		return api.ErrValidation(err.Error())
 	}
 	if !enabled {
-		return api.NewProblem(http.StatusServiceUnavailable, api.CodeCapacity, "Cold-start rehearsal unavailable", "The operator must qualify and enable contained cold-start rehearsals")
+		return api.ErrRehearsalNotEnabled("Contained cold-start rehearsal")
 	}
 	return nil
 }

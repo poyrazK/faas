@@ -218,3 +218,12 @@
 1324
 20261019120000
 20261019180000
+# Refreshed 2026-10-23 for independently duplicated merged main @ cac93bb2f5 (#4726):
+# ADR-732 and ADR-733 (production forks, crash snapshots) collide with #4313's
+# observed app health and scoped health diagnostics.
+732
+733
+# Refreshed 2026-10-24 for independently duplicated merged main @ 1d0748e45c:
+# ADR-20261017 (#5209 vmmd restart adoption, #5220 connection survival) collides
+# with #4879's node event acknowledgment worker.
+20261017

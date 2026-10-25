@@ -1,10 +1,10 @@
 import pytest
 
-from faas_sdk.models.workflow_recovery_automatic_blocked_notification import (
+from faas_sdk.preview.models.workflow_recovery_automatic_blocked_notification import (
     WorkflowRecoveryAutomaticBlockedNotification,
 )
-from faas_sdk.models.workflow_recovery_automatic_evaluation import WorkflowRecoveryAutomaticEvaluation
-from faas_sdk.models.workflow_recovery_queue_blocked_webhook_payload import WorkflowRecoveryQueueBlockedWebhookPayload
+from faas_sdk.preview.models.workflow_recovery_automatic_evaluation import WorkflowRecoveryAutomaticEvaluation
+from faas_sdk.preview.models.workflow_recovery_queue_blocked_webhook_payload import WorkflowRecoveryQueueBlockedWebhookPayload
 
 
 @pytest.mark.parametrize(

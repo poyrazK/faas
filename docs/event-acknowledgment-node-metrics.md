@@ -10,7 +10,7 @@ Create one long-lived collector for an application-owned observation scope and
 pass its bound `record` function directly as `onEvent`:
 
 ```js
-import { EventAcknowledgmentPreparationMetrics } from '@gregale/sdk-node';
+import { EventAcknowledgmentPreparationMetrics } from '@gregale/sdk-node/preview';
 
 const metrics = new EventAcknowledgmentPreparationMetrics();
 

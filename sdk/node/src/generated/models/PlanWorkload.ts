@@ -4,8 +4,10 @@
 /* eslint-disable */
 import type { ComposeHealthcheck } from './ComposeHealthcheck.js';
 import type { ComposeProcess } from './ComposeProcess.js';
+import type { ComposeResources } from './ComposeResources.js';
 import type { PlanDetectedBy } from './PlanDetectedBy.js';
 import type { PreviewServiceCallsPolicy } from './PreviewServiceCallsPolicy.js';
+import type { SecretFile } from './SecretFile.js';
 import type { ServiceBindingPolicy } from './ServiceBindingPolicy.js';
 import type { ServiceBindingTransport } from './ServiceBindingTransport.js';
 import type { ServiceCallerScopes } from './ServiceCallerScopes.js';
@@ -56,6 +58,11 @@ export type PlanWorkload = {
    * Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned.
    */
   build_args?: Array<string>;
+  /**
+   * Compose secrets written to /run/secrets (ADR-20261023090000).
+   */
+  secret_files?: Array<SecretFile>;
+  resources?: ComposeResources;
   command: Array<string>;
   /**
    * Compose service dependencies. The apply path validates the graph, deploys in dependency order, and injects GREGALE_SERVICE_<NAME>_URL plus GREGALE_SERVICE_<NAME>_HTTPS_URL for workload dependencies.
@@ -66,7 +73,7 @@ export type PlanWorkload = {
    */
   depends_on_conditions?: Record<string, 'service_started' | 'service_healthy'>;
   /**
-   * Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `declared`; existing workloads retain their persisted policy when the extension is omitted.
+   * Effective policy selected by Compose `x-gregale-service-policy` (`project`, `declared` or `account`). New project workloads default to `project` (ADR-20261022111119); existing workloads retain their persisted policy when the extension is omitted.
    */
   service_binding_policy?: ServiceBindingPolicy;
   /**
@@ -103,6 +110,18 @@ export type PlanWorkload = {
    * Explicit names from .gregale/required-secrets.json. Detected env_keys alone do not establish requirements.
    */
   required_env_keys?: Array<string>;
+  /**
+   * Names from env_keys and required_env_keys that will have no value in the selected environment: not configured on the app and not provided by the platform. Names only, never values.
+   */
+  unset_env_keys?: Array<string>;
+  /**
+   * For an unset_env_keys name with a Compose value, why that value is not imported (ADR-20261023085230). Never values.
+   */
+  unset_env_key_reasons?: Record<string, 'not_opted_in' | 'secret' | 'service_address' | 'local_address' | 'interpolated' | 'host_value' | 'empty' | 'invalid'>;
+  /**
+   * Compose environment names whose plain values apply will write, because the project sets x-gregale-env-import: true and they are unset (ADR-20261023085230). Names only.
+   */
+  imported_env_keys?: Array<string>;
   /**
    * detector provenance, e.g. compose.yaml: api
    */

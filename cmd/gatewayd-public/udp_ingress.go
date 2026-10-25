@@ -81,7 +81,7 @@ func startUDPIngress(ctx context.Context, log *slog.Logger, store *state.EdgeSto
 	})
 	nodes := gateway.NewNodeClientCache(func(dialCtx context.Context, target string) (*grpc.ClientConn, error) {
 		return overlay.Dial(dialCtx, overlay.New(target), vmmdTLS)
-	}, log)
+	}, log).WithRestartNotices(store)
 	closeDependencies := func() {
 		_ = sched.Close()
 		_ = nodes.Close()

@@ -39,7 +39,7 @@ captured (typically under a second per 512 MB), then returns and your
 handler carries on:
 
 ```ts
-import { captureCrashSnapshot } from '@gregale/sdk-node';
+import { captureCrashSnapshot } from '@gregale/sdk-node/preview';
 
 try {
   await checkout(order);
@@ -51,7 +51,7 @@ try {
 ```
 
 Python has `capture_crash_snapshot` / `acapture_crash_snapshot` in
-`faas_sdk`, Go has `faas.CaptureCrashSnapshot`. Any language can call the
+`faas_sdk`, Go has `preview.CaptureCrashSnapshot`. Any language can call the
 endpoint directly from inside the instance:
 
 ```sh

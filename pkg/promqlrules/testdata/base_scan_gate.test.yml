@@ -1,0 +1,41 @@
+# Hunt 12 H12-1: vmmd's base scan gate refusing boots must page.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 30s
+
+tests:
+  - interval: 1m
+    name: "a base refused for twenty minutes pages"
+    input_series:
+      - series: 'vmmd_base_scan_refusals_total{job="vmmd",instance="10.0.0.3:9104",node="fsn-3",base="base/releases/runner-python313-amd64-1f08.ext4",reason="critical"}'
+        values: '0+2x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: FaasBaseScanRefusingBoots
+        exp_alerts:
+          - exp_labels:
+              severity: page
+              component: vmmd
+              family: base_scan_gate
+              node: fsn-3
+              base: base/releases/runner-python313-amd64-1f08.ext4
+              reason: critical
+            exp_annotations:
+              summary: "vmmd refuses to boot base/releases/runner-python313-amd64-1f08.ext4 (critical) on fsn-3"
+              description: "vmmd's base scan gate has kept refusing boots on base/releases/runner-python313-amd64-1f08.ext4 for fifteen minutes with reason critical. No instance on that base can cold boot or restore, so every app on its runtime fails to deploy and to wake. critical means the node-side Grype scan found a fixable CRITICAL vulnerability: publish a patched base. sidecar_missing, incomplete and generation_* mean the scan record is absent or stale: rerun the base stage."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasBaseScanRefusingBoots.md"
+
+  - interval: 1m
+    name: "a short refusal burst after a release roll stays quiet"
+    input_series:
+      - series: 'vmmd_base_scan_refusals_total{job="vmmd",instance="10.0.0.3:9104",node="fsn-3",base="base/releases/runner-node22-amd64-33df.ext4",reason="sidecar_missing"}'
+        values: '0 5 9 9x40'
+    alert_rule_test:
+      - eval_time: 11m
+        alertname: FaasBaseScanRefusingBoots
+      - eval_time: 12m
+        alertname: FaasBaseScanRefusingBoots
+      - eval_time: 30m
+        alertname: FaasBaseScanRefusingBoots

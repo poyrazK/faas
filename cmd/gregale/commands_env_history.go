@@ -155,9 +155,12 @@ func envRollback(args []string) int {
 		if err != nil {
 			return printErr("Could not read revision", err)
 		}
-		_, _ = fmt.Fprintf(os.Stderr, "Revision %d (%s, %s) has %d variables: %s\n", revision, configChangeLabel(target.ConfigRevision),
-			target.CreatedAt, len(target.Variables), strings.Join(sortedKeys(target.Variables), ", "))
-		if !requireTyped(strconv.FormatInt(revision, 10)) {
+		vars := "no variables"
+		if len(target.Variables) > 0 {
+			vars = fmt.Sprintf("%d variables: %s", len(target.Variables), strings.Join(sortedKeys(target.Variables), ", "))
+		}
+		_, _ = fmt.Fprintf(os.Stderr, "Revision %d (%s, %s) has %s\n", revision, configChangeLabel(target.ConfigRevision), target.CreatedAt, vars)
+		if !requireTypedOr(strconv.FormatInt(revision, 10), "--yes") {
 			return 1
 		}
 	}
@@ -171,11 +174,11 @@ func envRollback(args []string) int {
 	if jsonOutput {
 		return jsonOut(writeJSON(out))
 	}
-	printConfigRollback(out)
+	printConfigRollback(out, *app, *scope)
 	return 0
 }
 
-func printConfigRollback(out api.ConfigRollbackResponse) {
+func printConfigRollback(out api.ConfigRollbackResponse, app, scope string) {
 	if len(out.Set) == 0 && len(out.Deleted) == 0 {
 		PrintOK(osStdout, "Variables already match revision %d; nothing changed.", out.RestoredRevision)
 	} else {
@@ -185,9 +188,24 @@ func printConfigRollback(out api.ConfigRollbackResponse) {
 			_, _ = fmt.Fprintf(osStdout, "The config guard watches the next %d minutes of traffic.\n", out.Change.Guard.WindowMinutes)
 		}
 	}
+	scopeArg := ""
+	if scope != "" {
+		scopeArg = " --scope " + quoteCLIArg(scope)
+	}
 	for _, s := range out.SecretsNotRestored {
-		_, _ = fmt.Fprintf(osStdout, "  secret %s not restored (revision %d had version %d, now %d); set it with `gregale secrets set`.\n",
-			s.Key, out.RestoredRevision, s.TargetVersion, s.CurrentVersion)
+		// Version 0 means the secret did not exist. A secret added after
+		// the revision is removed, not set, to match it (Hunt 12 H12-57).
+		switch {
+		case s.TargetVersion == 0:
+			_, _ = fmt.Fprintf(osStdout, "  secret %s not removed (revision %d did not have it, now version %d); remove it with `%s secrets unset --app %s%s %s`.\n",
+				s.Key, out.RestoredRevision, s.CurrentVersion, recoveryCLI(), quoteCLIArg(app), scopeArg, quoteCLIArg(s.Key))
+		case s.CurrentVersion == 0:
+			_, _ = fmt.Fprintf(osStdout, "  secret %s not restored (revision %d had version %d, now removed); set it with `%s secrets set`.\n",
+				s.Key, out.RestoredRevision, s.TargetVersion, recoveryCLI())
+		default:
+			_, _ = fmt.Fprintf(osStdout, "  secret %s not restored (revision %d had version %d, now %d); set it with `%s secrets set`.\n",
+				s.Key, out.RestoredRevision, s.TargetVersion, s.CurrentVersion, recoveryCLI())
+		}
 	}
 }
 

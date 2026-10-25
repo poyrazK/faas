@@ -54,7 +54,7 @@ class WorkerScaling:
                 "target": target,
             }
         )
-        if name is not UNSET:
+        if not isinstance(name, Unset):
             field_dict["name"] = name
         if observer_app_slug is not UNSET:
             field_dict["observer_app_slug"] = observer_app_slug

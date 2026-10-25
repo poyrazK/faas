@@ -15,6 +15,13 @@ faas_public_edge_platform_tls: "{{ faas_cloudflare_origin_only | default(false) 
 faas_public_edge_domain: "{{ gatewayd_apps_domain | default('gregale.dev') }}"
 # Must match faas-gatewayd-public.socket ListenStream.
 faas_public_edge_upstream: "127.0.0.1:8080"
+# gRPC (Content-Type application/grpc*) reaches gatewayd-public over HTTP/2
+# cleartext instead of the HTTP/1.1 hop every other request keeps, so
+# bidirectional streams work end to end. Turn it on only after every
+# gatewayd-public in the fleet accepts h2c on its public listener (the
+# release that adds it): an older gatewayd-public cannot answer the h2c
+# preface, and only gRPC would fail.
+faas_public_edge_grpc_h2c: false
 faas_public_edge_caddyfile: /etc/caddy/Caddyfile
 faas_public_edge_caddy_binary: /usr/bin/caddy
 # Operator-provisioned Origin CA material (a secret: never in inventory or the

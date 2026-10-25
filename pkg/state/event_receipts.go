@@ -111,9 +111,9 @@ func receiptLimit(limit int) int {
 	return min(limit, EventReceiptMaxRecipients)
 }
 
-func receiptRetention(receipt *EventReceipt) {
+func receiptRetention(receipt *EventReceipt, retention time.Duration) {
 	if receipt.RoutingSettledAt != nil {
-		until := receipt.RoutingSettledAt.Add(PublishedEventIdentityRetention)
+		until := receipt.RoutingSettledAt.Add(retention)
 		receipt.RetainUntil = &until
 	}
 }
@@ -148,7 +148,11 @@ func (s *PgStore) EventReceipt(ctx context.Context, accountID, source, eventID s
 	if err := json.Unmarshal(meta.BackfillRoutingSummary, &receipt.BackfillRoutingSummary); err != nil {
 		return EventReceipt{}, fmt.Errorf("decode backfill receipt summary: %w", err)
 	}
-	receiptRetention(&receipt)
+	retention, err := eventSettledRetention(ctx, q, tx, accountID)
+	if err != nil {
+		return EventReceipt{}, err
+	}
+	receiptRetention(&receipt, retention)
 	limit = receiptLimit(limit)
 	rows, err := q.EventReceiptRecipients(ctx, tx, sqlc.EventReceiptRecipientsParams{OutboxID: meta.ID, AccountID: meta.AccountID, AfterPosition: cursor.Position, PageLimit: int32(limit + 1)})
 	if err != nil {
@@ -330,7 +334,7 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 		at := work.DeliveredAt
 		receipt.RoutingSettledAt = &at
 	}
-	receiptRetention(&receipt)
+	receiptRetention(&receipt, m.eventSettledRetentionLocked(canonicalMemUUID(accountID)))
 	limit = receiptLimit(limit)
 	for i, recipient := range work.RecipientSnapshot {
 		progress := work.RecipientProgress[recipient.ID]

@@ -21,6 +21,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/billing/stripeinvoice"
+	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -61,8 +62,16 @@ type Service struct {
 	Enabled func() bool
 
 	mu      sync.Mutex
-	creates map[string]*rate.Limiter
-	reads   map[string]*rate.Limiter
+	creates addrLimiters
+	reads   addrLimiters
+}
+
+// addrLimiters is one per-address limit's buckets, keyed by
+// middleware.RateLimitKey.
+type addrLimiters struct {
+	byKey map[string]*rate.Limiter
+	// prunedAt is the last time a full map dropped its refilled buckets.
+	prunedAt time.Time
 }
 
 func (s *Service) now() time.Time {
@@ -79,10 +88,19 @@ func (s *Service) stripe() *stripeinvoice.Client {
 	return stripeinvoice.New()
 }
 
-// limiterCap bounds each per-address limiter map; it is reset when full.
+// limiterCap bounds each per-address limiter map. A full map drops the
+// buckets that have refilled to their burst, which hold no state; a map
+// still full of active buckets refuses new addresses rather than forget the
+// limits it holds. Resetting it instead let anyone who showed limiterCap
+// addresses (one IPv6 /64 holds 2^64) clear every address's limit.
 const limiterCap = 10000
 
-// allow applies a per-address limit before any database read.
+// limiterPruneEvery spaces the scans a full map runs, so a flood of new
+// addresses does not make every request walk the whole map.
+const limiterPruneEvery = time.Second
+
+// allow applies a per-address limit before any database read. An IPv6
+// client counts as its /64 (middleware.RateLimitKey).
 func (s *Service) allow(ip string, create bool) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -90,15 +108,28 @@ func (s *Service) allow(ip string, create bool) bool {
 	if create {
 		limiters, limit, burst = &s.creates, rate.Limit(float64(api.ConsumerSignupPerIPPerHour)/3600), api.ConsumerSignupPerIPPerHour
 	}
-	if *limiters == nil || len(*limiters) >= limiterCap {
-		*limiters = map[string]*rate.Limiter{}
+	if limiters.byKey == nil {
+		limiters.byKey = map[string]*rate.Limiter{}
 	}
-	limiter, ok := (*limiters)[ip]
+	now := s.now()
+	key := middleware.RateLimitKey(ip)
+	limiter, ok := limiters.byKey[key]
 	if !ok {
+		if len(limiters.byKey) >= limiterCap && now.Sub(limiters.prunedAt) >= limiterPruneEvery {
+			limiters.prunedAt = now
+			for k, l := range limiters.byKey {
+				if l.TokensAt(now) >= float64(burst) {
+					delete(limiters.byKey, k)
+				}
+			}
+		}
+		if len(limiters.byKey) >= limiterCap {
+			return false
+		}
 		limiter = rate.NewLimiter(limit, burst)
-		(*limiters)[ip] = limiter
+		limiters.byKey[key] = limiter
 	}
-	return limiter.Allow()
+	return limiter.AllowN(now, 1)
 }
 
 func (s *Service) signupStore(w http.ResponseWriter) (state.APIConsumerSignupStore, bool) {

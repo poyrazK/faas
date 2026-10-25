@@ -214,12 +214,41 @@ type Middleware struct {
 	keyTouchWindowForTest time.Duration
 	// sessionTouchWindowForTest: same override for sessions.
 	sessionTouchWindowForTest time.Duration
+	// Honeytokens, when set, is asked about a well-formed API key that
+	// matches no key (ADR 20261024014500). On a match OnHoneytoken runs and
+	// the request still gets the ordinary 401, so the caller learns nothing.
+	Honeytokens  HoneytokenMatcher
+	OnHoneytoken func(r *http.Request, h state.Honeytoken)
+
 	// BindingKeyFn is the IAM-hardening-mega-PR (logical change 5,
 	// ADR-076) HMAC key source. nil disables binding-hash
 	// computation (the envelope's `binding_hash` field is omitted;
 	// the cross-check is skipped). Production wires this to the
 	// first 32 bytes of the session-key AEAD secret.
 	BindingKeyFn func() []byte
+}
+
+// HoneytokenMatcher looks a presented credential up in the honeytoken
+// registry (ADR 20261024014500); state.ErrNotFound means no match. It gets
+// the plaintext because the registry is keyed by an HMAC the daemon holds.
+type HoneytokenMatcher interface {
+	MatchHoneytoken(ctx context.Context, token string) (state.Honeytoken, error)
+}
+
+// reportHoneytoken checks a bearer key that matched no API key against the
+// honeytoken registry. A failed lookup is logged and otherwise ignored: the
+// request is being refused either way.
+func (m *Middleware) reportHoneytoken(r *http.Request, token string) {
+	if m.Honeytokens == nil || m.OnHoneytoken == nil {
+		return
+	}
+	h, err := m.Honeytokens.MatchHoneytoken(r.Context(), token)
+	switch {
+	case err == nil:
+		m.OnHoneytoken(r, h)
+	case !errors.Is(err, state.ErrNotFound) && m.Log != nil:
+		m.Log.Warn("auth: honeytoken lookup failed", "err", err)
+	}
 }
 
 // keyTouchWindow returns the production 30s window unless an
@@ -476,7 +505,8 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			return
 		}
 		if api.ValidAPIKeyFormat(tok) {
-			acct, key, err := m.Authn.AuthenticateKey(r.Context(), api.HashAPIKey(tok))
+			keyHash := api.HashAPIKey(tok)
+			acct, key, err := m.Authn.AuthenticateKey(r.Context(), keyHash)
 			// IAM-5 (issue #189): translate the IAM-5 sentinels
 			// to RFC 7807 + emit the audit row. The store
 			// already lazily marked the key status='revoked'
@@ -504,6 +534,7 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 					m.credentialStoreUnavailable(w, r, err)
 					return
 				}
+				m.reportHoneytoken(r, tok)
 				// Fall through to the session-cookie branch —
 				// the key may have been deleted or the hash is
 				// simply unknown; both surface as "invalid
@@ -648,12 +679,24 @@ func (m *Middleware) RequireSession(next AccountHandler) http.HandlerFunc {
 			if deployAuth, ok := m.Authn.(DeployTokenAuthenticator); ok {
 				acct, key, err := deployAuth.AuthenticateDeployToken(r.Context(), api.HashAPIKey(tok))
 				if err == nil {
-					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") {
+					// The resumable upload routes are the CLI's default source
+					// deploy path. They name their app in the request body or the
+					// stored session, so the app binding is enforced where the
+					// handlers resolve it (appaccess.Authorize refuses a token
+					// bound to another app) instead of from the path here.
+					uploadRoute := IsUploadSessionPath(r.URL.Path)
+					if !strings.HasPrefix(r.URL.Path, "/v1/apps/") && !uploadRoute {
 						api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden,
-							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug}"))
+							"Deploy token scope is app-bound", "this token may only access routes under /v1/apps/{slug} and /v1/uploads"))
 						return
 					}
-					bound, bindErr := m.deployTokenBoundTo(r, key)
+					var bound bool
+					var bindErr error
+					if uploadRoute {
+						bound = key.AppID != ""
+					} else {
+						bound, bindErr = m.deployTokenBoundTo(r, key)
+					}
 					if bindErr != nil {
 						m.storeUnavailable(w, r, bindErr, "could not load the app; retry shortly")
 						return
@@ -1541,6 +1584,21 @@ func (m *Middleware) LoadApp(w http.ResponseWriter, r *http.Request, acct state.
 // handlers resolve the app with a direct store lookup and never reach
 // LoadApp's AppID check. A route without a {slug} (the account-wide
 // /v1/apps/metrics) is outside a deploy token's reach.
+// IsUploadSessionPath reports whether path is one of the resumable upload
+// routes: POST /v1/uploads and /v1/uploads/{id}[/commit].
+func IsUploadSessionPath(path string) bool {
+	const root = "/v1/uploads"
+	if path == root {
+		return true
+	}
+	rest, ok := strings.CutPrefix(path, root+"/")
+	if !ok || rest == "" {
+		return false
+	}
+	id, tail, _ := strings.Cut(rest, "/")
+	return id != "" && (tail == "" || tail == "commit")
+}
+
 func (m *Middleware) deployTokenBoundTo(r *http.Request, key state.APIKey) (bool, error) {
 	slug := r.PathValue("slug")
 	if slug == "" || key.AppID == "" {

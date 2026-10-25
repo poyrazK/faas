@@ -257,7 +257,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MaxQueueAttempts: 0,
 			// ADR-134 PR-B: Free's per-account cap ladder.
 			EventDeliveries:                   EventDeliveryLimits{64, 256, 1024},
-			EventStorage:                      EventStorageLimits{4096, 8 << 20},
+			EventStorage:                      EventStorageLimits{4096, 8 << 20, 86400},
 			MaxAsyncInvocationsPerAccount:     100,
 			MaxAsyncInvocationDeadlineSeconds: 300,
 			MaxAsyncResultRetentionSeconds:    86400,
@@ -300,7 +300,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// `custom_domains` path. Allowed=false means the create
 			// handler returns 402 CodeTenantSurfaceQuotaReached before
 			// the store is touched.
-			TenantSurfacesPerAccount: 0, TenantHostnamesPerSurface: 0, TenantSurfacesAllowed: false, WildcardDomainsAllowed: false,
+			TenantSurfacesPerAccount: 0, TenantHostnamesPerSurface: 0, TenantHostnamesPendingPerSurface: 0, TenantSurfacesAllowed: false, WildcardDomainsAllowed: false,
 			DataPlacementHintsPerApp: 0,
 			// ADR-076 (#476): outbound webhooks — Free gated to 402
 			// (CodePlanWebhooksNotAllowed), same fail-closed shape.
@@ -410,14 +410,16 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-044: see PlanFree. Hobby's tight quota is the
 			// load-bearing signal in the cpu-fairness e2e (cmd/e2e/cpu_fairness_test.go).
 			CPUWeight: 4, CPUQuotaUS: 200_000, CPUPeriodUS: 200_000,
-			MaxQueueDepth: 5, MaxDelayedTasksPerApp: 5, MaxSourceBytesPerInvocation: 64 * 1024, AsyncInvokeAllowed: true,
+			MaxQueueDepth: 10_000, MaxDelayedTasksPerApp: 5, MaxSourceBytesPerInvocation: 64 * 1024, AsyncInvokeAllowed: true,
+			// ADR-20261022105723: 100 MiB of pending queue messages per account, kept 1 day.
+			MaxQueueBacklogBytesPerAccount: 100 << 20, QueueMessageRetentionSeconds: 86_400,
 			// Issue #394: Hobby gets 3 retries before dead-letter — a
 			// poisoned row exits within ~15s at the default 5s backoff
 			// without thrashing the worker for long.
 			MaxQueueAttempts: 3,
 			// ADR-134 PR-B: Hobby 1k / 1h / 7d.
 			EventDeliveries:                   EventDeliveryLimits{256, 1024, 4096},
-			EventStorage:                      EventStorageLimits{16384, 64 << 20},
+			EventStorage:                      EventStorageLimits{131072, 256 << 20, 259200},
 			MaxAsyncInvocationsPerAccount:     1000,
 			MaxAsyncInvocationDeadlineSeconds: 3600,
 			MaxAsyncResultRetentionSeconds:    604800,
@@ -464,7 +466,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// paid tier. 1 surface with up to 10 verified hostnames.
 			// The "single SaaS customer, handful of end-customer
 			// subdomains" use case is the Hobby use case.
-			TenantSurfacesPerAccount: 1, TenantHostnamesPerSurface: 10, TenantSurfacesAllowed: true, WildcardDomainsAllowed: false,
+			TenantSurfacesPerAccount: 1, TenantHostnamesPerSurface: 10, TenantHostnamesPendingPerSurface: 10, TenantSurfacesAllowed: true, WildcardDomainsAllowed: false,
 			DataPlacementHintsPerApp: 3,
 			// IAM-6 / ADR-061 PR-2 (issue #190): Hobby tracks KeysMax
 			// (10) one-to-one. Pending invitations = members/2
@@ -559,7 +561,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// retention (matches log-archive retention), 1000
 			// req/min ingest, 10 deployments max in the histogram
 			// (small Hobby app), 50 spans per trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 3, DebugTelemetryRequestsPerMinute: 1000, DebugTelemetryDeploymentsPerApp: 10, DebugTelemetrySpansPerTrace: 50, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 3, WorkflowMaxConcurrent: 10, WorkflowStepMaxTimeout: 10 * time.Minute, WorkflowMaxWaitDays: 30,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 3, DebugTelemetryRequestsPerMinute: 1000, DebugTelemetryDeploymentsPerApp: 10, DebugTelemetrySpansPerTrace: 50, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 3, WorkflowMaxConcurrent: 10, WorkflowMaxParked: 100, WorkflowStepMaxTimeout: 10 * time.Minute, WorkflowMaxWaitDays: 30,
 			// ADR-124 queue controls — Hobby unlocks the gated surface.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 5, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Pro opt-in for per-app egress allowlist with a 16-CIDR cap.
@@ -579,14 +581,16 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			MinInstancesAllowed: true, CustomMetricsAllowed: true, MaxInstancesAllowed: true,
 			// ADR-044: see PlanFree.
 			CPUWeight: 8, CPUQuotaUS: 500_000, CPUPeriodUS: 500_000,
-			MaxQueueDepth: 25, MaxDelayedTasksPerApp: 50, MaxSourceBytesPerInvocation: 256 * 1024, AsyncInvokeAllowed: true,
+			MaxQueueDepth: 100_000, MaxDelayedTasksPerApp: 50, MaxSourceBytesPerInvocation: 256 * 1024, AsyncInvokeAllowed: true,
+			// ADR-20261022105723: 1 GiB of pending queue messages per account, kept 4 days.
+			MaxQueueBacklogBytesPerAccount: 1 << 30, QueueMessageRetentionSeconds: 4 * 86_400,
 			// Issue #394: Pro gets 10 retries — 5× Hobby's budget.
 			// Tolerates a transient downstream flap while still bounding
 			// the "permanently bad payload" worker cost.
 			MaxQueueAttempts: 10,
 			// ADR-134 PR-B: Pro 10k / 6h / 30d.
 			EventDeliveries:                   EventDeliveryLimits{1024, 4096, 16384},
-			EventStorage:                      EventStorageLimits{131072, 512 << 20},
+			EventStorage:                      EventStorageLimits{1048576, 2 << 30, 604800},
 			MaxAsyncInvocationsPerAccount:     10000,
 			MaxAsyncInvocationDeadlineSeconds: 21600,
 			MaxAsyncResultRetentionSeconds:    2592000,
@@ -601,9 +605,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Cron: Pro gets 20 per-app and 50 per-account.
 			CronLimitPerApp: 20, CronLimitPerAccount: 50,
 			// M-2 / ADR-137+138: Pro doubles Hobby (60 s grace,
-			// 60 s deadline, 10 retries). 3 workers, 5 service
+			// 10 retries); the startup deadline is the 30 s cold-boot
+			// window (ADR-138 amendment). 3 workers, 5 service
 			// replicas, 30-min job runtime.
-			DefaultStopGracePeriodS: 60, DefaultStartupDeadlineS: 60, DefaultMaxRetries: 10,
+			DefaultStopGracePeriodS: 60, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 10,
 			WorkerReplicasMax: 3, ServiceReplicasMax: 5, JobMaxRuntimeS: 1800,
 			// Issue #475: Pro gets 2 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 2,
@@ -624,7 +629,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// with up to 50 verified hostnames each. Each surface
 			// still binds to one app (the multi-app variant is the
 			// deferred footgun).
-			TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 50, TenantSurfacesAllowed: true, WildcardDomainsAllowed: true,
+			TenantSurfacesPerAccount: 5, TenantHostnamesPerSurface: 50, TenantHostnamesPendingPerSurface: 50, TenantSurfacesAllowed: true, WildcardDomainsAllowed: true,
 			DataPlacementHintsPerApp: 10,
 			// IAM-6 / ADR-061 PR-2 (issue #190): Pro tracks KeysMax
 			// (50) one-to-one — every team member can hold a key
@@ -719,7 +724,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// ADR-127: Pro = "this month" debugger surface — 7-day
 			// retention, 10000 req/min ingest, 50 deployments in
 			// the histogram, 200 spans per trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 7, DebugTelemetryRequestsPerMinute: 10000, DebugTelemetryDeploymentsPerApp: 50, DebugTelemetrySpansPerTrace: 200, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 10, WorkflowMaxConcurrent: 50, WorkflowStepMaxTimeout: 30 * time.Minute, WorkflowMaxWaitDays: 90,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 7, DebugTelemetryRequestsPerMinute: 10000, DebugTelemetryDeploymentsPerApp: 50, DebugTelemetrySpansPerTrace: 200, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 10, WorkflowMaxConcurrent: 50, WorkflowMaxParked: 1000, WorkflowStepMaxTimeout: 30 * time.Minute, WorkflowMaxWaitDays: 90,
 			// ADR-124: Pro mirrors Hobby for queue controls.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 10, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},
 		// ADR-031: Scale double-up to 64 CIDR cap (2× Pro, tracks 2×
@@ -742,14 +747,16 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// upper bound — 10 vCPU worth of compute at the per-instance
 			// level, gated by the §1 56 GB hard fence at the slice level.
 			CPUWeight: 16, CPUQuotaUS: 1_000_000, CPUPeriodUS: 1_000_000,
-			MaxQueueDepth: 100, MaxDelayedTasksPerApp: 1_000_000, MaxSourceBytesPerInvocation: 1024 * 1024, AsyncInvokeAllowed: true,
+			MaxQueueDepth: 1_000_000, MaxDelayedTasksPerApp: 1_000_000, MaxSourceBytesPerInvocation: 1024 * 1024, AsyncInvokeAllowed: true,
+			// ADR-20261022105723: 10 GiB of pending queue messages per account, kept 14 days.
+			MaxQueueBacklogBytesPerAccount: 10 << 30, QueueMessageRetentionSeconds: 14 * 86_400,
 			// Issue #394: Scale gets 25 retries — 2.5× Pro's budget, but
 			// capped so a genuinely-bad payload still terminates within
 			// the worker's hourly budget window.
 			MaxQueueAttempts: 25,
 			// ADR-134 PR-B: Scale 100k / 24h / 90d.
 			EventDeliveries:                   EventDeliveryLimits{4096, 16384, 65536},
-			EventStorage:                      EventStorageLimits{1048576, 4 << 30},
+			EventStorage:                      EventStorageLimits{8388608, 16 << 30, 1209600},
 			MaxAsyncInvocationsPerAccount:     100000,
 			MaxAsyncInvocationDeadlineSeconds: 86400,
 			MaxAsyncResultRetentionSeconds:    7776000,
@@ -767,9 +774,10 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// Cron: Scale gets 100 per-app and 500 per-account.
 			CronLimitPerApp: 100, CronLimitPerAccount: 500,
 			// M-2 / ADR-137+138: Scale doubles Pro (120 s grace,
-			// 120 s deadline, 20 retries). 10 workers, 20
-			// service replicas, 1-h job runtime.
-			DefaultStopGracePeriodS: 120, DefaultStartupDeadlineS: 120, DefaultMaxRetries: 20,
+			// 20 retries); the startup deadline is the 30 s cold-boot
+			// window (ADR-138 amendment). 10 workers, 20 service
+			// replicas, 1-h job runtime.
+			DefaultStopGracePeriodS: 120, DefaultStartupDeadlineS: 30, DefaultMaxRetries: 20,
 			WorkerReplicasMax: 10, ServiceReplicasMax: 20, JobMaxRuntimeS: 3600,
 			// Issue #475: Scale gets 4 reserved-tier apps.
 			EvictionPriorityReservedAllowed: true, ReservedConcurrencyPerAccount: 4,
@@ -790,7 +798,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// bounded by LE's 100-SAN-per-cert limit (per_host_san
 			// falls back to per_host above ~100, surfaced via the
 			// cert engine, not quota).
-			TenantSurfacesPerAccount: 25, TenantHostnamesPerSurface: 250, TenantSurfacesAllowed: true, WildcardDomainsAllowed: true,
+			TenantSurfacesPerAccount: 25, TenantHostnamesPerSurface: 250, TenantHostnamesPendingPerSurface: 250, TenantSurfacesAllowed: true, WildcardDomainsAllowed: true,
 			DataPlacementHintsPerApp: 50,
 			// IAM-6 / ADR-061 PR-2 (issue #190): Scale tracks KeysMax
 			// (200) one-to-one — SaaS-scale multi-team + rotating-CI.
@@ -890,7 +898,7 @@ func TestPlanLimitsMatchSpec(t *testing.T) {
 			// cap, a fleet with thousands of historical deployments
 			// would blow up Prometheus cardinality), 1000 spans per
 			// trace.
-			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 14, DebugTelemetryRequestsPerMinute: 50000, DebugTelemetryDeploymentsPerApp: 200, DebugTelemetrySpansPerTrace: 1000, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 50, WorkflowMaxConcurrent: 200, WorkflowStepMaxTimeout: 2 * time.Hour, WorkflowMaxWaitDays: 365,
+			DebugTelemetryEnabled: true, DebugTelemetryRetentionDays: 14, DebugTelemetryRequestsPerMinute: 50000, DebugTelemetryDeploymentsPerApp: 200, DebugTelemetrySpansPerTrace: 1000, PerAppMetricsAllowed: true, AppUsageSummaryAllowed: true, AppForkMaxActivePerApp: 1, AppForkMaxActivePerAccount: 2, AppErrorsAllowed: true, JobsAllowed: true, WorkflowsAllowed: true, WorkflowMaxPerApp: 50, WorkflowMaxConcurrent: 200, WorkflowMaxParked: 10000, WorkflowStepMaxTimeout: 2 * time.Hour, WorkflowMaxWaitDays: 365,
 			// ADR-124: Scale gets the highest queue depth (25) and
 			// the same 60/h reorder budget as Hobby/Pro.
 			QueueControlsAllowed: true, MaxQueuedDeploysPerApp: 25, MaxCancelOpsPerHour: 120, MaxReorderOpsPerHour: 60},

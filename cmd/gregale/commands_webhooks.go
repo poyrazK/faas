@@ -91,9 +91,7 @@ func cmdWebhooks(args []string) int {
 		return cmdAccountReleaseWebhooks(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown webhooks subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "webhooks", parent, args[0])
 }
 
 func cmdWebhooksList(args []string) int {
@@ -276,11 +274,14 @@ func cmdWebhooksUpdate(args []string) int {
 func cmdWebhooksRm(args []string) int {
 	fs := newFlagSet("webhooks-rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
+	// rm never prompts; --yes is accepted so scripts can pass the confirmation
+	// flag every other rm takes. It failed with "unknown flag --yes" (Hunt 12).
+	fs.Bool("yes", false, "accepted for consistency; rm does not prompt")
 	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || len(fs.Args()) != 1 {
-		PrintUsage(os.Stderr, "usage: gregale webhooks rm --app <slug> <id>", "webhooks")
+		PrintUsage(os.Stderr, "usage: gregale webhooks rm --app <slug> <id> [--yes]", "webhooks")
 		return 1
 	}
 	id := fs.Args()[0]
@@ -505,6 +506,7 @@ var validAppWebhookEvents = map[string]struct{}{
 	"usage_statement.finalized":        {},
 	"consumer.usage_threshold":         {},
 	"outbound.ai_budget.threshold":     {},
+	"outbound.ai_quality.drift":        {},
 	"app.health.changed":               {},
 }
 
@@ -514,7 +516,7 @@ var webhookEventVocab = []string{
 	"app.parked", "app.woken", "deployment.live", "deployment.failed",
 	"app.health.changed",
 	"rollout.completed", "rollout.aborted", "job.finished", "usage_statement.finalized",
-	"consumer.usage_threshold", "outbound.ai_budget.threshold",
+	"consumer.usage_threshold", "outbound.ai_budget.threshold", "outbound.ai_quality.drift",
 }
 
 func validAppWebhookEvent(s string) bool {

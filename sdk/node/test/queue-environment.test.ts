@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { FaaSClient, QueuesService } from '../src/index.js';
+import { FaaSClient, QueuesService } from '../src/preview.js';
 
 test('queue producers and bindings preserve environment selection and identity', async () => {
   const bindingID = '00000000-0000-4000-8000-000000000001';

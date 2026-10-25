@@ -44,7 +44,21 @@ existing S3 driver and does not change the preview's provider qualification gate
 ### Deploy the branded gateway
 
 The production Ansible path keeps this optional until a backend is qualified.
-Set the following inventory values on the control-plane host:
+Declare the gateway in the deploy manifest (ADR 20261025111015), and
+`gregalectl manifest ansible` renders the inventory values for the
+control-plane host:
+
+```yaml
+object_storage:
+  gateway: managed
+  config_src: /operator/config/object-storage.json
+  # S3/R2/OVH only; GCS with attached ADC does not need this file.
+  provider_env_src: /operator/secrets/object-storage.env
+```
+
+Strict `make verify-fleet` fails when `faas-s3-gatewayd` runs on a
+control-plane node that the manifest does not manage; lenient verification
+warns. Inventories written by hand set the same values directly:
 
 ```yaml
 faas_object_storage_gateway_managed: true
@@ -103,8 +117,13 @@ Create a bucket with `public: true` and a stable `serve_at` path, for example
 is ready, `GET` and `HEAD` requests to
 `https://<app>.<apps-domain>/assets/<key>` are served directly by
 `gatewayd-public`; a route hit never wakes or proxies to the app. Responses
-use `Cache-Control: public, max-age=31536000, immutable` and do not require a
-Gregale or S3 signed URL. The mount path is immutable after creation; choose a
+use `Cache-Control: public, max-age=300, must-revalidate` and do not require a
+Gregale or S3 signed URL. Caches revalidate every five minutes, so deleting or
+replacing an object takes it down everywhere within that time. Anonymous reads
+may use at most 75% of the account's monthly request and egress ceilings, so
+private access always keeps the rest. Each bucket also serves at most 100
+reads per second per gateway (burst 200). Past either limit, readers get 429
+([ADR 20261023223000](adr/20261023223000-object-storage-bucket-scoped-availability.md)). The mount path is immutable after creation; choose a
 new bucket if an app needs a different public path. Public reads still pass
 through the configured object-storage accounting policy, and successful bytes
 are recorded in the per-bucket request ledger; provider-authoritative egress
@@ -809,6 +828,22 @@ without changing the safety policy:
   "egress_millicents_per_gib": 90000
 }
 ```
+
+The published rate card is ADR-1430's: storage at $0.03 per GiB-month
+(`storage_millicents_per_gib_month: 3000`, `api.ObjectStorageMillicentsPerGiBMonth`)
+beyond each plan's included storage, with request and egress prices at zero.
+[`docs/plans.md`](plans.md) lists the included storage per plan.
+
+`gateway_safety_v1` has no provider usage reports, so Gregale meters stored
+bytes itself: every minute apid accrues each bucket's last inventoried bytes
+into stored byte-hours per UTC month
+([ADR 20261024132844](adr/20261024132844-gateway-metered-object-storage-billing.md)).
+This mode accepts only a storage-only rate card (request and egress prices
+zero), because it does not meter provider-side requests or egress. Month close
+bills a metered month once every metered bucket is accrued to the end of the
+month or to its deletion. Storage is never billed for time Gregale did not
+meter: a bucket starts accruing at its first accrual, and a month cannot mix
+metered rows with provider reports.
 
 `GET /v1/account/object-storage-usage` then includes `charges` with the
 storage, request, egress and total estimate for the current UTC month, plus

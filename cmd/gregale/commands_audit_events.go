@@ -71,9 +71,7 @@ func cmdAuditEvents(args []string) int {
 		return cmdAuditEventsGet(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown audit-events subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "audit-events", parent, args[0])
 }
 
 // cmdAuditEventsList implements `gregale audit-events list

@@ -455,7 +455,7 @@ func TestMemStore_AbortedCanaryIsNotAnImplicitRollbackTarget(t *testing.T) {
 	if _, _, err := m.RecoverRolloutForDeployment(ctx, app.ID, candidate.ID, stable.ID, "abort", "circuit breaker: 5xx error rate regression"); err != nil {
 		t.Fatalf("RecoverRolloutForDeployment: %v", err)
 	}
-	if target, err := m.LatestSupersededDeployment(ctx, app.ID); err == nil && target.ID == candidate.ID {
+	if target, err := m.LatestSupersededDeployment(ctx, app.ID, DefaultEnvScope); err == nil && target.ID == candidate.ID {
 		t.Fatalf("aborted canary %s offered as the rollback target", candidate.ID)
 	}
 }

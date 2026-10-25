@@ -15,7 +15,7 @@
 #
 # The two-drive scheme still amortizes this base across every python313 app on
 # the box — per-app cost is just the customer's site-packages + handler.
-FROM cgr.dev/chainguard/wolfi-base:latest@sha256:918a593b8268c222afd4e2c4f06860ac984e60719b4697e4c71d796bc8fcd042
+FROM cgr.dev/chainguard/wolfi-base:latest@sha256:340abe305ba813e2b6198a6d455e2063a53311f2e249d396e14c007caa5f53ac
 # Issue #197 B3.6 (extension): mutable tag pinned via images/Dockerfile.lock.
 RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt apk add --no-cache bash ca-certificates python-3.13 && \
     mkdir -p /usr/local/bin && \
@@ -35,6 +35,8 @@ RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt ch
       --target /opt/gregale/profiling/python -r /opt/gregale/profiling/requirements.txt && \
     apk del .profiling-build
 COPY --chmod=0644 guest/profiling/python/sitecustomize.py /opt/gregale/profiling/python/sitecustomize.py
+COPY --chmod=0644 guest/profiling/python/_gregale_heap.py /opt/gregale/profiling/python/_gregale_heap.py
+COPY --chmod=0644 guest/profiling/python/_gregale_stacks.py /opt/gregale/profiling/python/_gregale_stacks.py
 COPY --chmod=0644 guest/tracing/python/requirements.txt /opt/gregale/tracing/requirements.txt
 RUN --mount=type=secret,id=proxy_ca,target=/etc/ssl/certs/ca-certificates.crt mkdir -p /opt/gregale/tracing/python/lib && \
     chmod 0755 /opt/gregale/tracing /opt/gregale/tracing/python /opt/gregale/tracing/python/lib && \

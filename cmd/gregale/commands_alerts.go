@@ -73,9 +73,7 @@ func cmdAlerts(args []string) int {
 		return cmdAlertsPreset(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown alerts subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "alerts", parent, args[0])
 }
 
 // cmdAlertList mirrors cmdWebhookList. The SDK returns a flat slice;
@@ -132,6 +130,8 @@ func cmdAlertAdd(args []string) int {
 	customMetric := fs.String("custom-metric", "", "pushed custom metric name — required iff --metric=custom_metric")
 	sloID := fs.String("slo", "", "SLO id — required iff --metric is slo_budget_burn or slo_budget_remaining_pct")
 	syntheticCheck := fs.String("synthetic-check", "", "synthetic check id — required iff --metric is synthetic_check_*")
+	logQuery := fs.String("log-query", "", "log search filters, e.g. 'level=error&q=timeout' — with --metric log_search_matches")
+	savedSearch := fs.String("saved-search", "", "copy a saved log search's filters — with --metric log_search_matches")
 	action := fs.String(flagNameAction, "", "action (webhook|rollback|demote|promote; defaults to webhook)")
 	webhookURL := fs.String("webhook-url", "", "webhook URL (http(s)://...; https recommended); optional with --channel")
 	var channels stringListFlag
@@ -165,6 +165,9 @@ func cmdAlertAdd(args []string) int {
 	if api.IsSyntheticCheckAlertMetric(*metric) != (*syntheticCheck != "") {
 		return printErr("Invalid synthetic-check", fmt.Errorf("--synthetic-check is required with --metric synthetic_check_* and not allowed otherwise"))
 	}
+	if (*metric == api.AlertRuleMetricLogSearchMatches) != (*logQuery != "" || *savedSearch != "") || *logQuery != "" && *savedSearch != "" {
+		return printErr("Invalid log search", fmt.Errorf("--metric log_search_matches takes exactly one of --log-query or --saved-search; other metrics take neither"))
+	}
 	windowSeconds, err := alertRollbackWindowSeconds(*postWindow)
 	if err != nil || windowSeconds > 0 && *action != "rollback" {
 		return printErr("Invalid post-deploy rollback window", fmt.Errorf("requires action=rollback and a whole-second duration from 0 to 1h"))
@@ -179,6 +182,10 @@ func cmdAlertAdd(args []string) int {
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
+	query, err := alertLogQuery(client, *slug, *logQuery, *savedSearch)
+	if err != nil {
+		return printErr("Saved log search unavailable", err)
+	}
 	resp, err := client.CreateAlertRule(context.Background(), *slug, api.CreateAlertRuleRequest{
 		MCPReadinessScope: *readinessScope, Name: *name,
 		Enabled:                         enabled,
@@ -191,6 +198,7 @@ func cmdAlertAdd(args []string) int {
 		FailureSource:                   *failureSource,
 		ChannelIDs:                      channels,
 		CustomMetricName:                *customMetric,
+		LogQuery:                        query,
 		SLOID:                           *sloID,
 		SyntheticCheckID:                *syntheticCheck,
 		Action:                          ptrIfNonEmpty(*action),
@@ -224,6 +232,30 @@ func requireAlertCreateFlags(slug, name, metric, comparison, windowSpec, webhook
 	}
 	if *slug == "" || *name == "" || *metric == "" || *comparison == "" ||
 		*windowSpec == "" || webhookMissing || math.IsNaN(*threshold) {
+		// The compacted usage line ends in "[flags]" and no longer shows the
+		// webhook secret rule, so say what is missing (Hunt 14 H14-8).
+		var missing []string
+		for _, f := range []struct {
+			flag  string
+			unset bool
+		}{
+			{"--app", *slug == ""}, {"--name", *name == ""}, {"--metric", *metric == ""},
+			{"--comparison", *comparison == ""}, {"--threshold", math.IsNaN(*threshold)}, {"--window-spec", *windowSpec == ""},
+		} {
+			if f.unset {
+				missing = append(missing, f.flag)
+			}
+		}
+		switch {
+		case !webhookMissing:
+		case *webhookURL != "" && *webhookSecret == "":
+			missing = append(missing, "--webhook-secret or --webhook-secret-stdin (required with --webhook-url)")
+		case *webhookSecret != "" && *webhookURL == "":
+			missing = append(missing, "--webhook-url (required with a webhook secret)")
+		default:
+			missing = append(missing, "--webhook-url with --webhook-secret, or --channel")
+		}
+		_, _ = fmt.Fprintf(os.Stderr, "missing: %s\n", strings.Join(missing, ", "))
 		PrintUsage(os.Stderr, "usage: gregale alerts add --app <slug> --name <text> --metric <v> --comparison <op> --threshold <num> --window-spec <w> (--webhook-url <url> (--webhook-secret-stdin|--webhook-secret <s>) | --channel <id>...) [--failure-source <s>] [--action <webhook|rollback|demote|promote>] [--cooldown-minutes N] [--enabled=false]", "alerts")
 		return 1, false
 	}
@@ -313,6 +345,9 @@ func cmdAlertInfo(args []string) int {
 	}
 	if resp.CustomMetricName != "" {
 		_, _ = fmt.Fprintf(osStdout, "custom_metric: %s\n", resp.CustomMetricName)
+	}
+	if resp.LogQuery != "" {
+		_, _ = fmt.Fprintf(osStdout, "log_query:    %s\n", resp.LogQuery)
 	}
 	if resp.SLOID != "" {
 		_, _ = fmt.Fprintf(osStdout, "slo:          %s\n", resp.SLOID)
@@ -615,11 +650,13 @@ func resolveAlertSecret(secret *string, fromStdin bool) error {
 func cmdAlertRm(args []string) int {
 	fs := newFlagSet("alerts rm", flag.ContinueOnError)
 	slug := fs.String("app", "", "app slug (required)")
-	if err := fs.Parse(args); err != nil {
+	// rm never prompts; --yes is accepted like webhooks rm (Hunt 12 H12-37).
+	fs.Bool("yes", false, "accepted for consistency; rm does not prompt")
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
 	if *slug == "" || fs.NArg() != 1 {
-		PrintUsage(os.Stderr, "usage: gregale alerts rm --app <slug> <alert-id>", "alerts")
+		PrintUsage(os.Stderr, "usage: gregale alerts rm --app <slug> <alert-id> [--yes]", "alerts")
 		return 1
 	}
 	id := fs.Arg(0)
@@ -730,4 +767,22 @@ func alertRollbackWindowSeconds(d time.Duration) (int, error) {
 		return 0, fmt.Errorf("window must be a whole-second duration from 0 to 1h")
 	}
 	return int(d / time.Second), nil
+}
+
+// alertLogQuery is the rule's log_query: the explicit filters, or a copy of a
+// saved search's filters (the rule keeps its copy if the search changes).
+func alertLogQuery(client *Client, slug, query, saved string) (string, error) {
+	if saved == "" {
+		return query, nil
+	}
+	list, err := client.ListAppLogSavedSearches(context.Background(), slug)
+	if err != nil {
+		return "", err
+	}
+	for _, search := range list.Searches {
+		if search.Name == saved {
+			return search.Query, nil
+		}
+	}
+	return "", fmt.Errorf("%s has no saved log search named %s (see gregale logs saved %s)", slug, saved, slug)
 }

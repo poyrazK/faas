@@ -2,6 +2,7 @@
 /* istanbul ignore file */
 /* tslint:disable */
 /* eslint-disable */
+import type { OutboundAIOnlineEvaluation } from './OutboundAIOnlineEvaluation.js';
 /**
  * Replace an integration's AI gateway settings. An empty ai_provider turns AI handling off and requires a null daily_token_limit.
  */
@@ -31,6 +32,18 @@ export type PutOutboundAIPolicyRequest = {
    */
   auto_prompt_cache?: boolean;
   /**
+   * Refuse a trace's call once the trace made this many calls, settled and in flight, with 429 outbound_budget_exhausted and X-Gregale-Outbound-Rejection trace_call_limit (ADR 20261020202035). Requires ai_provider.
+   */
+  trace_max_calls?: number;
+  /**
+   * Refuse a trace's call that would take the trace's cost past this, with trace_cost_limit (ADR 20261020202035). Requires ai_provider.
+   */
+  trace_max_cost_millicents?: number;
+  /**
+   * Refuse a trace's call once this many consecutive calls requested the same tools with the same arguments, with trace_tool_loop: the agent is looping (ADR 20261020202035). Requires ai_provider.
+   */
+  trace_max_repeated_tool_calls?: number;
+  /**
    * Per-end-user UTC-day token limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
    */
   user_daily_token_limit?: number | null;
@@ -38,5 +51,13 @@ export type PutOutboundAIPolicyRequest = {
    * Per-end-user UTC-day cost limit for calls that send X-Gregale-AI-User (ADR-994). Requires ai_provider.
    */
   user_daily_cost_limit_millicents?: number | null;
+  /**
+   * Score a sample of answered app calls with a judge model (ADR 20261021171712). Requires ai_provider and request_log_content.
+   */
+  online_evaluation?: OutboundAIOnlineEvaluation;
+  /**
+   * Alert bound apps with outbound.ai_quality.drift when a model's quality signals move away from its previous 7 days (ADR 20261021171712). Requires ai_provider.
+   */
+  quality_alerts?: boolean;
 };
 

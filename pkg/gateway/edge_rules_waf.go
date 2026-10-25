@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/platformflags"
 )
 
 // EdgeRuleWAFResolved is the compiled kind=waf matcher payload (ADR-831
@@ -102,7 +103,19 @@ type WAFInlineResult struct {
 	Categories []string
 	Score      int
 	Seconds    float64
+	// SkipReason says why a WAFInlineSkipped check did not run.
+	SkipReason string
 }
+
+// Why an in-path check was skipped (gateway_waf_inline_skips_total, ADR-831
+// amendment 12).
+const (
+	// WAFInlineSkipBudget: the app had used its inline budget.
+	WAFInlineSkipBudget = "budget"
+	// WAFInlineSkipBusy: every check slot on the node stayed busy through
+	// the slot wait.
+	WAFInlineSkipBusy = "busy"
+)
 
 // WAFInlineChecker scores a sample's headers and URI on the request
 // goroutine for warn and block rules. It must return promptly: a check it
@@ -130,19 +143,21 @@ func (h *Handler) WithWAFInlineChecker(checker WAFInlineChecker) *Handler {
 // passes. Otherwise, and for observe rules, the body prefix is recorded as
 // later stages read it, and the returned func submits the sample off-path
 // once the request is finished (ServeHTTP defers it). Bodies are never
-// blocked.
+// blocked. For an account the edge_waf_blocking platform flag leaves out,
+// warn and block rules are inspected as observe (ADR-20261023113721).
 func (h *Handler) applyEdgeRuleWAF(w http.ResponseWriter, r *http.Request, app App, rec *statusRecorder) (handled bool, submit func()) {
 	rule := h.matchEdgeRuleWAF(r, app)
 	if rule == nil {
 		return false, nil
 	}
 	sample := newWAFSample(r, app, rule)
-	if rule.Mode == api.EdgeWAFModeWarn || rule.Mode == api.EdgeWAFModeBlock {
+	if (rule.Mode == api.EdgeWAFModeWarn || rule.Mode == api.EdgeWAFModeBlock) && h.edgeFeatureReleased(platformflags.EdgeWAFBlocking, app) {
 		outcome := h.checkEdgeRuleWAFInline(rule, sample)
 		if outcome == WAFInlineDetected {
 			if rule.Mode == api.EdgeWAFModeBlock {
 				api.WriteProblem(w, api.NewProblem(http.StatusForbidden, api.CodeForbidden, "Request blocked",
 					"blocked by edge rule "+rule.ID+" (kind=waf)"))
+				h.penalizeEdgeRuleRejection(r, app, rule.ID)
 				return true, nil
 			}
 			// The header names the edge rule, not the CRS rule, so the
@@ -234,6 +249,9 @@ func (h *Handler) checkEdgeRuleWAFInline(rule *EdgeRuleWAFResolved, sample WAFSa
 		h.recordWAFEvent(sample, event, res)
 	}
 	h.metrics.ObserveWAFInline(sample.AppID, outcome, res.Seconds)
+	if res.Outcome == WAFInlineSkipped {
+		h.metrics.ObserveWAFInlineSkip(sample.AppID, res.SkipReason)
+	}
 	return res.Outcome
 }
 

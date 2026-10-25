@@ -4,7 +4,7 @@ import uuid
 
 import httpx
 
-from faas_sdk.api.workflows import create_workflow_run, list_workflow_runs
+from faas_sdk.preview.api.workflows import create_workflow_run, list_workflow_runs
 from faas_sdk.client import AuthenticatedClient
 
 

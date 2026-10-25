@@ -1043,6 +1043,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Mailer:                      mailer,
 		Notif:                       pn,
 		Log:                         log,
+		Registerer:                  ops.Registry(),
 	})
 
 	// Per-daemon Prometheus registry (ADR-015) — built unconditionally
@@ -1177,6 +1178,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	evaluator := buildAlertEvaluatorWithPromQL(deps, store, log, ops, promClient)
 	// ADR-749: deliver alerts to Slack, PagerDuty and email channels.
 	evaluator.SetChannels(newAlertChannelSender(mailer), newAlertChannelCounter(ops.Registry()))
+	// ADR-20261022172052: firing app alerts carry what the log ledger shows.
+	evaluator.SetLogContext(deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1")
 	// ADR-747: record customer SLO budget hours from Prometheus.
 	go runSLORollup(ctx, store, promClient, log)
 	// ADR-098 PR-C: connection-aware upstream probe + partition
@@ -1288,6 +1291,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-049 §B.4: 13-month retention DELETE cron. The pool
 	// satisfies the retentionExecer contract.
 	go meter.RetentionLoop(ctx, poolAdapter{pool}, mc.RetentionInterval, log)
+	// ADR-20261023171905: the quiet pause ledger keeps
+	// api.QuietPauseLedgerRetentionDays.
+	go meter.QuietPauseRetentionLoop(ctx, store, mc.RetentionInterval, log)
 	// ADR-371: egress flow log rows are kept api.EgressFlowLogRetentionDays.
 	go meter.RetentionLoopEgressFlowLog(ctx, poolAdapter{pool}, time.Hour, log)
 

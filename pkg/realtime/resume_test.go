@@ -114,7 +114,7 @@ func newResumeTestManagerWithReporter(t *testing.T, history *testResumeHistory, 
 		HistoryReader: history, ResumePollInterval: 15 * time.Millisecond,
 		ChannelRouteReporter: reporter,
 	}, hooks)
-	if err := m.RegisterEndpoint(Endpoint{
+	if err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: AuthPolicy{
@@ -136,7 +136,7 @@ func newSyntheticResumeTestManager(t *testing.T, history *testResumeHistory, hoo
 		HistoryReader: history, ResumePollInterval: 15 * time.Millisecond,
 		ChannelRouteReporter: reporter,
 	}, hooks)
-	if err := m.RegisterEndpoint(Endpoint{
+	if err := m.RegisterEndpoint(Endpoint{Preview: true,
 		ID: "resume-endpoint", AppID: "app-1", AccountID: "acct-1", CallbackURL: "https://app.example",
 		AllowedOrigins: []string{"https://app.example"},
 		ClientAuth: AuthPolicy{
@@ -482,13 +482,20 @@ func TestResumeHandshakeRequiresPreviewAndOIDC(t *testing.T) {
 		status   int
 	}{
 		{
-			name: "preview disabled", endpoint: Endpoint{ID: "resume-endpoint", ClientAuth: AuthPolicy{
+			name: "preview disabled", endpoint: Endpoint{Preview: true, ID: "resume-endpoint", ClientAuth: AuthPolicy{
 				Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
 				JWKSURL: "https://issuer.example/jwks", Algorithms: []string{"RS256"},
 			}}, status: http.StatusServiceUnavailable,
 		},
 		{
-			name: "shared bearer", preview: true, endpoint: Endpoint{
+			// adr: 20261019102657 — the node flag alone is not enough.
+			name: "endpoint outside the preview rollout", preview: true, endpoint: Endpoint{ID: "resume-endpoint", ClientAuth: AuthPolicy{
+				Mode: AuthModeOIDCJWT, Issuer: "https://issuer.example",
+				JWKSURL: "https://issuer.example/jwks", Algorithms: []string{"RS256"},
+			}}, status: http.StatusServiceUnavailable,
+		},
+		{
+			name: "shared bearer", preview: true, endpoint: Endpoint{Preview: true,
 				ID: "resume-endpoint", AuthToken: "shared-token", ClientAuth: AuthPolicy{Mode: AuthModeStaticBearer},
 			}, status: http.StatusForbidden,
 		},

@@ -109,6 +109,11 @@ func cmdAccountDelete(args []string) int {
 	quiet := fs.Bool("q", false, "suppress confirmation prompt")
 	fs.BoolVar(quiet, "quiet", false, "confirm deletion without prompting")
 	fs.BoolVar(quiet, "yes", false, "confirm deletion without prompting")
+	// ADR-20261024150500 dark launch: a hidden flag. It parses, but stays out
+	// of help, completions, man pages and the generated reference until
+	// FAAS_ACCOUNT_DELETION_MANAGED_POSTGRES_ACCOUNTS admits every account;
+	// apid ignores it for an unlisted account.
+	includeDatabases := fs.Bool("include-postgres-databases", false, "also delete your managed PostgreSQL databases when the grace period ends")
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
@@ -126,6 +131,9 @@ func cmdAccountDelete(args []string) int {
 		fmt.Fprintf(os.Stderr,
 			"This will schedule your account for permanent deletion in 30 days. "+
 				"You can cancel with `gregale account restore` before the deadline.\n")
+		if *includeDatabases {
+			fmt.Fprintf(os.Stderr, "Your managed PostgreSQL databases will be deleted with the account when the 30 days end.\n")
+		}
 		if !requireTyped("delete my account") {
 			return 1
 		}
@@ -136,7 +144,11 @@ func cmdAccountDelete(args []string) int {
 	nonce := make([]byte, 16)
 	_, _ = rand.Read(nonce)
 	key := "cli-delete-" + hex.EncodeToString(nonce)
-	resp, err := client.DeleteAccount(context.Background(), key)
+	deleteAccount := client.DeleteAccount
+	if *includeDatabases {
+		deleteAccount = client.DeleteAccountIncludingManagedPostgres
+	}
+	resp, err := deleteAccount(context.Background(), key)
 	if err != nil {
 		return printErr("Could not delete account", err)
 	}

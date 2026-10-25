@@ -130,9 +130,17 @@ Do **not** publish as `faas-sdk` or `faas_sdk`. That name resolves to Sonra
 Intelligence Ltd's package and shipping under it would be a supply-chain
 confusion hazard for customers.
 
+#4262 (2026-10-06) put the distribution name back to `faas_sdk`, and the
+customer docs then told users to `pip install 'faas_sdk[auth]'`, which
+installs Sonra's package (Hunt 13 H13-4). `tests/test_packaging.py` now pins
+`gregale-sdk`. Until `gregale-sdk` is registered on PyPI, anyone can claim
+that name too, so customer docs install only from the repository
+([docs/sdks.md](../docs/sdks.md)), never by bare name.
+
 ## Local install (works today, no registry)
 
-The paths customers can use right now are documented in each SDK's README:
+The customer-facing install page is [docs/sdks.md](../docs/sdks.md). The
+paths customers can use right now:
 
 - Node — `npm pack` a tarball, then `npm install /path/to/tarball.tgz`
 - Python — `poetry build -f wheel`, then `pip install dist/*.whl`

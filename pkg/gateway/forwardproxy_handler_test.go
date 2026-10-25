@@ -221,6 +221,9 @@ func (s *stubVmmdClient) StopInstance(context.Context, *vmmdpb.StopInstanceReque
 func (s *stubVmmdClient) Stats(context.Context, *vmmdpb.StatsRequest, ...grpc.CallOption) (*vmmdpb.StatsResponse, error) {
 	return &vmmdpb.StatsResponse{}, nil
 }
+func (s *stubVmmdClient) CaptureProfile(context.Context, *vmmdpb.CaptureProfileRequest, ...grpc.CallOption) (*vmmdpb.CaptureProfileResponse, error) {
+	return &vmmdpb.CaptureProfileResponse{}, nil
+}
 func (s *stubVmmdClient) Heartbeat(context.Context, *vmmdpb.HeartbeatRequest, ...grpc.CallOption) (*vmmdpb.HeartbeatResponse, error) {
 	return &vmmdpb.HeartbeatResponse{}, nil
 }

@@ -70,12 +70,13 @@ const invalidOpenAPIDoc = `"just a string, not a doc"`
 func seedApp(t *testing.T, e testEnv, slug string) state.App {
 	t.Helper()
 	app, err := e.store.CreateApp(context.Background(), state.App{
-		AccountID: e.acct.ID,
-		Slug:      slug,
-		Type:      state.AppTypeFunction,
-		Runtime:   "node22",
-		RAMMB:     256,
-		CreatedAt: time.Now(),
+		AccountID:      e.acct.ID,
+		Slug:           slug,
+		Type:           state.AppTypeFunction,
+		Runtime:        "node22",
+		RAMMB:          256,
+		MaxConcurrency: 1,
+		CreatedAt:      time.Now(),
 	})
 	if err != nil {
 		t.Fatalf("CreateApp(%q): %v", slug, err)

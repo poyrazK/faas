@@ -22,6 +22,12 @@ func confirmProjectPlan(plan api.PlanResponse, excludeList []string, showAffecte
 		return printErr("Project plan cannot be applied", planBlockedError(plan))
 	}
 	if yes {
+		// --yes skips the reviewed plan, but missing configuration must
+		// still be visible before the apps start.
+		if !jsonOutput {
+			printPublicURLs(osStdout, plan.Workloads)
+			printUnsetEnvKeys(osStdout, plan.Workloads)
+		}
 		return 0
 	}
 	if code := requireAutomationConfirmation(false, "--yes"); code != 0 {
