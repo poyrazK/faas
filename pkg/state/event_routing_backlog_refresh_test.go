@@ -7,15 +7,44 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/onebox-faas/faas/migrations"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
 const routingBacklogColumns = `outbox_id,subscription_id,account_id,app_id,accepted_at,routing_mode,routing_state,capacity_scope,
 attempts,capacity_deferrals,next_attempt_at,lease_until,consumer_kind,origin,workflow_name`
+
+// unwindEventBacklogProjection rolls the projection back past its consumer
+// origins (20261008075254103) for tests that replay older migrations, newest
+// first; restore re-applies both in order.
+func unwindEventBacklogProjection(t *testing.T, ctx context.Context, pool *pgxpool.Pool) (restore func()) {
+	t.Helper()
+	var ups []string
+	for _, name := range []string{"20261024232808115_event_routing_backlog_refresh_filters.sql", "20261008075254103_event_backlog_consumer_origins.sql"} {
+		raw, err := migrations.FS.ReadFile(name)
+		if err != nil {
+			t.Fatal(err)
+		}
+		parts := strings.SplitN(string(raw), "-- +goose Down", 2)
+		if _, err := pool.Exec(ctx, parts[1]); err != nil {
+			t.Fatalf("unwind %s: %v", name, err)
+		}
+		ups = append([]string{parts[0]}, ups...)
+	}
+	return func() {
+		t.Helper()
+		for _, up := range ups {
+			if _, err := pool.Exec(ctx, up); err != nil {
+				t.Fatalf("restore projection: %v", err)
+			}
+		}
+	}
+}
 
 // requireRoutingBacklogMatchesSource fails when the projection differs from
 // its source view in any row or column.
@@ -35,7 +64,7 @@ func requireRoutingBacklogMatchesSource(t *testing.T, ctx context.Context, pool 
 	}
 }
 
-// The projection refreshes at commit once per key (ADR-617 amendment
+// The projection skips refreshes that cannot change it (ADR-617 amendment
 // 2026-10-25); after each step of a receipt's routing it must equal the view.
 func TestPgEventRoutingBacklogMatchesSourceThroughRouting(t *testing.T) {
 	store, pool, _ := pgStoreWithPool(t)
@@ -72,9 +101,11 @@ func TestPgEventRoutingBacklogMatchesSourceThroughRouting(t *testing.T) {
 	requireRoutingBacklogMatchesSource(t, ctx, pool, "receipt deleted")
 }
 
-// Deferred triggers can fire early, at SET CONSTRAINTS ... IMMEDIATE; a key
-// refreshed then must refresh again for a change made after.
-func TestPgEventRoutingBacklogRefreshesAgainAfterEarlyFiring(t *testing.T) {
+// Several changes in one transaction leave the projection equal to the view,
+// and the triggers stay immediate: a migration or repair may change these rows
+// and then alter the tables in the same transaction, which pending deferred
+// trigger events would refuse (SQLSTATE 55006).
+func TestPgEventRoutingBacklogWithinOneTransaction(t *testing.T) {
 	store, pool, _ := pgStoreWithPool(t)
 	ctx, _, _, work := seedRecipientClaims(t, store)
 	if err := store.InitializePublishedEventRecipients(ctx, work, time.Now()); err != nil {
@@ -88,8 +119,9 @@ func TestPgEventRoutingBacklogRefreshesAgainAfterEarlyFiring(t *testing.T) {
 	recipients := `UPDATE event_fanout_recipients SET %s WHERE outbox_id=` + strconv.FormatInt(work.ID, 10)
 	for _, stmt := range []string{
 		fmt.Sprintf(recipients, `capacity_deferrals=capacity_deferrals+1`),
-		`SET CONSTRAINTS ALL IMMEDIATE`,
-		`SET CONSTRAINTS ALL DEFERRED`,
+		`UPDATE event_fanout_outbox SET available_at=available_at+interval '1 minute' WHERE id=` + strconv.FormatInt(work.ID, 10),
+		`CREATE INDEX routing_backlog_test_ddl ON event_fanout_recipients (delivery_deadline_at)`,
+		`DROP INDEX routing_backlog_test_ddl`,
 		fmt.Sprintf(recipients, `capacity_deferrals=capacity_deferrals+1, available_at=available_at+interval '1 minute'`),
 		`SAVEPOINT undone`,
 		fmt.Sprintf(recipients, `capacity_deferrals=capacity_deferrals+5`),
@@ -102,7 +134,7 @@ func TestPgEventRoutingBacklogRefreshesAgainAfterEarlyFiring(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	requireRoutingBacklogMatchesSource(t, ctx, pool, "early firing, later change and rolled back savepoint")
+	requireRoutingBacklogMatchesSource(t, ctx, pool, "changes, DDL and a rolled back savepoint in one transaction")
 }
 
 // With recipient claims an outbox move skips recipients that have their own
@@ -118,6 +150,10 @@ func TestPgEventRoutingBacklogRecipientModeOutboxMoves(t *testing.T) {
 		{"recipient row removed", `DELETE FROM event_fanout_recipients WHERE outbox_id=$1 AND subscription_id=(SELECT min(subscription_id) FROM event_fanout_recipients WHERE outbox_id=$1)`},
 		{"outbox moved", `UPDATE event_fanout_outbox SET available_at=available_at+interval '1 hour' WHERE id=$1`},
 		{"unread recipient columns", `UPDATE event_fanout_recipients SET generation=generation+1, delivery_deadline_at=now()+interval '1 day' WHERE outbox_id=$1`},
+		// Each column the view reads, alone.
+		{"recipient deferrals", `UPDATE event_fanout_recipients SET capacity_deferrals=capacity_deferrals+2 WHERE outbox_id=$1`},
+		{"recipient total attempts", `UPDATE event_fanout_recipients SET total_attempts=total_attempts+1 WHERE outbox_id=$1`},
+		{"recipient availability", `UPDATE event_fanout_recipients SET available_at=available_at+interval '2 hours' WHERE outbox_id=$1`},
 		{"progress for one subscriber", `UPDATE event_fanout_outbox SET recipient_progress=jsonb_set(recipient_progress, ARRAY[(SELECT max(subscription_id) FROM event_fanout_recipients WHERE outbox_id=$1)], '{"state":"pending","capacity_scope":"app","capacity_deferrals":3}'::jsonb, true) WHERE id=$1`},
 	} {
 		if _, err := pool.Exec(ctx, step.sql, work.ID); err != nil {
