@@ -678,6 +678,21 @@ groups:
           summary: "A non-active account retained live compute"
           description: "Schedd found and repaired a live or waking instance owned by a suspended or deletion-pending account. Verify all scheduler admission producers enforce Account.Active and confirm no additional instances remain resident."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasInactiveAccountHasLiveInstance.md"
+      # meterd sets this gauge once per hourly dunning sweep and holds it until
+      # the next sweep, so one blocked sweep already reads > 0 for an hour.
+      # Two hours means the block outlived at least two consecutive sweeps.
+      - alert: FaasDunningDeletionBlocked
+        expr: max by (reason) (meterd_dunning_deletion_blocked_accounts) > 0
+        for: 2h
+        labels:
+          severity: warn
+          component: meterd
+          family: account_lifecycle
+          public_status: internal
+        annotations:
+          summary: "Non-payment deletion is blocked for suspended accounts ({{ $labels.reason }})"
+          description: "The dunning sweep cannot move suspended accounts past the non-payment deadline to deleted_pending because a deletion guard holds (managed_postgres_databases: the account still owns live managed PostgreSQL databases; shared_app_ownership: company apps still reference it). The accounts stay suspended, their provider databases keep running and erasure does not start. meterd logs each one as 'meter: non-payment deletion blocked'."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDunningDeletionBlocked.md"
 
   - name: postgres_capacity
     interval: 30s
@@ -6108,7 +6123,7 @@ groups:
           family: retry_safety
         annotations:
           summary: "Gateway retry budgets use mixed local and shared modes"
-          description: "At least one gateway uses a process-local allowance while another uses Redis. Check the fleet Vault variable and restart all gatewayd-internal units before claiming a fleet-wide retry cap."
+          description: "At least one gateway uses a process-local allowance while another uses a shared backend. Check ratelimit.mode and any Redis override before claiming a fleet-wide retry cap."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSharedRetryBudget.md"
 
       - alert: FaasRetryBudgetBackendErrors
@@ -6119,8 +6134,8 @@ groups:
           component: gatewayd-internal
           family: retry_safety
         annotations:
-          summary: "Shared retry budget Redis operations are failing"
-          description: "Gateway retries are being denied because Redis observations or admissions failed. Check Redis availability, TLS, credentials, and private transport. Original requests continue."
+          summary: "Shared retry budget operations are failing"
+          description: "Gateway retries are being denied because shared observations or admissions failed. Check Postgres or the configured Redis backend. Original requests run only when their independent admission checks succeed."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSharedRetryBudget.md"
 
       - alert: FaasRetryBudgetBackendMismatch
@@ -6132,7 +6147,7 @@ groups:
           family: retry_safety
         annotations:
           summary: "Gateways point at different shared retry budget endpoints"
-          description: "Redis-backed gateways report more than one endpoint identity. Check that one common fleet Vault URL reaches every gateway before relying on the aggregate retry cap."
+          description: "Gateways report more than one shared backend identity. Check that all gateways select the same Postgres database or common Redis override before relying on the aggregate retry cap."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasSharedRetryBudget.md"
 
       - alert: FaasRetryAmplificationHigh
@@ -6425,6 +6440,186 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasCrashSnapshots.md"
 
   # ─────────────────────────────────────────────────────────────────
+  # Edge security features (ADR-20261024082000 amendment 1, criterion
+  # C3): the failure modes of WAF warn/block, the browser challenge,
+  # shared penalty boxes, AI crawler range refresh and attack mode.
+  # Every feature fails open or stays inert, so none pages; each runbook
+  # names the platform flag that withdraws the feature.
+  # ─────────────────────────────────────────────────────────────────
+  - name: faas_edge_security
+    rules:
+      # ADR-831 amendment 12: a check that finds no free slot within 1 ms
+      # is skipped and its request passes unchecked. Criterion W2 allows
+      # 0.1%; budget skips are one app's flood and are not counted here.
+      - alert: FaasEdgeWAFChecksSkipped
+        expr: |
+          (
+            sum by (instance) (rate(gateway_waf_inline_skips_total{reason="busy"}[10m]))
+              / sum by (instance) (rate(gateway_waf_inline_checks_total[10m]))
+          ) > 0.001
+          and sum by (instance) (rate(gateway_waf_inline_checks_total[10m])) > 1
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} is skipping more than 0.1% of in-path WAF checks for lack of a check slot"
+          description: "gateway_waf_inline_skips_total{reason=\"busy\"} is above 0.1% of in-path checks on {{ $labels.instance }} for 15m. Skipped requests pass without the WAF's verdict (it fails open); the node is short of CPU for its check load."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeWAFInline.md"
+      - alert: FaasEdgeWAFCheckSlow
+        expr: |
+          histogram_quantile(0.95, sum by (instance, le) (rate(gateway_waf_inline_seconds_bucket[10m]))) > 0.002
+          and sum by (instance) (rate(gateway_waf_inline_seconds_count[10m])) > 1
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "In-path WAF checks on {{ $labels.instance }} add more than 2 ms at p95"
+          description: "The p95 of gateway_waf_inline_seconds on {{ $labels.instance }} has been above 2 ms (criterion W1) for 15m. Every request matched by a warn or block rule pays this latency."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeWAFInline.md"
+      - alert: FaasEdgeWAFCheckErrors
+        expr: sum by (instance) (rate(gateway_waf_inline_checks_total{outcome="error"}[10m])) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "In-path WAF checks are failing on {{ $labels.instance }}"
+          description: "gateway_waf_inline_checks_total{outcome=\"error\"} has kept rising on {{ $labels.instance }} for 10m. A failed check lets its request through, so warn and block rules are not protecting those requests."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeWAFInline.md"
+      # Criterion H5 wants 90% of challenge pages solved over 14 days;
+      # below half for an hour across the fleet means browsers cannot
+      # solve the page, not that bots are being turned away.
+      - alert: FaasEdgeChallengeSolveRateLow
+        expr: |
+          (
+            sum(rate(gateway_edge_challenge_total{outcome="solved"}[1h]))
+              / sum(rate(gateway_edge_challenge_total{outcome="issued"}[1h]))
+          ) < 0.5
+          and sum(rate(gateway_edge_challenge_total{outcome="issued"}[1h])) > 0.05
+        for: 30m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "Fewer than half of the challenge pages served in the last hour were solved"
+          description: "gateway_edge_challenge_total solved/issued has been below 0.5 for 30m with at least 3 pages a minute. Either one app is being flooded by clients that never solve (expected) or browsers cannot solve the page (a regression)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeChallenge.md"
+      - alert: FaasEdgeChallengeSolutionsRefused
+        expr: |
+          (
+            sum by (instance) (rate(gateway_edge_challenge_total{outcome=~"invalid|expired"}[15m]))
+              / sum by (instance) (rate(gateway_edge_challenge_total{outcome=~"solved|invalid|expired"}[15m]))
+          ) > 0.5
+          and sum by (instance) (rate(gateway_edge_challenge_total{outcome=~"solved|invalid|expired"}[15m])) > 0.05
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} refuses most challenge solutions it receives"
+          description: "More than half of the challenge solutions {{ $labels.instance }} received in 15m were invalid or expired. If only this gateway does it, its challenge key or clock differs from the gateway that issued the pages; visitors are sent back to the challenge."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeChallenge.md"
+      # ADR-20261022105846 amendment 1: boxes are shared through Postgres.
+      - alert: FaasEdgePenaltyShareFailing
+        expr: sum by (instance, op) (rate(gateway_edge_penalty_share_total{outcome="error"}[5m])) > 0
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} cannot {{ $labels.op }} shared penalty boxes"
+          description: "gateway_edge_penalty_share_total{op=\"{{ $labels.op }}\",outcome=\"error\"} has kept rising for 10m. Boxes still hold on the gateway that made them, but not on the others or across a restart."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgePenaltyShare.md"
+      - alert: FaasEdgePenaltyShareDropped
+        expr: sum by (instance) (increase(gateway_edge_penalty_share_dropped_total[10m])) > 0
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} dropped penalty boxes at the share queue bound"
+          description: "gateway_edge_penalty_share_dropped_total rose on {{ $labels.instance }}: more than 10,000 boxes were waiting for a flush. Those boxes hold on this gateway only."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgePenaltyShare.md"
+      - alert: FaasEdgePenaltyShareSlow
+        expr: |
+          histogram_quantile(0.95, sum by (instance, le) (rate(gateway_edge_penalty_share_seconds_bucket{stage="propagated"}[15m]))) > 1
+          and sum by (instance) (rate(gateway_edge_penalty_share_seconds_count{stage="propagated"}[15m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "Penalty boxes take more than 1 s to reach {{ $labels.instance }}"
+          description: "The p95 of gateway_edge_penalty_share_seconds{stage=\"propagated\"} on {{ $labels.instance }} has been above 1 s (criterion P2) for 15m. The gateway is probably missing the edge_penalty_box notifications and reading boxes only on its 15 s repair tick."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgePenaltyShare.md"
+      # ADR-20261022083601: apid refreshes each crawler operator's
+      # published ranges every 12 h; gateways stop trusting them after
+      # 7 days. Three failed cycles leave days to fix the feed.
+      - alert: FaasEdgeCrawlerRangesStale
+        expr: |
+          (sum by (crawler) (increase(edge_crawler_ranges_refresh_total[36h])) > 0)
+          unless
+          (sum by (crawler) (increase(edge_crawler_ranges_refresh_total{outcome=~"ok|fresh"}[36h])) > 0)
+        for: 1h
+        labels:
+          severity: warn
+          component: apid
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "Published IP ranges for crawler {{ $labels.crawler }} have not refreshed in 36 h"
+          description: "Every edge_crawler_ranges_refresh_total attempt for {{ $labels.crawler }} in 36h failed. Gateways keep the last good ranges for 7 days, then stop verifying {{ $labels.crawler }}, so verified_ai_crawler rules stop matching it."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeCrawlerRangesStale.md"
+      # ADR-20261021220456: attack mode challenges every visitor to an
+      # app. While it is preview, each use is reviewed (criterion A3).
+      - alert: FaasEdgeAttackModeActive
+        expr: sum by (app) (rate(gateway_edge_attack_mode_total[5m])) > 0
+        for: 15m
+        labels:
+          severity: info
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "App {{ $labels.app }} is in attack mode"
+          description: "gateway_edge_attack_mode_total shows app {{ $labels.app }}'s attack mode deciding requests for 15m. While attack mode is preview, review each use: did it stop the flood, and did the app's own clients get through?"
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeAttackMode.md"
+      - alert: FaasEdgeAttackModeRefusingClients
+        expr: |
+          (
+            sum by (app) (rate(gateway_edge_attack_mode_total{outcome="rejected"}[15m]))
+              / sum by (app) (rate(gateway_edge_attack_mode_total[15m]))
+          ) > 0.5
+          and sum by (app) (rate(gateway_edge_attack_mode_total{outcome="rejected"}[15m])) > 1
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_security
+          public_status: internal
+        annotations:
+          summary: "Attack mode refuses most of app {{ $labels.app }}'s requests"
+          description: "More than half of the requests app {{ $labels.app }}'s attack mode decided in 15m were refused with 403 challenge_required (not browser navigations, no verified credential). Either a script flood is being turned away, or the app's own API clients are locked out."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeAttackMode.md"
+
+  # ─────────────────────────────────────────────────────────────────
   # Spec §12 operator signals (ADR-1235). These rows of the §12 table
   # promised alerts that no rule implemented. All ship as warn,
   # including the rows the spec marks page, until the paging set is
@@ -6652,6 +6847,89 @@ groups:
           summary: "{{ $labels.instance }} is routing from last-known-good routes"
           description: "Route lookups on {{ $labels.instance }} are erroring and the edge has served from its stale route tier for 5m. Routes change no faster than FAAS_GATEWAY_ROUTE_STALE_TTL allows; check Postgres reachability from this node."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteLookupStaleServed.md"
+      # ADR-20261024154324: the per-route series budget and apid's route
+      # workers (insights evaluator, production route monitor, automatic
+      # route checks).
+      - alert: GatewayRouteMetricsBudgetExhausted
+        expr: sum by (job, instance) (increase(gateway_route_metrics_rejected_total[15m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: route_metrics
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} has no room for more per-route series"
+          description: "{{ $labels.instance }} holds its full budget of live (app, route) pairs and has declined new ones for 15m, so some apps' route lists and throttle suggestions miss routes. Raise FAAS_GATEWAY_ROUTE_METRICS_MAX_ROUTES if Prometheus has headroom."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/GatewayRouteMetricsBudget.md"
+      - alert: FaasRouteInsightsStalled
+        expr: time() - max(max_over_time(apid_route_insights_last_success_timestamp_seconds[13h])) > 13 * 3600
+        for: 30m
+        labels:
+          severity: warn
+          component: apid
+          family: route_workers
+          public_status: internal
+        annotations:
+          summary: "No route insights evaluation has finished in 13h"
+          description: "No apid replica has finished a route insights run without error for more than two six-hour intervals, so customers' route insights and their webhooks are going stale."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+      - alert: FaasRouteInsightsFailing
+        expr: |
+          sum(increase(apid_route_insights_runs_total{outcome="failed"}[13h])) > 1
+          or
+          (
+            sum(increase(apid_route_insights_apps_total{outcome="failed"}[13h]))
+            /
+            clamp_min(sum(increase(apid_route_insights_apps_total{outcome=~"evaluated|failed"}[13h])), 1)
+          ) > 0.25
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: route_workers
+          public_status: internal
+        annotations:
+          summary: "Route insights evaluations are failing"
+          description: "More than one route insights run failed, or more than a quarter of the apps evaluated failed, in the last 13h. Read apid's 'route insights' warnings for the failing query."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+      - alert: FaasRouteMonitorLagging
+        expr: max(apid_route_monitor_lag_seconds) > 300
+        for: 10m
+        labels:
+          severity: warn
+          component: apid
+          family: route_workers
+          public_status: internal
+        annotations:
+          summary: "Production route monitors are more than 5m overdue"
+          description: "The oldest due production route monitor waited {{ $value | humanizeDuration }} at the latest drain. Budget incidents and opt-in automatic rollbacks are delayed until the monitors catch up."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
+      - alert: FaasRouteWorkersFailing
+        expr: |
+          sum(increase(apid_route_worker_queue_unavailable_total[15m])) > 2
+          or
+          (
+            sum(rate(apid_route_monitor_evaluations_total{outcome="failed"}[15m]))
+            /
+            clamp_min(sum(rate(apid_route_monitor_evaluations_total{outcome=~"evaluated|failed"}[15m])), 1e-9)
+          ) > 0.1
+          or
+          (
+            sum(rate(apid_route_checks_total{outcome="retried"}[30m]))
+            /
+            clamp_min(sum(rate(apid_route_checks_total[30m])), 1e-9)
+          ) > 0.5
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: route_workers
+          public_status: internal
+        annotations:
+          summary: "apid's route monitor or route check workers are failing"
+          description: "A route worker cannot read its queue, more than 10% of production route monitor evaluations fail, or more than half of automatic route checks are being retried."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasRouteWorkers.md"
       - alert: FaasDBNotifyHubReconnects
         expr: sum by (job, instance) (increase({__name__=~".+_db_notify_hub_reconnects_total"}[5m])) > 1
         for: 5m

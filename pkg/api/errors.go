@@ -50,6 +50,11 @@ const CodeApplicationStandardVersionStale = "application_standard_version_stale"
 
 const CodeApplicationStandardsPending = "application_standards_pending"
 
+// PreviewNotEnabledHint is the remediation for a dark-launched preview's 503.
+// Without it the CLI's generic 5xx hint told customers to check Gregale's
+// service status and inspect deployments before retrying (Hunt 14 H14-37).
+const PreviewNotEnabledHint = "This preview is not enabled for this account; retrying will not help. Ask Gregale support for access."
+
 // dashboardBillingURL is duplicated from pkg/wire because pkg/api cannot
 // import pkg/wire without creating an import cycle.
 const dashboardBillingURL = "https://gregale.dev/dashboard/billing"
@@ -500,11 +505,22 @@ const (
 	// mirrors CodeCapacity / CodeBuildXXX — the failure is transient
 	// and the customer's CLI/CI will retry on the backoff.
 	CodeSourceRefUnavailable = "source_ref_unavailable"
-	CodeSourceRefStale       = "source_ref_stale"
-	CodeAppLayerTooBig       = "app_layer_too_large"
-	CodeBuildUndetected      = "build_undetected"
-	CodeBuildOOM             = "build_oom"
-	CodeBuildTimeout         = "build_timeout"
+	// ADR-570: connection-circuit enforcement availability and revision errors.
+	CodeEgressCircuitUnavailable = "egress_circuit_unavailable"
+	CodeEgressCircuitDisabled    = "egress_circuit_disabled"
+	CodeEgressCircuitRevision    = "egress_circuit_revision"
+	CodeSourceRefStale           = "source_ref_stale"
+	CodeAppLayerTooBig           = "app_layer_too_large"
+	CodeBuildUndetected          = "build_undetected"
+	CodeBuildOOM                 = "build_oom"
+	CodeBuildTimeout             = "build_timeout"
+	// CodeDeploymentQueueTimeout and CodeDeploymentStalled are the
+	// deployment watchdog's failures (ADR-20261024140100): a build waited
+	// past DeploymentQueuedBuildTimeoutSeconds, or an in-flight deployment
+	// with no build in progress made no stage progress for
+	// DeploymentStallTimeoutSeconds. Both are retryable by redeploying.
+	CodeDeploymentQueueTimeout = "deployment_queue_timeout"
+	CodeDeploymentStalled      = "deployment_stalled"
 	// CodeStage* (ADR-117 §Production-ready follow-on): per-stage
 	// RFC 7807 stable codes for the closed-6 deploy stage vocabulary.
 	// Distinct from CodeBuildXXX (which mark the whole build VM's
@@ -902,6 +918,20 @@ const (
 	// so the caller must acknowledge them; the problem lists them with
 	// restore points for managed PostgreSQL databases.
 	CodeRollbackCrossesRelease = "rollback_crosses_release"
+	// CodeRollbackTargetDatabaseRestored means a database switch restored
+	// the app's database to before the target's own release command
+	// (ADR-20261023181931). The target cannot run on that database; deploy
+	// it again so its release command runs. It cannot be acknowledged.
+	CodeRollbackTargetDatabaseRestored = "rollback_target_database_restored"
+	// CodeDatabaseSwitchUnavailable means a rollback cannot restore the
+	// database with the code (ADR-20261023181931); the detail says why.
+	CodeDatabaseSwitchUnavailable = "database_switch_unavailable"
+	// CodeDatabaseSwitchInProgress means the app already has an active
+	// database switch.
+	CodeDatabaseSwitchInProgress = "database_switch_in_progress"
+	// CodeDatabaseSwitchNotCancellable means the switch is already switching
+	// the release and its bindings, or has ended.
+	CodeDatabaseSwitchNotCancellable = "database_switch_not_cancellable"
 	// CodeReleaseFrozen means a freeze withholds production releases of the
 	// app (ADR-20261019071733); the problem lists the active freezes.
 	// override_freeze with a reason releases anyway, audited.
@@ -1654,6 +1684,11 @@ const (
 	CodeAccountNotRestorable   = "account_not_restorable"
 	CodeAppNotRestorable       = "app_not_restorable"
 
+	// CodeAccountDeletionManagedPostgres (409): the account still owns live
+	// managed PostgreSQL databases, which must be deleted before the account
+	// can be scheduled for deletion. Detail carries the count.
+	CodeAccountDeletionManagedPostgres = "account_deletion_managed_postgres_databases"
+
 	// App rename (issue #63). One code covers both "slug taken by
 	// another live app" and "DB unique violation"; the Detail field
 	// distinguishes the two so the CLI can render actionable guidance.
@@ -1768,9 +1803,15 @@ const (
 	// no-op when it already has ≥1 cached target, while plan_limit
 	// (the Wake path) is always fatal to the requesting call.
 	CodeAppConcurReached = "app_concurrency_reached"
-	// CodeConcurrencyThrottled is returned when an app explicitly selects
-	// overflow=drop and its concurrency boundary is saturated.
+	// CodeConcurrencyThrottled is returned by overflow=drop or the final node
+	// HTTP gate when the instance request boundary is saturated.
 	CodeConcurrencyThrottled = "concurrency_throttled"
+	// The node refused forwarding before guest execution because its trusted
+	// instance plan or admission owner was unavailable.
+	CodeHTTPAdmissionUnavailable = "http_admission_unavailable"
+	CodeTrafficPolicyUnavailable = "traffic_policy_unavailable"
+	CodeTrafficPolicyTooLarge    = "traffic_policy_too_large"
+	CodeTrafficPolicyTooComplex  = "traffic_policy_too_complex"
 	// Warm saturation queue outcomes are distinct from cold-wake and fleet
 	// capacity failures so clients can make safe retry decisions.
 	CodeConcurrencyQueueFull    = "concurrency_queue_full"
@@ -2068,6 +2109,8 @@ func StatusForCode(code string) int {
 		return http.StatusBadRequest
 	case CodeRequestUploadTimeout:
 		return http.StatusRequestTimeout
+	case CodeTrafficPolicyTooLarge, CodeTrafficPolicyTooComplex:
+		return http.StatusUnprocessableEntity
 	case CodeWorkflowDefinitionNotFound, CodeWorkflowRunNotFound, CodeWorkflowStepNotFound,
 		CodeWorkflowEventNotFound:
 		return http.StatusNotFound
@@ -2075,7 +2118,7 @@ func StatusForCode(code string) int {
 		return http.StatusNotImplemented
 	case CodeWorkflowCallbackExpired:
 		return http.StatusGone
-	case CodeAppAdmissionUnavailable, CodeCapacity, CodeDeploymentVerificationUnavailable, CodeServiceRecoveryCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
+	case CodeAppAdmissionUnavailable, CodeDeploymentVerificationUnavailable, CodeServiceRecoveryCapacity, CodeTrafficPolicyUnavailable, CodeHTTPAdmissionUnavailable, CodeEgressCircuitUnavailable, CodeEgressCircuitDisabled, CodeCapacity, CodeSafeReleaseUnavailable, CodeConcurrencyQueueTimeout, CodeDebugRegressionUnavailable, CodeBuildOOM, CodeBuildTimeout, CodeOAuthProviderUnavailable, CodeWaitForWarm, CodeSnapshotBackoff,
 		CodeEdgeRuleMaintenance, CodeAppMaintenance, CodeAppHealthUnavailable, CodeAppUnavailable, CodeMirrorSlotAtCapacity, CodeTenantSurfacesNotEnabled,
 		CodePrivateNetworkNotEnabled, CodePublicAuthConfigInvalid, CodeRealtimeUnavailable, CodeAppLogsUnavailable, CodeLogArchiveUnavailable,
 		CodeInstanceFrozen:
@@ -2135,7 +2178,7 @@ func StatusForCode(code string) int {
 		// alongside the existing row set", not "your plan forbids
 		// this".
 		return http.StatusConflict
-	case CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange, CodeAPIContractComparisonIncomplete:
+	case CodeEgressCircuitRevision, CodeDeployFailed, CodeBeforeCheckpointFailed, CodeSecurityScanBlocked, CodeInvalidAppCPU, CodeInvalidAppRAM, CodeInvalidCPURAMPair, CodeInvalidResourceProfile, CodeAPIContractBreakingChange, CodeAPIContractComparisonIncomplete:
 		return http.StatusUnprocessableEntity
 	case CodeDeploySignatureInvalid, CodeSecurityPostureBlocked:
 		// 403 — the deploy is REJECTED at accept time, distinct from
@@ -2333,7 +2376,7 @@ func StatusForCode(code string) int {
 		return http.StatusBadRequest
 	case CodeTrustedSignerNotFound:
 		return http.StatusNotFound
-	case CodeAccountDeletionConfirm, CodeAccountDeletionPending, CodeAccountNotRestorable:
+	case CodeAccountDeletionConfirm, CodeAccountDeletionPending, CodeAccountNotRestorable, CodeAccountDeletionManagedPostgres:
 		return http.StatusConflict
 	case CodeAppRenameFailed:
 		return http.StatusConflict
@@ -2990,6 +3033,46 @@ func ErrRequestBodyTooLarge(limit, observed int64) *Problem {
 		WithByteLimit(limit, observed).
 		WithDocs(docsBase + "/storage#signed-uploads").
 		WithHint("For larger uploads, use a bucket signed URL (gregale storage ... signed-url).")
+}
+
+// ErrTrafficPolicyTooLarge reports an unsaved runtime policy projection.
+func ErrTrafficPolicyTooLarge(scope string, limit, observed int64) *Problem {
+	return NewProblem(http.StatusUnprocessableEntity, CodeTrafficPolicyTooLarge,
+		"Traffic policy too large",
+		fmt.Sprintf("%s runtime projection is %d bytes, above the %d-byte cap; no policy was changed", scope, observed, limit)).
+		WithByteLimit(limit, observed).
+		WithDocs(docsBase + "/plans#edge-rules").
+		WithHint("Reduce policy values and replace the policy. Clear an environment overlay or disable and clear its scoped route contract to recover it.")
+}
+
+// ErrTrafficPolicyAggregateTooLarge reports the combined policy selected by
+// an overlapping host language, including distinct referenced CORS presets.
+func ErrTrafficPolicyAggregateTooLarge(scope, unit string, limit, observed int64) *Problem {
+	problem := NewProblem(http.StatusUnprocessableEntity, CodeTrafficPolicyTooLarge,
+		"Traffic policy too large",
+		fmt.Sprintf("%s host aggregate is %d %s, above the %d cap; no policy was changed", scope, observed, unit, limit)).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/plans#edge-rules").
+		WithHint("Reduce rules or preset values that match the same host. Size-reducing repairs to an existing oversized host remain allowed.")
+	if unit == "bytes" {
+		problem = problem.WithByteLimit(limit, observed)
+	}
+	return problem
+}
+
+// ErrTrafficPolicyTooComplex distinguishes an unfinished bounded analysis
+// from a proved oversized policy. The mutation has not been saved.
+func ErrTrafficPolicyTooComplex(scope, unit string, limit, observed int64) *Problem {
+	problem := NewProblem(http.StatusUnprocessableEntity, CodeTrafficPolicyTooComplex,
+		"Traffic policy analysis limit reached",
+		fmt.Sprintf("%s analysis reached %d %s, above the %d cap; no policy was changed", scope, observed, unit, limit)).
+		WithLimit(limit, observed).
+		WithDocs(docsBase + "/plans#edge-rules").
+		WithHint("Simplify host selectors, replace legacy rules with the supported API shape, or remove unused rules, then retry. Analysis could not verify the proposed policy within its limits.")
+	if unit == "bytes" {
+		problem = problem.WithByteLimit(limit, observed)
+	}
+	return problem
 }
 
 // ErrRequestUploadTimeout reports a stalled or too-slow inbound upload. The
@@ -3875,6 +3958,9 @@ const (
 	CodeEdgeRuleConflict           = "edge_rule_conflict"
 	CodePlanLimitEdgeRules         = "plan_limit_edge_rules"
 	CodePlanEdgeRuleKindNotAllowed = "plan_edge_rule_kind_not_allowed"
+	// CodeCapabilityNotReleased refuses a setting whose capability is not
+	// released to the account (ADR-20261023115741).
+	CodeCapabilityNotReleased = "capability_not_released"
 	// CodePlanEdgeRuleKindQuotaReached is the per-kind quota error
 	// (ADR-091 D22). Distinct from CodePlanLimitEdgeRules so the
 	// customer sees the specific kind that tripped ("1/1 geo rules
@@ -3913,7 +3999,11 @@ const (
 	// handler body" — surfaces this single stable code on every
 	// outbound problem envelope so an SDK can branch on it
 	// without parsing prose. ADR-093 §Decision.
-	CodeRequestBudgetExceeded = "request_budget_exceeded"
+	CodeRequestBudgetExceeded        = "request_budget_exceeded"
+	CodeTrafficRevoked               = "traffic_revoked"
+	CodeTrafficRevocationUnavailable = "traffic_revocation_unavailable"
+	CodeTrafficDeadlineUnavailable   = "traffic_deadline_unavailable"
+	CodeTrafficDeadlineInvalid       = "traffic_deadline_invalid"
 	// CodeCircuitOpen is the 503 the public gateway answers when every
 	// candidate instance of an app has an open instance-health circuit
 	// (ADR-201 §2). It carries Retry-After.
@@ -5005,6 +5095,24 @@ func ErrManagedSecretConflict() *Problem {
 		WithDocs(docsBase + "/postgres#bindings")
 }
 
+// ErrAccountDeletionManagedPostgres refuses to schedule an account deletion
+// while the account owns live managed PostgreSQL databases. live is the number
+// the deletion guard reported; 0 means it reported none.
+func ErrAccountDeletionManagedPostgres(live int64) *Problem {
+	what := "managed PostgreSQL databases"
+	switch {
+	case live == 1:
+		what = "1 managed PostgreSQL database"
+	case live > 1:
+		what = fmt.Sprintf("%d managed PostgreSQL databases", live)
+	}
+	return NewProblem(http.StatusConflict, CodeAccountDeletionManagedPostgres,
+		"Managed PostgreSQL databases must be deleted first",
+		fmt.Sprintf("this account still has %s; delete them before deleting the account. Run `gregale postgres list` to see them and `gregale postgres delete <database>` to delete each one, then delete the account again.", what)).
+		WithHint("run `gregale postgres list`, then `gregale postgres delete <database>` for each database").
+		WithDocs(docsBase + "/postgres")
+}
+
 // ErrManagedObjectStorageSecretConflict protects an environment key owned by
 // an active object-storage compute binding.
 func ErrManagedObjectStorageSecretConflict() *Problem {
@@ -6013,6 +6121,18 @@ func ErrValidation(detail string) *Problem {
 		"Validation failed", detail)
 }
 
+// ErrEventReplayBackfillRange is the 400 for a backfill acceptance range
+// longer than the plan's settled-receipt window (ADR-20261023215834):
+// receipts older than the window are already pruned. Limit and observed
+// values are seconds.
+func ErrEventReplayBackfillRange(limitSeconds, observedSeconds int64) *Problem {
+	return NewProblem(http.StatusBadRequest, CodeValidation, "Validation failed",
+		fmt.Sprintf("A backfill range can span at most %s on this plan, its settled-receipt retention window; the requested range spans %s.",
+			time.Duration(limitSeconds)*time.Second, time.Duration(observedSeconds)*time.Second)).
+		WithLimit(limitSeconds, observedSeconds).
+		WithDocs(docsBase + "/event-driven#settled-receipt-retention")
+}
+
 // ErrEdgeRulesVersionMismatch (ADR-961) is the 412 for an edge-rule mutation
 // whose If-Match no longer names the app's latest rule-set version.
 func ErrEdgeRulesVersionMismatch(expected string, current int) *Problem {
@@ -6590,6 +6710,16 @@ func ErrPlanEdgeRuleKindNotAllowed(plan Plan, kind string) *Problem {
 		"Edge rule kind unavailable on this plan",
 		fmt.Sprintf("the %s plan does not include edge rule kind %q; upgrade to Hobby or above to use it.", plan, kind)).
 		WithDocs(docsBase + "/plans#edge-rules")
+}
+
+// ErrCapabilityNotReleased refuses a request field or declaration whose
+// capability's platform flag is off for the account (ADR-20261023115741).
+// It names the setting and the capability, never the flag configuration.
+func ErrCapabilityNotReleased(setting, capability string) *Problem {
+	return NewProblem(http.StatusForbidden, CodeCapabilityNotReleased,
+		"Feature not available",
+		fmt.Sprintf("%s needs the %s capability, which is not available to this account; remove it or contact support for access.", setting, capability)).
+		WithDocs(docsBase + "/plans")
 }
 
 // ErrPlanEdgeRuleKindQuotaReached is the 403 returned when the

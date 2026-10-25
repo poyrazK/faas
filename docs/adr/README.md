@@ -1,7 +1,14 @@
 # Architecture Decision Records
 
+- [Every capability behind a platform flag](20261023115741-every-capability-behind-a-platform-flag.md)
+- [Per-account realtime preview rollout and realtime apps declared in gregale.yaml](20261019102657-realtime-preview-rollout-and-declared-apps.md)
+- [Gateway-metered object storage billing](20261024132844-gateway-metered-object-storage-billing.md) — gateway safety meters stored byte-hours from inventory; storage-only rate card bills ADR-1430's $0.03/GiB-month
+- [ADR-20261024191249: A rolled node publishes every runtime base its release configures, and is not activated until its vmmd can adopt them](20261024191249-rollout-publishes-release-bases-and-gates-activation.md) — proposed; the pre-stage publishes each configured base this node could not adopt (whoever owns its apps), a rebuild's scan refusal names no generation, `vmmd base-adoption-check` keeps a node drained until it can boot every base; amends ADR-20261024085817 (production-us 2026-10-24, rc.293 fsn-2)
+- [ADR-20261024140100: Every deployment reaches a terminal state](20261024140100-deployment-watchdog.md) — apid's watchdog fails a build queued over 6 h (`deployment_queue_timeout`) or an in-flight deployment with no build and no progress for 3 h (`deployment_stalled`)
+- [Build secrets resolve like the runtime environment](20261024140000-build-secrets-resolve-like-the-runtime.md)
 - [ADR-20261024135625: Resource journal: durable commits only for reboot-surviving assets](20261024135625-resource-journal-volatile-commits.md)
 - [Dockerfile HEALTHCHECK gates readiness on source builds](20261024100000-dockerfile-healthcheck-enforced.md)
+- [ADR-20261024132405: Language runtimes are supported until upstream end of life; their CVEs are triaged, not migrated away](20261024132405-runtime-language-version-support-and-cves.md) — accepted; deprecation dates, weekly base-digest refresh, version-pinned scanner exceptions; amends ADR 20261023220532 decision 4 for Python 3.12
 - [ADR-20261024090000: Idle parks re-check activity, and a park holds new forwards](20261024090000-idle-park-recheck-and-forward-hold.md) — the reaper's park re-checks fresh activity before SNAPSHOTTING; vmmd holds new forwards for the park and drains in-flight ones up to 5 s (amends spec §6)
 - [ADR-20261022083601: AI crawler controls](20261022083601-edge-ai-crawler-controls.md)
 - [ADR-20261024085817: A compute rollout never strands a node on a runtime base it cannot boot, and its drain finishes](20261024085817-rollout-base-generation-and-drain-completion.md) — proposed; a changed base generation pre-stages behind the drain barrier, the rescue never re-activates a node whose cache moved, a drain withdraws, drains and stops what it cannot hand off (2026-10-22 fsn-3)
@@ -9,6 +16,7 @@
 - [Bucket-scoped object storage availability](20261023223000-object-storage-bucket-scoped-availability.md) — per-bucket inventory freshness, maintenance listings off the customer meter, no fence on a never-versioned baseline, busy deletions wait, public-read share and revalidation
 - [ADR-20261024082000: Release gate for edge security features](20261024082000-edge-security-ga-gate.md)
 - [ADR-20261023171905: Unbilled quiet pause — bill the seconds a VM runs, not the seconds it waits](20261023171905-unbilled-quiet-pause.md) — schedd `quiet_pause_ledger` + meterd `quiet_pause_unbilled` (amends §4.7, ADR-1151 decision 1, ADR-20261021215353)
+- [ADR-20261023214253: Operators need MFA, and a session to read customer data](20261023214253-operators-need-mfa-and-sessions-for-customer-data.md) — proposed; operator sign-ins start mfa_pending; operator keys read fleet telemetry only (FAAS_OPERATOR_BEARER_READS grace)
 - [Compose profiles from COMPOSE_PROFILES in .env](20261022190000-compose-profiles-from-dotenv.md)
 - [Compose deploy resources and replicas set app settings](20261023120000-compose-deploy-resources.md)
 - [Compose service secrets as files in /run/secrets](20261023090000-compose-runtime-secret-files.md)
@@ -35,6 +43,9 @@
 - [ADR-20261021204307: Code-first workflows](20261021204307-code-first-workflows.md) — one entry handler replays the run's journal; Node, Python and Go SDKs
 - [Platform flags: company targeting, full coverage, scheduled and automatic rollouts, self-serve previews](20261021080640-platform-flag-extensions.md)
 - [Product Control free trials](20261021195901-product-control-free-trials.md)
+- [ADR-20261022193512: Unified incidents](20261022193512-unified-incidents.md)
+- [ADR-20261022173833: Custom dashboards](20261022173833-custom-dashboards.md)
+- [ADR-20261022172052: Alerts carry what the logs show](20261022172052-alert-log-context.md)
 - [ADR-20261021210000: Enrolled apps receive no account events](20261021210000-rehearsal-event-fanout-exclusion.md)
 - [Data API engine pool size and server-key limits](20261021180534-data-api-engine-pool-and-server-key-limits.md)
 - [ADR-20261021180000: Rehearsal capture of realtime publishes and signals](20261021180000-rehearsal-realtime-capture.md)
@@ -75,6 +86,7 @@
 - [ADR-1744: Offline grouping previews and reviewed regression baselines](1744-issue-grouping-previews-and-baselines.md)
 - [ADR-1743: Publish final Node build source maps with build completion](1743-builder-issue-source-map-publication.md)
 - [ADR-1742: Publish prebuilt Issues source maps during CLI deployment](1742-deploy-issue-source-map-publication.md)
+- [Customer log search and analytics over the unified ledger](20261018083536-customer-log-search.md)
 
 - [Preserve request identity in response caching](20261017214848-response-cache-request-identity.md)
 
@@ -428,6 +440,7 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1447 | [Explained rollout decisions](1447-explained-rollout-decisions.md) | proposed | The circuit breaker records why each canary stage advanced, is held, or was aborted; shown on the deployment, in `deployment wait --rollout` and `deployment summary`, and in rollout webhooks |
 | 1321 | [Evidence-paced default rollouts](1321-evidence-paced-default-rollouts.md) | proposed | The default `adaptive` ladder advances a stage on clean circuit-breaker evidence after one minute instead of its 2-minute timer; the default probe sends 20 per revision per round and each minute's round starts within about 15 s |
 | 1448 | [Releases that change the database](1448-releases-that-change-the-database.md) | proposed | A rollback over release commands that ran after its target last served needs acknowledgement; the refusal lists them with managed PostgreSQL restore points; automation never acknowledges; deployments report their release run |
+| 20261023181931 | [Rollbacks that restore the database](20261023181931-rollbacks-that-restore-the-database.md) | accepted | `restore_databases` on an acknowledged rollback restores the migrated managed PostgreSQL database to before the undone releases, fences and drains the app, makes the target live and moves the bindings to the copy in one transaction; writes after the restore point stay in the untouched source; only this switch activates a cutover |
 | 1449 | [App-chosen rollout probe routes](1449-app-chosen-rollout-probe-routes.md) | proposed | `release_probe_paths` names up to three GET paths the default rollout probe checks instead of `/`; a round splits its 20 probes across them |
 | 1450 | [One rollout flag and a live rollout view](1450-one-rollout-flag-and-live-rollout.md) | proposed | `gregale deploy --rollout safe\|fast\|immediate` and `release_policy` safe/fast/immediate; deploy follows a canary to 100% at a terminal and Ctrl-C detaches; `--safe`, `--canary-preset`, `--canary-stages` deprecated |
 | 1445 | [Post-release watch](1445-post-release-watch.md) | proposed | For 30 minutes after a release reaches 100%, apid compares it with its predecessor's pre-rollout traffic; a clear 5xx or p95 regression rolls back through the readiness-gated rollback (trigger `post_release`) and records an explained decision |
@@ -436,7 +449,6 @@ its baseline line in the same change (the gate fails on a stale entry).
 | 1037 | [Interactive app-task attach](1037-interactive-app-task-attach.md) | accepted; operator-gated preview | `gregale app exec -it` attaches one client to a fresh task VM's PTY through the gateway and vmmd with a single-use token; schedd lifecycle unchanged |
 | 971 | [Retire dead same-boot instance records after verified absence](971-same-boot-dead-instance-record-retirement.md) | accepted | vmmd startup retires instance records whose process is gone and whose kernel resources are verifiably absent, freeing quarantined slots and identity-verified temporary files (amends ADR-472, extends ADR-478) |
 | 630 | [Guest-init-only release reuse](630-guest-init-only-release-reuse.md) | proposed | Patch PID 1 into staged bases instead of rebuilding them, and key the builder cache on the builder image plus a guest-init build contract version |
-| 634 | [Asynchronous request-ID journal](634-async-request-id-journal.md) | proposed | The exact request-ID index is queued and written by bounded workers; a failed or dropped write never fails the request |
 | 635 | [Authenticated tenant workflow continuations](635-tenant-workflow-continuations.md) | accepted | Tenant-authenticated event and callback continuation routes with atomic live-link checks |
 | 636 | [Tenant-scoped scheduled workflow starts](636-tenant-scheduled-workflow-starts.md) | accepted | Per-tenant schedule cursors and atomic tenant-bound run admission |
 | 637 | [Tenant-configurable workflow schedules](637-tenant-configurable-workflow-schedules.md) | accepted | Explicitly opt in to tenant-owned cadence, overlap, and enablement settings |
@@ -1866,3 +1878,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 
 - [ADR-20261022184757: Background work and waitUntil in the awake report](20261022184757-route-awake-background-work.md)
 - [ADR-20261023220532: Move the Debian-based runtime bases to Debian 13](20261023220532-debian-13-runtime-bases.md) — accepted; clears the bookworm `<no-dsa>` glibc/SQLite criticals (#5206), matches Railpack's Debian 13 builder, audits `base-minimal` apps first
+- [ADR-20261024154324: Route subsystems at public scale](20261024154324-route-subsystems-at-public-scale.md) — per-gateway per-route series budget with idle eviction, fair route insight scheduling, concurrent route monitor drain, route worker alerts (amends ADR-093, ADR-1198)

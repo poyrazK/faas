@@ -15,7 +15,7 @@ export type EventReplayBackfillRequest = {
    */
   from: string;
   /**
-   * Exclusive upper bound; future values are capped at creation time. The range may not exceed 30 days.
+   * Exclusive upper bound; future values are capped at creation time. The range may not exceed the plan's settled-receipt window.
    */
   until: string;
 };

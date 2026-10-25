@@ -5,7 +5,7 @@ import (
 	"database/sql"
 	"time"
 
-	faas "github.com/poyrazK/faas/sdk/go"
+	"github.com/poyrazK/faas/sdk/go/preview"
 )
 
 // RecoveryAlertHost belongs to the application. Hold one fenced writer across
@@ -14,26 +14,26 @@ import (
 // Deliver must deduplicate by account/app, incident ID and sequence. The ack
 // ledger is durable and nondestructive until its checkpoint receipt is saved.
 type RecoveryAlertHost interface {
-	SaveCheckpoint(context.Context, faas.EventAcknowledgmentIntentCheckpoint) error
-	Acknowledgments(context.Context, faas.EventAcknowledgmentIntentCheckpoint) ([]faas.EventAcknowledgmentIntentAcknowledgment, error)
-	Deliver(context.Context, string, string, faas.EventAcknowledgmentIntentNotification) error
-	RecordAcknowledgment(context.Context, faas.EventAcknowledgmentIntentAcknowledgment) error
+	SaveCheckpoint(context.Context, preview.EventAcknowledgmentIntentCheckpoint) error
+	Acknowledgments(context.Context, preview.EventAcknowledgmentIntentCheckpoint) ([]preview.EventAcknowledgmentIntentAcknowledgment, error)
+	Deliver(context.Context, string, string, preview.EventAcknowledgmentIntentNotification) error
+	RecordAcknowledgment(context.Context, preview.EventAcknowledgmentIntentAcknowledgment) error
 }
 
 // WatchRecoveryAlerts resumes a checkpoint loaded by the current fenced owner.
 // The host bounds each storage/transport call and retains ownership until final
 // returned state is reconciled/persisted with an independent shutdown context.
-func WatchRecoveryAlerts(ctx context.Context, db *sql.DB, accountID, appID string, resume *faas.EventAcknowledgmentIntentCheckpoint, host RecoveryAlertHost) (faas.EventAcknowledgmentIntentCheckpointWatchResult, error) {
+func WatchRecoveryAlerts(ctx context.Context, db *sql.DB, accountID, appID string, resume *preview.EventAcknowledgmentIntentCheckpoint, host RecoveryAlertHost) (preview.EventAcknowledgmentIntentCheckpointWatchResult, error) {
 	if host == nil {
-		return faas.EventAcknowledgmentIntentCheckpointWatchResult{}, faas.ErrInvalidEventConsumerRequest
+		return preview.EventAcknowledgmentIntentCheckpointWatchResult{}, preview.ErrInvalidEventConsumerRequest
 	}
-	return faas.WatchEventAcknowledgmentIntentHealthWithCheckpoint(ctx, db, accountID, appID,
-		faas.EventAcknowledgmentIntentCheckpointWatchOptions{
-			EventAcknowledgmentIntentWatchOptions: faas.EventAcknowledgmentIntentWatchOptions{
+	return preview.WatchEventAcknowledgmentIntentHealthWithCheckpoint(ctx, db, accountID, appID,
+		preview.EventAcknowledgmentIntentCheckpointWatchOptions{
+			EventAcknowledgmentIntentWatchOptions: preview.EventAcknowledgmentIntentWatchOptions{
 				DueThreshold: 100, StalledThreshold: 1, ParkedThreshold: 1, Sustain: 30 * time.Second,
 			},
 			Resume: resume, PollAcknowledgments: host.Acknowledgments,
-			OnProgress: func(ctx context.Context, progress faas.EventAcknowledgmentIntentCheckpointWatchResult) error {
+			OnProgress: func(ctx context.Context, progress preview.EventAcknowledgmentIntentCheckpointWatchResult) error {
 				checkpoint := progress.Checkpoint
 				if err := host.SaveCheckpoint(ctx, checkpoint); err != nil {
 					return err // A failed save can have committed; no notification follows.
@@ -48,7 +48,7 @@ func WatchRecoveryAlerts(ctx context.Context, db *sql.DB, accountID, appID strin
 					if err := ctx.Err(); err != nil {
 						return err
 					}
-					if err := host.RecordAcknowledgment(ctx, faas.EventAcknowledgmentIntentAcknowledgment{IncidentID: notification.IncidentID, Sequence: notification.Sequence}); err != nil {
+					if err := host.RecordAcknowledgment(ctx, preview.EventAcknowledgmentIntentAcknowledgment{IncidentID: notification.IncidentID, Sequence: notification.Sequence}); err != nil {
 						return err
 					}
 				}

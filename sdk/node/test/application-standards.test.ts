@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import { once } from 'node:events';
-import { FaaSClient, OrgsService } from '../src/index.js';
+import { FaaSClient, OrgsService } from '../src/preview.js';
 
 const id = '00000000-0000-4000-8000-000000000001';
 const time = '2026-10-04T12:00:00Z';

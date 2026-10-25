@@ -100,7 +100,7 @@ func cmdDebug(args []string) int {
 		return cmdDebugBundle(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown debug subcommand %q\n", args[0])
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "debug", nestedCliCommand("debug"), args[0])
 }
 
 // cmdDebugCoverage renders the observed debugger signal coverage for a slug.
@@ -192,8 +192,7 @@ func cmdDebugRequests(args []string) int {
 	case "replay":
 		return cmdDebugRequestsReplay(args[1:])
 	}
-	printCommandValidation(os.Stderr, "unknown debug requests subcommand %q\n", args[0])
-	return 1
+	return printUnknownSubcommand(os.Stderr, "debug requests", cliCommand{Name: "debug", Subcommands: debugRequestsCLISubcommand().Subcommands}, args[0])
 }
 
 // debugRequestRefArgs accepts `<slug> <request-id>` or `--app <slug>

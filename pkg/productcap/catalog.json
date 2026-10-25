@@ -2,6 +2,114 @@
   "version": 1,
   "capabilities": [
     {
+      "id": "account",
+      "name": "Account and sign-in",
+      "category": "account",
+      "description": "Sign up, sign in with a password or magic link, use MFA and reset passwords.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/account",
+      "acceptance_test": "pkg/apid/apidserver/account_prehijack_test.go::TestMagicLinkFromSignupEndpointSignsIn",
+      "core": true,
+      "routes": [
+        "/auth",
+        "/cli-auth",
+        "/dashboard/account",
+        "/dashboard/account/set-password",
+        "/dashboard/mfa",
+        "/login",
+        "/logout",
+        "/signup",
+        "=/v1/account",
+        "/v1/account/mfa",
+        "/v1/account/rate-limits",
+        "/v1/auth/capabilities",
+        "/v1/auth/csrf",
+        "/v1/auth/github",
+        "/v1/auth/google",
+        "/v1/auth/login",
+        "/v1/auth/logout",
+        "/v1/auth/sessions",
+        "/v1/auth/signup",
+        "/v1/auth/verify-email",
+        "/v1/cli-auth"
+      ],
+      "cli": [
+        "account",
+        "mfa"
+      ]
+    },
+    {
+      "id": "account-release-webhooks",
+      "name": "Account release webhooks",
+      "category": "async",
+      "description": "Receive release events for every app in the account.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/apid/apidserver/handlers_account_release_webhooks_test.go::TestAccountReleaseWebhooks_CRUDAndScope",
+      "parent": "outbound-webhooks",
+      "routes": [
+        "/v1/account/release-webhooks"
+      ],
+      "cli": [
+        "webhooks account"
+      ]
+    },
+    {
+      "id": "ai-access-tokens",
+      "name": "AI access tokens",
+      "category": "data",
+      "description": "Let callers outside Gregale use the AI gateway with tokens.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/ai-gateway",
+      "acceptance_test": "pkg/apid/apidserver/handlers_outbound_ai_phase9_test.go::TestOutboundAIAccessTokensAndEvaluationsRoutes",
+      "parent": "ai-gateway",
+      "routes": [
+        "/v1/apps/{}/ai-access-tokens"
+      ],
+      "cli": [
+        "ai tokens"
+      ]
+    },
+    {
+      "id": "ai-content-policy",
+      "name": "AI guardrails and redaction",
+      "category": "data",
+      "description": "Block, moderate and redact content in model calls.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/ai-gateway",
+      "acceptance_test": "pkg/apid/apidserver/handlers_outbound_ai_content_test.go::TestOutboundAIContentPolicy",
+      "parent": "ai-gateway",
+      "routes": [
+        "/v1/apps/{}/outbound-bindings/{}/ai-guardrails",
+        "/v1/outbound/integrations/{}/ai-content-policy"
+      ],
+      "cli": [
+        "ai content-policy",
+        "ai guardrails"
+      ]
+    },
+    {
       "id": "ai-gateway",
       "name": "AI gateway",
       "category": "data",
@@ -13,8 +121,150 @@
         "scale"
       ],
       "docs_url": "/docs/ai-gateway",
+      "operator_flag": "FAAS_AI_GATEWAY_ENABLED",
       "acceptance_test": "pkg/outbound/ai_gateway_acceptance_test.go::TestAIGatewayPreviewAcceptance",
-      "operator_flag": "FAAS_AI_GATEWAY_ENABLED"
+      "routes": [
+        "/dashboard/ai",
+        "/dashboard/apps/{}/ai-access-tokens",
+        "/v1/apps/{}/ai-deployments",
+        "/v1/outbound/integrations/{}/ai",
+        "/v1/outbound/integrations/{}/ai-quality-alerts",
+        "/v1/outbound/integrations/{}/ai-traces"
+      ],
+      "cli": [
+        "ai"
+      ]
+    },
+    {
+      "id": "ai-request-replay",
+      "name": "AI request capture and replay",
+      "category": "data",
+      "description": "Capture model requests and replay them.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/ai-gateway",
+      "acceptance_test": "pkg/apid/apidserver/handlers_outbound_ai_content_test.go::TestOutboundAIReplay",
+      "parent": "ai-gateway",
+      "routes": [
+        "/v1/outbound/ai-replays",
+        "/v1/outbound/integrations/{}/ai-requests"
+      ],
+      "cli": [
+        "ai replay"
+      ]
+    },
+    {
+      "id": "ai-routes",
+      "name": "AI routes and fallbacks",
+      "category": "data",
+      "description": "Route model calls across providers with fallbacks, canaries and evaluations.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/ai-gateway",
+      "acceptance_test": "pkg/apid/apidserver/handlers_outbound_ai_phase3_test.go::TestOutboundAIRouteFormats",
+      "parent": "ai-gateway",
+      "routes": [
+        "/v1/outbound/ai-evaluations",
+        "/v1/outbound/ai-routes"
+      ],
+      "cli": [
+        "ai routes"
+      ]
+    },
+    {
+      "id": "ai-usage-limits",
+      "name": "AI usage, prices and limits",
+      "category": "data",
+      "description": "Track AI usage and cost, set per-tag limits and alerts.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/ai-gateway",
+      "acceptance_test": "pkg/outbound/ai_usage_test.go::TestAIUsageOutcome",
+      "parent": "ai-gateway",
+      "routes": [
+        "/v1/outbound/ai-price-catalog",
+        "/v1/outbound/integrations/{}/ai-alerts",
+        "/v1/outbound/integrations/{}/ai-prices",
+        "/v1/outbound/integrations/{}/ai-tag-limits",
+        "/v1/outbound/integrations/{}/ai-usage"
+      ],
+      "cli": [
+        "ai app-limit",
+        "ai tag-limits"
+      ]
+    },
+    {
+      "id": "alert-presets",
+      "name": "Alert presets",
+      "category": "observability",
+      "description": "Start alerts from presets.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/alerts",
+      "acceptance_test": "pkg/apid/apidserver/handlers_alert_presets_channels_test.go::TestAlertPresetDeliversToChannels",
+      "parent": "alerts",
+      "routes": [
+        "/dashboard/apps/{}/alert-presets",
+        "/v1/alert-presets",
+        "/v1/apps/{}/alert-presets"
+      ]
+    },
+    {
+      "id": "alert-rollbacks",
+      "name": "Alert-triggered rollbacks",
+      "category": "delivery",
+      "description": "Roll back automatically when an alert fires after a deploy.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/alerts",
+      "acceptance_test": "pkg/state/alert_rollback_selection_test.go::TestAlertRollbackSelectionFailsClosed",
+      "parent": "alerts",
+      "routes": [
+        "/dashboard/apps/{}/alert-rollbacks",
+        "/v1/apps/{}/alert-rollbacks"
+      ]
+    },
+    {
+      "id": "alerts",
+      "name": "Alerts",
+      "category": "observability",
+      "description": "Alert on metrics, SLOs and events to Slack, PagerDuty, email or webhooks.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/alerts",
+      "acceptance_test": "pkg/apid/apidserver/handlers_alerts_channels_test.go::TestAlertRuleChannels",
+      "routes": [
+        "/dashboard/alerts",
+        "/dashboard/apps/{}/alerts",
+        "/v1/apps/{}/alerts"
+      ],
+      "cli": [
+        "alerts"
+      ]
     },
     {
       "id": "anomaly-alerts",
@@ -25,7 +275,53 @@
       "plans": [],
       "docs_url": "/docs/adr/744-anomaly-alerts",
       "operator_flag": "FAAS_ANOMALY_ALERTS_ENABLED",
-      "acceptance_test": "pkg/alerts/anomaly_test.go::TestAnomalyRuleFiresAboveBaseline"
+      "acceptance_test": "pkg/alerts/anomaly_test.go::TestAnomalyRuleFiresAboveBaseline",
+      "parent": "alerts"
+    },
+    {
+      "id": "api-consumers",
+      "name": "API consumers",
+      "category": "account",
+      "description": "Issue keys and identities to your own API's customers.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/api-monetization",
+      "acceptance_test": "pkg/apid/apidserver/handlers_consumers_test.go::TestUpdateAppConsumerAuthMode",
+      "settings": [
+        "app.consumer_auth_mode"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/consumers",
+        "/v1/apps/{}/consumers"
+      ],
+      "cli": [
+        "consumers"
+      ]
+    },
+    {
+      "id": "api-keys",
+      "name": "API keys",
+      "category": "account",
+      "description": "Create scoped API keys and rotate them.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/cli",
+      "acceptance_test": "pkg/apid/apidserver/handlers_scopes_test.go::TestMintKeyScopes",
+      "core": true,
+      "routes": [
+        "/dashboard/account/keys",
+        "/v1/account/keys",
+        "/v1/keys",
+        "/v1/orgs/{}/keys"
+      ],
+      "cli": [
+        "keys"
+      ]
     },
     {
       "id": "api-monetization",
@@ -36,7 +332,130 @@
       "plans": [],
       "docs_url": "/docs/api-monetization",
       "operator_flag": "FAAS_API_MONETIZATION_ENABLED",
-      "acceptance_test": "pkg/apid/apidserver/billing_runs_test.go::TestBillingRunExportsEveryCustomer"
+      "acceptance_test": "pkg/apid/apidserver/billing_runs_test.go::TestBillingRunExportsEveryCustomer",
+      "routes": [
+        "/dashboard/apps/{}/consumer-billing-policy",
+        "/dashboard/apps/{}/consumer-overdue-holds",
+        "/dashboard/apps/{}/consumer-plans",
+        "/dashboard/apps/{}/consumer-signup",
+        "/dashboard/apps/{}/consumer-signups",
+        "/dashboard/apps/{}/rate-cards",
+        "/v1/account/billing-connections",
+        "/v1/account/billing-run-schedule",
+        "/v1/account/billing-runs",
+        "/v1/apps/{}/consumer-billing-policy",
+        "/v1/apps/{}/consumer-overdue-holds",
+        "/v1/apps/{}/consumer-plans",
+        "/v1/apps/{}/consumer-signup",
+        "/v1/apps/{}/consumer-signups",
+        "/v1/apps/{}/rate-cards",
+        "/v1/consumer-billing",
+        "/v1/consumer-signup"
+      ]
+    },
+    {
+      "id": "app-access-control",
+      "name": "App access control",
+      "category": "edge",
+      "description": "Require authentication, bearer or basic auth, or an IP allowlist for an app.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/auth",
+      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestGetApp_SurfacesRequireAuthn",
+      "settings": [
+        "app.public_auth",
+        "app.require_authn"
+      ]
+    },
+    {
+      "id": "app-costs",
+      "name": "App costs",
+      "category": "billing",
+      "description": "See each app's cost and cost trend.",
+      "maturity": "ga",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/billing",
+      "acceptance_test": "cmd/gregale/commands_app_costs_test.go::TestAppCostsCLIUsesStableAppIdentityAndFiltersAccountReport",
+      "parent": "billing",
+      "routes": [
+        "/dashboard/app-costs",
+        "/v1/billing/costs"
+      ],
+      "cli": [
+        "app costs",
+        "billing costs"
+      ]
+    },
+    {
+      "id": "app-health",
+      "name": "App health",
+      "category": "observability",
+      "description": "Read an app's health assessment without waking it.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/apps",
+      "acceptance_test": "pkg/apid/apidserver/handlers_app_health_history_test.go::TestAppHealthHistoryAPI",
+      "routes": [
+        "/dashboard/apps/{}/health",
+        "/v1/apps/{}/health"
+      ],
+      "cli": [
+        "app health",
+        "inspect"
+      ]
+    },
+    {
+      "id": "app-tasks",
+      "name": "App tasks",
+      "category": "runtime",
+      "description": "Run a one-off command in a fresh VM built from an app's deployment.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/apps",
+      "acceptance_test": "pkg/apid/apidserver/handlers_app_tasks_test.go::TestAppTaskAPIGateEnv",
+      "routes": [
+        "/dashboard/apps/{}/tasks",
+        "/v1/apps/{}/tasks"
+      ]
+    },
+    {
+      "id": "application-auth",
+      "name": "Application Auth",
+      "category": "data",
+      "description": "Add end-user sign-in to your apps.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/auth",
+      "acceptance_test": "pkg/apid/apidserver/application_auth_flag_test.go::TestApplicationAuthScreensAppearOnlyWhereItIsOn",
+      "routes": [
+        "/dashboard/apps/{}/auth"
+      ],
+      "cli": [
+        "auth"
+      ]
     },
     {
       "id": "application-messaging",
@@ -50,7 +469,402 @@
         "scale"
       ],
       "docs_url": "/docs/event-driven#application-inbox",
-      "acceptance_test": "pkg/apid/apidserver/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent"
+      "acceptance_test": "pkg/apid/apidserver/handlers_application_messaging_test.go::TestSendAppMessageEnqueuesCloudEvent",
+      "routes": [
+        "/dashboard/apps/{}/inbox",
+        "/dashboard/apps/{}/outbox",
+        "/v1/apps/{}/inbox",
+        "/v1/apps/{}/outbox",
+        "/v1/apps/{}/queues/send",
+        "/v1/orgs/{}/apps/{}/queues/send"
+      ],
+      "cli": [
+        "send",
+        "deliver"
+      ]
+    },
+    {
+      "id": "application-standards",
+      "name": "Application standards",
+      "category": "account",
+      "description": "Apply organization standards to applications and review exceptions.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/application-standards",
+      "acceptance_test": "pkg/apid/apidserver/handlers_application_standards_test.go::TestApplicationStandardVersionAPI",
+      "routes": [
+        "/v1/orgs/{}/application-standard-assignments",
+        "/v1/orgs/{}/application-standard-enrollments",
+        "/v1/orgs/{}/application-standard-log-destinations",
+        "/v1/orgs/{}/application-standard-operations",
+        "/v1/orgs/{}/application-standard-publishers",
+        "/v1/orgs/{}/application-standard-reviews",
+        "/v1/orgs/{}/application-standards"
+      ],
+      "cli": [
+        "orgs standards"
+      ]
+    },
+    {
+      "id": "apps",
+      "name": "Apps",
+      "category": "delivery",
+      "description": "Create, rename, delete and restore apps.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/apps",
+      "acceptance_test": "pkg/apid/apidserver/handlers_test.go::TestCreateApp_ExplicitCPU",
+      "core": true,
+      "routes": [
+        "/dashboard/apps/{}/rename",
+        "/dashboard/apps/{}/restore",
+        "=/v1/apps",
+        "=/v1/apps/{}",
+        "/v1/apps/{}/rename",
+        "/v1/apps/{}/restore",
+        "/v1/deleted-apps"
+      ],
+      "cli": [
+        "apps",
+        "app"
+      ]
+    },
+    {
+      "id": "async-invocations",
+      "name": "Async invocations",
+      "category": "async",
+      "description": "Invoke an app asynchronously and fetch the result later.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestAsyncInvoke_FreeRejected",
+      "consumers": [
+        "schedd"
+      ],
+      "settings": [
+        "app.max_retries",
+        "app.retry_policy",
+        "manifest.retry_policy"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/invoke",
+        "/dashboard/invocations",
+        "/v1/apps/{}/invoke",
+        "/v1/invocations"
+      ],
+      "cli": [
+        "invocations",
+        "tail"
+      ]
+    },
+    {
+      "id": "async-routes",
+      "name": "Async routes",
+      "category": "edge",
+      "description": "Accept a request at the edge and run it asynchronously.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "cmd/gatewayd-internal/async_routes_test.go::TestAsyncRouteEnqueuerCapturesProjectRelease",
+      "consumers": [
+        "gatewayd-internal"
+      ],
+      "settings": [
+        "edge_rule.async",
+        "manifest.async_routes"
+      ]
+    },
+    {
+      "id": "audit-log",
+      "name": "Audit log",
+      "category": "observability",
+      "description": "Review who changed what in the account.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/security",
+      "acceptance_test": "pkg/apid/apidserver/handlers_audit_test.go::TestListAuditEvents_LivenessKinds",
+      "routes": [
+        "/dashboard/apps/{}/audit",
+        "/dashboard/audit-events",
+        "/v1/apps/{}/audit",
+        "/v1/audit-events",
+        "/v1/audit-log",
+        "/v1/deployments/{}/audit"
+      ],
+      "cli": [
+        "audit-events"
+      ]
+    },
+    {
+      "id": "automations",
+      "name": "Automations",
+      "category": "async",
+      "description": "Run steps against an app manually, on a schedule or on an event.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/automations",
+      "acceptance_test": "pkg/apid/apidserver/handlers_automations_test.go::TestAutomationAPI",
+      "routes": [
+        "/dashboard/apps/{}/automations",
+        "/v1/apps/{}/automations",
+        "/v1/apps/{}/automations:publish-policy",
+        "/v1/apps/{}/automations:simulate",
+        "/v1/apps/{}/automations:validate",
+        "/v1/apps/{}/inbound-webhooks/{}/automation-binding",
+        "/v1/apps/{}/inbound-webhooks/{}/automation-receipts"
+      ],
+      "cli": [
+        "automations"
+      ]
+    },
+    {
+      "id": "autoscaling",
+      "name": "Autoscaling",
+      "category": "runtime",
+      "description": "Set minimum instances, concurrency and scaling targets or schedules.",
+      "maturity": "ga",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/scaling-policy",
+      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestUpdateAppAutoscaleDisableZero",
+      "settings": [
+        "app.function_concurrency",
+        "app.max_concurrency",
+        "app.min_instances",
+        "manifest.scaling"
+      ],
+      "cli": [
+        "app scale"
+      ]
+    },
+    {
+      "id": "autoscaling-targets",
+      "name": "Scaling targets and schedules",
+      "category": "runtime",
+      "description": "Scale on target RPS or CPU, and on a schedule.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/scaling-policy",
+      "acceptance_test": "pkg/state/pgstore_test.go::TestPg_UpdateApp_AutoscaleTargets",
+      "parent": "autoscaling",
+      "settings": [
+        "app.autoscale_target_rps",
+        "app.autoscale_target_cpu_pct",
+        "app.scaling_policy",
+        "manifest.scaling.targets"
+      ]
+    },
+    {
+      "id": "billing",
+      "name": "Billing",
+      "category": "billing",
+      "description": "Choose a plan, see usage and invoices and set an overage cap.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/billing",
+      "acceptance_test": "pkg/apid/apidserver/handlers_change_plan_test.go::TestGetBillingPortal",
+      "core": true,
+      "routes": [
+        "/dashboard/account/plan",
+        "/dashboard/apps/{}/policy",
+        "/dashboard/apps/{}/usage",
+        "/dashboard/billing",
+        "/dashboard/invoices",
+        "/dashboard/pricing",
+        "/dashboard/raise-overage-cap",
+        "/dashboard/upgrade",
+        "/dashboard/usage",
+        "/v1/account/billing",
+        "/v1/account/overage-cap",
+        "/v1/account/plan",
+        "/v1/account/statement-invoices",
+        "/v1/account/usage",
+        "/v1/apps/{}/policy",
+        "/v1/apps/{}/usage",
+        "/v1/billing/cancel",
+        "/v1/billing/portal",
+        "/v1/billing/retry",
+        "/v1/billing/status",
+        "/v1/invoices",
+        "/v1/orgs/{}/billing",
+        "/v1/orgs/{}/invoices",
+        "/v1/orgs/{}/plan",
+        "/v1/orgs/{}/seat_usage",
+        "/v1/orgs/{}/usage",
+        "/v1/usage",
+        "/v1/webhooks/paddle",
+        "/v1/webhooks/polar",
+        "/v1/webhooks/stripe"
+      ],
+      "cli": [
+        "billing",
+        "invoices",
+        "plan",
+        "usage",
+        "overage-cap"
+      ]
+    },
+    {
+      "id": "billing-focus-export",
+      "name": "FOCUS invoice export",
+      "category": "billing",
+      "description": "Export invoices as a FOCUS 1.4 dataset.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/billing",
+      "acceptance_test": "pkg/apid/apidserver/handlers_billing_invoice_details_test.go::TestFOCUSArtifactLimitProblem",
+      "parent": "billing",
+      "routes": [
+        "/v1/billing/focus"
+      ],
+      "cli": [
+        "billing export"
+      ]
+    },
+    {
+      "id": "billing-forecast",
+      "name": "Cost forecast",
+      "category": "billing",
+      "description": "Forecast this month's bill.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/billing",
+      "acceptance_test": "pkg/financial/forecast_test.go::TestForecastMeterUnavailable",
+      "parent": "billing",
+      "routes": [
+        "/v1/billing/forecast"
+      ],
+      "cli": [
+        "billing forecast"
+      ]
+    },
+    {
+      "id": "bucket-access-grants",
+      "name": "Bucket access grants",
+      "category": "data",
+      "description": "Grant other apps access to a bucket.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/state/object_bucket_access_test.go::TestObjectBucketAccessMem",
+      "parent": "object-storage",
+      "routes": [
+        "/v1/apps/{}/buckets/{}/access-grants",
+        "/v1/orgs/{}/apps/{}/buckets/{}/access-grants"
+      ]
+    },
+    {
+      "id": "bucket-encryption",
+      "name": "Bucket encryption keys",
+      "category": "data",
+      "description": "Encrypt buckets with customer-chosen keys.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/state/object_bucket_encryption_test.go::TestObjectBucketEncryptionPG",
+      "parent": "object-storage",
+      "routes": [
+        "/v1/apps/{}/buckets/{}/encryption",
+        "/v1/apps/{}/buckets/{}/encryption-capabilities",
+        "/v1/orgs/{}/apps/{}/buckets/{}/encryption",
+        "/v1/orgs/{}/apps/{}/buckets/{}/encryption-capabilities"
+      ],
+      "cli": [
+        "bucket encryption",
+        "bucket encryption-keys"
+      ]
+    },
+    {
+      "id": "budgets",
+      "name": "Budgets",
+      "category": "billing",
+      "description": "Set budgets with projections, alerts and automatic stops.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/billing",
+      "acceptance_test": "pkg/apid/apidserver/handlers_financial_budgets_test.go::TestFinancialBudgetCRUD",
+      "routes": [
+        "/v1/billing/budgets"
+      ],
+      "cli": [
+        "billing budgets",
+        "billing budget-preview"
+      ]
+    },
+    {
+      "id": "builds",
+      "name": "Builds",
+      "category": "delivery",
+      "description": "Build source in an isolated builder microVM with streamed logs and a build cache.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/build",
+      "acceptance_test": "pkg/apid/apidserver/handlers_build_test.go::TestGetBuild_OK",
+      "routes": [
+        "/v1/builds"
+      ],
+      "cli": [
+        "build"
+      ]
     },
     {
       "id": "change-timeline",
@@ -61,7 +875,14 @@
       "plans": [],
       "docs_url": "/docs/adr/751-app-change-timeline",
       "operator_flag": "FAAS_CHANGE_TIMELINE_ENABLED",
-      "acceptance_test": "pkg/apid/apidserver/handlers_change_timeline_test.go::TestGetChangeTimeline_MergesSources"
+      "acceptance_test": "pkg/apid/apidserver/handlers_change_timeline_test.go::TestGetChangeTimeline_MergesSources",
+      "routes": [
+        "/dashboard/apps/{}/changes",
+        "/v1/apps/{}/changes"
+      ],
+      "cli": [
+        "app changes"
+      ]
     },
     {
       "id": "circuit-breaking",
@@ -72,7 +893,30 @@
       "plans": [],
       "docs_url": "/docs/adr/201-traffic-as-a-platform-primitive",
       "operator_flag": "FAAS_GATEWAY_CIRCUIT_BREAKER",
-      "acceptance_test": "pkg/gateway/service_proxy_circuit_test.go::TestServiceProxyBreakerReadmitsRecoveredEndpoint"
+      "acceptance_test": "pkg/gateway/service_proxy_circuit_test.go::TestServiceProxyBreakerReadmitsRecoveredEndpoint",
+      "consumers": [
+        "gatewayd-internal"
+      ],
+      "settings": [
+        "edge_rule.circuit_breaker"
+      ]
+    },
+    {
+      "id": "cli",
+      "name": "CLI",
+      "category": "developer",
+      "description": "Use the gregale CLI, including guided setup and diagnostics.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/cli",
+      "acceptance_test": "cmd/gregale/main_test.go::TestRunExitCodes",
+      "core": true,
+      "always_on": true
     },
     {
       "id": "companions",
@@ -87,14 +931,23 @@
         "scale"
       ],
       "docs_url": "/docs/companions",
-      "acceptance_test": "pkg/fcvm/sidecar_metal_test.go::TestMetalTwoSidecarsColdBoot"
+      "acceptance_test": "pkg/fcvm/sidecar_metal_test.go::TestMetalTwoSidecarsColdBoot",
+      "settings": [
+        "manifest.companions",
+        "manifest.extensions",
+        "manifest.main_depends_on"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/sidecars",
+        "/v1/apps/{}/sidecars"
+      ]
     },
     {
       "id": "container-deployments",
       "name": "Container deployments",
       "category": "delivery",
       "description": "Deploy a stateless Linux/amd64 Docker or OCI image without rewriting it as a function.",
-      "maturity": "beta",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -102,7 +955,11 @@
         "scale"
       ],
       "docs_url": "/docs/container-compatibility",
-      "acceptance_test": "pkg/oci/container_contract_test.go::TestContainerDeploymentContract"
+      "acceptance_test": "pkg/oci/container_contract_test.go::TestContainerDeploymentContract",
+      "routes": [
+        "/dashboard/apps/{}/image-published",
+        "/v1/apps/{}/image-published"
+      ]
     },
     {
       "id": "continuous-profiling",
@@ -113,7 +970,35 @@
       "plans": [],
       "docs_url": "/docs/profiling",
       "operator_flag": "FAAS_PROFILING_ENABLED",
-      "acceptance_test": "pkg/profiling/profile_test.go::TestCPUProfileDeploymentComparison"
+      "acceptance_test": "pkg/profiling/profile_test.go::TestCPUProfileDeploymentComparison",
+      "settings": [
+        "app.profiling",
+        "manifest.profiling"
+      ],
+      "cli": [
+        "debug profiles"
+      ]
+    },
+    {
+      "id": "cors-presets",
+      "name": "CORS presets",
+      "category": "edge",
+      "description": "Reuse named CORS configurations across apps.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/networking",
+      "acceptance_test": "pkg/apid/apidserver/handlers_cors_presets_test.go::TestGetCorsPreset_HappyPath",
+      "settings": [
+        "app.cors_default_enabled",
+        "app.cors_default_origins"
+      ],
+      "routes": [
+        "/v1/cors-presets"
+      ]
     },
     {
       "id": "crash-snapshots",
@@ -127,14 +1012,64 @@
       ],
       "docs_url": "/docs/crash-snapshots",
       "operator_flag": "FAAS_CRASH_SNAPSHOTS",
-      "acceptance_test": "cmd/e2e/crash_snapshot_metal_test.go::TestCrashSnapshotMetal"
+      "acceptance_test": "cmd/e2e/crash_snapshot_metal_test.go::TestCrashSnapshotMetal",
+      "routes": [
+        "/dashboard/apps/{}/crash-snapshots",
+        "/v1/apps/{}/crash-snapshots"
+      ]
+    },
+    {
+      "id": "crons",
+      "name": "Crons",
+      "category": "async",
+      "description": "Run HTTP requests or commands on a schedule.",
+      "maturity": "ga",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/crons",
+      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestListCrons_HappyPath",
+      "consumers": [
+        "schedd"
+      ],
+      "settings": [
+        "manifest.triggers.cron"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/crons",
+        "/v1/cron-fire-now-requests",
+        "/v1/crons"
+      ],
+      "cli": [
+        "crons"
+      ]
+    },
+    {
+      "id": "custom-dashboards",
+      "name": "Custom dashboards",
+      "category": "observability",
+      "description": "Save named dashboards that combine request metrics, log search counts, custom metrics, and SLOs across an account's apps.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261022173833-custom-dashboards",
+      "operator_flag": "FAAS_CUSTOM_DASHBOARDS_ENABLED",
+      "acceptance_test": "pkg/apid/dashboards/service_test.go::TestDashboardLifecycle",
+      "routes": [
+        "/dashboard/dashboards",
+        "/v1/dashboards"
+      ],
+      "cli": [
+        "dashboards"
+      ]
     },
     {
       "id": "custom-domains",
       "name": "Custom domains",
       "category": "edge",
       "description": "Serve an API on a customer-owned domain with managed TLS.",
-      "maturity": "beta",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -142,7 +1077,13 @@
         "scale"
       ],
       "docs_url": "https://gregale.dev/docs/custom-domains",
-      "acceptance_test": "pkg/gateway/allowlist_test.go::TestOnDemandAllowlist_CustomDomainTakesPrecedence"
+      "acceptance_test": "cmd/gatewayd-internal/custom_domain_acceptance_test.go::TestCustomDomainAcceptance",
+      "routes": [
+        "/v1/domains"
+      ],
+      "cli": [
+        "domains"
+      ]
     },
     {
       "id": "custom-metric-history",
@@ -153,7 +1094,28 @@
       "plans": [],
       "docs_url": "/docs/adr/745-custom-metric-history",
       "operator_flag": "FAAS_CUSTOM_METRIC_HISTORY_ENABLED",
-      "acceptance_test": "pkg/apid/apidserver/custom_metric_exporter_test.go::TestCustomMetricExporterExportsOnlyFreshValues"
+      "acceptance_test": "pkg/apid/apidserver/custom_metric_exporter_test.go::TestCustomMetricExporterExportsOnlyFreshValues",
+      "parent": "custom-metrics"
+    },
+    {
+      "id": "custom-metrics",
+      "name": "Custom metrics",
+      "category": "observability",
+      "description": "Send your own metrics, including over OTLP.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/apps",
+      "acceptance_test": "pkg/api/custom_metrics_validation_test.go::TestCustomMetricsPlanGate",
+      "routes": [
+        "/dashboard/apps/{}/custom-metrics",
+        "/dashboard/apps/{}/otlp",
+        "/v1/apps/{}/custom-metrics",
+        "/v1/apps/{}/otlp"
+      ]
     },
     {
       "id": "custom-slos",
@@ -167,7 +1129,69 @@
         "scale"
       ],
       "docs_url": "/docs/slos",
-      "acceptance_test": "pkg/apid/apidserver/handlers_slo_status_test.go::TestGetSLOReportsBudgetFromHourlyRows"
+      "acceptance_test": "pkg/apid/apidserver/handlers_slo_status_test.go::TestGetSLOReportsBudgetFromHourlyRows",
+      "routes": [
+        "/dashboard/apps/{}/slo",
+        "/dashboard/apps/{}/slos",
+        "/v1/account/slo",
+        "/v1/apps/{}/slo",
+        "/v1/apps/{}/slos"
+      ],
+      "cli": [
+        "slos",
+        "slo"
+      ]
+    },
+    {
+      "id": "dashboard",
+      "name": "Dashboard",
+      "category": "developer",
+      "description": "Manage apps and the account in the web dashboard.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/account",
+      "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_test.go::TestDashboardManifestView",
+      "core": true,
+      "routes": [
+        "/app.js",
+        "/checks.js",
+        "=/dashboard",
+        "/dashboard/apps/new",
+        "/dashboard/assets",
+        "/history.js",
+        "/replacement.js",
+        "/resolution.js",
+        "/sources.js",
+        "/validation.js",
+        "/verification.js"
+      ]
+    },
+    {
+      "id": "data-api",
+      "name": "Data API",
+      "category": "data",
+      "description": "Serve a managed Postgres database over a generated HTTP API.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/data-api",
+      "acceptance_test": "cmd/gregale/commands_data_api_sync_test.go::TestDataAPISyncJourney",
+      "routes": [
+        "/dashboard/apps/{}/data-api",
+        "/v1/apps/{}/data-api",
+        "/v1/runtime/data-api"
+      ],
+      "cli": [
+        "data-api"
+      ]
     },
     {
       "id": "data-pipelines",
@@ -181,7 +1205,32 @@
         "scale"
       ],
       "docs_url": "/docs/data-pipelines",
-      "acceptance_test": "pkg/datapipeline/native_test.go::TestNativePipelineEndToEnd"
+      "acceptance_test": "pkg/datapipeline/native_test.go::TestNativePipelineEndToEnd",
+      "routes": [
+        "/dashboard/data",
+        "/v1/data"
+      ],
+      "cli": [
+        "pipeline"
+      ]
+    },
+    {
+      "id": "data-upstreams",
+      "name": "Data upstreams",
+      "category": "data",
+      "description": "Record the data upstreams an app uses and use them as placement hints.",
+      "maturity": "internal",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/storage",
+      "acceptance_test": "pkg/apid/apidserver/handlers_upstreams_runtime_test.go::TestDataUpstreamsRuntimeDisabledOnScale",
+      "routes": [
+        "/dashboard/apps/{}/upstreams",
+        "/v1/apps/{}/upstreams"
+      ]
     },
     {
       "id": "datadog-integration",
@@ -192,35 +1241,311 @@
       "plans": [],
       "docs_url": "/docs/adr/752-datadog-integration",
       "operator_flag": "FAAS_DATADOG_INTEGRATION_ENABLED",
-      "acceptance_test": "cmd/gregale/commands_add_datadog_test.go::TestCmdAddDatadog_ConfiguresDrainAndWebhook"
+      "acceptance_test": "cmd/gregale/commands_add_datadog_test.go::TestCmdAddDatadog_ConfiguresDrainAndWebhook",
+      "parent": "log-drains",
+      "cli": [
+        "add datadog"
+      ]
+    },
+    {
+      "id": "dead-letter-queues",
+      "name": "Dead-letter queues",
+      "category": "async",
+      "description": "Inspect, replay and purge dead-lettered work.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/queue-pull-leases",
+      "acceptance_test": "pkg/webhook/dispatcher_test.go::TestDispatcher_Attempt7DLQs",
+      "parent": "queues",
+      "routes": [
+        "/dashboard/apps/{}/queues/dead_letter",
+        "/v1/account/dlq",
+        "/v1/account/dlq:replay_all",
+        "/v1/apps/{}/dlq",
+        "/v1/apps/{}/dlq:replay_all",
+        "/v1/apps/{}/queues/dead_letter",
+        "/v1/orgs/{}/apps/{}/queues/dead_letter"
+      ],
+      "cli": [
+        "dlq",
+        "queue dead-letter"
+      ]
+    },
+    {
+      "id": "debug",
+      "name": "Debug",
+      "category": "observability",
+      "description": "Collect a debug bundle with telemetry, dependencies and post-deploy regressions.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/cli",
+      "acceptance_test": "pkg/apid/apidserver/handlers_debug_running_test.go::TestDebugRunning_IsPlanGated",
+      "routes": [
+        "/dashboard/apps/{}/debug",
+        "/v1/apps/{}/debug"
+      ],
+      "cli": [
+        "debug"
+      ]
+    },
+    {
+      "id": "debug-dependencies",
+      "name": "Dependency view",
+      "category": "observability",
+      "description": "See an app's downstream dependencies and their health.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/cli",
+      "acceptance_test": "pkg/apid/apidserver/handlers_debug_dependency_deployments_test.go::TestBuildDebugDependencyDeploymentComparison",
+      "parent": "debug",
+      "routes": [
+        "/v1/apps/{}/debug/dependencies"
+      ],
+      "cli": [
+        "debug dependencies"
+      ]
+    },
+    {
+      "id": "debug-regressions",
+      "name": "Post-deploy regressions",
+      "category": "observability",
+      "description": "Detect route regressions after a deploy.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/cli",
+      "acceptance_test": "pkg/apid/apidserver/handlers_admin_obs_regression_test.go::TestObsRegressionFailedJob",
+      "parent": "debug",
+      "routes": [
+        "/v1/apps/{}/debug/regressions"
+      ],
+      "cli": [
+        "debug regressions"
+      ]
     },
     {
       "id": "declarative-response-caching",
       "name": "Declarative response caching",
       "category": "edge",
       "description": "Cache selected GET and HEAD responses by route with bounded freshness, explicit purge hooks, stale-while-revalidate, and an optional distributed Redis tier.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
       "docs_url": "/docs/cache",
-      "acceptance_test": "pkg/gateway/handler_apply_edge_rule_cache_test.go::TestApplyEdgeRuleCache_StaleWhileRevalidate"
+      "acceptance_test": "pkg/gateway/handler_apply_edge_rule_cache_test.go::TestApplyEdgeRuleCache_StaleWhileRevalidate",
+      "consumers": [
+        "gatewayd-internal"
+      ],
+      "settings": [
+        "edge_rule.cache"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/cache",
+        "/v1/apps/{}/cache"
+      ],
+      "cli": [
+        "cache"
+      ]
     },
     {
       "id": "delayed-execution",
       "name": "Delayed execution",
       "category": "async",
       "description": "Schedule a durable one-shot app invocation for a future time without operating a queue, cron service, or external scheduler.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
       "docs_url": "/docs/event-driven#delayed-tasks",
-      "acceptance_test": "cmd/e2e/normal_path_e2e_test.go::TestE2E_NormalPath_DelayedTaskWaitsThenUsesRealGatewayBridge"
+      "acceptance_test": "cmd/e2e/normal_path_e2e_test.go::TestE2E_NormalPath_DelayedTaskWaitsThenUsesRealGatewayBridge",
+      "consumers": [
+        "schedd"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/delayed-tasks",
+        "/v1/apps/{}/delayed-tasks",
+        "/v1/delayed-tasks"
+      ],
+      "cli": [
+        "delayed-task"
+      ]
+    },
+    {
+      "id": "deploy-diff",
+      "name": "Deploy diff",
+      "category": "delivery",
+      "description": "Preview what a deploy will change before it runs.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/deploydiff/render_text_test.go::TestKindOrder",
+      "routes": [
+        "/dashboard/apps/{}/diff",
+        "/v1/apps/{}/diff"
+      ]
+    },
+    {
+      "id": "deploy-freezes",
+      "name": "Deploy freezes",
+      "category": "delivery",
+      "description": "Block deploys during freezes and outside release windows.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/apid/apidserver/release_guards_test.go::TestReleaseFreezeRefusesProductionReleasesUntilOverriddenOrLifted",
+      "routes": [
+        "/dashboard/apps/{}/freeze-status",
+        "/v1/apps/{}/freeze-status",
+        "/v1/freezes"
+      ],
+      "cli": [
+        "freeze"
+      ]
+    },
+    {
+      "id": "deploy-overrides",
+      "name": "gregale.yaml configuration",
+      "category": "delivery",
+      "description": "Keep build and runtime settings in a versioned gregale.yaml file.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploy-overrides",
+      "acceptance_test": "pkg/gregalemanifest/manifest_test.go::TestLoad_DevProfile",
+      "routes": [
+        "/dashboard/apps/{}/config",
+        "/v1/apps/{}/config"
+      ]
+    },
+    {
+      "id": "deploy-queue-controls",
+      "name": "Deploy queue controls",
+      "category": "delivery",
+      "description": "Reorder, cancel or fast-track queued deploys.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/state/deployment_queue_controls_pg_test.go::TestPg_CancelDeploymentTx_Pending_Happy",
+      "routes": [
+        "/v1/deployments/{}/reorder"
+      ],
+      "cli": [
+        "deploys reorder"
+      ]
+    },
+    {
+      "id": "deploy-scans",
+      "name": "Deploy scans",
+      "category": "delivery",
+      "description": "Scan each deployment for known vulnerabilities and leaked secrets.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/security",
+      "acceptance_test": "pkg/imaged/secretscan_pure_test.go::TestWithSecretScanFindings_ScannedAtUTC",
+      "routes": [
+        "/v1/deployments/{}/scan",
+        "/v1/deployments/{}/secret-scan"
+      ]
+    },
+    {
+      "id": "deploy-tokens",
+      "name": "Deploy tokens",
+      "category": "delivery",
+      "description": "Mint per-app tokens that CI can use to deploy.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/apid/apidserver/handlers_deploy_tokens_test.go::TestDeployTokenBearer_BoundToItsApp",
+      "routes": [
+        "/dashboard/apps/{}/deploy-tokens",
+        "/v1/apps/{}/deploy-tokens"
+      ]
+    },
+    {
+      "id": "deployment-aliases",
+      "name": "Deployment aliases",
+      "category": "delivery",
+      "description": "Give immutable deployments stable named URLs.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deployments",
+      "acceptance_test": "pkg/apid/apidserver/handlers_deployment_aliases_test.go::TestDeploymentAliasesCRUD",
+      "routes": [
+        "/dashboard/apps/{}/deployment-aliases",
+        "/v1/apps/{}/deployment-aliases"
+      ],
+      "cli": [
+        "deployments alias"
+      ]
+    },
+    {
+      "id": "deployment-staging",
+      "name": "Deployment staging",
+      "category": "delivery",
+      "description": "Stage a deployment, including its crons, before it serves traffic.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/apid/deploystaging/crons_test.go::TestCronStagingHTTP",
+      "routes": [
+        "/dashboard/apps/{}/deployment-cron-staging",
+        "/dashboard/apps/{}/deployment-staging",
+        "/v1/apps/{}/deployment-cron-staging",
+        "/v1/apps/{}/deployment-staging"
+      ]
     },
     {
       "id": "dev-bridge",
@@ -231,7 +1556,39 @@
       "plans": [],
       "docs_url": "/docs/dev-bridge",
       "operator_flag": "FAAS_DEV_BRIDGE_ENABLED",
-      "acceptance_test": "cmd/gatewayd-internal/dev_bridge_service_test.go::TestDevBridgeRemoteFrontendLocalPaymentsRemoteInventory"
+      "acceptance_test": "cmd/gatewayd-internal/dev_bridge_service_test.go::TestDevBridgeRemoteFrontendLocalPaymentsRemoteInventory",
+      "routes": [
+        "/dashboard/dev-bridges",
+        "/v1/dev/bridges"
+      ],
+      "cli": [
+        "dev bridge"
+      ]
+    },
+    {
+      "id": "developer-environments",
+      "name": "Developer environments",
+      "category": "runtime",
+      "description": "Run an expiring remote copy of an app for development, with file sync.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/dev",
+      "acceptance_test": "pkg/apid/apidserver/handlers_dev_test.go::TestDevSessionGetIsReadOnly",
+      "settings": [
+        "manifest.dev"
+      ],
+      "routes": [
+        "/dashboard/developers",
+        "/v1/dev/sessions"
+      ],
+      "cli": [
+        "dev"
+      ]
     },
     {
       "id": "disposable-runs",
@@ -246,21 +1603,99 @@
       ],
       "docs_url": "https://gregale.dev/docs/executions",
       "operator_flag": "FAAS_EXECUTION_API_ENABLED",
-      "acceptance_test": "pkg/apid/apidserver/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection"
+      "acceptance_test": "pkg/apid/apidserver/handlers_executions_test.go::TestCreateExecutionSealsPayloadAndReturnsQueuedProjection",
+      "routes": [
+        "/v1/execution-artifact-grants",
+        "/v1/executions"
+      ],
+      "cli": [
+        "run",
+        "runs"
+      ]
     },
     {
-      "id": "durable-inbound-webhooks",
-      "name": "Durable inbound webhooks",
-      "category": "async",
-      "description": "Accept a provider webhook while an app is asleep, persist it before acknowledging, then wake and deliver with retries and dead-lettering.",
+      "id": "docs-and-trust",
+      "name": "Docs and trust pages",
+      "category": "developer",
+      "description": "Publish docs, the DPA, subprocessors and security reporting.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/dpa",
+      "acceptance_test": "cmd/gatewayd-public/main_test.go::TestInstallPublicStaticRoutes_SecurityTxt",
+      "core": true,
+      "routes": [
+        "/docs"
+      ]
+    },
+    {
+      "id": "domain-doctor",
+      "name": "Domain doctor",
+      "category": "edge",
+      "description": "Diagnose a custom domain's DNS and TLS setup.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "https://gregale.dev/docs/custom-domains",
+      "acceptance_test": "pkg/apid/apidserver/handlers_doctor_test.go::TestGetDomainDoctor_IDOR",
+      "parent": "custom-domains",
+      "routes": [
+        "/v1/domains/{}/doctor"
+      ],
+      "cli": [
+        "domains doctor"
+      ]
+    },
+    {
+      "id": "durable-entities",
+      "name": "Durable entities",
+      "category": "data",
+      "description": "Keep addressable stateful entities and sessions with backup and restore.",
       "maturity": "preview",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
+      "docs_url": "/docs/durable-entity-development",
+      "acceptance_test": "pkg/apid/apidserver/durable_entities_test.go::TestDurableEntityAPIScopeAndAuthentication",
+      "routes": [
+        "/dashboard/apps/{}/entities",
+        "/v1/apps/{}/entities"
+      ],
+      "cli": [
+        "entities"
+      ]
+    },
+    {
+      "id": "durable-inbound-webhooks",
+      "name": "Durable inbound webhooks",
+      "category": "async",
+      "description": "Accept a provider webhook while an app is asleep, persist it before acknowledging, then wake and deliver with retries and dead-lettering.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/inbound-webhooks",
-      "acceptance_test": "pkg/apid/apidserver/handlers_inbound_webhooks_test.go::TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries"
+      "acceptance_test": "pkg/apid/apidserver/handlers_inbound_webhooks_test.go::TestInboundWebhookAcceptsDurablyAndDeduplicatesProviderRetries",
+      "consumers": [
+        "schedd"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/inbound-webhooks",
+        "/v1/apps/{}/inbound-webhooks",
+        "/v1/hooks"
+      ]
     },
     {
       "id": "edge-ai-crawler-controls",
@@ -322,6 +1757,168 @@
       "acceptance_test": "pkg/gateway/edge_penalty_box_test.go::TestPenaltyBoxRefusesBoxedClientAcrossPaths"
     },
     {
+      "id": "edge-protection",
+      "name": "Edge protection",
+      "category": "edge",
+      "description": "Guard apps with pre-auth limits, challenges under attack and WAF rules.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/security",
+      "acceptance_test": "pkg/apid/apidserver/handlers_edge_protection_test.go::TestAppEdgeProtectionSummarizesPerAppCounters",
+      "settings": [
+        "app.crawler_policy=block",
+        "app.pre_auth_rate_limit",
+        "edge_rule.challenge",
+        "edge_rule.waf"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/edge-protection",
+        "/dashboard/apps/{}/pre-auth-observations",
+        "/v1/apps/{}/edge-protection",
+        "/v1/apps/{}/pre-auth-observations"
+      ]
+    },
+    {
+      "id": "edge-rule-history",
+      "name": "Edge rule history and rollback",
+      "category": "edge",
+      "description": "See edge rule versions and events, and roll back.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/edge-rule-trace",
+      "acceptance_test": "pkg/apid/apidserver/handlers_edge_rule_events_test.go::TestEdgeRuleEventsAPI",
+      "parent": "edge-rules",
+      "routes": [
+        "/v1/apps/{}/edge-rules/events",
+        "/v1/apps/{}/edge-rules/rollback",
+        "/v1/apps/{}/edge-rules/versions"
+      ],
+      "cli": [
+        "edge-rules history"
+      ]
+    },
+    {
+      "id": "edge-rule-lists",
+      "name": "Edge rule lists",
+      "category": "edge",
+      "description": "Share IP, ASN and country lists across edge rules.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/edge-rule-trace",
+      "acceptance_test": "pkg/apid/apidserver/handlers_edge_rule_lists_test.go::TestEdgeRuleListLifecycle",
+      "parent": "edge-rules",
+      "routes": [
+        "/v1/edge-rule-lists"
+      ],
+      "cli": [
+        "edge-rule-lists"
+      ]
+    },
+    {
+      "id": "edge-rule-suggestions",
+      "name": "Edge rule suggestions",
+      "category": "edge",
+      "description": "Get suggested edge rules and recipes from observed traffic.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/edge-rule-trace",
+      "acceptance_test": "pkg/apid/apidserver/handlers_edge_rule_suggestions_test.go::TestEdgeRuleSuggestionsRoute",
+      "parent": "edge-rules",
+      "routes": [
+        "/dashboard/apps/{}/edge-rules/recipes",
+        "/v1/apps/{}/edge-rules/suggestions"
+      ],
+      "cli": [
+        "edge-rules suggest"
+      ]
+    },
+    {
+      "id": "edge-rule-trace",
+      "name": "Edge rule trace",
+      "category": "edge",
+      "description": "Trace which edge rules a request would match.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/edge-rule-trace",
+      "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_edge_rules_test.go::TestDashboardEdgeRuleTraceShowsRetryPolicy",
+      "parent": "edge-rules",
+      "routes": [
+        "/dashboard/apps/{}/edge-rules/trace"
+      ],
+      "cli": [
+        "edge-rules trace"
+      ]
+    },
+    {
+      "id": "edge-rules",
+      "name": "Edge rules",
+      "category": "edge",
+      "description": "Route, rewrite, redirect, throttle, validate and protect requests at the edge.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/edge-rule-trace",
+      "acceptance_test": "cmd/gatewayd-internal/edge_rules_app_wide_test.go::TestAppWideEdgeRules",
+      "settings": [
+        "app.maintenance_mode",
+        "app.request_rate_limit_burst",
+        "app.request_rate_limit_rps",
+        "edge_rule.budget",
+        "edge_rule.cors",
+        "edge_rule.geo",
+        "edge_rule.headers",
+        "edge_rule.ip",
+        "edge_rule.jwt",
+        "edge_rule.limit",
+        "edge_rule.maintenance",
+        "edge_rule.redirect",
+        "edge_rule.respond",
+        "edge_rule.rewrite",
+        "edge_rule.route",
+        "edge_rule.throttle",
+        "edge_rule.validate",
+        "manifest.routes"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/edge-rules",
+        "/v1/apps/{}/edge-rules",
+        "/v1/edge-rules"
+      ],
+      "cli": [
+        "edge-rules",
+        "cors"
+      ]
+    },
+    {
       "id": "edge-waf-blocking",
       "name": "WAF warn and block",
       "category": "edge",
@@ -335,6 +1932,31 @@
       "acceptance_test": "pkg/gateway/edge_rules_waf_test.go::TestApplyEdgeRuleWAFInline"
     },
     {
+      "id": "egress-allowlist",
+      "name": "Egress allowlist",
+      "category": "edge",
+      "description": "Limit outbound traffic to listed destinations and open extra ports.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/networking",
+      "acceptance_test": "pkg/state/app_egress_allowlist_test.go::TestUpdateApp_WithEgressAllowlist",
+      "settings": [
+        "app.egress_allowlist",
+        "app.egress_ports"
+      ],
+      "routes": [
+        "/v1/account/egress_allowlist_extra"
+      ],
+      "cli": [
+        "app egress-allowlist",
+        "app egress-ports"
+      ]
+    },
+    {
       "id": "egress-circuit-breaking",
       "name": "Dependency circuit breaking",
       "category": "data",
@@ -346,6 +1968,441 @@
       "acceptance_test": "pkg/sched/egress_circuit_test.go::TestEgressBreakerClosesAndRemovesRuleAfterRecovery"
     },
     {
+      "id": "entity-backups",
+      "name": "Entity backup, export and restore",
+      "category": "data",
+      "description": "Back up, export and restore durable entities.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/durable-entity-development",
+      "acceptance_test": "pkg/apid/apidserver/handlers_account_test.go::TestRestoreAccount_HappyPath",
+      "parent": "durable-entities",
+      "routes": [
+        "/v1/apps/{}/entities/backups",
+        "/v1/apps/{}/entities/export",
+        "/v1/apps/{}/entities/restore"
+      ]
+    },
+    {
+      "id": "entity-quotas",
+      "name": "Entity quotas",
+      "category": "data",
+      "description": "Set and migrate durable entity quotas.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/durable-entity-development",
+      "acceptance_test": "pkg/durableentity/socket/quota_migration_test.go::TestQuotaMigrationPlanResumeVerifyAndFencing",
+      "parent": "durable-entities",
+      "routes": [
+        "/v1/apps/{}/entities/quota-migration",
+        "/v1/apps/{}/entities/quota-policy",
+        "/v1/apps/{}/entities/quotas"
+      ]
+    },
+    {
+      "id": "entity-registry",
+      "name": "Entity registry",
+      "category": "data",
+      "description": "Register, retire and check readiness of entity types.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/durable-entity-development",
+      "acceptance_test": "pkg/apid/apidserver/handlers_registry_auth_test.go::TestRegistryAuth_HTTPSRequired",
+      "parent": "durable-entities",
+      "routes": [
+        "/v1/apps/{}/entities/readiness",
+        "/v1/apps/{}/entities/registry",
+        "/v1/apps/{}/entities/retirement"
+      ]
+    },
+    {
+      "id": "entity-sessions",
+      "name": "Entity sessions",
+      "category": "data",
+      "description": "Connect browser and app sessions to durable entities.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/durable-entity-development",
+      "acceptance_test": "pkg/tcpd/supervisor_test.go::TestSupervisorRecreationCancelsPreviousIdentitySessions",
+      "parent": "durable-entities",
+      "routes": [
+        "/v1/apps/{}/entities/session-connect",
+        "/v1/apps/{}/entities/session-grants"
+      ]
+    },
+    {
+      "id": "env-vars",
+      "name": "Environment variables",
+      "category": "runtime",
+      "description": "Set, diff, roll back, push and pull an app's environment variables.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/env",
+      "acceptance_test": "pkg/state/memstore_test.go::TestAppEnvUpsertListDelete",
+      "routes": [
+        "/dashboard/apps/{}/env",
+        "/dashboard/apps/{}/env-diff",
+        "/v1/apps/{}/env",
+        "/v1/apps/{}/env-diff"
+      ],
+      "cli": [
+        "env"
+      ]
+    },
+    {
+      "id": "environment-clones",
+      "name": "Environment clones",
+      "category": "delivery",
+      "description": "Clone an environment, including its databases.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/env",
+      "acceptance_test": "pkg/apid/apidserver/handlers_projects_test.go::TestProjectEnvironmentCloneCopiesScopedStateAtomically",
+      "parent": "environments",
+      "routes": [
+        "/v1/projects/{}/environment-clones"
+      ],
+      "cli": [
+        "env create",
+        "env clone-status"
+      ]
+    },
+    {
+      "id": "environment-gitops",
+      "name": "Environment GitOps",
+      "category": "delivery",
+      "description": "Manage environments from Git with field ownership.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/env",
+      "acceptance_test": "pkg/apid/apidserver/handlers_environment_gitops_test.go::TestEnvironmentGitOpsHTTPScopedConfigWorkflow",
+      "parent": "environments",
+      "routes": [
+        "/v1/environment-field-ownership",
+        "/v1/projects/{}/environments/{}/gitops"
+      ]
+    },
+    {
+      "id": "environment-promotions",
+      "name": "Environment promotions",
+      "category": "delivery",
+      "description": "Promote releases between environments with approvals.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/env",
+      "acceptance_test": "pkg/apid/apidserver/handlers_project_environment_promotion_test.go::TestProjectEnvironmentPromotionBlockedWhilePastDue",
+      "parent": "environments",
+      "routes": [
+        "/v1/projects/{}/environments/{}/approval-requests",
+        "/v1/projects/{}/environments/{}/approvals",
+        "/v1/projects/{}/environments/{}/promote",
+        "/v1/projects/{}/environments/{}/promotion-preview",
+        "/v1/projects/{}/environments/{}/promotions"
+      ]
+    },
+    {
+      "id": "environment-release-sets",
+      "name": "Environment release sets",
+      "category": "delivery",
+      "description": "Release several services together as a release set.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/env",
+      "acceptance_test": "pkg/apid/apidserver/handlers_project_release_sets_test.go::TestPublishProjectReleaseSetRequiresCompleteLiveGraph",
+      "parent": "environments",
+      "routes": [
+        "/v1/projects/{}/environments/{}/release-sets",
+        "/v1/projects/{}/environments/{}/releases"
+      ]
+    },
+    {
+      "id": "environments",
+      "name": "Environments",
+      "category": "delivery",
+      "description": "Run named project environments, clone them and manage them from Git.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/env",
+      "acceptance_test": "pkg/environmentsync/pgintegration/store_test.go::TestEnvironmentGitOpsApprovalAndScope",
+      "routes": [
+        "/v1/projects/{}/environments"
+      ],
+      "cli": [
+        "diff"
+      ]
+    },
+    {
+      "id": "event-acknowledgments",
+      "name": "Event acknowledgments",
+      "category": "async",
+      "description": "Acknowledge, renew and retry event deliveries explicitly.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/objectstorage/gcs_features_test.go::TestGCSTrackedWriteLostAcknowledgment",
+      "parent": "events",
+      "routes": [
+        "/v1/apps/{}/event-deliveries/{}/acknowledgment",
+        "/v1/apps/{}/event-subscriptions/{}/acknowledgment-history",
+        "/v1/apps/{}/event-subscriptions/{}/acknowledgment-policy"
+      ]
+    },
+    {
+      "id": "event-delivery-controls",
+      "name": "Event delivery controls",
+      "category": "async",
+      "description": "Pause, rate-limit, circuit-break and reconcile a subscription's deliveries.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/internalmail/control_pg_test.go::TestPGDeliveryControlPersistenceCASAndReplay",
+      "parent": "events",
+      "routes": [
+        "/v1/apps/{}/event-subscriptions/{}/circuit-breaker",
+        "/v1/apps/{}/event-subscriptions/{}/delivery-control",
+        "/v1/apps/{}/event-subscriptions/{}/execution-reconciliation",
+        "/v1/apps/{}/event-subscriptions/{}/retry-policy"
+      ]
+    },
+    {
+      "id": "event-recoveries",
+      "name": "Event recoveries",
+      "category": "async",
+      "description": "Recover failed event deliveries in controlled batches.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/apid/apidserver/handlers_keyed_invocation_replay_test.go::TestKeyedInvocationReplayIndependentEventRecovery",
+      "parent": "events",
+      "routes": [
+        "/dashboard/apps/{}/event-recoveries",
+        "/v1/apps/{}/event-recoveries",
+        "/v1/event-recoveries"
+      ]
+    },
+    {
+      "id": "event-replays",
+      "name": "Event replays",
+      "category": "async",
+      "description": "Replay past events to a subscription or workflow.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/apid/apidserver/handlers_event_replay_preview_test.go::TestEventReplayPreviewAPIReadScopes",
+      "parent": "events",
+      "routes": [
+        "/v1/apps/{}/event-deliveries:replay-fanout-failure",
+        "/v1/apps/{}/event-deliveries:replay-retryable-fanout-failures",
+        "/v1/apps/{}/event-subscriptions/{}/replay-preview",
+        "/v1/apps/{}/event-subscriptions/{}/replays",
+        "/v1/apps/{}/workflow-event-replay-preview",
+        "/v1/apps/{}/workflow-event-replays",
+        "/v1/event-replays"
+      ]
+    },
+    {
+      "id": "event-schemas",
+      "name": "Event schemas",
+      "category": "async",
+      "description": "Register event schemas and preview schema rollouts.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/apid/apidserver/handlers_event_schemas_test.go::TestEventSchemaRegistrationAndPublishValidation",
+      "parent": "events",
+      "routes": [
+        "/v1/event-schemas",
+        "/v1/event-schemas:preview-rollout"
+      ]
+    },
+    {
+      "id": "event-subscriptions",
+      "name": "Event subscriptions",
+      "category": "async",
+      "description": "Subscribe apps to event types and inspect delivery health.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/apid/apidserver/handlers_event_subscriptions_test.go::TestListEventSubscriptions_CrossAccountIsNotVisible",
+      "parent": "events",
+      "settings": [
+        "manifest.event_triggers"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/event-subscriptions",
+        "/v1/apps/{}/event-subscriptions"
+      ]
+    },
+    {
+      "id": "event-triggers",
+      "name": "Event triggers",
+      "category": "async",
+      "description": "Consume Kafka, NATS, Redis Streams, AMQP, SQS-compatible and bucket events.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/apid/apidserver/handlers_triggers_caps_test.go::TestTriggerRetryPolicyRoundTripsAndUpdates",
+      "consumers": [
+        "schedd"
+      ],
+      "settings": [
+        "manifest.triggers.amqp",
+        "manifest.triggers.kafka",
+        "manifest.triggers.nats",
+        "manifest.triggers.queue",
+        "manifest.triggers.rabbitmq",
+        "manifest.triggers.redis_streams",
+        "manifest.triggers.sqs_compat"
+      ],
+      "routes": [
+        "/v1/triggers",
+        "/v1/triggers:batch_create"
+      ],
+      "cli": [
+        "triggers"
+      ]
+    },
+    {
+      "id": "events",
+      "name": "Events",
+      "category": "async",
+      "description": "Publish events with schemas, subscriptions, replays and dead-letter queues.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/apid/apidserver/handlers_event_subscriptions_test.go::TestListEventSubscriptions_ReturnsReconciledManifestRows",
+      "routes": [
+        "/dashboard/apps/{}/event-deliveries",
+        "/dashboard/apps/{}/events",
+        "/dashboard/apps/{}/workflow-event-replay-preview",
+        "/dashboard/apps/{}/workflow-event-replays",
+        "/v1/apps/{}/event-deliveries",
+        "/v1/apps/{}/events",
+        "/v1/apps/{}/events:publish",
+        "/v1/events",
+        "/v1/events:preview",
+        "/v1/events:publish",
+        "/v1/events:publish-batch"
+      ],
+      "cli": [
+        "events"
+      ]
+    },
+    {
+      "id": "execution-workflows",
+      "name": "Execution workflows",
+      "category": "async",
+      "description": "Chain disposable runs into workflows.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/faas_openapi_spec",
+      "acceptance_test": "pkg/apid/apidserver/handlers_executions_test.go::TestExecutionWorkflowSummariesRespectKeyFamilyBoundaries",
+      "parent": "workflows-and-jobs",
+      "routes": [
+        "/v1/execution-workflows"
+      ]
+    },
+    {
+      "id": "failed-events-console",
+      "name": "Failed events console",
+      "category": "async",
+      "description": "Replay or discard failed events from the dashboard.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_failed_events_test.go::TestDashboardFailedEvents_PaginatesAtPageSize",
+      "parent": "events",
+      "routes": [
+        "/dashboard/failed-events"
+      ]
+    },
+    {
       "id": "feature-flags",
       "name": "Customer-aware feature flags",
       "category": "delivery",
@@ -353,15 +2410,22 @@
       "maturity": "internal",
       "plans": [],
       "docs_url": "/docs/flags",
+      "operator_flag": "FAAS_FLAGS_ENABLED",
       "acceptance_test": "cmd/e2e/feature_flags_native_restore_metal_test.go::TestFeatureFlagsNativeParkRestoreMetal",
-      "operator_flag": "FAAS_FLAGS_ENABLED"
+      "routes": [
+        "/v1/projects/{}/environments/{}/flags",
+        "/v1/runtime/flags"
+      ],
+      "cli": [
+        "flags"
+      ]
     },
     {
       "id": "firecracker-isolation",
       "name": "Firecracker isolation",
       "category": "runtime",
       "description": "Run each workload in an isolated Firecracker microVM.",
-      "maturity": "beta",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -369,14 +2433,15 @@
         "scale"
       ],
       "docs_url": "https://gregale.dev/docs/security",
-      "acceptance_test": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal"
+      "acceptance_test": "cmd/e2e/source_deploy_wake_metal_test.go::TestSourceDeployWakeMetal",
+      "always_on": true
     },
     {
       "id": "framework-profiles",
       "name": "Framework profiles",
       "category": "delivery",
       "description": "Detect common API frameworks and suggest a start command, port, and health path.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "free",
         "hobby",
@@ -387,11 +2452,72 @@
       "acceptance_test": "pkg/apihostingcontract/catalog_test.go::TestCatalogProfiles"
     },
     {
+      "id": "frozen-tier",
+      "name": "Frozen tier",
+      "category": "runtime",
+      "description": "Keep recently idle apps frozen in memory for a fast thaw.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/cold-wake",
+      "acceptance_test": "pkg/fcvm/freeze_test.go::TestAwaitFrozen"
+    },
+    {
+      "id": "function-runtimes",
+      "name": "Function runtimes",
+      "category": "runtime",
+      "description": "Run functions on managed Node.js, Python, Go and static-binary runtimes.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/functions",
+      "acceptance_test": "pkg/builderd/profile_test.go::TestFunctionRuntimeFramework",
+      "settings": [
+        "manifest.function",
+        "manifest.functions",
+        "runtime.node22",
+        "runtime.node24",
+        "runtime.python312",
+        "runtime.python313"
+      ],
+      "routes": [
+        "/v1/deployments/{}/runtime"
+      ]
+    },
+    {
+      "id": "gdpr",
+      "name": "Data export and deletion",
+      "category": "account",
+      "description": "Export account data and delete or restore an account.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/gdpr",
+      "acceptance_test": "pkg/apid/apidserver/handlers_account_test.go::TestDashboardAccountExport_ReturnsAttachment",
+      "core": true,
+      "routes": [
+        "/dashboard/account/delete",
+        "/dashboard/account/dpa",
+        "/dashboard/account/export",
+        "/dashboard/account/restore",
+        "/v1/account/dpa",
+        "/v1/account/export",
+        "/v1/account/restore"
+      ]
+    },
+    {
       "id": "github-deploys",
       "name": "GitHub deployments",
       "category": "delivery",
       "description": "Deploy an API from a connected GitHub repository and ref.",
-      "maturity": "beta",
+      "maturity": "ga",
       "plans": [
         "free",
         "hobby",
@@ -399,7 +2525,43 @@
         "scale"
       ],
       "docs_url": "https://gregale.dev/docs/deploy-from-github",
-      "acceptance_test": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"
+      "acceptance_test": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath",
+      "consumers": [
+        "githubd"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/github",
+        "/dashboard/apps/{}/install",
+        "/dashboard/install",
+        "/oauth/callback",
+        "/oauth/code-callback",
+        "/v1/apps/{}/github",
+        "/v1/apps/{}/install",
+        "/v1/github",
+        "/v1/install"
+      ],
+      "cli": [
+        "connect",
+        "github"
+      ]
+    },
+    {
+      "id": "gitlab-deploys",
+      "name": "GitLab deployments",
+      "category": "delivery",
+      "description": "Connect a GitLab repository and deploy from it.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploy-from-source",
+      "acceptance_test": "pkg/gitlabsource/oauth_test.go::TestGitLabOAuthAuthorizationExchangeAndRefresh",
+      "routes": [
+        "/v1/gitlab"
+      ]
     },
     {
       "id": "gregale-commit",
@@ -410,14 +2572,123 @@
       "plans": [],
       "docs_url": "/docs/gregale-commit",
       "operator_flag": "FAAS_COMMIT_RELAY_ENABLED",
-      "acceptance_test": "cmd/e2e/commit_e2e_test.go::TestE2E_CommitProducerDeathReachesCompletedInvocation"
+      "acceptance_test": "cmd/e2e/commit_e2e_test.go::TestE2E_CommitProducerDeathReachesCompletedInvocation",
+      "routes": [
+        "/dashboard/apps/{}/commit-sources",
+        "/v1/apps/{}/commit-sources",
+        "/v1/commit-sources",
+        "/v1/uploads/{}/commit"
+      ],
+      "cli": [
+        "commit"
+      ]
+    },
+    {
+      "id": "grpc",
+      "name": "gRPC",
+      "category": "edge",
+      "description": "Serve gRPC APIs.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "https://gregale.dev/docs/runtime-node",
+      "acceptance_test": "pkg/gateway/forwardproxy_grpc_duplex_test.go::TestGRPCDuplexThroughPublicAndForwarderHTTPHops",
+      "parent": "streaming-and-grpc",
+      "settings": [
+        "app.app_protocol=grpc"
+      ]
+    },
+    {
+      "id": "health-probes",
+      "name": "Health probes",
+      "category": "runtime",
+      "description": "Check startup, readiness and liveness, and restart unhealthy instances.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/apps",
+      "acceptance_test": "pkg/fcvm/readiness_test.go::TestReadinessProbeConfigDefaultsAndOverrides",
+      "settings": [
+        "app.health_path",
+        "app.health_path_wakes",
+        "app.restart_policy",
+        "app.startup_deadline_s",
+        "app.stop_grace_period_s",
+        "app.stop_signal"
+      ]
+    },
+    {
+      "id": "image-runs",
+      "name": "Image runs",
+      "category": "runtime",
+      "description": "Run a container image interactively.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/executions",
+      "acceptance_test": "pkg/api/image_runs_test.go::TestValidateImageRunWorkdir",
+      "routes": [
+        "/v1/image-runs"
+      ]
+    },
+    {
+      "id": "incidents",
+      "name": "Incidents",
+      "category": "observability",
+      "description": "One list of an account's open and recent incidents: alert rule firing periods, route monitor incidents and platform status incidents, each with its notifications, log context and the app's changes, plus the account's acknowledgements and notes.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261022193512-unified-incidents",
+      "operator_flag": "FAAS_INCIDENTS_ENABLED",
+      "acceptance_test": "pkg/apid/incidents/service_test.go::TestListMergesSourcesOpenFirst",
+      "routes": [
+        "/dashboard/incidents",
+        "/v1/incidents"
+      ],
+      "cli": [
+        "incidents"
+      ]
+    },
+    {
+      "id": "instances",
+      "name": "Instances",
+      "category": "runtime",
+      "description": "List and restart an app's running instances.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/apps",
+      "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_instances_test.go::TestParseAppInstancesPath",
+      "routes": [
+        "/dashboard/apps/{}/instances",
+        "/dashboard/apps/{}/restart",
+        "/dashboard/apps/{}/runtime-config-restarts",
+        "/v1/apps/{}/deployments/{}/instances",
+        "/v1/apps/{}/instances",
+        "/v1/apps/{}/restart",
+        "/v1/apps/{}/runtime-config-restarts",
+        "/v1/instances"
+      ],
+      "cli": [
+        "ps"
+      ]
     },
     {
       "id": "internal-services",
       "name": "Internal services",
       "category": "runtime",
       "description": "Call another app in the same account by a stable internal name, with no VPC, service registry, or DNS configuration. A parked target is woken by the call, and callers may opt into a declared-binding allowlist.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "free",
         "hobby",
@@ -425,7 +2696,141 @@
         "scale"
       ],
       "docs_url": "/docs/networking",
-      "acceptance_test": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_WakesParkedTarget"
+      "acceptance_test": "cmd/e2e/service_mesh_e2e_test.go::TestE2E_ServiceMesh_WakesParkedTarget",
+      "routes": [
+        "/v1/service-caller-keys"
+      ]
+    },
+    {
+      "id": "issue-alert-policies",
+      "name": "Issue alert policies",
+      "category": "observability",
+      "description": "Alert on issue frequency, impact, lifecycle and compound conditions.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/issues",
+      "acceptance_test": "pkg/apid/apidserver/handlers_issue_compound_alerts_test.go::TestIssueCompoundAlertsHTTPAndDashboardPostgres",
+      "parent": "issues",
+      "routes": [
+        "/dashboard/apps/{}/issues/compound-alerts",
+        "/dashboard/apps/{}/issues/frequency-alerts",
+        "/dashboard/apps/{}/issues/impact-alert-policy",
+        "/dashboard/apps/{}/issues/lifecycle-alerts",
+        "/v1/apps/{}/issue-compound-alert-policy",
+        "/v1/apps/{}/issue-frequency-alert-policy",
+        "/v1/apps/{}/issue-impact-alert-policy",
+        "/v1/apps/{}/issue-lifecycle-alert-policy"
+      ]
+    },
+    {
+      "id": "issue-ingest",
+      "name": "Issue ingest",
+      "category": "observability",
+      "description": "Send errors to Issues with ingest tokens or OTLP.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/issues",
+      "acceptance_test": "pkg/apid/apidserver/handlers_issues_security_test.go::TestIssueOTLPThroughProductionRouter",
+      "parent": "issues",
+      "routes": [
+        "/v1/apps/{}/issue-events",
+        "/v1/apps/{}/issue-ingest-tokens"
+      ]
+    },
+    {
+      "id": "issue-ownership",
+      "name": "Issue teams and ownership",
+      "category": "observability",
+      "description": "Assign issues to teams with ownership rules.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/issues",
+      "acceptance_test": "pkg/apid/apidserver/handlers_issue_teams_test.go::TestIssueTeamManagementRoutingAndInbox",
+      "parent": "issues",
+      "routes": [
+        "/dashboard/apps/{}/issues/ownership-rules",
+        "/dashboard/apps/{}/issues/teams",
+        "/v1/apps/{}/issue-ownership-rules",
+        "/v1/apps/{}/issue-teams"
+      ]
+    },
+    {
+      "id": "issue-saved-views",
+      "name": "Issue saved views",
+      "category": "observability",
+      "description": "Save filtered issue views.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/issues",
+      "acceptance_test": "pkg/apid/apidserver/handlers_issue_saved_views_test.go::TestIssueSavedViewsAndSymbolicatedOwnershipRoutes",
+      "parent": "issues",
+      "routes": [
+        "/dashboard/apps/{}/issues/saved-views",
+        "/v1/apps/{}/issue-saved-views"
+      ]
+    },
+    {
+      "id": "issue-split-rules",
+      "name": "Issue split rules",
+      "category": "observability",
+      "description": "Split one issue group into several by rule.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/issues",
+      "acceptance_test": "pkg/apid/apidserver/handlers_issues_split_rules_test.go::TestIssueSplitRuleCreationSerializesWithCaptures",
+      "parent": "issues",
+      "routes": [
+        "/v1/apps/{}/issues/{}/split-preview",
+        "/v1/apps/{}/issues/{}/split-rules"
+      ]
+    },
+    {
+      "id": "issue-trackers",
+      "name": "Issue tracker integrations",
+      "category": "observability",
+      "description": "Link issues to Linear and Slack.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/issues",
+      "acceptance_test": "pkg/apid/apidserver/handlers_issue_tracker_native_test.go::TestNativeIssueLinearConnectionScopesSealsAndDisconnects",
+      "parent": "issues",
+      "routes": [
+        "/dashboard/apps/{}/issues/slack-routing",
+        "/dashboard/apps/{}/issues/tracker-notifications",
+        "/dashboard/apps/{}/issues/tracker-review",
+        "/hooks/issue-trackers",
+        "/integrations/slack",
+        "/oauth/linear",
+        "/oauth/slack",
+        "/v1/apps/{}/issue-tracker-linear-connection",
+        "/v1/apps/{}/issues/{}/native-linear-tickets",
+        "/v1/apps/{}/issues/{}/native-tickets",
+        "/v1/apps/{}/issues/{}/tracker-links"
+      ]
     },
     {
       "id": "issues",
@@ -439,7 +2844,141 @@
         "scale"
       ],
       "docs_url": "/docs/issues",
-      "acceptance_test": "pkg/apid/apidserver/handlers_issues_integration_test.go::TestIssueEndToEndPostgres"
+      "acceptance_test": "pkg/apid/apidserver/handlers_issues_integration_test.go::TestIssueEndToEndPostgres",
+      "routes": [
+        "/dashboard/apps/{}/errors",
+        "/dashboard/apps/{}/issue-compound-alert-policy",
+        "/dashboard/apps/{}/issue-events",
+        "/dashboard/apps/{}/issue-frequency-alert-policy",
+        "/dashboard/apps/{}/issue-impact-alert-policy",
+        "/dashboard/apps/{}/issue-ingest-tokens",
+        "/dashboard/apps/{}/issue-lifecycle-alert-policy",
+        "/dashboard/apps/{}/issue-ownership-rules",
+        "/dashboard/apps/{}/issue-release-comparison",
+        "/dashboard/apps/{}/issue-saved-views",
+        "/dashboard/apps/{}/issue-teams",
+        "/dashboard/apps/{}/issue-tracker-linear-connection",
+        "/dashboard/apps/{}/issues",
+        "/hooks",
+        "/integrations",
+        "/v1/apps/{}/deployments/{}/issue-source-maps",
+        "/v1/apps/{}/errors",
+        "/v1/apps/{}/issue-release-comparison",
+        "/v1/apps/{}/issues"
+      ],
+      "cli": [
+        "issues"
+      ]
+    },
+    {
+      "id": "jobs",
+      "name": "Jobs",
+      "category": "async",
+      "description": "Run batch jobs with runs, tasks, retries and artifacts.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/faas_openapi_spec",
+      "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_jobs_test.go::TestParseAppJobsPath",
+      "parent": "workflows-and-jobs",
+      "consumers": [
+        "schedd"
+      ],
+      "settings": [
+        "app.execution_mode=job"
+      ],
+      "routes": [
+        "/dashboard/jobs",
+        "/v1/jobs"
+      ],
+      "cli": [
+        "jobs"
+      ]
+    },
+    {
+      "id": "live-queries",
+      "name": "Live queries",
+      "category": "data",
+      "description": "Stream incremental SQL query results to clients.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/realtime",
+      "acceptance_test": "pkg/apid/livequeries/service_test.go::TestLiveQueriesLogins",
+      "routes": [
+        "/v1/postgres/databases/{}/live"
+      ]
+    },
+    {
+      "id": "log-drains",
+      "name": "Log drains",
+      "category": "observability",
+      "description": "Forward logs to an external destination.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/datadog",
+      "acceptance_test": "cmd/gregale/commands_log_drains_test.go::TestCmdLogDrainsListJSON",
+      "routes": [
+        "/dashboard/apps/{}/log-drains",
+        "/v1/apps/{}/log-drains"
+      ],
+      "cli": [
+        "log-drains"
+      ]
+    },
+    {
+      "id": "log-search",
+      "name": "Log search",
+      "category": "observability",
+      "description": "Search an app's logs by text, level, route, status, release, request, and trace, and count the matches by facet, across the plan's log retention.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/adr/20261018083536-customer-log-search",
+      "operator_flag": "FAAS_LOG_SEARCH_ENABLED",
+      "acceptance_test": "pkg/apid/logsearch/service_test.go::TestSearchPagesNewestFirst",
+      "routes": [
+        "/dashboard/apps/{}/log-search",
+        "/v1/apps/{}/log-events",
+        "/v1/apps/{}/log-searches"
+      ],
+      "cli": [
+        "logs facets",
+        "logs saved",
+        "logs search"
+      ]
+    },
+    {
+      "id": "logs",
+      "name": "Logs",
+      "category": "observability",
+      "description": "View, search, tail and archive app logs.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/cli",
+      "acceptance_test": "pkg/api/client_test.go::TestStreamAppLogs_HappyPath",
+      "routes": [
+        "/dashboard/apps/{}/logs",
+        "/v1/apps/{}/logs",
+        "/v1/deployments/{}/logs"
+      ],
+      "cli": [
+        "logs"
+      ]
     },
     {
       "id": "managed-exclusive-operations",
@@ -449,18 +2988,81 @@
       "maturity": "internal",
       "plans": [],
       "docs_url": "/docs/exclusive-operations",
-      "acceptance_test": "pkg/sched/scheduled_jobs_test.go::TestRunScheduledJobsTickAdmitsManagedJobAndSharesLaneWithAppWork"
+      "acceptance_test": "pkg/sched/scheduled_jobs_test.go::TestRunScheduledJobsTickAdmitsManagedJobAndSharesLaneWithAppWork",
+      "consumers": [
+        "schedd"
+      ],
+      "settings": [
+        "manifest.exclusive_operations"
+      ]
     },
     {
       "id": "managed-postgres",
       "name": "Managed PostgreSQL",
       "category": "data",
       "description": "Provision and bind a managed PostgreSQL database to an API.",
-      "maturity": "internal",
-      "plans": [],
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/managed-postgres",
       "operator_flag": "FAAS_MANAGED_POSTGRES_CONFIG",
-      "acceptance_test": "pkg/managedpostgres/service_test.go::TestCreateIsIdempotentAndPersistsPlacement"
+      "acceptance_test": "pkg/managedpostgres/service_test.go::TestCreateIsIdempotentAndPersistsPlacement",
+      "settings": [
+        "manifest.databases"
+      ],
+      "routes": [
+        "/dashboard/postgres",
+        "/v1/account/managed-postgres-usage",
+        "/v1/postgres/capabilities",
+        "=/v1/postgres/databases",
+        "=/v1/postgres/databases/{}",
+        "/v1/postgres/databases/{}/connection-budget",
+        "/v1/postgres/usage"
+      ],
+      "cli": [
+        "postgres",
+        "add postgres"
+      ]
+    },
+    {
+      "id": "management-mcp",
+      "name": "Management MCP server",
+      "category": "developer",
+      "description": "Let AI agents manage Gregale over MCP with OAuth.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp",
+      "acceptance_test": "pkg/mcpmanagement/server_test.go::TestManagementMCPJourney",
+      "cli": [
+        "mcp serve",
+        "mcp connections"
+      ]
+    },
+    {
+      "id": "mcp-catalog-monitor",
+      "name": "MCP catalog monitor",
+      "category": "runtime",
+      "description": "Watch an MCP server's tool catalog for changes.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp",
+      "acceptance_test": "pkg/apid/apidserver/handlers_mcp_catalog_monitor_test.go::TestMCPCatalogMonitorHTTPRoles",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/apps/{}/mcp-catalog-monitor"
+      ]
     },
     {
       "id": "mcp-hosting",
@@ -474,7 +3076,233 @@
         "scale"
       ],
       "docs_url": "/docs/mcp",
-      "acceptance_test": "cmd/gregale/commands_mcp_test.go::TestMCPCLIJourney"
+      "acceptance_test": "cmd/gregale/commands_mcp_test.go::TestMCPCLIJourney",
+      "routes": [
+        "/dashboard/apps/{}/mcp-catalog-monitor",
+        "/dashboard/apps/{}/mcp-readiness-attention",
+        "/dashboard/apps/{}/mcp-readiness-incidents",
+        "/dashboard/apps/{}/mcp-readiness-maintenance",
+        "/dashboard/apps/{}/mcp-readiness-notifications",
+        "/dashboard/apps/{}/mcp-readiness-policy",
+        "/dashboard/apps/{}/mcp-task-compatibility",
+        "/dashboard/mcp",
+        "/v1/apps/{}/deployments/{}/instances/{}/mcp-health",
+        "/v1/apps/{}/deployments/{}/instances/{}/mcp-probe",
+        "/v1/deployments/{}/mcp-admissions",
+        "/v1/mcp",
+        "/v1/mcp-connection-health"
+      ],
+      "cli": [
+        "mcp"
+      ]
+    },
+    {
+      "id": "mcp-oauth",
+      "name": "MCP OAuth",
+      "category": "runtime",
+      "description": "Manage OAuth clients and retirements for hosted MCP servers.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp",
+      "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_mcp_oauth_test.go::TestDashboardMCPOAuthRenewalRecovery",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/dashboard/mcp/retirements",
+        "/v1/mcp-oauth-retirements"
+      ]
+    },
+    {
+      "id": "mcp-readiness-monitoring",
+      "name": "MCP readiness monitoring",
+      "category": "runtime",
+      "description": "Monitor MCP server readiness with incidents, maintenance and notifications.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp",
+      "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_mcp_alerts_test.go::TestMCPReadinessAlertScopeAPIRoundTrip",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/dashboard/mcp/apps",
+        "/v1/apps/{}/alerts/{}/mcp-readiness-fallback",
+        "/v1/apps/{}/alerts/{}/mcp-readiness-pagerduty",
+        "/v1/apps/{}/alerts/{}/mcp-readiness-pagerduty-acknowledgements",
+        "/v1/apps/{}/alerts/{}/mcp-readiness-reminder-defaults",
+        "/v1/apps/{}/mcp-readiness-attention",
+        "/v1/apps/{}/mcp-readiness-incidents",
+        "/v1/apps/{}/mcp-readiness-maintenance",
+        "/v1/apps/{}/mcp-readiness-notifications",
+        "/v1/apps/{}/mcp-readiness-policy",
+        "/v1/deployments/{}/mcp-readiness",
+        "/v1/deployments/{}/mcp-readiness-overrides",
+        "/v1/webhooks/mcp-readiness"
+      ]
+    },
+    {
+      "id": "mcp-tasks",
+      "name": "MCP tasks",
+      "category": "runtime",
+      "description": "Run durable MCP tasks and check task compatibility.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/mcp",
+      "acceptance_test": "pkg/apid/apidserver/handlers_alerts_test.go::TestCreateMCPTaskAgeAlert_NotificationOnly",
+      "parent": "mcp-hosting",
+      "routes": [
+        "/v1/apps/{}/mcp-task-compatibility",
+        "/v1/deployments/{}/mcp-task-hold"
+      ]
+    },
+    {
+      "id": "metrics",
+      "name": "Metrics",
+      "category": "observability",
+      "description": "See app, service and account metrics and request analytics.",
+      "maturity": "ga",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/apps",
+      "acceptance_test": "pkg/apid/apidserver/handlers_metrics_test.go::TestAppMetrics_HappyPath",
+      "routes": [
+        "/dashboard/apps/{}/analytics",
+        "/dashboard/apps/{}/metrics",
+        "/v1/apps/metrics",
+        "/v1/apps/{}/analytics",
+        "/v1/apps/{}/metrics"
+      ],
+      "cli": [
+        "metrics",
+        "analytics"
+      ]
+    },
+    {
+      "id": "multipart-uploads",
+      "name": "Multipart uploads",
+      "category": "data",
+      "description": "Upload large objects in parts.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/apid/apidserver/handlers_object_storage_multipart_test.go::TestObjectMultipartLayout",
+      "parent": "object-storage",
+      "routes": [
+        "/v1/apps/{}/buckets/{}/multipart-uploads",
+        "/v1/orgs/{}/apps/{}/buckets/{}/multipart-uploads"
+      ],
+      "cli": [
+        "bucket uploads"
+      ]
+    },
+    {
+      "id": "notification-channels",
+      "name": "Notification channels",
+      "category": "observability",
+      "description": "Send alerts to Slack, PagerDuty or email channels.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/alerts",
+      "acceptance_test": "pkg/apid/apidserver/handlers_notification_channels_test.go::TestNotificationChannelLifecycle",
+      "parent": "alerts",
+      "routes": [
+        "/v1/notification-channels"
+      ],
+      "cli": [
+        "channels"
+      ]
+    },
+    {
+      "id": "notification-emails",
+      "name": "Notification emails",
+      "category": "account",
+      "description": "Send verification, security, deploy, quota and billing emails.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/account",
+      "acceptance_test": "pkg/apid/apidserver/handlers_mfa_test.go::TestMFARecover_SendsBurnEmail",
+      "core": true,
+      "routes": [
+        "/v1/webhooks/resend"
+      ]
+    },
+    {
+      "id": "object-lifecycle",
+      "name": "Object lifecycle rules",
+      "category": "data",
+      "description": "Expire or transition objects by rule.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/apid/apidserver/handlers_slos_test.go::TestSLOLifecycle",
+      "parent": "object-storage",
+      "routes": [
+        "/v1/apps/{}/buckets/{}/lifecycle",
+        "/v1/orgs/{}/apps/{}/buckets/{}/lifecycle"
+      ],
+      "cli": [
+        "bucket lifecycle"
+      ]
+    },
+    {
+      "id": "object-protection",
+      "name": "Object lock and write protection",
+      "category": "data",
+      "description": "Lock objects, protect writes and keep write receipts.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/apid/apidserver/handlers_object_bucket_object_lock_test.go::TestBucketObjectLockAuthorityPG",
+      "parent": "object-storage",
+      "routes": [
+        "/v1/apps/{}/buckets/{}/object-lock",
+        "/v1/apps/{}/buckets/{}/object-lock-capabilities",
+        "/v1/apps/{}/buckets/{}/objects/protection",
+        "/v1/apps/{}/buckets/{}/protection-operations",
+        "/v1/apps/{}/buckets/{}/write-receipts",
+        "/v1/orgs/{}/apps/{}/buckets/{}/object-lock",
+        "/v1/orgs/{}/apps/{}/buckets/{}/object-lock-capabilities",
+        "/v1/orgs/{}/apps/{}/buckets/{}/objects/protection",
+        "/v1/orgs/{}/apps/{}/buckets/{}/protection-operations",
+        "/v1/orgs/{}/apps/{}/buckets/{}/write-receipts"
+      ],
+      "cli": [
+        "bucket object-lock",
+        "bucket protection"
+      ]
     },
     {
       "id": "object-storage",
@@ -489,7 +3317,75 @@
       ],
       "docs_url": "/docs/object-storage",
       "operator_flag": "s3_enabled",
-      "acceptance_test": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification"
+      "acceptance_test": "pkg/objectstorage/provider_live_test.go::TestLiveProviderQualification",
+      "settings": [
+        "manifest.buckets"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/buckets",
+        "/dashboard/apps/{}/storage",
+        "/dashboard/apps/{}/upload-routes",
+        "/v1/account/object-storage-usage",
+        "/v1/apps/{}/bindings/release-policy-with-object-storage",
+        "/v1/apps/{}/buckets",
+        "/v1/orgs/{}/apps/{}/buckets",
+        "/v1/orgs/{}/object-storage-usage"
+      ],
+      "cli": [
+        "bucket",
+        "add bucket",
+        "bindings object-storage",
+        "usage object-storage"
+      ]
+    },
+    {
+      "id": "object-storage-compute",
+      "name": "Object storage compute triggers",
+      "category": "data",
+      "description": "Run app code on bucket notifications.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/apid/apidserver/handlers_object_compute_triggers_test.go::TestObjectComputeTriggerAPIMem",
+      "parent": "object-storage",
+      "routes": [
+        "/v1/apps/{}/buckets/{}/compute-bindings",
+        "/v1/apps/{}/buckets/{}/compute-triggers",
+        "/v1/apps/{}/buckets/{}/notifications",
+        "/v1/orgs/{}/apps/{}/buckets/{}/compute-bindings",
+        "/v1/orgs/{}/apps/{}/buckets/{}/compute-triggers",
+        "/v1/orgs/{}/apps/{}/buckets/{}/notifications"
+      ]
+    },
+    {
+      "id": "object-versioning",
+      "name": "Object versioning",
+      "category": "data",
+      "description": "Keep and restore earlier versions of objects.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "cmd/gregale/commands_bucket_versioning_test.go::TestBucketVersioningCLI",
+      "parent": "object-storage",
+      "routes": [
+        "/v1/apps/{}/buckets/{}/objects/versions",
+        "/v1/apps/{}/buckets/{}/versioning",
+        "/v1/orgs/{}/apps/{}/buckets/{}/objects/versions",
+        "/v1/orgs/{}/apps/{}/buckets/{}/versioning"
+      ],
+      "cli": [
+        "bucket versions",
+        "bucket versioning",
+        "bucket version-delete"
+      ]
     },
     {
       "id": "openapi-contract-preview",
@@ -504,7 +3400,511 @@
         "scale"
       ],
       "docs_url": "/docs/api-hosting-openapi",
-      "acceptance_test": "pkg/openapidiff/preview_test.go::TestBuildRoutePolicyPreview"
+      "acceptance_test": "pkg/openapidiff/preview_test.go::TestBuildRoutePolicyPreview",
+      "routes": [
+        "/dashboard/apps/{}/openapi",
+        "/v1/apps/{}/deployments/{}/openapi",
+        "/v1/apps/{}/openapi"
+      ],
+      "cli": [
+        "openapi"
+      ]
+    },
+    {
+      "id": "openapi-spec",
+      "name": "OpenAPI spec",
+      "category": "developer",
+      "description": "Read the public OpenAPI description and capability list.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/faas_openapi_spec",
+      "acceptance_test": "pkg/apid/openapi_handler_test.go::TestServeOpenAPISpecJSON_Shape",
+      "core": true,
+      "routes": [
+        "/v1/capabilities",
+        "/v1/openapi.json",
+        "/v1/openapi.yaml"
+      ]
+    },
+    {
+      "id": "operation-approvals",
+      "name": "Operation approvals",
+      "category": "async",
+      "description": "Require approvals with forms before an operation proceeds.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/operations",
+      "acceptance_test": "pkg/apid/apidserver/operations_approval_inputs_test.go::TestOperationApprovalFormsAreHiddenUntilAllowlisted",
+      "parent": "operations",
+      "routes": [
+        "/v1/apps/{}/operation-approval-forms",
+        "/v1/apps/{}/operations/{}/approvals"
+      ]
+    },
+    {
+      "id": "operation-artifacts",
+      "name": "Operation artifacts",
+      "category": "async",
+      "description": "Upload and download artifacts produced by operations.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/operations",
+      "acceptance_test": "pkg/operations/acceptance/artifacts_test.go::TestPgOperationArtifacts",
+      "parent": "operations",
+      "routes": [
+        "/v1/apps/{}/operations/{}/artifacts",
+        "/v1/runtime/job-operations/{}/artifact-receipts",
+        "/v1/runtime/job-operations/{}/artifact-upload-receipts",
+        "/v1/runtime/job-operations/{}/artifact-uploads",
+        "/v1/runtime/job-operations/{}/artifacts",
+        "/v1/runtime/operations/{}/artifact-upload-receipts",
+        "/v1/runtime/operations/{}/artifact-uploads",
+        "/v1/runtime/operations/{}/artifacts",
+        "/v1/runtime/workflow-operations/{}/artifact-receipts",
+        "/v1/runtime/workflow-operations/{}/artifact-upload-receipts",
+        "/v1/runtime/workflow-operations/{}/artifact-uploads",
+        "/v1/runtime/workflow-operations/{}/artifacts"
+      ]
+    },
+    {
+      "id": "operation-children",
+      "name": "Child operations",
+      "category": "async",
+      "description": "Start child operations and cascade cancellation.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/operations",
+      "acceptance_test": "pkg/apid/apidserver/operations_children_test.go::TestOperationChildrenPlanLimit",
+      "parent": "operations",
+      "routes": [
+        "/v1/apps/{}/operations/{}/children",
+        "/v1/runtime/job-operations/{}/children",
+        "/v1/runtime/operations/{}/children",
+        "/v1/runtime/workflow-operations/{}/children"
+      ]
+    },
+    {
+      "id": "operation-concurrency",
+      "name": "Operation concurrency",
+      "category": "async",
+      "description": "Limit how many operations run at once.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/operations",
+      "acceptance_test": "pkg/state/operation_concurrency_test.go::TestOperationConcurrencyPolicies",
+      "parent": "operations",
+      "routes": [
+        "/v1/apps/{}/operation-concurrency"
+      ]
+    },
+    {
+      "id": "operation-effects",
+      "name": "Operation effects",
+      "category": "async",
+      "description": "Deliver an operation's webhook effects with retries.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/operations",
+      "acceptance_test": "pkg/webhook/operation_effect_compatibility_test.go::TestDispatcher_OrdinaryOutboxOperationEffectType",
+      "parent": "operations",
+      "routes": [
+        "/v1/apps/{}/operations/{}/delivery",
+        "/v1/apps/{}/operations/{}/delivery-attempts",
+        "/v1/apps/{}/operations/{}/delivery-retries",
+        "/v1/apps/{}/operations/{}/retry-delivery"
+      ]
+    },
+    {
+      "id": "operation-milestones",
+      "name": "Operation milestones",
+      "category": "async",
+      "description": "Track operation progress with milestones.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/operations",
+      "acceptance_test": "pkg/operations/milestones_test.go::TestMilestoneContracts",
+      "parent": "operations",
+      "routes": [
+        "/v1/apps/{}/operation-milestones",
+        "/v1/apps/{}/operations/{}/milestones",
+        "/v1/runtime/operations/{}/milestones"
+      ]
+    },
+    {
+      "id": "operation-recovery",
+      "name": "Operation recovery",
+      "category": "async",
+      "description": "Inspect and recover stuck operations.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/operations",
+      "acceptance_test": "pkg/operations/acceptance/recovery_test.go::TestPgOperationRecovery",
+      "parent": "operations",
+      "routes": [
+        "/v1/apps/{}/operations/{}/recover",
+        "/v1/apps/{}/operations/{}/recover-receipt",
+        "/v1/apps/{}/operations/{}/recovery-inspection",
+        "/v1/apps/{}/operations/{}/recovery-preview"
+      ]
+    },
+    {
+      "id": "operation-schedules",
+      "name": "Operation schedules",
+      "category": "async",
+      "description": "Start operations on a schedule.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/operations",
+      "acceptance_test": "pkg/state/operation_schedules_test.go::TestOperationScheduleChanges",
+      "parent": "operations",
+      "routes": [
+        "/v1/apps/{}/operation-schedules"
+      ]
+    },
+    {
+      "id": "operation-signals",
+      "name": "Operation signals",
+      "category": "async",
+      "description": "Send signals to running operations.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/operations",
+      "acceptance_test": "pkg/apid/apidserver/operations_signals_test.go::TestOperationSignalRoutes",
+      "parent": "operations",
+      "routes": [
+        "/v1/apps/{}/operation-signals",
+        "/v1/apps/{}/operations/{}/signals"
+      ]
+    },
+    {
+      "id": "operational-summary",
+      "name": "Operational summary",
+      "category": "observability",
+      "description": "Summarize an app's operational state on one page.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/apps",
+      "acceptance_test": "pkg/apid/apidserver/handlers_app_operational_summary_test.go::TestAppOperationalSummaryRequiresCompletedMFA",
+      "routes": [
+        "/dashboard/apps/{}/operational-summary",
+        "/v1/apps/{}/operational-summary"
+      ]
+    },
+    {
+      "id": "operations",
+      "name": "Operations",
+      "category": "async",
+      "description": "Run typed customer work with approvals, schedules and child operations.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/operations",
+      "acceptance_test": "cmd/gregale/customer_operations_signal_test.go::TestCustomerOperationSignal",
+      "settings": [
+        "manifest.operation_workflows",
+        "manifest.operations"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/operation-approval-forms",
+        "/dashboard/apps/{}/operation-concurrency",
+        "/dashboard/apps/{}/operation-milestones",
+        "/dashboard/apps/{}/operation-schedules",
+        "/dashboard/apps/{}/operation-signals",
+        "/dashboard/apps/{}/operations",
+        "/v1/account/operation-policies",
+        "/v1/account/operation-trigger-bindings",
+        "/v1/apps/{}/deployments/{}/operation-definitions",
+        "/v1/apps/{}/deployments/{}/operation-doctor",
+        "/v1/apps/{}/inbound-webhooks/{}/operation-binding",
+        "/v1/apps/{}/operations",
+        "/v1/jobs/{}/operations",
+        "/v1/operations",
+        "/v1/runtime/job-operations",
+        "/v1/runtime/operations",
+        "/v1/runtime/workflow-operations"
+      ],
+      "cli": [
+        "operations",
+        "customer-operations"
+      ]
+    },
+    {
+      "id": "org-postgres",
+      "name": "Organization databases",
+      "category": "data",
+      "description": "Own managed databases at the organization level.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/managed-postgres",
+      "acceptance_test": "pkg/apid/apidserver/org_managed_postgres_pg_test.go::TestOrgManagedPostgresPostgresHTTP",
+      "parent": "managed-postgres",
+      "routes": [
+        "/v1/orgs/{}/postgres"
+      ]
+    },
+    {
+      "id": "orgs",
+      "name": "Organizations",
+      "category": "account",
+      "description": "Share apps and billing with members, invitations and roles.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/orgs",
+      "acceptance_test": "pkg/apid/apidserver/handlers_org_test.go::TestOrgUUID_Pin",
+      "routes": [
+        "/dashboard/orgs",
+        "/v1/invitations",
+        "=/v1/orgs",
+        "/v1/orgs/me",
+        "=/v1/orgs/{}",
+        "/v1/orgs/{}/activity",
+        "/v1/orgs/{}/apps",
+        "/v1/orgs/{}/invitations",
+        "/v1/orgs/{}/members",
+        "/v1/orgs/{}/transfer_ownership"
+      ],
+      "cli": [
+        "orgs",
+        "invitations"
+      ]
+    },
+    {
+      "id": "outbound-integrations",
+      "name": "Outbound integrations",
+      "category": "data",
+      "description": "Call third-party APIs through managed integrations with key pools and limits.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/networking",
+      "acceptance_test": "pkg/apid/apidserver/handlers_outbound_ai_test.go::TestCreateOutboundIntegrationRejectsInvalidAIPolicy",
+      "routes": [
+        "/dashboard/apps/{}/outbound-bindings",
+        "/v1/apps/{}/outbound-bindings",
+        "=/v1/outbound/integrations",
+        "=/v1/outbound/integrations/{}",
+        "/v1/outbound/integrations/{}/budget",
+        "/v1/outbound/integrations/{}/credential",
+        "/v1/outbound/integrations/{}/credential-keys",
+        "/v1/outbound/integrations/{}/probe-policy",
+        "/v1/outbound/integrations/{}/request-policy",
+        "/v1/outbound/integrations/{}/runs",
+        "/v1/outbound/integrations/{}/usage"
+      ]
+    },
+    {
+      "id": "outbound-webhooks",
+      "name": "Outbound webhooks",
+      "category": "async",
+      "description": "Receive signed webhooks for app and account events.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_webhooks_test.go::TestParseAppWebhooksPath",
+      "routes": [
+        "/dashboard/apps/{}/webhooks",
+        "=/v1/apps/{}/webhooks",
+        "=/v1/apps/{}/webhooks/{}",
+        "/v1/apps/{}/webhooks/{}/deliveries",
+        "/v1/apps/{}/webhooks/{}/health",
+        "/v1/apps/{}/webhooks/{}/rotate-secret"
+      ],
+      "cli": [
+        "webhooks"
+      ]
+    },
+    {
+      "id": "park-and-wake",
+      "name": "Park, wake and prewarm",
+      "category": "runtime",
+      "description": "Park, wake or prewarm an app on demand.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/scale-to-zero",
+      "acceptance_test": "pkg/state/pgstore_prewarm_test.go::TestPgStorePrewarmLifecycle",
+      "routes": [
+        "/dashboard/apps/{}/park",
+        "/dashboard/apps/{}/prewarm",
+        "/dashboard/apps/{}/prewarms",
+        "/dashboard/apps/{}/wake",
+        "/v1/apps/{}/park",
+        "/v1/apps/{}/prewarm",
+        "/v1/apps/{}/prewarms",
+        "/v1/apps/{}/wake"
+      ],
+      "cli": [
+        "park",
+        "wake"
+      ]
+    },
+    {
+      "id": "platform-tenants",
+      "name": "Platform tenants",
+      "category": "account",
+      "description": "Represent each of your customers across several apps.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/platform-tenants",
+      "acceptance_test": "cmd/gregale/commands_platform_tenants_test.go::TestCmdPlatformTenantsActivity",
+      "settings": [
+        "app.platform_tenant_required"
+      ],
+      "routes": [
+        "/v1/account/platform-tenant-billing-policy",
+        "/v1/account/platform-tenant-overdue-holds",
+        "/v1/account/platform-tenant-plans",
+        "/v1/account/platform-tenants",
+        "/v1/platform-tenant-self"
+      ],
+      "cli": [
+        "platform-tenants"
+      ]
+    },
+    {
+      "id": "postgres-bindings",
+      "name": "Postgres bindings",
+      "category": "data",
+      "description": "Bind databases to apps and rotate their credentials.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/managed-postgres",
+      "acceptance_test": "cmd/gregale/commands_postgres_egress_test.go::TestPostgresBindingDeliveryGuidance",
+      "parent": "managed-postgres",
+      "routes": [
+        "/v1/orgs/{}/postgres/bindings",
+        "/v1/postgres/bindings",
+        "/v1/postgres/databases/{}/bindings"
+      ]
+    },
+    {
+      "id": "postgres-compute-policy",
+      "name": "Postgres compute policy and resize",
+      "category": "data",
+      "description": "Resize a database and set its scale-to-zero compute policy.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/managed-postgres",
+      "acceptance_test": "pkg/apid/apidserver/handlers_managed_postgres_compute_policy_test.go::TestManagedPostgresComputePolicyRoutesAndReplay",
+      "parent": "managed-postgres",
+      "routes": [
+        "/v1/postgres/databases/{}/compute-policy",
+        "/v1/postgres/databases/{}/compute-policy-changes",
+        "/v1/postgres/databases/{}/resize",
+        "/v1/postgres/databases/{}/resizes"
+      ]
+    },
+    {
+      "id": "postgres-cutovers",
+      "name": "Postgres cutovers",
+      "category": "data",
+      "description": "Move an app to a new database with a verified cutover.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/managed-postgres",
+      "acceptance_test": "pkg/dashboard/tls_cutover_test.go::TestReadTLSCutoverState",
+      "parent": "managed-postgres",
+      "routes": [
+        "/v1/postgres/cutovers"
+      ]
+    },
+    {
+      "id": "postgres-restore",
+      "name": "Postgres point-in-time restore",
+      "category": "data",
+      "description": "Restore a database to an earlier point in time.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/managed-postgres",
+      "acceptance_test": "pkg/objectstorage/snapshot_test.go::TestCaptureObjectManifestSelectsPointInTimeAcrossPages",
+      "parent": "managed-postgres",
+      "routes": [
+        "/v1/apps/{}/database-switches",
+        "/v1/postgres/databases/{}/restore"
+      ],
+      "cli": [
+        "rollback switch",
+        "rollback switches"
+      ]
     },
     {
       "id": "pr-previews",
@@ -519,14 +3919,28 @@
         "scale"
       ],
       "docs_url": "/docs/preview-environments",
-      "acceptance_test": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape"
+      "acceptance_test": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape",
+      "consumers": [
+        "githubd"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/previews",
+        "/dashboard/previews",
+        "/v1/apps/{}/previews",
+        "/v1/orgs/{}/previews",
+        "/v1/preview",
+        "/v1/previews"
+      ],
+      "cli": [
+        "preview"
+      ]
     },
     {
       "id": "private-apps",
       "name": "Private apps",
       "category": "edge",
       "description": "Keep an app off the public edge entirely while it stays reachable over authenticated same-account service routing.",
-      "maturity": "preview",
+      "maturity": "beta",
       "plans": [
         "free",
         "hobby",
@@ -534,7 +3948,31 @@
         "scale"
       ],
       "docs_url": "/docs/networking",
-      "acceptance_test": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted"
+      "acceptance_test": "cmd/gatewayd-internal/backend_test.go::TestPgRouter_InternalAppIsNotPubliclyRouted",
+      "settings": [
+        "app.visibility=internal"
+      ]
+    },
+    {
+      "id": "private-networks",
+      "name": "Private networks",
+      "category": "edge",
+      "description": "Attach apps to private networks with peering.",
+      "maturity": "preview",
+      "plans": [
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/networking",
+      "acceptance_test": "pkg/state/private_networks_test.go::TestValidatePrivateNetworkCIDR",
+      "routes": [
+        "/dashboard/apps/{}/network",
+        "/v1/apps/{}/network",
+        "/v1/networks"
+      ],
+      "cli": [
+        "app network"
+      ]
     },
     {
       "id": "product-control",
@@ -545,7 +3983,37 @@
       "plans": [],
       "docs_url": "/docs/ops/product-control",
       "operator_flag": "FAAS_PRODUCT_CONTROL_ENABLED",
-      "acceptance_test": "pkg/apid/apidserver/product_control_test.go::TestProductControlInternalBoundary"
+      "acceptance_test": "pkg/apid/apidserver/product_control_test.go::TestProductControlInternalBoundary",
+      "routes": [
+        "/dashboard/apps/{}/product",
+        "/dashboard/apps/{}/product-control",
+        "/v1/apps/{}/product",
+        "/v1/product-control"
+      ],
+      "cli": [
+        "product"
+      ]
+    },
+    {
+      "id": "production-debugger",
+      "name": "Production debugger",
+      "category": "observability",
+      "description": "Capture request evidence in production and replay it safely.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/tracing",
+      "acceptance_test": "pkg/apid/apidserver/handlers_pgstore_test.go::TestPGHandler_DebuggerRequestAndRegressionReadPaths",
+      "parent": "debug",
+      "routes": [
+        "/dashboard/apps/{}/debug/requests",
+        "/v1/apps/{}/debug/compare",
+        "/v1/apps/{}/debug/critical-paths",
+        "/v1/apps/{}/debug/requests"
+      ]
     },
     {
       "id": "production-forks",
@@ -559,7 +4027,11 @@
       ],
       "docs_url": "/docs/forks",
       "operator_flag": "FAAS_APP_FORKS",
-      "acceptance_test": "cmd/e2e/fork_metal_test.go::TestForkMetal"
+      "acceptance_test": "cmd/e2e/fork_metal_test.go::TestForkMetal",
+      "routes": [
+        "/dashboard/apps/{}/forks",
+        "/v1/apps/{}/forks"
+      ]
     },
     {
       "id": "production-route-monitoring",
@@ -573,7 +4045,14 @@
         "scale"
       ],
       "docs_url": "/docs/route-production-monitoring",
-      "acceptance_test": "pkg/routemonitor/monitor_test.go::TestProductionRouteMonitorBudgets"
+      "acceptance_test": "pkg/routemonitor/monitor_test.go::TestProductionRouteMonitorBudgets",
+      "routes": [
+        "/dashboard/apps/{}/route-monitor",
+        "/v1/apps/{}/route-monitor"
+      ],
+      "cli": [
+        "routes monitor"
+      ]
     },
     {
       "id": "progressive-rollouts",
@@ -588,7 +4067,436 @@
         "scale"
       ],
       "docs_url": "/docs/deploys",
-      "acceptance_test": "cmd/e2e/safe_release_drill_metal_test.go::TestSafeReleaseDrillMetal"
+      "acceptance_test": "cmd/e2e/safe_release_drill_metal_test.go::TestSafeReleaseDrillMetal",
+      "settings": [
+        "app.release_policy=safe",
+        "app.release_probe_paths",
+        "app.revision_pin_ttl_seconds",
+        "app.version_affinity_cookie",
+        "app.version_affinity_managed_cookie"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/rollouts",
+        "/dashboard/releases",
+        "/dashboard/safe-releases",
+        "/v1/apps/{}/rollouts",
+        "/v1/deployments/{}/canary/advance",
+        "/v1/deployments/{}/promote",
+        "/v1/deployments/{}/promote-with-application-ack",
+        "/v1/deployments/{}/traffic"
+      ],
+      "cli": [
+        "canary",
+        "traffic"
+      ]
+    },
+    {
+      "id": "projects",
+      "name": "Projects",
+      "category": "delivery",
+      "description": "Deploy several apps together as one project with shared releases.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/apps",
+      "acceptance_test": "pkg/apid/apidserver/project_image_test.go::TestProjectComposeImageScanAndApply",
+      "routes": [
+        "/dashboard/projects",
+        "/v1/orgs/{}/projects",
+        "/v1/project-submissions",
+        "=/v1/projects",
+        "/v1/projects/apply-plan",
+        "/v1/projects/safe-deploy",
+        "=/v1/projects/scan",
+        "=/v1/projects/{}",
+        "/v1/projects/{}/delete-preview",
+        "/v1/projects/{}/deployment-readiness",
+        "/v1/projects/{}/exclusions",
+        "/v1/projects/{}/release-secrets"
+      ],
+      "cli": [
+        "projects"
+      ]
+    },
+    {
+      "id": "queue-bindings",
+      "name": "Queue bindings",
+      "category": "async",
+      "description": "Bind queues to workloads.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/queue-pull-leases",
+      "acceptance_test": "pkg/apid/apidserver/handlers_queue_bindings_test.go::TestHTTPFunctionPushQueueBinding",
+      "parent": "queues",
+      "settings": [
+        "manifest.queue_bindings"
+      ],
+      "routes": [
+        "/v1/apps/{}/bindings/queue-canaries",
+        "/v1/apps/{}/bindings/release-policy-with-queues",
+        "/v1/apps/{}/queue-bindings",
+        "/v1/apps/{}/queue-workload",
+        "/v1/orgs/{}/apps/{}/queue-bindings"
+      ],
+      "cli": [
+        "queue bindings"
+      ]
+    },
+    {
+      "id": "queue-pull-leases",
+      "name": "Queue pull leases",
+      "category": "async",
+      "description": "Pull work from a queue with leases.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/queue-pull-leases",
+      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestQueueReceive_TimeoutReturns204",
+      "parent": "queues",
+      "routes": [
+        "/v1/apps/{}/queues/peek",
+        "/v1/apps/{}/queues/receive",
+        "/v1/apps/{}/queues/state",
+        "/v1/orgs/{}/apps/{}/queues/peek",
+        "/v1/orgs/{}/apps/{}/queues/receive",
+        "/v1/orgs/{}/apps/{}/queues/state"
+      ]
+    },
+    {
+      "id": "queues",
+      "name": "Queues",
+      "category": "async",
+      "description": "Send work to managed queues and pull it with leases.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/queue-pull-leases",
+      "acceptance_test": "pkg/apid/apidserver/handlers_queues_read_test.go::TestQueuePeek_HappyPath",
+      "consumers": [
+        "schedd"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/dlq",
+        "/dashboard/apps/{}/queue-bindings",
+        "/dashboard/apps/{}/queue-workload",
+        "/dashboard/apps/{}/queues",
+        "/v1/apps/{}/queues/{}",
+        "/v1/orgs/{}/apps/{}/queues/{}",
+        "/v1/orgs/{}/queue-usage"
+      ],
+      "cli": [
+        "queue"
+      ]
+    },
+    {
+      "id": "realtime",
+      "name": "Realtime",
+      "category": "data",
+      "description": "Broadcast to realtime channels with presence, history and access control.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/realtime",
+      "acceptance_test": "cmd/gregale/commands_realtime_usage_test.go::TestPrintRealtimeUsage",
+      "settings": [
+        "manifest.realtime"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/realtime",
+        "/v1/account/realtime-history-usage",
+        "/v1/apps/{}/realtime",
+        "/v1/apps/{}/webhooks/{}/realtime-channel",
+        "/v1/realtime",
+        "/v1/usage/realtime"
+      ],
+      "cli": [
+        "realtime"
+      ]
+    },
+    {
+      "id": "realtime-access",
+      "name": "Realtime access control",
+      "category": "data",
+      "description": "Revoke durable principals and sessions on realtime channels.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/realtime",
+      "acceptance_test": "pkg/apid/apidserver/handlers_realtime_access_test.go::TestRealtimeAccessPreviewRequiresOIDCAndPreservesSessionCutoff",
+      "parent": "realtime",
+      "routes": [
+        "/v1/apps/{}/realtime/endpoints/{}/principals",
+        "/v1/apps/{}/realtime/endpoints/{}/principals:send"
+      ]
+    },
+    {
+      "id": "realtime-channels",
+      "name": "Realtime channels",
+      "category": "data",
+      "description": "Manage channels, groups and history on a realtime endpoint.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/realtime",
+      "acceptance_test": "pkg/state/pgstore_managed_realtime_channel_routes_test.go::TestPgStoreManagedRealtimeChannelRouteSnapshot",
+      "parent": "realtime",
+      "routes": [
+        "/v1/apps/{}/realtime/endpoints/{}/channels"
+      ]
+    },
+    {
+      "id": "realtime-connections",
+      "name": "Realtime connections",
+      "category": "data",
+      "description": "List and disconnect realtime connections.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/realtime",
+      "acceptance_test": "pkg/apid/apidserver/handlers_realtime_connections_test.go::TestManagedRealtimeConnectionOperationsRouteToOwner",
+      "parent": "realtime",
+      "routes": [
+        "/v1/apps/{}/realtime/endpoints/{}/connections"
+      ],
+      "cli": [
+        "realtime connections"
+      ]
+    },
+    {
+      "id": "realtime-occupancy",
+      "name": "Realtime occupancy",
+      "category": "data",
+      "description": "Report live channel occupancy.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/realtime",
+      "acceptance_test": "pkg/apid/receivers/realtime_occupancy_test.go::TestOccupancyOperationRPC",
+      "parent": "realtime",
+      "routes": [
+        "/v1/apps/{}/realtime/endpoints/{}/occupancy"
+      ],
+      "cli": [
+        "realtime occupancy"
+      ]
+    },
+    {
+      "id": "realtime-publishers",
+      "name": "Realtime publishers",
+      "category": "data",
+      "description": "Publish to realtime endpoints from outside Gregale with publish credentials.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/realtime",
+      "acceptance_test": "pkg/state/pgstore_realtime_credentials_test.go::TestPgStoreRealtimePublisherCredentialPublishes",
+      "parent": "realtime",
+      "routes": [
+        "/v1/apps/{}/realtime/endpoints/{}/publish-credentials",
+        "/v1/realtime/publishers"
+      ]
+    },
+    {
+      "id": "realtime-push",
+      "name": "Realtime push",
+      "category": "data",
+      "description": "Push messages to connected realtime clients from the API.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/realtime",
+      "acceptance_test": "cmd/gregale/commands_realtime_usage_test.go::TestPrintRealtimeUsage",
+      "parent": "realtime",
+      "routes": [
+        "/v1/apps/{}/realtime/endpoints/{}/push"
+      ],
+      "cli": [
+        "realtime push"
+      ]
+    },
+    {
+      "id": "realtime-tickets",
+      "name": "Realtime tickets",
+      "category": "data",
+      "description": "Issue short-lived channel subscription tickets.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/realtime",
+      "acceptance_test": "pkg/apid/managedrealtime/handlers_tickets_test.go::TestRevokeRealtimeTicketHandlers",
+      "parent": "realtime",
+      "routes": [
+        "/v1/apps/{}/realtime/endpoints/{}/tickets"
+      ]
+    },
+    {
+      "id": "realtime-workers",
+      "name": "Realtime workers",
+      "category": "data",
+      "description": "Consume realtime events with worker groups, claims and dead letters.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/realtime",
+      "acceptance_test": "pkg/state/pgstore_realtime_credentials_test.go::TestPgStoreRealtimeWorkerCredentialScopesOperations",
+      "parent": "realtime",
+      "routes": [
+        "/v1/realtime/workers"
+      ]
+    },
+    {
+      "id": "registry-credentials",
+      "name": "Private registry credentials",
+      "category": "delivery",
+      "description": "Pull images from private container registries.",
+      "maturity": "ga",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/registry-credentials",
+      "acceptance_test": "pkg/apid/apidserver/handlers_job_registry_auth_test.go::TestJobRegistryCredentialsRoundTrip",
+      "routes": [
+        "/dashboard/apps/{}/registry-credentials",
+        "/v1/apps/{}/registry-credentials"
+      ],
+      "cli": [
+        "registry"
+      ]
+    },
+    {
+      "id": "release-approvals",
+      "name": "Release approvals",
+      "category": "delivery",
+      "description": "Require named approvers before a release proceeds.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/alerts/release_approvals_test.go::TestEvaluator_DeliversReleaseApprovalEvents",
+      "routes": [
+        "/dashboard/apps/{}/release-approval-policy",
+        "/dashboard/apps/{}/release-approvals",
+        "/v1/apps/{}/release-approval-policy",
+        "/v1/apps/{}/release-approvals",
+        "/v1/deployments/{}/approvals"
+      ],
+      "cli": [
+        "approvals"
+      ]
+    },
+    {
+      "id": "release-commands",
+      "name": "Release commands",
+      "category": "delivery",
+      "description": "Run a command such as a migration that must succeed before a deployment takes traffic.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_PinsProcfileReleaseCommand",
+      "settings": [
+        "manifest.release"
+      ]
+    },
+    {
+      "id": "release-gates",
+      "name": "Release gates",
+      "category": "delivery",
+      "description": "Hold a rollout until SLO, error and metric gates pass.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/apid/apidserver/release_guards_test.go::TestReleaseGatesRoundTripAndValidate",
+      "routes": [
+        "/dashboard/apps/{}/release-gates",
+        "/v1/apps/{}/release-gates"
+      ],
+      "cli": [
+        "release-gates"
+      ]
+    },
+    {
+      "id": "release-review",
+      "name": "Release review",
+      "category": "delivery",
+      "description": "Review a release's evidence before promoting it.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/state/release_review_pg_test.go::TestPgReleaseReview",
+      "routes": [
+        "/dashboard/apps/{}/release-review",
+        "/v1/apps/{}/release-review"
+      ]
+    },
+    {
+      "id": "repo-decomposition",
+      "name": "Repository decomposition",
+      "category": "delivery",
+      "description": "Split one repository into several apps.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/repo_decomposition_implementation",
+      "acceptance_test": "pkg/reposcan/scan_test.go::TestScan_RootsOnly",
+      "cli": [
+        "scan"
+      ]
     },
     {
       "id": "request-retry",
@@ -599,21 +4507,92 @@
       "plans": [],
       "docs_url": "/docs/adr/201-traffic-as-a-platform-primitive",
       "operator_flag": "FAAS_GATEWAY_RETRY",
-      "acceptance_test": "pkg/gateway/handler_retry_test.go::TestHandlerRetryConvertsTransportFailureIntoSuccess"
+      "acceptance_test": "pkg/gateway/handler_retry_test.go::TestHandlerRetryConvertsTransportFailureIntoSuccess",
+      "consumers": [
+        "gatewayd-internal"
+      ],
+      "settings": [
+        "edge_rule.retry"
+      ]
     },
     {
-      "id": "route-advisor",
-      "name": "Route advisor",
-      "category": "edge",
-      "description": "Suggest cache, async and per-consumer throttle edge rules from observed route traffic, with evidence and what-if estimates such as wakes avoided; suggested rules are created disabled for review.",
+      "id": "reserved-concurrency",
+      "name": "Reserved concurrency",
+      "category": "runtime",
+      "description": "Reserve capacity for an app so it is evicted last.",
       "maturity": "preview",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
+      "docs_url": "/docs/scaling-policy",
+      "acceptance_test": "pkg/state/memstore_test.go::TestEvictionPriorityOrBestEffort",
+      "settings": [
+        "app.eviction_priority=reserved"
+      ]
+    },
+    {
+      "id": "resource-sizing",
+      "name": "Resource sizing",
+      "category": "runtime",
+      "description": "Choose memory, CPU, scratch disk and workload class per app.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/plans",
+      "acceptance_test": "pkg/state/observed_workload_class_contract_test.go::TestMemRecordObservedWorkloadClass",
+      "settings": [
+        "app.cpu_millicores",
+        "app.resource_profile",
+        "app.service_replicas",
+        "app.vcpu"
+      ]
+    },
+    {
+      "id": "rollback",
+      "name": "Rollback",
+      "category": "delivery",
+      "description": "Roll an app back to a named earlier revision.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/apid/apidserver/handlers_ext_test.go::TestRollbackApp_HappyPath",
+      "routes": [
+        "/dashboard/apps/{}/rollback",
+        "/dashboard/apps/{}/rollbacks",
+        "/v1/apps/{}/rollback",
+        "/v1/apps/{}/rollbacks"
+      ],
+      "cli": [
+        "rollback"
+      ]
+    },
+    {
+      "id": "route-advisor",
+      "name": "Route advisor",
+      "category": "edge",
+      "description": "Suggest cache, async and per-consumer throttle edge rules from observed route traffic, with evidence and what-if estimates such as wakes avoided; suggested rules are created disabled for review.",
+      "maturity": "internal",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "/docs/route-advisor",
-      "acceptance_test": "pkg/routeadvisor/advisor_test.go::TestCacheSuggestionRules"
+      "acceptance_test": "pkg/routeadvisor/advisor_test.go::TestCacheSuggestionRules",
+      "cli": [
+        "routes advise"
+      ]
     },
     {
       "id": "route-health-canary-guard",
@@ -627,28 +4606,97 @@
         "scale"
       ],
       "docs_url": "/docs/route-health",
-      "acceptance_test": "pkg/apid/apidserver/handlers_route_health_seed_test.go::TestAdvanceCanarySeedsReportModeRouteHealth"
+      "acceptance_test": "pkg/apid/apidserver/handlers_route_health_seed_test.go::TestAdvanceCanarySeedsReportModeRouteHealth",
+      "routes": [
+        "/dashboard/apps/{}/route-health",
+        "/v1/apps/{}/route-health"
+      ],
+      "cli": [
+        "routes health",
+        "routes gate"
+      ]
+    },
+    {
+      "id": "route-insights",
+      "name": "Route insights",
+      "category": "observability",
+      "description": "Discover routes from traffic and inspect their status, customers and impact.",
+      "maturity": "internal",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/route-insights",
+      "acceptance_test": "pkg/apid/apidserver/handlers_request_audit_test.go::TestAppDiscoveredRoutesWithoutRequestAudit",
+      "settings": [
+        "app.route_metrics_enabled"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/discovered-routes",
+        "/dashboard/apps/{}/routes",
+        "/v1/apps/{}/discovered-routes",
+        "/v1/apps/{}/routes"
+      ],
+      "cli": [
+        "routes",
+        "routes insights"
+      ]
     },
     {
       "id": "route-lifecycle-review",
       "name": "Route lifecycle review",
       "category": "delivery",
       "description": "Reconcile a deployment's captured contract, source and observed traffic to surface route drift and retirement candidates, with approvals, deprecation headers and history.",
-      "maturity": "preview",
+      "maturity": "internal",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
       "docs_url": "/docs/route-lifecycle",
-      "acceptance_test": "cmd/gregale/commands_routes_lifecycle_test.go::TestBuildRouteLifecycleReviewClassifiesOnlySupportedQuietRouteAsCandidate"
+      "acceptance_test": "cmd/gregale/commands_routes_lifecycle_test.go::TestBuildRouteLifecycleReviewClassifiesOnlySupportedQuietRouteAsCandidate",
+      "routes": [
+        "/dashboard/apps/{}/route-lifecycle",
+        "/dashboard/apps/{}/route-removal",
+        "/v1/apps/{}/route-lifecycle",
+        "/v1/apps/{}/route-removal"
+      ],
+      "cli": [
+        "routes lifecycle",
+        "routes sunsets"
+      ]
+    },
+    {
+      "id": "route-priorities",
+      "name": "Route priorities and throttle suggestions",
+      "category": "edge",
+      "description": "Mark critical routes and get throttle suggestions from observed traffic.",
+      "maturity": "internal",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/route-priority",
+      "acceptance_test": "pkg/apid/apidserver/handlers_route_priority_test.go::TestRoutePrioritiesRejects",
+      "routes": [
+        "/dashboard/apps/{}/route-priorities",
+        "/dashboard/apps/{}/throttle-suggestions",
+        "/v1/apps/{}/route-priorities",
+        "/v1/apps/{}/throttle-suggestions"
+      ],
+      "cli": [
+        "throttle-suggestions",
+        "routes priority"
+      ]
     },
     {
       "id": "route-requirements",
       "name": "Route requirements and policy plans",
       "category": "edge",
       "description": "Keep per-route authentication, throttle and budget expectations in version control, check them against previews and deployments, and apply reviewed repair plans.",
-      "maturity": "preview",
+      "maturity": "internal",
       "plans": [
         "free",
         "hobby",
@@ -656,14 +4704,33 @@
         "scale"
       ],
       "docs_url": "/docs/route-requirements",
-      "acceptance_test": "pkg/routerequirements/evaluate_test.go::TestEvaluateRequirementsUsesSelectedPolicyAndAppBudget"
+      "acceptance_test": "pkg/routerequirements/evaluate_test.go::TestEvaluateRequirementsUsesSelectedPolicyAndAppBudget",
+      "settings": [
+        "app.declared_routes",
+        "app.only_allow_declared_routes"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/route-budgets",
+        "/dashboard/apps/{}/route-policy",
+        "/dashboard/apps/{}/route-requirements",
+        "/v1/apps/{}/deployments/{}/route-policy",
+        "/v1/apps/{}/route-budgets",
+        "/v1/apps/{}/route-policy",
+        "/v1/apps/{}/route-requirements"
+      ],
+      "cli": [
+        "routes requirements",
+        "routes plan",
+        "routes apply",
+        "routes check"
+      ]
     },
     {
       "id": "route-source-impact",
       "name": "Route source impact",
       "category": "delivery",
       "description": "Statically map a source diff to the FastAPI, Go HTTP, Express or Hono endpoints it can affect, and compare discovered routes with an OpenAPI document, offline.",
-      "maturity": "preview",
+      "maturity": "internal",
       "plans": [
         "free",
         "hobby",
@@ -671,13 +4738,16 @@
         "scale"
       ],
       "docs_url": "/docs/route-source-impact",
-      "acceptance_test": "pkg/routeimpact/analyze_test.go::TestFastAPINestedRoutersAndImportedHandlers"
+      "acceptance_test": "pkg/routeimpact/analyze_test.go::TestFastAPINestedRoutersAndImportedHandlers",
+      "cli": [
+        "routes impact"
+      ]
     },
     {
-      "id": "scale-to-zero",
-      "name": "Scale to zero",
+      "id": "runtime-binary",
+      "name": "Static binary runtime",
       "category": "runtime",
-      "description": "Park idle APIs and wake them on the next request.",
+      "description": "Run a statically linked executable built from a Dockerfile.",
       "maturity": "beta",
       "plans": [
         "free",
@@ -685,8 +4755,168 @@
         "pro",
         "scale"
       ],
+      "docs_url": "/docs/functions",
+      "acceptance_test": "pkg/api/deploy_validation_test.go::TestFunctionBinaryRuntime",
+      "parent": "function-runtimes",
+      "settings": [
+        "runtime.binary"
+      ]
+    },
+    {
+      "id": "runtime-go",
+      "name": "Go function runtime",
+      "category": "runtime",
+      "description": "Run functions on the Go 1.24 runtimes.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/functions",
+      "acceptance_test": "pkg/builderd/profile_test.go::TestFunctionRuntimeFramework",
+      "parent": "function-runtimes",
+      "settings": [
+        "runtime.go124",
+        "runtime.go124-alpine"
+      ]
+    },
+    {
+      "id": "s3-credentials",
+      "name": "S3 credentials",
+      "category": "data",
+      "description": "Mint S3-compatible credentials for a bucket.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/apid/apidserver/handlers_object_storage_test.go::TestObjectS3CredentialLifecycle",
+      "parent": "object-storage",
+      "routes": [
+        "/v1/apps/{}/buckets/{}/s3-credentials",
+        "/v1/orgs/{}/apps/{}/buckets/{}/s3-credentials"
+      ]
+    },
+    {
+      "id": "scale-to-zero",
+      "name": "Scale to zero",
+      "category": "runtime",
+      "description": "Park idle APIs and wake them on the next request.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "https://gregale.dev/docs/scale-to-zero",
-      "acceptance_test": "pkg/gateway/handler_test.go::TestColdWakeReturns200AndHeader"
+      "acceptance_test": "cmd/e2e/park_wake_cycle_e2e_test.go::TestE2E_ParkWakeCycle_RestoresTheSnapshotItJustWrote",
+      "always_on": true
+    },
+    {
+      "id": "scenario-tests",
+      "name": "Scenario tests",
+      "category": "delivery",
+      "description": "Run test scenarios against expiring environments, with record, replay and fault injection.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/scenario-tests",
+      "acceptance_test": "pkg/apid/apidserver/handlers_scenario_test_test.go::TestScenarioTestRegistrationRequiresSameRunAndCleanup",
+      "routes": [
+        "/v1/dev/test-runs"
+      ],
+      "cli": [
+        "test",
+        "chaos"
+      ]
+    },
+    {
+      "id": "scheduled-releases",
+      "name": "Scheduled releases",
+      "category": "delivery",
+      "description": "Schedule a release to start at a chosen time.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "cmd/gregale/commands_scheduled_releases_test.go::TestScheduledReleaseLines",
+      "routes": [
+        "/v1/deployments/{}/schedule",
+        "/v1/scheduled-releases"
+      ],
+      "cli": [
+        "scheduled-releases"
+      ]
+    },
+    {
+      "id": "sdks",
+      "name": "SDKs",
+      "category": "developer",
+      "description": "Call Gregale from Node.js, Python, Go, Kotlin and Swift SDKs.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/cli",
+      "acceptance_test": "sdk/go/preview/application_standard_assignments_test.go::TestApplicationStandardSDKAssignmentInventory",
+      "always_on": true
+    },
+    {
+      "id": "secrets",
+      "name": "Secrets",
+      "category": "runtime",
+      "description": "Store sealed secrets, reference them and reload them without a restart.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/secrets",
+      "acceptance_test": "pkg/apid/apidserver/handlers_secrets_test.go::TestSecrets_PutGetDeleteRoundTrip",
+      "routes": [
+        "/dashboard/apps/{}/secret-references",
+        "/dashboard/apps/{}/secret-revocations",
+        "/dashboard/apps/{}/secrets",
+        "/v1/apps/{}/secret-references",
+        "/v1/apps/{}/secret-revocations",
+        "/v1/apps/{}/secrets",
+        "/v1/secrets"
+      ],
+      "cli": [
+        "secrets"
+      ]
+    },
+    {
+      "id": "security-headers",
+      "name": "Security headers",
+      "category": "edge",
+      "description": "Set security response headers at the edge.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/edge-rule-trace",
+      "acceptance_test": "pkg/apid/apidserver/handlers_dashboard_edge_rules_test.go::TestDashboardSecurityHeadersCreatesStandardRule",
+      "parent": "edge-rules",
+      "routes": [
+        "/dashboard/apps/{}/edge-rules/security-headers"
+      ]
     },
     {
       "id": "selective-data-repair",
@@ -697,7 +4927,45 @@
       "plans": [],
       "docs_url": "/docs/data-repair",
       "operator_flag": "GREGALE_DATA_REPAIR_ENABLED",
-      "acceptance_test": "pkg/datarepair/repair_test.go::TestSelectiveRepairRealIsolatedRehearsal"
+      "acceptance_test": "pkg/datarepair/repair_test.go::TestSelectiveRepairRealIsolatedRehearsal",
+      "routes": [
+        "/dashboard/apps/{}/data-repair",
+        "/v1/apps/{}/data-repair",
+        "/v1/data-repair"
+      ],
+      "cli": [
+        "data-repair"
+      ]
+    },
+    {
+      "id": "service-bindings",
+      "name": "Service bindings",
+      "category": "runtime",
+      "description": "Declare and verify which internal services an app may call.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/networking",
+      "acceptance_test": "pkg/apid/apidserver/service_binding_plan_test.go::TestServiceBindingPlanAPI",
+      "settings": [
+        "app.allowed_service_call_scopes",
+        "app.allowed_service_callers",
+        "app.service_binding_policy",
+        "app.service_binding_targets",
+        "app.service_binding_transport",
+        "app.service_reliability"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/bindings",
+        "/v1/apps/{}/bindings"
+      ],
+      "cli": [
+        "bindings"
+      ]
     },
     {
       "id": "service-map",
@@ -708,13 +4976,40 @@
       "plans": [],
       "docs_url": "/docs/service-map",
       "operator_flag": "FAAS_SERVICE_MAP_ENABLED",
-      "acceptance_test": "pkg/apid/servicemap/service_test.go::TestGetServiceMap_HappyPath_WithProm"
+      "acceptance_test": "pkg/apid/servicemap/service_test.go::TestGetServiceMap_HappyPath_WithProm",
+      "routes": [
+        "/dashboard/service-map",
+        "/v1/service-map"
+      ]
     },
     {
-      "id": "source-deploy",
-      "name": "Source deploys",
+      "id": "service-migration",
+      "name": "Service migration",
       "category": "delivery",
-      "description": "Deploy an API from a local source tree, tarball, Dockerfile, or OCI image.",
+      "description": "Check whether an existing service will run on Gregale, import it, verify it and cut over.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "cmd/gregale/deploy_preflight_test.go::TestDeployPreflightRepoSourcePreservesRef",
+      "routes": [
+        "/dashboard/apps/{}/migration-cutovers",
+        "/dashboard/apps/{}/migration-verifications",
+        "/v1/apps/{}/migration-cutovers",
+        "/v1/apps/{}/migration-verifications",
+        "/v1/preflight",
+        "/v1/project-migrations"
+      ]
+    },
+    {
+      "id": "service-wake-ahead",
+      "name": "Service wake-ahead",
+      "category": "runtime",
+      "description": "Wake a parked dependency as soon as its caller wakes.",
       "maturity": "beta",
       "plans": [
         "free",
@@ -722,22 +5017,262 @@
         "pro",
         "scale"
       ],
+      "docs_url": "/docs/networking",
+      "acceptance_test": "pkg/state/service_wake_ahead_pg_test.go::TestServiceWakeAheadStore",
+      "routes": [
+        "/dashboard/apps/{}/service-wake-ahead",
+        "/v1/apps/{}/service-wake-ahead"
+      ],
+      "cli": [
+        "wake-ahead"
+      ]
+    },
+    {
+      "id": "session-affinity",
+      "name": "Session affinity",
+      "category": "edge",
+      "description": "Route a client's requests to the same instance with a signed cookie.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/networking",
+      "acceptance_test": "pkg/gateway/session_affinity_test.go::TestWakeCarriesSessionAffinityHint",
+      "consumers": [
+        "gatewayd-internal"
+      ],
+      "settings": [
+        "app.session_affinity"
+      ]
+    },
+    {
+      "id": "signed-deploys",
+      "name": "Signed deploys",
+      "category": "delivery",
+      "description": "Require deployments to be signed by a trusted signer.",
+      "maturity": "internal",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/security",
+      "acceptance_test": "pkg/apid/apidserver/handlers_signature_test.go::TestListTrustedSigners_Empty",
+      "settings": [
+        "app.require_signed"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/security",
+        "/dashboard/apps/{}/trusted_signers",
+        "/v1/apps/{}/security",
+        "/v1/apps/{}/trusted_signers"
+      ],
+      "cli": [
+        "trusted-publishers"
+      ]
+    },
+    {
+      "id": "signed-urls",
+      "name": "Signed URLs and upload routes",
+      "category": "data",
+      "description": "Share objects with signed URLs and accept browser uploads.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/apid/apidserver/object_signed_url_test.go::TestObjectSignedURLE2EPG",
+      "parent": "object-storage",
+      "routes": [
+        "/dashboard/apps/{}/storage/signed-url",
+        "/v1/apps/{}/buckets/{}/signed-url",
+        "/v1/apps/{}/upload-routes",
+        "/v1/orgs/{}/apps/{}/buckets/{}/signed-url"
+      ]
+    },
+    {
+      "id": "snapshot-lifecycle-hooks",
+      "name": "Snapshot lifecycle hooks",
+      "category": "runtime",
+      "description": "Run app code before a snapshot is taken and after a restore.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/functions",
+      "acceptance_test": "pkg/apid/apidserver/handlers_lifecycle_test.go::TestAppAfterRestoreLifecycleRoundTrip",
+      "settings": [
+        "app.after_restore",
+        "app.before_checkpoint"
+      ]
+    },
+    {
+      "id": "source-deploy",
+      "name": "Source deploys",
+      "category": "delivery",
+      "description": "Deploy an API from a local source tree, tarball, Dockerfile, or OCI image.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
       "docs_url": "https://gregale.dev/docs/deploy-from-source",
-      "acceptance_test": "cmd/e2e/apply_project_e2e_test.go::TestApplyProject_DeploymentKindTarball"
+      "acceptance_test": "cmd/e2e/apply_project_e2e_test.go::TestApplyProject_DeploymentKindTarball",
+      "routes": [
+        "/dashboard/apps/{}/deployment-submissions",
+        "/dashboard/apps/{}/deployments",
+        "/v1/apps/{}/deployment-submissions",
+        "=/v1/apps/{}/deployments",
+        "/v1/apps/{}/deployments/clear-obsolete",
+        "/v1/apps/{}/deployments/dev-source",
+        "/v1/apps/{}/deployments/latest",
+        "/v1/apps/{}/deployments/source-tarball",
+        "/v1/apps/{}/deployments/{}/cancel",
+        "/v1/apps/{}/deployments/{}/response-check",
+        "/v1/apps/{}/deployments/{}/summary",
+        "=/v1/deployments",
+        "/v1/deployments/latest-by-app",
+        "/v1/deployments/response-check",
+        "=/v1/deployments/{}",
+        "/v1/deployments/{}/diff",
+        "/v1/deployments/{}/retry",
+        "/v1/deployments/{}/stages",
+        "/v1/deployments/{}/url",
+        "=/v1/uploads",
+        "=/v1/uploads/{}"
+      ]
+    },
+    {
+      "id": "source-ref-deploys",
+      "name": "Source-ref deploys",
+      "category": "delivery",
+      "description": "Deploy a build pinned to a specific commit in one CI-friendly call.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/build/source-ref",
+      "acceptance_test": "pkg/apid/apidserver/handlers_source_ref_test.go::TestSourceRef_IDOR",
+      "routes": [
+        "/v1/apps/{}/deployments/source-ref",
+        "/v1/projects/scan/source-ref"
+      ]
+    },
+    {
+      "id": "starter-templates",
+      "name": "Starter templates",
+      "category": "delivery",
+      "description": "Start a new app from a maintained template.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/cli",
+      "acceptance_test": "pkg/apid/apidserver/handlers_templates_test.go::TestListTemplates_ReturnsAllNames",
+      "routes": [
+        "/v1/templates"
+      ],
+      "cli": [
+        "init"
+      ]
+    },
+    {
+      "id": "stateless-contract",
+      "name": "Stateless contract checks",
+      "category": "delivery",
+      "description": "Warn before deploying code that expects local state to survive a park.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/storage",
+      "acceptance_test": "pkg/fcvm/stateless_advisory_test.go::TestForwardStatelessAdvisory_AppendsRow",
+      "routes": [
+        "/dashboard/apps/{}/source-review",
+        "/dashboard/stateless",
+        "/v1/apps/{}/source-review"
+      ]
+    },
+    {
+      "id": "static-egress-ip",
+      "name": "Static egress IP",
+      "category": "edge",
+      "description": "Send an app's outbound traffic from a fixed IP address.",
+      "maturity": "preview",
+      "plans": [
+        "scale"
+      ],
+      "docs_url": "/docs/static-egress-ip",
+      "acceptance_test": "pkg/apid/apidserver/handlers_apps_static_egress_ip_test.go::TestStaticEgressIP_DeleteClears",
+      "routes": [
+        "/dashboard/apps/{}/static-egress-ip",
+        "/v1/apps/{}/static-egress-ip"
+      ],
+      "cli": [
+        "app static-egress-ip"
+      ]
+    },
+    {
+      "id": "status-page",
+      "name": "Status page",
+      "category": "observability",
+      "description": "Publish platform status, uptime and incidents.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/security",
+      "acceptance_test": "pkg/apid/apidserver/status_test.go::TestStatusHistoryRollup",
+      "core": true,
+      "routes": [
+        "/status",
+        "/v1/status"
+      ]
     },
     {
       "id": "streaming-and-grpc",
       "name": "Streaming and gRPC",
       "category": "edge",
       "description": "Serve streaming HTTP responses, SSE, and gRPC APIs.",
-      "maturity": "beta",
+      "maturity": "ga",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
       "docs_url": "https://gregale.dev/docs/runtime-node",
-      "acceptance_test": "pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode"
+      "acceptance_test": "pkg/gateway/forwardproxy_test.go::TestRawStreamReverseProxy_RemoteWakeNode",
+      "settings": [
+        "app.app_protocol=http2",
+        "app.streaming_enabled",
+        "app.websocket_enabled"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/streaming-cap",
+        "/v1/apps/{}/streaming-cap"
+      ]
     },
     {
       "id": "synthetic-checks",
@@ -751,7 +5286,246 @@
         "scale"
       ],
       "docs_url": "/docs/synthetic-checks",
-      "acceptance_test": "pkg/synthetics/runner_test.go::TestRunOnceRecordsOutcomes"
+      "acceptance_test": "pkg/synthetics/runner_test.go::TestRunOnceRecordsOutcomes",
+      "routes": [
+        "/dashboard/apps/{}/synthetics",
+        "/v1/apps/{}/synthetics"
+      ],
+      "cli": [
+        "synthetics"
+      ]
+    },
+    {
+      "id": "tcp-listeners",
+      "name": "TCP listeners",
+      "category": "edge",
+      "description": "Serve raw TCP on a dedicated listener.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/networking",
+      "acceptance_test": "pkg/apid/apidserver/handlers_tcp_listener_tls_test.go::TestTCPListenerTLSAPI",
+      "routes": [
+        "/dashboard/apps/{}/tcp-listeners",
+        "/v1/apps/{}/tcp-listeners"
+      ],
+      "cli": [
+        "app tcp"
+      ]
+    },
+    {
+      "id": "tenant-surfaces",
+      "name": "Tenant surfaces",
+      "category": "edge",
+      "description": "Serve each of your customers on their own hostname.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/api-hosting",
+      "acceptance_test": "cmd/gatewayd-internal/tenant_surfaces_routing_test.go::TestPgRouter_TenantSurfaceRouted",
+      "routes": [
+        "/dashboard/apps/{}/tenant-surfaces",
+        "/v1/apps/{}/tenant-surfaces"
+      ],
+      "cli": [
+        "tenant-surfaces"
+      ]
+    },
+    {
+      "id": "tracing",
+      "name": "Tracing",
+      "category": "observability",
+      "description": "Trace requests in the guest and ingest your own OTLP traces.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/tracing",
+      "acceptance_test": "pkg/apid/apidserver/handlers_selected_trace_test.go::TestSelectedAppTraceRoute",
+      "settings": [
+        "app.tracing",
+        "manifest.tracing"
+      ],
+      "routes": [
+        "/v1/account/traces",
+        "/v1/otel",
+        "/v1/traces"
+      ],
+      "cli": [
+        "trace"
+      ]
+    },
+    {
+      "id": "traffic-mirroring",
+      "name": "Traffic mirroring",
+      "category": "delivery",
+      "description": "Copy a share of live traffic to another deployment without affecting responses.",
+      "maturity": "preview",
+      "plans": [
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/deploys",
+      "acceptance_test": "pkg/apid/apidserver/handlers_mirror_test.go::TestMirrorCreate_RangeCheck",
+      "consumers": [
+        "gatewayd-internal"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/mirrors",
+        "/v1/apps/{}/mirrors"
+      ],
+      "cli": [
+        "mirror"
+      ]
+    },
+    {
+      "id": "traffic-profiles",
+      "name": "Traffic profiles",
+      "category": "observability",
+      "description": "Break traffic down by route, request mix and attribution.",
+      "maturity": "internal",
+      "plans": [],
+      "docs_url": "/docs/profiling",
+      "acceptance_test": "pkg/apid/apidserver/handlers_admin_obs_profiles_test.go::TestBuildObsTenantUsageProfiles",
+      "routes": [
+        "/dashboard/apps/{}/profiles",
+        "/v1/apps/{}/profiles",
+        "/v1/deployments/{}/canary/profile-gate"
+      ]
+    },
+    {
+      "id": "udp-listeners",
+      "name": "UDP listeners",
+      "category": "edge",
+      "description": "Serve UDP on a dedicated listener.",
+      "maturity": "preview",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/networking",
+      "acceptance_test": "pkg/apid/apidserver/handlers_udp_listeners_test.go::TestUDPListenerAPI",
+      "routes": [
+        "/dashboard/apps/{}/udp-listeners",
+        "/v1/apps/{}/udp-listeners"
+      ],
+      "cli": [
+        "app udp"
+      ]
+    },
+    {
+      "id": "wake-page",
+      "name": "Wake page",
+      "category": "runtime",
+      "description": "Show browser visitors a waiting page while a parked app wakes.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/scale-to-zero",
+      "acceptance_test": "pkg/gateway/wake_page_test.go::TestAcceptsWakePageRequiresNavigationWhenFetchMetadataPresent",
+      "consumers": [
+        "gatewayd-internal"
+      ]
+    },
+    {
+      "id": "wake-timeline",
+      "name": "Wake timeline",
+      "category": "observability",
+      "description": "See why and how fast each wake happened.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/scale-to-zero",
+      "acceptance_test": "pkg/apid/apidserver/handlers_wake_timeline_page_test.go::TestWakeTimelineKeysetAPI",
+      "routes": [
+        "/dashboard/apps/{}/wake-timeline",
+        "/dashboard/apps/{}/wakes",
+        "/v1/apps/{}/wake-timeline",
+        "/v1/apps/{}/wakes"
+      ],
+      "cli": [
+        "wake-timeline"
+      ]
+    },
+    {
+      "id": "warm-pool",
+      "name": "Warm pool",
+      "category": "runtime",
+      "description": "Keep paused warm instances ready for faster wakes.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/scale-to-zero",
+      "acceptance_test": "pkg/sched/warm_pool_test.go::TestWarmPoolResumePhaseMetric",
+      "settings": [
+        "app.warm_pool_size",
+        "app.warm_snapshot_enabled",
+        "app.warm_snapshot_min_ms",
+        "app.warm_snapshot_min_requests"
+      ]
+    },
+    {
+      "id": "wildcard-domains",
+      "name": "Wildcard domains",
+      "category": "edge",
+      "description": "Serve a wildcard custom domain.",
+      "maturity": "ga",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "https://gregale.dev/docs/custom-domains",
+      "acceptance_test": "pkg/api/limits_test.go::TestWildcardDomainsAllowedIsProPlus",
+      "parent": "custom-domains",
+      "settings": [
+        "domain.wildcard"
+      ]
+    },
+    {
+      "id": "work-policies",
+      "name": "Work policies",
+      "category": "async",
+      "description": "Coordinate invocations that share an application key.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/event-driven",
+      "acceptance_test": "pkg/apid/apidserver/handlers_queue_environment_test.go::TestQueueEnvironmentHTTPRejectsSharedKeyedWorkPolicy",
+      "parent": "events",
+      "settings": [
+        "manifest.work_policies"
+      ],
+      "routes": [
+        "/dashboard/apps/{}/work-policies",
+        "/v1/apps/{}/work-policies"
+      ]
     },
     {
       "id": "worker-pools",
@@ -765,21 +5539,155 @@
         "scale"
       ],
       "docs_url": "/docs/cli/deploy",
-      "acceptance_test": "cmd/e2e/worker_pool_e2e_test.go::TestE2E_WorkerPool_ScalesWithQueueDepthAndStabilizesScaleIn"
+      "acceptance_test": "cmd/e2e/worker_pool_e2e_test.go::TestE2E_WorkerPool_ScalesWithQueueDepthAndStabilizesScaleIn",
+      "settings": [
+        "app.execution_mode=worker",
+        "app.worker_replicas",
+        "manifest.worker"
+      ],
+      "cli": [
+        "workers"
+      ]
     },
     {
-      "id": "workflows-and-jobs",
-      "name": "Jobs and workflows",
+      "id": "workflow-insights",
+      "name": "Workflow insights",
       "category": "async",
-      "description": "Run asynchronous jobs and durable workflows alongside an API.",
-      "maturity": "preview",
+      "description": "See workflow readiness, attention, failures, outcomes and performance.",
+      "maturity": "beta",
       "plans": [
         "hobby",
         "pro",
         "scale"
       ],
       "docs_url": "/docs/faas_openapi_spec",
-      "acceptance_test": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle"
+      "acceptance_test": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle",
+      "parent": "workflows-and-jobs",
+      "routes": [
+        "/v1/apps/{}/workflow-actions",
+        "/v1/apps/{}/workflow-attention",
+        "/v1/apps/{}/workflow-failures",
+        "/v1/apps/{}/workflow-outcomes",
+        "/v1/apps/{}/workflow-performance",
+        "/v1/apps/{}/workflow-readiness"
+      ]
+    },
+    {
+      "id": "workflow-recovery",
+      "name": "Workflow recovery policy",
+      "category": "async",
+      "description": "Review and recover failed workflow runs under a policy.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/faas_openapi_spec",
+      "acceptance_test": "pkg/apid/apidserver/handlers_workflow_recovery_policy_test.go::TestWorkflowRecoveryPolicyHTTP",
+      "parent": "workflows-and-jobs",
+      "routes": [
+        "/v1/apps/{}/initial-recovery-reviews",
+        "/v1/apps/{}/recovery-policy"
+      ]
+    },
+    {
+      "id": "workflow-schedules",
+      "name": "Workflow schedules",
+      "category": "async",
+      "description": "Start workflows on a schedule.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/faas_openapi_spec",
+      "acceptance_test": "pkg/apid/apidserver/handlers_platform_tenant_workflow_schedules_test.go::TestPlatformTenantSelfWorkflowScheduleOverrides",
+      "parent": "workflows-and-jobs",
+      "routes": [
+        "/v1/apps/{}/workflows/schedules"
+      ],
+      "cli": [
+        "workflows schedules",
+        "workflows schedule-history"
+      ]
+    },
+    {
+      "id": "workflows",
+      "name": "Workflows",
+      "category": "async",
+      "description": "Run durable multi-step workflows.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/faas_openapi_spec",
+      "acceptance_test": "pkg/apid/apidserver/handlers_event_workflow_recovery_test.go::TestWorkflowRecoveryJobHTTP",
+      "parent": "workflows-and-jobs",
+      "consumers": [
+        "schedd"
+      ],
+      "settings": [
+        "manifest.workflows"
+      ],
+      "routes": [
+        "/v1/apps/{}/workflows",
+        "/v1/workflows"
+      ],
+      "cli": [
+        "workflows"
+      ]
+    },
+    {
+      "id": "workflows-and-jobs",
+      "name": "Jobs and workflows",
+      "category": "async",
+      "description": "Run asynchronous jobs and durable workflows alongside an API.",
+      "maturity": "beta",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/jobs",
+      "acceptance_test": "cmd/e2e/workflows_execution_e2e_test.go::TestE2E_Workflows_CodeFirstRunResumesAcrossSleepAndEvent",
+      "routes": [
+        "/dashboard/apps/{}/initial-recovery-reviews",
+        "/dashboard/apps/{}/recovery-policy",
+        "/dashboard/apps/{}/workflow-actions",
+        "/dashboard/apps/{}/workflow-attention",
+        "/dashboard/apps/{}/workflow-failures",
+        "/dashboard/apps/{}/workflow-outcomes",
+        "/dashboard/apps/{}/workflow-performance",
+        "/dashboard/apps/{}/workflow-readiness",
+        "/dashboard/apps/{}/workflows",
+        "=/v1/jobs",
+        "=/v1/jobs/{}",
+        "/v1/jobs/{}/occurrences",
+        "/v1/jobs/{}/registry-credentials",
+        "/v1/jobs/{}/runs"
+      ]
+    },
+    {
+      "id": "workload-identity",
+      "name": "Workload identity",
+      "category": "runtime",
+      "description": "Give apps short-lived OIDC tokens instead of long-lived provider keys.",
+      "maturity": "beta",
+      "plans": [
+        "free",
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/security",
+      "acceptance_test": "cmd/vmmd/workload_identity_config_test.go::TestLoadWorkloadIdentitySigner",
+      "routes": [
+        "/v1/auth/oidc"
+      ]
     }
   ]
 }

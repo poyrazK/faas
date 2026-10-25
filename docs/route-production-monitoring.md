@@ -90,8 +90,8 @@ customer UUID unless `customer_details=true` is requested.
 
 ## Sustained observations
 
-APID polls due monitors every 30 seconds and schedules each successful evaluation
-one minute later. It selects the sole default-scope live deployment receiving
+APID polls due monitors every 30 seconds, evaluates every due monitor (several
+at a time) and schedules each successful evaluation one minute later. It selects the sole default-scope live deployment receiving
 100% traffic whose canary steps have completed. Deployments without canary steps
 also qualify. Preview traffic and retired deployments are excluded. A split,
 missing/ambiguous deployment, lost entitlement or missing observations is unknown.

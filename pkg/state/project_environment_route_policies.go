@@ -50,6 +50,9 @@ func (m *MemStore) PutProjectEnvironmentRoutePolicy(_ context.Context, policy Pr
 	if err != nil {
 		return ProjectEnvironmentRoutePolicy{}, err
 	}
+	if err := validateMemTrafficProjection("environment_route_policy", environmentRouteTrafficProjection(policy)); err != nil {
+		return ProjectEnvironmentRoutePolicy{}, err
+	}
 	memory, err := m.gitOpsGuardScopedWriteLocked(policy.AccountID, policy.AppID, policy.EnvironmentSlug, []string{"routes"})
 	if err != nil {
 		return ProjectEnvironmentRoutePolicy{}, err
@@ -117,6 +120,9 @@ func (s *PgStore) GetProjectEnvironmentRoutePolicy(ctx context.Context, accountI
 func (s *PgStore) PutProjectEnvironmentRoutePolicy(ctx context.Context, policy ProjectEnvironmentRoutePolicy) (ProjectEnvironmentRoutePolicy, error) {
 	if policy.OnlyAllowDeclaredRoutes && len(policy.DeclaredRoutes) == 0 {
 		return ProjectEnvironmentRoutePolicy{}, ErrInvalidArgument
+	}
+	if err := s.validateTrafficProjection(ctx, "environment_route_policy", environmentRouteTrafficProjection(policy)); err != nil {
+		return ProjectEnvironmentRoutePolicy{}, err
 	}
 	routeList := policy.DeclaredRoutes
 	if routeList == nil {

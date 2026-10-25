@@ -40,6 +40,16 @@ func (s *PgStore) ResolveStaleRouteInsights(ctx context.Context, arg sqlc.Resolv
 	return s.appErrorsQueries().ResolveStaleRouteInsights(ctx, s.pool, arg)
 }
 
+// ClaimRouteInsightEvaluation takes an app for one evaluation; it reports
+// one row when this caller won it (ADR-20261024154324).
+func (s *PgStore) ClaimRouteInsightEvaluation(ctx context.Context, arg sqlc.ClaimRouteInsightEvaluationParams) (int64, error) {
+	return s.appErrorsQueries().ClaimRouteInsightEvaluation(ctx, s.pool, arg)
+}
+
+func (s *PgStore) ResolveStaleRouteInsightsBatch(ctx context.Context, arg sqlc.ResolveStaleRouteInsightsBatchParams) (int64, error) {
+	return s.appErrorsQueries().ResolveStaleRouteInsightsBatch(ctx, s.pool, arg)
+}
+
 func (s *PgStore) ListRouteInsights(ctx context.Context, arg sqlc.ListRouteInsightsParams) ([]sqlc.ListRouteInsightsRow, error) {
 	return s.appErrorsQueries().ListRouteInsights(ctx, s.pool, arg)
 }
@@ -81,6 +91,14 @@ func (m *MemStore) UpsertRouteInsight(context.Context, sqlc.UpsertRouteInsightPa
 }
 
 func (m *MemStore) ResolveStaleRouteInsights(context.Context, sqlc.ResolveStaleRouteInsightsParams) (int64, error) {
+	return 0, errMemStoreRequestTelemetry
+}
+
+func (m *MemStore) ClaimRouteInsightEvaluation(context.Context, sqlc.ClaimRouteInsightEvaluationParams) (int64, error) {
+	return 0, errMemStoreRequestTelemetry
+}
+
+func (m *MemStore) ResolveStaleRouteInsightsBatch(context.Context, sqlc.ResolveStaleRouteInsightsBatchParams) (int64, error) {
 	return 0, errMemStoreRequestTelemetry
 }
 

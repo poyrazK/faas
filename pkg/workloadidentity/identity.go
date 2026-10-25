@@ -57,6 +57,51 @@ type Claims struct {
 	AccountID  string `json:"account_id"`
 	AppID      string `json:"app_id"`
 	InstanceID string `json:"instance_id"`
+	// Environment is the deployment scope the instance runs (ADR-1141
+	// amendment 2026-10-25). Host-internal relay tokens and tokens minted
+	// before the amendment omit it.
+	Environment string `json:"environment,omitempty"`
+}
+
+// DefaultEnvironment is the deployment scope a deploy uses unless it names
+// another; its tokens keep the original subject.
+const DefaultEnvironment = "default"
+
+// Subject is the sub claim for appID running in environment: app:<app_id> in
+// the default environment, app:<app_id>:env:<environment> in any other.
+// Cloud trust policies match sub (AWS IAM conditions on nothing else for a
+// generic OIDC provider), so a staging deployment must not present the
+// subject a production role trusts.
+func Subject(appID, environment string) string {
+	if environment == "" || environment == DefaultEnvironment {
+		return "app:" + appID
+	}
+	return "app:" + appID + ":env:" + environment
+}
+
+// SubjectMatches reports whether c's subject is the one its app and
+// environment claims name.
+func (c Claims) SubjectMatches() bool {
+	return c.AppID != "" && c.Subject == Subject(c.AppID, c.Environment)
+}
+
+// validEnvironment mirrors deployments_scope_shape, so an environment can
+// never smuggle a ':' into the subject.
+func validEnvironment(environment string) bool {
+	if environment == "" {
+		return true
+	}
+	if len(environment) < 3 || len(environment) > 40 {
+		return false
+	}
+	for i, r := range environment {
+		edge := i == 0 || i == len(environment)-1
+		alnum := r >= 'a' && r <= 'z' || r >= '0' && r <= '9'
+		if !alnum && (r != '-' || edge) {
+			return false
+		}
+	}
+	return true
 }
 
 // ExecutionClaims is the host-to-host identity for a claimed disposable Run.
@@ -124,13 +169,24 @@ func NewSigner(private *rsa.PrivateKey, issuer, keyID string, ttl time.Duration)
 	return &Signer{private: private, issuer: issuer, kid: keyID, ttl: ttl, signer: signer}, nil
 }
 
-// Mint creates a short-lived assertion for one running app instance.
+// Mint creates a short-lived assertion for one running app instance with no
+// environment claim. vmmd uses it for host-internal relay audiences; guest
+// tokens come from MintEnvironment.
 func (s *Signer) Mint(now time.Time, accountID, appID, instanceID, audience string) (Token, error) {
+	return s.MintEnvironment(now, accountID, appID, instanceID, "", audience)
+}
+
+// MintEnvironment creates a short-lived assertion for one running app
+// instance in environment (its deployment scope).
+func (s *Signer) MintEnvironment(now time.Time, accountID, appID, instanceID, environment, audience string) (Token, error) {
 	if s == nil || s.signer == nil {
 		return Token{}, errors.New("workload identity: signer is not configured")
 	}
 	if accountID == "" || appID == "" || instanceID == "" {
 		return Token{}, errors.New("workload identity: account_id, app_id, and instance_id are required")
+	}
+	if !validEnvironment(environment) {
+		return Token{}, errors.New("workload identity: environment is not a deployment scope")
 	}
 	if err := validateAudience(audience); err != nil {
 		return Token{}, err
@@ -146,16 +202,17 @@ func (s *Signer) Mint(now time.Time, accountID, appID, instanceID, audience stri
 	claims := Claims{
 		Claims: jwt.Claims{
 			Issuer:    s.issuer,
-			Subject:   "app:" + appID,
+			Subject:   Subject(appID, environment),
 			Audience:  jwt.Audience{audience},
 			IssuedAt:  jwt.NewNumericDate(now),
 			Expiry:    jwt.NewNumericDate(expires),
 			NotBefore: jwt.NewNumericDate(now.Add(-time.Second)),
 			ID:        hex.EncodeToString(jtiBytes[:]),
 		},
-		AccountID:  accountID,
-		AppID:      appID,
-		InstanceID: instanceID,
+		AccountID:   accountID,
+		AppID:       appID,
+		InstanceID:  instanceID,
+		Environment: environment,
 	}
 	raw, err := jwt.Signed(s.signer).Claims(claims).Serialize()
 	if err != nil {

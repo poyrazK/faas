@@ -406,6 +406,15 @@ jobs:
         run: make memstore-stubs-check
       - name: daemon environment contract
         run: make env-contract-check
+      # ADR-20261023115741: every customer entry point (route, CLI command,
+      # manifest key, flag, SDK file, table, ...) maps to a row of
+      # docs/ga-capability-inventory.md, so nothing ships without a tier and
+      # a platform flag; the catalog's generated artefacts stay in sync.
+      - name: capability coverage, catalog matrix and SDK spec
+        run: |
+          make capability-coverage-check
+          make capabilities-check
+          make sdk-spec-check
       - name: restore-drill script contract
         run: make lint-drill
       - name: forbid mutating SQL in normal runbooks
@@ -753,8 +762,10 @@ jobs:
             # before a 10m package deadline. Whichever shard the diff assigns
             # it to keeps every test and the 40m job bound (~13m of race
             # builds, then the run) with a bounded 18m package deadline.
+            # cmd/gatewayd-internal's ADR-570 PostgreSQL fleet and public-route
+            # suites take 13-17m with -race on a light runner (#4153).
             package_timeout=10m
-            if [[ " $PKGS " == *" ./pkg/environmentsync/pgintegration "* ]]; then package_timeout=18m; fi
+            if [[ " $PKGS " == *" ./pkg/environmentsync/pgintegration "* || " $PKGS " == *" ./cmd/gatewayd-internal "* ]]; then package_timeout=18m; fi
             # shellcheck disable=SC2086 # space-separated package list
             GOMEMLIMIT=2GiB GOGC=10 GOMAXPROCS=2 go test -race -count=1 -p 4 -timeout="$package_timeout" $PKGS || status=1
           fi

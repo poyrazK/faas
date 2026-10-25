@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -19,7 +21,7 @@ func TestPublicObjectNotificationClient(t *testing.T) {
 			t.Error(r.Method, r.URL, r.Header.Get("Authorization"))
 		}
 		if r.Method == "PUT" {
-			var in faas.ObjectBucketNotificationsRequest
+			var in preview.ObjectBucketNotificationsRequest
 			if json.NewDecoder(r.Body).Decode(&in) != nil || len(in.Rules) != 1 || in.Rules[0].Prefix != "images/目录" || in.Rules[0].Events[0] != "s3:ObjectCreated:Put" {
 				t.Error(in)
 			}
@@ -32,7 +34,7 @@ func TestPublicObjectNotificationClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	if p, e := c.PutObjectBucketNotifications(ctx, "demo/x", "bucket/x", faas.ObjectBucketNotificationsRequest{Rules: []faas.ObjectNotificationRule{{ID: "images", Destination: "arn:gregale:sqs:us-east-1:11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222/storage", Events: []string{"s3:ObjectCreated:Put"}, Prefix: "images/目录"}}}); e != nil || p.Revision != 2 {
+	if p, e := c.PutObjectBucketNotifications(ctx, "demo/x", "bucket/x", preview.ObjectBucketNotificationsRequest{Rules: []preview.ObjectNotificationRule{{ID: "images", Destination: "arn:gregale:sqs:us-east-1:11111111-1111-4111-8111-111111111111:22222222-2222-4222-8222-222222222222/storage", Events: []string{"s3:ObjectCreated:Put"}, Prefix: "images/目录"}}}); e != nil || p.Revision != 2 {
 		t.Fatal(p, e)
 	}
 	if _, err = c.GetObjectBucketNotifications(ctx, "demo/x", "bucket/x"); err != nil {
@@ -55,7 +57,7 @@ func TestPublicObjectComputeTriggerClient(t *testing.T) {
 		if r.Method != "PUT" || r.Header.Get("Authorization") != "Bearer token" || r.URL.EscapedPath() != "/v1/apps/demo%2Fx/buckets/bucket%2Fx/compute-triggers" {
 			t.Error(r.Method, r.URL)
 		}
-		var in faas.ReconcileObjectStorageComputeTriggersRequest
+		var in preview.ReconcileObjectStorageComputeTriggersRequest
 		if err := json.NewDecoder(r.Body).Decode(&in); err != nil || in.ExpectedRevision == nil || *in.ExpectedRevision != 3 || in.Triggers == nil || len(in.Triggers) != 0 {
 			t.Error(in, err)
 		}
@@ -67,7 +69,7 @@ func TestPublicObjectComputeTriggerClient(t *testing.T) {
 		t.Fatal(err)
 	}
 	revision := int64(3)
-	p, err := client.ReconcileObjectStorageComputeTriggers(ctx, "demo/x", "bucket/x", faas.ReconcileObjectStorageComputeTriggersRequest{ExpectedRevision: &revision, Triggers: []faas.ObjectStorageComputeTrigger{}})
+	p, err := preview.Wrap(client).ReconcileObjectStorageComputeTriggers(ctx, "demo/x", "bucket/x", preview.ReconcileObjectStorageComputeTriggersRequest{ExpectedRevision: &revision, Triggers: []preview.ObjectStorageComputeTrigger{}})
 	if err != nil || !called || p.Revision != 4 || len(p.ManagedRuleIDs) != 1 {
 		t.Fatal(p, err)
 	}

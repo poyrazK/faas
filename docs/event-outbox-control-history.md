@@ -2,7 +2,7 @@
 
 Applications can opt into retained, payload-free receipts for outbox
 reconciliation and resume controls. Supply `CommandID` on the existing Go SDK
-options after explicitly installing the updated `faas.EventOutboxSchema`.
+options after explicitly installing the updated `preview.EventOutboxSchema`.
 Omitting it preserves the previous behavior and writes no history. The SDK never
 installs tables or prunes receipts automatically.
 
@@ -15,8 +15,8 @@ control actions and all producer keys, including saved-policy updates.
 
 ```go
 // Persist commandID and the original status guard before sending the control.
-resumed, err := faas.ResumeEventOutbox(ctx, db, accountID, appID, key,
-    faas.EventOutboxResumeOptions{
+resumed, err := preview.ResumeEventOutbox(ctx, db, accountID, appID, key,
+    preview.EventOutboxResumeOptions{
         CommandID: commandID,
         ExpectedUpdatedAt: status.UpdatedAt,
         ExpectedAttempts: status.Attempts,
@@ -26,7 +26,7 @@ _ = resumed
 _ = err
 
 // After an uncertain response, read the retained command result.
-receipt, err := faas.GetEventOutboxControlReceipt(ctx, db, accountID, appID, commandID)
+receipt, err := preview.GetEventOutboxControlReceipt(ctx, db, accountID, appID, commandID)
 if err != nil { return err }
 // Retrieval success is not control success: inspect receipt.ErrorCode and Result.
 _ = receipt
@@ -99,8 +99,8 @@ not included in this history.
 ## Paginate retained history
 
 ```go
-page, err := faas.ListEventOutboxControlHistory(ctx, db, accountID, appID, key,
-    faas.EventOutboxControlHistoryOptions{After: afterSequence, Limit: 50})
+page, err := preview.ListEventOutboxControlHistory(ctx, db, accountID, appID, key,
+    preview.EventOutboxControlHistoryOptions{After: afterSequence, Limit: 50})
 if err != nil { return err }
 // Consume page.Items; continue with page.NextAfter if nonzero.
 ```

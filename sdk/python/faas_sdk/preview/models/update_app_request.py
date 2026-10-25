@@ -1,0 +1,2282 @@
+from __future__ import annotations
+
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any, TypeVar, cast
+
+from attrs import define as _attrs_define
+from attrs import field as _attrs_field
+
+from ..models.resource_profile import ResourceProfile, check_resource_profile
+from ..models.update_app_request_app_protocol import UpdateAppRequestAppProtocol, check_update_app_request_app_protocol
+from ..models.update_app_request_consumer_auth_mode_type_1 import (
+    UpdateAppRequestConsumerAuthModeType1,
+    check_update_app_request_consumer_auth_mode_type_1,
+)
+from ..models.update_app_request_consumer_auth_mode_type_2_type_1 import (
+    UpdateAppRequestConsumerAuthModeType2Type1,
+    check_update_app_request_consumer_auth_mode_type_2_type_1,
+)
+from ..models.update_app_request_consumer_auth_mode_type_3_type_1 import (
+    UpdateAppRequestConsumerAuthModeType3Type1,
+    check_update_app_request_consumer_auth_mode_type_3_type_1,
+)
+from ..models.update_app_request_cpu_millicores_type_1 import (
+    UpdateAppRequestCpuMillicoresType1,
+    check_update_app_request_cpu_millicores_type_1,
+)
+from ..models.update_app_request_cpu_millicores_type_2_type_1 import (
+    UpdateAppRequestCpuMillicoresType2Type1,
+    check_update_app_request_cpu_millicores_type_2_type_1,
+)
+from ..models.update_app_request_cpu_millicores_type_3_type_1 import (
+    UpdateAppRequestCpuMillicoresType3Type1,
+    check_update_app_request_cpu_millicores_type_3_type_1,
+)
+from ..models.update_app_request_crawler_policy_type_1 import (
+    UpdateAppRequestCrawlerPolicyType1,
+    check_update_app_request_crawler_policy_type_1,
+)
+from ..models.update_app_request_crawler_policy_type_2_type_1 import (
+    UpdateAppRequestCrawlerPolicyType2Type1,
+    check_update_app_request_crawler_policy_type_2_type_1,
+)
+from ..models.update_app_request_crawler_policy_type_3_type_1 import (
+    UpdateAppRequestCrawlerPolicyType3Type1,
+    check_update_app_request_crawler_policy_type_3_type_1,
+)
+from ..models.update_app_request_eviction_priority_type_1 import (
+    UpdateAppRequestEvictionPriorityType1,
+    check_update_app_request_eviction_priority_type_1,
+)
+from ..models.update_app_request_eviction_priority_type_2_type_1 import (
+    UpdateAppRequestEvictionPriorityType2Type1,
+    check_update_app_request_eviction_priority_type_2_type_1,
+)
+from ..models.update_app_request_eviction_priority_type_3_type_1 import (
+    UpdateAppRequestEvictionPriorityType3Type1,
+    check_update_app_request_eviction_priority_type_3_type_1,
+)
+from ..models.update_app_request_execution_mode_type_1 import (
+    UpdateAppRequestExecutionModeType1,
+    check_update_app_request_execution_mode_type_1,
+)
+from ..models.update_app_request_execution_mode_type_2_type_1 import (
+    UpdateAppRequestExecutionModeType2Type1,
+    check_update_app_request_execution_mode_type_2_type_1,
+)
+from ..models.update_app_request_execution_mode_type_3_type_1 import (
+    UpdateAppRequestExecutionModeType3Type1,
+    check_update_app_request_execution_mode_type_3_type_1,
+)
+from ..models.update_app_request_pause import UpdateAppRequestPause, check_update_app_request_pause
+from ..models.update_app_request_release_policy_type_1 import (
+    UpdateAppRequestReleasePolicyType1,
+    check_update_app_request_release_policy_type_1,
+)
+from ..models.update_app_request_release_policy_type_2_type_1 import (
+    UpdateAppRequestReleasePolicyType2Type1,
+    check_update_app_request_release_policy_type_2_type_1,
+)
+from ..models.update_app_request_release_policy_type_3_type_1 import (
+    UpdateAppRequestReleasePolicyType3Type1,
+    check_update_app_request_release_policy_type_3_type_1,
+)
+from ..models.update_app_request_restart_policy_type_1 import (
+    UpdateAppRequestRestartPolicyType1,
+    check_update_app_request_restart_policy_type_1,
+)
+from ..models.update_app_request_restart_policy_type_2_type_1 import (
+    UpdateAppRequestRestartPolicyType2Type1,
+    check_update_app_request_restart_policy_type_2_type_1,
+)
+from ..models.update_app_request_restart_policy_type_3_type_1 import (
+    UpdateAppRequestRestartPolicyType3Type1,
+    check_update_app_request_restart_policy_type_3_type_1,
+)
+from ..models.update_app_request_service_binding_policy_type_1 import (
+    UpdateAppRequestServiceBindingPolicyType1,
+    check_update_app_request_service_binding_policy_type_1,
+)
+from ..models.update_app_request_service_binding_policy_type_2_type_1 import (
+    UpdateAppRequestServiceBindingPolicyType2Type1,
+    check_update_app_request_service_binding_policy_type_2_type_1,
+)
+from ..models.update_app_request_service_binding_policy_type_3_type_1 import (
+    UpdateAppRequestServiceBindingPolicyType3Type1,
+    check_update_app_request_service_binding_policy_type_3_type_1,
+)
+from ..models.update_app_request_service_binding_transport_type_1 import (
+    UpdateAppRequestServiceBindingTransportType1,
+    check_update_app_request_service_binding_transport_type_1,
+)
+from ..models.update_app_request_service_binding_transport_type_2_type_1 import (
+    UpdateAppRequestServiceBindingTransportType2Type1,
+    check_update_app_request_service_binding_transport_type_2_type_1,
+)
+from ..models.update_app_request_service_binding_transport_type_3_type_1 import (
+    UpdateAppRequestServiceBindingTransportType3Type1,
+    check_update_app_request_service_binding_transport_type_3_type_1,
+)
+from ..models.update_app_request_visibility_type_1 import (
+    UpdateAppRequestVisibilityType1,
+    check_update_app_request_visibility_type_1,
+)
+from ..models.update_app_request_visibility_type_2_type_1 import (
+    UpdateAppRequestVisibilityType2Type1,
+    check_update_app_request_visibility_type_2_type_1,
+)
+from ..models.update_app_request_visibility_type_3_type_1 import (
+    UpdateAppRequestVisibilityType3Type1,
+    check_update_app_request_visibility_type_3_type_1,
+)
+from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.after_restore_hook import AfterRestoreHook
+    from ..models.app_deploy_settings_condition import AppDeploySettingsCondition
+    from ..models.before_checkpoint_hook import BeforeCheckpointHook
+    from ..models.declared_route import DeclaredRoute
+    from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+    from ..models.profiling_config import ProfilingConfig
+    from ..models.public_auth_block import PublicAuthBlock
+    from ..models.retry_policy_dto import RetryPolicyDTO
+    from ..models.scaling_policy import ScalingPolicy
+    from ..models.service_caller_scopes import ServiceCallerScopes
+    from ..models.service_reliability_policies import ServiceReliabilityPolicies
+    from ..models.service_replicas import ServiceReplicas
+    from ..models.tracing_config import TracingConfig
+    from ..models.worker_scaling import WorkerScaling
+    from ..models.workload_port import WorkloadPort
+
+
+T = TypeVar("T", bound="UpdateAppRequest")
+
+
+@_attrs_define
+class UpdateAppRequest:
+    """Partial update — every field is optional; omitted fields are unchanged."""
+
+    deploy_settings_condition: AppDeploySettingsCondition | Unset = UNSET
+    """Atomic preconditions for single-app lifecycle/scaling recovery. The app must retain this identity and its
+    newest deployment must be the expected live deployment. Every targeted field must still match its observed
+    value, including targeted fields omitted from the partial update because they already match the desired value.
+    Checked in the same transaction as the update. A conflict returns 409 deploy_settings_conflict with field names,
+    without setting values. Cannot be combined with environment edits or other app fields. Ordinary updates can omit
+    this object."""
+    profiling: ProfilingConfig | Unset = UNSET
+    """Opt-in sampled CPU profiling baked into each deployment (ADR-819)."""
+    tracing: TracingConfig | Unset = UNSET
+    """Opt-in zero-config request tracing baked into each deployment (ADR-958). Managed runtimes export database,
+    cache and HTTP client spans to the debugger without an API key or code changes; apps that configure their own
+    OTel exporter are left untouched."""
+    visibility: (
+        None
+        | Unset
+        | UpdateAppRequestVisibilityType1
+        | UpdateAppRequestVisibilityType2Type1
+        | UpdateAppRequestVisibilityType3Type1
+    ) = UNSET
+    """Change the app's public edge exposure. Omit for no change; internal visibility is available on every plan."""
+    allowed_service_callers: list[str] | None | Unset = UNSET
+    """Standalone target policy (ADR-267). Omit to keep unchanged, [] to deny all, an array to replace, or null to
+    restore same-account access. Project-managed and preview apps reject this PATCH."""
+    allowed_service_call_scopes: None | ServiceCallerScopes | Unset = UNSET
+    """Replace standalone target-side per-caller method/path grants (ADR-278). Omit to keep unchanged, null to
+    clear, or an object (including {}) to replace. Project-managed and preview apps reject this PATCH."""
+    service_binding_targets: list[str] | None | Unset = UNSET
+    """Replace standalone outbound target app slugs (ADR-269). Omit or null to keep unchanged; [] clears all
+    bindings. Project-managed and preview apps reject non-null changes."""
+    service_reliability: None | ServiceReliabilityPolicies | Unset = UNSET
+    """Replace standalone dependency timeout and retry policies. Omit to keep unchanged; null or {} clears.
+    Project-managed and preview apps reject this PATCH."""
+    service_binding_policy: (
+        None
+        | Unset
+        | UpdateAppRequestServiceBindingPolicyType1
+        | UpdateAppRequestServiceBindingPolicyType2Type1
+        | UpdateAppRequestServiceBindingPolicyType3Type1
+    ) = UNSET
+    """Set standalone caller authorization (ADR-269). Omit or null to keep unchanged; account restores same-account
+    reachability; declared enforces the bound target list. Project-managed and preview apps reject non-null changes.
+   """
+    service_binding_transport: (
+        None
+        | Unset
+        | UpdateAppRequestServiceBindingTransportType1
+        | UpdateAppRequestServiceBindingTransportType2Type1
+        | UpdateAppRequestServiceBindingTransportType3Type1
+    ) = UNSET
+    """Set standalone canonical service URL scheme. Omit or null to keep unchanged; http restores the legacy
+    endpoint and https selects the private `.internal` alias. Project-managed and preview apps reject non-null
+    changes."""
+    ram_mb: int | None | Unset = UNSET
+    cpu_millicores: (
+        None
+        | Unset
+        | UpdateAppRequestCpuMillicoresType1
+        | UpdateAppRequestCpuMillicoresType2Type1
+        | UpdateAppRequestCpuMillicoresType3Type1
+    ) = UNSET
+    """Sustained CPU allowance per instance. Omit for no change."""
+    resource_profile: None | ResourceProfile | Unset = UNSET
+    """Named memory/CPU profile. Omit for no change; explicit ram_mb or cpu_millicores must agree with the selected
+    profile."""
+    idle_timeout_s: int | None | Unset = UNSET
+    max_concurrency: int | None | Unset = UNSET
+    execution_mode: (
+        None
+        | Unset
+        | UpdateAppRequestExecutionModeType1
+        | UpdateAppRequestExecutionModeType2Type1
+        | UpdateAppRequestExecutionModeType3Type1
+    ) = UNSET
+    """Lifecycle contract for the app. Omit for no change; service/worker/job are plan-gated."""
+    restart_policy: (
+        None
+        | Unset
+        | UpdateAppRequestRestartPolicyType1
+        | UpdateAppRequestRestartPolicyType2Type1
+        | UpdateAppRequestRestartPolicyType3Type1
+    ) = UNSET
+    """Restart behavior for the workload. Omit for no change."""
+    after_restore: AfterRestoreHook | Unset = UNSET
+    """Optional loopback callback that must succeed after snapshot restore, or after a frozen instance resumes,
+    before the instance becomes ready."""
+    before_checkpoint: BeforeCheckpointHook | Unset = UNSET
+    """Optional loopback callback for new terminal init snapshots. A failure aborts capture. Enabling it disables
+    warm snapshots; snapshot reuse skips the callback."""
+    pause: UpdateAppRequestPause | Unset = UNSET
+    """When the platform may pause the app's VM (ADR-1151): between_requests pauses it between requests and freezes
+    it at the idle timeout, when_idle freezes it at the idle timeout, never parks it as before. Omitted uses the
+    default: between_requests for functions, when_idle for request-mode apps. Worker, service and job execution
+    modes accept only never. Omit to preserve; an empty string restores the default."""
+    startup_deadline_s: int | None | Unset = UNSET
+    """Upper bound on time-to-ready in seconds. Omit for no change; 0 uses the plan default."""
+    stop_grace_period_s: int | None | Unset = UNSET
+    """Upper bound on worker or service shutdown draining time in seconds before SIGKILL. Omit for no change; 0
+    uses the mode/plan default."""
+    stop_signal: None | str | Unset = UNSET
+    """Signal sent to initiate graceful stop (e.g. SIGTERM, SIGINT, SIGQUIT, SIGHUP, SIGUSR1, SIGUSR2). Omit for no
+    change."""
+    max_retries: int | None | Unset = UNSET
+    """Maximum consecutive restart attempts. Omit for no change; 0 uses the plan default."""
+    retry_policy: None | RetryPolicyDTO | Unset = UNSET
+    """Replace the app-level invocation retry default. Omit for no change; an empty object clears it."""
+    request_timeout_s: int | None | Unset = UNSET
+    """Per-app request wall-clock timeout in seconds. 0 inherits the plan/type default."""
+    function_concurrency: int | None | Unset = UNSET
+    """Changes how many requests one Node or Python function worker serves at once (ADR-1342). 0 or 1 restores one
+    request per worker; capped by the plan's concurrency_per_vm. Existing functions pick up the change on their next
+    deploy."""
+    request_rate_limit_rps: int | None | Unset = UNSET
+    """Runtime override for the app-wide edge rate-limit refill rate. 0 restores the plan default; positive values
+    may only tighten the plan ceiling. Does not create a deployment."""
+    request_rate_limit_burst: int | None | Unset = UNSET
+    """Runtime override for the app-wide edge rate-limit burst capacity. 0 restores the plan default; positive
+    values may only tighten the plan ceiling. Does not create a deployment."""
+    service_replicas: ServiceReplicas | Unset = UNSET
+    """Per-deployment replica scaffold for execution_mode='service' (ADR-137 §Decision 3, M-2 + M-4 workstream E).
+    Replica count is bounded by ServiceReplicasMax per plan (Hobby 3, Pro 5, Scale 20), and desired must also fit
+    the app's max_concurrency ceiling. min ≤ desired ≤ max must hold. Foundation here; rolling-deploy / rollback /
+    image-digest pinning semantics land in M-4."""
+    worker_replicas: WorkerScaling | Unset = UNSET
+    """Queue-driven or custom-metric autoscaling policy for execution_mode='worker'. Supports scale-to-zero when
+    min=0."""
+    ports: list[WorkloadPort] | None | Unset = UNSET
+    """Replace the app-owned listener declaration. Omit for no change; an empty array clears it. Named TCP
+    listeners use the `<slug>--port-<name>.<domain>` hostname form; UDP remains guest-only."""
+    favicon: None | str | Unset = UNSET
+    """Replace the per-app base64-encoded favicon; an empty value clears it. Omit for no change."""
+    robots_txt: None | str | Unset = UNSET
+    """Replace the per-app robots.txt body; an empty value restores the allow-all default. Omit for no change."""
+    head_wakes: bool | None | Unset = UNSET
+    """Opt into waking a parked app for HEAD /. Omit for no change."""
+    crawler_policy: (
+        None
+        | Unset
+        | UpdateAppRequestCrawlerPolicyType1
+        | UpdateAppRequestCrawlerPolicyType2Type1
+        | UpdateAppRequestCrawlerPolicyType3Type1
+    ) = UNSET
+    """Policy for known monitor/crawler requests. Omit for no change."""
+    pre_auth_rate_limit: None | PreAuthRateLimitConfig | Unset = UNSET
+    """Replace the pre-auth source limit; set mode=off to disable. Omit or send null for no change."""
+    health_path: None | str | Unset = UNSET
+    """Monitor-facing health path. Omit for no change; empty resets to /healthz."""
+    health_path_wakes: bool | None | Unset = UNSET
+    """Allow health probes to wake the app. Omit for no change; Pro/Scale only when true."""
+    session_affinity: bool | None | Unset = UNSET
+    """Toggle best-effort cookie-based routing to the same running instance. Omit for no change."""
+    version_affinity_cookie: None | str | Unset = UNSET
+    """Replace the rollout-affinity cookie name; an empty string disables it. Omit for no change."""
+    version_affinity_managed_cookie: bool | None | Unset = UNSET
+    """Toggle edge-issued rollout-affinity cookie. Mutually exclusive with version_affinity_cookie; omit for no
+    change."""
+    revision_pin_ttl_seconds: int | None | Unset = UNSET
+    """Set the revision pin window in seconds; zero disables future retention. Omit for no change."""
+    release_policy: (
+        None
+        | Unset
+        | UpdateAppRequestReleasePolicyType1
+        | UpdateAppRequestReleasePolicyType2Type1
+        | UpdateAppRequestReleasePolicyType3Type1
+    ) = UNSET
+    """Set the default rollout for production releases (ADR-1446, ADR-1450). Omit for no change."""
+    release_probe_paths: list[str] | None | Unset = UNSET
+    """Replace the paths the default rollout probe checks (ADR-1449). An empty list restores /. Omit for no change."""
+    min_instances: int | None | Unset = UNSET
+    egress_allowlist: list[str] | Unset = UNSET
+    """v4 or v6 CIDR allowlist; empty array clears to chain-default-accept."""
+    egress_ports: list[int] | Unset = UNSET
+    """Replaces the app's extra TCP egress ports (ADR-361). Pro and Scale only, capped per plan. SMTP, remote-
+    administration, SMB, IRC, well-known mining and DNS ports are refused; 80 and 443 are always allowed and are
+    dropped from the stored list. An empty array clears the extra ports."""
+    autoscale_target_rps: int | None | Unset = UNSET
+    """Per-instance RPS target for the reactive scale-up trigger. 0 = disable. Hobby/Pro/Scale only. Values < 0 are
+    422 invalid_autoscale_target_rps."""
+    autoscale_target_cpu_pct: int | None | Unset = UNSET
+    """Per-instance CPU% target (1..100, 0 = disable) for the reactive scale-up trigger. Pro/Scale only. Values
+    outside [1, 100] (other than 0) are 422 invalid_autoscale_target_cpu_pct."""
+    streaming_enabled: bool | None | Unset = UNSET
+    """Per-app streaming flag (issue #471). Omitted → no change. Free PATCHing true is 403
+    plan_streaming_not_allowed."""
+    websocket_enabled: bool | None | Unset = UNSET
+    """Per-app raw-bytes Upgrade bridge flag (issue #676 / ADR-080). Omitted → no change. Free PATCHing true is 403
+    plan_websocket_not_allowed."""
+    route_metrics_enabled: bool | None | Unset = UNSET
+    """Per-app per-route observability flag (ADR-093). Omitted → no change. Free PATCHing true is 403
+    plan_route_metrics_not_allowed."""
+    only_allow_declared_routes: bool | None | Unset = UNSET
+    """Enable or disable gateway-side rejection of paths not declared by the app. Enabling requires declared_routes
+    or an imported OpenAPI document."""
+    declared_routes: list[DeclaredRoute] | Unset = UNSET
+    """Replace the explicit route contract. An empty array clears it and makes the gateway use the imported OpenAPI
+    document."""
+    maintenance_mode: bool | None | Unset = UNSET
+    """Coarse per-app maintenance toggle (ADR-091 amendment). Omitted → no change. PATCH true pins the app for
+    maintenance (every request 503 + Retry-After); PATCH false restores normal handling. Free-tier allowed; no plan
+    gate. The apps_maintenance_mode_notify trigger (migration 00237) fires pg_notify on flip."""
+    app_protocol: UpdateAppRequestAppProtocol | Unset = UNSET
+    """Per-app wire-protocol selector (ADR-124). Closed set {http1, http2, grpc}. Omit for no change; set
+    explicitly to opt in (http2/grpc) or reset to 'http1'. Free customers PATCHing 'grpc' are rejected with 403
+    plan_app_protocol_grpc_not_allowed."""
+    scaling_policy: None | ScalingPolicy | Unset = UNSET
+    """Per-app scaling policy. Omitted → no change. Non-null → atomic full-overwrite of the jsonb column."""
+    require_signed: bool | None | Unset = UNSET
+    """DEPRECATED on this surface. The customer PATCH /v1/apps/{slug} endpoint silently drops require_signed; the
+    operator endpoint PATCH /v1/apps/{slug}/security is the only path that flips the flag (issue #472 / ADR-054).
+    The field is parsed for backwards compatibility but never persisted from this endpoint."""
+    warm_snapshot_enabled: bool | None | Unset = UNSET
+    """Per-app two-tier snapshot flag (issue #470 / ADR-055). Omitted → no change. PATCH-true on Free/Hobby is
+    rejected with 403 plan_warm_snapshot_not_allowed."""
+    warm_snapshot_min_requests: int | None | Unset = UNSET
+    """Per-app request-count threshold for warm-tier capture (issue #470 / ADR-055). Range [1, 100]. Omitted → no
+    change."""
+    warm_snapshot_min_ms: int | None | Unset = UNSET
+    """Per-app time-since-first-ready threshold for warm-tier capture, milliseconds (issue #470 / ADR-055). Range
+    [100, 60000]. Omitted → no change."""
+    warm_pool_size: int | None | Unset = UNSET
+    """Desired paused warm-pool size (issue #1056 / ADR-074). Omitted → no change; zero explicitly disables the
+    pool. Non-zero values require Hobby+ and may not exceed max_concurrency."""
+    eviction_priority: (
+        None
+        | Unset
+        | UpdateAppRequestEvictionPriorityType1
+        | UpdateAppRequestEvictionPriorityType2Type1
+        | UpdateAppRequestEvictionPriorityType3Type1
+    ) = UNSET
+    """Per-app eviction tier (issue #475). 'best_effort' (default) keeps the pre-#475 LRU-by-last_request_at reaper
+    behaviour; 'reserved' protects the app from cross-account RAM-pressure eviction (every best_effort candidate is
+    drained before any reserved is parked). Plan-gated upstream: Free PATCH 'reserved' returns 402
+    plan_eviction_priority_reserved_not_allowed. Per-account cap (Hobby 1, Pro 2, Scale 4): 422
+    plan_eviction_priority_reserved_quota when exhausted. Omitted → no change."""
+    require_authn: bool | None | Unset = UNSET
+    """Per-deployment token-gate flag (issue #560). Omitted → no change. PATCH-true on Free/Hobby is rejected with
+    403 plan_require_authn_not_allowed."""
+    consumer_auth_mode: (
+        None
+        | Unset
+        | UpdateAppRequestConsumerAuthModeType1
+        | UpdateAppRequestConsumerAuthModeType2Type1
+        | UpdateAppRequestConsumerAuthModeType3Type1
+    ) = UNSET
+    """End-customer credential policy for this app. Omit for no change; optional accepts anonymous requests,
+    required mandates a valid consumer key."""
+    platform_tenant_required: bool | None | Unset = UNSET
+    """Require verified platform tenant identity on app traffic. Omit for no change; true requires a linked
+    consumer key, verified tenant surface, or opted-in JWT rule. Available on Hobby and above."""
+    public_auth: None | PublicAuthBlock | Unset = UNSET
+    """Per-app public-URL auth configuration (issue #477 / ADR-077). Omitted → no change. When present, mode is the
+    closed enum {open, bearer, basic}; basic_user + basic_pass are required when mode='basic' and the apid seal step
+    encrypts them under the APP_BASIC_AUTH secretbox namespace before persistence."""
+    overflow_node: None | str | Unset = UNSET
+    """Per-app preferred spill target for cross-node pressure rebalance (Tier A10 / ADR-088). Wire form is the
+    human-readable compute_nodes.name; apid resolves to UUID server-side. Tri-state: omitted → no change; empty
+    string → clear (back to A9 fallback); non-empty → resolve name → UUID via Store.ComputeNodeByName and persist
+    the UUID. 404 on unknown name; 422 on inactive node."""
+    cors_default_enabled: bool | None | Unset = UNSET
+    cors_default_origins: list[str] | Unset = UNSET
+    expected_service_binding_fingerprint: str | Unset = UNSET
+    """Apply only if the locked app service settings still match this fingerprint. Supported only for app-level
+    service-only updates; returns 409 on conflict. Omit for the existing unguarded behavior."""
+    additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
+
+    def to_dict(self) -> dict[str, Any]:
+        from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+        from ..models.public_auth_block import PublicAuthBlock
+        from ..models.retry_policy_dto import RetryPolicyDTO
+        from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
+
+        deploy_settings_condition: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.deploy_settings_condition, Unset):
+            deploy_settings_condition = self.deploy_settings_condition.to_dict()
+
+        profiling: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.profiling, Unset):
+            profiling = self.profiling.to_dict()
+
+        tracing: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.tracing, Unset):
+            tracing = self.tracing.to_dict()
+
+        visibility: None | str | Unset
+        if isinstance(self.visibility, Unset):
+            visibility = UNSET
+        elif isinstance(self.visibility, str):
+            visibility = self.visibility
+        elif isinstance(self.visibility, str):
+            visibility = self.visibility
+        elif isinstance(self.visibility, str):
+            visibility = self.visibility
+        else:
+            visibility = self.visibility
+
+        allowed_service_callers: list[str] | None | Unset
+        if isinstance(self.allowed_service_callers, Unset):
+            allowed_service_callers = UNSET
+        elif isinstance(self.allowed_service_callers, list):
+            allowed_service_callers = self.allowed_service_callers
+
+        else:
+            allowed_service_callers = self.allowed_service_callers
+
+        allowed_service_call_scopes: dict[str, Any] | None | Unset
+        if isinstance(self.allowed_service_call_scopes, Unset):
+            allowed_service_call_scopes = UNSET
+        elif isinstance(self.allowed_service_call_scopes, ServiceCallerScopes):
+            allowed_service_call_scopes = self.allowed_service_call_scopes.to_dict()
+        else:
+            allowed_service_call_scopes = self.allowed_service_call_scopes
+
+        service_binding_targets: list[str] | None | Unset
+        if isinstance(self.service_binding_targets, Unset):
+            service_binding_targets = UNSET
+        elif isinstance(self.service_binding_targets, list):
+            service_binding_targets = self.service_binding_targets
+
+        else:
+            service_binding_targets = self.service_binding_targets
+
+        service_reliability: dict[str, Any] | None | Unset
+        if isinstance(self.service_reliability, Unset):
+            service_reliability = UNSET
+        elif isinstance(self.service_reliability, ServiceReliabilityPolicies):
+            service_reliability = self.service_reliability.to_dict()
+        else:
+            service_reliability = self.service_reliability
+
+        service_binding_policy: None | str | Unset
+        if isinstance(self.service_binding_policy, Unset):
+            service_binding_policy = UNSET
+        elif isinstance(self.service_binding_policy, str):
+            service_binding_policy = self.service_binding_policy
+        elif isinstance(self.service_binding_policy, str):
+            service_binding_policy = self.service_binding_policy
+        elif isinstance(self.service_binding_policy, str):
+            service_binding_policy = self.service_binding_policy
+        else:
+            service_binding_policy = self.service_binding_policy
+
+        service_binding_transport: None | str | Unset
+        if isinstance(self.service_binding_transport, Unset):
+            service_binding_transport = UNSET
+        elif isinstance(self.service_binding_transport, str):
+            service_binding_transport = self.service_binding_transport
+        elif isinstance(self.service_binding_transport, str):
+            service_binding_transport = self.service_binding_transport
+        elif isinstance(self.service_binding_transport, str):
+            service_binding_transport = self.service_binding_transport
+        else:
+            service_binding_transport = self.service_binding_transport
+
+        ram_mb: int | None | Unset
+        if isinstance(self.ram_mb, Unset):
+            ram_mb = UNSET
+        else:
+            ram_mb = self.ram_mb
+
+        cpu_millicores: int | None | Unset
+        if isinstance(self.cpu_millicores, Unset):
+            cpu_millicores = UNSET
+        elif isinstance(self.cpu_millicores, int):
+            cpu_millicores = self.cpu_millicores
+        elif isinstance(self.cpu_millicores, int):
+            cpu_millicores = self.cpu_millicores
+        elif isinstance(self.cpu_millicores, int):
+            cpu_millicores = self.cpu_millicores
+        else:
+            cpu_millicores = self.cpu_millicores
+
+        resource_profile: None | str | Unset
+        if isinstance(self.resource_profile, Unset):
+            resource_profile = UNSET
+        elif isinstance(self.resource_profile, str):
+            resource_profile = self.resource_profile
+        else:
+            resource_profile = self.resource_profile
+
+        idle_timeout_s: int | None | Unset
+        if isinstance(self.idle_timeout_s, Unset):
+            idle_timeout_s = UNSET
+        else:
+            idle_timeout_s = self.idle_timeout_s
+
+        max_concurrency: int | None | Unset
+        if isinstance(self.max_concurrency, Unset):
+            max_concurrency = UNSET
+        else:
+            max_concurrency = self.max_concurrency
+
+        execution_mode: None | str | Unset
+        if isinstance(self.execution_mode, Unset):
+            execution_mode = UNSET
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        elif isinstance(self.execution_mode, str):
+            execution_mode = self.execution_mode
+        else:
+            execution_mode = self.execution_mode
+
+        restart_policy: None | str | Unset
+        if isinstance(self.restart_policy, Unset):
+            restart_policy = UNSET
+        elif isinstance(self.restart_policy, str):
+            restart_policy = self.restart_policy
+        elif isinstance(self.restart_policy, str):
+            restart_policy = self.restart_policy
+        elif isinstance(self.restart_policy, str):
+            restart_policy = self.restart_policy
+        else:
+            restart_policy = self.restart_policy
+
+        after_restore: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.after_restore, Unset):
+            after_restore = self.after_restore.to_dict()
+
+        before_checkpoint: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.before_checkpoint, Unset):
+            before_checkpoint = self.before_checkpoint.to_dict()
+
+        pause: str | Unset = UNSET
+        if not isinstance(self.pause, Unset):
+            pause = self.pause
+
+        startup_deadline_s: int | None | Unset
+        if isinstance(self.startup_deadline_s, Unset):
+            startup_deadline_s = UNSET
+        else:
+            startup_deadline_s = self.startup_deadline_s
+
+        stop_grace_period_s: int | None | Unset
+        if isinstance(self.stop_grace_period_s, Unset):
+            stop_grace_period_s = UNSET
+        else:
+            stop_grace_period_s = self.stop_grace_period_s
+
+        stop_signal: None | str | Unset
+        if isinstance(self.stop_signal, Unset):
+            stop_signal = UNSET
+        else:
+            stop_signal = self.stop_signal
+
+        max_retries: int | None | Unset
+        if isinstance(self.max_retries, Unset):
+            max_retries = UNSET
+        else:
+            max_retries = self.max_retries
+
+        retry_policy: dict[str, Any] | None | Unset
+        if isinstance(self.retry_policy, Unset):
+            retry_policy = UNSET
+        elif isinstance(self.retry_policy, RetryPolicyDTO):
+            retry_policy = self.retry_policy.to_dict()
+        else:
+            retry_policy = self.retry_policy
+
+        request_timeout_s: int | None | Unset
+        if isinstance(self.request_timeout_s, Unset):
+            request_timeout_s = UNSET
+        else:
+            request_timeout_s = self.request_timeout_s
+
+        function_concurrency: int | None | Unset
+        if isinstance(self.function_concurrency, Unset):
+            function_concurrency = UNSET
+        else:
+            function_concurrency = self.function_concurrency
+
+        request_rate_limit_rps: int | None | Unset
+        if isinstance(self.request_rate_limit_rps, Unset):
+            request_rate_limit_rps = UNSET
+        else:
+            request_rate_limit_rps = self.request_rate_limit_rps
+
+        request_rate_limit_burst: int | None | Unset
+        if isinstance(self.request_rate_limit_burst, Unset):
+            request_rate_limit_burst = UNSET
+        else:
+            request_rate_limit_burst = self.request_rate_limit_burst
+
+        service_replicas: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.service_replicas, Unset):
+            service_replicas = self.service_replicas.to_dict()
+
+        worker_replicas: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.worker_replicas, Unset):
+            worker_replicas = self.worker_replicas.to_dict()
+
+        ports: list[dict[str, Any]] | None | Unset
+        if isinstance(self.ports, Unset):
+            ports = UNSET
+        elif isinstance(self.ports, list):
+            ports = []
+            for ports_type_0_item_data in self.ports:
+                ports_type_0_item = ports_type_0_item_data.to_dict()
+                ports.append(ports_type_0_item)
+
+        else:
+            ports = self.ports
+
+        favicon: None | str | Unset
+        if isinstance(self.favicon, Unset):
+            favicon = UNSET
+        else:
+            favicon = self.favicon
+
+        robots_txt: None | str | Unset
+        if isinstance(self.robots_txt, Unset):
+            robots_txt = UNSET
+        else:
+            robots_txt = self.robots_txt
+
+        head_wakes: bool | None | Unset
+        if isinstance(self.head_wakes, Unset):
+            head_wakes = UNSET
+        else:
+            head_wakes = self.head_wakes
+
+        crawler_policy: None | str | Unset
+        if isinstance(self.crawler_policy, Unset):
+            crawler_policy = UNSET
+        elif isinstance(self.crawler_policy, str):
+            crawler_policy = self.crawler_policy
+        elif isinstance(self.crawler_policy, str):
+            crawler_policy = self.crawler_policy
+        elif isinstance(self.crawler_policy, str):
+            crawler_policy = self.crawler_policy
+        else:
+            crawler_policy = self.crawler_policy
+
+        pre_auth_rate_limit: dict[str, Any] | None | Unset
+        if isinstance(self.pre_auth_rate_limit, Unset):
+            pre_auth_rate_limit = UNSET
+        elif isinstance(self.pre_auth_rate_limit, PreAuthRateLimitConfig):
+            pre_auth_rate_limit = self.pre_auth_rate_limit.to_dict()
+        else:
+            pre_auth_rate_limit = self.pre_auth_rate_limit
+
+        health_path: None | str | Unset
+        if isinstance(self.health_path, Unset):
+            health_path = UNSET
+        else:
+            health_path = self.health_path
+
+        health_path_wakes: bool | None | Unset
+        if isinstance(self.health_path_wakes, Unset):
+            health_path_wakes = UNSET
+        else:
+            health_path_wakes = self.health_path_wakes
+
+        session_affinity: bool | None | Unset
+        if isinstance(self.session_affinity, Unset):
+            session_affinity = UNSET
+        else:
+            session_affinity = self.session_affinity
+
+        version_affinity_cookie: None | str | Unset
+        if isinstance(self.version_affinity_cookie, Unset):
+            version_affinity_cookie = UNSET
+        else:
+            version_affinity_cookie = self.version_affinity_cookie
+
+        version_affinity_managed_cookie: bool | None | Unset
+        if isinstance(self.version_affinity_managed_cookie, Unset):
+            version_affinity_managed_cookie = UNSET
+        else:
+            version_affinity_managed_cookie = self.version_affinity_managed_cookie
+
+        revision_pin_ttl_seconds: int | None | Unset
+        if isinstance(self.revision_pin_ttl_seconds, Unset):
+            revision_pin_ttl_seconds = UNSET
+        else:
+            revision_pin_ttl_seconds = self.revision_pin_ttl_seconds
+
+        release_policy: None | str | Unset
+        if isinstance(self.release_policy, Unset):
+            release_policy = UNSET
+        elif isinstance(self.release_policy, str):
+            release_policy = self.release_policy
+        elif isinstance(self.release_policy, str):
+            release_policy = self.release_policy
+        elif isinstance(self.release_policy, str):
+            release_policy = self.release_policy
+        else:
+            release_policy = self.release_policy
+
+        release_probe_paths: list[str] | None | Unset
+        if isinstance(self.release_probe_paths, Unset):
+            release_probe_paths = UNSET
+        elif isinstance(self.release_probe_paths, list):
+            release_probe_paths = self.release_probe_paths
+
+        else:
+            release_probe_paths = self.release_probe_paths
+
+        min_instances: int | None | Unset
+        if isinstance(self.min_instances, Unset):
+            min_instances = UNSET
+        else:
+            min_instances = self.min_instances
+
+        egress_allowlist: list[str] | Unset = UNSET
+        if not isinstance(self.egress_allowlist, Unset):
+            egress_allowlist = self.egress_allowlist
+
+        egress_ports: list[int] | Unset = UNSET
+        if not isinstance(self.egress_ports, Unset):
+            egress_ports = self.egress_ports
+
+        autoscale_target_rps: int | None | Unset
+        if isinstance(self.autoscale_target_rps, Unset):
+            autoscale_target_rps = UNSET
+        else:
+            autoscale_target_rps = self.autoscale_target_rps
+
+        autoscale_target_cpu_pct: int | None | Unset
+        if isinstance(self.autoscale_target_cpu_pct, Unset):
+            autoscale_target_cpu_pct = UNSET
+        else:
+            autoscale_target_cpu_pct = self.autoscale_target_cpu_pct
+
+        streaming_enabled: bool | None | Unset
+        if isinstance(self.streaming_enabled, Unset):
+            streaming_enabled = UNSET
+        else:
+            streaming_enabled = self.streaming_enabled
+
+        websocket_enabled: bool | None | Unset
+        if isinstance(self.websocket_enabled, Unset):
+            websocket_enabled = UNSET
+        else:
+            websocket_enabled = self.websocket_enabled
+
+        route_metrics_enabled: bool | None | Unset
+        if isinstance(self.route_metrics_enabled, Unset):
+            route_metrics_enabled = UNSET
+        else:
+            route_metrics_enabled = self.route_metrics_enabled
+
+        only_allow_declared_routes: bool | None | Unset
+        if isinstance(self.only_allow_declared_routes, Unset):
+            only_allow_declared_routes = UNSET
+        else:
+            only_allow_declared_routes = self.only_allow_declared_routes
+
+        declared_routes: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.declared_routes, Unset):
+            declared_routes = []
+            for declared_routes_item_data in self.declared_routes:
+                declared_routes_item = declared_routes_item_data.to_dict()
+                declared_routes.append(declared_routes_item)
+
+        maintenance_mode: bool | None | Unset
+        if isinstance(self.maintenance_mode, Unset):
+            maintenance_mode = UNSET
+        else:
+            maintenance_mode = self.maintenance_mode
+
+        app_protocol: str | Unset = UNSET
+        if not isinstance(self.app_protocol, Unset):
+            app_protocol = self.app_protocol
+
+        scaling_policy: dict[str, Any] | None | Unset
+        if isinstance(self.scaling_policy, Unset):
+            scaling_policy = UNSET
+        elif isinstance(self.scaling_policy, ScalingPolicy):
+            scaling_policy = self.scaling_policy.to_dict()
+        else:
+            scaling_policy = self.scaling_policy
+
+        require_signed: bool | None | Unset
+        if isinstance(self.require_signed, Unset):
+            require_signed = UNSET
+        else:
+            require_signed = self.require_signed
+
+        warm_snapshot_enabled: bool | None | Unset
+        if isinstance(self.warm_snapshot_enabled, Unset):
+            warm_snapshot_enabled = UNSET
+        else:
+            warm_snapshot_enabled = self.warm_snapshot_enabled
+
+        warm_snapshot_min_requests: int | None | Unset
+        if isinstance(self.warm_snapshot_min_requests, Unset):
+            warm_snapshot_min_requests = UNSET
+        else:
+            warm_snapshot_min_requests = self.warm_snapshot_min_requests
+
+        warm_snapshot_min_ms: int | None | Unset
+        if isinstance(self.warm_snapshot_min_ms, Unset):
+            warm_snapshot_min_ms = UNSET
+        else:
+            warm_snapshot_min_ms = self.warm_snapshot_min_ms
+
+        warm_pool_size: int | None | Unset
+        if isinstance(self.warm_pool_size, Unset):
+            warm_pool_size = UNSET
+        else:
+            warm_pool_size = self.warm_pool_size
+
+        eviction_priority: None | str | Unset
+        if isinstance(self.eviction_priority, Unset):
+            eviction_priority = UNSET
+        elif isinstance(self.eviction_priority, str):
+            eviction_priority = self.eviction_priority
+        elif isinstance(self.eviction_priority, str):
+            eviction_priority = self.eviction_priority
+        elif isinstance(self.eviction_priority, str):
+            eviction_priority = self.eviction_priority
+        else:
+            eviction_priority = self.eviction_priority
+
+        require_authn: bool | None | Unset
+        if isinstance(self.require_authn, Unset):
+            require_authn = UNSET
+        else:
+            require_authn = self.require_authn
+
+        consumer_auth_mode: None | str | Unset
+        if isinstance(self.consumer_auth_mode, Unset):
+            consumer_auth_mode = UNSET
+        elif isinstance(self.consumer_auth_mode, str):
+            consumer_auth_mode = self.consumer_auth_mode
+        elif isinstance(self.consumer_auth_mode, str):
+            consumer_auth_mode = self.consumer_auth_mode
+        elif isinstance(self.consumer_auth_mode, str):
+            consumer_auth_mode = self.consumer_auth_mode
+        else:
+            consumer_auth_mode = self.consumer_auth_mode
+
+        platform_tenant_required: bool | None | Unset
+        if isinstance(self.platform_tenant_required, Unset):
+            platform_tenant_required = UNSET
+        else:
+            platform_tenant_required = self.platform_tenant_required
+
+        public_auth: dict[str, Any] | None | Unset
+        if isinstance(self.public_auth, Unset):
+            public_auth = UNSET
+        elif isinstance(self.public_auth, PublicAuthBlock):
+            public_auth = self.public_auth.to_dict()
+        else:
+            public_auth = self.public_auth
+
+        overflow_node: None | str | Unset
+        if isinstance(self.overflow_node, Unset):
+            overflow_node = UNSET
+        else:
+            overflow_node = self.overflow_node
+
+        cors_default_enabled: bool | None | Unset
+        if isinstance(self.cors_default_enabled, Unset):
+            cors_default_enabled = UNSET
+        else:
+            cors_default_enabled = self.cors_default_enabled
+
+        cors_default_origins: list[str] | Unset = UNSET
+        if not isinstance(self.cors_default_origins, Unset):
+            cors_default_origins = self.cors_default_origins
+
+        expected_service_binding_fingerprint = self.expected_service_binding_fingerprint
+
+        field_dict: dict[str, Any] = {}
+        field_dict.update(self.additional_properties)
+        field_dict.update({})
+        if deploy_settings_condition is not UNSET:
+            field_dict["deploy_settings_condition"] = deploy_settings_condition
+        if profiling is not UNSET:
+            field_dict["profiling"] = profiling
+        if tracing is not UNSET:
+            field_dict["tracing"] = tracing
+        if visibility is not UNSET:
+            field_dict["visibility"] = visibility
+        if allowed_service_callers is not UNSET:
+            field_dict["allowed_service_callers"] = allowed_service_callers
+        if allowed_service_call_scopes is not UNSET:
+            field_dict["allowed_service_call_scopes"] = allowed_service_call_scopes
+        if service_binding_targets is not UNSET:
+            field_dict["service_binding_targets"] = service_binding_targets
+        if service_reliability is not UNSET:
+            field_dict["service_reliability"] = service_reliability
+        if service_binding_policy is not UNSET:
+            field_dict["service_binding_policy"] = service_binding_policy
+        if service_binding_transport is not UNSET:
+            field_dict["service_binding_transport"] = service_binding_transport
+        if ram_mb is not UNSET:
+            field_dict["ram_mb"] = ram_mb
+        if cpu_millicores is not UNSET:
+            field_dict["cpu_millicores"] = cpu_millicores
+        if resource_profile is not UNSET:
+            field_dict["resource_profile"] = resource_profile
+        if idle_timeout_s is not UNSET:
+            field_dict["idle_timeout_s"] = idle_timeout_s
+        if max_concurrency is not UNSET:
+            field_dict["max_concurrency"] = max_concurrency
+        if execution_mode is not UNSET:
+            field_dict["execution_mode"] = execution_mode
+        if restart_policy is not UNSET:
+            field_dict["restart_policy"] = restart_policy
+        if after_restore is not UNSET:
+            field_dict["after_restore"] = after_restore
+        if before_checkpoint is not UNSET:
+            field_dict["before_checkpoint"] = before_checkpoint
+        if pause is not UNSET:
+            field_dict["pause"] = pause
+        if startup_deadline_s is not UNSET:
+            field_dict["startup_deadline_s"] = startup_deadline_s
+        if stop_grace_period_s is not UNSET:
+            field_dict["stop_grace_period_s"] = stop_grace_period_s
+        if stop_signal is not UNSET:
+            field_dict["stop_signal"] = stop_signal
+        if max_retries is not UNSET:
+            field_dict["max_retries"] = max_retries
+        if retry_policy is not UNSET:
+            field_dict["retry_policy"] = retry_policy
+        if request_timeout_s is not UNSET:
+            field_dict["request_timeout_s"] = request_timeout_s
+        if function_concurrency is not UNSET:
+            field_dict["function_concurrency"] = function_concurrency
+        if request_rate_limit_rps is not UNSET:
+            field_dict["request_rate_limit_rps"] = request_rate_limit_rps
+        if request_rate_limit_burst is not UNSET:
+            field_dict["request_rate_limit_burst"] = request_rate_limit_burst
+        if service_replicas is not UNSET:
+            field_dict["service_replicas"] = service_replicas
+        if worker_replicas is not UNSET:
+            field_dict["worker_replicas"] = worker_replicas
+        if ports is not UNSET:
+            field_dict["ports"] = ports
+        if favicon is not UNSET:
+            field_dict["favicon"] = favicon
+        if robots_txt is not UNSET:
+            field_dict["robots_txt"] = robots_txt
+        if head_wakes is not UNSET:
+            field_dict["head_wakes"] = head_wakes
+        if crawler_policy is not UNSET:
+            field_dict["crawler_policy"] = crawler_policy
+        if pre_auth_rate_limit is not UNSET:
+            field_dict["pre_auth_rate_limit"] = pre_auth_rate_limit
+        if health_path is not UNSET:
+            field_dict["health_path"] = health_path
+        if health_path_wakes is not UNSET:
+            field_dict["health_path_wakes"] = health_path_wakes
+        if session_affinity is not UNSET:
+            field_dict["session_affinity"] = session_affinity
+        if version_affinity_cookie is not UNSET:
+            field_dict["version_affinity_cookie"] = version_affinity_cookie
+        if version_affinity_managed_cookie is not UNSET:
+            field_dict["version_affinity_managed_cookie"] = version_affinity_managed_cookie
+        if revision_pin_ttl_seconds is not UNSET:
+            field_dict["revision_pin_ttl_seconds"] = revision_pin_ttl_seconds
+        if release_policy is not UNSET:
+            field_dict["release_policy"] = release_policy
+        if release_probe_paths is not UNSET:
+            field_dict["release_probe_paths"] = release_probe_paths
+        if min_instances is not UNSET:
+            field_dict["min_instances"] = min_instances
+        if egress_allowlist is not UNSET:
+            field_dict["egress_allowlist"] = egress_allowlist
+        if egress_ports is not UNSET:
+            field_dict["egress_ports"] = egress_ports
+        if autoscale_target_rps is not UNSET:
+            field_dict["autoscale_target_rps"] = autoscale_target_rps
+        if autoscale_target_cpu_pct is not UNSET:
+            field_dict["autoscale_target_cpu_pct"] = autoscale_target_cpu_pct
+        if streaming_enabled is not UNSET:
+            field_dict["streaming_enabled"] = streaming_enabled
+        if websocket_enabled is not UNSET:
+            field_dict["websocket_enabled"] = websocket_enabled
+        if route_metrics_enabled is not UNSET:
+            field_dict["route_metrics_enabled"] = route_metrics_enabled
+        if only_allow_declared_routes is not UNSET:
+            field_dict["only_allow_declared_routes"] = only_allow_declared_routes
+        if declared_routes is not UNSET:
+            field_dict["declared_routes"] = declared_routes
+        if maintenance_mode is not UNSET:
+            field_dict["maintenance_mode"] = maintenance_mode
+        if app_protocol is not UNSET:
+            field_dict["app_protocol"] = app_protocol
+        if scaling_policy is not UNSET:
+            field_dict["scaling_policy"] = scaling_policy
+        if require_signed is not UNSET:
+            field_dict["require_signed"] = require_signed
+        if warm_snapshot_enabled is not UNSET:
+            field_dict["warm_snapshot_enabled"] = warm_snapshot_enabled
+        if warm_snapshot_min_requests is not UNSET:
+            field_dict["warm_snapshot_min_requests"] = warm_snapshot_min_requests
+        if warm_snapshot_min_ms is not UNSET:
+            field_dict["warm_snapshot_min_ms"] = warm_snapshot_min_ms
+        if warm_pool_size is not UNSET:
+            field_dict["warm_pool_size"] = warm_pool_size
+        if eviction_priority is not UNSET:
+            field_dict["eviction_priority"] = eviction_priority
+        if require_authn is not UNSET:
+            field_dict["require_authn"] = require_authn
+        if consumer_auth_mode is not UNSET:
+            field_dict["consumer_auth_mode"] = consumer_auth_mode
+        if platform_tenant_required is not UNSET:
+            field_dict["platform_tenant_required"] = platform_tenant_required
+        if public_auth is not UNSET:
+            field_dict["public_auth"] = public_auth
+        if overflow_node is not UNSET:
+            field_dict["overflow_node"] = overflow_node
+        if cors_default_enabled is not UNSET:
+            field_dict["cors_default_enabled"] = cors_default_enabled
+        if cors_default_origins is not UNSET:
+            field_dict["cors_default_origins"] = cors_default_origins
+        if expected_service_binding_fingerprint is not UNSET:
+            field_dict["expected_service_binding_fingerprint"] = expected_service_binding_fingerprint
+
+        return field_dict
+
+    @classmethod
+    def from_dict(cls: type[T], src_dict: Mapping[str, Any]) -> T:
+        from ..models.after_restore_hook import AfterRestoreHook
+        from ..models.app_deploy_settings_condition import AppDeploySettingsCondition
+        from ..models.before_checkpoint_hook import BeforeCheckpointHook
+        from ..models.declared_route import DeclaredRoute
+        from ..models.pre_auth_rate_limit_config import PreAuthRateLimitConfig
+        from ..models.profiling_config import ProfilingConfig
+        from ..models.public_auth_block import PublicAuthBlock
+        from ..models.retry_policy_dto import RetryPolicyDTO
+        from ..models.scaling_policy import ScalingPolicy
+        from ..models.service_caller_scopes import ServiceCallerScopes
+        from ..models.service_reliability_policies import ServiceReliabilityPolicies
+        from ..models.service_replicas import ServiceReplicas
+        from ..models.tracing_config import TracingConfig
+        from ..models.worker_scaling import WorkerScaling
+        from ..models.workload_port import WorkloadPort
+
+        d = dict(src_dict)
+        _deploy_settings_condition = d.pop("deploy_settings_condition", UNSET)
+        deploy_settings_condition: AppDeploySettingsCondition | Unset
+        if isinstance(_deploy_settings_condition, Unset):
+            deploy_settings_condition = UNSET
+        else:
+            deploy_settings_condition = AppDeploySettingsCondition.from_dict(_deploy_settings_condition)
+
+        _profiling = d.pop("profiling", UNSET)
+        profiling: ProfilingConfig | Unset
+        if isinstance(_profiling, Unset):
+            profiling = UNSET
+        else:
+            profiling = ProfilingConfig.from_dict(_profiling)
+
+        _tracing = d.pop("tracing", UNSET)
+        tracing: TracingConfig | Unset
+        if isinstance(_tracing, Unset):
+            tracing = UNSET
+        else:
+            tracing = TracingConfig.from_dict(_tracing)
+
+        def _parse_visibility(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestVisibilityType1
+            | UpdateAppRequestVisibilityType2Type1
+            | UpdateAppRequestVisibilityType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                visibility_type_1 = check_update_app_request_visibility_type_1(data)
+
+                return visibility_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                visibility_type_2_type_1 = check_update_app_request_visibility_type_2_type_1(data)
+
+                return visibility_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                visibility_type_3_type_1 = check_update_app_request_visibility_type_3_type_1(data)
+
+                return visibility_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestVisibilityType1
+                | UpdateAppRequestVisibilityType2Type1
+                | UpdateAppRequestVisibilityType3Type1,
+                data,
+            )
+
+        visibility = _parse_visibility(d.pop("visibility", UNSET))
+
+        def _parse_allowed_service_callers(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                allowed_service_callers_type_0 = cast(list[str], data)
+
+                return allowed_service_callers_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        allowed_service_callers = _parse_allowed_service_callers(d.pop("allowed_service_callers", UNSET))
+
+        def _parse_allowed_service_call_scopes(data: object) -> None | ServiceCallerScopes | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                allowed_service_call_scopes_type_0 = ServiceCallerScopes.from_dict(data)
+
+                return allowed_service_call_scopes_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ServiceCallerScopes | Unset, data)
+
+        allowed_service_call_scopes = _parse_allowed_service_call_scopes(d.pop("allowed_service_call_scopes", UNSET))
+
+        def _parse_service_binding_targets(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                service_binding_targets_type_0 = cast(list[str], data)
+
+                return service_binding_targets_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        service_binding_targets = _parse_service_binding_targets(d.pop("service_binding_targets", UNSET))
+
+        def _parse_service_reliability(data: object) -> None | ServiceReliabilityPolicies | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                service_reliability_type_0 = ServiceReliabilityPolicies.from_dict(data)
+
+                return service_reliability_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ServiceReliabilityPolicies | Unset, data)
+
+        service_reliability = _parse_service_reliability(d.pop("service_reliability", UNSET))
+
+        def _parse_service_binding_policy(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestServiceBindingPolicyType1
+            | UpdateAppRequestServiceBindingPolicyType2Type1
+            | UpdateAppRequestServiceBindingPolicyType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_policy_type_1 = check_update_app_request_service_binding_policy_type_1(data)
+
+                return service_binding_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_policy_type_2_type_1 = check_update_app_request_service_binding_policy_type_2_type_1(
+                    data
+                )
+
+                return service_binding_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_policy_type_3_type_1 = check_update_app_request_service_binding_policy_type_3_type_1(
+                    data
+                )
+
+                return service_binding_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestServiceBindingPolicyType1
+                | UpdateAppRequestServiceBindingPolicyType2Type1
+                | UpdateAppRequestServiceBindingPolicyType3Type1,
+                data,
+            )
+
+        service_binding_policy = _parse_service_binding_policy(d.pop("service_binding_policy", UNSET))
+
+        def _parse_service_binding_transport(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestServiceBindingTransportType1
+            | UpdateAppRequestServiceBindingTransportType2Type1
+            | UpdateAppRequestServiceBindingTransportType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_transport_type_1 = check_update_app_request_service_binding_transport_type_1(data)
+
+                return service_binding_transport_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_transport_type_2_type_1 = (
+                    check_update_app_request_service_binding_transport_type_2_type_1(data)
+                )
+
+                return service_binding_transport_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                service_binding_transport_type_3_type_1 = (
+                    check_update_app_request_service_binding_transport_type_3_type_1(data)
+                )
+
+                return service_binding_transport_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestServiceBindingTransportType1
+                | UpdateAppRequestServiceBindingTransportType2Type1
+                | UpdateAppRequestServiceBindingTransportType3Type1,
+                data,
+            )
+
+        service_binding_transport = _parse_service_binding_transport(d.pop("service_binding_transport", UNSET))
+
+        def _parse_ram_mb(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        ram_mb = _parse_ram_mb(d.pop("ram_mb", UNSET))
+
+        def _parse_cpu_millicores(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestCpuMillicoresType1
+            | UpdateAppRequestCpuMillicoresType2Type1
+            | UpdateAppRequestCpuMillicoresType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, int):
+                    raise TypeError()
+                cpu_millicores_type_1 = check_update_app_request_cpu_millicores_type_1(data)
+
+                return cpu_millicores_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, int):
+                    raise TypeError()
+                cpu_millicores_type_2_type_1 = check_update_app_request_cpu_millicores_type_2_type_1(data)
+
+                return cpu_millicores_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, int):
+                    raise TypeError()
+                cpu_millicores_type_3_type_1 = check_update_app_request_cpu_millicores_type_3_type_1(data)
+
+                return cpu_millicores_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestCpuMillicoresType1
+                | UpdateAppRequestCpuMillicoresType2Type1
+                | UpdateAppRequestCpuMillicoresType3Type1,
+                data,
+            )
+
+        cpu_millicores = _parse_cpu_millicores(d.pop("cpu_millicores", UNSET))
+
+        def _parse_resource_profile(data: object) -> None | ResourceProfile | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                resource_profile_type_0 = check_resource_profile(data)
+
+                return resource_profile_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ResourceProfile | Unset, data)
+
+        resource_profile = _parse_resource_profile(d.pop("resource_profile", UNSET))
+
+        def _parse_idle_timeout_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        idle_timeout_s = _parse_idle_timeout_s(d.pop("idle_timeout_s", UNSET))
+
+        def _parse_max_concurrency(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        max_concurrency = _parse_max_concurrency(d.pop("max_concurrency", UNSET))
+
+        def _parse_execution_mode(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestExecutionModeType1
+            | UpdateAppRequestExecutionModeType2Type1
+            | UpdateAppRequestExecutionModeType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_1 = check_update_app_request_execution_mode_type_1(data)
+
+                return execution_mode_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_2_type_1 = check_update_app_request_execution_mode_type_2_type_1(data)
+
+                return execution_mode_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                execution_mode_type_3_type_1 = check_update_app_request_execution_mode_type_3_type_1(data)
+
+                return execution_mode_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestExecutionModeType1
+                | UpdateAppRequestExecutionModeType2Type1
+                | UpdateAppRequestExecutionModeType3Type1,
+                data,
+            )
+
+        execution_mode = _parse_execution_mode(d.pop("execution_mode", UNSET))
+
+        def _parse_restart_policy(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestRestartPolicyType1
+            | UpdateAppRequestRestartPolicyType2Type1
+            | UpdateAppRequestRestartPolicyType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                restart_policy_type_1 = check_update_app_request_restart_policy_type_1(data)
+
+                return restart_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                restart_policy_type_2_type_1 = check_update_app_request_restart_policy_type_2_type_1(data)
+
+                return restart_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                restart_policy_type_3_type_1 = check_update_app_request_restart_policy_type_3_type_1(data)
+
+                return restart_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestRestartPolicyType1
+                | UpdateAppRequestRestartPolicyType2Type1
+                | UpdateAppRequestRestartPolicyType3Type1,
+                data,
+            )
+
+        restart_policy = _parse_restart_policy(d.pop("restart_policy", UNSET))
+
+        _after_restore = d.pop("after_restore", UNSET)
+        after_restore: AfterRestoreHook | Unset
+        if isinstance(_after_restore, Unset):
+            after_restore = UNSET
+        else:
+            after_restore = AfterRestoreHook.from_dict(_after_restore)
+
+        _before_checkpoint = d.pop("before_checkpoint", UNSET)
+        before_checkpoint: BeforeCheckpointHook | Unset
+        if isinstance(_before_checkpoint, Unset):
+            before_checkpoint = UNSET
+        else:
+            before_checkpoint = BeforeCheckpointHook.from_dict(_before_checkpoint)
+
+        _pause = d.pop("pause", UNSET)
+        pause: UpdateAppRequestPause | Unset
+        if isinstance(_pause, Unset):
+            pause = UNSET
+        else:
+            pause = check_update_app_request_pause(_pause)
+
+        def _parse_startup_deadline_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        startup_deadline_s = _parse_startup_deadline_s(d.pop("startup_deadline_s", UNSET))
+
+        def _parse_stop_grace_period_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        stop_grace_period_s = _parse_stop_grace_period_s(d.pop("stop_grace_period_s", UNSET))
+
+        def _parse_stop_signal(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        stop_signal = _parse_stop_signal(d.pop("stop_signal", UNSET))
+
+        def _parse_max_retries(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        max_retries = _parse_max_retries(d.pop("max_retries", UNSET))
+
+        def _parse_retry_policy(data: object) -> None | RetryPolicyDTO | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                retry_policy_type_0 = RetryPolicyDTO.from_dict(data)
+
+                return retry_policy_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | RetryPolicyDTO | Unset, data)
+
+        retry_policy = _parse_retry_policy(d.pop("retry_policy", UNSET))
+
+        def _parse_request_timeout_s(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        request_timeout_s = _parse_request_timeout_s(d.pop("request_timeout_s", UNSET))
+
+        def _parse_function_concurrency(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        function_concurrency = _parse_function_concurrency(d.pop("function_concurrency", UNSET))
+
+        def _parse_request_rate_limit_rps(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        request_rate_limit_rps = _parse_request_rate_limit_rps(d.pop("request_rate_limit_rps", UNSET))
+
+        def _parse_request_rate_limit_burst(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        request_rate_limit_burst = _parse_request_rate_limit_burst(d.pop("request_rate_limit_burst", UNSET))
+
+        _service_replicas = d.pop("service_replicas", UNSET)
+        service_replicas: ServiceReplicas | Unset
+        if isinstance(_service_replicas, Unset):
+            service_replicas = UNSET
+        else:
+            service_replicas = ServiceReplicas.from_dict(_service_replicas)
+
+        _worker_replicas = d.pop("worker_replicas", UNSET)
+        worker_replicas: WorkerScaling | Unset
+        if isinstance(_worker_replicas, Unset):
+            worker_replicas = UNSET
+        else:
+            worker_replicas = WorkerScaling.from_dict(_worker_replicas)
+
+        def _parse_ports(data: object) -> list[WorkloadPort] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                ports_type_0 = []
+                _ports_type_0 = data
+                for ports_type_0_item_data in _ports_type_0:
+                    ports_type_0_item = WorkloadPort.from_dict(ports_type_0_item_data)
+
+                    ports_type_0.append(ports_type_0_item)
+
+                return ports_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[WorkloadPort] | None | Unset, data)
+
+        ports = _parse_ports(d.pop("ports", UNSET))
+
+        def _parse_favicon(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        favicon = _parse_favicon(d.pop("favicon", UNSET))
+
+        def _parse_robots_txt(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        robots_txt = _parse_robots_txt(d.pop("robots_txt", UNSET))
+
+        def _parse_head_wakes(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        head_wakes = _parse_head_wakes(d.pop("head_wakes", UNSET))
+
+        def _parse_crawler_policy(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestCrawlerPolicyType1
+            | UpdateAppRequestCrawlerPolicyType2Type1
+            | UpdateAppRequestCrawlerPolicyType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                crawler_policy_type_1 = check_update_app_request_crawler_policy_type_1(data)
+
+                return crawler_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                crawler_policy_type_2_type_1 = check_update_app_request_crawler_policy_type_2_type_1(data)
+
+                return crawler_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                crawler_policy_type_3_type_1 = check_update_app_request_crawler_policy_type_3_type_1(data)
+
+                return crawler_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestCrawlerPolicyType1
+                | UpdateAppRequestCrawlerPolicyType2Type1
+                | UpdateAppRequestCrawlerPolicyType3Type1,
+                data,
+            )
+
+        crawler_policy = _parse_crawler_policy(d.pop("crawler_policy", UNSET))
+
+        def _parse_pre_auth_rate_limit(data: object) -> None | PreAuthRateLimitConfig | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                pre_auth_rate_limit_type_0 = PreAuthRateLimitConfig.from_dict(data)
+
+                return pre_auth_rate_limit_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | PreAuthRateLimitConfig | Unset, data)
+
+        pre_auth_rate_limit = _parse_pre_auth_rate_limit(d.pop("pre_auth_rate_limit", UNSET))
+
+        def _parse_health_path(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        health_path = _parse_health_path(d.pop("health_path", UNSET))
+
+        def _parse_health_path_wakes(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        health_path_wakes = _parse_health_path_wakes(d.pop("health_path_wakes", UNSET))
+
+        def _parse_session_affinity(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        session_affinity = _parse_session_affinity(d.pop("session_affinity", UNSET))
+
+        def _parse_version_affinity_cookie(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        version_affinity_cookie = _parse_version_affinity_cookie(d.pop("version_affinity_cookie", UNSET))
+
+        def _parse_version_affinity_managed_cookie(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        version_affinity_managed_cookie = _parse_version_affinity_managed_cookie(
+            d.pop("version_affinity_managed_cookie", UNSET)
+        )
+
+        def _parse_revision_pin_ttl_seconds(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        revision_pin_ttl_seconds = _parse_revision_pin_ttl_seconds(d.pop("revision_pin_ttl_seconds", UNSET))
+
+        def _parse_release_policy(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestReleasePolicyType1
+            | UpdateAppRequestReleasePolicyType2Type1
+            | UpdateAppRequestReleasePolicyType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                release_policy_type_1 = check_update_app_request_release_policy_type_1(data)
+
+                return release_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                release_policy_type_2_type_1 = check_update_app_request_release_policy_type_2_type_1(data)
+
+                return release_policy_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                release_policy_type_3_type_1 = check_update_app_request_release_policy_type_3_type_1(data)
+
+                return release_policy_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestReleasePolicyType1
+                | UpdateAppRequestReleasePolicyType2Type1
+                | UpdateAppRequestReleasePolicyType3Type1,
+                data,
+            )
+
+        release_policy = _parse_release_policy(d.pop("release_policy", UNSET))
+
+        def _parse_release_probe_paths(data: object) -> list[str] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                release_probe_paths_type_0 = cast(list[str], data)
+
+                return release_probe_paths_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[str] | None | Unset, data)
+
+        release_probe_paths = _parse_release_probe_paths(d.pop("release_probe_paths", UNSET))
+
+        def _parse_min_instances(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        min_instances = _parse_min_instances(d.pop("min_instances", UNSET))
+
+        egress_allowlist = cast(list[str], d.pop("egress_allowlist", UNSET))
+
+        egress_ports = cast(list[int], d.pop("egress_ports", UNSET))
+
+        def _parse_autoscale_target_rps(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        autoscale_target_rps = _parse_autoscale_target_rps(d.pop("autoscale_target_rps", UNSET))
+
+        def _parse_autoscale_target_cpu_pct(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        autoscale_target_cpu_pct = _parse_autoscale_target_cpu_pct(d.pop("autoscale_target_cpu_pct", UNSET))
+
+        def _parse_streaming_enabled(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        streaming_enabled = _parse_streaming_enabled(d.pop("streaming_enabled", UNSET))
+
+        def _parse_websocket_enabled(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        websocket_enabled = _parse_websocket_enabled(d.pop("websocket_enabled", UNSET))
+
+        def _parse_route_metrics_enabled(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        route_metrics_enabled = _parse_route_metrics_enabled(d.pop("route_metrics_enabled", UNSET))
+
+        def _parse_only_allow_declared_routes(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        only_allow_declared_routes = _parse_only_allow_declared_routes(d.pop("only_allow_declared_routes", UNSET))
+
+        _declared_routes = d.pop("declared_routes", UNSET)
+        declared_routes: list[DeclaredRoute] | Unset = UNSET
+        if _declared_routes is not UNSET:
+            declared_routes = []
+            for declared_routes_item_data in _declared_routes:
+                declared_routes_item = DeclaredRoute.from_dict(declared_routes_item_data)
+
+                declared_routes.append(declared_routes_item)
+
+        def _parse_maintenance_mode(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        maintenance_mode = _parse_maintenance_mode(d.pop("maintenance_mode", UNSET))
+
+        _app_protocol = d.pop("app_protocol", UNSET)
+        app_protocol: UpdateAppRequestAppProtocol | Unset
+        if isinstance(_app_protocol, Unset):
+            app_protocol = UNSET
+        else:
+            app_protocol = check_update_app_request_app_protocol(_app_protocol)
+
+        def _parse_scaling_policy(data: object) -> None | ScalingPolicy | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                scaling_policy_type_1 = ScalingPolicy.from_dict(data)
+
+                return scaling_policy_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | ScalingPolicy | Unset, data)
+
+        scaling_policy = _parse_scaling_policy(d.pop("scaling_policy", UNSET))
+
+        def _parse_require_signed(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        require_signed = _parse_require_signed(d.pop("require_signed", UNSET))
+
+        def _parse_warm_snapshot_enabled(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        warm_snapshot_enabled = _parse_warm_snapshot_enabled(d.pop("warm_snapshot_enabled", UNSET))
+
+        def _parse_warm_snapshot_min_requests(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        warm_snapshot_min_requests = _parse_warm_snapshot_min_requests(d.pop("warm_snapshot_min_requests", UNSET))
+
+        def _parse_warm_snapshot_min_ms(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        warm_snapshot_min_ms = _parse_warm_snapshot_min_ms(d.pop("warm_snapshot_min_ms", UNSET))
+
+        def _parse_warm_pool_size(data: object) -> int | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(int | None | Unset, data)
+
+        warm_pool_size = _parse_warm_pool_size(d.pop("warm_pool_size", UNSET))
+
+        def _parse_eviction_priority(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestEvictionPriorityType1
+            | UpdateAppRequestEvictionPriorityType2Type1
+            | UpdateAppRequestEvictionPriorityType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                eviction_priority_type_1 = check_update_app_request_eviction_priority_type_1(data)
+
+                return eviction_priority_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                eviction_priority_type_2_type_1 = check_update_app_request_eviction_priority_type_2_type_1(data)
+
+                return eviction_priority_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                eviction_priority_type_3_type_1 = check_update_app_request_eviction_priority_type_3_type_1(data)
+
+                return eviction_priority_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestEvictionPriorityType1
+                | UpdateAppRequestEvictionPriorityType2Type1
+                | UpdateAppRequestEvictionPriorityType3Type1,
+                data,
+            )
+
+        eviction_priority = _parse_eviction_priority(d.pop("eviction_priority", UNSET))
+
+        def _parse_require_authn(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        require_authn = _parse_require_authn(d.pop("require_authn", UNSET))
+
+        def _parse_consumer_auth_mode(
+            data: object,
+        ) -> (
+            None
+            | Unset
+            | UpdateAppRequestConsumerAuthModeType1
+            | UpdateAppRequestConsumerAuthModeType2Type1
+            | UpdateAppRequestConsumerAuthModeType3Type1
+        ):
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                consumer_auth_mode_type_1 = check_update_app_request_consumer_auth_mode_type_1(data)
+
+                return consumer_auth_mode_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                consumer_auth_mode_type_2_type_1 = check_update_app_request_consumer_auth_mode_type_2_type_1(data)
+
+                return consumer_auth_mode_type_2_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            try:
+                if not isinstance(data, str):
+                    raise TypeError()
+                consumer_auth_mode_type_3_type_1 = check_update_app_request_consumer_auth_mode_type_3_type_1(data)
+
+                return consumer_auth_mode_type_3_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(
+                None
+                | Unset
+                | UpdateAppRequestConsumerAuthModeType1
+                | UpdateAppRequestConsumerAuthModeType2Type1
+                | UpdateAppRequestConsumerAuthModeType3Type1,
+                data,
+            )
+
+        consumer_auth_mode = _parse_consumer_auth_mode(d.pop("consumer_auth_mode", UNSET))
+
+        def _parse_platform_tenant_required(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        platform_tenant_required = _parse_platform_tenant_required(d.pop("platform_tenant_required", UNSET))
+
+        def _parse_public_auth(data: object) -> None | PublicAuthBlock | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, dict):
+                    raise TypeError()
+                public_auth_type_1 = PublicAuthBlock.from_dict(data)
+
+                return public_auth_type_1
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(None | PublicAuthBlock | Unset, data)
+
+        public_auth = _parse_public_auth(d.pop("public_auth", UNSET))
+
+        def _parse_overflow_node(data: object) -> None | str | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(None | str | Unset, data)
+
+        overflow_node = _parse_overflow_node(d.pop("overflow_node", UNSET))
+
+        def _parse_cors_default_enabled(data: object) -> bool | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            return cast(bool | None | Unset, data)
+
+        cors_default_enabled = _parse_cors_default_enabled(d.pop("cors_default_enabled", UNSET))
+
+        cors_default_origins = cast(list[str], d.pop("cors_default_origins", UNSET))
+
+        expected_service_binding_fingerprint = d.pop("expected_service_binding_fingerprint", UNSET)
+
+        update_app_request = cls(
+            deploy_settings_condition=deploy_settings_condition,
+            profiling=profiling,
+            tracing=tracing,
+            visibility=visibility,
+            allowed_service_callers=allowed_service_callers,
+            allowed_service_call_scopes=allowed_service_call_scopes,
+            service_binding_targets=service_binding_targets,
+            service_reliability=service_reliability,
+            service_binding_policy=service_binding_policy,
+            service_binding_transport=service_binding_transport,
+            ram_mb=ram_mb,
+            cpu_millicores=cpu_millicores,
+            resource_profile=resource_profile,
+            idle_timeout_s=idle_timeout_s,
+            max_concurrency=max_concurrency,
+            execution_mode=execution_mode,
+            restart_policy=restart_policy,
+            after_restore=after_restore,
+            before_checkpoint=before_checkpoint,
+            pause=pause,
+            startup_deadline_s=startup_deadline_s,
+            stop_grace_period_s=stop_grace_period_s,
+            stop_signal=stop_signal,
+            max_retries=max_retries,
+            retry_policy=retry_policy,
+            request_timeout_s=request_timeout_s,
+            function_concurrency=function_concurrency,
+            request_rate_limit_rps=request_rate_limit_rps,
+            request_rate_limit_burst=request_rate_limit_burst,
+            service_replicas=service_replicas,
+            worker_replicas=worker_replicas,
+            ports=ports,
+            favicon=favicon,
+            robots_txt=robots_txt,
+            head_wakes=head_wakes,
+            crawler_policy=crawler_policy,
+            pre_auth_rate_limit=pre_auth_rate_limit,
+            health_path=health_path,
+            health_path_wakes=health_path_wakes,
+            session_affinity=session_affinity,
+            version_affinity_cookie=version_affinity_cookie,
+            version_affinity_managed_cookie=version_affinity_managed_cookie,
+            revision_pin_ttl_seconds=revision_pin_ttl_seconds,
+            release_policy=release_policy,
+            release_probe_paths=release_probe_paths,
+            min_instances=min_instances,
+            egress_allowlist=egress_allowlist,
+            egress_ports=egress_ports,
+            autoscale_target_rps=autoscale_target_rps,
+            autoscale_target_cpu_pct=autoscale_target_cpu_pct,
+            streaming_enabled=streaming_enabled,
+            websocket_enabled=websocket_enabled,
+            route_metrics_enabled=route_metrics_enabled,
+            only_allow_declared_routes=only_allow_declared_routes,
+            declared_routes=declared_routes,
+            maintenance_mode=maintenance_mode,
+            app_protocol=app_protocol,
+            scaling_policy=scaling_policy,
+            require_signed=require_signed,
+            warm_snapshot_enabled=warm_snapshot_enabled,
+            warm_snapshot_min_requests=warm_snapshot_min_requests,
+            warm_snapshot_min_ms=warm_snapshot_min_ms,
+            warm_pool_size=warm_pool_size,
+            eviction_priority=eviction_priority,
+            require_authn=require_authn,
+            consumer_auth_mode=consumer_auth_mode,
+            platform_tenant_required=platform_tenant_required,
+            public_auth=public_auth,
+            overflow_node=overflow_node,
+            cors_default_enabled=cors_default_enabled,
+            cors_default_origins=cors_default_origins,
+            expected_service_binding_fingerprint=expected_service_binding_fingerprint,
+        )
+
+        update_app_request.additional_properties = d
+        return update_app_request
+
+    @property
+    def additional_keys(self) -> list[str]:
+        return list(self.additional_properties.keys())
+
+    def __getitem__(self, key: str) -> Any:
+        return self.additional_properties[key]
+
+    def __setitem__(self, key: str, value: Any) -> None:
+        self.additional_properties[key] = value
+
+    def __delitem__(self, key: str) -> None:
+        del self.additional_properties[key]
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.additional_properties

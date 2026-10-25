@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/routejobs"
 	"github.com/onebox-faas/faas/pkg/routerequirements"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -16,6 +17,7 @@ func (s *server) runAutomaticRouteCheckWorker(ctx context.Context) {
 	for {
 		if _, err := s.drainAutomaticRouteChecks(ctx); err != nil && ctx.Err() == nil {
 			s.log.Warn("automatic route check queue unavailable")
+			s.routeJobMetrics.QueueUnavailable(routejobs.WorkerCheck)
 		}
 		select {
 		case <-ctx.Done():
@@ -41,13 +43,17 @@ func (s *server) drainAutomaticRouteChecks(ctx context.Context) (int, error) {
 			return completed, err
 		}
 		done, err := s.processAutomaticRouteCheck(ctx, queue, checks, claim)
-		if err != nil && ctx.Err() == nil {
+		switch {
+		case err != nil && ctx.Err() == nil:
 			// Failure details can contain database or private intent context.
 			// Persist/expose only the stable failure code and retry schedule.
 			s.log.Warn("automatic route check retry scheduled", "app_id", claim.AppID, "deployment_id", claim.DeploymentID)
-		}
-		if done {
+			s.routeJobMetrics.ObserveCheck(routejobs.CheckRetried)
+		case done:
 			completed++
+			s.routeJobMetrics.ObserveCheck(routejobs.CheckCompleted)
+		case err == nil:
+			s.routeJobMetrics.ObserveCheck(routejobs.CheckSkipped)
 		}
 	}
 	return completed, nil

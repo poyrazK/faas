@@ -3302,6 +3302,8 @@ const (
 type CustomDomain struct {
 	Domain string
 	AppID  string
+	// RedirectAppID mirrors the legacy redirect FK used by app purge.
+	RedirectAppID string `json:"-"`
 	// EnvironmentID is empty for the legacy application-wide route. A
 	// non-empty value binds the hostname to one project environment.
 	EnvironmentID    string
@@ -3645,6 +3647,9 @@ const (
 	// AlertMetricCustomMetric watches one ADR-202 pushed metric, named by
 	// AlertRule.CustomMetricName (ADR-745).
 	AlertMetricCustomMetric AlertMetric = "custom_metric"
+	// AlertMetricLogSearchMatches counts an app's log events matching
+	// AlertRule.LogQuery within the window (ADR-20261018083536).
+	AlertMetricLogSearchMatches AlertMetric = "log_search_matches"
 	// ADR-747: rules on one customer SLO, named by AlertRule.SLOID.
 	AlertMetricSLOBudgetBurn      AlertMetric = "slo_budget_burn"
 	AlertMetricSLOBudgetRemaining AlertMetric = "slo_budget_remaining_pct"
@@ -3861,6 +3866,7 @@ type AlertRule struct {
 	WindowSpec                      AlertWindowSpec
 	FailureSource                   AlertFailureSource // empty unless Metric == failed_invocations
 	CustomMetricName                string             // empty unless Metric == custom_metric (ADR-745)
+	LogQuery                        string             // canonical log search filters; set only for log_search_matches
 	SLOID                           string             // set only for the ADR-747 SLO metrics
 	SyntheticCheckID                string             // set only for the ADR-748 synthetic check metrics
 	Action                          AlertAction        // issue #976 / ADR-122 / SAFE-RELEASES-B
@@ -4280,6 +4286,12 @@ type ManagedRealtimeEndpoint struct {
 	Enabled                    bool
 	CreatedAt                  time.Time
 	UpdatedAt                  time.Time
+	// Slug names the endpoint within its app so gregale.yaml can declare it
+	// (ADR-20261019102657). Empty for endpoints created without one.
+	Slug string
+	// ChannelRules authorize channels from verified token claims without the
+	// authorize callback (ADR-20261019102657).
+	ChannelRules []api.RealtimeChannelRule
 }
 
 type UpdateManagedRealtimeEndpointParams struct {
@@ -4303,6 +4315,10 @@ type UpdateManagedRealtimeEndpointParams struct {
 	MaxMessageBytes                 *int64
 	MaxConnectionAgeSeconds         *int64
 	Enabled                         *bool
+	// Slug replaces the endpoint's slug; an empty value removes it.
+	Slug *string
+	// ChannelRules replaces the endpoint's channel rules.
+	ChannelRules *[]api.RealtimeChannelRule
 }
 
 type ManagedRealtimeEndpointQuotaScope string
@@ -8306,6 +8322,7 @@ type EdgeRuleGeoAction struct {
 // apid-Validate.
 type EdgeRuleBudgetAction struct {
 	BudgetMs            int    `json:"budget_ms"`
+	TotalDeadlineMs     int    `json:"total_deadline_ms,omitempty"`
 	AllowOverrideHeader string `json:"allow_override_header,omitempty"`
 }
 

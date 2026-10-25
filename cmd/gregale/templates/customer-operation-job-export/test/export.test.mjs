@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {createHash} from 'node:crypto';
-import {GregaleOperationClient, GregaleOperationSession, createBrowserOperationReceiptStore} from '@gregale/sdk-node/operations';
+import {GregaleOperationClient, GregaleOperationSession, createBrowserOperationReceiptStore} from '@gregale/sdk-node/preview/operations';
 import {runExportJob} from '../job.mjs';
 import {generateExport} from '../export.mjs';
 import {createExportServer} from '../server.mjs';

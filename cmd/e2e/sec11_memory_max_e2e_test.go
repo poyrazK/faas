@@ -135,7 +135,9 @@ func TestSec11_MemoryMaxFenceEnforced_CrossProcess(t *testing.T) {
 	// Create + deploy. The deployment lifecycle (imaged pull → app-layer
 	// ext4 → prime cold boot → snapshot → PARKED) is what causes the
 	// jailer to create the per-VM cgroup scope under faas-tenant.slice/.
-	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: "m8-memfence", Type: "app"}); got != http.StatusCreated {
+	// The probe wakes the app with an anonymous gateway request.
+	falsy := false
+	if got := postOK(t, h, key, "/v1/apps", api.CreateAppRequest{Slug: "m8-memfence", Type: "app", RequireAuthn: &falsy}); got != http.StatusCreated {
 		t.Fatalf("create app: status=%d", got)
 	}
 	appID := mustGetAppID(t, h, key, "m8-memfence")

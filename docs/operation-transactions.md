@@ -8,7 +8,7 @@ requests. Concurrent attempts share one database lock and one receipt.
 Install the exported receipt schema explicitly as your database owner:
 
 - Node: `operationReceiptSchema` from `@gregale/sdk-node`.
-- Go: `faas.OperationReceiptSchema`.
+- Go: `preview.OperationReceiptSchema`.
 - Python: `operation_receipt_schema` from `faas_sdk`.
 
 The canonical DDL is [pkg/operationinbox/schema.sql](../pkg/operationinbox/schema.sql).
@@ -17,7 +17,7 @@ and INSERT on that table. The SDK performs no DDL or automatic cleanup. Retain
 receipts while the original operation can still replay.
 
 Customer Operations use a separate application-owned receipt table. Install
-`customerOperationReceiptSchema` in Node, `faas.CustomerOperationReceiptSchema`
+`customerOperationReceiptSchema` in Node, `preview.CustomerOperationReceiptSchema`
 in Go, or `customer_operation_receipt_schema` in Python. Its canonical DDL is
 [pkg/operationinbox/customer_schema.sql](../pkg/operationinbox/customer_schema.sql).
 The application role needs SELECT and INSERT on the customer inbox table. Retain
@@ -33,7 +33,7 @@ The callback contains ordinary business logic and returns delivery intent:
 import {
   operationRequestFromHeaders,
   withOperationTransaction,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 app.use(express.json({
   verify(req, _res, body) { req.rawBody = Buffer.from(body); },
@@ -73,15 +73,15 @@ reports whether the SDK recovered an existing receipt.
 ## Go
 
 Read the bounded original request bytes before parsing your business input. Build
-the context with `faas.OperationRequestFromHTTP(r, body)`, then call:
+the context with `preview.OperationRequestFromHTTP(r, body)`, then call:
 
 ```go
-response, err := faas.WithOperationTransaction(ctx, db, operation,
-    func(tx faas.OperationSQLTransaction) (faas.OperationOutcome, error) {
+response, err := preview.WithOperationTransaction(ctx, db, operation,
+    func(tx preview.OperationSQLTransaction) (preview.OperationOutcome, error) {
         order, err := fulfillOrder(ctx, tx, operation.PlatformTenantID, orderID)
-        if err != nil { return faas.OperationOutcome{}, err }
+        if err != nil { return preview.OperationOutcome{}, err }
         result, err := json.Marshal(order)
-        return faas.OperationOutcome{Result: result}, err
+        return preview.OperationOutcome{Result: result}, err
     })
 if err != nil { return err }
 w.Header().Set("Content-Type", "application/json")
@@ -100,7 +100,7 @@ The target includes the original encoded path and query string. With an
 exclusively leased psycopg connection configured with `autocommit=True`:
 
 ```python
-from faas_sdk import with_operation_transaction
+from faas_sdk.preview import with_operation_transaction
 
 def business(cursor):
     order = fulfill_order(cursor, operation.platform_tenant_id, order_id)
@@ -139,7 +139,7 @@ Gregale guest listener, use the Customer Operations factory and helper. In Node:
 import {
   customerOperationReceiptRequestFromHeaders,
   withCustomerOperationReceiptTransaction,
-} from '@gregale/sdk-node';
+} from '@gregale/sdk-node/preview';
 
 const request = customerOperationReceiptRequestFromHeaders(
   req.headers, req.method, req.originalUrl, req.rawBody,

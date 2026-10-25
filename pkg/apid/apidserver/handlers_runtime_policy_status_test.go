@@ -307,3 +307,27 @@ func (s *runtimePolicyStatusTestStore) LatestAccountEdgeRulePolicyPosition(_ con
 	s.queriedEdgeAccountID = accountID
 	return state.EdgeRulePolicyPosition{DesiredRevision: s.edgeRulesDesired + 1, LegacyFleetRevision: 7}, nil
 }
+
+func TestSummarizeRuntimePolicyComponentUsesDatabaseClockAndRejectsFutureProgress(t *testing.T) {
+	databaseNow := time.Date(2026, 10, 1, 0, 0, 0, 0, time.UTC)
+	for _, tc := range []struct {
+		name     string
+		observed time.Time
+		state    string
+		stale    int
+	}{
+		{"fresh despite API clock skew", databaseNow.Add(-time.Second), "active", 0},
+		{"stale by database clock", databaseNow.Add(-time.Minute), "pending", 1},
+		{"future observation", databaseNow.Add(time.Second), "pending", 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			rows := []state.ServingGatewayControlPlaneState{{DatabaseNow: databaseNow, LastChangeID: 4, ObservedAt: tc.observed}}
+			got := apidserver.SummarizeRuntimePolicyComponent("app", 4, rows, databaseNow.Add(time.Hour),
+				func(g state.ServingGatewayControlPlaneState) int64 { return g.LastChangeID },
+				func(g state.ServingGatewayControlPlaneState) time.Time { return g.ObservedAt })
+			if got.State != tc.state || got.StaleGateways != tc.stale {
+				t.Fatalf("status = %+v, want %s, stale %d", got, tc.state, tc.stale)
+			}
+		})
+	}
+}

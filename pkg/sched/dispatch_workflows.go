@@ -62,6 +62,9 @@ type WorkflowOrchestrator struct {
 	auditor  *audit.Auditor
 	metrics  *wire.WorkflowMetrics
 	log      *slog.Logger
+	// capabilityAllowed holds a claimed run while workflows are switched off
+	// for its app's account (ADR-20261023115741); nil allows every run.
+	capabilityAllowed func(ctx context.Context, appID string) bool
 }
 
 // NewWorkflowOrchestrator constructs a new orchestrator.
@@ -500,6 +503,14 @@ func (o *WorkflowOrchestrator) dispatchOne(ctx context.Context) (bool, error) {
 
 	if claimed != nil {
 		ctx = state.WithWorkflowRunGeneration(ctx, claimed.ID, claimed.ResumeCount)
+		if o.capabilityAllowed != nil && !o.capabilityAllowed(ctx, claimed.AppID) {
+			// Put the run back, due again after the deferral; its steps are
+			// untouched and it resumes when the flag is on.
+			if err := o.store.ScheduleWorkflowRun(ctx, claimed.ID, state.WorkflowRunStatusPending, time.Now().Add(capabilityDeferral)); err != nil {
+				return true, err
+			}
+			return true, nil
+		}
 		if err := o.initAndAdvanceRun(ctx, claimed); err != nil {
 			if errors.Is(err, state.ErrWorkflowOutboundAttemptExpired) || errors.Is(err, state.ErrWorkflowGuardNotReady) {
 				return true, nil

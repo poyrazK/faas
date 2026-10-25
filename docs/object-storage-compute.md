@@ -20,7 +20,7 @@ For example, with [AWS SDK for JavaScript v3](https://docs.aws.amazon.com/AWSJav
 
 ```js
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
-import { ObjectStorageBinding } from '@gregale/sdk-node/object-storage/runtime';
+import { ObjectStorageBinding } from '@gregale/sdk-node/preview/object-storage/runtime';
 
 const storage = new ObjectStorageBinding('GREGALE_S3_ASSETS', options => new S3Client({
   ...options, credentials: {...options.credentials}, // AWS annotates resolved credentials.
@@ -36,8 +36,8 @@ async function readAsset(key) {
 Go factories receive an `ObjectStorageClientConfig`:
 
 ```go
-storage, err := faas.NewObjectStorageBinding("GREGALE_S3_ASSETS",
-    func(ctx context.Context, c faas.ObjectStorageClientConfig) (*s3.Client, error) {
+storage, err := preview.NewObjectStorageBinding("GREGALE_S3_ASSETS",
+    func(ctx context.Context, c preview.ObjectStorageClientConfig) (*s3.Client, error) {
         return s3.New(s3.Options{
             Region: c.Region, BaseEndpoint: aws.String(c.Endpoint), UsePathStyle: c.UsePathStyle,
             Credentials: credentials.NewStaticCredentialsProvider(c.AccessKeyID, c.SecretAccessKey, ""),
@@ -55,7 +55,7 @@ With Python and [Boto3 configuration](https://docs.aws.amazon.com/boto3/latest/g
 ```python
 import boto3
 from botocore.config import Config
-from faas_sdk.object_storage_runtime import ObjectStorageBinding
+from faas_sdk.preview.object_storage_runtime import ObjectStorageBinding
 
 storage = ObjectStorageBinding("GREGALE_S3_ASSETS", lambda c: boto3.client(
     "s3", endpoint_url=c.endpoint, region_name=c.region,
@@ -92,7 +92,7 @@ when a workload opts into `secret_reload_signal: SIGHUP` and
 
 ```js
 import { SecretReloadCoordinator } from '@gregale/sdk-node/secrets/runtime';
-import { ObjectStorageBinding } from '@gregale/sdk-node/object-storage/runtime';
+import { ObjectStorageBinding } from '@gregale/sdk-node/preview/object-storage/runtime';
 import { S3Client, GetObjectCommand } from '@aws-sdk/client-s3';
 
 const shutdown = new AbortController();
@@ -229,7 +229,7 @@ Stopping does not join arbitrary callbacks or destroy previously acquired client
 
 ### Async Python clients and streaming
 
-Use `faas_sdk.async_object_storage_runtime.AsyncObjectStorageBinding` with
+Use `faas_sdk.preview.async_object_storage_runtime.AsyncObjectStorageBinding` with
 `faas_sdk.async_secret_reload_runtime.AsyncSecretReloadCoordinator` for
 loop-owned S3 libraries. The existing synchronous APIs remain unchanged. Core
 imports no database or S3 driver. Factories receive the same immutable explicit
@@ -237,7 +237,7 @@ imports no database or S3 driver. Factories receive the same immutable explicit
 `when_required` checksum settings, plus an async cancellation token.
 
 ```python
-from faas_sdk.async_object_storage_runtime import AsyncObjectStorageBinding
+from faas_sdk.preview.async_object_storage_runtime import AsyncObjectStorageBinding
 from faas_sdk.async_secret_reload_runtime import AsyncSecretReloadCoordinator
 
 # App-supplied async callbacks. validate(client, bucket, cancel) must complete a
@@ -338,8 +338,8 @@ the SDK cannot discover every hidden resource alias. Obvious reuse of a still
 tracked client is rejected without closing its outstanding leases.
 
 ```go
-storage, err := faas.NewObjectStorageBinding("GREGALE_S3_ASSETS", createClient,
-    faas.ObjectStorageBindingOptions[*StorageClient]{Retire: retireClient})
+storage, err := preview.NewObjectStorageBinding("GREGALE_S3_ASSETS", createClient,
+    preview.ObjectStorageBindingOptions[*StorageClient]{Retire: retireClient})
 if err != nil { return err }
 // Start the coordinator with storage.SecretConsumer() before serving requests.
 lease, err := storage.Acquire()

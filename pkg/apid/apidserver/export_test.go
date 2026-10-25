@@ -46,6 +46,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/tenantplans"
 	"github.com/onebox-faas/faas/pkg/billing"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gitlabsource"
 	"github.com/onebox-faas/faas/pkg/gregalemanifest"
 	"github.com/onebox-faas/faas/pkg/issuetracker"
@@ -653,8 +654,10 @@ var StoreAsSessionLookup = storeAsSessionLookup
 var StorePlanCache = storePlanCache
 var StripeWebhookHarness = stripeWebhookHarness
 var SummarizeDevSyncHistory = summarizeDevSyncHistory
+var SummarizeRuntimePolicyComponent = summarizeRuntimePolicyComponent
 var SummarizeRuntimePolicySchedulerStatus = summarizeRuntimePolicySchedulerStatus
 var SummarizeRuntimePolicyStatus = summarizeRuntimePolicyStatus
+var SummarizeTrafficRuntime = summarizeTrafficRuntime
 var SuspectedDependency = suspectedDependency
 var SuspectedDependencyFor = suspectedDependencyFor
 var SweepExpiredCacheEntries = sweepExpiredCacheEntries
@@ -907,6 +910,9 @@ func (r *server) Log() **slog.Logger                                 { return &r
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
+func (r *server) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
+	return r.beforeAccountDelete(ctx, acct)
+}
 func (r *server) ManagedPostgresBindings() **managedpostgres.BindingService {
 	return &r.managedPostgresBindings
 }
@@ -1438,6 +1444,9 @@ func (r testEnv) Do(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]s
 func (r testEnv) DoAdmin(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
 	return r.doAdmin(p0, p1, p2, p3, p4)
 }
+func (r testEnv) DoOperator(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string) *httptest.ResponseRecorder {
+	return r.doOperator(p0, p1, p2, p3, p4)
+}
 func (r testEnv) DoAs(p0 *testing.T, p1 string, p2 string, p3 any, p4 map[string]string, p5 string) *httptest.ResponseRecorder {
 	return r.doAs(p0, p1, p2, p3, p4, p5)
 }
@@ -1595,6 +1604,36 @@ func (s *server) LiveRoutesForTest(ctx context.Context, accountID, appID string)
 	return s.liveRoutes(ctx, nil, accountID, appID)
 }
 
+// RealtimePreviewEveryone shows realtime preview features to every account
+// (ADR-20261019102657).
+func RealtimePreviewEveryone() managedrealtime.PreviewRollout {
+	r, err := managedrealtime.ParsePreviewRollout("*")
+	if err != nil {
+		panic(err)
+	}
+	return r
+}
+
+// AppWebhookEventsForTest is the app webhook vocabulary accountID may choose.
+func (s *server) AppWebhookEventsForTest(accountID string) []string {
+	return s.appWebhookEvents(accountID)
+}
+
+// ConfigureRealtimePreviewForTest reads FAAS_REALTIME_PREVIEW_ACCOUNTS from
+// getenv, seeding the realtime_preview platform flag.
+func (s *server) ConfigureRealtimePreviewForTest(getenv func(string) string) error {
+	return s.configureRealtimePreview(getenv)
+}
+
+// RealtimePreviewGateForTest is the gate the realtime handlers consult.
+func (s *server) RealtimePreviewGateForTest() managedrealtime.PreviewGate {
+	return s.realtime.Preview
+}
+
+// RealtimePreviewPublishedForTest reports whether the served spec lists the
+// realtime preview.
+func (s *server) RealtimePreviewPublishedForTest() bool { return s.realtimePreviewPublished() }
+
 // GatewayControlURL exposes gatewayControlURL (ADR-20261022004500).
 func (s *server) GatewayControlURL(ctx context.Context) string { return s.gatewayControlURL(ctx) }
 
@@ -1640,4 +1679,37 @@ func VerifyCandidateObjectStorageCredentialsForTest(ctx context.Context, intent 
 func VerifyCandidateObjectStorageCredentialForTest(ctx context.Context, c state.EnvironmentQualificationObjectStorageCheck, identities []*age.X25519Identity,
 	hmacKey []byte, canary func(context.Context, string, string, func(string) string) api.ObjectStorageBindingProbeReport) error {
 	return verifyCandidateObjectStorageCredentialWith(ctx, identities, hmacKey, canary, c)
+}
+
+// SetDatabaseSwitchDrain gives a test server's database switch worker drain
+// evidence the in-memory store lacks (ADR-20261023181931).
+func (e sourceRefTestEnv) SetDatabaseSwitchDrain(drain state.DatabaseSwitchDrainStore) {
+	e.srv.databaseSwitchDrainOverride = drain
+	e.srv.rollbackArtifactVerifier = stubRollbackArtifactVerifier{}
+}
+
+// DatabaseSwitchWorkerConfigured reports whether the server can run database
+// switches.
+func (e sourceRefTestEnv) DatabaseSwitchWorkerConfigured() bool {
+	return e.srv.databaseSwitchWorker() != nil
+}
+
+// PrepareGitOpsWorkloadCandidatesForTest runs the GitOps backend's candidate
+// preparation against s's runtime configuration (ADR 20261022140000).
+func (s *server) PrepareGitOpsWorkloadCandidatesForTest(ctx context.Context, intent state.EnvironmentGitOpsIntentStore,
+	lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) (bool, error) {
+	b := &environmentGitOpsBackend{server: s, intent: intent}
+	return b.prepareWorkloadCandidates(ctx, lease, plan)
+}
+
+// DashboardWidgetAppForTest resolves a dashboard widget's app as the
+// dashboards host does (ADR-20261022173833).
+func (s *server) DashboardWidgetAppForTest(ctx context.Context, acct state.Account, slug string) (state.App, bool) {
+	return dashboardsHost{s}.AppForAccount(ctx, acct, slug)
+}
+
+// IncidentAppVisibleForTest reports whether the incidents host serves an
+// app's incidents (ADR-20261022193512).
+func (s *server) IncidentAppVisibleForTest(ctx context.Context, acct state.Account, app state.App) bool {
+	return incidentsHost{s}.AppVisible(ctx, acct, app)
 }

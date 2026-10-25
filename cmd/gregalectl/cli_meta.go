@@ -752,13 +752,27 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchAudit,
 		DocSlug: "audit",
-		Short:   "Correlate durable operator intents and live events by trace ID",
+		Short:   "Correlate operator intents by trace ID; audit app layers before a base change",
 		Subcommands: []cliSub{{
 			Name:  "trace",
 			Short: "Look up one exact OTel trace ID through the operator API",
 			Flags: []cliFlag{
 				{Name: "trace-id", Short: "OTel 32-char lowercase hex trace id", Req: true},
 				{Name: "limit", Short: "maximum intents and events to return (1..500)"},
+			},
+		}, {
+			// ADR 20261023220532 rollout step 4: read-only; reads PostgreSQL
+			// and the layer store directly from a control-plane node.
+			Name:  auditBaseLibrariesSub,
+			Short: "List live base-minimal app layers that need a library the Debian 13 base drops",
+			Flags: []cliFlag{
+				{Name: "pg-dsn", Short: "PostgreSQL DSN (default: $FAAS_PG_DSN or $DATABASE_URL)"},
+				{Name: "db-env", Short: "systemd env file containing DATABASE_URL"},
+				{Name: "app", Short: "audit only this app slug"},
+				{Name: "include-superseded", Short: "also audit superseded deployments (rollback targets)"},
+				{Name: "work-dir", Short: "scratch directory for layer copies and dumps"},
+				{Name: "debugfs", Short: "debugfs binary (e2fsprogs)"},
+				{Name: "libraries", Short: "comma-separated sonames the new base drops"},
 			},
 		}},
 	},

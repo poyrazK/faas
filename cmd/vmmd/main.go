@@ -79,24 +79,16 @@ func configuredRuntimeBaseGenerations(envLookup func(string) string) (map[string
 	if envLookup == nil {
 		envLookup = os.Getenv
 	}
-	rows := []struct {
-		runtime string
-	}{
-		{""},
-		{imaged.RuntimeNode22},
-		{imaged.RuntimePython312},
-		{imaged.RuntimeGo124},
-		{imaged.RuntimeGo124Alpine},
-		{imaged.RuntimeNode24},
-		{imaged.RuntimePython313},
-	}
-	out := make(map[string]string, len(rows))
-	for _, row := range rows {
-		ref, err := imaged.ResolveDeployBaseRef(row.runtime, envLookup)
+	// The rollout pre-stage publishes, and base-adoption-check gates on,
+	// this same list (ADR-20261024191249).
+	gated := imaged.GatedRuntimeBases()
+	out := make(map[string]string, len(gated))
+	for _, base := range gated {
+		ref, err := imaged.ResolveDeployBaseRef(base, envLookup)
 		if err != nil {
-			return nil, fmt.Errorf("vmmd: resolve runtime base generation %q: %w", row.runtime, err)
+			return nil, fmt.Errorf("vmmd: resolve runtime base generation %q: %w", base, err)
 		}
-		out[storagekey.BaseForArch(row.runtime, runtime.GOARCH)] = ref
+		out[storagekey.BaseForArch(base, runtime.GOARCH)] = ref
 	}
 	return out, nil
 }
@@ -404,7 +396,7 @@ func defaultDeps() runDeps {
 		openDB: func(ctx context.Context, dsn string) (*pgxpool.Pool, error) {
 			return db.OpenWithAppName(ctx, dsn, "faas-vmmd")
 		},
-		openStore:           state.NewPgStore,
+		openStore:           func(pool *pgxpool.Pool) *state.PgStore { return state.NewPgStore(pool) },
 		detectOverlayIP:     nil, // Mega-PR-B Commit 3: detectOverlayIP is bound inline at the only call site (post-LoadConfig) so it can read cfg.ComputeNode.OverlayCIDR. Legacy first-line behavior preserved when the detector finds tailscale but no PreferCIDR match.
 		loadHostKey:         secretbox.LoadHostKey,
 		loadHostKeys:        secretbox.LoadFleetAndHostKeys,
@@ -937,6 +929,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithRestorePrefetch(!cfg.DisableRestorePrefetch).
 		WithFreePageReporting(freePageReporting).
 		WithPmemBase(pmemBaseDir).
+		WithRestoreReseedThread(cfg.RestoreReseedThread).
 		// Issue #309 / tier-2 DX: install the per-VMM
 		// slow-subscriber callback that every ring
 		// registerRing creates will fire on a full
@@ -967,6 +960,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	// ADR-746: count error and warn guest log lines per app for log alerts.
 	jailer.WithLogCommitCallback(newAppLogLineCounter(ops.Registry()).Observe)
+	// ADR-20261018083536 slice B: project warn and error lines into the
+	// customer log ledger, before any ring is registered.
+	closeRuntimeLogEvents, err := startRuntimeLogEvents(ctx, log, os.Getenv, ops.Registry(), jailer)
+	if err != nil {
+		return fmt.Errorf("vmmd: %w", err)
+	}
+	defer closeRuntimeLogEvents()
 	// Activity tracker (PR-B, issue #462): per-instance in-flight
 	// ForwardHTTP request counter. It is shared by the gRPC server's
 	// stats surface and the liveness loop so load-correlated probe misses
@@ -1018,6 +1018,17 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// Wake RPC contexts are canceled when the request returns and
 	// must not own either background activity.
 	mgr.WithLifecycleContext(ctx)
+	egressCircuitEnabled, err := api.EgressCircuitBreakerEnabled(os.Getenv("FAAS_EGRESS_CIRCUIT_BREAKER"))
+	if err != nil {
+		return err
+	}
+	mgr.WithEgressCircuitBreaker(egressCircuitEnabled)
+	if egressCircuitEnabled {
+		if store == nil {
+			return fmt.Errorf("vmmd: FAAS_EGRESS_CIRCUIT_BREAKER requires a compute-node database configuration for durable policy")
+		}
+		mgr.WithEgressCircuitSource(store.GetAppEgressCircuits)
+	}
 	if store != nil {
 		if rehearsalContainmentEnabled(os.Getenv) {
 			policies, ok := store.(state.ScenarioNetworkPolicyStore)
@@ -1554,6 +1565,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		log.Warn("vmmd: workload identity receiver unavailable", "err", identityRecvErr, "goos", runtime.GOOS)
 	} else {
 		identityRecv.UseMetrics(newWorkloadIdentityMetrics(ops.Registry()))
+		if store != nil {
+			identityRecv.UseDeployments(store)
+		}
 		defer identityRecv.Close()
 	}
 	// ADR-989: apps reach managed outbound integrations through a loopback
@@ -1768,9 +1782,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithQualificationNodeID(qualificationNodeID).
 		WithExecutionIdentitySigner(identitySigner).
 		WithDivergedInstances(divergedInstances)
+	if err := vmmdgrpc.FenceStaleStreamBridges(ctx); err != nil {
+		return fmt.Errorf("vmmd: fence previous HTTP forwarding owner: %w", err)
+	}
 	if cfg.AdoptRunningVMs {
 		impl.WithAdoptionReport(adoptionReport)
 	}
+	// Bridge units a crashed predecessor left (connection-survival ADR 1c):
+	// nothing routes to them, and this vmmd does not adopt them.
+	impl.SweepInstanceBridgeUnits(ctx)
 	// issue #517 / PR-C / ADR-064 — wire the wake-timeline fan-out
 	// on the gRPC server. vmmd is the source for the corroborating wake.boot_observed event at the
 	// gRPC server boundary and the canonical emit site for wake.readiness_200

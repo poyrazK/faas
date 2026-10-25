@@ -196,7 +196,7 @@ http.createServer((req, res) => {
   if (req.url === '/healthz') { res.writeHead(200); res.end('ready'); return; }
   res.writeHead(200);
   res.end('restored=' + (hooks > 0 ? '1' : '0') + ' hooks=' + hooks);
-}).listen(8080, '0.0.0.0');`
+}).listen(Number(process.env.PORT || 8080), '0.0.0.0');`
 	return buildTarGz(t, map[string]string{
 		"package.json":     packageJSON,
 		"index.js":         indexJS,

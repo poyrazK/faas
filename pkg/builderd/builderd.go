@@ -967,6 +967,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Function:        app.Type == state.AppTypeFunction,
 		DevWatchCommand: watch.Command,
 		DevWatchHost:    watch.Host,
+		AccountID:       app.AccountID,
 	}
 	recipe.BuildSecretScope = buildSecretScope(app.AccountID, app.ID, dep.Scope, buildSecrets)
 	reuseScope, reuseOptedIn := gitOpsReuseScope(app, dep)
@@ -1140,6 +1141,10 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	timeout := time.Duration(b.cfg.BuildTimeoutSeconds) * time.Second
 	vmCtx, cancel := context.WithTimeout(ctx, timeout)
 
+	// Phase timings: builds took minutes on production-us while the guest's
+	// own build steps took seconds, and nothing recorded where the rest went
+	// (Hunt 14 H14-11).
+	phases := buildPhaseClock{start: time.Now()}
 	var handle BuildHandle
 	if warmStarted && warmResult == WarmRestoreHit {
 		handle, err = warmVM.RestoreWarmBuilder(vmCtx, vmReq, warmSnapshot)
@@ -1206,6 +1211,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		cancelVM()
 	}
 	defer b.unregisterActiveVM(build.ID)
+	phases.vmReady = time.Now()
 	if handle.DependencyCacheKey != "" {
 		if handle.DependencyCacheRestored {
 			b.emitBuildLog(ctx, build.ID, "dependency cache restored — reusing matching install layers\n")
@@ -1267,6 +1273,8 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		b.markFailed(ctx, build, fc, "vm wait: "+err.Error(), buildStart)
 		return BuildResult{}, err
 	}
+	phases.vmDone = time.Now()
+	b.emitBuildLog(ctx, build.ID, phases.vmLine())
 	if out.WarmSnapshotError != "" {
 		b.log.Warn("builderd: warm snapshot unavailable; build artifact preserved", "build", build.ID, "err", out.WarmSnapshotError)
 		b.emitBuildLog(ctx, build.ID, "warm builder cache unavailable — deployment completed from the built artifact\n")
@@ -1406,10 +1414,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		}
 		buildResult.IssueSourceMaps, buildResult.IssueSourceMapsImageSHA256 = &set.Request, digest
 	}
+	phases.published = time.Now()
 	result, err := b.completeBuild(ctx, build, dep, app, acct, srcHash, ver, buildResult, buildStart)
 	if err != nil || result.BuildID == "" {
 		return result, err
 	}
+	phases.completed = time.Now()
+	b.log.Info("builderd: build phases", append([]any{"build", build.ID, "deployment", build.DeploymentID}, phases.attrs()...)...)
 	// Only cache a successfully committed build produced by the same builder
 	// environment observed before VM launch. A concurrent base restage leaves
 	// the successful deployment intact but deliberately skips cache publication.

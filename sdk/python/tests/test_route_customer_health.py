@@ -3,8 +3,8 @@ from uuid import UUID
 import httpx
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.apps import get_route_health_report
-from faas_sdk.models import GetRouteHealthReportCustomerGroupBy, RouteHealthReport
+from faas_sdk.preview.api.apps import get_route_health_report
+from faas_sdk.preview.models import GetRouteHealthReportCustomerGroupBy, RouteHealthReport
 
 
 def test_customer_health_options_and_advisory_roundtrip():

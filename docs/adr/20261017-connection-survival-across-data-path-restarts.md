@@ -643,8 +643,81 @@ its own.
     - Still owed: the fsn-4 metal run, then the switch turned on per node.
   - 1b: one `instance-bridge` with one data socket. vmmd's four handlers
     become its clients, and the per-connection spawn goes away.
+    **Built** behind `FAAS_INSTANCE_BRIDGE_SESSIONS=1` (vmmd, default off):
+    `pkg/instancebridge`, `pkg/vmmdgrpc/bridge_session.go`.
+    - The instance bridge is today's persistent stream bridge
+      (`cmd/vmmd-stream-bridge`); it keeps that binary name until P1c
+      installs it as `instance-bridge` with its unit, so release N and N−1
+      run the same bridge path. Its socket now also serves sessions: a
+      connection whose first bytes are the hello is a session, anything
+      else (H2C, HTTP/1) is served as before.
+    - A session is one unix stream connection. The client sends
+      `FAAS-IBRIDGE/1 <raw|tcp|udp> <port>\n`, then the request bytes
+      (raw, tcp) or udpwire frames (udp), and half-closes at the end of
+      the request. The bridge dials the guest and answers `OK` or
+      `ERR <message>`, then sends framed output (`D` + length + bytes)
+      and one end frame (`E` + code + message). The end frame carries
+      what the per-connection process's exit code and stderr carried, so
+      a guest that drops a request body is still a failure, not a clean,
+      truncated response.
+    - vmmd's raw, TCP and UDP handlers open a session on the instance's
+      live bridge whatever port started it; with none, the bridge starts
+      with the parameters the instance's HTTP prewarm recorded, so a
+      later HTTP request does not replace it. A session holds a lease, so
+      the idle reaper keeps the bridge while it is open. The session
+      context ends a session as it killed the process (H9-129).
+    - A session lives as long as its bridge, as an HTTP stream through it
+      does: the bridge's crash, or vmmd replacing it (another port or
+      protocol for the instance, its teardown), ends the session, where a
+      per-connection process lived on. The idle reaper never stops a
+      bridge a session holds. 1c's unit gives the bridge the instance's
+      lifetime.
+    - The process path stays the default and the fallback: with the flag
+      off, and whenever a bridge answers the hello with anything but the
+      session protocol.
+    - Activity counting, quiet pause, the frozen gate and session teardown
+      stay in vmmd until 1d. The bridge still accepts only vmmd (its
+      socket is in vmmd's directory); the `faas-forward` peer check comes
+      with forwardd (P2).
   - 1c: transient unit, journal kind, adoption, and lifetime equal to the
     instance's.
+    **Unit and lifetime built** behind `FAAS_INSTANCE_BRIDGE_UNIT=1` (vmmd,
+    default off): `pkg/sdunit`, `pkg/vmmdgrpc/bridge_unit.go`.
+    - The persistent bridge of a namespace instance with a bridge uid (1a)
+      is `faas-ibridge-<instance>-<gen>.service`, created with
+      `StartTransientUnit` (`Type=exec`) and the unit properties above.
+      `<gen>` is random per run, not the incarnation, so a run whose stop
+      is still settling never blocks the next one. vmmd then proves the run:
+      it holds a pidfd on the main pid and checks that pid's cgroup is the
+      unit's and its netns is the binding vmmd named. A run it cannot prove
+      is stopped.
+    - The unit does not set `User=`/`Group=`: systemd resolves them through
+      the user database and refuses a uid with no account (`217/USER`), and
+      bridge uids must have none (`checkBridgeUIDRange`). The unit starts
+      the bridge as root with `CapabilityBoundingSet=CAP_SETUID CAP_SETGID`
+      and `NoNewPrivileges`; the bridge drops to its uid (supplementary
+      groups, then every gid, then every uid) before it reads anything, and
+      its existing check then refuses to run unless every uid and gid is the
+      bridge uid and it holds no capability (`pkg/bridgeproc`,
+      `FAAS_BRIDGE_DROP_TO_UID`).
+    - Lifetime: the wake's prewarm starts the unit, the idle reaper leaves
+      it, and park, destroy, stop, a failed wake and a freeze stop it and
+      wait until systemd has unloaded it before the RPC answers (invariant
+      4). A thaw starts a new run.
+    - Until adoption lands, vmmd stops its bridge units at shutdown and,
+      before serving, stops every `faas-ibridge-*` unit it finds (a crash
+      leaves them; nothing routes to them). `make leakcheck` reports any
+      left behind.
+    - `faas-tenant-ibridge.slice` (ansible `systemd_slices`) sits inside the
+      tenant fence. Admission does not count it yet (ADR-909 amendment,
+      below).
+    - Not yet: the bridge keeps the `vmmd-stream-bridge` binary and path
+      until P5 launches from the release directory, and a failed bridge start
+      does not fail the wake (`bridge_start_failed`): the first request
+      still starts the bridge, as before.
+    - Still owed in 1c: the bridge group of the v7 adoption record and
+      adoption across a vmmd restart, then the slice's measured memory in
+      node stats for admission.
   - 1d: gate and counters move to the bridge, with ADR-1151 property tests.
 
   After P1, bridges survive vmmd, but streams are still cut, because the

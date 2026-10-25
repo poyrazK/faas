@@ -95,6 +95,34 @@ func healthcheckGRPCFromDep(dep state.Deployment) (bool, string) {
 	return true, hc.GRPC.Service
 }
 
+// healthcheckGRPCForApp adds the gRPC-app default to healthcheckGRPCFromDep:
+// an app_protocol=grpc app whose deployment declares no startup probe gets
+// standard gRPC health readiness. A gRPC server cannot answer the HTTP
+// /healthz default, so `deploy --app-protocol grpc` without
+// --healthcheck-grpc ended in app_startup_timeout after a full build, and
+// every later plain redeploy would again (Hunt 14 H14-55).
+func healthcheckGRPCForApp(dep state.Deployment, appProtocol string) (bool, string) {
+	if grpc, service := healthcheckGRPCFromDep(dep); grpc {
+		return grpc, service
+	}
+	if appProtocol != api.AppProtocolGRPC || deploymentDeclaresStartupProbe(dep) {
+		return false, ""
+	}
+	return true, ""
+}
+
+// deploymentDeclaresStartupProbe reports an explicit primary-app probe: an
+// environment-scoped healthcheck or healthz, or a deploy-time override.
+// Inferred framework paths are defaults, not declarations.
+func deploymentDeclaresStartupProbe(dep state.Deployment) bool {
+	for _, field := range []string{"healthcheck", "healthz"} {
+		if _, declared := scopedDeploymentRuntimeField(dep, field); declared {
+			return true
+		}
+	}
+	return len(dep.OverrideHealthcheck) > 0
+}
+
 func imageHealthcheckRequiredFromDep(dep state.Deployment) bool {
 	if dep.Kind == state.DeploymentKindImage {
 		return frameworkprofile.RequiresImageHealthcheck(dep.InferredProfile)

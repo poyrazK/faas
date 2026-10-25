@@ -59,7 +59,7 @@ func cmdDataAPIStorage(args []string) int {
 		return cmdDataAPIStorageDisable(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown data-api storage subcommand %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "data-api storage", nestedCliCommand("data-api", "storage"), args[0])
 	}
 }
 

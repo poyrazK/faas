@@ -9,18 +9,18 @@ first, then run the worker in the application's background process.
 workerCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 defer stop()
 
-err := faas.RunEventOutboxWorker(workerCtx, db, client, accountID, appID,
-    faas.EventOutboxWorkerOptions{
+err := preview.RunEventOutboxWorker(workerCtx, db, client, accountID, appID,
+    preview.EventOutboxWorkerOptions{
         Concurrency: 4,
         ShutdownGrace: 30 * time.Second,
-        Recovery: faas.EventOutboxRecoveryOptions{
-            RetryPolicy: &faas.EventOutboxRetryPolicy{
+        Recovery: preview.EventOutboxRecoveryOptions{
+            RetryPolicy: &preview.EventOutboxRetryPolicy{
                 InitialBackoff: time.Second,
                 MaxBackoff: 5 * time.Minute,
                 MaxAttempts: 20,
             },
         },
-    }, func(callbackCtx context.Context, event faas.EventOutboxWorkerEvent) {
+    }, func(callbackCtx context.Context, event preview.EventOutboxWorkerEvent) {
         // Record locally or hand off promptly, honoring callbackCtx.Done().
         // Callbacks can run concurrently; shared state must be synchronized.
     })

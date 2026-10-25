@@ -4,8 +4,8 @@ from pathlib import Path
 import httpx
 
 from faas_sdk import FaaSClient
-from faas_sdk.api.apps import get_app_operational_summary
-from faas_sdk.models import AppOperationalSummary
+from faas_sdk.preview.api.apps import get_app_operational_summary
+from faas_sdk.preview.models import AppOperationalSummary
 
 
 def test_summary_preserves_unknown_health_blocked_recovery_and_unavailable_sources():

@@ -229,12 +229,7 @@ func (m *MemStore) admitEventWorkflowLocked(work *PublishedEventWork, recipient 
 		return "", false, ErrWorkflowEventTargetUnavailable
 	}
 	run.AppID = app.ID
-	active := 0
-	for _, candidate := range m.workflowRuns {
-		if candidate.AppID == app.ID && (candidate.Status == WorkflowRunStatusPending || candidate.Status == WorkflowRunStatusRunning || candidate.Status == WorkflowRunStatusAwaitingEvent) {
-			active++
-		}
-	}
+	active := m.workflowAdmissionLocked(app.ID, account.Plan.WorkflowMaxParkedRuns())
 	if active >= account.Plan.WorkflowMaxConcurrentRuns() {
 		return "", false, ErrWorkflowRunQuotaExceeded
 	}

@@ -96,7 +96,7 @@ func TestNodeOutboundBudgetShedsLargestBacklog(t *testing.T) {
 	const kib = 1 << 10
 	m := NewManager(Config{OutboundQueueBytes: 512 * kib, OutboundNodeBytes: 1 << 20}, nil)
 	defer func() { _ = m.Close() }()
-	if err := m.RegisterEndpoint(Endpoint{ID: "e", MaxMessageBytes: 1 << 20}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "e", MaxMessageBytes: 1 << 20}); err != nil {
 		t.Fatal(err)
 	}
 	big, bigClient := outboundTestConnection(t, m, "e")
@@ -142,7 +142,7 @@ func TestNodeOutboundBudgetRefusesFramesItCannotShed(t *testing.T) {
 	const kib = 1 << 10
 	m := NewManager(Config{OutboundQueueBytes: 1 << 20, OutboundNodeBytes: 256 * kib}, nil)
 	defer m.cancel()
-	if err := m.RegisterEndpoint(Endpoint{ID: "e", MaxMessageBytes: 1 << 20}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "e", MaxMessageBytes: 1 << 20}); err != nil {
 		t.Fatal(err)
 	}
 	// Every backlog stays below 1/16 of the per-connection limit (64 KiB), so
@@ -177,7 +177,7 @@ func TestNodeOutboundBudgetRefusesFramesItCannotShed(t *testing.T) {
 func TestNodeOutboundBudgetBoundsCoalescedSignals(t *testing.T) {
 	m := NewManager(Config{OutboundNodeBytes: 100}, nil)
 	defer m.cancel()
-	if err := m.RegisterEndpoint(Endpoint{ID: "e", MaxMessageBytes: 1 << 20}); err != nil {
+	if err := m.RegisterEndpoint(Endpoint{Preview: true, ID: "e", MaxMessageBytes: 1 << 20}); err != nil {
 		t.Fatal(err)
 	}
 	c := addSyntheticConnection(t, m, "e")

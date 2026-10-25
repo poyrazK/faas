@@ -90,6 +90,7 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			data.Review = dashboardEdgeRuleReview(rules, data.Rules, hits)
 		}
 		data.Events = s.loadDashboardEdgeRuleEvents(r, log, acct, app, rules)
+		data.WAFReview = s.loadDashboardEdgeWAFReview(r, log, acct, app, rules)
 		for _, rule := range rules {
 			if isSecurityHeadersRule(rule) && rule.Enabled {
 				data.SecurityHeadersEnabled = true
@@ -100,6 +101,9 @@ func (s *server) renderAppEdgeRules(w http.ResponseWriter, r *http.Request, log 
 			traceContext := *traceInput
 			traceContext.AppMaintenanceLoaded = true
 			traceContext.AppMaintenanceMode = app.MaintenanceMode
+			traceContext.EdgeAnswersLoaded = true
+			traceContext.AppHealthPath = edgeruletrace.EdgeAnswerHealthPath(app.Manifest.HealthPath, app.Manifest.Healthz)
+			traceContext.AppHealthPathWakes = app.Manifest.HealthPathWakes
 			effectiveLimits := appEffectiveLimits(app, acct.Plan)
 			traceContext.AppRequestBudgetLoaded = effectiveLimits.RequestBudgetMS > 0 && effectiveLimits.RequestBudgetMaxMS > 0
 			traceContext.RequestBudgetMS = effectiveLimits.RequestBudgetMS
@@ -352,7 +356,7 @@ func edgeRuleActionSummary(rule state.EdgeRule) string {
 func dashboardEdgeRulesActionFlash(r *http.Request) string {
 	switch r.URL.Query().Get("action") {
 	case "created", "updated", "deleted", "security_headers_enabled", "mode_enforce", "mode_log", "recipe_log", "recipe_enforce",
-		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed", "attack_mode_on", "attack_mode_off":
+		"recipe_log_alert", "recipe_enforce_alert", "recipe_alert_failed", "attack_mode_on", "attack_mode_off", "waf_excluded":
 		return r.URL.Query().Get("action")
 	case "error":
 		return "error"

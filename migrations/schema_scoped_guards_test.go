@@ -1,7 +1,7 @@
 //go:build !no_pg
 
-// Guard migrations that create a type or constraint conditionally must look
-// the object up in the schema they are migrating, not database-wide.
+// Guard migrations that create a type, constraint or function conditionally
+// must look the object up in the schema they are migrating, not database-wide.
 //
 // pkg/db/pgtest isolates every test in its own schema on one shared
 // database and `go test -p 4` migrates several of them at once. A guard
@@ -52,6 +52,10 @@ func TestMigrations_GuardsAreSchemaScoped(t *testing.T) {
 		fmt.Sprintf(`CREATE TABLE %s.managed_postgres_databases (
 			x int CONSTRAINT managed_postgres_restore_source_database_fk CHECK (x > 0),
 			y int CONSTRAINT managed_postgres_restore_fields_ck CHECK (y > 0))`, decoy),
+		// The route insight migration keeps this helper after Up; a sibling
+		// schema's copy must not stop the target from creating its own.
+		fmt.Sprintf(`CREATE FUNCTION %s.route_insight_alert_metric_base(kind text) RETURNS text
+			LANGUAGE sql IMMUTABLE AS $$ SELECT 'CHECK (false)' $$`, decoy),
 	}
 	for _, s := range stmts {
 		if _, err := pool.Exec(ctx, s); err != nil {
@@ -76,6 +80,16 @@ func TestMigrations_GuardsAreSchemaScoped(t *testing.T) {
 	}
 	if typeSchema != here {
 		t.Fatalf("compute_node_lifecycle resolved in schema %q, want %q", typeSchema, here)
+	}
+
+	var helperSchema string
+	if err := pool.QueryRow(ctx,
+		`SELECT n.nspname FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
+		  WHERE p.oid = to_regprocedure('route_insight_alert_metric_base(text)')`).Scan(&helperSchema); err != nil {
+		t.Fatalf("route_insight_alert_metric_base does not resolve after migration: %v", err)
+	}
+	if helperSchema != here {
+		t.Fatalf("route_insight_alert_metric_base resolved in schema %q, want %q", helperSchema, here)
 	}
 
 	// Every guarded constraint must exist on THIS schema's table.

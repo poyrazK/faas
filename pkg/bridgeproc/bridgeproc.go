@@ -24,6 +24,11 @@ const (
 	// ParentPIDEnv names the vmmd process that started the bridge. When set,
 	// the bridge exits with that process.
 	ParentPIDEnv = "FAAS_BRIDGE_PARENT_PID"
+	// DropToUIDEnv names the uid and gid a bridge started as root drops to
+	// before anything else. A bridge unit needs it (slice 1c): systemd's
+	// User= refuses a uid with no account, and bridge uids have none. It
+	// must name the same uid as ExpectUIDEnv, which then verifies the drop.
+	DropToUIDEnv = "FAAS_BRIDGE_DROP_TO_UID"
 )
 
 // Harden applies the bridge startup checks. A bridge exits when it fails.

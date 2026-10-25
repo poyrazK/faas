@@ -51,7 +51,7 @@ Common to all five:
 |---|---|---|---|
 | C1 | Turning the flag off makes the feature inert at the edge and refuses configuring it | the `*Flag` tests per feature, `TestEdgeFeatureReleaseGate` | met |
 | C2 | A rule the edge does not enforce says so in the API, dashboard, CLI and trace | `unreleased_features` (ADR-20261023113721 amendment 1) | met |
-| C3 | Alerts and runbooks cover the feature's failure modes | runbooks under `docs/runbooks/` | open |
+| C3 | Alerts and runbooks cover the feature's failure modes | the `faas_edge_security` alerts and their runbooks under `docs/runbooks/` (amendment 1) | met |
 | C4 | Each release stage held its targets for 14 days | `docs/STATUS.md` entries | open |
 
 WAF warn and block (GA; these retire amendment 11's known limits):
@@ -61,7 +61,7 @@ WAF warn and block (GA; these retire amendment 11's known limits):
 | W1 | In-path check latency on the reference compute node (n2-standard-4), 100-500 req/s | p95 at most 2 ms | `TestEdgeWAFInlineLoad_E2E` with `FAAS_E2E_WAF_LOAD_GATE=1` | met (1.49-2.00 ms, amendment 10); re-measure with W2 |
 | W2 | Checks skipped under load, 100-500 req/s | at most 0.1% | same run; `gateway_waf_inline_skips_total{reason="busy"}`; `TestInlineSlotModel` | built (amendment 12 models 0.003-0.013%); needs the production run |
 | W3 | Detection on the CRS regression corpus | no regression against the baseline | `TestCRSRegressionCorpus` | met |
-| W4 | False positives | none beyond the documented ones on the benign corpus; none unexplained in 14 days of production traffic | `TestBenignCorpus`; detection events (amendment 5) | corpus met; traffic review open |
+| W4 | False positives | none beyond the documented ones on the benign corpus; none unexplained in 14 days of production traffic | `TestBenignCorpus`; detection events (amendment 5); the WAF review (ADR-831 amendment 13) | corpus met; review tooling built; traffic review open |
 | W5 | Fails open, with a node kill switch | a skipped or failed check passes the request | `TestCheckInlineFailsOpen` | met |
 
 Browser challenge (GA):
@@ -112,3 +112,50 @@ AI crawler controls (preview):
   accounts and design partners.
 - WAF `observe` stays generally available (ADR-831 amendment 9) and outside
   this gate; paranoia level 2 stays preview.
+
+## Amendment 1 (2026-10-24): alerts, runbooks and the false-positive review
+
+Criterion C3 asked for alerts and runbooks covering each feature's failure
+modes; W4 needed a way to review production detections. Both are built.
+
+**Metrics added** (gatewayd-internal):
+
+- `gateway_edge_penalty_share_total{op,outcome}` (op flush, sync, prune;
+  outcome ok, error), `gateway_edge_penalty_share_dropped_total`, and
+  `gateway_edge_penalty_share_seconds{stage}`: `queued` (made until written)
+  and `propagated` (written until read by this gateway, on the database
+  clock, counting only boxes read for the first time after the start-up
+  load). Their sum is the time a box takes to hold everywhere, so P2's
+  production timing reads from it.
+- `gateway_edge_attack_mode_total{app,outcome}` (issued, passed, bypassed,
+  rejected): attack mode's decisions, a subset of
+  `gateway_edge_challenge_total`, for A3's reviews.
+
+**Alerts** (`faas_edge_security` group in `faas.rules.yml`, family
+`edge_security`, all internal; none pages, because every feature fails open
+or goes inert):
+
+| Alert | Fires when | Severity | Runbook |
+|---|---|---|---|
+| FaasEdgeWAFChecksSkipped | busy skips over 0.1% of a gateway's checks for 15m (W2) | warn | FaasEdgeWAFInline |
+| FaasEdgeWAFCheckSlow | check p95 over 2 ms for 15m (W1) | warn | FaasEdgeWAFInline |
+| FaasEdgeWAFCheckErrors | checks erroring for 10m | warn | FaasEdgeWAFInline |
+| FaasEdgeChallengeSolveRateLow | fleet solved/issued under 0.5 for 30m | warn | FaasEdgeChallenge |
+| FaasEdgeChallengeSolutionsRefused | a gateway refuses over half its solutions for 15m | warn | FaasEdgeChallenge |
+| FaasEdgePenaltyShareFailing | flush, sync or prune erroring for 10m | warn | FaasEdgePenaltyShare |
+| FaasEdgePenaltyShareDropped | boxes dropped at the queue bound | warn | FaasEdgePenaltyShare |
+| FaasEdgePenaltyShareSlow | propagation p95 over 1 s for 15m (P2) | warn | FaasEdgePenaltyShare |
+| FaasEdgeCrawlerRangesStale | every refresh of a crawler failed for 36h | warn | FaasEdgeCrawlerRangesStale |
+| FaasEdgeAttackModeActive | an app in attack mode for 15m (A3 review) | info | FaasEdgeAttackMode |
+| FaasEdgeAttackModeRefusingClients | attack mode refuses over half an app's requests for 15m | warn | FaasEdgeAttackMode |
+
+`pkg/promqlrules/testdata/edge_security.test.yml` fires each and checks the
+cases that must not fire. Each runbook names the flag that withdraws its
+feature.
+
+**The false-positive review** is ADR-831 amendment 13, with the W4
+procedure in `docs/runbooks/edge-waf-false-positive-review.md`.
+
+Criteria now: C3 met. W4's tooling is built; the 14-day traffic review
+remains open, as do W2's production run, H3, H5, P2's production timing and
+the stage reviews (P4, A3, I3, C4).
