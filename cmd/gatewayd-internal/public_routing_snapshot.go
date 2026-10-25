@@ -10,7 +10,12 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-func newPublicRoutingPinner(store state.PublicRoutingSnapshotStore) gateway.PublicRoutingPinner {
+// newPublicRoutingPinner reads dispatch policy in one snapshot. With
+// cachedHostPolicy (FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY off, the default)
+// the request's host came from the route cache, which carries no snapshot
+// source, so only the authoritative path re-verifies host policy here
+// (ADR-570).
+func newPublicRoutingPinner(store state.PublicRoutingSnapshotStore, cachedHostPolicy bool) gateway.PublicRoutingPinner {
 	return func(ctx context.Context, app gateway.App, inputs gateway.PublicRoutingInputs) (gateway.PublicRoutingSnapshot, error) {
 		result := gateway.PublicRoutingSnapshot{AppID: app.ID, AccountID: app.AccountID, Scope: inputs.Scope,
 			ReleaseRequested: inputs.RequestedReleaseID, RevisionID: inputs.RequestedRevisionID,
@@ -22,8 +27,10 @@ func newPublicRoutingPinner(store state.PublicRoutingSnapshotStore) gateway.Publ
 			if err := reader.VerifyPublicRoutingOwner(ctx, app.ID, app.AccountID, app.ProjectID); err != nil {
 				return err
 			}
-			if err := verifyPublicHostPolicy(ctx, reader, app); err != nil {
-				return err
+			if !cachedHostPolicy {
+				if err := verifyPublicHostPolicy(ctx, reader, app); err != nil {
+					return err
+				}
 			}
 			if inputs.HostDeploymentID != "" {
 				result.HostChecked = true

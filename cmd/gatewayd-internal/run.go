@@ -2841,7 +2841,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if routingStore == nil {
 			routingStore = state.NewPgStore(deps.pool)
 		}
-		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(routingStore))
+		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(routingStore, deps.cachedHostPolicy))
 	}
 	if deps.declaredRoutesMatcher != nil && deps.pool != nil {
 		go watchDeclaredRouteInvalidations(ctx, deps.pool, deps.declaredRoutesMatcher, log)

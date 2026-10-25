@@ -57,7 +57,7 @@ func TestPublicDomainRemovalPostgresHTTPPeersFallbackWithoutNotify(t *testing.T)
 		scheduler := domainRemovalScheduler{gateway.NewFakeScheduler("node").WithInstanceID(uuid.NewString())}
 		handler := gateway.NewHandlerWith(gateway.NewPGBackend(router, scheduler, nil), nil, nil)
 		handler.SetWakeGateHook()
-		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil)
+		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store, false)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil)
 		handler.WithForwarding(func(gateway.Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { forwards.Add(1); w.WriteHeader(http.StatusNoContent) })
 		})
@@ -123,7 +123,7 @@ func TestPublicDomainRemovalPostgresHTTPPeersFallbackWithoutNotify(t *testing.T)
 	if err := f.store.DeleteCustomDomainForApp(t.Context(), host, f.app.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store)(old, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(old, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
 		t.Fatal("removed exact claim authorized the old owner's dispatch")
 	}
 	if headers := policies.MatchHeaders(old, host, "/", "GET"); headers == nil || headers.ResponseHeaders[0].Value != "original" {
@@ -167,7 +167,7 @@ func TestPublicDomainPublicationPostgresHTTPPeersShadowAndActivateWithoutNotify(
 		scheduler := domainRemovalScheduler{gateway.NewFakeScheduler("node").WithInstanceID(uuid.NewString())}
 		handler := gateway.NewHandlerWith(gateway.NewPGBackend(router, scheduler, nil), nil, nil)
 		handler.SetWakeGateHook()
-		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil)
+		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store, false)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil)
 		handler.WithForwarding(func(gateway.Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { forwards.Add(1); w.WriteHeader(http.StatusNoContent) })
 		})
@@ -215,7 +215,7 @@ func TestPublicDomainPublicationPostgresHTTPPeersShadowAndActivateWithoutNotify(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store)(old, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "default"}); err == nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(old, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "default"}); err == nil {
 		t.Fatal("pending exact claim authorized the old wildcard dispatch")
 	}
 	if headers := policies.MatchHeaders(old, host, "/", "GET"); headers == nil || headers.ResponseHeaders[0].Value != "prior-owner" {

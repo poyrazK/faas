@@ -93,7 +93,7 @@ func TestPublicAliasReservationPostgresPreventsFallbackAndStaleDispatch(t *testi
 				t.Fatalf("initial alias claim: %+v found=%v err=%v", old, found, err)
 			}
 			inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production", HostDeploymentID: deployment.ID, HostScope: "production"}
-			if snapshot, err := newPublicRoutingPinner(f.store)(t.Context(), old, inputs); err != nil || !snapshot.HostAllowed {
+			if snapshot, err := newPublicRoutingPinner(f.store, false)(t.Context(), old, inputs); err != nil || !snapshot.HostAllowed {
 				t.Fatalf("unchanged alias pin refused: %+v %v", snapshot, err)
 			}
 			before := aliasReservationRevision(t, f.store, label, true)
@@ -101,7 +101,7 @@ func TestPublicAliasReservationPostgresPreventsFallbackAndStaleDispatch(t *testi
 			if got, found, err := backend.LookupHostPolicy(t.Context(), host); err != nil || found || got.ID != "" || got.PublicPolicySource == nil || got.PublicPolicySource.CanSubstitute {
 				t.Fatalf("unavailable alias routed or permitted substitution: %+v found=%v err=%v", got, found, err)
 			}
-			if snapshot, err := newPublicRoutingPinner(f.store)(t.Context(), old, inputs); err == nil || len(snapshot.Weights) != 0 {
+			if snapshot, err := newPublicRoutingPinner(f.store, false)(t.Context(), old, inputs); err == nil || len(snapshot.Weights) != 0 {
 				t.Fatalf("stale alias admitted dispatch: %+v %v", snapshot, err)
 			}
 			if aliasReservationRevision(t, f.store, label, true) != before {

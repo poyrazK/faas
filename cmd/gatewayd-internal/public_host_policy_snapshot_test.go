@@ -82,7 +82,7 @@ func TestPublicHostSnapshotPostgresProductionSettingsFollowCommittedRelease(t *t
 	if err != nil || !found || !fresh.RequireAuthn || fresh.PublicPolicySource.Revision == before.PublicPolicySource.Revision {
 		t.Fatalf("new production graph/settings missing: authn=%v found=%v err=%v", fresh.RequireAuthn, found, err)
 	}
-	if _, err := newPublicRoutingPinner(f.store)(t.Context(), during, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), during, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
 		t.Fatal("production cutover between resolution and dispatch was accepted")
 	}
 }
@@ -117,6 +117,28 @@ func (f publicRoutingPGFixture) ingress(t *testing.T, deployment string, port in
 	}
 }
 
+// With FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY off (the default) hosts resolve
+// from the route cache, which carries no snapshot source; dispatch must not
+// require one. The authoritative pinner still refuses the same app.
+func TestPublicRoutingPinnerCachedHostPolicyDispatchesCachedRoutes(t *testing.T) {
+	f := newPublicRoutingPGFixture(t)
+	deployment := f.deployment(t, "production", "sha256:cached")
+	router := pgRouter{store: f.store, appsSuffix: ".apps.gregale.dev", cachedHostPolicy: true,
+		tenantSurfacesEnabled: func() bool { return false }}
+	app, found, err := router.ResolveHost(t.Context(), f.app.Slug+".apps.gregale.dev")
+	if err != nil || !found || app.PublicPolicySource != nil {
+		t.Fatalf("cached host: found=%v source=%+v err=%v", found, app.PublicPolicySource, err)
+	}
+	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production"}
+	snapshot, err := newPublicRoutingPinner(f.store, true)(t.Context(), app, inputs)
+	if err != nil || len(snapshot.Weights) != 1 || snapshot.Weights[0].ID != deployment.ID {
+		t.Fatalf("cached host policy refused a cached route: %+v %v", snapshot, err)
+	}
+	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), app, inputs); err == nil {
+		t.Fatal("authoritative host policy accepted an app without a snapshot source")
+	}
+}
+
 func TestPublicHostSnapshotPostgresDoesNotMixAppAccountAndIngress(t *testing.T) {
 	f := newPublicRoutingPGFixture(t)
 	deployment := f.deployment(t, "production", "sha256:host")
@@ -147,7 +169,7 @@ func TestPublicHostSnapshotPostgresDoesNotMixAppAccountAndIngress(t *testing.T) 
 		t.Fatalf("host projection mixed committed generations: %+v found=%v err=%v", during, found, err)
 	}
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production"}
-	if snapshot, err := newPublicRoutingPinner(f.store)(t.Context(), during, inputs); err == nil || len(snapshot.Weights) != 0 {
+	if snapshot, err := newPublicRoutingPinner(f.store, false)(t.Context(), during, inputs); err == nil || len(snapshot.Weights) != 0 {
 		t.Fatalf("old app settings combined with new dispatch policy: %+v %v", snapshot, err)
 	}
 	fresh, found, err := router.ResolveHost(t.Context(), host)
@@ -155,7 +177,7 @@ func TestPublicHostSnapshotPostgresDoesNotMixAppAccountAndIngress(t *testing.T) 
 		fresh.PublicPolicySource.Revision == before.PublicPolicySource.Revision {
 		t.Fatalf("new host projection missing updates: %+v found=%v err=%v", fresh, found, err)
 	}
-	if snapshot, err := newPublicRoutingPinner(f.store)(t.Context(), fresh, inputs); err != nil || len(snapshot.Weights) != 1 || snapshot.Weights[0].ID != deployment.ID {
+	if snapshot, err := newPublicRoutingPinner(f.store, false)(t.Context(), fresh, inputs); err != nil || len(snapshot.Weights) != 1 || snapshot.Weights[0].ID != deployment.ID {
 		t.Fatalf("consistent fresh policy refused: %+v %v", snapshot, err)
 	}
 }
@@ -200,11 +222,11 @@ func TestPublicHostSnapshotPostgresScopesIngressAndRefreshesAliasWithoutNotify(t
 		t.Fatalf("missed notification served stale alias: %+v %v %v", fresh, found, err)
 	}
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "staging", HostDeploymentID: staging.ID, HostScope: "staging"}
-	if _, err := newPublicRoutingPinner(f.store)(t.Context(), old, inputs); err == nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), old, inputs); err == nil {
 		t.Fatal("alias retarget between resolution and dispatch was accepted")
 	}
 	inputs.HostDeploymentID = next.ID
-	if snapshot, err := newPublicRoutingPinner(f.store)(t.Context(), fresh, inputs); err != nil || !snapshot.HostAllowed {
+	if snapshot, err := newPublicRoutingPinner(f.store, false)(t.Context(), fresh, inputs); err != nil || !snapshot.HostAllowed {
 		t.Fatalf("fresh alias refused: %+v %v", snapshot, err)
 	}
 	if err := f.store.DeleteDeploymentAlias(t.Context(), f.app.ID, "qa"); err != nil {
@@ -308,14 +330,14 @@ func TestPublicHostSnapshotPostgresEnvironmentAndDomainBindingsRemainVerified(t 
 		t.Fatalf("named environment projection: %+v %v %v", old, found, err)
 	}
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "staging", HostDeploymentID: staging.ID, HostScope: "staging"}
-	if _, err := newPublicRoutingPinner(f.store)(t.Context(), old, inputs); err != nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), old, inputs); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.store.PutProjectEnvironmentEdgePolicy(t.Context(), state.ProjectEnvironmentEdgePolicy{
 		AccountID: f.app.AccountID, ProjectID: f.project.ID, AppID: f.app.ID, EnvironmentSlug: "staging"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store)(t.Context(), old, inputs); err == nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), old, inputs); err == nil {
 		t.Fatal("environment policy update between views was missed")
 	}
 	const domain = "binding.example.test"
@@ -340,7 +362,7 @@ func TestPublicHostSnapshotPostgresEnvironmentAndDomainBindingsRemainVerified(t 
 	if _, err := f.pool.Exec(t.Context(), `UPDATE custom_domains SET environment_id=$2 WHERE domain=$1`, domain, prodEnvironment.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store)(t.Context(), old, inputs); err == nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), old, inputs); err == nil {
 		t.Fatal("domain retarget combined old environment settings with a new binding")
 	}
 	fresh, found, err := backend.LookupHostPolicy(t.Context(), domain)
@@ -406,13 +428,13 @@ func TestPublicHostSnapshotPostgresTenantBindingCannotFallThroughAfterSuspension
 	if err != nil || !found || old.PlatformTenantID != tenant.ID || old.RoutedSurfaceID != surface.ID {
 		t.Fatalf("tenant snapshot binding: %+v %v %v", old, found, err)
 	}
-	if _, err := newPublicRoutingPinner(f.store)(t.Context(), old, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), old, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := f.pool.Exec(t.Context(), `UPDATE platform_tenants SET status='suspended' WHERE id=$1`, tenant.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store)(t.Context(), old, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(t.Context(), old, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
 		t.Fatal("tenant suspension between policy views was missed")
 	}
 	if _, found, err := backend.LookupHostPolicy(t.Context(), host); err != nil || found {

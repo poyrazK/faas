@@ -58,7 +58,7 @@ func TestTargetCustomerPathPostgresDiscoversExistingResident(t *testing.T) {
 	backend := gateway.NewPGBackend(router, scheduler, discardLogger()).WithStore(weightsStoreAdapter{store: store}).
 		WithTargetPlacementLoader(newTargetPlacementLoader(store)).WithTargetReadinessLoader(newTargetReadinessLoader(store))
 	forwarded := 0
-	handler := gateway.NewHandlerWith(backend, gateway.NewMetrics(), discardLogger()).WithPublicRoutingPolicy(newPublicRoutingPinner(store)).WithForwarding(func(target gateway.Target) http.Handler {
+	handler := gateway.NewHandlerWith(backend, gateway.NewMetrics(), discardLogger()).WithPublicRoutingPolicy(newPublicRoutingPinner(store, false)).WithForwarding(func(target gateway.Target) http.Handler {
 		if target.AppID != app.ID || target.DeploymentID != dep.ID || target.InstanceID != instance.ID || target.NodeID != node.ID {
 			t.Errorf("wrong resident identity: %+v", target)
 		}

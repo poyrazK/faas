@@ -26,7 +26,7 @@ func TestPublicRevisionReservationPostgresRefusesFallbackAndStaleDispatch(t *tes
 				t.Fatalf("initial immutable revision: %+v found=%v err=%v", old, found, err)
 			}
 			inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production", HostDeploymentID: deployment.ID, HostScope: "production"}
-			if snapshot, err := newPublicRoutingPinner(f.store)(t.Context(), old, inputs); err != nil || !snapshot.HostAllowed {
+			if snapshot, err := newPublicRoutingPinner(f.store, false)(t.Context(), old, inputs); err != nil || !snapshot.HostAllowed {
 				t.Fatalf("initial immutable dispatch: %+v %v", snapshot, err)
 			}
 			if mode == "superseded" {
@@ -40,7 +40,7 @@ func TestPublicRevisionReservationPostgresRefusesFallbackAndStaleDispatch(t *tes
 			if err != nil || found || fresh.ID != "" || fresh.PublicPolicySource == nil || fresh.PublicPolicySource.CanSubstitute {
 				t.Fatalf("unavailable revision exposed a primary or synthetic route: %+v found=%v err=%v", fresh, found, err)
 			}
-			if snapshot, err := newPublicRoutingPinner(f.store)(t.Context(), old, inputs); err == nil || len(snapshot.Weights) != 0 {
+			if snapshot, err := newPublicRoutingPinner(f.store, false)(t.Context(), old, inputs); err == nil || len(snapshot.Weights) != 0 {
 				t.Fatalf("stale immutable revision reached dispatch: %+v %v", snapshot, err)
 			}
 			if f.pool.Stat().AcquiredConns() != 0 {

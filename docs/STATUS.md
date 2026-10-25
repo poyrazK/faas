@@ -29,8 +29,21 @@ signals for the route workers:
 
 Verified with unit tests (series budget under `-race`, evaluator rotation past
 one batch, concurrent drain), a PostgreSQL test of the claim, candidate and
-batch-resolve queries, and promtool fixtures for every alert. Open: none of
-the routes capabilities has end-to-end coverage yet, and all remain `preview`.
+batch-resolve queries, and promtool fixtures for every alert.
+
+End to end (2026-10-26, KVM-free on the n2 test node,
+`cmd/e2e/routes_e2e_test.go`): anonymous traffic through gatewayd-public and
+gatewayd-internal is listed per route through the gateway control listener and
+through a real Prometheus scraping the gateway, within the per-gateway series
+budget; route advice and the awake report read it; apid's own insights
+evaluator records a cacheable insight whose fix makes the gateway answer from
+its cache without reaching the app; and apid's production route monitor opens
+one incident from two sustained 5xx windows. The run also found that ADR-570's
+public routing pinner refused every public request with the default
+`FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY=false`; it now verifies host policy only
+on the authoritative path. Open: canary route health, route requirements and
+OpenAPI contract preview have no end-to-end test; six routes capabilities are
+`internal` and three `preview` (ADR-20261023115741).
 
 ## Every capability behind a platform flag — 2026-10-23 (branch, not released)
 

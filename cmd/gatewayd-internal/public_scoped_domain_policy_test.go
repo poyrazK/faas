@@ -64,7 +64,7 @@ func TestPublicScopedDomainPostgresPolicyAndFreshAdmission(t *testing.T) {
 				t.Fatal(err)
 			}
 			inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "staging", HostDeploymentID: deployment.ID, HostScope: "staging"}
-			if _, err := newPublicRoutingPinner(f.store)(old, admitted, inputs); err == nil {
+			if _, err := newPublicRoutingPinner(f.store, false)(old, admitted, inputs); err == nil {
 				t.Fatal("overlay update authorized an old dispatch")
 			}
 			fresh, _ := f.compiledAppWithRouter(t, g, router, host)
@@ -232,7 +232,7 @@ func TestPublicScopedDomainPostgresHTTPPeersRepairWithoutNotify(t *testing.T) {
 		scheduler := gateway.NewFakeScheduler("node").WithInstanceID(uuid.NewString()).WithDeploymentID(deployment.ID)
 		handler := gateway.NewHandlerWith(gateway.NewPGBackend(router, scheduler, nil), nil, nil)
 		handler.SetWakeGateHook()
-		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil)
+		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store, false)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil)
 		handler.WithForwarding(func(gateway.Target) http.Handler {
 			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { forwards.Add(1); w.WriteHeader(http.StatusNoContent) })
 		})

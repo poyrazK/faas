@@ -108,12 +108,12 @@ func TestPublicRoutingSnapshotPostgresRetainsOneViewAcrossCutover(t *testing.T) 
 	old := f.deployment(t, "production", "sha256:old")
 	first := f.publish(t, old.ID)
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production"}
-	pin := newPublicRoutingPinner(f.store)
+	pin := newPublicRoutingPinner(f.store, false)
 	var next state.Deployment
 	during, err := newPublicRoutingPinner(publicSnapshotAfterOwner{PublicRoutingSnapshotStore: f.store, after: func() {
 		next = f.deployment(t, "production", "sha256:next")
 		f.publish(t, next.ID)
-	}})(t.Context(), f.routingApp(), inputs)
+	}}, false)(t.Context(), f.routingApp(), inputs)
 	if err != nil || len(during.Weights) != 1 || during.Weights[0].ID != old.ID {
 		t.Fatalf("mixed weight snapshot: %+v %v", during, err)
 	}
@@ -133,7 +133,7 @@ func TestPublicRoutingSnapshotPostgresRetainsOneViewAcrossCutover(t *testing.T) 
 		if _, err := f.pool.Exec(t.Context(), `UPDATE deployment_revision_pins SET expires_at=now()-interval '1 minute' WHERE deployment_id=$1`, old.ID); err != nil {
 			t.Fatal(err)
 		}
-	}})(t.Context(), f.routingApp(), inputs)
+	}}, false)(t.Context(), f.routingApp(), inputs)
 	if err != nil || during.ReleaseVerdict != "allowed" || during.ReleaseDeploymentID != old.ID {
 		t.Fatalf("mixed release snapshot: %+v %v", during, err)
 	}
@@ -197,7 +197,7 @@ func TestPublicRoutingSnapshotPostgresBoundsRosterAndIncompleteGraph(t *testing.
 	if _, err := f.pool.Exec(t.Context(), `DELETE FROM project_release_members WHERE release_id=$1 AND app_id=$2`, release.ID, f.app.ID); err != nil {
 		t.Fatal(err)
 	}
-	pin := newPublicRoutingPinner(f.store)
+	pin := newPublicRoutingPinner(f.store, false)
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production", ResolveRelease: true}
 	if _, _, err := (pgRouter{store: f.store}).resolvePublicAppSlug(t.Context(), f.app.Slug); !errors.Is(err, state.ErrConflict) {
 		t.Fatalf("incomplete production graph resolved host settings: %v", err)

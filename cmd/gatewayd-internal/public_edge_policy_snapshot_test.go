@@ -80,7 +80,7 @@ func TestPublicEdgePolicyPostgresFreshReadsAndImmutableAdmission(t *testing.T) {
 	ctx, admitted := f.compiledApp(t, g, host)
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production"}
 	for range 2 {
-		if _, err := newPublicRoutingPinner(f.store)(ctx, admitted, inputs); err != nil {
+		if _, err := newPublicRoutingPinner(f.store, false)(ctx, admitted, inputs); err != nil {
 			t.Fatalf("cache changed host metadata: %v", err)
 		}
 	}
@@ -89,7 +89,7 @@ func TestPublicEdgePolicyPostgresFreshReadsAndImmutableAdmission(t *testing.T) {
 	if _, err := f.store.UpdateCorsPreset(t.Context(), f.app.AccountID, preset.ID, preset); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store)(ctx, admitted, inputs); err == nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(ctx, admitted, inputs); err == nil {
 		t.Fatal("changed preset authorized old dispatch")
 	}
 	freshCtx, _ := f.compiledApp(t, g, host) // No invalidation notification or Reset.
@@ -137,7 +137,7 @@ func TestPublicEdgePolicyPostgresAppRulesAndPresetsShareView(t *testing.T) {
 	if err != nil || !found || during.PublicPolicySource.Revision != before.PublicPolicySource.Revision || during.MaintenanceMode {
 		t.Fatalf("app/rule/preset mixed views: found=%v err=%v", found, err)
 	}
-	if _, err := newPublicRoutingPinner(f.store)(ctx, during, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(ctx, during, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
 		t.Fatal("mixed dispatch authorized after cutover")
 	}
 	_, after := f.compiledApp(t, g, host)
@@ -173,7 +173,7 @@ func TestPublicEdgePolicyPostgresForeignPresetDoesNotBlockOwner(t *testing.T) {
 	if got := g.MatchCORS(ctx, host, "/", "GET"); got != nil {
 		t.Fatalf("foreign CORS entered owner policy: %+v", got)
 	}
-	if _, err := newPublicRoutingPinner(f.store)(ctx, app, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(ctx, app, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
 		t.Fatalf("unused foreign preset lock blocked owner: %v", err)
 	}
 	if err := lock.Rollback(t.Context()); err != nil {
@@ -208,7 +208,7 @@ func TestPublicEdgePolicyPostgresTwoHTTPGatewaysRepairWithoutNotify(t *testing.T
 		scheduler := gateway.NewFakeScheduler("node").WithInstanceID(uuid.NewString()).WithDeploymentID(deployment.ID)
 		handler := gateway.NewHandlerWith(gateway.NewPGBackend(router, scheduler, nil), nil, nil)
 		handler.SetWakeGateHook()
-		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil).WithEdgeTargetPolicyLoader(
+		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(f.store, false)).WithEdgeRules(newGatewaydEdgeRules(f.store, nil, nil, nil).withPublicHostRouter(router), nil, nil).WithEdgeTargetPolicyLoader(
 			func(ctx context.Context, slug string) (gateway.App, bool, error) {
 				return router.resolvePublicAppSlug(ctx, slug)
 			})
@@ -397,13 +397,13 @@ func TestPublicEdgePolicyPostgresBoundsOutageAndCleanup(t *testing.T) {
 	}
 	bounded, cancel := context.WithTimeout(ctx, 50*time.Millisecond)
 	defer cancel()
-	if _, err := newPublicRoutingPinner(f.store)(bounded, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(bounded, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
 		t.Fatal("cached policy authorized during store failure")
 	}
 	if err := lock.Rollback(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store)(ctx, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(ctx, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err != nil {
 		t.Fatalf("store recovery: %v", err)
 	}
 	var escaped state.PublicHostPolicyReader
@@ -439,7 +439,7 @@ func TestPublicEdgePolicyPostgresBoundsOutageAndCleanup(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := newPublicRoutingPinner(f.store)(ctx, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(ctx, admitted, gateway.PublicRoutingInputs{Valid: true, Scope: "production"}); err == nil {
 		t.Fatal("oversized preset authorized dispatch")
 	}
 }
@@ -467,7 +467,7 @@ func TestPublicEdgePolicyPostgresEnvironmentOverlayRepairsWithoutNotify(t *testi
 		t.Fatal(err)
 	}
 	inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "staging", HostDeploymentID: deployment.ID, HostScope: "staging"}
-	if _, err := newPublicRoutingPinner(f.store)(ctx, admitted, inputs); err == nil {
+	if _, err := newPublicRoutingPinner(f.store, false)(ctx, admitted, inputs); err == nil {
 		t.Fatal("new overlay combined with old policy baseline")
 	}
 	fresh, _ := f.compiledApp(t, g, host)
