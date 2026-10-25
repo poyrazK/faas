@@ -273,8 +273,16 @@ func (s *PgStore) CreateWorkflowRunAdmittedWithIdempotencyKey(ctx context.Contex
 }
 
 func (s *PgStore) GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, error) {
+	return readWorkflowRun(ctx, s.pool, id)
+}
+
+// readWorkflowRun is shared by the pool read and the invocation-version
+// snapshot, which must observe the run in the same transaction as its pin.
+func readWorkflowRun(ctx context.Context, q interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}, id string) (*WorkflowRun, error) {
 	query := fmt.Sprintf(`SELECT %s FROM workflow_runs WHERE id = $1`, workflowRunSelectCols)
-	row := s.pool.QueryRow(ctx, query, id)
+	row := q.QueryRow(ctx, query, id)
 	r, err := scanWorkflowRunCols(row.Scan)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
@@ -879,8 +887,12 @@ func (s *PgStore) CreateWorkflowSteps(ctx context.Context, runID string, steps [
 }
 
 func (s *PgStore) GetWorkflowSteps(ctx context.Context, runID string) ([]*WorkflowStep, error) {
+	return readWorkflowSteps(ctx, s.pool, runID)
+}
+
+func readWorkflowSteps(ctx context.Context, db sqlc.DBTX, runID string) ([]*WorkflowStep, error) {
 	query := fmt.Sprintf(`SELECT %s FROM workflow_steps WHERE run_id = $1 ORDER BY created_at ASC, step_name ASC`, workflowStepSelectCols)
-	rows, err := s.pool.Query(ctx, query, runID)
+	rows, err := db.Query(ctx, query, runID)
 	if err != nil {
 		return nil, fmt.Errorf("pgstore: get workflow steps: %w", err)
 	}

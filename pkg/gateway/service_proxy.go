@@ -32,6 +32,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/devbridge"
 	"github.com/onebox-faas/faas/pkg/flags"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
+	"github.com/onebox-faas/faas/pkg/trafficdeadline"
+	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"go.opentelemetry.io/otel/attribute"
 	"go.opentelemetry.io/otel/codes"
@@ -270,6 +272,9 @@ type ServiceProxyRequestAttemptObserver func(runID, callerAppID, generation stri
 // small handler factory so selection and retry behavior can be exercised
 // without a live gRPC server.
 type ServiceProxyConfig struct {
+	// Policy pins discovery, alias access, authorization and transport inputs
+	// together. Production wires this; legacy callback seams support fixtures.
+	Policy         ServicePolicyPinner
 	AuthorizeBound ServiceProxyAuthorizer
 	// AdmitRuntime checks current budget holds after selecting the runtime.
 	AdmitRuntime              func(context.Context, string, string) error
@@ -352,7 +357,9 @@ type ServiceProxyConfig struct {
 	RetryPolicy RetryPolicy
 	// RetryBudget may be shared with the public handler so all platform-
 	// generated retries for an app draw from the same aggregate allowance.
-	RetryBudget *RetryBudget
+	RetryBudget        *RetryBudget
+	TrafficDeadlines   *trafficdeadline.Signer
+	TrafficRevocations *trafficrevocation.Registry
 }
 
 // ServiceProxy is an HTTP service-name router backed by the gateway's live
@@ -368,6 +375,7 @@ type ServiceProxy struct {
 	mintAssertion             ServiceCallerMinter
 	localNodeID               string
 	provider                  ServiceEndpointProvider
+	policy                    ServicePolicyPinner
 	resolve                   ServiceProxyResolver
 	authorize                 ServiceProxyAuthorizer
 	allowAlias                ServiceAliasAllowed
@@ -394,9 +402,11 @@ type ServiceProxy struct {
 	resolveEnvironmentBinding ServiceProxyEnvironmentBindingResolver
 	observeCall               func(callerAppID, targetAppID string, woken bool)
 
-	breaker     *circuit.Group
-	retryPolicy RetryPolicy
-	retryBudget *RetryBudget
+	breaker            *circuit.Group
+	retryPolicy        RetryPolicy
+	retryBudget        *RetryBudget
+	trafficDeadlines   *trafficdeadline.Signer
+	trafficRevocations *trafficrevocation.Registry
 
 	mu           sync.Mutex
 	snapshots    map[string]serviceProxySnapshot
@@ -478,6 +488,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		mintAssertion:             cfg.MintCallerAssertion,
 		localNodeID:               strings.TrimSpace(cfg.LocalNodeID),
 		provider:                  cfg.Provider,
+		policy:                    cfg.Policy,
 		resolve:                   cfg.Resolve,
 		authorize:                 cfg.Authorize,
 		admitManagedAsync:         cfg.AdmitManagedAsync,
@@ -506,6 +517,8 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 		breaker:                   breaker,
 		retryPolicy:               retryPolicy,
 		retryBudget:               retryBudget,
+		trafficDeadlines:          cfg.TrafficDeadlines,
+		trafficRevocations:        cfg.TrafficRevocations,
 		snapshots:                 make(map[string]serviceProxySnapshot),
 		next:                      make(map[string]uint64),
 		nextSeen:                  make(map[string]time.Time),
@@ -519,6 +532,7 @@ func NewServiceProxy(cfg ServiceProxyConfig) *ServiceProxy {
 // <service>.internal alias. The service segment is resolved to an app; the
 // remaining path is forwarded unchanged.
 func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	defer func() { cancelStampedRequestBudget(r.Context()) }() //nolint:contextcheck // release every timer on the final rebound request context.
 	dependencyStarted := p.now()
 	service, targetPath, alias, ok := parseServiceProxyRequest(r)
 	if !ok {
@@ -537,6 +551,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// its inbound traceparent joins the original request instead of always
 	// starting a new service-call trace.
 	parentCtx := propagation.TraceContext{}.Extract(r.Context(), propagation.HeaderCarrier(r.Header))
+	parentCtx = withTrafficDecision(parentCtx, true)
 	dependencyCtx, dependencySpan := dependencytrace.StartClientSpan(parentCtx, serviceProxySpanName(service), //nolint:contextcheck // extracted W3C trace context inherits r.Context() through propagation.Extract.
 		attribute.String("gregale.dependency.type", "managed_binding"),
 		attribute.String("gregale.dependency.kind", "service_proxy"),
@@ -614,12 +629,17 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 		}
-		if evidence, ok := guestExecutionEvidenceFromContext(r.Context()); ok { //nolint:contextcheck // the deferred read observes the shared evidence sink through the dependency request context.
+		dependencySpan.SetAttributes(trafficDecisionEvidence(r.Context(), status, true).attributes()...) //nolint:contextcheck // final rebound context includes lifetime fences added after span entry.
+		if evidence, ok := guestExecutionEvidenceFromContext(r.Context()); ok {                          //nolint:contextcheck // the deferred read observes the shared evidence sink through the dependency request context.
 			addServiceFlagEvidenceEvents(dependencySpan, evidence.FlagEvidenceJSON)
 		}
 		dependencySpan.End()
 	}()
 	r = r.WithContext(dependencyCtx)
+	if p.consumeManagedDeadline(dispatchWriter, r) {
+		return
+	}
+	dependencyCtx = r.Context()
 	caller := strings.TrimSpace(r.Header.Get(ServiceProxyCallerAppHeader))
 	callerDeploymentID := ""
 	if p.resolveCallerIdentity != nil || p.resolveCaller != nil {
@@ -631,6 +651,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			resolved, err = p.resolveCaller(dependencyCtx, r.RemoteAddr)
 		}
 		if err != nil {
+			if handleForwardRequestCancellation(dispatchWriter, r, true) {
+				return
+			}
 			// The guest only sees a generic 503, and the call's span is dropped
 			// before authorization stamps a tenant, so this line is the only
 			// record of why (production-us e2e Bug 4: every service call from a
@@ -657,6 +680,26 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		serviceProxyProblem(dispatchWriter, http.StatusUnauthorized, "caller identity is required")
 		return
 	}
+	if p.policy != nil && p.trafficRevocations != nil {
+		// Durable policy and security stores use UUID app identities. Reject
+		// malformed callers before requesting a security epoch for them.
+		if _, err := uuid.Parse(caller); err != nil {
+			p.metrics.IncServiceCall(ServiceCallDenied)
+			serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller identity is unknown")
+			return
+		}
+	}
+	if validateManagedDeadlineCaller(dispatchWriter, r, caller) {
+		return
+	}
+	callerScopes := []trafficrevocation.Scope{{Kind: "app", ID: caller}}
+	if callerDeploymentID != "" {
+		callerScopes = append(callerScopes, trafficrevocation.Scope{Kind: "deployment", ID: callerDeploymentID})
+	}
+	if enrollTrafficScopes(dispatchWriter, r, p.trafficRevocations, callerScopes...) {
+		return
+	}
+	dependencyCtx = r.Context()
 	if requested, present, valid := serviceReleaseFromRequest(r); present && valid {
 		dependencyCtx = context.WithValue(dependencyCtx, requestedServiceReleaseKey{}, requested)
 		r = r.WithContext(dependencyCtx)
@@ -665,6 +708,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if p.resolveEnvironmentBinding != nil {
 		binding, managed, found, err := p.resolveEnvironmentBinding(dependencyCtx, caller, callerDeploymentID, service)
 		if err != nil {
+			if handleForwardRequestCancellation(dispatchWriter, r, true) {
+				return
+			}
 			if errors.Is(err, ErrServiceProxyBindingDenied) || errors.Is(err, ErrServiceProxyDenied) {
 				p.metrics.IncServiceCall(ServiceCallBindingDenied)
 				serviceProxyProblem(dispatchWriter, http.StatusForbidden, "caller has no active GitOps binding for this service")
@@ -688,16 +734,29 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	setProbeStage("binding")
+	p.withServiceRoutingInputs(r, callerDeploymentID, targetPath, probe)
+	if p.pinServicePolicy(dispatchWriter, r, caller, service, alias) {
+		return
+	}
+	dependencyCtx = r.Context()
+	traceWriter.policyRevision = TrafficPolicyRevision(dependencyCtx)
+	if traceWriter.policyRevision != "" {
+		dependencySpan.SetAttributes(attribute.String("gregale.traffic.policy_revision", traceWriter.policyRevision))
+	}
 	if alias || probe {
+		markTrafficPhase(r.Context(), trafficAuthentication)
 		if environmentBinding != nil {
 			// The exact deployment-scoped resolver already proved this alias
 			// against the active reviewed graph.
-		} else if p.allowAlias == nil {
+		} else if p.allowAlias == nil && p.policy == nil {
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorizer is not wired")
 			return
 		} else {
-			allowed, err := p.allowAlias(dependencyCtx, caller, service)
+			allowed, err := p.serviceAliasAllowed(dependencyCtx, caller, service)
 			if err != nil {
+				if handleForwardRequestCancellation(dispatchWriter, r, true) {
+					return
+				}
 				serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service alias authorization is unavailable")
 				return
 			}
@@ -709,6 +768,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	setProbeStage("discovery")
+	markTrafficPhase(r.Context(), trafficOwnership)
 	var target ServiceTarget
 	var err error
 	if environmentBinding != nil {
@@ -716,6 +776,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	} else {
 		target, err = p.resolveTarget(dependencyCtx, caller, service)
 		if err != nil {
+			if handleForwardRequestCancellation(dispatchWriter, r, true) {
+				return
+			}
 			if errors.Is(err, ErrServiceProxyNotFound) {
 				p.metrics.IncServiceCall(ServiceCallNotFound)
 				serviceProxyProblem(dispatchWriter, http.StatusNotFound, "service is not registered")
@@ -727,12 +790,13 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	dependencyHealthTarget = target
 	setProbeStage("authorization")
-	if p.authorize == nil {
+	markTrafficPhase(r.Context(), trafficAuthentication)
+	if p.authorize == nil && p.policy == nil {
 		serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service proxy authorizer is not wired")
 		return
 	}
 	dependencySpan.SetAttributes(attribute.String("gregale.service.target_app_id", target.AppID))
-	authorize := p.authorize
+	authorize := p.authorizeServiceCaller
 	if environmentBinding != nil && environmentBinding.FrozenPolicy {
 		authorize = p.authorizeBound
 		if authorize == nil {
@@ -742,6 +806,9 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	callerInfo, err := authorize(dependencyCtx, caller, target.AppID)
 	if err != nil {
+		if handleForwardRequestCancellation(dispatchWriter, r, true) {
+			return
+		}
 		if errors.Is(err, ErrServiceProxyPreviewProductionDenied) {
 			p.metrics.IncServiceCall(ServiceCallPreviewDenied)
 			api.WriteProblem(dispatchWriter, api.NewProblem(
@@ -791,17 +858,31 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		callerInfo.Reliability = environmentBinding.Reliability
 	}
 	dependencyHealthCaller = callerInfo
+	if validateManagedDeadlineAccount(dispatchWriter, r, callerInfo.AccountID) {
+		return
+	}
+	if enrollTrafficScopes(dispatchWriter, r, p.trafficRevocations,
+		trafficrevocation.Scope{Kind: "account", ID: callerInfo.AccountID}, trafficrevocation.Scope{Kind: "app", ID: target.AppID}) {
+		return
+	}
+	dependencyCtx = r.Context()
 	if callerInfo.AppID != "" {
 		// This identity is sourced from the tenant authorizer and stamped only
 		// after authorization, so trace search cannot trust a guest header.
 		dependencySpan.SetAttributes(attribute.String("gregale.service.caller_app_id", callerInfo.AppID))
 	}
 	if callerInfo.Reliability != nil && callerInfo.Reliability.TimeoutMS > 0 {
+		if p.trafficDeadlines == nil || callerInfo.AccountID == "" {
+			writeTrafficDeadlineError(dispatchWriter, r, trafficdeadline.ErrUnavailable)
+			return
+		}
 		callTimeout := time.Duration(callerInfo.Reliability.TimeoutMS) * time.Millisecond
-		boundedCtx, cancel, _ := reqbudget.WithRemaining(dependencyCtx, callTimeout, callTimeout, "service_proxy", target.AppID)
+		callTimeout = min(callTimeout, time.Duration(api.MaxServiceReliabilityTimeoutMS)*time.Millisecond)
+		boundedCtx, cancel, _ := reqbudget.WithStarted(dependencyCtx, dependencyStarted, callTimeout, callTimeout, "service_proxy", target.AppID)
 		defer cancel()
 		dependencyCtx = boundedCtx
-		r = r.WithContext(boundedCtx)
+		r = r.WithContext(newManagedDeadlineChain(boundedCtx, callerInfo.AccountID))
+		dependencyCtx = r.Context()
 	}
 	// Only the authorizer can establish the tenant identity. Stamp it after a
 	// successful authorization so the in-process retained-span exporter can
@@ -877,7 +958,7 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			requested = releaseID
 		}
 		var releaseErr error
-		releaseID, releaseDeploymentID, releaseErr = p.resolveRelease(dependencyCtx, caller, callerDeploymentID, target.AppID, requested)
+		releaseID, releaseDeploymentID, releaseErr = p.resolveServiceRelease(dependencyCtx, caller, callerDeploymentID, target.AppID, requested)
 		if releaseErr != nil {
 			status := http.StatusServiceUnavailable
 			switch {
@@ -908,12 +989,12 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			serviceProxyProblem(dispatchWriter, http.StatusBadRequest, "Gregale-Target-Deployment must contain one deployment ID")
 			return
 		}
-		if p.validateDeployment == nil {
+		if p.validateDeployment == nil && p.policy == nil {
 			p.metrics.IncServiceCall(ServiceCallOverrideUnavailable)
 			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service deployment validation is unavailable")
 			return
 		}
-		live, err := p.validateDeployment(dependencyCtx, target.AppID, overrideID)
+		live, err := p.validateServiceDeployment(dependencyCtx, target.AppID, overrideID)
 		if err != nil {
 			p.metrics.IncServiceCall(ServiceCallOverrideUnavailable)
 			p.log.Warn("gateway: service deployment validation failed", "app", target.AppID, "err", err)
@@ -929,10 +1010,20 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	versionKey, versionKeyOutcome := versionAffinityKeyFromRequest(r)
 	p.metrics.ObserveVersionAffinityKey(versionAffinitySurfaceService, versionKeyOutcome)
 	versionDeploymentID := overrideID
-	if !overridePresent && versionKey != "" {
+	if p.policy != nil {
+		var err error
+		versionDeploymentID, err = p.serviceSnapshotDeployment(r.Context(), target.AppID)
+		if err != nil {
+			serviceProxyProblem(dispatchWriter, http.StatusServiceUnavailable, "service routing policy has no admitted deployment")
+			return
+		}
+	} else if !overridePresent && versionKey != "" {
 		if resolver, ok := p.provider.(versionAffinityResolver); ok {
 			versionDeploymentID, _ = resolver.AffinityDeployment(target.AppID, versionKey)
 		}
+	}
+	if versionDeploymentID != "" {
+		dependencySpan.SetAttributes(attribute.String("gregale.traffic.selected_deployment_id", versionDeploymentID))
 	}
 	if p.admitRuntime != nil {
 		if err := p.admitRuntime(dependencyCtx, target.AppID, versionDeploymentID); err != nil {
@@ -959,6 +1050,10 @@ func (p *ServiceProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// failures as well as final upstream responses, but exclude malformed or
 	// unauthorized requests from release health.
 	dependencyCallEligible = true
+	if versionDeploymentID != "" && enrollTrafficScopes(dispatchWriter, r, p.trafficRevocations,
+		trafficrevocation.Scope{Kind: "deployment", ID: versionDeploymentID}) {
+		return
+	}
 	endpoints, woken, served := p.routableEndpoints(dispatchWriter, r, target.AppID, versionDeploymentID)
 	dependencyWoke = woken
 	if !served {
@@ -1122,12 +1217,18 @@ func serviceProxySpanName(service string) string {
 // unwrapping. Upgrade requests bypass it because they need net.Hijacker.
 type serviceProxyTraceResponseWriter struct {
 	http.ResponseWriter
-	status int
+	status         int
+	policyRevision string
 }
 
 func (w *serviceProxyTraceResponseWriter) WriteHeader(status int) {
 	if w.status != 0 {
 		return
+	}
+	if w.policyRevision != "" {
+		stripTrafficControlTrailerDeclarations(w.Header())
+		stripTrafficPolicyProof(w.Header())
+		w.Header().Set(TrafficPolicyRevisionHeader, w.policyRevision)
 	}
 	if !isInformationalStatus(status) {
 		w.status = status
@@ -1279,6 +1380,15 @@ func validServiceDNSLabel(service string) bool {
 }
 
 func (p *ServiceProxy) resolveTarget(ctx context.Context, callerAppID, service string) (ServiceTarget, error) {
+	if pinned, ok := ctx.Value(pinnedServicePolicyKey{}).(pinnedServicePolicy); ok && pinned.caller == callerAppID && pinned.service == service {
+		if !pinned.snapshot.Found {
+			return ServiceTarget{}, ErrServiceProxyNotFound
+		}
+		return pinned.snapshot.Target, nil
+	}
+	if p.policy != nil {
+		return ServiceTarget{}, ErrServiceProxyUnavailable
+	}
 	if p.resolve == nil {
 		return ServiceTarget{}, fmt.Errorf("service name resolver is not wired")
 	}
@@ -1315,9 +1425,12 @@ func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEn
 	if cached, ok := p.snapshots[appID]; ok && now.Before(cached.fetchedAt.Add(p.endpointTTL)) {
 		out := append([]ServiceEndpoint(nil), cached.endpoints...)
 		p.mu.Unlock()
-		return out, nil
+		if p.cachedEndpointsRoutable(appID, out) {
+			return out, nil
+		}
+	} else {
+		p.mu.Unlock()
 	}
-	p.mu.Unlock()
 	snapshot, err := p.provider.ServiceEndpoints(ctx, appID)
 	if err != nil {
 		return nil, err
@@ -1327,6 +1440,22 @@ func (p *ServiceProxy) endpoints(ctx context.Context, appID string) ([]ServiceEn
 	p.snapshots[appID] = serviceProxySnapshot{fetchedAt: now, endpoints: append([]ServiceEndpoint(nil), endpoints...)}
 	p.mu.Unlock()
 	return endpoints, nil
+}
+
+func (p *ServiceProxy) cachedEndpointsRoutable(appID string, endpoints []ServiceEndpoint) bool {
+	validator, ok := p.provider.(ServiceEndpointRoutability)
+	if !ok {
+		return true
+	}
+	if len(endpoints) == 0 {
+		return false // Observe readiness recovery without waiting for the lease.
+	}
+	for _, endpoint := range endpoints {
+		if !validator.ServiceEndpointRoutable(appID, endpoint) {
+			return false
+		}
+	}
+	return true
 }
 
 // pruneIdle bounds per-app leases, round-robin cursors, and per-instance
@@ -1368,8 +1497,15 @@ func (p *ServiceProxy) pruneIdle(now time.Time) {
 // itself and reports served=false when nothing is routable, so ServeHTTP
 // stays within the handler-length convention.
 func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request, appID, deploymentID string) (_ []ServiceEndpoint, woken, served bool) {
+	markTrafficPhase(r.Context(), trafficCapacity)
+	if handleForwardRequestCancellation(w, r, true) {
+		return nil, false, false
+	}
 	endpoints, err := p.endpoints(r.Context(), appID)
 	if err != nil {
+		if handleForwardRequestCancellation(w, r, true) {
+			return nil, false, false
+		}
 		p.metrics.IncServiceCall(ServiceCallRegistryUnavailable)
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service endpoint registry is unavailable")
 		return nil, false, false
@@ -1380,6 +1516,9 @@ func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request,
 	}
 	endpoints, err = p.wakeAndRefresh(r.Context(), appID, deploymentID)
 	if err != nil {
+		if handleForwardRequestCancellation(w, r, true) {
+			return nil, false, false
+		}
 		p.writeWakeFailure(w, appID, err)
 		return nil, false, false
 	}
@@ -1393,18 +1532,17 @@ func (p *ServiceProxy) routableEndpoints(w http.ResponseWriter, r *http.Request,
 
 // writeWakeFailure maps a wake error onto the caller-facing response.
 func (p *ServiceProxy) writeWakeFailure(w http.ResponseWriter, appID string, err error) {
-	var full *WakeQueueFullError
-	if errors.As(err, &full) {
+	if errors.Is(err, ErrQueueFull) || errors.Is(err, ErrWakeAdmissionQueueFull) || errors.Is(err, ErrWakeQueueWaitTimeout) {
 		p.metrics.IncServiceCall(ServiceCallWakeQueueFull)
-		// Mirror the public edge: a saturated wake queue is a bounded,
-		// retryable condition, not a failure of the service. Hand the caller
-		// the same Retry-After the edge would so a peer workload can back off
-		// instead of hot-looping on a restoring dependency.
-		w.Header().Set("Retry-After", retryAfterSeconds(full.RetryAfter))
-		serviceProxyProblem(w, http.StatusServiceUnavailable, "service is waking and its wake queue is full")
+		writeWakeError(w, err)
 		return
 	}
 	p.metrics.IncServiceCall(ServiceCallWakeFailed)
+	var problem *api.Problem
+	if errors.As(err, &problem) {
+		writeWakeError(w, err)
+		return
+	}
 	p.log.Warn("gateway: service proxy wake failed", "app", appID, "err", err)
 	serviceProxyProblem(w, http.StatusServiceUnavailable, "service could not be woken")
 }
@@ -1421,6 +1559,7 @@ func (p *ServiceProxy) writeWakeFailure(w http.ResponseWriter, appID string, err
 // A nil waker returns no endpoints and no error, so the caller falls through
 // to the pre-ADR-196 "no healthy replicas" response.
 func (p *ServiceProxy) wakeAndRefresh(ctx context.Context, appID, deploymentID string) ([]ServiceEndpoint, error) {
+	defer measureTrafficPhase(ctx, trafficWake)()
 	if deploymentID != "" && p.wakeDeployment != nil {
 		start := p.now()
 		if err := p.wakeDeployment(ctx, appID, deploymentID); err != nil {
@@ -1521,19 +1660,22 @@ func validServiceEndpoints(in []ServiceEndpoint) []ServiceEndpoint {
 	return out
 }
 
-// guestRequest builds the outbound request for the guest hop: the caller
+// prepareGuestRequest prepares an owned request clone for the guest hop: the caller
 // header is stripped, inbound identity claims are cleared before the target
 // identity this hop actually knows is applied, and the target's wire protocol
 // is stamped so vmmd selects the H1 or H2C guest bridge (ADR-197).
 //
 // The request id is preserved so an internal hop stays correlated end to end.
-func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller) *http.Request {
-	request := r.Clone(r.Context())
+// The returned context retains the inherited lifetime and any minted assertion.
+func (p *ServiceProxy) prepareGuestRequest(ctx context.Context, request *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller) context.Context {
 	request.URL.Path = targetPath
 	request.URL.RawPath = ""
 	request.RequestURI = ""
-	request.Header = r.Header.Clone()
+	request.Header = request.Header.Clone()
+	flagValues := request.Header.Values(api.FlagContextHeader)
 	request.Header.Del(api.FlagContextHeader)
+	request.Header.Del("x-faas-stream")
+	request.Header.Del(trafficdeadline.Header)
 	request.Header.Del(ServiceProxyCallerAppHeader)
 	// An override applies only to this resolved binding. Forwarding it would
 	// unintentionally pin a later service hop to this app's deployment ID.
@@ -1542,7 +1684,7 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	// release can cross a managed service hop.
 	request.Header.Del(api.RevisionHeader)
 	request.Header.Del(api.ReleaseHeader)
-	if releaseID, ok := r.Context().Value(serviceReleaseContextKey{}).(string); ok && releaseID != "" {
+	if releaseID, ok := ctx.Value(serviceReleaseContextKey{}).(string); ok && releaseID != "" {
 		request.Header.Set(api.ReleaseHeader, releaseID)
 	}
 	// Both caller-environment headers are platform-owned. Strip whatever the
@@ -1554,11 +1696,10 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 	request.Header.Del(ServiceCallerAssertionHeader)
 	requestID := request.Header.Get(api.RequestIDHeader)
 	api.PlatformIdentity{RequestID: requestID, AppID: target.AppID}.ApplyGuestHeaders(request.Header)
-	if values := r.Header.Values(api.FlagContextHeader); len(values) == 1 {
-		if inherited, err := flags.DecodePropagationHeader(values[0]); err == nil {
-			inheritedCtx := context.WithValue(r.Context(), serviceFlagPropagationContextKey{}, inherited)
-			request = request.WithContext(inheritedCtx)
-			addServiceFlagPropagationEvents(inheritedCtx, inherited)
+	if len(flagValues) == 1 {
+		if inherited, err := flags.DecodePropagationHeader(flagValues[0]); err == nil {
+			ctx = context.WithValue(ctx, serviceFlagPropagationContextKey{}, inherited)
+			addServiceFlagPropagationEvents(ctx, inherited)
 		}
 	}
 	request.Header.Set("x-faas-protocol", serviceGuestProtocol(target))
@@ -1578,10 +1719,9 @@ func (p *ServiceProxy) guestRequest(r *http.Request, targetPath string, target S
 		}
 	}
 	if p.attachCallerAssertion(request, target, caller, callerEnv) {
-		request = withTrustedServiceCallerAssertion(request)
+		ctx = context.WithValue(ctx, trustedServiceCallerAssertionContextKey{}, true)
 	}
-	request = request.WithContext(wire.WithPrivateForward(request.Context())) //nolint:contextcheck // request inherits r.Context and may carry the authorized assertion context.
-	return request
+	return wire.WithPrivateForward(ctx)
 }
 
 // attachCallerAssertion adds the ADR-206 statement of who called. A mint
@@ -1618,13 +1758,20 @@ func (p *ServiceProxy) attachCallerAssertion(request *http.Request, target Servi
 // hijacked connection, so the first endpoint chosen is the only one, and a
 // stale-target signal cannot be acted on after bytes have flowed.
 func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool) {
-	endpoint, ok := p.pick(target.AppID, endpoints)
+	endpoint, ok, eligible := p.pickForAttempt(target.AppID, endpoints)
+	p.recordEndpointPick(r.Context(), ok, eligible, len(endpoints))
 	if !ok {
 		serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
 		return
 	}
-	request := p.guestRequest(r, targetPath, target, caller)
-	applyServiceEndpointIdentity(request, target, endpoint, caller)
+	ctx := r.Context()
+	request := r.Clone(ctx)
+	ctx = p.prepareGuestRequest(ctx, request, targetPath, target, caller)
+	request = request.WithContext(ctx)
+	request = requestForServiceEndpoint(ctx, request, target, endpoint, caller)
+	if enrollTrafficScopes(w, request, p.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: endpoint.DeploymentID}) {
+		return
+	}
 	// Mirrors the public edge (ADR-080): the wake-timeline vocabulary marks a
 	// raw-bytes session so observability does not have to re-derive it from
 	// the Connection/Upgrade pair.
@@ -1632,14 +1779,17 @@ func (p *ServiceProxy) forwardUpgrade(w http.ResponseWriter, r *http.Request, ta
 	key := serviceProxyEndpointKey(target.AppID, endpoint.InstanceID)
 	signal := &staleTargetSignal{}
 	signal.onStale = func() { p.retireEndpoint(target.AppID, endpoint.InstanceID, signal.frozen.Load()) }
-	request = request.WithContext(withStaleTargetSignal(request.Context(), signal))
+	request = request.WithContext(withStaleTargetSignal(request.Context(), signal)) //nolint:contextcheck // request-local stale-target state inherits the prepared inbound context.
 	request, observe := p.withServiceRequestObservation(request, target, caller, endpoint, woken)
 	probeWriter := &serviceProxyUpgradeProbeWriter{
 		ResponseWriter: w,
 		onHandshake:    func() { p.healthy(target.AppID, endpoint.InstanceID) },
 		onResponse:     observe,
 	}
-	p.rawForward(serviceEndpointTarget(target.AppID, endpoint)).ServeHTTP(probeWriter, request)
+	recordTrafficAttempt(ctx)
+	forwardTarget := serviceEndpointTarget(target.AppID, endpoint)
+	oteltrace.SpanFromContext(ctx).SetAttributes(completionTargetAttributes(forwardTarget)...)
+	p.rawForward(forwardTarget).ServeHTTP(probeWriter, request)
 	if signal.stale.Load() || probeWriter.handshake {
 		return
 	}
@@ -1696,7 +1846,13 @@ func (w *serviceProxyUpgradeProbeWriter) Unwrap() http.ResponseWriter { return w
 
 func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targetPath string, target ServiceTarget, caller ServiceCaller, endpoints []ServiceEndpoint, woken bool, deploymentID string) (rerouteWoke bool) {
 	appID := target.AppID
-	request := p.guestRequest(r, targetPath, target, caller)
+	ctx := r.Context()
+	request := r.Clone(ctx)
+	ctx = p.prepareGuestRequest(ctx, request, targetPath, target, caller)
+	request = request.WithContext(ctx)
+	if serviceGuestProtocol(target) != "grpc" && stampManagedDeadline(w, request, p.trafficDeadlines, target.AppID, caller.AccountID) {
+		return
+	}
 	policy := p.retryPolicy
 	if override := caller.Reliability; override != nil {
 		if override.MaxAttempts > 0 {
@@ -1719,15 +1875,21 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		maxAttempts = policy.MaxAttempts
 	}
 	if policy.Enabled && !retryable {
+		recordTrafficRetryStop(ctx, skipReason)
 		p.metrics.IncRetryExhausted(skipReason)
 	}
 	hasBody := request.Body != nil && request.Body != http.NoBody
 	if maxAttempts > 1 && hasBody && request.GetBody == nil {
 		maxAttempts = 1
+		recordTrafficRetryStop(ctx, RetrySkipBodyNotReplay)
 		p.metrics.IncRetryExhausted(RetrySkipBodyNotReplay)
 	}
 	if maxAttempts > 1 {
-		p.retryBudget.ObserveOriginal(request.Context(), appID)
+		if !p.retryBudget.ObserveOriginal(ctx, appID) {
+			maxAttempts = 1
+			recordTrafficRetryStop(ctx, RetrySkipAggregate)
+			p.metrics.IncRetryExhausted(RetrySkipAggregate)
+		}
 	}
 	// ADR-1133: a request the bridge proved never reached a guest earns one
 	// extra attempt on top of the policy's, for any method and outside the
@@ -1740,23 +1902,31 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 	var previous *serviceProxyResponseWriter
 	retryMinRemaining := policy.MinRemaining
 	for attempt := 0; attempt < limit; attempt++ {
-		endpoint, ok := p.pick(appID, endpoints)
+		endpoint, ok, eligible := p.pickForAttempt(appID, endpoints)
+		candidates := len(endpoints)
 		if !ok && !rerouted {
 			// Every endpoint in the lease is benched. When an instance
 			// stopped (park, restart, rollout drain) inside the lease, the
 			// registry no longer lists it; re-route once instead of
 			// answering "no healthy replicas" for an app that is parked.
 			rerouted = true
-			fresh, freshWoken, served := p.rerouteAfterStale(w, request.Context(), appID, deploymentID)
+			fresh, freshWoken, served := p.rerouteAfterStale(w, ctx, appID, deploymentID)
 			if !served {
+				// The refusal that ended the call is the empty pick.
+				p.recordEndpointPick(ctx, ok, eligible, candidates)
 				return
 			}
 			endpoints, woken = fresh, woken || freshWoken
 			rerouteWoke = freshWoken
-			endpoint, ok = p.pick(appID, endpoints)
+			endpoint, ok, eligible = p.pickForAttempt(appID, endpoints)
+			// The registry omits withdrawn replicas, so an empty refresh of a
+			// non-empty lease is still a capacity refusal, not an unknown one.
+			candidates = max(candidates, len(endpoints))
 		}
+		p.recordEndpointPick(ctx, ok, eligible, candidates)
 		if !ok {
 			if attempt > 0 {
+				recordTrafficRetryStop(ctx, RetrySkipNoTarget)
 				p.metrics.IncRetryExhausted(RetrySkipNoTarget)
 			}
 			serviceProxyProblem(w, http.StatusServiceUnavailable, "service has no healthy replicas")
@@ -1765,6 +1935,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		forwardReq := request
 		if attempt > 0 {
 			if !retryTimeAvailable(request, retryMinRemaining, p.now()) {
+				recordTrafficRetryStop(ctx, RetrySkipBudget)
 				p.metrics.IncRetryExhausted(RetrySkipBudget)
 				previous.commit()
 				previous.commitTrailers()
@@ -1773,6 +1944,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			var err error
 			forwardReq, err = replayRequest(request)
 			if err != nil {
+				recordTrafficRetryStop(ctx, RetrySkipBodyNotReplay)
 				p.metrics.IncRetryExhausted(RetrySkipBodyNotReplay)
 				previous.commit()
 				previous.commitTrailers()
@@ -1780,7 +1952,10 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			}
 		}
 		retryMinRemaining = policy.MinRemaining
-		applyServiceEndpointIdentity(forwardReq, target, endpoint, caller)
+		forwardReq = requestForServiceEndpoint(ctx, forwardReq, target, endpoint, caller)
+		if enrollTrafficScopes(w, forwardReq, p.trafficRevocations, trafficrevocation.Scope{Kind: "deployment", ID: endpoint.DeploymentID}) {
+			return
+		}
 		signal := &staleTargetSignal{}
 		signal.onStale = func() { p.retireEndpoint(appID, endpoint.InstanceID, signal.frozen.Load()) }
 		buffer := newServiceProxyResponseWriter(w)
@@ -1791,7 +1966,10 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		// context so the bridge can report a stale target to this retry loop.
 		forwardReq = forwardReq.WithContext(withStaleTargetSignal(forwardReq.Context(), signal)) //nolint:contextcheck // request context is deliberately wrapped with request-local stale-target state.
 		forwardReq, buffer.onResponse = p.withServiceRequestObservation(forwardReq, target, caller, endpoint, woken)
-		p.forward(serviceEndpointTarget(appID, endpoint)).ServeHTTP(buffer, forwardReq)
+		recordTrafficAttempt(ctx)
+		forwardTarget := serviceEndpointTarget(appID, endpoint)
+		oteltrace.SpanFromContext(ctx).SetAttributes(completionTargetAttributes(forwardTarget)...)
+		p.forward(forwardTarget).ServeHTTP(buffer, forwardReq)
 		if attempt > 0 && forwardReq.Body != nil {
 			_ = forwardReq.Body.Close()
 		}
@@ -1811,6 +1989,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			return
 		}
 		if buffer.committed || buffer.interimSent {
+			recordTrafficRetryStop(ctx, RetrySkipCommitted)
 			p.metrics.IncRetryExhausted(RetrySkipCommitted)
 			buffer.commit()
 			buffer.commitTrailers()
@@ -1821,6 +2000,7 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			// retry on a thawed replica sits outside the retry policy.
 			// It must still respect cancellation and the request deadline.
 			if !retryTimeAvailable(request, 0, p.now()) {
+				recordTrafficRetryStop(ctx, RetrySkipBudget)
 				p.metrics.IncRetryExhausted(RetrySkipBudget)
 				buffer.commit()
 				buffer.commitTrailers()
@@ -1838,12 +2018,14 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 		// already handled it, so it earns no second re-route.
 		undelivered := signal.undelivered.Load() && !signal.frozen.Load() && !undeliveredGranted && bodyReplayable
 		if !undelivered && attempt+1 >= limit {
+			recordTrafficRetryStop(ctx, RetrySkipAttempts)
 			p.metrics.IncRetryExhausted(RetrySkipAttempts)
 			buffer.commit()
 			buffer.commitTrailers()
 			return
 		}
 		if !retryTimeAvailable(request, policy.MinRemaining, p.now()) {
+			recordTrafficRetryStop(ctx, RetrySkipBudget)
 			p.metrics.IncRetryExhausted(RetrySkipBudget)
 			buffer.commit()
 			buffer.commitTrailers()
@@ -1857,23 +2039,30 @@ func (p *ServiceProxy) forwardOnce(w http.ResponseWriter, r *http.Request, targe
 			limit++
 			continue
 		}
-		if !p.retryBudget.AllowRetry(request.Context(), appID, policy.BudgetPercent, policy.BudgetMinRetries) {
+		if !p.retryBudget.AllowRetry(ctx, appID, policy.BudgetPercent, policy.BudgetMinRetries) {
+			recordTrafficRetryStop(ctx, RetrySkipAggregate)
 			p.metrics.IncRetryExhausted(RetrySkipAggregate)
 			buffer.commit()
 			buffer.commitTrailers()
 			return
 		}
 		if policy.Backoff > 0 {
+			stopBackoff := measureTrafficPhase(ctx, trafficBackoff)
 			timer := time.NewTimer(policy.Backoff)
 			select {
 			case <-timer.C:
-			case <-request.Context().Done():
+			case <-ctx.Done():
 				timer.Stop()
+				stopBackoff()
+				if handleForwardRequestCancellation(w, request, !buffer.committed) {
+					return
+				}
 				buffer.commit()
 				buffer.commitTrailers()
 				return
 			}
 			timer.Stop()
+			stopBackoff()
 		}
 	}
 	return rerouteWoke
@@ -1987,6 +2176,7 @@ func serviceFlagDecisionValue(value any) string {
 
 func serviceEndpointTarget(appID string, endpoint ServiceEndpoint) Target {
 	return Target{
+		WakeID:              endpoint.wakeID,
 		AppID:               appID,
 		NodeID:              endpoint.NodeID,
 		InstanceID:          endpoint.InstanceID,
@@ -2000,11 +2190,11 @@ func serviceEndpointTarget(appID string, endpoint ServiceEndpoint) Target {
 	}
 }
 
-// pick walks the round-robin ring and returns the first endpoint whose
-// breaker admits it. In half-open exactly one caller is admitted as a probe,
+// pickForAttempt walks the ring, rechecking current readiness and identity
+// before asking the breaker. In half-open exactly one caller is admitted as a probe,
 // so a recovering endpoint receives a single trial request rather than the
 // full share the ring would otherwise hand it.
-func (p *ServiceProxy) pick(appID string, endpoints []ServiceEndpoint) (ServiceEndpoint, bool) {
+func (p *ServiceProxy) pickForAttempt(appID string, endpoints []ServiceEndpoint) (ServiceEndpoint, bool, bool) {
 	p.mu.Lock()
 	start := p.next[appID]
 	p.next[appID]++
@@ -2019,35 +2209,50 @@ func (p *ServiceProxy) pick(appID string, endpoints []ServiceEndpoint) (ServiceE
 	// Round-robin still runs within each tier, so local replicas share load
 	// evenly and a benched local endpoint falls through to a remote one
 	// rather than failing the call.
-	if endpoint, ok := p.pickFrom(appID, endpoints, start, true); ok {
-		return endpoint, true
+	endpoint, ok, localEligible := p.pickFrom(appID, endpoints, start, true)
+	if ok {
+		return endpoint, true, true
 	}
-	return p.pickFrom(appID, endpoints, start, false)
+	endpoint, ok, eligible := p.pickFrom(appID, endpoints, start, false)
+	return endpoint, ok, localEligible || eligible
 }
 
 // pickFrom walks the rotation once, considering only endpoints that match the
 // requested locality. localOnly=false considers every endpoint, so the second
 // pass is a superset of the first and no target is unreachable.
-func (p *ServiceProxy) pickFrom(appID string, endpoints []ServiceEndpoint, start uint64, localOnly bool) (ServiceEndpoint, bool) {
+func (p *ServiceProxy) pickFrom(appID string, endpoints []ServiceEndpoint, start uint64, localOnly bool) (ServiceEndpoint, bool, bool) {
 	if localOnly && p.localNodeID == "" {
-		return ServiceEndpoint{}, false
+		return ServiceEndpoint{}, false, false
 	}
+	eligible := false
+	validator, validates := p.provider.(ServiceEndpointRoutability)
 	for i := 0; i < len(endpoints); i++ {
 		endpoint := endpoints[(int(start)+i)%len(endpoints)]
 		if localOnly && endpoint.NodeID != p.localNodeID {
 			continue
 		}
+		if validates && !validator.ServiceEndpointRoutable(appID, endpoint) {
+			continue
+		}
+		eligible = true
 		if p.breaker.Allow(serviceProxyEndpointKey(appID, endpoint.InstanceID)) {
-			return endpoint, true
+			return endpoint, true, true
 		}
 	}
-	return ServiceEndpoint{}, false
+	return ServiceEndpoint{}, false, eligible
 }
 
-// quarantine reports a transport failure for an endpoint. The name is kept
-// because every call site reads as "bench this endpoint"; the mechanism
-// underneath is now the shared breaker, so repeated failures back off
-// geometrically instead of re-admitting the endpoint every endpointTTL.
+func (p *ServiceProxy) recordEndpointPick(ctx context.Context, picked, eligible bool, candidates int) {
+	if eligible {
+		recordTrafficCircuit(ctx, picked)
+		if !picked {
+			recordTrafficRefusal(ctx, "circuit")
+		}
+	} else if candidates > 0 {
+		recordTrafficRefusal(ctx, "capacity")
+	}
+}
+
 // rerouteAfterStale re-reads the registry, bypassing the lease, once no
 // endpoint the call holds is pickable. A target the registry still lists is
 // live and stays behind its breaker; an evicted one leaves the registry empty
@@ -2072,6 +2277,10 @@ func (p *ServiceProxy) rerouteAfterStale(w http.ResponseWriter, ctx context.Cont
 	return endpoints, true, true
 }
 
+// quarantine reports a transport failure for an endpoint. The name is kept
+// because every call site reads as "bench this endpoint"; the mechanism
+// underneath is now the shared breaker, so repeated failures back off
+// geometrically instead of re-admitting the endpoint every endpointTTL.
 func (p *ServiceProxy) quarantine(appID, instanceID string) {
 	p.breaker.Failure(serviceProxyEndpointKey(appID, instanceID))
 	p.publishOpenTargets(appID)
@@ -2282,7 +2491,14 @@ func (w *serviceProxyResponseWriter) commitTrailers() {
 	if !w.committed {
 		return
 	}
-	copyBufferedResponseTrailers(w.dst.Header(), w.header)
+	// A guest cannot forge the platform's policy revision through a trailer.
+	src := make(http.Header, len(w.header))
+	for key, values := range w.header {
+		if !isTrafficPolicyProof(key) {
+			src[key] = values
+		}
+	}
+	copyBufferedResponseTrailers(w.dst.Header(), src)
 }
 
 func (w *serviceProxyResponseWriter) Unwrap() http.ResponseWriter { return w.dst }
