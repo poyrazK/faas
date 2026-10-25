@@ -234,7 +234,6 @@ GetTenantSurfaceByName
 GetUploadCommitOutcome
 GetUploadSession
 GetWorkflowEventsForRun
-GetWorkflowRunByIdempotencyKey
 GitHubBindingForApp
 GitHubInstallForAccount
 GithubInstallBindingForRepoBranch

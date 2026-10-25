@@ -14,23 +14,47 @@ import (
 // UpdateEgressCircuit pushes the complete open-circuit set for an app to one
 // vmmd. An empty set closes every circuit.
 func (c *VMMClient) UpdateEgressCircuit(ctx context.Context, appID string, targets []netns.EgressCircuitTarget) error {
+	return c.UpdateEgressCircuitRevision(ctx, appID, netns.EgressCircuitSnapshot{Targets: targets})
+}
+
+func (c *VMMClient) UpdateEgressCircuitRevision(ctx context.Context, appID string, snapshot netns.EgressCircuitSnapshot) error {
+	targets, err := netns.CanonicalEgressCircuitTargets(snapshot.Targets)
+	if err != nil {
+		return err
+	}
 	wire := make([]*vmmdpb.EgressCircuitTarget, 0, len(targets))
 	for _, t := range targets {
-		if !t.Valid() {
-			continue
-		}
 		wire = append(wire, &vmmdpb.EgressCircuitTarget{
 			Addr: t.Addr.String(),
 			Port: uint32(t.Port),
 		})
 	}
-	if _, err := c.cli.UpdateEgressCircuit(ctx, &vmmdpb.UpdateEgressCircuitRequest{
+	ack, err := c.cli.UpdateEgressCircuit(ctx, &vmmdpb.UpdateEgressCircuitRequest{
 		AppId:    appID,
 		Circuits: wire,
-	}); err != nil {
+		Revision: snapshot.Revision,
+	})
+	if err != nil {
 		return liftErr(err)
 	}
+	if snapshot.Revision > 0 && ack.GetRevision() < snapshot.Revision {
+		return fmt.Errorf("vmm client: node did not acknowledge circuit revision")
+	}
 	return nil
+}
+
+func (r *VMMRouter) UpdateEgressCircuitRevision(ctx context.Context, nodeID, appID string, snapshot netns.EgressCircuitSnapshot) error {
+	cli, err := r.resolveFor(ctx, nodeID)
+	if err != nil {
+		return err
+	}
+	updater, ok := cli.(interface {
+		UpdateEgressCircuitRevision(context.Context, string, netns.EgressCircuitSnapshot) error
+	})
+	if !ok {
+		return fmt.Errorf("vmm router: durable egress circuits unsupported by node %q", nodeID)
+	}
+	return updater.UpdateEgressCircuitRevision(ctx, appID, snapshot)
 }
 
 // UpdateEgressCircuit routes a circuit-set push to the vmmd owning the node.
@@ -65,13 +89,24 @@ type EgressCircuitRouter interface {
 // RoutedEgressCircuitApplier is the production EgressCircuitApplier: it fans a
 // circuit-set push out to every node running the app.
 //
-// It holds the desired set per app rather than per (app, upstream), because
-// the vmmd RPC takes a whole set. A per-upstream transition therefore has to
-// re-push the union of that app's open circuits, which is also what makes the
-// push idempotent and self-healing.
+// It commits the whole-app union to the desired store before fanout because
+// the vmmd RPC replaces the complete set. Retrying the same revision repairs
+// missed pushes and lets boot-time readers recover the same policy.
 type RoutedEgressCircuitApplier struct {
-	router EgressCircuitRouter
-	nodes  EgressCircuitNodeLister
+	router  EgressCircuitRouter
+	nodes   EgressCircuitNodeLister
+	desired EgressCircuitDesiredStore
+}
+
+type EgressCircuitDesiredStore interface {
+	PutAppEgressCircuits(context.Context, string, []netns.EgressCircuitTarget) (netns.EgressCircuitSnapshot, error)
+}
+
+// WithDesiredStore enables commit-before-fanout semantics. Wake-time readers
+// on new nodes and after daemon restart use the same authoritative revision.
+func (a *RoutedEgressCircuitApplier) WithDesiredStore(store EgressCircuitDesiredStore) *RoutedEgressCircuitApplier {
+	a.desired = store
+	return a
 }
 
 // NewRoutedEgressCircuitApplier wires the applier. A nil router or lister
@@ -92,6 +127,18 @@ func (a *RoutedEgressCircuitApplier) ApplyEgressCircuits(ctx context.Context, ap
 	if a == nil || a.router == nil || a.nodes == nil {
 		return nil
 	}
+	snapshot := netns.EgressCircuitSnapshot{Targets: targets}
+	if a.desired != nil {
+		var err error
+		snapshot, err = a.desired.PutAppEgressCircuits(ctx, appID, targets)
+		if err != nil {
+			return err
+		}
+	}
+	return a.applySnapshot(ctx, appID, snapshot)
+}
+
+func (a *RoutedEgressCircuitApplier) applySnapshot(ctx context.Context, appID string, snapshot netns.EgressCircuitSnapshot) error {
 	nodeIDs, err := a.nodes(ctx, appID)
 	if err != nil {
 		return fmt.Errorf("sched: egress circuit: list nodes for app %s: %w", appID, err)
@@ -101,7 +148,20 @@ func (a *RoutedEgressCircuitApplier) ApplyEgressCircuits(ctx context.Context, ap
 		if nodeID == "" {
 			continue
 		}
-		if err := a.router.UpdateEgressCircuit(ctx, nodeID, appID, targets); err != nil && firstErr == nil {
+		var err error
+		if snapshot.Revision > 0 {
+			updater, ok := a.router.(interface {
+				UpdateEgressCircuitRevision(context.Context, string, string, netns.EgressCircuitSnapshot) error
+			})
+			if !ok {
+				err = fmt.Errorf("durable egress circuit updates unsupported")
+			} else {
+				err = updater.UpdateEgressCircuitRevision(ctx, nodeID, appID, snapshot)
+			}
+		} else {
+			err = a.router.UpdateEgressCircuit(ctx, nodeID, appID, snapshot.Targets)
+		}
+		if err != nil && firstErr == nil {
 			firstErr = fmt.Errorf("sched: egress circuit: node %s: %w", nodeID, err)
 		}
 	}

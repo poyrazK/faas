@@ -532,6 +532,20 @@
     group: root
     mode: "0644"
 
+- name: compute_only_service — install traffic apps-domain drop-in
+  notify:
+    - restart faas-imaged
+    - restart faas-schedd
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-apps-domain.conf.j2
+    dest: "/etc/systemd/system/{{ item }}.service.d/99-faas-apps-domain.conf"
+    owner: root
+    group: root
+    mode: "0644"
+  loop:
+    - faas-imaged
+    - faas-schedd
+
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
 # through to imaged via FAAS_IMAGED_ROLE so cmd/imaged/main.go
 # picks up faas_box_role (compute-only on fsn-2). See

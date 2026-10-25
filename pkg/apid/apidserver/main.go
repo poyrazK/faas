@@ -753,7 +753,9 @@ func run(ctx context.Context, log *slog.Logger) error {
 		return err
 	}
 	defer stopEventWriter()
-	deps.store = func() state.Store { return state.NewPgStore(pool) }
+	deps.store = func() state.Store {
+		return state.NewPgStore(pool, state.WithTrafficAppsDomain(cfg.GetAppsDomain(deps.getenv)))
+	}
 	// Wire the canonical OpenAPI projector before any deployment can be
 	// promoted. state.MarkDeploymentLive invokes it inside the same Postgres
 	// transaction as the status flip and snapshot UPSERT.

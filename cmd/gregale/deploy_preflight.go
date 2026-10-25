@@ -124,7 +124,10 @@ func deployPreflightRelease(safe bool, canaryPreset string, trafficPercent int, 
 	case trafficPercent >= 0:
 		release = fmt.Sprintf("traffic split · %d%%", trafficPercent)
 	default:
-		release = "standard · 100% after readiness"
+		// The plan renders before authentication, so it cannot see whether a
+		// release is live; apid applies the app's release policy (ADR-1446,
+		// Hunt 14 H14-9).
+		release = "app release policy (default: health-gated canary when a release is live)"
 	}
 	if rollbackOn5xx != nil && *rollbackOn5xx && !strings.Contains(release, "automatic rollback") {
 		release += " · first-wake 5xx rollback"
