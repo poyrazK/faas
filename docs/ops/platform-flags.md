@@ -88,6 +88,7 @@ flag still cannot use a capability its plan lacks; the inspector reports both.
 | `realtime_tickets` | Realtime subscription tickets (ADR-1117) | apid → realtimed | `FAAS_REALTIME_TICKETS_PREVIEW_ENABLED` |
 | `realtime_access` | Realtime principal access revocation (ADR-1113) | apid → realtimed | `FAAS_REALTIME_ACCESS_PREVIEW_ENABLED` |
 | `realtime_occupancy` | Realtime channel occupancy (ADR-1324) | apid → realtimed | `FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED` |
+| `realtime_preview` | Realtime preview: retained history and what builds on it, tickets, access controls, occupancy, usage, endpoint slugs and channel rules, the v2 protocol and SSE (ADR-20261019102657). The v2 protocol, tickets, access controls and occupancy also need their own flag above | apid → realtimed | `FAAS_REALTIME_PREVIEW_ACCOUNTS` |
 | `strict_budgets` | Strict compute and egress budgets (ADR-1750) | apid | none (off until an operator writes it) |
 | `edge_waf_blocking` | Warn and block modes of WAF edge rules (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
 | `edge_challenge` | Challenge edge rules, with difficulty escalation (ADR-20261023113721) | apid, gatewayd-internal | none (off until an operator writes it) |
@@ -104,12 +105,15 @@ Until an operator writes one of them, its existing gate still decides, and
 `FAAS_APPLICATION_AUTH_*` is still re-read on every call. The first operator
 write hands the decision to the flag.
 
-Two of these flags have limits:
+`live_queries` and `realtime_preview` have limits:
 
-- `live_queries` is decided by account only, because the realtime path knows
-  only the account. Plan rules never match it.
+- `live_queries` and `realtime_preview` are decided by account only, because
+  the realtime path knows only the account. Plan rules never match them.
 - Unless `live_queries` includes every account, the live-query routes stay
-  hidden from accounts outside it.
+  hidden from accounts outside it. Unless `realtime_preview` includes every
+  account, the served OpenAPI document leaves the realtime preview out.
+  realtimed applies a change to an account's endpoints within the 30 s
+  endpoint resync.
 
 The four realtime flags are decided by apid, which has no realtime node
 database pool to share.

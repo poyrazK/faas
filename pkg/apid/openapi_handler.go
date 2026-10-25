@@ -42,7 +42,7 @@ func OpenAPIYAML() []byte { return openapiYAML }
 // jail mount helper: eager YAML conversion added about 82 ms to every helper
 // process on the SSD compute node, even though it never serves this endpoint.
 // Indexed like publicSpecs.
-var openapiJSON [2]struct {
+var openapiJSON [4]struct {
 	once sync.Once
 	body []byte
 }
@@ -75,12 +75,12 @@ func mustMarshalJSON(yamlBytes []byte) []byte {
 	return body
 }
 
-func openAPIJSONBytes() []byte { return openAPIJSONBytesFor(false) }
+func openAPIJSONBytes() []byte { return openAPIJSONBytesFor(Visibility{}) }
 
-func openAPIJSONBytesFor(monetization bool) []byte {
-	spec := &openapiJSON[specIndex(monetization)]
+func openAPIJSONBytesFor(v Visibility) []byte {
+	spec := &openapiJSON[v.index()]
 	spec.once.Do(func() {
-		spec.body = mustMarshalJSON(PublicOpenAPIYAMLFor(monetization))
+		spec.body = mustMarshalJSON(PublicOpenAPIYAMLFor(v))
 	})
 	return spec.body
 }
@@ -88,36 +88,44 @@ func openAPIJSONBytesFor(monetization bool) []byte {
 // OpenAPIJSONSHA256 returns the hex SHA-256 checksum of the exact bytes served
 // by GET /v1/openapi.json. The docs page publishes this value so clients and
 // CI can verify that Swagger UI is rendering the deployed document.
-func OpenAPIJSONSHA256() string { return openAPIJSONSHA256For(false) }
+func OpenAPIJSONSHA256() string { return openAPIJSONSHA256For(Visibility{}) }
 
-func openAPIJSONSHA256For(monetization bool) string {
-	sum := sha256.Sum256(openAPIJSONBytesFor(monetization))
+func openAPIJSONSHA256For(v Visibility) string {
+	sum := sha256.Sum256(openAPIJSONBytesFor(v))
 	return hex.EncodeToString(sum[:])
 }
 
 // OpenAPI serves the anonymous spec and API reference. Monetization reports
-// whether API monetization is released (ADR-20261018090210) and is read per
-// request; nil keeps it hidden. ServeOpenAPISpec, ServeOpenAPISpecJSON and
-// ServeDocs are the hidden variants.
+// whether API monetization is released (ADR-20261018090210) and
+// RealtimePreview whether every account sees the realtime preview
+// (ADR-20261019102657); both are read per request, and nil keeps the feature
+// hidden. ServeOpenAPISpec, ServeOpenAPISpecJSON and ServeDocs are the hidden
+// variants.
 type OpenAPI struct {
-	Monetization func() bool
+	Monetization    func() bool
+	RealtimePreview func() bool
 }
 
-func (o OpenAPI) monetization() bool { return o.Monetization != nil && o.Monetization() }
+func (o OpenAPI) visibility() Visibility {
+	return Visibility{
+		Monetization:    o.Monetization != nil && o.Monetization(),
+		RealtimePreview: o.RealtimePreview != nil && o.RealtimePreview(),
+	}
+}
 
 // ServeYAML handles GET /v1/openapi.yaml like ServeOpenAPISpec.
 func (o OpenAPI) ServeYAML(w http.ResponseWriter, _ *http.Request) {
-	writeOpenAPIYAML(w, PublicOpenAPIYAMLFor(o.monetization()))
+	writeOpenAPIYAML(w, PublicOpenAPIYAMLFor(o.visibility()))
 }
 
 // ServeJSON handles GET /v1/openapi.json like ServeOpenAPISpecJSON.
 func (o OpenAPI) ServeJSON(w http.ResponseWriter, _ *http.Request) {
-	writeOpenAPIJSON(w, openAPIJSONBytesFor(o.monetization()))
+	writeOpenAPIJSON(w, openAPIJSONBytesFor(o.visibility()))
 }
 
 // ServeDocs handles the API reference like the package-level ServeDocs.
 func (o OpenAPI) ServeDocs(w http.ResponseWriter, r *http.Request) {
-	serveDocs(w, r, openAPIJSONSHA256For(o.monetization()))
+	serveDocs(w, r, openAPIJSONSHA256For(o.visibility()))
 }
 
 // ServeOpenAPISpec handles GET /v1/openapi.yaml. Anonymous; emits

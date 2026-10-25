@@ -4078,8 +4078,8 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 		if m, ok, loadErr := gregalemanifest.Load(sourceDir); loadErr != nil {
 			return savedSession.failure("Could not load manifest realtime triggers", "configuration", loadErr)
 		} else if ok {
-			if err := reconcileManifestRealtimeTriggers(ctx, client, slug, m, realtimeTriggers); err != nil {
-				return savedSession.failure("Manifest realtime triggers failed", "configuration", err)
+			if err := reconcileManifestRealtime(ctx, client, slug, m, realtimeTriggers); err != nil {
+				return savedSession.failure("Manifest realtime failed", "configuration", err)
 			}
 		}
 	}

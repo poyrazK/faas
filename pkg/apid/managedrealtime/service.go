@@ -69,6 +69,10 @@ type Service struct {
 	// channel grants and the versioned reconnect protocol are ready.
 	HistoryPreviewEnabled bool
 	HistoryMetrics        *ManagedRealtimeHistoryMetrics
+	// Preview decides which accounts see realtime preview features
+	// (ADR-20261019102657); nil shows them to nobody. The *Enabled flags only
+	// say the daemon is ready for a feature.
+	Preview PreviewGate
 	// OccupancyPreviewEnabled serves channel occupancy (ADR-1324).
 	OccupancyPreviewEnabled bool
 	// UsageEnabled serves the account's realtime usage (ADR-1323), recorded

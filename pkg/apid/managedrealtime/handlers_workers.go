@@ -28,7 +28,11 @@ func (s *Service) authenticateRealtimeWorker(r *http.Request) (state.RealtimeWor
 	if !ok {
 		return grant, state.ErrRealtimeWorkerCredentialDenied
 	}
-	return store.AuthenticateRealtimeWorkerCredential(r.Context(), r.PathValue("group_id"), fields[1])
+	grant, err := store.AuthenticateRealtimeWorkerCredential(r.Context(), r.PathValue("group_id"), fields[1])
+	if err == nil && !s.PreviewVisible(grant.AccountID) {
+		return state.RealtimeWorkerGrant{}, state.ErrRealtimeWorkerCredentialDenied
+	}
+	return grant, err
 }
 func (s *Service) RealtimeWorkerLimited(next http.HandlerFunc) http.HandlerFunc {
 	cfg := middleware.AuthLimitConfig{CountStatuses: []int{http.StatusUnauthorized}, Log: s.Host.Logger()}

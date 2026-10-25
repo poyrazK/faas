@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from ..models.create_managed_realtime_endpoint_request_auth_required_claims import (
         CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
     )
+    from ..models.realtime_channel_rule import RealtimeChannelRule
 
 
 T = TypeVar("T", bound="CreateManagedRealtimeEndpointRequest")
@@ -46,6 +47,11 @@ class CreateManagedRealtimeEndpointRequest:
     max_message_bytes: int | Unset = 0
     max_connection_age_seconds: int | Unset = 0
     enabled: bool | Unset = True
+    slug: str | Unset = UNSET
+    """Optional name of the endpoint within its app, unique per app. gregale.yaml declares endpoints by slug."""
+    channel_rules: list[RealtimeChannelRule] | Unset = UNSET
+    """Channels granted from verified token claims without the authorize callback. A matching channel trusts the
+    token until it expires."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -96,6 +102,15 @@ class CreateManagedRealtimeEndpointRequest:
 
         enabled = self.enabled
 
+        slug = self.slug
+
+        channel_rules: list[dict[str, Any]] | Unset = UNSET
+        if not isinstance(self.channel_rules, Unset):
+            channel_rules = []
+            for channel_rules_item_data in self.channel_rules:
+                channel_rules_item = channel_rules_item_data.to_dict()
+                channel_rules.append(channel_rules_item)
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -134,6 +149,10 @@ class CreateManagedRealtimeEndpointRequest:
             field_dict["max_connection_age_seconds"] = max_connection_age_seconds
         if enabled is not UNSET:
             field_dict["enabled"] = enabled
+        if slug is not UNSET:
+            field_dict["slug"] = slug
+        if channel_rules is not UNSET:
+            field_dict["channel_rules"] = channel_rules
 
         return field_dict
 
@@ -142,6 +161,7 @@ class CreateManagedRealtimeEndpointRequest:
         from ..models.create_managed_realtime_endpoint_request_auth_required_claims import (
             CreateManagedRealtimeEndpointRequestAuthRequiredClaims,
         )
+        from ..models.realtime_channel_rule import RealtimeChannelRule
 
         d = dict(src_dict)
         callback_url = d.pop("callback_url")
@@ -199,6 +219,17 @@ class CreateManagedRealtimeEndpointRequest:
 
         enabled = d.pop("enabled", UNSET)
 
+        slug = d.pop("slug", UNSET)
+
+        _channel_rules = d.pop("channel_rules", UNSET)
+        channel_rules: list[RealtimeChannelRule] | Unset = UNSET
+        if _channel_rules is not UNSET:
+            channel_rules = []
+            for channel_rules_item_data in _channel_rules:
+                channel_rules_item = RealtimeChannelRule.from_dict(channel_rules_item_data)
+
+                channel_rules.append(channel_rules_item)
+
         create_managed_realtime_endpoint_request = cls(
             callback_url=callback_url,
             callback_auth_token=callback_auth_token,
@@ -217,6 +248,8 @@ class CreateManagedRealtimeEndpointRequest:
             max_message_bytes=max_message_bytes,
             max_connection_age_seconds=max_connection_age_seconds,
             enabled=enabled,
+            slug=slug,
+            channel_rules=channel_rules,
         )
 
         create_managed_realtime_endpoint_request.additional_properties = d
