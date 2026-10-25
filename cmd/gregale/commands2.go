@@ -5183,9 +5183,7 @@ func cmdDomains(args []string) int {
 		return cmdDomainsDoctor(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown domains subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "domains", parent, args[0])
 }
 
 // cmdCrons: list/add/update/rm.
@@ -5375,9 +5373,7 @@ func cmdCrons(args []string) int {
 		return cmdCronsFireNowGet(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown crons subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "crons", parent, args[0])
 }
 
 // cronIDPattern is the 32-hex shape used by the API for cron ids
@@ -5709,9 +5705,7 @@ func cmdKeys(args []string) int {
 		return cmdKeysGraceWindow(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown keys subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "keys", parent, args[0])
 }
 
 // cmdKeysRotate issues POST /v1/keys/{id}/rotate. The new plaintext
@@ -5848,9 +5842,7 @@ func cmdUsage(args []string) int {
 	}
 	PrintUsage(os.Stderr, "usage: gregale usage [--month YYYY-MM] | gregale usage summary [--month YYYY-MM] | gregale usage daily [--day YYYY-MM-DD] | gregale usage storage [--day YYYY-MM-DD]", "usage")
 	printCommandValidation(os.Stderr, "unknown usage subcommand %q\n", args[0])
-	sug, _ := suggestSubcommand(args[0], parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "usage", parent, args[0])
 }
 
 // cmdUsageList: GET /v1/usage?month=YYYY-MM. Defaults to the current
