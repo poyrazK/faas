@@ -99,6 +99,18 @@ ADR-568 requires.
   amendment (`bindq-0d1f6f3315`) showed the receipt leaving the guest
   113 ms after resume. vmmd then cancelled the stream when the channels
   closed, because it only waited after the restore had returned.
+- **The expectation uses the capture's instance identity.** A snapshot
+  restore cannot change the environment of a running process, so the
+  restored guest keeps the `FAAS_INSTANCE_ID` it booted with. That is the
+  capture instance's ID, while schedd builds the restore spec for the target
+  instance. `FAAS_INSTANCE_ID` is the only per-instance entry: the restore runs
+  under the same request and graph, on the same node, so binding URLs match.
+  - vmmd expects the restore request's env with that entry set to the
+    capture instance.
+  - schedd records the same digest for the restored target
+    (`fcvm.QualificationRestoreAPIEnvSHA256`).
+  - The n2 rerun with the in-restore wait had the receipt rejected
+    (`did not match this attempt`) until this change.
 - **What the receipt proves.** A capture made from different inputs cannot
   satisfy the restore request's expectation. Restore still refuses sidecars,
   so only the main workload re-attests.
@@ -114,7 +126,14 @@ ADR-568 requires.
   - The restore loaded the capture with the strict layer check, and the
     resume hook was acknowledged.
   - The receipt was dropped as described above.
-- Pending: the n2 native GitOps journey with the in-restore receipt wait.
+- 2026-10-25, n2, rerun with b5819ddd5a on a private PostgreSQL (the shared
+  e2e cluster was down after a full root disk):
+  - The gitlab restore received the guest's receipt inside the restore.
+  - vmmd rejected the receipt because of the instance identity mismatch
+    described above.
+  - The github capture failed on a full scratch disk.
+- Pending: the n2 native GitOps journey with the capture-identity
+  expectation.
 
 ## Rejected alternatives
 

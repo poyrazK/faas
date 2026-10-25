@@ -279,7 +279,7 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 	// verifies it byte-for-byte, so restore stages and unseals nothing. Only
 	// the fresh receipt control reaches the guest, through the resume hook.
 	var waiter *qualificationConfigReceiptWaiter
-	req, waiter, err = m.prepareQualificationRestoreConfigReceipt(req)
+	req, waiter, err = m.prepareQualificationRestoreConfigReceipt(req, frame.CaptureInstanceID)
 	if err != nil {
 		return nil, fmt.Errorf("native qualification restore: prepare config receipt: %w", err)
 	}

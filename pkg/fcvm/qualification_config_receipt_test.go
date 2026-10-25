@@ -7,9 +7,11 @@ import (
 	"encoding/hex"
 	"errors"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -85,12 +87,15 @@ func TestQualificationConfigReceiptBindsGuestAndDeliveredInputs(t *testing.T) {
 }
 
 // A restore stages nothing: the fresh control rides the resume hook, and the
-// guest re-attests its boot configuration against this request's projection.
+// guest re-attests its boot configuration: this request's projection under the
+// capture's platform instance identity.
 func TestQualificationRestoreConfigReceiptStagesNoControls(t *testing.T) {
 	m := NewManager(&fakeRunner{}, nil, Paths{}, "test", nil, nil)
+	captureInstance := uuid.NewString()
 	request := WakeRequest{Instance: uuid.NewString(), APIEnvEntries: []APIEnvEntry{{Key: "MODE", Value: "reviewed"}},
 		SealedEnvEntries: []SealedEnvEntry{{Key: "DATABASE_URL", Ciphertext: []byte("ciphertext")}}}
-	prepared, waiter, err := m.prepareQualificationRestoreConfigReceipt(request)
+	request.APIEnvEntries = append(request.APIEnvEntries, APIEnvEntry{Key: api.PlatformInstanceIDEnv, Value: request.Instance})
+	prepared, waiter, err := m.prepareQualificationRestoreConfigReceipt(request, captureInstance)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -104,16 +109,35 @@ func TestQualificationRestoreConfigReceiptStagesNoControls(t *testing.T) {
 		t.Fatal(err)
 	}
 	wantMAC, err := qualificationSecretKeysMAC(macKey, []string{"DATABASE_URL"})
-	digest, digestErr := QualificationAPIEnvSHA256(request.APIEnvEntries)
+	// The captured guest booted as the capture instance; the restore request
+	// names its own target, and nothing else differs.
+	captured := []APIEnvEntry{{Key: "MODE", Value: "reviewed"}, {Key: api.PlatformInstanceIDEnv, Value: captureInstance}}
+	digest, digestErr := QualificationAPIEnvSHA256(captured)
+	exported, exportedErr := QualificationRestoreAPIEnvSHA256(request.APIEnvEntries, captureInstance)
+	targetDigest, _ := QualificationAPIEnvSHA256(request.APIEnvEntries)
 	expected := waiter.expected[WorkloadNameMain]
-	if err != nil || digestErr != nil || len(waiter.expected) != 1 || expected.secretKeysMAC != wantMAC || expected.apiEnvSHA256 != digest || !expected.secretsRead {
+	if err != nil || digestErr != nil || exportedErr != nil || len(waiter.expected) != 1 || expected.secretKeysMAC != wantMAC ||
+		expected.apiEnvSHA256 != digest || exported != digest || targetDigest == digest || !expected.secretsRead {
 		t.Fatalf("restore receipt expectation = %+v", waiter.expected)
 	}
 	sidecars := request
 	sidecars.Instance = uuid.NewString()
 	sidecars.Sidecars = []WorkloadSpec{{Name: "worker"}}
-	if _, _, err := m.prepareQualificationRestoreConfigReceipt(sidecars); !errors.Is(err, state.ErrInvalidArgument) {
+	if _, _, err := m.prepareQualificationRestoreConfigReceipt(sidecars, captureInstance); !errors.Is(err, state.ErrInvalidArgument) {
 		t.Fatalf("restore receipt accepted sidecars: %v", err)
+	}
+	for _, capture := range []string{"", uuid.Nil.String(), strings.ToUpper(captureInstance)} {
+		bad := request
+		bad.Instance = uuid.NewString()
+		if _, _, err := m.prepareQualificationRestoreConfigReceipt(bad, capture); !errors.Is(err, state.ErrInvalidArgument) {
+			t.Fatalf("restore receipt accepted capture instance %q: %v", capture, err)
+		}
+	}
+	// Without a platform identity the restored env is the request's own.
+	plain := []APIEnvEntry{{Key: "MODE", Value: "reviewed"}}
+	plainDigest, _ := QualificationAPIEnvSHA256(plain)
+	if got, err := QualificationRestoreAPIEnvSHA256(plain, captureInstance); err != nil || got != plainDigest {
+		t.Fatalf("restore digest without platform identity = %q, %v", got, err)
 	}
 	for _, bad := range []qualificationRestoreReceiptControl{{}, {token: waiter.token}, {token: uuid.Nil.String(), macKey: control.macKey}, {token: waiter.token, macKey: control.macKey[:32]}} {
 		if bad.valid() {

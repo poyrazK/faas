@@ -77,6 +77,35 @@ func QualificationAPIEnvSHA256(entries []APIEnvEntry) (string, error) {
 	return qualificationAPIEnvSHA256(env)
 }
 
+// qualificationRestoreAPIEnv is the API env a restored qualification guest
+// actually holds: the restore request's reviewed env under the instance
+// identity of the capture it was restored from. A snapshot restore cannot
+// change a running process's environment, and the platform identity is the
+// only per-instance entry of a qualification spec (ADR 20261023093000).
+func qualificationRestoreAPIEnv(entries []APIEnvEntry, captureInstanceID string) ([]APIEnvEntry, error) {
+	if parsed, err := uuid.Parse(captureInstanceID); err != nil || parsed == uuid.Nil || parsed.String() != captureInstanceID {
+		return nil, state.ErrInvalidArgument
+	}
+	restored := append([]APIEnvEntry(nil), entries...)
+	for i := range restored {
+		if restored[i].Key == api.PlatformInstanceIDEnv {
+			restored[i].Value = captureInstanceID
+		}
+	}
+	return restored, nil
+}
+
+// QualificationRestoreAPIEnvSHA256 is the configuration digest a restored
+// qualification guest acknowledges: the restore request's env with the
+// capture's platform instance identity.
+func QualificationRestoreAPIEnvSHA256(entries []APIEnvEntry, captureInstanceID string) (string, error) {
+	restored, err := qualificationRestoreAPIEnv(entries, captureInstanceID)
+	if err != nil {
+		return "", err
+	}
+	return QualificationAPIEnvSHA256(restored)
+}
+
 func qualificationSecretKeysMAC(key []byte, keys []string) (string, error) {
 	if len(key) != sha256.Size {
 		return "", state.ErrInvalidArgument
@@ -154,12 +183,18 @@ func (m *Manager) prepareQualificationConfigReceipt(req WakeRequest) (WakeReques
 // prepareQualificationRestoreConfigReceipt registers a fresh receipt for a
 // restored main workload without staging any file. The captured guest reports
 // the configuration it loaded at boot; the host expects this request's frozen
-// projection, so a capture made from different inputs cannot satisfy it.
-func (m *Manager) prepareQualificationRestoreConfigReceipt(req WakeRequest) (WakeRequest, *qualificationConfigReceiptWaiter, error) {
+// projection under the capture's instance identity, so a capture made from
+// different inputs cannot satisfy it.
+func (m *Manager) prepareQualificationRestoreConfigReceipt(req WakeRequest, captureInstanceID string) (WakeRequest, *qualificationConfigReceiptWaiter, error) {
 	if len(req.Sidecars) != 0 {
 		return WakeRequest{}, nil, state.ErrInvalidArgument
 	}
-	token, secretKeysKey, waiter, err := m.registerQualificationWakeConfigReceipt(req)
+	expected := req
+	var err error
+	if expected.APIEnvEntries, err = qualificationRestoreAPIEnv(req.APIEnvEntries, captureInstanceID); err != nil {
+		return WakeRequest{}, nil, err
+	}
+	token, secretKeysKey, waiter, err := m.registerQualificationWakeConfigReceipt(expected)
 	if err != nil {
 		return WakeRequest{}, nil, err
 	}
