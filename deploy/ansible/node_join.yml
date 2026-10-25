@@ -892,6 +892,32 @@
           Environment=FAAS_COMPUTE_ADMISSION_CEILING_MB={{ faas_join_admission_ceiling_mb | default(faas_node_sizing.admission_ceiling_mb, true) }}
           Environment=FAAS_VCPU_BUDGET={{ faas_join_vcpu_budget | default((faas_join_tenant_vcpus | int) * 8, true) }}
 
+    # vmmd restart adoption switches (roles/vmmd_service/defaults/main.yml).
+    # Rendered on every run, not only on bootstrap convergence, so a host var
+    # change reaches the node with the next rollout; the adoption check below
+    # sees the same values. An off switch renders empty: vmmd.toml decides.
+    - name: Validate the vmmd restart adoption switches
+      ansible.builtin.assert:
+        that:
+          - not (vmmd_adopt_running_vms | default(false) | bool) or (vmmd_adoption_record | default(false) | bool)
+          - not (vmmd_adopt_admitted_runtimes | default(false) | bool) or (vmmd_adopt_running_vms | default(false) | bool)
+        fail_msg: >-
+          vmmd_adopt_running_vms needs vmmd_adoption_record, and
+          vmmd_adopt_admitted_runtimes needs vmmd_adopt_running_vms
+          (roles/vmmd_service/defaults/main.yml).
+
+    - name: Install the vmmd restart adoption switches
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/faas-vmmd.service.d/zz-faas-adoption.conf
+        owner: root
+        group: root
+        mode: "0644"
+        content: |
+          [Service]
+          Environment=FAAS_VMMD_ADOPTION_RECORD={{ 'true' if (vmmd_adoption_record | default(false) | bool) else '' }}
+          Environment=FAAS_VMMD_ADOPT_RUNNING_VMS={{ 'true' if (vmmd_adopt_running_vms | default(false) | bool) else '' }}
+          Environment=FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES={{ 'true' if (vmmd_adopt_admitted_runtimes | default(false) | bool) else '' }}
+
     # A fresh host has no /opt/faas/current yet, but release-bound base
     # preparation needs vmmd. Register the row as unavailable before the
     # temporary candidate vmmd starts so self-registration cannot make the
@@ -1290,6 +1316,12 @@
           - adoption-check
           - --config
           - /etc/faas/vmmd.toml
+      # The candidate judges with the switches the restarted vmmd will run
+      # with (zz-faas-adoption.conf above), not only vmmd.toml's.
+      environment:
+        FAAS_VMMD_ADOPTION_RECORD: "{{ 'true' if (vmmd_adoption_record | default(false) | bool) else '' }}"
+        FAAS_VMMD_ADOPT_RUNNING_VMS: "{{ 'true' if (vmmd_adopt_running_vms | default(false) | bool) else '' }}"
+        FAAS_VMMD_ADOPT_ADMITTED_RUNTIMES: "{{ 'true' if (vmmd_adopt_admitted_runtimes | default(false) | bool) else '' }}"
       register: faas_join_adoption_check
       changed_when: false
       failed_when: faas_join_adoption_check.rc not in [0, 3]
