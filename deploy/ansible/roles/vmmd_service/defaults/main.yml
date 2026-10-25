@@ -45,6 +45,26 @@ vmmd_adoption_record: false
 vmmd_adopt_running_vms: false
 vmmd_adopt_admitted_runtimes: false
 
+# Connection survival (docs/adr/20261017-connection-survival-across-data-path-restarts.md),
+# phase P1: with all three on and the adoption switches above, an instance's
+# bridge outlives a vmmd restart that adopts the guest. Streams through it
+# still end with vmmd until forwardd (P2) takes over the RPCs. Rendered as
+# FAAS_* environment only when on; off sets nothing, which leaves vmmd's
+# default (off). node_join.yml renders the same switches on every rollout
+# (zz-faas-bridge.conf). Set them per host (host_vars) to canary one node:
+# - vmmd_bridge_unprivileged runs each instance's bridges as its own bridge
+#   uid with no capability (slice 1a). vmmd refuses to start while an account
+#   holds a uid in the bridge range.
+# - vmmd_instance_bridge_sessions carries raw, TCP and UDP forwards as sessions
+#   on the instance's persistent bridge instead of a process per connection
+#   (P1b), so they ride the bridge that outlives vmmd.
+# - vmmd_instance_bridge_unit runs that bridge as a transient systemd service
+#   that outlives vmmd (P1c); needs vmmd_bridge_unprivileged. Turning it off
+#   is safe: the next vmmd stops every bridge unit it finds.
+vmmd_bridge_unprivileged: false
+vmmd_instance_bridge_sessions: false
+vmmd_instance_bridge_unit: false
+
 # ADR-740 developer live source patches. Must match control_plane_service's
 # value: apid publishes patches and vmmd serves them to developer environments.
 faas_dev_patch_delivery_enabled: false
