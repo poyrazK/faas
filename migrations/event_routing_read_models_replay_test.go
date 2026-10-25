@@ -81,9 +81,16 @@ func eventRoutingReadModelsReplayFixture(t *testing.T) (string, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// The filtered refresh triggers depend on the projection functions the
+	// older rollback drops; unwind them first and restore them last.
+	filters, err := migrations.FS.ReadFile("20261024232808115_event_routing_backlog_refresh_filters.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	filterParts := strings.SplitN(string(filters), "-- +goose Down", 2)
 	// The new rollback retains three view columns for its own forward restore.
 	// Restore the original view shape before replaying its historical definition.
 	viewStart := strings.Index(string(legacy), "CREATE OR REPLACE VIEW event_routing_backlog_source AS")
 	view := strings.SplitN(string(legacy)[viewStart:], "CREATE OR REPLACE FUNCTION", 2)[0]
-	return parts[1] + "\nDROP VIEW event_routing_backlog_source;\n" + view, parts[0]
+	return filterParts[1] + "\n" + parts[1] + "\nDROP VIEW event_routing_backlog_source;\n" + view, parts[0] + "\n" + filterParts[0]
 }
