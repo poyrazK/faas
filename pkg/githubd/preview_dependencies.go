@@ -14,9 +14,13 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// previewDependencyParents selects only the bound workload's transitive
-// depends_on closure. An unrelated service in the same repository never gets
-// a PR preview merely because it was discovered by the scanner.
+// previewDependencyParents selects the bound workload's transitive
+// depends_on closure. Under the project service policy the bound preview may
+// call any service of its project without declaring it, so every callable
+// sibling at the PR head joins the preview too (ADR-20261025093331); workers,
+// jobs and scheduled workloads join only as declared dependencies. Otherwise
+// an unrelated service never gets a PR preview merely because the scanner
+// discovered it.
 func (s *Service) previewDependencyParents(ctx context.Context, parent state.App, scan reposcan.Result, prNumber int) ([]state.App, error) {
 	if parent.ProjectID == "" {
 		return nil, nil // legacy single-app bindings have no project graph
@@ -62,14 +66,6 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 	if err := visit(root); err != nil {
 		return nil, err
 	}
-	closure := make([]reposcan.Workload, 0, len(selected))
-	for _, workload := range selected {
-		closure = append(closure, workload)
-	}
-	order, err := reposcan.DependencyOrder(closure, scan.Managed)
-	if err != nil {
-		return nil, fmt.Errorf("githubd: PR dependency graph: %w", err)
-	}
 	production, err := s.Reconcile.Store.AppsForProject(ctx, parent.AccountID, parent.ProjectID)
 	if err != nil {
 		return nil, fmt.Errorf("githubd: list production dependency apps: %w", err)
@@ -77,6 +73,23 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 	byWorkload := make(map[string]state.App, len(production))
 	for _, app := range production {
 		byWorkload[strings.ToLower(app.WorkloadName)] = app
+	}
+	if previewCallsWholeProject(parent, workloads[root]) {
+		for key, workload := range workloads {
+			if callablePreviewSibling(workload, byWorkload[key]) {
+				if err := visit(key); err != nil {
+					return nil, err
+				}
+			}
+		}
+	}
+	closure := make([]reposcan.Workload, 0, len(selected))
+	for _, workload := range selected {
+		closure = append(closure, workload)
+	}
+	order, err := reposcan.DependencyOrder(closure, scan.Managed)
+	if err != nil {
+		return nil, fmt.Errorf("githubd: PR dependency graph: %w", err)
 	}
 	parents := make([]state.App, 0, len(order)-1)
 	for _, name := range order {
@@ -119,6 +132,28 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 		parents = append(parents, app)
 	}
 	return parents, nil
+}
+
+// previewCallsWholeProject reports whether the bound preview runs under the
+// project service policy: the PR head's declaration, else the policy the
+// production app already has, as reconcile applies it to the preview.
+func previewCallsWholeProject(parent state.App, root reposcan.Workload) bool {
+	policy := parent.Manifest.EffectiveServiceBindingPolicy()
+	if root.ServiceBindingPolicy != "" {
+		policy = api.ServiceBindingPolicy(root.ServiceBindingPolicy).Effective()
+	}
+	return policy == api.ServiceBindingPolicyProject
+}
+
+// callablePreviewSibling reports whether a project sibling serves calls.
+// A worker, job or scheduled workload consumes production queues or runs on
+// a timer; it joins a preview only when a service declares it in depends_on.
+func callablePreviewSibling(workload reposcan.Workload, production state.App) bool {
+	if workload.Schedule != "" || len(workload.Schedules) > 0 ||
+		workload.Class == reposcan.ClassJob || workload.Class == reposcan.ClassWorker {
+		return false
+	}
+	return production.WorkloadClass != state.WorkloadClassJob && production.WorkloadClass != state.WorkloadClassWorker
 }
 
 // makePRDependencyPreview builds the desired sibling row. The caller reserves

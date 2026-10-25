@@ -420,6 +420,9 @@ func (m *Manager) adoptedInstance(l Lease, a *resourceAdoption) *Instance {
 	if a.Lifecycle.State == adoptionStateFrozen && a.Lifecycle.FrozenSince != nil {
 		inst.Frozen, inst.FrozenSince = true, *a.Lifecycle.FrozenSince
 	}
+	// The successor proves the unit before it serves through it
+	// (vmmdgrpc ReconcileInstanceBridgeUnits).
+	inst.bridge = a.Bridge.clone()
 	return inst
 }
 

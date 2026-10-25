@@ -165,10 +165,15 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 	if err != nil {
 		return nil, nil, nil, err
 	}
-	resolved, sources, linkWarnings, err := resolveComposeLinks(fsys, resolved, sources)
+	composeEnv, envErr := readComposeEnv(fsys)
+	if envErr != nil {
+		return nil, nil, nil, envErr
+	}
+	links, err := resolveComposeLinks(fsys, resolved, sources, composeEnv)
 	if err != nil {
 		return nil, nil, nil, err
 	}
+	resolved, sources, linkWarnings := links.body, links.sources, links.warnings
 	src = strings.Join(sources, " + ")
 	var c composeDoc
 	if err := yaml.Unmarshal(resolved, &c); err != nil {
@@ -206,10 +211,6 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 		warnings []string
 	)
 	warnings = append(warnings, linkWarnings...)
-	composeEnv, envErr := readComposeEnv(fsys)
-	if envErr != nil {
-		return nil, nil, nil, envErr
-	}
 	topSecrets, _ := rawDoc["secrets"].(map[string]any)
 	projectPolicy, err := interpolateComposeString(c.ServiceBindingPolicy, composeEnv, src, "(top level)", "x-gregale-service-policy")
 	if err != nil {
@@ -227,7 +228,10 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 				src, name, strings.Join(s.Profiles, ",")))
 			continue
 		}
-		if err := interpolateComposeCandidate(&s, composeEnv, src, name); err != nil {
+		// An included service interpolates with its own project's values
+		// (ADR-20261025090000).
+		serviceEnv := links.envFor(name, composeEnv)
+		if err := interpolateComposeCandidate(&s, serviceEnv, src, name); err != nil {
 			return nil, nil, nil, err
 		}
 		ctx, df, hasBuild, buildErr := buildFromAny(s.Build)
@@ -353,7 +357,7 @@ func detectCompose(fsys fs.FS) ([]workloadSeed, []Managed, []string, error) {
 			command, commandShell, process = builtServiceProcess(process, command, commandShell)
 			rawBuild, _ := rawService["build"].(map[string]any)
 			var buildWarnings []string
-			dockerfileBuild, buildWarnings, err = composeDockerfileBuild(fsys, s.Build, rawBuild, composeEnv, topSecrets, ctx, df)
+			dockerfileBuild, buildWarnings, err = composeDockerfileBuild(fsys, s.Build, rawBuild, serviceEnv, topSecrets, ctx, df)
 			if err != nil {
 				return nil, nil, nil, fmt.Errorf("reposcan: %s: %s: %w", src, name, err)
 			}

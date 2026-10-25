@@ -1645,6 +1645,15 @@ func (e *Engine) TelemetrySink() TelemetrySink {
 	}
 }
 
+// InstanceBridgeSink returns the callback scheddgrpc uses to record a node's
+// instance bridge memory (connection-survival ADR §2) with its telemetry.
+func (e *Engine) InstanceBridgeSink() InstanceBridgeSink {
+	if e == nil || e.telemetryCache == nil {
+		return func(string, time.Time, int64) {}
+	}
+	return e.telemetryCache.ReplaceInstanceBridge
+}
+
 // WithNodeKeyRegistry wires the ADR-053 signature-verification
 // registry onto the engine. Called once at startup after
 // NewEngine returns; the listener for 'compute_node_changed'

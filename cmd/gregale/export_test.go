@@ -1628,6 +1628,7 @@ var RecoveryReportDuration = recoveryReportDuration
 var RecoveryTrendReceipt = recoveryTrendReceipt
 var RedactErrorText = redactErrorText
 var RedactTestDiagnosticText = redactTestDiagnosticText
+var RehearsalTestGit = rehearsalTestGit
 var RehearsalTestRepo = rehearsalTestRepo
 var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
 var ReleaseDiffLines = releaseDiffLines
@@ -1899,6 +1900,7 @@ var TestLatencySelection = testLatencySelection
 var TestManagedWorkDigest = testManagedWorkDigest
 var TestPhaseRecoveryEvidence = testPhaseRecoveryEvidence
 var TestRecoveryDeadlineSpec = testRecoveryDeadlineSpec
+var TestRehearsalLocalExecution = testRehearsalLocalExecution
 var TestStabilityMinimizationOutcome = testStabilityMinimizationOutcome
 var TestStabilitySelection = testStabilitySelection
 var TokenFingerprint = tokenFingerprint
@@ -2445,3 +2447,10 @@ var InspectAttention = inspectAttention
 var RemoveCLITestSandbox = removeCLITestSandbox
 var WorkerScalingMetrics = workerScalingMetrics
 var WorkerMetricLabel = workerMetricLabel
+
+// ADR-20261025110000: registry credentials from a Docker config.
+type DockerCredentialHelper = dockerCredentialHelper
+
+func DockerConfigRegistryAuth(ctx context.Context, configPath, image string, helper DockerCredentialHelper) (*api.ImageRunRegistryAuth, error) {
+	return dockerConfigRegistryAuth(ctx, configPath, image, helper)
+}

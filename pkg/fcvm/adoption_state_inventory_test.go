@@ -165,6 +165,7 @@ var adoptionInstanceInventory = map[string]string{
 	"adoptionMemSizeMiB":              "rebuilt",
 	"adoptionOp":                      "reset", // resolved before adoption (slice 3)
 	"devPatched":                      "rebuilt",
+	"bridge":                          "rebuilt",
 	"migrationPaused":                 "rebuilt",
 	"warmSpare":                       "rebuilt",
 	"DataRepairOnly":                  "refused", // a data repair runs as an execution, which adoption kills

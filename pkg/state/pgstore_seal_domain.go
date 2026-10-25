@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // SealDomainProbe is one domain's non-secret probe (ADR 20261022111812),
@@ -315,6 +316,102 @@ func (s *PgStore) ResealRegistryCredential(ctx context.Context, c RegistrySealed
 	tag, err := s.pool.Exec(ctx, query, c.ID, c.Sealed, sealed)
 	if err != nil {
 		return false, fmt.Errorf("state: reseal registry credential %s %s: %w", c.Kind, c.ID, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// Edge credential kinds (ADR 20261022111812): an app's basic-auth credential,
+// a log drain's authentication header, and an application standard's log
+// destination header.
+const (
+	EdgeSealedCredentialBasicAuth      = "app_basic_auth"
+	EdgeSealedCredentialLogDrain       = "log_drain"
+	EdgeSealedCredentialLogDestination = "log_destination"
+)
+
+// EdgeSealedCredential is one sealed edge credential, listed for the edge
+// seal-domain re-seal. Managed rows belong to an application standard: its
+// log destinations are immutable versions, and the drains it installs must
+// carry the destination's exact ciphertext, so the re-seal leaves both.
+type EdgeSealedCredential struct {
+	Kind    string
+	ID      string
+	Sealed  []byte
+	Managed bool
+}
+
+// ListEdgeSealedCredentials pages through every sealed edge credential in
+// (kind, id) order, after the given cursor.
+func (s *PgStore) ListEdgeSealedCredentials(ctx context.Context, afterKind, afterID string, limit int) ([]EdgeSealedCredential, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	rows, err := s.pool.Query(ctx, `
+		SELECT kind, id, sealed, managed FROM (
+			SELECT 'app_basic_auth' AS kind, a.id::text AS id, a.public_auth_basic AS sealed, false AS managed
+			  FROM apps a
+			 WHERE octet_length(a.public_auth_basic) > 0
+			UNION ALL
+			SELECT 'log_drain', d.id::text, d.auth_header_sealed,
+			       EXISTS (SELECT 1 FROM app_application_standards e
+			                WHERE e.app_id = d.app_id
+			                  AND coalesce(jsonb_array_length(e.effective->'sources'->'log_destinations'), 0) > 0)
+			  FROM app_log_drains d
+			 WHERE octet_length(d.auth_header_sealed) > 0
+			UNION ALL
+			SELECT 'log_destination', l.id::text, l.auth_header_sealed, true
+			  FROM application_standard_log_destinations l
+			 WHERE octet_length(l.auth_header_sealed) > 0
+		) credential
+		 WHERE (kind, id) > ($1, $2)
+		 ORDER BY kind, id
+		 LIMIT $3
+	`, afterKind, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list edge sealed credentials: %w", err)
+	}
+	defer rows.Close()
+	var out []EdgeSealedCredential
+	for rows.Next() {
+		var c EdgeSealedCredential
+		if err := rows.Scan(&c.Kind, &c.ID, &c.Sealed, &c.Managed); err != nil {
+			return nil, fmt.Errorf("state: scan edge sealed credential: %w", err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list edge sealed credentials: %w", err)
+	}
+	return out, nil
+}
+
+// ResealEdgeCredential replaces c's ciphertext only while it still holds
+// c.Sealed, so a customer change between the read and the write wins. A row
+// a guard holds for now (a project clone, a pending standard review) is
+// left for the next run too. It reports whether the row was replaced;
+// updated_at is left alone because the credential did not change.
+func (s *PgStore) ResealEdgeCredential(ctx context.Context, c EdgeSealedCredential, sealed []byte) (bool, error) {
+	if len(c.Sealed) == 0 || len(sealed) == 0 {
+		return false, errors.New("state: reseal edge credential needs the old and new ciphertext")
+	}
+	var query string
+	switch c.Kind {
+	case EdgeSealedCredentialBasicAuth:
+		query = `UPDATE apps SET public_auth_basic = $3
+		          WHERE id = $1::uuid AND public_auth_basic = $2`
+	case EdgeSealedCredentialLogDrain:
+		query = `UPDATE app_log_drains SET auth_header_sealed = $3
+		          WHERE id = $1::uuid AND auth_header_sealed = $2`
+	default:
+		return false, fmt.Errorf("state: reseal edge credential: kind %q cannot be re-sealed in place", c.Kind)
+	}
+	tag, err := s.pool.Exec(ctx, query, c.ID, c.Sealed, sealed)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23514" {
+			return false, nil
+		}
+		return false, fmt.Errorf("state: reseal edge credential %s %s: %w", c.Kind, c.ID, err)
 	}
 	return tag.RowsAffected() == 1, nil
 }

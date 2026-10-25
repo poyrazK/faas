@@ -1420,6 +1420,15 @@ func (s *Server) ReportCapacity(stream scheddpb.Schedd_ReportCapacityServer) err
 				}
 			}
 		}
+		if v := msg.GetInstanceBridgeResidentBytes(); v != nil {
+			if provider, ok := s.engine.(interface {
+				InstanceBridgeSink() sched.InstanceBridgeSink
+			}); ok {
+				if sink := provider.InstanceBridgeSink(); sink != nil {
+					sink(report.NodeID, time.Now(), v.GetValue())
+				}
+			}
+		}
 		// Only separately signed process inventories can drive destructive
 		// reconciliation. Legacy capacity signatures do not cover metrics IDs.
 		if observer, ok := s.engine.(interface {

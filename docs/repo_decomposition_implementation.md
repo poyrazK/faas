@@ -52,6 +52,13 @@ A Compose service without `ports:` becomes an internal app: reachable from the
 project's other services, with no public URL (ADR-20261022131852). Services
 that publish `ports:` are public.
 
+`.gregale/project.yaml` at the repository root declares, for any detected
+workload, the service policy (`service_policy`, top level or per service),
+`visibility` (create-only) and `depends_on` (ADR-20261025093331). It is
+applied after the scan merges workloads: a Compose `x-gregale-service-policy`
+wins, `depends_on` lists are merged, and the merged graph goes through the
+same plan gate. Unknown services, keys or values fail the scan.
+
 For Compose workloads, `depends_on` is carried into the plan, validated as a
 cycle-free graph, and used to order app creation/build enqueueing. Each
 workload also receives platform-owned `GREGALE_SERVICE_<NAME>_URL` variables
