@@ -145,6 +145,31 @@
 # GF_SECURITY_ADMIN_PASSWORD__FILE (see templates/grafana-server.service.j2).
 # dev_mode: skip the assert so dev / CI hosts without secrets still
 # bootstrap (and Grafana isn't enabled in that case — see below).
+# The grafana package resets everything under /etc/grafana to root:grafana
+# 0640 when it is installed or upgraded, which leaves the admin password
+# group-readable and fails the check below on the next converge. Put an
+# existing, operator-provisioned file back to grafana:grafana 0400; its
+# contents are never read.
+- name: grafana — stat the admin password file
+  ansible.builtin.stat:
+    path: "{{ gv_admin_password_file }}"
+  register: gv_secret_present
+  when:
+    - not gv_dev_mode | bool
+  no_log: true
+
+- name: grafana — keep the admin password file private after package installs
+  ansible.builtin.file:
+    path: "{{ gv_admin_password_file }}"
+    owner: grafana
+    group: grafana
+    mode: "0400"
+  when:
+    - not gv_dev_mode | bool
+    - gv_secret_present.stat.exists | default(false)
+    - gv_secret_present.stat.isreg | default(false)
+  no_log: true
+
 - name: grafana — assert admin password file perms (production)
   ansible.builtin.stat:
     path: "{{ gv_admin_password_file }}"
