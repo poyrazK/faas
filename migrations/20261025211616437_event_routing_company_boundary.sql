@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261025211616000_event_routing_company_boundary.sql
+-- filename: 20261025211616437_event_routing_company_boundary.sql
 
 -- +goose Up
 -- +goose StatementBegin
