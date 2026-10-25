@@ -974,9 +974,10 @@ func validateJobExitPayload(payload JobExitPayload) error {
 	return nil
 }
 
-// SignalJob delivers graceful cancellation to guest-init. StopInstance cannot
-// signal the customer by signalling the Firecracker host process; it must use a
-// host-initiated vsock connection to the supervisor inside the VM.
+// SignalJob delivers a graceful stop to guest-init, for jobs and for workers
+// (stopSignalsGuest). StopInstance cannot signal the customer by signalling the
+// Firecracker host process; it must use a host-initiated vsock connection to
+// the supervisor inside the VM.
 func (v *JailerVMM) SignalJob(ctx context.Context, l Lease, signal syscall.Signal, grace time.Duration) (bool, int32, error) {
 	// Preserve StopInstance's immediate-stop contract. A zero grace or explicit
 	// SIGKILL must not silently become a 30-second graceful stop for job VMs.
@@ -1022,7 +1023,9 @@ func (v *JailerVMM) signalJobGuest(ctx context.Context, l Lease, signal syscall.
 		return fmt.Errorf("vmm: signal job: invalid VMM or instance")
 	}
 	switch signal {
-	case syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP:
+	// A worker manifest may also declare SIGUSR1 or SIGUSR2; a job guest still
+	// refuses them, and SignalJob then falls back to the hard stop.
+	case syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2:
 	default:
 		return fmt.Errorf("vmm: signal job: unsupported signal %d", signal)
 	}

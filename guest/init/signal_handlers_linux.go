@@ -172,6 +172,10 @@ func runSignalHandlers(ctx context.Context, manifest api.AppManifest, sup *Super
 		syscall.SIGUSR2,
 		syscall.SIGCHLD,
 	)
+	// The host's graceful stop arrives over the control port, not as a
+	// signal to PID 1: vmmd cannot signal inside the VM (Hunt 14 H14-59).
+	closeControl := listenControlSignals(sigCh, isWorkloadStopSignal, log)
+	defer closeControl()
 
 	// runErr holds the supervisor's terminal error so the
 	// caller can stamp the exit code onto the poweroff cycle.
