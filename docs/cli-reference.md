@@ -12525,7 +12525,7 @@ Run code, or one command from an image, in a disposable sandbox
 
 See also: [`runs`](#runs).
 
-`gregale run [--image <REF>] [--interactive] [--tty] [--entrypoint <CMD|FILE>] [--env <KEY[=VALUE]>] [--env-file <FILE>] [--user <USER>] [--workdir <DIR>] [--registry-username <USER>] [--registry-password-stdin] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--image <REF>] [--interactive] [--tty] [--entrypoint <CMD|FILE>] [--env <KEY[=VALUE]>] [--env-file <FILE>] [--user <USER>] [--workdir <DIR>] [--registry-username <USER>] [--registry-password-stdin] [--docker-config <PATH>] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -12539,6 +12539,7 @@ See also: [`runs`](#runs).
 | `--workdir <DIR>` | with --image, absolute working directory instead of the image WORKDIR (-w) |  |
 | `--registry-username <USER>` | with --image, username for a private registry; the password comes from --registry-password-stdin, $GREGALE_REGISTRY_PASSWORD or a prompt |  |
 | `--registry-password-stdin` | with --registry-username, read the registry password or token from stdin |  |
+| `--docker-config <PATH>` | with --image, use the credentials `docker login` stored for the image&#39;s registry, from this config.json or its directory, including credential helpers |  |
 | `--ram <MB>` | with --image, memory in MB (default: Job default) |  |
 | `--timeout <D>` | with --image, task deadline (default: the plan&#39;s Job ceiling) |  |
 | `--pull <P>` | with --image, re-pull a cached tag (always) or reuse it (missing) | one of `missing` · `always` |
@@ -12570,6 +12571,7 @@ gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'
 gregale run -it --image alpine sh
 gregale run -u nobody -w /data --env-file .env alpine env
 printf '%s' "$TOKEN" | gregale run --registry-username ci --registry-password-stdin ghcr.io/acme/tool:1.4 --version
+gregale run --docker-config ~/.docker ghcr.io/acme/tool:1.4 --version
 ```
 
 
