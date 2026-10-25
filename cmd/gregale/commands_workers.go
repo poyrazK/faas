@@ -327,7 +327,7 @@ func cmdWorkersStatus(args []string) int {
 		Status:       app.Status,
 		RAMMB:        app.RAMMB,
 		VCPU:         app.VCPU,
-		Metric:       "queue_lag",
+		Metric:       workerScalingMetrics(app),
 		StopSignal:   "SIGTERM",
 		DrainTimeout: 30,
 		Restart:      "always",
@@ -338,9 +338,6 @@ func cmdWorkersStatus(args []string) int {
 	}
 	status.MinReplicas, status.MaxReplicas = workerReplicaBounds(app)
 	if app.Manifest.WorkerReplicas != nil {
-		if app.Manifest.WorkerReplicas.Metric != "" {
-			status.Metric = app.Manifest.WorkerReplicas.Metric
-		}
 		status.Target = app.Manifest.WorkerReplicas.Target
 	}
 	if app.Manifest.StopGracePeriod > 0 {
@@ -403,7 +400,7 @@ func cmdWorkersStatus(args []string) int {
 
 	_, _ = fmt.Fprintln(osStdout, "Autoscaling:")
 	_, _ = fmt.Fprintf(osStdout, "  Replicas:   %d running (min: %d, max: %d)\n", status.Replicas, status.MinReplicas, status.MaxReplicas)
-	_, _ = fmt.Fprintf(osStdout, "  Metric:     %s\n", status.Metric)
+	_, _ = fmt.Fprintf(osStdout, "  Metric:     %s\n", workerMetricLabel(status.Metric))
 	if status.Target > 0 {
 		_, _ = fmt.Fprintf(osStdout, "  Target:     %.0f messages/worker\n", status.Target)
 	}
@@ -647,9 +644,12 @@ func cmdWorkersScale(args []string) int {
 	PrintOK(osStdout, "Worker scaling updated for %s", slug)
 	if updatedApp.Manifest.WorkerReplicas != nil {
 		_, _ = fmt.Fprintf(osStdout, "  Replicas: min=%d, max=%d\n", updatedApp.Manifest.WorkerReplicas.Min, updatedApp.Manifest.WorkerReplicas.Max)
-		_, _ = fmt.Fprintf(osStdout, "  Scaling:  target=%.0f, metric=%s", updatedApp.Manifest.WorkerReplicas.Target, updatedApp.Manifest.WorkerReplicas.Metric)
-		if updatedApp.Manifest.WorkerReplicas.Name != "" {
-			_, _ = fmt.Fprintf(osStdout, " (%s)", updatedApp.Manifest.WorkerReplicas.Name)
+		_, _ = fmt.Fprintf(osStdout, "  Scaling:  metric=%s", workerMetricLabel(workerScalingMetrics(updatedApp)))
+		if name := updatedApp.Manifest.WorkerReplicas.Name; name != "" {
+			_, _ = fmt.Fprintf(osStdout, " (%s)", name)
+		}
+		if target := updatedApp.Manifest.WorkerReplicas.Target; target > 0 {
+			_, _ = fmt.Fprintf(osStdout, ", target=%.0f", target)
 		}
 		_, _ = fmt.Fprintln(osStdout)
 	}
@@ -661,4 +661,34 @@ func cmdWorkersScale(args []string) int {
 	}
 
 	return 0
+}
+
+// workerScalingMetrics names the signals the scheduler scales a worker on:
+// its scaling policy's targets, else the worker manifest's metric, else "".
+// Status claimed queue_lag for h14-wk, whose policy has no target, while the
+// scale receipt printed "target=0, metric=" (Hunt 14 H14-58).
+func workerScalingMetrics(app api.AppResponse) string {
+	var metrics []string
+	if policy := app.ScalingPolicy; policy != nil {
+		if policy.Target != nil && policy.Target.Metric != "" {
+			metrics = append(metrics, policy.Target.Metric)
+		}
+		for _, target := range policy.Targets {
+			if target.Metric != "" {
+				metrics = append(metrics, target.Metric)
+			}
+		}
+	}
+	if len(metrics) == 0 && app.Manifest.WorkerReplicas != nil && app.Manifest.WorkerReplicas.Metric != "" {
+		metrics = append(metrics, app.Manifest.WorkerReplicas.Metric)
+	}
+	return strings.Join(metrics, ", ")
+}
+
+// workerMetricLabel renders workerScalingMetrics for people.
+func workerMetricLabel(metrics string) string {
+	if metrics == "" {
+		return "none (holds the minimum replicas)"
+	}
+	return metrics
 }
