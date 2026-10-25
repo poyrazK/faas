@@ -411,11 +411,13 @@ func natsURL(top rawObject) (*url.URL, bool, error) {
 	if err != nil {
 		return nil, false, err
 	}
+	parsed, ok := parseURL(value)
+	return parsed, ok, nil
+}
+
+func parseURL(value string) (*url.URL, bool) {
 	parsed, err := url.Parse(value)
-	if err != nil {
-		return nil, false, nil
-	}
-	return parsed, true, nil
+	return parsed, err == nil
 }
 
 func setNATSURL(top rawObject, u *url.URL) error {
