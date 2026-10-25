@@ -2452,3 +2452,5 @@ type DockerCredentialHelper = dockerCredentialHelper
 func DockerConfigRegistryAuth(ctx context.Context, configPath, image string, helper DockerCredentialHelper) (*api.ImageRunRegistryAuth, error) {
 	return dockerConfigRegistryAuth(ctx, configPath, image, helper)
 }
+
+var RenderRouteMonitorReport = renderRouteMonitorReport
