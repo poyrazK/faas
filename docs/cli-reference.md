@@ -16328,16 +16328,21 @@ Inspect queues and manage queue bindings
 
 Tail the wake queue
 
-`gregale queue tail <slug>`
+`gregale queue tail [--app <SLUG>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 
 ### queue send
 
 Enqueue a wake request
 
-`gregale queue send [--payload <J>] [--queue-name <QUEUE>] [--environment <ENV>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] <slug>`
+`gregale queue send [--app <SLUG>] [--payload <J>] [--queue-name <QUEUE>] [--environment <ENV>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 | `--payload <J>` | JSON payload (inline \| @file \| -) |  |
 | `--queue-name <QUEUE>` | logical queue name |  |
 | `--environment <ENV>` | registered project environment with an enabled queue binding |  |
@@ -16349,28 +16354,41 @@ Enqueue a wake request
 
 Wait for the next queue row the platform delivers
 
-`gregale queue receive <slug>`
+`gregale queue receive [--app <SLUG>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 
 ### queue state
 
 Show queue state
 
-`gregale queue state <slug>`
+`gregale queue state [--app <SLUG>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 
 ### queue status
 
 Show queue depth, scaling, bindings, and liveness
 
-`gregale queue status <slug>`
+`gregale queue status [--app <SLUG>] <slug>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 
 ### queue peek
 
 Peek at the next wake
 
-`gregale queue peek [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] <slug>`
+`gregale queue peek [--app <SLUG>] [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 | `--limit <N>` | page size (1..100, default 50) |  |
 | `--cursor <CURSOR>` | opaque continuation cursor |  |
 | `--before <CURSOR>` | alias for --cursor |  |
@@ -16380,10 +16398,11 @@ Peek at the next wake
 
 Inspect the dead-letter queue
 
-`gregale queue dead-letter [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] <slug>`
+`gregale queue dead-letter [--app <SLUG>] [--limit <N>] [--cursor <CURSOR>] [--before <CURSOR>] [--all] <slug>`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 | `--limit <N>` | page size (1..100, default 50) |  |
 | `--cursor <CURSOR>` | opaque continuation cursor |  |
 | `--before <CURSOR>` | alias for --cursor |  |
@@ -16393,7 +16412,11 @@ Inspect the dead-letter queue
 
 Ack a wake
 
-`gregale queue ack <slug> <row-id>`
+`gregale queue ack [--app <SLUG>] <slug> <row-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | app slug (same as the &lt;slug&gt; positional; defaults to linked context) |  |
 
 ### queue setup
 

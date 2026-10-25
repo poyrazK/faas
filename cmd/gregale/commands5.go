@@ -1489,6 +1489,7 @@ func cmdQueueBindingUpdate(client *api.Client, args []string) int {
 // --payload semantics (inline JSON / @file / stdin).
 func cmdQueueSend(args []string) int {
 	fs := newFlagSet("queue send", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	payload := fs.String("payload", "", "JSON payload (inline | @file | -)")
 	environment := fs.String("environment", "", "registered project environment with an enabled queue binding")
 	queueName := fs.String("queue-name", "", "logical queue name (optional when the app has one active binding)")
@@ -1498,6 +1499,10 @@ func cmdQueueSend(args []string) int {
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale queue send <slug> --payload <json|@file|-> [--queue-name QUEUE] [--environment ENV] [--work-policy NAME --work-key JSON [--work-fairness-key JSON]]", "queue")
@@ -1560,9 +1565,14 @@ func queueWorkFromFlags(policy, key, fairnessKey string) (*api.InvokeWork, error
 // same signal.NotifyContext wiring.
 func cmdQueueReceive(args []string) int {
 	fs := newFlagSet("queue receive", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale queue receive <slug>", "queue")
@@ -1618,9 +1628,14 @@ func cmdQueueReceive(args []string) int {
 // Read-only; safe to call on a hot path.
 func cmdQueueState(args []string) int {
 	fs := newFlagSet("queue state", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale queue state <slug>", "queue")
@@ -1653,6 +1668,7 @@ func cmdQueueState(args []string) int {
 // Cursor pagination via --before mirrors cmdAuditEventsList.
 func cmdQueuePeek(args []string) int {
 	fs := newFlagSet("queue peek", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	before := fs.String("before", "", "pagination cursor (NextBefore from a prior call)")
 	fs.StringVar(before, "cursor", "", "alias for --before")
@@ -1660,6 +1676,10 @@ func cmdQueuePeek(args []string) int {
 	flags, pos := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
 		PrintUsage(os.Stderr, "usage: gregale queue peek <slug> [--limit N] [--cursor C] [--all]", "queue")
@@ -1706,6 +1726,7 @@ func cmdQueuePeek(args []string) int {
 // pagination shape as cmdQueuePeek (cursor via --before).
 func cmdQueueDeadLetter(args []string) int {
 	fs := newFlagSet("queue dead-letter", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	limit := fs.Int("limit", 50, "max rows (1..100)")
 	before := fs.String("before", "", "pagination cursor")
 	fs.StringVar(before, "cursor", "", "alias for --before")
@@ -1713,6 +1734,10 @@ func cmdQueueDeadLetter(args []string) int {
 	flags, pos := splitArgsForFlags(args, "all")
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 1 || rejectUnexpectedFlagArgs(fs) {
 		PrintUsage(os.Stderr, "usage: gregale queue dead-letter <slug> [--limit N] [--cursor C] [--all]", "queue")
@@ -1760,9 +1785,14 @@ func cmdQueueDeadLetter(args []string) int {
 // row before the lease expires.
 func cmdQueueAck(args []string) int {
 	fs := newFlagSet("queue ack", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
 	flags, pos := splitArgsForFlags(args)
 	if err := fs.Parse(flags); err != nil {
 		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 2)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
 	}
 	if len(pos) != 2 {
 		PrintUsage(os.Stderr, "usage: gregale queue ack <slug> <row-id>", "queue")
@@ -2183,11 +2213,21 @@ func writeRawTailFrame(e api.Event) error {
 // the UX surface for queues without forcing the customer to learn
 // long-poll semantics.
 func cmdQueueTail(args []string) int {
-	if len(args) != 1 {
+	fs := newFlagSet("queue tail", flag.ContinueOnError)
+	appFlag := fs.String("app", "", appSlugFlagUsage)
+	flags, pos := splitArgsForFlags(args)
+	if err := fs.Parse(flags); err != nil {
+		return 1
+	}
+	pos, mergeErr := mergeAppFlag(pos, strings.TrimSpace(*appFlag), 1)
+	if mergeErr != nil {
+		return printErr("Invalid arguments", mergeErr)
+	}
+	if len(pos) != 1 {
 		PrintUsage(os.Stderr, "usage: gregale queue tail <slug>", "queue")
 		return 1
 	}
-	slug := args[0]
+	slug := pos[0]
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
