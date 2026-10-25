@@ -187,6 +187,8 @@ export type { DNSRecordInstruction } from './DNSRecordInstruction.js';
 export type { DailyUsageListResponse } from './DailyUsageListResponse.js';
 export type { DailyUsagePoint } from './DailyUsagePoint.js';
 export type { DailyUsageResponse } from './DailyUsageResponse.js';
+export type { DatabaseSwitch } from './DatabaseSwitch.js';
+export type { DatabaseSwitchDrain } from './DatabaseSwitchDrain.js';
 export type { DebugCoverageResponse } from './DebugCoverageResponse.js';
 export type { DebugCoverageSignal } from './DebugCoverageSignal.js';
 export type { DebugCriticalPathSegment } from './DebugCriticalPathSegment.js';

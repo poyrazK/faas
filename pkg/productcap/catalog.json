@@ -3898,7 +3898,12 @@
       "acceptance_test": "pkg/objectstorage/snapshot_test.go::TestCaptureObjectManifestSelectsPointInTimeAcrossPages",
       "parent": "managed-postgres",
       "routes": [
+        "/v1/apps/{}/database-switches",
         "/v1/postgres/databases/{}/restore"
+      ],
+      "cli": [
+        "rollback switch",
+        "rollback switches"
       ]
     },
     {

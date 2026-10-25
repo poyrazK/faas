@@ -795,9 +795,14 @@ See [ADR-1335](adr/1335-managed-postgres-source-writer-isolation.md).
 fences, drain writers, publish credentials or resume workloads. See
 [ADR-1333](adr/1333-managed-postgres-activation-preflight.md).
 
-Preparation, verification and preflight keep bindings on the source. The current API has
-no activation operation; complete writer draining and atomic publication remain
-pending. Both databases and the selected source bindings stay pinned until
+Preparation, verification and preflight keep bindings on the source. The cutover API has
+no activation operation. Only a rollback that restores the database activates its
+own cutover: it fences and drains the app, then moves the bindings in one
+transaction, and the cutover becomes `activated`, which is final. It accepts the
+loss of writes made after the restore point, so it does not need the writer
+isolation above; see [Rollbacks that restore the database](deploys.md#rollbacks-that-restore-the-database)
+and [ADR-20261023181931](adr/20261023181931-rollbacks-that-restore-the-database.md).
+For other cutovers, both databases and the selected source bindings stay pinned until
 `gregale postgres cutover cancel CUTOVER_ID` finishes revoking every staged role.
 Cancellation and status remain available when provisioning is disabled. Required
 host age/HMAC keys must remain available while envelopes are staged; cancel and

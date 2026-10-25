@@ -19,10 +19,21 @@ OAuth shape:
 ```
 
 The assertion has issuer `FAAS_WORKLOAD_IDENTITY_ISSUER` (default
-`https://identity.gregale.dev`), subject `app:<app_id>`, and the claims
-`account_id`, `app_id`, and `instance_id`. The requested audience is included
-in `aud`, so the same app can use separate trust policies for AWS, GCP, and
-Cloudflare.
+`https://identity.gregale.dev`) and the claims `account_id`, `app_id`,
+`instance_id` and `environment`, the deployment scope (`--env`) the instance
+runs. The subject names the environment unless it is `default`:
+
+| Deployment scope | `sub` |
+|---|---|
+| `default` | `app:<app_id>` |
+| any other, for example `staging` | `app:<app_id>:env:staging` |
+
+Write each trust policy for the subject of the environment it should admit,
+so a staging deployment cannot assume a production role. The requested
+audience is included in `aud`, so the same app can use separate trust
+policies for AWS, GCP, and Cloudflare. When vmmd cannot read the instance's
+deployment it refuses the request with `environment_unavailable` rather than
+mint a token for the wrong environment.
 
 To enable signing on a vmmd node, provision the same RSA-2048+ private key on
 the node and set these `vmmd.toml` fields (the `FAAS_WORKLOAD_IDENTITY_*`

@@ -24848,6 +24848,9 @@ components:
         scheduled_release:
           $ref: '#/components/schemas/ScheduledRelease'
           description: The schedule of a release that waits live without traffic for its scheduled start, or how its latest schedule ended (ADR-20261021152201).
+        database_switch:
+          $ref: '#/components/schemas/DatabaseSwitch'
+          description: The switch a rollback with restore_databases started (ADR-20261023181931).
         durable_entity_validator:
           $ref: '#/components/schemas/DurableEntityValidatorDeploymentInfo'
         stage_state:
@@ -25504,6 +25507,9 @@ components:
         acknowledge_releases:
           type: boolean
           description: "Roll back although release commands ran after the target last served (ADR-1448). Rollback does not undo them. Without it such a rollback is refused with rollback_crosses_release, which lists them. Automated rollbacks never set it."
+        restore_databases:
+          type: boolean
+          description: "Also restore the managed PostgreSQL database the crossed release commands migrated to just before the earliest of them, and switch the app to that copy (ADR-20261023181931). Requires acknowledge_releases and the postgres:manage scope; cannot be combined with expected_current_deployment_id. The response carries database_switch; the code rollback happens inside it while the app is fenced."
     RollbackCrossedRelease:
       description: "A release command that ran after a rollback target last served (ADR-1448). A rollback does not undo it."
       type: object
@@ -33910,6 +33916,54 @@ components:
         comment: {type: string}
         counted: {type: boolean, description: "Whether the approval counts toward the policy; the deployer's own approval does not unless self-approval is allowed."}
         decided_at: {type: string, format: date-time}
+    DatabaseSwitch:
+      description: "A rollback that restores the app's managed PostgreSQL database with the code (ADR-20261023181931). The database is restored to restore_point as a new database, and the app moves to it and to the target release while it is fenced."
+      type: object
+      required: [id, app_id, scope, phase, target_deployment_id, undone_deployment_ids, source_database_id, target_name, restore_point, drain, phase_started_at, created_at, updated_at]
+      properties:
+        id: {type: string, format: uuid}
+        app_id: {type: string, format: uuid}
+        scope: {type: string, description: "The deployment scope the rollback restores."}
+        phase:
+          type: string
+          enum: [restoring, staging, verifying, fencing, settling, draining, switching, resuming, aborting, completed, failed, cancelled]
+          description: "From fencing until completed the app does not serve. aborting unwinds everything done before the bindings switched."
+        from_deployment_id: {type: string, format: uuid, description: "The release serving when the switch was requested; the switch aborts if another one serves before it switches."}
+        from_revision: {type: integer, minimum: 0}
+        target_deployment_id: {type: string, format: uuid, description: "The rollback target."}
+        target_revision: {type: integer, minimum: 0}
+        undone_deployment_ids:
+          type: array
+          items: {type: string, format: uuid}
+          description: "Deployments whose release commands the restore undoes; rolling back to them is refused afterwards."
+        source_database_id: {type: string, format: uuid, description: "The database the app leaves. It keeps every write."}
+        source_database_name: {type: string}
+        target_database_id: {type: string, format: uuid, description: "The restored copy, once its restore has started."}
+        target_name: {type: string, description: "Name of the restored copy."}
+        restore_point: {type: string, format: date-time, description: "Writes after this moment stay only in the source database."}
+        drain:
+          $ref: '#/components/schemas/DatabaseSwitchDrain'
+        failure_code: {type: string, description: "Why a switch failed or was cancelled, or why it is aborting."}
+        failure_detail: {type: string}
+        last_error_code: {type: string, description: "The latest transient error the switch is retrying."}
+        requested_by: {type: string}
+        cancel_requested_at: {type: string, format: date-time}
+        fenced_at: {type: string, format: date-time}
+        release_switched_at: {type: string, format: date-time}
+        activated_at: {type: string, format: date-time, description: "When the bindings moved to the copy; there is no way back after it."}
+        finished_at: {type: string, format: date-time}
+        phase_started_at: {type: string, format: date-time}
+        created_at: {type: string, format: date-time}
+        updated_at: {type: string, format: date-time}
+    DatabaseSwitchDrain:
+      description: "A fenced app's instances by outcome: retired with a native receipt, parked (no process; snapshot invalidated), still pending, or blocking the switch."
+      type: object
+      required: [retired, parked, pending, blocked]
+      properties:
+        retired: {type: integer, minimum: 0}
+        parked: {type: integer, minimum: 0}
+        pending: {type: integer, minimum: 0}
+        blocked: {type: integer, minimum: 0}
     ScheduledRelease:
       description: "A release built ahead of time that starts its rollout at release_at (ADR-20261021152201)."
       type: object

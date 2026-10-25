@@ -188,6 +188,8 @@ export type { CustomStage } from './models/CustomStage.js';
 export type { DailyUsageListResponse } from './models/DailyUsageListResponse.js';
 export type { DailyUsagePoint } from './models/DailyUsagePoint.js';
 export type { DailyUsageResponse } from './models/DailyUsageResponse.js';
+export type { DatabaseSwitch } from './models/DatabaseSwitch.js';
+export type { DatabaseSwitchDrain } from './models/DatabaseSwitchDrain.js';
 export type { DebugCoverageResponse } from './models/DebugCoverageResponse.js';
 export type { DebugCoverageSignal } from './models/DebugCoverageSignal.js';
 export type { DebugCriticalPathSegment } from './models/DebugCriticalPathSegment.js';
