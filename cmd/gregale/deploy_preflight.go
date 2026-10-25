@@ -135,6 +135,16 @@ func deployPreflightRelease(safe bool, canaryPreset string, trafficPercent int, 
 	return release
 }
 
+// deployPreflightScheduled names a scheduled release's start; the plan said
+// "100% after readiness" for a deploy whose rollout waits for --at (Hunt 14
+// H14-15).
+func deployPreflightScheduled(releaseAt, release string) string {
+	if releaseAt == "" {
+		return release
+	}
+	return "scheduled · rollout starts " + localReleaseTime(releaseAt) + ", then " + release
+}
+
 func renderDeployPreflight(w io.Writer, summary deployPreflightSummary) {
 	if nonInteractive && w == osStdout {
 		w = osStderr

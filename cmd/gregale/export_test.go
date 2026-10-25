@@ -1190,6 +1190,7 @@ var DeployOptionsFingerprint = deployOptionsFingerprint
 var DeployPreflightListener = deployPreflightListener
 var DeployPreflightListenerWith = deployPreflightListenerWith
 var DeployPreflightRepoSource = deployPreflightRepoSource
+var DeployPreflightScheduled = deployPreflightScheduled
 var DeployPreflightSource = deployPreflightSource
 var DeployPreviewRequested = deployPreviewRequested
 var DeploymentAliasRevisionLabel = deploymentAliasRevisionLabel
