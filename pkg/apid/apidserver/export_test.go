@@ -1715,3 +1715,5 @@ func (s *server) DashboardWidgetAppForTest(ctx context.Context, acct state.Accou
 func (s *server) IncidentAppVisibleForTest(ctx context.Context, acct state.Account, app state.App) bool {
 	return incidentsHost{s}.AppVisible(ctx, acct, app)
 }
+
+var ValidateAndPlanSidecars = validateAndPlanSidecars
