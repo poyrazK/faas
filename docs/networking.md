@@ -266,6 +266,11 @@ services:
     build: ./billing
 ```
 
+A repository without Compose declares the same policy, per-service
+visibility and `depends_on` in `.gregale/project.yaml`
+([ADR-20261025093331](adr/20261025093331-project-config-and-whole-project-previews.md));
+a Compose declaration wins where both set a policy.
+
 An undeclared sibling has no injected URL; call it at
 `http://<name>.internal:10081`
 ([ADR-20261022160248](adr/20261022160248-project-internal-aliases.md)) or

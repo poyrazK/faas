@@ -2,12 +2,34 @@ package reconcile
 
 import (
 	"reflect"
+	"slices"
 	"testing"
+	"testing/fstest"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
 )
+
+// ADR-20261025093331: a project created before the project default, from a
+// repository without Compose, moves over by declaring it in its project file.
+func TestProjectConfigMovesAnExistingDeclaredAppToProject(t *testing.T) {
+	scan, err := reposcan.Scan(fstest.MapFS{
+		"services/api/package.json": {Data: []byte(`{"name":"api","scripts":{"start":"node index.js"}}`)},
+		".gregale/project.yaml":     {Data: []byte("service_policy: project\n")},
+	})
+	if err != nil || len(scan.Workloads) != 1 {
+		t.Fatalf("scan = %+v, %v", scan.Workloads, err)
+	}
+	app := state.App{WorkloadName: "api", WorkloadClass: state.WorkloadClassHTTP,
+		Manifest: state.AppManifest{ServiceBindingPolicy: api.ServiceBindingPolicyDeclared}}
+	if got := serviceBindingPolicyForExistingWorkload(scan.Workloads[0], app.Manifest.ServiceBindingPolicy); got != api.ServiceBindingPolicyProject {
+		t.Fatalf("reapplied policy = %q, want project", got)
+	}
+	if got := diffFieldsChanged(app, scan.Workloads[0], ""); !slices.Contains(got, "service_binding_policy") {
+		t.Fatalf("changed fields = %v, want service_binding_policy", got)
+	}
+}
 
 func TestPartialMigrationPreservesOnlyOwnedProductionServiceReferences(t *testing.T) {
 	scan := reposcan.Result{Workloads: []reposcan.Workload{{Name: "web", DependsOn: []string{"api", "external"}}}, DependencyReferences: []reposcan.Workload{{Name: "api"}, {Name: "external"}}}
