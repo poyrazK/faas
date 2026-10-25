@@ -117,6 +117,8 @@ func realtimeEndpointResponse(e state.ManagedRealtimeEndpoint) api.ManagedRealti
 	if len(e.AuthTokenSealed) == 0 {
 		out.AuthTokenMasked = ""
 	}
+	out.Slug = e.Slug
+	out.ChannelRules = e.ChannelRules
 	return out
 }
 
@@ -244,6 +246,12 @@ func (s *Service) syncManagedRealtimeEndpoint(ctx context.Context, row state.Man
 		Previews:         previews,
 
 		AccountMaxConnections: accountMaxConnections,
+		// Channel rules are a preview field (ADR-20261019102657): an
+		// account that leaves the rollout falls back to the callback.
+		ChannelRules: previewChannelRules(s.PreviewVisible(row.AccountID), row.ChannelRules),
+		// Live queries ride the v2 protocol, so an endpoint with live routes
+		// (FAAS_LIVE_QUERIES_ACCOUNTS) is marked too.
+		Preview: s.PreviewVisible(row.AccountID) || len(liveRoutes) > 0,
 	})
 }
 
@@ -352,9 +360,22 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
 		return
 	}
+	if s.hiddenEndpointField(w, acct.ID, req.Slug != "", req.ChannelRules != nil) {
+		return
+	}
 	limits, allowed := s.realtimePlanLimits(acct)
 	if !allowed {
 		api.WriteProblem(w, api.ErrPlanRealtimeNotAllowed(acct.Plan))
+		return
+	}
+	if req.Slug != "" {
+		if err := api.ValidateRealtimeEndpointSlug(req.Slug); err != nil {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+			return
+		}
+	}
+	if err := api.ValidateRealtimeChannelRules(req.ChannelRules); err != nil {
+		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
 		return
 	}
 	app, ok := s.Host.LoadApp(w, r, acct, r.PathValue("slug"))
@@ -438,7 +459,8 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		AuthRequiredClaims: cloneRealtimeClaims(req.AuthRequiredClaims),
 		AllowedOrigins:     append([]string(nil), req.AllowedOrigins...),
 		MaxConnections:     req.MaxConnections, MaxMessageBytes: req.MaxMessageBytes,
-		MaxConnectionAgeSeconds: req.MaxConnectionAgeSeconds, Enabled: enabled,
+		MaxConnectionAgeSeconds: req.MaxConnectionAgeSeconds, Enabled: enabled, Slug: req.Slug,
+		ChannelRules: append([]api.RealtimeChannelRule(nil), req.ChannelRules...),
 	}, limits.EndpointsPerApp, limits.EndpointsPerAccount)
 	if err != nil {
 		var quotaErr *state.ManagedRealtimeEndpointQuotaError
@@ -447,6 +469,10 @@ func (s *Service) CreateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 			return
 		}
 		if errors.Is(err, state.ErrConflict) {
+			if req.Slug != "" {
+				api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("the app already has an endpoint with slug %q", req.Slug)))
+				return
+			}
 			api.WriteProblem(w, api.ErrRealtimeInvalid("managed realtime endpoint already exists"))
 			return
 		}
@@ -476,6 +502,9 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 	var req api.UpdateManagedRealtimeEndpointRequest
 	if err := httpkit.DecodeJSON(r, &req); err != nil {
 		api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+		return
+	}
+	if s.hiddenEndpointField(w, acct.ID, req.Slug != nil, req.ChannelRules != nil) {
 		return
 	}
 	if _, ok := s.realtimePlanLimits(acct); !ok {
@@ -650,10 +679,28 @@ func (s *Service) UpdateManagedRealtimeEndpoint(w http.ResponseWriter, r *http.R
 		params.MaxConnectionAgeSeconds = req.MaxConnectionAgeSeconds
 	}
 	params.Enabled = req.Enabled
+	if req.Slug != nil && *req.Slug != "" {
+		if err := api.ValidateRealtimeEndpointSlug(*req.Slug); err != nil {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+			return
+		}
+	}
+	params.Slug = req.Slug
+	if req.ChannelRules != nil {
+		if err := api.ValidateRealtimeChannelRules(*req.ChannelRules); err != nil {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(err.Error()))
+			return
+		}
+		params.ChannelRules = req.ChannelRules
+	}
 	row, err := store.UpdateManagedRealtimeEndpoint(r.Context(), existing.ID, params)
 	if err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			httpkit.NotFound(w, "managed realtime endpoint not found")
+			return
+		}
+		if errors.Is(err, state.ErrConflict) {
+			api.WriteProblem(w, api.ErrRealtimeInvalid(fmt.Sprintf("the app already has an endpoint with slug %q", *req.Slug)))
 			return
 		}
 		s.Host.Logger().WarnContext(r.Context(), "update managed realtime endpoint", "err", err)

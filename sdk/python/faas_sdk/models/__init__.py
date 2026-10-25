@@ -4798,6 +4798,7 @@ from .queue_workload_profile_response import QueueWorkloadProfileResponse
 from .quota_block import QuotaBlock
 from .raise_overage_cap_request import RaiseOverageCapRequest
 from .realtime_acknowledgement import RealtimeAcknowledgement
+from .realtime_channel_rule import RealtimeChannelRule
 from .realtime_channel_webhook_filter import RealtimeChannelWebhookFilter
 from .realtime_channel_webhook_filter_metadata import RealtimeChannelWebhookFilterMetadata
 from .realtime_consumer_group import RealtimeConsumerGroup
@@ -10678,6 +10679,7 @@ __all__ = (
     "QuotaBlock",
     "RaiseOverageCapRequest",
     "RealtimeAcknowledgement",
+    "RealtimeChannelRule",
     "RealtimeChannelWebhookFilter",
     "RealtimeChannelWebhookFilterMetadata",
     "RealtimeConsumerGroup",

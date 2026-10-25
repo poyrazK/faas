@@ -42964,9 +42964,13 @@ CREATE TABLE public.managed_realtime_endpoints (
     max_connection_age_seconds bigint DEFAULT 0 NOT NULL,
     auth_token_previous_sealed bytea DEFAULT '\x'::bytea NOT NULL,
     auth_token_previous_expires_at timestamp with time zone,
+    slug text,
+    channel_rules jsonb DEFAULT '[]'::jsonb NOT NULL,
     CONSTRAINT managed_realtime_callback_url_len_chk CHECK (((length(callback_url) >= 8) AND (length(callback_url) <= 2048))),
     CONSTRAINT managed_realtime_endpoint_auth_chk CHECK (((auth_mode = ANY (ARRAY['none'::text, 'static_bearer'::text, 'oidc_jwt'::text])) AND (cardinality(auth_audience) <= 16) AND ((cardinality(auth_algorithms) >= 0) AND (cardinality(auth_algorithms) <= 16)) AND (jsonb_typeof(auth_required_claims) = 'object'::text))),
     CONSTRAINT managed_realtime_endpoint_policy_chk CHECK ((((max_connections >= 0) AND (max_connections <= 10000)) AND ((max_message_bytes >= 0) AND (max_message_bytes <= 1048576)) AND ((max_connection_age_seconds >= 0) AND (max_connection_age_seconds <= 604800)) AND (cardinality(allowed_origins) <= 16))),
+    CONSTRAINT managed_realtime_endpoints_channel_rules_check CHECK (((jsonb_typeof(channel_rules) = 'array'::text) AND (jsonb_array_length(channel_rules) <= 32))),
+    CONSTRAINT managed_realtime_endpoints_slug_check CHECK (((slug IS NULL) OR (slug ~ '^[a-z0-9][a-z0-9-]{0,47}$'::text))),
     CONSTRAINT managed_realtime_paths_len_chk CHECK ((((length(connect_path) >= 1) AND (length(connect_path) <= 256)) AND ((length(message_path) >= 1) AND (length(message_path) <= 256)) AND ((length(disconnect_path) >= 1) AND (length(disconnect_path) <= 256)))),
     CONSTRAINT managed_realtime_paths_shape_chk CHECK ((("left"(connect_path, 1) = '/'::text) AND ("left"(message_path, 1) = '/'::text) AND ("left"(disconnect_path, 1) = '/'::text))),
     CONSTRAINT managed_realtime_tokens_len_chk CHECK (((octet_length(callback_auth_token_sealed) <= 4096) AND (octet_length(auth_token_sealed) <= 4096) AND (octet_length(auth_token_previous_sealed) <= 4096)))
@@ -73214,6 +73218,13 @@ CREATE INDEX managed_realtime_endpoints_account_idx ON public.managed_realtime_e
 --
 
 CREATE INDEX managed_realtime_endpoints_app_idx ON public.managed_realtime_endpoints USING btree (app_id, created_at DESC);
+
+
+--
+-- Name: managed_realtime_endpoints_app_slug; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX managed_realtime_endpoints_app_slug ON public.managed_realtime_endpoints USING btree (app_id, slug) WHERE (slug IS NOT NULL);
 
 
 --

@@ -2,10 +2,12 @@ package apid
 
 import (
 	"bytes"
+	"slices"
 	"strings"
 	"sync"
 
 	"github.com/onebox-faas/faas/pkg/apid/monetization"
+	"github.com/onebox-faas/faas/pkg/apid/realtimepreview"
 	"gopkg.in/yaml.v3"
 )
 
@@ -16,36 +18,48 @@ import (
 // for SDK generation, contract diffs and the route compliance gate.
 var publicHiddenPathPrefixes = []string{"/v1/apps/{slug}/entities"}
 
-// publicSpecs caches the served spec: index 0 hides API monetization
-// (ADR-20261018090210), index 1 publishes it.
-var publicSpecs [2]struct {
+// Visibility names the unreleased features the served spec publishes.
+type Visibility struct {
+	// Monetization: API monetization is released (ADR-20261018090210).
+	Monetization bool
+	// RealtimePreview: every account sees the realtime preview
+	// (ADR-20261019102657).
+	RealtimePreview bool
+}
+
+func (v Visibility) index() int {
+	i := 0
+	if v.Monetization {
+		i |= 1
+	}
+	if v.RealtimePreview {
+		i |= 2
+	}
+	return i
+}
+
+// publicSpecs caches the served spec per Visibility.index.
+var publicSpecs [4]struct {
 	once sync.Once
 	yaml []byte
 }
 
-// PublicOpenAPIYAML returns the embedded spec without hidden paths, API
-// monetization's included, or the components only they reference.
-func PublicOpenAPIYAML() []byte { return PublicOpenAPIYAMLFor(false) }
+// PublicOpenAPIYAML returns the embedded spec without hidden paths, unreleased
+// features included, or the components only they reference.
+func PublicOpenAPIYAML() []byte { return PublicOpenAPIYAMLFor(Visibility{}) }
 
 // PublicOpenAPIYAMLFor returns the served spec, publishing API monetization's
-// paths and webhook events only when monetization is released. Each variant
-// is computed on first use, like the JSON form.
-func PublicOpenAPIYAMLFor(monetization bool) []byte {
-	spec := &publicSpecs[specIndex(monetization)]
-	spec.once.Do(func() { spec.yaml = publicSpec(openapiYAML, monetization) })
+// paths and webhook events and the realtime preview's routes and fields only
+// as v allows. Each variant is computed on first use, like the JSON form.
+func PublicOpenAPIYAMLFor(v Visibility) []byte {
+	spec := &publicSpecs[v.index()]
+	spec.once.Do(func() { spec.yaml = publicSpec(openapiYAML, v) })
 	return spec.yaml
-}
-
-func specIndex(monetization bool) int {
-	if monetization {
-		return 1
-	}
-	return 0
 }
 
 // publicSpec filters raw. A spec it cannot rewrite yields an error document,
 // never the unfiltered spec, so hidden paths cannot leak on failure.
-func publicSpec(raw []byte, showMonetization bool) []byte {
+func publicSpec(raw []byte, v Visibility) []byte {
 	const malformed = "error: openapi spec is malformed at build time\n"
 	var doc yaml.Node
 	if err := yaml.Unmarshal(raw, &doc); err != nil || len(doc.Content) == 0 {
@@ -59,17 +73,30 @@ func publicSpec(raw []byte, showMonetization bool) []byte {
 	var removed []*yaml.Node
 	kept := make([]*yaml.Node, 0, len(paths.Content))
 	for i := 0; i+1 < len(paths.Content); i += 2 {
-		if hiddenPublicPath(paths.Content[i].Value) || !showMonetization && monetization.Path(paths.Content[i].Value) {
-			removed = append(removed, paths.Content[i+1])
+		key, item := paths.Content[i].Value, paths.Content[i+1]
+		if hiddenPublicPath(key) || !v.Monetization && monetization.Path(key) {
+			removed = append(removed, item)
 			continue
 		}
-		kept = append(kept, paths.Content[i], paths.Content[i+1])
+		if !v.RealtimePreview {
+			if ops := hideRealtimePreview(key, item); len(ops) > 0 {
+				removed = append(removed, ops...)
+				if !hasOperation(item) {
+					removed = append(removed, item)
+					continue
+				}
+			}
+		}
+		kept = append(kept, paths.Content[i], item)
+	}
+	if !v.RealtimePreview {
+		removed = append(removed, hideRealtimePreviewFields(root)...)
 	}
 	if len(removed) == 0 {
 		return raw
 	}
 	paths.Content = kept
-	if !showMonetization {
+	if !v.Monetization {
 		schemas := mappingValue(mappingValue(root, "components"), "schemas")
 		for _, name := range monetization.Schemas {
 			if body := mappingValue(schemas, name); body != nil {
@@ -78,9 +105,23 @@ func publicSpec(raw []byte, showMonetization bool) []byte {
 			}
 		}
 	}
+	if !v.RealtimePreview {
+		components := mappingValue(root, "components")
+		for _, component := range realtimepreview.Components {
+			kind, name, _ := strings.Cut(component, "/")
+			group := mappingValue(components, kind)
+			if body := mappingValue(group, name); body != nil {
+				removed = append(removed, body)
+				deleteMappingKey(group, name)
+			}
+		}
+	}
 	pruneComponents(root, removed)
-	if !showMonetization {
+	if !v.Monetization {
 		dropListValues(root, monetization.WebhookEvent)
+	}
+	if !v.RealtimePreview {
+		dropListValues(root, realtimepreview.WebhookEvent)
 	}
 	explicitNulls(root)
 	var buf bytes.Buffer
@@ -90,6 +131,66 @@ func publicSpec(raw []byte, showMonetization bool) []byte {
 		return []byte(malformed)
 	}
 	return buf.Bytes()
+}
+
+var operationMethods = []string{"get", "put", "post", "delete", "options", "head", "patch", "trace"}
+
+// hideRealtimePreview deletes the realtime preview's operations from a path
+// item and the retained delivery value from the released publish route,
+// returning the deleted operations.
+func hideRealtimePreview(template string, item *yaml.Node) []*yaml.Node {
+	var removed []*yaml.Node
+	for _, method := range operationMethods {
+		op := mappingValue(item, method)
+		if op == nil {
+			continue
+		}
+		if realtimepreview.Route(method, template) {
+			removed = append(removed, op)
+			deleteMappingKey(item, method)
+			continue
+		}
+		params := mappingValue(op, "parameters")
+		if params == nil || params.Kind != yaml.SequenceNode {
+			continue
+		}
+		for _, param := range params.Content {
+			if name := mappingValue(param, "name"); name != nil && name.Value == "delivery" && strings.ToUpper(method)+" "+template == realtimepreview.RetainedDeliveryRoute {
+				dropListValues(param, func(value string) bool { return value == realtimepreview.RetainedDelivery })
+			}
+		}
+	}
+	return removed
+}
+
+// hideRealtimePreviewFields deletes the preview-only properties of released
+// schemas, returning them.
+func hideRealtimePreviewFields(root *yaml.Node) []*yaml.Node {
+	schemas := mappingValue(mappingValue(root, "components"), "schemas")
+	var removed []*yaml.Node
+	for schema, fields := range realtimepreview.Fields {
+		body := mappingValue(schemas, schema)
+		properties := mappingValue(body, "properties")
+		for _, field := range fields {
+			if property := mappingValue(properties, field); property != nil {
+				removed = append(removed, property)
+				deleteMappingKey(properties, field)
+			}
+		}
+		if required := mappingValue(body, "required"); required != nil && required.Kind == yaml.SequenceNode {
+			required.Content = slices.DeleteFunc(required.Content, func(n *yaml.Node) bool { return slices.Contains(fields, n.Value) })
+		}
+	}
+	return removed
+}
+
+func hasOperation(item *yaml.Node) bool {
+	for _, method := range operationMethods {
+		if mappingValue(item, method) != nil {
+			return true
+		}
+	}
+	return false
 }
 
 func hiddenPublicPath(path string) bool {

@@ -9751,6 +9751,7 @@
       "auth_token_sealed",
       "callback_auth_token_sealed",
       "callback_url",
+      "channel_rules",
       "connect_path",
       "created_at",
       "disconnect_path",
@@ -9760,6 +9761,7 @@
       "max_connections",
       "max_message_bytes",
       "message_path",
+      "slug",
       "updated_at"
     ],
     "kind": "configuration"

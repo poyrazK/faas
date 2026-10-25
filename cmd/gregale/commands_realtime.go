@@ -18,7 +18,11 @@ import (
 
 func cmdRealtime(args []string) int {
 	if len(args) == 0 {
-		PrintUsage(os.Stderr, "usage: gregale realtime <list|usage|get|create|update|delete|connections|drain|drain-status|send|send-principal|edit-message|delete-message|receipt|inbox|push|read-progress|mark-read|close|subscribe|unsubscribe|publish|auth>", "realtime")
+		PrintUsage(os.Stderr, realtimeUsage(), "realtime")
+		return 1
+	}
+	if hiddenRealtimeVerb(args[0]) {
+		printCommandValidation(os.Stderr, "unknown realtime subcommand %q\n", args[0])
 		return 1
 	}
 	switch args[0] {
