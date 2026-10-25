@@ -167,9 +167,13 @@ func TestInstanceBridgeUnitLivesAsLongAsItsInstance(t *testing.T) {
 		t.Fatalf("unit name %q", name)
 	}
 	svc := f.units.svcs[name]
-	socket := bridgeUID(1).streamBridgeSocket("a")
+	// Each entry has its own socket directory (<instance>-<pid>-<seq>).
+	socket := svc.ExecStart[1]
+	if filepath.Dir(filepath.Dir(socket)) != bridgeRunRoot || !strings.HasPrefix(filepath.Base(filepath.Dir(socket)), "a-") {
+		t.Fatalf("bridge socket %s is not one of instance a's under %s", socket, bridgeRunRoot)
+	}
 	if svc.UID != 0 || svc.Capabilities != sdunit.CapSetUID|sdunit.CapSetGID || svc.NetworkNamespacePath != filepath.Join(netnsRunDir, "fc-a") ||
-		svc.Slice != instanceBridgeSlice || svc.ExecStart[1] != socket || svc.ExecStart[2] != "10.0.0.2" || svc.ExecStart[3] != "8080" ||
+		svc.Slice != instanceBridgeSlice || svc.ExecStart[2] != "10.0.0.2" || svc.ExecStart[3] != "8080" ||
 		!slices.Equal(svc.ReadWritePaths, []string{filepath.Dir(socket)}) || svc.MemoryMaxBytes != api.InstanceBridgeMemoryMaxMB<<20 ||
 		len(svc.IPAddressAllow) != 1 || svc.IPAddressAllow[0].String() != "10.0.0.2/32" {
 		t.Fatalf("service = %+v", svc)
@@ -266,6 +270,19 @@ func TestSweepInstanceBridgeUnits(t *testing.T) {
 	}
 	if _, stopped := f.units.snapshot(); n != 1 || !slices.Equal(stopped, []string{"faas-ibridge-a-0123abcd.service"}) {
 		t.Fatalf("swept %d: %v", n, stopped)
+	}
+	// The stopped run's socket directory goes; the live entry's stays.
+	live := filepath.Dir(f.manager.entries["b"].socket)
+	stale := filepath.Join(bridgeRunRoot, "a-999-1")
+	if err := os.MkdirAll(stale, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	f.manager.removeStaleSocketDirs()
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale socket directory kept: %v", err)
+	}
+	if _, err := os.Stat(live); err != nil {
+		t.Fatalf("live socket directory removed: %v", err)
 	}
 }
 

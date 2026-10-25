@@ -259,7 +259,35 @@ func (m *streamBridgeManager) sweepUnits(ctx context.Context) (int, error) {
 		}()
 	}
 	wg.Wait()
+	m.removeStaleSocketDirs()
 	return len(stale), nil
+}
+
+// removeStaleSocketDirs removes the bridge socket directories no entry
+// uses. Each bridge run has its own directory, so a unit stopped at startup
+// leaves one behind. Call it only before serving: every unprivileged
+// namespace bridge then is either an entry or stopped.
+func (m *streamBridgeManager) removeStaleSocketDirs() {
+	keep := map[string]bool{}
+	m.mu.Lock()
+	for _, entry := range m.entries {
+		keep[filepath.Dir(entry.socket)] = true
+	}
+	m.mu.Unlock()
+	if ensureBridgeRunRoot() != nil {
+		return
+	}
+	dirs, err := os.ReadDir(bridgeRunRoot)
+	if err != nil {
+		return
+	}
+	for _, d := range dirs {
+		dir := filepath.Join(bridgeRunRoot, d.Name())
+		if !keep[dir] {
+			// A bridge uid owned it; RemoveAll does not follow its symlinks.
+			_ = os.RemoveAll(dir)
+		}
+	}
 }
 
 // SweepInstanceBridgeUnits stops the bridge units a previous vmmd left; call
