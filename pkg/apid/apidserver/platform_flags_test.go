@@ -65,8 +65,14 @@ func TestPlatformFlagsAdminLifecycle(t *testing.T) {
 		t.Fatalf("items = %d, want every catalogued flag", len(initial.Items))
 	}
 	for _, item := range initial.Items {
-		if item.Source != "default_or_environment" || item.Definition.Enabled || item.ConfigKey != platformflags.ConfigKey(item.Key) {
-			t.Fatalf("fresh flag = %+v, want an off bootstrap value", item)
+		// Hand-written flags boot off; generated capability flags boot at their
+		// tier default (ADR-20261023115741).
+		spec, _ := platformflags.Lookup(item.Key)
+		if item.Source != "default_or_environment" || item.Definition.Enabled != spec.Default.Enabled || item.Definition.Default != spec.Default.Default || item.ConfigKey != platformflags.ConfigKey(item.Key) {
+			t.Fatalf("fresh flag = %+v, want its declared bootstrap value %+v", item, spec.Default)
+		}
+		if !spec.Generated && item.Definition.Enabled {
+			t.Fatalf("hand-written flag %s must boot off", item.Key)
 		}
 	}
 

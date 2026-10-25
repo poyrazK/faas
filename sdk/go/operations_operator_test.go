@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -39,7 +41,7 @@ func TestOperationAccountOperatorRoutes(t *testing.T) {
 	}))
 	defer server.Close()
 	client := operationClient(t, server)
-	page, err := client.ListAccountOperations(context.Background(), "exports", faas.OperationListOptions{Scope: "production", TenantID: "customer", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque"})
+	page, err := preview.Wrap(client).ListAccountOperations(context.Background(), "exports", preview.OperationListOptions{Scope: "production", TenantID: "customer", Name: "export", State: preview.OperationSucceeded, Limit: 2, Cursor: "opaque"})
 	if err != nil || len(page.Operations) != 1 || page.Operations[0].PlatformTenantID != "customer" || page.NextCursor != "next" {
 		t.Fatalf("list %+v %v", page, err)
 	}
@@ -52,7 +54,7 @@ func TestOperationAccountOperatorRoutes(t *testing.T) {
 		t.Fatalf("executions %+v %v", executions, err)
 	}
 	op, err := client.RetryOperationDelivery(context.Background(), "exports", "operation")
-	if err != nil || op.State != faas.OperationSucceeded || op.Generation != 2 || op.CompletionDelivery.State != "pending" {
+	if err != nil || op.State != preview.OperationSucceeded || op.Generation != 2 || op.CompletionDelivery.State != "pending" {
 		t.Fatalf("notification retry %+v %v", op, err)
 	}
 }
@@ -74,15 +76,15 @@ func TestOperationDefinitionDiscoveryAndTenantIdentity(t *testing.T) {
 	}))
 	defer server.Close()
 	client := operationClient(t, server)
-	page, err := client.ListOperationDefinitions(context.Background(), "exports", "deployment")
+	page, err := preview.Wrap(client).ListOperationDefinitions(context.Background(), "exports", "deployment")
 	if err != nil || len(page.Definitions) != 1 || page.Definitions[0].Revision != "immutable" {
 		t.Fatalf("definitions %+v %v", page, err)
 	}
-	definition, err := client.GetOperationDefinition(context.Background(), "exports", "deployment", "export")
+	definition, err := preview.Wrap(client).GetOperationDefinition(context.Background(), "exports", "deployment", "export")
 	if err != nil || definition.ID != "definition" || string(definition.Spec.InputSchema) != `{"type":"object"}` {
 		t.Fatalf("definition %+v %v", definition, err)
 	}
-	identity, err := client.GetPlatformTenantSelfOperationIdentity(context.Background())
+	identity, err := preview.Wrap(client).GetPlatformTenantSelfOperationIdentity(context.Background())
 	if err != nil || identity.PlatformTenantID != "tenant" {
 		t.Fatalf("identity %+v %v", identity, err)
 	}
@@ -103,7 +105,7 @@ func TestOperationDoctorScopedReadOnlyContract(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r, err := client.GetOperationDoctor(context.Background(), "exports", definitionID, "tenant+selector", "export name")
+	r, err := preview.Wrap(client).GetOperationDoctor(context.Background(), "exports", definitionID, "tenant+selector", "export name")
 	if err != nil || r.SubmissionState != "eligible" || r.ObservedSubmissionState() != "eligible" || len(r.Checks) != 4 || r.Checks[1].Status != "warning" || r.Checks[2].Status != "unknown" || r.Checks[3].ExecutionKind != "job" {
 		t.Fatal("doctor contract", r, err)
 	}
@@ -137,7 +139,7 @@ func TestOperationAccountOperatorRoutesIntegratedBusinessWorkflows(t *testing.T)
 	}))
 	defer server.Close()
 	client := operationClient(t, server)
-	page, err := client.ListAccountOperations(context.Background(), "exports", faas.OperationListOptions{SubjectType: "order", SubjectID: "ord/42&é", Scope: "production", TenantID: "customer", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque"})
+	page, err := preview.Wrap(client).ListAccountOperations(context.Background(), "exports", preview.OperationListOptions{SubjectType: "order", SubjectID: "ord/42&é", Scope: "production", TenantID: "customer", Name: "export", State: preview.OperationSucceeded, Limit: 2, Cursor: "opaque"})
 	if err != nil || len(page.Operations) != 1 || page.Operations[0].PlatformTenantID != "customer" || page.NextCursor != "next" {
 		t.Fatalf("list %+v %v", page, err)
 	}
@@ -150,7 +152,7 @@ func TestOperationAccountOperatorRoutesIntegratedBusinessWorkflows(t *testing.T)
 		t.Fatalf("executions %+v %v", executions, err)
 	}
 	op, err := client.RetryOperationDelivery(context.Background(), "exports", "operation")
-	if err != nil || op.State != faas.OperationSucceeded || op.Generation != 2 || op.CompletionDelivery.State != "pending" {
+	if err != nil || op.State != preview.OperationSucceeded || op.Generation != 2 || op.CompletionDelivery.State != "pending" {
 		t.Fatalf("notification retry %+v %v", op, err)
 	}
 }

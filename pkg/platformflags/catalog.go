@@ -114,6 +114,15 @@ type Spec struct {
 	// Default applies when neither the environment nor an operator value is
 	// present.
 	Default Definition
+	// Core marks a platform-core capability flag: writing it off needs an
+	// explicit force (ADR-20261023115741).
+	Core bool
+	// Generated reports a flag derived from the product capability catalog
+	// rather than declared by hand.
+	Generated bool
+	// Parent is the capability whose flag must also be on: a sub-feature
+	// flag never releases more than its parent does.
+	Parent string
 }
 
 var catalog = []Spec{
@@ -141,6 +150,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:         ApplicationAuth,
+		Capability:  "application-auth",
 		Label:       "Application Auth",
 		Description: "Release application Auth (the Auth screens and the auth credential mode) to accounts. Apps already using Auth keep running while it is off.",
 		ADR:         "ADR-1190",
@@ -151,6 +161,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:         LiveQueries,
+		Capability:  "live-queries",
 		Label:       "Live queries",
 		Description: "Release live queries (incremental SQL results over realtime) to accounts. Decided by account only, because the realtime path knows nothing else, so plan and org rules are refused. Unless every account is included, the live-query routes stay hidden from accounts outside it.",
 		ADR:         "ADR-20261016151947",
@@ -160,6 +171,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:          ChangeTimeline,
+		Capability:   "change-timeline",
 		Label:        "Change timeline",
 		Description:  "Release the app change timeline preview (GET /v1/apps/{slug}/changes and its dashboard page) to accounts.",
 		ADR:          "ADR-751",
@@ -171,6 +183,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:         AnomalyAlerts,
+		Capability:  "anomaly-alerts",
 		Label:       "Anomaly alerts",
 		Description: "Release baseline alert comparisons (above_baseline, below_baseline) to accounts. Existing rules keep evaluating while it is off; only creating or changing one is refused.",
 		ADR:         "ADR-744",
@@ -191,6 +204,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:          OperationSchedules,
+		Capability:   "operation-schedules",
 		Label:        "Operation schedules",
 		Description:  "Release Operation schedules to accounts: the schedule routes, and firing of their schedules. Decided by account only, because the schedule firer knows nothing else.",
 		ADR:          "ADR-20261018161833",
@@ -200,6 +214,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:          OperationChildren,
+		Capability:   "operation-children",
 		Label:        "Child Operations",
 		Description:  "Release child Operations to accounts: starting children and cascading a parent's cancellation to them. Decided by account only.",
 		ADR:          "ADR-20261018183000",
@@ -209,6 +224,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:          ServiceMap,
+		Capability:   "service-map",
 		Label:        "Service map",
 		Description:  "Release the service map preview (GET /v1/service-map and its dashboard page) to accounts. The plan check for per-app metrics still applies.",
 		ADR:          "ADR-1131",
@@ -229,6 +245,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:          StaticEgressIP,
+		Capability:   "static-egress-ip",
 		Label:        "Static egress IP",
 		Description:  "Release static egress IP management for apps to accounts.",
 		ADR:          "ADR-119",
@@ -249,6 +266,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:         RealtimeTickets,
+		Capability:  "realtime-tickets",
 		Label:       "Realtime subscription tickets",
 		Description: "Release short-lived channel subscription tickets to accounts: the ticket API on apid and ticket connections on realtime nodes, which also need FAAS_REALTIME_TICKETS_PREVIEW_ENABLED.",
 		ADR:         "ADR-1117",
@@ -263,6 +281,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:         RealtimeAccess,
+		Capability:  "realtime-access",
 		Label:       "Realtime access revocation",
 		Description: "Release durable principal channel and session revocation to accounts: the access API on apid and its enforcement on realtime nodes, which also need FAAS_REALTIME_ACCESS_PREVIEW_ENABLED.",
 		ADR:         "ADR-1113",
@@ -277,6 +296,7 @@ var catalog = []Spec{
 	},
 	{
 		Key:          RealtimeOccupancy,
+		Capability:   "realtime-occupancy",
 		Label:        "Realtime channel occupancy",
 		Description:  "Release channel occupancy to accounts: the occupancy API on apid and live occupancy frames and SSE events on realtime nodes, which also need FAAS_REALTIME_OCCUPANCY_PREVIEW_ENABLED.",
 		ADR:          "ADR-1324",
@@ -287,8 +307,9 @@ var catalog = []Spec{
 		HealthRoutes: []string{"GET /v1/apps/{slug}/realtime/endpoints/{id}/occupancy"},
 	},
 	{
-		Key:   APIMonetization,
-		Label: "API monetization",
+		Key:        APIMonetization,
+		Capability: "api-monetization",
+		Label:      "API monetization",
 		Description: "Release API monetization (rate cards, plans, statements, credits, invoice exports, billing runs and their gateway enforcement) " +
 			"to accounts. The api_monetization_enabled runtime switch still releases it to every account. Unless every account is included, " +
 			"its routes answer an unregistered route to accounts outside the flag after authentication.",
@@ -371,15 +392,21 @@ var catalog = []Spec{
 	},
 }
 
-// Catalog returns every declared platform flag in a stable order.
+// Catalog returns every declared platform flag in a stable order: the
+// hand-written flags, then one generated flag per product capability that no
+// hand-written flag claims.
 func Catalog() []Spec {
-	out := make([]Spec, len(catalog))
-	for i, spec := range catalog {
+	all := append(slices.Clip(catalog), generatedSpecs()...)
+	out := make([]Spec, len(all))
+	for i, spec := range all {
 		spec.Consumers = slices.Clone(spec.Consumers)
 		spec.Attributes = slices.Clone(spec.Attributes)
 		spec.LegacyEnv = slices.Clone(spec.LegacyEnv)
 		spec.HealthRoutes = slices.Clone(spec.HealthRoutes)
 		spec.Default = NormalizeDefinition(spec.Default)
+		if spec.Parent == "" && spec.Capability != "" {
+			spec.Parent = capabilityParents()[spec.Capability]
+		}
 		out[i] = spec
 	}
 	return out
@@ -395,11 +422,26 @@ func Lookup(key string) (Spec, bool) {
 	return Spec{}, false
 }
 
-// FlagForCapability returns the flag that releases a pkg/productcap
-// capability, if one does.
+// FlagForCapability returns the hand-written flag that releases a
+// pkg/productcap capability, if one does. CapabilityFlag also covers the
+// generated flags.
 func FlagForCapability(capability string) (string, bool) {
 	for _, spec := range catalog {
 		if capability != "" && spec.Capability == capability {
+			return spec.Key, true
+		}
+	}
+	return "", false
+}
+
+// CapabilityFlag returns the flag that gates a pkg/productcap capability:
+// its hand-written flag if one claims it, else its generated flag.
+func CapabilityFlag(capability string) (string, bool) {
+	if key, ok := FlagForCapability(capability); ok {
+		return key, true
+	}
+	for _, spec := range generatedSpecs() {
+		if spec.Capability == capability {
 			return spec.Key, true
 		}
 	}

@@ -76,12 +76,12 @@ func (c *Client) RebindEnvironmentGitSource(ctx context.Context, project, enviro
 func (c *Client) DetachEnvironmentGitSource(ctx context.Context, project, environment string, request DetachEnvironmentGitSourceRequest) error {
 	return c.do(ctx, http.MethodDelete, environmentGitOpsPath(project, environment)+"/source", request, nil)
 }
-func (c *Client) ClaimEnvironmentFieldOwnership(ctx context.Context, request EnvironmentFieldOwnershipRequest) (EnvironmentFieldOwnershipResponse, error) {
+func (c *PreviewClient) ClaimEnvironmentFieldOwnership(ctx context.Context, request EnvironmentFieldOwnershipRequest) (EnvironmentFieldOwnershipResponse, error) {
 	var out EnvironmentFieldOwnershipResponse
 	err := c.do(ctx, http.MethodPut, "/v1/environment-field-ownership", request, &out)
 	return out, err
 }
-func (c *Client) ReleaseEnvironmentFieldOwnership(ctx context.Context, request EnvironmentFieldOwnershipRequest) (EnvironmentFieldOwnershipResponse, error) {
+func (c *PreviewClient) ReleaseEnvironmentFieldOwnership(ctx context.Context, request EnvironmentFieldOwnershipRequest) (EnvironmentFieldOwnershipResponse, error) {
 	var out EnvironmentFieldOwnershipResponse
 	err := c.do(ctx, http.MethodDelete, "/v1/environment-field-ownership", request, &out)
 	return out, err

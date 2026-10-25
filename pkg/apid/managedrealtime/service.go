@@ -92,6 +92,10 @@ type Service struct {
 	// endpoint's registration. A nil result sends none, so realtimed's own
 	// switches decide.
 	EndpointPreviews func(ctx context.Context, accountID, appID string) (*realtime.EndpointPreviews, error)
+	// RealtimeReleased decides the realtime capability flag for an
+	// endpoint's account (ADR-20261023115741). An endpoint without it, and
+	// without live routes, is withdrawn from realtimed. Nil releases it.
+	RealtimeReleased func(ctx context.Context, accountID, appID string) bool
 
 	publishIdempotencySweep atomic.Uint64
 }

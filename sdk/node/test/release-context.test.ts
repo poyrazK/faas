@@ -12,7 +12,7 @@ import {
   gregaleReleaseMetaTag,
   withGregaleReleaseContext,
   withGregaleRequestContext,
-} from '../src/index.js';
+} from '../src/preview.js';
 
 test('SSR release meta helper renders only a validated release ID', () => {
   const release = 'a91f2000-0000-4000-8000-000000000001';

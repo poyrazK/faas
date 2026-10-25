@@ -99,11 +99,14 @@ func openAPIJSONSHA256For(v Visibility) string {
 // whether API monetization is released (ADR-20261018090210) and
 // RealtimePreview whether every account sees the realtime preview
 // (ADR-20261019102657); both are read per request, and nil keeps the feature
-// hidden. ServeOpenAPISpec, ServeOpenAPISpecJSON and ServeDocs are the hidden
-// variants.
+// hidden. Hidden returns the paths to leave out, those of capabilities off by
+// default (ADR-20261023115741), with a key naming that set; nil hides none.
+// ServeOpenAPISpec, ServeOpenAPISpecJSON and ServeDocs are the variants that
+// publish none of these.
 type OpenAPI struct {
 	Monetization    func() bool
 	RealtimePreview func() bool
+	Hidden          func() (key string, hide func(path string) bool)
 }
 
 func (o OpenAPI) visibility() Visibility {
@@ -113,19 +116,61 @@ func (o OpenAPI) visibility() Visibility {
 	}
 }
 
+// servedSpec is one served variant of the spec.
+type servedSpec struct {
+	yaml, json []byte
+	sha        string
+}
+
+// maxServedSpecs bounds the variants kept; flags change rarely, so a full
+// cache is simply dropped.
+const maxServedSpecs = 16
+
+var servedSpecs struct {
+	sync.Mutex
+	byKey map[string]*servedSpec
+}
+
+func (o OpenAPI) spec() *servedSpec {
+	v := o.visibility()
+	var key string
+	var hide func(string) bool
+	if o.Hidden != nil {
+		key, hide = o.Hidden()
+	}
+	if hide == nil {
+		return &servedSpec{yaml: PublicOpenAPIYAMLFor(v), json: openAPIJSONBytesFor(v), sha: openAPIJSONSHA256For(v)}
+	}
+	cacheKey := fmt.Sprintf("%d\x00%s", v.index(), key)
+	servedSpecs.Lock()
+	defer servedSpecs.Unlock()
+	if spec, ok := servedSpecs.byKey[cacheKey]; ok {
+		return spec
+	}
+	if servedSpecs.byKey == nil || len(servedSpecs.byKey) >= maxServedSpecs {
+		servedSpecs.byKey = map[string]*servedSpec{}
+	}
+	spec := &servedSpec{yaml: FilterSpec(openapiYAML, hide, v)}
+	spec.json = mustMarshalJSON(spec.yaml)
+	sum := sha256.Sum256(spec.json)
+	spec.sha = hex.EncodeToString(sum[:])
+	servedSpecs.byKey[cacheKey] = spec
+	return spec
+}
+
 // ServeYAML handles GET /v1/openapi.yaml like ServeOpenAPISpec.
 func (o OpenAPI) ServeYAML(w http.ResponseWriter, _ *http.Request) {
-	writeOpenAPIYAML(w, PublicOpenAPIYAMLFor(o.visibility()))
+	writeOpenAPIYAML(w, o.spec().yaml)
 }
 
 // ServeJSON handles GET /v1/openapi.json like ServeOpenAPISpecJSON.
 func (o OpenAPI) ServeJSON(w http.ResponseWriter, _ *http.Request) {
-	writeOpenAPIJSON(w, openAPIJSONBytesFor(o.visibility()))
+	writeOpenAPIJSON(w, o.spec().json)
 }
 
 // ServeDocs handles the API reference like the package-level ServeDocs.
 func (o OpenAPI) ServeDocs(w http.ResponseWriter, r *http.Request) {
-	serveDocs(w, r, openAPIJSONSHA256For(o.visibility()))
+	serveDocs(w, r, o.spec().sha)
 }
 
 // ServeOpenAPISpec handles GET /v1/openapi.yaml. Anonymous; emits

@@ -29,7 +29,7 @@ type CommitRecoveryApplyItem struct {
 // ApplyCommitRecovery submits only reviewed, freshly revalidated execution recovery actions.
 // Routing actions require the precise acceptance guard in the fresh server offer.
 // Ambiguous writes stop the batch without retrying. limit bounds reviewed eligible items.
-func (c *Client) ApplyCommitRecovery(ctx context.Context, reviewed CommitRecoveryPlan, limit, pages int) (CommitRecoveryApplyResult, error) {
+func (c *PreviewClient) ApplyCommitRecovery(ctx context.Context, reviewed CommitRecoveryPlan, limit, pages int) (CommitRecoveryApplyResult, error) {
 	out := CommitRecoveryApplyResult{SourceID: reviewed.Report.SourceID, Items: []CommitRecoveryApplyItem{}, Counts: map[string]int{}}
 	raw, err := json.Marshal(reviewed)
 	if err != nil {

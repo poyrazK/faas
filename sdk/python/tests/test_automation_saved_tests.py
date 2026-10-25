@@ -1,6 +1,6 @@
-from faas_sdk.models.automation_response import AutomationResponse
-from faas_sdk.models.automation_test_report import AutomationTestReport
-from faas_sdk.models.save_automation_test_suite_request import SaveAutomationTestSuiteRequest
+from faas_sdk.preview.models.automation_response import AutomationResponse
+from faas_sdk.preview.models.automation_test_report import AutomationTestReport
+from faas_sdk.preview.models.save_automation_test_suite_request import SaveAutomationTestSuiteRequest
 
 
 def test_saved_suite_null_and_large_integer_roundtrip():

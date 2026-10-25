@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createServer } from 'node:http';
 import test from 'node:test';
-import { FaaSClient, WorkflowsService } from '../src/index.js';
+import { FaaSClient, WorkflowsService } from '../src/preview.js';
 
 test('workflow run history filters are sent as query parameters', async t => {
   const server = createServer((req, res) => {

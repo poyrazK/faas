@@ -66,6 +66,97 @@ runtime-configuration row, `platform_flag.<key>`. Its value is a definition:
 A flag decides **release, never entitlement**. A Free account included by a
 flag still cannot use a capability its plan lacks; the inspector reports both.
 
+## Capability flags
+
+Every product capability has a flag (ADR-20261023115741). The hand-written
+flags in the table below release their capability; every other capability in
+`pkg/productcap/catalog.json` gets a generated flag whose key is its id with
+`-` replaced by `_` (`realtime`, `managed_postgres`, `route_insights`, …).
+`gregalectl flags list` shows them all.
+
+- **Default from the tier.** GA and beta capabilities are on for every
+  account. Preview and internal capabilities keep the kill switch on and are
+  off by default, so you release one with an `accounts`, `orgs`, `group`,
+  `plans` or `rollout` rule.
+- **What off means.** apid answers the capability's routes as if they did
+  not exist: `404 no such API route` under `/v1`, a plain 404 elsewhere, and
+  404 instead of 405 for a wrong method. With the kill switch off this happens
+  before authentication; otherwise it is decided per account. Dashboard links
+  to the capability disappear, and `GET /v1/capabilities` lists it as
+  unavailable.
+- **Core capabilities.** Sign-in, API keys, apps, billing, GDPR export and
+  deletion, the status page, docs, the CLI, the dashboard, the OpenAPI spec
+  and notification emails are core. Turning a core flag's kill switch or
+  default off is refused unless the write carries `--force`.
+- **Sub-features.** Large capabilities are split into sub-features with
+  their own flags (`parent=` in `gregalectl flags list`): for example
+  `realtime` has `realtime_channels`, `realtime_push`, `realtime_workers`,
+  `realtime_access`, `realtime_tickets` and more. A sub-feature is released
+  only while its parent is released too, so switching a parent off hides every
+  sub-feature under it.
+- **Always-on capabilities** (Firecracker isolation, scale-to-zero, the CLI,
+  the SDKs) have no flag.
+- **Enforcement.** `enforcement=routes` means apid hides the capability's
+  routes; `settings` means apid refuses the app fields, edge rule kinds,
+  runtimes, gregale.yaml blocks or wildcard domains that turn it on (with
+  `403 capability_not_released`); `daemons` means schedd, githubd or
+  gatewayd-internal also stop its work outside apid (below); `handler` means
+  the flag's consumers decide it in code; `none` means the flag is not
+  enforced yet (VM behavior, or a CLI-side tool).
+- **Work outside apid.** Daemons follow the same decision, tier defaults
+  included, within a few seconds of a write:
+  - schedd defers the work of crons, delayed execution, async invocations,
+    durable inbound webhooks, queues, event triggers, jobs, workflows and
+    managed exclusive operations a minute at a time, without spending a
+    delivery attempt. The backlog runs when the flag is back on, so cancel
+    the work as well if the capability is off for good.
+  - githubd ignores pushes (`github_deploys`) and pull-request previews
+    (`pr_previews`) and does not replay them later; closing a pull request
+    still tears its preview down.
+  - gatewayd-internal drops cache, async, retry and circuit-breaker edge rules
+    and stops traffic mirroring, session affinity and the wake page.
+    Restrictive edge rules (WAF, challenge, IP, JWT, geo, limits,
+    maintenance, headers, routing) keep enforcing while `edge_rules` or
+    `edge_protection` is off, so switching those off never opens an app.
+  - apid withdraws a realtime endpoint from realtimed while `realtime` is off
+    for its account, unless the endpoint carries live routes. Live queries
+    stop for clients through the `live_queries` flag; livequeryd keeps its
+    replication slot consumed.
+
+  Rules on a flag a daemon decides can target accounts only (schedd also
+  matches plans and organizations), because those daemons know only the
+  account. `gregalectl flags show --key <flag>` prints its consumers and
+  attributes.
+- **CLI.** The gregale CLI leaves a hidden capability's commands out of help,
+  completion, man pages and suggestions, using `hidden_capabilities` from
+  `GET /v1/capabilities` (cached for an hour per credential), and answers
+  them as unknown commands. Logged-out CLIs follow tier defaults. A customer
+  who was just released a preview sees it within the hour, or at once by
+  running the command, which reads the view again before refusing.
+- **Release a preview to one account:**
+
+  ```bash
+  gregalectl flags allow --key realtime --account-id <account-uuid> --reason "design partner" --yes
+  ```
+
+- **Bulk writes.** Use `--tier` or `--capability` in place of `--key` with
+  `enable`, `disable`, `allow`, `deny`, `revoke` and `default`. Each matching
+  flag is written separately; the summary line reports written and failed
+  writes.
+
+  ```bash
+  gregalectl flags allow --tier preview --account-id <account-uuid> --reason "design partner" --yes
+  gregalectl flags disable --capability realtime --reason "incident 412" --yes
+  gregalectl flags deny --capability object-protection --org-id <org-uuid> --reason "not yet" --yes
+  ```
+
+- **New routes.** A route must belong to a capability: add its path to that
+  capability's `routes` in `pkg/productcap/catalog.json`.
+  `TestEveryApidRouteHasACapability` fails until you do.
+- **Metrics.** `apid_capability_hidden_requests_total{capability,stage}` counts
+  hidden requests; `apid_capability_unmapped_requests_total` counts requests
+  to routes no capability owns (a catalog gap, released by default).
+
 ## Current flags
 
 | Key | Releases | Consumers | Boot fallback |

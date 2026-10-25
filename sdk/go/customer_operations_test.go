@@ -15,6 +15,8 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/poyrazK/faas/sdk/go/preview"
+
 	faas "github.com/poyrazK/faas/sdk/go"
 )
 
@@ -45,13 +47,13 @@ func TestOperationRecoveryInspectionAndPreviewFence(t *testing.T) {
 			}
 			writeOperationJSON(w, 200, `{"inspection":{"operation_id":"op","inspection_revision":"`+revision+`"},"eligible":false,"evidence_required":true,"blockers":["workflow_concurrency_limit"],"reopened_steps":["finish"]}`)
 		case "POST /v1/apps/exports/operations/op/recover":
-			var body faas.OperationRecoveryRequest
+			var body preview.OperationRecoveryRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ExpectedInspectionRevision != revision {
 				t.Error("apply lost revision fence", err)
 			}
 			writeOperationJSON(w, 200, `{"id":"op","generation":2}`)
 		case "POST /v1/apps/exports/operations/op/recover-receipt":
-			var body faas.OperationRecoveryRequest
+			var body preview.OperationRecoveryRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ExpectedInspectionRevision != revision || body.RecoveryID != "decision" {
 				t.Error("decision receipt lost intent", err)
 			}
@@ -66,15 +68,15 @@ func TestOperationRecoveryInspectionAndPreviewFence(t *testing.T) {
 	if err != nil || i.InspectionRevision != revision {
 		t.Fatal("inspection DTO", err)
 	}
-	p, err := c.PreviewOperationRecovery(context.Background(), "exports", "op", faas.OperationRecoveryPreviewRequest{ExpectedGeneration: 1, Resolution: "safe_to_retry"})
+	p, err := c.PreviewOperationRecovery(context.Background(), "exports", "op", preview.OperationRecoveryPreviewRequest{ExpectedGeneration: 1, Resolution: "safe_to_retry"})
 	if err != nil || p.Eligible || !p.EvidenceRequired || len(p.ReopenedSteps) != 1 {
 		t.Fatal("preview DTO", err)
 	}
-	if _, err := c.RecoverOperation(context.Background(), "exports", "op", faas.OperationRecoveryRequest{RecoveryID: "decision", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "provider ledger checked", ExpectedInspectionRevision: i.InspectionRevision}); err != nil || calls != 3 {
+	if _, err := c.RecoverOperation(context.Background(), "exports", "op", preview.OperationRecoveryRequest{RecoveryID: "decision", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "provider ledger checked", ExpectedInspectionRevision: i.InspectionRevision}); err != nil || calls != 3 {
 		t.Fatal("revision fence wire", err)
 	}
-	decision, err := c.RecoverOperationWithReceipt(context.Background(), "exports", "op", faas.OperationRecoveryRequest{RecoveryID: "decision", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "provider ledger checked", ExpectedInspectionRevision: i.InspectionRevision})
-	if err != nil || decision.OperationID != "op" || decision.Generation != 2 || decision.State != faas.OperationAccepted || calls != 4 {
+	decision, err := c.RecoverOperationWithReceipt(context.Background(), "exports", "op", preview.OperationRecoveryRequest{RecoveryID: "decision", ExpectedGeneration: 1, Resolution: "safe_to_retry", Evidence: "provider ledger checked", ExpectedInspectionRevision: i.InspectionRevision})
+	if err != nil || decision.OperationID != "op" || decision.Generation != 2 || decision.State != preview.OperationAccepted || calls != 4 {
 		t.Fatal("immutable decision wire", decision, err)
 	}
 }
@@ -82,13 +84,13 @@ func TestOperationRecoveryInspectionAndPreviewFence(t *testing.T) {
 func TestOperationExecutionControlUsesReadOnlyProof(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
-		if r.Method != http.MethodGet || r.URL.RequestURI() != "/v1/runtime/operations/operation%2Fid/control" || len(body) != 0 || r.Header.Get("Authorization") != "Bearer tenant-first" || r.Header.Get("X-Faas-Invocation-Id") != "invocation" || r.Header.Get(faas.OperationAttemptHeader) != "2" || r.Header.Get(faas.OperationCapabilityHeader) != "private-capability" {
+		if r.Method != http.MethodGet || r.URL.RequestURI() != "/v1/runtime/operations/operation%2Fid/control" || len(body) != 0 || r.Header.Get("Authorization") != "Bearer tenant-first" || r.Header.Get("X-Faas-Invocation-Id") != "invocation" || r.Header.Get(preview.OperationAttemptHeader) != "2" || r.Header.Get(preview.OperationCapabilityHeader) != "private-capability" {
 			t.Error("control proof, path or method changed")
 		}
 		writeOperationJSON(w, http.StatusOK, `{"operation_id":"operation/id","invocation_id":"invocation","attempt":2,"cancellation_requested":true,"deadline_at":"2026-10-05T12:00:00Z","lease_expires_at":"2026-10-05T11:59:00Z","observed_at":"2026-10-05T11:58:00Z","poll_after_ms":1000}`)
 	}))
 	defer server.Close()
-	control, err := operationClient(t, server).GetOperationExecutionControl(context.Background(), "operation/id", faas.OperationRuntimeProof{InvocationID: "invocation", Attempt: 2, Capability: "private-capability"})
+	control, err := preview.Wrap(operationClient(t, server)).GetOperationExecutionControl(context.Background(), "operation/id", preview.OperationRuntimeProof{InvocationID: "invocation", Attempt: 2, Capability: "private-capability"})
 	if err != nil || control.OperationID != "operation/id" || !control.CancellationRequested || !control.LeaseExpiresAt.Before(control.DeadlineAt) {
 		t.Fatalf("control DTO: %+v %v", control, err)
 	}
@@ -109,7 +111,7 @@ func TestOperationSubmissionIdentityAndIndependentDelivery(t *testing.T) {
 			if r.URL.Path != "/v1/platform-tenant-self/customer-operations" || r.Header.Get("Idempotency-Key") != "customer-export-42" || r.Header.Get("Authorization") != "Bearer tenant-first" {
 				t.Error("submission scope or stable key changed")
 			}
-			var body faas.OperationStartRequest
+			var body preview.OperationStartRequest
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.DefinitionID != "export-definition" {
 				t.Error("typed submission changed", err)
 			}
@@ -127,9 +129,9 @@ func TestOperationSubmissionIdentityAndIndependentDelivery(t *testing.T) {
 	}))
 	defer server.Close()
 	c := operationClient(t, server)
-	body := faas.OperationStartRequest{DefinitionID: "export-definition", Input: json.RawMessage(`{"customer":"42"}`)}
+	body := preview.OperationStartRequest{DefinitionID: "export-definition", Input: json.RawMessage(`{"customer":"42"}`)}
 	for _, key := range []string{"", strings.Repeat("x", 129), strings.Repeat("é", 65), "line\rbreak", "line\nbreak", "nul\x00key"} {
-		if _, err := c.StartPlatformTenantSelfOperation(context.Background(), body, key); err == nil {
+		if _, err := preview.Wrap(c).StartPlatformTenantSelfOperation(context.Background(), body, key); err == nil {
 			t.Fatal("invalid key accepted")
 		}
 	}
@@ -137,20 +139,20 @@ func TestOperationSubmissionIdentityAndIndependentDelivery(t *testing.T) {
 		t.Fatal("invalid key reached the API")
 	}
 	for range 2 {
-		receipt, err := c.StartPlatformTenantSelfOperation(context.Background(), body, "customer-export-42")
+		receipt, err := preview.Wrap(c).StartPlatformTenantSelfOperation(context.Background(), body, "customer-export-42")
 		if err != nil || receipt.ID != "export-42" || receipt.StatusURL != "/status" || receipt.EventsURL != "/events" {
 			t.Fatal("receipt lost on replay", receipt, err)
 		}
 	}
 	body.Input = json.RawMessage(`{"customer":"43"}`)
-	_, err := c.StartPlatformTenantSelfOperation(context.Background(), body, "customer-export-42")
+	_, err := preview.Wrap(c).StartPlatformTenantSelfOperation(context.Background(), body, "customer-export-42")
 	var problem *faas.APIError
 	if !errors.As(err, &problem) || problem.Problem.Status != 409 || problem.Problem.Code != "operation_idempotency_conflict" {
 		t.Fatal("payload conflict not preserved", err)
 	}
 	c.SetToken("tenant-refreshed")
 	operation, err := c.GetPlatformTenantSelfOperation(context.Background(), "export-42")
-	if err != nil || operation.ID != "export-42" || operation.State != faas.OperationSucceeded || !operation.State.Terminal() || operation.CompletionDelivery.State != "pending" || operation.CompletionDelivery.Attempts != 2 {
+	if err != nil || operation.ID != "export-42" || operation.State != preview.OperationSucceeded || !operation.State.Terminal() || operation.CompletionDelivery.State != "pending" || operation.CompletionDelivery.Attempts != 2 {
 		t.Fatal("notification failure changed business outcome", operation, err)
 	}
 	if string(operation.Result) != `{"rows":9007199254740993}` {
@@ -197,7 +199,7 @@ func TestOperationArtifactLengthDigestAndBounds(t *testing.T) {
 				t.Fatal("unverified artifact accepted")
 			}
 			if tc.name == "truncated" || tc.name == "extra_bytes" {
-				var mismatch *faas.OperationArtifactTruncatedError
+				var mismatch *preview.OperationArtifactTruncatedError
 				if !errors.As(err, &mismatch) || mismatch.Expected != tc.length {
 					t.Fatal("length error not typed", err)
 				}
@@ -228,7 +230,7 @@ func TestOperationCredentialsNeverFollowRedirects(t *testing.T) {
 		_ = body.Close()
 		t.Fatal("stream redirect succeeded")
 	}
-	if _, err := c.RecoverOperationWithReceipt(context.Background(), "exports", "op", faas.OperationRecoveryRequest{}); err == nil {
+	if _, err := c.RecoverOperationWithReceipt(context.Background(), "exports", "op", preview.OperationRecoveryRequest{}); err == nil {
 		t.Fatal("recovery receipt followed redirect")
 	}
 	if targetCalls.Load() != 0 {
@@ -280,7 +282,7 @@ func TestOperationJSONRejectsMissingAndOversizedBodies(t *testing.T) {
 }
 
 func TestOperationRuntimeProofIsPrivateAndForwardedOnlyToRuntime(t *testing.T) {
-	proof := faas.OperationRuntimeProof{InvocationID: "invocation", Attempt: 2, Capability: strings.Repeat("a", 64)}
+	proof := preview.OperationRuntimeProof{InvocationID: "invocation", Attempt: 2, Capability: strings.Repeat("a", 64)}
 	raw, err := json.Marshal(proof)
 	if err != nil || strings.Contains(string(raw), proof.Capability) || strings.Contains(fmt.Sprintf("%+v %#v", proof, proof), proof.Capability) {
 		t.Fatal("runtime proof leaked")
@@ -292,8 +294,8 @@ func TestOperationRuntimeProofIsPrivateAndForwardedOnlyToRuntime(t *testing.T) {
 		writeOperationJSON(w, 200, `{"id":"export","state":"running"}`)
 	}))
 	defer server.Close()
-	out, err := operationClient(t, server).ReportOperationProgress(context.Background(), "export", proof, faas.OperationReportRequest{ReportID: "chunk-1", Stage: "generating", Completed: 1, Total: 1})
-	if err != nil || out.ID != "export" || out.State != faas.OperationRunning {
+	out, err := preview.Wrap(operationClient(t, server)).ReportOperationProgress(context.Background(), "export", proof, preview.OperationReportRequest{ReportID: "chunk-1", Stage: "generating", Completed: 1, Total: 1})
+	if err != nil || out.ID != "export" || out.State != preview.OperationRunning {
 		t.Fatal("runtime projection lost", out, err)
 	}
 }
@@ -309,14 +311,14 @@ func TestOperationHistoryScopedWireContract(t *testing.T) {
 	defer server.Close()
 	client := operationClient(t, server)
 	client.SetToken("tenant-refreshed")
-	page, err := client.ListPlatformTenantSelfOperations(context.Background(), faas.OperationListOptions{AppID: "app", Scope: "staging", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque+/="})
-	if err != nil || len(page.Operations) != 1 || page.Operations[0].State != faas.OperationSucceeded || page.Operations[0].CompletionDelivery.State != "failed" || page.NextCursor != "next" {
+	page, err := preview.Wrap(client).ListPlatformTenantSelfOperations(context.Background(), preview.OperationListOptions{AppID: "app", Scope: "staging", Name: "export", State: preview.OperationSucceeded, Limit: 2, Cursor: "opaque+/="})
+	if err != nil || len(page.Operations) != 1 || page.Operations[0].State != preview.OperationSucceeded || page.Operations[0].CompletionDelivery.State != "failed" || page.NextCursor != "next" {
 		t.Fatalf("history wire contract: %+v %v", page, err)
 	}
 }
 
 func TestOperationWorkflowArtifactProofAndPrivateReceipt(t *testing.T) {
-	proof := faas.OperationWorkflowRuntimeProof{RunID: "run", StepName: "finish", Generation: 2, Attempt: 3, Capability: "private-native-nonce"}
+	proof := preview.OperationWorkflowRuntimeProof{RunID: "run", StepName: "finish", Generation: 2, Attempt: 3, Capability: "private-native-nonce"}
 	for _, formatted := range []string{fmt.Sprintf("%v", proof), fmt.Sprintf("%+v", proof), fmt.Sprintf("%#v", proof)} {
 		if strings.Contains(formatted, proof.Capability) {
 			t.Fatal("workflow proof leaked")
@@ -325,7 +327,7 @@ func TestOperationWorkflowArtifactProofAndPrivateReceipt(t *testing.T) {
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
-		if r.Header.Get(faas.OperationWorkflowRunHeader) != proof.RunID || r.Header.Get(faas.OperationWorkflowStepHeader) != proof.StepName || r.Header.Get(faas.OperationGenerationHeader) != "2" || r.Header.Get(faas.OperationAttemptHeader) != "3" || r.Header.Get(faas.OperationWorkflowCapabilityHeader) != proof.Capability || r.Header.Get(faas.OperationExecutionKindHeader) != "workflow" || r.Header.Get(faas.OperationCapabilityHeader) != "" || r.Header.Get("X-Faas-Invocation-Id") != "" {
+		if r.Header.Get(preview.OperationWorkflowRunHeader) != proof.RunID || r.Header.Get(preview.OperationWorkflowStepHeader) != proof.StepName || r.Header.Get(preview.OperationGenerationHeader) != "2" || r.Header.Get(preview.OperationAttemptHeader) != "3" || r.Header.Get(preview.OperationWorkflowCapabilityHeader) != proof.Capability || r.Header.Get(preview.OperationExecutionKindHeader) != "workflow" || r.Header.Get(preview.OperationCapabilityHeader) != "" || r.Header.Get("X-Faas-Invocation-Id") != "" {
 			t.Fatal("native proof headers changed")
 		}
 		if calls == 1 {
@@ -342,39 +344,39 @@ func TestOperationWorkflowArtifactProofAndPrivateReceipt(t *testing.T) {
 	}))
 	defer server.Close()
 	client := operationClient(t, server)
-	req := faas.OperationArtifactRequest{ReportID: "csv", Name: "export.csv", URI: "obj://app/bucket/key", SizeBytes: 3, SHA256: "digest"}
-	receipt, err := client.ReuseWorkflowOperationArtifact(context.Background(), "operation/id", proof, req)
+	req := preview.OperationArtifactRequest{ReportID: "csv", Name: "export.csv", URI: "obj://app/bucket/key", SizeBytes: 3, SHA256: "digest"}
+	receipt, err := preview.Wrap(client).ReuseWorkflowOperationArtifact(context.Background(), "operation/id", proof, req)
 	if err != nil || receipt.Available || receipt.Artifact != nil {
 		t.Fatalf("missing receipt=%+v %v", receipt, err)
 	}
-	receipt, err = client.PrepareWorkflowOperationArtifact(context.Background(), "operation/id", proof, req)
+	receipt, err = preview.Wrap(client).PrepareWorkflowOperationArtifact(context.Background(), "operation/id", proof, req)
 	if err != nil || !receipt.Available || receipt.Artifact == nil || receipt.Artifact.ID != "file" {
 		t.Fatalf("prepared receipt=%+v %v", receipt, err)
 	}
 }
 
 func TestOperationWorkflowControlWireContract(t *testing.T) {
-	proof := faas.OperationWorkflowRuntimeProof{RunID: "native-run", StepName: "collect", Generation: 2, Attempt: 3, Capability: "private-native-nonce"}
+	proof := preview.OperationWorkflowRuntimeProof{RunID: "native-run", StepName: "collect", Generation: 2, Attempt: 3, Capability: "private-native-nonce"}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet || r.URL.RequestURI() != "/v1/runtime/workflow-operations/operation%2Fid/control" || r.ContentLength != 0 {
 			t.Fatal("native control request changed", r.Method, r.URL.RequestURI())
 		}
-		if r.Header.Get(faas.OperationWorkflowRunHeader) != proof.RunID || r.Header.Get(faas.OperationWorkflowStepHeader) != "collect" || r.Header.Get(faas.OperationGenerationHeader) != "2" || r.Header.Get(faas.OperationAttemptHeader) != "3" || r.Header.Get(faas.OperationWorkflowCapabilityHeader) != proof.Capability || r.Header.Get(faas.OperationExecutionKindHeader) != "workflow" || r.Header.Get(faas.OperationCapabilityHeader) != "" || r.Header.Get("X-Faas-Invocation-Id") != "" {
+		if r.Header.Get(preview.OperationWorkflowRunHeader) != proof.RunID || r.Header.Get(preview.OperationWorkflowStepHeader) != "collect" || r.Header.Get(preview.OperationGenerationHeader) != "2" || r.Header.Get(preview.OperationAttemptHeader) != "3" || r.Header.Get(preview.OperationWorkflowCapabilityHeader) != proof.Capability || r.Header.Get(preview.OperationExecutionKindHeader) != "workflow" || r.Header.Get(preview.OperationCapabilityHeader) != "" || r.Header.Get("X-Faas-Invocation-Id") != "" {
 			t.Fatal("control changed native proof family")
 		}
 		writeOperationJSON(w, http.StatusOK, `{"operation_id":"operation/id","workflow_run_id":"native-run","workflow_step":"collect","generation":2,"attempt":3,"cancellation_requested":false,"deadline_at":"2026-10-06T10:01:00Z","lease_expires_at":"2026-10-06T10:00:30Z","observed_at":"2026-10-06T10:00:00Z","poll_after_ms":1000}`)
 	}))
 	defer server.Close()
-	control, err := operationClient(t, server).GetWorkflowOperationExecutionControl(context.Background(), "operation/id", proof)
+	control, err := preview.Wrap(operationClient(t, server)).GetWorkflowOperationExecutionControl(context.Background(), "operation/id", proof)
 	if err != nil || control.WorkflowRunID != proof.RunID || control.WorkflowStep != proof.StepName || control.Generation != 2 || control.Attempt != 3 || control.CancellationRequested || control.DeadlineAt.IsZero() || control.LeaseExpiresAt.After(control.DeadlineAt) || control.PollAfterMS != 1000 {
 		t.Fatalf("native control response=%+v %v", control, err)
 	}
 }
 
 func TestOperationSubmissionLookupClient(t *testing.T) {
-	identity := &faas.OperationTenantIdentity{AccountID: "11111111-1111-4111-8111-111111111111", PlatformTenantID: "22222222-2222-4222-8222-222222222222"}
-	scope := faas.OperationSubmissionScope{AppID: "33333333-3333-4333-8333-333333333333", Scope: "default", Name: "export"}
-	lookup := faas.OperationSubmissionLookupRequest{AppID: scope.AppID, Scope: scope.Scope, Name: scope.Name, IdempotencyKey: "private-stable-key", ExpectedIdentity: identity}
+	identity := &preview.OperationTenantIdentity{AccountID: "11111111-1111-4111-8111-111111111111", PlatformTenantID: "22222222-2222-4222-8222-222222222222"}
+	scope := preview.OperationSubmissionScope{AppID: "33333333-3333-4333-8333-333333333333", Scope: "default", Name: "export"}
+	lookup := preview.OperationSubmissionLookupRequest{AppID: scope.AppID, Scope: scope.Scope, Name: scope.Name, IdempotencyKey: "private-stable-key", ExpectedIdentity: identity}
 	calls := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls++
@@ -385,13 +387,13 @@ func TestOperationSubmissionLookupClient(t *testing.T) {
 			if r.URL.Path != "/v1/platform-tenant-self/customer-operations/submissions/lookup" {
 				t.Error(r.URL.Path)
 			}
-			var got faas.OperationSubmissionLookupRequest
+			var got preview.OperationSubmissionLookupRequest
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil || got.IdempotencyKey != lookup.IdempotencyKey || got.ExpectedIdentity == nil || *got.ExpectedIdentity != *identity {
 				t.Error("lookup intent", got, err)
 			}
 			_, _ = w.Write([]byte(`{"state":"accepted","accepted_at":"2026-10-06T12:00:00Z","idempotency_expires_at":"2026-11-06T12:00:00Z","receipt":{"id":"accepted","status_url":"/status","events_url":"/events"}}`))
 		} else {
-			var got faas.OperationStartRequest
+			var got preview.OperationStartRequest
 			if err := json.NewDecoder(r.Body).Decode(&got); err != nil || got.ExpectedIdentity == nil || *got.ExpectedIdentity != *identity || got.ExpectedScope == nil || *got.ExpectedScope != scope || r.Header.Get("Idempotency-Key") != lookup.IdempotencyKey {
 				t.Error("submission fences", got, err)
 			}
@@ -404,11 +406,11 @@ func TestOperationSubmissionLookupClient(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, err := client.LookupPlatformTenantSelfOperationSubmission(context.Background(), lookup)
+	got, err := preview.Wrap(client).LookupPlatformTenantSelfOperationSubmission(context.Background(), lookup)
 	if err != nil || got.State != "accepted" || got.Receipt == nil || got.Receipt.ID != "accepted" || got.AcceptedAt == nil || got.IdempotencyExpiresAt == nil || !got.AcceptedAt.Before(*got.IdempotencyExpiresAt) {
 		t.Fatal("observation", got, err)
 	}
-	_, err = client.StartPlatformTenantSelfOperation(context.Background(), faas.OperationStartRequest{DefinitionID: scope.AppID, Input: []byte(`{"count":1}`), ExpectedIdentity: identity, ExpectedScope: &scope}, lookup.IdempotencyKey)
+	_, err = preview.Wrap(client).StartPlatformTenantSelfOperation(context.Background(), preview.OperationStartRequest{DefinitionID: scope.AppID, Input: []byte(`{"count":1}`), ExpectedIdentity: identity, ExpectedScope: &scope}, lookup.IdempotencyKey)
 	if err != nil || calls != 2 {
 		t.Fatal("fenced start", calls, err)
 	}
@@ -434,10 +436,10 @@ func TestOperationMilestoneFeedsPreserveOwnershipAndReference(t *testing.T) {
 		t.Fatal(err)
 	}
 	client.SetToken("refreshed")
-	if _, err := client.ListPlatformTenantSelfBusinessMilestones(context.Background(), faas.OperationMilestoneListOptions{AppID: "app", Scope: "default", SubjectType: "order", SubjectID: "ord/42&é", TenantID: "untrusted-owner"}); err != nil {
+	if _, err := preview.Wrap(client).ListPlatformTenantSelfBusinessMilestones(context.Background(), preview.OperationMilestoneListOptions{AppID: "app", Scope: "default", SubjectType: "order", SubjectID: "ord/42&é", TenantID: "untrusted-owner"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.GetPlatformTenantSelfOperationMilestones(context.Background(), "op", faas.OperationMilestoneListOptions{TenantID: "untrusted-owner"}); err != nil {
+	if _, err := client.GetPlatformTenantSelfOperationMilestones(context.Background(), "op", preview.OperationMilestoneListOptions{TenantID: "untrusted-owner"}); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -453,8 +455,8 @@ func TestOperationHistoryScopedWireContractIntegratedBusinessWorkflows(t *testin
 	defer server.Close()
 	client := operationClient(t, server)
 	client.SetToken("tenant-refreshed")
-	page, err := client.ListPlatformTenantSelfOperations(context.Background(), faas.OperationListOptions{SubjectType: "order", SubjectID: "ord/42&é", AppID: "app", Scope: "staging", Name: "export", State: faas.OperationSucceeded, Limit: 2, Cursor: "opaque+/="})
-	if err != nil || len(page.Operations) != 1 || page.Operations[0].State != faas.OperationSucceeded || page.Operations[0].CompletionDelivery.State != "failed" || page.NextCursor != "next" {
+	page, err := preview.Wrap(client).ListPlatformTenantSelfOperations(context.Background(), preview.OperationListOptions{SubjectType: "order", SubjectID: "ord/42&é", AppID: "app", Scope: "staging", Name: "export", State: preview.OperationSucceeded, Limit: 2, Cursor: "opaque+/="})
+	if err != nil || len(page.Operations) != 1 || page.Operations[0].State != preview.OperationSucceeded || page.Operations[0].CompletionDelivery.State != "failed" || page.NextCursor != "next" {
 		t.Fatalf("history wire contract: %+v %v", page, err)
 	}
 }

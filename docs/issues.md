@@ -21,7 +21,7 @@ release environment; `application` is the default namespace for standalone apps.
 Node:
 
 ```ts
-import { createIssueReporter } from '@gregale/sdk-node';
+import { createIssueReporter } from '@gregale/sdk-node/preview';
 
 const issues = createIssueReporter({
   baseURL: process.env.GREGALE_API_URL!,
@@ -41,7 +41,7 @@ await issues.close();
 Python:
 
 ```python
-from faas_sdk import IssueReporter
+from faas_sdk.preview import IssueReporter
 
 issues = IssueReporter(api_url, "exports", reporting_token)
 try:
@@ -56,7 +56,7 @@ Go:
 
 ```go
 // Imports include context, os, time, and faas "github.com/poyrazK/faas/sdk/go".
-issues, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+issues, err := preview.NewIssueReporter(preview.IssueReporterOptions{
 	BaseURL: os.Getenv("GREGALE_API_URL"),
 	App:     "exports",
 	Token:   os.Getenv("GREGALE_ISSUE_TOKEN"),
@@ -71,7 +71,7 @@ defer func() {
 }()
 
 if err := generateExport(); err != nil {
-	issues.CaptureException(err, faas.IssueContext{
+	issues.CaptureException(err, preview.IssueContext{
 		RequestID: requestID,
 		TraceID:   traceID,
 		Route:     "/exports",
@@ -80,7 +80,7 @@ if err := generateExport(); err != nil {
 }
 ```
 
-For worker panics, `defer issues.RecoverAndRepanic(faas.IssueContext{SourceKind: "worker", InvocationID: invocationID})`
+For worker panics, `defer issues.RecoverAndRepanic(preview.IssueContext{SourceKind: "worker", InvocationID: invocationID})`
 captures the panic best-effort and re-panics with the original value. Standard Go errors do not
 carry creation-time stacks, so the helper records the current goroutine's stack
 at the capture call. No locals, request bodies, or arbitrary context fields are
@@ -252,12 +252,12 @@ issues.capture_exception(error, error_code="INVALID_DATE")
 ```
 
 ```go
-issues, err := faas.NewIssueReporter(faas.IssueReporterOptions{
+issues, err := preview.NewIssueReporter(preview.IssueReporterOptions{
     BaseURL: apiURL, App: "exports", Token: reportingToken,
     GroupingStrategy: "failure-site-v1",
 })
 // Handle err before using the reporter.
-issues.CaptureException(errToReport, faas.IssueContext{ErrorCode: "INVALID_DATE"})
+issues.CaptureException(errToReport, preview.IssueContext{ErrorCode: "INVALID_DATE"})
 ```
 
 Use stable, low-cardinality application codes, rather than customer IDs or
@@ -302,7 +302,7 @@ no map URLs itself:
 
 ```ts
 import { readFileSync } from 'node:fs';
-import { createIssueReporter } from '@gregale/sdk-node';
+import { createIssueReporter } from '@gregale/sdk-node/preview';
 
 const issues = createIssueReporter({
   baseURL: apiURL, app: 'exports', token: reportingToken,
@@ -1136,7 +1136,7 @@ and [ADR-1744](adr/1744-issue-grouping-previews-and-baselines.md).
 Create a collector for each request or job; add only messages appropriate to retain as issue evidence:
 
 ```typescript
-import { createIssueContext } from '@gregale/sdk-node';
+import { createIssueContext } from '@gregale/sdk-node/preview';
 const context = createIssueContext();
 context.setTag('component', 'payments');
 context.addBreadcrumb({ category: 'workflow', message: 'starting charge' });

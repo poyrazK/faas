@@ -3,9 +3,9 @@ from uuid import UUID
 
 import httpx
 
-from faas_sdk.api.alert_rules import get_alert_rollback, list_alert_rollbacks
+from faas_sdk.preview.api.alert_rules import get_alert_rollback, list_alert_rollbacks
 from faas_sdk.client import Client
-from faas_sdk.models import AlertRollback
+from faas_sdk.preview.models import AlertRollback
 
 
 def test_alert_rollback_gets_preserve_exact_pair_and_blocked_state():
@@ -46,7 +46,7 @@ def test_alert_rollback_gets_preserve_exact_pair_and_blocked_state():
 
 
 def test_historical_alert_receipt_and_window_wire():
-    from faas_sdk.models import CreateAlertRuleRequest, UpdateAlertRuleRequest
+    from faas_sdk.preview.models import CreateAlertRuleRequest, UpdateAlertRuleRequest
 
     fire = UUID("3e9f323a-ade6-442b-8444-c91da107fe44")
     wire = {

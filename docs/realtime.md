@@ -214,8 +214,8 @@ presence and occupancy. React hooks come from `@gregale/sdk-node/react`
 (React 18 or later):
 
 ```tsx
-import { createBrowserRealtimeTicketSocketFactory, createRealtimeClient } from '@gregale/sdk-node/browser';
-import { RealtimeProvider, useOccupancy, usePresence, useRealtimeChannel } from '@gregale/sdk-node/react';
+import { createBrowserRealtimeTicketSocketFactory, createRealtimeClient } from '@gregale/sdk-node/preview/browser';
+import { RealtimeProvider, useOccupancy, usePresence, useRealtimeChannel } from '@gregale/sdk-node/preview/react';
 
 const client = createRealtimeClient({
   url: 'wss://app.example.com/__gregale/realtime/ENDPOINT_ID',
@@ -329,7 +329,7 @@ The SDKs do the parsing and bookkeeping. A handler that throws for a record
 puts just that record in `batchItemFailures`:
 
 ```ts
-import { handleTriggerBatch } from '@gregale/sdk-node/triggers/runtime';
+import { handleTriggerBatch } from '@gregale/sdk-node/preview/triggers/runtime';
 
 export async function POST(request: Request) {
   const result = await handleTriggerBatch(await request.json(), async (record) => {
@@ -340,7 +340,7 @@ export async function POST(request: Request) {
 ```
 
 ```python
-from faas_sdk.trigger_batch import handle_trigger_batch
+from faas_sdk.preview.trigger_batch import handle_trigger_batch
 
 def handler(request):
     return handle_trigger_batch(request.body, lambda record: save_order(record.data))

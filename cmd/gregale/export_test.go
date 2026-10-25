@@ -2424,6 +2424,10 @@ func AppArgumentPaths() [][]string {
 	return paths
 }
 
+// Capability hiding (ADR-20261023115741).
+var CliPathCapability = cliPathCapability
+var CommandCapabilityPath = commandCapabilityPath
+
 var ValidateMCPProtocolResponseHeaders = validateMCPProtocolResponseHeaders
 
 // SavedDeployRecovery returns the resume command and hint a saved deploy

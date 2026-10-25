@@ -1,4 +1,4 @@
-import {PostgresPoolBinding} from '@gregale/sdk-node/postgres/runtime';
+import {PostgresPoolBinding} from '@gregale/sdk-node/preview/postgres/runtime';
 
 // Supply pg.Pool from the application's driver dependency. The SDK has none.
 export function createPostgresBinding(Pool) {

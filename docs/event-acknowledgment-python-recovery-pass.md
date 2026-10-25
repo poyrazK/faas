@@ -13,7 +13,7 @@ Go provides the [same finite-pass model](event-acknowledgment-go-recovery-pass.m
 using its existing `database/sql` recovery primitive and context cancellation.
 
 ```python
-from faas_sdk import (
+from faas_sdk.preview import (
     EventAcknowledgmentIntentRecoveryPassOptions,
     arecover_event_acknowledgment_intents,
 )

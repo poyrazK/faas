@@ -44,6 +44,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/audit"
+	"github.com/onebox-faas/faas/pkg/capflags"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
@@ -427,6 +428,10 @@ type Engine struct {
 	// publication (WithNotifyInPublication).
 	notifyInPublication bool
 	fcVer               string // running Firecracker version — snapshots load only on a match (ADR-005)
+	// capabilities holds a capability's background work while its platform
+	// flag is off for the owning account (ADR-20261023115741); nil allows all.
+	capabilities       *capflags.Decider
+	capabilitySubjects capabilitySubjects
 	// sealCrashCaptures seals crash captures at the source (ADR-733,
 	// remote storage backends).
 	sealCrashCaptures bool

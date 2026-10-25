@@ -210,7 +210,7 @@ func (h *Handler) selectPublicRoutingDeployment(r *http.Request, app App, inputs
 	case inputs.Async:
 		return
 	default:
-		if inputs.VersionKey == "" && app.SessionAffinity {
+		if inputs.VersionKey == "" && h.sessionAffinity(app) {
 			preferred := h.affinityTargetFromRequest(r, app.ID)
 			if picker, ok := h.backend.(affinityPicker); ok && preferred != "" {
 				candidate := picker.PickForInstance(app.ID, preferred)

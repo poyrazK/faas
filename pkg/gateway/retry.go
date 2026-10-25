@@ -555,7 +555,7 @@ func (h *Handler) proxyAttempt(
 		// WakeID is a cause of this request, not the sibling's cached history.
 		selected.WakeID = target.WakeID
 		completed = selected
-		if app.SessionAffinity {
+		if h.sessionAffinity(app) {
 			if _, ok := h.backend.(affinityPicker); ok {
 				h.setSessionAffinityCookie(dst, app.ID, selected.InstanceID)
 			}
