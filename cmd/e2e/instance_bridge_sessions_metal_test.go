@@ -185,12 +185,30 @@ func TestInstanceBridgeSessionsMetal(t *testing.T) {
 		if len(units) != 1 {
 			t.Fatalf("instance %s has bridge units %v, want one", running[0].ID, units)
 		}
-		show := systemctlShow(t, units[0], "Slice", "ActiveState", "MainPID", "User")
+		show := systemctlShow(t, units[0], "Slice", "ActiveState", "MainPID")
 		if show["Slice"] != "faas-tenant-ibridge.slice" || show["ActiveState"] != "active" || show["MainPID"] == "0" {
 			t.Fatalf("bridge unit %s: %v", units[0], show)
 		}
-		if uid, err := strconv.Atoi(show["User"]); err != nil || uid < 30000 || uid > 39999 {
-			t.Fatalf("bridge unit %s runs as %q, want a bridge uid", units[0], show["User"])
+		// The unit starts the bridge as root (User= refuses a uid with no
+		// account); the bridge drops itself. Every uid must be a bridge uid
+		// and the bridge must hold no capability.
+		status, err := os.ReadFile("/proc/" + show["MainPID"] + "/status")
+		if err != nil {
+			t.Fatal(err)
+		}
+		var uids []string
+		for _, line := range strings.Split(string(status), "\n") {
+			if ids, ok := strings.CutPrefix(line, "Uid:"); ok {
+				uids = strings.Fields(ids)
+			}
+		}
+		if len(uids) != 4 || !strings.Contains(string(status), "CapEff:\t0000000000000000") {
+			t.Fatalf("bridge unit %s main process:\n%s", units[0], status)
+		}
+		for _, u := range uids {
+			if uid, err := strconv.Atoi(u); err != nil || uid < 30000 || uid > 39999 || u != uids[0] {
+				t.Fatalf("bridge unit %s runs as uids %v, want one bridge uid", units[0], uids)
+			}
 		}
 		if body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/hello/park", nil); status != http.StatusNoContent {
 			t.Fatalf("park: status=%d body=%s", status, body)
