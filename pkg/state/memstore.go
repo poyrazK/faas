@@ -5582,6 +5582,7 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out DeploymentOutcomeCounts
+	failedTenants := map[string]struct{}{}
 	for _, d := range m.deployments {
 		switch d.Status {
 		case DeployLive, DeploySuperseded:
@@ -5603,9 +5604,15 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 			}
 			if !m.customerCausedFailureLocked(d) {
 				out.Failed++
+				tenant := d.AppID
+				if app, ok := m.apps[d.AppID]; ok && app.AccountID != "" {
+					tenant = app.AccountID
+				}
+				failedTenants[tenant] = struct{}{}
 			}
 		}
 	}
+	out.FailedAccounts = len(failedTenants)
 	return out, nil
 }
 
