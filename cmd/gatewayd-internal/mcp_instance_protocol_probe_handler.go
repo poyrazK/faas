@@ -118,8 +118,7 @@ func internalMCPInstanceProtocolProbeHandler(
 		api.PlatformIdentity{AppID: target.AppID, DeploymentID: target.DeploymentID, InstanceID: target.InstanceID, NodeID: target.NodeID}.ApplyGuestHeaders(guestRequest.Header)
 		guestRequest.Header.Set("x-faas-wake-id", target.WakeID)
 		guestResponse := &boundedMCPProbeResponseWriter{header: make(http.Header), cancel: cancel, maxBytes: api.MCPProbeMaxResponseBytes}
-		forward(target).ServeHTTP(guestResponse, guestRequest)
-		if guestResponse.status == 0 {
+		if serveBoundedProbe(forward(target), guestResponse, guestRequest) || guestResponse.status == 0 {
 			guestResponse.status = http.StatusBadGateway
 		}
 		protocolVersion := boundedMCPResponseHeader(guestResponse.header.Get("MCP-Protocol-Version"), 64)

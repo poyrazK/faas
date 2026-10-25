@@ -170,7 +170,7 @@ func TestPreviewEdgeRules_DeterministicActionPreviewIsExplicitlyPerRule(t *testi
 	}
 }
 
-func TestSimulateEdgeRuleRequest_ComposesRewriteHeadersAndResponse(t *testing.T) {
+func TestSimulateEdgeRuleRequest_HeaderActionsCannotManufactureResponseSelector(t *testing.T) {
 	rules := []api.EdgeRuleResponse{
 		{ID: "rewrite", Enabled: true, Kind: "rewrite", MatchHost: "*", MatchPath: "/legacy/*", Priority: 10,
 			Action: json.RawMessage(`{"rewrite":{"from":"/legacy","to":"/v1"}}`)},
@@ -181,10 +181,10 @@ func TestSimulateEdgeRuleRequest_ComposesRewriteHeadersAndResponse(t *testing.T)
 	}
 	requestHeaders := http.Header{"X-Mode": []string{"on"}}
 	got := main.SimulateEdgeRuleRequest("example.com", "/legacy/items", "GET", "", "", rules, requestHeaders)
-	if got.Outcome != "fixed_response" || got.StatusCode != http.StatusAccepted || got.FinalPath != "/v1/items" {
+	if got.Outcome != "continue" || got.StatusCode != 0 || got.FinalPath != "/v1/items" {
 		t.Fatalf("simulation = %#v", got)
 	}
-	if len(got.Steps) != 3 || got.Steps[0].Phase != "rewrite" || got.Steps[1].Phase != "headers" || got.Steps[2].Phase != "respond" {
+	if len(got.Steps) != 2 || got.Steps[0].Phase != "rewrite" || got.Steps[1].Phase != "headers" {
 		t.Fatalf("phase order = %#v", got.Steps)
 	}
 	if values := got.RequestHeaders["x-stage"]; len(values) != 1 || values[0] != "ready" {
@@ -193,8 +193,13 @@ func TestSimulateEdgeRuleRequest_ComposesRewriteHeadersAndResponse(t *testing.T)
 	if len(got.ResponseHeaderOps) != 1 || got.ResponseHeaderOps[0].Name != "X-Trace-Preview" {
 		t.Fatalf("simulated response operations = %#v", got.ResponseHeaderOps)
 	}
-	if string(got.Body) != `{"accepted":true}` {
-		t.Fatalf("simulated response body = %s", got.Body)
+	if len(got.Body) != 0 {
+		t.Fatalf("unmatched response produced a body: %s", got.Body)
+	}
+	requestHeaders.Set("X-Stage", "ready")
+	got = main.SimulateEdgeRuleRequest("example.com", "/legacy/items", "GET", "", "", rules, requestHeaders)
+	if got.Outcome != "fixed_response" || got.StatusCode != http.StatusAccepted || len(got.Steps) != 3 || got.Steps[2].Phase != "respond" || string(got.Body) != `{"accepted":true}` {
+		t.Fatalf("original ingress selector did not compose the fixed response: %#v", got)
 	}
 }
 
@@ -492,7 +497,7 @@ func TestCmdEdgeRulesTraceUsesSelectedEnvironmentPolicies(t *testing.T) {
 	defer func() { (*main.OsStdout) = old }()
 	if code := main.CmdEdgeRulesTrace([]string{
 		"--app", "demo", "--project", "shop", "--environment", "staging",
-		"--url", "https://staging.example.com/staging-only",
+		"--url", "https://staging.example.com/staging-only", "--header", "X-Environment:staging",
 	}); code != 0 {
 		t.Fatalf("trace exit = %d; output=%s", code, stdout.String())
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -511,7 +512,7 @@ func writeCreateProjectEnvironmentError(w http.ResponseWriter, projectSlug strin
 		api.WriteProblem(w, api.NewProblem(http.StatusConflict, api.CodeConflict,
 			"Environment already exists", "the project already has an environment with this slug"))
 	default:
-		api.WriteProblem(w, api.ErrCapacity("could not create project environment"))
+		api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not create project environment")))
 	}
 }
 

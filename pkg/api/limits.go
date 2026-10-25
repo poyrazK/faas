@@ -21,6 +21,32 @@ import (
 	"time"
 )
 
+// Shared traffic counters bound each admission round trip and aggregate replay.
+const (
+	TrafficCounterOperationTimeout = 100 * time.Millisecond
+	TrafficRetryBudgetWindow       = 10 * time.Second
+	// Readiness repair is independent of LISTEN. Batch reads and local leases
+	// bound recovery work and prevent indefinite use of an unverifiable gate.
+	TrafficReadinessReconcileInterval = time.Second
+	TrafficReadinessReadTimeout       = time.Second
+	TrafficReadinessBatchSize         = 128
+	TrafficReadinessLease             = 30 * time.Second
+	// Current placement repair includes probe-free and hot targets. Per-app
+	// overflow is detected with a sentinel and never interpreted as absence.
+	TrafficPlacementReconcileInterval = time.Second
+	TrafficPlacementReadTimeout       = time.Second
+	TrafficPlacementAppBatchSize      = 16
+	TrafficPlacementTargetsPerApp     = 128
+	TrafficPlacementLease             = 30 * time.Second
+	// A transport-proven stale VM lifetime cannot be immediately reinserted.
+	TrafficStaleTargetQuarantine = 30 * time.Second
+	// Reusable bridges acknowledge exchange cleanup before node capacity is
+	// released. Failure fences and reaps the bridge process instead.
+	TrafficBridgeCompletionTimeout    = 5 * time.Second
+	TrafficBridgeCompletionMaxEntries = 128
+	TrafficBridgeFenceDialTimeout     = 100 * time.Millisecond
+)
+
 // DeploymentAttemptIDBytes is the encoded size of a random 128-bit submission identity.
 const DeploymentAttemptIDBytes = 32
 
@@ -4435,6 +4461,13 @@ func (l Limits) LayerExtractionBudgetBytes() int64 {
 // on the Limits struct) per ADR-098 §263.
 const UpstreamProbeMaxConcurrent = 64
 
+// ADR-570: bounds for resolved TCP circuit sets. Reject an oversized DNS
+// response rather than claiming protection for only a subset of its answers.
+const (
+	EgressCircuitMaxResolvedAddresses = 64
+	EgressCircuitMaxTargets           = 50 * EgressCircuitMaxResolvedAddresses // Scale's upstream cap.
+)
+
 // UpstreamFitMinDeltaMs (ADR-098 §D3) is the global threshold below
 // which schedd's chooser bias is suppressed (the legacy
 // RAM/vCPU/region tie-break wins). Defends against flapping: a
@@ -7039,7 +7072,10 @@ const (
 	// sent. It is independent of the request budget: active sessions may
 	// outlive the 3/30-second request budget, but a silent session must not
 	// pin gateway resources forever.
-	StreamingIdleTimeoutDefault   = 60 * time.Minute
+	StreamingIdleTimeoutDefault = 60 * time.Minute
+	// HTTPForwardSessionTimeout preserves the bridge's complete exchange
+	// ceiling after a long-lived response detaches its handshake budget.
+	HTTPForwardSessionTimeout     = 910 * time.Second
 	StreamingFlushBytesDefault    = 256 * 1024 // 256 KiB flush window (ADR-047)
 	StreamingFlushIntervalDefault = 200 * time.Millisecond
 
@@ -7793,6 +7829,14 @@ const (
 	// Hard limits policy (CLAUDE.md): every limit is a constant
 	// here, never inlined.
 	GatewayDrainGraceSeconds = 25
+	// GatewayShutdownCleanupGraceSeconds is one shared allowance for egress,
+	// debugger and trace cleanup after HTTP drains. It also bounds startup-error
+	// cleanup. Its deadline is at most drain plus cleanup (30s) from drain start.
+	GatewayShutdownCleanupGraceSeconds = 5
+	// GatewayRequestTelemetryShutdownTimeoutSeconds caps the final debugger
+	// flush, including an interrupted RPC and every queued batch. It consumes
+	// the shared cleanup allowance rather than extending it.
+	GatewayRequestTelemetryShutdownTimeoutSeconds = 2
 	// ComputeGatewayRestartWaitSeconds caps how long gatewayd-public keeps
 	// sending new requests to a compute node whose gatewayd-internal stopped
 	// answering (for example while it restarts behind its durable socket)
@@ -11041,6 +11085,39 @@ const (
 	// MaxServiceReliabilityTimeoutMS bounds a declared dependency's complete
 	// call, including a cold wake and all retries. The default remains unset.
 	MaxServiceReliabilityTimeoutMS = 300_000
+	// MaxTrafficDeadlineTokenBytes bounds the private managed-request carrier
+	// before decoding or authenticating any customer-supplied bytes (ADR-570).
+	MaxTrafficDeadlineTokenBytes = 2048
+	// TrafficServicePolicyReadTimeout bounds the complete read-only discovery
+	// and authorization snapshot; no transaction is retained during wake.
+	TrafficServicePolicyReadTimeout = 250 * time.Millisecond
+	TrafficPublicRoutingReadTimeout = 250 * time.Millisecond
+	TrafficPublicHostReadTimeout    = 250 * time.Millisecond
+	// Bound public policy host input and hostname expansion in environment
+	// overlays to the DNS name size accepted for custom domains (ADR-570).
+	TrafficPolicyMaxHostnameBytes = 253
+	// Contended policy writers return pool connections between lock attempts.
+	TrafficPolicyMutationLockRetry        = 25 * time.Millisecond
+	TrafficPolicyAnalysisTimeout          = 2 * time.Second
+	TrafficPolicyAnalysisSQLTimeout       = 1750 * time.Millisecond
+	TrafficPolicyMaxAnalysisInputs        = 100_000
+	TrafficPolicyMaxAnalysisMetadataBytes = 64 * 1024 * 1024
+	TrafficPolicyMaxAnalysisNodes         = 1_000_000
+	TrafficPolicyMaxAnalysisStates        = 100_000
+	TrafficPolicyMaxAnalysisStateBytes    = 64 * 1024 * 1024
+	TrafficPolicyAnalysisStateOverhead    = 128 // state slice and visited-map allowance
+	TrafficPolicyMaxAnalysisTransitions   = 2_000_000
+	// Every positive traffic share consumes at least one percentage point.
+	// Bound a verified routing roster even if corrupted rows exceed that sum.
+	TrafficPolicyMaxDeployments = 100
+	TrafficPolicyMaxWeight      = 100
+	// Canonical JSONB text can be larger than a valid 256 KiB OpenAPI import.
+	// Bound route-contract projections before transferring them to a gateway.
+	TrafficPolicyMaxContractBytes = 512 * 1024
+	// Scale's 100 deployed apps can each own 500 rules; reserve 20 more for
+	// an environment overlay. Also bound the aggregate wire projection.
+	TrafficPolicyMaxHostRules = 50_020
+	TrafficPolicyMaxHostBytes = 64 * 1024 * 1024
 
 	// AppErrorsDedupeWindowSeconds (ADR-096) is the platform-wide
 	// dedupe window for the IncrementAppError INSERT. NOT a
@@ -11141,6 +11218,22 @@ const (
 	// Defends against a misconfiguration that would re-pin a 300 s stdlib
 	// WriteTimeout as the request budget.
 	RequestBudgetMax = 30 * time.Second
+	// RequestBudgetErrorWriteTimeout bounds best-effort delivery of a 504
+	// generated after a request deadline, before any response was committed.
+	RequestBudgetErrorWriteTimeout = 100 * time.Millisecond
+	// Traffic security generations independently fence admitted HTTP work.
+	TrafficSecurityRefreshInterval  = time.Second
+	TrafficSecurityStoreTimeout     = 250 * time.Millisecond
+	TrafficSecurityMaxExchanges     = 65_536
+	TrafficSecurityMaxScopes        = 4_096
+	TrafficSecurityMaxRequestScopes = 16
+	TrafficSecurityMaxHeaderBytes   = 4096
+	// Runtime feature observations are small fleet snapshots, independent of
+	// request accounting and policy-revision convergence.
+	TrafficRuntimeObservationInterval  = 2 * time.Second
+	TrafficRuntimeObservationTimeout   = 250 * time.Millisecond
+	TrafficRuntimeObservationFreshness = 10 * time.Second
+	TrafficRuntimeObservationMaxNodes  = 4096
 	// RequestBudgetPlanMax is the largest request budget any plan may allow
 	// (Scale's 15 minutes, ADR-1150). Every per-plan ceiling is clamped to
 	// it, edge-rule and route-requirement budgets are validated against it,

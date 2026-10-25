@@ -54,6 +54,10 @@ RULES = [
     (r"log-search|log-events|log-saved-search|log-projection|logsearch", "Logs, tail"),
     (r"^/v1/dashboards|custom-dashboard|^dashboards$", "App, service and account metrics"),
     (r"^/v1/incidents|^incidents?$|^incident-notes$|^incidents-enabled$", "Alerts, notification channels"),
+    # traffic enforcement guarantees (ADR-570, merged from main 2026-10-25):
+    # request deadlines are kind=budget edge rules, host and target policy
+    # keep route rules' internal apps private
+    (r"^(managed|response|total)-deadline$|^(edge-target|public-host)-policy$", "Edge rules"),
     # --- deploy env and gateway internals (round 4)
     (r"^dev-patch-delivery$", "Developer environments"),
     (r"^notifications-unsubscribe-url$", "Customer notification emails"),
@@ -359,6 +363,7 @@ INFRA_RULES = [
     r"lock|lease-|fence|leader|ledger|journal|outbox-reconcil|receipt|idempotency-key|retention|gc$|janitor|reconcil|watchdog|spool|backpressure|ratelimit|rate-limit|quota|admission|eviction",
     r"release-artifact|releasebundle|releaseinstall|release-compat|unit-|deploy-order|version-skew|pricing-md|standards-md|capabilities-md|obs-rule|denylist-md|runtime-qualification|api-hosting-(scorecard|contract)",
     r"metric|prometheus|promauto|otel|slog|log$|telemetry-internal|healthz|livez|readyz|^/metrics",
+    r"^target-(hydration|placement|publication)$|^public-routing-(burst|capacity)$",
 ]
 
 

@@ -97,6 +97,7 @@ type Unit struct {
 	// starts a two-generation hand-off (ADR-1736).
 	ExecReload      string
 	Restart         string
+	KillMode        string // explicit process fence for bridge-owning daemons
 	RestartSec      string
 	TimeoutStartSec string // bounded allowance for Type=notify startup work
 	// WatchdogSec (ADR-190) is the systemd watchdog interval. A
@@ -226,6 +227,7 @@ func (u Unit) Render() []byte {
 	}
 	writeStringKV(&buf, "ExecReload", u.ExecReload)
 	writeStringKV(&buf, "Restart", u.Restart)
+	writeStringKV(&buf, "KillMode", u.KillMode)
 	writeStringKV(&buf, "RestartSec", u.RestartSec)
 	writeStringKV(&buf, "TimeoutStartSec", u.TimeoutStartSec)
 	writeStringKV(&buf, "WatchdogSec", u.WatchdogSec)
@@ -537,6 +539,8 @@ func apply(u *Unit, section, key, val string) error {
 		u.NotifyAccess = val
 	case "[Service]/Restart":
 		u.Restart = val
+	case "[Service]/KillMode":
+		u.KillMode = val
 	case "[Service]/RestartSec":
 		u.RestartSec = val
 	case "[Service]/TimeoutStartSec":

@@ -59,11 +59,13 @@ export { streamSse, parseFrame, type SseEvent } from './sse.js';
 export {
   createGregaleFetch,
   currentGregaleRelease,
+  currentGregaleRequestDeadline,
   gregaleReleaseMetaTag,
   withGregaleReleaseContext,
   withGregaleRequestContext,
   GREGALE_RELEASE_HEADER,
   GREGALE_REVISION_HEADER,
+  GREGALE_REQUEST_DEADLINE_HEADER,
 } from './release-context.js';
 // Server-side verification of incoming service-binding identity assertions.
 export {

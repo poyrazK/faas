@@ -1046,6 +1046,8 @@ export type { TemplateView } from './TemplateView.js';
 export type { TestAlertPresetResponse } from './TestAlertPresetResponse.js';
 export type { TestNotificationChannelResponse } from './TestNotificationChannelResponse.js';
 export type { TracingConfig } from './TracingConfig.js';
+export type { TrafficRuntimeFeatureStatus } from './TrafficRuntimeFeatureStatus.js';
+export type { TrafficRuntimeStatus } from './TrafficRuntimeStatus.js';
 export type { TransferOwnershipRequest } from './TransferOwnershipRequest.js';
 export type { TriggerKind } from './TriggerKind.js';
 export type { UpdateAccountBillingInfoRequest } from './UpdateAccountBillingInfoRequest.js';

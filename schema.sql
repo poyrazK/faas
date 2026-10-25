@@ -45,6 +45,35 @@ CREATE TYPE public.compute_node_lifecycle AS ENUM (
 
 
 --
+-- Name: account_traffic_security_epoch_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.account_traffic_security_epoch_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE blocked boolean; cause text;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM advance_traffic_security_epoch('account', OLD.id, true, 'entity_deleted');
+        RETURN OLD;
+    END IF;
+    blocked := NEW.status IN ('suspended', 'deleted_pending') OR NEW.abuse_hold_at IS NOT NULL;
+    IF TG_OP = 'INSERT' THEN
+        IF NOT blocked THEN RETURN NEW; END IF;
+    ELSIF (OLD.status IN ('suspended', 'deleted_pending')) IS NOT DISTINCT FROM
+          (NEW.status IN ('suspended', 'deleted_pending'))
+          AND (OLD.abuse_hold_at IS NOT NULL) IS NOT DISTINCT FROM (NEW.abuse_hold_at IS NOT NULL) THEN
+        RETURN NEW;
+    END IF;
+    cause := CASE WHEN NEW.abuse_hold_at IS NOT NULL THEN 'account_abuse_hold'
+                  WHEN blocked THEN 'account_suspended' ELSE 'released' END;
+    PERFORM advance_traffic_security_epoch('account', NEW.id, blocked, cause);
+    RETURN NEW;
+END;
+$$;
+
+
+--
 -- Name: activate_org_billing_identity(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -416,6 +445,29 @@ CREATE FUNCTION public.advance_regression_review_version() RETURNS trigger
 
 
 --
+-- Name: advance_traffic_security_epoch(text, uuid, boolean, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.advance_traffic_security_epoch(kind text, identity uuid, blocked boolean, cause text) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+DECLARE applied_revision bigint;
+BEGIN
+    INSERT INTO traffic_security_epochs(scope_kind, scope_id, revision, revoked, reason)
+    VALUES (kind, identity, 1, blocked, cause)
+    ON CONFLICT (scope_kind, scope_id) DO UPDATE
+    SET revision = traffic_security_epochs.revision + 1,
+        revoked = EXCLUDED.revoked, reason = EXCLUDED.reason,
+        updated_at = clock_timestamp()
+    RETURNING revision INTO applied_revision;
+    PERFORM pg_notify('traffic_security_changed',
+        json_build_object('scope_kind', kind, 'scope_id', identity,
+                          'revision', applied_revision)::text);
+END;
+$$;
+
+
+--
 -- Name: alert_presets_set_updated_at(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -757,6 +809,32 @@ BEGIN
         PERFORM app_runtime_generation_bump(member);
     END LOOP;
     RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: app_traffic_security_epoch_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_traffic_security_epoch_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE blocked boolean;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM advance_traffic_security_epoch('app', OLD.id, true, 'entity_deleted');
+        RETURN OLD;
+    END IF;
+    blocked := NEW.status = 'deleted';
+    IF TG_OP = 'INSERT' THEN
+        IF NOT blocked THEN RETURN NEW; END IF;
+    ELSIF (OLD.status = 'deleted') IS NOT DISTINCT FROM blocked THEN
+        RETURN NEW;
+    END IF;
+    PERFORM advance_traffic_security_epoch('app', NEW.id, blocked,
+        CASE WHEN blocked THEN 'app_deleted' ELSE 'released' END);
+    RETURN NEW;
 END;
 $$;
 
@@ -6368,6 +6446,21 @@ $$;
 
 
 --
+-- Name: clone_checkpoint_admission_snapshot_guard(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.clone_checkpoint_admission_snapshot_guard() RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+ PERFORM 1 FROM clone_checkpoint_admission_guard WHERE id=1 FOR SHARE;
+ IF NOT FOUND THEN
+  RAISE EXCEPTION 'clone admission guard is missing' USING ERRCODE='55000',CONSTRAINT='clone_checkpoint_admission_guard_missing';
+ END IF;
+END $$;
+
+
+--
 -- Name: clone_checkpoint_deployment_fenced(uuid, text); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -7064,6 +7157,32 @@ BEGIN
             USING ERRCODE = 'check_violation';
     END IF;
 
+    RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: deployment_traffic_security_epoch_trigger(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.deployment_traffic_security_epoch_trigger() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE blocked boolean;
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        PERFORM advance_traffic_security_epoch('deployment', OLD.id, true, 'entity_deleted');
+        RETURN OLD;
+    END IF;
+    blocked := COALESCE(NEW.parked_reason = 'security_scan_regressed', false);
+    IF TG_OP = 'INSERT' THEN
+        IF NOT blocked THEN RETURN NEW; END IF;
+    ELSIF COALESCE(OLD.parked_reason = 'security_scan_regressed', false) IS NOT DISTINCT FROM blocked THEN
+        RETURN NEW;
+    END IF;
+    PERFORM advance_traffic_security_epoch('deployment', NEW.id, blocked,
+        CASE WHEN blocked THEN 'deployment_quarantined' ELSE 'released' END);
     RETURN NEW;
 END;
 $$;
@@ -13401,7 +13520,9 @@ CREATE FUNCTION public.guard_clone_checkpoint_deployment_admission() RETURNS tri
 BEGIN
  IF (TG_OP='INSERT' OR (NEW.id,NEW.app_id,NEW.scope,NEW.reason) IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.scope,OLD.reason))
   AND current_setting('transaction_isolation')<>'read committed' THEN
-  RAISE EXCEPTION 'deployment admission requires a current snapshot' USING ERRCODE='40001';
+  -- A snapshot older than the newest retirement request fails here (40001),
+  -- so the fence check below never reads a stale retirement catalogue.
+  PERFORM clone_checkpoint_admission_snapshot_guard();
  END IF;
  IF clone_checkpoint_deployment_fenced(NEW.id,NEW.reason) THEN
   IF TG_OP='INSERT' THEN
@@ -13427,7 +13548,9 @@ DECLARE fenced boolean;
 BEGIN
  IF (TG_OP='INSERT' OR (NEW.id,NEW.app_id,NEW.deployment_id,NEW.node_id,NEW.wake_id,NEW.mode,NEW.state) IS DISTINCT FROM (OLD.id,OLD.app_id,OLD.deployment_id,OLD.node_id,OLD.wake_id,OLD.mode,OLD.state))
   AND current_setting('transaction_isolation')<>'read committed' THEN
-  RAISE EXCEPTION 'instance admission requires a current snapshot' USING ERRCODE='40001';
+  -- A snapshot older than the newest retirement request fails here (40001),
+  -- so the fence check below never reads a stale retirement catalogue.
+  PERFORM clone_checkpoint_admission_snapshot_guard();
  END IF;
  SELECT clone_checkpoint_deployment_fenced(NEW.deployment_id,d.reason) INTO fenced
  FROM (SELECT 1) x LEFT JOIN deployments d ON d.id=NEW.deployment_id;
@@ -13455,7 +13578,9 @@ CREATE FUNCTION public.guard_clone_checkpoint_migration_deployment() RETURNS tri
     LANGUAGE plpgsql
     AS $$
 BEGIN
- IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'deployment deletion requires a current snapshot' USING ERRCODE='40001'; END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  PERFORM clone_checkpoint_admission_snapshot_guard();
+ END IF;
  IF clone_checkpoint_deployment_fenced(OLD.id,OLD.reason) AND EXISTS(
  SELECT 1 FROM instances i JOIN migration_leases m ON m.instance_id=i.id WHERE i.deployment_id=OLD.id) THEN
   RAISE EXCEPTION 'clone deployment retains original migration ownership' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_retained';
@@ -13472,7 +13597,9 @@ CREATE FUNCTION public.guard_clone_checkpoint_migration_instance() RETURNS trigg
     LANGUAGE plpgsql
     AS $$
 BEGIN
- IF current_setting('transaction_isolation')<>'read committed' THEN RAISE EXCEPTION 'instance deletion requires a current snapshot' USING ERRCODE='40001'; END IF;
+ IF current_setting('transaction_isolation')<>'read committed' THEN
+  PERFORM clone_checkpoint_admission_snapshot_guard();
+ END IF;
  IF EXISTS(SELECT 1 FROM migration_leases WHERE instance_id=OLD.id) AND clone_checkpoint_deployment_fenced(OLD.deployment_id,(SELECT reason FROM deployments WHERE id=OLD.deployment_id)) THEN
   RAISE EXCEPTION 'clone instance retains original migration ownership' USING ERRCODE='23514',CONSTRAINT='clone_checkpoint_migration_retained';
  END IF;
@@ -18506,6 +18633,23 @@ $$;
 
 
 --
+-- Name: guard_workflow_admission_snapshot(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.guard_workflow_admission_snapshot(app uuid) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
+BEGIN
+    IF current_setting('transaction_isolation')='read committed' THEN
+        RETURN;
+    END IF;
+    INSERT INTO workflow_code_admission_guard(app_id) VALUES(app) ON CONFLICT(app_id) DO NOTHING;
+    PERFORM 1 FROM workflow_code_admission_guard WHERE app_id=app FOR SHARE;
+END;
+$$;
+
+
+--
 -- Name: guard_workflow_code_pin(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -18681,6 +18825,8 @@ BEGIN
         PERFORM pg_notify('instance_readiness_changed', json_build_object(
             'app_id', NEW.data->>'app_id',
             'instance_id', NEW.data->>'instance_id',
+            'wake_id', coalesce(NEW.data->>'wake_id', ''),
+            'node_id', coalesce(NEW.data->>'node_id', ''),
             'source', CASE
                 WHEN NEW.kind = 'wake.app_readiness' THEN 'primary_app'
                 ELSE 'sidecar:' || coalesce(NEW.data->>'sidecar_name', '')
@@ -19463,6 +19609,9 @@ BEGIN
  LOCK TABLE project_environment_clone_wake_dispatches IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE project_environment_clone_migration_adoptions IN SHARE ROW EXCLUSIVE MODE;
  LOCK TABLE project_environment_clone_migration_resumes IN SHARE ROW EXCLUSIVE MODE;
+ -- Last, after every table guard: admission writers in a non-read-committed
+ -- snapshot detect this update instead of missing the new fence.
+ UPDATE clone_checkpoint_admission_guard SET generation=generation+1 WHERE id=1;
 END $$;
 
 
@@ -21745,6 +21894,9 @@ BEGIN
     PERFORM require_deployment_layer_artifacts(deployment);
     INSERT INTO workflow_code_pins(deployment_id,app_id,expires_at) VALUES(deployment,app,now())
     ON CONFLICT(deployment_id) DO NOTHING;
+    -- A repeatable-read cutover that started earlier detects this admission.
+    INSERT INTO workflow_code_admission_guard(app_id) VALUES(app)
+    ON CONFLICT(app_id) DO UPDATE SET generation=workflow_code_admission_guard.generation+1;
 END;
 $$;
 
@@ -28851,6 +29003,20 @@ CREATE TABLE public.app_default_domains (
 
 
 --
+-- Name: app_egress_circuits; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.app_egress_circuits (
+    app_id uuid NOT NULL,
+    revision bigint DEFAULT 1 NOT NULL,
+    targets jsonb DEFAULT '[]'::jsonb NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT app_egress_circuits_revision_check CHECK ((revision > 0)),
+    CONSTRAINT app_egress_circuits_targets_check CHECK (((jsonb_typeof(targets) = 'array'::text) AND (jsonb_array_length(targets) <= 3200)))
+);
+
+
+--
 -- Name: app_egress_policy_node_status; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -31841,6 +32007,18 @@ CREATE TABLE public.cli_auth_codes (
     consumed_at timestamp with time zone,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT cli_auth_codes_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'consumed'::text, 'expired'::text])))
+);
+
+
+--
+-- Name: clone_checkpoint_admission_guard; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.clone_checkpoint_admission_guard (
+    id smallint NOT NULL,
+    generation bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT clone_checkpoint_admission_guard_generation_check CHECK ((generation >= 0)),
+    CONSTRAINT clone_checkpoint_admission_guard_id_check CHECK ((id = 1))
 );
 
 
@@ -38073,6 +38251,69 @@ CREATE TABLE public.gateway_response_cache_purge_watermarks (
     CONSTRAINT gateway_response_cache_purge_watermarks_last_change_id_check CHECK ((last_change_id >= 0)),
     CONSTRAINT gateway_response_cache_purge_watermarks_node_name_check CHECK ((node_name <> ''::text))
 );
+
+
+--
+-- Name: gateway_traffic_policy_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.gateway_traffic_policy_observations (
+    node_name text NOT NULL,
+    policy_kind text NOT NULL,
+    generation bigint NOT NULL,
+    boot_id uuid NOT NULL,
+    last_change_id bigint NOT NULL,
+    observed_at timestamp with time zone NOT NULL,
+    CONSTRAINT gateway_traffic_policy_observations_generation_check CHECK ((generation > 0)),
+    CONSTRAINT gateway_traffic_policy_observations_last_change_id_check CHECK ((last_change_id >= 0)),
+    CONSTRAINT gateway_traffic_policy_observations_policy_kind_check CHECK ((policy_kind = ANY (ARRAY['control_plane'::text, 'edge_rules'::text, 'cors_presets'::text, 'cache_purge'::text])))
+);
+
+
+--
+-- Name: gateway_traffic_runtime_observations; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.gateway_traffic_runtime_observations (
+    node_name text NOT NULL,
+    generation bigint NOT NULL,
+    boot_id uuid NOT NULL,
+    reported_at timestamp with time zone,
+    retry_enabled boolean DEFAULT false NOT NULL,
+    rate_counter_mode text DEFAULT 'unwired'::text NOT NULL,
+    retry_counter_mode text DEFAULT 'unwired'::text NOT NULL,
+    retry_backend_id text DEFAULT ''::text NOT NULL,
+    deadline_signing boolean DEFAULT false NOT NULL,
+    policy_snapshot boolean DEFAULT false NOT NULL,
+    security_revocation boolean DEFAULT false NOT NULL,
+    managed_http boolean DEFAULT false NOT NULL,
+    managed_circuit boolean DEFAULT false NOT NULL,
+    CONSTRAINT gateway_traffic_runtime_observations_check CHECK (((NOT managed_circuit) OR managed_http)),
+    CONSTRAINT gateway_traffic_runtime_observations_check1 CHECK ((((retry_counter_mode = ANY (ARRAY['shared'::text, 'redis'::text])) AND (retry_backend_id <> ''::text)) OR ((retry_counter_mode = ANY (ARRAY['local'::text, 'unwired'::text])) AND (retry_backend_id = ''::text)))),
+    CONSTRAINT gateway_traffic_runtime_observations_generation_check CHECK ((generation > 0)),
+    CONSTRAINT gateway_traffic_runtime_observations_rate_counter_mode_check CHECK ((rate_counter_mode = ANY (ARRAY['central'::text, 'local'::text, 'unwired'::text]))),
+    CONSTRAINT gateway_traffic_runtime_observations_retry_backend_id_check CHECK (((retry_backend_id = ''::text) OR (retry_backend_id ~ '^[0-9a-f]{16}$'::text))),
+    CONSTRAINT gateway_traffic_runtime_observations_retry_counter_mode_check CHECK ((retry_counter_mode = ANY (ARRAY['shared'::text, 'redis'::text, 'local'::text, 'unwired'::text])))
+);
+
+
+--
+-- Name: gateway_traffic_runtime_observations_generation_seq; Type: SEQUENCE; Schema: public; Owner: -
+--
+
+CREATE SEQUENCE public.gateway_traffic_runtime_observations_generation_seq
+    START WITH 1
+    INCREMENT BY 1
+    NO MINVALUE
+    NO MAXVALUE
+    CACHE 1;
+
+
+--
+-- Name: gateway_traffic_runtime_observations_generation_seq; Type: SEQUENCE OWNED BY; Schema: public; Owner: -
+--
+
+ALTER SEQUENCE public.gateway_traffic_runtime_observations_generation_seq OWNED BY public.gateway_traffic_runtime_observations.generation;
 
 
 --
@@ -45588,6 +45829,17 @@ ALTER TABLE public.org_activity_outbox ALTER COLUMN id ADD GENERATED ALWAYS AS I
     NO MINVALUE
     NO MAXVALUE
     CACHE 1
+);
+
+
+--
+-- Name: org_app_quota_fences; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.org_app_quota_fences (
+    org_id uuid NOT NULL,
+    generation bigint DEFAULT 1 NOT NULL,
+    CONSTRAINT org_app_quota_fences_generation_check CHECK ((generation > 0))
 );
 
 
@@ -53540,6 +53792,38 @@ CREATE TABLE public.tenant_surfaces (
 
 
 --
+-- Name: traffic_retry_counters; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.traffic_retry_counters (
+    app_id uuid NOT NULL,
+    originals bigint NOT NULL,
+    retries bigint DEFAULT 0 NOT NULL,
+    expires_at timestamp with time zone NOT NULL,
+    CONSTRAINT traffic_retry_counters_expires_at_check CHECK (isfinite(expires_at)),
+    CONSTRAINT traffic_retry_counters_originals_check CHECK ((originals > 0)),
+    CONSTRAINT traffic_retry_counters_retries_check CHECK ((retries >= 0))
+);
+
+
+--
+-- Name: traffic_security_epochs; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.traffic_security_epochs (
+    scope_kind text NOT NULL,
+    scope_id uuid NOT NULL,
+    revision bigint NOT NULL,
+    revoked boolean NOT NULL,
+    reason text NOT NULL,
+    updated_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT traffic_security_epochs_check CHECK (((revoked AND (reason = ANY (ARRAY['account_suspended'::text, 'account_abuse_hold'::text, 'app_deleted'::text, 'deployment_quarantined'::text, 'entity_deleted'::text]))) OR ((NOT revoked) AND (reason = 'released'::text)))),
+    CONSTRAINT traffic_security_epochs_revision_check CHECK ((revision > 0)),
+    CONSTRAINT traffic_security_epochs_scope_kind_check CHECK ((scope_kind = ANY (ARRAY['account'::text, 'app'::text, 'deployment'::text])))
+);
+
+
+--
 -- Name: trigger_consumer_health; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -54281,6 +54565,17 @@ CREATE TABLE public.workflow_callback_webhook_bindings (
 
 
 --
+-- Name: workflow_code_admission_guard; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.workflow_code_admission_guard (
+    app_id uuid NOT NULL,
+    generation bigint DEFAULT 0 NOT NULL,
+    CONSTRAINT workflow_code_admission_guard_generation_check CHECK ((generation >= 0))
+);
+
+
+--
 -- Name: workflow_dispatch_cursors; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -54910,6 +55205,13 @@ ALTER TABLE ONLY public.execution_events ALTER COLUMN id SET DEFAULT nextval('pu
 
 
 --
+-- Name: gateway_traffic_runtime_observations generation; Type: DEFAULT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gateway_traffic_runtime_observations ALTER COLUMN generation SET DEFAULT nextval('public.gateway_traffic_runtime_observations_generation_seq'::regclass);
+
+
+--
 -- Name: instance_billing_intervals id; Type: DEFAULT; Schema: public; Owner: -
 --
 
@@ -55430,6 +55732,14 @@ ALTER TABLE ONLY public.app_custom_metrics
 
 ALTER TABLE ONLY public.app_default_domains
     ADD CONSTRAINT app_default_domains_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: app_egress_circuits app_egress_circuits_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_egress_circuits
+    ADD CONSTRAINT app_egress_circuits_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -57030,6 +57340,14 @@ ALTER TABLE ONLY public.ci_worker_health
 
 ALTER TABLE ONLY public.cli_auth_codes
     ADD CONSTRAINT cli_auth_codes_pkey PRIMARY KEY (token_hash);
+
+
+--
+-- Name: clone_checkpoint_admission_guard clone_checkpoint_admission_guard_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.clone_checkpoint_admission_guard
+    ADD CONSTRAINT clone_checkpoint_admission_guard_pkey PRIMARY KEY (id);
 
 
 --
@@ -59750,6 +60068,30 @@ ALTER TABLE ONLY public.gateway_edge_rule_watermarks
 
 ALTER TABLE ONLY public.gateway_response_cache_purge_watermarks
     ADD CONSTRAINT gateway_response_cache_purge_watermarks_pkey PRIMARY KEY (node_name);
+
+
+--
+-- Name: gateway_traffic_policy_observations gateway_traffic_policy_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gateway_traffic_policy_observations
+    ADD CONSTRAINT gateway_traffic_policy_observations_pkey PRIMARY KEY (node_name, policy_kind);
+
+
+--
+-- Name: gateway_traffic_runtime_observations gateway_traffic_runtime_observations_generation_key; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gateway_traffic_runtime_observations
+    ADD CONSTRAINT gateway_traffic_runtime_observations_generation_key UNIQUE (generation);
+
+
+--
+-- Name: gateway_traffic_runtime_observations gateway_traffic_runtime_observations_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gateway_traffic_runtime_observations
+    ADD CONSTRAINT gateway_traffic_runtime_observations_pkey PRIMARY KEY (node_name);
 
 
 --
@@ -62894,6 +63236,14 @@ ALTER TABLE ONLY public.org_activity
 
 ALTER TABLE ONLY public.org_activity
     ADD CONSTRAINT org_activity_source_unique UNIQUE (org_id, source_type, source_id);
+
+
+--
+-- Name: org_app_quota_fences org_app_quota_fences_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_app_quota_fences
+    ADD CONSTRAINT org_app_quota_fences_pkey PRIMARY KEY (org_id);
 
 
 --
@@ -66481,6 +66831,22 @@ ALTER TABLE ONLY public.tenant_surfaces
 
 
 --
+-- Name: traffic_retry_counters traffic_retry_counters_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.traffic_retry_counters
+    ADD CONSTRAINT traffic_retry_counters_pkey PRIMARY KEY (app_id);
+
+
+--
+-- Name: traffic_security_epochs traffic_security_epochs_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.traffic_security_epochs
+    ADD CONSTRAINT traffic_security_epochs_pkey PRIMARY KEY (scope_kind, scope_id);
+
+
+--
 -- Name: trigger_consumer_health trigger_consumer_health_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -66774,6 +67140,14 @@ ALTER TABLE ONLY public.workflow_callback_webhook_bindings
 
 ALTER TABLE ONLY public.workflow_callback_webhook_bindings
     ADD CONSTRAINT workflow_callback_webhook_bindings_step_uniq UNIQUE (run_id, step_name);
+
+
+--
+-- Name: workflow_code_admission_guard workflow_code_admission_guard_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_code_admission_guard
+    ADD CONSTRAINT workflow_code_admission_guard_pkey PRIMARY KEY (app_id);
 
 
 --
@@ -69173,6 +69547,13 @@ CREATE UNIQUE INDEX customer_operation_executions_identity_idx ON public.custome
 --
 
 CREATE UNIQUE INDEX customer_operation_executions_owner_idx ON public.customer_operation_executions USING btree (operation_id, execution_id);
+
+
+--
+-- Name: customer_operation_executions_workflow_custody_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE UNIQUE INDEX customer_operation_executions_workflow_custody_idx ON public.customer_operation_executions USING btree (operation_id, generation, workflow_run_id, execution_kind);
 
 
 --
@@ -77401,6 +77782,13 @@ CREATE TRIGGER accounts_subscription_mail_revision_guard BEFORE UPDATE OF plan, 
 
 
 --
+-- Name: accounts accounts_traffic_security_epoch; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER accounts_traffic_security_epoch AFTER INSERT OR DELETE OR UPDATE OF status, abuse_hold_at ON public.accounts FOR EACH ROW EXECUTE FUNCTION public.account_traffic_security_epoch_trigger();
+
+
+--
 -- Name: alert_presets alert_presets_set_updated_at_trg; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -78420,6 +78808,13 @@ CREATE CONSTRAINT TRIGGER apps_streaming_plan_account_guard_trg AFTER UPDATE OF 
 --
 
 CREATE TRIGGER apps_streaming_plan_app_guard_trg BEFORE INSERT OR UPDATE OF account_id, streaming_enabled ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_streaming_plan_app_guard();
+
+
+--
+-- Name: apps apps_traffic_security_epoch; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_traffic_security_epoch AFTER INSERT OR DELETE OR UPDATE OF status ON public.apps FOR EACH ROW EXECUTE FUNCTION public.app_traffic_security_epoch_trigger();
 
 
 --
@@ -79512,6 +79907,13 @@ CREATE TRIGGER deployments_runtime_upgrade_routing_token BEFORE INSERT OR UPDATE
 --
 
 CREATE TRIGGER deployments_runtime_upgrade_traffic_fence BEFORE INSERT OR UPDATE ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.enforce_runtime_upgrade_traffic_fence();
+
+
+--
+-- Name: deployments deployments_traffic_security_epoch; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER deployments_traffic_security_epoch AFTER INSERT OR DELETE OR UPDATE OF parked_reason ON public.deployments FOR EACH ROW EXECUTE FUNCTION public.deployment_traffic_security_epoch_trigger();
 
 
 --
@@ -84586,6 +84988,14 @@ ALTER TABLE ONLY public.app_default_domains
 
 
 --
+-- Name: app_egress_circuits app_egress_circuits_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.app_egress_circuits
+    ADD CONSTRAINT app_egress_circuits_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: app_egress_policy_node_status app_egress_policy_node_status_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -87218,11 +87628,11 @@ ALTER TABLE ONLY public.customer_operation_webhook_receipts
 
 
 --
--- Name: customer_operation_workflow_claims customer_operation_workflow_claims_execution_identity_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+-- Name: customer_operation_workflow_claims customer_operation_workflow_claims_workflow_custody_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operation_workflow_claims
-    ADD CONSTRAINT customer_operation_workflow_claims_execution_identity_fkey FOREIGN KEY (operation_id, generation, workflow_run_id, execution_kind) REFERENCES public.customer_operation_executions(operation_id, generation, execution_id, execution_kind) ON DELETE CASCADE;
+    ADD CONSTRAINT customer_operation_workflow_claims_workflow_custody_fkey FOREIGN KEY (operation_id, generation, workflow_run_id, execution_kind) REFERENCES public.customer_operation_executions(operation_id, generation, workflow_run_id, execution_kind) ON DELETE CASCADE;
 
 
 --
@@ -87258,19 +87668,19 @@ ALTER TABLE ONLY public.customer_operation_workflow_guest_claims
 
 
 --
--- Name: customer_operation_workflow_guest_claims customer_operation_workflow_guest_claims_execution_identity_fke; Type: FK CONSTRAINT; Schema: public; Owner: -
---
-
-ALTER TABLE ONLY public.customer_operation_workflow_guest_claims
-    ADD CONSTRAINT customer_operation_workflow_guest_claims_execution_identity_fke FOREIGN KEY (operation_id, generation, workflow_run_id, execution_kind) REFERENCES public.customer_operation_executions(operation_id, generation, execution_id, execution_kind) ON DELETE CASCADE;
-
-
---
 -- Name: customer_operation_workflow_guest_claims customer_operation_workflow_guest_claims_instance_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
 ALTER TABLE ONLY public.customer_operation_workflow_guest_claims
     ADD CONSTRAINT customer_operation_workflow_guest_claims_instance_id_fkey FOREIGN KEY (instance_id) REFERENCES public.instances(id) ON DELETE SET NULL;
+
+
+--
+-- Name: customer_operation_workflow_guest_claims customer_operation_workflow_guest_claims_workflow_custody_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.customer_operation_workflow_guest_claims
+    ADD CONSTRAINT customer_operation_workflow_guest_claims_workflow_custody_fkey FOREIGN KEY (operation_id, generation, workflow_run_id, execution_kind) REFERENCES public.customer_operation_executions(operation_id, generation, workflow_run_id, execution_kind) ON DELETE CASCADE;
 
 
 --
@@ -90007,6 +90417,22 @@ ALTER TABLE ONLY public.function_migration_sources
 
 ALTER TABLE ONLY public.gateway_concurrency_queue_leases
     ADD CONSTRAINT gateway_concurrency_queue_leases_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: gateway_traffic_policy_observations gateway_traffic_policy_observations_node_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gateway_traffic_policy_observations
+    ADD CONSTRAINT gateway_traffic_policy_observations_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.compute_nodes(name) ON DELETE CASCADE;
+
+
+--
+-- Name: gateway_traffic_runtime_observations gateway_traffic_runtime_observations_node_name_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.gateway_traffic_runtime_observations
+    ADD CONSTRAINT gateway_traffic_runtime_observations_node_name_fkey FOREIGN KEY (node_name) REFERENCES public.compute_nodes(name) ON DELETE CASCADE;
 
 
 --
@@ -93495,6 +93921,14 @@ ALTER TABLE ONLY public.operator_recovery_submissions
 
 ALTER TABLE ONLY public.operator_restart_executions
     ADD CONSTRAINT operator_restart_executions_intent_id_fkey FOREIGN KEY (intent_id) REFERENCES public.operator_intents(id) ON DELETE RESTRICT;
+
+
+--
+-- Name: org_app_quota_fences org_app_quota_fences_org_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.org_app_quota_fences
+    ADD CONSTRAINT org_app_quota_fences_org_id_fkey FOREIGN KEY (org_id) REFERENCES public.orgs(id) ON DELETE CASCADE;
 
 
 --
@@ -98234,6 +98668,14 @@ ALTER TABLE ONLY public.tenant_surfaces
 
 
 --
+-- Name: traffic_retry_counters traffic_retry_counters_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.traffic_retry_counters
+    ADD CONSTRAINT traffic_retry_counters_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
 -- Name: trigger_consumer_health trigger_consumer_health_trigger_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -98495,6 +98937,14 @@ ALTER TABLE ONLY public.workflow_callback_webhook_bindings
 
 ALTER TABLE ONLY public.workflow_callback_webhook_bindings
     ADD CONSTRAINT workflow_callback_webhook_bindings_run_id_fkey FOREIGN KEY (run_id) REFERENCES public.workflow_runs(id) ON DELETE CASCADE;
+
+
+--
+-- Name: workflow_code_admission_guard workflow_code_admission_guard_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.workflow_code_admission_guard
+    ADD CONSTRAINT workflow_code_admission_guard_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
 
 
 --

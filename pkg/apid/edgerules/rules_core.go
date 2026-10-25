@@ -17,6 +17,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -235,7 +236,7 @@ func (s *Service) createRule(ctx context.Context, acct state.Account, app state.
 		case errors.Is(err, state.ErrConflict):
 			return m, api.ErrEdgeRuleConflict(err.Error())
 		default:
-			return m, api.ErrCapacity("could not create edge rule")
+			return m, trafficproblem.Policy(err, api.ErrCapacity("could not create edge rule"))
 		}
 	}
 	s.Host.Logger().Info("edge rule created",
@@ -426,7 +427,7 @@ func (s *Service) updateRule(ctx context.Context, acct state.Account, row state.
 		if errors.Is(err, state.ErrNotFound) {
 			return m, api.NewProblem(http.StatusNotFound, api.CodeNotFound, "Not found", "no such edge rule")
 		}
-		return m, api.ErrCapacity("could not update edge rule")
+		return m, trafficproblem.Policy(err, api.ErrCapacity("could not update edge rule"))
 	}
 	s.Host.Logger().Info("edge rule updated",
 		"rule", logsanitize.Field(updated.ID),

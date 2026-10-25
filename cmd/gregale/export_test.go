@@ -1287,6 +1287,7 @@ var FindLatestFailedDeployment = findLatestFailedDeployment
 var FindPreviewReportRoute = findPreviewReportRoute
 var FindProjectContext = findProjectContext
 var FindSecretStatus = findSecretStatus
+var FinishMCPDeploy = finishMCPDeploy
 var FinishPreviewRequestComparison = finishPreviewRequestComparison
 var FinishPreviewSecurityComparison = finishPreviewSecurityComparison
 var FinishTestRunReports = finishTestRunReports
