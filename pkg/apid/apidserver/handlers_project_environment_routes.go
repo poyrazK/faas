@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/trafficproblem"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -41,7 +42,7 @@ func (s *server) updateProjectEnvironmentRoutes(w http.ResponseWriter, r *http.R
 		if errors.Is(err, state.ErrNotFound) {
 			api.WriteProblem(w, projectEnvironmentNotFound(project.Slug, environment.Slug))
 		} else {
-			api.WriteProblem(w, api.ErrCapacity("could not store environment routes"))
+			api.WriteProblem(w, trafficproblem.Policy(err, api.ErrCapacity("could not store environment routes")))
 		}
 		return
 	}

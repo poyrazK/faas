@@ -21,18 +21,18 @@ func TestAppReadinessProbeTransitionsAreReversible(t *testing.T) {
 	loop := &appReadinessProbeLoop{
 		instance: "instance-1",
 		appID:    "app-1",
-		cfg:      fcvm.ReadinessProbeConfig{PeriodSeconds: 5, TimeoutSeconds: 2, FailureThreshold: 2},
+		cfg:      fcvm.ReadinessProbeConfig{WakeID: "wake-1", NodeID: "node-1", PeriodSeconds: 5, TimeoutSeconds: 2, FailureThreshold: 2},
 		events:   platform,
 		log:      slog.New(slog.NewTextHandler(io.Discard, nil)),
 		probeFn:  func(context.Context, int) string { return outcome },
 	}
 	assertReady := func(want bool) {
 		t.Helper()
-		got, err := store.LatestInstanceReadiness(ctx, []string{"instance-1"})
+		got, err := store.LatestInstanceReadinessForTargets(ctx, []state.ReadinessTarget{{AppID: "app-1", InstanceID: "instance-1", WakeID: "wake-1", NodeID: "node-1"}})
 		if err != nil {
 			t.Fatal(err)
 		}
-		readiness, ok := got["instance-1"]
+		readiness, ok := got["instance-1"]["primary_app"]
 		if !ok || readiness.Ready != want {
 			t.Fatalf("readiness = %+v, present=%t; want ready=%t", readiness, ok, want)
 		}
