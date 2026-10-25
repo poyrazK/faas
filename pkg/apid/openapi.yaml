@@ -20361,6 +20361,7 @@ paths:
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
         '409': { $ref: '#/components/responses/Conflict' }
+        '501': { $ref: '#/components/responses/RehearsalNotEnabled' }
     delete:
       tags: [dev]
       operationId: deleteScenarioTest
@@ -20466,6 +20467,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/RehearsalNotEnabled' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       tags: [dev]
@@ -20531,6 +20533,7 @@ paths:
         '400': { $ref: '#/components/responses/ValidationFailed' }
         '401': { $ref: '#/components/responses/Unauthorized' }
         '404': { $ref: '#/components/responses/NotFound' }
+        '501': { $ref: '#/components/responses/RehearsalNotEnabled' }
         '503': { $ref: '#/components/responses/ServiceUnavailable' }
     delete:
       tags: [dev]
@@ -130842,6 +130845,12 @@ components:
 
     NotFound:
       description: 'code: not_found'
+      content:
+        application/problem+json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    RehearsalNotEnabled:
+      description: 'code: rehearsal_not_enabled — a requested rehearsal capability is not enabled on this installation. Retrying will not help.'
       content:
         application/problem+json:
           schema: { $ref: '#/components/schemas/Problem' }

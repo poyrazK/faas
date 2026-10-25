@@ -51,7 +51,7 @@ func TestManagedWorkerEnrollmentGateValidationAndDurableAcknowledgement(t *testi
 	}
 	plan.Participants[1].Workload = "worker"
 	plan.WorkerTermination = &rehearsalwork.WorkerTermination{Workload: "worker", Checkpoint: "after-commit"}
-	if r := e.Do(t, "PUT", url, req, nil); r.Code != http.StatusServiceUnavailable {
+	if r := e.Do(t, "PUT", url, req, nil); r.Code != http.StatusNotImplemented {
 		t.Fatalf("unqualified termination admitted: %d %s", r.Code, r.Body.String())
 	}
 	*s.RehearsalWorkerFaultsEnabled() = true
