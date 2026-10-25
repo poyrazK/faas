@@ -52699,6 +52699,55 @@ func (q *Queries) LiveServiceProxyIdentitiesByHostIP(ctx context.Context, db DBT
 	return items, nil
 }
 
+const liveServiceProxyInstanceRowsByHostIP = `-- name: LiveServiceProxyInstanceRowsByHostIP :many
+SELECT COALESCE(i.app_id::text, '')::text AS app_id,
+       COALESCE(i.deployment_id::text, '')::text AS deployment_id,
+       (i.app_id IS NULL AND i.kind = 'job_task' AND i.job_id IS NOT NULL)::boolean AS needs_job_attribution
+FROM instances i
+WHERE i.host_ip = $1::text::inet
+  AND i.state IN ('running', 'draining')
+  AND ($2::text = '' OR EXISTS (
+      SELECT 1 FROM compute_nodes n
+      WHERE n.id = i.node_id AND n.name = $2::text
+  ))
+`
+
+type LiveServiceProxyInstanceRowsByHostIPParams struct {
+	HostIp   string
+	NodeName string
+}
+
+type LiveServiceProxyInstanceRowsByHostIPRow struct {
+	AppID               string
+	DeploymentID        string
+	NeedsJobAttribution bool
+}
+
+// The cheap first read behind LiveInstancesByHostIP: the live instances at a
+// guest address with their own app and deployment. Only a job task without an
+// app needs LiveServiceProxyIdentitiesByHostIP's managed-Job attribution,
+// whose 13-way join took 0.6-0.8 s to plan on every service call through the
+// transaction pooler (Hunt 14 H14-33).
+func (q *Queries) LiveServiceProxyInstanceRowsByHostIP(ctx context.Context, db DBTX, arg LiveServiceProxyInstanceRowsByHostIPParams) ([]LiveServiceProxyInstanceRowsByHostIPRow, error) {
+	rows, err := db.Query(ctx, liveServiceProxyInstanceRowsByHostIP, arg.HostIp, arg.NodeName)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []LiveServiceProxyInstanceRowsByHostIPRow{}
+	for rows.Next() {
+		var i LiveServiceProxyInstanceRowsByHostIPRow
+		if err := rows.Scan(&i.AppID, &i.DeploymentID, &i.NeedsJobAttribution); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const loadApplicationStandardLogConsumerSnapshot = `-- name: LoadApplicationStandardLogConsumerSnapshot :one
 SELECT jsonb_build_object('drains',coalesce((SELECT jsonb_agg(jsonb_build_object('spec',
  jsonb_build_object('ID',d.id::text,'AppID',d.app_id::text,'AccountID',d.account_id::text,

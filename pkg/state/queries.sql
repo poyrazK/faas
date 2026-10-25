@@ -9479,6 +9479,23 @@ WHERE d.id=sqlc.arg(deployment_id)::uuid;
 -- name: LockTrafficDeploymentApp :one
 SELECT app_id FROM deployments WHERE id=sqlc.arg(deployment_id)::uuid FOR UPDATE;
 
+-- name: LiveServiceProxyInstanceRowsByHostIP :many
+-- The cheap first read behind LiveInstancesByHostIP: the live instances at a
+-- guest address with their own app and deployment. Only a job task without an
+-- app needs LiveServiceProxyIdentitiesByHostIP's managed-Job attribution,
+-- whose 13-way join took 0.6-0.8 s to plan on every service call through the
+-- transaction pooler (Hunt 14 H14-33).
+SELECT COALESCE(i.app_id::text, '')::text AS app_id,
+       COALESCE(i.deployment_id::text, '')::text AS deployment_id,
+       (i.app_id IS NULL AND i.kind = 'job_task' AND i.job_id IS NOT NULL)::boolean AS needs_job_attribution
+FROM instances i
+WHERE i.host_ip = sqlc.arg(host_ip)::text::inet
+  AND i.state IN ('running', 'draining')
+  AND (sqlc.arg(node_name)::text = '' OR EXISTS (
+      SELECT 1 FROM compute_nodes n
+      WHERE n.id = i.node_id AND n.name = sqlc.arg(node_name)::text
+  ));
+
 -- name: LiveServiceProxyIdentitiesByHostIP :many
 -- Collapse deployment overlap before limiting distinct app owners. Two release
 -- identities from one app must not hide a different owner of the same source.

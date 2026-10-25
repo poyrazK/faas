@@ -3549,6 +3549,12 @@ type Querier interface {
 	// a claimed scheduled task and its active GitOps release prove the frozen Job;
 	// any other job task is returned unattributed (empty app) so callers refuse it.
 	LiveServiceProxyIdentitiesByHostIP(ctx context.Context, db DBTX, arg LiveServiceProxyIdentitiesByHostIPParams) ([]LiveServiceProxyIdentitiesByHostIPRow, error)
+	// The cheap first read behind LiveInstancesByHostIP: the live instances at a
+	// guest address with their own app and deployment. Only a job task without an
+	// app needs LiveServiceProxyIdentitiesByHostIP's managed-Job attribution,
+	// whose 13-way join took 0.6-0.8 s to plan on every service call through the
+	// transaction pooler (Hunt 14 H14-33).
+	LiveServiceProxyInstanceRowsByHostIP(ctx context.Context, db DBTX, arg LiveServiceProxyInstanceRowsByHostIPParams) ([]LiveServiceProxyInstanceRowsByHostIPRow, error)
 	// Both collections come from one statement snapshot, including empty drain sets.
 	LoadApplicationStandardLogConsumerSnapshot(ctx context.Context, db DBTX) ([]byte, error)
 	// ADR-732: production fork intent (app_forks). apid admits forks under a
