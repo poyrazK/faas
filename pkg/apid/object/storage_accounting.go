@@ -241,12 +241,58 @@ func (s *Service) reconcileObjectInventory(ctx context.Context, st state.ObjectS
 		return err
 	}
 	outcome := "success"
-	if err := s.scanObjectInventory(ctx, st, b, token, page); err != nil {
+	err = awaitObjectDeletions(ctx, st, b, api.ObjectInventoryDeletionDrain)
+	if err == nil {
+		err = s.scanObjectInventory(ctx, st, b, token, page)
+	}
+	if err != nil {
 		outcome = "failed"
+		releaseObjectInventory(ctx, st, b.ID, token)
 		s.Host.Logger().Warn("object storage inventory failed", "bucket_id", b.ID, "backend_id", b.BackendID)
 	}
 	report(outcome)
 	return nil
+}
+
+var errObjectDeletionsUnsettled = errors.New("object deletions did not settle before inventory")
+
+// awaitObjectDeletions waits up to drain for deletions admitted before the
+// inventory claim to settle. New deletions wait for the claim, so the listing
+// starts from a settled bucket (ADR-20261025115958).
+func awaitObjectDeletions(ctx context.Context, st state.ObjectStorageAccountingStore, b state.ObjectBucket, drain time.Duration) error {
+	deletions, ok := st.(state.ObjectDeletionActivityStore)
+	if !ok {
+		return nil
+	}
+	deadline := time.Now().Add(drain)
+	for {
+		active, err := deletions.HasActiveObjectDeletion(ctx, b.AccountID, b.AppID, b.ID)
+		if err != nil || !active {
+			return err
+		}
+		if !time.Now().Before(deadline) {
+			return errObjectDeletionsUnsettled
+		}
+		timer := time.NewTimer(api.ObjectDeletionAdmissionMaxPoll)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+// releaseObjectInventory gives up a claim that will not publish, so
+// deletions waiting for it continue at once.
+func releaseObjectInventory(ctx context.Context, st state.ObjectStorageAccountingStore, bucket, token string) {
+	releaser, ok := st.(state.ObjectInventoryReleaser)
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+	_ = releaser.ReleaseObjectInventory(ctx, bucket, token)
 }
 
 // ScanObjectInventory lists one claimed bucket and publishes its inventory.
