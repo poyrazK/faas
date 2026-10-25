@@ -15,14 +15,19 @@ and `jobs`.
 
 ## How work runs
 
-- **Workflows.** apid writes `workflow_runs`; schedd claims due runs on
-  `api.WorkflowDispatchSlots` (4) off-loop slots per schedd, up to
-  `api.WorkflowDispatchBatchPerSlot` (8) runs per slot turn, with at most
+- **Workflows.** apid writes `workflow_runs`; schedd claims due runs on up to
+  `api.WorkflowDispatchSlots` (32) off-loop slots per schedd. The first
+  `api.WorkflowDispatchBaseSlots` (4) are offered every second and one more
+  only while every lower slot is busy, so capacity grows by a slot a second
+  under load (`workflow_dispatch_slots_busy`). A slot runs up to
+  `api.WorkflowDispatchBatchPerSlot` (8) runs per turn, with at most
   `api.WorkflowDispatchMaxPerApp` (2) runs of one app and
   `api.WorkflowDispatchMaxPerTenant` (1) per platform tenant in flight. A slot
-  makes each step call synchronously, for up to the plan's step timeout, so
-  slow steps hold slots. Dispatch needs `FAAS_WORKFLOWS_ENABLED=1` on schedd
-  and apid.
+  waits on each step call for up to the plan's step timeout, but gives back
+  its database token while it waits: only `api.WorkflowDispatchDBPhaseSlots`
+  (4) slots touch the database at once
+  ([ADR-20261025150000](../adr/20261025150000-workflow-dispatch-db-phase-tokens.md)).
+  Dispatch needs `FAAS_WORKFLOWS_ENABLED=1` on schedd and apid.
 - **Jobs.** schedd's dispatch tick runs once a second, takes up to 32 ready
   tasks and starts each one in its own job VM, subject to the account's
   `JobConcurrentPerAccount` and the node admission ceiling.
@@ -55,10 +60,9 @@ they are on for every entitled account unless an operator writes them.
 
 ## FaasWorkflowDispatchSaturated
 
-More than 90% of `schedd_loop_work_total{kind="workflow_dispatch"}`
-submissions on one schedd found their slot still busy (`outcome="coalesced"`)
-for 10 minutes. Due runs, including other customers' runs, wait until a slot
-frees.
+`workflow_dispatch_slots_busy` has equalled `workflow_dispatch_slots` (32) on
+one schedd for 10 minutes: every slot is waiting on a step. Due runs,
+including other customers' runs, wait until a slot frees.
 
 1. Find the steps holding slots:
    `topk(5, sum by (app) (rate(workflow_step_duration_seconds_sum[10m])))`.
@@ -69,8 +73,9 @@ frees.
 3. If one account dominates, deny the `workflows` flag for it (above) and
    tell the customer; its runs resume when the flag is allowed again.
 4. If load is spread across many apps, dispatch capacity is short for the
-   fleet: raise it through a reviewed change to `api.WorkflowDispatchSlots`
-   (Hunt 13 H13-9), not by restarting schedd.
+   fleet: raise `api.WorkflowDispatchSlots` through a reviewed change, not by
+   restarting schedd. Leave `api.WorkflowDispatchDBPhaseSlots` alone unless
+   `FaasDBPoolStarved` shows schedd's pool has headroom.
 
 ## FaasWorkflowDispatchLagHigh
 

@@ -113,14 +113,23 @@ func (e *workflowOutboundExecutor) ExecuteOutboundStep(ctx context.Context, runI
 	if len(input) > 0 {
 		request.Header.Set("Content-Type", "application/json")
 	}
-	response, err := e.client.Do(request)
+	// The integration call holds no dispatch DB-phase token; the attempt
+	// check above polls once a second untracked.
+	var response *http.Response
+	var body []byte
+	var readErr error
+	outsideDBPhase(ctx, func() {
+		response, err = e.client.Do(request)
+		if err == nil {
+			body, readErr = io.ReadAll(io.LimitReader(response.Body, api.WorkflowOutboundBodyMaxBytes+1))
+		}
+	})
 	if err != nil {
 		return 0, nil, zero, errors.New("workflow outbound request failed")
 	}
 	defer func() { _ = response.Body.Close() }()
 	retryAt := workflowOutboundRetryAfter(response.Header.Get("Retry-After"), time.Now().UTC())
-	body, err := io.ReadAll(io.LimitReader(response.Body, api.WorkflowOutboundBodyMaxBytes+1))
-	if err != nil || int64(len(body)) > api.WorkflowOutboundBodyMaxBytes {
+	if readErr != nil || int64(len(body)) > api.WorkflowOutboundBodyMaxBytes {
 		return response.StatusCode, nil, retryAt, errors.New("workflow outbound response incomplete or exceeds the limit")
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {

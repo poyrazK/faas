@@ -2010,12 +2010,7 @@ groups:
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasJobsQueueBacklog.md"
 
       - alert: FaasWorkflowDispatchSaturated
-        expr: |
-          (
-            sum by (job, instance) (rate(schedd_loop_work_total{kind="workflow_dispatch",outcome="coalesced"}[10m]))
-            /
-            sum by (job, instance) (rate(schedd_loop_work_total{kind="workflow_dispatch"}[10m]))
-          ) > 0.9
+        expr: min_over_time(workflow_dispatch_slots_busy[5m]) >= workflow_dispatch_slots
         for: 10m
         labels:
           severity: warn
@@ -2024,7 +2019,7 @@ groups:
           public_status: internal
         annotations:
           summary: "Every workflow dispatch slot on {{ $labels.instance }} has been busy for 10m"
-          description: "More than 90% of workflow dispatch submissions on {{ $labels.instance }} found their slot still busy. Slots run step calls synchronously, so long steps hold them, and due runs wait, including other customers' runs."
+          description: "Every one of the {{ $value }} workflow dispatch slots on {{ $labels.instance }} has stayed busy for 10m. Slots wait on customer step handlers, so due runs, including other customers' runs, wait for a slot."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWorkflowsAndJobs.md"
 
       - alert: FaasWorkflowDispatchLagHigh

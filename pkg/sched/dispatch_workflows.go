@@ -65,6 +65,8 @@ type WorkflowOrchestrator struct {
 	// capabilityAllowed holds a claimed run while workflows are switched off
 	// for its app's account (ADR-20261023115741); nil allows every run.
 	capabilityAllowed func(ctx context.Context, appID string) bool
+	// dbPhase bounds dispatch slots' database work (workflow_db_phase.go).
+	dbPhase *workflowDBPhase
 }
 
 // NewWorkflowOrchestrator constructs a new orchestrator.
@@ -81,6 +83,7 @@ func NewWorkflowOrchestrator(
 		auditor:  auditor,
 		metrics:  metrics,
 		log:      log,
+		dbPhase:  newWorkflowDBPhase(api.WorkflowDispatchDBPhaseSlots),
 	}
 }
 
@@ -142,7 +145,12 @@ func (o *WorkflowOrchestrator) executeWorkflowHandlerWithRetryAfter(ctx context.
 		return 0, nil, time.Time{}, err
 	}
 	defer done()
-	status, result, retryAt, err := executor.ExecuteWorkflowStepWithRetryAfter(ctx, run.AppID, WorkflowStepIdentity{RunID: run.ID, PlatformTenantID: run.PlatformTenantID, DeploymentID: run.DeploymentID}, path, method, headers, body, timeout, operationID, generation)
+	var status int
+	var result []byte
+	var retryAt time.Time
+	outsideDBPhase(ctx, func() {
+		status, result, retryAt, err = executor.ExecuteWorkflowStepWithRetryAfter(ctx, run.AppID, WorkflowStepIdentity{RunID: run.ID, PlatformTenantID: run.PlatformTenantID, DeploymentID: run.DeploymentID}, path, method, headers, body, timeout, operationID, generation)
+	})
 	if ctx.Err() != nil {
 		return 0, nil, time.Time{}, ctx.Err()
 	}
@@ -155,7 +163,11 @@ func (o *WorkflowOrchestrator) executeWorkflowHandler(ctx context.Context, run *
 		return 0, nil, err
 	}
 	defer done()
-	status, result, err := o.dispatchWorkflowHandler(ctx, run, path, method, headers, body, timeout, managedOperationID, generation)
+	var status int
+	var result []byte
+	outsideDBPhase(ctx, func() {
+		status, result, err = o.dispatchWorkflowHandler(ctx, run, path, method, headers, body, timeout, managedOperationID, generation)
+	})
 	if ctx.Err() != nil {
 		return 0, nil, ctx.Err()
 	}
@@ -473,8 +485,14 @@ func (o *WorkflowOrchestrator) DispatchTick(ctx context.Context) error {
 }
 
 // DispatchBatch drains a bounded number of runs on an already reserved pool
-// slot. No run is claimed ahead of available execution capacity.
+// slot. No run is claimed ahead of available execution capacity. The slot
+// does its database work under a dispatch DB-phase token.
 func (o *WorkflowOrchestrator) DispatchBatch(ctx context.Context) error {
+	ctx, leave, err := o.enterDBPhase(ctx)
+	if err != nil {
+		return err
+	}
+	defer leave()
 	for range api.WorkflowDispatchBatchPerSlot {
 		claimed, err := o.dispatchOne(ctx)
 		if err != nil || !claimed {

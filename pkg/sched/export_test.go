@@ -210,6 +210,19 @@ var TriggerDispatchParent = triggerDispatchParent
 var TruncateCodeError = truncateCodeError
 
 var JobDispatchResult = jobDispatchResult
+
+// Dispatch DB-phase tokens (ADR-20261025150000).
+func (o *WorkflowOrchestrator) SetDBPhaseSlotsForTest(slots int) {
+	o.dbPhase = newWorkflowDBPhase(slots)
+}
+func (o *WorkflowOrchestrator) EnterDBPhaseForTest(ctx context.Context) (context.Context, func(), error) {
+	return o.enterDBPhase(ctx)
+}
+func (o *WorkflowOrchestrator) ChildDBPhaseForTest(ctx context.Context) (context.Context, func()) {
+	return o.childDBPhase(ctx)
+}
+func OutsideDBPhaseForTest(ctx context.Context, wait func()) { outsideDBPhase(ctx, wait) }
+
 var UntilNextMinuteTick = untilNextMinuteTick
 var ValidEnvironmentGitOpsJobVariables = validEnvironmentGitOpsJobVariables
 var ValidRuntimeSnapshot = validRuntimeSnapshot

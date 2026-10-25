@@ -74,16 +74,26 @@ func TestWorkflowDispatchFillsSlotsAndCoalescesBusyTicks(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	loop := &Loop{engine: &Engine{store: store}, log: quietLog(), workflowOrch: NewWorkflowOrchestrator(store, executor, nil, nil, quietLog())}
 	t.Cleanup(func() { cancel(); loop.workPool().drain() })
+	// The first tick offers only the base slots, served fairly across apps.
 	loop.runWorkflowsDispatchTick(ctx)
-	apps := waitDispatchEntries(t, executor, api.WorkflowDispatchSlots)
-	if len(apps) != api.WorkflowDispatchSlots {
+	apps := waitDispatchEntries(t, executor, api.WorkflowDispatchBaseSlots)
+	if len(apps) != api.WorkflowDispatchBaseSlots {
 		t.Fatalf("backlog monopolized slots: %+v", apps)
+	}
+	// While every slot is busy, each tick offers one more slot (ADR-20261025150000)
+	// until the per-app cap holds every remaining run: 4 apps × 2 = 8 handlers.
+	for want := api.WorkflowDispatchBaseSlots + 1; want <= len(all); want++ {
+		loop.runWorkflowsDispatchTick(ctx)
+		waitDispatchEntries(t, executor, 1)
+		if calls := executor.calls.Load(); calls != int32(want) {
+			t.Fatalf("busy tick started %d handlers, want %d", calls, want)
+		}
 	}
 	for range 20 {
 		loop.runWorkflowsDispatchTick(ctx)
 	}
-	if calls := executor.calls.Load(); calls != int32(api.WorkflowDispatchSlots) {
-		t.Fatalf("busy ticks started %d handlers", calls)
+	if calls := executor.calls.Load(); calls != int32(len(all)) {
+		t.Fatalf("busy ticks started %d handlers, want %d", calls, len(all))
 	}
 	pending := 0
 	for _, run := range all {
@@ -95,7 +105,7 @@ func TestWorkflowDispatchFillsSlotsAndCoalescesBusyTicks(t *testing.T) {
 			pending++
 		}
 	}
-	if pending != len(all)-api.WorkflowDispatchSlots {
+	if pending != len(all)-int(executor.calls.Load()) {
 		t.Fatalf("claimed work without a slot: pending=%d", pending)
 	}
 	close(executor.release)
