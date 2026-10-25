@@ -44549,6 +44549,20 @@ CREATE TABLE public.oauth_links (
 
 
 --
+-- Name: object_bucket_cors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_cors (
+    bucket_id uuid NOT NULL,
+    rules jsonb NOT NULL,
+    revision bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_bucket_cors_revision_check CHECK ((revision > 0)),
+    CONSTRAINT object_bucket_cors_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND ((jsonb_array_length(rules) >= 1) AND (jsonb_array_length(rules) <= 100)) AND (octet_length((rules)::text) <= 65536)))
+);
+
+
+--
 -- Name: object_bucket_encryption; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -62753,6 +62767,14 @@ ALTER TABLE ONLY public.notification_outbox
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_pkey PRIMARY KEY (provider, provider_subject);
+
+
+--
+-- Name: object_bucket_cors object_bucket_cors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_cors
+    ADD CONSTRAINT object_bucket_cors_pkey PRIMARY KEY (bucket_id);
 
 
 --
@@ -93427,6 +93449,14 @@ ALTER TABLE ONLY public.notification_channels
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_cors object_bucket_cors_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_cors
+    ADD CONSTRAINT object_bucket_cors_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --

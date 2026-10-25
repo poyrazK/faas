@@ -61241,6 +61241,70 @@ func (q *Queries) ObjectBucketByName(ctx context.Context, db DBTX, arg ObjectBuc
 	return i, err
 }
 
+const objectBucketCORSDelete = `-- name: ObjectBucketCORSDelete :exec
+DELETE FROM object_bucket_cors WHERE bucket_id=$1
+`
+
+func (q *Queries) ObjectBucketCORSDelete(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectBucketCORSDelete, bucketID)
+	return err
+}
+
+const objectBucketCORSGet = `-- name: ObjectBucketCORSGet :one
+SELECT rules, revision, updated_at FROM object_bucket_cors WHERE bucket_id=$1
+`
+
+type ObjectBucketCORSGetRow struct {
+	Rules     []byte
+	Revision  int64
+	UpdatedAt pgtype.Timestamptz
+}
+
+// ADR-20261025202805: a customer's bucket CORS rules.
+func (q *Queries) ObjectBucketCORSGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketCORSGetRow, error) {
+	row := db.QueryRow(ctx, objectBucketCORSGet, bucketID)
+	var i ObjectBucketCORSGetRow
+	err := row.Scan(&i.Rules, &i.Revision, &i.UpdatedAt)
+	return i, err
+}
+
+const objectBucketCORSPut = `-- name: ObjectBucketCORSPut :one
+INSERT INTO object_bucket_cors (bucket_id, rules, revision, updated_at)
+SELECT b.id, $1::jsonb, 1, now() FROM object_buckets b WHERE b.id=$2::uuid AND b.state='ready'
+ON CONFLICT (bucket_id) DO UPDATE SET rules=EXCLUDED.rules, revision=object_bucket_cors.revision+1, updated_at=now()
+RETURNING rules, revision, updated_at
+`
+
+type ObjectBucketCORSPutParams struct {
+	Rules    []byte
+	BucketID pgtype.UUID
+}
+
+type ObjectBucketCORSPutRow struct {
+	Rules     []byte
+	Revision  int64
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectBucketCORSPut(ctx context.Context, db DBTX, arg ObjectBucketCORSPutParams) (ObjectBucketCORSPutRow, error) {
+	row := db.QueryRow(ctx, objectBucketCORSPut, arg.Rules, arg.BucketID)
+	var i ObjectBucketCORSPutRow
+	err := row.Scan(&i.Rules, &i.Revision, &i.UpdatedAt)
+	return i, err
+}
+
+const objectBucketCORSRules = `-- name: ObjectBucketCORSRules :one
+SELECT c.rules FROM object_bucket_cors c JOIN object_buckets b ON b.id=c.bucket_id WHERE c.bucket_id=$1 AND b.state='ready'
+`
+
+// The gateway's read: rules of a ready bucket only.
+func (q *Queries) ObjectBucketCORSRules(ctx context.Context, db DBTX, bucketID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, objectBucketCORSRules, bucketID)
+	var rules []byte
+	err := row.Scan(&rules)
+	return rules, err
+}
+
 const objectBucketClaim = `-- name: ObjectBucketClaim :one
 UPDATE object_buckets SET state = $1, lease_token = $2, lease_until = now() + ($3::int * interval '1 second'), updated_at = now(),
 attempt_count = CASE WHEN state <> $1 THEN 1 ELSE least(attempt_count + 1, 30) END,

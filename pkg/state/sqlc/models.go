@@ -9216,6 +9216,13 @@ type ObjectBucket struct {
 	OrgID                          pgtype.UUID
 }
 
+type ObjectBucketCor struct {
+	BucketID  pgtype.UUID
+	Rules     []byte
+	Revision  int64
+	UpdatedAt pgtype.Timestamptz
+}
+
 type ObjectBucketEncryption struct {
 	BucketID           pgtype.UUID
 	AccountID          pgtype.UUID

@@ -26044,3 +26044,20 @@ RETURNING true::boolean AS reserved;
 SELECT response_status, response_body, request_digest
 FROM idempotency_keys
 WHERE account_id = sqlc.arg(account_id)::text::uuid AND key = sqlc.arg(key)::text;
+
+-- name: ObjectBucketCORSGet :one
+-- ADR-20261025202805: a customer's bucket CORS rules.
+SELECT rules, revision, updated_at FROM object_bucket_cors WHERE bucket_id=$1;
+
+-- name: ObjectBucketCORSPut :one
+INSERT INTO object_bucket_cors (bucket_id, rules, revision, updated_at)
+SELECT b.id, sqlc.arg(rules)::jsonb, 1, now() FROM object_buckets b WHERE b.id=sqlc.arg(bucket_id)::uuid AND b.state='ready'
+ON CONFLICT (bucket_id) DO UPDATE SET rules=EXCLUDED.rules, revision=object_bucket_cors.revision+1, updated_at=now()
+RETURNING rules, revision, updated_at;
+
+-- name: ObjectBucketCORSDelete :exec
+DELETE FROM object_bucket_cors WHERE bucket_id=$1;
+
+-- name: ObjectBucketCORSRules :one
+-- The gateway's read: rules of a ready bucket only.
+SELECT c.rules FROM object_bucket_cors c JOIN object_buckets b ON b.id=c.bucket_id WHERE c.bucket_id=$1 AND b.state='ready';

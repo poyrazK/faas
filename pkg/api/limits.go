@@ -12100,6 +12100,17 @@ const (
 	WorkPolicyMaxStartDeadlineSeconds = 30 * 24 * 60 * 60
 )
 
+// Customer bucket CORS (ADR-20261025202805). The rule count, the 64 KiB
+// configuration and the methods follow S3's PutBucketCors.
+const (
+	MaxObjectBucketCORSRules         = 100
+	MaxObjectBucketCORSRuleValues    = 100
+	MaxObjectBucketCORSValueBytes    = 1024
+	MaxObjectBucketCORSRuleIDBytes   = 255
+	MaxObjectBucketCORSMaxAgeSeconds = 86400
+	MaxObjectBucketCORSBodyBytes     = 64 << 10
+)
+
 // S3 protocol and browser-policy bounds shared by the branded gateway and stores.
 const (
 	ObjectS3CORSMaxAgeSeconds    = 3600

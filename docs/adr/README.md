@@ -1,5 +1,6 @@
 # Architecture Decision Records
 
+- [Customer bucket CORS on the branded S3 endpoint](20261025202805-object-storage-bucket-cors.md) — per-bucket S3-shaped CORS rules set through apid (preview `bucket-cors`); the gateway applies them to preflights that carry a presigned URL or upload grant and to the actual requests
 - [Per-key object deletion fences](20261025115958-object-storage-per-key-deletion.md) — one active deletion per key, not per bucket; writes are fenced only by a deletion of their key; deletions yield to inventory; bulk deletes run eight entries at once (amends ADR-547)
 - [ADR-20261025094915: Managed PostgreSQL compute caps hold on running databases](20261025094915-managed-postgres-compute-caps-on-running-databases.md) — proposed; Free suspends at its allowance, paid plans suspend at it unless the customer turns overage on (then at 2×); Neon project quotas, never a deletion (amends ADR-1430, ADR-155)
 - [Each Compose include interpolates with its own .env](20261025090000-compose-include-env-files.md)
