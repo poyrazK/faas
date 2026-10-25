@@ -50,6 +50,7 @@ func TestMain(m *testing.M) {
 	// Helper subprocesses (exec of this test binary) inherit the parent's
 	// sandbox; creating their own leaked one empty dir per helper because
 	// they are killed before the deferred cleanup runs.
+	pinGoToolEnv()
 	sandbox, owned := os.Getenv("HOME"), false
 	if !strings.Contains(filepath.Base(sandbox), cliTestHomePrefix) {
 		var err error
@@ -87,7 +88,7 @@ func TestMain(m *testing.M) {
 	testOnlyTTY = &on
 	code := m.Run()
 	if owned {
-		_ = os.RemoveAll(sandbox)
+		removeCLITestSandbox(sandbox)
 	}
 	testOnlyTTY = nil
 	if hadNoColor {

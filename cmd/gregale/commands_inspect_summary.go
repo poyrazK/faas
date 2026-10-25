@@ -539,13 +539,26 @@ func inspectRecommendations(summary inspectSummary) []inspectRecommendation {
 		// The next request wakes a parked app (gregale park: "until its next
 		// request"); "does not run or wake on its own" read as if requests
 		// were refused (Hunt 12 H12-60).
+		// A parked request app is scale to zero working, so it is info, not
+		// an error: h14-img read "Needs attention" after a plain `gregale
+		// park` (Hunt 14 H14-43). A crash-looped app, or a worker, service
+		// or job that no request wakes, still needs attention.
 		message := "This app is parked: its instances are stopped until the next request wakes it."
 		next := "Send a request, or run `gregale wake " + summary.App.Slug + "` to start it now."
-		if summary.App.ParkedReason == "liveness_exhausted" {
+		severity := "info"
+		switch {
+		case summary.App.ParkedReason == "liveness_exhausted":
 			message = "This app is parked because its instances repeatedly failed liveness checks or crashed; the next request starts it again."
 			next = "Fix the failure (see `gregale logs " + summary.App.Slug + " --since 1h`), deploy, then run `gregale wake " + summary.App.Slug + "`."
+			severity = "error"
+		case summary.App.ExecutionMode == api.ExecutionModeWorker:
+			message = "This worker is parked: requests do not wake a worker, so it stays stopped until you wake it."
+			next = "Run `gregale wake " + summary.App.Slug + "` to start it."
+			severity = "error"
+		case summary.App.ExecutionMode != "":
+			severity = "error"
 		}
-		add("app_parked", "error", message, next)
+		add("app_parked", severity, message, next)
 	}
 	if summary.App.DeploymentAvailability == api.AppDeploymentAvailabilityMissing {
 		add("no_live_deployment", "error", "This app has no live deployment, so requests, wakes, and app-backed workflows cannot run.", "Redeploy from current source with `gregale deploy`; if the latest attempt failed, inspect it with `gregale inspect "+summary.App.Slug+" --errors`. Restore an old revision only after its artifact and rollout history have been verified.")

@@ -640,6 +640,7 @@ func envPush(args []string) int {
 		receipt.UpdatedKeyCount++
 		if !jsonOutput {
 			PrintOK(osStdout, "%s set (scope=%s)", p.k, scopeOrDefault(*scope))
+			warnPlatformOwnedEnvKey(p.k)
 		}
 	}
 	printConfigGuardNotice(context.Background(), client, *app, *scope)

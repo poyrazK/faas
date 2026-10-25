@@ -638,6 +638,19 @@ func secretsSet(args []string) int {
 	return writeSecretsPairs(context.Background(), client, *app, pairs, *scope, *secretClass, *restart, secretSetWaitOptions{enabled: *waitForAck, timeout: *timeout})
 }
 
+// warnPlatformOwnedEnvKey says when a saved key never reaches the app as
+// set: guest-init stamps PORT (ADR-053) and the FAAS_* identity variables over
+// customer values, so PORT=9999 was accepted and silently ignored on
+// production-us rc.294 (Hunt 14 H14-44).
+func warnPlatformOwnedEnvKey(key string) {
+	switch {
+	case key == "PORT":
+		PrintWarn(osStderr, "PORT is ignored: Gregale sets it at runtime to the port the app must listen on")
+	case api.IsPlatformIdentityEnvKey(key):
+		PrintWarn(osStderr, "%s is ignored: Gregale sets it at runtime to the workload's identity", key)
+	}
+}
+
 func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []secretsPair, scope, secretClass string, restart bool, waitOptions ...secretSetWaitOptions) int {
 	keys := make([]string, 0, len(pairs))
 	for _, p := range pairs {
@@ -650,6 +663,7 @@ func writeSecretsPairs(ctx context.Context, client *Client, app string, pairs []
 		keys = append(keys, p.Key)
 		if !jsonOutput {
 			PrintOK(osStdout, "%s set (scope=%s)", p.Key, scopeOrDefault(scope))
+			warnPlatformOwnedEnvKey(p.Key)
 		}
 	}
 	printConfigGuardNotice(ctx, client, app, scope)
