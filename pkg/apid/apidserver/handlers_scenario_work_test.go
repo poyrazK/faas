@@ -41,7 +41,7 @@ func TestManagedWorkerEnrollmentGateValidationAndDurableAcknowledgement(t *testi
 	simulation := api.ScenarioSimulationPlan{Version: 1, Fixtures: []api.ScenarioSimulationFixture{{Workload: "worker", Name: "notify", Integration: "email", Adapter: "resend", Method: "POST", Path: "/emails", Responses: []api.ScenarioSimulationResponse{{Status: 200}}}}}
 	req := api.RegisterScenarioTestRequest{ManagedWork: &plan, CommandVersion: 1, NetworkMode: "contained", WebhookMode: "capture", ActionEvidenceVersion: 2, Simulation: &simulation, Members: members}
 	url := "/v1/dev/test-runs/" + run
-	if r := e.Do(t, "PUT", url, req, nil); r.Code != 503 {
+	if r := e.Do(t, "PUT", url, req, nil); r.Code != http.StatusNotImplemented {
 		t.Fatalf("unqualified workers admitted: %d %s", r.Code, r.Body.String())
 	}
 	*s.RehearsalWorkersEnabled() = true
