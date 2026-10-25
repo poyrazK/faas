@@ -74,7 +74,10 @@ curl http://billing.internal:10081/invoices
 ```
 
 `http://billing.svc.gregale:10081` is the same service. Calls stay on
-Gregale's private network and wake a parked service when needed.
+Gregale's private network and wake a parked service when needed. During
+development, `gregale dev --all` runs every service in its own developer
+environment, and the same names reach those environments instead of
+production ([gregale dev](gregale-dev.md#call-the-other-apps)).
 
 Addresses from Docker, such as `http://billing:8080`, do not resolve on Gregale.
 Use the `.internal` name instead, or declare the dependency and read the URL
