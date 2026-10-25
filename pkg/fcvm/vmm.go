@@ -570,6 +570,10 @@ var guestInitPlatformMessages = []string{
 	// ended every job task log, its attempt being the vsock retry rather than
 	// the task attempt the log header names (hunt #10).
 	"job-exit ", "job cancel ",
+	// App-task exec listener: "INFO fork exec listener started
+	// vsock_port=1034" opened every cold boot's customer log on
+	// production-us rc.294 (Hunt 14 H14-27).
+	"fork exec listener ",
 }
 
 // guestInitPlatformLine matches a default-slog line ("2006/01/02 15:04:05

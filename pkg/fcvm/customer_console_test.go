@@ -196,6 +196,8 @@ func TestCustomerConsoleDropsGuestInitPlatformLines(t *testing.T) {
 		"2026/10/14 19:44:14 INFO framework_ready stream proxy started vsock_port=1027\n",
 		"2026/10/14 19:44:14 INFO secrets loaded count=3\n",
 		"2026/10/14 19:44:14 INFO api_env loaded count=10\n",
+		// Hunt 14 H14-27: first line of every cold boot on rc.294.
+		"2026/10/25 02:54:27 INFO fork exec listener started vsock_port=1034\n",
 		"2026-10-14T07:14:45.514973340 [c26f50da-1f34-494c-9ecc-acd797734558:main] Vmm is stopping.\n",
 		"2026-10-14T07:14:45.515204584 [c26f50da-1f34-494c-9ecc-acd797734558:main] Killing vCPU threads\n",
 		"2026/10/14 00:58:51 INFO order created id=42\n",
