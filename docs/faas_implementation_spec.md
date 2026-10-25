@@ -3118,6 +3118,28 @@ no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
 
 
+## Management MCP request promotion outcomes (ADR-20261025090000)
+
+New guarded request promotions persist a stable opaque identity before PATCH.
+Native Mem/Pg stores commit an immutable receipt and traffic atomically, preserving
+serving/review/admission gates and preventing an accepted attempt from moving
+traffic twice. Owned deployment-read lookup binds the original candidate,
+request hash, serving guard and immutable named target. Receipt absence never
+establishes non-commit. Schema expansion is additive; receipts end with retained
+app/candidate lifetime and require current named environment identity.
+
+The existing MCP outcome reader accepts optional `phase=apply|promotion`, with
+apply as default. A separate encrypted promotion reference survives plan expiry,
+shares bounded history retention and OAuth purge, and is preserved by N-1 readers.
+Legacy attempted plans receive no new identity. History/prompts/resources offer
+separate exact apply/promotion outcome calls without fetching receipts. Final
+read guards recheck consent, immutable ownership/target, retention, references
+and storage. Verified promotion proves historical acceptance only; current
+traffic and health need separate observation. No recovery read mutates history,
+replays writes or renews authority. Catalog remains 58 read/planning tools,
+67 with writes, eight prompts and eleven templates. No quota changes.
+See [ADR-20261025090000](adr/20261025090000-management-mcp-promotion-outcomes.md).
+
 ## Management MCP deployment submission outcomes (ADR-20261024234500)
 
 New MCP deployment and service/worker rollout apply attempts atomically persist

@@ -126,6 +126,11 @@ func attachDeploymentSubmission(ctx context.Context, db sqlc.DBTX, appID, attemp
 }
 
 func (m *MemStore) deleteDeploymentSubmissionsLocked(deploymentID string) {
+	for key, r := range m.deploymentPromotionReceipts {
+		if r.DeploymentID == deploymentID {
+			delete(m.deploymentPromotionReceipts, key)
+		}
+	}
 	delete(m.deploymentCronOutcomes, deploymentID)
 	for key, receipt := range m.deploymentSubmissionReceipts {
 		if receipt.DeploymentID == deploymentID {

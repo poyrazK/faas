@@ -1224,6 +1224,7 @@ from .deployment_liveness_probe import DeploymentLivenessProbe
 from .deployment_preview_url import DeploymentPreviewURL
 from .deployment_promotion_hold import DeploymentPromotionHold
 from .deployment_promotion_hold_last_recovery_outcome import DeploymentPromotionHoldLastRecoveryOutcome
+from .deployment_promotion_receipt import DeploymentPromotionReceipt
 from .deployment_readiness_probe import DeploymentReadinessProbe
 from .deployment_release import DeploymentRelease
 from .deployment_release_status import DeploymentReleaseStatus
@@ -7229,6 +7230,7 @@ __all__ = (
     "DeploymentPreviewURL",
     "DeploymentPromotionHold",
     "DeploymentPromotionHoldLastRecoveryOutcome",
+    "DeploymentPromotionReceipt",
     "DeploymentReadinessProbe",
     "DeploymentRelease",
     "DeploymentReleaseStatus",

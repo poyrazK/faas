@@ -638,6 +638,7 @@ export type { DeploymentLivenessProbe } from './models/DeploymentLivenessProbe.j
 export type { DeploymentLiveWebhookPayload } from './models/DeploymentLiveWebhookPayload.js';
 export type { DeploymentPreviewURL } from './models/DeploymentPreviewURL.js';
 export type { DeploymentPromotionHold } from './models/DeploymentPromotionHold.js';
+export type { DeploymentPromotionReceipt } from './models/DeploymentPromotionReceipt.js';
 export type { DeploymentReadinessProbe } from './models/DeploymentReadinessProbe.js';
 export type { DeploymentRelease } from './models/DeploymentRelease.js';
 export type { DeploymentResponse } from './models/DeploymentResponse.js';

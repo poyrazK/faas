@@ -417,11 +417,15 @@ func (m *management) promoteDeployment(ctx context.Context, args applyArgs) (any
 	if d.AppID != p.AppID || normalizedScope(d.Scope) != p.Scope || d.Status != "live" {
 		return nil, invalid("not_ready", "the planned revision is not live in the expected app and scope")
 	}
+	writeCtx, err := m.preparePromotionOutcome(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	p.promotionAttempted = true
 	if err := m.persistPlans(); err != nil {
 		return nil, err
 	}
-	writeCtx := api.ContextWithIdempotencyKey(ctx, "mcp-promote-"+p.ID)
+	writeCtx = api.ContextWithIdempotencyKey(writeCtx, "mcp-promote-"+p.ID)
 	if p.EnvironmentID != "" {
 		d, err = m.client.PatchDeploymentTrafficReviewed(writeCtx, d.ID, p.ExpectedCurrentID, *p.result.StagedReview)
 	} else {

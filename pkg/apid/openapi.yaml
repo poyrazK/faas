@@ -23879,6 +23879,40 @@ paths:
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
+  /v1/apps/{slug}/deployment-promotions/{attempt_id}:
+    parameters:
+      - $ref: '#/components/parameters/Slug'
+      - name: attempt_id
+        in: path
+        required: true
+        description: The opaque attempt ID persisted before guarded traffic promotion.
+        schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+    get:
+      tags: [deployments]
+      operationId: getDeploymentPromotionReceipt
+      summary: Read the immutable acceptance receipt for a promotion attempt.
+      description: |
+        Requires deployment-read access to the owned app. Returns the original
+        candidate and original serving guard even after traffic changes. A 404 means no retained
+        receipt is available; it does not establish rejection and must never
+        trigger automatic resubmission. Receipts expire when their deployment
+        or app is purged. Named environment identities must still exist. This lookup never changes traffic.
+      responses:
+        '200':
+          description: The immutable receipt for the original guarded traffic promotion.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/DeploymentPromotionReceipt' }
+        '400': { $ref: '#/components/responses/BadRequest' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { $ref: '#/components/responses/Forbidden' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503':
+          description: Promotion receipt storage is unavailable.
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
   /v1/apps/{slug}/deployment-submissions/{attempt_id}:
     parameters:
       - $ref: '#/components/parameters/Slug'
@@ -29904,6 +29938,12 @@ paths:
     parameters:
       - $ref: '#/components/parameters/Id32'
     patch:
+      parameters:
+        - name: Deployment-Promotion-Attempt-ID
+          in: header
+          required: false
+          description: Opaque durable identity for guarded 100 percent promotion. An accepted retry returns 409 deployment_promotion_attempt_accepted without changing traffic; read its receipt separately. Never reuse it with another body.
+          schema: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
       tags: [deployments]
       operationId: updateDeploymentTraffic
       summary: Set the per-deployment traffic-split weight.
@@ -89912,6 +89952,20 @@ components:
         app_id: { type: string, format: uuid }
         status: { type: string, enum: [staged, cleaned, prepared, activated, conflict, discarded] }
         revision: { type: integer, format: int64, minimum: 0 }
+    DeploymentPromotionReceipt:
+      description: Immutable acceptance of an original guarded 100 percent traffic promotion; current traffic and health are separate.
+      type: object
+      required: [attempt_id, request_hash, app_id, deployment_id, expected_serving_deployment_id, scope, accepted_at]
+      properties:
+        attempt_id: { type: string, minLength: 32, maxLength: 32, pattern: '^[0-9a-f]{32}$' }
+        request_hash: { type: string, minLength: 64, maxLength: 64, pattern: '^[0-9a-f]{64}$' }
+        app_id: { type: string, format: uuid }
+        deployment_id: { type: string, format: uuid }
+        expected_serving_deployment_id: { type: string, description: Original serving guard; empty requires no serving sibling. }
+        scope: { type: string }
+        project_id: { type: string, format: uuid }
+        environment_id: { type: string, format: uuid }
+        accepted_at: { type: string, format: date-time }
     DeploymentSubmissionReceipt:
       description: Immutable acceptance evidence for one opaque deployment submission attempt.
       type: object

@@ -8011,6 +8011,19 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	if _, err := sqlc.New().LockDeploymentTrafficApp(ctx, tx, mustPgUUID(id)); err != nil {
 		return Deployment{}, fmt.Errorf("state: lock traffic app: %w", mapErr(err))
 	}
+	promotionReceipt, err := promotionReceiptFor(ctx, Deployment{ID: id, AppID: trafficTarget.AppID, Scope: trafficScope}, newPercent, expectedServingID, reviews)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if promotionReceipt != nil {
+		prior, readErr := readPromotionReceipt(ctx, tx, trafficTarget.AppID, promotionReceipt.AttemptID)
+		if readErr == nil {
+			return Deployment{}, promotionAttemptError(prior, *promotionReceipt)
+		}
+		if !errors.Is(readErr, ErrNotFound) {
+			return Deployment{}, readErr
+		}
+	}
 	if len(reviews) > 0 {
 		current, err := readReleaseReview(ctx, tx, reviews[0].AppID, trafficScope)
 		if err != nil {
@@ -8218,6 +8231,9 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 	}
 	if err := appendMCPAdmission(ctx, tx, admission, "accepted", ""); err != nil {
 		return Deployment{}, errors.Join(ErrMCPAdmissionPersistence, err)
+	}
+	if err := insertPromotionReceipt(ctx, tx, promotionReceipt); err != nil {
+		return Deployment{}, err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return Deployment{}, fmt.Errorf("state: commit update traffic: %w", err)

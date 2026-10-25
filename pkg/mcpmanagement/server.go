@@ -71,6 +71,7 @@ type management struct {
 	environmentActions map[string]environmentActionRecord
 	budgetOutcomes     map[string]budgetOutcomeLookup
 	deploymentOutcomes map[string]deploymentOutcomeLookup
+	promotionOutcomes  map[string]promotionOutcomeLookup
 }
 
 // NewServer constructs a management server without making API calls.

@@ -563,6 +563,7 @@ type MemStore struct {
 	deployFailedEmailAt          map[string]time.Time
 	deployments                  map[string]Deployment
 	deploymentSubmissionReceipts map[string]api.DeploymentSubmissionReceipt
+	deploymentPromotionReceipts  map[string]api.DeploymentPromotionReceipt
 	deploymentPolicyStates       map[string]deploymentPolicyState
 	deploymentCronStates         map[string]deploymentPolicyState
 	deploymentCronActivations    map[string]cronActivation
@@ -5814,6 +5815,15 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	if !ok {
 		return Deployment{}, ErrNotFound
 	}
+	promotionReceipt, err := promotionReceiptFor(ctx, d, newPercent, expectedServingID, reviews)
+	if err != nil {
+		return Deployment{}, err
+	}
+	if promotionReceipt != nil {
+		if prior, ok := m.deploymentPromotionReceipts[submissionKey(d.AppID, promotionReceipt.AttemptID)]; ok {
+			return Deployment{}, promotionAttemptError(prior, *promotionReceipt)
+		}
+	}
 	if d.Status != DeployLive {
 		return Deployment{}, ErrDeploymentNotLive
 	}
@@ -5942,6 +5952,12 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		m.putDeploymentLocked(sibling.ID, other)
 	}
 
+	if promotionReceipt != nil {
+		if m.deploymentPromotionReceipts == nil {
+			m.deploymentPromotionReceipts = map[string]api.DeploymentPromotionReceipt{}
+		}
+		m.deploymentPromotionReceipts[submissionKey(d.AppID, promotionReceipt.AttemptID)] = *promotionReceipt
+	}
 	return d, nil
 }
 

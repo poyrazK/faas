@@ -634,6 +634,7 @@ export type { DeploymentLiveWebhookPayload } from './DeploymentLiveWebhookPayloa
 export type { DeploymentLivenessProbe } from './DeploymentLivenessProbe.js';
 export type { DeploymentPreviewURL } from './DeploymentPreviewURL.js';
 export type { DeploymentPromotionHold } from './DeploymentPromotionHold.js';
+export type { DeploymentPromotionReceipt } from './DeploymentPromotionReceipt.js';
 export type { DeploymentReadinessProbe } from './DeploymentReadinessProbe.js';
 export type { DeploymentRelease } from './DeploymentRelease.js';
 export type { DeploymentResponse } from './DeploymentResponse.js';

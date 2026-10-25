@@ -7,6 +7,34 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP promotion outcome recovery — 2026-10-25 (branch, not released)
+
+Explicit request promotion now has an independent durable native receipt,
+committed atomically with guarded traffic. The bridge persists its encrypted
+lookup before PATCH and offers `phase: promotion` recovery after plan expiry.
+History and passive recipes expose independent apply/promotion lookup calls.
+Recovered acceptance is historical; current traffic and health require separate
+observation. Legacy attempted plans never receive replacement identities, and
+all recovery reads retain current consent, immutable targets, retention and
+storage guards. Catalog remains 58 read/planning tools, 67 with writes, eight
+prompts and eleven templates. Migration: `20261025090000001`.
+
+Full MCP race tests and pinned Codex 0.159.0-alpha.3 acceptance pass, including
+both protocol versions, image/source lost replies, expired restart, independent
+phase links, malformed evidence, final read guards, retention and N-1 journal
+reconciliation. All three read-only Codex profiles follow a synthetic historical
+promotion receipt across restart/refresh/revocation with zero model requests and
+zero native writes. Native Mem/Pg race and real HTTP lost-network-reply tests
+pass, including concurrent attempts, serving/review refusals, atomic receipt
+failure rollback, later traffic changes and UUID representation normalization.
+Fresh migration application, populated replay, down/up and candidate purge pass.
+Go SDK, Node build/tests, Python transport/auth/diagnostics and receipt tests,
+and byte-identical Node/Python generation pass. MCP, API, state and HTTP-server
+lint pass. SQLC, spec/documentation, typed-client coverage, test-store,
+seal-domain, migration and ADR integrity gates pass. Portable fixtures do not
+qualify native/provider execution. See
+[ADR-20261025090000](adr/20261025090000-management-mcp-promotion-outcomes.md).
+
 ## Management MCP deployment acceptance outcomes — 2026-10-24 (branch, not released)
 
 New image/source deployment and service/worker rollout attempts atomically save

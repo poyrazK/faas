@@ -2633,7 +2633,7 @@ func (c *Client) PatchDeploymentTrafficIfServing(ctx context.Context, id string,
 // PatchDeploymentTrafficIfServingWithMCPAccess atomically fences serving and stored access policy.
 func (c *Client) PatchDeploymentTrafficIfServingWithMCPAccess(ctx context.Context, id string, percent int, servingID string, policy *MCPAccessPolicyExpectation) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	err := c.do(ctx, "PATCH", "/v1/deployments/"+id+"/traffic", UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID, ExpectedMCPAccessPolicy: policy}, &out)
+	err := c.doWithHeaders(ctx, "PATCH", "/v1/deployments/"+id+"/traffic", UpdateDeploymentTrafficRequest{TrafficPercent: percent, ExpectedServingDeploymentID: &servingID, ExpectedMCPAccessPolicy: policy}, &out, deploymentPromotionHeaders(ctx))
 	return out, err
 }
 

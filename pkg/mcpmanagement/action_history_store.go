@@ -93,6 +93,13 @@ func (m *management) restoreActionHistory() error {
 	if err := m.restoreDeploymentOutcomeLookups(); err != nil {
 		return err
 	}
+	if err := m.restorePromotionOutcomeLookups(); err != nil {
+		return err
+	}
+	promotionBefore := make(map[string]promotionOutcomeLookup, len(m.promotionOutcomes))
+	for id, ref := range m.promotionOutcomes {
+		promotionBefore[id] = ref
+	}
 	deploymentBefore := make(map[string]deploymentOutcomeLookup, len(m.deploymentOutcomes))
 	for id, ref := range m.deploymentOutcomes {
 		deploymentBefore[id] = ref
@@ -112,7 +119,7 @@ func (m *management) restoreActionHistory() error {
 	if err := m.syncActionHistory(time.Now().UTC()); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) {
+	if !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) || !reflect.DeepEqual(promotionBefore, m.promotionOutcomes) {
 		// Import only still-live legacy plans. History cannot reconstruct plans
 		// already discarded by an older bridge, or mint new replay authority.
 		return m.persistPlans()
@@ -154,7 +161,10 @@ func (m *management) syncActionHistory(now time.Time) error {
 	if err := m.syncBudgetOutcomeLookups(now); err != nil {
 		return err
 	}
-	return m.syncDeploymentOutcomeLookups(now)
+	if err := m.syncDeploymentOutcomeLookups(now); err != nil {
+		return err
+	}
+	return m.syncPromotionOutcomeLookups(now)
 }
 
 func recordAction(p *releasePlan) actionRecord {

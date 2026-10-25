@@ -3652,6 +3652,18 @@ type DeploymentProjectReleaseWorker struct {
 	AttemptID    string
 }
 
+type DeploymentPromotionReceipt struct {
+	AppID                       pgtype.UUID
+	AttemptID                   string
+	RequestHash                 string
+	DeploymentID                pgtype.UUID
+	ExpectedServingDeploymentID string
+	Scope                       string
+	ProjectID                   string
+	EnvironmentID               string
+	AcceptedAt                  pgtype.Timestamptz
+}
+
 type DeploymentPublicBuildUrl struct {
 	DeploymentID pgtype.UUID
 	Urls         []byte

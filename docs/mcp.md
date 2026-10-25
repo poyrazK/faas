@@ -1553,6 +1553,33 @@ only currently consented identities. These are independent reads, not an atomic
 snapshot. The tool and prompt add no probes, replay, collection, model requests
 or platform writes, and do not plan/apply configuration changes.
 
+## Resolve an ambiguous request promotion
+
+Action history and saved-plan recipes now expose `promotion_outcome` separately
+from the existing apply `outcome` call. Follow its exact original selectors:
+
+```json
+{"app":"orders","plan_id":"<original plan ID>","phase":"promotion"}
+```
+
+New promotions persist an encrypted lookup before sending a stable native
+`Deployment-Promotion-Attempt-ID`. APID commits its receipt atomically with the
+guarded 100% traffic write. The receipt binds the candidate, original serving
+guard, exact request hash and immutable named environment. Reusing an accepted
+attempt cannot move traffic a second time, even after a later release or rollback.
+An accepted native retry returns `409 deployment_promotion_attempt_accepted`;
+read the owned app's `/deployment-promotions/{attempt_id}` receipt explicitly.
+
+The MCP lookup works after plan expiry with current read consent. A verified
+result reports `phase: promotion`, the original candidate ID and an exact
+`gregale_get_deployment` observation call. It proves historical acceptance only;
+inspect current traffic and health separately. Missing, unavailable or mismatched
+evidence stays unresolved. Legacy attempted plans never receive a new identity.
+Recovery reads do not replay writes, alter history, renew authority or fetch
+receipts while merely retrieving a prompt/resource recipe. Both original phases
+remain independently discoverable, including when only promotion lookup survives.
+See [ADR-20261025090000](adr/20261025090000-management-mcp-promotion-outcomes.md).
+
 ## Resolve an ambiguous deployment submission
 
 `gregale_get_action_outcome` now supports the original apply phase of request
@@ -1581,7 +1608,7 @@ known deployment ID contains history/outcome calls only; follow the observation
 returned by the outcome rather than inventing a target. Current read consent,
 immutable identities, storage and the retained reference are checked again before
 release. No read replays a write, extends expiry or changes recorded uncertainty.
-Promotion, rollback and service-abort outcomes remain unsupported. See
+Rollback and service-abort outcomes remain unsupported. Explicit request promotion recovery is described above. See
 [ADR-20261024234500](adr/20261024234500-management-mcp-deployment-submission-outcomes.md).
 
 ## Resolve an ambiguous route-budget write
@@ -1602,7 +1629,7 @@ plan or extends its expiry. `native_completion` remains `not_observed`.
 
 Unavailable, missing or mismatched receipts return `unresolved`. This never
 proves that the original write did not commit. Deployment and service/worker rollout apply acceptance use the submission lookup
-described above; promotion, rollback and service-abort outcomes remain unsupported. Older bridges/APIs and expired legacy actions without a saved
+described above; explicit request promotions support phase=promotion. Rollback and service-abort outcomes remain unsupported. Older bridges/APIs and expired legacy actions without a saved
 lookup reference also remain unresolved; do not create a replacement request
 to resolve ambiguity.
 

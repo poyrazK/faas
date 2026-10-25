@@ -13,10 +13,11 @@ type savedPromptReference struct {
 
 // Discovery metadata is read-only guidance, never apply or retry authority.
 type actionRecoveryLinks struct {
-	ResourceURI string               `json:"resource_uri"`
-	Prompt      savedPromptReference `json:"prompt"`
-	Check       savedPlanReference   `json:"check,omitzero"`
-	Outcome     *savedPlanReference  `json:"outcome,omitempty"`
+	ResourceURI      string               `json:"resource_uri"`
+	Prompt           savedPromptReference `json:"prompt"`
+	Check            savedPlanReference   `json:"check,omitzero"`
+	Outcome          *savedPlanReference  `json:"outcome,omitempty"`
+	PromotionOutcome *savedPlanReference  `json:"promotion_outcome,omitempty"`
 }
 
 func (m *management) recoveryLinks(args getActionArgs, environment bool) *actionRecoveryLinks {
@@ -71,6 +72,7 @@ func (m *management) refreshHistoryRecoveryLinks(read *guardedRead) error {
 
 func (m *management) currentAppRecoveryLinks(view actionView, now time.Time) actionView {
 	hadOutcome := view.Recovery != nil && view.Recovery.Outcome != nil
+	hadPromotion := view.Recovery != nil && view.Recovery.PromotionOutcome != nil
 	if view.PlanAvailable && !m.actionPlanAvailable(view.actionRecord, now) {
 		view = m.actionView(view.actionRecord, now)
 	}
@@ -79,8 +81,11 @@ func (m *management) currentAppRecoveryLinks(view actionView, now time.Time) act
 		if !hadOutcome || m.outcomeRecoveryReference(view.actionRecord, now) == nil {
 			links.Outcome = nil
 		}
+		if !hadPromotion || m.promotionRecoveryReference(view.actionRecord, now) == nil {
+			links.PromotionOutcome = nil
+		}
 		view.Recovery = &links
-		if !view.PlanAvailable && links.Outcome == nil {
+		if !view.PlanAvailable && links.Outcome == nil && links.PromotionOutcome == nil {
 			view.Recovery = nil
 		}
 	}
@@ -121,14 +126,20 @@ func (m *management) outcomeRecoveryReference(entry actionRecord, now time.Time)
 
 func (m *management) addOutcomeRecoveryLinks(view actionView, now time.Time) actionView {
 	call := m.outcomeRecoveryReference(view.actionRecord, now)
-	if call == nil {
+	promotion := m.promotionRecoveryReference(view.actionRecord, now)
+	if call == nil && promotion == nil {
 		return view
 	}
 	if view.Recovery == nil {
-		args := call.Arguments.(getActionArgs)
+		environment := view.Scope
+		if environment == api.DefaultEnvScope {
+			environment = ""
+		}
+		args := getActionArgs{App: view.App, Project: view.Project, Environment: environment, PlanID: view.PlanID}
 		view.Recovery = &actionRecoveryLinks{ResourceURI: savedPlanRecoveryURI(args, false), Prompt: savedPromptReference{Name: "gregale_saved_plan_review", Arguments: args}}
 	}
 	view.Recovery.Outcome = call
+	view.Recovery.PromotionOutcome = promotion
 	return view
 }
 

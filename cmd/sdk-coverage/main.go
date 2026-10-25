@@ -2241,6 +2241,7 @@ var methodRouteMap = map[string]string{
 	// names derived from hyphenated route segments.
 	"GET /v1/apps/{slug}/deployment-cron-staging":                                                  "GetDeploymentCronStagingSnapshot",
 	"GET /v1/apps/{slug}/deployment-staging":                                                       "GetDeploymentStagingSnapshot",
+	"GET /v1/apps/{slug}/deployment-promotions/{attempt_id}":                                       "GetDeploymentPromotionReceipt",
 	"GET /v1/apps/{slug}/deployment-submissions/{attempt_id}":                                      "GetDeploymentSubmission",
 	"GET /v1/project-submissions/{attempt_id}":                                                     "GetProjectSubmission",
 	"POST /v1/apps/{slug}/deployment-cron-staging":                                                 "ApplyDeploymentCronStaging",

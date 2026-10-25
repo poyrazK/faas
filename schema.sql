@@ -33473,6 +33473,31 @@ CREATE TABLE public.deployment_project_release_workers (
 
 
 --
+-- Name: deployment_promotion_receipts; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.deployment_promotion_receipts (
+    app_id uuid NOT NULL,
+    attempt_id text NOT NULL,
+    request_hash text NOT NULL,
+    deployment_id uuid NOT NULL,
+    expected_serving_deployment_id text NOT NULL,
+    scope text NOT NULL,
+    project_id text NOT NULL,
+    environment_id text NOT NULL,
+    accepted_at timestamp with time zone DEFAULT clock_timestamp() NOT NULL,
+    CONSTRAINT deployment_promotion_receipt_expected_serving_deployment__check CHECK (((expected_serving_deployment_id = ''::text) OR (expected_serving_deployment_id ~ '^[0-9a-f-]{36}$'::text))),
+    CONSTRAINT deployment_promotion_receipts_accepted_at_check CHECK (isfinite(accepted_at)),
+    CONSTRAINT deployment_promotion_receipts_attempt_id_check CHECK ((attempt_id ~ '^[0-9a-f]{32}$'::text)),
+    CONSTRAINT deployment_promotion_receipts_check CHECK ((((scope = 'default'::text) AND (project_id = ''::text) AND (environment_id = ''::text)) OR ((scope <> 'default'::text) AND (project_id <> ''::text) AND (environment_id <> ''::text)))),
+    CONSTRAINT deployment_promotion_receipts_environment_id_check CHECK (((environment_id = ''::text) OR (environment_id ~ '^[0-9a-f-]{36}$'::text))),
+    CONSTRAINT deployment_promotion_receipts_project_id_check CHECK (((project_id = ''::text) OR (project_id ~ '^[0-9a-f-]{36}$'::text))),
+    CONSTRAINT deployment_promotion_receipts_request_hash_check CHECK ((request_hash ~ '^[0-9a-f]{64}$'::text)),
+    CONSTRAINT deployment_promotion_receipts_scope_check CHECK (((scope = 'default'::text) OR (scope ~ '^[a-z0-9]([a-z0-9-]{0,31}[a-z0-9])?$'::text)))
+);
+
+
+--
 -- Name: deployment_public_build_urls; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -56812,6 +56837,14 @@ ALTER TABLE ONLY public.deployment_project_release_workers
 
 
 --
+-- Name: deployment_promotion_receipts deployment_promotion_receipts_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_promotion_receipts
+    ADD CONSTRAINT deployment_promotion_receipts_pkey PRIMARY KEY (app_id, attempt_id);
+
+
+--
 -- Name: deployment_public_build_urls deployment_public_build_urls_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -68205,6 +68238,13 @@ CREATE INDEX deployment_openapi_snapshots_app_scope_idx ON public.deployment_ope
 --
 
 CREATE INDEX deployment_project_release_workers_app_idx ON public.deployment_project_release_workers USING btree (project_id, attempt_id);
+
+
+--
+-- Name: deployment_promotion_receipts_deployment_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX deployment_promotion_receipts_deployment_idx ON public.deployment_promotion_receipts USING btree (deployment_id);
 
 
 --
@@ -85914,6 +85954,22 @@ ALTER TABLE ONLY public.deployment_project_release_workers
 
 ALTER TABLE ONLY public.deployment_project_release_workers
     ADD CONSTRAINT deployment_project_release_workers_project_id_fkey FOREIGN KEY (project_id) REFERENCES public.projects(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_promotion_receipts deployment_promotion_receipts_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_promotion_receipts
+    ADD CONSTRAINT deployment_promotion_receipts_app_id_fkey FOREIGN KEY (app_id) REFERENCES public.apps(id) ON DELETE CASCADE;
+
+
+--
+-- Name: deployment_promotion_receipts deployment_promotion_receipts_deployment_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.deployment_promotion_receipts
+    ADD CONSTRAINT deployment_promotion_receipts_deployment_id_fkey FOREIGN KEY (deployment_id) REFERENCES public.deployments(id) ON DELETE CASCADE;
 
 
 --

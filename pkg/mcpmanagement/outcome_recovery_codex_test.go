@@ -95,3 +95,47 @@ func seedCodexDeploymentOutcome(remote *remoteServer) (api.DeploymentSubmissionR
 	}
 	return api.DeploymentSubmissionReceipt{}, api.DeploymentResponse{}, errors.New("missing source fixture plan")
 }
+
+// Synthetic expired promotion receipt: no native mutation endpoint is invoked.
+func seedCodexPromotionOutcome(remote *remoteServer) (api.DeploymentPromotionReceipt, api.DeploymentResponse, error) {
+	remote.mu.Lock()
+	var managers []*management
+	for _, grant := range remote.grants {
+		if !grant.revoked && grant.management != nil {
+			managers = append(managers, grant.management)
+		}
+	}
+	remote.mu.Unlock()
+	id := strings.Repeat("c", 64)
+	for _, m := range managers {
+		m.mu.Lock()
+		for _, p := range m.plans {
+			if p.Action != "deploy" || p.Source == nil || p.App != "alpha" || p.ID == id {
+				continue
+			}
+			d := api.DeploymentResponse{ID: "promoted-source-deployment", AppID: p.AppID, Scope: p.Scope, Kind: "github", CommitSHA: p.Source.CommitSHA, BuildID: "promoted-source-build", Status: "superseded", TrafficPercent: 0}
+			if _, found := m.actions[id]; !found {
+				seed := *p
+				seed.ID, seed.ExpiresAt = id, time.Now().Add(-time.Minute)
+				seed.attempted, seed.result = true, &d
+				if _, err := m.preparePromotionOutcome(context.Background(), &seed); err != nil {
+					m.mu.Unlock()
+					return api.DeploymentPromotionReceipt{}, api.DeploymentResponse{}, err
+				}
+				seed.promotionAttempted = true
+				seed.promoted = nil
+				m.plans[id] = &seed
+				if err := m.persistPlans(); err != nil {
+					m.mu.Unlock()
+					return api.DeploymentPromotionReceipt{}, api.DeploymentResponse{}, err
+				}
+			}
+			entry, ref := m.actions[id], m.promotionOutcomes[id]
+			receipt := api.DeploymentPromotionReceipt{AttemptID: ref.AttemptID, RequestHash: ref.RequestHash, AppID: entry.AppID, DeploymentID: ref.CandidateID, ExpectedServingDeploymentID: ref.ExpectedServingID, Scope: entry.Scope, ProjectID: entry.ProjectID, EnvironmentID: entry.EnvironmentID, AcceptedAt: entry.RecordedAt}
+			m.mu.Unlock()
+			return receipt, d, nil
+		}
+		m.mu.Unlock()
+	}
+	return api.DeploymentPromotionReceipt{}, api.DeploymentResponse{}, errors.New("missing promotion fixture plan")
+}

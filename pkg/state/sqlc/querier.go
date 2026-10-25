@@ -2160,6 +2160,7 @@ type Querier interface {
 	InsertDataUpstreamProbe(ctx context.Context, db DBTX, arg InsertDataUpstreamProbeParams) error
 	InsertDeploymentArtifactScan(ctx context.Context, db DBTX, arg InsertDeploymentArtifactScanParams) (DeploymentArtifactScan, error)
 	InsertDeploymentDependencyGate(ctx context.Context, db DBTX, arg InsertDeploymentDependencyGateParams) error
+	InsertDeploymentPromotionReceipt(ctx context.Context, db DBTX, arg InsertDeploymentPromotionReceiptParams) error
 	InsertDeploymentRegistryRootfs(ctx context.Context, db DBTX, arg InsertDeploymentRegistryRootfsParams) (DeploymentRegistryRootf, error)
 	InsertDeploymentRegistryVerification(ctx context.Context, db DBTX, arg InsertDeploymentRegistryVerificationParams) (DeploymentRegistryVerification, error)
 	InsertDeploymentRuntimeScan(ctx context.Context, db DBTX, arg InsertDeploymentRuntimeScanParams) (DeploymentRuntimeScan, error)
@@ -4777,6 +4778,7 @@ type Querier interface {
 	ReadDeploymentLayerArtifactKeys(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]string, error)
 	ReadDeploymentPolicySnapshot(ctx context.Context, db DBTX, arg ReadDeploymentPolicySnapshotParams) (ReadDeploymentPolicySnapshotRow, error)
 	ReadDeploymentPolicyState(ctx context.Context, db DBTX, appID string) (ReadDeploymentPolicyStateRow, error)
+	ReadDeploymentPromotionReceipt(ctx context.Context, db DBTX, arg ReadDeploymentPromotionReceiptParams) (ReadDeploymentPromotionReceiptRow, error)
 	ReadDeploymentReleaseAddition(ctx context.Context, db DBTX, appID string) (ReadDeploymentReleaseAdditionRow, error)
 	ReadDeploymentReleaseSecrets(ctx context.Context, db DBTX, deploymentID pgtype.UUID) ([]byte, error)
 	ReadDeploymentSubmission(ctx context.Context, db DBTX, arg ReadDeploymentSubmissionParams) (ReadDeploymentSubmissionRow, error)

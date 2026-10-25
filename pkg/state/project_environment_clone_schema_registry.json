@@ -4641,6 +4641,21 @@
     "kind": "operational"
   },
   {
+    "table": "deployment_promotion_receipts",
+    "kind": "operational",
+    "columns": [
+      "accepted_at",
+      "app_id",
+      "attempt_id",
+      "deployment_id",
+      "environment_id",
+      "expected_serving_deployment_id",
+      "project_id",
+      "request_hash",
+      "scope"
+    ]
+  },
+  {
     "table": "deployment_submission_receipts",
     "kind": "operational",
     "columns": [
