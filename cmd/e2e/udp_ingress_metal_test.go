@@ -135,8 +135,11 @@ func TestUDPIngressMetal(t *testing.T) {
 		t.Fatalf("disable UDP listener: status=%d body=%s", status, body)
 	}
 	udpMetalWaitUnbound(t, addr)
-	// All peers must be canceled, allowing the app to park again.
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, app.ID, state.StateParked, 90*time.Second); err != nil {
+	// All peers must be canceled, allowing the app to park again. Pro's
+	// idle timeout (300 s) outlasts the wait, so drop to the floor; and the
+	// priming snapshot's parked row is still there, so require no residents.
+	setAppIdleTimeout(t, h, key, slug, api.IdleTimeoutFloorSeconds)
+	if _, err := e2etest.WaitForAppParked(ctx, t, pool, app.ID, 90*time.Second); err != nil {
 		t.Fatalf("UDP peers prevented park after disable: %v", err)
 	}
 	for _, client := range clients {
