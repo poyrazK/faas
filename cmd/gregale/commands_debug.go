@@ -192,8 +192,7 @@ func cmdDebugRequests(args []string) int {
 	case "replay":
 		return cmdDebugRequestsReplay(args[1:])
 	}
-	printCommandValidation(os.Stderr, "unknown debug requests subcommand %q\n", args[0])
-	return 1
+	return printUnknownSubcommand(os.Stderr, "debug requests", cliCommand{Name: "debug", Subcommands: debugRequestsCLISubcommand().Subcommands}, args[0])
 }
 
 // debugRequestRefArgs accepts `<slug> <request-id>` or `--app <slug>

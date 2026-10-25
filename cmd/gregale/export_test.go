@@ -2435,3 +2435,7 @@ func SavedDeployRecovery(outcome string) (resume, hint string) {
 }
 
 var RoutesAppFlagAsPositional = routesAppFlagAsPositional
+
+var RenderProject = renderProject
+var InspectAttention = inspectAttention
+var RemoveCLITestSandbox = removeCLITestSandbox

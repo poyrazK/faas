@@ -930,7 +930,13 @@ func renderDoctorHuman(w io.Writer, rep doctorReport) {
 			if rep.Profile.StartCommand != "" {
 				_, _ = fmt.Fprintf(w, " · start=%s", rep.Profile.StartCommand)
 			}
-			_, _ = fmt.Fprintf(w, " · port=%d · health=%s\n", rep.Profile.Port, rep.Profile.HealthPath)
+			// A worker: manifest has no listener; the framework's default
+			// port and health path described it as HTTP (Hunt 14 H14-42).
+			if manifestDeployExecutionMode(rep.Path) == api.ExecutionModeWorker {
+				_, _ = fmt.Fprintln(w, " · worker (no HTTP listener)")
+			} else {
+				_, _ = fmt.Fprintf(w, " · port=%d · health=%s\n", rep.Profile.Port, rep.Profile.HealthPath)
+			}
 		}
 	}
 	_, _ = fmt.Fprintln(w, strings.Repeat("─", 60))
