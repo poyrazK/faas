@@ -1,4 +1,4 @@
-# ADR-1360 · Parallel-safe compute prepare when the role contract changed
+# ADR-20261025095348 · Parallel-safe compute prepare when the role contract changed
 
 - **Status:** proposed
 - **Date:** 2026-10-16

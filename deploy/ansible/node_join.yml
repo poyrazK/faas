@@ -132,7 +132,7 @@
     # converges OS or roles (bootstrap.yml ends every host in prepare) and never
     # touches serving daemons. A host whose OS/role contract changed is still
     # prepared in parallel; its serialized activation converges roles before
-    # the drain (ADR-1360). A fresh host has nothing serving to protect and
+    # the drain (ADR-20261025095348). A fresh host has nothing serving to protect and
     # takes the full serialized join path.
     - name: Require an existing managed host for non-disruptive rollout preparation
       ansible.builtin.assert:
@@ -941,7 +941,7 @@
     # existing host keeps serving with its currently active release.
     # Preparation skips role convergence, including supply_chain_scanners.
     # Refresh the scanner database here, in parallel, so the pre-stage scans
-    # and activation's role pass find it current (ADR-1360).
+    # and activation's role pass find it current (ADR-20261025095348).
     - name: Refresh the Grype vulnerability database during preparation
       ansible.builtin.include_role:
         name: supply_chain_scanners
@@ -1175,7 +1175,7 @@
     # --activate-prepared starts at this exact task when the node's bootstrap
     # contract is current. When it is stale, activation runs the playbook from
     # the top so bootstrap.yml converges roles serially, skips the pre-stage
-    # section it already completed, and reaches this task (ADR-1360). The
+    # section it already completed, and reaches this task (ADR-20261025095348). The
     # release-bound marker is written only after signature verification and
     # runtime-base pre-stage complete, so the serialized lane cannot drain a
     # partially prepared node.

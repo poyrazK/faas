@@ -2,7 +2,7 @@
 # Grype vulnerability database refresh. main.yml imports this file; the
 # node_join.yml preparation phase includes it on its own so a parallel
 # prepare can refresh the database without converging the whole role
-# (ADR-1360).
+# (ADR-20261025095348).
 # Grype 0.116 ships a database seed but validates its age on every scan. Keep
 # the refreshed database outside a daemon home directory: imaged runs with
 # ProtectHome and must be able to refresh the same DB after bootstrap.

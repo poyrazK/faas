@@ -11,7 +11,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// ADR-1360: prepare runs on every serving node at once, so it must never
+// ADR-20261025095348: prepare runs on every serving node at once, so it must never
 // converge roles or claim a bootstrap contract it did not converge, while a
 // stale-contract activation must not redo the pre-stage it already finished.
 func TestNodeJoinParallelPrepareContract(t *testing.T) {

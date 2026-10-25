@@ -1,7 +1,7 @@
 ---
 # Read-only. Reports the managed-host bootstrap contract a compute node last
 # converged to, so `gregalectl deploy join-node --activate-prepared` can decide
-# whether activation must converge roles before the drain (ADR-1360).
+# whether activation must converge roles before the drain (ADR-20261025095348).
 - name: Report the recorded managed-host bootstrap contract
   hosts: compute_nodes
   gather_facts: false

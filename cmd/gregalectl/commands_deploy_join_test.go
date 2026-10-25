@@ -1653,7 +1653,7 @@ func TestDeployJoinApply_RendersProviderConnectionOverride(t *testing.T) {
 		t.Fatalf("current-contract activation probed %q, RolesConverged=%v", probedContract, activateReport.RolesConverged)
 	}
 
-	// ADR-1360: a stale contract was prepared without role convergence, so
+	// ADR-20261025095348: a stale contract was prepared without role convergence, so
 	// activation runs the playbook from the top and converges roles first.
 	calls = nil
 	contractCurrent = false

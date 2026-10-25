@@ -94,7 +94,7 @@ type deployJoinReport struct {
 	Timings        []joinTiming `json:"timings,omitempty"`
 	// RolesConverged is true when an --activate-prepared run found the node's
 	// bootstrap contract stale and converged roles before the drain instead
-	// of starting at the prepared marker (ADR-1360).
+	// of starting at the prepared marker (ADR-20261025095348).
 	RolesConverged bool `json:"roles_converged,omitempty"`
 }
 
@@ -949,7 +949,7 @@ func deployJoinApplyWithContext(ctx context.Context, opts *deployJoinOptions, re
 	}
 	joinArgs := append(append([]string{}, common...), "--limit", opts.Node)
 	if rolloutPhase == joinRolloutActivate {
-		// A prepare run never converges roles (ADR-1360). With a current
+		// A prepare run never converges roles (ADR-20261025095348). With a current
 		// contract there is nothing to converge, so activation starts at the
 		// prepared marker; with a stale one it runs the playbook from the top,
 		// converging roles before the drain and skipping the finished pre-stage.
