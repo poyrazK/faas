@@ -24,7 +24,8 @@ work while it is down.
 
 ```bash
 systemctl status 'postgresql@*-main' --no-pager
-journalctl -u 'postgresql@*-main' --since '-30m' --no-pager | tail -40
+journalctl -u 'postgresql@*-main' --since '-30m' --no-pager | tail -40   # start/stop only
+sudo tail -40 /var/log/postgresql/postgresql-16-main.log                  # the server's own log
 sudo -u postgres psql -Atc 'select 1'
 systemctl list-timers faas-postgres-connection-metrics.timer --no-pager
 df -h /var/lib/postgresql

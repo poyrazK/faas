@@ -494,6 +494,9 @@ jobs:
       - name: cgroup metrics gate
         run: make cgroup-metrics-test
 
+      - name: PostgreSQL activity collector tests
+        run: make postgres-activity-metrics-test
+
       - name: GCP public-beta policy gate
         run: make gcp-public-beta-policy-test
 
