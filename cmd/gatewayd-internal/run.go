@@ -1778,29 +1778,9 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 		// one-in-flight and cooldown. Off unless FAAS_CRASH_SNAPSHOTS=1.
 		WithCrashCaptureRequester(crashCaptureRequester(pgStore, os.Getenv("FAAS_CRASH_SNAPSHOTS"), crashCaptureRequests)).
 		// ADR-732: route a fork request only when the fork, its token and
-		// its instance all check out (gateway.ForkTargetFromState).
-		WithForkTargetLoader(func(ctx context.Context, appID, forkID, token string) (gateway.Target, bool, error) {
-			fork, err := pgStore.AppForkForApp(ctx, appID, forkID)
-			if errors.Is(err, state.ErrNotFound) || (err == nil && fork.InstanceID == nil) {
-				return gateway.Target{}, false, nil
-			}
-			if err != nil {
-				return gateway.Target{}, false, err
-			}
-			instance, err := pgStore.InstanceByID(ctx, *fork.InstanceID)
-			if errors.Is(err, state.ErrNotFound) {
-				return gateway.Target{}, false, nil
-			}
-			if err != nil {
-				return gateway.Target{}, false, err
-			}
-			dep, err := pgStore.DeploymentByID(ctx, instance.DeploymentID)
-			if err != nil {
-				return gateway.Target{}, false, err
-			}
-			target, ok := gateway.ForkTargetFromState(fork, instance, schedpkg.DeploymentRuntimePort(dep), token, time.Now())
-			return target, ok, nil
-		}).
+		// its instance all check out (gateway.ForkTargetFromState), and the
+		// fork's creator still holds the app (forkTargetLoader).
+		WithForkTargetLoader(forkTargetLoader(pgStore, pgStore, time.Now)).
 		WithClientForApp(func(ctx context.Context, app gateway.App) (gateway.Scheduler, bool, error) {
 			cli, err := deps.scheddRouter.ScheddForApp(ctx, state.App{ID: app.ID, NodeID: app.NodeID})
 			if err != nil {
