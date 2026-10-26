@@ -3,6 +3,19 @@
 This change completes the current core Data API development slice. It does not
 publish artifacts or establish hosted staging acceptance.
 
+## Hosted engine fixes: TLS roots and snapshot-safe sessions
+
+[ADR 20261026131131](adr/20261026131131-data-api-hosted-tls-roots-and-snapshot-sessions.md)
+fixes two faults that only a hosted database exposes:
+
+- **Remote databases.** PostgREST now verifies the database with Node's root
+  store; before, `sslmode=verify-full` without a root file refused every
+  remote database and the first deploy never became ready.
+- **Wakes.** The runtime stops PostgREST before a snapshot and starts it after
+  a restore, and requests wait for it, so the first request after a wake no
+  longer fails on a dead captured session. `data-api create` and `data-api
+  deploy` register the hooks.
+
 ## Public reads, server keys, aggregates, single-app projects and Python/Go clients
 
 [ADR 20261018170742](adr/20261018170742-data-api-access-modes-and-clients.md)

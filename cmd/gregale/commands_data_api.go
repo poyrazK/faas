@@ -279,7 +279,9 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 	// defaults require an owner API key, which would reject those JWTs first.
 	requireAuthn := false
 	publicAuth := openPublicAuthAfterTokenRemoval(app)
-	if _, err = client.UpdateApp(ctx, app.Slug, api.UpdateAppRequest{EgressPorts: &ports, RequireAuthn: &requireAuthn, PublicAuth: publicAuth, SetPublicAuth: publicAuth != nil}); err != nil {
+	update := api.UpdateAppRequest{EgressPorts: &ports, RequireAuthn: &requireAuthn, PublicAuth: publicAuth, SetPublicAuth: publicAuth != nil}
+	setDataAPILifecycle(&update)
+	if _, err = client.UpdateApp(ctx, app.Slug, update); err != nil {
 		return err
 	}
 	for _, key := range []string{"DATA_API_SCHEMAS", "DATA_API_ISSUER", "DATA_API_JWKS_URL", "DATA_API_AUDIENCE", "DATA_API_ALLOWED_ORIGINS", "DATA_API_READ_ONLY"} {
@@ -302,6 +304,18 @@ func configureDataAPI(ctx context.Context, client *api.Client, app api.AppRespon
 		}
 	}
 	return nil
+}
+
+// The runtime stops PostgREST before a snapshot and starts it after a restore,
+// so no snapshot holds a SQL session (templates/data-api/engine.mjs).
+const (
+	dataAPIBeforeCheckpointPath = "/__gregale/lifecycle/before-checkpoint"
+	dataAPIAfterRestorePath     = "/__gregale/lifecycle/after-restore"
+)
+
+func setDataAPILifecycle(update *api.UpdateAppRequest) {
+	update.BeforeCheckpoint = &api.BeforeCheckpointHook{Path: dataAPIBeforeCheckpointPath, TimeoutMS: api.AfterRestoreHookMaxTimeoutMS}
+	update.AfterRestore = &api.AfterRestoreHook{Path: dataAPIAfterRestorePath, TimeoutMS: api.AfterRestoreHookMaxTimeoutMS}
 }
 
 func dataAPIHTTPS(value string) bool {

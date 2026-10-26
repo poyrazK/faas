@@ -923,6 +923,14 @@ Repeat the command with the same settings and `--resume` to continue; the bindin
 request uses a stable idempotency key. Use ordinary app/database commands to
 inspect or remove retained resources.
 
+The API verifies the database's TLS certificate against the public root store
+(plus `NODE_EXTRA_CA_CERTS`, if set). Like any app, it parks when idle. Creation
+also registers `before_checkpoint` and `after_restore` hooks, so a parked API
+holds no database connection: the first request after a wake waits while the
+API reconnects, within the request deadline. For an API created before these
+hooks existed, `data-api create NAME ... --resume` (or `data-api deploy` for a
+single-app project) adds them with the current runtime.
+
 ## Define your application schema and authorization
 
 Create tables and policies with your existing migration tool, using a managed

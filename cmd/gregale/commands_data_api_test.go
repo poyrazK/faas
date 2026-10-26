@@ -226,6 +226,21 @@ func TestDataAPIConfiguresBindingEgressAndScopedSecrets(t *testing.T) {
 			if body.RequireAuthn == nil || *body.RequireAuthn || body.PublicAuth == nil || body.PublicAuth.Mode != "open" {
 				t.Error("application JWT authentication was not configured")
 			}
+			// The hooks must name the runtime's own lifecycle routes.
+			engine, err := os.ReadFile("templates/data-api/engine.mjs")
+			if err != nil || body.BeforeCheckpoint == nil || body.AfterRestore == nil {
+				t.Errorf("lifecycle hooks missing: %v", err)
+			} else {
+				for _, hook := range []struct {
+					path    string
+					timeout int
+					route   string
+				}{{body.BeforeCheckpoint.Path, body.BeforeCheckpoint.TimeoutMS, "beforeCheckpoint: '"}, {body.AfterRestore.Path, body.AfterRestore.TimeoutMS, "afterRestore: '"}} {
+					if hook.timeout != api.AfterRestoreHookMaxTimeoutMS || !strings.Contains(string(engine), hook.route+hook.path+"'") {
+						t.Errorf("lifecycle hook %s (%d ms) is not the runtime's route", hook.path, hook.timeout)
+					}
+				}
+			}
 			writeJSONTest(w, api.AppResponse{ID: "app", Slug: "notes"})
 		case r.Method == "PUT":
 			if r.URL.Query().Get("scope") != "staging" {

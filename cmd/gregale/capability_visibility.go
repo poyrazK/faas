@@ -214,6 +214,10 @@ func commandCapabilityPath(args []string) string {
 	return path
 }
 
+// localCommands never call the platform. A hidden capability leaves them out
+// of help like its other commands but does not refuse to run them.
+var localCommands = map[string]bool{"data-api dev": true}
+
 // hiddenCommand reports an invocation whose command is hidden, with its
 // path. A help request follows the discovery view. Running a command is
 // refused only when the cached account view hides it and a fresh read
@@ -226,6 +230,9 @@ func hiddenCommand(args []string, helpRequest bool) (string, bool) {
 	}
 	if helpRequest {
 		return path, discoveryCapabilityView().hides(capability)
+	}
+	if localCommands[path] {
+		return path, false
 	}
 	token := loadTokenWithDiagnostics(io.Discard)
 	if token == "" {

@@ -208,3 +208,24 @@ func TestAccountViewHidesCommandsAndRereadsBeforeRefusing(t *testing.T) {
 		t.Fatalf("a capability released since the cached view must run: %q", stderr)
 	}
 }
+
+func TestLocalCommandsRunWhileTheirCapabilityIsHidden(t *testing.T) {
+	api := &capabilitiesAPI{}
+	server := httptest.NewServer(api)
+	defer server.Close()
+	t.Setenv("FAAS_CAPABILITY_FLAGS_RELEASE_ALL", "")
+	t.Setenv("FAAS_API", server.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	t.Setenv("FAAS_COMPLETION_CACHE_PATH", filepath.Join(t.TempDir(), "cache.json"))
+	api.setHidden("data-api")
+	if _, help, _ := runCLI(t, "help", "--all"); listsCommand(help, "data-api") {
+		t.Fatal("a hidden capability stays out of help")
+	}
+	// The local development server never calls the platform.
+	if _, _, stderr := runCLI(t, "data-api", "dev", "--no-such-flag"); strings.Contains(stderr, "unknown command") {
+		t.Fatalf("data-api dev was refused: %q", stderr)
+	}
+	if code, _, stderr := runCLI(t, "data-api", "types", "notes"); code == 0 || !strings.Contains(stderr, `unknown command "data-api types"`) {
+		t.Fatalf("a platform command of a hidden capability = %d %q, want unknown command", code, stderr)
+	}
+}
