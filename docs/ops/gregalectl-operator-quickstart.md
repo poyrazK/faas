@@ -457,6 +457,22 @@ gregalectl obs node fsn-3 --heartbeats 100 --instances 50
 gregalectl obs node fsn-3 --json
 ```
 
+Profile a platform daemon in place (ADR-20261023200002). Run it as root on the
+daemon's host: each daemon serves Go profiles on a root-only abstract socket,
+`@faas-debug/<daemon>`, and nothing listens on the network.
+
+```bash
+sudo gregalectl debug pprof --list                                     # daemons serving profiles here
+sudo gregalectl debug pprof --daemon schedd --profile heap --gc         # live memory
+sudo gregalectl debug pprof --daemon apid --profile cpu --seconds 30    # where the CPU goes
+sudo gregalectl debug pprof --daemon vmmd --profile goroutine --debug 2 # full goroutine dump
+```
+
+The command writes a file named `<daemon>-<profile>-<time>`, which you open
+with `go tool pprof -http=:0 <file>`. During an apid reload, `--list` shows the
+second generation as `apid (--pid N)`. `FAAS_DEBUG_PROFILING=off` in a
+daemon's environment turns the endpoint off.
+
 Inspect an incident's current potential exposure and related evidence:
 
 ```

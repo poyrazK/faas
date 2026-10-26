@@ -236,6 +236,7 @@ var EnvContract = []EnvVar{
 	{Name: "FAAS_DB_ROLE", Owners: []string{"shared"}, Source: EnvSourceDropin, Note: "ADR-20261023104734; faas_<daemon> runtime role that replaces the DSN user on both pools (control_plane_service zz-faas-db-role.conf). Unset = the DSN user; refused with a password DSN for another user"},
 	{Name: "FAAS_DEAD_NODE_RECONCILER_INTERVAL_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
 	{Name: "FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS", Owners: []string{"schedd"}, Source: EnvSourceDefault},
+	{Name: "FAAS_DEBUG_PROFILING", Owners: []string{"shared"}, Source: EnvSourceDefault, Note: "on; off/false/0 disables the root-only pprof socket @faas-debug/<daemon> (ADR-20261023200002)"},
 	{Name: "FAAS_DEPLOYMENT_CREATED_AT", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
 	{Name: "FAAS_DEPLOYMENT_ID", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},
 	{Name: "FAAS_DEPLOYMENT_TAG", Owners: []string{"shared"}, Source: EnvSourceGuest, Note: "platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled"},

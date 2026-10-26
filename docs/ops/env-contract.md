@@ -157,6 +157,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DB_ROLE` | shared | `dropin` |  |  | `` | ADR-20261023104734; faas_<daemon> runtime role that replaces the DSN user on both pools (control_plane_service zz-faas-db-role.conf). Unset = the DSN user; refused with a password DSN for another user |
 | `FAAS_DEAD_NODE_RECONCILER_INTERVAL_SECONDS` | schedd | `default` |  |  | `` |  |
 | `FAAS_DEAD_NODE_RECONCILER_STALENESS_SECONDS` | schedd | `default` |  |  | `` |  |
+| `FAAS_DEBUG_PROFILING` | shared | `default` |  |  | `` | on; off/false/0 disables the root-only pprof socket @faas-debug/<daemon> (ADR-20261023200002) |
 | `FAAS_DEPLOYMENT_CREATED_AT` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_DEPLOYMENT_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_DEPLOYMENT_TAG` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
