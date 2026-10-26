@@ -33,7 +33,11 @@ make e2e-journeys TIER=full RUN=TestTemplateDeploys
   stream and `report.md` land in `.e2e-journeys/<timestamp>/` (gitignored).
 
 Smoke takes about 10 minutes and holds 3 apps; full about 20 minutes and 8
-apps. The account needs that many free deployed-app slots: the suite checks
+apps. Deploys run at most two at a time (`--max-deploys`): each build
+reserves a 20 GiB builder drive, so firing every template at once measures
+builder capacity rather than the features. A deploy aborted for capacity
+(RAM admission ceiling, builder drive space, `failure_class=infra`) is
+retried once and listed under **warnings** in the report. The account needs that many free deployed-app slots: the suite checks
 before it creates its first app and stops with the numbers if it cannot fit.
 
 ## Journeys

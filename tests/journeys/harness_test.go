@@ -55,6 +55,7 @@ type target struct {
 
 	preflightOnce sync.Once
 	preflightErr  error
+	deploySlots   chan struct{} // bounds concurrent deploys (GREGALE_E2E_MAX_DEPLOYS)
 }
 
 // tgt is nil when GREGALE_E2E_API is unset; every journey then skips, so
@@ -127,6 +128,15 @@ func loadTarget(getenv func(string) string) (*target, error) {
 	if t.runID == "" {
 		t.runID = newRunID(time.Now())
 	}
+	maxDeploys := 2
+	if v := getenv("GREGALE_E2E_MAX_DEPLOYS"); v != "" {
+		n, err := strconv.Atoi(v)
+		if err != nil || n < 1 {
+			return nil, fmt.Errorf("GREGALE_E2E_MAX_DEPLOYS %q: want a positive integer", v)
+		}
+		maxDeploys = n
+	}
+	t.deploySlots = make(chan struct{}, maxDeploys)
 	if _, ok := runTime(t.runID); !ok {
 		return nil, fmt.Errorf("GREGALE_E2E_RUN_ID %q: want 5 base36 minute digits plus one random character", t.runID)
 	}
@@ -434,10 +444,13 @@ func (tg *target) deploy(t *testing.T, slug string, args ...string) map[string]a
 	full := append([]string{"deploy", "--name", slug, "--wait", "--timeout", deployLimit.String(),
 		"--yes", "--no-require-authn", "--reason", "e2e-journeys run " + tg.runID}, args...)
 	dir := t.TempDir()
+	tg.deploySlots <- struct{}{}
+	defer func() { <-tg.deploySlots }()
 	res := tg.exec(t, tg.token, dir, deployLimit+5*time.Minute, full...)
-	if res.exit != 0 && failureClass(res.stdout) == "infra" {
-		t.Logf("deploy %s hit an infrastructure-class failure; retrying once in 30s: %s", slug, res.problem())
-		time.Sleep(30 * time.Second)
+	if reason := retryableAbort(res); reason != "" {
+		// Reported, not hidden: the report lists every warning line.
+		t.Logf("warning: deploy %s aborted for capacity (%s); retrying once in 60s", slug, reason)
+		time.Sleep(60 * time.Second)
 		res = tg.exec(t, tg.token, dir, deployLimit+5*time.Minute, full...)
 	}
 	if res.exit != 0 {
@@ -455,12 +468,27 @@ func (tg *target) deploy(t *testing.T, slug string, args ...string) map[string]a
 	return receipt
 }
 
-func failureClass(receipt []byte) string {
-	docs, err := decodeObjects(receipt)
+// retryableAbort names a failed deploy's platform-capacity cause: an
+// infrastructure-class failure, a node at its RAM admission ceiling, or a
+// builder short of drive space. A broken app or release fails at once.
+func retryableAbort(res cliResult) string {
+	if res.exit == 0 {
+		return ""
+	}
+	docs, err := decodeObjects(res.stdout)
 	if err != nil || len(docs) == 0 {
 		return ""
 	}
-	return str(docs[0], "failure_class")
+	if str(docs[0], "failure_class") == "infra" {
+		return "failure_class=infra"
+	}
+	reason := str(docs[0], "rollout_aborted_reason")
+	for _, capacity := range []string{"capacity_unavailable", "insufficient host free space"} {
+		if strings.Contains(reason, capacity) {
+			return reason
+		}
+	}
+	return ""
 }
 
 func (tg *target) deployLogTail(t *testing.T, slug string, receipt []byte) string {
@@ -469,7 +497,8 @@ func (tg *target) deployLogTail(t *testing.T, slug string, receipt []byte) strin
 	if err != nil || len(docs) == 0 || str(docs[0], "id") == "" {
 		return "(no deployment id in the receipt)"
 	}
-	res := tg.run(t, time.Minute, "logs", slug, "--deployment", str(docs[0], "id"), "--limit", "40")
+	// Build and deploy log; `logs --deployment` reads runtime logs only.
+	res := tg.run(t, time.Minute, "deploys", "logs", str(docs[0], "id"), "--limit", "60")
 	return tail(string(res.stdout)+string(res.stderr), 4000)
 }
 

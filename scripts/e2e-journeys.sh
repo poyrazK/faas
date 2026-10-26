@@ -31,6 +31,7 @@ usage: scripts/e2e-journeys.sh [flags]
   --out DIR              where to write go-test.json and report.md
                          (default .e2e-journeys/<timestamp>)
   --keep                 keep the apps of failed journeys for debugging
+  --max-deploys N        concurrent deploys (default 2; each build reserves a 20 GiB drive)
   --sweep-hours N        first delete e2ej- apps from runs older than N hours (default 3, 0 = off)
   --list                 list journeys and exit
 EOF
@@ -45,6 +46,7 @@ cli_version=''
 token_file=''
 out=''
 keep=0
+max_deploys=2
 sweep_hours=3
 list=0
 
@@ -59,6 +61,7 @@ while (($#)); do
 	--token-file) token_file="$2"; shift 2 ;;
 	--out) out="$2"; shift 2 ;;
 	--keep) keep=1; shift ;;
+	--max-deploys) max_deploys="$2"; shift 2 ;;
 	--sweep-hours) sweep_hours="$2"; shift 2 ;;
 	--list) list=1; shift ;;
 	-h|--help) usage; exit 0 ;;
@@ -73,7 +76,8 @@ command -v python3 >/dev/null || { echo "python3 is required" >&2; exit 1; }
 
 if ((list)); then
 	cd "$REPO_ROOT"
-	exec go test ./tests/journeys -list '.*'
+	go test ./tests/journeys -list '.*' | grep '^Test' | grep -v '^TestHarness'
+	exit 0
 fi
 
 # resolve_cli downloads the release CLI for this OS/arch into a cache and
@@ -143,8 +147,9 @@ GREGALE_E2E_API="$api" \
 	GREGALE_E2E_CLI="$cli" \
 	GREGALE_E2E_TIER="$tier" \
 	GREGALE_E2E_KEEP="$keep" \
+	GREGALE_E2E_MAX_DEPLOYS="$max_deploys" \
 	GREGALE_E2E_SWEEP_HOURS="$( [[ "$sweep_hours" == 0 ]] || echo "$sweep_hours")" \
-	go test ./tests/journeys -count=1 -json -timeout 90m -parallel 8 ${run_re:+-run "$run_re"} 2>&1 |
+	go test ./tests/journeys -count=1 -json -timeout 90m -parallel 8 -skip '^TestHarness' ${run_re:+-run "$run_re"} 2>&1 |
 	tee "$out/go-test.json" |
 	python3 -I tests/journeys/report.py --markdown "$out/report.md" \
 		--header "target: $api" --header "tier: $tier" --header "cli: $cli_reported" \

@@ -6,9 +6,10 @@ import (
 	"time"
 )
 
-// These tests cover the harness itself and need no target.
+// These tests cover the harness itself and need no target. The runner
+// skips them (-skip ^TestHarness) so reports list journeys only.
 
-func TestRunIDEncodesStartMinute(t *testing.T) {
+func TestHarnessRunIDEncodesStartMinute(t *testing.T) {
 	now := time.Date(2026, 10, 26, 17, 30, 45, 0, time.UTC)
 	id := newRunID(now)
 	got, ok := runTime(id)
@@ -20,7 +21,7 @@ func TestRunIDEncodesStartMinute(t *testing.T) {
 	}
 }
 
-func TestRunTimeRejectsMalformedIDs(t *testing.T) {
+func TestHarnessRunTimeRejectsMalformedIDs(t *testing.T) {
 	for _, id := range []string{"", "abc", "ABCDEF", "abcdefg", "ab_def", "hk3x9-"} {
 		if _, ok := runTime(id); ok {
 			t.Errorf("runTime(%q) accepted a malformed id", id)
@@ -28,7 +29,7 @@ func TestRunTimeRejectsMalformedIDs(t *testing.T) {
 	}
 }
 
-func TestSlugRunOnlyMatchesJourneySlugs(t *testing.T) {
+func TestHarnessSlugRunOnlyMatchesJourneySlugs(t *testing.T) {
 	tests := []struct {
 		slug string
 		run  string
@@ -50,7 +51,7 @@ func TestSlugRunOnlyMatchesJourneySlugs(t *testing.T) {
 	}
 }
 
-func TestStaleSlugsKeepsCurrentRunAndRecentRuns(t *testing.T) {
+func TestHarnessStaleSlugsKeepsCurrentRunAndRecentRuns(t *testing.T) {
 	now := time.Date(2026, 10, 26, 18, 0, 0, 0, time.UTC)
 	old := newRunID(now.Add(-5 * time.Hour))
 	recent := newRunID(now.Add(-10 * time.Minute))
@@ -68,7 +69,7 @@ func TestStaleSlugsKeepsCurrentRunAndRecentRuns(t *testing.T) {
 	}
 }
 
-func TestSlugPanicsWhenTooLong(t *testing.T) {
+func TestHarnessSlugPanicsWhenTooLong(t *testing.T) {
 	tg := &target{runID: "hk3x9a"}
 	if got := tg.slug("probe"); got != "e2ej-hk3x9a-probe" {
 		t.Fatalf("slug = %q", got)
@@ -81,7 +82,7 @@ func TestSlugPanicsWhenTooLong(t *testing.T) {
 	tg.slug(strings.Repeat("x", maxSlugLen))
 }
 
-func TestDecodeObjectsReadsIndentedAndNDJSON(t *testing.T) {
+func TestHarnessDecodeObjectsReadsIndentedAndNDJSON(t *testing.T) {
 	indented := []byte("{\n  \"items\": [\n    {\"id\": \"a\"}\n  ]\n}\n")
 	docs, err := decodeObjects(indented)
 	if err != nil || len(docs) != 1 || str(docs[0], "items.0.id") != "a" {
@@ -100,7 +101,7 @@ func TestDecodeObjectsReadsIndentedAndNDJSON(t *testing.T) {
 	}
 }
 
-func TestFieldWalksMapsAndArrays(t *testing.T) {
+func TestHarnessFieldWalksMapsAndArrays(t *testing.T) {
 	doc := map[string]any{"a": map[string]any{"b": []any{"x", map[string]any{"c": "y"}}}}
 	tests := map[string]any{"a.b.0": "x", "a.b.1.c": "y", "a.b.2": nil, "a.z": nil, "a.b.x": nil}
 	for path, want := range tests {
@@ -110,7 +111,7 @@ func TestFieldWalksMapsAndArrays(t *testing.T) {
 	}
 }
 
-func TestLoadTarget(t *testing.T) {
+func TestHarnessLoadTarget(t *testing.T) {
 	env := func(kv map[string]string) func(string) string {
 		return func(k string) string { return kv[k] }
 	}
@@ -129,6 +130,7 @@ func TestLoadTarget(t *testing.T) {
 		{"GREGALE_E2E_API": "https://api.gregale.dev", "GREGALE_E2E_TIER": "nightly"},
 		{"GREGALE_E2E_API": "https://api.gregale.dev", "GREGALE_E2E_RUN_ID": "run-1"},
 		{"GREGALE_E2E_API": "https://api.gregale.dev", "GREGALE_E2E_AUTH": "cli-login", "GREGALE_E2E_TOKEN": "fp_live_x"},
+		{"GREGALE_E2E_API": "https://api.gregale.dev", "GREGALE_E2E_MAX_DEPLOYS": "0"},
 	} {
 		if _, err := loadTarget(env(bad)); err == nil {
 			t.Errorf("loadTarget(%v) accepted a bad configuration", bad)
@@ -136,14 +138,34 @@ func TestLoadTarget(t *testing.T) {
 	}
 }
 
-func TestRedactHidesToken(t *testing.T) {
+func TestHarnessRetryableAbortOnlyForCapacity(t *testing.T) {
+	tests := []struct {
+		name  string
+		res   cliResult
+		retry bool
+	}{
+		{"success", cliResult{exit: 0, stdout: []byte(`{"failure_class":"infra"}`)}, false},
+		{"infra class", cliResult{exit: 1, stdout: []byte(`{"failure_class":"infra"}`)}, true},
+		{"ram ceiling", cliResult{exit: 1, stdout: []byte(`{"rollout_aborted_reason":"snapshot prime failed: capacity_unavailable: RAM headroom"}`)}, true},
+		{"builder disk", cliResult{exit: 1, stdout: []byte(`{"rollout_aborted_reason":"builderd: insufficient host free space for build drive"}`)}, true},
+		{"app bug", cliResult{exit: 1, stdout: []byte(`{"rollout_aborted_reason":"readiness probe failed: /healthz 500"}`)}, false},
+		{"no receipt", cliResult{exit: 1}, false},
+	}
+	for _, tc := range tests {
+		if got := retryableAbort(tc.res) != ""; got != tc.retry {
+			t.Errorf("%s: retryableAbort = %v, want %v", tc.name, got, tc.retry)
+		}
+	}
+}
+
+func TestHarnessRedactHidesToken(t *testing.T) {
 	tg := &target{token: "fp_live_0123456789abcdef"}
 	if got := tg.redact("Authorization: Bearer fp_live_0123456789abcdef"); strings.Contains(got, "0123456789") {
 		t.Fatalf("redact leaked the token: %q", got)
 	}
 }
 
-func TestStoryBlocksLaterStepsAfterFailure(t *testing.T) {
+func TestHarnessStoryBlocksLaterStepsAfterFailure(t *testing.T) {
 	// A failing subtest would fail this test, so drive the bookkeeping only.
 	s := &story{t: t, blocked: "deploy"}
 	ran := false

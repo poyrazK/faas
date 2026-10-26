@@ -16,6 +16,7 @@ import re
 import sys
 
 METRIC_RE = re.compile(r"\bmetric ([a-z0-9_]+)=([0-9.]+)")
+WARNING_RE = re.compile(r"\bwarning: (.*)")
 FILE_LINE_RE = re.compile(r"^\s+\w+\.go:\d+: ")
 ICON = {"pass": "PASS", "fail": "FAIL", "skip": "SKIP"}
 
@@ -26,6 +27,7 @@ class Report:
         self.output = {}   # test name -> [lines]
         self.order = []
         self.metrics = []
+        self.warnings = []
         self.package_failed = False
         self.package_output = []
 
@@ -46,6 +48,8 @@ class Report:
             self.output[test].append(line)
             for name, value in METRIC_RE.findall(line):
                 self.metrics.append((test, name, value))
+            for text in WARNING_RE.findall(line):
+                self.warnings.append((test, text.strip()))
             return None
         if action in ICON:
             self.results[test] = (action, float(event.get("Elapsed", 0)))
@@ -103,6 +107,11 @@ class Report:
             out.append("metrics:")
             for test, name, value in self.metrics:
                 out.append(f"  {name}={value}  ({test})")
+        if self.warnings:
+            out.append("")
+            out.append("warnings:")
+            for test, text in self.warnings:
+                out.append(f"  {text}  ({test})")
         for test in self.leaves():
             if self.results[test][0] == "fail":
                 out.append("")
@@ -128,6 +137,9 @@ class Report:
         if self.metrics:
             out += ["", "## Metrics", ""]
             out.extend(f"- `{name}` = {value} ({test})" for test, name, value in self.metrics)
+        if self.warnings:
+            out += ["", "## Warnings", ""]
+            out.extend(f"- {text} (`{test}`)" for test, text in self.warnings)
         failures = [t for t in self.leaves() if self.results[t][0] == "fail"]
         if failures:
             out += ["", "## Failures"]

@@ -20,6 +20,7 @@ EVENTS = stream(
     {"Action": "run", "Test": "TestAppLifecycle"},
     {"Action": "run", "Test": "TestAppLifecycle/deploy_v1"},
     {"Action": "output", "Test": "TestAppLifecycle/deploy_v1", "Output": "    harness_test.go:420: deployed e2ej-x\n"},
+    {"Action": "output", "Test": "TestAppLifecycle/deploy_v1", "Output": "    harness_test.go:440: warning: deploy e2ej-x aborted for capacity (RAM headroom); retrying once in 60s\n"},
     {"Action": "pass", "Test": "TestAppLifecycle/deploy_v1", "Elapsed": 95.2},
     {"Action": "run", "Test": "TestAppLifecycle/park_and_wake_on_request"},
     {"Action": "output", "Test": "TestAppLifecycle/park_and_wake_on_request", "Output": "    app_test.go:150: metric wake_first_request_ms=812\n"},
@@ -59,6 +60,7 @@ class ReportTest(unittest.TestCase):
         self.assertIn("--- FAIL TestAppLifecycle/http_request_logs", out)
         self.assertIn("Not found (not_found)", out)
         self.assertIn("wake_first_request_ms=812", out)
+        self.assertIn("warnings:\n  deploy e2ej-x aborted for capacity (RAM headroom); retrying once in 60s  (TestAppLifecycle/deploy_v1)", out)
 
     def test_live_progress_prints_each_step_once(self):
         _, out = run(EVENTS)
