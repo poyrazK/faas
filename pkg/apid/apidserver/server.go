@@ -158,6 +158,7 @@ type server struct {
 	appEvents                              appevents.Service  // ADR-977; Host wired in newServer
 	serviceMap                             servicemap.Service // ADR-1131; Host wired in newServer
 	logSearch                              logsearch.Service  // ADR-20261018083536; Host wired in newServer
+	logReads                               *logsearch.ReadLimiter
 	dashboards                             dashboards.Service // ADR-20261022173833; Host wired in newServer
 	incidents                              incidents.Service  // ADR-20261022193512; Host wired in newServer
 	// configGuardTelemetry overrides the store's request telemetry for
@@ -1555,6 +1556,7 @@ func newServerWithDeps(
 	}
 	s.platformFlagAdmin.Host = platformFlagAdminHost{s}
 	s.logSearch.Host = logSearchHost{s}
+	s.logReads = logsearch.NewReadLimiter(api.LogReadsInFlightPerAccount, api.LogReadsInFlightMax, api.LogReadSlotWait)
 	s.dashboards.Host = dashboardsHost{s}
 	s.incidents.Host = incidentsHost{s}
 	s.previews.Host = previewsHost{s}
@@ -4919,6 +4921,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/github/sync", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubSync))))
 	mux.Handle("POST /dashboard/apps/{slug}/github/disconnect", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubDisconnect))))
 	mux.Handle("POST /dashboard/apps/{slug}/github/activity/retry", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubRetry))))
+	mux.Handle("POST /dashboard/apps/{slug}/preview/{previewSlug}/destroy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDestroyPreview))))
 	// Issue #961 / Mega-B PR-3 — GET /v1/templates is the dashboard's
 	// source of truth for the template catalog (handlers_templates.go).
 	// Mirrors cmd/gregale/templates.Names without importing the CLI's

@@ -1536,7 +1536,8 @@ WITH page AS MATERIALIZED (
 )
 SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
        p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
-       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at,
+       bc.data AS completed_data
 FROM page p
 LEFT JOIN LATERAL (
  SELECT id, data, at FROM events
@@ -1544,7 +1545,7 @@ LEFT JOIN LATERAL (
  ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
 ) bs ON true
 LEFT JOIN LATERAL (
- SELECT at FROM events
+ SELECT at, data FROM events
  WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
  ORDER BY at ASC, id ASC LIMIT 1
 ) bc ON true
@@ -1563,7 +1564,8 @@ WITH page AS MATERIALIZED (
 )
 SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
        p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
-       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at,
+       bc.data AS completed_data
 FROM page p
 LEFT JOIN LATERAL (
  SELECT id, data, at FROM events
@@ -1571,11 +1573,26 @@ LEFT JOIN LATERAL (
  ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
 ) bs ON true
 LEFT JOIN LATERAL (
- SELECT at FROM events
+ SELECT at, data FROM events
  WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
  ORDER BY at ASC, id ASC LIMIT 1
 ) bc ON true
 ORDER BY p.started_at ASC, p.wake_id;
+
+-- The account trace view's frozen-VM thaws (ADR-1151): a thaw resumes an
+-- instance under its original wake_id, so a request that thawed one names
+-- that wake. Read within the trace's time window through events_kind_at_idx.
+-- name: ListWakeThawsByWakeIDs :many
+SELECT (data->>'wake_id')::text AS wake_id, at,
+       (CASE WHEN jsonb_typeof(data->'total_ms') = 'number' THEN (data->>'total_ms')::numeric ELSE 0 END)::bigint AS total_ms
+FROM events
+WHERE kind = 'wake.thaw_breakdown'
+  AND at >= sqlc.arg(since)::timestamptz
+  AND at <= sqlc.arg(until)::timestamptz
+  AND data->>'app_id' = ANY(sqlc.arg(app_ids)::text[])
+  AND data->>'wake_id' = ANY(sqlc.arg(wake_ids)::text[])
+ORDER BY at ASC, id ASC
+LIMIT sqlc.arg(row_limit)::int;
 
 -- name: ListAllEventsPaged :many
 -- ADR-091 §3.7 / PR #3 — operator-obs backend audit-reading surface.

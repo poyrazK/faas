@@ -965,6 +965,19 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("mounting %d build secrets\n", len(dockerfileBuild.Secrets)))
 		}
 	}
+	// ADR-20261026090000: a Dockerfile build pulls its base images with the
+	// app's registry credentials, so it can build FROM a private image.
+	var registryCreds []SealedRegistryCredential
+	if fw == FrameworkDocker {
+		var skippedECR []string
+		var credsErr error
+		registryCreds, skippedECR, credsErr = loadBuildRegistryCredentials(ctx, b.store, app)
+		if credsErr != nil {
+			b.markFailed(ctx, build, state.FailureInfra, credsErr.Error(), buildStart)
+			return BuildResult{}, credsErr
+		}
+		b.emitRegistryCredentialLog(ctx, build.ID, registryCreds, skippedECR)
+	}
 	recipe := BuildCacheRecipe{
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
@@ -979,6 +992,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		AccountID:       app.AccountID,
 	}
 	recipe.BuildSecretScope = buildSecretScope(app.AccountID, app.ID, dep.Scope, buildSecrets)
+	recipe.RegistryAuthScope = registryAuthScope(app.ID, registryCreds)
 	reuseScope, reuseOptedIn := gitOpsReuseScope(app, dep)
 	recipe.GitOpsReuseScope = reuseScope
 	if sourceMaps != nil {
@@ -1104,6 +1118,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		DockerfileBuild:       dockerfileBuild,
 		GoCommand:             goCommand,
 		BuildSecrets:          buildSecrets,
+		RegistryCredentials:   registryCreds,
 		BuildID:               build.ID,
 		TenantID:              app.AccountID,
 		DeploymentID:          dep.ID,
@@ -1126,9 +1141,10 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Plan:                  string(acct.Plan),
 		WarmScopeKey:          builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
 	}
-	if len(buildSecrets) > 0 {
-		// A build with secrets never restores or leaves a warm builder, so a
-		// value cannot outlive its build in a snapshot (ADR-20261022185329).
+	if len(buildSecrets) > 0 || len(registryCreds) > 0 {
+		// A build with secrets or registry credentials never restores or
+		// leaves a warm builder, so a value cannot outlive its build in a
+		// snapshot (ADR-20261022185329, ADR-20261026090000).
 		vmReq.WarmScopeKey = ""
 	}
 	warmVM, warmResult, warmSnapshot, warmStarted := b.prepareWarmBuilder(ctx, slot, vmReq)

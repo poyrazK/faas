@@ -45,6 +45,16 @@ with the default `FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY=false`, fixed by
 OpenAPI contract preview have no end-to-end test; six routes capabilities are
 `internal` and three `preview` (ADR-20261023115741).
 
+A follow-up review (2026-10-26,
+[ADR-20261026143210](adr/20261026143210-route-labels-for-served-routes.md))
+closed three gaps: a route now earns one of the app's 50 labels only after
+the app answers it, so scanner 404s and made-up methods can no longer blind
+the monitor, insights and route list; routes analytics reads stop at 10 s and
+tell the caller to narrow the window; and route priorities, throttle
+suggestions and route lifecycle review refuse the Free plan, as the catalog
+lists them. Residual: an app that answers every path with 200 can still have
+its labels filled unless it declares its routes.
+
 ## Every capability behind a platform flag — 2026-10-23 (branch, not released)
 
 The product catalog now lists every customer capability (161, from the

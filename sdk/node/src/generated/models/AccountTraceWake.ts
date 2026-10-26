@@ -8,12 +8,28 @@
 export type AccountTraceWake = {
   wake_id: string;
   /**
-   * How the instance started, for example restore or cold_boot.
+   * How the instance started, for example restore or cold_boot. A planned restore that fell back to a cold boot reads cold_boot.
    */
   method?: string;
   /**
    * Milliseconds from boot start to ready; omitted until the wake completed.
    */
   ready_in_ms?: number;
+  /**
+   * What schedd planned for this wake when it differs from method, such as restore for a restore that fell back to a cold boot.
+   */
+  planned_method?: string;
+  /**
+   * Closed reason for a restore that fell back to a cold boot, when one is reported.
+   */
+  restore_fallback_reason?: 'after_restore_failed';
+  /**
+   * True when the request resumed this wake's frozen instance instead of waiting for its boot. A thaw keeps the instance's original wake ID; method and ready_in_ms, which describe the original boot, are then omitted.
+   */
+  thawed?: boolean;
+  /**
+   * Milliseconds the thaw took from the wake request to the answer, when thawed.
+   */
+  thaw_ms?: number;
 };
 

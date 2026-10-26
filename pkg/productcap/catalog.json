@@ -2604,8 +2604,7 @@
       "routes": [
         "/dashboard/apps/{}/commit-sources",
         "/v1/apps/{}/commit-sources",
-        "/v1/commit-sources",
-        "/v1/uploads/{}/commit"
+        "/v1/commit-sources"
       ],
       "cli": [
         "commit"
@@ -5178,7 +5177,8 @@
         "/v1/deployments/{}/stages",
         "/v1/deployments/{}/url",
         "=/v1/uploads",
-        "=/v1/uploads/{}"
+        "=/v1/uploads/{}",
+        "=/v1/uploads/{}/commit"
       ]
     },
     {

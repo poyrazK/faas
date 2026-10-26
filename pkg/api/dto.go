@@ -5845,6 +5845,16 @@ type AccountTraceWake struct {
 	WakeID    string `json:"wake_id"`
 	Method    string `json:"method,omitempty"`
 	ReadyInMS int32  `json:"ready_in_ms,omitempty"`
+	// PlannedMethod and RestoreFallbackReason are set when a planned restore
+	// fell back to a cold boot, as on WakeTimelineJSONRow.
+	PlannedMethod         string `json:"planned_method,omitempty"`
+	RestoreFallbackReason string `json:"restore_fallback_reason,omitempty"`
+	// Thawed marks a request that resumed this wake's frozen instance
+	// (ADR-1151) instead of waiting for its boot; a thaw keeps the instance's
+	// original wake ID. ThawMS is how long the thaw took, and Method and
+	// ReadyInMS, which describe the original boot, are omitted.
+	Thawed bool  `json:"thawed,omitempty"`
+	ThawMS int32 `json:"thaw_ms,omitempty"`
 }
 
 // AccountTraceInvocation is a safe durable invocation lifecycle projection.
@@ -7181,6 +7191,12 @@ type WakeTimelineJSONRow struct {
 	AtCapacity         bool   `json:"at_capacity"`
 	AtCapacityPresent  bool   `json:"at_capacity_present"`
 	ReadyInMS          int32  `json:"ready_in_ms,omitempty"` // -1 = em-dash on absent
+	// PlannedMethod is the method schedd planned when vmmd ran another one,
+	// such as a restore that fell back to a cold boot; empty otherwise.
+	PlannedMethod string `json:"planned_method,omitempty"`
+	// RestoreFallbackReason is the closed reason for that fallback when one
+	// is reported (after_restore_failed); empty otherwise.
+	RestoreFallbackReason string `json:"restore_fallback_reason,omitempty"`
 }
 
 // AccountSLOResponse is the flat account-wide SLO rollup returned by

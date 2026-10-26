@@ -1,4 +1,4 @@
-// adr: 373 — DNS-gated egress hook in the bridge resolver.
+// adr: 373 — DNS-gated egress hook in the bridge resolver; 20261026150000 — it carries the question name.
 package gateway
 
 import (

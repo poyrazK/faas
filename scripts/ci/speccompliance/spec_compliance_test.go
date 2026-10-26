@@ -485,6 +485,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/github/sync":                       true, // GitHub connection repair form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/disconnect":                 true, // GitHub connection disconnect form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/activity/retry":             true, // GitHub activity recovery form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/preview/{previewSlug}/destroy":     true, // ADR-20261026090000 previews-page Tear down form; session-cookie + CSRF adapter for POST /v1/preview/{slug}/destroy
 	"GET /dashboard/apps/{slug}/data-api":                           true, // ADR-968 session-auth owner HTML workspace
 	"GET /dashboard/data":                                           true, // ADR-1591 session-auth connection onboarding HTML
 	"POST /dashboard/data":                                          true, // ADR-1591 account-bound CSRF form adapter

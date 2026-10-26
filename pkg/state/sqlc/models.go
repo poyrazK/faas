@@ -11083,6 +11083,7 @@ type PrPreviewSet struct {
 	MemberAppIds   []string
 	ClosedAt       pgtype.Timestamptz
 	UpdatedAt      pgtype.Timestamptz
+	SetupError     pgtype.Text
 }
 
 type PrewarmIntent struct {
