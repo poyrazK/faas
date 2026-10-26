@@ -155,11 +155,12 @@ type server struct {
 	devBridgeObserver                      *devbridge.Observer
 	operation                              operation.Service // ADR-977; Host wired in newServer
 	productControl                         product.Service
-	appEvents                              appevents.Service  // ADR-977; Host wired in newServer
-	serviceMap                             servicemap.Service // ADR-1131; Host wired in newServer
-	logSearch                              logsearch.Service  // ADR-20261018083536; Host wired in newServer
-	dashboards                             dashboards.Service // ADR-20261022173833; Host wired in newServer
-	incidents                              incidents.Service  // ADR-20261022193512; Host wired in newServer
+	appEvents                              appevents.Service     // ADR-977; Host wired in newServer
+	eventPublishLimiter                    events.PublishLimiter // ADR-20261026140000
+	serviceMap                             servicemap.Service    // ADR-1131; Host wired in newServer
+	logSearch                              logsearch.Service     // ADR-20261018083536; Host wired in newServer
+	dashboards                             dashboards.Service    // ADR-20261022173833; Host wired in newServer
+	incidents                              incidents.Service     // ADR-20261022193512; Host wired in newServer
 	// configGuardTelemetry overrides the store's request telemetry for
 	// config guards (ADR-1451); nil reads it from the store.
 	configGuardTelemetry state.ConfigGuardTelemetryStore

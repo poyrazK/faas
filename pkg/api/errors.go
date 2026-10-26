@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -649,7 +650,10 @@ const (
 	// CodeDeployRateLimited marks an account that exhausted its plan's
 	// deployment admissions in the current one-hour window.
 	CodeDeployRateLimited = "deploy_rate_limited"
-	CodeUnauthorized      = "unauthorized"
+	// CodeEventPublishRateLimited marks a publication beyond the account's
+	// event publish rate (EventPublishLimits); retry after Retry-After.
+	CodeEventPublishRateLimited = "event_publish_rate_limited"
+	CodeUnauthorized            = "unauthorized"
 	// CodeAuthRateLimited marks a rejected credential after the caller's
 	// source IP exhausted the failed-auth budget. Valid credentials from the
 	// same IP are still admitted, so one broken client behind a shared NAT
@@ -2104,7 +2108,7 @@ func StatusForCode(code string) int {
 		CodeAccountAbuseHold:
 		return http.StatusForbidden
 	case CodePlanLimitConcur, CodeQuotaExhausted, CodeAppConcurReached, CodeConcurrencyThrottled, CodeConcurrencyQueueFull, CodeExportRateLimited, CodeDeployRateLimited,
-		CodeAuthRateLimited, CodeDevDebugSessionLimit:
+		CodeAuthRateLimited, CodeDevDebugSessionLimit, CodeEventPublishRateLimited:
 		return http.StatusTooManyRequests
 	case CodeSourceTooLarge, CodeInboundWebhookTooLarge:
 		return http.StatusRequestEntityTooLarge
@@ -2970,6 +2974,21 @@ func ErrDeployRateLimited(limit, retryAfterS int) *Problem {
 		WithLimit(int64(limit), int64(limit)).
 		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
 		WithDocs("https://gregale.dev/docs/deployments#rate-limit")
+}
+
+// ErrEventPublishRateLimited reports a publication of events beyond the
+// account's per-second event publish rate. Nothing was accepted.
+func ErrEventPublishRateLimited(perSecond, events int, retryAfter time.Duration) *Problem {
+	retryAfterS := int(math.Ceil(retryAfter.Seconds()))
+	if retryAfterS <= 0 {
+		retryAfterS = 1
+	}
+	return NewProblem(http.StatusTooManyRequests, CodeEventPublishRateLimited,
+		"Event publish rate limited",
+		fmt.Sprintf("This account publishes at most %d events per second; retry the same events after the indicated back-off.", perSecond)).
+		WithLimit(int64(perSecond), int64(events)).
+		WithHeader("Retry-After", strconv.Itoa(retryAfterS)).
+		WithDocs("https://gregale.dev/docs/event-driven#publish-rate")
 }
 
 // ErrAuthRateLimited reports that the caller's source IP exhausted the

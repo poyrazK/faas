@@ -29,6 +29,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/workpolicy"
@@ -199,6 +200,7 @@ func (h eventBenchHost) LoadApp(http.ResponseWriter, *http.Request, state.Accoun
 }
 func (h eventBenchHost) Store() state.Store                                         { return h.store }
 func (h eventBenchHost) WorkflowRuntimeEnabled() bool                               { return false }
+func (h eventBenchHost) PublishLimiter() *events.PublishLimiter                     { return nil }
 func (h eventBenchHost) Logger() *slog.Logger                                       { return h.log }
 func (h eventBenchHost) EmitAudit(context.Context, string, *string, map[string]any) {}
 func (h eventBenchHost) Notify(ctx context.Context, channel, payload string) error {
