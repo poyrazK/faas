@@ -91,22 +91,30 @@ func (i Integration) recordsAITraces() bool {
 
 // aiTraceState is one trace as admission reads it: whether it is recorded,
 // its settled calls, cost and streak of identical tool requests, the new
-// traces the integration recorded today, and its live leases.
+// traces the integration recorded today, its live leases, and whether the
+// app named it (AdmissionSpec.AITraceNamed).
 type aiTraceState struct {
 	known                       bool
 	calls, cost, repeats        int64
 	dayTraces                   int64
 	inflightCalls, inflightCost int64
+	named                       bool
 }
 
 // aiTraceRejection returns the trace limit that refuses a call, or "". A
-// trace never resets, so there is nothing to wait for.
+// trace never resets, so there is nothing to wait for. Past the day's
+// traces only a trace the app named is refused: a traceparent can come from
+// the app's own clients, and refusing those would let anyone who reaches
+// the app fill the day and stop every new trace of the integration. Such a
+// call goes on untracked.
 func aiTraceRejection(state aiTraceState, limits aiTraceLimits, reserve aiReservation) string {
 	switch {
 	case !limits.any():
 		return ""
-	case !state.known && state.dayTraces >= api.OutboundAITracesPerDay:
+	case !state.known && state.dayTraces >= api.OutboundAITracesPerDay && state.named:
 		return ReasonTraceUntracked
+	case !state.known && state.dayTraces >= api.OutboundAITracesPerDay:
+		return ""
 	case limits.calls > 0 && state.calls+state.inflightCalls >= limits.calls:
 		return ReasonTraceCallLimit
 	case limits.cost > 0 && (state.cost >= limits.cost || state.cost+state.inflightCost+reserve.cost > limits.cost):

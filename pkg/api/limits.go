@@ -430,6 +430,11 @@ const DeploymentResponseCheckPreflightTimeout = 5 * time.Second
 const OperationBusinessConditionsMax = 16
 const OperationBusinessConditionDescriptionMaxBytes = 1024
 
+// ManagedPostgresOverageCeilingMultiplier is how far past the plan's monthly
+// compute allowance a paid account with overage on may run its managed
+// PostgreSQL databases before the cap suspends them (ADR-20261025094915).
+const ManagedPostgresOverageCeilingMultiplier = 2
+
 // Bounded recovery of explicitly requested PostgreSQL cutover retirements.
 const ManagedPostgresCutoverDrainBatchMax = 32
 const ManagedPostgresCutoverDrainTimeout = 20 * time.Second
@@ -11371,6 +11376,18 @@ const (
 	TrafficSecurityMaxScopes        = 4_096
 	TrafficSecurityMaxRequestScopes = 16
 	TrafficSecurityMaxHeaderBytes   = 4096
+	// TrafficSecurityOutageGrace is how long a gateway keeps admitting from,
+	// and keeps admitted traffic on, the security generations it last
+	// verified while the store cannot be read (ADR-20261026160000, owner
+	// decision 2026-10-26). A store outage refuses new and cancels admitted
+	// traffic only after this; a revocation written meanwhile cannot land in
+	// an unreachable store anyway.
+	TrafficSecurityOutageGrace = 5 * time.Minute
+	// TrafficSecurityWarmScopeTTL keeps a scope refreshed in the background
+	// after its last request ends, so the app's next request admits without a
+	// store read. Warm scopes share TrafficSecurityMaxScopes with active ones
+	// and give way to them least recently used first.
+	TrafficSecurityWarmScopeTTL = 10 * time.Minute
 	// Runtime feature observations are small fleet snapshots, independent of
 	// request accounting and policy-revision convergence.
 	TrafficRuntimeObservationInterval  = 2 * time.Second
@@ -12514,6 +12531,12 @@ const (
 	RouteHealthPooledMaxSpan = 30 * time.Minute
 )
 
+// RouteAnalyticsQueryTimeout bounds each routes analytics read over retained
+// request telemetry (route advice, the awake report and the insights
+// evaluator that reuses them): Postgres cancels the statement past it and the
+// caller is told to narrow the window (ADR-20261026143210).
+const RouteAnalyticsQueryTimeout = 10 * time.Second
+
 // RouteAdvice bounds the route advisor (ADR-976): it reads retained request
 // telemetry for the busiest RouteAdviceMaxRoutes routes and only suggests a
 // rule for a route with at least RouteAdviceMinRequests in the window.
@@ -12599,7 +12622,8 @@ const (
 	MCPWakeHistoryTimeMaxBytes                    = 64
 	WakeHistoryPageDefault                        = 20
 	WakeHistoryPageMax                            = 100
-	AccountTraceWakesMax                          = 32 // wakes one account trace lookup reads to show each request's restore
+	AccountTraceWakesMax                          = 32  // wakes one account trace lookup reads to show each request's restore
+	AccountTraceThawsMax                          = 256 // frozen-VM thaws one account trace lookup reads for those wakes (Hunt 12 H12-49)
 	WakeHistoryCursorMaxBytes                     = 2048
 	MCPWakeHistoryCursorMaxBytes                  = 8192
 	MCPProfileFunctionsDefault                    = 10
