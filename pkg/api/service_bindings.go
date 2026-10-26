@@ -492,6 +492,11 @@ func ServiceBindingCanonicalURL(service string, transport ServiceBindingTranspor
 	return fmt.Sprintf("http://%s.svc.gregale:%d", service, ServiceBindingPort)
 }
 
+// ValidServiceName reports whether name is a service DNS label, the name
+// `<name>.internal` and `<name>.svc.gregale` resolve (1 to 63 lowercase
+// letters, digits and inner hyphens).
+func ValidServiceName(name string) bool { return validServiceCallerName(name) }
+
 func validServiceCallerName(name string) bool {
 	if len(name) == 0 || len(name) > 63 || name[0] == '-' || name[len(name)-1] == '-' {
 		return false

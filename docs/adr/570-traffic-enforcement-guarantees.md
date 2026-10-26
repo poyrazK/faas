@@ -333,6 +333,11 @@ request. Generations retain deleted identity tombstones and contain no policy
 or credentials. Ordinary rule, configuration and deployment-weight updates do
 not advance a security generation.
 
+Amended by ADR-20261026160000: a gateway admits from the generations its
+refresher last verified, reads Postgres only for untracked or stale scopes, and
+keeps verified traffic for a 5-minute outage grace. The paragraphs below are the
+original decision.
+
 Every participating HTTP admission verifies its security scopes in Postgres and
 registers a cancellation fence. Public requests enroll account/app before wake
 and the selected deployment before forwarding; managed service calls enroll
@@ -1047,6 +1052,23 @@ lease, submission, reservation and candidate intent unchanged. Promotion
 visibility, environment policy writes and verification/environment
 withdrawals remain separate follow-ups.
 
+### Follow-up: environment deletion and DNS-drift withdrawal
+
+Deleting a project environment cascades every custom domain bound to it. Like
+direct custom-domain removal and app deletion, that customer withdrawal can let
+another owner's wildcard serve the hostname, so environment deletion and
+failed-clone environment rollback join the account binding guard and commit
+only after the before/after analysis. Memory deletion projects the environment,
+its bound domains and its edge policies before deleting anything. Clone
+environment cleanup already refuses while a custom domain is bound, so it
+never cascades one.
+
+DNS drift is different: it records that the customer's DNS no longer points at
+the platform. It always commits, like platform-tenant suspension, even when the
+withdrawn domain lets a wildcard fallback serve the hostname; refusing it would
+keep a domain the platform no longer controls bound to the old app. A tenant
+hostname's failed DNS check keeps its verification and changes no binding.
+
 ### Follow-up: bounded request decision evidence
 
 Ordinary response completion checks the attached budget's wall-clock expiry as
@@ -1634,3 +1656,72 @@ guards. A non-read-committed admission writer locks that row FOR SHARE before
 the fence check: a retirement committed after its snapshot raises a
 serialization failure (the writer retries with a fresh snapshot), and one
 still in flight is waited for. Read-committed writers keep ADR-590's path.
+
+### Amendment: public enforcement waits for the compute fleet (2026-10-26)
+
+"Compute must be upgraded before public enforcement" was left to deploy order,
+and deploy order does not guarantee it. gatewayd-public runs on the control
+plane host and moves with the control-plane stage, before the compute
+gateways (docs/release-compatibility.md). On 2026-10-26 the rc.295
+control-plane stage put an enforcing public edge in front of rc.294 compute
+gateways, which never stamp `X-Faas-Traffic-Security`. Every successful
+application response became a 503 `traffic_revocation_unavailable` from
+10:39 to 12:14 UTC, until the control plane was rolled back. The version-skew
+gate did not catch it, because it compares protos and guest JSON only and
+does not see HTTP headers between gateways.
+
+The public edge now decides from the fleet's own runtime observations, every
+observation interval (2 s):
+
+- **Members** are the gateways the edge may dial. With database discovery, or
+  as a compute-node edge, that is every active compute node with a gateway
+  target, the compute gateway pool's own rule with no role filter. A
+  single-host or split-box edge dials one gateway, named by `FAAS_NODE_NAME`
+  when set.
+- **Required** means every member has a fresh observation (above) with
+  security-fence wiring. Missing metadata then refuses a successful or
+  long-lived answer, as specified above.
+- **Otherwise** answers pass unverified, as before this fence. That covers a
+  member with no observation (an N-1 daemon, or a node the observation
+  roster's role filter excludes), one without the wiring, one with a stale or
+  retired report, and an edge with no members. A stamped value is dropped,
+  not verified, because an N-1 gateway does not strip a guest's copy and a
+  forged snapshot could otherwise fill the edge's scope and exchange bounds.
+  Compute gateways that have the fence still enforce it at their own
+  admission.
+- **N-1 streams.** An N-1 gateway marks a stream only with
+  `Streaming-Status: streaming|upgrade-bypass`, the rule its own edge used. It
+  never sends the long-lived session header. While answers pass unverified,
+  the edge also treats such an answer as long-lived when it carries neither
+  the session header nor a compute response deadline, which every N gateway
+  writes. Without this rule, every SSE or streaming answer from an N-1 node
+  was cut at the public request budget.
+- The edge starts unverified until its first roster read, and keeps its last
+  decision while the roster cannot be read.
+- Metrics: `gatewayd_public_traffic_security_enforced` (1 or 0),
+  `gatewayd_public_traffic_security_legacy_gateways`, and
+  `gatewayd_public_traffic_security_unverified_total`. Each change of
+  decision is logged with the gateways that lack the wiring.
+
+Bounds and limits:
+
+- **Rolling a compute node back from N to N-1.** gatewayd-internal retires its
+  observation on shutdown, so the edge stops requiring the snapshot within one
+  observation interval (about 2 s). A crash without retirement waits out
+  freshness (10 s) plus one interval. Answers that the restarting node gives
+  in that window can still be refused.
+- **Rolling the public edge back below the release that strips the snapshot
+  (rc.295)** while compute gateways stamp it lets the snapshot reach clients.
+  That exposes the app's own account, app and deployment IDs and their
+  revisions. Do not roll gatewayd-public below rc.295 once any compute
+  gateway runs rc.295 or later; roll compute back first (reverse deploy
+  order). Opt-in stamping, where the edge asks for the snapshot with a
+  request header, would remove the rule and is a follow-up.
+- **Unverified long-lived exchanges** are never enrolled at the edge.
+  Revocation cannot cut them at the public hop, and they outlive the switch
+  to required until they end. Compute gateways with the fence still cut
+  their side.
+- **Contract step.** The unverified path is deleted only after two
+  consecutive releases have run with every member reporting the wiring, and
+  not before rc.297. That is a separate change, with the release-compatibility
+  tests updated to match.

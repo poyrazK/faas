@@ -42035,6 +42035,24 @@ CREATE TABLE public.mail_suppressions (
 
 
 --
+-- Name: managed_postgres_account_overage; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.managed_postgres_account_overage (
+    subject_id uuid NOT NULL,
+    enabled boolean NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: TABLE managed_postgres_account_overage; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.managed_postgres_account_overage IS 'Whether a paid account runs its managed PostgreSQL databases past the monthly compute allowance, up to 2x, before suspension; written only by apid (ADR-20261025094915).';
+
+
+--
 -- Name: managed_postgres_accounting_reconciliations; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -53568,7 +53586,7 @@ CREATE TABLE public.scenario_test_members (
     chaos_generation uuid,
     CONSTRAINT scenario_test_members_chaos_rules_array_check CHECK ((jsonb_typeof(chaos_rules) = 'array'::text)),
     CONSTRAINT scenario_test_members_run_id_check CHECK ((run_id ~ '^[0-9a-f]{32}$'::text)),
-    CONSTRAINT scenario_test_members_workload_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$'::text))
+    CONSTRAINT scenario_test_members_service_name_check CHECK ((workload_name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$'::text))
 );
 
 
@@ -61980,6 +61998,14 @@ ALTER TABLE ONLY public.magic_link_tokens
 
 ALTER TABLE ONLY public.mail_suppressions
     ADD CONSTRAINT mail_suppressions_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: managed_postgres_account_overage managed_postgres_account_overage_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_account_overage
+    ADD CONSTRAINT managed_postgres_account_overage_pkey PRIMARY KEY (subject_id);
 
 
 --
@@ -92557,6 +92583,14 @@ ALTER TABLE ONLY public.magic_link_tokens
 
 ALTER TABLE ONLY public.mail_suppressions
     ADD CONSTRAINT mail_suppressions_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: managed_postgres_account_overage managed_postgres_account_overage_subject_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.managed_postgres_account_overage
+    ADD CONSTRAINT managed_postgres_account_overage_subject_id_fkey FOREIGN KEY (subject_id) REFERENCES public.resource_namespaces(id) ON DELETE CASCADE;
 
 
 --

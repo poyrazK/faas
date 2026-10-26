@@ -3539,6 +3539,10 @@ type Querier interface {
 	// (its first), scoped to the account's apps before reading wake metadata, with
 	// the same boot and completion reads as ListAppWakeHistoryPage.
 	ListWakeHistoryByWakeIDs(ctx context.Context, db DBTX, arg ListWakeHistoryByWakeIDsParams) ([]ListWakeHistoryByWakeIDsRow, error)
+	// The account trace view's frozen-VM thaws (ADR-1151): a thaw resumes an
+	// instance under its original wake_id, so a request that thawed one names
+	// that wake. Read within the trace's time window through events_kind_at_idx.
+	ListWakeThawsByWakeIDs(ctx context.Context, db DBTX, arg ListWakeThawsByWakeIDsParams) ([]ListWakeThawsByWakeIDsRow, error)
 	ListWarmPoolReconciliationAppIDs(ctx context.Context, db DBTX, nodeID string) ([]string, error)
 	ListWatchingAppConfigGuards(ctx context.Context, db DBTX, rowLimit int32) ([]AppConfigGuard, error)
 	ListWorkerRecoveryApps(ctx context.Context, db DBTX, arg ListWorkerRecoveryAppsParams) ([]pgtype.UUID, error)
@@ -4022,9 +4026,12 @@ type Querier interface {
 	ManagedPostgresCutoverUnreleasedSourceFences(ctx context.Context, db DBTX, cutoverID string) (int64, error)
 	ManagedPostgresDrainPlanHasUnplannedInstances(ctx context.Context, db DBTX, arg ManagedPostgresDrainPlanHasUnplannedInstancesParams) (bool, error)
 	ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg ManagedPostgresDueBindingsParams) ([]ManagedPostgresBinding, error)
+	// ADR-20261025094915: managed PostgreSQL compute overage and cap subjects.
+	ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)
 	ManagedPostgresPersonalDatabaseReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalDatabaseReferenceParams) (bool, error)
 	ManagedPostgresUsageForSubject(ctx context.Context, db DBTX, arg ManagedPostgresUsageForSubjectParams) (ManagedPostgresUsageForSubjectRow, error)
+	ManagedPostgresUsageSubjects(ctx context.Context, db DBTX, databaseIds []pgtype.UUID) ([]ManagedPostgresUsageSubjectsRow, error)
 	ManagedWorkflowEffectAppScope(ctx context.Context, db DBTX, appID string) (ManagedWorkflowEffectAppScopeRow, error)
 	MarkAppForkRunning(ctx context.Context, db DBTX, arg MarkAppForkRunningParams) (AppFork, error)
 	MarkCheckedRollbackReady(ctx context.Context, db DBTX, targetID pgtype.UUID) error
@@ -6296,6 +6303,7 @@ type Querier interface {
 	// Enrollment and policy changes invalidate saved disable-email links, including
 	// while issuance/delivery gates are off. Burns of recovery codes keep the factor.
 	SetMFASecret(ctx context.Context, db DBTX, arg SetMFASecretParams) (int64, error)
+	SetManagedPostgresOverage(ctx context.Context, db DBTX, arg SetManagedPostgresOverageParams) error
 	SetMigrationAdmissionCleaned(ctx context.Context, db DBTX, arg SetMigrationAdmissionCleanedParams) (int64, error)
 	SetMigrationAdmissionCleaning(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	SetMigrationSourceRetiring(ctx context.Context, db DBTX, leaseToken string) (int64, error)

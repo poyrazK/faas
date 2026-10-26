@@ -1025,6 +1025,10 @@ cgroup-metrics-test: ## Test the per-slice cgroup metrics collector (ADR-2026102
 postgres-activity-metrics-test: ## Test the control-plane PostgreSQL activity collector
 	python3 scripts/ops/faas_postgres_activity_metrics_test.py
 
+.PHONY: obs-gate-test
+obs-gate-test: ## Test the observability go/no-go check (ADR-20261023124955 §7)
+	python3 scripts/ops/obs_gate_test.py
+
 .PHONY: gcp-public-beta-policy-test
 gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM transformer
 	python3 scripts/ops/gcp_public_beta_audit_test.py
