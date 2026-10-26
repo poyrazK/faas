@@ -36,6 +36,9 @@ import (
 func (s *server) renderPreviewsList(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
 	ctx := r.Context()
 	rows, err := s.store.ListPreviewsForAccount(ctx, acct.ID)
+	if err == nil {
+		rows, _, err = s.visibleAccountApps(r, acct, rows)
+	}
 	if err != nil {
 		renderProblem(w, log, err)
 		return
