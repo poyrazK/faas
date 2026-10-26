@@ -29,7 +29,7 @@
 //	          (cmd/apid/upload_session_reaper.go) sweeps status='open'
 //	          expired rows and terminal rows whose grace (24h for a
 //	          committed source, never while its deployment is in
-//	          flight; 1h otherwise, ADR-20261026120000)
+//	          flight; 1h otherwise, ADR-20261026152731)
 //	          has elapsed.
 //	cancel  → os.Remove(.part) AFTER the row's status flips to
 //	          cancelled.

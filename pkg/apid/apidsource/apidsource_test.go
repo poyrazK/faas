@@ -314,7 +314,7 @@ func TestEnqueue_ExplicitDockerfileOverridesLanguageProfile(t *testing.T) {
 
 // A gregale.yaml build: section reaches Enqueue as a Dockerfile path; it
 // selects the Docker pipeline whatever the deployment's provenance kind
-// (ADR-20261026120000).
+// (ADR-20261026152731).
 func TestEnqueue_DockerfilePathSelectsDockerForGitHubDeploys(t *testing.T) {
 	st := state.NewMemStore()
 	app := mustSeedApp(t, st)

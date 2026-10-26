@@ -305,7 +305,7 @@ func TestMemStoreUploadSession_Reaper(t *testing.T) {
 	})
 
 	// Row 3: committed + last_patched past the 24h source retention →
-	// stale sweep picks up (ADR-20261026120000).
+	// stale sweep picks up (ADR-20261026152731).
 	seedUploadSession(t, m, struct {
 		id          string
 		account     string
@@ -388,7 +388,7 @@ func TestMemStoreUploadSession_Reaper(t *testing.T) {
 }
 
 // TestMemStoreUploadSession_ReaperKeepsInFlightSource pins
-// ADR-20261026120000: on a single box the committed .part is the build
+// ADR-20261026152731: on a single box the committed .part is the build
 // source, so it survives while its deployment can still build, however
 // old; a cancelled part keeps the 1h grace. ListInFlightDeploymentSpoolPaths
 // names the same in-flight deployment's files for the spool sweeper.

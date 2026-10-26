@@ -90,7 +90,7 @@ func scanValidatorBundle(path string, data []byte) (findings []Finding, ok bool)
 // AllowSecretMarker, anywhere on a line, tells the scanner the value on that
 // line is deliberately committed (a test fixture, a documented example key).
 // It is the explicit, reviewable escape hatch for source files; the line is
-// still uploaded unchanged (ADR-20261026120000).
+// still uploaded unchanged (ADR-20261026152731).
 const AllowSecretMarker = "gregale:allow-secret"
 
 var allowSecretMarker = []byte(AllowSecretMarker)

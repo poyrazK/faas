@@ -16,7 +16,7 @@ func TestMemSourceSpoolInFlightPaths(t *testing.T) {
 }
 
 // The spool sweeper keeps every file a deployment that can still build or
-// image names (ADR-20261026120000): its source archive and its build log.
+// image names (ADR-20261026152731): its source archive and its build log.
 // Terminal deployments release theirs. It returns the app and its
 // deployment IDs keyed by status name.
 func testSourceSpoolInFlightPaths(t *testing.T, store state.ContractTestStore) (state.App, map[string]string) {

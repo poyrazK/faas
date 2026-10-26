@@ -20,7 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 )
 
-// ADR-20261026120000 source packaging: overridable defaults, Dockerfile
+// ADR-20261026152731 source packaging: overridable defaults, Dockerfile
 // contexts, dereferenced symlinks, submodules, Git LFS and the server's
 // size limits.
 

@@ -6,7 +6,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
-// Source deploy GA exports (ADR-20261026120000).
+// Source deploy GA exports (ADR-20261026152731).
 
 var ScanForStatefulShapeAtRoot = scanForStatefulShapeAtRoot
 

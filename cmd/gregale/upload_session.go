@@ -46,7 +46,7 @@ type resumableUploadProgress func(uploaded, total int64)
 // on the legacy path until the rollout mutation is made transactional with
 // upload commit. The session's deploy options carry no per-revision env or
 // MCP task migration override, so those deploys use multipart too; before,
-// --mcp-task-migration-override was silently dropped (ADR-20261026120000).
+// --mcp-task-migration-override was silently dropped (ADR-20261026152731).
 func canUseResumableUpload(sh shape, runtime, handler string, dockerfile bool, sourceRoot string, ann api.DeployAnnotations, trafficPercent int, canaryPreset, canaryStages string) bool {
 	return (sh == shapeApp || sh == shapeFunction) &&
 		len(ann.OverrideEnv) == 0 &&

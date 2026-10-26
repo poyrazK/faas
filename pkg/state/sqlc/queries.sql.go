@@ -85623,7 +85623,7 @@ type ReapStaleUploadPartFilesRow struct {
 // as a follow-up ADR rather than conflated into PR-1's
 // migration slot 533.
 //
-// ADR-20261026120000: on a single-box install the committed .part IS the
+// ADR-20261026152731: on a single-box install the committed .part IS the
 // build source, so it is kept while its deployment is in flight (a build
 // may queue for hours) and for the 24h source-retention window that
 // `deploys retry` relies on. Cancelled and expired parts keep the 1h grace.
