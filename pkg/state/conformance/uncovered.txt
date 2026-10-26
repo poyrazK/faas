@@ -25,9 +25,7 @@ AppForkByID
 AppForkExecByID
 AppForkForApp
 AppForksDueForTeardown
-AppLogDrainByID
 AppLogDrainHealthByDrainID
-AppWebhookByID
 AppWebhookDeliveryByID
 AppendBuilderUsage
 AppendComputeNodeHeartbeat

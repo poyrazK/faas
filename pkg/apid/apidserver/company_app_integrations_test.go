@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"filippo.io/age"
 	"github.com/google/uuid"
 
 	"github.com/onebox-faas/faas/pkg/api"
@@ -20,6 +21,7 @@ import (
 //
 // adr: 20261026151103
 func TestOrgGovernsCompanyAppIntegrations(t *testing.T) {
+	useTestSealRecipient(t)
 	e := apidserver.Setup(t, api.PlanPro)
 	store := *e.Store()
 	ctx := t.Context()
@@ -117,6 +119,7 @@ func TestOrgGovernsCompanyAppIntegrations(t *testing.T) {
 //
 // adr: 20261026151103
 func TestDepartedCreatorsCompanyIntegrationsPause(t *testing.T) {
+	useTestSealRecipient(t)
 	e := apidserver.Setup(t, api.PlanPro)
 	store := *e.Store()
 	ctx := t.Context()
@@ -161,4 +164,17 @@ func TestDepartedCreatorsCompanyIntegrationsPause(t *testing.T) {
 func alertRuleRequest() api.CreateAlertRuleRequest {
 	return api.CreateAlertRuleRequest{Name: "p99 > 500ms", Metric: "latency_p99_ms", Comparison: "gt", Threshold: 500, WindowSpec: "5m",
 		WebhookURL: "https://example.com/hook", WebhookSecret: "shh"}
+}
+
+// useTestSealRecipient lets the test seal webhook secrets: apid refuses to
+// store one without the host's age recipient.
+func useTestSealRecipient(t *testing.T) {
+	t.Helper()
+	identity, err := age.GenerateX25519Identity()
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := *apidserver.SetSecretRecipient
+	*apidserver.SetSecretRecipient = func() *age.X25519Recipient { return identity.Recipient() }
+	t.Cleanup(func() { *apidserver.SetSecretRecipient = previous })
 }
