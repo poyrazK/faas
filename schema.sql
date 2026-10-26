@@ -34113,7 +34113,7 @@ CREATE TABLE public.dead_letter_events (
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     environment_owned boolean DEFAULT false NOT NULL,
     CONSTRAINT dead_letter_events_retry_count_check CHECK ((retry_count >= 0)),
-    CONSTRAINT dead_letter_events_source_check CHECK ((source = ANY (ARRAY['invocation'::text, 'trigger_record'::text, 'webhook_delivery'::text, 'job_run'::text, 'workflow_run'::text])))
+    CONSTRAINT dead_letter_events_source_kind_check CHECK ((source = ANY (ARRAY['invocation'::text, 'trigger_record'::text, 'webhook_delivery'::text, 'job_run'::text, 'workflow_run'::text, 'event_route'::text])))
 );
 
 
