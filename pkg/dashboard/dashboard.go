@@ -700,6 +700,9 @@ type FailedEventPageItem struct {
 	LastFailed  string
 	ReplayedAt  string
 	Status      string
+	// Replayable is false for an entry replay cannot redrive (event_route);
+	// it can only be discarded.
+	Replayable bool
 }
 
 // AppWebhooksData is the customer-facing projection for the per-app
