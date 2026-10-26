@@ -52,21 +52,21 @@ func TestServiceDiscoveryDNSReportsForwardedAnswers(t *testing.T) {
 		t.Fatal(err)
 	}
 	type call struct {
-		remote string
-		addrs  []netip.Addr
-		ttl    time.Duration
+		remote, name string
+		addrs        []netip.Addr
+		ttl          time.Duration
 	}
 	var calls []call
 	hookErr := errors.New("vmmd down")
-	h.WithResolvedEgressHook(func(_ context.Context, remote string, addrs []netip.Addr, ttl time.Duration) error {
-		calls = append(calls, call{remote, addrs, ttl})
+	h.WithResolvedEgressHook(func(_ context.Context, remote, name string, addrs []netip.Addr, ttl time.Duration) error {
+		calls = append(calls, call{remote, name, addrs, ttl})
 		return hookErr
 	})
 	req := new(dns.Msg)
-	req.SetQuestion("api.example.", dns.TypeA)
+	req.SetQuestion("API.Example.", dns.TypeA)
 	w := &serviceDiscoveryResponseWriter{remote: &net.UDPAddr{IP: net.ParseIP("10.100.0.7"), Port: 40000}}
 	h.ServeDNS(w, req)
-	if len(calls) != 1 || calls[0].remote != "10.100.0.7:40000" || len(calls[0].addrs) != 1 ||
+	if len(calls) != 1 || calls[0].remote != "10.100.0.7:40000" || calls[0].name != "api.example" || len(calls[0].addrs) != 1 ||
 		calls[0].addrs[0] != netip.MustParseAddr("203.0.113.9") || calls[0].ttl != time.Minute {
 		t.Fatalf("hook calls = %+v", calls)
 	}

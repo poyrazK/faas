@@ -242,6 +242,12 @@ type Config struct {
 	// resolver reports an answer. ADR-031 allowlisted destinations are
 	// exempt; they are accepted before the gate.
 	DNSGated bool
+	// DatabaseEgress (ADR 20261026150000) declares the egress_db set and
+	// accepts guest TCP to its address and port pairs before the ADR-361
+	// port policy: the endpoints of the app's own managed databases, added
+	// by vmmd when the guest resolves their names. It is part of Config so
+	// a prepared namespace built without the set is never reused.
+	DatabaseEgress bool
 	// ServiceAddressCIDR admits guest TCP to private service addresses
 	// (ADR-576). The host DNATs that traffic onto the tenant-bridge service
 	// listeners. The zero prefix admits nothing.
@@ -805,8 +811,10 @@ func (c Config) NftCommands() [][]string {
 	add("add", "rule", "ip", "faas", "forward", "iifname", c.Tap, "tcp", "dport", "{", c.denySMTPPortsSet(), "}", "drop")
 	// ADR-361 port policy: everything not accepted above must be TCP to an
 	// egress_ports port. Allowlisted destinations were accepted above and
-	// keep ADR-031's any-port-but-25 semantics.
+	// keep ADR-031's any-port-but-25 semantics; bound managed databases are
+	// accepted just before it on their own port.
 	if !c.QualificationOnly {
+		cmds = append(cmds, c.egressDatabaseRule(nft, "ip")...)
 		cmds = append(cmds, c.egressPortRule(nft, "ip"))
 	}
 	if len(c.EgressAllowlist) > 0 {
@@ -894,6 +902,7 @@ func (c Config) NftCommands() [][]string {
 		cmds = append(cmds, rule)
 	}
 	if !c.QualificationOnly {
+		cmds = append(cmds, c.egressDatabaseRule(nft, "ip6")...)
 		cmds = append(cmds, c.egressPortRule(nft, "ip6"))
 	}
 	if len(c.EgressAllowlist) > 0 {
@@ -944,6 +953,13 @@ const (
 	// after EgressFlowTimeout of silence.
 	EgressFlowSet     = "egress_flows"
 	EgressFlowTimeout = "10m"
+	// EgressDatabaseSet holds address . port pairs of the app's bound managed
+	// databases (ADR 20261026150000), each with the answer's timeout, so the
+	// database port opens only to those addresses on every plan.
+	EgressDatabaseSet = "egress_db"
+	// egressDatabaseSetSize bounds the set: a database host answers with a
+	// handful of addresses and an app binds a few databases.
+	egressDatabaseSetSize = 1024
 )
 
 // egressPolicyObjects declares the policy counters and the egress_ports set
@@ -977,6 +993,10 @@ func (c Config) egressPolicyObjects(nft func(...string) []string, family string)
 			nft("add", "counter", family, "faas", EgressUnresolvedCounter, "{}"),
 			nft("add", "set", family, "faas", EgressResolvedSet, "{", "type", addrType, ";", "flags", "timeout", ";",
 				"size", strconv.Itoa(egressDstSetSize), ";", "}"))
+	}
+	if c.DatabaseEgress {
+		cmds = append(cmds, nft("add", "set", family, "faas", EgressDatabaseSet, "{", "type", addrType, ".", "inet_service", ";", "flags", "timeout", ";",
+			"size", strconv.Itoa(egressDatabaseSetSize), ";", "}"))
 	}
 	if elems := c.EgressPortElements(); elems != "" {
 		cmds = append(cmds, nft("add", "element", family, "faas", EgressPortsSet, "{", elems, "}"))
@@ -1110,6 +1130,44 @@ func (c Config) ResolvedEgressAddCommands(addrs []netip.Addr, ttl time.Duration)
 func (c Config) egressFlowRule(nft func(...string) []string, family string) []string {
 	return nft("add", "rule", family, "faas", "forward", "iifname", c.Tap, "ct", "state", "new",
 		"update", "@"+EgressFlowSet, "{", family, "daddr", ".", "tcp", "dport", "}")
+}
+
+// egressDatabaseRule accepts guest TCP to a bound managed database's address
+// and port (ADR 20261026150000). It runs just before the port policy, after
+// the DNS gate and the SMTP drop, so it widens only egress_ports and only for
+// those pairs.
+func (c Config) egressDatabaseRule(nft func(...string) []string, family string) [][]string {
+	if !c.DatabaseEgress {
+		return nil
+	}
+	return [][]string{nft("add", "rule", family, "faas", "forward", "iifname", c.Tap,
+		family, "daddr", ".", "tcp", "dport", "@"+EgressDatabaseSet, "accept")}
+}
+
+// DatabaseEgressAddCommands adds address . port pairs to the egress_db sets,
+// each expiring after ttl. v4 and v6 addresses go to their family's set. Run
+// them as one nft -f transaction.
+func (c Config) DatabaseEgressAddCommands(addrs []netip.Addr, port uint16, ttl time.Duration) [][]string {
+	nx := []string{"ip", "netns", "exec", c.Netns, "nft"}
+	nft := func(parts ...string) []string { return append(append([]string{}, nx...), parts...) }
+	secs := int(max(ttl, time.Second) / time.Second)
+	var v4, v6 []string
+	for _, a := range addrs {
+		elem := fmt.Sprintf("%s . %d timeout %ds", a.Unmap(), port, secs)
+		if a.Unmap().Is4() {
+			v4 = append(v4, elem)
+		} else {
+			v6 = append(v6, elem)
+		}
+	}
+	var cmds [][]string
+	if len(v4) > 0 {
+		cmds = append(cmds, nft("add", "element", "ip", "faas", EgressDatabaseSet, "{", strings.Join(v4, ", "), "}"))
+	}
+	if len(v6) > 0 {
+		cmds = append(cmds, nft("add", "element", "ip6", "faas", EgressDatabaseSet, "{", strings.Join(v6, ", "), "}"))
+	}
+	return cmds
 }
 
 // egressPortRule drops guest-originated TCP to any port outside egress_ports.

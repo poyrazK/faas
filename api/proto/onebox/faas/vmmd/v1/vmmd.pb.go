@@ -12937,10 +12937,14 @@ func (*AttachAppTaskAttached) Descriptor() ([]byte, []int) {
 }
 
 type AllowResolvedEgressRequest struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	SourceIp      string                 `protobuf:"bytes,1,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`
-	Addresses     []string               `protobuf:"bytes,2,rep,name=addresses,proto3" json:"addresses,omitempty"`
-	TtlSeconds    uint32                 `protobuf:"varint,3,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
+	state      protoimpl.MessageState `protogen:"open.v1"`
+	SourceIp   string                 `protobuf:"bytes,1,opt,name=source_ip,json=sourceIp,proto3" json:"source_ip,omitempty"`
+	Addresses  []string               `protobuf:"bytes,2,rep,name=addresses,proto3" json:"addresses,omitempty"`
+	TtlSeconds uint32                 `protobuf:"varint,3,opt,name=ttl_seconds,json=ttlSeconds,proto3" json:"ttl_seconds,omitempty"`
+	// database_port is non-zero when the answered name is one of the caller
+	// app's bound managed databases (ADR 20261026150000): vmmd also opens that
+	// TCP port to the addresses. An older resolver leaves it zero.
+	DatabasePort  uint32 `protobuf:"varint,4,opt,name=database_port,json=databasePort,proto3" json:"database_port,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -12992,6 +12996,13 @@ func (x *AllowResolvedEgressRequest) GetAddresses() []string {
 func (x *AllowResolvedEgressRequest) GetTtlSeconds() uint32 {
 	if x != nil {
 		return x.TtlSeconds
+	}
+	return 0
+}
+
+func (x *AllowResolvedEgressRequest) GetDatabasePort() uint32 {
+	if x != nil {
+		return x.DatabasePort
 	}
 	return 0
 }
@@ -17388,12 +17399,13 @@ const file_onebox_faas_vmmd_v1_vmmd_proto_rawDesc = "" +
 	"\x06output\x18\x02 \x01(\v2..onebox.faas.vmmd.v1.ExecuteAppTaskOutputChunkH\x00R\x06output\x12I\n" +
 	"\bterminal\x18\x03 \x01(\v2+.onebox.faas.vmmd.v1.ExecuteAppTaskResponseH\x00R\bterminalB\a\n" +
 	"\x05frame\"\x17\n" +
-	"\x15AttachAppTaskAttached\"x\n" +
+	"\x15AttachAppTaskAttached\"\x9d\x01\n" +
 	"\x1aAllowResolvedEgressRequest\x12\x1b\n" +
 	"\tsource_ip\x18\x01 \x01(\tR\bsourceIp\x12\x1c\n" +
 	"\taddresses\x18\x02 \x03(\tR\taddresses\x12\x1f\n" +
 	"\vttl_seconds\x18\x03 \x01(\rR\n" +
-	"ttlSeconds\"2\n" +
+	"ttlSeconds\x12#\n" +
+	"\rdatabase_port\x18\x04 \x01(\rR\fdatabasePort\"2\n" +
 	"\x16AllowResolvedEgressAck\x12\x18\n" +
 	"\amatched\x18\x01 \x01(\bR\amatched\"\x9f\x01\n" +
 	"\x1cUpdateAppEgressPolicyRequest\x12\x15\n" +

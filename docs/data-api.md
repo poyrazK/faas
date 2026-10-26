@@ -3,7 +3,8 @@
 Data APIs expose PostgreSQL relations as authenticated REST endpoints and
 generate TypeScript application types from the same schema. This is a managed
 PostgreSQL preview: your account and region must already be enabled for managed
-databases, `data_api` bindings, port 5432 egress, and app tasks.
+databases, `data_api` bindings and app tasks. The binding opens the database's
+port for the API on every plan.
 
 For a complete application starting point, run
 `gregale init --template data-api-starter --path notes`. The

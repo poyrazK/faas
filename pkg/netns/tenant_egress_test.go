@@ -223,3 +223,34 @@ func TestTenantEgressDNSGate(t *testing.T) {
 		t.Fatalf("add commands = %v", cmds)
 	}
 }
+
+// ADR 20261026150000: a bound managed database's address and port are
+// accepted after the DNS gate and the SMTP drop, just before the port policy.
+func TestTenantEgressDatabaseEgress(t *testing.T) {
+	c := egressTestConfig()
+	c.DNSGated, c.DatabaseEgress = true, true
+	lines := renderedLines(c)
+	for _, tc := range []struct{ family, addrType string }{{"ip", "ipv4_addr"}, {"ip6", "ipv6_addr"}} {
+		lineIndex(t, lines, "add set "+tc.family+" faas egress_db { type "+tc.addrType+" . inet_service ; flags timeout ; size 1024 ; }")
+		gate := lineIndex(t, lines, "rule "+tc.family+" faas forward iifname tap0 ct state new "+tc.family+" daddr != @egress_resolved")
+		accept := lineIndex(t, lines, "rule "+tc.family+" faas forward iifname tap0 "+tc.family+" daddr . tcp dport @egress_db accept")
+		port := lineIndex(t, lines, "rule "+tc.family+" faas forward iifname tap0 tcp dport != @egress_ports")
+		if gate >= accept || accept+1 != port {
+			t.Fatalf("%s: database accept (%d) must follow the DNS gate (%d) and directly precede the port policy (%d)", tc.family, accept, gate, port)
+		}
+	}
+	if smtp := lineIndex(t, lines, "rule ip faas forward iifname tap0 tcp dport { 25"); smtp >= lineIndex(t, lines, "@egress_db accept") {
+		t.Fatal("SMTP must drop before the database accept")
+	}
+	for _, line := range renderedLines(egressTestConfig()) {
+		if strings.Contains(line, "egress_db") {
+			t.Fatalf("a config without database egress rendered %q", line)
+		}
+	}
+	cmds := c.DatabaseEgressAddCommands([]netip.Addr{netip.MustParseAddr("::ffff:198.51.100.10"), netip.MustParseAddr("2001:db8::1")}, 5432, 10*time.Minute)
+	if len(cmds) != 2 ||
+		!strings.HasSuffix(strings.Join(cmds[0], " "), "add element ip faas egress_db { 198.51.100.10 . 5432 timeout 600s }") ||
+		!strings.HasSuffix(strings.Join(cmds[1], " "), "add element ip6 faas egress_db { 2001:db8::1 . 5432 timeout 600s }") {
+		t.Fatalf("add commands = %v", cmds)
+	}
+}

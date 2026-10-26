@@ -16,6 +16,13 @@ fixes two faults that only a hosted database exposes:
   longer fails on a dead captured session. `data-api create` and `data-api
   deploy` register the hooks.
 
+## Managed databases reachable on every plan
+
+[ADR 20261026150000](adr/20261026150000-managed-database-binding-egress.md):
+a managed PostgreSQL binding opens its database's port to that database's own
+addresses for the bound app, on every plan, so `data-api create` works on
+Hobby. Other destinations on 5432 still need Pro or Scale egress ports.
+
 ## Row-level security required for signed-in requests
 
 [ADR 20261026140223](adr/20261026140223-data-api-requires-row-level-security.md):

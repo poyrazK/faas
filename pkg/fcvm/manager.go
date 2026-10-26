@@ -681,6 +681,9 @@ type Instance struct {
 	// egress_resolved set expires (ADR-373), so repeated lookups of the
 	// same name skip the nft call until half the TTL has passed.
 	resolvedEgress map[netip.Addr]time.Time
+	// databaseEgress is when each address . port pair in this instance's
+	// egress_db set expires (ADR 20261026150000), on the same rule.
+	databaseEgress map[databaseEgressKey]time.Time
 	// TailCount (issue #667 / ADR-078) is the in-memory
 	// mirror of the per-instance `tail_count` SQL column.
 	// Incremented by the runner's WaitGroup each time a
@@ -874,6 +877,9 @@ type Manager struct {
 	// egress_resolved set: a restored snapshot may reconnect to addresses
 	// its guest resolved before the snapshot.
 	appResolved map[string]map[netip.Addr]time.Time
+	// appDatabaseResolved is the same per app for bound managed databases'
+	// address . port pairs (ADR 20261026150000).
+	appDatabaseResolved map[string]map[databaseEgressKey]time.Time
 	// ADR-570: serialize circuit updates and pending-network registration so
 	// a wake cannot miss a policy change before it enters the live map.
 	egressCircuitMu           sync.Mutex
