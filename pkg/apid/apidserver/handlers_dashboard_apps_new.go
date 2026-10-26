@@ -27,7 +27,6 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/onebox-faas/faas/cmd/gregale/templates"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
@@ -71,7 +70,7 @@ func (s *server) renderAppNew(w http.ResponseWriter, r *http.Request, log *slog.
 	// the dashboard catalog endpoint; starter projects are currently created
 	// locally with `gregale init`, not written into a GitHub repository by this
 	// server-side flow.
-	view.Templates = projectAppsNewTemplates(fetchTemplatesForWizard(log))
+	view.Templates = projectAppsNewTemplates(s.templateRows(flagSubject(r, acct)))
 
 	// §11 ownership proof. Empty env.GithubLogin → render the
 	// "Connect GitHub first" CTA only; the install/repo/template
@@ -222,40 +221,6 @@ func renderAppsNewPage(w http.ResponseWriter, log *slog.Logger, r *http.Request,
 	if err := dashboard.Render(w, log, httpsec.NonceFromContext(r.Context()), page); err != nil {
 		renderProblem(w, log, err)
 	}
-}
-
-// fetchTemplatesForWizard is a tiny adapter that calls the in-process
-// listTemplates logic without going through the HTTP wire. Same sort
-// + filter logic, no JSON marshal round-trip.
-//
-// Re-derives from templates.Names; this avoids a second HTTP
-// round-trip through /v1/templates. The handler is the
-// canonical sort/filter path; a future refactor that hoists
-// listTemplates into a service method will let both surfaces
-// share one implementation.
-func fetchTemplatesForWizard(log *slog.Logger) []templateView {
-	_ = log
-	rows := make([]templateView, 0, len(templates.Names))
-	for _, name := range templates.ListedNames() {
-		cat := templates.CategoryFor(name)
-		desc := templateDescription(name)
-		if cat == "" || desc == "" {
-			continue
-		}
-		rows = append(rows, templateView{Name: name, Category: cat, Description: desc})
-	}
-	catOrder := map[string]int{}
-	for i, c := range templates.CategoryOrder {
-		catOrder[c] = i
-	}
-	sort.SliceStable(rows, func(i, j int) bool {
-		oi, oj := catOrder[rows[i].Category], catOrder[rows[j].Category]
-		if oi != oj {
-			return oi < oj
-		}
-		return rows[i].Name < rows[j].Name
-	})
-	return rows
 }
 
 // Compile-time check: githubdgrpc.Repo is the wire type referenced

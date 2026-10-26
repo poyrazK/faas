@@ -871,8 +871,17 @@ const (
 )
 
 // Workflow reliability bounds (ADR-725, ADR-726, ADR-649).
+//
+// WorkflowDispatchSlots bounds the runs one schedd executes at once; a slot
+// waits on the customer's handler for up to the plan's step timeout. The
+// first WorkflowDispatchBaseSlots are offered every tick, and one more only
+// while every lower slot is busy. Database work is bounded separately by
+// WorkflowDispatchDBPhaseSlots, which a slot gives back while it waits on a
+// handler (ADR-20261025232118).
 const (
-	WorkflowDispatchSlots                = 4
+	WorkflowDispatchSlots                = 32
+	WorkflowDispatchBaseSlots            = 4
+	WorkflowDispatchDBPhaseSlots         = 4
 	WorkflowDispatchBatchPerSlot         = 8
 	WorkflowDispatchMaxPerApp            = 2
 	WorkflowDispatchMaxPerTenant         = 1
@@ -7181,6 +7190,17 @@ const (
 	// (DockerHubMirrorsEnv, ADR-20261025114554): every miss costs a round
 	// trip before the next mirror or Docker Hub itself is tried.
 	MaxDockerHubMirrors = 4
+
+	// GuestOpenFilesSoftLimit and GuestOpenFilesHardLimit are the
+	// RLIMIT_NOFILE every guest process inherits from guest-init
+	// (ADR-20261025111339). The kernel's 1024/4096 default capped a Go or
+	// JVM server, which raises its soft limit to the hard one, near 4,096
+	// sockets. The hard limit is the kernel's default fs.nr_open, as under
+	// Kubernetes; the soft limit stays low enough that programs which close
+	// or index every possible descriptor do not slow down. The guest's
+	// fs.file-max, which scales with its RAM, still bounds the total.
+	GuestOpenFilesSoftLimit = 65536
+	GuestOpenFilesHardLimit = 1 << 20
 
 	// ColdBootReadyWindowS is how long an app may take to become ready
 	// on any cold boot: the spec §6.1 COLD_BOOTING budget the scheduler's

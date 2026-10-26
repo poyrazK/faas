@@ -107,7 +107,12 @@ type Workload struct {
 	// DockerfileBuild carries a source-built Compose service's build.args
 	// and build.target (ADR-20261019142544). Nil builds the final stage with
 	// every ARG at its default.
-	DockerfileBuild  *api.DockerfileBuildOptions
+	DockerfileBuild *api.DockerfileBuildOptions
+	// GoCommand selects which `cmd/<GoCommand>` main package of the Go module
+	// at RootDir a source build compiles, for a module with several commands
+	// and none at its root (ADR-20261025134512). Empty builds what Railpack
+	// picks by default.
+	GoCommand        string
 	Image            string                  // prebuilt OCI image when the source declares one
 	ImageHealthcheck *api.ComposeHealthcheck // partial Compose healthcheck override, prebuilt or built
 	// ImageProcess carries the Compose entrypoint, user, working_dir and stop
@@ -413,7 +418,7 @@ func Scan(fsys fs.FS) (Result, error) {
 		highestTier = TierSingle
 	}
 
-	workloads := mergeByKey(seeds)
+	workloads := mergeByKey(dropShadowedGoCommands(seeds))
 	if err := attachProcfileReleaseCommand(fsys, workloads); err != nil {
 		return Result{}, err
 	}

@@ -2997,6 +2997,10 @@ from .object_bucket_access_grant import ObjectBucketAccessGrant
 from .object_bucket_access_grant_key_status import ObjectBucketAccessGrantKeyStatus
 from .object_bucket_access_grant_list import ObjectBucketAccessGrantList
 from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermission
+from .object_bucket_cors import ObjectBucketCORS
+from .object_bucket_cors_request import ObjectBucketCORSRequest
+from .object_bucket_cors_rule import ObjectBucketCORSRule
+from .object_bucket_cors_rule_allowed_methods_item import ObjectBucketCORSRuleAllowedMethodsItem
 from .object_bucket_encryption import ObjectBucketEncryption
 from .object_bucket_encryption_request import ObjectBucketEncryptionRequest
 from .object_bucket_encryption_state import ObjectBucketEncryptionState
@@ -4113,6 +4117,9 @@ from .plan_detection_warning_detector import PlanDetectionWarningDetector
 from .plan_detection_warning_outcome import PlanDetectionWarningOutcome
 from .plan_durable_entity_quota_migration_response_200 import PlanDurableEntityQuotaMigrationResponse200
 from .plan_managed import PlanManaged
+from .plan_managed_binding import PlanManagedBinding
+from .plan_managed_not_provisioned_reason import PlanManagedNotProvisionedReason
+from .plan_managed_provision import PlanManagedProvision
 from .plan_platform_tenant_reconciliation_request import PlanPlatformTenantReconciliationRequest
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
@@ -9045,6 +9052,10 @@ __all__ = (
     "ObjectBucketAccessGrantKeyStatus",
     "ObjectBucketAccessGrantList",
     "ObjectBucketAccessGrantPermission",
+    "ObjectBucketCORS",
+    "ObjectBucketCORSRequest",
+    "ObjectBucketCORSRule",
+    "ObjectBucketCORSRuleAllowedMethodsItem",
     "ObjectBucketEncryption",
     "ObjectBucketEncryptionRequest",
     "ObjectBucketEncryptionState",
@@ -10049,6 +10060,9 @@ __all__ = (
     "PlanDetectionWarningOutcome",
     "PlanDurableEntityQuotaMigrationResponse200",
     "PlanManaged",
+    "PlanManagedBinding",
+    "PlanManagedNotProvisionedReason",
+    "PlanManagedProvision",
     "PlanPlatformTenantReconciliationRequest",
     "PlanResponse",
     "PlanResponseScanSource",

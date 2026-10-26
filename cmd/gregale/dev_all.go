@@ -395,16 +395,22 @@ func cmdDevAll(sourceDir string, opts devAllOptions) int {
 	if err != nil {
 		return printErr("No developer apps selected", err)
 	}
+	// Every app's developer environment lives in one group workspace, derived
+	// from the --all root; each child joins the group's namespace after
+	// creating its environment, so the apps call each other by name
+	// (ADR-20261025121530).
+	developerID, err := loadOrCreateDeveloperID()
+	if err != nil {
+		return printErr("Could not load local developer identity", err)
+	}
+	workspace, err := deriveDevWorkspaceID(developerID, sourceDir)
+	if err != nil {
+		return printErr("Could not identify developer workspace", err)
+	}
 	if !opts.stop {
-		developerID, err := loadOrCreateDeveloperID()
-		if err != nil {
-			return printErr("Could not load local developer identity", err)
-		}
 		workspaceIDs := make([]string, len(apps))
-		for i, app := range apps {
-			if workspaceIDs[i], err = deriveDevWorkspaceID(developerID, app.SourceDir); err != nil {
-				return printErr("Could not identify developer workspace", err)
-			}
+		for i := range apps {
+			workspaceIDs[i] = workspace
 		}
 		client, err := authedClient()
 		if err != nil {
@@ -416,6 +422,9 @@ func cmdDevAll(sourceDir string, opts devAllOptions) int {
 		if err != nil {
 			return printErr("Developer environment quota exceeded", err)
 		}
+	}
+	if err := os.Setenv(devGroupWorkspaceEnv, workspace); err != nil {
+		return printErr("Could not start the developer loops", err)
 	}
 	if !jsonOutput {
 		labels := make([]string, len(apps))

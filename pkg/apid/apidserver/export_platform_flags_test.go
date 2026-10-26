@@ -163,3 +163,13 @@ func (r *server) CheckPlatformFlagWrite(flagKey string, value json.RawMessage, f
 func (r *server) CheckManifestSettings(acct state.Account, manifest *gregalemanifest.Manifest) *api.Problem {
 	return r.manifestSettingsProblem(acct, manifest)
 }
+
+// TemplateNames lists the catalog templates GET /v1/templates offers acct.
+func (r *server) TemplateNames(acct state.Account) []string {
+	rows := r.templateRows(platformflags.Subject{AccountID: acct.ID, Plan: string(acct.Plan)})
+	names := make([]string, 0, len(rows))
+	for _, row := range rows {
+		names = append(names, row.Name)
+	}
+	return names
+}
