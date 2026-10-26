@@ -1,7 +1,8 @@
 // s3client.go — minimal hand-rolled S3-compatible client (issue
-// #562). PUT and GET only; no list, no multipart, no presigned
-// URLs. The shipper's needs are narrow: gzip one file, ship it,
-// retrieve on `?after=7d`. Hand-rolling avoids the
+// #562). PUT and GET, plus list and delete for account erasure
+// (s3client_erase.go); no multipart, no presigned URLs. The
+// shipper's needs are narrow: gzip one file, ship it, retrieve on
+// `?after=7d`. Hand-rolling avoids the
 // aws-sdk-go-v2 vendor tree (50+ transitive deps, ~5 MB binary
 // growth) and keeps the signing surface auditable in one place.
 //

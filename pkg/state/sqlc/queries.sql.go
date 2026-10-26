@@ -14322,6 +14322,15 @@ func (q *Queries) DeleteGuardedCron(ctx context.Context, db DBTX, arg DeleteGuar
 	return err
 }
 
+const deleteLogArchiveErasure = `-- name: DeleteLogArchiveErasure :exec
+DELETE FROM log_archive_erasures WHERE account_id = $1::uuid
+`
+
+func (q *Queries) DeleteLogArchiveErasure(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteLogArchiveErasure, accountID)
+	return err
+}
+
 const deleteNotificationChannel = `-- name: DeleteNotificationChannel :execrows
 DELETE FROM notification_channels WHERE account_id = $1::uuid AND id = $2::uuid
 `
@@ -32525,6 +32534,25 @@ func (q *Queries) InsertLiveAppFork(ctx context.Context, db DBTX, arg InsertLive
 		&i.CrashCaptureID,
 	)
 	return i, err
+}
+
+const insertLogArchiveErasure = `-- name: InsertLogArchiveErasure :execrows
+INSERT INTO log_archive_erasures (account_id, deletion_requested_at)
+VALUES ($1::uuid, $2::timestamptz)
+ON CONFLICT (account_id) DO NOTHING
+`
+
+type InsertLogArchiveErasureParams struct {
+	AccountID           pgtype.UUID
+	DeletionRequestedAt pgtype.Timestamptz
+}
+
+func (q *Queries) InsertLogArchiveErasure(ctx context.Context, db DBTX, arg InsertLogArchiveErasureParams) (int64, error) {
+	result, err := db.Exec(ctx, insertLogArchiveErasure, arg.AccountID, arg.DeletionRequestedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const insertMCPAttentionAction = `-- name: InsertMCPAttentionAction :exec
@@ -58874,6 +58902,20 @@ func (q *Queries) LockWorkflowStepsForManualRetry(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const logArchiveErasureRequestedAt = `-- name: LogArchiveErasureRequestedAt :one
+SELECT deletion_requested_at FROM log_archive_erasures
+WHERE account_id = $1::uuid
+FOR UPDATE
+`
+
+// The deletion request the account's archived-log snapshot was taken for.
+func (q *Queries) LogArchiveErasureRequestedAt(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, logArchiveErasureRequestedAt, accountID)
+	var deletion_requested_at pgtype.Timestamptz
+	err := row.Scan(&deletion_requested_at)
+	return deletion_requested_at, err
+}
+
 const lookupCustomerOperationSubmission = `-- name: LookupCustomerOperationSubmission :one
 SELECT i.expires_at,coalesce(o.record,'null'::jsonb)::jsonb AS record
 FROM customer_operation_idempotency i
@@ -59354,6 +59396,23 @@ AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,
 // attempt closure and running-step reset in that order in one transaction.
 func (q *Queries) MarkLegacyWorkflowOutboundUnknown(ctx context.Context, db DBTX, runID pgtype.UUID) error {
 	_, err := db.Exec(ctx, markLegacyWorkflowOutboundUnknown, runID)
+	return err
+}
+
+const markLogArchiveInstanceErased = `-- name: MarkLogArchiveInstanceErased :exec
+UPDATE log_archive_erasure_instances SET erased_at = now()
+WHERE account_id = $1::uuid
+  AND instance_id = $2::uuid
+  AND erased_at IS NULL
+`
+
+type MarkLogArchiveInstanceErasedParams struct {
+	AccountID  pgtype.UUID
+	InstanceID pgtype.UUID
+}
+
+func (q *Queries) MarkLogArchiveInstanceErased(ctx context.Context, db DBTX, arg MarkLogArchiveInstanceErasedParams) error {
+	_, err := db.Exec(ctx, markLogArchiveInstanceErased, arg.AccountID, arg.InstanceID)
 	return err
 }
 
@@ -70087,6 +70146,38 @@ func (q *Queries) PendingLayerArtifactDeletions(ctx context.Context, db DBTX) ([
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pendingLogArchiveErasureInstances = `-- name: PendingLogArchiveErasureInstances :many
+SELECT instance_id FROM log_archive_erasure_instances
+WHERE account_id = $1::uuid AND erased_at IS NULL
+ORDER BY instance_id
+LIMIT $2::int
+`
+
+type PendingLogArchiveErasureInstancesParams struct {
+	AccountID pgtype.UUID
+	RowLimit  int32
+}
+
+func (q *Queries) PendingLogArchiveErasureInstances(ctx context.Context, db DBTX, arg PendingLogArchiveErasureInstancesParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, pendingLogArchiveErasureInstances, arg.AccountID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var instance_id pgtype.UUID
+		if err := rows.Scan(&instance_id); err != nil {
+			return nil, err
+		}
+		items = append(items, instance_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -96931,6 +97022,35 @@ func (q *Queries) SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 p
 		return nil, err
 	}
 	return items, nil
+}
+
+const snapshotLogArchiveErasureInstances = `-- name: SnapshotLogArchiveErasureInstances :execrows
+INSERT INTO log_archive_erasure_instances (account_id, instance_id)
+SELECT $1::uuid, s.instance_id
+FROM (
+    SELECT i.id AS instance_id
+    FROM instances i
+    JOIN apps a ON a.id = i.app_id
+    WHERE a.account_id = $1::uuid
+      AND (a.org_id IS NULL OR a.org_id IN (SELECT id FROM orgs WHERE personal_org))
+    UNION
+    SELECT u.instance_id
+    FROM usage_minutes u
+    WHERE u.account_id = $1::uuid
+      AND (u.org_id IS NULL OR u.org_id IN (SELECT id FROM orgs WHERE personal_org))
+) s
+ON CONFLICT (account_id, instance_id) DO NOTHING
+`
+
+// Every instance whose archived logs go with the account: the instances and
+// billing rows DeleteAccount removes, that is apps with no org or a personal
+// org. Billing rows outlive instance rows, so they cover parked history.
+func (q *Queries) SnapshotLogArchiveErasureInstances(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, snapshotLogArchiveErasureInstances, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const snapshotPublicationRuntimeChangedAt = `-- name: SnapshotPublicationRuntimeChangedAt :one
