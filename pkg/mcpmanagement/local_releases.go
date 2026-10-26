@@ -64,17 +64,17 @@ type envChangePlan struct {
 }
 
 type planLocalDeployArgs struct {
-	Path       string `json:"path" jsonschema:"Absolute path of the project directory to deploy as one app"`
-	App        string `json:"app" jsonschema:"App slug; the app is created on apply when it does not exist"`
+	Path       string `json:"path" jsonschema:"Absolute project directory"`
+	App        string `json:"app" jsonschema:"App slug; created on apply if missing"`
 	Reason     string `json:"reason" jsonschema:"Reviewable release reason; at most 280 characters"`
-	CreateOnly bool   `json:"create_only,omitempty" jsonschema:"Create the app without deploying, for example to set environment variables first"`
+	CreateOnly bool   `json:"create_only,omitempty" jsonschema:"Create the app without deploying"`
 }
 
 type planEnvChangeArgs struct {
 	App     string            `json:"app" jsonschema:"Existing Gregale app slug"`
-	Values  map[string]string `json:"values" jsonschema:"1 to 50 non-secret variables to set; keys match ^[A-Z][A-Z0-9_]*$ and values hold no newlines"`
+	Values  map[string]string `json:"values" jsonschema:"1 to 50 KEY: value pairs; keys match ^[A-Z][A-Z0-9_]*$, values hold no newlines"`
 	Reason  string            `json:"reason" jsonschema:"Reviewable change reason; at most 280 characters"`
-	Restart bool              `json:"restart,omitempty" jsonschema:"Restart the app so the values apply now; otherwise they apply on the next cold wake"`
+	Restart bool              `json:"restart,omitempty" jsonschema:"Restart so values apply now; otherwise on the next cold wake"`
 }
 
 func registerLocalReleases(s *mcp.Server, m *management) {
@@ -83,8 +83,8 @@ func registerLocalReleases(s *mcp.Server, m *management) {
 	if m.opts.LocalCLI == nil || m.opts.AllowedApps != nil || m.opts.Environments != nil {
 		return
 	}
-	register(s, m, "gregale_plan_local_deploy", "Review deploying a local project directory as one app through this machine's gregale CLI, without uploading. Infers the app shape, fingerprints the files and pins the app's release state for 15 minutes. A new app, or one serving nothing yet, goes live on apply; an app with a serving release is staged at 0% traffic for gregale_promote_deployment. Functions, multi-service projects and linked project directories stay in the CLI.", m.planLocalDeploy)
-	register(s, m, "gregale_plan_env_change", "Review setting non-secret environment variables on an app's default scope through the gregale CLI. A value that looks like a credential is refused: ask the user to run `gregale secrets set` and never ask for a secret value. Pins the newest config revision for 15 minutes.", m.planEnvChange)
+	register(s, m, "gregale_plan_local_deploy", "Review deploying a local directory as one app through this machine's gregale CLI, without uploading; pins the files and the app's release state for 15 minutes. Apply makes a new or non-serving app live; a serving app is staged at 0% for gregale_promote_deployment. Functions, multi-service projects and linked project directories stay in the CLI.", m.planLocalDeploy)
+	register(s, m, "gregale_plan_env_change", "Review setting non-secret environment variables on an app's default scope through the gregale CLI; pins the config revision for 15 minutes. Credential-like values are refused: ask the user to run `gregale secrets set`, never for the value.", m.planEnvChange)
 	if !m.opts.AllowWrites {
 		return
 	}

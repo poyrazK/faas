@@ -48,7 +48,9 @@ type Options struct {
 	// Environments is nil for local account access. Remote grants always set it.
 	Environments *EnvironmentConsent
 	// LocalCLI enables the local deploy and env tools on local connections.
-	LocalCLI      LocalCLI
+	LocalCLI LocalCLI
+	// Toolsets limits the listed tools (see ParseToolsets); nil lists all.
+	Toolsets      []string
 	planStore     *StateStore
 	planNamespace string
 	auditLogger   *slog.Logger
@@ -101,6 +103,13 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	}
 	if opts.Version == "" {
 		opts.Version = "dev"
+	}
+	if opts.Toolsets != nil {
+		toolsets, err := ParseToolsets(strings.Join(opts.Toolsets, ","))
+		if err != nil {
+			return nil, nil, err
+		}
+		opts.Toolsets = toolsets
 	}
 	if opts.AllowedApps != nil {
 		apps := make(map[string]string, len(opts.AllowedApps))
@@ -177,6 +186,9 @@ func register[In any](s *mcp.Server, m *management, name, description string, ha
 }
 
 func registerTool[In any](s *mcp.Server, m *management, name, description string, readOnly bool, handle func(context.Context, In) (any, error)) {
+	if !m.toolListed(name) {
+		return
+	}
 	m.toolNames[name] = true
 	m.toolWrites[name] = !readOnly
 	destructive := !readOnly
