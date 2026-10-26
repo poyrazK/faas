@@ -3598,6 +3598,7 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 			ResourceProfile:     *profile,
 			ExecutionMode:       *executionMode,
 			Healthcheck:         healthcheck,
+			AppProtocol:         strings.TrimSpace(*appProtocol),
 			QueueCanaryBindings: queueCanaryNames,
 			Release: deployPreflightScheduled(releaseAt, deployPreflightRelease(
 				*safeDeploy, *canaryPreset, *trafficPercent, rollbackOn5xxPtr,
