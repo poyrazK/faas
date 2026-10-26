@@ -288,7 +288,7 @@ func (e *Engine) wakeJobOnce(ctx context.Context, accountID, runID string, taskI
 	//
 	//    On any create-instance failure, release the lease + ledger slot. The
 	//    task has not been claimed yet, so it remains queued for the next tick.
-	if _, err := e.store.CreateAndClaimJobInstance(nodePlacementContext(ctx, placement), instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
+	if _, err := e.store.CreateAndClaimJobInstance(e.nodePlacementContext(ctx, placement), instanceID, job.ID, runID, taskIndex, string(state.StateColdBooting), ramMB, nodeID, instanceID, string(tok), leaseExpires, e.ownerNodeID); err != nil {
 		e.rollbackUnclaimedJobAdmission(ctx, instanceID, tok, "")
 		return JobWakeResult{}, fmt.Errorf("sched: WakeJob create and claim instance: %w", err)
 	}
