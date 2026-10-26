@@ -5776,7 +5776,17 @@ func (v *JailerVMM) stageEphemeralWritableAsForOwner(ctx context.Context, owner 
 	} else if !errors.Is(err, syscall.EXDEV) {
 		return "", fmt.Errorf("link ephemeral writable %s: %w", src, err)
 	}
-	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0o006, false)
+	// The image is this build's own scratch, so it goes to the jail uid as
+	// the linked copy above does. Left root-owned (with o+rw for the jail),
+	// the drive editor refuses it and every build's artifact export fails
+	// (ADR-20261025090100: it edits only jail-owned drives, never as root).
+	if err := os.Chmod(src, 0o600); err != nil {
+		return "", fmt.Errorf("chmod ephemeral writable %s: %w", src, err)
+	}
+	if err := chownJail(src, uid, gid); err != nil {
+		return "", err
+	}
+	return v.bindImageForOwner(ctx, owner, root, src, name, instance, 0, false)
 }
 
 // stageReadOnlyAs hardlinks a shared read-only image when possible and
