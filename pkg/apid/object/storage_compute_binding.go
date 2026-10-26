@@ -204,12 +204,15 @@ func (s *Service) newObjectStorageComputeBinding(ctx context.Context, acct state
 	if !s.ObjectStorageSecretSealReady() {
 		return state.ObjectS3Credential{}, nil, objectstorage.ErrUnavailable
 	}
-	recipient := s.Host.SecretRecipient()
+	recipients, kid, err := s.Host.StorageCredentialRecipients()
+	if err != nil {
+		return state.ObjectS3Credential{}, nil, objectstorage.ErrUnavailable
+	}
 	accessKeyID, secretAccessKey, err := api.GenerateObjectS3Credential()
 	if err != nil {
 		return state.ObjectS3Credential{}, nil, objectstorage.ErrUnavailable
 	}
-	sealed, err := secretbox.SealBytes(recipient, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
+	sealed, err := secretbox.SealBytesTo(recipients, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
 	if err != nil {
 		return state.ObjectS3Credential{}, nil, objectstorage.ErrUnavailable
 	}
@@ -223,7 +226,7 @@ func (s *Service) newObjectStorageComputeBinding(ctx context.Context, acct state
 	}
 	credential, err := store.CreateObjectS3ComputeBinding(ctx, state.ObjectS3ComputeBindingCreateRequest{Credential: state.ObjectS3Credential{
 		ID: credentialID, AccountID: acct.ID, BucketID: bucket.ID, AccessKeyID: accessKeyID,
-		SecretSealed: sealed, KID: recipient.String(), Label: req.Label, Permission: req.Permission,
+		SecretSealed: sealed, KID: kid, Label: req.Label, Permission: req.Permission,
 		Status: state.ObjectS3CredentialStatusActive, ManagedAppID: app.ID, ManagedScope: bucket.Scope, ManagedPrefix: req.Prefix,
 	}, Secrets: secrets, MaxCredentialsPerBucket: api.MaxObjectS3CredentialsPerBucket, MaxSecretsPerApp: limits.SecretCountMax})
 	if err != nil {
@@ -335,13 +338,17 @@ func (s *Service) RotateObjectStorageComputeBinding(w http.ResponseWriter, r *ht
 			return
 		}
 		wakeID = uuid.NewString()
-		recipient := s.Host.SecretRecipient()
+		recipients, kid, err := s.Host.StorageCredentialRecipients()
+		if err != nil {
+			BucketProblem(w, objectstorage.ErrUnavailable)
+			return
+		}
 		accessKeyID, secretAccessKey, err := api.GenerateObjectS3Credential()
 		if err != nil {
 			BucketProblem(w, objectstorage.ErrUnavailable)
 			return
 		}
-		sealed, err := secretbox.SealBytes(recipient, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
+		sealed, err := secretbox.SealBytesTo(recipients, s3gateway.CredentialSecretNamespace, []byte(secretAccessKey), 64)
 		if err != nil {
 			BucketProblem(w, objectstorage.ErrUnavailable)
 			return
@@ -355,7 +362,7 @@ func (s *Service) RotateObjectStorageComputeBinding(w http.ResponseWriter, r *ht
 		}
 		rotated, err = store.StageObjectS3CredentialRotation(r.Context(), state.ObjectS3CredentialRotationRequest{
 			AccountID: acct.ID, BucketID: bucket.ID, BindingID: credential.ID, WakeID: wakeID,
-			AccessKeyID: accessKeyID, SecretSealed: sealed, KID: recipient.String(), Secrets: secrets,
+			AccessKeyID: accessKeyID, SecretSealed: sealed, KID: kid, Secrets: secrets,
 		})
 		if err != nil {
 			BucketProblem(w, err)

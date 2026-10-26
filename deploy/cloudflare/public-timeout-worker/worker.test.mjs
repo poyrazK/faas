@@ -231,3 +231,64 @@ test("a pilot host still restores a transported 504 from the app edge", async ()
   assert.equal(response.headers.get("X-Faas-Edge-Original-Status"), null);
   assert.equal(response.headers.get("X-Faas-Error-Code"), "request_budget_exceeded");
 });
+
+// ADR-1343 cutover: "*" moves every app host and nothing else.
+const allAppsEnv = {
+  ORIGIN_HOSTNAME: "origin.gregale.dev",
+  APP_EDGE_ORIGIN_HOSTNAME: "app-edge.gregale.dev",
+  APP_EDGE_HOSTS: "*",
+  APP_EDGE_EXCLUDE_HOSTS: "kept-on-cp.gregale.dev",
+};
+
+for (const [host, want] of [
+  ["shop.gregale.dev", "app-edge.gregale.dev"],
+  ["pr-7-shop.gregale.dev", "app-edge.gregale.dev"],
+  ["a1b.gregale.dev", "app-edge.gregale.dev"],
+  ["api.gregale.dev", "origin.gregale.dev"],
+  ["operations.gregale.dev", "origin.gregale.dev"],
+  ["s3.gregale.dev", "origin.gregale.dev"],
+  ["app-edge.gregale.dev", "origin.gregale.dev"],
+  ["origin.gregale.dev", "origin.gregale.dev"],
+  ["status.gregale.dev", "origin.gregale.dev"],
+  ["www.gregale.dev", "origin.gregale.dev"],
+  ["tag-shop.gregale.dev", "origin.gregale.dev"],
+  ["ab.gregale.dev", "origin.gregale.dev"],
+  ["deep.shop.gregale.dev", "origin.gregale.dev"],
+  ["shop.example.com", "origin.gregale.dev"],
+  ["kept-on-cp.gregale.dev", "origin.gregale.dev"],
+]) {
+  test(`all-apps mode: ${host} -> ${want}`, async () => {
+    let resolved;
+    await handleRequest(new Request(`https://${host}/`), allAppsEnv, async (_req, init) => {
+      resolved = init.cf.resolveOverride;
+      return new Response("ok");
+    });
+    assert.equal(resolved, want);
+  });
+}
+
+test("all-apps mode follows APPS_DOMAIN", async () => {
+  let resolved;
+  await handleRequest(
+    new Request("https://shop.apps.example.net/"),
+    { ...allAppsEnv, APPS_DOMAIN: "apps.example.net" },
+    async (_req, init) => {
+      resolved = init.cf.resolveOverride;
+      return new Response("ok");
+    },
+  );
+  assert.equal(resolved, "app-edge.gregale.dev");
+});
+
+test("an excluded host stays on the control plane even when listed", async () => {
+  let resolved;
+  await handleRequest(
+    new Request("https://pilot.gregale.dev/"),
+    { ...appEdgeEnv, APP_EDGE_EXCLUDE_HOSTS: "pilot.gregale.dev" },
+    async (_req, init) => {
+      resolved = init.cf.resolveOverride;
+      return new Response("ok");
+    },
+  );
+  assert.equal(resolved, "origin.gregale.dev");
+});

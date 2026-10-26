@@ -14,8 +14,10 @@ faas_postgres_per_compute_pool_budget: 34
 # 5 database daemons per compute node (vmmd, imaged, builderd, schedd,
 # gatewayd-internal — the same five whose pool budgets sum to the 34 above)
 # x db.directHubOnMaxConns (2, being one parked hub connection plus MigrateUp's
-# boot advisory lock).
-faas_postgres_per_compute_direct_budget: 10
+# boot advisory lock), plus one for imaged: its deployment activation lock and
+# MarkDeploymentLive's ADR-570 traffic guard each pin a direct connection
+# (db.directNestedGuardHubOnMaxConns).
+faas_postgres_per_compute_direct_budget: 11
 
 # pgbouncer's own backends against the postmaster: default_pool_size +
 # reserve_pool_size from the pgbouncer role. This is the whole compute fleet's

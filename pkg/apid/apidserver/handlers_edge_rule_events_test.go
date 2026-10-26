@@ -98,6 +98,16 @@ func TestEdgeRuleEventsAPI(t *testing.T) {
 	if solved := read("?outcome=solved"); len(solved.Events) != 0 {
 		t.Fatalf("solved = %+v, want none", solved.Events)
 	}
+	// ADR-20261022105846 amendment 2: a penalty box is an event too.
+	if err := store.RecordEdgeRuleEvents(context.Background(), []state.EdgeRuleEvent{{
+		RuleID: rule.ID, AppID: rule.AppID, OccurredAt: now, Outcome: state.EdgeRuleEventBoxed, Method: "GET", Path: "/xmlrpc.php",
+		ClientIP: "203.0.113.7", UserAgent: "scanner/1.0",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	if boxed := read("?outcome=boxed"); len(boxed.Events) != 1 || boxed.Events[0].ClientIP != "203.0.113.7" || boxed.Events[0].Path != "/xmlrpc.php" {
+		t.Fatalf("boxed = %+v", boxed.Events)
+	}
 	for _, bad := range []string{"?since=-1h", "?since=soon", "?limit=500", "?outcome=denied", "?rule=nope", "?cursor=x", "?request_id=" + strings.Repeat("r", 129)} {
 		if rec := e.Do(t, "GET", "/v1/apps/"+slug+"/edge-rules/events"+bad, nil, nil); rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: %d, want 400", bad, rec.Code)

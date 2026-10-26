@@ -1269,6 +1269,9 @@ type ManagedPostgresUsageResponse struct {
 	StorageByteSecondsRemaining int64      `json:"storage_byte_seconds_remaining"`
 	HistoryByteSeconds          int64      `json:"history_byte_seconds"`
 	EgressBytes                 int64      `json:"egress_bytes"`
+	ComputeAllowanceUnitSeconds int64      `json:"compute_allowance_unit_seconds,omitempty"`
+	ComputeCeilingUnitSeconds   int64      `json:"compute_ceiling_unit_seconds,omitempty"`
+	ComputeCapState             string     `json:"compute_cap_state,omitempty"`
 }
 
 // ValidateAppConfig checks a requested app config against its plan caps (spec

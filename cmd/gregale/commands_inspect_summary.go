@@ -730,7 +730,11 @@ func inspectScalingTargetLabel(resources inspectResourceSummary) string {
 
 func renderInspectSignals(w io.Writer, summary inspectSummary) {
 	if summary.API.Available {
-		_, _ = fmt.Fprintf(w, "  api:       OpenAPI %s · %d paths · %d endpoints\n", fallback(summary.API.OpenAPIVersion), summary.API.Paths, summary.API.Endpoints)
+		discovered := ""
+		if summary.API.Source == "auto" {
+			discovered = " · discovered from traffic"
+		}
+		_, _ = fmt.Fprintf(w, "  api:       OpenAPI %s · %d paths · %d endpoints%s\n", fallback(summary.API.OpenAPIVersion), summary.API.Paths, summary.API.Endpoints, discovered)
 	} else {
 		_, _ = fmt.Fprintln(w, "  api:       unavailable")
 	}

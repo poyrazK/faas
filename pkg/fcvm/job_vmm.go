@@ -801,9 +801,10 @@ func validateJobExitPayload(payload JobExitPayload) error {
 	return nil
 }
 
-// SignalJob delivers graceful cancellation to guest-init. StopInstance cannot
-// signal the customer by signalling the Firecracker host process; it must use a
-// host-initiated vsock connection to the supervisor inside the VM.
+// SignalJob delivers a graceful stop to guest-init, for jobs and for workers
+// (stopSignalsGuest). StopInstance cannot signal the customer by signalling the
+// Firecracker host process; it must use a host-initiated vsock connection to
+// the supervisor inside the VM.
 func (v *JailerVMM) SignalJob(ctx context.Context, l Lease, signal syscall.Signal, grace time.Duration) (bool, int32, error) {
 	// Preserve StopInstance's immediate-stop contract. A zero grace or explicit
 	// SIGKILL must not silently become a 30-second graceful stop for job VMs.
@@ -831,17 +832,80 @@ func (v *JailerVMM) SignalJob(ctx context.Context, l Lease, signal syscall.Signa
 	}
 	timer := time.NewTimer(grace + 5*time.Second)
 	defer timer.Stop()
-	select {
-	case <-rec.done:
-		v.mu.Lock()
-		code := int32(rec.exitCode)
-		v.mu.Unlock()
-		return false, code, nil
-	case <-ctx.Done():
-	case <-timer.C:
+	// Firecracker keeps running a guest that stopped on its own: a worker's
+	// guest-init exits as PID 1 once its workload drains, and a job guest
+	// powers off after its exit report is acknowledged. Reap it as soon as the
+	// console shows that, as watchBuilderGuestHalt does for builders, rather
+	// than waiting out the grace and reporting a SIGKILL (Hunt 14 H14-59).
+	poll := time.NewTicker(guestStopPollInterval)
+	defer poll.Stop()
+	for {
+		select {
+		case <-rec.done:
+			v.mu.Lock()
+			code := int32(rec.exitCode)
+			v.mu.Unlock()
+			return false, code, nil
+		case <-poll.C:
+			stopped, guestCode := consoleShowsGuestStopped(rec.consolePath)
+			if !stopped {
+				continue
+			}
+			_, _, err := v.SignalAndKill(context.WithoutCancel(ctx), l, 0, 0)
+			return false, guestCode, err
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+		break
 	}
 	killed, code, err := v.SignalAndKill(context.WithoutCancel(ctx), l, 0, 0)
 	return killed, code, err
+}
+
+// errGuestStopUnsupported is a stop frame answered by something other than a
+// stop handler: a guest-init without the H14-59 dispatch serves port 1028 with
+// its liveness listener, whose error reply also starts with a zero byte.
+var errGuestStopUnsupported = errors.New("guest answered the stop frame with a liveness reply")
+
+// confirmJobControlAckEnd checks that the one-byte ack is the whole reply: a
+// stop handler closes the connection after it. Anything more is a liveness
+// reply, so the stop never reached the workload (Hunt 14 H14-59).
+func confirmJobControlAckEnd(conn net.Conn) error {
+	_ = conn.SetReadDeadline(time.Now().Add(jobControlAckEndWait))
+	var extra [1]byte
+	if n, _ := conn.Read(extra[:]); n > 0 {
+		return errGuestStopUnsupported
+	}
+	return nil
+}
+
+// jobControlAckEndWait bounds the wait for the guest to close after its ack.
+const jobControlAckEndWait = 500 * time.Millisecond
+
+// guestStopPollInterval is how often SignalJob reads the console for a guest
+// that stopped on its own.
+const guestStopPollInterval = 100 * time.Millisecond
+
+// guestInitExitMarker is the kernel's panic line when guest-init (PID 1)
+// exits; the value after it is the wait status, so the exit code is bits 8-15.
+const guestInitExitMarker = "Attempted to kill init! exitcode=0x"
+
+// consoleShowsGuestStopped reports whether the console shows the guest
+// stopped on its own: guest-init exited, or the guest halted after a power-off.
+// code is guest-init's exit code when the kernel printed it, else 0.
+func consoleShowsGuestStopped(path string) (stopped bool, code int32) {
+	tail := consoleTail(path)
+	if i := bytes.LastIndex(tail, []byte(guestInitExitMarker)); i >= 0 {
+		digits := tail[i+len(guestInitExitMarker):]
+		if n := bytes.IndexFunc(digits, func(r rune) bool { return !strings.ContainsRune("0123456789abcdefABCDEF", r) }); n >= 0 {
+			digits = digits[:n]
+		}
+		if status, err := strconv.ParseUint(string(digits), 16, 32); err == nil {
+			return true, int32((status >> 8) & 0xff)
+		}
+		return true, 0
+	}
+	return bytes.Contains(tail, []byte("Attempted to kill init!")) || bytes.Contains(tail, []byte("System halted")), 0
 }
 
 func (v *JailerVMM) signalJobGuest(ctx context.Context, l Lease, signal syscall.Signal) error {
@@ -849,7 +913,9 @@ func (v *JailerVMM) signalJobGuest(ctx context.Context, l Lease, signal syscall.
 		return fmt.Errorf("vmm: signal job: invalid VMM or instance")
 	}
 	switch signal {
-	case syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP:
+	// A worker manifest may also declare SIGUSR1 or SIGUSR2; a job guest still
+	// refuses them, and SignalJob then falls back to the hard stop.
+	case syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP, syscall.SIGUSR1, syscall.SIGUSR2:
 	default:
 		return fmt.Errorf("vmm: signal job: unsupported signal %d", signal)
 	}
@@ -893,10 +959,16 @@ func (v *JailerVMM) signalJobGuest(ctx context.Context, l Lease, signal syscall.
 			if err == nil && ack[0] != vsockJobControlAckOK {
 				err = fmt.Errorf("guest rejected cancellation")
 			}
+			if err == nil {
+				err = confirmJobControlAckEnd(conn)
+			}
 		}
 		_ = conn.Close()
 		if err == nil {
 			return nil
+		}
+		if errors.Is(err, errGuestStopUnsupported) {
+			return fmt.Errorf("vmm: signal job %s: %w", l.Instance, err)
 		}
 		lastErr = err
 		select {

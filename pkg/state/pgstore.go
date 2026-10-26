@@ -8285,17 +8285,34 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 			}
 		}
 	}
-	if _, err := tx.Exec(ctx,
-		`update deployments set traffic_percent = $2 where id = $1`,
-		id, newPercent); err != nil {
-		return Deployment{}, fmt.Errorf("state: stamp traffic_percent %s: %w", id, mapErr(err))
+	// Lower rows before raising any, so deployments_app_scope_live_uniq never
+	// sees two stable rows serving mid-transaction (a promote raised the
+	// target while the old stable row still held 100), and mark split members
+	// explicit (manualTrafficExplicit; Hunt 14 H14-71).
+	type trafficStamp struct {
+		id          string
+		prior, next int
+		target      bool
 	}
-
-	for i, s := range siblings {
+	stamps := make([]trafficStamp, 0, len(siblings)+1)
+	stamps = append(stamps, trafficStamp{id: id, prior: currentTrafficPercent, next: newPercent, target: true})
+	for i, sibling := range siblings {
+		stamps = append(stamps, trafficStamp{id: sibling.ID, prior: sibling.Prior, next: newWeights[i]})
+	}
+	sort.SliceStable(stamps, func(a, b int) bool {
+		return stamps[a].next-stamps[a].prior < stamps[b].next-stamps[b].prior
+	})
+	for _, stamp := range stamps {
 		if _, err := tx.Exec(ctx,
-			`update deployments set traffic_percent = $2 where id = $1`,
-			s.ID, newWeights[i]); err != nil {
-			return Deployment{}, fmt.Errorf("state: stamp sibling %s traffic_percent: %w", s.ID, mapErr(err))
+			`update deployments
+			    set traffic_percent = $2,
+			        traffic_percent_explicit = case when traffic_percent = $2 then traffic_percent_explicit else $3 end
+			  where id = $1`,
+			stamp.id, stamp.next, manualTrafficExplicit(stamp.prior, stamp.next, false)); err != nil {
+			if stamp.target {
+				return Deployment{}, fmt.Errorf("state: stamp traffic_percent %s: %w", stamp.id, mapErr(err))
+			}
+			return Deployment{}, fmt.Errorf("state: stamp sibling %s traffic_percent: %w", stamp.id, mapErr(err))
 		}
 	}
 

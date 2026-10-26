@@ -121,10 +121,7 @@ func cmdEdgeRules(args []string) int {
 		return cmdEdgeRulesRm(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown edge-rules subcommand %q\n", args[0])
-	if sug, _ := suggestSubcommand(args[0], parent); sug != "" {
-		maybeSuggestSub(sug)
-	}
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "edge-rules", parent, args[0])
 }
 
 // cmdEdgeRulesList lists edge rules for the current account or for

@@ -3363,6 +3363,8 @@
       "overlay_ip",
       "public_ip",
       "public_ip_set_at",
+      "readiness",
+      "readiness_reason",
       "recovery_initiated_at",
       "region",
       "release_id",
@@ -8905,6 +8907,24 @@
     "kind": "operational"
   },
   {
+    "table": "log_archive_erasure_instances",
+    "columns": [
+      "account_id",
+      "erased_at",
+      "instance_id"
+    ],
+    "kind": "operational"
+  },
+  {
+    "table": "log_archive_erasures",
+    "columns": [
+      "account_id",
+      "deletion_requested_at",
+      "snapshotted_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "log_saved_searches",
     "columns": [
       "account_id",
@@ -10799,6 +10819,16 @@
       "provider_subject"
     ],
     "kind": "account_identity"
+  },
+  {
+    "table": "object_bucket_cors",
+    "columns": [
+      "bucket_id",
+      "revision",
+      "rules",
+      "updated_at"
+    ],
+    "kind": "configuration"
   },
   {
     "table": "object_bucket_encryption",
