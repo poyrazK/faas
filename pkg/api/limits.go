@@ -11363,6 +11363,18 @@ const (
 	TrafficSecurityMaxScopes        = 4_096
 	TrafficSecurityMaxRequestScopes = 16
 	TrafficSecurityMaxHeaderBytes   = 4096
+	// TrafficSecurityOutageGrace is how long a gateway keeps admitting from,
+	// and keeps admitted traffic on, the security generations it last
+	// verified while the store cannot be read (ADR-20261026160000, owner
+	// decision 2026-10-26). A store outage refuses new and cancels admitted
+	// traffic only after this; a revocation written meanwhile cannot land in
+	// an unreachable store anyway.
+	TrafficSecurityOutageGrace = 5 * time.Minute
+	// TrafficSecurityWarmScopeTTL keeps a scope refreshed in the background
+	// after its last request ends, so the app's next request admits without a
+	// store read. Warm scopes share TrafficSecurityMaxScopes with active ones
+	// and give way to them least recently used first.
+	TrafficSecurityWarmScopeTTL = 10 * time.Minute
 	// Runtime feature observations are small fleet snapshots, independent of
 	// request accounting and policy-revision convergence.
 	TrafficRuntimeObservationInterval  = 2 * time.Second

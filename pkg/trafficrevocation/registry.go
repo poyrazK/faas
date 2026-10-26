@@ -1,6 +1,14 @@
 // adr: 570
 // Package trafficrevocation fences admitted exchanges using authoritative
 // security generations independently of their immutable traffic policy.
+//
+// A gateway admits from its own refreshed view of those generations
+// (ADR-20261026160000): a scope it tracked recently is admitted from the
+// generation its refresher last read, so warm traffic reads the store only
+// in the background. A scope it does not track, or one not verified within
+// api.TrafficSecurityOutageGrace, is read before admission. While the store
+// cannot be read, admitted traffic and warm scopes ride on their last
+// verified generations until that grace runs out.
 package trafficrevocation
 
 import (
@@ -20,6 +28,9 @@ var (
 	ErrRevoked     = errors.New("traffic security generation revoked")
 	ErrUnavailable = errors.New("traffic security verification unavailable")
 	ErrCapacity    = errors.New("traffic security tracking capacity exhausted")
+	// errInvalidSnapshot is a store answer that cannot be a generation. It is
+	// not an outage: it fails verified traffic at once, with no outage grace.
+	errInvalidSnapshot = fmt.Errorf("%w: invalid generation in store result", ErrUnavailable)
 )
 
 type Scope struct{ Kind, ID string }
@@ -52,19 +63,41 @@ type exchange struct {
 }
 
 type Registry struct {
-	store     Store
-	mu        sync.Mutex
-	active    map[*exchange]struct{}
-	latest    map[Scope]State
-	members   map[Scope]map[*exchange]struct{}
-	refreshMu sync.Mutex
-	wake      chan struct{}
-	closed    bool
+	store   Store
+	now     func() time.Time
+	mu      sync.Mutex
+	active  map[*exchange]struct{}
+	latest  map[Scope]State
+	members map[Scope]map[*exchange]struct{}
+	// verified is when the store last confirmed latest[scope]; lastUsed is
+	// when a request last held the scope. A scope with no members stays
+	// tracked (warm) until api.TrafficSecurityWarmScopeTTL after lastUsed.
+	verified map[Scope]time.Time
+	lastUsed map[Scope]time.Time
+	// refreshedAt is the last successful refresh. A failing store cancels
+	// admitted traffic only once it is api.TrafficSecurityOutageGrace old.
+	refreshedAt time.Time
+	refreshMu   sync.Mutex
+	wake        chan struct{}
+	closed      bool
 }
 
 func New(store Store) *Registry {
-	return &Registry{store: store, active: make(map[*exchange]struct{}),
-		latest: make(map[Scope]State), members: make(map[Scope]map[*exchange]struct{}), wake: make(chan struct{}, 1)}
+	r := &Registry{store: store, now: time.Now, active: make(map[*exchange]struct{}),
+		latest: make(map[Scope]State), members: make(map[Scope]map[*exchange]struct{}),
+		verified: make(map[Scope]time.Time), lastUsed: make(map[Scope]time.Time), wake: make(chan struct{}, 1)}
+	r.refreshedAt = r.now()
+	return r
+}
+
+// WithClock replaces the registry's clock; tests use it to cross the warm
+// and outage bounds without waiting.
+func (r *Registry) WithClock(now func() time.Time) *Registry {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.now = now
+	r.refreshedAt = now()
+	return r
 }
 
 // Admit verifies before enrolling. The release function only unregisters;
@@ -103,9 +136,12 @@ func (r *Registry) admit(ctx context.Context, scopes []Scope, expected map[Scope
 	if err != nil {
 		return nil, nil, err
 	}
-	states, err := r.read(ctx, scopes)
-	if err != nil {
-		return nil, nil, err
+	states, fromStore := r.cached(scopes, expected), false
+	if states == nil {
+		if states, err = r.read(ctx, scopes); err != nil {
+			return nil, nil, err
+		}
+		fromStore = true
 	}
 	if err := ctx.Err(); err != nil {
 		return nil, nil, err
@@ -119,14 +155,24 @@ func (r *Registry) admit(ctx context.Context, scopes []Scope, expected map[Scope
 			admissionErr = err
 		}
 	}
-	// A fresh request can discover a revoke before the periodic repair pass.
-	r.apply(states)
+	// A store read can discover a revoke before the periodic repair pass.
+	if fromStore {
+		r.apply(states)
+	}
 	if admissionErr != nil {
 		return nil, nil, admissionErr
 	}
+	now := r.now()
 	for _, scope := range scopes {
+		if _, tracked := r.latest[scope]; !tracked {
+			r.evictWarmLocked(1)
+		}
 		lease.states[scope] = states[scope]
 		r.latest[scope] = states[scope]
+		if fromStore {
+			r.verified[scope] = now
+		}
+		r.lastUsed[scope] = now
 		if r.members[scope] == nil {
 			r.members[scope] = make(map[*exchange]struct{})
 		}
@@ -135,6 +181,60 @@ func (r *Registry) admit(ctx context.Context, scopes []Scope, expected map[Scope
 	r.active[lease] = struct{}{}
 	var once sync.Once
 	return maps.Clone(lease.states), func() { once.Do(func() { r.release(lease) }) }, nil
+}
+
+// cached returns the scopes' last verified generations when every scope is
+// tracked and was verified within api.TrafficSecurityOutageGrace, and nil when
+// any scope needs a store read. A preceding hop's baseline newer than the
+// cache also needs one: the cache may lag a generation that hop already read.
+// So does a revoked scope: a refusal is always confirmed by the store, which
+// also lets a release admit again at once rather than at the next refresh.
+func (r *Registry) cached(scopes []Scope, expected map[Scope]State) map[Scope]State {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := r.now()
+	states := make(map[Scope]State, len(scopes))
+	for _, scope := range scopes {
+		state, tracked := r.latest[scope]
+		at, verified := r.verified[scope]
+		if !tracked || !verified || state.Revoked || now.Sub(at) > api.TrafficSecurityOutageGrace {
+			return nil
+		}
+		if before, ok := expected[scope]; ok && before.Revision > state.Revision {
+			return nil
+		}
+		states[scope] = state
+	}
+	return states
+}
+
+// evictWarmLocked makes room for n new scopes by dropping the least recently
+// used warm scopes, so a refresh never reads more than the store's bound.
+// Scopes with members are never evicted; validateAdmission bounds those.
+func (r *Registry) evictWarmLocked(n int) {
+	for len(r.latest)+n > api.TrafficSecurityMaxScopes {
+		var oldest Scope
+		var oldestAt time.Time
+		found := false
+		for scope := range r.latest {
+			if len(r.members[scope]) > 0 {
+				continue
+			}
+			if at := r.lastUsed[scope]; !found || at.Before(oldestAt) {
+				oldest, oldestAt, found = scope, at, true
+			}
+		}
+		if !found {
+			return
+		}
+		r.forgetLocked(oldest)
+	}
+}
+
+func (r *Registry) forgetLocked(scope Scope) {
+	delete(r.latest, scope)
+	delete(r.verified, scope)
+	delete(r.lastUsed, scope)
 }
 
 func verifyBaseline(states, expected map[Scope]State) error {
@@ -164,7 +264,8 @@ func (r *Registry) validateAdmission(scopes []Scope, states map[Scope]State) err
 			if state.Revision < prior.Revision || state.Revision == prior.Revision && state != prior {
 				return ErrUnavailable
 			}
-		} else {
+		}
+		if len(r.members[scope]) == 0 {
 			newScopes++
 		}
 		if state.Revoked {
@@ -209,28 +310,36 @@ func (r *Registry) read(ctx context.Context, scopes []Scope) (map[Scope]State, e
 	for _, scope := range scopes {
 		state := states[scope]
 		if state.Revision < 0 || state.Revoked && state.Revision == 0 {
-			return nil, ErrUnavailable
+			return nil, errInvalidSnapshot
 		}
 		verified[scope] = state
 	}
 	return verified, nil
 }
 
+// release unregisters the exchange. Its scopes stay tracked as warm scopes,
+// refreshed in the background, so the app's next request needs no read.
 func (r *Registry) release(lease *exchange) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	delete(r.active, lease)
+	now := r.now()
 	for scope := range lease.states {
 		delete(r.members[scope], lease)
 		if len(r.members[scope]) == 0 {
 			delete(r.members, scope)
-			delete(r.latest, scope)
 		}
+		r.lastUsed[scope] = now
 	}
 }
 
 // Refresh is serialized: an older read must not overwrite a newer generation.
-// Store errors cancel all tracked exchanges, including detached sessions.
+// It reads every tracked scope, active and warm, and forgets warm scopes idle
+// past api.TrafficSecurityWarmScopeTTL. A store error cancels all tracked
+// exchanges, including detached sessions, once the last successful refresh is
+// older than api.TrafficSecurityOutageGrace; until then they keep running on
+// their verified generations. A store answer that cannot be a generation
+// cancels them at once.
 func (r *Registry) Refresh(ctx context.Context) error {
 	if r == nil || r.store == nil {
 		return ErrUnavailable
@@ -238,22 +347,42 @@ func (r *Registry) Refresh(ctx context.Context) error {
 	r.refreshMu.Lock()
 	defer r.refreshMu.Unlock()
 	r.mu.Lock()
-	scopes := make([]Scope, 0, len(r.members))
-	for scope := range r.members {
+	now := r.now()
+	scopes := make([]Scope, 0, len(r.latest))
+	for scope := range r.latest {
+		if len(r.members[scope]) == 0 && now.Sub(r.lastUsed[scope]) > api.TrafficSecurityWarmScopeTTL {
+			r.forgetLocked(scope)
+			continue
+		}
 		scopes = append(scopes, scope)
 	}
 	r.mu.Unlock()
 	if len(scopes) == 0 {
+		r.mu.Lock()
+		r.refreshedAt = now
+		r.mu.Unlock()
 		return nil
 	}
 	states, err := r.read(ctx, scopes)
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if err != nil {
-		r.cancelAll(err)
+		if errors.Is(err, errInvalidSnapshot) || r.now().Sub(r.refreshedAt) > api.TrafficSecurityOutageGrace {
+			r.cancelAll(err)
+		}
 		return err
 	}
 	r.apply(states)
+	r.refreshedAt = now
+	for scope, state := range states {
+		if latest, ok := r.latest[scope]; ok && latest == state {
+			r.verified[scope] = now
+		} else {
+			// An inconsistent read leaves the cache unverified, so the next
+			// admission reads the store and validateAdmission refuses it.
+			delete(r.verified, scope)
+		}
+	}
 	return nil
 }
 
