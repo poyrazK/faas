@@ -301,7 +301,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "init", Short: "Create <domain>.age and <domain>.age.pub", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "force", Short: "coordinated identity replacement"}, {Name: "json", Short: "emit structured JSON"}}},
 			{Name: "verify", Short: "Prove this node's domain identity opens the domain probe", Flags: []cliFlag{{Name: "domain", Short: "seal domain"}, {Name: "dir", Short: "domain identity directory"}, {Name: "publish", Short: "write the probe when the domain has none"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "metrics-file", Short: "node_exporter textfile output"}, {Name: "recipient-only", Short: "check the staged recipient against the published probe"}, {Name: "json", Short: "emit structured JSON"}}},
-			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime, source, build, edge, alerting, storage or control)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "migrate", Short: "Re-seal a domain's stored envelopes", Flags: []cliFlag{{Name: "domain", Short: "seal domain (outbound, runtime, source, build, edge, alerting, storage, control or delivery)"}, {Name: "dir", Short: "domain identity directory"}, {Name: "fleet-key", Short: "fleet.age identity"}, {Name: "host-key", Short: "legacy host.age identity"}, {Name: "readers-verified", Short: "every reader holds the domain identity"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
 		},
 	},
 	{
@@ -762,7 +762,7 @@ var cliCommands = []cliCommand{
 	{
 		Name:    dispatchAudit,
 		DocSlug: "audit",
-		Short:   "Correlate operator intents by trace ID; audit app layers before a base change",
+		Short:   "Correlate operator intents by trace ID; audit app layers before a base change; seal and verify the audit log",
 		Subcommands: []cliSub{{
 			Name:  "trace",
 			Short: "Look up one exact OTel trace ID through the operator API",
@@ -783,6 +783,30 @@ var cliCommands = []cliCommand{
 				{Name: "work-dir", Short: "scratch directory for layer copies and dumps"},
 				{Name: "debugfs", Short: "debugfs binary (e2fsprogs)"},
 				{Name: "libraries", Short: "comma-separated sonames the new base drops"},
+			},
+		}, {
+			// ADR-20261026163015: reads and appends audit_log_anchors directly
+			// from the control plane; the timer runs it every 15 minutes.
+			Name:  auditAnchorSub,
+			Short: "Seal the next window of the audit log into the anchor chain and re-verify recent anchors",
+			Flags: []cliFlag{
+				{Name: "pg-dsn", Short: "PostgreSQL DSN (default: $FAAS_PG_DSN or $DATABASE_URL)"},
+				{Name: "db-env", Short: "systemd env file containing DATABASE_URL (and FAAS_AUDIT_HMAC_KEY)"},
+				{Name: "key-file", Short: "apid's audit HMAC key file"},
+				{Name: "metrics-file", Short: "node_exporter textfile to write the outcome to"},
+				{Name: "lag", Short: "how far behind now a window ends (default 10m)"},
+				{Name: "verify-since", Short: "re-verify anchors whose windows end within this (default 48h; 0 skips)"},
+				{Name: "accept-key-change", Short: "extend a chain sealed under a lost audit HMAC key"},
+			},
+		}, {
+			Name:  auditVerifySub,
+			Short: "Recompute the audit log anchor chain and report tampering",
+			Flags: []cliFlag{
+				{Name: "pg-dsn", Short: "PostgreSQL DSN (default: $FAAS_PG_DSN or $DATABASE_URL)"},
+				{Name: "db-env", Short: "systemd env file containing DATABASE_URL (and FAAS_AUDIT_HMAC_KEY)"},
+				{Name: "key-file", Short: "apid's audit HMAC key file"},
+				{Name: "metrics-file", Short: "node_exporter textfile to write the outcome to"},
+				{Name: "from-seq", Short: "first anchor to verify (default 1)"},
 			},
 		}},
 	},
