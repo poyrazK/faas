@@ -135,9 +135,6 @@ func (m *MemStore) StageProjectReleaseAdditions(ctx context.Context, accountID, 
 	if observed+creates > limits.DeployedApps {
 		return nil, &QuotaError{Kind: QuotaErrorKindApps, Limit: limits.DeployedApps, Observed: observed + creates}
 	}
-	if m.projectReleaseAdditions == nil {
-		m.projectReleaseAdditions = map[string]projectReleaseAdditionRecord{}
-	}
 	var out []App
 	var inserted []string
 	for _, draft := range drafts {
@@ -163,6 +160,9 @@ func (m *MemStore) StageProjectReleaseAdditions(ctx context.Context, accountID, 
 			delete(m.apps, id)
 		}
 		return nil, err
+	}
+	if m.projectReleaseAdditions == nil {
+		m.projectReleaseAdditions = map[string]projectReleaseAdditionRecord{}
 	}
 	for _, app := range out {
 		m.projectReleaseAdditions[app.ID] = projectReleaseAdditionRecord{app.ID, attemptID, ProjectReleaseAdditionFingerprint(app), true}
