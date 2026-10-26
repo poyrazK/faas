@@ -3358,6 +3358,34 @@ func (s *PgStore) ListUnplacedApps(ctx context.Context) ([]App, error) {
 	return scanApps(rows)
 }
 
+// OwnedAppRAMByNode implements AppOwnershipLoadReader: Σ apps.ram_mb over
+// the non-deleted apps each node owns.
+func (s *PgStore) OwnedAppRAMByNode(ctx context.Context) (map[string]int64, error) {
+	rows, err := s.pool.Query(ctx, `
+		select node_id::text, coalesce(sum(ram_mb), 0)::bigint
+		  from apps
+		 where node_id is not null
+		   and status <> 'deleted'
+		 group by node_id`)
+	if err != nil {
+		return nil, fmt.Errorf("state: owned app ram by node: %w", err)
+	}
+	defer rows.Close()
+	owned := make(map[string]int64)
+	for rows.Next() {
+		var nodeID string
+		var mb int64
+		if err := rows.Scan(&nodeID, &mb); err != nil {
+			return nil, fmt.Errorf("state: scan owned app ram by node: %w", err)
+		}
+		owned[nodeID] = mb
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: iterate owned app ram by node: %w", err)
+	}
+	return owned, nil
+}
+
 // SetAppNodeID atomically claims the owner for an unplaced app. The
 // UPDATE is conditional on node_id IS NULL so exactly one schedd
 // wins the race; losers receive ErrConflict and the subscriber
