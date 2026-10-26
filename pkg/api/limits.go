@@ -871,8 +871,17 @@ const (
 )
 
 // Workflow reliability bounds (ADR-725, ADR-726, ADR-649).
+//
+// WorkflowDispatchSlots bounds the runs one schedd executes at once; a slot
+// waits on the customer's handler for up to the plan's step timeout. The
+// first WorkflowDispatchBaseSlots are offered every tick, and one more only
+// while every lower slot is busy. Database work is bounded separately by
+// WorkflowDispatchDBPhaseSlots, which a slot gives back while it waits on a
+// handler (ADR-20261025232118).
 const (
-	WorkflowDispatchSlots                = 4
+	WorkflowDispatchSlots                = 32
+	WorkflowDispatchBaseSlots            = 4
+	WorkflowDispatchDBPhaseSlots         = 4
 	WorkflowDispatchBatchPerSlot         = 8
 	WorkflowDispatchMaxPerApp            = 2
 	WorkflowDispatchMaxPerTenant         = 1

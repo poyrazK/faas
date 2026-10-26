@@ -2057,6 +2057,51 @@ groups:
           description: "The job ownership reconciler found a live Firecracker instance without a matching claimed task and vmmd destroy failed. The VM may still consume and meter RAM until the next successful sweep."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasJobInstanceCleanupFailed.md"
 
+      # Jobs and workflows dispatch (Hunt 13 H13-10/H13-11). Customer limits
+      # (concurrency caps, spend caps, budgets, capability flags) hold work by
+      # design and never fire these.
+      - alert: FaasJobsQueueBacklog
+        expr: sum by (job, instance) (rate(schedd_job_dispatch_total{result=~"node_capacity|compute_unavailable|wake_error"}[5m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: schedd
+          family: job_dispatch
+          public_status: internal
+        annotations:
+          summary: "schedd on {{ $labels.instance }} has failed to start ready job tasks for 15m"
+          description: "Ready job tasks kept failing to start for 15m because of node capacity, an unavailable compute authority or a wake error. Customer concurrency caps, spend caps, budgets and capability flags are not counted."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasJobsQueueBacklog.md"
+
+      - alert: FaasWorkflowDispatchSaturated
+        expr: min_over_time(workflow_dispatch_slots_busy[5m]) >= workflow_dispatch_slots
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: workflow_dispatch
+          public_status: internal
+        annotations:
+          summary: "Every workflow dispatch slot on {{ $labels.instance }} has been busy for 10m"
+          description: "Every one of the {{ $value }} workflow dispatch slots on {{ $labels.instance }} has stayed busy for 10m. Slots wait on customer step handlers, so due runs, including other customers' runs, wait for a slot."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWorkflowsAndJobs.md"
+
+      - alert: FaasWorkflowDispatchLagHigh
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(workflow_dispatch_lag_seconds_bucket[10m]))) > 60
+          and on ()
+          sum(increase(workflow_dispatch_lag_seconds_count[10m])) >= 5
+        for: 10m
+        labels:
+          severity: warn
+          component: schedd
+          family: workflow_dispatch
+          public_status: internal
+        annotations:
+          summary: "Due workflow runs are claimed more than 60s late (p95)"
+          description: "The p95 delay between a workflow run's scheduled_for and schedd claiming it has been over 60s for 10m. Sleeps wake late, events resume late and retries run late."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasWorkflowsAndJobs.md"
+
       # ─────────────────────────────────────────────────────────────────
       # Snapshot fleet average size (vmmd / fcvm — schedd /metrics/fcvm)
       # Spec §12 row: "snapshot_fleet_avg_mb 130 plan, > 160 warn, > 200 page".
