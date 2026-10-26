@@ -53,7 +53,7 @@ freeze and approval ADRs):
   apps that require approvals.
 - **Project applies.** Project applies refuse such apps too.
 - **Production environment.** A project's `production` environment counts as
-  production for approvals.
+  production for approvals (#5538, which this work builds on).
 - **Runtime upgrades.** Runtime upgrade staging refuses frozen apps.
 - **`restore_databases`.** It is hidden while `postgres-restore` is off.
 - **Metrics.** The guards export `faas_release_*` metrics

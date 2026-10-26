@@ -39,6 +39,8 @@ class DevSessionResponse:
     live source patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the
     next developer build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM
     or does not require authentication."""
+    go_command: str | Unset = UNSET
+    """The stored Go command (ADR-20261026120412); omitted when none."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -61,6 +63,8 @@ class DevSessionResponse:
         if not isinstance(self.watch, Unset):
             watch = self.watch.to_dict()
 
+        go_command = self.go_command
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -75,6 +79,8 @@ class DevSessionResponse:
             field_dict["buckets"] = buckets
         if watch is not UNSET:
             field_dict["watch"] = watch
+        if go_command is not UNSET:
+            field_dict["go_command"] = go_command
 
         return field_dict
 
@@ -113,12 +119,15 @@ class DevSessionResponse:
         else:
             watch = DevWatch.from_dict(_watch)
 
+        go_command = d.pop("go_command", UNSET)
+
         dev_session_response = cls(
             app=app,
             expires_at=expires_at,
             postgres=postgres,
             buckets=buckets,
             watch=watch,
+            go_command=go_command,
         )
 
         dev_session_response.additional_properties = d

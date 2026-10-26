@@ -43,7 +43,8 @@ Changing or removing the policy needs the organization's `manage_app_security` a
 
 A deployment needs approval when all of these hold:
 - its app has a policy;
-- it is in the app's default (production) scope;
+- it is in the app's production lane: the default scope, or the project
+  `production` environment's scope (amended 2026-10-26, see Scope);
 - it has never completed a rollout and is not the app's serving release;
 - it was created, or its rollout started, after the policy. A scheduled release ([ADR-20261021152201](20261021152201-scheduled-releases.md)) starts its rollout at its time, so a policy set while it waited applies to it.
 
@@ -137,6 +138,20 @@ Email carries the same links.
 
 Named environment scopes and project environments are not covered. Project environments keep their own promotion approvals.
 
+*Amendment (2026-10-26).* The `production` environment's scope later became
+the app's production routing lane (`state.ProductionRoutingDeployments`), and
+release freezes already treat it as production (`freeze.IsProductionScope`).
+A release deployed straight into it, with `--environment production` on a
+project app or `scope: production` on any app, therefore took production
+traffic outside the policy. A plain CLI deploy could skip the approvals this
+ADR exists to require. Such releases now wait like default-scope ones, and the
+release-time canary check covers them (`state.IsProductionScope`). An app is
+on its first release only when neither production scope has a live
+deployment.
+
+Environment promotions into `production` keep their own approvals. They are
+not checked at release time and go live at full traffic, as before.
+
 Services, workers and jobs have no canary. Their releases are not held, and a policy cannot be set on them.
 
 ## Consequences
@@ -158,11 +173,9 @@ Ship the tables, routes, CLI and enforcement together. The feature is off for ev
 - release-time refusal of releases without a canary;
 - the store conformance cases.
 
-## Amendment 1 (2026-10-26): production environments and the paths without a canary
+## Amendment 1 (2026-10-26): the paths without a canary
 
-The Scope section left named environment scopes and project environments out. But a project's `production` environment is production: freezes already cover it. An app with a policy could therefore be released there without any approval. This amendment replaces that sentence:
-
-- **Production scopes.** Approvals cover the scopes freezes treat as production: `default` and a project's `production` environment (scope `production`). Other named scopes and environments stay uncovered. `approval.Gated`, `ParkedNeedsCanary` and `CanaryRequired` use `freeze.IsProductionScope`. A deploy into the production environment needs a canary when the app requires approvals, and its canary waits like a default-scope one. The first release in a scope still never waits.
+The Scope amendment above made the `production` environment's scope a production lane: releases deployed straight into it wait like default-scope ones (`state.IsProductionScope`). A release-tooling audit found that other paths still released into production without a canary to wait in, and so skipped the policy. This amendment covers them. It replaces the sentence "Environment promotions into `production` keep their own approvals …".
 - **Promotions.** A promotion into an unprotected production environment releases every app at once, with no canary to wait in. When one of its apps requires approvals, it is refused with `409 release_approval_canary_required`; the hint says to protect the environment or remove the policy. Promotion approvals of a protected environment stand in for the app's policy. They are approved before the change is applied, which the original decision rejected for app releases, but a promotion has no running candidate to attach a decision to.
 - **Project applies.** A project apply (`POST /v1/projects/scan`, `apply-plan` and `safe-deploy`, atomic or not) releases each app without a canary. It now refuses, per app, an app that requires approvals, like `--rollout immediate`.
 - **Retries.** A retry of a release with no canary is refused while the app requires approvals, as a deploy would be. A retry keeps the failed release's canary.

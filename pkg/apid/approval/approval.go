@@ -12,7 +12,6 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
-	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,14 +19,12 @@ import (
 // traffic. Releases whose rollout started before the policy, releases that
 // completed a rollout and the app's serving release never wait, so a
 // rollback never does. A scheduled release starts its rollout when its time
-// comes (ADR-20261021152201), so a policy set while it waited gates it.
-// Production releases are the ones freezes cover: the default scope and a
-// project's production environment (amendment 1).
+// comes (ADR-20261021152201), so a policy set while it waited gates it. Only
+// production releases wait: the default scope and the production
+// environment's are one lane (state.IsProductionScope), so naming the
+// environment does not step around the policy.
 func Gated(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment) bool {
-	if policy == nil || !RequestMode(app) {
-		return false
-	}
-	if !freeze.IsProductionScope(d.Scope) {
+	if policy == nil || !RequestMode(app) || !state.IsProductionScope(d.Scope) {
 		return false
 	}
 	if startedBefore(d, policy.CreatedAt) || d.RolloutCompletedAt != nil {
@@ -47,7 +44,7 @@ func startedBefore(d state.Deployment, t time.Time) bool {
 // without traffic can only start through a schedule, whose canary can wait
 // (ADR-20261021152201).
 func ParkedNeedsCanary(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment) bool {
-	if policy == nil || !RequestMode(app) || !freeze.IsProductionScope(d.Scope) {
+	if policy == nil || !RequestMode(app) || !state.IsProductionScope(d.Scope) {
 		return false
 	}
 	return d.Status == state.DeployLive && d.TrafficPercent == 0 && d.TrafficPercentExplicit && d.CanaryTotalSteps == 0
@@ -223,20 +220,23 @@ type releaseReader interface {
 	LiveDeploymentForScope(ctx context.Context, appID, scope string) (state.Deployment, error)
 }
 
+// productionLanes are the scopes a production release lands in: the legacy
+// default scope and the production environment's (state.IsProductionScope).
+var productionLanes = []string{api.DefaultEnvScope, "production"}
+
 // CanaryRequired reports whether a production release of app must roll out
-// through a canary because the app requires approvals. The app's first
-// release in the scope, other scopes and non-request apps never need one.
-// A project environment's deploy resolves to its scope; environment is used
-// only when scope is still empty. Stores without approvals need none.
+// through a canary because the app requires approvals. A release names
+// production by the default scope or by the production environment, which
+// routing and release freezes treat as one lane, so both wait alike. The
+// app's first production release, other environments and scopes, and
+// non-request apps never need one. Stores without approvals need none.
 func CanaryRequired(ctx context.Context, store any, app state.App, scope, environment string) (bool, error) {
-	if scope == "" {
-		scope = environment
+	target := scope
+	if environment != "" {
+		target = environment
 	}
-	if !freeze.IsProductionScope(scope) || !RequestMode(app) {
+	if !state.IsProductionScope(target) || !RequestMode(app) {
 		return false, nil
-	}
-	if scope == "" {
-		scope = api.DefaultEnvScope
 	}
 	reader, ok := store.(releaseReader)
 	if !ok {
@@ -248,13 +248,16 @@ func CanaryRequired(ctx context.Context, store any, app state.App, scope, enviro
 		}
 		return false, fmt.Errorf("read release approval policy: %w", err)
 	}
-	if _, err := reader.LiveDeploymentForScope(ctx, app.ID, scope); err != nil {
-		if errors.Is(err, state.ErrNotFound) {
-			return false, nil
+	for _, lane := range productionLanes {
+		_, err := reader.LiveDeploymentForScope(ctx, app.ID, lane)
+		if err == nil {
+			return true, nil
 		}
-		return false, fmt.Errorf("read live deployment: %w", err)
+		if !errors.Is(err, state.ErrNotFound) {
+			return false, fmt.Errorf("read live deployment: %w", err)
+		}
 	}
-	return true, nil
+	return false, nil
 }
 
 // TakesTrafficWithoutCanary reports whether a deploy request would give the

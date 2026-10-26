@@ -670,7 +670,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
 		}
 	} else if publicStorageRegistry != nil {
-		rootHandler, err = publicObjectStorageRoot(pgStore, publicStorageRegistry, s3Flag.Load,
+		// Public reads wait out the same restore fence as the S3 gateway
+		// (ADR-20261025111015 amendment).
+		fence := runtimeconfig.NewObjectStorageFence(pgStore, log)
+		if err := fence.Check(runtimeCtx); err != nil {
+			log.Warn("gatewayd-public: initial object storage fence read failed", "err", err)
+		}
+		go fence.Run(runtimeCtx)
+		rootHandler, err = publicObjectStorageRoot(pgStore, publicStorageRegistry, func() bool { return s3Flag.Load() && fence.Open() },
 			domains, controlPlaneHandler, log)
 		if err != nil {
 			return err

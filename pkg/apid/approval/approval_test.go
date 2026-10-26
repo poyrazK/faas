@@ -51,9 +51,10 @@ func TestGated(t *testing.T) {
 		{name: "completed a rollout", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.RolloutCompletedAt = &completed }},
 		{name: "serving release", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.TrafficPercent = 100 }},
 		{name: "named scope", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "staging" }},
-		// adr: 20261020085706 amendment 1 — a project's production environment
-		// is production, as it is for freezes.
-		{name: "production environment", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "production" }, want: true},
+		// The production environment's scope is the production lane, as for
+		// routing and release freezes: a release there waits like a default one.
+		{name: "production environment scope", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "production" }, want: true},
+		{name: "legacy empty scope", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "" }, want: true},
 		{name: "dark candidate", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.TrafficPercent = 0; d.CanaryTotalSteps = 0 }, want: true},
 		{name: "worker app", policy: testPolicy(), app: state.App{ID: "app", Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeWorker}}},
 	} {
@@ -182,6 +183,11 @@ func TestParkedNeedsCanary(t *testing.T) {
 	if !ParkedNeedsCanary(testPolicy(), app, parked) {
 		t.Fatal("a parked production release of an app with a policy needs a canary")
 	}
+	inProduction := parked
+	inProduction.Scope = "production"
+	if !ParkedNeedsCanary(testPolicy(), app, inProduction) {
+		t.Fatal("a parked release in the production environment's scope needs a canary too")
+	}
 	if ParkedNeedsCanary(nil, app, parked) {
 		t.Fatal("no policy, no requirement")
 	}
@@ -196,56 +202,56 @@ func TestParkedNeedsCanary(t *testing.T) {
 			t.Fatalf("%s needs no canary", name)
 		}
 	}
-	production := parked
-	production.Scope = "production"
-	if !ParkedNeedsCanary(testPolicy(), app, production) {
-		t.Fatal("a parked release in the production environment needs a canary")
-	}
 }
 
-type fakeReleaseReader struct {
+// releases is CanaryRequired's store: an app's policy and live deployments.
+type releases struct {
 	policy bool
-	live   map[string]bool
+	live   map[string]bool // scope → a live deployment
 }
 
-func (f fakeReleaseReader) ReleaseApprovalPolicy(context.Context, string) (state.ReleaseApprovalPolicy, error) {
-	if !f.policy {
+func (r releases) ReleaseApprovalPolicy(context.Context, string) (state.ReleaseApprovalPolicy, error) {
+	if !r.policy {
 		return state.ReleaseApprovalPolicy{}, state.ErrNotFound
 	}
 	return *testPolicy(), nil
 }
 
-func (f fakeReleaseReader) LiveDeploymentForScope(_ context.Context, _ string, scope string) (state.Deployment, error) {
-	if !f.live[scope] {
+func (r releases) LiveDeploymentForScope(_ context.Context, _ string, scope string) (state.Deployment, error) {
+	if !r.live[scope] {
 		return state.Deployment{}, state.ErrNotFound
 	}
-	return state.Deployment{Scope: scope}, nil
+	return state.Deployment{Scope: scope, Status: state.DeployLive}, nil
 }
 
-// adr: 20261020085706 amendment 1 — a deploy into a project's production
-// environment needs a canary like a default-scope one; other environments,
-// and the first release in a scope, do not.
+// A production release must wait in a canary whichever production scope it
+// names, and it is the app's first release only when no production scope has
+// one live.
 func TestCanaryRequired(t *testing.T) {
 	app := state.App{ID: "app", Slug: "shop"}
-	both := fakeReleaseReader{policy: true, live: map[string]bool{api.DefaultEnvScope: true, "production": true, "staging": true}}
+	serving := releases{policy: true, live: map[string]bool{api.DefaultEnvScope: true}}
+	inProduction := releases{policy: true, live: map[string]bool{"production": true}}
 	for _, tc := range []struct {
 		name               string
-		store              fakeReleaseReader
+		store              releases
 		scope, environment string
 		want               bool
 	}{
-		{name: "default scope", store: both, want: true},
-		{name: "explicit default scope", store: both, scope: api.DefaultEnvScope, want: true},
-		{name: "production environment", store: both, environment: "production", want: true},
-		{name: "resolved production scope", store: both, scope: "production", environment: "production", want: true},
-		{name: "staging environment", store: both, environment: "staging"},
-		{name: "named scope", store: both, scope: "staging"},
-		{name: "no policy", store: fakeReleaseReader{live: both.live}, environment: "production"},
-		{name: "first production release", store: fakeReleaseReader{policy: true, live: map[string]bool{api.DefaultEnvScope: true}}, environment: "production"},
+		{name: "default scope", store: serving, want: true},
+		{name: "production scope", store: serving, scope: "production", want: true},
+		{name: "production environment", store: serving, environment: "production", want: true},
+		{name: "production after production releases", store: inProduction, environment: "production", want: true},
+		{name: "default after production releases", store: inProduction, want: true},
+		{name: "named environment", store: serving, environment: "staging"},
+		{name: "named scope", store: serving, scope: "staging"},
+		{name: "first release", store: releases{policy: true}, scope: "production"},
+		{name: "no policy", store: releases{live: map[string]bool{api.DefaultEnvScope: true}}, scope: "production"},
 	} {
-		got, err := CanaryRequired(context.Background(), tc.store, app, tc.scope, tc.environment)
-		if err != nil || got != tc.want {
-			t.Fatalf("%s: CanaryRequired = %v, %v; want %v", tc.name, got, err, tc.want)
-		}
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := CanaryRequired(context.Background(), tc.store, app, tc.scope, tc.environment)
+			if err != nil || got != tc.want {
+				t.Fatalf("CanaryRequired(%q, %q) = %v, %v; want %v", tc.scope, tc.environment, got, err, tc.want)
+			}
+		})
 	}
 }

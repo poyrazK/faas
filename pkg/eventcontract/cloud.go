@@ -56,6 +56,22 @@ const ProducerPersonal = "personal"
 // company when it routes the event.
 func AppProducer(appID string) string { return "app:" + appID }
 
+// AppSource reports whether source is an app's own namespace, `app.<app
+// UUID>` (ADR-929, as amended 2026-10-26), and returns that app's canonical
+// ID. Only the app publishes there: its producer route and its own runtime.
+// Any UUID spelling counts, so a variant cannot slip past the check.
+func AppSource(source string) (string, bool) {
+	rest, ok := strings.CutPrefix(source, "app.")
+	if !ok {
+		return "", false
+	}
+	id, err := uuid.Parse(rest)
+	if err != nil {
+		return "", false
+	}
+	return id.String(), true
+}
+
 // OrgProducer marks an event published with a key bound to an organization.
 func OrgProducer(orgID string) string { return "org:" + orgID }
 

@@ -28066,6 +28066,29 @@ CREATE TABLE public.account_passwords (
 
 
 --
+-- Name: account_spend_cap_holds; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.account_spend_cap_holds (
+    account_id uuid NOT NULL,
+    month date NOT NULL,
+    cap_cents bigint NOT NULL,
+    observed_cents bigint NOT NULL,
+    reached_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT account_spend_cap_holds_cap_cents_check CHECK ((cap_cents >= 0)),
+    CONSTRAINT account_spend_cap_holds_check CHECK ((observed_cents >= cap_cents)),
+    CONSTRAINT account_spend_cap_holds_month_check CHECK ((month = (date_trunc('month'::text, (month)::timestamp with time zone))::date))
+);
+
+
+--
+-- Name: TABLE account_spend_cap_holds; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.account_spend_cap_holds IS 'Accounts whose combined billable overage (compute plus live secondary meters) reached overage_cap_cents this UTC month. Written by meterd, read by schedd (ADR-20261026120843).';
+
+
+--
 -- Name: account_spend_snapshot; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -45539,6 +45562,21 @@ CREATE TABLE public.object_storage_request_metrics (
 
 
 --
+-- Name: object_storage_timeline_acceptance; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_storage_timeline_acceptance (
+    singleton boolean DEFAULT true NOT NULL,
+    timeline text NOT NULL,
+    accepted_at timestamp with time zone DEFAULT now() NOT NULL,
+    accepted_by text NOT NULL,
+    CONSTRAINT object_storage_timeline_acceptance_accepted_by_check CHECK (((char_length(accepted_by) >= 1) AND (char_length(accepted_by) <= 128))),
+    CONSTRAINT object_storage_timeline_acceptance_singleton_check CHECK (singleton),
+    CONSTRAINT object_storage_timeline_acceptance_timeline_check CHECK ((timeline ~ '^[0-9A-F]{8}$'::text))
+);
+
+
+--
 -- Name: object_storage_upload_grants; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -55633,6 +55671,14 @@ ALTER TABLE ONLY public.account_passwords
 
 
 --
+-- Name: account_spend_cap_holds account_spend_cap_holds_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_spend_cap_holds
+    ADD CONSTRAINT account_spend_cap_holds_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: account_spend_snapshot account_spend_snapshot_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -63374,6 +63420,14 @@ ALTER TABLE ONLY public.object_storage_s3_credentials
 
 ALTER TABLE ONLY public.object_storage_s3_credentials
     ADD CONSTRAINT object_storage_s3_credentials_pkey PRIMARY KEY (id);
+
+
+--
+-- Name: object_storage_timeline_acceptance object_storage_timeline_acceptance_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_storage_timeline_acceptance
+    ADD CONSTRAINT object_storage_timeline_acceptance_pkey PRIMARY KEY (singleton);
 
 
 --
@@ -84719,6 +84773,14 @@ ALTER TABLE ONLY public.account_deploy_rate_limits
 
 ALTER TABLE ONLY public.account_passwords
     ADD CONSTRAINT account_passwords_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: account_spend_cap_holds account_spend_cap_holds_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.account_spend_cap_holds
+    ADD CONSTRAINT account_spend_cap_holds_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
