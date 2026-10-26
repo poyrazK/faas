@@ -15,7 +15,9 @@ import (
 // TestObjectCopyDeletionPerKey pins the ADR-20261025115958 amendment: a
 // cross-bucket copy waits only for a deletion of its source key. Its
 // destination is an ordinary write, fenced per key at admission.
-func TestObjectCopyDeletionPerKeyMem(t *testing.T) { objectCopyDeletionPerKeySuite(t, state.NewMemStore()) }
+func TestObjectCopyDeletionPerKeyMem(t *testing.T) {
+	objectCopyDeletionPerKeySuite(t, state.NewMemStore())
+}
 func TestObjectCopyDeletionPerKeyPG(t *testing.T) {
 	st, _ := pgStore(t)
 	objectCopyDeletionPerKeySuite(t, st)
