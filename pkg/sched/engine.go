@@ -3525,6 +3525,7 @@ func (e *Engine) admitAndDispatchOnce(ctx context.Context, appID, deploymentID, 
 		PrioritizeSnapshotLocality: deploymentSmoke && snapshotLocalityKnown,
 		PreferredRegion:            preferredRegion,
 		ExcludeNodeIDs:             excludedWakeNodes(ctx),
+		SpreadReplicas:             spreadsReplicas(ctx, trigger),
 		ownerApp:                   &app,
 	}
 	var placement Placement
@@ -5123,7 +5124,29 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 	if err != nil {
 		return Placement{}, err
 	}
-	return snapshot.choose(r)
+	return snapshot.choose(e.withAppInstances(r))
+}
+
+// spreadsReplicas reports whether an admission keeps away from the app's other
+// instances (ADR-20261026140000): service replicas, whose desired count is a
+// failure-isolation contract, and minimum-instance floors, which keep capacity
+// warm. A cold burst keeps its snapshot locality instead, because a local
+// restore takes well under a second and a remote one many seconds.
+func spreadsReplicas(ctx context.Context, trigger string) bool {
+	switch trigger {
+	case TriggerServiceReplica, TriggerFloor, TriggerFloorDep:
+		return true
+	}
+	return isServiceReplicaPlacementSpread(ctx)
+}
+
+// withAppInstances supplies a spreading request with the app's live instances
+// per node.
+func (e *Engine) withAppInstances(r Request) Request {
+	if r.SpreadReplicas && r.AppInstancesByNode == nil && e.ledger != nil {
+		r.AppInstancesByNode = e.ledger.AppInstancesByNode(r.AppID)
+	}
+	return r
 }
 
 // chooseRestorePlacementLocked snapshots local restore pressure, selects a
@@ -5133,6 +5156,7 @@ func (e *Engine) choosePlacementLocked(ctx context.Context, r Request) (Placemen
 // fallback if the coordinator is temporarily unavailable.
 func (e *Engine) chooseRestorePlacementLocked(ctx context.Context, r Request) (Placement, func(), error) {
 	r.restorePressureAware = !r.PrioritizeSnapshotLocality
+	r = e.withAppInstances(r)
 	snapshot, err := e.loadPlacementSnapshot(ctx, r)
 	if err != nil {
 		return Placement{}, nil, err

@@ -260,6 +260,9 @@ func chooseAmongNodes(nodes []state.ComputeNode, usedMB map[string]int64, usedVC
 			snapshotF = append(snapshotF, n)
 		}
 	}
+	if r.SpreadReplicas && len(candidates) > 1 {
+		candidates, warmFit, snapshotF = spreadCandidates(nodes, candidates, warmFit, snapshotF, r.AppInstancesByNode)
+	}
 	scoreRequest := r
 	scoreRequest.restorePressureAware = restorePressureActive(candidates, r)
 
@@ -355,6 +358,55 @@ func chooseAmongNodes(nodes []state.ComputeNode, usedMB map[string]int64, usedVC
 		}
 	}
 	return placementForNode(best, usedMB[best.ID]), nil
+}
+
+// spreadCandidates keeps the fitting nodes whose zone, and then whose own
+// node, hold the fewest of the app's live instances (ADR-20261026140000).
+// The usual ranking then chooses among them. A warm or snapshot-holding hint
+// survives only when its node is kept, so locality cannot gather every
+// replica onto one node. Zone counts include the instances on nodes that no
+// longer fit: they still share that zone's failure domain.
+func spreadCandidates(nodes, candidates []state.ComputeNode, warmFit *state.ComputeNode, snapshotF []state.ComputeNode, byNode map[string]int) ([]state.ComputeNode, *state.ComputeNode, []state.ComputeNode) {
+	byZone := make(map[string]int, len(nodes))
+	for _, n := range nodes {
+		byZone[failureZone(n)] += byNode[n.ID]
+	}
+	var kept []state.ComputeNode
+	bestZone, bestNode := 0, 0
+	for _, n := range candidates {
+		zone, own := byZone[failureZone(n)], byNode[n.ID]
+		switch {
+		case len(kept) == 0 || zone < bestZone || zone == bestZone && own < bestNode:
+			kept, bestZone, bestNode = []state.ComputeNode{n}, zone, own
+		case zone == bestZone && own == bestNode:
+			kept = append(kept, n)
+		}
+	}
+	if warmFit != nil && !nodeIn(kept, warmFit.ID) {
+		warmFit = nil
+	}
+	var snapshots []state.ComputeNode
+	for _, n := range snapshotF {
+		if nodeIn(kept, n.ID) {
+			snapshots = append(snapshots, n)
+		}
+	}
+	return kept, warmFit, snapshots
+}
+
+// failureZone is the failure domain replica spread separates: a node's
+// region and zone. Nodes without either share one domain.
+func failureZone(n state.ComputeNode) string {
+	return stringValue(n.Region) + "\x00" + stringValue(n.Zone)
+}
+
+func nodeIn(nodes []state.ComputeNode, id string) bool {
+	for _, n := range nodes {
+		if n.ID == id {
+			return true
+		}
+	}
+	return false
 }
 
 func restorePressureActive(candidates []state.ComputeNode, r Request) bool {
