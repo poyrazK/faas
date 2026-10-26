@@ -1,0 +1,11 @@
+# Managed by Ansible (audit_anchor). Local edits are overwritten.
+[Unit]
+Description=Verify the Gregale audit log anchor chain daily (ADR-20261026163015)
+
+[Timer]
+OnCalendar={{ faas_audit_verify_schedule }}
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

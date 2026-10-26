@@ -149,6 +149,7 @@ func Run(t *testing.T, open Open) {
 		{"service_address_caller_is_gated_on_node_readiness", testServiceAddressCallerByHostIP},
 		{"removed_member_can_rejoin", testRemovedMemberCanRejoin},
 		{"object_storage_timeline_fence", testObjectStorageTimelineFence},
+		{"audit_log_anchors_seal_and_verify", testAuditLogAnchors},
 		{"api_key_requires_scopes", testAPIKeyRequiresScopes},
 		{"login_token_single_use_and_expiry", testLoginTokenSingleUseAndExpiry},
 		{"email_verification_token_single_use_and_expiry", testEmailVerificationTokenSingleUseAndExpiry},
