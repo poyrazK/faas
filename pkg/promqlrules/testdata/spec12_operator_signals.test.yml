@@ -681,3 +681,30 @@ tests:
       - eval_time: 30m
         alertname: FaasScheddInstanceStatsCollectSlow
         exp_alerts: []
+
+  # ADR-091 amendment (2026-10-26): a gateway that cannot read edge rules
+  # alerts per outcome; ordinary reads do not.
+  - interval: 1m
+    name: "edge rule reads failing fires; ordinary reads stay quiet"
+    input_series:
+      - series: 'gateway_edge_rule_load_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="failed"}'
+        values: '0+3x30'
+      - series: 'gateway_edge_rule_load_total{job="gatewayd-internal",instance="fsn-2.gregale.dev:9092",outcome="last_known"}'
+        values: '0x30'
+      - series: 'gateway_edge_rule_load_total{job="gatewayd-internal",instance="fsn-3.gregale.dev:9092",outcome="loaded"}'
+        values: '0+100x30'
+    alert_rule_test:
+      - eval_time: 30m
+        alertname: FaasEdgeRuleLoadFailing
+        exp_alerts:
+          - exp_labels:
+              instance: "fsn-2.gregale.dev:9092"
+              outcome: "failed"
+              severity: "warn"
+              component: "gatewayd-internal"
+              family: "edge_rules"
+              public_status: "internal"
+            exp_annotations:
+              summary: "fsn-2.gregale.dev:9092 cannot read edge rules (failed)"
+              description: "gateway_edge_rule_load_total{outcome=\"failed\"} kept rising on fsn-2.gregale.dev:9092 for 5m. last_known: hosts get their last compiled rules and rule edits do not apply. failed: hosts with nothing compiled are refused with 503 Edge security unavailable."
+              runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleLoadFailing.md"

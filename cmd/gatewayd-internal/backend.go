@@ -1549,7 +1549,7 @@ func handleInvalidation(ctx context.Context, inv invalidator, n db.Notification,
 			inv.ResetEdgeRules()
 			inv.InvalidateResponseCacheAll()
 		} else {
-			invalidateEdgeRuleScope(ctx, inv, payload.AppID, payload.MatchHosts)
+			invalidateEdgeRuleScope(ctx, inv, payload.AccountID, payload.AppID, payload.MatchHosts)
 		}
 		if parseErr == nil && payload.Generation > 0 && payload.Phase == "apply" {
 			if converger, ok := inv.(interface {
