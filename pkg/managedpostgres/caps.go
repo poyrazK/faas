@@ -136,10 +136,66 @@ func capQuotaNeedsWrite(current, target, used int64) bool {
 	}
 }
 
-// CapCeiling returns a usage subject's monthly compute ceiling in
-// compute-unit seconds: an account, or an organization that owns resources.
-// Zero means the subject is not capped.
-type CapCeiling func(ctx context.Context, accountID string) (int64, error)
+// CapLimits are a usage subject's monthly compute limits in compute-unit
+// seconds. Allowance is the plan's; Ceiling is where databases are suspended,
+// the allowance or twice it with overage on. A zero Ceiling means uncapped.
+type CapLimits struct {
+	Allowance int64
+	Ceiling   int64
+	Overage   bool
+}
+
+// CapCeiling returns a usage subject's limits: an account, or an
+// organization that owns resources.
+type CapCeiling func(ctx context.Context, subjectID string) (CapLimits, error)
+
+// Cap thresholds (ADR-20261025094915 decision 8), recorded once per subject
+// and UTC month while caps are enforced.
+const (
+	CapThresholdWarning        = "warning"
+	CapThresholdAllowance      = "allowance"
+	CapThresholdCeilingWarning = "ceiling_warning"
+	CapThresholdSuspended      = "suspended"
+)
+
+// CapEvent is one threshold a subject reached in a month.
+type CapEvent struct {
+	SubjectID   string
+	PeriodStart time.Time
+	Threshold   string
+	ReachedAt   time.Time
+	Used        int64
+	Allowance   int64
+	Ceiling     int64
+	Overage     bool
+}
+
+// CapEventStore is an optional UsageStore capability. RecordCapEvent reports
+// whether the event is new; a repeat for the same subject, month and
+// threshold is a no-op.
+type CapEventStore interface {
+	RecordCapEvent(ctx context.Context, event CapEvent) (bool, error)
+	CapSuspendedAt(ctx context.Context, subjectID string, periodStart time.Time) (*time.Time, error)
+}
+
+// capThresholds lists the thresholds used reaches: 80% of the allowance, the
+// allowance, 80% of the ceiling when overage raises it, and the ceiling.
+func capThresholds(used int64, limits CapLimits, ceiling int64) []string {
+	var reached []string
+	if limits.Allowance > 0 && used >= limits.Allowance-limits.Allowance/5 {
+		reached = append(reached, CapThresholdWarning)
+	}
+	if limits.Allowance > 0 && used >= limits.Allowance {
+		reached = append(reached, CapThresholdAllowance)
+	}
+	if limits.Overage && ceiling > limits.Allowance && used >= ceiling-ceiling/5 {
+		reached = append(reached, CapThresholdCeilingWarning)
+	}
+	if used >= ceiling {
+		reached = append(reached, CapThresholdSuspended)
+	}
+	return reached
+}
 
 type CapEnforcerOptions struct {
 	Mode    CapEnforcementMode
@@ -166,6 +222,7 @@ type CapSweepSummary struct {
 	ScopesUnchanged   int
 	ScopesApplied     int
 	ScopesShadowed    int
+	EventsRecorded    int
 	CompletedAt       time.Time
 }
 
@@ -316,10 +373,11 @@ func capEnforceable(database Database) bool {
 }
 
 func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, databases []Database, summary *CapSweepSummary) error {
-	ceiling, err := e.ceiling(ctx, accountID)
+	limits, err := e.ceiling(ctx, accountID)
 	if err != nil {
 		return err
 	}
+	ceiling := limits.Ceiling
 	if ceiling <= 0 {
 		summary.Uncapped++
 		return nil
@@ -344,6 +402,11 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		summary.SuspendedAccounts++
 	}
 	var failures []error
+	if e.mode == CapEnforcementOn {
+		if err := e.recordCapEvents(ctx, accountID, now, plan.used, limits, plan.ceiling, summary); err != nil {
+			failures = append(failures, err)
+		}
+	}
 	for _, decision := range plan.decisions {
 		if !decision.apply {
 			summary.ScopesUnchanged++
@@ -366,6 +429,31 @@ func (e *CapEnforcer) enforceAccount(ctx context.Context, accountID string, data
 		e.logger.Info("managed postgres compute cap applied", attrs...)
 	}
 	return errors.Join(failures...)
+}
+
+// recordCapEvents records each threshold the subject reached this month the
+// first time a sweep sees it. Shadow mode records nothing: no customer is
+// told about a suspension that is not happening.
+func (e *CapEnforcer) recordCapEvents(ctx context.Context, subjectID string, now time.Time, used int64, limits CapLimits, ceiling int64, summary *CapSweepSummary) error {
+	store, ok := e.store.(CapEventStore)
+	if !ok {
+		return nil
+	}
+	for _, threshold := range capThresholds(used, limits, ceiling) {
+		recorded, err := store.RecordCapEvent(ctx, CapEvent{
+			SubjectID: subjectID, PeriodStart: monthStart(now), Threshold: threshold, ReachedAt: now,
+			Used: used, Allowance: max(limits.Allowance, 1), Ceiling: max(ceiling, limits.Allowance, 1), Overage: limits.Overage,
+		})
+		if err != nil {
+			return err
+		}
+		if recorded {
+			summary.EventsRecorded++
+			e.logger.Info("managed postgres compute cap threshold reached", "subject_id", subjectID,
+				"threshold", threshold, "used_unit_seconds", used, "ceiling_unit_seconds", ceiling, "overage", limits.Overage)
+		}
+	}
+	return nil
 }
 
 // observeScopes reads each database's provider quota and groups databases

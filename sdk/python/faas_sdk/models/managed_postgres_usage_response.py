@@ -50,6 +50,9 @@ class ManagedPostgresUsageResponse:
     resume next month or after an upgrade."""
     overage_enabled: bool | Unset = UNSET
     """True while the account runs its databases past the allowance, up to the ceiling."""
+    compute_suspended_at: datetime.datetime | Unset = UNSET
+    """When the compute cap suspended the account's databases this month; present while compute_cap_state is
+    suspended."""
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -97,6 +100,10 @@ class ManagedPostgresUsageResponse:
 
         overage_enabled = self.overage_enabled
 
+        compute_suspended_at: str | Unset = UNSET
+        if not isinstance(self.compute_suspended_at, Unset):
+            compute_suspended_at = self.compute_suspended_at.isoformat()
+
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
@@ -126,6 +133,8 @@ class ManagedPostgresUsageResponse:
             field_dict["compute_cap_state"] = compute_cap_state
         if overage_enabled is not UNSET:
             field_dict["overage_enabled"] = overage_enabled
+        if compute_suspended_at is not UNSET:
+            field_dict["compute_suspended_at"] = compute_suspended_at
 
         return field_dict
 
@@ -188,6 +197,13 @@ class ManagedPostgresUsageResponse:
 
         overage_enabled = d.pop("overage_enabled", UNSET)
 
+        _compute_suspended_at = d.pop("compute_suspended_at", UNSET)
+        compute_suspended_at: datetime.datetime | Unset
+        if isinstance(_compute_suspended_at, Unset):
+            compute_suspended_at = UNSET
+        else:
+            compute_suspended_at = datetime.datetime.fromisoformat(_compute_suspended_at)
+
         managed_postgres_usage_response = cls(
             period_start=period_start,
             policy_enabled=policy_enabled,
@@ -207,6 +223,7 @@ class ManagedPostgresUsageResponse:
             compute_ceiling_unit_seconds=compute_ceiling_unit_seconds,
             compute_cap_state=compute_cap_state,
             overage_enabled=overage_enabled,
+            compute_suspended_at=compute_suspended_at,
         )
 
         managed_postgres_usage_response.additional_properties = d

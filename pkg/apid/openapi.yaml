@@ -82109,6 +82109,10 @@ components:
         overage_enabled:
           description: True while the account runs its databases past the allowance, up to the ceiling.
           type: boolean
+        compute_suspended_at:
+          description: When the compute cap suspended the account's databases this month; present while compute_cap_state is suspended.
+          type: string
+          format: date-time
     ManagedPostgresOverage:
       description: An account's managed PostgreSQL compute overage setting (ADR-20261025094915).
       type: object

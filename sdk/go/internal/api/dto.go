@@ -1272,6 +1272,8 @@ type ManagedPostgresUsageResponse struct {
 	ComputeAllowanceUnitSeconds int64      `json:"compute_allowance_unit_seconds,omitempty"`
 	ComputeCeilingUnitSeconds   int64      `json:"compute_ceiling_unit_seconds,omitempty"`
 	ComputeCapState             string     `json:"compute_cap_state,omitempty"`
+	OverageEnabled              bool       `json:"overage_enabled,omitempty"`
+	ComputeSuspendedAt          *time.Time `json:"compute_suspended_at,omitempty"`
 }
 
 // ValidateAppConfig checks a requested app config against its plan caps (spec
