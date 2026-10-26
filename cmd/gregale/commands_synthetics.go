@@ -6,6 +6,9 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
+	"strconv"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 )
@@ -100,6 +103,15 @@ func cmdSyntheticsCreate(args []string) int {
 	if *slug == "" || *name == "" || fs.NArg() != 0 {
 		PrintUsage(os.Stderr, "usage: gregale synthetics create --app <slug> --name <name> [--path /healthz] [--method GET|HEAD] [--expect-status N] [--timeout-ms N] [--every-minutes 5|15|60]", "synthetics")
 		return 1
+	}
+	// The API's check names interval_seconds and [300 900 3600], which
+	// `--every-minutes 1` never spelled (Hunt 14 H14-64).
+	if !slices.Contains(api.SyntheticCheckIntervalsSeconds, *every*60) {
+		minutes := make([]string, 0, len(api.SyntheticCheckIntervalsSeconds))
+		for _, seconds := range api.SyntheticCheckIntervalsSeconds {
+			minutes = append(minutes, strconv.Itoa(seconds/60))
+		}
+		return printErr("Invalid synthetic check", fmt.Errorf("--every-minutes must be one of %s; shorter intervals would keep the app permanently awake", strings.Join(minutes, ", ")))
 	}
 	req, prob := api.NormalizeCreateSyntheticCheck(api.CreateSyntheticCheckRequest{
 		Name: *name, Method: *method, Path: *path, ExpectedStatus: *expect, TimeoutMS: *timeout, IntervalSeconds: *every * 60,

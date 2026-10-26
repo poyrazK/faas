@@ -40,16 +40,22 @@ func (h dashboardsHost) AppForAccount(ctx context.Context, acct state.Account, s
 // or an incident) may show app's data to the request's principal. A failed
 // read hides the app.
 func accountViewAppVisible(ctx context.Context, store appaccess.Store, log *slog.Logger, acct state.Account, app state.App) bool {
-	actor := acct
-	if principal, _, ok := middleware.AccountFromCtx(ctx); ok {
-		actor = principal
-	}
-	visible, err := appaccess.VisibleAppsContext(ctx, store, actor, []state.App{app})
+	visible, err := accountViewApps(ctx, store, acct, []state.App{app})
 	if err != nil {
 		log.WarnContext(ctx, "account view: app access", "app_id", app.ID, "err", err)
 		return false
 	}
 	return len(visible) == 1
+}
+
+// accountViewApps keeps the apps of acct's list that an account view may
+// show to the request's principal (appaccess.VisibleAppsContext).
+func accountViewApps(ctx context.Context, store appaccess.Store, acct state.Account, apps []state.App) ([]state.App, error) {
+	actor := acct
+	if principal, _, ok := middleware.AccountFromCtx(ctx); ok {
+		actor = principal
+	}
+	return appaccess.VisibleAppsContext(ctx, store, actor, apps)
 }
 
 func (h dashboardsHost) Dashboards() state.DashboardStore { return h.s.store }

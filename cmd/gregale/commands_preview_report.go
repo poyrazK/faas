@@ -54,6 +54,9 @@ type previewRouteReport struct {
 	candidateEdgeRules       []api.EdgeRuleResponse
 	candidateRulesErr        error
 	candidateRulesLoaded     bool
+	// prPreview marks a GitHub PR preview, which may be the root of a
+	// multi-workload PR preview environment.
+	prPreview bool
 }
 
 type previewReportEvidence struct {
@@ -197,8 +200,10 @@ func cmdPreviewReport(args []string) int {
 	if err != nil {
 		return printErr("Could not build route change report", err)
 	}
-	if note, ok := previewEnvironmentReviewNote(ctx, client, pos[0]); ok {
-		report.Notes = append(report.Notes, note)
+	if report.prPreview {
+		if note, ok := previewEnvironmentReviewNote(ctx, client, pos[0]); ok {
+			report.Notes = append(report.Notes, note)
+		}
 	}
 	attachPreviewReportTests(&report, receipts, digest)
 	collectPreviewCustomerUsage(ctx, client, &report, *since, *customerDetails)
@@ -269,7 +274,7 @@ func collectPreviewRouteReport(ctx context.Context, client *api.Client, slug, ba
 		return previewRouteReport{}, errors.New("preview has no accessible parent app")
 	}
 	report := previewRouteReport{
-		Version: 7, Preview: preview.App.Slug, Parent: preview.Parent.Slug,
+		Version: 7, Preview: preview.App.Slug, Parent: preview.Parent.Slug, prPreview: preview.App.PreviewPRNumber > 0,
 		GeneratedAt: time.Now().UTC(), BaselineSelection: "latest_live_parent",
 		Requests:  previewReportEvidence{Status: "unavailable", Reason: "captured_documents_missing"},
 		Security:  previewReportEvidence{Status: "unavailable", Reason: "captured_documents_missing"},

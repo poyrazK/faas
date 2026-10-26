@@ -201,7 +201,10 @@ func runGrypeImpl(ctx context.Context, bin, dir string) (*ScanResult, error) {
 		return nil, fmt.Errorf("imaged: prepare grype source %q: %w", dir, err)
 	}
 	defer cleanup()
-	return runBoundedGrypeView(ctx, bin, scanDir)
+	markScanPhase(ctx, "extract")
+	result, err := runBoundedGrypeView(ctx, bin, scanDir)
+	markScanPhase(ctx, "grype")
+	return result, err
 }
 
 func runGrypeDirectory(ctx context.Context, bin, scanDir string) (*ScanResult, error) {

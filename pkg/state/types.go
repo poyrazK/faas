@@ -1973,6 +1973,10 @@ type AppManifest struct {
 	// Dockerfile build (ADR-20261019142544); project-managed like
 	// BuildDockerfile and captured per deployment at enqueue.
 	DockerfileBuild *api.DockerfileBuildOptions `json:"dockerfile_build,omitempty"`
+	// BuildGoCommand selects the `cmd/<name>` main package a Railpack build
+	// of a multi-command Go module compiles (ADR-20261025134512);
+	// project-managed like BuildDockerfile.
+	BuildGoCommand string `json:"build_go_command,omitempty"`
 	// ProjectImage preserves declared image intent (including a mutable tag).
 	// Each deployment resolves and pins its own immutable source. Command
 	// replaces the image CMD, retaining its ENTRYPOINT; nil inherits CMD.
@@ -2092,7 +2096,7 @@ func (m AppManifest) EffectivePreviewServiceCallsPolicy() api.PreviewServiceCall
 // app rows to persist a non-empty contract.
 func (m AppManifest) IsZero() bool {
 	return len(m.PublicBuildURLs) == 0 && m.Entrypoint == nil && m.Env == nil && m.ProjectSourceSHA256 == "" &&
-		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
+		m.BuildDockerfile == "" && m.DockerfileBuild == nil && m.BuildGoCommand == "" && m.ProjectImage == "" && m.ProjectImageCommand == nil && m.ProjectImagePort == 0 && m.ProjectImageHealthcheck == nil && m.ProjectImageProcess == nil && len(m.ProjectDependencyConditions) == 0 && len(m.ProjectSecretFiles) == 0 && len(m.ServiceBindings) == 0 && len(m.ServiceReliability) == 0 && m.ServiceBindingPolicy == "" && m.ServiceBindingTransport == "" && m.PreviewServiceCallsPolicy == "" && m.AllowedServiceCallers == nil && m.AllowedServiceCallScopes == nil && m.WorkingDir == "" &&
 		m.Port == 0 && len(m.Ports) == 0 && m.Healthz == "" && m.User == "" &&
 		m.ExecutionMode == "" && m.RestartPolicy == "" && m.AfterRestore == nil && m.BeforeCheckpoint == nil && m.Pause == "" && m.Profiling == nil && m.Tracing == nil &&
 		m.StartupDeadlineS == 0 && m.MaxRetries == 0 && m.RequestTimeoutS == 0 && m.FunctionConcurrency == 0 &&
@@ -2110,6 +2114,7 @@ func mergeProjectManagedManifest(existing, desired AppManifest) AppManifest {
 	existing.ProjectSourceSHA256 = desired.ProjectSourceSHA256
 	existing.BuildDockerfile = desired.BuildDockerfile
 	existing.DockerfileBuild = desired.DockerfileBuild.Clone()
+	existing.BuildGoCommand = desired.BuildGoCommand
 	existing.ProjectImage = desired.ProjectImage
 	existing.ProjectImageCommand = desired.ProjectImageCommand
 	existing.ProjectImagePort = desired.ProjectImagePort
@@ -5664,6 +5669,12 @@ type ComputeNode struct {
 	// nil on a never-recovered node. The DB CHECK constraint
 	// (00582) rejects values outside this closed set.
 	LastRecoveryOutcome *string
+	// CPUTemplate is the Firecracker CPU template vmmd boots guests with,
+	// and CPUModel the host CPU signature (fcvm.HostCPU.Signature). vmmd
+	// writes both at registration; empty means "not reported", a vmmd from
+	// before ADR-20261024225612.
+	CPUTemplate string
+	CPUModel    string
 	// Readiness is what schedd's heartbeat last proved about the node
 	// (ADR-20261022184531). Placement prefers ready nodes; Lifecycle stays
 	// the authority for operator and recovery states.
@@ -6887,6 +6898,12 @@ type Snapshot struct {
 	Stale                           bool
 	DeletePending                   bool
 	CreatedAt                       time.Time
+	// CPUTemplate and CPUModel are the capturing node's CPU identity
+	// (ADR-20261024225612): a templated snapshot restores on any node
+	// class the template supports, a template-less one only on the same
+	// CPUModel. Both empty identifies a legacy row.
+	CPUTemplate string
+	CPUModel    string
 }
 
 // Snapshot tier constants (issue #470 / ADR-055). Use these rather

@@ -417,6 +417,7 @@ const DevDiagImportFailure = devDiagImportFailure
 const DevDiagStartupCrash = devDiagStartupCrash
 const DevDiagUpstreamFailure = devDiagUpstreamFailure
 const DevEditToLiveTarget = devEditToLiveTarget
+const DevGroupWorkspaceEnv = devGroupWorkspaceEnv
 const DevPhaseBuild = devPhaseBuild
 const DevPhaseReady = devPhaseReady
 const DevPhaseSync = devPhaseSync
@@ -1211,6 +1212,7 @@ var DescribeRolloutDecision = describeRolloutDecision
 var DetectGithubSnippetEnv = detectGithubSnippetEnv
 var DevDiagnosticFromDeployment = devDiagnosticFromDeployment
 var DevDiagnosticFromError = devDiagnosticFromError
+var DevGroupWorkspace = devGroupWorkspace
 var DevHistoryPatchNote = devHistoryPatchNote
 var DevPatchExplanation = devPatchExplanation
 var DevSetupManifestEdit = devSetupManifestEdit
@@ -1223,6 +1225,7 @@ var DiffAutomationDefinition = diffAutomationDefinition
 var DiffDataAPISnapshots = diffDataAPISnapshots
 var DiffPreviewRoutePolicy = diffPreviewRoutePolicy
 var DiffRequestFromCLI = diffRequestFromCLI
+var DiscoverProjectSources = discoverProjectSources
 var DocsURLForCode = docsURLForCode
 var DocsURLForTemplate = docsURLForTemplate
 var DocsURLForTopic = docsURLForTopic
@@ -1341,6 +1344,7 @@ var IsCompletedDeployment = isCompletedDeployment
 var IsTerminalBuildStatus = isTerminalBuildStatus
 var IsTerminalDeploymentStatus = isTerminalDeploymentStatus
 var IsValidDeploymentAnnotationTag = isValidDeploymentAnnotationTag
+var JoinDevGroup = joinDevGroup
 var JsonOut = jsonOut
 var LinkedAppSlug = linkedAppSlug
 var LinkedProjectContext = linkedProjectContext
@@ -2460,3 +2464,5 @@ func DockerConfigRegistryAuth(ctx context.Context, configPath, image string, hel
 }
 
 var RenderRouteMonitorReport = renderRouteMonitorReport
+
+var PreviewCompanionsFromManifest = previewCompanionsFromManifest

@@ -19,7 +19,6 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"os"
 	"strings"
 	"time"
 
@@ -1152,26 +1151,16 @@ func previewHostnameForSlug(slug string) string {
 	return slug + "." + AppsDomain()
 }
 
-// AppsDomain is the customer-facing apex domain. App and preview hosts are
-// its subdomains and the customer dashboard is served at its root. The
-// retired apps.gregale.dev shape (issue #1727) maps to the apex.
-func AppsDomain() string {
-	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" || domain == "apps.gregale.dev" {
-		domain = "gregale.dev"
-	}
-	return domain
-}
-
 // DashboardAppURL is the customer dashboard page for one app. Links written
 // to GitHub must use routes the dashboard serves: an app page, selected with
 // query parameters, is the deepest one. The page's app menu carries the
-// "Tear down preview" action for a preview app.
+// "Tear down preview" action for a preview app. The dashboard lives on the
+// platform domain (ADR-20261026100000).
 func DashboardAppURL(slug string) string {
 	if slug == "" {
 		return ""
 	}
-	return "https://" + AppsDomain() + "/dashboard/apps/" + url.PathEscape(slug)
+	return "https://" + PlatformDomain() + "/dashboard/apps/" + url.PathEscape(slug)
 }
 
 // DashboardDeploymentURL opens one deployment on its app's Deployments tab.

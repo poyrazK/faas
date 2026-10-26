@@ -1,0 +1,21 @@
+# ADR-20261025134512: Each command of a multi-command Go module is a service
+
+- **Status:** accepted
+- **Date:** 2026-10-25
+- **Decision:** A repository whose root is one Go module (`go.mod`, no `go.work`, no root Dockerfile) with no `main` package at its root and two or more `cmd/<name>` main packages deploys one service per command. Each service is named `<name>` and builds from the module root with Railpack selecting `./cmd/<name>`.
+  - **Scan:** `reposcan` emits a convention-tier workload `{name: <name>, root_dir: ".", go_command: <name>}` for each `cmd/<name>` directory that holds a non-test `package main` file and is not already a convention member (no Dockerfile, `go.mod` or other marker of its own). A command name another source already declares, such as a Compose service with its own Dockerfile, is left to that source. The plan carries `go_command` and the CLI shows `builds=cmd/<name>`. `gregale deploy` counts these services when it decides that a root is a project.
+  - **Manifest:** reconcile records the command as `apps.manifest.build_go_command`, project-managed like `build_dockerfile`. A change shows up as `go_command` in the plan diff. GitOps environment inheritance refuses to inherit it, as it does Dockerfile build options, rather than drop it.
+  - **Build:** builderd passes the command in `build.json` (`go_command`) only for a Go Railpack build. A Dockerfile build or a source that does not detect as Go fails with a user error instead of building something else. The build cache recipe includes the command. Without it, two services of one module (same source, root and framework) would share a cache key, and one would be served the other's binary.
+  - **Guest:** guest-init runs `railpack prepare --env RAILPACK_GO_BIN=<name>` and exports the same value for `buildctl --secret id=RAILPACK_GO_BIN,env=RAILPACK_GO_BIN`. Railpack 0.38 lists every `--env` value as a plan secret its steps mount, and BuildKit fails a build whose secret is missing. The guest acknowledges the command in `build-done.json` (`go_command`). builderd refuses a successful build without the acknowledgement, which is what an older guest produces.
+- **Why:** Railpack builds a root `main` package, or else the first directory under `cmd/`. A typical Go service repository (`cmd/api`, `cmd/worker`, shared `internal/`) therefore deployed as one app running only `cmd/api`, with the rest silently missing. Building each command from the module root keeps the shared packages in context. Splitting the module into per-command roots would not, and the module has only one `go.mod`.
+- **Consequences:**
+  - Every command service rebuilds on any change to the module, because its source root is the whole module. Commands share code, so this is correct, at the cost of extra builds.
+  - Layouts that deploy as one app today keep doing so: a root `main` package, a single command, a root Dockerfile, or a `go.work` workspace. They keep the app name they already use.
+  - A project that already deployed a multi-command module as one app sees the next plan replace that app with one per command. The plan lists the change before apply.
+  - `gregale dev --all` does not run these services: a developer session has no command selection, and its loop would build Railpack's default command.
+  - Rolling upgrades: the new `build.json` and `build-done.json` keys are `omitempty`. Until the builder guest updates, builds of command services fail with "builder guest did not acknowledge the Go command" instead of deploying the wrong binary. Other builds are unaffected. An older apid never sets the field.
+- **Rejected alternatives:**
+  - **Root dir `cmd/<name>`.** The build context would lose `go.mod` and the shared packages.
+  - **A start command per service over one shared binary.** Railpack builds a single `main` package, so there is no binary that contains the other commands.
+  - **Strip `RAILPACK_GO_BIN` from the plan's secrets instead of supplying it.** That needs another plan rewrite in the guest. Supplying a non-secret value costs one flag.
+  - **Also split a single command or a root `main` beside `cmd/`.** That would rename apps that deploy correctly today. A root `main` package is the module's declared entry point.

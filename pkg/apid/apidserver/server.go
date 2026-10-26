@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/incidents"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
+	"github.com/onebox-faas/faas/pkg/apid/logerasure"
 	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
@@ -214,20 +215,29 @@ type server struct {
 	managedPostgresReconciler     *managedpostgres.Reconciler
 	managedPostgresBindings       *managedpostgres.BindingService
 	managedPostgresCutovers       *managedpostgres.CutoverService
+	// logArchive reaches the runtime-log archive bucket; nil when this apid
+	// has none configured. The grace sweep erases archived logs through it.
+	logArchive logerasure.Objects
 	// databaseSwitchDrainOverride feeds the database switch worker drain
 	// evidence on stores without schedd's drain plans (tests).
 	databaseSwitchDrainOverride      state.DatabaseSwitchDrainStore
 	managedPostgresBindingReconciler *managedpostgres.BindingReconciler
 	managedPostgresUsageCollector    *managedpostgres.UsageCollector
-	managedPostgresHealthCollector   *managedpostgres.HealthCollector
-	store                            state.Store
-	domainVerificationMetrics        *domainVerificationMetrics
-	log                              *slog.Logger
+	// managedPostgresCapMode is FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT, read
+	// by the usage views (ADR-20261025094915).
+	managedPostgresCapMode         managedpostgres.CapEnforcementMode
+	managedPostgresHealthCollector *managedpostgres.HealthCollector
+	store                          state.Store
+	domainVerificationMetrics      *domainVerificationMetrics
+	log                            *slog.Logger
 	// devSourceCacheMu serializes reconstruction with best-effort cache
 	// replacement. The cache is node-local and disposable; this lock is not
 	// cross-node coordination and never guards customer-intent state.
 	devSourceCacheMu sync.Mutex
 	domain           string // apps base domain for URLs
+	// platformDomain is the domain of the site, dashboard and API hosts when
+	// it differs from the apps domain (ADR-20261026100000); see platformHost.
+	platformDomain string
 	// companionImages is the operator-owned catalog behind preset-only
 	// companion declarations. Values are immutable OCI digest references.
 	companionImages map[string]string
@@ -1711,6 +1721,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/encryption", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.PutObjectBucketEncryption))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/encryption", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.DeleteObjectBucketEncryption))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/versioning", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.PutObjectBucketVersioning))))
+	// ADR-20261025202805: customer bucket CORS, behind the bucket-cors capability.
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/cors", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.GetObjectBucketCORS))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/cors", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.PutObjectBucketCORS))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/cors", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.DeleteObjectBucketCORS))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/lifecycle", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.ObjectBucketLifecycle))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/compute-triggers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.ReconcileObjectStorageComputeTriggers))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/notifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.ObjectBucketNotifications))))

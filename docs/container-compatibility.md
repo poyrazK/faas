@@ -95,6 +95,28 @@ for HTTP health checks; an older gateway cannot verify a candidate.
 Gregale adds the managed infrastructure around that process: TLS, readiness,
 logs and metrics, snapshots, autoscaling, and scale-to-zero.
 
+## Runtime environment
+
+The process starts in the environment a container runtime provides
+([ADR-20261025111339](adr/20261025111339-guest-container-runtime-parity.md)):
+
+| | Gregale | Docker |
+|---|---|---|
+| `HOME` | The image or deployment value; else the user's passwd home when the user can write there; else `/tmp` | The image value, else the passwd home |
+| `PATH` | The image or deployment value, else `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | Same |
+| Working directory | `WORKDIR`, created for the process user when missing | Same |
+| Open files (`ulimit -n`) | 65,536 soft, 1,048,576 hard | Varies by host; Kubernetes gives 1,048,576 |
+| Hostname | `gregale` | The container ID |
+| `/etc/hosts` | The image's file, plus `127.0.0.1 localhost` and `10.0.0.2 <hostname>` when it lacks them | Generated; image entries ignored |
+| `/tmp` | RAM-backed tmpfs, up to half the instance's RAM, starting with the image's `/tmp` files | The image's directory on the container disk |
+| `/dev/shm` | tmpfs, up to half the instance's RAM | 64 MB tmpfs |
+| `/dev/pts` | Mounted | Mounted |
+
+Files in `/tmp` and `/dev/shm` use the instance's memory: filling them hits
+the plan's RAM limit, not a disk-full error. Write large scratch files under
+the home directory or the working directory instead; that space counts against
+the ephemeral disk allowance.
+
 ## Randomness after a snapshot restore
 
 A scaled-to-zero app wakes from a snapshot of its running process, so any
@@ -412,6 +434,12 @@ every apply and replace values set with `gregale app <slug> --ram` and the like;
 file does not declare keep the app's. Reservations and the other `deploy` keys
 are warned.
 
+A new service whose file declares no memory starts with 128 MB
+(`ProjectWorkloadDefaultRAMMB`), not the plan's RAM a standalone app gets. The
+project plan marks such services `memory=128MB (default)` and lists them under
+"Starts with the default 128 MB". Node and Python services often need more, so
+declare `memory`, or raise it with `gregale app <slug> --ram` after the deploy.
+
 `extends` and top-level `include` are resolved as Compose resolves them
 ([ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)):
 
@@ -448,7 +476,8 @@ The scan reports every other Compose key instead of dropping it silently:
 
 | Keys | Result |
 |---|---|
-| `build` (`context`, `dockerfile`, `args`, `target`, `secrets`), `command`, `cpus`, `depends_on`, `deploy` (`replicas`, `resources.limits.memory`, `resources.limits.cpus`), `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `mem_limit`, `ports`, `profiles`, `scale`, `secrets` (`environment:` sources), `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
+| `build` (`context`, `dockerfile`, `args`, `target`, `secrets`), `command`, `cpus`, `depends_on`, `deploy` (`replicas`, `resources.limits.memory`, `resources.limits.cpus`), `entrypoint`, `expose`, `healthcheck`, `image`, `mem_limit`, `ports`, `profiles`, `scale`, `secrets` (`environment:` sources), `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
+| `environment`, `env_file` | Names applied: the plan lists each one without a value under **Needs a value**. Plain `environment:` values are imported only with `x-gregale-env-import: true`, on a reviewed deploy; `env_file` values are never imported. See above. |
 | `container_name`, `init`, `stdin_open`, `tty`, `platform: linux/amd64`, `x-*` extensions | Ignored without a warning; they have no effect on a microVM service. |
 | `volumes`, `tmpfs` | Warning: no persistent volumes or bind mounts; each start gets a fresh filesystem. |
 | Other `deploy` keys (`restart_policy`, `placement`, `update_config`, `resources.reservations`, …), `cpu_shares`, `cpu_quota`, `cpuset`, `mem_reservation`, `memswap_limit` | Warning, with the reason for each. |
@@ -482,8 +511,8 @@ their keys: the managed resource replaces the container.
 | Snapshot restore | Restorable cache with cold-boot fallback; optional lifecycle callbacks | External connections and durable state require application recovery handling. |
 
 Availability is defined by the [capability matrix](capabilities.md), not by this
-compatibility table. In particular, container deployment is beta while
-companions and worker pools are preview.
+compatibility table. In particular, container deployment is generally
+available while companions and worker pools are preview.
 
 ## Image preflight
 

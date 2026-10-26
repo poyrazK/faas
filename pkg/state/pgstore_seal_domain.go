@@ -510,3 +510,25 @@ func (s *PgStore) ResealAlertingCredential(ctx context.Context, c AlertingSealed
 	}
 	return tag.RowsAffected() == 1, nil
 }
+
+// ResealStorageCredential replaces an active S3 credential's sealed secret
+// and key id for the storage seal-domain re-seal (ADR 20261022111812), only
+// while it still holds old: a binding rotation can replace a credential's
+// secret in place, and must win. A row a guard holds for now (a project
+// clone in progress) is left for the next run too.
+func (s *PgStore) ResealStorageCredential(ctx context.Context, id string, old []byte, kid string, sealed []byte) (bool, error) {
+	if len(old) == 0 || len(sealed) == 0 || kid == "" {
+		return false, errors.New("state: reseal storage credential needs the old and new ciphertext and a key id")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE object_storage_s3_credentials SET secret_sealed = $3, kid = $4
+		 WHERE id = $1::uuid AND secret_sealed = $2 AND status = 'active'`, id, old, sealed, kid)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23514" {
+			return false, nil
+		}
+		return false, fmt.Errorf("state: reseal storage credential %s: %w", id, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}

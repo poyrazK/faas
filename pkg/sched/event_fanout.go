@@ -199,6 +199,18 @@ func (l *Loop) routePublishedEventSnapshot(ctx context.Context, work *state.Publ
 		var routeErr error
 		if len(recipient.Workflow) != 0 {
 			matched, routeErr = l.routeWorkflowEvent(ctx, work, envelope, recipient)
+			if errors.Is(routeErr, state.ErrWorkflowRunQuotaExceeded) {
+				// The app's run limit is capacity: wait without spending a
+				// routing attempt, as the recipient-claim path does.
+				wait := state.EventWorkflowCapacityWaitProgress(previous, previous.Attempts+1)
+				if err := progressStore.RecordPublishedEventRecipientProgress(ctx, work.ID, work.ClaimToken, recipient.ID, wait); err != nil {
+					return err
+				}
+				work.RecipientProgress[recipient.ID] = wait
+				l.ops.ObserveEventDeliveryCapacityDeferral(wait.CapacityScope)
+				routeErrs = append(routeErrs, state.ErrEventDeliveryCapacity)
+				continue
+			}
 		} else if admission, ok := l.engine.store.(state.PublishedEventRecipientAdmissionStore); ok && recipient.ObjectNotification == nil {
 			result, err := l.admitEventRecipient(ctx, admission, state.PublishedEventRoutingClaim{
 				OutboxID: work.ID, SubscriptionID: recipient.ID, ClaimToken: work.ClaimToken,
@@ -737,6 +749,9 @@ func (l *Loop) routeEventRecipient(ctx context.Context, store state.PublishedEve
 					ClaimToken: work.ClaimToken, Generation: work.Generation,
 				})
 				if err == nil {
+					if result.CapacityDeferred {
+						l.ops.ObserveEventDeliveryCapacityDeferral(result.Progress.CapacityScope)
+					}
 					return
 				}
 				matched, routeErr = result.Matched, err

@@ -124,9 +124,7 @@ func cmdJobs(args []string) int {
 		return cmdJobsRegistry(rest)
 	}
 	printCommandValidation(os.Stderr, "unknown jobs subcommand %q\n", subcommand)
-	sug, _ := suggestSubcommand(subcommand, parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "jobs", parent, subcommand)
 }
 
 // cmdJobsList implements `gregale jobs list`. Returns the
@@ -134,6 +132,12 @@ func cmdJobs(args []string) int {
 // server-side list. Output is either the complete pagination envelope
 // in JSON mode or a tabular row per job.
 func cmdJobsList(args []string) int {
+	// Jobs belong to the account, not to an app, so there is no --app filter;
+	// the flag package answered only "unknown flag --app" (Hunt 14 H14-63).
+	if argsPassAppFlag(args) {
+		PrintUsage(os.Stderr, "gregale jobs list lists every job in the account; it has no --app filter. Inspect one job with `gregale jobs info <job>`.\nusage: gregale jobs list [--limit N] [--offset N] [--all]", "jobs")
+		return 1
+	}
 	fs := newFlagSet("jobs-list", flag.ContinueOnError)
 	limit := fs.Int("limit", 0, "page size (1..200; omit for server default 50)")
 	offset := fs.Int("offset", 0, "starting page offset")
@@ -2027,4 +2031,15 @@ func writeJSONSingle(v any) error {
 	}
 	_, err = fmt.Fprintln(osStdout, string(b))
 	return err
+}
+
+// argsPassAppFlag reports an --app flag on an account-wide list, which the
+// flag package would refuse with only "unknown flag --app".
+func argsPassAppFlag(args []string) bool {
+	for _, arg := range args {
+		if arg == "--app" || strings.HasPrefix(arg, "--app=") || arg == "-app" || strings.HasPrefix(arg, "-app=") {
+			return true
+		}
+	}
+	return false
 }

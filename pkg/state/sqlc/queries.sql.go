@@ -12179,11 +12179,12 @@ func (q *Queries) CreateSession(ctx context.Context, db DBTX, arg CreateSessionP
 }
 
 const createSnapshot = `-- name: CreateSnapshot :one
-INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation)
+INSERT INTO snapshots(deployment_id,fc_version,base_image_version,mem_bytes,disk_bytes,stored_bytes,storage_key,stale,tier,application_standard_capture_token,recovery_generation,cpu_template,cpu_model)
 VALUES($1::uuid,$2::text,$3::text,
  $4::bigint,$5::bigint,$6::bigint,
- $7::text,$8::boolean,$9::text,$10::uuid,$11::bigint)
-RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation
+ $7::text,$8::boolean,$9::text,$10::uuid,$11::bigint,
+ $12::text,$13::text)
+RETURNING id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model
 `
 
 type CreateSnapshotParams struct {
@@ -12198,6 +12199,8 @@ type CreateSnapshotParams struct {
 	Tier                            string
 	ApplicationStandardCaptureToken pgtype.UUID
 	RecoveryGeneration              int64
+	CpuTemplate                     string
+	CpuModel                        string
 }
 
 func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapshotParams) (Snapshot, error) {
@@ -12213,6 +12216,8 @@ func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapsho
 		arg.Tier,
 		arg.ApplicationStandardCaptureToken,
 		arg.RecoveryGeneration,
+		arg.CpuTemplate,
+		arg.CpuModel,
 	)
 	var i Snapshot
 	err := row.Scan(
@@ -12230,6 +12235,8 @@ func (q *Queries) CreateSnapshot(ctx context.Context, db DBTX, arg CreateSnapsho
 		&i.DeletePending,
 		&i.ApplicationStandardCaptureToken,
 		&i.RecoveryGeneration,
+		&i.CpuTemplate,
+		&i.CpuModel,
 	)
 	return i, err
 }
@@ -14312,6 +14319,15 @@ type DeleteGuardedCronParams struct {
 
 func (q *Queries) DeleteGuardedCron(ctx context.Context, db DBTX, arg DeleteGuardedCronParams) error {
 	_, err := db.Exec(ctx, deleteGuardedCron, arg.CronID, arg.AppID)
+	return err
+}
+
+const deleteLogArchiveErasure = `-- name: DeleteLogArchiveErasure :exec
+DELETE FROM log_archive_erasures WHERE account_id = $1::uuid
+`
+
+func (q *Queries) DeleteLogArchiveErasure(ctx context.Context, db DBTX, accountID pgtype.UUID) error {
+	_, err := db.Exec(ctx, deleteLogArchiveErasure, accountID)
 	return err
 }
 
@@ -32520,6 +32536,25 @@ func (q *Queries) InsertLiveAppFork(ctx context.Context, db DBTX, arg InsertLive
 	return i, err
 }
 
+const insertLogArchiveErasure = `-- name: InsertLogArchiveErasure :execrows
+INSERT INTO log_archive_erasures (account_id, deletion_requested_at)
+VALUES ($1::uuid, $2::timestamptz)
+ON CONFLICT (account_id) DO NOTHING
+`
+
+type InsertLogArchiveErasureParams struct {
+	AccountID           pgtype.UUID
+	DeletionRequestedAt pgtype.Timestamptz
+}
+
+func (q *Queries) InsertLogArchiveErasure(ctx context.Context, db DBTX, arg InsertLogArchiveErasureParams) (int64, error) {
+	result, err := db.Exec(ctx, insertLogArchiveErasure, arg.AccountID, arg.DeletionRequestedAt)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const insertMCPAttentionAction = `-- name: InsertMCPAttentionAction :exec
 INSERT INTO mcp_readiness_attention_actions(app_id,account_id,request_id,incident_id,request,receipt,created_at)
 VALUES($1,$2,$3,$4,$5,$6,$7)
@@ -39487,7 +39522,7 @@ func (q *Queries) LatestRetainedRollbackDeployment(ctx context.Context, db DBTX,
 }
 
 const latestSnapshot = `-- name: LatestSnapshot :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY (tier='warm') DESC,created_at DESC LIMIT 1
 `
@@ -39510,12 +39545,14 @@ func (q *Queries) LatestSnapshot(ctx context.Context, db DBTX, deploymentID pgty
 		&i.DeletePending,
 		&i.ApplicationStandardCaptureToken,
 		&i.RecoveryGeneration,
+		&i.CpuTemplate,
+		&i.CpuModel,
 	)
 	return i, err
 }
 
 const latestSnapshotForTier = `-- name: LatestSnapshotForTier :one
-SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
 AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
 ORDER BY created_at DESC LIMIT 1
 `
@@ -39543,6 +39580,8 @@ func (q *Queries) LatestSnapshotForTier(ctx context.Context, db DBTX, arg Latest
 		&i.DeletePending,
 		&i.ApplicationStandardCaptureToken,
 		&i.RecoveryGeneration,
+		&i.CpuTemplate,
+		&i.CpuModel,
 	)
 	return i, err
 }
@@ -45460,17 +45499,23 @@ select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.
 		         and active.state='claimed' and active.claim_expires_at > $1
 		   )) < i.work_fairness_limit)
 		   and ($2::boolean or (i.due_at, i.id) > ($3::timestamptz, $4::uuid))
+		   and ($5::uuid is null or exists (
+		       select 1 from apps owner
+		        where owner.id = i.app_id
+		          and (owner.node_id is null or owner.node_id = $5::uuid)
+		   ))
 		 order by i.due_at, i.id
 		 for update skip locked
-		 limit $5::bigint
+		 limit $6::bigint
 `
 
 type ListDueInvocationRowsAfterParams struct {
-	NowAt      pgtype.Timestamptz
-	FirstPage  bool
-	AfterDueAt pgtype.Timestamptz
-	AfterID    pgtype.UUID
-	BatchLimit int64
+	NowAt       pgtype.Timestamptz
+	FirstPage   bool
+	AfterDueAt  pgtype.Timestamptz
+	AfterID     pgtype.UUID
+	OwnerNodeID pgtype.UUID
+	BatchLimit  int64
 }
 
 func (q *Queries) ListDueInvocationRowsAfter(ctx context.Context, db DBTX, arg ListDueInvocationRowsAfterParams) ([]Invocation, error) {
@@ -45479,6 +45524,7 @@ func (q *Queries) ListDueInvocationRowsAfter(ctx context.Context, db DBTX, arg L
 		arg.FirstPage,
 		arg.AfterDueAt,
 		arg.AfterID,
+		arg.OwnerNodeID,
 		arg.BatchLimit,
 	)
 	if err != nil {
@@ -52812,6 +52858,54 @@ func (q *Queries) LiveServiceProxyInstanceRowsByHostIP(ctx context.Context, db D
 	return items, nil
 }
 
+const liveSnapshotsForTier = `-- name: LiveSnapshotsForTier :many
+SELECT id, deployment_id, fc_version, mem_bytes, disk_bytes, stale, created_at, storage_key, tier, stored_bytes, base_image_version, delete_pending, application_standard_capture_token, recovery_generation, cpu_template, cpu_model FROM snapshots WHERE deployment_id=$1::uuid AND tier=$2::text AND stale=false
+AND recovery_generation=(SELECT snapshot_recovery_generation FROM deployments WHERE id=$1::uuid)
+ORDER BY created_at DESC
+`
+
+type LiveSnapshotsForTierParams struct {
+	DeploymentID pgtype.UUID
+	Tier         string
+}
+
+func (q *Queries) LiveSnapshotsForTier(ctx context.Context, db DBTX, arg LiveSnapshotsForTierParams) ([]Snapshot, error) {
+	rows, err := db.Query(ctx, liveSnapshotsForTier, arg.DeploymentID, arg.Tier)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Snapshot{}
+	for rows.Next() {
+		var i Snapshot
+		if err := rows.Scan(
+			&i.ID,
+			&i.DeploymentID,
+			&i.FcVersion,
+			&i.MemBytes,
+			&i.DiskBytes,
+			&i.Stale,
+			&i.CreatedAt,
+			&i.StorageKey,
+			&i.Tier,
+			&i.StoredBytes,
+			&i.BaseImageVersion,
+			&i.DeletePending,
+			&i.ApplicationStandardCaptureToken,
+			&i.RecoveryGeneration,
+			&i.CpuTemplate,
+			&i.CpuModel,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const loadApplicationStandardLogConsumerSnapshot = `-- name: LoadApplicationStandardLogConsumerSnapshot :one
 SELECT jsonb_build_object('drains',coalesce((SELECT jsonb_agg(jsonb_build_object('spec',
  jsonb_build_object('ID',d.id::text,'AppID',d.app_id::text,'AccountID',d.account_id::text,
@@ -58815,6 +58909,20 @@ func (q *Queries) LockWorkflowStepsForManualRetry(ctx context.Context, db DBTX, 
 	return items, nil
 }
 
+const logArchiveErasureRequestedAt = `-- name: LogArchiveErasureRequestedAt :one
+SELECT deletion_requested_at FROM log_archive_erasures
+WHERE account_id = $1::uuid
+FOR UPDATE
+`
+
+// The deletion request the account's archived-log snapshot was taken for.
+func (q *Queries) LogArchiveErasureRequestedAt(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Timestamptz, error) {
+	row := db.QueryRow(ctx, logArchiveErasureRequestedAt, accountID)
+	var deletion_requested_at pgtype.Timestamptz
+	err := row.Scan(&deletion_requested_at)
+	return deletion_requested_at, err
+}
+
 const lookupCustomerOperationSubmission = `-- name: LookupCustomerOperationSubmission :one
 SELECT i.expires_at,coalesce(o.record,'null'::jsonb)::jsonb AS record
 FROM customer_operation_idempotency i
@@ -59295,6 +59403,23 @@ AND workflow_step_definition(r.definition_snapshot,s.step_name,s.foreach_parent,
 // attempt closure and running-step reset in that order in one transaction.
 func (q *Queries) MarkLegacyWorkflowOutboundUnknown(ctx context.Context, db DBTX, runID pgtype.UUID) error {
 	_, err := db.Exec(ctx, markLegacyWorkflowOutboundUnknown, runID)
+	return err
+}
+
+const markLogArchiveInstanceErased = `-- name: MarkLogArchiveInstanceErased :exec
+UPDATE log_archive_erasure_instances SET erased_at = now()
+WHERE account_id = $1::uuid
+  AND instance_id = $2::uuid
+  AND erased_at IS NULL
+`
+
+type MarkLogArchiveInstanceErasedParams struct {
+	AccountID  pgtype.UUID
+	InstanceID pgtype.UUID
+}
+
+func (q *Queries) MarkLogArchiveInstanceErased(ctx context.Context, db DBTX, arg MarkLogArchiveInstanceErasedParams) error {
+	_, err := db.Exec(ctx, markLogArchiveInstanceErased, arg.AccountID, arg.InstanceID)
 	return err
 }
 
@@ -61239,6 +61364,70 @@ func (q *Queries) ObjectBucketByName(ctx context.Context, db DBTX, arg ObjectBuc
 		&i.OrgID,
 	)
 	return i, err
+}
+
+const objectBucketCORSDelete = `-- name: ObjectBucketCORSDelete :exec
+DELETE FROM object_bucket_cors WHERE bucket_id=$1
+`
+
+func (q *Queries) ObjectBucketCORSDelete(ctx context.Context, db DBTX, bucketID pgtype.UUID) error {
+	_, err := db.Exec(ctx, objectBucketCORSDelete, bucketID)
+	return err
+}
+
+const objectBucketCORSGet = `-- name: ObjectBucketCORSGet :one
+SELECT rules, revision, updated_at FROM object_bucket_cors WHERE bucket_id=$1
+`
+
+type ObjectBucketCORSGetRow struct {
+	Rules     []byte
+	Revision  int64
+	UpdatedAt pgtype.Timestamptz
+}
+
+// ADR-20261025202805: a customer's bucket CORS rules.
+func (q *Queries) ObjectBucketCORSGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketCORSGetRow, error) {
+	row := db.QueryRow(ctx, objectBucketCORSGet, bucketID)
+	var i ObjectBucketCORSGetRow
+	err := row.Scan(&i.Rules, &i.Revision, &i.UpdatedAt)
+	return i, err
+}
+
+const objectBucketCORSPut = `-- name: ObjectBucketCORSPut :one
+INSERT INTO object_bucket_cors (bucket_id, rules, revision, updated_at)
+SELECT b.id, $1::jsonb, 1, now() FROM object_buckets b WHERE b.id=$2::uuid AND b.state='ready'
+ON CONFLICT (bucket_id) DO UPDATE SET rules=EXCLUDED.rules, revision=object_bucket_cors.revision+1, updated_at=now()
+RETURNING rules, revision, updated_at
+`
+
+type ObjectBucketCORSPutParams struct {
+	Rules    []byte
+	BucketID pgtype.UUID
+}
+
+type ObjectBucketCORSPutRow struct {
+	Rules     []byte
+	Revision  int64
+	UpdatedAt pgtype.Timestamptz
+}
+
+func (q *Queries) ObjectBucketCORSPut(ctx context.Context, db DBTX, arg ObjectBucketCORSPutParams) (ObjectBucketCORSPutRow, error) {
+	row := db.QueryRow(ctx, objectBucketCORSPut, arg.Rules, arg.BucketID)
+	var i ObjectBucketCORSPutRow
+	err := row.Scan(&i.Rules, &i.Revision, &i.UpdatedAt)
+	return i, err
+}
+
+const objectBucketCORSRules = `-- name: ObjectBucketCORSRules :one
+SELECT c.rules FROM object_bucket_cors c JOIN object_buckets b ON b.id=c.bucket_id WHERE c.bucket_id=$1 AND b.state='ready'
+`
+
+// The gateway's read: rules of a ready bucket only.
+func (q *Queries) ObjectBucketCORSRules(ctx context.Context, db DBTX, bucketID pgtype.UUID) ([]byte, error) {
+	row := db.QueryRow(ctx, objectBucketCORSRules, bucketID)
+	var rules []byte
+	err := row.Scan(&rules)
+	return rules, err
 }
 
 const objectBucketClaim = `-- name: ObjectBucketClaim :one
@@ -70028,6 +70217,38 @@ func (q *Queries) PendingLayerArtifactDeletions(ctx context.Context, db DBTX) ([
 			return nil, err
 		}
 		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const pendingLogArchiveErasureInstances = `-- name: PendingLogArchiveErasureInstances :many
+SELECT instance_id FROM log_archive_erasure_instances
+WHERE account_id = $1::uuid AND erased_at IS NULL
+ORDER BY instance_id
+LIMIT $2::int
+`
+
+type PendingLogArchiveErasureInstancesParams struct {
+	AccountID pgtype.UUID
+	RowLimit  int32
+}
+
+func (q *Queries) PendingLogArchiveErasureInstances(ctx context.Context, db DBTX, arg PendingLogArchiveErasureInstancesParams) ([]pgtype.UUID, error) {
+	rows, err := db.Query(ctx, pendingLogArchiveErasureInstances, arg.AccountID, arg.RowLimit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []pgtype.UUID{}
+	for rows.Next() {
+		var instance_id pgtype.UUID
+		if err := rows.Scan(&instance_id); err != nil {
+			return nil, err
+		}
+		items = append(items, instance_id)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -92619,7 +92840,7 @@ UPDATE deployments d SET status = CASE WHEN
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
     OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
-    THEN 'live' ELSE 'superseded' END, traffic_percent=0
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false
 WHERE d.app_id=$1::uuid AND d.scope=$2::text
 AND d.status='live' AND d.id<>$3::uuid
 `
@@ -92630,6 +92851,8 @@ type RetireLiveDeploymentSiblingsParams struct {
 	DeploymentID pgtype.UUID
 }
 
+// A retired sibling is a retained stable revision, not a manual dark
+// deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71).
 func (q *Queries) RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg RetireLiveDeploymentSiblingsParams) (int64, error) {
 	result, err := db.Exec(ctx, retireLiveDeploymentSiblings, arg.AppID, arg.Scope, arg.DeploymentID)
 	if err != nil {
@@ -96872,6 +97095,35 @@ func (q *Queries) SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 p
 		return nil, err
 	}
 	return items, nil
+}
+
+const snapshotLogArchiveErasureInstances = `-- name: SnapshotLogArchiveErasureInstances :execrows
+INSERT INTO log_archive_erasure_instances (account_id, instance_id)
+SELECT $1::uuid, s.instance_id
+FROM (
+    SELECT i.id AS instance_id
+    FROM instances i
+    JOIN apps a ON a.id = i.app_id
+    WHERE a.account_id = $1::uuid
+      AND (a.org_id IS NULL OR a.org_id IN (SELECT id FROM orgs WHERE personal_org))
+    UNION
+    SELECT u.instance_id
+    FROM usage_minutes u
+    WHERE u.account_id = $1::uuid
+      AND (u.org_id IS NULL OR u.org_id IN (SELECT id FROM orgs WHERE personal_org))
+) s
+ON CONFLICT (account_id, instance_id) DO NOTHING
+`
+
+// Every instance whose archived logs go with the account: the instances and
+// billing rows DeleteAccount removes, that is apps with no org or a personal
+// org. Billing rows outlive instance rows, so they cover parked history.
+func (q *Queries) SnapshotLogArchiveErasureInstances(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error) {
+	result, err := db.Exec(ctx, snapshotLogArchiveErasureInstances, accountID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const snapshotPublicationRuntimeChangedAt = `-- name: SnapshotPublicationRuntimeChangedAt :one

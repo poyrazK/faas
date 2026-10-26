@@ -317,5 +317,30 @@ func (h *Handler) penalizeEdgeRuleRejection(r *http.Request, app App, ruleID str
 	}
 	if h.penaltyBox.Hit(app.ID, ruleID, challengeClientIP(r), p) {
 		h.metrics.ObserveEdgePenalty(app.ID, "boxed")
+		h.recordPenaltyBoxEvent(r, ruleID, app.ID)
 	}
+}
+
+// EdgeRuleEventBoxed is the event outcome for a client put in a penalty box
+// (ADR-20261022105846 amendment 2), recorded from the request whose
+// rejection tipped it in. Only the gateway that boxed the client records it;
+// the gateways the box is shared to do not.
+const EdgeRuleEventBoxed = "boxed"
+
+// PenaltyEventRecorder samples penalty box events on a per-rule budget of
+// their own, so a rule's WAF detections or challenge outcomes cannot crowd
+// its boxes out, nor boxes them.
+type PenaltyEventRecorder interface {
+	SampleEdgePenaltyBox(ruleID string) bool
+	RecordEdgeRuleEvent(ev EdgeRuleEvent)
+}
+
+// recordPenaltyBoxEvent records that the rule boxed the request's client,
+// so the box can be reviewed after its shared row is pruned.
+func (h *Handler) recordPenaltyBoxEvent(r *http.Request, ruleID, appID string) {
+	rec, ok := h.edgeRuleHits.(PenaltyEventRecorder)
+	if !ok || !rec.SampleEdgePenaltyBox(ruleID) {
+		return
+	}
+	rec.RecordEdgeRuleEvent(outcomeEvent(r, ruleID, appID, EdgeRuleEventBoxed))
 }

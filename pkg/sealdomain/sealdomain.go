@@ -140,7 +140,7 @@ var registry = []Spec{
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
 		cols("mcp_readiness_fallback_policies", "integration_key_sealed", "webhook_secret_sealed"),
 	)},
-	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Columns: join(
+	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("object_storage_s3_credentials", "secret_sealed"),
 	)},
 	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Columns: join(
@@ -149,7 +149,7 @@ var registry = []Spec{
 		cols("app_webhooks", "secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
-	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Columns: join(
+	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("cluster_signing_keys", "sealed_blob"),
 	)},
 	{Domain: Account, Readers: []string{"apid", "apid-clone-worker", "apid-data-pipeline-worker"}, Roles: cpOnly, Columns: join(

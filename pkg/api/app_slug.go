@@ -13,12 +13,25 @@ var reservedAppSlugs = map[string]struct{}{
 	"login": {}, "logout": {}, "mail": {}, "ns": {}, "operations": {},
 	"security": {}, "signup": {}, "static": {}, "status": {}, "support": {},
 	"www": {},
+	// Hosts the platform zone serves (ADR-20261026100000): object storage,
+	// the AI gateway, the edge, the installer, identity, the registry and the
+	// edge origins.
+	"s3": {}, "ai": {}, "edge": {}, "get": {}, "identity": {}, "registry": {},
+	"origin": {}, "app-edge": {},
 }
 
 // ValidAppSlug is the canonical public app-name contract shared by direct
 // app creation and project workload admission.
 func ValidAppSlug(slug string) bool {
 	return appSlugRE.MatchString(slug) && !strings.HasPrefix(slug, "tag-")
+}
+
+// IsPlatformReservedSlug reports names held for hosts the platform zone
+// serves (IsReservedAppSlug without the preview forms). Such a label is never
+// an app under any apps domain (ADR-20261026100000).
+func IsPlatformReservedSlug(slug string) bool {
+	_, ok := reservedAppSlugs[slug]
+	return ok
 }
 
 // IsReservedAppSlug reports names held for Gregale-owned services. Existing

@@ -29,6 +29,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/capdecl/runtimecheck"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
@@ -220,8 +221,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("builderd: vmmd driver: %w", err)
 	}
+	// ADR-20261025114554: every builder's BuildKit daemon tries the
+	// operator's Docker Hub mirrors before Docker Hub.
+	mirrors, err := api.ParseDockerHubMirrors(os.Getenv(api.DockerHubMirrorsEnv))
+	if err != nil {
+		return fmt.Errorf("builderd: %w", err)
+	}
 	if d, ok := driver.(*builderdpkg.VMMDriver); ok {
 		d.WithBuilderBaseDigest(builderBaseDigestPath)
+		d.WithDockerHubMirrors(mirrors)
 	}
 	if c, ok := driver.(*builderdpkg.VMMDriver); ok {
 		defer func() { _ = c.Close() }()

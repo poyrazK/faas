@@ -246,4 +246,13 @@ func TestPreviewLinksUseDashboardRoutes(t *testing.T) {
 	if !strings.Contains(body, "(https://gregale.dev/dashboard/apps/pr-42-api)") || strings.Contains(body, "/destroy") {
 		t.Errorf("comment body = %q, want the preview's dashboard page and no dead destroy route", body)
 	}
+	// The dashboard follows the platform domain when it differs from the
+	// apps domain (ADR-20261026100000); preview hosts stay on the apps domain.
+	t.Setenv("FAAS_PLATFORM_DOMAIN", "console.example.test")
+	if got := DashboardAppURL("pr-42-api"); got != "https://console.example.test/dashboard/apps/pr-42-api" {
+		t.Errorf("platform dashboard URL = %q", got)
+	}
+	if got := previewHostnameForSlug("pr-42-api"); got != "pr-42-api.gregale.dev" {
+		t.Errorf("preview host = %q, want the apps domain", got)
+	}
 }

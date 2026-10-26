@@ -2491,6 +2491,34 @@ type PublicAuthStatus struct {
 // below for the contract.
 type Sidecars []Sidecar
 
+// DeploymentCompanion is one companion of a deployment as the API shows it:
+// identity, image, port and size, never environment values or secret
+// grants.
+type DeploymentCompanion struct {
+	Name           string `json:"name"`
+	Image          string `json:"image,omitempty"`
+	Preset         string `json:"preset,omitempty"`
+	Type           string `json:"type,omitempty"`
+	Port           int    `json:"port,omitempty"`
+	RAMMB          int    `json:"ram_mb,omitempty"`
+	PrimaryIngress bool   `json:"primary_ingress,omitempty"`
+}
+
+// Summaries returns the API view of each companion, nil when there are none.
+func (ss Sidecars) Summaries() []DeploymentCompanion {
+	if len(ss) == 0 {
+		return nil
+	}
+	out := make([]DeploymentCompanion, 0, len(ss))
+	for _, sc := range ss {
+		out = append(out, DeploymentCompanion{
+			Name: sc.Name, Image: sc.Image, Preset: sc.Preset, Type: string(sc.Type),
+			Port: sc.Port, RAMMB: sc.RamMB, PrimaryIngress: sc.PrimaryIngress,
+		})
+	}
+	return out
+}
+
 // Companion and Companions are the customer-facing names for the bounded
 // helper workload model. Sidecar/Sidecars remain the storage and runtime wire
 // names for backwards compatibility with deployments created before the
@@ -3547,6 +3575,10 @@ type DeploymentResponse struct {
 	// deployment. It lets deploy preview compare the next immutable revision
 	// with the currently deployed workflow contract.
 	Workflows []WorkflowSpec `json:"workflows,omitempty"`
+	// Companions summarizes the companions this deployment carries, without
+	// their environment, so deploy preview can show companion changes and the
+	// public hostname a companion port opens (Hunt 14 H14-53).
+	Companions []DeploymentCompanion `json:"companions,omitempty"`
 	// APIHostingReceipt is the non-secret evidence captured when imaged
 	// promoted this deployment to live. It is intentionally free-form on the
 	// API surface so future receipt schema versions remain additive.
@@ -7371,6 +7403,9 @@ type PlanWorkload struct {
 	// options (ADR-20261019142544); argument values stay out of plans.
 	BuildTarget string   `json:"build_target,omitempty"`
 	BuildArgs   []string `json:"build_args,omitempty"`
+	// GoCommand is the `cmd/<name>` main package a service of a multi-command
+	// Go module builds from the module root (ADR-20261025134512).
+	GoCommand string `json:"go_command,omitempty"`
 	// SecretFiles are the Compose secrets written to /run/secrets
 	// (ADR-20261023090000); they name app secrets, never values.
 	SecretFiles []SecretFile `json:"secret_files,omitempty"`
@@ -7475,6 +7510,31 @@ type PlanManaged struct {
 	EnvHint string `json:"env_hint"`
 	Source  string `json:"source"`
 	Image   string `json:"image"`
+	// Provision is the managed PostgreSQL database apply creates or reuses
+	// for a Compose postgres service, and the keys it binds
+	// (ADR-20261025111824). Nil means apply does not provide it; see
+	// NotProvisionedReason.
+	Provision *PlanManagedProvision `json:"provision,omitempty"`
+	// NotProvisionedReason says why a Compose postgres service is not
+	// provided: unavailable, plan, quota, unsupported, configured or
+	// not_referenced. Empty for other datastores.
+	NotProvisionedReason string `json:"not_provisioned_reason,omitempty"`
+}
+
+// PlanManagedProvision is a managed database a project apply provides.
+type PlanManagedProvision struct {
+	Database string `json:"database"`
+	Existing bool   `json:"existing,omitempty"`
+	// PostgresMajor is the database's PostgreSQL major: the Compose image's,
+	// or the nearest newer one the platform offers.
+	PostgresMajor int                  `json:"postgres_major,omitempty"`
+	Bindings      []PlanManagedBinding `json:"bindings"`
+}
+
+// PlanManagedBinding is one service key bound to a provided database.
+type PlanManagedBinding struct {
+	Workload string `json:"workload"`
+	EnvKey   string `json:"env_key"`
 }
 
 // PlanCron is the per-cron line in the scan response. Carries the
@@ -10611,8 +10671,9 @@ type EdgeRuleStatsResponse struct {
 // the rule has been deleted. Detections (outcome detected, warned or
 // blocked; ADR-831 amendment 5) also carry the CRS rule IDs that scored,
 // their attack categories and the anomaly score. Challenge outcomes
-// (challenged, rejected, solved or failed; amendment 7 follow-up) carry the
-// request fields only.
+// (challenged, rejected, solved or failed; amendment 7 follow-up) and
+// penalty boxes (boxed; ADR-20261022105846 amendment 2) carry the request
+// fields only.
 type EdgeRuleEventResponse struct {
 	ID         string    `json:"id"`
 	RuleID     string    `json:"rule_id"`

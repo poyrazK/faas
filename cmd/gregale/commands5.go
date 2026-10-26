@@ -301,7 +301,9 @@ func cmdEnv(args []string) int {
 		return envDiff(args[1:])
 	}
 	fmt.Fprintf(os.Stderr, "gregale env: unknown subcommand %q\n", args[0])
-	return 1
+	// `env list` named no verb (Hunt 14 H14-63).
+	parent, _ := lookupCliCommand("env")
+	return unknownSubcommandChoices(os.Stderr, "env", parent, args[0])
 }
 
 func envPull(args []string) int {

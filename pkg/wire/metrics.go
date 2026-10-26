@@ -6661,7 +6661,7 @@ var WakeColdReasons = []string{
 	"no_snapshot", "snapshots_stale", "snapshot_lookup_failed",
 	"fc_version_mismatch", "snapshot_without_drive", "ram_mismatch",
 	"base_image_mismatch", "snapshot_stale", "instance_mode",
-	"ephemeral_secret", "secret_policy_unavailable",
+	"ephemeral_secret", "secret_policy_unavailable", "cpu_incompatible",
 }
 
 // WakeColdReason returns the counter for one cold-boot reason. Values outside

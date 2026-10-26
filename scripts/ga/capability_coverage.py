@@ -364,7 +364,7 @@ INFRA_RULES = [
     r"sched|schedd|vmmd|fcvm|netns|rootfs|imaged|meterd|gateway$|gatewayd|snapshot|base-|layer-|nft|denylist|hostage|jail|cgroup|kernel|rng|reseed|guest-init|init-helper|vsock|sdunit|guestdisk",
     r"lock|lease-|fence|leader|ledger|journal|outbox-reconcil|receipt|idempotency-key|retention|gc$|janitor|reconcil|watchdog|spool|backpressure|ratelimit|rate-limit|quota|admission|eviction",
     r"release-artifact|releasebundle|releaseinstall|release-compat|unit-|deploy-order|version-skew|pricing-md|standards-md|capabilities-md|obs-rule|denylist-md|runtime-qualification|api-hosting-(scorecard|contract)",
-    r"metric|prometheus|promauto|otel|slog|log$|telemetry-internal|healthz|livez|readyz|^/metrics",
+    r"metric|prometheus|promauto|otel|slog|log$|telemetry-internal|healthz|livez|readyz|^/metrics|^loki-",
     r"^target-(hydration|placement|publication)$|^public-routing-(burst|capacity)$",
 ]
 

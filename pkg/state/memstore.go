@@ -432,6 +432,7 @@ type MemStore struct {
 	objectWriteAdmissions       map[string]objectWriteAdmission
 	objectCapacityJobs          map[string]ObjectCapacityReconciliation
 	objectBucketVersioning      map[string]ObjectBucketVersioning
+	objectBucketCORS            map[string]api.ObjectBucketCORS
 	objectBucketEncryption      map[string]ObjectBucketEncryption
 	objectBucketObjectLock      map[string]ObjectBucketObjectLock
 	objectVersionProtection     map[string]ObjectVersionProtection
@@ -1136,6 +1137,9 @@ type MemStore struct {
 	// per-app shape unchanged. (M7 fix; the previous shape was wrong.)
 	usage        []usageMinute
 	usageByMonth []Usage
+	// logArchiveErasures mirrors log_archive_erasures and its instance rows,
+	// keyed by account ID.
+	logArchiveErasures map[string]*memLogArchiveErasure
 	// apiConsumerUsage mirrors the durable per-(app, consumer, minute)
 	// aggregate. apiConsumerUsageEvents is the idempotency ledger: an
 	// event is applied at most once even when the gateway retries a
@@ -6020,6 +6024,7 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 
 	// Plan every weight before mutating any row, including upgrade fences.
+	priorPercent := d.TrafficPercent
 	d.TrafficPercent = newPercent
 	if err := m.checkRuntimeUpgradeTrafficLocked(d); err != nil {
 		return Deployment{}, err
@@ -6064,10 +6069,12 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		}
 		d.MCPTaskMigrationOverride = false
 	}
+	d.TrafficPercentExplicit = manualTrafficExplicit(priorPercent, newPercent, d.TrafficPercentExplicit)
 	d.TrafficPercent = newPercent
 	sum := newPercent
 	for i, sibling := range siblings {
 		other := m.deployments[sibling.ID]
+		other.TrafficPercentExplicit = manualTrafficExplicit(other.TrafficPercent, newWeights[i], other.TrafficPercentExplicit)
 		other.TrafficPercent = newWeights[i]
 		if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
 			return Deployment{}, err
@@ -6084,6 +6091,7 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	m.putDeploymentLocked(id, d)
 	for i, sibling := range siblings {
 		other := m.deployments[sibling.ID]
+		other.TrafficPercentExplicit = manualTrafficExplicit(other.TrafficPercent, newWeights[i], other.TrafficPercentExplicit)
 		other.TrafficPercent = newWeights[i]
 		m.putDeploymentLocked(sibling.ID, other)
 	}
@@ -10064,6 +10072,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 				other.Status = DeploySuperseded
 			}
 			other.TrafficPercent = 0
+			// A retained stable revision, not a manual dark deployment
+			// (RetireLiveDeploymentSiblings; Hunt 14 H14-71).
+			other.TrafficPercentExplicit = false
 			m.putDeploymentLocked(otherID, other)
 		}
 		m.reactivateCronsForAppLocked(d.AppID)
@@ -12336,6 +12347,22 @@ func (m *MemStore) QueuedBuildsCount(ctx context.Context) (int, error) {
 	return n, nil
 }
 
+// SetDeploymentTrafficForTest marks a deployment live at percent with the
+// given traffic_percent_explicit flag, for fixtures that need two live
+// releases in one scope as production holds them after a rollback.
+func (m *MemStore) SetDeploymentTrafficForTest(id string, percent int, explicit bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok {
+		return
+	}
+	d.Status = DeployLive
+	d.TrafficPercent = percent
+	d.TrafficPercentExplicit = explicit
+	m.putDeploymentLocked(id, d)
+}
+
 // SetBuildStartedAtForTest is a test-only hook that lets the reaper
 // tests backdate a build's started_at without touching the public
 // Create flow. Mirrors the BackdateForTest pattern on instances.
@@ -14434,6 +14461,11 @@ func (m *MemStore) ListDueInvocationsAfter(_ context.Context, now time.Time, aft
 	for _, inv := range all {
 		if after.ID != "" && (inv.DueAt.Before(after.DueAt) || (inv.DueAt.Equal(after.DueAt) && inv.ID <= after.ID)) {
 			continue
+		}
+		if after.OwnerNodeID != "" {
+			if app, ok := m.apps[inv.AppID]; !ok || app.NodeID != "" && app.NodeID != after.OwnerNodeID {
+				continue
+			}
 		}
 		out = append(out, inv)
 	}
@@ -16886,12 +16918,15 @@ func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
 		snap.CreatedAt = time.Now()
 	}
 	for _, existing := range m.snapshots {
-		// Mirror the (deployment_id, tier) unique index from migration
-		// 00110: a non-stale row with the same (deployment_id, tier)
+		// Mirror the (deployment_id, tier, cpu platform) unique index
+		// (migration 00110, widened by ADR-20261024225612 amendment 1): a
+		// non-stale row with the same deployment, tier and CPU platform
 		// is a duplicate — surface ErrConflict so callers fall through
 		// to the existing-imaged semantic. Different-tier rows on the
-		// same deployment are allowed (warm + init coexist).
-		if existing.DeploymentID == snap.DeploymentID && existing.Tier == snap.Tier && !existing.Stale {
+		// same deployment are allowed (warm + init coexist), and so are
+		// rows of different CPU platforms.
+		if existing.DeploymentID == snap.DeploymentID && existing.Tier == snap.Tier && !existing.Stale &&
+			existing.CPUPlatform() == snap.CPUPlatform() {
 			return Snapshot{}, ErrConflict
 		}
 	}
@@ -23571,6 +23606,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		}
 	}
 	m.usageByMonth = keptMonth
+	delete(m.logArchiveErasures, id)
 	for deploymentID, deployment := range m.deployments {
 		if deployment.DeployedByUserID == id {
 			deployment.DeployedByUserID = ""

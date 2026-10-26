@@ -97,8 +97,9 @@ docs/adr/
   never with host docker/buildkit. The VM boundary IS the resource cap and the sandbox.
 - **Cold boot must always work** (ADR-005): snapshots are cache, not truth. Snapshots are
   pinned to the Firecracker version that made them (`snapshots.fc_version`); on FC
-  upgrade they go stale and apps lazily re-snapshot via cold boot. Never make wake
-  depend on a snapshot existing.
+  upgrade they go stale and apps lazily re-snapshot via cold boot. They restore
+  only on a node whose CPU can carry them (`snapshots.cpu_template`/`cpu_model`,
+  ADR-20261024225612). Never make wake depend on a snapshot existing.
 - **Billing uses plan RAM + 8 MB per running second** (§4.7), not sampled RSS. Sampled
   RSS is telemetry only. Customers get predictable bills; the model's math depends on it.
 - **Builder slots**: 1 guaranteed (inside the 6 GB control-plane slice), 2nd opportunistic

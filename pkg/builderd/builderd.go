@@ -864,6 +864,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// including clearing a Dockerfile for autodetected source builds.
 		dockerfilePath = frozen.Source.Dockerfile
 	}
+	goCommand, goCommandErr := selectGoCommand(app, dockerfilePath, fw)
+	if goCommandErr != nil {
+		b.markFailed(ctx, build, state.FailureUserError, goCommandErr.Error(), buildStart)
+		return BuildResult{}, goCommandErr
+	}
+	if goCommand != "" {
+		b.emitBuildLog(ctx, build.ID, "building Go command cmd/"+goCommand+"\n")
+	}
 
 	// Railpack must build FROM the same immutable runtime base that imaged
 	// will use when it materialises the deployment layer. Without this handoff
@@ -961,6 +969,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
 		DockerfileBuild:       dockerfileBuild,
+		GoCommand:             goCommand,
 		SourceSHA256:          srcHash, SourceRoot: dep.SourceRoot,
 		DockerfilePath: dockerfilePath,
 		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
@@ -1061,7 +1070,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, ErrNoSlot
 	}
 	defer releaseSlot()
-	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("allocated builder slot (%s)\n", slot.Label))
+	b.emitBuildLog(ctx, build.ID, builderSlotLogLine(slot.Label, time.Since(build.EnqueuedAt)))
 	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
@@ -1093,6 +1102,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
 		DockerfileBuild:       dockerfileBuild,
+		GoCommand:             goCommand,
 		BuildSecrets:          buildSecrets,
 		BuildID:               build.ID,
 		TenantID:              app.AccountID,
@@ -1305,6 +1315,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// An older builder guest ignores the options and builds the final
 		// stage with default arguments; refuse that artifact.
 		err := errors.New("builder guest did not acknowledge the Compose build arguments and target")
+		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
+		return BuildResult{}, err
+	}
+	if out.ExitCode == 0 && out.GoCommand != goCommand {
+		// An older builder guest ignores the selection and builds the
+		// module's default command; refuse that artifact.
+		err := fmt.Errorf("builder guest did not acknowledge the Go command cmd/%s", goCommand)
 		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
 		return BuildResult{}, err
 	}
