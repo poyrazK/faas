@@ -36,6 +36,28 @@ WHERE (org_id = sqlc.narg(org_id)::uuid OR
       WHEN 'preview_apps' THEN preview_of_slug IS NOT NULL AND preview_pr_number > 0
       ELSE preview_of_slug IS NULL END;
 
+-- name: CountOpenPreviewEnvironments :one
+-- PreviewApps caps open PR preview environments: the open previews of one
+-- project and pull request. A legacy preview without a project is its own
+-- environment. A closed preview in its grace window holds no allowance; a
+-- preview without a recorded state holds one.
+SELECT count(DISTINCT coalesce(project_id::text, id::text) || '/' || preview_pr_number::text) FROM apps
+WHERE (org_id = sqlc.narg(org_id)::uuid OR
+       (org_id IS NULL AND account_id = sqlc.arg(account_id)::uuid AND sqlc.arg(personal)::boolean))
+  AND status IN ('active', 'evicted_cold')
+  AND preview_of_slug IS NOT NULL AND preview_pr_number > 0
+  AND coalesce(preview_pr_state, 'open') = 'open';
+
+-- name: CountOpenPreviewEnvironmentMembers :one
+SELECT count(*) FROM apps
+WHERE account_id = sqlc.arg(account_id)::uuid
+  AND project_id = sqlc.arg(project_id)::uuid
+  AND preview_pr_number = sqlc.arg(pr_number)::integer
+  AND preview_of_slug IS NOT NULL
+  AND status IN ('active', 'evicted_cold')
+  AND coalesce(preview_pr_state, 'open') = 'open'
+  AND id IS DISTINCT FROM sqlc.narg(app_id)::uuid;
+
 -- name: HasLegacySharedApps :one
 SELECT EXISTS (SELECT 1 FROM apps a JOIN orgs o ON o.id = a.org_id
                WHERE a.account_id = $1 AND NOT o.personal_org);
