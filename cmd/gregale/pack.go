@@ -337,9 +337,9 @@ func (r packRules) exclude(rel string, isDir bool) bool {
 	}
 	excluded := false
 	if isDir {
-		excluded = defaultExcludeDirs[base] &&
-			!(r.dockerfile && buildOutputDirs[base]) &&
-			!(base == "vendor" && r.goVendor != nil && r.goVendor(rel))
+		keptBuildOutput := r.dockerfile && buildOutputDirs[base]
+		keptGoVendor := base == "vendor" && r.goVendor != nil && r.goVendor(rel)
+		excluded = defaultExcludeDirs[base] && !keptBuildOutput && !keptGoVendor
 	} else {
 		excluded = defaultExcludeFiles[base] || strings.HasSuffix(base, ".pyc")
 	}
@@ -1157,7 +1157,7 @@ func collectPackEntries(root, dir, rel string, rules packRules, extra map[string
 func resolvePackSymlink(root, p, rel string) (string, os.FileInfo, error) {
 	target, err := filepath.EvalSymlinks(p)
 	if err != nil {
-		return "", nil, fmt.Errorf("symlink %q does not resolve (%v); remove it or exclude it in .gregaleignore", rel, err)
+		return "", nil, fmt.Errorf("symlink %q does not resolve; remove it or exclude it in .gregaleignore: %w", rel, err)
 	}
 	inside, err := filepath.Rel(root, target)
 	if err != nil || inside == ".." || strings.HasPrefix(inside, ".."+string(filepath.Separator)) {
