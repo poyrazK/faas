@@ -1069,6 +1069,20 @@ withdrawn domain lets a wildcard fallback serve the hostname; refusing it would
 keep a domain the platform no longer controls bound to the old app. A tenant
 hostname's failed DNS check keeps its verification and changes no binding.
 
+### Follow-up: promotion visibility and GitOps environment policies
+
+A production promotion projects the promoted workload settings onto the app,
+including its visibility, so publishing or rolling back a promotion can
+publish or withdraw the app's hostnames. Both PostgreSQL writers begin through
+the account binding guard and retry serialization failures; the memory writer
+analyzes the projected apps whose visibility changes before the release set or
+any setting is published. GitOps environment edge policies are part of every
+bound hostname's policy projection: a GitOps apply whose reviewed plan changes
+them begins through the binding guard, and the memory twin analyzes the staged
+policies before changing any row. Applies without policy changes keep their
+existing transaction. With these, every writer found by the 2026-10-26
+inventory of binding-table writes is guarded or explicitly exempt.
+
 ### Follow-up: bounded request decision evidence
 
 Ordinary response completion checks the attached budget's wall-clock expiry as
