@@ -82035,6 +82035,7 @@ components:
           format: int64
           minimum: 0
     ManagedPostgresOverageRequest:
+      description: Turn an account's managed PostgreSQL compute overage on or off (ADR-20261025094915).
       type: object
       required: [enabled]
       additionalProperties: false
