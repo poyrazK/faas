@@ -30,47 +30,12 @@ type environmentGitOpsBackend struct {
 var _ environmentgitops.Backend = (*environmentGitOpsBackend)(nil)
 var _ environmentgitops.EffectRecoverer = (*environmentGitOpsBackend)(nil)
 
-type edgeRuleBatchMutationLocker interface {
-	AcquireEdgeRuleMutationLocks(context.Context, []string) (func(context.Context), error)
-}
-
 func (b *environmentGitOpsBackend) Observe(ctx context.Context, lease state.EnvironmentGitOpsLease, desired environmentsync.DesiredState) (environmentgitops.Observation, error) {
 	return b.intent.ObserveEnvironmentGitOps(ctx, lease, desired)
 }
 
 func (s *server) lockGitOpsEdgeApps(ctx context.Context, apps []string) (func(context.Context), error) {
-	apps = slices.Clone(apps)
-	slices.Sort(apps)
-	apps = slices.Compact(apps)
-	edgerules.EdgeRuleMutationMu.Lock()
-	releases := []func(context.Context){}
-	var once sync.Once
-	unlock := func(ctx context.Context) {
-		once.Do(func() {
-			for i := len(releases) - 1; i >= 0; i-- {
-				releases[i](ctx)
-			}
-			edgerules.EdgeRuleMutationMu.Unlock()
-		})
-	}
-	if locker, ok := s.store.(edgeRuleBatchMutationLocker); ok {
-		release, err := locker.AcquireEdgeRuleMutationLocks(ctx, apps)
-		if err != nil {
-			unlock(ctx)
-			return nil, err
-		}
-		releases = append(releases, release)
-	} else if locker, ok := s.store.(edgerules.EdgeRuleMutationLocker); ok {
-		for _, app := range apps {
-			release, err := locker.AcquireEdgeRuleMutationLock(ctx, app)
-			if err != nil {
-				unlock(ctx)
-				return nil, err
-			}
-			releases = append(releases, release)
-		}
-	}
-	return unlock, nil
+	return s.edgeRules.LockEdgeRuleMutations(ctx, apps)
 }
 
 func (b *environmentGitOpsBackend) Apply(ctx context.Context, lease state.EnvironmentGitOpsLease, plan environmentsync.Plan) ([]environmentgitops.Step, error) {

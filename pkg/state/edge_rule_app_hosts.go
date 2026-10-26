@@ -114,6 +114,83 @@ func (m *MemStore) OwnedEdgeRulesForHost(_ context.Context, host, accountID, app
 	return out, nil
 }
 
+// OwnerEdgeRuleSetStore lists an account's whole enabled rule set, so the
+// gateway can serve every host the account owns from one read instead of one
+// read per new hostname under a wildcard rule (ADR-091 amendment 2026-10-27).
+type OwnerEdgeRuleSetStore interface {
+	// OwnerEdgeRules returns accountID's enabled, unexpired rules (every app's,
+	// "@app" ones included) in evaluation order, at most limit of them;
+	// complete is false when the account has more.
+	OwnerEdgeRules(ctx context.Context, accountID string, limit int) (rules []EdgeRule, complete bool, err error)
+}
+
+var (
+	_ OwnerEdgeRuleSetStore = (*PgStore)(nil)
+	_ OwnerEdgeRuleSetStore = (*MemStore)(nil)
+)
+
+func (s *PgStore) OwnerEdgeRules(ctx context.Context, accountID string, limit int) ([]EdgeRule, bool, error) {
+	if limit <= 0 {
+		return nil, false, nil
+	}
+	rows, err := s.pool.Query(ctx, `
+		select `+edgeRuleSelectCols+` from edge_rules
+		 where account_id = $1
+		   and enabled = true
+		   and (expires_at is null or expires_at > now())
+		 order by priority asc, created_at asc, id asc
+		 limit $2
+	`, accountID, limit+1)
+	if err != nil {
+		return nil, false, fmt.Errorf("state: edge rules of account %s: %w", accountID, err)
+	}
+	defer rows.Close()
+	rules, err := scanEdgeRules(rows)
+	if err != nil || len(rules) > limit {
+		return nil, false, err
+	}
+	return rules, true, nil
+}
+
+func (m *MemStore) OwnerEdgeRules(_ context.Context, accountID string, limit int) ([]EdgeRule, bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	var out []EdgeRule
+	for _, r := range m.edgeRules {
+		if r.AccountID != accountID || !r.Enabled || r.EdgeRuleExpired(time.Now()) {
+			continue
+		}
+		r.MatchHeaders = cloneEdgeRuleMatchHeaders(r.MatchHeaders)
+		out = append(out, r)
+	}
+	if limit <= 0 || len(out) > limit {
+		return nil, false, nil
+	}
+	sort.Slice(out, func(i, j int) bool { return edgeRuleMatchOrderLess(out[i], out[j]) })
+	return out, true, nil
+}
+
+// EdgeRulesCoveringHost filters one owner's rule set (OwnerEdgeRules) to what
+// OwnedEdgeRulesForHost returns for host: the unexpired rules whose match_host
+// covers host, and appID's "@app" rules, in the set's order.
+func EdgeRulesCoveringHost(rules []EdgeRule, host, appID string, now time.Time) []EdgeRule {
+	var out []EdgeRule
+	for _, r := range rules {
+		if r.EdgeRuleExpired(now) {
+			continue
+		}
+		if api.IsEdgeRuleAppHosts(r.MatchHost) {
+			if appID == "" || r.AppID != appID {
+				continue
+			}
+		} else if !matchHostPattern(r.MatchHost, host) {
+			continue
+		}
+		out = append(out, r)
+	}
+	return out
+}
+
 // MergeEdgeRulesInOrder merges two rule slices already in evaluation order
 // into one, keeping that order and dropping duplicate ids.
 func MergeEdgeRulesInOrder(a, b []EdgeRule) []EdgeRule {

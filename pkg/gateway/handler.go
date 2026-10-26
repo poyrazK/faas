@@ -3645,6 +3645,16 @@ func (h *Handler) applyEdgeRuleMaintenance(w http.ResponseWriter, r *http.Reques
 	return true
 }
 
+// validateBodyCap is the in-memory body cap for a kind=validate rule: the
+// rule's own cap, else the platform cap, and never above the plan's.
+func validateBodyCap(ruleCap int, planCap int64) int {
+	limit := int64(api.MaxRequestBodyBytes)
+	if ruleCap > 0 && int64(ruleCap) < limit {
+		limit = int64(ruleCap)
+	}
+	return int(min(limit, planCap))
+}
+
 // applyEdgeRuleValidate (PR-B) consults the per-host edge-rule
 // matcher for a `kind=validate` rule. On a hit, the inbound
 // request body is buffered (up to the per-rule cap or
@@ -3755,12 +3765,11 @@ func (h *Handler) applyEdgeRuleValidate(w http.ResponseWriter, r *http.Request, 
 	// MaxBytesReader installed in ServeHTTP above this slot).
 	// The per-rule cap is layered on top via an inner
 	// MaxBytesReader so a rule with MaxBodyBytes=2KiB
-	// short-circuits before the global cap fires.
-	cap := rule.MaxBodyBytes
-	planCap := app.Plan.MaxRequestBodyBytes()
-	if cap <= 0 || int64(cap) > planCap {
-		cap = int(planCap)
-	}
+	// short-circuits before the global cap fires. The body is held
+	// in memory, so an unset or oversized cap stops at the 25 MiB
+	// platform cap (spec §4.1.2) even on plans that accept larger
+	// bodies through the spooled proxy path.
+	cap := validateBodyCap(rule.MaxBodyBytes, app.Plan.MaxRequestBodyBytes())
 	r.Body = http.MaxBytesReader(w, r.Body, int64(cap))
 	body, err := io.ReadAll(r.Body)
 	_ = r.Body.Close()
@@ -6049,11 +6058,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// The fence is scoped to the host's owner (resolved above, before any
 	// route substitution or edge rule runs): another account's mutation,
 	// even on match_host "*", cannot change this host's policy.
-	var fenceOwner string
+	var fenceAccount, fenceApp string
 	if ok {
-		fenceOwner = lookedApp.AccountID
+		fenceAccount, fenceApp = lookedApp.AccountID, lookedApp.ID
 	}
-	if h.edgeRules != nil && h.edgeRules.Converging(host, fenceOwner) {
+	if h.edgeRules != nil && h.edgeRules.Converging(host, fenceAccount, fenceApp) {
 		w.Header().Set("Retry-After", "1")
 		api.WriteProblem(w, api.NewProblem(http.StatusServiceUnavailable,
 			api.CodeCapacity, "Edge policy update in progress",

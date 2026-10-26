@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
@@ -74,29 +75,62 @@ func TestAppWideEdgeRules(t *testing.T) {
 	}
 }
 
-// adr: 1191 — an "@app" fence holds the owning account's hosts only, and
-// never an unclaimed host; an unscoped one holds any claimed host.
+// adr: 1191 — an "@app" fence holds the mutated app's hosts only (ADR-091
+// amendment 2026-10-27), never another app's or an unclaimed host; an
+// unscoped one holds any claimed host.
 func TestAppWideEdgeRuleFence(t *testing.T) {
 	matcher := newGatewaydEdgeRules(state.NewMemStore(), testLogger(), nil, nil)
-	matcher.BeginConvergence("acct-a", []string{api.EdgeRuleAppHosts}, 1)
+	matcher.BeginConvergence("acct-a", "app-shop", []string{api.EdgeRuleAppHosts}, 1)
 	for _, tc := range []struct {
-		host, owner string
-		want        bool
+		host, owner, app string
+		want             bool
 	}{
-		{"shop.example.com", "acct-a", true},
-		{"other.example.com", "acct-b", false},
-		{"unclaimed.example.com", "", false},
+		{"shop.example.com", "acct-a", "app-shop", true},
+		{"blog.example.com", "acct-a", "app-blog", false},
+		{"other.example.com", "acct-b", "app-other", false},
+		{"unclaimed.example.com", "", "", false},
 	} {
-		if got := matcher.Converging(tc.host, tc.owner); got != tc.want {
-			t.Errorf("Converging(%s, %q) = %v, want %v", tc.host, tc.owner, got, tc.want)
+		if got := matcher.Converging(tc.host, tc.owner, tc.app); got != tc.want {
+			t.Errorf("Converging(%s, %q, %q) = %v, want %v", tc.host, tc.owner, tc.app, got, tc.want)
 		}
 	}
-	matcher.EndConvergence("acct-a", []string{api.EdgeRuleAppHosts}, 1)
-	if matcher.Converging("shop.example.com", "acct-a") {
+	matcher.EndConvergence("acct-a", "app-shop", []string{api.EdgeRuleAppHosts}, 1)
+	if matcher.Converging("shop.example.com", "acct-a", "app-shop") {
 		t.Fatal("fence still held after EndConvergence")
 	}
-	matcher.BeginConvergence("", []string{api.EdgeRuleAppHosts}, 2)
-	if !matcher.Converging("shop.example.com", "acct-b") || matcher.Converging("unclaimed.example.com", "") {
+	// A payload without an app (an older apid) keeps the account-wide hold.
+	matcher.BeginConvergence("acct-a", "", []string{api.EdgeRuleAppHosts}, 2)
+	if !matcher.Converging("blog.example.com", "acct-a", "app-blog") {
+		t.Fatal("app-less @app fence must hold every app of the account")
+	}
+	matcher.EndConvergence("acct-a", "", []string{api.EdgeRuleAppHosts}, 2)
+	matcher.BeginConvergence("", "app-shop", []string{api.EdgeRuleAppHosts}, 3)
+	if !matcher.Converging("shop.example.com", "acct-b", "app-b") || matcher.Converging("unclaimed.example.com", "", "") {
 		t.Fatal("unscoped app-wide fence must hold claimed hosts only")
+	}
+}
+
+// adr: 091 — a fence past its TTL stops holding and is dropped, and the
+// request path skips the scan entirely when no fence exists.
+func TestEdgeRuleFenceExpiry(t *testing.T) {
+	matcher := newGatewaydEdgeRules(state.NewMemStore(), testLogger(), nil, nil)
+	if matcher.Converging("shop.example.com", "acct-a", "app-shop") {
+		t.Fatal("no fence must not hold")
+	}
+	matcher.BeginConvergence("acct-a", "", []string{"shop.example.com"}, 1)
+	if !matcher.Converging("shop.example.com", "acct-a", "app-shop") || matcher.fenceCount.Load() != 1 {
+		t.Fatalf("fence not held; count=%d", matcher.fenceCount.Load())
+	}
+	matcher.fenceMu.Lock()
+	for key, fence := range matcher.fences {
+		fence.expiresAt = time.Now().Add(-time.Second)
+		matcher.fences[key] = fence
+	}
+	matcher.fenceMu.Unlock()
+	if matcher.Converging("shop.example.com", "acct-a", "app-shop") {
+		t.Fatal("expired fence still held")
+	}
+	if matcher.fenceCount.Load() != 0 {
+		t.Fatalf("expired fence not dropped; count=%d", matcher.fenceCount.Load())
 	}
 }
