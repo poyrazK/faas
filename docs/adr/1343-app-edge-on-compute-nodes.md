@@ -83,8 +83,10 @@ On every compute node with the edge enabled:
   send `*.<apps domain>` to `http://127.0.0.1:8090` and return 404 for
   anything else. It runs in `faas-cp.slice`.
 - **gatewayd-public** listens on `127.0.0.1:8090` (8080 is gatewayd-internal's
-  TCP listener on compute nodes). Its control listener binds port 9092,
-  which nftables already limits to the control plane. Its compute unit drops
+  TCP listener on compute nodes). Its control listener binds port 9109,
+  which nftables admits from the control plane only. (Amended 2026-10-26:
+  this said 9092, but gatewayd-internal's egress listener holds 9092 on a
+  compute node, and the edge failed to start there on rc.296.) Its compute unit drops
   `Requires=postgresql.service` and `Wants=faas-apid.service`, and uses
   `/etc/faas/compute-db.env`.
 - The compute unit is a separate optional unit, `faas-gatewayd-public-edge`
