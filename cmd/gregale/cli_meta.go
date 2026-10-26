@@ -4474,6 +4474,8 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "async", Short: "return immediately with status_url"},
 			{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J|@file|-"},
+			{Name: "method", Short: "HTTP method (default POST, or the function handler's)", Value: "METHOD"},
+			{Name: "path", Short: "URL path (default /, or the function handler's)", Value: "PATH"},
 			{Name: "on-success-webhook", Short: "app webhook id for completed invocation callbacks", Value: "ID"},
 			{Name: "on-failure-webhook", Short: "app webhook id for failed or dead-lettered callbacks", Value: "ID"},
 			{Name: "work-policy", Short: "named app work policy for async invocation", Value: "NAME"},

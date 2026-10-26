@@ -53,3 +53,23 @@ func TestInvocationsListExplainsItHasNoAppFilter(t *testing.T) {
 		t.Fatalf("exit=%d stderr=%q", code, stderr())
 	}
 }
+
+// TestInvokeNamesMethodOnA405: `invoke h14-py --path /` sent POST to a
+// GET-only route on production-us rc.294 and answered only the app's 405
+// page (Hunt 14 H14-64).
+func TestInvokeNamesMethodOnA405(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"id":"inv-1","status":"failed","error":"invoke: sched: permanent invoke error: application returned HTTP 405: \"Method Not Allowed\""}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	main.ResetJSONOut(t)
+	_, stderr, restore := main.SwapIO(t)
+	code := main.Run([]string{"invoke", "h14-py", "--path", "/"})
+	restore()
+	if code != 1 || !strings.Contains(stderr(), "invoke sends POST unless --method is given") {
+		t.Fatalf("exit=%d stderr=%q", code, stderr())
+	}
+}
