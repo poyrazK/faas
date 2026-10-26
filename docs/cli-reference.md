@@ -16482,14 +16482,26 @@ Inspect, replay or purge events that failed delivery
 
 ### dlq list
 
-List app dead-letter events
+List an app&#39;s dead letters from every source
 
-`gregale dlq list [--limit <N>] [--before <ID>] <app>`
+`gregale dlq list [--limit <N>] [--before <ID>] [--source <SOURCE>] [--trigger <ID>] <app>`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--limit <N>` | max events (1..200) |  |
 | `--before <ID>` | pagination cursor |  |
+| `--source <SOURCE>` | only this source | one of `invocation` · `trigger` · `webhook` |
+| `--trigger <ID>` | only dead letters from this trigger |  |
+
+Examples:
+
+```sh
+gregale dlq list my-api
+gregale dlq list my-api --source trigger
+gregale dlq list my-api --trigger <trigger-id>
+```
+
+--source and --trigger filter each page; when a filtered page is empty, later pages may still match.
 
 ### dlq inspect
 
