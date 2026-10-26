@@ -343,6 +343,14 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			return err
 		}
 	}
+	// ADR 20261022111812: the delivery seal-domain identity opens the
+	// execution payloads, app webhook secrets and commit-source connections
+	// apid seals for schedd, ahead of the fleet and host identities. A
+	// configured identity that does not load fails startup.
+	deliveryIdentities, err := loadDeliverySealDomain(os.Getenv)
+	if err != nil {
+		return err
+	}
 	var executionHostAgeIdentities []*age.X25519Identity
 	if executionEnabled {
 		if deps.executionArtifacts == nil {
@@ -358,7 +366,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if identityErr != nil {
 				return fmt.Errorf("schedd: authenticated payload decoder unavailable: load host age identities: %w", identityErr)
 			}
-			deps.executionPayloadDecoder = sched.NewAgeExecutionBundlePayloadDecoder(executionHostAgeIdentities)
+			deps.executionPayloadDecoder = sched.NewAgeExecutionBundlePayloadDecoder(domainReaders(deliveryIdentities, executionHostAgeIdentities))
 			if deps.executionPayloadDecoder == nil {
 				return errors.New("schedd: authenticated payload decoder unavailable: no host age identities")
 			}
@@ -613,6 +621,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Control, len(controlIdentities) > 0)
 	log.Info("control seal domain", "domain_identity", len(controlIdentities) > 0)
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Delivery, len(deliveryIdentities) > 0)
+	log.Info("delivery seal domain", "domain_identity", len(deliveryIdentities) > 0)
 	// ADR-190 follow-up: export this pool's live statistics so the
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(ops, pool)
@@ -1850,7 +1860,10 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if hostAgeErr != nil {
 		log.Warn("trigger credentials: host age identities unavailable", "path", hostAgePath, "err", hostAgeErr)
 	}
-	if err := startCommitRelay(ctx, store, hostAgeIdentities, log, ops.Registry()); err != nil {
+	// Trigger configs stay sealed to the fleet key (hostAgeIdentities):
+	// apid still opens a stored config to merge an update into it.
+	deliveryReaders := domainReaders(deliveryIdentities, hostAgeIdentities)
+	if err := startCommitRelay(ctx, store, deliveryReaders, log, ops.Registry()); err != nil {
 		return err
 	}
 	// ADR-098: app-delete handler. Built here (not via the
@@ -2599,7 +2612,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		Store: store, Metrics: webhookDispatcher.HealthMetrics, Log: log,
 	}).Run(ctx)
 	webhookDispatcher.IdentityLoader = func() []*age.X25519Identity {
-		return append([]*age.X25519Identity(nil), hostAgeIdentities...)
+		return append([]*age.X25519Identity(nil), deliveryReaders...)
 	}
 	// Propagate the dispatcher's lifecycle error through loopErr so
 	// a non-context-canceled exit (e.g. a poisoned row) tears down
