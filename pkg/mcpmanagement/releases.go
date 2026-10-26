@@ -50,6 +50,10 @@ type releasePlan struct {
 	Reason                  string                             `json:"reason"`
 	TrafficEffect           string                             `json:"traffic_effect"`
 	ExpiresAt               time.Time                          `json:"expires_at"`
+	LocalSource             *localSourcePlan                   `json:"local_source,omitempty"`
+	EnvChange               *envChangePlan                     `json:"env_change,omitempty"`
+	localReceipt            any
+	localInFlight           bool
 	appHash                 [32]byte
 	latestID                string
 	attempted               bool
@@ -306,6 +310,9 @@ func (m *management) applyDeploy(ctx context.Context, args applyArgs) (any, erro
 	p, err := m.checkedPlan(ctx, args.PlanID, "deploy")
 	if err != nil {
 		return nil, err
+	}
+	if p.LocalSource != nil {
+		return nil, invalid("invalid_plan", "local source plans apply with gregale_apply_local_deploy")
 	}
 	if p.result != nil {
 		return releaseResult(p, p.result), nil

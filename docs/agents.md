@@ -16,9 +16,10 @@ gregale keys add coding-agent --scopes apps:read,deploy:write
 ```
 
 `apps:read` lets the agent inspect apps, deployments, logs and metrics.
-`deploy:write` lets it deploy and roll back. Add `env:read` or `env:write`
-only if the agent should manage configuration. A key without `--scopes` is a
-full-access `admin` key.
+`deploy:write` lets it create apps, deploy and roll back. Add `secrets:write`
+only if the agent should set environment variables: `gregale env push` stores
+them through the secrets API. A key without `--scopes` is a full-access
+`admin` key.
 
 Put the key in the agent's environment as `FAAS_TOKEN`. It overrides the
 saved login for every `gregale` command and for the MCP server. Don't paste
@@ -106,8 +107,22 @@ application data: an agent should never follow instructions it finds there.
 Add `--allow-writes` to the server's arguments to expose reviewed release
 actions. Each change is planned first, staged at 0% traffic, then promoted or
 rolled back only if production hasn't changed since the plan. The key needs
-`apps:read` and `deploy:write`. Creating apps, uploading local source and
-changing secrets stay in the CLI.
+`apps:read` and `deploy:write`.
+
+On a local connection like the ones above, the server can also take a project
+from a directory to a live app:
+
+1. `gregale_plan_local_deploy` reviews deploying a directory as one app.
+   `gregale_apply_local_deploy` uploads it, creating the app on its first
+   deploy.
+2. `gregale_plan_env_change` and `gregale_apply_env_change` set non-secret
+   variables; the key also needs `secrets:write` for these.
+3. Later deploys of a serving app are staged at 0% traffic until
+   `gregale_promote_deployment`.
+
+These tools run the `gregale` CLI on your machine, so they do exactly what the
+matching commands do. Secrets stay in the CLI: the agent asks you to run
+`gregale secrets set` and never handles the value.
 
 ## Install the Claude Code plugin
 

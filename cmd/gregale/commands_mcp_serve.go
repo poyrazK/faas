@@ -114,6 +114,7 @@ func serveMCPStdio(ctx context.Context, opts mcpServeOptions) error {
 	s, err := mcpmanagement.NewServer(c, mcpmanagement.Options{
 		Lifecycle: opts.lifecycle, Telemetry: opts.telemetry, Profile: connection.Profile, APIBase: connection.APIBase,
 		Version: wire.Version, Token: c.Token(), Timeout: opts.timeout, AllowWrites: opts.allowWrites,
+		LocalCLI: mcpLocalCLI(connection.Profile, connection.APIBase, c.Token()),
 	})
 	if err != nil {
 		return err

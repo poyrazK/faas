@@ -196,8 +196,12 @@ func hasSubcommand(command cliCommand, name string) bool {
 func managementToolNames(t *testing.T) map[string]bool {
 	t.Helper()
 	const base = "http://127.0.0.1:1"
+	// A local connection with writes lists every tool agents may be told about.
+	noCLI := func(context.Context, []string, []byte) (mcpmanagement.LocalCLIResult, error) {
+		return mcpmanagement.LocalCLIResult{}, nil
+	}
 	server, err := mcpmanagement.NewServer(api.NewClient(base, "test-token"), mcpmanagement.Options{
-		APIBase: base, Token: "test-token", Version: "test", AllowWrites: true,
+		APIBase: base, Token: "test-token", Version: "test", AllowWrites: true, LocalCLI: noCLI,
 	})
 	if err != nil {
 		t.Fatal(err)
