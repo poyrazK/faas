@@ -150,6 +150,19 @@ flags in the table below release their capability; every other capability in
   gregalectl flags deny --capability object-protection --org-id <org-uuid> --reason "not yet" --yes
   ```
 
+- **Native acceptance accounts.** Runs that exercise preview or internal
+  capabilities through a deployed API need them released to their account
+  first. Each run checks with `scripts/ci/require-capabilities.py` before it
+  starts and, when a capability is hidden, prints the `gregalectl flags allow`
+  commands to run and fails. The e2e harness and GitOps native boot their own
+  stack with `FAAS_CAPABILITY_FLAGS_RELEASE_ALL=1` and need nothing.
+
+  | Run | Capabilities |
+  |---|---|
+  | Dev Bridge native (`make native-dev-bridge-acceptance`) | `dev-bridge`, `projects`, `environments` |
+  | Scenario restart native (`make native-scenario-restart-acceptance`) | `scenario-tests`, `developer-environments`, `projects` |
+  | Profiling native (`scripts/ci/run-native-profiling-acceptance.sh`) | `continuous-profiling`, `traffic-profiles`, `route-requirements`, `route-insights` |
+
 - **New routes.** A route must belong to a capability: add its path to that
   capability's `routes` in `pkg/productcap/catalog.json`.
   `TestEveryApidRouteHasACapability` fails until you do.

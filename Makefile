@@ -1489,6 +1489,7 @@ capabilities-check: ## Verify the product capability registry and generated matr
 capability-coverage-check: ## CI gate: every customer entry point maps to a row of docs/ga-capability-inventory.md (ADR-20261023115741)
 	@python3 -I scripts/ga/capability_coverage_test.py
 	@python3 -I scripts/ga/capability_coverage.py
+	@python3 -I scripts/ci/require_capabilities_test.py
 
 .PHONY: sdk-spec
 sdk-spec: ## Regenerate sdk/openapi.yaml, the GA and beta spec the SDKs are generated from (ADR-20261023115741)
