@@ -401,6 +401,46 @@ type BootStarted struct {
 type PreRPCTimings struct {
 	Set                                                          bool
 	BeforeAdmissionMs, LockWaitMs, ReadsMs, AdmitMs, PostAdmitMs int64
+	// PreWake splits EnsureWake's work before Engine.Wake started, which
+	// the spans above do not see; set only for wakes that came through it.
+	PreWake PreWakeTimings
+}
+
+// PreWakeTimings split the EnsureWake RPC before Engine.Wake starts, in
+// milliseconds:
+//   - AuthorizeMs: the RPC's app authorization and correlation setup.
+//   - EnvironmentMs: the app read, application-standard and financial-budget
+//     admission and the wake environment (skipped by a thaw ticket).
+//   - CoordinateMs: entering the per-app wake coordinator as its leader.
+//   - TransitionMs: the parked -> active lifecycle claim and the hand-off
+//     into Engine.Wake.
+type PreWakeTimings struct {
+	Set                                                    bool
+	AuthorizeMs, EnvironmentMs, CoordinateMs, TransitionMs int64
+}
+
+// NewPreWakeTimings derives the spans from the instants schedd stamps. Any
+// zero instant (a wake that did not come through EnsureWake, or a path that
+// skipped a step's mark) leaves them unset.
+func NewPreWakeTimings(rpcStarted, ensureStarted, environmentReady, leader, wakeStarted time.Time) PreWakeTimings {
+	for _, at := range []time.Time{rpcStarted, ensureStarted, environmentReady, leader, wakeStarted} {
+		if at.IsZero() {
+			return PreWakeTimings{}
+		}
+	}
+	ms := func(from, to time.Time) int64 {
+		if to.Before(from) {
+			return 0
+		}
+		return to.Sub(from).Milliseconds()
+	}
+	return PreWakeTimings{
+		Set:           true,
+		AuthorizeMs:   ms(rpcStarted, ensureStarted),
+		EnvironmentMs: ms(ensureStarted, environmentReady),
+		CoordinateMs:  ms(environmentReady, leader),
+		TransitionMs:  ms(leader, wakeStarted),
+	}
 }
 
 // NewPreRPCTimings derives the spans from the instants schedd stamps. A zero
@@ -735,6 +775,12 @@ func (e BootStarted) Payload() map[string]any {
 		p["pre_rpc_reads_ms"] = e.PreRPC.ReadsMs
 		p["pre_rpc_admit_ms"] = e.PreRPC.AdmitMs
 		p["pre_rpc_post_admit_ms"] = e.PreRPC.PostAdmitMs
+	}
+	if w := e.PreRPC.PreWake; w.Set {
+		p["pre_wake_authorize_ms"] = w.AuthorizeMs
+		p["pre_wake_environment_ms"] = w.EnvironmentMs
+		p["pre_wake_coordinate_ms"] = w.CoordinateMs
+		p["pre_wake_transition_ms"] = w.TransitionMs
 	}
 	return p
 }

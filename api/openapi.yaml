@@ -54619,6 +54619,37 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { description: Response timing storage could not be read within its deadline. }
 
+  /v1/admin/obs/wakes/{wake_id}:
+    get:
+      tags: [admin]
+      operationId: getObsWakeTimeline
+      summary: Read every platform event recorded for one wake.
+      description: |
+        Returns the events whose data carries this wake_id, oldest first, for an
+        operator who has only the wake_id (from a log line, a latency exemplar or
+        a customer report) and not the app or account. At most 1000 events are
+        returned; truncated is true when the wake recorded more. Reads use the
+        events wake_id index and a five-second budget. gregalectl obs wake
+        merges these events with the wake's platform log lines.
+      parameters:
+        - in: path
+          name: wake_id
+          required: true
+          description: The wake's id, 8-64 letters, digits or dashes.
+          schema: { type: string, pattern: '^[A-Za-z0-9-]{8,64}$' }
+      responses:
+        '200':
+          description: The wake's events, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsWakeTimeline' }
+        '400': { description: Malformed wake_id or unexpected query parameters. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Wake read denied by operator scope or MFA or allowlist policy. }
+        '404': { description: No events are recorded for this wake_id. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Event storage could not be read within its deadline. }
+
   /v1/admin/obs/incidents/platform_alert/summary:
     get:
       tags: [admin]
@@ -85420,6 +85451,29 @@ components:
         started_at: { type: string, format: date-time }
         resolved_at: { type: [string, 'null'], format: date-time }
         evidence_path: { type: string }
+    ObsWakeTimeline:
+      type: object
+      description: Every platform event recorded for one wake, oldest first.
+      required: [wake_id, events, truncated]
+      properties:
+        wake_id: { type: string }
+        subject: { type: string, description: The first subject the events name (the app), when any does. }
+        events:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/ObsWakeEvent' }
+        truncated: { type: boolean, description: True when the wake recorded more than 1000 events. }
+    ObsWakeEvent:
+      type: object
+      description: One events row of a wake.
+      required: [at, kind]
+      properties:
+        at: { type: string, format: date-time }
+        kind: { type: string }
+        actor: { type: string }
+        subject: { type: string }
+        trace_id: { type: string }
+        data: { type: object, additionalProperties: true, description: The event's payload as recorded. }
     ObsAlertResponseTimes:
       type: object
       description: Atomic retained activation-cohort timing with explicit evidence and sample limitations.
@@ -105848,6 +105902,10 @@ components:
           type: array
           items: { type: string }
           description: "Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."
+        go_command:
+          type: string
+          example: api
+          description: "The cmd/<name> main package this service builds from the root of a Go module with several commands (ADR-20261025134512)."
         secret_files:
           type: array
           items:

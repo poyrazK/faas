@@ -33,6 +33,7 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"gopkg.in/yaml.v3"
 )
 
@@ -627,6 +628,17 @@ type DNS struct {
 	// consistency against the gatewayd-internal / apid / CLI
 	// running config.
 	AppsDomain string `yaml:"apps_domain"`
+	// PlatformDomain, DeployDomain, AppsDomainAliases and
+	// AppsDomainAliasMode split the layout (ADR-20261026100000): the site,
+	// dashboard and API hosts, the deployment-preview hosts, further apps
+	// domains that reach the same apps, and whether those serve or redirect.
+	// Empty keeps every host under apps_domain. manifest-ansible renders them
+	// as the faas_* variables the domain-layout drop-in and the public edge
+	// read.
+	PlatformDomain      string   `yaml:"platform_domain,omitempty"`
+	DeployDomain        string   `yaml:"deploy_domain,omitempty"`
+	AppsDomainAliases   []string `yaml:"apps_domain_aliases,omitempty"`
+	AppsDomainAliasMode string   `yaml:"apps_domain_alias_mode,omitempty"`
 	// Mode is the DNS provider ("cloudflare", "manual", "nip_io").
 	// The validator rejects values outside the supported set.
 	Mode string `yaml:"mode"`
@@ -1497,6 +1509,8 @@ func (d *DNS) validate() Errors {
 	} else if !looksLikeHostname(d.AppsDomain) {
 		errs = append(errs, Error{"dns.apps_domain",
 			fmt.Sprintf("apps_domain %q must be a valid hostname (e.g. gregale.dev)", d.AppsDomain)})
+	} else if _, err := hostidentity.NewDomains(d.PlatformDomain, d.AppsDomain, d.DeployDomain, d.AppsDomainAliases, d.AppsDomainAliasMode); err != nil {
+		errs = append(errs, Error{"dns", err.Error()})
 	}
 	if d.Mode == "" {
 		errs = append(errs, Error{"dns.mode", "is required"})

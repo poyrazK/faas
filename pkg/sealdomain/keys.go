@@ -130,3 +130,21 @@ func Recipients(mode WriteMode, domain, fleet *age.X25519Recipient) ([]*age.X255
 		return nil, fmt.Errorf("sealdomain: unknown write mode %q", mode)
 	}
 }
+
+// KeyID is the key id stored beside a value sealed to recipients, for a
+// reader that re-keys by key id (s3-gatewayd re-seals any credential whose
+// id is not its current key): the fleet recipient while the value still
+// opens with it, else the first recipient (the domain).
+func KeyID(recipients []*age.X25519Recipient, fleet *age.X25519Recipient) string {
+	if fleet != nil {
+		for _, r := range recipients {
+			if r.String() == fleet.String() {
+				return fleet.String()
+			}
+		}
+	}
+	if len(recipients) == 0 {
+		return ""
+	}
+	return recipients[0].String()
+}

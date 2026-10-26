@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
@@ -54,6 +55,7 @@ func (s *server) publishAppEvent(w http.ResponseWriter, r *http.Request, acct st
 		api.WriteProblem(w, api.ErrValidation(err.Error()))
 		return
 	}
+	envelope.Producer = eventcontract.AppProducer(appID)
 	trace := pkgtrace.InjectHeaders(ctx)
 	envelope.Traceparent, envelope.Tracestate, envelope.Baggage = trace["traceparent"], trace["tracestate"], trace["baggage"]
 	payload, err := json.Marshal(envelope)

@@ -62,6 +62,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
+	"net/url"
 )
 
 var ResolveAlertmanagerURL = resolveAlertmanagerURL
@@ -300,6 +301,9 @@ var EdgeDomainRecipient = &edgeDomainRecipient
 var EdgeWriteMode = &edgeWriteMode
 var AlertingDomainRecipient = &alertingDomainRecipient
 var AlertingWriteMode = &alertingWriteMode
+var StorageDomainRecipient = &storageDomainRecipient
+var StorageWriteMode = &storageWriteMode
+var StorageCredentialRecipients = storageCredentialRecipients
 var SealPresetWebhookSecret = sealPresetWebhookSecret
 var SealMCPFallbackSecret = sealMCPFallbackSecret
 var SealMCPPagerDutyKey = sealMCPPagerDutyKey
@@ -518,6 +522,13 @@ var NewRuntimeConfigManager = newRuntimeConfigManager
 func (s *server) ConfigureHostingForTest(getenv func(string) string) error {
 	return s.configureHosting(getenv)
 }
+
+func (s *server) InboundWebhookURLForTest(token string) string { return s.inboundWebhookURL(token) }
+func (s *server) IsWebDashboardOriginForTest(origin *url.URL) bool {
+	return s.isWebDashboardOrigin(origin)
+}
+
+var PlatformDomainFromConfig = platformDomainFromConfig
 
 var NewSafeReleaseLeaseMetrics = newSafeReleaseLeaseMetrics
 var NewServer = newServer

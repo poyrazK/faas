@@ -95,6 +95,28 @@ for HTTP health checks; an older gateway cannot verify a candidate.
 Gregale adds the managed infrastructure around that process: TLS, readiness,
 logs and metrics, snapshots, autoscaling, and scale-to-zero.
 
+## Runtime environment
+
+The process starts in the environment a container runtime provides
+([ADR-20261025111339](adr/20261025111339-guest-container-runtime-parity.md)):
+
+| | Gregale | Docker |
+|---|---|---|
+| `HOME` | The image or deployment value; else the user's passwd home when the user can write there; else `/tmp` | The image value, else the passwd home |
+| `PATH` | The image or deployment value, else `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | Same |
+| Working directory | `WORKDIR`, created for the process user when missing | Same |
+| Open files (`ulimit -n`) | 65,536 soft, 1,048,576 hard | Varies by host; Kubernetes gives 1,048,576 |
+| Hostname | `gregale` | The container ID |
+| `/etc/hosts` | The image's file, plus `127.0.0.1 localhost` and `10.0.0.2 <hostname>` when it lacks them | Generated; image entries ignored |
+| `/tmp` | RAM-backed tmpfs, up to half the instance's RAM, starting with the image's `/tmp` files | The image's directory on the container disk |
+| `/dev/shm` | tmpfs, up to half the instance's RAM | 64 MB tmpfs |
+| `/dev/pts` | Mounted | Mounted |
+
+Files in `/tmp` and `/dev/shm` use the instance's memory: filling them hits
+the plan's RAM limit, not a disk-full error. Write large scratch files under
+the home directory or the working directory instead; that space counts against
+the ephemeral disk allowance.
+
 ## Randomness after a snapshot restore
 
 A scaled-to-zero app wakes from a snapshot of its running process, so any

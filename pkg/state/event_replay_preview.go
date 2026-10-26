@@ -329,6 +329,9 @@ func (m *MemStore) PreviewEventReplay(ctx context.Context, accountID string, que
 		if work.CreatedAt.Before(query.From) || !work.CreatedAt.Before(c.CutoffAt) || (!c.AcceptedAt.IsZero() && (work.CreatedAt.Before(c.AcceptedAt) || work.CreatedAt.Equal(c.AcceptedAt) && work.ID <= c.OutboxID)) {
 			continue
 		}
+		if !m.eventAppInProducerReachLocked(accountID, work.Payload, sub.AppID) {
+			continue
+		}
 		original := "unknown"
 		if work.SnapshotCaptured {
 			original = "not_captured"

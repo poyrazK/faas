@@ -67,8 +67,8 @@ func (s *server) newCheckpointObjectCredentialValues(ctx context.Context, r stat
 		out.SHA256 = state.ProjectEnvironmentCloneCheckpointObjectCredentialValuesSHA256(out)
 		return out, nil
 	}
-	recipient := hostSecretRecipient()
-	if !s.object.ObjectStorageEnabled() || recipient == nil {
+	recipients, kid, recipientErr := storageCredentialRecipients()
+	if !s.object.ObjectStorageEnabled() || recipientErr != nil {
 		return zero, objectstorage.ErrUnavailable
 	}
 	out.Endpoint, out.Region = s.objectStorage.PublicEndpoint, s.objectStorage.PublicRegion
@@ -88,11 +88,11 @@ func (s *server) newCheckpointObjectCredentialValues(ctx context.Context, r stat
 			if err != nil {
 				return zero, err
 			}
-			sealed, err := secretbox.SealBytes(recipient, s3gateway.CredentialSecretNamespace, []byte(key), 64)
+			sealed, err := secretbox.SealBytesTo(recipients, s3gateway.CredentialSecretNamespace, []byte(key), 64)
 			if err != nil {
 				return zero, err
 			}
-			c := state.ObjectS3Credential{ID: member.TargetCredentialID, AccountID: r.Inputs.AccountID, BucketID: b.Target.TargetBucketID, AccessKeyID: access, SecretSealed: sealed, KID: recipient.String(), Label: slot.Label, Permission: slot.Permission, Status: state.ObjectS3CredentialStatusActive, ManagedAppID: slot.ManagedAppID, ManagedScope: slot.TargetScope, ManagedPrefix: slot.ManagedPrefix}
+			c := state.ObjectS3Credential{ID: member.TargetCredentialID, AccountID: r.Inputs.AccountID, BucketID: b.Target.TargetBucketID, AccessKeyID: access, SecretSealed: sealed, KID: kid, Label: slot.Label, Permission: slot.Permission, Status: state.ObjectS3CredentialStatusActive, ManagedAppID: slot.ManagedAppID, ManagedScope: slot.TargetScope, ManagedPrefix: slot.ManagedPrefix}
 			p := state.ProjectEnvironmentCloneObjectCredentialPreparation{OperationID: out.OperationID, AppID: b.AppID, SourceBucketID: b.Source.ID, SourceCredentialID: slot.SourceCredentialID, Credential: c, Secrets: []state.AppSecret{}}
 			if slot.ManagedAppID != "" {
 				bucketName := state.ProjectEnvironmentCloneObjectBucketName(state.ProjectEnvironmentCloneOperation{ID: r.Inputs.OperationID, ProjectID: r.Inputs.ProjectID, TargetEnvironment: r.Inputs.TargetEnvironment}, b.AppID, b.Source.ID)

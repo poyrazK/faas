@@ -35,7 +35,9 @@ type contractTestStore interface {
 	state.EventFanoutReplayBatchStore
 	state.EventFanoutReplayStore
 	state.EventReceiptAcceptanceStore
+	state.EventReceiptAttemptStore
 	state.EventReceiptReplayStore
+	state.EventReceiptScopeStore
 	state.EventReceiptStore
 	state.EventReplayPreviewStore
 	state.EventStorageUsageStore

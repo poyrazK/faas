@@ -89,7 +89,7 @@ func (s *Session) Inspect(ctx context.Context, paths []string, reads map[string]
 	if err != nil {
 		return nil, err
 	}
-	res, err := s.run(ctx, s.ed.debugfs, []string{"-f", "-", s.image}, probes.script, runLimits{output: probes.output})
+	res, err := s.run(ctx, s.ed.debugfs, []string{"-f", "-", s.toolImage()}, probes.script, runLimits{output: probes.output})
 	if err != nil {
 		return nil, fmt.Errorf("guestdisk: inspect: %w", err)
 	}
@@ -291,7 +291,7 @@ func (s *Session) List(ctx context.Context, dirs []string, maxEntries int) (map[
 	}
 	end := s.marker("end")
 	fmt.Fprintf(&script, "%s\n", end)
-	res, err := s.run(ctx, s.ed.debugfs, []string{"-f", "-", s.image}, script.Bytes(), runLimits{output: 64<<10 + maxEntries*600})
+	res, err := s.run(ctx, s.ed.debugfs, []string{"-f", "-", s.toolImage()}, script.Bytes(), runLimits{output: 64<<10 + maxEntries*600})
 	if errors.Is(err, errOutputCap) {
 		return nil, fmt.Errorf("%w: more than %d entries", errListTooLong, maxEntries)
 	}

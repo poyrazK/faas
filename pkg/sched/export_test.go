@@ -19,10 +19,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
@@ -81,6 +83,7 @@ const TriggerReasonMaxAttempts = triggerReasonMaxAttempts
 const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
+const MaxDuePagesPerTick = maxDuePagesPerTick
 const WorkReaper = workReaper
 
 // Package-level vars
@@ -157,6 +160,25 @@ var NewNodeCapacityTable = newNodeCapacityTable
 var NewNodePresenceTracker = newNodePresenceTracker
 var NewQueuePoller = newQueuePoller
 var NewRealtimePoller = newRealtimePoller
+
+type NATSBroker = natsBroker
+
+// NewNATSBrokerPool is a broker pool that dials with dial instead of
+// connecting to NATS.
+func NewNATSBrokerPool(dial func(rawURL string) (*NATSBroker, error)) *natsBrokerPool {
+	return &natsBrokerPool{dial: dial, brokers: map[string]*natsBroker{}}
+}
+
+func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) { return p.forURL(rawURL) }
+
+// NewRedisStreamPoller wraps an already connected client, as newRedisPoller
+// does after its ping and group creation; the egress dialer refuses the
+// loopback address a test server listens on.
+func NewRedisStreamPoller(client *redis.Client, stream, group, consumer string) TriggerSource {
+	return &redisPoller{client: client, stream: stream, group: group, consumer: consumer, addr: "test",
+		batchMax: 100, visibility: 30 * time.Second, inFlight: map[string]string{}}
+}
+
 var NewStandardCaptureService = newStandardCaptureService
 var NewStandardNativeTestVMM = newStandardNativeTestVMM
 var NewWakeCoord = newWakeCoord
@@ -251,6 +273,12 @@ var ReadWakeRPC = readWakeRPC
 const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
+
+// XDispatchExplicitWake is Loop.Run's arm for app_wake and
+// runtime_config_restart deliveries.
+func (l *Loop) XDispatchExplicitWake(ctx context.Context, n db.Notification) {
+	l.dispatchExplicitWake(ctx, n)
+}
 
 // XRunEventRecipientSweep runs only the sweep's independent recipient stage.
 // adr: 614 — recipients are claimed in batches and unrouted claims released.
@@ -422,7 +450,11 @@ func (r *Loop) GatewayBaseURL() *string                   { return &r.gatewayBas
 func (r *Loop) GatewayHTTPClient() **http.Client          { return &r.gatewayHTTPClient }
 func (r *Loop) Pool() **pgxpool.Pool                      { return &r.pool }
 func (r *Loop) TriggerPollers() *map[string]triggerSource { return &r.triggerPollers }
-func (r *Loop) BeatMain()                                 { r.beatMain() }
+func (r *Loop) PollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
+	return r.pollerForTrigger(t)
+}
+func (r *Loop) EvictTriggerPollers(enabled []sqlc.Trigger) { r.evictTriggerPollers(enabled) }
+func (r *Loop) BeatMain()                                  { r.beatMain() }
 func (r *Loop) DispatchOneCron(p0 context.Context, p1 state.Cron, p2 time.Time) {
 	r.dispatchOneCron(p0, p1, p2)
 }
@@ -799,4 +831,27 @@ func (r *fakeNotifier) LastPayload(channel string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// WithPreWakeClockForTest starts a pre-wake clock with every stamp given.
+func WithPreWakeClockForTest(ctx context.Context, rpc, ensure, env, leader time.Time) context.Context {
+	return context.WithValue(ctx, preWakeClockKey{}, &preWakeClock{rpcStarted: rpc, ensureStarted: ensure, envReady: env, leader: leader})
+}
+
+// WithWakeStartedForTest is withWakeStarted.
+func WithWakeStartedForTest(ctx context.Context, at time.Time) context.Context {
+	return withWakeStarted(ctx, at)
+}
+
+// PreRPCWithPreWakeForTest is preRPCWithPreWake.
+func PreRPCWithPreWakeForTest(ctx context.Context, t events.PreRPCTimings, attempt time.Time) events.PreRPCTimings {
+	return preRPCWithPreWake(ctx, t, attempt)
+}
+
+// MarkPreWakeForTest stamps the ensure-started, environment-ready and leader
+// marks in order.
+func MarkPreWakeForTest(ctx context.Context) {
+	markPreWake(ctx, preWakeEnsureStarted)
+	markPreWake(ctx, preWakeEnvironmentReady)
+	markPreWake(ctx, preWakeLeader)
 }

@@ -45499,17 +45499,23 @@ select i.id, i.app_id, i.account_id, i.source, i.state, i.payload, i.headers, i.
 		         and active.state='claimed' and active.claim_expires_at > $1
 		   )) < i.work_fairness_limit)
 		   and ($2::boolean or (i.due_at, i.id) > ($3::timestamptz, $4::uuid))
+		   and ($5::uuid is null or exists (
+		       select 1 from apps owner
+		        where owner.id = i.app_id
+		          and (owner.node_id is null or owner.node_id = $5::uuid)
+		   ))
 		 order by i.due_at, i.id
 		 for update skip locked
-		 limit $5::bigint
+		 limit $6::bigint
 `
 
 type ListDueInvocationRowsAfterParams struct {
-	NowAt      pgtype.Timestamptz
-	FirstPage  bool
-	AfterDueAt pgtype.Timestamptz
-	AfterID    pgtype.UUID
-	BatchLimit int64
+	NowAt       pgtype.Timestamptz
+	FirstPage   bool
+	AfterDueAt  pgtype.Timestamptz
+	AfterID     pgtype.UUID
+	OwnerNodeID pgtype.UUID
+	BatchLimit  int64
 }
 
 func (q *Queries) ListDueInvocationRowsAfter(ctx context.Context, db DBTX, arg ListDueInvocationRowsAfterParams) ([]Invocation, error) {
@@ -45518,6 +45524,7 @@ func (q *Queries) ListDueInvocationRowsAfter(ctx context.Context, db DBTX, arg L
 		arg.FirstPage,
 		arg.AfterDueAt,
 		arg.AfterID,
+		arg.OwnerNodeID,
 		arg.BatchLimit,
 	)
 	if err != nil {
@@ -92833,7 +92840,7 @@ UPDATE deployments d SET status = CASE WHEN
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
     OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
-    THEN 'live' ELSE 'superseded' END, traffic_percent=0
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false
 WHERE d.app_id=$1::uuid AND d.scope=$2::text
 AND d.status='live' AND d.id<>$3::uuid
 `
@@ -92844,6 +92851,8 @@ type RetireLiveDeploymentSiblingsParams struct {
 	DeploymentID pgtype.UUID
 }
 
+// A retired sibling is a retained stable revision, not a manual dark
+// deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71).
 func (q *Queries) RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg RetireLiveDeploymentSiblingsParams) (int64, error) {
 	result, err := db.Exec(ctx, retireLiveDeploymentSiblings, arg.AppID, arg.Scope, arg.DeploymentID)
 	if err != nil {

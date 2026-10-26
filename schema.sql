@@ -776,6 +776,23 @@ $$;
 
 
 --
+-- Name: app_runtime_generation_on_project_environment_secrets(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_project_environment_secrets() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE member uuid;
+BEGIN
+    FOR member IN SELECT id FROM apps WHERE project_id = NEW.project_id ORDER BY id LOOP
+        PERFORM app_runtime_generation_bump(member);
+    END LOOP;
+    RETURN NULL;
+END;
+$$;
+
+
+--
 -- Name: app_runtime_generation_on_project_environments(); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -8089,6 +8106,8 @@ BEGIN
             FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
             WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
                 WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
+        -- ADR-20261025211616: keep the event inside its producer's company.
+        recipients := event_recipients_in_producer_reach(NEW.subject, NEW.data->>'producer', recipients);
     END IF;
 
     INSERT INTO event_fanout_outbox
@@ -10974,6 +10993,30 @@ $_$;
 
 
 --
+-- Name: event_app_company(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_app_company(target_app uuid) RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT o.id FROM apps a JOIN orgs o ON o.id = a.org_id AND NOT o.personal_org
+    WHERE a.id = target_app
+$$;
+
+
+--
+-- Name: event_app_in_producer_reach(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_app_in_producer_reach(target_account uuid, producer text, target_app text) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT jsonb_array_length(event_recipients_in_producer_reach(target_account, producer,
+        jsonb_build_array(jsonb_build_object('app_id', target_app)))) = 1
+$$;
+
+
+--
 -- Name: event_backlog_waiting_reason(text, text, text, timestamp with time zone, timestamp with time zone, text, jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10988,6 +11031,20 @@ SELECT CASE
  WHEN next_attempt_at > observed_at THEN 'retry_backoff'
  WHEN consumer_kind = 'workflow' THEN 'workflow_routing'
  ELSE 'ready' END;
+$$;
+
+
+--
+-- Name: event_company_reachable(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_company_reachable(target_account uuid, company uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT EXISTS (SELECT 1 FROM org_memberships m JOIN orgs o ON o.id = m.org_id
+        WHERE m.org_id = company AND m.account_id = target_account AND m.removed_at IS NULL
+          AND m.role IN ('owner', 'admin', 'developer')
+          AND NOT o.deleted_pending AND o.status <> 'deleted_pending')
 $$;
 
 
@@ -11238,6 +11295,39 @@ CREATE FUNCTION public.event_recipient_schema_version_mismatch(recipient jsonb, 
     AS $$
  SELECT NOT recipient ? 'workflow' AND NOT recipient ? 'object_notification' AND jsonb_array_length(coalesce(recipient->'schema_versions','[]'::jsonb))>0 AND NOT (recipient->'schema_versions' ? coalesce(payload->>'schemaversion',''));
 $$;
+
+
+--
+-- Name: event_recipients_in_producer_reach(uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_recipients_in_producer_reach(target_account uuid, producer text, recipients jsonb) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $_$
+DECLARE producer_company uuid; producer_reachable boolean;
+BEGIN
+    IF producer IS NULL OR jsonb_array_length(recipients) = 0 THEN
+        RETURN recipients;
+    END IF;
+    IF producer = 'personal' THEN
+        producer_company := NULL;
+    ELSIF producer ~* '^org:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        SELECT o.id INTO producer_company FROM orgs o
+        WHERE o.id = substr(producer, 5)::uuid AND NOT o.personal_org;
+    ELSIF producer ~* '^app:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        producer_company := event_app_company(substr(producer, 5)::uuid);
+    ELSE
+        RAISE EXCEPTION 'event producer % is not recognized', producer USING ERRCODE = '23514';
+    END IF;
+    producer_reachable := producer_company IS NULL OR event_company_reachable(target_account, producer_company);
+    RETURN coalesce((SELECT jsonb_agg(r.recipient ORDER BY r.position)
+        FROM jsonb_array_elements(recipients) WITH ORDINALITY AS r(recipient, position)
+        CROSS JOIN LATERAL (SELECT event_app_company((r.recipient->>'app_id')::uuid) AS company) d
+        WHERE d.company IS NOT DISTINCT FROM producer_company
+           OR (producer_reachable AND (d.company IS NULL OR event_company_reachable(target_account, d.company)))),
+        '[]'::jsonb);
+END;
+$_$;
 
 
 --
@@ -18947,11 +19037,11 @@ BEGIN
   IF NEW.object_storage_owned_from IS NULL THEN
    UPDATE orgs SET object_storage_owned_from=now() WHERE id=NEW.id;
   END IF;
-  IF EXISTS(SELECT 1 FROM object_storage_billing_periods p WHERE p.period_start>=date_trunc('month',now())
+  IF EXISTS(SELECT 1 FROM object_storage_billing_periods p WHERE p.period_start>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
     AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.account_id=p.account_id)) THEN
    RAISE EXCEPTION 'remediate finalized current-period object billing before adoption' USING ERRCODE='23514';
   END IF;
-  DELETE FROM object_storage_usage_heads h WHERE h.period_start>=date_trunc('month',now()) AND
+  DELETE FROM object_storage_usage_heads h WHERE h.period_start>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AND
    (h.account_id=NEW.id OR EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.account_id=h.account_id));
  END IF;
  RETURN NEW;
@@ -21213,7 +21303,7 @@ $$;
 CREATE FUNCTION public.object_storage_usage_subject(owner_org uuid, namespace uuid) RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
- SELECT object_storage_usage_subject(owner_org,namespace,date_trunc('month',now()))
+ SELECT object_storage_usage_subject(owner_org,namespace,date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
 $$;
 
 
@@ -78206,6 +78296,13 @@ CREATE TRIGGER app_runtime_generation_envs AFTER INSERT OR DELETE OR UPDATE ON p
 
 
 --
+-- Name: project_environment_secrets app_runtime_generation_project_environment_secrets; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_project_environment_secrets AFTER UPDATE ON public.project_environment_secrets FOR EACH ROW WHEN (((old.ciphertext IS DISTINCT FROM new.ciphertext) OR (old.kid IS DISTINCT FROM new.kid))) EXECUTE FUNCTION public.app_runtime_generation_on_project_environment_secrets();
+
+
+--
 -- Name: project_environments app_runtime_generation_project_environments; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -78217,6 +78314,13 @@ CREATE TRIGGER app_runtime_generation_project_environments AFTER DELETE OR UPDAT
 --
 
 CREATE TRIGGER app_runtime_generation_release_members AFTER INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: deployment_release_secret_snapshots app_runtime_generation_release_secret_snapshots; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_release_secret_snapshots AFTER UPDATE ON public.deployment_release_secret_snapshots FOR EACH ROW WHEN ((old.values_json IS DISTINCT FROM new.values_json)) EXECUTE FUNCTION public.app_runtime_generation_on_deployment_row();
 
 
 --

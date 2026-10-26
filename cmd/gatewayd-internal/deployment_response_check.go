@@ -13,10 +13,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/deploymentcheck"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 type deploymentResponsePicker interface {
@@ -141,7 +141,7 @@ func (c deploymentResponseChecker) check(ctx context.Context, target deploymentR
 	path, _ := url.Parse(request.Path)
 	path.Scheme, path.Host = "http", slug
 	if request.EnvironmentID != "" {
-		path.Host = gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, request.EnvironmentID, request.AppID)
+		path.Host = gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), request.EnvironmentID, request.AppID)
 	} else if domain := strings.TrimPrefix(c.appsDomain, "."); domain != "" {
 		path.Host += "." + domain
 	}

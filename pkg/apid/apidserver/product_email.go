@@ -32,7 +32,7 @@ func (s *server) configureProductEmail(getenv func(string) string) error {
 	p.EmailOpen = func(id string, sealed []byte) (string, error) {
 		return productemail.Open(productEmailIdentities(), id, sealed)
 	}
-	p.EmailOrigin = "https://" + s.domain
+	p.EmailOrigin = "https://" + s.platformHost()
 	mode := getenv("FAAS_PRODUCT_CONTROL_EMAIL_MODE")
 	if !p.Enabled || mode == "" || mode == "disabled" {
 		return nil
@@ -54,7 +54,7 @@ func (s *server) configureProductEmail(getenv func(string) string) error {
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(s.domain) == "" || s.domain == domainUnset {
+	if platform := strings.TrimSpace(s.platformHost()); platform == "" || platform == domainUnset {
 		return errors.New("product email requires the API domain")
 	}
 	return nil

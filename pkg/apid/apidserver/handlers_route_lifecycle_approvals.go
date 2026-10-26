@@ -9,10 +9,10 @@ import (
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/edgeruletrace"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
 	"github.com/onebox-faas/faas/pkg/routerequirements"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 func (s *server) routeLifecycleApprovalTarget(w http.ResponseWriter, r *http.Request, acct state.Account) (state.App, state.RouteLifecycleApprovalStore, bool) {
@@ -112,7 +112,7 @@ func (s *server) validateRouteLifecycleCompatibility(snapshot state.RoutePolicyS
 		}
 		u, _ := url.Parse(m.SuccessorURL)
 		canonical := s.routeRequirementsContext(targetSnapshot).Host
-		if u == nil || u.Host != strings.ToLower(u.Host) || u.Port() != "" || claimed || (u.Host != canonical && (!verified || strings.HasSuffix(u.Host, "."+strings.TrimPrefix(s.domain, ".")) || strings.HasSuffix(u.Host, wire.DeployWildcardSuffix))) {
+		if u == nil || u.Host != strings.ToLower(u.Host) || u.Port() != "" || claimed || (u.Host != canonical && (!verified || strings.HasSuffix(u.Host, "."+strings.TrimPrefix(s.domain, ".")) || hostidentity.Configured().Owns(u.Host))) {
 			return &state.RouteLifecycleReviewBlockedError{Reason: "successor_host_unverified_or_ambiguous"}
 		}
 		if targetSnapshot.App.OnlyAllowDeclaredRoutes {

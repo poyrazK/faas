@@ -13,3 +13,12 @@ type (
 	AppPublishEventResponse         = api.AppPublishEventResponse
 	AppPublishedEventReceipt        = api.AppPublishedEventReceipt
 )
+
+// Account-level publication: Client.PublishEvent and Client.PublishEventBatch.
+type (
+	PublishEventRequest       = api.PublishEventRequest
+	PublishEventResponse      = api.PublishEventResponse
+	PublishEventBatchRequest  = api.PublishEventBatchRequest
+	PublishEventBatchResult   = api.PublishEventBatchResult
+	PublishEventBatchResponse = api.PublishEventBatchResponse
+)

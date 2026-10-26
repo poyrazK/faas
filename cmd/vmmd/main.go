@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/datarepair"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/activity"
@@ -1503,6 +1504,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if err != nil {
 				return err
 			}
+			// Fanout keeps the app's company boundary (ADR-20261025211616).
+			envelope.Producer = eventcontract.AppProducer(appID)
 			// A capture-only rehearsal keeps its ordinary network, but its
 			// events still belong to its run (ADR-20261020090000).
 			if captured, err := captureGuestEvent(publishCtx, store, appID, "", accountID, envelope); captured || err != nil {
