@@ -18,6 +18,13 @@ func cmdFlags(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale flags <get|apply|history|inspect|rollback|requests|outcomes|promote> --project SLUG [flags]", "flags")
 		return 1
 	}
+	if !knownFlagsVerb(args[0]) {
+		// `flags list` answered "invalid flags command or missing required
+		// options", naming neither (Hunt 14 H14-63).
+		printCommandValidation(os.Stderr, "gregale flags: unknown subcommand %q\n", args[0])
+		parent, _ := lookupCliCommand("flags")
+		return unknownSubcommandChoices(os.Stderr, "flags", parent, args[0])
+	}
 	fs := newFlagSet("flags-"+args[0], flag.ContinueOnError)
 	project := fs.String("project", "", "project slug")
 	environment := fs.String("environment", "production", "named project environment")
@@ -61,7 +68,7 @@ func cmdFlags(args []string) int {
 		valid = *version > 0 && *expected >= 0
 	}
 	if !valid {
-		PrintUsage(os.Stderr, "invalid flags command or missing required options", "flags")
+		PrintUsage(os.Stderr, fmt.Sprintf("gregale flags %s needs %s", args[0], flagsVerbRequirements[args[0]]), "flags")
 		return 1
 	}
 	client, err := authedClient()
@@ -123,4 +130,22 @@ func readFlagsUpdate(path string) (json.RawMessage, error) {
 		return nil, fmt.Errorf("invalid flag update JSON")
 	}
 	return raw, nil
+}
+
+// flagsVerbRequirements names what each flags verb needs beyond --project,
+// for the message when it is missing.
+var flagsVerbRequirements = map[string]string{
+	"get":      "--project",
+	"history":  "--project",
+	"apply":    "--file (a JSON update with expected_version and config)",
+	"inspect":  "--key (and --customer-id with --subject-id)",
+	"requests": "--key (--variant and --value cannot be combined)",
+	"outcomes": "--key and a non-negative --config-version",
+	"promote":  "--key, --rule-id and --expected-version",
+	"rollback": "--version and --expected-version",
+}
+
+func knownFlagsVerb(verb string) bool {
+	_, ok := flagsVerbRequirements[verb]
+	return ok
 }

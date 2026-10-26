@@ -152,14 +152,18 @@ func extractTriggerSource(t api.Trigger) (kind string, source string) {
 }
 
 func cmdWorkersList(args []string) int {
-	usage := "usage: gregale workers [list] [<app>] [--json]"
+	usage := "usage: gregale workers [list] [<app> | --app <app>] [--json]"
 	flags, positional := splitArgsForFlags(args)
 	fs := newFlagSet("workers list", flag.ContinueOnError)
+	// Other list verbs take --app; `workers list --app` answered "unknown
+	// flag" on production-us rc.294 (Hunt 14 H14-64).
+	app := fs.String("app", "", "list only this app's worker pool")
 	if err := fs.Parse(flags); err != nil {
 		PrintUsage(osStderr, usage, "workers")
 		return 1
 	}
-	if len(positional) > 1 || rejectUnexpectedFlagArgs(fs) {
+	positional, mergeErr := mergeAppFlag(positional, strings.TrimSpace(*app), 1)
+	if mergeErr != nil || len(positional) > 1 || rejectUnexpectedFlagArgs(fs) {
 		PrintUsage(osStderr, usage, "workers")
 		return 1
 	}

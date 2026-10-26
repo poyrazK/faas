@@ -91,7 +91,12 @@ func cmdScan(args []string) int {
 		PrintUsage(os.Stderr, "usage: gregale scan [--tarball P] [--path DIR] [--repo OWNER/NAME] [--repository OWNER/NAME --install-id N] [--production-branch BRANCH] [--show-affected] [--explain] [--exclude NAME,…]", "scan")
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) {
+	// `scan ./my-app` answered only "unexpected positional argument" on
+	// production-us rc.294 while `doctor ./my-app` takes the directory
+	// positionally (Hunt 14 H14-64).
+	if dir, ok := sourceDirPositional(fs); ok && *pathFlag == "" && *tarball == "" && *repo == "" {
+		*pathFlag = dir
+	} else if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	projectSlugExplicit := false

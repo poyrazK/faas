@@ -663,6 +663,7 @@ export type { DeploymentAttemptID } from './DeploymentAttemptID.js';
 export type { DeploymentAuditResponse } from './DeploymentAuditResponse.js';
 export type { DeploymentBuildDependencyGate } from './DeploymentBuildDependencyGate.js';
 export type { DeploymentChange } from './DeploymentChange.js';
+export type { DeploymentCompanion } from './DeploymentCompanion.js';
 export type { DeploymentConfigurationStatus } from './DeploymentConfigurationStatus.js';
 export type { DeploymentCronActivationStatus } from './DeploymentCronActivationStatus.js';
 export type { DeploymentCronConfig } from './DeploymentCronConfig.js';
