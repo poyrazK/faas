@@ -174,3 +174,30 @@ func TestSubFeatureNeedsEveryAncestor(t *testing.T) {
 		t.Fatal("a parent's kill switch must hide its sub-features before authentication")
 	}
 }
+
+// Every step of the CLI's source upload (start, append, discover, commit,
+// cancel) belongs to the GA source-deploy capability. rc.295 put the commit
+// under the internal gregale-commit capability, so every CLI source deploy
+// on production answered 404 "no such API route" at commit (2026-10-26).
+func TestSourceUploadRoutesAreSourceDeploy(t *testing.T) {
+	catalog, err := productcap.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := New(catalog, nil)
+	subject := platformflags.Subject{AccountID: account, Plan: "free"}
+	for _, pattern := range []string{
+		"POST /v1/uploads",
+		"GET /v1/uploads/{id}",
+		"PATCH /v1/uploads/{id}",
+		"DELETE /v1/uploads/{id}",
+		"POST /v1/uploads/{id}/commit",
+	} {
+		if capability, _ := g.Capability(pattern); capability != "source-deploy" {
+			t.Errorf("Capability(%q) = %q, want source-deploy", pattern, capability)
+		}
+		if !g.Released(pattern) || !g.Allowed(pattern, subject) {
+			t.Errorf("%q is hidden by default; a GA deploy step must not be", pattern)
+		}
+	}
+}
