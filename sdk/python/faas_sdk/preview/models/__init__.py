@@ -2999,6 +2999,10 @@ from .object_bucket_access_grant import ObjectBucketAccessGrant
 from .object_bucket_access_grant_key_status import ObjectBucketAccessGrantKeyStatus
 from .object_bucket_access_grant_list import ObjectBucketAccessGrantList
 from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermission
+from .object_bucket_cors import ObjectBucketCORS
+from .object_bucket_cors_request import ObjectBucketCORSRequest
+from .object_bucket_cors_rule import ObjectBucketCORSRule
+from .object_bucket_cors_rule_allowed_methods_item import ObjectBucketCORSRuleAllowedMethodsItem
 from .object_bucket_encryption import ObjectBucketEncryption
 from .object_bucket_encryption_request import ObjectBucketEncryptionRequest
 from .object_bucket_encryption_state import ObjectBucketEncryptionState
@@ -9049,6 +9053,10 @@ __all__ = (
     "ObjectBucketAccessGrantKeyStatus",
     "ObjectBucketAccessGrantList",
     "ObjectBucketAccessGrantPermission",
+    "ObjectBucketCORS",
+    "ObjectBucketCORSRequest",
+    "ObjectBucketCORSRule",
+    "ObjectBucketCORSRuleAllowedMethodsItem",
     "ObjectBucketEncryption",
     "ObjectBucketEncryptionRequest",
     "ObjectBucketEncryptionState",
