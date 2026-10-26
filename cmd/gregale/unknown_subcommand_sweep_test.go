@@ -80,7 +80,7 @@ func TestCacheListPointsAtEdgeRules(t *testing.T) {
 	_, stderr, restore := main.SwapIO(t)
 	code := main.Run([]string{"cache", "list", "h14-py"})
 	restore()
-	for _, want := range []string{`unknown cache subcommand "list"`, "gregale edge-rules list <slug>", "Subcommands: GET, HEAD, purge"} {
+	for _, want := range []string{`unknown cache subcommand "list"`, "gregale edge-rules list <slug>", "Subcommands: set, GET, HEAD, purge"} {
 		if code != 1 || !strings.Contains(stderr(), want) {
 			t.Errorf("exit=%d, stderr lacks %q:\n%s", code, want, stderr())
 		}
