@@ -1625,3 +1625,18 @@ func TestPlanBlockedErrorNamesReasons(t *testing.T) {
 		t.Fatalf("no reasons: got %q, want the generic fallback", got)
 	}
 }
+
+// ADR-20261025134512: the plan names the cmd/ package each service of a Go
+// module builds, since they share one root.
+func TestPrintGoModuleCommands(t *testing.T) {
+	var out bytes.Buffer
+	plan := api.PlanResponse{CanApply: true, Workloads: []api.PlanWorkload{
+		{Name: "api", RootDir: ".", GoCommand: "api"}, {Name: "worker", RootDir: ".", GoCommand: "worker"},
+	}}
+	main.PrintPlanText(&out, plan, nil, false)
+	for _, want := range []string{"builds=cmd/api", "builds=cmd/worker"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("plan missing %q:\n%s", want, out.String())
+		}
+	}
+}

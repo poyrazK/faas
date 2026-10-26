@@ -3,6 +3,8 @@ package builderd
 import (
 	"fmt"
 	"time"
+
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 // builderQueueWaitNotice is the queue wait from which the build log says how
@@ -19,4 +21,20 @@ func builderSlotLogLine(label string, wait time.Duration) string {
 		return fmt.Sprintf("allocated builder slot (%s)\n", label)
 	}
 	return fmt.Sprintf("allocated builder slot (%s) after %s in the build queue\n", label, wait.Round(time.Second))
+}
+
+// builderQueueWaitReason is the note on the closed source_download stage when
+// the build queued for a builder slot: the deploy stages book that wait to
+// "Source downloaded", which read as a 192 s download on production-us
+// (Hunt 12 H12-5). RequeueBuild keeps enqueued_at and each claim stamps
+// started_at, so their gap is the time spent queued.
+func builderQueueWaitReason(build state.Build) string {
+	if build.StartedAt.IsZero() || build.EnqueuedAt.IsZero() {
+		return ""
+	}
+	wait := build.StartedAt.Sub(build.EnqueuedAt)
+	if wait < builderQueueWaitNotice {
+		return ""
+	}
+	return fmt.Sprintf("waited %s for a builder slot", wait.Round(time.Second))
 }

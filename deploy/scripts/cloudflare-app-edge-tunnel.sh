@@ -26,6 +26,10 @@ if [[ -z "${CF_API_TOKEN:-}" ]]; then
 fi
 
 APPS_DOMAIN=${APPS_DOMAIN:-gregale.dev}
+# ADR-20261026100000: alias apps domains (space-separated) reach the same app
+# edge; gatewayd-public rewrites their hosts to the apps domain. Each alias
+# zone keeps its own Worker route and origin record.
+APPS_DOMAIN_ALIASES=${APPS_DOMAIN_ALIASES:-}
 TUNNEL_NAME=${TUNNEL_NAME:-gregale-apps-production-us}
 ORIGIN_NAME=${ORIGIN_NAME:-app-edge.$APPS_DOMAIN}
 NODES=${NODES:-gregale-compute-1 gregale-compute-2}
@@ -47,11 +51,14 @@ if [[ -z "$tunnel_id" ]]; then
 else
   echo "tunnel $TUNNEL_NAME exists: $tunnel_id"
 fi
+hosts=("*.$APPS_DOMAIN")
+for alias in $APPS_DOMAIN_ALIASES; do
+  hosts+=("*.$alias")
+done
 cf -X PUT "$api/accounts/$CF_ACCOUNT_ID/cfd_tunnel/$tunnel_id/configurations" \
-  --data "$(jq -cn --arg host "*.$APPS_DOMAIN" '{config: {ingress: [
-      {hostname: $host, service: "http://127.0.0.1:8090"},
-      {service: "http_status:404"}]}}')" >/dev/null
-echo "ingress: *.$APPS_DOMAIN -> http://127.0.0.1:8090, anything else 404"
+  --data "$(printf '%s\n' "${hosts[@]}" | jq -Rcn '{config: {ingress: (
+      [inputs | {hostname: ., service: "http://127.0.0.1:8090"}] + [{service: "http_status:404"}])}}')" >/dev/null
+echo "ingress: ${hosts[*]} -> http://127.0.0.1:8090, anything else 404"
 
 # 2. The connector token on every compute node.
 for node in $NODES; do

@@ -15,6 +15,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonenv"
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/managedpostgres/copycontents"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
 	"github.com/onebox-faas/faas/pkg/openapidiff"
@@ -76,8 +77,14 @@ func runProjectEnvironmentCloneWorker(ctx context.Context, log *slog.Logger) (er
 		return fmt.Errorf("clone worker: migrate: %w", err)
 	}
 	openapidiff.RegisterStateCapture()
+	domains, err := cfg.Domains(os.Getenv)
+	if err != nil {
+		return fmt.Errorf("clone worker: %w", err)
+	}
+	hostidentity.Configure(domains)
 	store := state.NewPgStore(pool)
-	srv := newServer(store, log, cfg.GetAppsDomain(os.Getenv), pgNotifier{pool: pool, log: log}).WithCompanionImages(cfg.CompanionImages)
+	srv := newServer(store, log, cfg.GetAppsDomain(os.Getenv), pgNotifier{pool: pool, log: log}).WithCompanionImages(cfg.CompanionImages).
+		WithPlatformDomain(platformDomainFromConfig(cfg, os.Getenv))
 	srv.clonePostgresContentsReadPool, srv.cloneWorkerAdmission = reads, admit
 	srv.WithRuntimeConfigManager(newRuntimeConfigManager(os.Getenv)).WithDataPlacement(dataPlacementEnabledFromEnv(os.Getenv))
 	objects, err := objectstorage.Load(os.Getenv)

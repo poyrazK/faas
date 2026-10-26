@@ -56,6 +56,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/sched/scaleup"
 	"github.com/onebox-faas/faas/pkg/sched/targets"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/storage"
@@ -603,6 +604,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	go repairHealth.Run(ctx)
 	wire.BootStamps(ctx, "schedd", ops)
 	wire.RegisterDefaultOps(ops)
+	// ADR 20261022111812: report whether this schedd holds the control
+	// seal-domain identity; a configured identity that does not load fails
+	// startup, as for the other domains' readers.
+	controlIdentities, err := loadControlSealDomain(os.Getenv)
+	if err != nil {
+		return err
+	}
+	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Control, len(controlIdentities) > 0)
+	log.Info("control seal domain", "domain_identity", len(controlIdentities) > 0)
 	// ADR-190 follow-up: export this pool's live statistics so the
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
 	wire.RegisterPoolMetrics(ops, pool)

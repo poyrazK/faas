@@ -12,32 +12,70 @@ promtail_environment: production
 promtail_host_label: "{{ faas_node_name | default(inventory_hostname) }}"
 
 # The endpoint must be the private HTTPS Loki push URL in production. It is
-# intentionally empty so an incomplete inventory fails closed.
-promtail_loki_url: ""
+# derived from faas_obs_loki_address, the control plane's private address
+# (ADR-20261023124955 §2), and stays empty without it so an incomplete
+# inventory fails closed.
+promtail_loki_url: "{{ ('https://' ~ faas_obs_loki_address ~ ':3100/loki/api/v1/push') if (faas_obs_loki_address | default('')) else '' }}"
 promtail_loki_tenant_id: gregale
-promtail_loki_server_name: ""
-promtail_loki_ca_file: /etc/faas/secrets/loki/tls/ca.crt
-promtail_loki_client_cert_file: /etc/faas/secrets/loki/tls/promtail.crt
-promtail_loki_client_key_file: /etc/faas/secrets/loki/tls/promtail.key
+# Fleet-PKI feature leaf (ADR-20261023124955 §2), issued by the
+# platform_logs_pki role; Loki's server leaf is named loki.faas.
+promtail_loki_server_name: "{{ faas_obs_loki_server_name | default('loki.faas', true) }}"
+promtail_loki_ca_file: /etc/faas/tls/ca/ca.crt
+promtail_loki_client_cert_file: /etc/faas/tls/promtail/loki-client.crt
+promtail_loki_client_key_file: /etc/faas/tls/promtail/loki-client.key
 
 # Journal matches are explicit so unrelated host services are not sent to the
 # operations backend. The gatewayd-internal unit carries the structured
-# customer-log records emitted by the app-log stream.
+# customer-log records emitted by the app-log stream. A unit that is not
+# installed on a host simply matches nothing. Every faas-*.service under
+# deploy/ must be listed here or carry an exclusion with a reason in
+# pkg/daemonunitspec/promtail_units_test.go.
 promtail_journal_units:
+  # Control-plane and compute daemons.
   - faas-apid.service
+  - faas-apid-clone-worker.service
+  - faas-apid-data-pipeline-worker.service
+  - faas-apid-data-pipeline-alert-worker.service
   - faas-schedd.service
   - faas-meterd.service
   - faas-gatewayd-public.service
+  - faas-gatewayd-public-edge.service
   - faas-gatewayd-internal.service
   - faas-githubd.service
   - faas-vmmd.service
   - faas-imaged.service
   - faas-builderd.service
+  - faas-bridged.service
+  - faas-outboundd.service
+  - faas-realtimed.service
+  - faas-profiled.service
+  - faas-livequeryd.service
+  - faas-maild.service
+  - faas-s3-gatewayd.service
+  - faas-cloudflared.service
+  # Host helpers and timers.
+  - faas-serving-probe.service
+  - faas-cgroup-metrics.service
+  - faas-canary-artifact-sweep.service
+  - faas-cp-state-backup.service
+  - faas-pg-basebackup.service
+  - faas-pg-basebackup-push.service
+  - faas-pg-wal-prune.service
+  - faas-postgres-connection-metrics.service
+  - faas-internal-mail-metrics.service
+  - faas-internal-pki-metrics.service
+  - faas-tenant-egress-firewall.service
+  - faas-overlay-tailscale.service
+  - faas-overlay-wireguard.service
+  - faas-rsyslog-rotate.service
+  - faas-zswap.service
+  # Platform dependencies.
+  - postgresql@16-main.service
   - prometheus.service
   - alertmanager.service
   - grafana-server.service
+  - loki.service
   - node_exporter.service
-
 promtail_journal_max_age: 12h
 promtail_batch_wait: 1s
 promtail_batch_size: 1048576

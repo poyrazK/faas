@@ -209,6 +209,16 @@ egress:
 dns:
   apps_domain: gregale.dev
   mode: cloudflare
+  # ADR-20261026100000: put tenant apps on their own registrable domain while
+  # the site, dashboard and API stay on the platform domain, and keep old app
+  # URLs working through an alias (serve, then redirect once customers moved).
+  # Each extra zone needs its Cloudflare zone, Origin CA certificate at
+  # /etc/caddy/tls/cloudflare-origin-<domain>.{pem,key}, Worker route and
+  # tunnel ingress. Unset, every host stays under apps_domain.
+  # platform_domain: gregale.dev
+  # deploy_domain: gregale.app
+  # apps_domain_aliases: [gregale.dev]
+  # apps_domain_alias_mode: serve
 
 # Customer custom domains served by the control plane's own edge (ADR-520).
 # Caddy obtains and renews a Let's Encrypt certificate per customer hostname

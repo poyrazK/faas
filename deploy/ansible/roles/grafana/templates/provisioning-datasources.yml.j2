@@ -36,10 +36,9 @@ datasources:
 {% endif %}
 {% endif %}
 {% if gv_loki_url | length > 0 %}
-  # Loki is enabled only when the provider supplies the dedicated backend
-  # endpoint and the provider-owned EnvironmentFile. The TLS values below
-  # are expanded by Grafana from the service environment; certificate
-  # contents never pass through Ansible templating.
+  # Loki on the control plane (ADR-20261023124955 §2). Grafana reads the
+  # fleet-PKI client leaf itself through $__file{}; certificate contents never
+  # pass through Ansible templating.
   - name: Loki
     type: loki
     uid: loki
@@ -55,7 +54,7 @@ datasources:
       serverName: "{{ gv_loki_server_name }}"
     secureJsonData:
       httpHeaderValue1: "{{ gv_loki_tenant_id }}"
-      tlsCACert: "$FAAS_LOKI_TLS_CA_CERT"
-      tlsClientCert: "$FAAS_LOKI_TLS_CLIENT_CERT"
-      tlsClientKey: "$FAAS_LOKI_TLS_CLIENT_KEY"
+      tlsCACert: "$__file{{ '{' }}{{ gv_loki_ca_file }}{{ '}' }}"
+      tlsClientCert: "$__file{{ '{' }}{{ gv_loki_client_cert_file }}{{ '}' }}"
+      tlsClientKey: "$__file{{ '{' }}{{ gv_loki_client_key_file }}{{ '}' }}"
 {% endif %}

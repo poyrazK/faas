@@ -27,6 +27,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -75,11 +76,13 @@ type OnDemandTLSStore interface {
 // OnDemandTLSPolicy decides whether the edge may hold a certificate for a
 // hostname.
 type OnDemandTLSPolicy struct {
-	store      OnDemandTLSStore
-	appsDomain string
-	now        func() time.Time
-	log        *slog.Logger
-	decisions  *prometheus.CounterVec
+	store OnDemandTLSStore
+	// owned are the deployment's own domains: none of them, and no name
+	// below them, is a customer's domain.
+	owned     []string
+	now       func() time.Time
+	log       *slog.Logger
+	decisions *prometheus.CounterVec
 
 	mu       sync.Mutex
 	tokens   float64
@@ -89,16 +92,16 @@ type OnDemandTLSPolicy struct {
 }
 
 // NewOnDemandTLSPolicy builds the policy. appsDomain is the platform zone
-// (FAAS_APPS_DOMAIN); it and every name below it are refused. reg may be nil.
+// (FAAS_APPS_DOMAIN); it and every name below it are refused, as are the
+// domains passed to RefuseOwned. reg may be nil.
 func NewOnDemandTLSPolicy(store OnDemandTLSStore, appsDomain string, reg prometheus.Registerer, log *slog.Logger) *OnDemandTLSPolicy {
 	if log == nil {
 		log = slog.Default()
 	}
 	p := &OnDemandTLSPolicy{
-		store:      store,
-		appsDomain: normalizeTLSHost(appsDomain),
-		now:        time.Now,
-		log:        log,
+		store: store,
+		now:   time.Now,
+		log:   log,
 		decisions: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_tls_on_demand_ask_total",
 			Help: "On-demand TLS permission checks from the public edge, by decision (ADR-520).",
@@ -107,7 +110,28 @@ func NewOnDemandTLSPolicy(store OnDemandTLSStore, appsDomain string, reg prometh
 	if reg != nil {
 		reg.MustRegister(p.decisions)
 	}
+	return p.RefuseOwned([]string{appsDomain})
+}
+
+// RefuseOwned adds domains the deployment owns (ADR-20261026100000: the
+// platform domain, the apps domain and its aliases, the deployment-preview
+// domain). A certificate is never issued for them or a name below them.
+func (p *OnDemandTLSPolicy) RefuseOwned(domains []string) *OnDemandTLSPolicy {
+	for _, d := range domains {
+		if d = normalizeTLSHost(d); d != "" && !slices.Contains(p.owned, d) {
+			p.owned = append(p.owned, d)
+		}
+	}
 	return p
+}
+
+func (p *OnDemandTLSPolicy) ownsHost(host string) bool {
+	for _, d := range p.owned {
+		if host == d || strings.HasSuffix(host, "."+d) {
+			return true
+		}
+	}
+	return false
 }
 
 // SetNow overrides the clock for tests.
@@ -120,7 +144,7 @@ func (p *OnDemandTLSPolicy) Decide(ctx context.Context, rawHost string) (bool, s
 	if host == "" || strings.Contains(host, "*") || state.ValidateCustomDomainName(host) != nil {
 		return false, OnDemandTLSDenyInvalid
 	}
-	if p.appsDomain != "" && (host == p.appsDomain || strings.HasSuffix(host, "."+p.appsDomain)) {
+	if p.ownsHost(host) {
 		return false, OnDemandTLSDenyPlatform
 	}
 	if p.store == nil {

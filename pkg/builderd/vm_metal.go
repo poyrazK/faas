@@ -190,6 +190,7 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 	return api.BuildManifest{
 		PublicBuildURLs:       req.PublicBuildURLs,
 		DockerfileBuild:       req.DockerfileBuild.Clone(),
+		GoCommand:             req.GoCommand,
 		BuildDependencyDigest: req.BuildDependencyDigest,
 		SchemaVersion:         1,
 		BuildID:               req.BuildID,
@@ -712,6 +713,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.ExitCode = exitCode
 		res.PublicBuildURLsSHA256 = done.PublicBuildURLsSHA256
 		res.DockerfileBuildSHA256 = done.DockerfileBuildSHA256
+		res.GoCommand = done.GoCommand
 		res.BuildDependencyDigest = done.BuildDependencyDigest
 		res.LogTailBytes = int64(len(done.LogTail))
 		res.LogTail = done.LogTail

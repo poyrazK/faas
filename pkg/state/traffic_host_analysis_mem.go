@@ -120,7 +120,7 @@ func (m *MemStore) readMemTrafficHostAnalysisLocked(ctx context.Context, account
 			if err := ctx.Err(); err != nil {
 				return err
 			}
-			host := hostidentity.BuildEnvironmentHost(hostidentity.DeployWildcardSuffix, environment.ID, app.ID)
+			host := hostidentity.BuildEnvironmentHost(hostidentity.DeploySuffix(), environment.ID, app.ID)
 			if host == "" {
 				return analysisLimit("environment_identity", "bindings", 0, 1)
 			}
