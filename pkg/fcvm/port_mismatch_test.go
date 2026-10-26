@@ -55,3 +55,15 @@ func TestPortMismatchProblemNamesTheObservedPort(t *testing.T) {
 		})
 	}
 }
+
+// The CLI reads "on :N got ECONNREFUSED (... deadline=...)" as an app that
+// started too slowly and rewrites the hint, so the mismatch detail must not
+// carry the wrapped probe text.
+func TestPortMismatchProblemOmitsTheProbeText(t *testing.T) {
+	refused := api.NewProblem(422, api.CodeAppNotListening, "no process listening on $PORT",
+		"startup_phase=handler_boot: readiness probe on :3000 got ECONNREFUSED (refused_count=3, deadline=30s, instance=i)")
+	p := api.AsProblem(portMismatchProblem(api.CharacterizationReport{ObservedPort: 8080}, 3000, refused))
+	if p == nil || strings.Contains(p.Detail, "ECONNREFUSED") {
+		t.Fatalf("portMismatchProblem = %#v, want a detail without the probe text", p)
+	}
+}

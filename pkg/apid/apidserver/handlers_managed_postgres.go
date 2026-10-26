@@ -493,6 +493,9 @@ func (s *server) beforeAccountDelete(ctx context.Context, acct state.Account) er
 	if err := s.object.CleanupExpiredAccountObjectBuckets(ctx, acct); err != nil {
 		return err
 	}
+	if err := s.logArchiveErasure().BeforeAccountDelete(ctx, acct); err != nil {
+		return err
+	}
 	erasure := managedpostgresapi.AccountErasure{Audit: s.audit.Emit, Log: s.log}
 	if s.managedPostgres != nil {
 		erasure.Databases = s.managedPostgres
