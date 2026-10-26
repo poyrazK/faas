@@ -60,6 +60,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_APPLICATION_AUTH_ENABLED` | apid, shared | `default` |  |  | `` | dark-launch switch for application Auth (ADR-1190) for every account; off by default; boot fallback for the application_auth platform flag (ADR-1700), ignored once an operator writes platform_flag.application_auth |
 | `FAAS_APPLICATION_STANDARD_MUTATIONS_ENABLED` | apid | `default` |  | 0 | `` | ADR-435 release gate; keep disabled until consumer convergence, controlled rollout/recovery and dedicated Linux amd64 root/KVM acceptance pass |
 | `FAAS_APPS_DOMAIN` | apid, builderd, gatewayd-internal, gatewayd-public, githubd, imaged, meterd, schedd, shared | `envfile` |  |  | `` |  |
+| `FAAS_APPS_DOMAIN_ALIASES` | apid, gatewayd-internal, gatewayd-public, shared | `default` |  |  | `` | ADR-20261026100000 domain layout; unset keeps the shared layout (no alias); comma-separated further apps domains that reach the same apps; the drop-ins set it from faas_apps_domain_aliases |
+| `FAAS_APPS_DOMAIN_ALIAS_MODE` | apid, gatewayd-internal, gatewayd-public, shared | `default` |  | serve | `` | ADR-20261026100000 domain layout; unset keeps the shared layout; serve or redirect (308 to the primary apps domain); the drop-ins set it from faas_apps_domain_alias_mode |
 | `FAAS_APPS_ROOT` | imaged, shared | `default` |  |  | `` |  |
 | `FAAS_APP_ERRORS_ENABLED` | apid, gatewayd-internal | `runtime-config` |  |  | `` |  |
 | `FAAS_APP_FORKS` | apid, schedd | `default` |  |  | `` | exact opt-in for ADR-732 production forks; apid admits fork intent and schedd restores quarantined forks only when both are 1; default off until the quarantine metal test is qualified |
@@ -167,6 +169,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DEPLOY_BASE_REF_NODE24` | shared | `envfile` |  |  | `` |  |
 | `FAAS_DEPLOY_BASE_REF_PYTHON312` | shared | `envfile` |  |  | `` |  |
 | `FAAS_DEPLOY_BASE_REF_PYTHON313` | shared | `envfile` |  |  | `` |  |
+| `FAAS_DEPLOY_DOMAIN` | apid, bridged, builderd, gatewayd-internal, gatewayd-public, imaged, schedd, shared | `default` |  | gregale.dev | `` | ADR-20261026100000 domain layout; unset keeps the shared layout; domain of deployment previews and environment hosts; the drop-ins set it from faas_deploy_domain |
 | `FAAS_DEV` | shared, apid | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_DEV_BRIDGE_ADDR` | bridged | `default` |  | 127.0.0.1:9098 | `` | loopback-only development relay listener |
 | `FAAS_DEV_BRIDGE_ENABLED` | apid, bridged, gatewayd-internal | `default` |  | 0 | `` | ADR-378 operator gate; explicit 1 on the API, relay and compute gateways |
@@ -572,6 +575,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_PER_INSTANCE_CONCURRENCY_ACCOUNTS` | apid, shared | `default` |  |  | `` | comma-separated account UUIDs, or *, that may set scaling_policy.per_instance_concurrency (ADR-20261022203523); unset admits none, and a stored value keeps applying until it is set to 0 |
 | `FAAS_PGTEST_TEMPLATE_DATABASE` | shared | `dev-only` |  |  | `` | must never be set on a production host |
 | `FAAS_PLAN_CACHE_ROOT` | apid | `default` |  |  | `` |  |
+| `FAAS_PLATFORM_DOMAIN` | apid, gatewayd-internal, gatewayd-public, githubd, shared | `default` |  |  | `` | ADR-20261026100000 domain layout; unset keeps the shared layout (the apps domain); apex, api. and operations. hosts of the site, dashboard and API; the drop-ins set it from faas_platform_domain |
 | `FAAS_PMEM_BASE_DIR` | vmmd | `default` |  | auto | `` | per-account pmem base copies (ADR-908); default auto keeps each copy on the mount of its base; empty or off keeps every base on virtio-blk; a path must be on the same reflink-capable mount as the cached bases |
 | `FAAS_POLAR_ACCESS_TOKEN` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |
 | `FAAS_POLAR_API_KEY` | shared | `secrets-env` |  |  | `` | delivered by /etc/faas/secrets/meterd/billing.env (meterd) and /etc/faas/sealed.env (apid) |

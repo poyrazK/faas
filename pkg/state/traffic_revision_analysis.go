@@ -11,8 +11,8 @@ import (
 func servingTrafficRevisionHosts(candidates []string) []string {
 	var hosts []string
 	for _, host := range candidates {
-		revision, slug, ok := hostidentity.DeploymentScopeFromHost(hostidentity.DeployWildcardSuffix, host)
-		if ok && hostidentity.BuildDeploymentHost(hostidentity.DeployWildcardSuffix, revision, slug) == host {
+		revision, slug, ok := hostidentity.DeploymentScopeFromHost(hostidentity.DeploySuffix(), host)
+		if ok && hostidentity.BuildDeploymentHost(hostidentity.DeploySuffix(), revision, slug) == host {
 			hosts = append(hosts, host)
 		}
 	}
@@ -20,7 +20,7 @@ func servingTrafficRevisionHosts(candidates []string) []string {
 }
 
 func (m *MemStore) appendMemTrafficRevisionHostsLocked(ctx context.Context, account string, change memTrafficPolicyChange, view *trafficHostAnalysis, otherInputs int) error {
-	if change.GlobalRoutes || hostidentity.DeployWildcardSuffix == "" {
+	if change.GlobalRoutes || hostidentity.DeploySuffix() == "" {
 		return ctx.Err()
 	}
 	return visitMemTrafficRows(ctx, m.deployments, change.Deployments, func(deployment Deployment) error {
@@ -34,7 +34,7 @@ func (m *MemStore) appendMemTrafficRevisionHostsLocked(ctx context.Context, acco
 		if !found || app.AccountID != account || app.Status == AppDeleted || app.DeletedAt != nil || api.NormalizeAppVisibility(app.Visibility) == api.AppVisibilityInternal {
 			return nil
 		}
-		host := hostidentity.BuildDeploymentHost(hostidentity.DeployWildcardSuffix, deployment.Revision, app.Slug)
+		host := hostidentity.BuildDeploymentHost(hostidentity.DeploySuffix(), deployment.Revision, app.Slug)
 		if host == "" {
 			return nil
 		}

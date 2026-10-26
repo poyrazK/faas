@@ -38,10 +38,10 @@ func BuildPrimaryAppHost(appsSuffix, slug string) string {
 	if parsed, ok := AppSlugFromHost(appsSuffix, host); !ok || parsed != slug {
 		return ""
 	}
-	if _, _, ok := EnvironmentIDsFromHost(DeployWildcardSuffix, host); ok {
+	if _, _, ok := EnvironmentIDsFromHost(DeploySuffix(), host); ok {
 		return ""
 	}
-	if _, _, ok := DeploymentScopeFromHost(DeployWildcardSuffix, host); ok {
+	if _, _, ok := DeploymentScopeFromHost(DeploySuffix(), host); ok {
 		return ""
 	}
 	return host
