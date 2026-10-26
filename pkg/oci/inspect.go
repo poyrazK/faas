@@ -45,7 +45,7 @@ func (c *RegistryClient) ResolveImage(ctx context.Context, ref string, auth *Bas
 	}
 	// A mirror serves the network reads only: the references returned below
 	// keep the requested registry.
-	resolved, err := viaDockerHubMirrors(ctx, c, r, auth, func(at Reference) (resolvedImageManifest, error) {
+	resolved, err := pullFrom(ctx, c, r, auth, func(at Reference, auth *BasicAuth) (resolvedImageManifest, error) {
 		resolved, err := c.resolveImageManifest(ctx, at, auth)
 		if err != nil || resolved.config != nil {
 			return resolved, err
