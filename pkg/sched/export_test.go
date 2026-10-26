@@ -274,6 +274,12 @@ const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
 
+// XDispatchExplicitWake is Loop.Run's arm for app_wake and
+// runtime_config_restart deliveries.
+func (l *Loop) XDispatchExplicitWake(ctx context.Context, n db.Notification) {
+	l.dispatchExplicitWake(ctx, n)
+}
+
 // XRunEventRecipientSweep runs only the sweep's independent recipient stage.
 // adr: 614 — recipients are claimed in batches and unrouted claims released.
 func (l *Loop) XRunEventRecipientSweep(ctx context.Context) { l.runEventRecipientSweep(ctx) }
