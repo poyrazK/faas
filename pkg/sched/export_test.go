@@ -277,6 +277,9 @@ var XLayerKey = layerKey
 var XNewEngine = newEngine
 var ReadWakeRPC = readWakeRPC
 
+// XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
+func (e *Engine) XWakeLeaderBudget() time.Duration { return e.wakeLeaderBudget() }
+
 // XEventFanoutSafetyTick and XRunEventFanoutSweep let the event substrate
 // benchmark schedule fanout exactly as Loop.Run does (spec Appendix D V12).
 // adr: 647 — the sweep admits independently routed recipients.

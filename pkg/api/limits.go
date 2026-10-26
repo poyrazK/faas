@@ -6619,7 +6619,8 @@ const (
 	WakeFailoverMaxAlternates = 2
 	// WakeFailoverMinRemainingMs is the least of the wake's deadline that
 	// must remain for an alternate attempt to start. The coordinated wake
-	// runs under the WakeQueueTTLSeconds hold, so failover never extends it.
+	// runs under schedd's leader budget (the cold-boot budget plus admission,
+	// at least the WakeQueueTTLSeconds hold), so failover never extends it.
 	WakeFailoverMinRemainingMs = 2000
 
 	// BaseGenerationReadinessCheckIntervalSeconds is how old vmmd's verdict
