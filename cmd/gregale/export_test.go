@@ -2493,3 +2493,10 @@ func CheckDevGoCommand(dir string, function bool, command string) error {
 func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {
 	return withDevGoCommand(devSourceConfig{shape: shapeApp}.sessionRequest("", false, "", 0, nil), command)
 }
+
+// Bucket CORS CLI (ADR-20261025202805).
+var (
+	DecodeBucketCORSFile = decodeBucketCORSFile
+	ValidBucketCORSArgs  = validBucketCORSArgs
+	RunBucketCORS        = runBucketCORS
+)
