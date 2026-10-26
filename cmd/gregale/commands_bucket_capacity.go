@@ -42,6 +42,9 @@ func cmdBucket(args []string) int {
 	if len(args) > 0 && args[0] == "notifications" {
 		return cmdBucketNotifications(args[1:])
 	}
+	if len(args) > 0 && args[0] == "cors" {
+		return cmdBucketCORS(args[1:])
+	}
 	if len(args) > 0 && args[0] == "lifecycle" {
 		return cmdBucketLifecycle(args[1:])
 	}

@@ -209,6 +209,13 @@ cgroups:
   slice: faas-cp.slice
   controllers: "memory,cpu,io,pids"
 
+# Workload-identity tokens for queue workers (ADR-1141). Off until an
+# operator runs `gregalectl workload-identity init --out DIR` on the
+# controller and uncomments this with that DIR; converge the control plane
+# first. See deploy/manifest/README.md.
+# workload_identity:
+#   source_dir: /path/on/controller/workload-identity
+
 pki:
   root_dir: /etc/faas/tls
   # gregale-prod control-plane CA (fsn-1, `gregalectl pki init --box-role

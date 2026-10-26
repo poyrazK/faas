@@ -1,16 +1,15 @@
 openapi: 3.1.0
 
 info:
-  title: one-box FaaS REST API
+  title: Gregale API
   version: 1.0.0
-  summary: Customer-facing REST API for the one-box FaaS platform.
+  summary: The Gregale platform REST API.
   description: |
-    Public REST surface exposed by `apid` on `127.0.0.1:8081` (proxied by
-    `gatewayd` at the public listener). Protected routes accept an account
-    Bearer API key (`fp_live_…`) or the tenant-bound `fp_tenant_…` credential
-    only on the explicitly documented tenant-self routes. Authentication
-    is rate-limited per-IP (10 failed-auth / min), except the provider-signed
-    durable inbound webhook ingress.
+    The public REST API of Gregale. Protected routes accept an account Bearer
+    API key (`fp_live_…`), or the tenant-bound `fp_tenant_…` credential on
+    the explicitly documented tenant-self routes. Authentication is
+    rate-limited per client IP (10 failed attempts a minute), except
+    provider-signed durable inbound webhook deliveries.
     Successful POSTs generally accept an `Idempotency-Key` header (24h TTL)
     and replay with `Idempotent-Replayed: true`; the one-time token-creation
     endpoint deliberately does not cache plaintext for retries. A key is
@@ -22,24 +21,23 @@ info:
     field — see `Problem` schema. Authentication rate limits use the same
     envelope with `code: auth_rate_limited` and a `Retry-After` header.
 
-    Operator routes (`/v1/compute-nodes`), dashboard routes (`/dashboard/*`),
-    webhook receivers (`/v1/webhooks/stripe`), SSE streams (`/v1/events`,
-    `/v1/deployments/{id}/logs`), and the CLI device-code flow
-    (`/v1/cli-auth/*`) are not part of this public spec.
+    Dashboard pages, server-sent event streams (account events and
+    deployment logs), the CLI sign-in flow and operator-only routes are not
+    part of this reference.
   contact:
-    name: one-box FaaS
+    name: Gregale
     url: https://gregale.dev/docs
   license:
     name: Proprietary
-    identifier: LicenseRef-onebox-internal
+    identifier: LicenseRef-Gregale-Proprietary
 
 servers:
   - url: https://{host}
-    description: Public endpoint (proxied through gatewayd).
+    description: Gregale API.
     variables:
       host:
         default: api.gregale.dev
-        description: Public hostname (one-box FaaS).
+        description: API hostname.
 
 tags:
   - name: operations
@@ -93893,7 +93891,7 @@ components:
         commit_sha: { type: string }
         plan: { type: string, description: "free / hobby / pro / scale — copied from the account at claim time." }
         runner_digest: { type: string }
-        builder_node_id: { type: string, description: "compute_node name (default `default-local` on the one-box)." }
+        builder_node_id: { type: string, description: "Compute node name (`default-local` on a single-node install)." }
         started_at: { type: string, format: date-time }
         finished_at: { type: string, format: date-time }
         sbom_storage_key: { type: [string, "null"], description: "Phase 3 populator fills this from `syft` output. Empty string when not yet populated." }
@@ -105140,6 +105138,10 @@ components:
         deployment_status: { type: string }
         rollout_state: { type: string }
         build_status: { type: string }
+        depends_on:
+          type: array
+          items: { type: string }
+          description: "The project services this one declares it calls (Compose depends_on), sorted. Omitted when none (ADR-20261026193018)."
 
     ProjectResponse:
       description: Project metadata with its workloads, exclusions, and latest reconciliation state.

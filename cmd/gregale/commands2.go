@@ -6545,9 +6545,17 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 	// whole stream to know which error fired.
 	explain := fs.Bool("explain", false, "on stream end, print a 3-line summary (failure, error count, top patterns)")
 	app := fs.String("app", "", appSlugFlagUsage)
+	projectSlug := fs.String("project", "", "read every service of this project together, each line prefixed with its service")
+	projectServices := fs.String("service", "", "with --project, only these services (comma-separated)")
 	if err := parseAppLogFlags(fs, args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale logs [<slug>] [--source runtime|http] [--release ID|vN] [--since 15m|RFC3339] [--status N] [--route PATH] [--request ID|--trace TRACE_ID] [--limit N|--all]", "logs")
 		return 1
+	}
+	if *projectSlug != "" {
+		return cmdLogsProject(fs, *projectSlug, *projectServices, *follow, *since, *grep, *level)
+	}
+	if *projectServices != "" {
+		return printErr("Invalid --service", errors.New("--service selects services of a --project"))
 	}
 	savedViewPath := ""
 	if *savedView {

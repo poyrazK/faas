@@ -160,7 +160,7 @@ before signing up.
 ## 7. Sub-processors
 
 The current sub-processor list is published at
-https://docs.gregale.dev/dpa/subprocessors for advance notification
+https://gregale.dev/docs/dpa/subprocessors for advance notification
 of additions and replacements (30-day notice, see paragraph below);
 the executed sub-processor set for any signed DPA is the list
 enumerated in this section at the time of signature, and the
@@ -250,7 +250,7 @@ required by Art. 32 GDPR, including:
   is written to the audit log (ADR-732).
 - TLS 1.3 in transit; HSTS + Strict CSP on the dashboard.
 
-Full security checklist lives at https://docs.gregale.dev/security.
+Full security checklist lives at https://gregale.dev/docs/security.
 
 ## 9. Audit rights
 

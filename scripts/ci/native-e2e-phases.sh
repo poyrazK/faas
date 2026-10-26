@@ -128,7 +128,7 @@ native_e2e_phase_files() {
     # Response streaming and the h2c/gRPC inner leg (G19.3).
     streaming) printf '%s\n' streaming_metal_test.go bridge_h2c_terminator_metal_test.go function_streaming_metal_test.go instance_bridge_sessions_metal_test.go ;;
     # App log delivery (SSE).
-    logs) printf '%s\n' logs_e2e_test.go ;;
+    logs) printf '%s\n' logs_e2e_test.go logs_archive_metal_test.go ;;
     # Spec §11 ship-blocking fences. Small, and must never be skipped quietly.
     security) printf '%s\n' sec11_memory_max_e2e_test.go sec11_seccomp_e2e_test.go ;;
     # Multi-node control plane: recovery arbiter, drain, heartbeat drills.

@@ -34,6 +34,11 @@ func UnitRealtimed() daemonunit.Unit {
 		EnvironmentFile: "-/etc/faas/secrets/realtimed/realtimed.env -/etc/faas/otel.env",
 		Environment: []daemonunit.KV{
 			{Key: "FAAS_REALTIME_SOCKET", Value: "/run/faas/realtimed.sock"},
+			// Fair use and the outbound budget (ADR-1323) keep realtimed inside
+			// MemoryMax: without fair use the node cap stays 10,000 connections,
+			// about 520 MB at ~52 KB each. apid sets fair use too.
+			{Key: "FAAS_REALTIME_FAIR_USE_ENABLED", Value: "1"},
+			{Key: "FAAS_REALTIME_OUTBOUND_BUDGET_ENABLED", Value: "1"},
 		},
 
 		NoNewPrivileges:         true,
