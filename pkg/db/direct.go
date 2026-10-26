@@ -72,9 +72,13 @@ const DirectDSNEnv = "FAAS_DATABASE_URL_DIRECT"
 // across every node.
 const directHubOnMaxConns int32 = 2
 
-// ADR-570: apid holds its outer edge mutation lock while the traffic guard
-// uses a second pinned connection. Its process mutex admits one outer lock.
-const directAPIDHubOnMaxConns int32 = directHubOnMaxConns + 1
+// ADR-570: apid holds its outer edge mutation lock, and imaged its deployment
+// activation lock, while a traffic policy guard pins a second connection
+// (imaged's MarkDeploymentLive). Each admits one outer lock at a time: apid's
+// process mutex, imaged's serial notification loop. Without the extra
+// connection imaged's guard waited behind the parked hub connection and image
+// deploys stalled in snapshotting.
+const directNestedGuardHubOnMaxConns int32 = directHubOnMaxConns + 1
 
 // directMaxConns resolves the session-scoped pool budget for the notify mode
 // this process runs in.
@@ -89,8 +93,8 @@ const directAPIDHubOnMaxConns int32 = directHubOnMaxConns + 1
 func directMaxConns(appName string) int32 {
 	name := strings.TrimPrefix(strings.TrimSpace(appName), "faas-")
 	if notifyHubEnabled() {
-		if name == "apid" {
-			return directAPIDHubOnMaxConns
+		if name == "apid" || name == "imaged" {
+			return directNestedGuardHubOnMaxConns
 		}
 		return directHubOnMaxConns
 	}

@@ -43,19 +43,24 @@ func (c *RegistryClient) ResolveImage(ctx context.Context, ref string, auth *Bas
 	if err != nil {
 		return result, err
 	}
-	resolved, err := c.resolveImageManifest(ctx, r, auth)
+	// A mirror serves the network reads only: the references returned below
+	// keep the requested registry.
+	resolved, err := viaDockerHubMirrors(ctx, c, r, auth, func(at Reference) (resolvedImageManifest, error) {
+		resolved, err := c.resolveImageManifest(ctx, at, auth)
+		if err != nil || resolved.config != nil {
+			return resolved, err
+		}
+		parsed, body, err := c.verifiedImageConfigBytes(ctx, at, resolved.manifest, auth)
+		if err != nil {
+			return resolved, err
+		}
+		resolved.config, resolved.configBody = &parsed, body
+		return resolved, nil
+	})
 	if err != nil {
 		return result, err
 	}
 	cfg := resolved.config
-	if cfg == nil {
-		parsed, body, err := c.verifiedImageConfigBytes(ctx, r, resolved.manifest, auth)
-		if err != nil {
-			return result, err
-		}
-		cfg = &parsed
-		resolved.configBody = body
-	}
 	if !cfg.SupportsProductionPlatform() {
 		return result, &PlatformSelectionError{Reason: "image config is incompatible with the production fleet", Available: []string{cfg.OS + "/" + cfg.Architecture + "/" + cfg.Variant}}
 	}

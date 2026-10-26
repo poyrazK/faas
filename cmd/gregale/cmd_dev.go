@@ -341,8 +341,11 @@ func cmdDev(args []string) int {
 		PrintUsage(osStderr, devUsage, "dev")
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(osStderr, devUsage, "dev")
+	if dir, ok := sourceDirPositional(fs); ok {
+		return printErr("Invalid arguments", fmt.Errorf(
+			"gregale dev takes the source directory with --path. Did you mean `gregale dev --path %s`?", dir))
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	explicitFlags := flagSetWasSet(fs)

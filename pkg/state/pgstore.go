@@ -18513,6 +18513,7 @@ func createSnapshotWithQuerier(ctx context.Context, q sqlc.DBTX, snap Snapshot) 
 		DeploymentID:       mustPgUUID(snap.DeploymentID), FcVersion: snap.FCVersion, BaseImageVersion: snap.BaseImageVersion,
 		MemBytes: snap.MemBytes, DiskBytes: snap.DiskBytes, StoredBytes: snap.StoredBytes, StorageKey: snap.StorageKey,
 		Stale: snap.Stale, Tier: tier, ApplicationStandardCaptureToken: mustPgUUID(snap.ApplicationStandardCaptureToken),
+		CpuTemplate: snap.CPUTemplate, CpuModel: snap.CPUModel,
 	})
 	if err != nil {
 		return Snapshot{}, mapErr(err)
@@ -18555,6 +18556,25 @@ func (s *PgStore) LatestSnapshotForTier(ctx context.Context, deploymentID, tier 
 		return Snapshot{}, mapErr(err)
 	}
 	return snapshotFromSQLC(row), nil
+}
+
+// LiveSnapshotsForTier returns every live snapshot of the deployment's tier,
+// one per CPU platform, newest first (ADR-20261024225612 amendment 1).
+func (s *PgStore) LiveSnapshotsForTier(ctx context.Context, deploymentID, tier string) ([]Snapshot, error) {
+	if tier == "" {
+		tier = SnapshotTierInit
+	}
+	rows, err := sqlc.New().LiveSnapshotsForTier(ctx, s.pool, sqlc.LiveSnapshotsForTierParams{
+		DeploymentID: mustPgUUID(deploymentID), Tier: tier,
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]Snapshot, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, snapshotFromSQLC(row))
+	}
+	return out, nil
 }
 
 // MarkSnapshotStale flags a snapshot unusable after a failed restore (ADR-005):
@@ -18843,7 +18863,8 @@ func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 		&n.ScheddTargetURL, &n.GatewayTargetURL, &n.PublicIp, &n.PublicIpSetAt,
 		&n.ReleaseID, &n.ManifestHash, &n.HostCertificate, &n.CertFingerprint,
 		&n.Role, &n.Generation, &n.Lifecycle, &n.LifecycleGeneration,
-		&n.Readiness, &n.ReadinessReason); err != nil {
+		&n.Readiness, &n.ReadinessReason,
+		&n.CPUTemplate, &n.CPUModel); err != nil {
 		return ComputeNode{}, mapErr(err)
 	}
 	return n, nil
@@ -18856,7 +18877,7 @@ func (s *pgCore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error) 
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 		  from compute_nodes
 		 where active = true
 		 order by name
@@ -18888,7 +18909,7 @@ func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 		  from compute_nodes
 		 order by name
 	`)
@@ -18914,7 +18935,7 @@ func (s *pgCore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, e
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 		  from compute_nodes
 		 where id = $1
 	`, id)
@@ -18932,7 +18953,7 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 		  from compute_nodes
 		 where name = $1
 	`, name)
@@ -19576,7 +19597,7 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget, string(lifecycle),
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -19622,11 +19643,13 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		    (name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
 		     region, zone, gateway_target_url,
 		     public_ip, public_ip_set_at,
-		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation)
+		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		     cpu_template, cpu_model)
 		values ($1, $2, $3, $4, $5, $6, $7, $8, 'active'::compute_node_lifecycle,
 		        $9, $10, $11,
 		        $12, $13,
-		        $14, $15, $16, $17, $18, $19)
+		        $14, $15, $16, $17, $18, $19,
+		        $20, $21)
 		on conflict (name) do update
 		  set target_url          = excluded.target_url,
 		      vpcpus              = excluded.vpcpus,
@@ -19648,19 +19671,24 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		      role                = excluded.role,
 		      host_certificate    = coalesce(compute_nodes.host_certificate, excluded.host_certificate),
 		      cert_fingerprint    = coalesce(compute_nodes.cert_fingerprint, excluded.cert_fingerprint),
-		      generation          = coalesce(compute_nodes.generation, excluded.generation)
+		      generation          = coalesce(compute_nodes.generation, excluded.generation),
+		      -- vmmd owns its CPU identity (ADR-20261024225612): every
+		      -- registration reports what this boot of vmmd runs with.
+		      cpu_template        = excluded.cpu_template,
+		      cpu_model           = excluded.cpu_model
 		returning id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,
-		node.Role, node.Generation)
+		node.Role, node.Generation,
+		node.CPUTemplate, node.CPUModel)
 	n, err := scanComputeNode(row)
 	if err != nil {
 		return ComputeNode{}, fmt.Errorf("state: upsert compute_node %q: %w", node.Name, err)
@@ -19732,7 +19760,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, vcpuBudget, lifecycle,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -19855,7 +19883,7 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation, readiness, readiness_reason
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -20116,7 +20144,7 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -20152,7 +20180,7 @@ func (s *PgStore) ListComputeNodesPage(ctx context.Context, includeInactive bool
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation, readiness, readiness_reason
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -26189,6 +26217,8 @@ func snapshotFromSQLC(row sqlc.Snapshot) Snapshot {
 		StorageKey: row.StorageKey, Tier: row.Tier, Stale: row.Stale, DeletePending: row.DeletePending, CreatedAt: row.CreatedAt.Time,
 		ApplicationStandardCaptureToken: pgUUIDString(row.ApplicationStandardCaptureToken),
 		RecoveryGeneration:              row.RecoveryGeneration,
+		CPUTemplate:                     row.CpuTemplate,
+		CPUModel:                        row.CpuModel,
 	}
 }
 

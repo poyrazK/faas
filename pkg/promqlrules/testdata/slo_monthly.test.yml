@@ -1,0 +1,102 @@
+# Monthly public SLOs (spec §12, ADR-20261023124955 §3). faas_slo_monthly
+# records fleet-wide 5m rates and rolling 30 d ratios. These cases pin the
+# arithmetic: requests answered without a platform 5xx over eligible requests,
+# the share of wakes inside the 1 s and 0.35 s buckets, and builds that
+# succeeded over builds that did not fail on the customer's code. A quiet
+# fleet must read as "no data", never as a perfect month.
+
+rule_files:
+  - ../../../deploy/ansible/roles/prometheus/files/faas.rules.yml
+
+evaluation_interval: 1m
+
+tests:
+  - interval: 1m
+    name: "steady traffic produces the four monthly ratios"
+    input_series:
+      # 1,000 eligible requests a minute, one platform 5xx among them.
+      - series: 'gateway_requests_total{app="a1",plan="pro",code="2xx"}'
+        values: '0+999x240'
+      - series: 'gateway_requests_total{app="a1",plan="pro",code="5xx"}'
+        values: '0+1x240'
+      - series: 'gateway_platform_errors_total{app="a1",plan="pro"}'
+        values: '0+1x240'
+      # Requests that never reached an app are not eligible.
+      - series: 'gateway_requests_total{app="-",plan="",code="5xx"}'
+        values: '0+500x240'
+      # 97 of 100 wakes finish within 1 s.
+      - series: 'gateway_wake_latency_seconds_bucket{le="1"}'
+        values: '0+97x240'
+      - series: 'gateway_wake_latency_seconds_bucket{le="+Inf"}'
+        values: '0+100x240'
+      - series: 'gateway_wake_latency_seconds_count'
+        values: '0+100x240'
+      # 96 of 100 platform wakes finish within 350 ms.
+      - series: 'gateway_platform_wake_latency_seconds_bucket{le="0.35"}'
+        values: '0+96x240'
+      - series: 'gateway_platform_wake_latency_seconds_count'
+        values: '0+100x240'
+      # 99 of 100 eligible builds succeed; user errors do not count.
+      - series: 'builderd_ops_total{op="build",code="ok"}'
+        values: '0+98x240'
+      - series: 'builderd_ops_total{op="build",code="cache_hit"}'
+        values: '0+1x240'
+      - series: 'builderd_ops_total{op="build",code="internal"}'
+        values: '0+1x240'
+      - series: 'builderd_ops_total{op="build",code="user_error"}'
+        values: '0+50x240'
+    promql_expr_test:
+      - expr: 'abs(faas_slo_api_availability:ratio_30d - 0.999) < bool 0.0001'
+        eval_time: 4h
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: 'abs(faas_slo_wakes_within_1s:ratio_30d - 0.97) < bool 0.0001'
+        eval_time: 4h
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: 'abs(faas_slo_platform_wakes_within_350ms:ratio_30d - 0.96) < bool 0.0001'
+        eval_time: 4h
+        exp_samples:
+          - labels: '{}'
+            value: 1
+      - expr: 'abs(faas_slo_build_success:ratio_30d - 0.99) < bool 0.0001'
+        eval_time: 4h
+        exp_samples:
+          - labels: '{}'
+            value: 1
+
+  - interval: 1m
+    name: "no platform error series reads as full availability"
+    input_series:
+      - series: 'gateway_requests_total{app="a1",plan="pro",code="2xx"}'
+        values: '0+100x120'
+    promql_expr_test:
+      - expr: 'faas_slo_api_availability:ratio_30d'
+        eval_time: 2h
+        exp_samples:
+          - labels: '{__name__="faas_slo_api_availability:ratio_30d"}'
+            value: 1
+
+  - interval: 1m
+    name: "a quiet fleet has no monthly ratio"
+    input_series:
+      - series: 'gateway_requests_total{app="a1",plan="pro",code="2xx"}'
+        values: '0+0x120'
+      - series: 'gateway_wake_latency_seconds_bucket{le="1"}'
+        values: '0+0x120'
+      - series: 'gateway_wake_latency_seconds_count'
+        values: '0+0x120'
+      - series: 'builderd_ops_total{op="build",code="user_error"}'
+        values: '0+5x120'
+    promql_expr_test:
+      - expr: 'faas_slo_api_availability:ratio_30d'
+        eval_time: 2h
+        exp_samples: []
+      - expr: 'faas_slo_wakes_within_1s:ratio_30d'
+        eval_time: 2h
+        exp_samples: []
+      - expr: 'faas_slo_build_success:ratio_30d'
+        eval_time: 2h
+        exp_samples: []

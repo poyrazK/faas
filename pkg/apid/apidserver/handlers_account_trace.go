@@ -12,6 +12,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/apid/wakehistory"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -45,7 +46,12 @@ func (s *server) accountTraceLookup(w http.ResponseWriter, r *http.Request, acct
 		limit = n
 	}
 
+	// Every source below is read for these apps only, so a company app the
+	// caller may no longer see contributes no invocation, log or request.
 	apps, err := s.store.ListApps(r.Context(), acct.ID)
+	if err == nil {
+		apps, err = appaccess.VisibleApps(r, s.store, actorAccount(r, acct), apps)
+	}
 	if err != nil {
 		api.WriteProblem(w, api.ErrCapacity("list apps for trace lookup"))
 		return

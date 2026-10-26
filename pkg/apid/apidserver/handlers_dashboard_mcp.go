@@ -100,7 +100,7 @@ func (s *server) renderMCPOperations(w http.ResponseWriter, r *http.Request, log
 	var apps []state.App
 	if data.AppFilter != "" {
 		app, e := s.store.AppBySlug(ctx, data.AppFilter)
-		if e != nil || app.AccountID != account.ID {
+		if e != nil || app.AccountID != account.ID || !accountViewAppVisible(ctx, s.store, log, account, app) {
 			http.NotFound(w, r)
 			return
 		}
@@ -108,6 +108,9 @@ func (s *server) renderMCPOperations(w http.ResponseWriter, r *http.Request, log
 		appID = app.ID
 	} else {
 		apps, err = s.store.ListApps(ctx, account.ID)
+		if err == nil {
+			apps, _, err = s.visibleAccountApps(r, account, apps)
+		}
 		if err != nil {
 			data.Error = "Application inventory is unavailable. Try again shortly."
 		}
@@ -164,7 +167,7 @@ func (s *server) renderMCPOperations(w http.ResponseWriter, r *http.Request, log
 			return
 		}
 		app, e := s.store.AppByID(ctx, deployment.AppID)
-		if e != nil || app.AccountID != account.ID {
+		if e != nil || app.AccountID != account.ID || !accountViewAppVisible(ctx, s.store, log, account, app) {
 			http.NotFound(w, r)
 			return
 		}

@@ -1172,7 +1172,10 @@ func resolveAndCheckEgress(c context.Context, rawURL string) *api.Problem {
 				Status: 403,
 				Type:   docsTypeBase + "/image-egress-denied",
 				Title:  "Egress denied",
-				Detail: fmt.Sprintf("webhook_url resolves to %s, which is in the egress denylist", ipa.IP),
+				// Log drains, webhooks, channels and realtime hosts share this
+				// check; "webhook_url" named a field a log drain does not have
+				// (Hunt 14 H14-66). The code stays stable for clients.
+				Detail: fmt.Sprintf("the URL's host %s resolves to %s, which is in the egress denylist (private, link-local and metadata ranges)", host, ipa.IP),
 				Code:   api.CodeImageEgressDenied,
 			}
 		}

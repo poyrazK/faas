@@ -305,8 +305,10 @@ func notFound(r *http.Request) *api.Problem {
 		what = "no such domain"
 	case strings.HasPrefix(path, "/v1/workflows/runs/"):
 		return api.ErrWorkflowRunNotFound()
-	case strings.HasPrefix(path, "/v1/delayed-tasks/"):
+	case strings.HasPrefix(path, "/v1/delayed-tasks/"), strings.HasPrefix(path, "/v1/invocations/"):
 		return api.ErrInvocationNotFound(r.PathValue("id"))
+	case strings.HasPrefix(path, "/v1/edge-rules/"):
+		return api.ErrEdgeRuleNotFound(r.PathValue("id"))
 	case strings.HasPrefix(path, "/v1/triggers/"):
 		what = "no such trigger"
 	case strings.HasPrefix(path, "/v1/deleted-apps/"):
@@ -316,7 +318,8 @@ func notFound(r *http.Request) *api.Problem {
 }
 
 func lookupProblem(r *http.Request, err error) *api.Problem {
-	if errors.Is(err, state.ErrNotFound) {
+	// A path ID that is no UUID names no resource either (Hunt 14 H14-65).
+	if errors.Is(err, state.ErrNotFound) || state.IsMalformedID(err) {
 		return notFound(r)
 	}
 	return api.ErrCapacity("could not authorize application access")

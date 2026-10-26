@@ -216,7 +216,7 @@ func OpenNativeSession(ctx context.Context, c NativeConfig, f Fixture) (session 
 	if _, err = protectedNativePath(filepath.Dir(c.OutputDirectory), true); err != nil {
 		return nil, err
 	}
-	for _, name := range []string{"git", "bash", "firecracker", "jailer", "systemctl", "ip", "iptables", "nft", "tc", "gcc", "debugfs", "python3", "readlink"} {
+	for _, name := range []string{"git", "bash", "firecracker", "jailer", "systemctl", "ip", "iptables", "nft", "tc", "gcc", "debugfs", "e2fsck", "python3", "readlink"} {
 		s.tools[name], err = nativeTool(name)
 		if err != nil {
 			return nil, err

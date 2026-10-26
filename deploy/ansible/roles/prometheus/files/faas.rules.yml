@@ -693,6 +693,20 @@ groups:
           summary: "Non-payment deletion is blocked for suspended accounts ({{ $labels.reason }})"
           description: "The dunning sweep cannot move suspended accounts past the non-payment deadline to deleted_pending because a deletion guard holds (managed_postgres_databases: the account still owns live managed PostgreSQL databases; shared_app_ownership: company apps still reference it). The accounts stay suspended, their provider databases keep running and erasure does not start. meterd logs each one as 'meter: non-payment deletion blocked'."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDunningDeletionBlocked.md"
+      # apid's grace sweep sets this gauge every tick (60 s). A day of holds
+      # leaves most of the DPA's 30-day deletion window to fix the cause.
+      - alert: FaasAccountErasureDeferred
+        expr: max(apid_account_grace_deferred_accounts) > 0
+        for: 24h
+        labels:
+          severity: warn
+          component: apid
+          family: account_lifecycle
+          public_status: internal
+        annotations:
+          summary: "Expired account deletions are held by unfinished external cleanup"
+          description: "{{ $value }} account(s) are past their deletion grace but the grace sweep keeps their rows because external cleanup (object buckets, managed PostgreSQL, archived runtime logs) is not finished. apid logs each one as 'grace: external cleanup deferred' with the failing step. The DPA promises erasure within 30 days of the grace ending."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAccountErasureDeferred.md"
 
   - name: postgres_capacity
     interval: 30s
@@ -1828,7 +1842,7 @@ groups:
   # Fan-out to per-account series is done by the alert rules, not here
   # (keeps the recording-rule set O(routes) not O(customers)). The 3d
   # window sees the same time-of-day/weekday traffic mix as the
-  # current 5m window; retention (15d, prom_retention_days) gives 5x
+  # current 5m window; retention (35d, prom_retention_days) gives 11x
   # headroom. clamp_min(...) guards against /0 when a route has zero
   # recent traffic — the small 0.001 floor lets the ratio formula
   # produce a numeric value rather than a NaN.
@@ -1945,6 +1959,56 @@ groups:
             0.95,
             sum by (app, route, le) (rate(gateway_request_duration_by_route_seconds_bucket[5m]))
           )
+
+  # ─────────────────────────────────────────────────────────────────────
+  # Monthly public SLOs (spec §12, ADR-20261023124955 §3). The burn-rate
+  # alerts in faas_slo watch minutes to hours; nothing computed the month the
+  # status page promises, and 15 d of retention could not hold one. These
+  # rules record fleet-wide good/total rates every 5m (no app label, so the
+  # 30 d windows cost a handful of series), then a rolling 30 d ratio per
+  # SLO. Ratios of summed 5m rates equal ratios of counts because every
+  # sample covers the same 5m. Wake p95 < 1 s is recorded as the share of
+  # wakes at or under the 1 s bucket: p95 < 1 s holds exactly when that share
+  # is >= 0.95. The platform 350 ms gate uses the platform histogram's
+  # 0.35 s bucket the same way. A ratio has no sample while its window holds
+  # no eligible events, so a quiet fleet reads as "no data", not 100 %.
+  # Retention must cover the window: prom_retention_days is 35.
+  - name: faas_slo_monthly
+    interval: 5m
+    rules:
+      - record: faas_slo_api_eligible_requests:rate5m
+        expr: sum(rate(gateway_requests_total{app!="-",code=~"2..|5.."}[5m]))
+      - record: faas_slo_api_platform_errors:rate5m
+        expr: sum(rate(gateway_platform_errors_total{app!="-"}[5m])) or vector(0)
+      - record: faas_slo_wakes:rate5m
+        expr: sum(rate(gateway_wake_latency_seconds_count[5m]))
+      - record: faas_slo_wakes_within_1s:rate5m
+        expr: sum(rate(gateway_wake_latency_seconds_bucket{le="1"}[5m]))
+      - record: faas_slo_platform_wakes:rate5m
+        expr: sum(rate(gateway_platform_wake_latency_seconds_count[5m]))
+      - record: faas_slo_platform_wakes_within_350ms:rate5m
+        expr: sum(rate(gateway_platform_wake_latency_seconds_bucket{le="0.35"}[5m]))
+      - record: faas_slo_builds_eligible:rate5m
+        expr: sum(rate(builderd_ops_total{op="build",code!="user_error"}[5m]))
+      - record: faas_slo_builds_ok:rate5m
+        expr: sum(rate(builderd_ops_total{op="build",code=~"ok|cache_hit"}[5m]))
+
+      - record: faas_slo_api_availability:ratio_30d
+        expr: |
+          1 - sum_over_time(faas_slo_api_platform_errors:rate5m[30d])
+            / (sum_over_time(faas_slo_api_eligible_requests:rate5m[30d]) > 0)
+      - record: faas_slo_wakes_within_1s:ratio_30d
+        expr: |
+          sum_over_time(faas_slo_wakes_within_1s:rate5m[30d])
+            / (sum_over_time(faas_slo_wakes:rate5m[30d]) > 0)
+      - record: faas_slo_platform_wakes_within_350ms:ratio_30d
+        expr: |
+          sum_over_time(faas_slo_platform_wakes_within_350ms:rate5m[30d])
+            / (sum_over_time(faas_slo_platform_wakes:rate5m[30d]) > 0)
+      - record: faas_slo_build_success:ratio_30d
+        expr: |
+          sum_over_time(faas_slo_builds_ok:rate5m[30d])
+            / (sum_over_time(faas_slo_builds_eligible:rate5m[30d]) > 0)
 
   - name: faas_slo
     interval: 30s
@@ -5242,6 +5306,29 @@ groups:
         annotations:
           summary: "Managed PostgreSQL usage collection is stale"
           description: "The usage ledger is enabled but apid has not completed a full provider usage sweep for more than 15m. New database reservations fail closed while observations are stale; check the usage collector, provider API, and apid database connectivity."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
+
+      # ADR-20261025094915: the compute cap sweep runs after every usage sweep
+      # (5m by default). Its timestamp moves only when no account failed, so
+      # this also fires when quota writes keep failing.
+      - alert: FaasManagedPostgresCapEnforcementStale
+        expr: |
+          apid_managed_postgres_usage_policy_enabled == 1
+          and on(job, instance)
+          max by (job, instance) (apid_managed_postgres_cap_enforcement_mode{mode=~"shadow|on"}) == 1
+          and on(job, instance)
+          (
+            apid_managed_postgres_cap_last_sweep_timestamp_seconds == 0
+            or time() - apid_managed_postgres_cap_last_sweep_timestamp_seconds > 2700
+          )
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: managed_postgres
+        annotations:
+          summary: "Managed PostgreSQL compute caps are not being enforced"
+          description: "apid has not completed a compute cap sweep without a failed account for more than 45m. Running databases keep the quotas last written, so a stalled sweep neither lifts nor imposes a suspension; check the usage collector, the provider API and apid_managed_postgres_cap_accounts{state=\"failed\"}."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasManagedPostgresDegraded.md"
 
       - alert: FaasManagedPostgresUsageCollectionDeferred

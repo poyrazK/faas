@@ -230,7 +230,7 @@ func boot() error {
 	if extensionHooks != nil {
 		if err := listenResumeHookWithExtension(slog.Default(),
 			func() { extensionHooks.emit(extension.PhasePostRestore) },
-			func(req extensionHookRequest) { extensionHooks.emitWithMetadata(req.Phase, req.Metadata) },
+			func(req extensionHookRequest) error { return extensionHooks.emitWithMetadata(req.Phase, req.Metadata) },
 			func() error {
 				cfg := afterRestore.Load()
 				if cfg == nil {
@@ -1168,23 +1168,38 @@ func runBuildOnce(m api.BuildManifest) error {
 	}
 	guestStage("runc-preflight")
 
+	buildkitArgs := []string{
+		"--debug",
+		"--rootless",
+		"--root", buildkitRoot,
+		"--addr", "unix:///run/buildkit/buildkitd.sock",
+		"--oci-worker-binary", "/usr/local/bin/runc",
+		// The builder drive is deliberately 28 GiB. The image includes
+		// fuse-overlayfs and the guest kernel has FUSE built in; use the
+		// rootless COW snapshotter so committing a layer does not scan/copy the
+		// complete native snapshot tree after every RUN instruction.
+		"--oci-worker-snapshotter", "fuse-overlayfs",
+		"--oci-worker-net", "host",
+	}
+	// ADR-20261025114554: BuildKit tries the operator's Docker Hub mirrors
+	// before Docker Hub, which limits anonymous pulls per IP.
+	if len(m.DockerHubMirrors) > 0 {
+		config, err := buildkitMirrorConfig(m.DockerHubMirrors)
+		if err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("buildkit mirror config: %w", err), "")
+		}
+		if err := os.MkdirAll(filepath.Dir(buildkitConfigPath), 0o755); err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("buildkit config dir: %w", err), "")
+		}
+		if err := os.WriteFile(buildkitConfigPath, []byte(config), 0o644); err != nil {
+			return writeAndPoweroff(m, fmt.Errorf("write buildkit config: %w", err), "")
+		}
+		buildkitArgs = append(buildkitArgs, "--config", buildkitConfigPath)
+	}
 	var buildkitLog bytes.Buffer
 	bk := exec.Command(
 		"/usr/bin/unshare",
-		rootlessBuildkitUnshareArgs(
-			"/usr/local/bin/buildkitd",
-			"--debug",
-			"--rootless",
-			"--root", buildkitRoot,
-			"--addr", "unix:///run/buildkit/buildkitd.sock",
-			"--oci-worker-binary", "/usr/local/bin/runc",
-			// The builder drive is deliberately 28 GiB. The image includes
-			// fuse-overlayfs and the guest kernel has FUSE built in; use the
-			// rootless COW snapshotter so committing a layer does not scan/copy the
-			// complete native snapshot tree after every RUN instruction.
-			"--oci-worker-snapshotter", "fuse-overlayfs",
-			"--oci-worker-net", "host",
-		)...,
+		rootlessBuildkitUnshareArgs(append([]string{"/usr/local/bin/buildkitd"}, buildkitArgs...)...)...,
 	)
 	// Keep the daemon and its rootless worker tree in a private process group so
 	// the timeout path can terminate BuildKit descendants before powering off.

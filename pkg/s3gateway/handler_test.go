@@ -44,6 +44,11 @@ type gatewayTestStore struct {
 	activity                            map[string]state.ObjectBucketMutation
 	fenced                              bool
 	activityBeginErr, activityFinishErr error
+	cors                                []api.ObjectBucketCORSRule
+}
+
+func (s *gatewayTestStore) ObjectBucketCORSRules(context.Context, string) ([]api.ObjectBucketCORSRule, error) {
+	return s.cors, nil
 }
 
 // Deletion admission owns the same source hold as generic mutation admission

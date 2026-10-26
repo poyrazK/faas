@@ -799,6 +799,25 @@
       ]
     },
     {
+      "id": "bucket-cors",
+      "name": "Bucket CORS",
+      "category": "data",
+      "description": "Let browsers on your own sites use a bucket's signed URLs and upload grants.",
+      "maturity": "preview",
+      "plans": [
+        "hobby",
+        "pro",
+        "scale"
+      ],
+      "docs_url": "/docs/object-storage",
+      "acceptance_test": "pkg/s3gateway/bucket_cors_test.go::TestGatewayBucketCORS",
+      "parent": "object-storage",
+      "routes": [
+        "/v1/apps/{}/buckets/{}/cors",
+        "/v1/orgs/{}/apps/{}/buckets/{}/cors"
+      ]
+    },
+    {
       "id": "bucket-encryption",
       "name": "Bucket encryption keys",
       "category": "data",

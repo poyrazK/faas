@@ -442,6 +442,15 @@ func waitForJobStart(started <-chan struct{}, signals <-chan os.Signal, timeout 
 }
 
 func listenJobCancellation(signals chan<- os.Signal, log *slog.Logger) func() {
+	return listenControlSignals(signals, isJobCancelSignal, log)
+}
+
+// listenControlSignals accepts host-initiated cancel frames on the job control
+// port and delivers each allowed signal to signals. Jobs use it for
+// cancellation; runSignalHandlers uses it so a worker's stop signal reaches
+// guest-init, because signalling the Firecracker host process never reaches
+// the guest (Hunt 14 H14-59).
+func listenControlSignals(signals chan<- os.Signal, allow func(syscall.Signal) bool, log *slog.Logger) func() {
 	fd, err := unix.Socket(unix.AF_VSOCK, unix.SOCK_STREAM|unix.SOCK_CLOEXEC, 0)
 	if err != nil {
 		log.Debug("job cancel vsock unavailable", "err", err)
@@ -469,13 +478,27 @@ func listenJobCancellation(signals chan<- os.Signal, log *slog.Logger) func() {
 				_ = unix.Close(raw)
 				continue
 			}
-			go handleJobCancellation(raw, signals)
+			go handleControlSignal(raw, signals, allow)
 		}
 	}()
 	return func() { _ = unix.Close(fd) }
 }
 
-func handleJobCancellation(fd int, signals chan<- os.Signal) {
+// isJobCancelSignal is the set a job accepts over the control port.
+func isJobCancelSignal(sig syscall.Signal) bool {
+	switch sig {
+	case syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP:
+		return true
+	}
+	return false
+}
+
+// isWorkloadStopSignal adds the stop signals a worker manifest may declare.
+func isWorkloadStopSignal(sig syscall.Signal) bool {
+	return isJobCancelSignal(sig) || sig == syscall.SIGUSR1 || sig == syscall.SIGUSR2
+}
+
+func handleControlSignal(fd int, signals chan<- os.Signal, allow func(syscall.Signal) bool) {
 	f := os.NewFile(uintptr(fd), "job-cancel")
 	if f == nil {
 		_ = unix.Close(fd)
@@ -500,9 +523,7 @@ func handleJobCancellation(fd int, signals chan<- os.Signal) {
 		return
 	}
 	sig := syscall.Signal(binary.BigEndian.Uint32(frame[4:]))
-	switch sig {
-	case syscall.SIGTERM, syscall.SIGINT, syscall.SIGQUIT, syscall.SIGHUP:
-	default:
+	if !allow(sig) {
 		_, _ = unix.Write(fd, []byte{VsockJobControlAckError})
 		return
 	}

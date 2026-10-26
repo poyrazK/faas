@@ -489,6 +489,7 @@ from .deployment_change import DeploymentChange
 from .deployment_change_after_type_3 import DeploymentChangeAfterType3
 from .deployment_change_before_type_3 import DeploymentChangeBeforeType3
 from .deployment_change_field import DeploymentChangeField
+from .deployment_companion import DeploymentCompanion
 from .deployment_configuration_status import DeploymentConfigurationStatus
 from .deployment_cron_activation_status import DeploymentCronActivationStatus
 from .deployment_cron_activation_status_reason import DeploymentCronActivationStatusReason
@@ -985,6 +986,7 @@ from .managed_operation_effect import ManagedOperationEffect
 from .managed_operation_result import ManagedOperationResult
 from .managed_operation_result_gregale_operation_result import ManagedOperationResultGregaleOperationResult
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
+from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .managed_service_probe_spec import ManagedServiceProbeSpec
 from .mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
@@ -2919,6 +2921,7 @@ __all__ = (
     "DeploymentChangeAfterType3",
     "DeploymentChangeBeforeType3",
     "DeploymentChangeField",
+    "DeploymentCompanion",
     "DeploymentConfigurationStatus",
     "DeploymentCronActivationStatus",
     "DeploymentCronActivationStatusReason",
@@ -3398,6 +3401,7 @@ __all__ = (
     "ManagedOperationResult",
     "ManagedOperationResultGregaleOperationResult",
     "ManagedPostgresUsageResponse",
+    "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseGuardrailState",
     "ManagedServiceProbeSpec",
     "MCPPolicyConvergenceSnapshot",

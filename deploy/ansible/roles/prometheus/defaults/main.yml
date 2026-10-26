@@ -21,7 +21,19 @@ prom_release_sha256: "31715ef65e8a898d0f97c8c08c03b6b9afe485ac84e1698bcfec90fc6e
 # its dedicated loopback port so a restart cannot collide with a daemon
 # health/metrics endpoint.
 prom_listen_addr: "127.0.0.1:9095"
-prom_retention_days: 15
+# 35 d covers a calendar month plus slack, so the faas_slo_monthly 30 d ratios
+# have a full window (ADR-20261023124955 §3). The size cap is the backstop;
+# whichever limit is reached first wins. production-us held 12 GB for 15 d at
+# 104k head series on 2026-10-23 (~28 GB for 35 d) with 107 GB free. A host
+# with less disk lowers prom_retention_size; Prometheus then keeps fewer days.
+prom_retention_days: 35
+prom_retention_size: 40GB
+# Memory inside faas-obs.slice (ADR-20261023124955 §1). production-us measured
+# 1.24 GB RSS and a 1.74 GB peak at 104k head series on 2026-10-23. GOMEMLIMIT
+# sits below MemoryHigh so the Go collector works harder before the cgroup
+# starts throttling.
+prom_memory_high: 2304M
+prom_gomemlimit: 2048MiB
 prom_data_dir: /var/lib/prometheus
 # Prometheus keeps exemplars in a bounded in-memory circular buffer. The
 # platform opts in explicitly because exemplar storage is disabled by default

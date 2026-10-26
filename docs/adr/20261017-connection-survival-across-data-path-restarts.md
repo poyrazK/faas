@@ -745,6 +745,17 @@ its own.
     - Still owed in 1c: the `instance_bridge_*` metrics of §7. Streams
       through a restarting vmmd still end with it: the RPCs terminate there
       until P2.
+    - Per-node switches in ansible: `vmmd_bridge_unprivileged`,
+      `vmmd_instance_bridge_sessions` and `vmmd_instance_bridge_unit`
+      (default false; roles/vmmd_service/defaults/main.yml) render
+      `FAAS_BRIDGE_UNPRIVILEGED`, `FAAS_INSTANCE_BRIDGE_SESSIONS` and
+      `FAAS_INSTANCE_BRIDGE_UNIT` as `1` only when on, and node_join writes
+      them on every rollout (`zz-faas-bridge.conf`). Units need the
+      unprivileged bridge; ansible refuses the unit switch without it.
+      Turning units off is safe: a vmmd started with them off stops every
+      `faas-ibridge-*` unit it finds before serving (only when systemd holds
+      one, so a node that never ran them makes no D-Bus call), where it
+      used to leave a predecessor's handed-off units running.
   - 1d: gate and counters move to the bridge, with ADR-1151 property tests.
 
   After P1, bridges survive vmmd, but streams are still cut, because the
