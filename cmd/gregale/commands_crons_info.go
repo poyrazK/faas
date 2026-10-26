@@ -125,5 +125,7 @@ func renderCronInfo(w io.Writer, c api.CronResponse) {
 	if last == "" {
 		last = "—"
 	}
-	_, _ = fmt.Fprintf(w, "  last:     %s\n", last)
+	// A manual run does not move last_fired_at, so a bare "last: —" sat
+	// above "last run: success" on production-us rc.294 (Hunt 14 H14-64).
+	_, _ = fmt.Fprintf(w, "  last scheduled fire: %s\n", last)
 }

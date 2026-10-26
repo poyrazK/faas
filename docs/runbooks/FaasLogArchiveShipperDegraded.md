@@ -153,6 +153,37 @@ so the *visible* retention stays plan-correct. The bucket
 is over-storing, not under-deleting. Tune `Days` up if
 you onboard an Enterprise tier with a longer floor.
 
+The rule is required, not advisory: the DPA (section 4,
+application logs) promises the archive deletes logs 90 days
+after they are written. Check it on every archive bucket, for
+example `gcloud storage buckets describe gs://<bucket>
+--format='yaml(lifecycle_config,soft_delete_policy)'`. The DPA
+also states that deleted objects stay recoverable for 7 days,
+which is GCS's default soft-delete window; keep the bucket's
+soft-delete retention at or below 7 days.
+
+### Account erasure
+
+Archive objects are keyed by instance only, so deleting an
+account's rows does not reach them. When an account's
+deletion grace ends, apid's grace sweep snapshots the
+account's instances (`log_archive_erasures`,
+`log_archive_erasure_instances`), deletes every object
+under `faas-logs/{instance}/` for 200 instances per tick,
+and deletes the account row only once none remain. apid's
+archive identity therefore needs list and delete on the
+bucket (GCS: `storage.objects.list` and
+`storage.objects.delete`). While the bucket is unreachable
+or refuses, apid logs `grace: external cleanup deferred`
+with `log archive: account logs are not erased yet` and
+retries every tick; the account stays in `deleted_pending`.
+Progress:
+
+```sql
+SELECT account_id, count(*) FILTER (WHERE erased_at IS NULL) AS pending
+FROM log_archive_erasure_instances GROUP BY account_id;
+```
+
 ## Silence
 
 ```bash

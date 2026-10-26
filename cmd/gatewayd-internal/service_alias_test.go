@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -58,6 +59,49 @@ func TestServiceAliasAllowedUsesCurrentBindingInventory(t *testing.T) {
 	}
 	if got, err := allowed(ctx, caller.ID, "billing"); err != nil || got {
 		t.Fatalf("deleted caller alias allowed: %v, %v", got, err)
+	}
+}
+
+// ADR-20261025121530: a member of a registered developer or test namespace
+// (`gregale dev --all`, scenario runs) names its siblings by .internal; a
+// session outside the namespace does not.
+func TestServiceAliasAllowedNamesNamespaceSiblings(t *testing.T) {
+	ctx := context.Background()
+	store := state.NewMemStore()
+	account, err := store.CreateAccount(ctx, "namespace-alias@local", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expires := time.Now().Add(time.Hour)
+	session := func(slug, project string) state.App {
+		t.Helper()
+		app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, Slug: slug, Type: state.AppTypeApp, RAMMB: 128,
+			Status: state.AppActive, PreviewOfSlug: project, PreviewPrState: state.PreviewPrStateOpen, PreviewExpiresAt: &expires})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return app
+	}
+	web, api1, loner := session("dev-web-1", "web"), session("dev-api-1", "api"), session("dev-other-1", "other")
+	runID := "0123456789abcdef0123456789abcdef"
+	if err := store.RegisterScenarioTestMembers(ctx, account.ID, runID, []state.ScenarioTestMember{
+		{Workload: "web", AppID: web.ID}, {Workload: "api", AppID: api1.ID},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	allowed := newServiceAliasAllowed(store)
+	for _, tc := range []struct {
+		caller, service string
+		want            bool
+	}{
+		{web.ID, "api", true},
+		{api1.ID, "web", true},
+		{web.ID, "billing", false},
+		{loner.ID, "api", false},
+	} {
+		if got, err := allowed(ctx, tc.caller, tc.service); err != nil || got != tc.want {
+			t.Errorf("alias %q from %s = %v, %v; want %v", tc.service, tc.caller, got, err, tc.want)
+		}
 	}
 }
 

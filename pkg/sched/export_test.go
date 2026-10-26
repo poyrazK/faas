@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/redis/go-redis/v9"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -81,6 +82,7 @@ const TriggerReasonMaxAttempts = triggerReasonMaxAttempts
 const TriggerReasonPoisonRecord = triggerReasonPoisonRecord
 const WakeTierColdBootFallback = wakeTierColdBootFallback
 const WakeTierInit = wakeTierInit
+const MaxDuePagesPerTick = maxDuePagesPerTick
 const WorkReaper = workReaper
 
 // Package-level vars
@@ -157,6 +159,25 @@ var NewNodeCapacityTable = newNodeCapacityTable
 var NewNodePresenceTracker = newNodePresenceTracker
 var NewQueuePoller = newQueuePoller
 var NewRealtimePoller = newRealtimePoller
+
+type NATSBroker = natsBroker
+
+// NewNATSBrokerPool is a broker pool that dials with dial instead of
+// connecting to NATS.
+func NewNATSBrokerPool(dial func(rawURL string) (*NATSBroker, error)) *natsBrokerPool {
+	return &natsBrokerPool{dial: dial, brokers: map[string]*natsBroker{}}
+}
+
+func (p *natsBrokerPool) ForURL(rawURL string) (*NATSBroker, error) { return p.forURL(rawURL) }
+
+// NewRedisStreamPoller wraps an already connected client, as newRedisPoller
+// does after its ping and group creation; the egress dialer refuses the
+// loopback address a test server listens on.
+func NewRedisStreamPoller(client *redis.Client, stream, group, consumer string) TriggerSource {
+	return &redisPoller{client: client, stream: stream, group: group, consumer: consumer, addr: "test",
+		batchMax: 100, visibility: 30 * time.Second, inFlight: map[string]string{}}
+}
+
 var NewStandardCaptureService = newStandardCaptureService
 var NewStandardNativeTestVMM = newStandardNativeTestVMM
 var NewWakeCoord = newWakeCoord
@@ -208,6 +229,21 @@ var TaskObservationStore = taskObservationStore
 var TestLog = testLog
 var TriggerDispatchParent = triggerDispatchParent
 var TruncateCodeError = truncateCodeError
+
+var JobDispatchResult = jobDispatchResult
+
+// Dispatch DB-phase tokens (ADR-20261025232118).
+func (o *WorkflowOrchestrator) SetDBPhaseSlotsForTest(slots int) {
+	o.dbPhase = newWorkflowDBPhase(slots)
+}
+func (o *WorkflowOrchestrator) EnterDBPhaseForTest(ctx context.Context) (context.Context, func(), error) {
+	return o.enterDBPhase(ctx)
+}
+func (o *WorkflowOrchestrator) ChildDBPhaseForTest(ctx context.Context) (context.Context, func()) {
+	return o.childDBPhase(ctx)
+}
+func OutsideDBPhaseForTest(ctx context.Context, wait func()) { outsideDBPhase(ctx, wait) }
+
 var UntilNextMinuteTick = untilNextMinuteTick
 var ValidEnvironmentGitOpsJobVariables = validEnvironmentGitOpsJobVariables
 var ValidRuntimeSnapshot = validRuntimeSnapshot
@@ -407,7 +443,11 @@ func (r *Loop) GatewayBaseURL() *string                   { return &r.gatewayBas
 func (r *Loop) GatewayHTTPClient() **http.Client          { return &r.gatewayHTTPClient }
 func (r *Loop) Pool() **pgxpool.Pool                      { return &r.pool }
 func (r *Loop) TriggerPollers() *map[string]triggerSource { return &r.triggerPollers }
-func (r *Loop) BeatMain()                                 { r.beatMain() }
+func (r *Loop) PollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
+	return r.pollerForTrigger(t)
+}
+func (r *Loop) EvictTriggerPollers(enabled []sqlc.Trigger) { r.evictTriggerPollers(enabled) }
+func (r *Loop) BeatMain()                                  { r.beatMain() }
 func (r *Loop) DispatchOneCron(p0 context.Context, p1 state.Cron, p2 time.Time) {
 	r.dispatchOneCron(p0, p1, p2)
 }

@@ -1263,6 +1263,7 @@ var cliCommands = []cliCommand{
 		Subcommands: []cliSub{
 			{Name: "list", Short: "List audit events", Flags: []cliFlag{
 				{Name: "kind-prefix", Short: "filter by kind prefix", Value: "PREFIX"},
+				{Name: "app", Short: "filter by app slug", Value: "SLUG"},
 				{Name: "app-id", Short: "filter by app UUID", Value: "UUID"},
 				{Name: "since", Short: "RFC3339 lower bound", Value: "RFC3339"},
 				{Name: "limit", Short: "maximum rows (1..100; default 50)", Value: "N"},
@@ -2231,7 +2232,9 @@ var cliCommands = []cliCommand{
 		DocSlug: "workers",
 		Short:   "Inspect and manage background worker pools",
 		Subcommands: []cliSub{
-			{Name: "list", Short: "List background worker pools, or one pool by app", Positionals: []string{"[<app>]"}},
+			{Name: "list", Short: "List background worker pools, or one pool by app", Positionals: []string{"[<app>]"}, Flags: []cliFlag{
+				{Name: "app", Short: "list only this app's worker pool", Value: "slug"},
+			}},
 			{Name: "status", Short: "Show real-time status and autoscaling for a worker pool", Positionals: []string{"[<app>]"}, Flags: []cliFlag{
 				{Name: "app", Short: "app slug (optional; defaults to linked context)", Value: "slug"},
 			}},
@@ -2656,7 +2659,7 @@ var cliCommands = []cliCommand{
 		DocSlug: "deployments",
 		Short:   "List an app's deployments and manage named revision URLs",
 		Examples: []string{
-			"gregale deployments --app my-api --limit 10",
+			"gregale deployments my-api --limit 10",
 			"gregale deployments --app my-api --wide",
 		},
 		Subcommands: []cliSub{{
@@ -4018,7 +4021,7 @@ var cliCommands = []cliCommand{
 				{Name: "app", Short: "app slug", Req: true, Value: "slug"},
 				{Name: "rule", Short: "only this rule id", Value: "ID"},
 				{Name: "request-id", Short: "only this request, e.g. the reference a visitor without JavaScript saw on the challenge page", Value: "ID"},
-				{Name: "outcome", Short: "outcome filter; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes", Value: "OUTCOME", ClosedSet: []string{"matched", "logged", "detected", "warned", "blocked", "challenged", "rejected", "solved", "failed"}},
+				{Name: "outcome", Short: "outcome filter; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes; boxed is a client put in a penalty box", Value: "OUTCOME", ClosedSet: []string{"matched", "logged", "detected", "warned", "blocked", "challenged", "rejected", "solved", "failed", "boxed"}},
 				{Name: "since", Short: "how far back, e.g. 1h, 24h, 7d (clamped to the plan window)", Value: "DURATION"},
 				{Name: "limit", Short: "events per page (1..200)", Value: "N"},
 				{Name: "cursor", Short: "continue from a previous page's next cursor", Value: "CURSOR"},
@@ -4471,6 +4474,8 @@ var cliCommands = []cliCommand{
 		Flags: []cliFlag{
 			{Name: "async", Short: "return immediately with status_url"},
 			{Name: "payload", Short: "JSON payload (inline | @file | -)", Value: "J|@file|-"},
+			{Name: "method", Short: "HTTP method (default POST, or the function handler's)", Value: "METHOD"},
+			{Name: "path", Short: "URL path (default /, or the function handler's)", Value: "PATH"},
 			{Name: "on-success-webhook", Short: "app webhook id for completed invocation callbacks", Value: "ID"},
 			{Name: "on-failure-webhook", Short: "app webhook id for failed or dead-lettered callbacks", Value: "ID"},
 			{Name: "work-policy", Short: "named app work policy for async invocation", Value: "NAME"},
@@ -6048,7 +6053,7 @@ var cliCommands = []cliCommand{
 			{Name: "list", Short: "List projects in this account"},
 			{Name: "info", Short: "Show a project and its workloads", Positionals: []string{"<slug>"}},
 			{Name: "environments", Aliases: []string{"envs"}, Short: "Manage project environments, releases and promotions", Notes: []string{"Qualify binds probes to release, config and secret revisions."}, Subcommands: []cliSub{
-				{Name: "list", Aliases: []string{"ls"}, Short: "List environments"},
+				{Name: "list", Aliases: []string{"ls"}, Short: "List environments", Positionals: []string{"<project-slug>"}},
 				{Name: "create", Short: "Create or clone an environment"},
 				{Name: "protect", Short: "Protect an environment"},
 				{Name: "unprotect", Short: "Remove environment protection"},
@@ -6184,6 +6189,8 @@ var cliCommands = []cliCommand{
 		Name:    "scan",
 		DocSlug: "scan",
 		Short:   "Show how a source tree splits into deployable workloads",
+		// A lone directory positional is --path, as `doctor <dir>` takes it.
+		Positionals: []string{"[<dir>]"},
 		Flags: []cliFlag{
 			{Name: "tarball", Short: "scan a source tarball", Value: "PATH"},
 			{Name: "path", Short: "scan a local directory", Value: "DIR"},
@@ -6252,7 +6259,7 @@ var cliCommands = []cliCommand{
 				{Name: "class", Short: "filter by snapshot-retention class", Value: "CLASS", ClosedSet: []string{api.SecretClassPersistent, api.SecretClassEphemeral}},
 				{Name: "older-than", Short: "filter to secrets not updated within a duration (for example 90d or 2160h); unknown timestamps are excluded", Value: "DURATION"},
 			}},
-			{Name: "set", Short: "Set a sealed secret", Examples: []string{"gregale secrets set --file secrets.env --dry-run", "gregale secrets set --app my-api --interactive", "gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\"", "printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets set --app my-api --from-stdin", "gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\" --restart", "gregale secrets set --app my-api SESSION_TOKEN=\"$SESSION_TOKEN\" --class ephemeral"}, Positionals: []string{"[<KEY=VALUE>...]"}, Flags: []cliFlag{
+			{Name: "set", Short: "Set a sealed secret", Examples: []string{"gregale secrets set --file secrets.env --dry-run", "gregale secrets set --app my-api --interactive", "gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\"", "printf '%s\\n' \"DATABASE_URL=$DATABASE_URL\" | gregale secrets set --app my-api --from-stdin", "gregale secrets set --app my-api DATABASE_URL=\"$DATABASE_URL\" --restart", "gregale secrets set --app my-api SESSION_TOKEN=\"$SESSION_TOKEN\" --class ephemeral"}, Positionals: []string{"[<slug>]", "[<KEY=VALUE>...]"}, Flags: []cliFlag{
 				{Name: "wait-for-ack", Short: "wait for application acknowledgements for all updated keys", Bool: true},
 				{Name: "timeout", Short: "restart and acknowledgement wait limit after saving (default 2m; requires --wait-for-ack)", Value: "DURATION"},
 				{Name: "dry-run", Short: "validate local input and preview keys and runtime options without API requests or changes", Bool: true},

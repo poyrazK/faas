@@ -39,6 +39,9 @@ func NewAliasAllowed(store interface {
 		if allowed, err := projectAliasAllowed(ctx, store, caller, service); err != nil || allowed {
 			return allowed, err
 		}
+		if allowed, err := namespaceAliasAllowed(ctx, store, caller, service); err != nil || allowed {
+			return allowed, err
+		}
 		if qualificationAliases, ok := store.(state.EnvironmentQualificationServiceAliasStore); ok {
 			allowed, err := qualificationAliases.EnvironmentQualificationServiceAliasAllowed(ctx, caller.ID, service)
 			if err != nil {
@@ -52,10 +55,43 @@ func NewAliasAllowed(store interface {
 	}
 }
 
+// namespaceAliasAllowed answers the alias for a sibling in the caller's
+// registered developer or test namespace (`gregale dev --all`, scenario
+// runs; ADR-20261025121530), which the proxy already resolves within that
+// namespace and never to production.
+func namespaceAliasAllowed(ctx context.Context, store any, caller state.App, service string) (bool, error) {
+	if caller.PreviewOfSlug == "" || caller.PreviewPrNumber != 0 {
+		return false, nil
+	}
+	namespaces, ok := store.(interface {
+		ScenarioTestMemberByApp(context.Context, string) (state.ScenarioTestMember, error)
+		ScenarioTestAppByWorkload(context.Context, string, string, string) (state.App, error)
+	})
+	if !ok {
+		return false, nil
+	}
+	member, err := namespaces.ScenarioTestMemberByApp(ctx, caller.ID)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("load caller namespace: %w", err)
+	}
+	target, err := namespaces.ScenarioTestAppByWorkload(ctx, member.AccountID, member.RunID, service)
+	if errors.Is(err, state.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("resolve namespace service alias: %w", err)
+	}
+	return target.ID != "" && target.AccountID == caller.AccountID, nil
+}
+
 // projectAliasAllowed answers the alias for any service of the caller's own
 // project under the project policy (ADR-20261022160248), which the proxy
-// already admits without a declaration. Scenario-test members keep the binding
-// inventory. A PR preview names its project's production members; the
+// already admits without a declaration. Members of a developer or test
+// namespace use namespaceAliasAllowed instead. A PR preview names its
+// project's production members; the
 // resolver then routes to its own PR's sibling or the permitted fallback.
 func projectAliasAllowed(ctx context.Context, store any, caller state.App, service string) (bool, error) {
 	if caller.Manifest.EffectiveServiceBindingPolicy() != api.ServiceBindingPolicyProject || caller.ProjectID == "" ||

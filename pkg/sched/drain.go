@@ -338,9 +338,12 @@ func (d *Drain) Tick(ctx context.Context) {
 	// cap — stay pending with an unchanged due_at. Re-listing from the head
 	// returned the same full page forever: the tick spun on the database
 	// and every row behind that page, for every other tenant, starved.
+	// The walk is bounded (maxDuePagesPerTick), so it also lists only apps
+	// this node may claim: otherwise more than a walk's worth of other
+	// nodes' rows at the head hid this node's own work for good.
 	pager, paged := d.store.(dueInvocationPager)
 	now := d.now()
-	var after state.InvocationDueCursor
+	after := state.InvocationDueCursor{OwnerNodeID: d.engine.claimNodeID()}
 	var prevPage string
 	for page := 0; ; page++ {
 		var (
@@ -422,7 +425,7 @@ func (d *Drain) Tick(ctx context.Context) {
 				return
 			}
 			last := rows[len(rows)-1]
-			after = state.InvocationDueCursor{DueAt: last.DueAt, ID: last.ID}
+			after = state.InvocationDueCursor{DueAt: last.DueAt, ID: last.ID, OwnerNodeID: after.OwnerNodeID}
 		}
 	}
 }

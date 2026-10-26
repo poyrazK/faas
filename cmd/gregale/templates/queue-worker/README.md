@@ -29,7 +29,7 @@ The handler receives the parsed JSON payload as `event.body` (or a raw JSON
 string) and returns `202` after
 accepting it. Keep the business operation idempotent because retries and
 redelivery are normal queue behavior. Exhausted messages are visible with
-`gregale dlq orders-worker` and can be replayed after the underlying error is
+`gregale dlq list orders-worker` and can be replayed after the underlying error is
 fixed.
 
 ## Verify handler completion before release

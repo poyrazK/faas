@@ -641,6 +641,7 @@ type publishedEventIdentity struct {
 	AppID            string          `json:"appid,omitempty"`
 	PlatformTenantID string          `json:"platformtenantid,omitempty"`
 	TenantEventID    string          `json:"tenanteventid,omitempty"`
+	Producer         string          `json:"producer,omitempty"`
 }
 
 // appendEventFanoutAttemptLocked mirrors the durable attempt-history insert.
@@ -728,6 +729,10 @@ func (m *MemStore) enqueuePublishedEventLocked(subject *uuid.UUID, payload []byt
 		recipients = append(recipients, m.tenantWorkflowEventRecipientsLocked(subject.String(), event.AppID, event.PlatformTenantID, event.Source, event.Type)...)
 	} else {
 		recipients = append(recipients, m.workflowEventRecipientsLocked(subject.String(), event.Source, event.Type)...)
+		var err error
+		if recipients, err = m.recipientsInProducerReachLocked(subject.String(), event.Producer, recipients); err != nil {
+			return false, err
+		}
 	}
 	// ADR-20261021210000: an app enrolled in a rehearsal never receives the
 	// account's events, mirroring enqueue_event_fanout.

@@ -341,8 +341,11 @@ func cmdDev(args []string) int {
 		PrintUsage(osStderr, devUsage, "dev")
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(osStderr, devUsage, "dev")
+	if dir, ok := sourceDirPositional(fs); ok {
+		return printErr("Invalid arguments", fmt.Errorf(
+			"gregale dev takes the source directory with --path. Did you mean `gregale dev --path %s`?", dir))
+	}
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	explicitFlags := flagSetWasSet(fs)
@@ -496,6 +499,12 @@ func cmdDev(args []string) int {
 	if err != nil {
 		return printErr("Could not identify developer workspace", err)
 	}
+	// A `dev --all` child lives in its group's workspace and joins the group's
+	// namespace once its environment exists (ADR-20261025121530).
+	group := devGroupWorkspace()
+	if group != "" {
+		workspaceID = group
+	}
 
 	client, err := authedClient()
 	if err != nil {
@@ -540,6 +549,14 @@ func cmdDev(args []string) int {
 	session, err := upsertDevSession(client, project, config.sessionRequest(workspaceID, *withPostgres, *postgresRegion, lease, devWatch, buckets...))
 	if err != nil {
 		return printErr("Could not create developer environment", err)
+	}
+	if group != "" {
+		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		err := joinDevGroup(ctx, client, group, project, session.App.Slug, osStderr)
+		cancel()
+		if err != nil {
+			return printErr("Could not connect to the other developer environments", err)
+		}
 	}
 	defer renderDevSessionExit(sourceDir, project, session.App.Slug, lease)
 	if code := applyDevDebugSetting(client, session.App.Slug, *debug); code != 0 {

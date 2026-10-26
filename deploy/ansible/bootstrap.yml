@@ -243,6 +243,9 @@
     - role: gcp_ops_agent
     - role: internal_pki_renewal
     - role: canary_artifact_retention
+    # ADR-20261023124955 §5: alerts on the public serving path without the
+    # control plane. Removes its timer while no probe URL is configured.
+    - role: serving_probe
     # Compute-only:
     # ADR 20261022111812: stage the runtime seal-domain identity before
     # vmmd_service so a vmmd (re)start in this run loads it.

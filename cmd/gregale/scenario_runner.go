@@ -419,8 +419,7 @@ func cmdTestWithChaos(args []string, chaosOverride *testChaosSpec) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if rejectUnexpectedFlagArgs(fs) || fs.NArg() != 0 {
-		PrintUsage(osStderr, "usage: gregale test [--validate|--preflight] [--scenario NAME|--suite NAME] [--fail-fast] [--engine real-vm|local|simulated] [--base-url URL] [--data PATH] [--load [--vus N] [--iterations N|--duration D [--rate N]] [--pacing D] [--progress] [--baseline PATH]] [--recovery-baseline PATH] [--sweep-baseline PATH] [--profile warm|cold|restored|all] [--repeat N] [--max-workload-minutes N] [--manifest PATH] [--report PATH] [--junit PATH] [--html PATH]", "test")
+	if rejectUnexpectedFlagArgs(fs) {
 		return 1
 	}
 	if err := validateDistinctTestReportPaths(*reportPath, *junitPath, *htmlPath); err != nil {

@@ -40,6 +40,7 @@ type VMRequest struct {
 	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLs       map[string]string
 	DockerfileBuild       *api.DockerfileBuildOptions // Compose build.args/target (ADR-20261019142544)
+	GoCommand             string                      // cmd/<name> a Go module build compiles (ADR-20261025134512)
 	// BuildSecrets is the ciphertext of the app secrets the build mounts
 	// (ADR-20261022185329); vmmd opens it into the builder VM.
 	BuildSecrets    []SealedBuildSecret
@@ -120,6 +121,7 @@ type BuildOutcome struct {
 	BuildDependencyDigest string `json:"build_dependency_digest,omitempty"`
 	PublicBuildURLsSHA256 string
 	DockerfileBuildSHA256 string
+	GoCommand             string // the Go command the guest built; empty from older guests
 	BuildID               string // echoes handle.BuildID
 	InstanceID            string // echoes handle.Instance
 	// ExportDir is the node-local handoff directory. imaged leases image.tar
