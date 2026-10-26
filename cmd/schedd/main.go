@@ -619,9 +619,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return err
 	}
-	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Control, len(controlIdentities) > 0)
+	// One gauge, one series per domain: registering it per domain would
+	// collide on the same registry.
+	sealdomain.RegisterLoadedDomains(ops.Registry(), map[sealdomain.Domain]bool{
+		sealdomain.Control:  len(controlIdentities) > 0,
+		sealdomain.Delivery: len(deliveryIdentities) > 0,
+	})
 	log.Info("control seal domain", "domain_identity", len(controlIdentities) > 0)
-	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Delivery, len(deliveryIdentities) > 0)
 	log.Info("delivery seal domain", "domain_identity", len(deliveryIdentities) > 0)
 	// ADR-190 follow-up: export this pool's live statistics so the
 	// DaemonMaxConnections cap above is measurable rather than arithmetic.
