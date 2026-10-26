@@ -10,7 +10,11 @@ platform after one confirmation keypress. No per-language parser, no manifest
 the customer has to author.
 
 **Non-goal:** storage. Datastores found during the scan are reported as
-managed-service requirements, never provisioned (ADR-047, `docs/storage.md`).
+managed-service requirements, never run as apps (ADR-047, `docs/storage.md`).
+The one exception is a Compose `postgres` service on an account with managed
+PostgreSQL: a reviewed apply creates or reuses the managed database
+`<project>-<service>` and binds it to the services that use it, never
+replacing a key already configured (ADR-20261025111824).
 
 ---
 

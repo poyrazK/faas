@@ -835,6 +835,25 @@ func TestPrintProjectTenantPolicy(t *testing.T) {
 	}
 }
 
+// ADR-20261025111824: the plan names the database a Compose postgres service
+// becomes, its PostgreSQL major and the keys it binds, and says why another
+// datastore is not provided.
+func TestPrintProvidedManagedPostgres(t *testing.T) {
+	var out bytes.Buffer
+	plan := api.PlanResponse{CanApply: true, Managed: []api.PlanManaged{
+		{Name: "db", Kind: "postgres", EnvHint: "DATABASE_URL", Image: "postgres:17", Provision: &api.PlanManagedProvision{
+			Database: "shop-db", PostgresMajor: 17, Bindings: []api.PlanManagedBinding{{Workload: "api", EnvKey: "DATABASE_URL"}},
+		}},
+		{Name: "cache", Kind: "redis", EnvHint: "REDIS_URL", Image: "redis:7"},
+	}}
+	main.PrintPlanText(&out, plan, nil, false)
+	for _, want := range []string{"creates shop-db (PostgreSQL 17), bound to api.DATABASE_URL", "cache [redis]"} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("plan missing %q:\n%s", want, out.String())
+		}
+	}
+}
+
 // TestCmdDeployTarball_ProjectScopeFlagsRouteToPlanner pins the implicit
 // project mode for each scope-only control. These flags must never fall
 // through to a single-app deployment where they would be silently ignored.
