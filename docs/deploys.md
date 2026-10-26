@@ -410,6 +410,25 @@ can't be given traffic by hand either; start it with
 `gregale scheduled-releases set <release> --at now`, which rolls it out
 through a canary that waits for approval.
 
+Production means the `default` scope and a project's `production`
+environment, as for freezes. Releases that have no canary to wait in are
+refused the same way:
+- `gregale deploys retry` of a release that had no canary;
+- a project apply that would release the app;
+- a promotion into a `production` environment that is not protected.
+
+Protect the environment (`gregale projects environments protect <project>
+production`) and its promotion approval stands in for the app's policy.
+A GitOps source releases into `production` only once a person approved the
+revision in Gregale (approval policy `manual`); with `protected_branch` the
+sync waits until you remove the app's policy or switch the source to manual
+approval.
+
+The app's **Release safety** page in the dashboard
+(`/dashboard/apps/<app>/release-safety`) shows the policy and the releases
+waiting for approval, next to the app's freezes, gates and scheduled
+releases.
+
 ## Deploy freezes
 
 A freeze stops new production releases of one app, or of every app in the
@@ -434,7 +453,13 @@ with `release_frozen`, which names the freeze, its reason and its creator:
 - `gregale deploy` and the deployment API;
 - GitHub push deploys;
 - `gregale deploy --project`;
-- promotions into `production`.
+- promotions into `production`;
+- `gregale deploys retry` and the dashboard's retry button. A retry can't
+  carry an override; deploy again with `--override-freeze` instead.
+
+A GitOps source managing the `production` environment keeps its sync
+unconverged while a freeze covers one of its apps, and activates the new
+revision once the freeze ends.
 
 A freeze covers the `default` deployment scope and the `production`
 environment.

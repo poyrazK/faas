@@ -7,6 +7,70 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Release guards — 2026-10-26
+
+Production releases can be held back by:
+
+- deploy freezes and release windows
+  ([ADR-20261019071733](adr/20261019071733-deploy-freezes-and-release-windows.md)),
+  shipped in #5034;
+- release gates on customer signals
+  ([ADR-20261019071734](adr/20261019071734-release-gates-on-customer-signals.md)),
+  shipped in #5034;
+- release approvals ([ADR-20261020085706](adr/20261020085706-release-approvals.md)),
+  shipped in #5126 with the release diff
+  ([ADR-20261021101117](adr/20261021101117-release-diff.md));
+- scheduled releases ([ADR-20261021152201](adr/20261021152201-scheduled-releases.md)),
+  shipped in #5126.
+
+Database-restoring rollbacks
+([ADR-20261023181931](adr/20261023181931-rollbacks-that-restore-the-database.md))
+shipped in #5305 behind the preview `postgres-restore` flag. All of these are
+preview capabilities except rollback (GA).
+
+Evidence: an n2 metal drill on 2026-10-26
+(`cmd/e2e/release_guards_drill_metal_test.go`, branch
+`test/release-guards-drill`) covered:
+
+- a freeze refusing a release;
+- a canary gate abort in 18 s;
+- a post-release gate rollback in 85 s, followed by the after-rollback freeze;
+- a scheduled start, and a schedule blocked by a freeze;
+- an approval hold at 50%, self-approval refused, admin approval and rejection, with email notices.
+
+Leakcheck was clean. The drill ran on a pre-ADR-570 base. On current main,
+full-stack deploys on n2 fail ADR-570's `policy_unavailable` until the open
+gateway snapshot fix lands.
+
+A release-tooling audit on 2026-10-26 closed these gaps (amendment 1 of the
+freeze and approval ADRs):
+
+- **Retries.** Retries meet freezes and the approval canary rule.
+- **GitOps activation.** Activation into `production` holds for a freeze, and
+  for an app that requires approvals unless the revision was approved in
+  Gregale.
+- **Promotions.** Promotions into an unprotected production environment refuse
+  apps that require approvals.
+- **Project applies.** Project applies refuse such apps too.
+- **Production environment.** A project's `production` environment counts as
+  production for approvals.
+- **Runtime upgrades.** Runtime upgrade staging refuses frozen apps.
+- **`restore_databases`.** It is hidden while `postgres-restore` is off.
+- **Metrics.** The guards export `faas_release_*` metrics
+  (`pkg/releasemetrics`).
+- **Alerts.** Six `release_guards` alerts, with promtool fixtures and the
+  runbook `FaasReleaseGuards.md`.
+- **Dashboard.** `/dashboard/apps/{slug}/release-safety` shows freezes, gates,
+  approvals and schedules.
+
+Still open:
+
+- slo/custom-metric gates, real Slack/Resend delivery and the approval timeout
+  have not been drilled on metal;
+- no database switch has been drilled with a real provider restore;
+- runtime-upgrade cutover must also hold for freezes before customer admission
+  ships.
+
 ## Routes at public scale — 2026-10-24
 
 [ADR-20261024154324](adr/20261024154324-route-subsystems-at-public-scale.md)

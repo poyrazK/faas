@@ -1,6 +1,7 @@
 package approval
 
 import (
+	"context"
 	"testing"
 	"time"
 
@@ -50,6 +51,9 @@ func TestGated(t *testing.T) {
 		{name: "completed a rollout", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.RolloutCompletedAt = &completed }},
 		{name: "serving release", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.TrafficPercent = 100 }},
 		{name: "named scope", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "staging" }},
+		// adr: 20261020085706 amendment 1 — a project's production environment
+		// is production, as it is for freezes.
+		{name: "production environment", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.Scope = "production" }, want: true},
 		{name: "dark candidate", policy: testPolicy(), app: app, edit: func(d *state.Deployment) { d.TrafficPercent = 0; d.CanaryTotalSteps = 0 }, want: true},
 		{name: "worker app", policy: testPolicy(), app: state.App{ID: "app", Manifest: state.AppManifest{ExecutionMode: api.ExecutionModeWorker}}},
 	} {
@@ -190,6 +194,58 @@ func TestParkedNeedsCanary(t *testing.T) {
 	for name, d := range map[string]state.Deployment{"serving": serving, "named scope": staging, "a release demoted to 0%": demoted} {
 		if ParkedNeedsCanary(testPolicy(), app, d) {
 			t.Fatalf("%s needs no canary", name)
+		}
+	}
+	production := parked
+	production.Scope = "production"
+	if !ParkedNeedsCanary(testPolicy(), app, production) {
+		t.Fatal("a parked release in the production environment needs a canary")
+	}
+}
+
+type fakeReleaseReader struct {
+	policy bool
+	live   map[string]bool
+}
+
+func (f fakeReleaseReader) ReleaseApprovalPolicy(context.Context, string) (state.ReleaseApprovalPolicy, error) {
+	if !f.policy {
+		return state.ReleaseApprovalPolicy{}, state.ErrNotFound
+	}
+	return *testPolicy(), nil
+}
+
+func (f fakeReleaseReader) LiveDeploymentForScope(_ context.Context, _ string, scope string) (state.Deployment, error) {
+	if !f.live[scope] {
+		return state.Deployment{}, state.ErrNotFound
+	}
+	return state.Deployment{Scope: scope}, nil
+}
+
+// adr: 20261020085706 amendment 1 — a deploy into a project's production
+// environment needs a canary like a default-scope one; other environments,
+// and the first release in a scope, do not.
+func TestCanaryRequired(t *testing.T) {
+	app := state.App{ID: "app", Slug: "shop"}
+	both := fakeReleaseReader{policy: true, live: map[string]bool{api.DefaultEnvScope: true, "production": true, "staging": true}}
+	for _, tc := range []struct {
+		name               string
+		store              fakeReleaseReader
+		scope, environment string
+		want               bool
+	}{
+		{name: "default scope", store: both, want: true},
+		{name: "explicit default scope", store: both, scope: api.DefaultEnvScope, want: true},
+		{name: "production environment", store: both, environment: "production", want: true},
+		{name: "resolved production scope", store: both, scope: "production", environment: "production", want: true},
+		{name: "staging environment", store: both, environment: "staging"},
+		{name: "named scope", store: both, scope: "staging"},
+		{name: "no policy", store: fakeReleaseReader{live: both.live}, environment: "production"},
+		{name: "first production release", store: fakeReleaseReader{policy: true, live: map[string]bool{api.DefaultEnvScope: true}}, environment: "production"},
+	} {
+		got, err := CanaryRequired(context.Background(), tc.store, app, tc.scope, tc.environment)
+		if err != nil || got != tc.want {
+			t.Fatalf("%s: CanaryRequired = %v, %v; want %v", tc.name, got, err, tc.want)
 		}
 	}
 }

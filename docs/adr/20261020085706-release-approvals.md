@@ -1,6 +1,6 @@
 # ADR-20261020085706 · Release approvals
 
-- **Status:** proposed
+- **Status:** accepted (shipped in PR 5126, 2026-10-22); n2 metal drill passed 2026-10-26 (hold, self-approval refusal, approve, reject, notices); amendment 1 (2026-10-26)
 - **Date:** 2026-10-20
 - **Amends:** [ADR-1446](1446-safe-releases-by-default.md) (the default canary), [ADR-1447](1447-explained-rollout-decisions.md) (rollout decision rules)
 - **Uses:** organization roles ([ADR-061](061-organizations-and-memberships.md)), deploy attribution (`deployments.deployed_by_user_id`), release freezes ([ADR-20261019071733](20261019071733-deploy-freezes-and-release-windows.md))
@@ -157,3 +157,14 @@ Ship the tables, routes, CLI and enforcement together. The feature is off for ev
 - rejection and timeout aborts;
 - release-time refusal of releases without a canary;
 - the store conformance cases.
+
+## Amendment 1 (2026-10-26): production environments and the paths without a canary
+
+The Scope section left named environment scopes and project environments out. But a project's `production` environment is production: freezes already cover it. An app with a policy could therefore be released there without any approval. This amendment replaces that sentence:
+
+- **Production scopes.** Approvals cover the scopes freezes treat as production: `default` and a project's `production` environment (scope `production`). Other named scopes and environments stay uncovered. `approval.Gated`, `ParkedNeedsCanary` and `CanaryRequired` use `freeze.IsProductionScope`. A deploy into the production environment needs a canary when the app requires approvals, and its canary waits like a default-scope one. The first release in a scope still never waits.
+- **Promotions.** A promotion into an unprotected production environment releases every app at once, with no canary to wait in. When one of its apps requires approvals, it is refused with `409 release_approval_canary_required`; the hint says to protect the environment or remove the policy. Promotion approvals of a protected environment stand in for the app's policy. They are approved before the change is applied, which the original decision rejected for app releases, but a promotion has no running candidate to attach a decision to.
+- **Project applies.** A project apply (`POST /v1/projects/scan`, `apply-plan` and `safe-deploy`, atomic or not) releases each app without a canary. It now refuses, per app, an app that requires approvals, like `--rollout immediate`.
+- **Retries.** A retry of a release with no canary is refused while the app requires approvals, as a deploy would be. A retry keeps the failed release's canary.
+- **GitOps activation.** Activating a graph in the production environment is held for a member app that requires approvals. The exception is a source with `approval_policy: manual`, where a person approved the revision in Gregale. A `protected_branch` revision was approved outside Gregale, and activation has no canary, so it waits until the policy is removed or the source switches to manual approval.
+- **Metrics.** `faas_release_guard_decisions_total{guard="approval"}` counts holds, approvals, rejections, timeouts and canary-required refusals. `{guard="approval_notice"}` counts meterd's deliveries, and dropped notices alert (`FaasReleaseApprovalNoticeDropped`).

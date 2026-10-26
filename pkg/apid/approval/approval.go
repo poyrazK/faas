@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/alertchannels"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -20,11 +21,13 @@ import (
 // completed a rollout and the app's serving release never wait, so a
 // rollback never does. A scheduled release starts its rollout when its time
 // comes (ADR-20261021152201), so a policy set while it waited gates it.
+// Production releases are the ones freezes cover: the default scope and a
+// project's production environment (amendment 1).
 func Gated(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment) bool {
 	if policy == nil || !RequestMode(app) {
 		return false
 	}
-	if d.Scope != "" && d.Scope != api.DefaultEnvScope {
+	if !freeze.IsProductionScope(d.Scope) {
 		return false
 	}
 	if startedBefore(d, policy.CreatedAt) || d.RolloutCompletedAt != nil {
@@ -44,7 +47,7 @@ func startedBefore(d state.Deployment, t time.Time) bool {
 // without traffic can only start through a schedule, whose canary can wait
 // (ADR-20261021152201).
 func ParkedNeedsCanary(policy *state.ReleaseApprovalPolicy, app state.App, d state.Deployment) bool {
-	if policy == nil || !RequestMode(app) || (d.Scope != "" && d.Scope != api.DefaultEnvScope) {
+	if policy == nil || !RequestMode(app) || !freeze.IsProductionScope(d.Scope) {
 		return false
 	}
 	return d.Status == state.DeployLive && d.TrafficPercent == 0 && d.TrafficPercentExplicit && d.CanaryTotalSteps == 0
@@ -222,11 +225,18 @@ type releaseReader interface {
 
 // CanaryRequired reports whether a production release of app must roll out
 // through a canary because the app requires approvals. The app's first
-// release, named environments, other scopes and non-request apps never need
-// one. Stores without approvals need none.
+// release in the scope, other scopes and non-request apps never need one.
+// A project environment's deploy resolves to its scope; environment is used
+// only when scope is still empty. Stores without approvals need none.
 func CanaryRequired(ctx context.Context, store any, app state.App, scope, environment string) (bool, error) {
-	if environment != "" || (scope != "" && scope != api.DefaultEnvScope) || !RequestMode(app) {
+	if scope == "" {
+		scope = environment
+	}
+	if !freeze.IsProductionScope(scope) || !RequestMode(app) {
 		return false, nil
+	}
+	if scope == "" {
+		scope = api.DefaultEnvScope
 	}
 	reader, ok := store.(releaseReader)
 	if !ok {
@@ -238,7 +248,7 @@ func CanaryRequired(ctx context.Context, store any, app state.App, scope, enviro
 		}
 		return false, fmt.Errorf("read release approval policy: %w", err)
 	}
-	if _, err := reader.LiveDeploymentForScope(ctx, app.ID, api.DefaultEnvScope); err != nil {
+	if _, err := reader.LiveDeploymentForScope(ctx, app.ID, scope); err != nil {
 		if errors.Is(err, state.ErrNotFound) {
 			return false, nil
 		}
