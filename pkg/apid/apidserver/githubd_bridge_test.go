@@ -267,7 +267,8 @@ func stageFixtureFile(t *testing.T, rootDir, subpath string, body []byte) (strin
 func TestEnqueueBuild_RefusesStatefulSource(t *testing.T) {
 	store := &bridgeStubStore{app: state.App{ID: "app-1", AccountID: "acct-1", Status: state.AppActive}}
 	bridge := newBridge(t, store, &bridgeStubNotifier{})
-	path, size := stageFixtureFile(t, bridge.stagingRoot, "acct-1/app-1/abc123", []byte("x"))
+	// Stage the fixture for its path and scan spool, then replace its bytes.
+	path, _ := stageFixtureFile(t, bridge.stagingRoot, "acct-1/app-1/abc123", []byte("x"))
 	var archive bytes.Buffer
 	gz := gzip.NewWriter(&archive)
 	tw := tar.NewWriter(gz)
@@ -288,7 +289,7 @@ func TestEnqueueBuild_RefusesStatefulSource(t *testing.T) {
 	if err := os.WriteFile(path, archive.Bytes(), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	size = int64(archive.Len())
+	size := int64(archive.Len())
 	_, err := bridge.EnqueueBuild(t.Context(), &githubdpb.EnqueueBuildRequest{
 		AccountId: "acct-1", AppId: "app-1", CommitSha: "abc123", SourcePath: path,
 		SourceUrl: "https://codeload.example.com/repo/tar.gz/abc123", SourceBytes: size,
