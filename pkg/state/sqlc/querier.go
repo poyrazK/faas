@@ -3302,6 +3302,11 @@ type Querier interface {
 	// fully covers the 14-day beta cohort window.
 	ListFirstSuccessfulRequestsForAccountsCreatedSince(ctx context.Context, db DBTX, createdAt pgtype.Timestamptz) ([]ListFirstSuccessfulRequestsForAccountsCreatedSinceRow, error)
 	ListFunctionMigrationSourceInstances(ctx context.Context, db DBTX, appID pgtype.UUID) ([]pgtype.UUID, error)
+	// Source spool retention (ADR-20261026120000). A deployment that can still
+	// build or image reads its source archive from the build spool and appends
+	// to its build log there. The spool sweeper never removes either while the
+	// deployment is in one of these states, whatever the file's age.
+	ListInFlightDeploymentSpoolPaths(ctx context.Context, db DBTX) ([]ListInFlightDeploymentSpoolPathsRow, error)
 	ListInstancesForApp(ctx context.Context, db DBTX, appID pgtype.UUID) ([]ListInstancesForAppRow, error)
 	ListInvoiceSnapshots(ctx context.Context, db DBTX, arg ListInvoiceSnapshotsParams) ([]ListInvoiceSnapshotsRow, error)
 	ListLatestDeploymentPerApp(ctx context.Context, db DBTX, accountID pgtype.UUID) ([]Deployment, error)
@@ -5519,6 +5524,11 @@ type Querier interface {
 	// status IN ('committed', 'cancelled', 'expired') — leaving
 	// as a follow-up ADR rather than conflated into PR-1's
 	// migration slot 533.
+	//
+	// ADR-20261026120000: on a single-box install the committed .part IS the
+	// build source, so it is kept while its deployment is in flight (a build
+	// may queue for hours) and for the 24h source-retention window that
+	// `deploys retry` relies on. Cancelled and expired parts keep the 1h grace.
 	ReapStaleUploadPartFiles(ctx context.Context, db DBTX) ([]ReapStaleUploadPartFilesRow, error)
 	// Preserve tenant cadence, version and admission priority, but invalidate the
 	// evaluated deployment so publish/pause/resume cannot replay the paused interval.

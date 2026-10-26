@@ -1725,7 +1725,7 @@ const (
 	// fires in three cases:
 	//   - apid at deploy-accept time when a Dockerfile contains a
 	//     VOLUME instruction, a mkfs/mount -t ext4|xfs call inside a
-	//     RUN, or a top-level data/ or db/ directory (cmd/apid/deploy_inputs.go).
+	//     RUN, or a database file under a top-level data/ or db/ directory (pkg/statelessshape).
 	//   - imaged at build time when the resolved OCI base image matches
 	//     StatefulBaseImageDenylist (pkg/imaged/base.go).
 	//   - guest-init at runtime (advisory only, never blocking — see
@@ -3211,7 +3211,7 @@ func ErrDevSourceBaseMissing() *Problem {
 
 // ErrStatelessOnlyViolation is returned when a deploy shape (or resolved
 // base image) requires persistent state — VOLUME in Dockerfile, mkfs/mount
-// of a block device, a top-level data/ or db/ directory in the tarball, or
+// of a block device, a database file under a top-level data/ or db/ directory, or
 // a base image like postgres:16 / redis:7 / mysql:8 — and the platform is
 // stateless-only in year one.
 //

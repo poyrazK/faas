@@ -87,6 +87,14 @@ func scanValidatorBundle(path string, data []byte) (findings []Finding, ok bool)
 	return append(scanFileLines(path, rest), out...), true
 }
 
+// AllowSecretMarker, anywhere on a line, tells the scanner the value on that
+// line is deliberately committed (a test fixture, a documented example key).
+// It is the explicit, reviewable escape hatch for source files; the line is
+// still uploaded unchanged (ADR-20261026120000).
+const AllowSecretMarker = "gregale:allow-secret"
+
+var allowSecretMarker = []byte(AllowSecretMarker)
+
 func scanFileLines(path string, data []byte) []Finding {
 	var out []Finding
 	inPEMBlock := false
@@ -112,7 +120,9 @@ func scanFileLines(path string, data []byte) []Finding {
 		if pemArmorLine(line, "-----END ") {
 			inPEMBlock = false
 		}
-		out = scanOneLine(path, lineNo, line, out, inPEMBlock, dependencyLock)
+		if !bytes.Contains(line, allowSecretMarker) {
+			out = scanOneLine(path, lineNo, line, out, inPEMBlock, dependencyLock)
+		}
 		if len(data) == 0 {
 			return out
 		}

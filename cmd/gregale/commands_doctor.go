@@ -52,8 +52,22 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/frameworkprofile"
 	"github.com/onebox-faas/faas/pkg/oci"
+	"github.com/onebox-faas/faas/pkg/statelessshape"
 	"github.com/onebox-faas/faas/pkg/whycopy"
 )
+
+// readFileHeader returns up to n leading bytes of a customer file, or nil
+// when it cannot be read; callers treat nil as "no signature".
+func readFileHeader(path string, n int) []byte {
+	f, err := openCustomerFile(path)
+	if err != nil {
+		return nil
+	}
+	defer func() { _ = f.Close() }()
+	buf := make([]byte, n)
+	read, _ := io.ReadFull(f, buf)
+	return buf[:read]
+}
 
 // doctorCheck is the result of one customer-doctor check. The
 // shape mirrors commands_inspect.go's per-leaf Finding so a future
@@ -898,10 +912,10 @@ func isDeclaredEnvKey(k string) bool {
 	return true
 }
 
-// scanStatelessShape scans for Dockerfile VOLUME lines, data/ or
-// db/ top-level dirs, and stateful base-image references. The
-// base-image list is a curated 6-entry set; full image
-// classification is a build-VM concern.
+// scanStatelessShape scans for Dockerfile VOLUME lines and for database
+// files under a top-level data/ or db/ directory, the same rule apid
+// applies at accept time (pkg/statelessshape). Migrations and other
+// source in those directories are fine.
 func scanStatelessShape(path string) []string {
 	out := []string{}
 	_ = filepath.Walk(path, func(p string, info os.FileInfo, err error) error {
@@ -912,14 +926,14 @@ func scanStatelessShape(path string) []string {
 			return err
 		}
 		if info.IsDir() {
-			name := info.Name()
-			if name == "data" || name == "db" || name == "var" {
-				// Only top-level dirs (parent == path).
-				if filepath.Dir(p) == path {
-					out = append(out, p)
-				}
-			}
 			return nil
+		}
+		if rel, relErr := filepath.Rel(path, p); relErr == nil && info.Mode().IsRegular() {
+			rel = filepath.ToSlash(rel)
+			if statelessshape.StateDirOf(rel) != "" && statelessshape.DatabaseFile(rel, readFileHeader(p, statelessshape.HeaderBytes)) {
+				out = append(out, p)
+				return nil
+			}
 		}
 		if filepath.Base(p) == "Dockerfile" {
 			//nolint:forbidigo // filepath.Walk has already resolved p; Dockerfile contents are read-only line-by-line to detect VOLUME directives. Same security discipline as openCustomerFile: no follow on symlinks, no exec.
