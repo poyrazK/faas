@@ -1129,6 +1129,7 @@ Decision:
   unexpired rules covering the host plus the app's `@app` rules, in
   evaluation order, using the new `edge_rules_account_enabled_idx`
   (migration `20261026095955220`). Without an owner it reads as before.
+  An alias name of the host (ADR-20261026100000) is read the same way.
   Behaviour is unchanged, because the appliers applied only the owner's
   rules already.
 2. **Invalidation is per account.** A cached set records the account it was
