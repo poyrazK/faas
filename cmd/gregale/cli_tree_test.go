@@ -56,7 +56,7 @@ func TestCliTreePathsFollowNamingRules(t *testing.T) {
 	enableEveryCLIFeature(t)
 	nouns := map[string]bool{}
 	for _, noun := range *main.CliTreeNouns {
-		if strings.HasSuffix(noun.Name, "s") {
+		if strings.HasSuffix(noun.Name, "s") && noun.Name != "postgres" {
 			t.Errorf("noun %q must be singular", noun.Name)
 		}
 		nouns[noun.Name] = true
