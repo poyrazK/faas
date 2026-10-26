@@ -111,7 +111,7 @@ func loadClusterInternalSvcKey(
 		return nil, "", fmt.Errorf("%w: %w", ErrClusterKeyUnavailable, ErrClusterKeyUnsealable)
 	}
 	legacy, legacyErr := secretbox.LoadFleetAndHostKeys(scheddHostAgeKeyDir())
-	identities := controlReaders(control, legacy)
+	identities := domainReaders(control, legacy)
 	if len(identities) == 0 {
 		// A populated cluster-key row without a usable identity is unsafe:
 		// fail closed instead of minting with a host-local key.
