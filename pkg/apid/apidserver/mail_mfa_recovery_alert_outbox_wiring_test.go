@@ -20,6 +20,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 func mfaAlertRecoverPost(t *testing.T, handler http.Handler, manager *session.Manager, accountID, cookie, code string, csrf bool) *httptest.ResponseRecorder {
@@ -154,14 +155,14 @@ func TestMFARecoveryAlertOutboxPublicFlowAndFailureBoundaries(t *testing.T) {
 			}
 			if response.Code == http.StatusOK {
 				var recovered bool
-				for _, c := range response.Result().Cookies() {
-					if c.Name == "faas_sid" {
-						envelope, err := manager.Verify(c.Value)
-						if err != nil || envelope.MfaPending || envelope.Sid != sid || envelope.AccountID != accountID || !envelope.StepUpAt.IsZero() {
-							t.Fatal("recovery changed existing MFA session rules", err)
-						}
-						recovered = true
+				// A secure session cookie is __Host-faas_sid, written beside
+				// an expired faas_sid (ADR-20261026112500).
+				if c, ok := sessioncookie.FromResponse(response.Result()); ok && c.Value != "" {
+					envelope, err := manager.Verify(c.Value)
+					if err != nil || envelope.MfaPending || envelope.Sid != sid || envelope.AccountID != accountID || !envelope.StepUpAt.IsZero() {
+						t.Fatal("recovery changed existing MFA session rules", err)
 					}
+					recovered = true
 				}
 				if !recovered {
 					t.Fatal("successful recovery did not reissue its session")

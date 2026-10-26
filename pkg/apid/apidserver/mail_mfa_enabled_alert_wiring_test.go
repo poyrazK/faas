@@ -22,6 +22,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/middleware"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/pquerna/otp/totp"
 )
 
@@ -172,14 +173,14 @@ CREATE TRIGGER revoke_enabled_alert_session AFTER INSERT ON platform_mail_produc
 			}
 			cookieCount := 0
 			fresh := ""
-			for _, c := range response.Result().Cookies() {
-				if c.Name == "faas_sid" {
-					cookieCount++
-					fresh = c.Value
-					envelope, err := manager.Verify(c.Value)
-					if err != nil || envelope.MfaPending || envelope.Sid != sid || envelope.AccountID != id || !envelope.StepUpAt.IsZero() {
-						t.Fatal("confirmation changed session proof rules", err)
-					}
+			// A secure session cookie is __Host-faas_sid, written beside an
+			// expired faas_sid (ADR-20261026112500); an empty value clears it.
+			if c, ok := sessioncookie.FromResponse(response.Result()); ok && c.Value != "" {
+				cookieCount++
+				fresh = c.Value
+				envelope, err := manager.Verify(c.Value)
+				if err != nil || envelope.MfaPending || envelope.Sid != sid || envelope.AccountID != id || !envelope.StepUpAt.IsZero() {
+					t.Fatal("confirmation changed session proof rules", err)
 				}
 			}
 			wantCookies := 0

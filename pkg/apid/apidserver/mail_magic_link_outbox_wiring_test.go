@@ -19,6 +19,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/mailoutbox"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -125,13 +126,10 @@ func TestMagicLinkOutboxPublicWiringUniformResponseAndRollback(t *testing.T) {
 			if verify.Code != http.StatusFound || verify.Header().Get("Location") != "/dashboard/" {
 				t.Fatal("issued sign-in link failed after flag rollback", verify.Code)
 			}
-			var cookie *http.Cookie
-			for _, c := range verify.Result().Cookies() {
-				if c.Name == "faas_sid" {
-					cookie = c
-				}
-			}
-			if cookie == nil || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode {
+			// A secure session cookie is __Host-faas_sid, written beside an
+			// expired faas_sid (ADR-20261026112500).
+			cookie, _ := sessioncookie.FromResponse(verify.Result())
+			if cookie == nil || cookie.Value == "" || !cookie.HttpOnly || cookie.SameSite != http.SameSiteLaxMode {
 				t.Fatal("sign-in lost the session cookie contract")
 			}
 			envelope, err := (*server.Sessions()).Verify(cookie.Value)
