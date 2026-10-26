@@ -71,6 +71,7 @@ type management struct {
 	mu               sync.Mutex
 	plans            map[string]*releasePlan
 	environmentPlans map[string]*environmentPlan
+	secretRequests   map[string]*secretRequest
 }
 
 // NewServer constructs a management server without making API calls.
@@ -142,7 +143,7 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	if opts.Lifecycle == nil {
 		opts.Lifecycle = NewLifecycle()
 	}
-	m := &management{grantLifecycle: NewLifecycle(), lifecycle: opts.Lifecycle, toolWrites: map[string]bool{}, toolNames: map[string]bool{}, admission: newRequestAdmission(opts.Telemetry), client: client, opts: opts, plans: make(map[string]*releasePlan), environmentPlans: make(map[string]*environmentPlan)}
+	m := &management{grantLifecycle: NewLifecycle(), lifecycle: opts.Lifecycle, toolWrites: map[string]bool{}, toolNames: map[string]bool{}, admission: newRequestAdmission(opts.Telemetry), client: client, opts: opts, plans: make(map[string]*releasePlan), environmentPlans: make(map[string]*environmentPlan), secretRequests: make(map[string]*secretRequest)}
 	if err := m.restorePlans(); err != nil {
 		return nil, nil, err
 	}
@@ -173,6 +174,8 @@ func newManagementServer(client *api.Client, opts Options) (*mcp.Server, *manage
 	registerResidencyDiagnostics(s, m)
 	registerReleases(s, m)
 	registerLocalReleases(s, m)
+	registerSecretEntry(s, m)
+	registerLocalProvisioning(s, m)
 	registerEnvironments(s, m)
 	registerContextCatalog(s, m)
 	registerLifecycle(s, m)
@@ -195,11 +198,16 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 	mcp.AddTool(s, &mcp.Tool{Name: name, Description: description, Annotations: &mcp.ToolAnnotations{ReadOnlyHint: readOnly, DestructiveHint: &destructive, IdempotentHint: !readOnly}},
 		func(ctx context.Context, req *mcp.CallToolRequest, args In) (*mcp.CallToolResult, any, error) {
 			timeout := m.opts.Timeout
-			if name == "gregale_apply_local_deploy" {
+			switch name {
+			case "gregale_apply_local_deploy":
 				timeout = localDeployTimeout // the source upload
+			case "gregale_apply_provision":
+				timeout = provisionTimeout // a database can take minutes
 			}
 			ctx, cancel := context.WithTimeout(ctx, timeout)
 			defer cancel()
+			// Tools that ask the user something (SEP-2322 input requests) read the call.
+			ctx = context.WithValue(ctx, toolRequestKey{}, req)
 			if err := m.authorizeToolArgs(ctx, args, !readOnly); err != nil {
 				return m.toolError(err), nil, nil
 			}
@@ -211,6 +219,9 @@ func registerTool[In any](s *mcp.Server, m *management, name, description string
 				}
 			}
 			output, err := handle(ctx, args)
+			if pending, ok := output.(*needsInput); ok && err == nil {
+				return &mcp.CallToolResult{InputRequests: pending.requests, RequestState: pending.state}, nil, nil
+			}
 			if !readOnly && m.opts.auditLogger != nil {
 				m.opts.auditLogger.InfoContext(ctx, "management MCP mutation", "event", "mcp.tool", "tool", name, "grant_id", m.opts.grantID, "account_id", m.opts.accountID, "succeeded", err == nil)
 			}
