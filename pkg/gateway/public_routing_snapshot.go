@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type PublicRoutingInputs struct {
@@ -122,6 +123,7 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 	if err == nil {
 		err = bounded.Err()
 	}
+	readErr := err != nil
 	if err == nil {
 		err = validatePublicRoutingSnapshot(source, app, inputs)
 	}
@@ -129,16 +131,19 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 		if handleForwardRequestCancellation(w, r, true) {
 			return true
 		}
+		recordTrafficPolicyStage(r.Context(), publicRoutingReadStage(err, readErr))
 		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
 	encoded, err := json.Marshal(source)
 	if err != nil {
+		recordTrafficPolicyStage(r.Context(), "routing_encode")
 		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
 	var frozen PublicRoutingSnapshot
 	if err := json.Unmarshal(encoded, &frozen); err != nil {
+		recordTrafficPolicyStage(r.Context(), "routing_encode")
 		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
@@ -156,6 +161,7 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 				"No deployment available", "The app has no routable deployment. Retry after a deployment is available."))
 			return true
 		}
+		recordTrafficPolicyStage(r.Context(), publicRoutingSelectionStage(frozen))
 		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
@@ -164,12 +170,41 @@ func (h *Handler) pinPublicRoutingPolicy(w http.ResponseWriter, r *http.Request,
 		Routing json.RawMessage
 	}{TrafficPolicyRevision(r.Context()), encoded})
 	if err != nil {
+		recordTrafficPolicyStage(r.Context(), "routing_encode")
 		h.writeTrafficPolicyUnavailable(w, r)
 		return true
 	}
 	ctx := context.WithValue(r.Context(), publicRoutingSnapshotKey{}, frozen)
 	*r = *r.WithContext(context.WithValue(ctx, effectiveTrafficPolicyKey{}, policyDigest(proof)))
 	return false
+}
+
+// publicRoutingReadStage classifies a refused routing read for the traffic
+// decision. readErr is false when the read succeeded and validation failed.
+func publicRoutingReadStage(err error, readErr bool) string {
+	switch {
+	case !readErr:
+		return "routing_snapshot_invalid"
+	case errors.Is(err, context.DeadlineExceeded):
+		return "routing_read_timeout"
+	case errors.Is(err, state.ErrNotFound):
+		return "routing_owner_unverified"
+	default:
+		return "routing_read_error"
+	}
+}
+
+// publicRoutingSelectionStage classifies a verified snapshot that selected
+// no deployment.
+func publicRoutingSelectionStage(snapshot PublicRoutingSnapshot) string {
+	switch {
+	case snapshot.HostChecked && !snapshot.HostAllowed:
+		return "routing_host_pin_denied"
+	case len(snapshot.Weights) == 0:
+		return "routing_empty_roster"
+	default:
+		return "routing_no_selection"
+	}
 }
 
 func validatePublicRoutingSnapshot(snapshot PublicRoutingSnapshot, app App, inputs PublicRoutingInputs) error {
