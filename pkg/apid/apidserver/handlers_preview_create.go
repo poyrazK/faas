@@ -177,8 +177,11 @@ func samePreview(app, parent state.App, prNumber int) bool {
 }
 
 func previewAppFromParent(parent state.App, slug string, prNumber int, expiresAt time.Time) state.App {
+	// A PR preview runs unpromoted code, and production env values can hold
+	// credentials (ADR-310): keep only the platform-owned service binding URLs,
+	// as the GitHub webhook path does.
 	manifest := parent.Manifest
-	manifest.Env = api.ServiceBindingEnvForTransport(parent.Manifest.Env, parent.Manifest.ServiceBindings, parent.Manifest.ServiceBindingTransport)
+	manifest.Env = api.ServiceBindingEnvForTransport(nil, parent.Manifest.ServiceBindings, parent.Manifest.ServiceBindingTransport)
 	return state.App{
 		AccountID: parent.AccountID, OrgID: parent.OrgID, Slug: slug, Visibility: parent.Visibility, Type: parent.Type,
 		Runtime: parent.Runtime, RAMMB: parent.RAMMB, CPUMillicores: parent.CPUMillicores,
