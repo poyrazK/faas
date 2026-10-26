@@ -73,6 +73,10 @@ type Worker struct {
 	InvalidateSnapshots func(ctx context.Context, appID string) error
 	// AppChanged tells the gateway and schedd that the app changed.
 	AppChanged func(ctx context.Context, appID string)
+	// Ownership scopes a step's managed PostgreSQL calls to the app's
+	// organization, as the request that started the switch was; nil leaves
+	// the account's own scope.
+	Ownership func(ctx context.Context, sw state.DatabaseSwitch) (context.Context, error)
 	// Observe records audit rows for a step; nil records nothing.
 	Observe func(ctx context.Context, sw state.DatabaseSwitch, event Event)
 	// Report feeds worker liveness metrics: true after each tick that could
@@ -81,6 +85,13 @@ type Worker struct {
 	Report func(ok bool, at time.Time)
 	Log    *slog.Logger
 	Now    func() time.Time
+}
+
+func (w *Worker) ownership(ctx context.Context, sw state.DatabaseSwitch) (context.Context, error) {
+	if w.Ownership == nil {
+		return ctx, nil
+	}
+	return w.Ownership(ctx, sw)
 }
 
 func (w *Worker) report(ok bool, at time.Time) {
@@ -140,7 +151,14 @@ func (w *Worker) Tick(ctx context.Context) {
 
 // Advance runs one step of a leased switch and saves the result.
 func (w *Worker) Advance(ctx context.Context, sw state.DatabaseSwitch) state.DatabaseSwitch {
-	next := w.step(ctx, sw)
+	var next state.DatabaseSwitch
+	stepCtx, err := w.ownership(ctx, sw)
+	if err != nil {
+		w.log().Warn("database switch: app ownership", "switch", sw.ID, "app", sw.AppID, "err", err)
+		next = w.retry(sw, errorCode(err))
+	} else {
+		next = w.step(stepCtx, sw)
+	}
 	if next.LastErrorCode != "" && next.AttemptCount > sw.AttemptCount {
 		w.report(false, w.now())
 	}
