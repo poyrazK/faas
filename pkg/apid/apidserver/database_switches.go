@@ -16,6 +16,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/release"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/safetext"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -53,6 +54,7 @@ func (s *server) databaseSwitchWorker() *databaseswitch.Worker {
 		},
 		AppChanged: func(ctx context.Context, appID string) { _ = s.notif.Notify(ctx, db.NotifyAppChanged, appID) },
 		Observe:    s.observeDatabaseSwitch,
+		Report:     s.reportDatabaseSwitchTick,
 		Log:        s.log,
 	}
 }
@@ -315,6 +317,19 @@ func (s *server) observeDatabaseSwitch(ctx context.Context, sw state.DatabaseSwi
 		"target_database_id": sw.TargetDatabaseID, "drain": sw.Drain,
 	})
 	s.appendDatabaseSwitchAudit(ctx, sw, string(event))
+	switch event {
+	case databaseswitch.EventCompleted, databaseswitch.EventCancelled, databaseswitch.EventAborting, databaseswitch.EventFailed:
+		s.releaseMetrics.Decision(releasemetrics.GuardDatabaseSwitch, string(event))
+	}
+}
+
+// reportDatabaseSwitchTick records the switch worker's liveness and retries.
+func (s *server) reportDatabaseSwitchTick(ok bool, at time.Time) {
+	if ok {
+		s.releaseMetrics.Pass(releasemetrics.WorkerDatabaseSwitches, at)
+		return
+	}
+	s.releaseMetrics.Error(releasemetrics.WorkerDatabaseSwitches)
 }
 
 func (s *server) appendDatabaseSwitchAudit(ctx context.Context, sw state.DatabaseSwitch, step string) {

@@ -4124,6 +4124,7 @@
         "app.version_affinity_managed_cookie"
       ],
       "routes": [
+        "/dashboard/apps/{}/release-safety",
         "/dashboard/apps/{}/rollouts",
         "/dashboard/releases",
         "/dashboard/safe-releases",

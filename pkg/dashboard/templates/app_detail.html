@@ -312,6 +312,7 @@
       {{if .Data.ProductControlURL}}<p><a href="{{.Data.ProductControlURL}}">Manage Product Control →</a></p>{{end}}
       {{if $.On "issues"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/errors">View grouped errors →</a></p>{{end}}
       {{if $.On "debug"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/debug">Open production debugger →</a></p>{{end}}
+      {{if $.On "progressive-rollouts"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/release-safety">Review release safety →</a></p>{{end}}
       <p><a href="/dashboard/apps/{{.Data.App.Slug}}/domains">Manage custom domains →</a></p>
       {{if $.On "instances"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/instances">Inspect instances →</a></p>{{end}}
       {{if $.On "edge-rules"}}<p><a href="/dashboard/apps/{{.Data.App.Slug}}/edge-rules">Manage edge rules →</a></p>{{end}}

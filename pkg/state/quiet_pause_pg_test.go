@@ -4,13 +4,18 @@ package state_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
 	"github.com/onebox-faas/faas/pkg/state"
+	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
 func TestPgQuietPauseLedger(t *testing.T) {
@@ -138,5 +143,77 @@ func TestPgDeleteQuietPausesBefore(t *testing.T) {
 	got, err := store.QuietPausedSeconds(ctx, recent.StartedAt, recent.EndedAt)
 	if err != nil || got[recent.InstanceID].Seconds != 1 {
 		t.Fatalf("recent pause after retention = %+v, %v; want 1 s", got, err)
+	}
+}
+
+// queryCapture runs queries on a connection and keeps the last one, so a
+// test can EXPLAIN exactly what a generated query sends.
+type queryCapture struct {
+	*pgxpool.Conn
+	sql  string
+	args []any
+}
+
+func (c *queryCapture) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	c.sql, c.args = sql, args
+	return c.Conn.Query(ctx, sql, args...)
+}
+
+// meterd reads the pauses overlapping one closed minute every minute it
+// rolls. A pause can stay open arbitrarily long, so the read bounds
+// started_at only from above, which the started_at index answers with the
+// whole retained ledger. Over 45 days of pauses the planner must reach the
+// minute through the ended_at index instead.
+func TestPgQuietPausedSecondsReadsOnlyNearbyPauses(t *testing.T) {
+	ctx := context.Background()
+	pool := pgtest.OpenMigrated(t)
+	node := uuid.NewString()
+	minute := time.Date(2026, 10, 23, 12, 0, 0, 0, time.UTC)
+	// 50,000 closed pauses of 716 instances, one every 77 s back from the
+	// minute (44.6 days), and one pause still open.
+	if _, err := pool.Exec(ctx, `
+INSERT INTO instance_quiet_pauses (instance_id, node_id, started_at, ended_at)
+SELECT md5((g % 716)::text)::uuid, $2::uuid,
+       $1::timestamptz - g * interval '77 seconds',
+       $1::timestamptz - g * interval '77 seconds' + (2 + g % 30) * interval '1 second'
+  FROM generate_series(1, 50000) g`, minute, node); err != nil {
+		t.Fatal(err)
+	}
+	store := state.NewPgStore(pool)
+	open := state.QuietPause{InstanceID: uuid.NewString(), StartedAt: minute.Add(-10 * time.Second)}
+	if err := store.RecordQuietPauses(ctx, node, minute.Add(2*time.Minute), []state.QuietPause{open}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `ANALYZE instance_quiet_pauses`); err != nil {
+		t.Fatal(err)
+	}
+
+	conn, err := pool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Release()
+	q := &queryCapture{Conn: conn}
+	rows, err := sqlc.New().QuietPausedSeconds(ctx, q, sqlc.QuietPausedSecondsParams{
+		WindowStart: pgtype.Timestamptz{Time: minute, Valid: true},
+		WindowEnd:   pgtype.Timestamptz{Time: minute.Add(time.Minute), Valid: true},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].InstanceID != open.InstanceID || rows[0].PausedSeconds != 60 {
+		t.Fatalf("QuietPausedSeconds = %+v, want the open pause's 60 s", rows)
+	}
+	planRows, err := conn.Query(ctx, "EXPLAIN "+q.sql, q.args...)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lines, err := pgx.CollectRows(planRows, pgx.RowTo[string])
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan := strings.Join(lines, "\n")
+	if strings.Contains(plan, "Seq Scan on instance_quiet_pauses") || !strings.Contains(plan, "instance_quiet_pauses_ended_at") {
+		t.Fatalf("QuietPausedSeconds does not reach the minute through the ended_at index:\n%s", plan)
 	}
 }

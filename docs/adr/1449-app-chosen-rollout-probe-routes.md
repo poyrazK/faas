@@ -1,6 +1,6 @@
 # ADR-1449 · App-chosen rollout probe routes
 
-- **Status:** proposed
+- **Status:** accepted (shipped in PR 4872, 2026-10-18)
 - **Date:** 2026-10-16
 - **Amends:** [ADR-1446](1446-safe-releases-by-default.md) (default probe of `GET /`), [ADR-1321](1321-evidence-paced-default-rollouts.md) (probe cadence)
 - **Follows:** [ADR-847](847-synthetic-route-probes.md) route probes
