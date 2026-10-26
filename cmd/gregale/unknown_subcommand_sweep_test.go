@@ -124,3 +124,24 @@ func TestWorkersListTakesAppFlag(t *testing.T) {
 		t.Fatalf("conflicting slug and --app: exit=%d stderr=%q", code, stderr())
 	}
 }
+
+// TestLogsNamesTheFlagThatChoseHTTPLogs: `logs h14-py --grep healthz --limit
+// 3` answered "HTTP log queries cannot be combined with --grep" on
+// production-us rc.294 though it never asked for HTTP logs (Hunt 14 H14-64).
+func TestLogsNamesTheFlagThatChoseHTTPLogs(t *testing.T) {
+	t.Setenv("FAAS_API", "http://127.0.0.1:9")
+	t.Setenv("FAAS_TOKEN", "test-token")
+	main.ResetJSONOut(t)
+	_, stderr, restore := main.SwapIO(t)
+	code := main.Run([]string{"logs", "h14-py", "--grep", "healthz", "--limit", "3"})
+	restore()
+	if code != 2 || !strings.Contains(stderr(), "--limit applies only to HTTP request logs") || !strings.Contains(stderr(), "drop --limit to read runtime logs") {
+		t.Fatalf("exit=%d stderr=%q", code, stderr())
+	}
+	_, stderr, restore = main.SwapIO(t)
+	code = main.Run([]string{"logs", "h14-py", "--source", "http", "--grep", "healthz"})
+	restore()
+	if code != 2 || !strings.Contains(stderr(), "HTTP log queries cannot be combined") {
+		t.Fatalf("explicit --source http: exit=%d stderr=%q", code, stderr())
+	}
+}

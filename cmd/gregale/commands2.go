@@ -6760,6 +6760,17 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		archiveSelector = &api.ArchiveLogSelector{InstanceID: *archiveInstance, Date: *archiveDate}
 	}
 	if logSource == logsSourceHTTP && (*follow || *grep != "" || *level != "" || *explain || archiveRequested) {
+		if inferred := logsHTTPOnlyFlagsSet(fs); !logsFlagWasSet(fs, "source") && len(inferred) > 0 {
+			// `logs h14-py --grep healthz --limit 3` never asked for HTTP logs;
+			// --limit chose them silently (Hunt 14 H14-64).
+			flags, verb := strings.Join(inferred, ", "), "applies"
+			if len(inferred) > 1 {
+				verb = "apply"
+			}
+			PrintUsage(os.Stderr, fmt.Sprintf("%s %s only to HTTP request logs, which cannot be combined with --follow, --grep, --level, --explain, or --archive; drop %s to read runtime logs",
+				flags, verb, flags), "logs")
+			return 2
+		}
 		PrintUsage(os.Stderr, "HTTP log queries cannot be combined with --follow, --grep, --level, --explain, or --archive", "logs")
 		return 2
 	}
