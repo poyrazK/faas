@@ -524,9 +524,15 @@ func (s *server) deleteManagedPostgresBinding(w http.ResponseWriter, r *http.Req
 }
 
 // beforeAccountDelete removes an account's external resources before the
-// grace sweep deletes its row: object buckets, then the managed PostgreSQL
-// databases its deletion includes (ADR-20261024150500).
+// grace sweep deletes its row: its billing subscription, object buckets, then
+// the managed PostgreSQL databases its deletion includes (ADR-20261024150500).
 func (s *server) beforeAccountDelete(ctx context.Context, acct state.Account) error {
+	// The billing identity cascades with the account, so this is the last
+	// chance to stop a renewal: a non-payment deletion, or one scheduled
+	// before deletion cancelled subscriptions (Hunt 17 H17-2).
+	if err := s.endSubscriptionForDeletion(ctx, acct); err != nil {
+		return err
+	}
 	if err := s.object.CleanupExpiredAccountObjectBuckets(ctx, acct); err != nil {
 		return err
 	}
