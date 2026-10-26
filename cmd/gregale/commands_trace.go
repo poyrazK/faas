@@ -493,6 +493,9 @@ func traceMatchBreakdown(match api.AccountTraceMatch) string {
 			how = "woke by " + match.Wake.Method
 		}
 		parts = append(parts, fmt.Sprintf("%s in %d ms (wake %s)", how, wakeMS, match.Wake.WakeID))
+		if note := traceWakeFallback(*match.Wake); note != "" {
+			parts = append(parts, note)
+		}
 	case request.ColdBoot:
 		wake := "found the app parked"
 		if request.WakeID != "" {
@@ -509,6 +512,22 @@ func traceMatchBreakdown(match api.AccountTraceMatch) string {
 		parts = append(parts, fmt.Sprintf("other ≈%d ms", request.LatencyMS-wakeMS-appMS))
 	}
 	return strings.Join(parts, " · ")
+}
+
+// traceWakeFallback says when vmmd ran another method than the one planned,
+// such as a restore that fell back to a cold boot (Hunt 12 H12-49).
+func traceWakeFallback(wake api.AccountTraceWake) string {
+	if wake.PlannedMethod == "" || wake.PlannedMethod == wake.Method {
+		return ""
+	}
+	note := "planned " + wake.PlannedMethod
+	if wake.PlannedMethod == "restore" && wake.Method == "cold_boot" {
+		note = "the planned restore fell back to a cold boot"
+	}
+	if wake.RestoreFallbackReason == "after_restore_failed" {
+		note += " because the app's after-restore hook failed"
+	}
+	return note
 }
 
 func traceInvocationLabel(inv api.AccountTraceInvocation) string {
