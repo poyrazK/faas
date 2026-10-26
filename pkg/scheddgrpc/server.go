@@ -600,6 +600,9 @@ func (s *Server) AdmitInstance(ctx context.Context, req *scheddpb.AdmitInstanceR
 // legacy wire — this method is additive per ADR-016.
 func (s *Server) EnsureWake(ctx context.Context, req *scheddpb.EnsureWakeRequest) (*scheddpb.EnsureWakeResponse, error) {
 	const op = "EnsureWake"
+	// The pre-wake clock starts before authorization so wake.boot_started
+	// accounts for the whole RPC up to Engine.Wake.
+	ctx = sched.WithEnsureWakeRPCStarted(ctx, time.Now())
 	if _, err := s.authorizeApp(ctx, req.GetAppId()); err != nil {
 		return nil, err
 	}
