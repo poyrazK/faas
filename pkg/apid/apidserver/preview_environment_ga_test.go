@@ -145,3 +145,33 @@ func TestCreatePreviewAdmitsByEnvironment(t *testing.T) {
 		t.Fatalf("reopening the closed preview beside an open one = %d %s, want 403", rec.Code, rec.Body)
 	}
 }
+
+// TestCreatePreviewDoesNotCopyProductionEnv pins ADR-310 on the developer
+// preview API: the preview runs unpromoted code, so only platform-owned
+// service binding URLs reach it, never the production app's env values.
+func TestCreatePreviewDoesNotCopyProductionEnv(t *testing.T) {
+	e := apidserver.Setup(t, api.PlanPro)
+	store := *e.Store()
+	if _, err := store.CreateAppIfUnderQuota(context.Background(), state.App{AccountID: (*e.Acct()).ID, Slug: "acme",
+		Type: state.AppTypeApp, RAMMB: 128, MaxConcurrency: 1, Status: state.AppActive,
+		Manifest: state.AppManifest{
+			Env: map[string]string{"DATABASE_URL": "postgres://prod", "GREGALE_SERVICE_BILLING_URL": "http://stale"},
+			ServiceBindings: []api.AppServiceBinding{{Binding: "GREGALE_SERVICE_BILLING_URL", Service: "billing"}},
+		},
+	}, api.MustLimitsFor(api.PlanPro)); err != nil {
+		t.Fatal(err)
+	}
+	if rec := e.Do(t, http.MethodPost, "/v1/apps/acme/previews", api.CreatePreviewRequest{PRNumber: 7}, nil); rec.Code != http.StatusCreated {
+		t.Fatalf("create preview = %d %s", rec.Code, rec.Body)
+	}
+	preview, err := store.AppBySlug(context.Background(), "pr-7-acme")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, leaked := preview.Manifest.Env["DATABASE_URL"]; leaked {
+		t.Fatalf("preview env = %#v, copied the production value", preview.Manifest.Env)
+	}
+	if got := preview.Manifest.Env["GREGALE_SERVICE_BILLING_URL"]; got != "http://billing.svc.gregale:10081" {
+		t.Fatalf("preview binding URL = %q, want the platform-owned service URL", got)
+	}
+}
