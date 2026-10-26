@@ -5590,7 +5590,7 @@
         "pro",
         "scale"
       ],
-      "docs_url": "/docs/cli/deploy",
+      "docs_url": "/docs/workers",
       "acceptance_test": "cmd/e2e/worker_pool_e2e_test.go::TestE2E_WorkerPool_ScalesWithQueueDepthAndStabilizesScaleIn",
       "settings": [
         "app.execution_mode=worker",

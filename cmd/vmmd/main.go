@@ -1499,7 +1499,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		}
 		// Workstream B: the guest metadata event proxy sends only the
 		// caller-authored JSON over the instance-bound vsock stream. Resolve
-		// account identity from vmmd's live map and persist the same canonical
+		// account identity from vmmd's live or booting instance (ADR-1141
+		// amendment 2026-10-24) and persist the same canonical
 		// event envelope as POST /v1/events:publish. A missing database is the
 		// expected default-local development posture, so the endpoint reports
 		// a bounded transport error instead of accepting an unverifiable event.
