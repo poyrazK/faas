@@ -17452,6 +17452,24 @@ func (m *MemStore) ComputeNodeUsedMBByNode(ctx context.Context, nodeIDs []string
 	return used, nil
 }
 
+// ComputeNodeUsedVCPUByNode mirrors PgStore's fleet-wide guest vCPU
+// aggregate: each live instance's captured capacity_vcpu.
+func (m *MemStore) ComputeNodeUsedVCPUByNode(_ context.Context, nodeIDs []string) (map[string]int64, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	used := make(map[string]int64, len(nodeIDs))
+	for _, nodeID := range nodeIDs {
+		used[nodeID] = 0
+	}
+	for _, ins := range m.instances {
+		if _, ok := used[ins.NodeID]; !ok || !nodeUsageCounts(State(ins.State)) {
+			continue
+		}
+		used[ins.NodeID] += m.capacityInstanceResources[ins.ID].VCPU
+	}
+	return used, nil
+}
+
 // ComputeNodeUsedCPUMillicoresByNode mirrors PgStore's fleet-wide CPU
 // reservation aggregate for local tests and in-memory deployments.
 func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs []string) (map[string]int64, error) {

@@ -453,6 +453,11 @@ type Metrics struct {
 	// kinds; the counter surfaces the signal even when the
 	// loader's WARN log is drowned by other gatewayd-internal noise.
 	edgeRuleCompileError *prometheus.CounterVec
+	// edgeRuleLoad (ADR-091 amendment 2026-10-26): outcome of each read of a
+	// host's rule set from Postgres: loaded, last_known (the read failed and
+	// the host's last compiled set is served) or failed (nothing to serve:
+	// the host's requests are refused with 503).
+	edgeRuleLoad *prometheus.CounterVec
 	// envelopeCapWarns (issue #995 Phase 4 / ADR-121): warn
 	// counters for the body-cap surfaces (request, response,
 	// raw-bridge). Labels: {app_id, bucket}; bucket ∈
@@ -1211,6 +1216,10 @@ func NewMetrics() *Metrics {
 			Name: "gateway_edge_rule_compile_error_total",
 			Help: "Edge-rule compile-time errors caught by the cmd-side loader, labelled by kind. ADR-091 hardening PR-A.",
 		}, []string{"kind"}),
+		edgeRuleLoad: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "gateway_edge_rule_load_total",
+			Help: "Reads of a host's edge-rule set from Postgres, by outcome: loaded, last_known (read failed, the last compiled set is served) or failed (read failed with nothing to serve; the host's requests get 503). ADR-091 amendment 2026-10-26.",
+		}, []string{"outcome"}),
 		// Issue #995 Phase 4 / ADR-121 — envelope-cap warn
 		// counter for the response body (used by both the buffered
 		// and streaming capWriter paths).
@@ -1391,7 +1400,7 @@ func NewMetrics() *Metrics {
 		}, []string{"app", "outcome"}),
 		edgeRejections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_edge_rejections_total",
-			Help: "Requests answered by an edge gate before wake, by app, gate kind (jwt|ip_allowlist|internal_only|ip|geo|limit|body_limit|throttle|waf) and status (401|403|413|429|503|other). Pre-auth and kind=validate decisions have their own per-app counters.",
+			Help: "Requests answered by an edge gate before wake, by app, gate kind (jwt|ip_allowlist|internal_only|ip|geo|limit|body_limit|throttle|waf|policy_unavailable) and status (401|403|413|429|503|other). Pre-auth and kind=validate decisions have their own per-app counters.",
 		}, []string{"app", "kind", "status"}),
 		wafInspections: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "gateway_waf_inspections_total",
@@ -2081,6 +2090,10 @@ func NewMetrics() *Metrics {
 		}
 		m.edgeRuleCompileError.WithLabelValues(kind)
 	}
+	m.edgeRuleApply.WithLabelValues("policy", "error")
+	for _, outcome := range []string{"loaded", "last_known", "failed"} {
+		m.edgeRuleLoad.WithLabelValues(outcome)
+	}
 	for _, reason := range []string{"empty_mode", "unknown_mode"} {
 		m.publicAuthConfigErrors.WithLabelValues(reason)
 	}
@@ -2136,7 +2149,7 @@ func NewMetrics() *Metrics {
 	for _, result := range []string{"recorded", "failed"} {
 		m.requestIDJournalWrites.WithLabelValues(result)
 	}
-	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
+	reg.MustRegister(m.requests, m.platformErrors, m.appInflight, m.smokeChallenge, m.smokeValidation, m.versionAffinityKeys, m.notificationPayloadRejected, m.logDrainDropped, m.logDrainDelivered, m.logDrainFailed, m.logDrainActive, m.logDrainQueueDepth, m.logDrainQueueCapacity, m.logDrainPendingRecords, m.logDrainPendingBytes, m.logDrainPendingCapacity, m.logDrainDeadLetters, m.logDrainOldestPending, m.logDrainDeliveryLatency, m.logDrainRetries, m.logDrainStreamReconnects, m.logDrainGaps, m.logDrainLastSuccess, m.logDrainLastFailure, m.requestTelemetryDropped, m.requestTelemetryShipped, m.requestTelemetryOverwritten, m.requestDuration, m.requestDurationByDeployment, m.wakeLatency, m.platformWakeLatency, m.wakeLatencyByNode, m.wakeQueueWait, m.wakePhaseDuration, m.queueDepth, m.wakeQueueDepth, m.wakeAdmissionQueueDepth, m.wakeAdmissionTotal, m.wakeAdmissionWait, m.wakeAdmissionPreemptTotal, m.concurrencyThrottled, m.concurrencyQueueDepth, m.concurrencyQueueWait, m.rateLimited, m.rateLimitDegraded, m.rateLimitLeaseRequests, m.rateLimitLeaseTokens, m.rateLimitSyncConsults, m.rateLimitShared, m.accountRateLimited, m.coldBoot, m.tlsCertExpiry, m.tlsCertExpiryByHost, m.tlsCertExpiryRefresherWalkComplete, m.tlsOnDemandDenied, m.tenantSurfaceCert, m.wakeLocality, m.wakeSnapshotTier, m.computeNodeChangedSubscriberAlive, m.responseBytes, m.streamFlushes, m.streamActive, m.vmInflightRequests, m.edgeRuleMatch, m.edgeRuleLoadedGeneration, m.edgeRuleConvergingHosts, m.edgeRuleGenerationLag, m.edgeRuleApply, m.publicAuthConfigErrors, m.edgeRuleValidateFailures, m.validateFailures, m.retryAttempts, m.retryExhausted, m.retryBudgetShared, m.retryBudgetBackend, m.circuitTransitions, m.circuitOpenTargets, m.edgeRuleCompileError, m.edgeRuleLoad, m.responseBodyWarnTotal, m.internalAuthMatch, m.appMaintenance, m.requestsByRoute, m.durationByRoute, m.failuresByRoute, m.leaderBootstrapAborts, m.wsUpgradeTotal, m.wsActiveSessions, m.wsSessionDuration, m.wsSessionBytes, m.geoipDBAgeSeconds, m.routeConsumerThrottleDecisions, m.responseCache, m.responseCacheByApp, m.responseCacheWakesAvoided, m.cacheStaleWhileWaking, m.responseCacheBytes, m.responseCacheEntries, m.edgeAnswered, m.corsPreflightEdge, m.healthEdgeAnswered, m.mirrorDispatched, m.mirrorLatency, m.mirrorBodyDiff, m.serviceCallTotal, m.serviceChaosInjected, m.serviceDependencyCalls, m.serviceWakeLatency)
 	reg.MustRegister(m.retryBudgetBackendInfo)
 	reg.MustRegister(m.requestIDJournalWrites, m.requestIDJournalWriteTime)
 	reg.MustRegister(m.preAuthRateLimited, m.preAuthPolicyShadow, m.edgeRejections)
@@ -3457,6 +3470,15 @@ func (m *Metrics) ObserveEdgeRuleCompileError(kind string) {
 		return
 	}
 	m.edgeRuleCompileError.WithLabelValues(kind).Inc()
+}
+
+// ObserveEdgeRuleLoad counts one read of a host's edge-rule set by outcome
+// (loaded, last_known, failed). Nil-safe.
+func (m *Metrics) ObserveEdgeRuleLoad(outcome string) {
+	if m == nil {
+		return
+	}
+	m.edgeRuleLoad.WithLabelValues(outcome).Inc()
 }
 
 // ObserveAppMaintenance (ADR-091 amendment / §4.1.2.0) increments
