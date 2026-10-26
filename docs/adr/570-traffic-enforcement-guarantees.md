@@ -333,6 +333,11 @@ request. Generations retain deleted identity tombstones and contain no policy
 or credentials. Ordinary rule, configuration and deployment-weight updates do
 not advance a security generation.
 
+Amended by ADR-20261026160000: a gateway admits from the generations its
+refresher last verified, reads Postgres only for untracked or stale scopes, and
+keeps verified traffic for a 5-minute outage grace. The paragraphs below are the
+original decision.
+
 Every participating HTTP admission verifies its security scopes in Postgres and
 registers a cancellation fence. Public requests enroll account/app before wake
 and the selected deployment before forwarding; managed service calls enroll
