@@ -37,10 +37,11 @@ import (
 // inside the boot.
 //
 // Detached-ctx contract: the leader's ensure runs on
-// context.WithoutCancel(caller) + TTL (default 30 s,
-// WakeQueueTTLSeconds), so a cancelled triggering request cannot kill an
-// in-flight boot that other follow-on callers still depend on while request
-// correlation values remain available to the boot pipeline.
+// context.WithoutCancel(caller) bounded by Engine.wakeLeaderBudget — the TTL
+// (default 30 s, WakeQueueTTLSeconds) or, when longer, the boot it starts —
+// so a cancelled triggering request cannot kill an in-flight boot that other
+// follow-on callers still depend on while request correlation values remain
+// available to the boot pipeline.
 //
 // Error semantics:
 //   - ErrQueueFull: every usable wake has reached its follower cap; leaders are
@@ -59,10 +60,27 @@ const (
 	wakeCoordCap = 512
 
 	// WakeCoordTTLDefault mirrors pkg/api/limits.go WakeQueueTTLSeconds = 30.
-	// The leader's detached ensure goroutine is bounded by this; the
-	// follower's await uses its own ctx.
+	// The leader's detached ensure goroutine is bounded by this or by
+	// wakeLeaderBudget when the boot needs longer; the follower's await uses
+	// its own ctx.
 	wakeCoordTTLDefault = 30 * time.Second
+
+	// wakeLeaderAdmissionAllowance is the leader's time for admission,
+	// layer verification and failover refusals before the boot budget
+	// starts. The main loop's 60 s stall budget assumes the cold-boot
+	// budget plus admission fits inside it (loop.go MainLoopBudget).
+	wakeLeaderAdmissionAllowance = 10 * time.Second
 )
+
+// wakeLeaderBudget bounds a coordinated wake's detached leader. The queue
+// TTL is the gateway's request hold, not the boot's: a snapshot wake may
+// spend the cold-boot budget after a refused restore (ADR-640) and failover
+// may place another attempt (ADR-20261022184531), both after admission. A
+// leader cut at the TTL cancelled those boots before the engine deadline or
+// the watchdog would, and the next request started over from nothing.
+func (e *Engine) wakeLeaderBudget() time.Duration {
+	return max(e.wakeCoord.TTL(), e.budgetFor(state.StateColdBooting)+wakeLeaderAdmissionAllowance)
+}
 
 // ErrQueueFull is returned when every usable wake has reached its follower cap.
 // Callers must convert this to a 503/ResourceExhausted response.

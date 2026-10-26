@@ -15564,7 +15564,7 @@ func (m *MemStore) CreateInstance(ctx context.Context, appID, deploymentID, stat
 	// the FK divergence noted above, an un-seeded nodeID is still a pass —
 	// the guard only fires for a node whose compute_nodes row exists and
 	// carries a positive ceiling.
-	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
+	if err := m.checkNodeAdmissionReservationLocked(ctx, nodeID, state, ramMB); err != nil {
 		return Instance{}, err
 	}
 	ins := Instance{
@@ -15650,7 +15650,7 @@ func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deployment
 	}
 	// ADR-193: mirror of the PgStore per-node reservation. m.mu is held
 	// across check and insert, which is what the advisory lock buys PgStore.
-	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
+	if err := m.checkNodeAdmissionReservationLocked(ctx, nodeID, state, ramMB); err != nil {
 		return Instance{}, err
 	}
 	mode = strings.TrimSpace(mode)
@@ -15748,7 +15748,7 @@ func (m *MemStore) CreateJobInstance(ctx context.Context, instanceID, jobID, run
 		return Instance{}, ErrConflict
 	}
 	// ADR-193: job tasks take the same per-node reservation as app wakes.
-	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
+	if err := m.checkNodeAdmissionReservationLocked(ctx, nodeID, state, ramMB); err != nil {
 		return Instance{}, err
 	}
 	ins := Instance{
