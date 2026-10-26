@@ -81,6 +81,9 @@ func runNativeSourceJob(t *testing.T, providerName, kind string) {
 	daemonEnv := []string{"FAAS_STORAGE_ROOT=" + storageRoot,
 		"GREGALE_GITOPS_ACCEPTANCE=1", "FAAS_ENVIRONMENT_GITOPS_ACCEPTANCE_ENFORCEMENT=1",
 		"FAAS_ENVIRONMENT_GITOPS_QUALIFICATION_DISPATCH=1",
+		// Scheduled occurrences run through the ordinary Job dispatcher,
+		// which schedd keeps off unless a node opts in.
+		"FAAS_JOBS_DISPATCH=1",
 		"FAAS_AUDIT_HMAC_KEY_FILE=" + gitOpsAcceptanceHMACKeyFile(t, "audit-hmac.key"),
 		"FAAS_RECOVERY_HMAC_KEY_FILE=" + gitOpsAcceptanceHMACKeyFile(t, "recovery-hmac.key")}
 	h := e2etest.StartWithAPIDEnv(t, pool, e2etest.All, providerEnv, daemonEnv...)
