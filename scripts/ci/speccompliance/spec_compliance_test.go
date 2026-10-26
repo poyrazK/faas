@@ -423,6 +423,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence":               true,
 	"GET /v1/admin/obs/incidents/platform_alert/recurrence":          true, // private retained-episode recurrence diagnostics
 	"GET /v1/admin/obs/incidents/platform_alert/response-times":      true, // private retained-episode response analytics
+	"GET /v1/admin/obs/wakes/{wake_id}":                              true, // private one-wake event timeline (gregalectl obs wake)
 	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
 	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
 	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
@@ -484,6 +485,7 @@ var routeExclude = map[string]bool{
 	"POST /dashboard/apps/{slug}/github/sync":                       true, // GitHub connection repair form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/disconnect":                 true, // GitHub connection disconnect form; session-cookie + CSRF-only
 	"POST /dashboard/apps/{slug}/github/activity/retry":             true, // GitHub activity recovery form; session-cookie + CSRF-only
+	"POST /dashboard/apps/{slug}/preview/{previewSlug}/destroy":     true, // ADR-20261026090000 previews-page Tear down form; session-cookie + CSRF adapter for POST /v1/preview/{slug}/destroy
 	"GET /dashboard/apps/{slug}/data-api":                           true, // ADR-968 session-auth owner HTML workspace
 	"GET /dashboard/data":                                           true, // ADR-1591 session-auth connection onboarding HTML
 	"POST /dashboard/data":                                          true, // ADR-1591 account-bound CSRF form adapter
@@ -885,6 +887,7 @@ var dtoExclude = map[string]bool{
 	"ObsAppDetail":               true,
 	"ObsAppDetailResponse":       true,
 	"ObsAppHealth":               true,
+	"ObsAppSnapshot":             true, // obs app snapshot rows, same private surface
 	"ObsAuditActivityRow":        true,
 	// ADR-115 capacity PR (post-PR #1111): admin-only capacity
 	// snapshot shapes — same admin-only posture as the other
@@ -1649,6 +1652,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "object_version_protection.go"),
 		filepath.Join(root, "pkg", "api", "object_write_protection.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_versioning.go"),
+		filepath.Join(root, "pkg", "api", "object_bucket_cors.go"),
 		filepath.Join(root, "pkg", "api", "object_bucket_encryption.go"),
 		filepath.Join(root, "pkg", "api", "object_s3_copy_sources.go"),
 		filepath.Join(root, "pkg", "api", "object_lifecycle.go"),
@@ -1770,6 +1774,7 @@ func testSchemasParity(t *testing.T, root string, spec *specDoc) {
 		filepath.Join(root, "pkg", "api", "obs_rule_coverage.go"),
 		filepath.Join(root, "pkg", "api", "obs_recording_coverage.go"),
 		filepath.Join(root, "pkg", "api", "obs_input_health.go"),
+		filepath.Join(root, "pkg", "api", "obs_wake.go"),
 		filepath.Join(root, "pkg", "api", corsPresetsFile),
 		filepath.Join(root, "pkg", "api", canaryCustomStageFile),
 		filepath.Join(root, "pkg", "api", uploadSessionFile),

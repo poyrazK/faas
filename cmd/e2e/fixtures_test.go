@@ -206,15 +206,13 @@ exports.handler = async () => ({ statusCode: 200, body: 'function ok' });
 }
 
 // NodeFixturePort returns the bytes of a minimal Node 22 source tarball
-// whose index.js reads the `PORT` env var (issue #460 / ADR-053, PR-C).
-// The platform contract is that guest-init always stamps PORT
-// (EffectivePort() resolves to 8080 when the override is unset, and
-// to the override value otherwise), so the fixture mirrors that by
-// reading the env var with no source-level fallback — if guest-init
-// ever drops the stamp, the runner would bind :0 and the
-// TestDeployOverridePortMetal content assertion would catch the
-// regression. Callers wanting a hardcoded :3000 bind should keep
-// using NodeFixture (the legacy fixture that pre-dates PR-C).
+// that declares `hosting.port: 9090` in gregale.yaml and whose index.js
+// reads the `PORT` env var (issue #460 / ADR-053, PR-C). The platform
+// contract is that guest-init always stamps PORT with the deployment's
+// effective port, so the fixture reads the env var with no source-level
+// fallback — if guest-init ever drops the stamp, the runner would bind :0
+// and the TestDeployOverridePortMetal content assertion would catch the
+// regression.
 func NodeFixturePort(t *testing.T) []byte {
 	t.Helper()
 	const pkgJSON = `{
@@ -234,6 +232,7 @@ http.createServer((req, res) => {
 }).listen(parseInt(port, 10), () => console.log('node fixture listening on :' + port));
 `
 	files := map[string]string{
+		"gregale.yaml":     "hosting:\n  port: 9090\n",
 		"package.json":     pkgJSON,
 		"index.js":         indexJS,
 		".faas-fixture":    "node22\n",

@@ -13,6 +13,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -43,6 +44,11 @@ type gatewayTestStore struct {
 	activity                            map[string]state.ObjectBucketMutation
 	fenced                              bool
 	activityBeginErr, activityFinishErr error
+	cors                                []api.ObjectBucketCORSRule
+}
+
+func (s *gatewayTestStore) ObjectBucketCORSRules(context.Context, string) ([]api.ObjectBucketCORSRule, error) {
+	return s.cors, nil
 }
 
 // Deletion admission owns the same source hold as generic mutation admission
@@ -120,31 +126,37 @@ func (s *gatewayTestStore) AdmitObjectURL(_ context.Context, _, _, key string, _
 }
 
 type gatewayTestProvider struct {
-	multipartMu      sync.Mutex
-	keepPartsOnAbort bool
-	multipartListErr error
-	multipartSignErr error
-	objects          objectstorage.ObjectPage
-	objectSize       int64
-	copyRequests     []objectstorage.CopyObjectRequest
-	presignRequests  []objectstorage.SignRequest
-	conditions       []objectstorage.ObjectWriteConditions
-	listRequests     []objectstorage.ObjectListRequest
-	tags             map[string]string
-	deleted          []string
-	deleteErrors     map[string]error
-	multipart        map[string]map[int32]objectstorage.MultipartPart
-	multipartCreates []objectstorage.MultipartCreateRequest
-	completedUploads []string
-	abortedUploads   []string
+	multipartMu           sync.Mutex
+	deleteMu              sync.Mutex // bulk deletes run entries concurrently
+	deleteDelay           time.Duration
+	deleting, maxDeleting int
+	keepPartsOnAbort      bool
+	multipartListErr      error
+	multipartSignErr      error
+	objects               objectstorage.ObjectPage
+	objectSize            int64
+	copyRequests          []objectstorage.CopyObjectRequest
+	presignRequests       []objectstorage.SignRequest
+	conditions            []objectstorage.ObjectWriteConditions
+	listRequests          []objectstorage.ObjectListRequest
+	tags                  map[string]string
+	deleted               []string
+	deleteErrors          map[string]error
+	multipart             map[string]map[int32]objectstorage.MultipartPart
+	multipartCreates      []objectstorage.MultipartCreateRequest
+	completedUploads      []string
+	abortedUploads        []string
 }
 
 type gatewayRequestMetrics struct {
+	mu    sync.Mutex
 	calls int
 	err   error
 }
 
 func (m *gatewayRequestMetrics) RecordObjectStorageProviderRequest(context.Context, string, time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls++
 	return m.err
 }
@@ -171,6 +183,15 @@ func (p *gatewayTestProvider) CopyObject(_ context.Context, _ string, request ob
 	return objectstorage.CopyObjectResult{ETag: `"copy-etag"`, LastModified: time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)}, nil
 }
 func (p *gatewayTestProvider) DeleteObject(_ context.Context, _ string, key string) error {
+	p.deleteMu.Lock()
+	p.deleting++
+	p.maxDeleting = max(p.maxDeleting, p.deleting)
+	delay := p.deleteDelay
+	p.deleteMu.Unlock()
+	time.Sleep(delay)
+	p.deleteMu.Lock()
+	defer p.deleteMu.Unlock()
+	p.deleting--
 	p.deleted = append(p.deleted, key)
 	return p.deleteErrors[key]
 }
@@ -957,8 +978,12 @@ func TestGatewayDeleteObjects(t *testing.T) {
 	if recorder.Code != http.StatusOK || !strings.Contains(recorder.Body.String(), "<DeleteResult") || !strings.Contains(recorder.Body.String(), "<Key>one.txt</Key>") {
 		t.Fatalf("DeleteObjects = %d %s", recorder.Code, recorder.Body.String())
 	}
-	if strings.Join(provider.deleted, ",") != "one.txt,folder/two.txt" {
+	// Entries run concurrently (ADR-20261025115958); the response keeps order.
+	if slices.Sort(provider.deleted); strings.Join(provider.deleted, ",") != "folder/two.txt,one.txt" {
 		t.Fatalf("deleted keys = %v", provider.deleted)
+	}
+	if strings.Index(recorder.Body.String(), "<Key>one.txt</Key>") > strings.Index(recorder.Body.String(), "<Key>folder/two.txt</Key>") {
+		t.Fatalf("DeleteObjects reordered its entries: %s", recorder.Body.String())
 	}
 
 	quietBody := []byte(`<Delete><Object><Key>quiet.txt</Key></Object><Quiet>true</Quiet></Delete>`)

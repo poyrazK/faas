@@ -419,10 +419,6 @@ from .custom_metric_list_response import CustomMetricListResponse
 from .custom_metric_request import CustomMetricRequest
 from .custom_metric_response import CustomMetricResponse
 from .custom_metric_response_kind import CustomMetricResponseKind
-from .custom_metric_series_point import CustomMetricSeriesPoint
-from .custom_metric_series_response import CustomMetricSeriesResponse
-from .custom_metric_series_response_kind import CustomMetricSeriesResponseKind
-from .custom_metric_series_response_range import CustomMetricSeriesResponseRange
 from .custom_stage import CustomStage
 from .daily_usage_list_response import DailyUsageListResponse
 from .daily_usage_point import DailyUsagePoint
@@ -493,6 +489,7 @@ from .deployment_change import DeploymentChange
 from .deployment_change_after_type_3 import DeploymentChangeAfterType3
 from .deployment_change_before_type_3 import DeploymentChangeBeforeType3
 from .deployment_change_field import DeploymentChangeField
+from .deployment_companion import DeploymentCompanion
 from .deployment_configuration_status import DeploymentConfigurationStatus
 from .deployment_cron_activation_status import DeploymentCronActivationStatus
 from .deployment_cron_activation_status_reason import DeploymentCronActivationStatusReason
@@ -804,7 +801,6 @@ from .get_app_wake_timeline_pagination import GetAppWakeTimelinePagination
 from .get_apps_metrics_range import GetAppsMetricsRange
 from .get_build_sbom_response_200 import GetBuildSbomResponse200
 from .get_builds_status import GetBuildsStatus
-from .get_custom_metric_series_range import GetCustomMetricSeriesRange
 from .get_edge_rule_stats_window import GetEdgeRuleStatsWindow
 from .get_open_api_spec_json_response_200 import GetOpenAPISpecJSONResponse200
 from .get_runtime_policy_status_edge_rules_scope import GetRuntimePolicyStatusEdgeRulesScope
@@ -990,6 +986,7 @@ from .managed_operation_effect import ManagedOperationEffect
 from .managed_operation_result import ManagedOperationResult
 from .managed_operation_result_gregale_operation_result import ManagedOperationResultGregaleOperationResult
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
+from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .managed_service_probe_spec import ManagedServiceProbeSpec
 from .mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
@@ -1642,6 +1639,9 @@ from .plan_detection_warning import PlanDetectionWarning
 from .plan_detection_warning_detector import PlanDetectionWarningDetector
 from .plan_detection_warning_outcome import PlanDetectionWarningOutcome
 from .plan_managed import PlanManaged
+from .plan_managed_binding import PlanManagedBinding
+from .plan_managed_not_provisioned_reason import PlanManagedNotProvisionedReason
+from .plan_managed_provision import PlanManagedProvision
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
 from .plan_workload import PlanWorkload
@@ -1673,8 +1673,6 @@ from .platform_tenant_surface_deployment_changed_webhook_payload_deployment_stat
     PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus,
 )
 from .post_account_sessions_revoke_all_body import PostAccountSessionsRevokeAllBody
-from .post_otlp_metrics_json_body import PostOTLPMetricsJsonBody
-from .post_otlp_metrics_response_200 import PostOTLPMetricsResponse200
 from .pre_auth_enforcement_suggestion import PreAuthEnforcementSuggestion
 from .pre_auth_enforcement_suggestion_status import PreAuthEnforcementSuggestionStatus
 from .pre_auth_failed_response_limit import PreAuthFailedResponseLimit
@@ -2204,6 +2202,7 @@ from .wake_timeline_event import WakeTimelineEvent
 from .wake_timeline_event_data import WakeTimelineEventData
 from .wake_timeline_json_row import WakeTimelineJSONRow
 from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
+from .wake_timeline_json_row_restore_fallback_reason import WakeTimelineJSONRowRestoreFallbackReason
 from .wake_timeline_json_row_tier import WakeTimelineJSONRowTier
 from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClass
 from .wake_timeline_page import WakeTimelinePage
@@ -2859,10 +2858,6 @@ __all__ = (
     "CustomMetricRequest",
     "CustomMetricResponse",
     "CustomMetricResponseKind",
-    "CustomMetricSeriesPoint",
-    "CustomMetricSeriesResponse",
-    "CustomMetricSeriesResponseKind",
-    "CustomMetricSeriesResponseRange",
     "CustomStage",
     "DailyUsageListResponse",
     "DailyUsagePoint",
@@ -2930,6 +2925,7 @@ __all__ = (
     "DeploymentChangeAfterType3",
     "DeploymentChangeBeforeType3",
     "DeploymentChangeField",
+    "DeploymentCompanion",
     "DeploymentConfigurationStatus",
     "DeploymentCronActivationStatus",
     "DeploymentCronActivationStatusReason",
@@ -3232,7 +3228,6 @@ __all__ = (
     "GetAppWakeTimelinePagination",
     "GetBuildSbomResponse200",
     "GetBuildsStatus",
-    "GetCustomMetricSeriesRange",
     "GetEdgeRuleStatsWindow",
     "GetOpenAPISpecJSONResponse200",
     "GetRuntimePolicyStatusEdgeRulesScope",
@@ -3410,6 +3405,7 @@ __all__ = (
     "ManagedOperationResult",
     "ManagedOperationResultGregaleOperationResult",
     "ManagedPostgresUsageResponse",
+    "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseGuardrailState",
     "ManagedServiceProbeSpec",
     "MCPPolicyConvergenceSnapshot",
@@ -3954,6 +3950,9 @@ __all__ = (
     "PlanDetectionWarningDetector",
     "PlanDetectionWarningOutcome",
     "PlanManaged",
+    "PlanManagedBinding",
+    "PlanManagedNotProvisionedReason",
+    "PlanManagedProvision",
     "PlanResponse",
     "PlanResponseScanSource",
     "PlanWorkload",
@@ -3975,8 +3974,6 @@ __all__ = (
     "PlatformTenantSurfaceDeploymentChangedWebhookPayload",
     "PlatformTenantSurfaceDeploymentChangedWebhookPayloadDeploymentStatus",
     "PostAccountSessionsRevokeAllBody",
-    "PostOTLPMetricsJsonBody",
-    "PostOTLPMetricsResponse200",
     "PreAuthEnforcementSuggestion",
     "PreAuthEnforcementSuggestionStatus",
     "PreAuthFailedResponseLimit",
@@ -4492,6 +4489,7 @@ __all__ = (
     "WakeTimelineEventData",
     "WakeTimelineJSONRow",
     "WakeTimelineJSONRowKind",
+    "WakeTimelineJSONRowRestoreFallbackReason",
     "WakeTimelineJSONRowTier",
     "WakeTimelineJSONRowTriggerClass",
     "WakeTimelinePage",

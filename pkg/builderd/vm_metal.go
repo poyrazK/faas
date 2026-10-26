@@ -77,6 +77,16 @@ type VMMDriver struct {
 	// atomic publication. The immutable hard links remain valid after unlock,
 	// so source staging and mke2fs do not serialize the two builder slots.
 	dependencyCacheMu sync.Mutex
+
+	// dockerHubMirrors go into every build manifest; the builder's BuildKit
+	// daemon tries them before Docker Hub (ADR-20261025114554).
+	dockerHubMirrors []string
+}
+
+// WithDockerHubMirrors sets the Docker Hub mirrors every builder VM uses.
+func (d *VMMDriver) WithDockerHubMirrors(mirrors []string) *VMMDriver {
+	d.dockerHubMirrors = append([]string(nil), mirrors...)
+	return d
 }
 
 // NewVMMDriver opens a lazy gRPC connection to vmmd's socket.
@@ -180,6 +190,7 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 	return api.BuildManifest{
 		PublicBuildURLs:       req.PublicBuildURLs,
 		DockerfileBuild:       req.DockerfileBuild.Clone(),
+		GoCommand:             req.GoCommand,
 		BuildDependencyDigest: req.BuildDependencyDigest,
 		SchemaVersion:         1,
 		BuildID:               req.BuildID,
@@ -270,6 +281,7 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		os.Remove(drive1Path)
 		return BuildHandle{}, err
 	}
+	bManifest.DockerHubMirrors = d.dockerHubMirrors
 	cachePath := ""
 	if req.DependencyCacheKey != "" {
 		var cachePathErr error
@@ -332,6 +344,10 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		Build: &vmmdpb.BuildSpec{
 			ExportDir:  buildExportDir,
 			TimeoutSec: int32(timeoutSec),
+			// ADR-20261026090000: vmmd opens these into the builder's
+			// Docker config for its base-image pulls. A build that has
+			// them never uses a warm builder.
+			RegistryCredentials: registryCredentialsToProto(req.RegistryCredentials),
 		},
 		// Issue #301 / ADR-043: vmmd validates Plan on every cold
 		// boot and routes the VM into the per-plan cgroup slice.
@@ -394,6 +410,7 @@ func (d *VMMDriver) RestoreWarmBuilder(ctx context.Context, req VMRequest, snaps
 	if err != nil {
 		return BuildHandle{}, err
 	}
+	manifest.DockerHubMirrors = d.dockerHubMirrors
 	if err := refreshWarmBuilderDrive(ctx, snapshot.LayerPath, manifest, req.SourcePath); err != nil {
 		return BuildHandle{}, fmt.Errorf("builderd: refresh warm drive: %w", err)
 	}
@@ -700,6 +717,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.ExitCode = exitCode
 		res.PublicBuildURLsSHA256 = done.PublicBuildURLsSHA256
 		res.DockerfileBuildSHA256 = done.DockerfileBuildSHA256
+		res.GoCommand = done.GoCommand
 		res.BuildDependencyDigest = done.BuildDependencyDigest
 		res.LogTailBytes = int64(len(done.LogTail))
 		res.LogTail = done.LogTail

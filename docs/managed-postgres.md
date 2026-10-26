@@ -691,6 +691,64 @@ The adapter contract is based on Neon's maintained
 qualification run against an isolated organization is still required before
 enabling provisioning.
 
+## Compute caps on running databases
+
+Admission only stops new work. A running database is held to its account's
+monthly compute ceiling by the provider itself
+([ADR-20261025094915](adr/20261025094915-managed-postgres-compute-caps-on-running-databases.md)).
+
+After each usage sweep, apid runs one enforcement sweep:
+
+- The ceiling is the plan's monthly compute allowance (`pkg/api/managed_postgres.go`),
+  capped by `usage.max_monthly_compute_unit_seconds`.
+- The account's use is the larger of the ledger, which still counts databases
+  deleted this month, and the live provider counters.
+- Each Neon project gets `settings.quota.compute_time_seconds` set to its own
+  use plus what the account has left. A restore is a branch inside its source's
+  project, so the two share one quota.
+- When nothing is left, every quota equals its project's use, and Neon suspends
+  the computes until the quota is raised or the counters reset on the 1st. A
+  cap never deletes a database.
+
+`FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT` selects the mode:
+
+- `shadow` (the default) logs `managed postgres compute cap (shadow)` with the
+  quota it would set, and writes nothing.
+- `on` writes the quotas, and requires the usage ledger.
+- `off` does nothing.
+
+Quotas written earlier stay on the projects in every mode, so switching to
+`off` or rolling back never lifts a suspension.
+
+Customers see the cap in `GET /v1/account/managed-postgres-usage` and
+`gregale postgres usage`:
+
+- `compute_allowance_unit_seconds`
+- `compute_ceiling_unit_seconds`
+- `compute_cap_state`: one of `healthy`; `warning` (at 80% of the allowance);
+  `overage` (past the allowance with overage on, once the overage setting
+  ships); or `suspended`, which is reported only while enforcement is `on`.
+
+The state is judged from the ledger, which can trail Neon by up to two hours.
+`guardrail_state` is unchanged; it still describes admission of new work.
+
+A sweep skips an account, without failing it, when its provider has no quota
+support, or when the provider's consumption period does not start within an
+hour of the UTC month start. Metrics:
+
+- `apid_managed_postgres_cap_accounts{state}`
+- `apid_managed_postgres_cap_quota_decisions_total{outcome}`
+- `apid_managed_postgres_cap_last_sweep_timestamp_seconds`
+- `apid_managed_postgres_cap_enforcement_mode{mode}`
+
+Before setting `on`, run the staging qualification in the ADR's decision 10.
+It checks:
+
+- that Neon's CPU-second counter matches the ledger's compute-unit seconds;
+- that a quota at or below use suspends at once;
+- that raising the quota lets the database wake;
+- that the quota write leaves `logical_size_bytes` unchanged.
+
 ## Restore-to-new-database safety
 
 The control plane exposes restore as a new logical database intent. A restore
@@ -926,6 +984,12 @@ kernel boot ID, PID and process start ticks before guest boot returns
 The generated service provisions it with mode 0700. A `resource_journal_dir`
 TOML override requires a private, writable persistent directory and an existing
 parent hierarchy; provide any necessary service filesystem permissions.
+vmmd also reads tmpfs copies of the records from `/run/faas/vmmd-resources`
+(`resource_journal_volatile_dir`), which hold each record's newest version on
+the current boot. With `resource_journal_volatile_writes` on, writes for
+resources a reboot destroys go only to those copies and skip the disk fsync
+([ADR-20261026113920](adr/20261026113920-resource-journal-volatile-tmpfs.md)).
+Turn it on only where the rollback target is that release or later.
 Unknown versions, corrupt records, another journal writer or persistence errors
 fail closed. Live cleanup retires a record only after physical cleanup is confirmed,
 and commits removal before releasing the slot.

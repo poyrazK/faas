@@ -40,6 +40,14 @@ func TestDeployOfMultiServiceRepositoryPlansTheProject(t *testing.T) {
 			"go.mod": "module example.com/shop\n", "main.go": "package main\n\nfunc main() {}\n",
 			"services/api/Dockerfile": "FROM scratch\n", "services/web/Dockerfile": "FROM scratch\n",
 		}, false},
+		// ADR-20261025134512: each cmd/ main package of one module is a service.
+		{"Go module with several commands", map[string]string{
+			"go.mod": "module example.com/shop\n", "internal/db/db.go": "package db\n",
+			"cmd/api/main.go": "package main\n\nfunc main() {}\n", "cmd/worker/main.go": "package main\n\nfunc main() {}\n",
+		}, true},
+		{"Go module with one command", map[string]string{
+			"go.mod": "module example.com/shop\n", "cmd/api/main.go": "package main\n\nfunc main() {}\n",
+		}, false},
 		{"Node app at the root beside packages", map[string]string{
 			"package.json":              `{"scripts":{"start":"node server.js"}}`,
 			"packages/api/package.json": `{"name":"api","scripts":{"start":"node index.js"}}`,

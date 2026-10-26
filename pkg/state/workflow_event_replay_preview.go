@@ -279,6 +279,9 @@ func (m *MemStore) PreviewWorkflowEventReplay(ctx context.Context, accountID str
 			(!c.AcceptedAt.IsZero() && (work.CreatedAt.Before(c.AcceptedAt) || work.CreatedAt.Equal(c.AcceptedAt) && work.ID <= c.OutboxID)) {
 			continue
 		}
+		if !m.eventAppInProducerReachLocked(accountID, work.Payload, query.AppID) {
+			continue
+		}
 		var identity publishedEventIdentity
 		if err := json.Unmarshal(work.Payload, &identity); err != nil {
 			return api.WorkflowEventReplayPreviewResponse{}, fmt.Errorf("decode retained event: %w", err)

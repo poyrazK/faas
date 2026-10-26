@@ -432,6 +432,7 @@ type MemStore struct {
 	objectWriteAdmissions       map[string]objectWriteAdmission
 	objectCapacityJobs          map[string]ObjectCapacityReconciliation
 	objectBucketVersioning      map[string]ObjectBucketVersioning
+	objectBucketCORS            map[string]api.ObjectBucketCORS
 	objectBucketEncryption      map[string]ObjectBucketEncryption
 	objectBucketObjectLock      map[string]ObjectBucketObjectLock
 	objectVersionProtection     map[string]ObjectVersionProtection
@@ -571,6 +572,8 @@ type MemStore struct {
 	githubWebhookSecrets map[int64]GithubWebhookSecret
 	// honeytokens is keyed by HoneytokenDigest (ADR 20261024014500).
 	honeytokens map[string]Honeytoken
+	// alertTestSends are relayed test sends (ADR 20261022111812).
+	alertTestSends map[string]memAlertTestSend
 	// githubWebhookSecretMeta stamps (upgraded_at, upgraded_by)
 	// for each per-tenant row so the apid admin route can echo
 	// the row back without a second query.
@@ -1134,6 +1137,9 @@ type MemStore struct {
 	// per-app shape unchanged. (M7 fix; the previous shape was wrong.)
 	usage        []usageMinute
 	usageByMonth []Usage
+	// logArchiveErasures mirrors log_archive_erasures and its instance rows,
+	// keyed by account ID.
+	logArchiveErasures map[string]*memLogArchiveErasure
 	// apiConsumerUsage mirrors the durable per-(app, consumer, minute)
 	// aggregate. apiConsumerUsageEvents is the idempotency ledger: an
 	// event is applied at most once even when the gateway retries a
@@ -5580,6 +5586,7 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var out DeploymentOutcomeCounts
+	failedTenants := map[string]struct{}{}
 	for _, d := range m.deployments {
 		switch d.Status {
 		case DeployLive, DeploySuperseded:
@@ -5601,9 +5608,15 @@ func (m *MemStore) CountDeploymentOutcomesSince(_ context.Context, since time.Ti
 			}
 			if !m.customerCausedFailureLocked(d) {
 				out.Failed++
+				tenant := d.AppID
+				if app, ok := m.apps[d.AppID]; ok && app.AccountID != "" {
+					tenant = app.AccountID
+				}
+				failedTenants[tenant] = struct{}{}
 			}
 		}
 	}
+	out.FailedAccounts = len(failedTenants)
 	return out, nil
 }
 
@@ -6011,6 +6024,7 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	}
 
 	// Plan every weight before mutating any row, including upgrade fences.
+	priorPercent := d.TrafficPercent
 	d.TrafficPercent = newPercent
 	if err := m.checkRuntimeUpgradeTrafficLocked(d); err != nil {
 		return Deployment{}, err
@@ -6055,10 +6069,12 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 		}
 		d.MCPTaskMigrationOverride = false
 	}
+	d.TrafficPercentExplicit = manualTrafficExplicit(priorPercent, newPercent, d.TrafficPercentExplicit)
 	d.TrafficPercent = newPercent
 	sum := newPercent
 	for i, sibling := range siblings {
 		other := m.deployments[sibling.ID]
+		other.TrafficPercentExplicit = manualTrafficExplicit(other.TrafficPercent, newWeights[i], other.TrafficPercentExplicit)
 		other.TrafficPercent = newWeights[i]
 		if err := m.checkRuntimeUpgradeTrafficLocked(other); err != nil {
 			return Deployment{}, err
@@ -6075,6 +6091,7 @@ func (m *MemStore) updateDeploymentTraffic(ctx context.Context, id string, newPe
 	m.putDeploymentLocked(id, d)
 	for i, sibling := range siblings {
 		other := m.deployments[sibling.ID]
+		other.TrafficPercentExplicit = manualTrafficExplicit(other.TrafficPercent, newWeights[i], other.TrafficPercentExplicit)
 		other.TrafficPercent = newWeights[i]
 		m.putDeploymentLocked(sibling.ID, other)
 	}
@@ -10055,6 +10072,9 @@ func (m *MemStore) markDeploymentLive(ctx context.Context, id string, fenceLates
 				other.Status = DeploySuperseded
 			}
 			other.TrafficPercent = 0
+			// A retained stable revision, not a manual dark deployment
+			// (RetireLiveDeploymentSiblings; Hunt 14 H14-71).
+			other.TrafficPercentExplicit = false
 			m.putDeploymentLocked(otherID, other)
 		}
 		m.reactivateCronsForAppLocked(d.AppID)
@@ -10441,6 +10461,7 @@ func (m *MemStore) AppendDeploymentStage(_ context.Context, id string, from, to 
 		EndedAt:    &endedAt,
 		DurationMs: durMs,
 		Status:     stageHistoryStatusCompleted,
+		Reason:     reason, // PgStore parity (Hunt 12 H12-5)
 	})
 	state.Current = to
 	state.CurrentStartedAt = &startedAt
@@ -10563,7 +10584,7 @@ func (m *MemStore) CloseDeploymentStage(_ context.Context, id string, name Stage
 // from the failed row, seed the new row's stage_state to
 // `RetryStageState(fromStage)` (actual source_download + requested-stage metadata).
 // The fresh id is allocated by the existing newID() helper.
-func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, fromStage StageName) (Deployment, error) {
+func (m *MemStore) RetryDeploymentFromStage(ctx context.Context, failedID string, fromStage StageName) (Deployment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if !stageNameClosedSet[fromStage] {
@@ -10597,6 +10618,11 @@ func (m *MemStore) RetryDeploymentFromStage(_ context.Context, failedID string, 
 	// builds a fresh struct and never copies Revision, so this is always
 	// a fresh assignment; mirrors the subselect in PgStore's retry INSERT.
 	newDep.Revision = m.nextDeploymentRevisionLocked(newDep.AppID)
+	// The new revision URL is a new binding (ADR-570); check it before any
+	// retry intent is staged.
+	if err := m.checkMemTrafficDeploymentChangeLocked(ctx, newDep); err != nil {
+		return Deployment{}, err
+	}
 	if pin, ok := m.runtimeUpgradeTargets[failedID]; ok {
 		if !pin.matches(newDep) {
 			return Deployment{}, ErrConflict
@@ -10712,7 +10738,7 @@ func (m *MemStore) MarkAutoRollback(_ context.Context, deploymentID, reason stri
 // not live.
 //
 // Migration 00297 / Mega-C PR-2 / issue #961 leaf 8.
-func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDeploymentID string) (string, error) {
+func (m *MemStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentDeploymentID string) (string, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	defer m.invalidateChangedLifecycleSuccessorsLocked()
@@ -10756,6 +10782,11 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 		return "", err
 	}
 	if err := m.requireLayerArtifactsRetainedLocked(m.deploymentLayerKeysLocked(m.deployments[targetID])); err != nil {
+		return "", err
+	}
+	revived := m.deployments[targetID]
+	revived.Status = DeployLive
+	if err := m.checkMemTrafficDeploymentChangeLocked(ctx, revived); err != nil {
 		return "", err
 	}
 	now := time.Now().UTC()
@@ -10812,15 +10843,15 @@ func (m *MemStore) AutoRollbackDeploymentsTx(_ context.Context, appID, currentDe
 
 // PrepareDeploymentRollback mirrors PgStore.PrepareDeploymentRollback under
 // the MemStore mutex.
-func (m *MemStore) PrepareDeploymentRollback(_ context.Context, appID, targetDeploymentID string) (Deployment, error) {
+func (m *MemStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDeploymentID string) (Deployment, error) {
 	if appID == "" || targetDeploymentID == "" {
 		return Deployment{}, ErrInvalidArgument
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.prepareDeploymentRollbackLocked(appID, targetDeploymentID)
+	return m.prepareDeploymentRollbackLocked(ctx, appID, targetDeploymentID)
 }
-func (m *MemStore) prepareDeploymentRollbackLocked(appID, targetDeploymentID string) (Deployment, error) {
+func (m *MemStore) prepareDeploymentRollbackLocked(ctx context.Context, appID, targetDeploymentID string) (Deployment, error) {
 	target, ok := m.deployments[targetDeploymentID]
 	if !ok || target.AppID != appID {
 		return Deployment{}, ErrNoRollbackTarget
@@ -10860,6 +10891,9 @@ func (m *MemStore) prepareDeploymentRollbackLocked(appID, targetDeploymentID str
 	target.RolloutAbortedAt = nil
 	target.RolloutAbortedReason = ""
 	target.StageState = stage
+	if err := m.checkMemTrafficDeploymentChangeLocked(ctx, target); err != nil {
+		return Deployment{}, err
+	}
 	m.putDeploymentLocked(targetDeploymentID, target)
 	if m.rollbackPrepared == nil {
 		m.rollbackPrepared = map[string]time.Time{}
@@ -12325,6 +12359,22 @@ func (m *MemStore) QueuedBuildsCount(ctx context.Context) (int, error) {
 		}
 	}
 	return n, nil
+}
+
+// SetDeploymentTrafficForTest marks a deployment live at percent with the
+// given traffic_percent_explicit flag, for fixtures that need two live
+// releases in one scope as production holds them after a rollback.
+func (m *MemStore) SetDeploymentTrafficForTest(id string, percent int, explicit bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	d, ok := m.deployments[id]
+	if !ok {
+		return
+	}
+	d.Status = DeployLive
+	d.TrafficPercent = percent
+	d.TrafficPercentExplicit = explicit
+	m.putDeploymentLocked(id, d)
 }
 
 // SetBuildStartedAtForTest is a test-only hook that lets the reaper
@@ -14426,6 +14476,11 @@ func (m *MemStore) ListDueInvocationsAfter(_ context.Context, now time.Time, aft
 		if after.ID != "" && (inv.DueAt.Before(after.DueAt) || (inv.DueAt.Equal(after.DueAt) && inv.ID <= after.ID)) {
 			continue
 		}
+		if after.OwnerNodeID != "" {
+			if app, ok := m.apps[inv.AppID]; !ok || app.NodeID != "" && app.NodeID != after.OwnerNodeID {
+				continue
+			}
+		}
 		out = append(out, inv)
 	}
 	sort.Slice(out, func(i, j int) bool {
@@ -15555,7 +15610,7 @@ func (m *MemStore) CreateInstance(ctx context.Context, appID, deploymentID, stat
 	// the FK divergence noted above, an un-seeded nodeID is still a pass —
 	// the guard only fires for a node whose compute_nodes row exists and
 	// carries a positive ceiling.
-	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
+	if err := m.checkNodeAdmissionReservationLocked(ctx, nodeID, state, ramMB); err != nil {
 		return Instance{}, err
 	}
 	ins := Instance{
@@ -15641,7 +15696,7 @@ func (m *MemStore) CreateInstanceWithMode(ctx context.Context, appID, deployment
 	}
 	// ADR-193: mirror of the PgStore per-node reservation. m.mu is held
 	// across check and insert, which is what the advisory lock buys PgStore.
-	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
+	if err := m.checkNodeAdmissionReservationLocked(ctx, nodeID, state, ramMB); err != nil {
 		return Instance{}, err
 	}
 	mode = strings.TrimSpace(mode)
@@ -15739,7 +15794,7 @@ func (m *MemStore) CreateJobInstance(ctx context.Context, instanceID, jobID, run
 		return Instance{}, ErrConflict
 	}
 	// ADR-193: job tasks take the same per-node reservation as app wakes.
-	if err := m.checkNodeReservationLocked(nodeID, state, ramMB); err != nil {
+	if err := m.checkNodeAdmissionReservationLocked(ctx, nodeID, state, ramMB); err != nil {
 		return Instance{}, err
 	}
 	ins := Instance{
@@ -16877,12 +16932,15 @@ func (m *MemStore) createSnapshotLocked(snap Snapshot) (Snapshot, error) {
 		snap.CreatedAt = time.Now()
 	}
 	for _, existing := range m.snapshots {
-		// Mirror the (deployment_id, tier) unique index from migration
-		// 00110: a non-stale row with the same (deployment_id, tier)
+		// Mirror the (deployment_id, tier, cpu platform) unique index
+		// (migration 00110, widened by ADR-20261024225612 amendment 1): a
+		// non-stale row with the same deployment, tier and CPU platform
 		// is a duplicate — surface ErrConflict so callers fall through
 		// to the existing-imaged semantic. Different-tier rows on the
-		// same deployment are allowed (warm + init coexist).
-		if existing.DeploymentID == snap.DeploymentID && existing.Tier == snap.Tier && !existing.Stale {
+		// same deployment are allowed (warm + init coexist), and so are
+		// rows of different CPU platforms.
+		if existing.DeploymentID == snap.DeploymentID && existing.Tier == snap.Tier && !existing.Stale &&
+			existing.CPUPlatform() == snap.CPUPlatform() {
 			return Snapshot{}, ErrConflict
 		}
 	}
@@ -17434,6 +17492,32 @@ func (m *MemStore) ComputeNodeUsedCPUMillicoresByNode(_ context.Context, nodeIDs
 		}
 	}
 	return used, nil
+}
+
+// SetComputeNodeReadiness mirrors PgStore.SetComputeNodeReadiness.
+func (m *MemStore) SetComputeNodeReadiness(_ context.Context, nodeID string, readiness NodeReadiness, reason string) (bool, error) {
+	if !readiness.Valid() {
+		return false, fmt.Errorf("state: set compute_node %s readiness: invalid value %q", nodeID, readiness)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n, ok := m.computeNodes[nodeID]
+	if !ok {
+		return false, nil
+	}
+	current := ""
+	if n.ReadinessReason != nil {
+		current = *n.ReadinessReason
+	}
+	if n.Readiness == readiness && current == reason {
+		return false, nil
+	}
+	n.Readiness, n.ReadinessReason = readiness, nil
+	if reason != "" {
+		n.ReadinessReason = &reason
+	}
+	m.computeNodes[nodeID] = n
+	return true, nil
 }
 
 func (m *MemStore) HeartbeatComputeNode(_ context.Context, nodeID string) error {
@@ -23536,6 +23620,7 @@ func (m *MemStore) DeleteAccount(ctx context.Context, id string) error {
 		}
 	}
 	m.usageByMonth = keptMonth
+	delete(m.logArchiveErasures, id)
 	for deploymentID, deployment := range m.deployments {
 		if deployment.DeployedByUserID == id {
 			deployment.DeployedByUserID = ""

@@ -1214,8 +1214,10 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 	// a previous PATCH doesn't reach a fresh request.
 	var publicAuthSealed []byte
 	if req.PublicAuth != nil && req.PublicAuth.Mode == api.AppPublicAuthModeBasic {
-		recipient := hostSecretRecipient()
-		if recipient == nil {
+		// ADR 20261022111812: sealed to the edge domain (and the fleet
+		// recipient until it is in domain mode); gatewayd-internal opens it.
+		recipients, recipientErr := edgeCredentialRecipients()
+		if recipientErr != nil {
 			api.WriteProblem(w, customerCapacityProblem(s.log, "update app public authentication", "App settings temporarily unavailable",
 				"Gregale could not securely update these app settings.",
 				"Retry in a few seconds; if it still fails, contact support.", nil))
@@ -1228,7 +1230,7 @@ func (s *server) updateApp(w http.ResponseWriter, r *http.Request, acct state.Ac
 		// splits on the first newline and treats both
 		// halves as required.
 		plaintext := []byte(req.PublicAuth.BasicUser + "\n" + req.PublicAuth.BasicPass)
-		sealed, err := secretbox.SealBytes(recipient, api.AppPublicAuthBasicSealNamespace, plaintext, api.AppPublicAuthBasicMaxBytes)
+		sealed, err := secretbox.SealBytesTo(recipients, api.AppPublicAuthBasicSealNamespace, plaintext, api.AppPublicAuthBasicMaxBytes)
 		if err != nil {
 			if prob := api.AsProblem(err); prob != nil {
 				api.WriteProblem(w, prob)
@@ -2519,7 +2521,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		if errors.Is(err, state.ErrNoRollbackTarget) || errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 			return state.Deployment{}, nil, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
 		}
-		return state.Deployment{}, nil, api.ErrCapacity("could not prepare rollback target")
+		return state.Deployment{}, nil, trafficproblem.Policy(err, api.ErrCapacity("could not prepare rollback target"))
 	}
 	primePayload, marshalErr := json.Marshal(map[string]string{
 		"app_id": app.ID, "deployment_id": target.ID,
@@ -6246,6 +6248,14 @@ func (s *server) deploymentResponse(parent context.Context, d state.Deployment, 
 	if len(d.Workflows) > 0 && string(d.Workflows) != "null" {
 		_ = json.Unmarshal(d.Workflows, &resp.Workflows)
 	}
+	if len(d.Sidecars) > 0 && string(d.Sidecars) != "null" {
+		// Environment values are sealed and never echoed; the summary
+		// carries only identity, image, port and size.
+		var companions api.Sidecars
+		if json.Unmarshal(d.Sidecars, &companions) == nil {
+			resp.Companions = companions.Summaries()
+		}
+	}
 	return resp
 }
 
@@ -6946,7 +6956,7 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 				managedPostgresProblem(w, err)
 				return
 			}
-			view := managedPostgresUsageView(usage, limits)
+			view := managedPostgresUsageView(usage, limits, s.managedPostgresCapMode)
 			out.ManagedPostgres = &view
 		}
 	}

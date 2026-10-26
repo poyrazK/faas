@@ -354,7 +354,9 @@ failure_report_dir = %q
 					t.Fatalf("e2etest: create native ownership root: %v", err)
 				}
 			}
-			cfg += fmt.Sprintf("native_process_recovery = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
+			// Owner records let a restarted vmmd clean up after the one it
+			// replaced (ADR-2026101710 Amendment 1).
+			cfg += fmt.Sprintf("native_process_recovery = true\nnative_launch_owner_records = true\nprepared_networks = 0\nnative_image_staging_root = %q\nnative_snapshot_publication_root = %q\n", images, publications)
 			// Strict budgets need the native owner; their apps must still park
 			// and wake from snapshots (ADR 20261022184951).
 			if os.Getenv("FAAS_FINANCIAL_SYSTEM_ACCEPTANCE") == "1" {
@@ -2051,6 +2053,26 @@ func (h *Harness) PlannedRestartVMMD(stopTimeout time.Duration) error {
 	return nil
 }
 
+// SetVMMDEnv changes one variable of the retained vmmd launch recipe; the
+// next PlannedRestartVMMD starts the successor with it. Launch entries come
+// after the inherited environment, so this overrides the test's own.
+func (h *Harness) SetVMMDEnv(key, value string) error {
+	if h == nil || len(h.vmmdLaunchEnv) == 0 {
+		return fmt.Errorf("e2etest: vmmd launch recipe unavailable")
+	}
+	if key == "" || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, '\x00') {
+		return fmt.Errorf("e2etest: invalid vmmd environment entry")
+	}
+	env := h.vmmdLaunchEnv[:0]
+	for _, existing := range h.vmmdLaunchEnv {
+		if !strings.HasPrefix(existing, key+"=") {
+			env = append(env, existing)
+		}
+	}
+	h.vmmdLaunchEnv = append(env, key+"="+value)
+	return nil
+}
+
 // SetAPIDEnv updates the retained apid launch recipe without exposing private
 // runtime settings to other daemons or guests. RestartAPID applies the change.
 func (h *Harness) SetAPIDEnv(key, value string) error {
@@ -2181,7 +2203,7 @@ var DaemonBinaries = []string{"apid", "schedd", "vmmd", "imaged", "gatewayd-inte
 // (Makefile DAEMONS, deploy/packer/scripts/compile-daemons.sh,
 // pkg/releaseinstall.Names), so building it here makes the harness match the
 // node rather than depend on a fallback that only works for static builds.
-var StaticHelperBinaries = []string{"vmmd-jail-helper"}
+var StaticHelperBinaries = []string{"vmmd-jail-helper", "vmmd-guestdisk"}
 
 var (
 	sharedBinOnce sync.Once

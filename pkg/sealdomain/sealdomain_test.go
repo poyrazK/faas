@@ -63,13 +63,96 @@ func TestRegistry_SourceIsWiredToGithubdAlone(t *testing.T) {
 	}
 }
 
-func TestRegistry_BuildIsWiredToImagedAlone(t *testing.T) {
+func TestRegistry_ControlIsWiredToScheddAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Control)
+	if !ok || !s.Wired {
+		t.Fatalf("control domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "schedd" {
+		t.Fatalf("control readers = %v, want [schedd]", s.Readers)
+	}
+	if len(s.Roles) != 2 {
+		t.Fatalf("control roles = %v; schedd runs on both node roles", s.Roles)
+	}
+}
+
+func TestRegistry_StorageIsWiredToS3GatewaydAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Storage)
+	if !ok || !s.Wired {
+		t.Fatalf("storage domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "s3-gatewayd" {
+		t.Fatalf("storage readers = %v, want [s3-gatewayd]", s.Readers)
+	}
+	if containsDomain(sealdomain.ReaderDomains("apid"), sealdomain.Storage) {
+		t.Fatal("apid reads the storage domain; it must only seal S3 credentials")
+	}
+}
+
+func TestKeyID(t *testing.T) {
+	newRecipient := func() *age.X25519Recipient {
+		id, err := age.GenerateX25519Identity()
+		if err != nil {
+			t.Fatal(err)
+		}
+		return id.Recipient()
+	}
+	domain, fleet := newRecipient(), newRecipient()
+	for name, tc := range map[string]struct {
+		recipients []*age.X25519Recipient
+		want       string
+	}{
+		"fleet alone":        {[]*age.X25519Recipient{fleet}, fleet.String()},
+		"dual keeps fleet":   {[]*age.X25519Recipient{domain, fleet}, fleet.String()},
+		"domain alone":       {[]*age.X25519Recipient{domain}, domain.String()},
+		"nothing to seal to": {nil, ""},
+	} {
+		if got := sealdomain.KeyID(tc.recipients, fleet); got != tc.want {
+			t.Errorf("%s: KeyID = %q, want %q", name, got, tc.want)
+		}
+	}
+}
+
+func TestRegistry_AlertingIsWiredToMeterdAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Alerting)
+	if !ok || !s.Wired {
+		t.Fatalf("alerting domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "meterd" {
+		t.Fatalf("alerting readers = %v, want [meterd]", s.Readers)
+	}
+	// apid seals alerting values and sends the tests it cannot open
+	// through meterd (ADR 20261022111812, section 3).
+	if containsDomain(sealdomain.ReaderDomains("apid"), sealdomain.Alerting) {
+		t.Fatal("apid reads the alerting domain; it must only seal alerting values")
+	}
+}
+
+func TestRegistry_EdgeIsWiredToGatewaydInternalAlone(t *testing.T) {
+	s, ok := sealdomain.Lookup(sealdomain.Edge)
+	if !ok || !s.Wired {
+		t.Fatalf("edge domain = %+v, %v; want wired", s, ok)
+	}
+	if len(s.Readers) != 1 || s.Readers[0] != "gatewayd-internal" {
+		t.Fatalf("edge readers = %v, want [gatewayd-internal]", s.Readers)
+	}
+	for _, d := range []string{"apid", "gatewayd-public"} {
+		if containsDomain(sealdomain.ReaderDomains(d), sealdomain.Edge) {
+			t.Fatalf("%s reads the edge domain; only gatewayd-internal opens its columns", d)
+		}
+	}
+}
+
+// imaged opens registry passwords to pull images; vmmd opens them into a
+// builder VM's Docker config for its base-image pulls (ADR-20261026090000).
+// Both run on compute nodes, where root already holds the build identity.
+func TestRegistry_BuildIsWiredToImagedAndVmmd(t *testing.T) {
 	s, ok := sealdomain.Lookup(sealdomain.Build)
 	if !ok || !s.Wired {
 		t.Fatalf("build domain = %+v, %v; want wired", s, ok)
 	}
-	if len(s.Readers) != 1 || s.Readers[0] != "imaged" {
-		t.Fatalf("build readers = %v, want [imaged]", s.Readers)
+	if len(s.Readers) != 2 || s.Readers[0] != "imaged" || s.Readers[1] != "vmmd" {
+		t.Fatalf("build readers = %v, want [imaged vmmd]", s.Readers)
 	}
 	if got := sealdomain.ReaderDomains("apid"); containsDomain(got, sealdomain.Build) {
 		t.Fatalf("apid reads %v; it must only seal registry passwords", got)

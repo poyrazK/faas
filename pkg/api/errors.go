@@ -1031,6 +1031,15 @@ const (
 	// the operator rebuilds the base.
 	CodeScanCritical = "scan_critical"
 
+	// Titles of the scan_critical refusals vmmd's boot gate returns before
+	// it starts a VM. These depend on the node (its configured base
+	// generation and its cache), not on the artifact, so schedd re-places
+	// such a wake on another node (ADR-20261022184531). pkg/fcvm's tests
+	// pin the boot gate to these titles.
+	ScanCriticalTitleGenerationUnavailable = "runtime base generation unavailable"
+	ScanCriticalTitleGenerationMismatch    = "scan sidecar generation mismatch"
+	ScanCriticalTitleSidecarMissing        = "scan sidecar missing"
+
 	// CodeBuildSBOMUnavailable is returned by the SBOM GET handler
 	// when no SBOM populator has run for this build (pre-PR build, or
 	// the imaged syft populator in pkg/imaged/loop.go has not yet
@@ -2611,6 +2620,27 @@ func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 		WithDocs(docsBase + "/plans#developer-environments")
 }
 
+// ErrPlanLimitPreviewEnvironments is returned when a pull-request preview
+// would open more PR preview environments than the plan allows. A closed
+// PR's preview holds no allowance. It keeps the plan_limit_apps code.
+func ErrPlanLimitPreviewEnvironments(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitApps,
+		"PR preview limit reached",
+		fmt.Sprintf("%s plan allows %d open PR preview environment(s); you have %d. Close a pull request or run `gregale preview destroy` on one of its previews.", l.Plan, l.PreviewApps, observed)).
+		WithLimit(int64(l.PreviewApps), int64(observed)).
+		WithDocs(docsBase + "/plans#apps")
+}
+
+// ErrPlanLimitPreviewWorkloads is returned when one PR preview environment
+// would hold more workloads than the plan can deploy.
+func ErrPlanLimitPreviewWorkloads(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitApps,
+		"PR preview environment too large",
+		fmt.Sprintf("%s plan allows %d workload(s) in one PR preview environment; this one already has %d.", l.Plan, l.DeployedApps, observed)).
+		WithLimit(int64(l.DeployedApps), int64(observed)).
+		WithDocs(docsBase + "/plans#apps")
+}
+
 // ErrDevWatchRAM refuses watch mode (ADR-1170) for a developer app whose RAM
 // is below DevWatchMinRAMMB. Limit and observed are MB.
 func ErrDevWatchRAM(ramMB int) *Problem {
@@ -4168,6 +4198,18 @@ func ErrJobQuota(plan Plan, quotaName string, limit, observed int) *Problem {
 		fmt.Sprintf("%s plan caps jobs at %d for %s; you have %d. Cancel a task or delete a job to free capacity.",
 			plan, limit, quotaName, observed)).
 		WithLimit(int64(limit), int64(observed)).
+		WithDocs(docsBase + "/plans#jobs")
+}
+
+// ValidateJobRAMMB refuses a job or image run whose memory cannot boot a
+// guest. Zero means the default and is resolved before this check.
+func ValidateJobRAMMB(ramMB int) *Problem {
+	if ramMB >= JobMinRAMMB {
+		return nil
+	}
+	return NewProblem(http.StatusBadRequest, CodeValidation, "Invalid ram_mb",
+		fmt.Sprintf("ram_mb must be at least %d MB; requested %d MB.", JobMinRAMMB, ramMB)).
+		WithLimit(int64(JobMinRAMMB), int64(ramMB)).
 		WithDocs(docsBase + "/plans#jobs")
 }
 

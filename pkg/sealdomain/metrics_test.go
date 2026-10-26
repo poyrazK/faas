@@ -30,3 +30,19 @@ func TestRegisterLoaded(t *testing.T) {
 		}
 	}
 }
+
+// vmmd reads the runtime and build domains (ADR-20261026090000); a second
+// RegisterLoaded call would register the gauge twice and panic.
+func TestRegisterLoadedDomains(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	sealdomain.RegisterLoadedDomains(reg, map[sealdomain.Domain]bool{sealdomain.Runtime: true, sealdomain.Build: false})
+	want := `
+# HELP faas_seal_domain_loaded 1 when this daemon loaded the seal domain's identity at start (ADR 20261022111812).
+# TYPE faas_seal_domain_loaded gauge
+faas_seal_domain_loaded{domain="build"} 0
+faas_seal_domain_loaded{domain="runtime"} 1
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "faas_seal_domain_loaded"); err != nil {
+		t.Fatal(err)
+	}
+}

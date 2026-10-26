@@ -113,6 +113,10 @@ func (c RealtimeTriggerConfig) Concurrency() int {
 const (
 	KafkaSASLPasswordMaxBytes = 4 * 1024
 	KafkaTLSClientKeyMaxBytes = 64 * 1024
+	// RedisStreamsPasswordMaxBytes and NATSURLCredentialsMaxBytes bound the
+	// sealed Redis password and NATS URL userinfo.
+	RedisStreamsPasswordMaxBytes = 4 * 1024
+	NATSURLCredentialsMaxBytes   = 4 * 1024
 )
 
 // BrokerPoisonStrategy is the closed-vocabulary carrier for the

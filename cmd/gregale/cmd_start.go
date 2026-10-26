@@ -311,9 +311,9 @@ type projectSource struct {
 	Path    string // absolute source directory
 }
 
-// discoverProjectSources lists the deployable workspace and convention members
-// below root. The root itself is never returned; callers decide whether a
-// deployable root is also a candidate.
+// discoverProjectSources lists the deployable workspace, convention and
+// source-built Compose members below root. The root itself is never
+// returned; callers decide whether a deployable root is also a candidate.
 func discoverProjectSources(root string) ([]projectSource, error) {
 	scan, err := reposcan.Scan(os.DirFS(root))
 	if err != nil {
@@ -322,7 +322,10 @@ func discoverProjectSources(root string) ([]projectSource, error) {
 	var sources []projectSource
 	seen := make(map[string]bool)
 	for _, workload := range scan.Workloads {
-		if workload.RootDir == "" || workload.RootDir == "." || (workload.Tier != reposcan.TierWorkspace && workload.Tier != reposcan.TierConvention) {
+		// Compose services count when they build from a source directory;
+		// an image-only service has no source to run.
+		if workload.RootDir == "" || workload.RootDir == "." ||
+			(workload.Tier != reposcan.TierWorkspace && workload.Tier != reposcan.TierConvention && workload.Tier != reposcan.TierCompose) {
 			continue
 		}
 		path := filepath.Join(root, filepath.FromSlash(workload.RootDir))

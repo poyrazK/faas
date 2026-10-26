@@ -42,11 +42,11 @@ export type WakeTimelineJSONRow = {
    */
   trigger_class?: 'user' | 'monitor' | 'crawler' | 'preview_bot' | 'unknown';
   /**
-   * Wake method (restore or cold_boot), when telemetry is available.
+   * Wake method vmmd ran (restore or cold_boot), when telemetry is available. A planned restore that fell back to a cold boot reads cold_boot.
    */
   method?: string;
   /**
-   * Snapshot tier selected for the wake.
+   * Snapshot tier selected for the wake; cold_boot_fallback when a planned restore fell back to a cold boot.
    */
   tier?: 'warm' | 'init' | 'cold_boot_fallback';
   /**
@@ -69,5 +69,13 @@ export type WakeTimelineJSONRow = {
    * Wall-clock boot_started → boot_completed delta in ms. -1 when still booting or rejected. 0 is impossible (a 0ms wake would round to a positive integer).
    */
   ready_in_ms?: number;
+  /**
+   * The method schedd planned when vmmd ran another one, for example restore on a wake that fell back to a cold boot. Absent otherwise.
+   */
+  planned_method?: string;
+  /**
+   * Closed reason for a restore that fell back to a cold boot, when one is reported. Absent for other fallbacks, such as a snapshot made from an older base.
+   */
+  restore_fallback_reason?: 'after_restore_failed';
 };
 

@@ -53,14 +53,14 @@ func (m *Manager) resumeInboxSubscribe(ctx context.Context, c *connection, frame
 	c.mu.RLock()
 	occupied := c.inboxSub != nil || len(c.resumeSubs) >= maxResumePerConnection
 	c.mu.RUnlock()
-	if occupied || !m.reserveResume() {
+	if occupied || !m.reserveResume(c.account()) {
 		m.inboxError(ctx, c, frame.Consumer, "subscription_limit")
 		return
 	}
 	release := true
 	defer func() {
 		if release {
-			m.resumeCount.Add(-1)
+			m.releaseResume(c.account())
 		}
 	}()
 	readCtx, cancel := context.WithTimeout(ctx, resumeHistoryReadTimeout)
@@ -111,7 +111,7 @@ func (m *Manager) resumeInboxSubscribe(ctx context.Context, c *connection, frame
 }
 
 func (m *Manager) pumpInbox(ctx context.Context, c *connection, client ManagedRealtimeInboxClient, sub *inboxSubscription, page state.ManagedRealtimeChannelHistory) {
-	defer m.resumeCount.Add(-1)
+	defer m.releaseResume(c.account())
 	defer func() {
 		sub.cancel()
 		c.mu.Lock()

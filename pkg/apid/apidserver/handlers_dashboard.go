@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dashboard/stages"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -527,6 +528,9 @@ func appURLForDomain(slug, domain string) string {
 func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
 	ctx := r.Context()
 	apps, err := s.store.ListApps(ctx, acct.ID)
+	if err == nil {
+		apps, _, err = s.visibleAccountApps(r, acct, apps)
+	}
 	if err != nil {
 		renderProblem(w, log, err)
 		return
@@ -3064,7 +3068,7 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	alive := dep.DeploymentPreviewActive()
 	preview := dashboard.DeploymentPreviewURL{Alive: alive}
 	if alive {
-		suffix := wire.DeployWildcardSuffix
+		suffix := hostidentity.DeploySuffix()
 		if suffix != "" {
 			ord, ordErr := s.store.DeploymentOrdinal(ctx, app.ID, dep.ID)
 			if ordErr == nil {

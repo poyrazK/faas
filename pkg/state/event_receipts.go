@@ -88,6 +88,9 @@ type EventReceiptCancellation struct {
 }
 
 type EventReceiptRecipient struct {
+	// deliveryID is the delivery this recipient routed to
+	// (PublishedEventDeliveryID); empty means the original identity.
+	deliveryID                                     string
 	Position                                       int64
 	SubscriptionID, AppID, AppSlug                 string
 	Origin, BackfillJobID                          string
@@ -192,8 +195,9 @@ func (s *PgStore) EventReceipt(ctx context.Context, accountID, source, eventID s
 			deferrals := int(row.GenerationCapacityDeferrals)
 			entry.Routing.GenerationCapacityDeferrals = &deferrals
 		}
+		entry.deliveryID = PublishedEventDeliveryID(progress, meta.InvocationAccountID, source, eventID, recipient.ID)
 		receipt.Recipients = append(receipt.Recipients, entry)
-		ids = append(ids, mustPgUUID(PublishedEventInvocationID(meta.InvocationAccountID, source, eventID, recipient.ID)))
+		ids = append(ids, mustPgUUID(entry.deliveryID))
 	}
 	if err := enrichPgEventReceipt(ctx, q, tx, &receipt, accountID, ids); err != nil {
 		return EventReceipt{}, err
@@ -239,7 +243,10 @@ func enrichPgEventReceipt(ctx context.Context, q *sqlc.Queries, tx pgx.Tx, recei
 		if entry.WorkflowName != "" {
 			continue
 		}
-		id := PublishedEventInvocationID(receipt.invocationAccountID, receipt.EventSource, receipt.EventID, entry.SubscriptionID)
+		id := entry.deliveryID
+		if id == "" {
+			id = PublishedEventInvocationID(receipt.invocationAccountID, receipt.EventSource, receipt.EventID, entry.SubscriptionID)
+		}
 		if invocation, ok := byID[id]; ok && uuidFromPgtype(invocation.AppID).String() == entry.AppID {
 			entry.Execution = receiptExecution(id, invocation.State, int(invocation.Attempts), invocation.ReplayGeneration, timeFromPgtype(invocation.DueAt), timeFromPgtype(invocation.CreatedAt), timestamptzToTimePtr(invocation.CompletedAt), invocation.LastError)
 			if entry.TargetAvailable {
@@ -420,7 +427,8 @@ func (m *MemStore) EventReceipt(_ context.Context, accountID, source, eventID st
 			receipt.Recipients = append(receipt.Recipients, entry)
 			continue
 		}
-		id := PublishedEventInvocationID(invocationAccountID, source, eventID, recipient.ID)
+		id := PublishedEventDeliveryID(progress, invocationAccountID, source, eventID, recipient.ID)
+		entry.deliveryID = id
 		if invocation, ok := m.invocations[id]; ok && owned && sameMemUUID(invocation.AccountID, accountID) && sameMemUUID(invocation.AppID, recipient.AppID) && !invocation.CreatedAt.Before(work.CreatedAt) {
 			entry.Execution = receiptExecution(id, string(invocation.State), invocation.Attempts, invocation.ReplayGeneration, invocation.DueAt, invocation.CreatedAt, cloneEventReceiptTime(invocation.CompletedAt), invocation.LastError)
 			if entry.TargetAvailable {

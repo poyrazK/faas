@@ -165,12 +165,18 @@ func cmdDeployments(args []string) int {
 	// use (e.g. `kubectl get pods -w` watch flag — semantically
 	// different but the user mental model is "show me more").
 	wide := fs.Bool("wide", false, "include the revision (vN) and annotation columns (by / pr / tag / reason)")
-	if err := fs.Parse(args); err != nil {
+	if err := parseInterspersed(fs, args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
-		PrintUsage(os.Stderr, "usage: gregale deployments [--app SLUG] [--limit N] [--cursor CURSOR] [--all] [--wide] [--failed-only]", "deployments")
+	// Other app commands take the slug positionally; `deployments h14-py`
+	// answered with bare usage (Hunt 14 H14-63).
+	positional, mergeErr := mergeAppFlag(fs.Args(), *app, 1)
+	if mergeErr != nil || len(positional) > 1 {
+		PrintUsage(os.Stderr, "usage: gregale deployments [SLUG | --app SLUG] [--limit N] [--cursor CURSOR] [--all] [--wide] [--failed-only]", "deployments")
 		return 1
+	}
+	if len(positional) == 1 {
+		*app = positional[0]
 	}
 	if err := validateCLILimit("limit", *limit, 200); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale deployments --limit N (1 <= N <= 200)", "deployments")

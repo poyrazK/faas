@@ -864,6 +864,14 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// including clearing a Dockerfile for autodetected source builds.
 		dockerfilePath = frozen.Source.Dockerfile
 	}
+	goCommand, goCommandErr := selectGoCommand(app, dockerfilePath, fw)
+	if goCommandErr != nil {
+		b.markFailed(ctx, build, state.FailureUserError, goCommandErr.Error(), buildStart)
+		return BuildResult{}, goCommandErr
+	}
+	if goCommand != "" {
+		b.emitBuildLog(ctx, build.ID, "building Go command cmd/"+goCommand+"\n")
+	}
 
 	// Railpack must build FROM the same immutable runtime base that imaged
 	// will use when it materialises the deployment layer. Without this handoff
@@ -957,10 +965,24 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 			b.emitBuildLog(ctx, build.ID, fmt.Sprintf("mounting %d build secrets\n", len(dockerfileBuild.Secrets)))
 		}
 	}
+	// ADR-20261026090000: a Dockerfile build pulls its base images with the
+	// app's registry credentials, so it can build FROM a private image.
+	var registryCreds []SealedRegistryCredential
+	if fw == FrameworkDocker {
+		var skippedECR []string
+		var credsErr error
+		registryCreds, skippedECR, credsErr = loadBuildRegistryCredentials(ctx, b.store, app)
+		if credsErr != nil {
+			b.markFailed(ctx, build, state.FailureInfra, credsErr.Error(), buildStart)
+			return BuildResult{}, credsErr
+		}
+		b.emitRegistryCredentialLog(ctx, build.ID, registryCreds, skippedECR)
+	}
 	recipe := BuildCacheRecipe{
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
 		DockerfileBuild:       dockerfileBuild,
+		GoCommand:             goCommand,
 		SourceSHA256:          srcHash, SourceRoot: dep.SourceRoot,
 		DockerfilePath: dockerfilePath,
 		Framework:      fw, Plan: acct.Plan, RuntimeBaseRef: runtimeBaseRef,
@@ -970,6 +992,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		AccountID:       app.AccountID,
 	}
 	recipe.BuildSecretScope = buildSecretScope(app.AccountID, app.ID, dep.Scope, buildSecrets)
+	recipe.RegistryAuthScope = registryAuthScope(app.ID, registryCreds)
 	reuseScope, reuseOptedIn := gitOpsReuseScope(app, dep)
 	recipe.GitOpsReuseScope = reuseScope
 	if sourceMaps != nil {
@@ -1061,7 +1084,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, ErrNoSlot
 	}
 	defer releaseSlot()
-	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("allocated builder slot (%s)\n", slot.Label))
+	b.emitBuildLog(ctx, build.ID, builderSlotLogLine(slot.Label, time.Since(build.EnqueuedAt)))
 	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}
@@ -1079,7 +1102,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 	// Keep this projection best-effort, matching imaged's transition helper;
 	// the durable build/deployment status remains authoritative if the stage
 	// write is temporarily unavailable.
-	if _, stageErr := b.store.AppendDeploymentStage(ctx, dep.ID, state.StageSourceDownload, state.StageImageBuild, buildStart, ""); stageErr != nil {
+	if _, stageErr := b.store.AppendDeploymentStage(ctx, dep.ID, state.StageSourceDownload, state.StageImageBuild, buildStart, builderQueueWaitReason(build)); stageErr != nil {
 		b.log.Warn("builderd: open image-build stage", "deployment", dep.ID, "err", stageErr)
 	}
 
@@ -1093,7 +1116,9 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		BuildDependencyDigest: buildDependencyDigest,
 		PublicBuildURLs:       publicURLs,
 		DockerfileBuild:       dockerfileBuild,
+		GoCommand:             goCommand,
 		BuildSecrets:          buildSecrets,
+		RegistryCredentials:   registryCreds,
 		BuildID:               build.ID,
 		TenantID:              app.AccountID,
 		DeploymentID:          dep.ID,
@@ -1116,9 +1141,10 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		Plan:                  string(acct.Plan),
 		WarmScopeKey:          builderWarmScopeKey(app.AccountID, app.ID, fw, runtimeBaseRef),
 	}
-	if len(buildSecrets) > 0 {
-		// A build with secrets never restores or leaves a warm builder, so a
-		// value cannot outlive its build in a snapshot (ADR-20261022185329).
+	if len(buildSecrets) > 0 || len(registryCreds) > 0 {
+		// A build with secrets or registry credentials never restores or
+		// leaves a warm builder, so a value cannot outlive its build in a
+		// snapshot (ADR-20261022185329, ADR-20261026090000).
 		vmReq.WarmScopeKey = ""
 	}
 	warmVM, warmResult, warmSnapshot, warmStarted := b.prepareWarmBuilder(ctx, slot, vmReq)
@@ -1305,6 +1331,13 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		// An older builder guest ignores the options and builds the final
 		// stage with default arguments; refuse that artifact.
 		err := errors.New("builder guest did not acknowledge the Compose build arguments and target")
+		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
+		return BuildResult{}, err
+	}
+	if out.ExitCode == 0 && out.GoCommand != goCommand {
+		// An older builder guest ignores the selection and builds the
+		// module's default command; refuse that artifact.
+		err := fmt.Errorf("builder guest did not acknowledge the Go command cmd/%s", goCommand)
 		b.markFailed(ctx, build, state.FailureInfra, err.Error(), buildStart)
 		return BuildResult{}, err
 	}

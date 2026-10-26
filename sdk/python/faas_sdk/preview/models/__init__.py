@@ -40,6 +40,7 @@ from .account_trace_lookup_error import AccountTraceLookupError
 from .account_trace_lookup_response import AccountTraceLookupResponse
 from .account_trace_match import AccountTraceMatch
 from .account_trace_wake import AccountTraceWake
+from .account_trace_wake_restore_fallback_reason import AccountTraceWakeRestoreFallbackReason
 from .account_usage_response import AccountUsageResponse
 from .activity_actor_response import ActivityActorResponse
 from .activity_actor_response_type import ActivityActorResponseType
@@ -1257,6 +1258,7 @@ from .deployment_change import DeploymentChange
 from .deployment_change_after_type_3 import DeploymentChangeAfterType3
 from .deployment_change_before_type_3 import DeploymentChangeBeforeType3
 from .deployment_change_field import DeploymentChangeField
+from .deployment_companion import DeploymentCompanion
 from .deployment_configuration_status import DeploymentConfigurationStatus
 from .deployment_cron_activation_status import DeploymentCronActivationStatus
 from .deployment_cron_activation_status_reason import DeploymentCronActivationStatusReason
@@ -2634,6 +2636,7 @@ from .managed_postgres_usage_line_item_code import ManagedPostgresUsageLineItemC
 from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperatorResponse
 from .managed_postgres_usage_operator_response_guardrail_state import ManagedPostgresUsageOperatorResponseGuardrailState
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
+from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .managed_realtime_access_request import ManagedRealtimeAccessRequest
 from .managed_realtime_access_request_action import ManagedRealtimeAccessRequestAction
@@ -2995,6 +2998,10 @@ from .object_bucket_access_grant import ObjectBucketAccessGrant
 from .object_bucket_access_grant_key_status import ObjectBucketAccessGrantKeyStatus
 from .object_bucket_access_grant_list import ObjectBucketAccessGrantList
 from .object_bucket_access_grant_permission import ObjectBucketAccessGrantPermission
+from .object_bucket_cors import ObjectBucketCORS
+from .object_bucket_cors_request import ObjectBucketCORSRequest
+from .object_bucket_cors_rule import ObjectBucketCORSRule
+from .object_bucket_cors_rule_allowed_methods_item import ObjectBucketCORSRuleAllowedMethodsItem
 from .object_bucket_encryption import ObjectBucketEncryption
 from .object_bucket_encryption_request import ObjectBucketEncryptionRequest
 from .object_bucket_encryption_state import ObjectBucketEncryptionState
@@ -3244,6 +3251,9 @@ from .obs_rule_health_item_state import ObsRuleHealthItemState
 from .obs_rule_health_response import ObsRuleHealthResponse
 from .obs_rule_health_response_state import ObsRuleHealthResponseState
 from .obs_rule_health_totals import ObsRuleHealthTotals
+from .obs_wake_event import ObsWakeEvent
+from .obs_wake_event_data import ObsWakeEventData
+from .obs_wake_timeline import ObsWakeTimeline
 from .oci_healthcheck_timing import OCIHealthcheckTiming
 from .oidc_exchange_request import OIDCExchangeRequest
 from .oidc_exchange_request_capability import OIDCExchangeRequestCapability
@@ -4111,6 +4121,9 @@ from .plan_detection_warning_detector import PlanDetectionWarningDetector
 from .plan_detection_warning_outcome import PlanDetectionWarningOutcome
 from .plan_durable_entity_quota_migration_response_200 import PlanDurableEntityQuotaMigrationResponse200
 from .plan_managed import PlanManaged
+from .plan_managed_binding import PlanManagedBinding
+from .plan_managed_not_provisioned_reason import PlanManagedNotProvisionedReason
+from .plan_managed_provision import PlanManagedProvision
 from .plan_platform_tenant_reconciliation_request import PlanPlatformTenantReconciliationRequest
 from .plan_response import PlanResponse
 from .plan_response_scan_source import PlanResponseScanSource
@@ -5930,6 +5943,7 @@ from .wake_timeline_event import WakeTimelineEvent
 from .wake_timeline_event_data import WakeTimelineEventData
 from .wake_timeline_json_row import WakeTimelineJSONRow
 from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
+from .wake_timeline_json_row_restore_fallback_reason import WakeTimelineJSONRowRestoreFallbackReason
 from .wake_timeline_json_row_tier import WakeTimelineJSONRowTier
 from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClass
 from .wake_timeline_page import WakeTimelinePage
@@ -6226,6 +6240,7 @@ __all__ = (
     "AccountTraceLookupResponse",
     "AccountTraceMatch",
     "AccountTraceWake",
+    "AccountTraceWakeRestoreFallbackReason",
     "AccountUsageResponse",
     "ActivityActorResponse",
     "ActivityActorResponseType",
@@ -7406,6 +7421,7 @@ __all__ = (
     "DeploymentChangeAfterType3",
     "DeploymentChangeBeforeType3",
     "DeploymentChangeField",
+    "DeploymentCompanion",
     "DeploymentConfigurationStatus",
     "DeploymentCronActivationStatus",
     "DeploymentCronActivationStatusReason",
@@ -8704,6 +8720,7 @@ __all__ = (
     "ManagedPostgresUsageOperatorResponse",
     "ManagedPostgresUsageOperatorResponseGuardrailState",
     "ManagedPostgresUsageResponse",
+    "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseGuardrailState",
     "ManagedRealtimeAccessRequest",
     "ManagedRealtimeAccessRequestAction",
@@ -9041,6 +9058,10 @@ __all__ = (
     "ObjectBucketAccessGrantKeyStatus",
     "ObjectBucketAccessGrantList",
     "ObjectBucketAccessGrantPermission",
+    "ObjectBucketCORS",
+    "ObjectBucketCORSRequest",
+    "ObjectBucketCORSRule",
+    "ObjectBucketCORSRuleAllowedMethodsItem",
     "ObjectBucketEncryption",
     "ObjectBucketEncryptionRequest",
     "ObjectBucketEncryptionState",
@@ -9288,6 +9309,9 @@ __all__ = (
     "ObsRuleHealthResponse",
     "ObsRuleHealthResponseState",
     "ObsRuleHealthTotals",
+    "ObsWakeEvent",
+    "ObsWakeEventData",
+    "ObsWakeTimeline",
     "OCIHealthcheckTiming",
     "OIDCExchangeRequest",
     "OIDCExchangeRequestCapability",
@@ -10045,6 +10069,9 @@ __all__ = (
     "PlanDetectionWarningOutcome",
     "PlanDurableEntityQuotaMigrationResponse200",
     "PlanManaged",
+    "PlanManagedBinding",
+    "PlanManagedNotProvisionedReason",
+    "PlanManagedProvision",
     "PlanPlatformTenantReconciliationRequest",
     "PlanResponse",
     "PlanResponseScanSource",
@@ -11762,6 +11789,7 @@ __all__ = (
     "WakeTimelineEventData",
     "WakeTimelineJSONRow",
     "WakeTimelineJSONRowKind",
+    "WakeTimelineJSONRowRestoreFallbackReason",
     "WakeTimelineJSONRowTier",
     "WakeTimelineJSONRowTriggerClass",
     "WakeTimelinePage",

@@ -115,10 +115,23 @@ END $$;
 CREATE FUNCTION public.admission_reserve_node(p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer) RETURNS void
     LANGUAGE plpgsql
     AS $$
+BEGIN
+    PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb, 100);
+END $$;
+
+
+--
+-- Name: admission_reserve_node(uuid, bigint, integer, boolean, integer, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.admission_reserve_node(p_node_id uuid, p_expected_generation bigint, p_ram_mb integer, p_counts boolean, p_overhead_mb integer, p_reservation_percent integer) RETURNS void
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     node_lifecycle text;
     node_generation bigint;
     ceiling_mb bigint;
+    cap_mb bigint;
     used_mb bigint;
     resident_mb bigint;
 BEGIN
@@ -157,10 +170,12 @@ BEGIN
        AND i.node_id = p_node_id
        AND i.state IN ('waking','cold_booting','running','draining','warm');
     used_mb := used_mb + resident_mb;
-    IF ceiling_mb > 0 AND used_mb + p_ram_mb + p_overhead_mb > ceiling_mb THEN
+    cap_mb := ceiling_mb * greatest(100, least(coalesce(p_reservation_percent, 100), 200)) / 100;
+    IF ceiling_mb > 0 AND used_mb + p_ram_mb + p_overhead_mb > cap_mb THEN
         RAISE EXCEPTION 'node RAM headroom exhausted'
             USING ERRCODE = '23514', CONSTRAINT = 'instance_node_capacity',
-                  DETAIL = format('used_mb=%s admit_mb=%s ceiling_mb=%s', used_mb, p_ram_mb + p_overhead_mb, ceiling_mb);
+                  DETAIL = format('used_mb=%s admit_mb=%s ceiling_mb=%s cap_mb=%s',
+                                  used_mb, p_ram_mb + p_overhead_mb, ceiling_mb, cap_mb);
     END IF;
 END $$;
 
@@ -222,12 +237,25 @@ CREATE TABLE public.instances (
 CREATE FUNCTION public.admit_wake_instance(p_app_id uuid, p_deployment_id text, p_state text, p_ram_mb integer, p_node_id uuid, p_wake_id text, p_mode text, p_expected_generation bigint, p_counts boolean, p_overhead_mb integer, p_bind_recovery boolean, p_snapshot_id uuid, p_guard_generation bigint) RETURNS SETOF public.instances
     LANGUAGE plpgsql
     AS $$
+BEGIN
+    RETURN QUERY SELECT * FROM admit_wake_instance(p_app_id, p_deployment_id, p_state, p_ram_mb, p_node_id, p_wake_id, p_mode,
+        p_expected_generation, p_counts, p_overhead_mb, p_bind_recovery, p_snapshot_id, p_guard_generation, 100);
+END $$;
+
+
+--
+-- Name: admit_wake_instance(uuid, text, text, integer, uuid, text, text, bigint, boolean, integer, boolean, uuid, bigint, integer); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.admit_wake_instance(p_app_id uuid, p_deployment_id text, p_state text, p_ram_mb integer, p_node_id uuid, p_wake_id text, p_mode text, p_expected_generation bigint, p_counts boolean, p_overhead_mb integer, p_bind_recovery boolean, p_snapshot_id uuid, p_guard_generation bigint, p_reservation_percent integer) RETURNS SETOF public.instances
+    LANGUAGE plpgsql
+    AS $$
 DECLARE
     admitted instances%ROWTYPE;
     bound integer;
     current_generation bigint;
 BEGIN
-    PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb);
+    PERFORM admission_reserve_node(p_node_id, p_expected_generation, p_ram_mb, p_counts, p_overhead_mb, p_reservation_percent);
     INSERT INTO instances (app_id, deployment_id, state, ram_mb, node_id, wake_id, started_at, mode)
     VALUES (p_app_id, nullif(p_deployment_id, '')::uuid, p_state, p_ram_mb, p_node_id,
             CASE WHEN p_wake_id = '' THEN gen_random_uuid() ELSE p_wake_id::uuid END, now(), p_mode)
@@ -770,6 +798,23 @@ BEGIN
     IF TG_OP = 'INSERT' OR (TG_OP = 'UPDATE' AND NEW.deployment_id IS DISTINCT FROM OLD.deployment_id) THEN
         PERFORM app_runtime_generation_bump((SELECT d.app_id FROM deployments d WHERE d.id = NEW.deployment_id));
     END IF;
+    RETURN NULL;
+END;
+$$;
+
+
+--
+-- Name: app_runtime_generation_on_project_environment_secrets(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.app_runtime_generation_on_project_environment_secrets() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE member uuid;
+BEGIN
+    FOR member IN SELECT id FROM apps WHERE project_id = NEW.project_id ORDER BY id LOOP
+        PERFORM app_runtime_generation_bump(member);
+    END LOOP;
     RETURN NULL;
 END;
 $$;
@@ -4380,6 +4425,8 @@ CREATE TABLE public.snapshots (
     delete_pending boolean DEFAULT false NOT NULL,
     application_standard_capture_token uuid,
     recovery_generation bigint DEFAULT 0 NOT NULL,
+    cpu_template text DEFAULT ''::text NOT NULL,
+    cpu_model text DEFAULT ''::text NOT NULL,
     CONSTRAINT snapshots_recovery_generation_check CHECK ((recovery_generation >= 0)),
     CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
     CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
@@ -4405,6 +4452,20 @@ COMMENT ON COLUMN public.snapshots.base_image_version IS 'Runner base-image comp
 --
 
 COMMENT ON COLUMN public.snapshots.application_standard_capture_token IS 'Immutable historical capture reference. A fresh restore grant and current artifact approval are still required.';
+
+
+--
+-- Name: COLUMN snapshots.cpu_template; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.cpu_template IS 'CPU template of the capturing node; a templated snapshot restores on any node class the template supports.';
+
+
+--
+-- Name: COLUMN snapshots.cpu_model; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.cpu_model IS 'Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.';
 
 
 --
@@ -8073,6 +8134,8 @@ BEGIN
             FROM workflow_event_recipients(NEW.subject, NEW.data->>'source', NEW.data->>'type') AS w(recipient)
             WHERE NOT EXISTS (SELECT 1 FROM scenario_test_action_policies x
                 WHERE x.app_id = (w.recipient->>'app_id')::uuid)), '[]'::jsonb);
+        -- ADR-20261025211616: keep the event inside its producer's company.
+        recipients := event_recipients_in_producer_reach(NEW.subject, NEW.data->>'producer', recipients);
     END IF;
 
     INSERT INTO event_fanout_outbox
@@ -8396,6 +8459,37 @@ BEGIN
      AND s.status <> 'deleted'
   ON CONFLICT DO NOTHING;
   RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: enqueue_preview_teardown_github_update(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.enqueue_preview_teardown_github_update() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    latest uuid;
+BEGIN
+    SELECT id INTO latest FROM deployments
+    WHERE app_id = NEW.id AND kind = 'preview'
+    ORDER BY created_at DESC, id DESC
+    LIMIT 1;
+    IF latest IS NOT NULL THEN
+        INSERT INTO github_check_updates (deployment_id)
+        VALUES (latest)
+        ON CONFLICT (deployment_id) DO UPDATE SET
+          generation = github_check_updates.generation + 1,
+          status = 'pending',
+          attempts = 0,
+          next_attempt_at = now(),
+          last_error = '',
+          processed_at = NULL,
+          updated_at = now();
+    END IF;
+    RETURN NULL;
 END;
 $$;
 
@@ -10958,6 +11052,30 @@ $_$;
 
 
 --
+-- Name: event_app_company(uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_app_company(target_app uuid) RETURNS uuid
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT o.id FROM apps a JOIN orgs o ON o.id = a.org_id AND NOT o.personal_org
+    WHERE a.id = target_app
+$$;
+
+
+--
+-- Name: event_app_in_producer_reach(uuid, text, text); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_app_in_producer_reach(target_account uuid, producer text, target_app text) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT jsonb_array_length(event_recipients_in_producer_reach(target_account, producer,
+        jsonb_build_array(jsonb_build_object('app_id', target_app)))) = 1
+$$;
+
+
+--
 -- Name: event_backlog_waiting_reason(text, text, text, timestamp with time zone, timestamp with time zone, text, jsonb, timestamp with time zone); Type: FUNCTION; Schema: public; Owner: -
 --
 
@@ -10972,6 +11090,20 @@ SELECT CASE
  WHEN next_attempt_at > observed_at THEN 'retry_backoff'
  WHEN consumer_kind = 'workflow' THEN 'workflow_routing'
  ELSE 'ready' END;
+$$;
+
+
+--
+-- Name: event_company_reachable(uuid, uuid); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_company_reachable(target_account uuid, company uuid) RETURNS boolean
+    LANGUAGE sql STABLE
+    AS $$
+    SELECT EXISTS (SELECT 1 FROM org_memberships m JOIN orgs o ON o.id = m.org_id
+        WHERE m.org_id = company AND m.account_id = target_account AND m.removed_at IS NULL
+          AND m.role IN ('owner', 'admin', 'developer')
+          AND NOT o.deleted_pending AND o.status <> 'deleted_pending')
 $$;
 
 
@@ -11222,6 +11354,39 @@ CREATE FUNCTION public.event_recipient_schema_version_mismatch(recipient jsonb, 
     AS $$
  SELECT NOT recipient ? 'workflow' AND NOT recipient ? 'object_notification' AND jsonb_array_length(coalesce(recipient->'schema_versions','[]'::jsonb))>0 AND NOT (recipient->'schema_versions' ? coalesce(payload->>'schemaversion',''));
 $$;
+
+
+--
+-- Name: event_recipients_in_producer_reach(uuid, text, jsonb); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.event_recipients_in_producer_reach(target_account uuid, producer text, recipients jsonb) RETURNS jsonb
+    LANGUAGE plpgsql STABLE
+    AS $_$
+DECLARE producer_company uuid; producer_reachable boolean;
+BEGIN
+    IF producer IS NULL OR jsonb_array_length(recipients) = 0 THEN
+        RETURN recipients;
+    END IF;
+    IF producer = 'personal' THEN
+        producer_company := NULL;
+    ELSIF producer ~* '^org:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        SELECT o.id INTO producer_company FROM orgs o
+        WHERE o.id = substr(producer, 5)::uuid AND NOT o.personal_org;
+    ELSIF producer ~* '^app:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$' THEN
+        producer_company := event_app_company(substr(producer, 5)::uuid);
+    ELSE
+        RAISE EXCEPTION 'event producer % is not recognized', producer USING ERRCODE = '23514';
+    END IF;
+    producer_reachable := producer_company IS NULL OR event_company_reachable(target_account, producer_company);
+    RETURN coalesce((SELECT jsonb_agg(r.recipient ORDER BY r.position)
+        FROM jsonb_array_elements(recipients) WITH ORDINALITY AS r(recipient, position)
+        CROSS JOIN LATERAL (SELECT event_app_company((r.recipient->>'app_id')::uuid) AS company) d
+        WHERE d.company IS NOT DISTINCT FROM producer_company
+           OR (producer_reachable AND (d.company IS NULL OR event_company_reachable(target_account, d.company)))),
+        '[]'::jsonb);
+END;
+$_$;
 
 
 --
@@ -12436,7 +12601,7 @@ END $$;
 CREATE FUNCTION public.fence_object_deletion() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE bid uuid;
+DECLARE bid uuid; fence_key text; fence_key_hash text;
 BEGIN
  IF TG_TABLE_NAME='object_buckets' THEN
   IF TG_OP='DELETE' THEN bid:=OLD.id;
@@ -12444,8 +12609,14 @@ BEGIN
  ELSE
   bid:=NEW.bucket_id;
   IF TG_TABLE_NAME='object_bucket_versioning' THEN IF NEW.state='ready' THEN RETURN NEW; END IF; END IF;
+  -- Writes, multipart uploads and key grants touch one key.
+  IF TG_TABLE_NAME IN ('object_storage_write_admissions','object_storage_key_grants') THEN fence_key_hash:=NEW.key_hash;
+  ELSIF TG_TABLE_NAME='object_storage_multipart_uploads' THEN fence_key:=NEW.object_key;
+  END IF;
  END IF;
- IF EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=bid AND d.state IN ('prepared','dispatched')) THEN
+ IF EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=bid AND d.state IN ('prepared','dispatched')
+  AND (fence_key IS NULL OR d.object_key=fence_key)
+  AND (fence_key_hash IS NULL OR encode(sha256(convert_to(d.object_key,'UTF8')),'hex')=fence_key_hash)) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_deletion_fenced',MESSAGE='Unsettled deletion fences mutation and inventory';
  END IF;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
@@ -18925,11 +19096,11 @@ BEGIN
   IF NEW.object_storage_owned_from IS NULL THEN
    UPDATE orgs SET object_storage_owned_from=now() WHERE id=NEW.id;
   END IF;
-  IF EXISTS(SELECT 1 FROM object_storage_billing_periods p WHERE p.period_start>=date_trunc('month',now())
+  IF EXISTS(SELECT 1 FROM object_storage_billing_periods p WHERE p.period_start>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC'
     AND EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.account_id=p.account_id)) THEN
    RAISE EXCEPTION 'remediate finalized current-period object billing before adoption' USING ERRCODE='23514';
   END IF;
-  DELETE FROM object_storage_usage_heads h WHERE h.period_start>=date_trunc('month',now()) AND
+  DELETE FROM object_storage_usage_heads h WHERE h.period_start>=date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AND
    (h.account_id=NEW.id OR EXISTS(SELECT 1 FROM object_buckets b WHERE b.org_id=NEW.id AND b.account_id=h.account_id));
  END IF;
  RETURN NEW;
@@ -21191,7 +21362,7 @@ $$;
 CREATE FUNCTION public.object_storage_usage_subject(owner_org uuid, namespace uuid) RETURNS uuid
     LANGUAGE sql STABLE
     AS $$
- SELECT object_storage_usage_subject(owner_org,namespace,date_trunc('month',now()))
+ SELECT object_storage_usage_subject(owner_org,namespace,date_trunc('month',now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
 $$;
 
 
@@ -22336,7 +22507,11 @@ CREATE FUNCTION public.project_event_routing_backlog_recipient() RETURNS trigger
     AS $$
 BEGIN
     IF TG_OP='DELETE' THEN
-        PERFORM refresh_event_routing_backlog(OLD.outbox_id,OLD.subscription_id);
+        -- Deleting a receipt cascades its projection rows; only a recipient
+        -- removed from a live receipt can change what remains.
+        IF EXISTS (SELECT 1 FROM event_fanout_outbox WHERE id=OLD.outbox_id) THEN
+            PERFORM refresh_event_routing_backlog(OLD.outbox_id,OLD.subscription_id);
+        END IF;
         RETURN OLD;
     END IF;
     PERFORM refresh_event_routing_backlog(NEW.outbox_id,NEW.subscription_id);
@@ -22352,20 +22527,33 @@ $$;
 CREATE FUNCTION public.project_event_routing_backlog_root() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE sub text;
+DECLARE sub text; moved boolean;
 BEGIN
-    IF TG_OP='INSERT' THEN
+    IF TG_OP='INSERT' OR (NEW.recipient_snapshot,NEW.recipient_claims,NEW.created_at,NEW.account_id)
+        IS DISTINCT FROM (OLD.recipient_snapshot,OLD.recipient_claims,OLD.created_at,OLD.account_id) THEN
         PERFORM refresh_event_routing_backlog(NEW.id);
-    ELSIF (NEW.recipient_snapshot,NEW.state,NEW.available_at,NEW.lease_until,NEW.recipient_claims,NEW.created_at,NEW.account_id)
-       IS DISTINCT FROM (OLD.recipient_snapshot,OLD.state,OLD.available_at,OLD.lease_until,OLD.recipient_claims,OLD.created_at,OLD.account_id) THEN
+        RETURN NEW;
+    END IF;
+    moved := (NEW.state,NEW.available_at,NEW.lease_until) IS DISTINCT FROM (OLD.state,OLD.available_at,OLD.lease_until);
+    IF moved AND NOT NEW.recipient_claims THEN
         PERFORM refresh_event_routing_backlog(NEW.id);
-    ELSE
-        FOR sub IN SELECT k FROM (
+        RETURN NEW;
+    END IF;
+    -- With recipient claims a recipient that has its own row takes state,
+    -- availability and lease from it, so an outbox move can change only
+    -- captured recipients without a row yet; progress changes only its keys.
+    FOR sub IN
+        SELECT k FROM (
             SELECT jsonb_object_keys(NEW.recipient_progress) AS k
             UNION SELECT jsonb_object_keys(OLD.recipient_progress) AS k
-        ) keys WHERE NEW.recipient_progress->k IS DISTINCT FROM OLD.recipient_progress->k ORDER BY k
-        LOOP PERFORM refresh_event_routing_backlog(NEW.id,sub); END LOOP;
-    END IF;
+        ) keys WHERE NEW.recipient_progress->k IS DISTINCT FROM OLD.recipient_progress->k
+        UNION
+        SELECT captured.recipient->>'id'
+        FROM jsonb_array_elements(CASE WHEN moved THEN coalesce(NEW.recipient_snapshot,'[]'::jsonb) ELSE '[]'::jsonb END) captured(recipient)
+        WHERE NOT EXISTS (SELECT 1 FROM event_fanout_recipients r
+                          WHERE r.outbox_id=NEW.id AND r.subscription_id=captured.recipient->>'id')
+        ORDER BY 1
+    LOOP PERFORM refresh_event_routing_backlog(NEW.id,sub); END LOOP;
     RETURN NEW;
 END;
 $$;
@@ -26099,17 +26287,21 @@ CREATE FUNCTION public.scenario_webhook_delivery_fence() RETURNS trigger
 BEGIN
     -- Serialize new deliveries with the registration transaction. A registration
     -- takes FOR UPDATE and refuses any app that already has work or deliveries.
-    PERFORM id FROM apps
-    WHERE id = NEW.app_id OR id = (SELECT app_id FROM app_webhooks WHERE id = NEW.webhook_id)
-    ORDER BY id FOR KEY SHARE;
-    IF EXISTS (
-        SELECT 1 FROM scenario_test_action_policies p
-        WHERE p.app_id = NEW.app_id
-           OR p.app_id = (SELECT app_id FROM app_webhooks WHERE id = NEW.webhook_id)
-    ) AND NEW.status IN ('pending', 'in_flight', 'failed') THEN
-        NEW.status := 'dead';
-        NEW.last_error := 'rehearsal: unsupported webhook delivery suppressed';
-        NEW.updated_at := clock_timestamp();
+    IF TG_OP = 'INSERT' THEN
+        PERFORM id FROM apps
+        WHERE id = NEW.app_id OR id = (SELECT app_id FROM app_webhooks WHERE id = NEW.webhook_id)
+        ORDER BY id FOR KEY SHARE;
+    END IF;
+    IF NEW.status IN ('pending', 'in_flight', 'failed') THEN
+        IF EXISTS (
+            SELECT 1 FROM scenario_test_action_policies p
+            WHERE p.app_id = NEW.app_id
+               OR p.app_id = (SELECT app_id FROM app_webhooks WHERE id = NEW.webhook_id)
+        ) THEN
+            NEW.status := 'dead';
+            NEW.last_error := 'rehearsal: unsupported webhook delivery suppressed';
+            NEW.updated_at := clock_timestamp();
+        END IF;
     END IF;
     RETURN NEW;
 END $$;
@@ -27053,6 +27245,40 @@ BEGIN
    updated_at = clock_timestamp()
  WHERE o.job_run_id = NEW.id;
  RETURN NEW;
+END;
+$$;
+
+
+--
+-- Name: sync_preview_access_gates(); Type: FUNCTION; Schema: public; Owner: -
+--
+
+CREATE FUNCTION public.sync_preview_access_gates() RETURNS trigger
+    LANGUAGE plpgsql
+    AS $$
+DECLARE
+    preview_id uuid;
+BEGIN
+    -- A preview runs unreviewed code on a guessable host; it keeps the
+    -- access and egress gates of the production app it previews.
+    FOR preview_id IN
+        UPDATE apps
+        SET require_authn = NEW.require_authn,
+            public_auth_mode = NEW.public_auth_mode,
+            public_auth_basic = NEW.public_auth_basic,
+            public_auth_ip_allowlist = NEW.public_auth_ip_allowlist,
+            consumer_auth_mode = NEW.consumer_auth_mode,
+            require_signed = NEW.require_signed,
+            egress_allowlist = NEW.egress_allowlist,
+            visibility = NEW.visibility
+        WHERE account_id = NEW.account_id
+          AND preview_of_slug = NEW.slug
+          AND status <> 'deleted'
+        RETURNING id
+    LOOP
+        PERFORM pg_notify('app_changed', preview_id::text);
+    END LOOP;
+    RETURN NULL;
 END;
 $$;
 
@@ -28163,6 +28389,38 @@ END)::double precision)) OR ((metric <> ALL (ARRAY['mcp_protocol_error_rate_pct'
     CONSTRAINT alert_rules_window_chk CHECK ((window_spec = ANY (ARRAY['5m'::text, '15m'::text, '1h'::text, '6h'::text, '24h'::text, '7d'::text, '15d'::text]))),
     CONSTRAINT alert_rules_workflow_notification_chk CHECK (((metric <> ALL (ARRAY['workflow_failures'::text, 'workflow_schedule_quota_skips'::text, 'workflow_pending_age_seconds'::text, 'workflow_waiting_age_seconds'::text, 'workflow_due_age_seconds'::text])) OR (action = 'webhook'::text)))
 );
+
+
+--
+-- Name: alert_test_sends; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_test_sends (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    subject_id uuid NOT NULL,
+    event jsonb DEFAULT '{}'::jsonb NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    claim_token uuid,
+    claimed_until timestamp with time zone,
+    result jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT alert_test_sends_check CHECK (((state = 'claimed'::text) = ((claim_token IS NOT NULL) AND (claimed_until IS NOT NULL)))),
+    CONSTRAINT alert_test_sends_check1 CHECK (((state = 'done'::text) = ((result IS NOT NULL) AND (completed_at IS NOT NULL)))),
+    CONSTRAINT alert_test_sends_event_check CHECK ((pg_column_size(event) <= 65536)),
+    CONSTRAINT alert_test_sends_kind_check CHECK ((kind = ANY (ARRAY['notification_channel'::text, 'alert_rule_webhook'::text]))),
+    CONSTRAINT alert_test_sends_result_check CHECK (((result IS NULL) OR (pg_column_size(result) <= 8192))),
+    CONSTRAINT alert_test_sends_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'claimed'::text, 'done'::text])))
+);
+
+
+--
+-- Name: TABLE alert_test_sends; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.alert_test_sends IS 'Test sends apid relays to meterd, which holds the alerting seal-domain key (ADR 20261022111812). Short-lived: apid deletes a row once it reads the result, meterd prunes abandoned ones.';
 
 
 --
@@ -32251,6 +32509,10 @@ CREATE TABLE public.compute_nodes (
     vmmd_epoch_incarnation uuid,
     vmmd_predecessor_incarnation uuid,
     vmmd_restart_notice_until timestamp with time zone,
+    cpu_template text DEFAULT ''::text NOT NULL,
+    cpu_model text DEFAULT ''::text NOT NULL,
+    readiness text DEFAULT 'ready'::text NOT NULL,
+    readiness_reason text,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
     CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
@@ -32259,6 +32521,7 @@ CREATE TABLE public.compute_nodes (
     CONSTRAINT compute_nodes_mem_mb_check CHECK ((mem_mb > 0)),
     CONSTRAINT compute_nodes_overlay_ip_family_chk CHECK (((overlay_ip IS NULL) OR (family(overlay_ip) = 4))),
     CONSTRAINT compute_nodes_public_ip_format_chk CHECK (((public_ip IS NULL) OR (family(public_ip) = ANY (ARRAY[4, 6])))),
+    CONSTRAINT compute_nodes_readiness_chk CHECK ((readiness = ANY (ARRAY['ready'::text, 'degraded'::text, 'unavailable'::text, 'draining'::text]))),
     CONSTRAINT compute_nodes_schedd_target_url_scheme_chk CHECK (((schedd_target_url IS NULL) OR (schedd_target_url ~ '^(unix|tcp)://'::text))),
     CONSTRAINT compute_nodes_target_url_check CHECK ((target_url ~ '^(unix|tcp|dns)://'::text)),
     CONSTRAINT compute_nodes_vcpu_budget_check CHECK ((vcpu_budget > 0)),
@@ -32328,6 +32591,20 @@ COMMENT ON COLUMN public.compute_nodes.generation IS 'monotonic counter bumped b
 --
 
 COMMENT ON COLUMN public.compute_nodes.overlay_ip IS 'vmmd-registered IPv4 address on the operator-managed regional overlay';
+
+
+--
+-- Name: COLUMN compute_nodes.cpu_template; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.compute_nodes.cpu_template IS 'Firecracker CPU template vmmd boots guests with; empty for none (ADR-20261024225612).';
+
+
+--
+-- Name: COLUMN compute_nodes.cpu_model; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.compute_nodes.cpu_model IS 'Host CPU signature <class>/<vendor>-<family>-<model>-<stepping>/<flags hash>; empty before vmmd reports it.';
 
 
 --
@@ -35003,7 +35280,7 @@ CREATE TABLE public.edge_rule_events (
     CONSTRAINT edge_rule_events_country_check CHECK ((length(country) <= 8)),
     CONSTRAINT edge_rule_events_host_check CHECK ((length(host) <= 253)),
     CONSTRAINT edge_rule_events_method_check CHECK ((length(method) <= 16)),
-    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text, 'detected'::text, 'warned'::text, 'blocked'::text, 'challenged'::text, 'rejected'::text, 'solved'::text, 'failed'::text]))),
+    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text, 'detected'::text, 'warned'::text, 'blocked'::text, 'challenged'::text, 'rejected'::text, 'solved'::text, 'failed'::text, 'boxed'::text]))),
     CONSTRAINT edge_rule_events_path_check CHECK ((octet_length(path) <= 1024)),
     CONSTRAINT edge_rule_events_request_id_check CHECK ((length(request_id) <= 128)),
     CONSTRAINT edge_rule_events_user_agent_check CHECK ((octet_length(user_agent) <= 256)),
@@ -41491,6 +41768,31 @@ CREATE TABLE public.layer_artifact_retention (
 
 
 --
+-- Name: log_archive_erasure_instances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.log_archive_erasure_instances (
+    account_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    erased_at timestamp with time zone,
+    CONSTRAINT log_archive_erasure_instances_erased_at_check CHECK (((erased_at IS NULL) OR isfinite(erased_at)))
+);
+
+
+--
+-- Name: log_archive_erasures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.log_archive_erasures (
+    account_id uuid NOT NULL,
+    deletion_requested_at timestamp with time zone NOT NULL,
+    snapshotted_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT log_archive_erasures_deletion_requested_at_check CHECK (isfinite(deletion_requested_at)),
+    CONSTRAINT log_archive_erasures_snapshotted_at_check CHECK (isfinite(snapshotted_at))
+);
+
+
+--
 -- Name: log_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -44486,6 +44788,20 @@ CREATE TABLE public.oauth_links (
     email text NOT NULL,
     email_verified boolean NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: object_bucket_cors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_cors (
+    bucket_id uuid NOT NULL,
+    rules jsonb NOT NULL,
+    revision bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_bucket_cors_revision_check CHECK ((revision > 0)),
+    CONSTRAINT object_bucket_cors_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND ((jsonb_array_length(rules) >= 1) AND (jsonb_array_length(rules) <= 100)) AND (octet_length((rules)::text) <= 65536)))
 );
 
 
@@ -47716,11 +48032,13 @@ CREATE TABLE public.pr_preview_sets (
     member_app_ids text[] NOT NULL,
     closed_at timestamp with time zone,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    setup_error text,
     CONSTRAINT pr_preview_sets_commit_sha_check CHECK ((commit_sha ~ '^[0-9a-f]{7,64}$'::text)),
     CONSTRAINT pr_preview_sets_installation_id_check CHECK ((installation_id > 0)),
     CONSTRAINT pr_preview_sets_member_app_ids_check CHECK ((cardinality(member_app_ids) > 0)),
     CONSTRAINT pr_preview_sets_pr_number_check CHECK ((pr_number > 0)),
-    CONSTRAINT pr_preview_sets_repo_full_name_check CHECK ((repo_full_name <> ''::text))
+    CONSTRAINT pr_preview_sets_repo_full_name_check CHECK ((repo_full_name <> ''::text)),
+    CONSTRAINT pr_preview_sets_setup_error_chk CHECK (((setup_error IS NULL) OR ((char_length(setup_error) >= 1) AND (char_length(setup_error) <= 1000))))
 );
 
 
@@ -55409,6 +55727,14 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: alert_test_sends alert_test_sends_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_test_sends
+    ADD CONSTRAINT alert_test_sends_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: api_consumer_billing_policies api_consumer_billing_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -61569,6 +61895,22 @@ ALTER TABLE ONLY public.layer_artifact_retention
 
 
 --
+-- Name: log_archive_erasure_instances log_archive_erasure_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasure_instances
+    ADD CONSTRAINT log_archive_erasure_instances_pkey PRIMARY KEY (account_id, instance_id);
+
+
+--
+-- Name: log_archive_erasures log_archive_erasures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasures
+    ADD CONSTRAINT log_archive_erasures_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: log_events log_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62686,6 +63028,14 @@ ALTER TABLE ONLY public.notification_outbox
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_pkey PRIMARY KEY (provider, provider_subject);
+
+
+--
+-- Name: object_bucket_cors object_bucket_cors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_cors
+    ADD CONSTRAINT object_bucket_cors_pkey PRIMARY KEY (bucket_id);
 
 
 --
@@ -67649,6 +67999,13 @@ CREATE INDEX alert_rules_slo_id_idx ON public.alert_rules USING btree (slo_id) W
 --
 
 CREATE INDEX alert_rules_synthetic_check_id_idx ON public.alert_rules USING btree (synthetic_check_id) WHERE (synthetic_check_id IS NOT NULL);
+
+
+--
+-- Name: alert_test_sends_open; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_test_sends_open ON public.alert_test_sends USING btree (created_at) WHERE (state <> 'done'::text);
 
 
 --
@@ -72640,6 +72997,13 @@ CREATE INDEX jobs_legacy_artifact_verification_idx ON public.jobs USING btree (u
 
 
 --
+-- Name: log_archive_erasure_instances_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX log_archive_erasure_instances_pending_idx ON public.log_archive_erasure_instances USING btree (account_id, instance_id) WHERE (erased_at IS NULL);
+
+
+--
 -- Name: log_events_app_deployment_time_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -73851,10 +74215,10 @@ CREATE INDEX object_deletion_lifecycle_scan ON public.object_deletions USING btr
 
 
 --
--- Name: object_deletions_active_bucket; Type: INDEX; Schema: public; Owner: -
+-- Name: object_deletions_active_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX object_deletions_active_bucket ON public.object_deletions USING btree (bucket_id) WHERE (state = ANY (ARRAY['prepared'::text, 'dispatched'::text]));
+CREATE UNIQUE INDEX object_deletions_active_key ON public.object_deletions USING btree (bucket_id, object_key) WHERE (state = ANY (ARRAY['prepared'::text, 'dispatched'::text]));
 
 
 --
@@ -76595,10 +76959,14 @@ CREATE INDEX snapshots_deployment_idx ON public.snapshots USING btree (deploymen
 
 
 --
--- Name: snapshots_deployment_tier_key; Type: INDEX; Schema: public; Owner: -
+-- Name: snapshots_deployment_tier_platform_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX snapshots_deployment_tier_key ON public.snapshots USING btree (deployment_id, tier) WHERE (stale = false);
+CREATE UNIQUE INDEX snapshots_deployment_tier_platform_key ON public.snapshots USING btree (deployment_id, tier, (
+CASE
+    WHEN (cpu_template <> ''::text) THEN ('template:'::text || cpu_template)
+    ELSE cpu_model
+END)) WHERE (stale = false);
 
 
 --
@@ -78023,6 +78391,13 @@ CREATE TRIGGER app_runtime_generation_envs AFTER INSERT OR DELETE OR UPDATE ON p
 
 
 --
+-- Name: project_environment_secrets app_runtime_generation_project_environment_secrets; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_project_environment_secrets AFTER UPDATE ON public.project_environment_secrets FOR EACH ROW WHEN (((old.ciphertext IS DISTINCT FROM new.ciphertext) OR (old.kid IS DISTINCT FROM new.kid))) EXECUTE FUNCTION public.app_runtime_generation_on_project_environment_secrets();
+
+
+--
 -- Name: project_environments app_runtime_generation_project_environments; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -78034,6 +78409,13 @@ CREATE TRIGGER app_runtime_generation_project_environments AFTER DELETE OR UPDAT
 --
 
 CREATE TRIGGER app_runtime_generation_release_members AFTER INSERT OR DELETE OR UPDATE ON public.project_release_members FOR EACH ROW EXECUTE FUNCTION public.app_runtime_generation_on_app_row();
+
+
+--
+-- Name: deployment_release_secret_snapshots app_runtime_generation_release_secret_snapshots; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER app_runtime_generation_release_secret_snapshots AFTER UPDATE ON public.deployment_release_secret_snapshots FOR EACH ROW WHEN ((old.values_json IS DISTINCT FROM new.values_json)) EXECUTE FUNCTION public.app_runtime_generation_on_deployment_row();
 
 
 --
@@ -78786,6 +79168,13 @@ CREATE TRIGGER apps_notify_egress_allowlist_changed_trg AFTER UPDATE OF egress_a
 
 
 --
+-- Name: apps apps_preview_teardown_github_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_preview_teardown_github_update AFTER UPDATE OF status ON public.apps FOR EACH ROW WHEN (((old.status IS DISTINCT FROM 'deleted'::text) AND (new.status = 'deleted'::text) AND (new.preview_of_slug IS NOT NULL) AND (COALESCE(new.preview_pr_number, 0) > 0))) EXECUTE FUNCTION public.enqueue_preview_teardown_github_update();
+
+
+--
 -- Name: apps apps_public_auth_ip_allowlist_cidr; Type: TRIGGER; Schema: public; Owner: -
 --
 
@@ -78825,6 +79214,13 @@ CREATE CONSTRAINT TRIGGER apps_streaming_plan_account_guard_trg AFTER UPDATE OF 
 --
 
 CREATE TRIGGER apps_streaming_plan_app_guard_trg BEFORE INSERT OR UPDATE OF account_id, streaming_enabled ON public.apps FOR EACH ROW EXECUTE FUNCTION public.apps_streaming_plan_app_guard();
+
+
+--
+-- Name: apps apps_sync_preview_access_gates; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER apps_sync_preview_access_gates AFTER UPDATE OF require_authn, public_auth_mode, public_auth_basic, public_auth_ip_allowlist, consumer_auth_mode, require_signed, egress_allowlist, visibility ON public.apps FOR EACH ROW WHEN (((new.preview_of_slug IS NULL) AND (new.status <> 'deleted'::text) AND ((old.require_authn IS DISTINCT FROM new.require_authn) OR (old.public_auth_mode IS DISTINCT FROM new.public_auth_mode) OR (old.public_auth_basic IS DISTINCT FROM new.public_auth_basic) OR (old.public_auth_ip_allowlist IS DISTINCT FROM new.public_auth_ip_allowlist) OR (old.consumer_auth_mode IS DISTINCT FROM new.consumer_auth_mode) OR (old.require_signed IS DISTINCT FROM new.require_signed) OR (old.egress_allowlist IS DISTINCT FROM new.egress_allowlist) OR (old.visibility IS DISTINCT FROM new.visibility)))) EXECUTE FUNCTION public.sync_preview_access_gates();
 
 
 --
@@ -80553,7 +80949,14 @@ CREATE TRIGGER event_recovery_workflow_result BEFORE DELETE OR UPDATE OF status,
 -- Name: event_fanout_recipients event_routing_backlog_recipient; Type: TRIGGER; Schema: public; Owner: -
 --
 
-CREATE TRIGGER event_routing_backlog_recipient AFTER INSERT OR DELETE OR UPDATE ON public.event_fanout_recipients FOR EACH ROW EXECUTE FUNCTION public.project_event_routing_backlog_recipient();
+CREATE TRIGGER event_routing_backlog_recipient AFTER INSERT OR DELETE ON public.event_fanout_recipients FOR EACH ROW EXECUTE FUNCTION public.project_event_routing_backlog_recipient();
+
+
+--
+-- Name: event_fanout_recipients event_routing_backlog_recipient_update; Type: TRIGGER; Schema: public; Owner: -
+--
+
+CREATE TRIGGER event_routing_backlog_recipient_update AFTER UPDATE OF state, total_attempts, capacity_deferrals, available_at, lease_until, recipient, receipt_position, outbox_id, subscription_id ON public.event_fanout_recipients FOR EACH ROW WHEN ((((((((((old.state IS DISTINCT FROM new.state) OR (old.total_attempts IS DISTINCT FROM new.total_attempts)) OR (old.capacity_deferrals IS DISTINCT FROM new.capacity_deferrals)) OR (old.available_at IS DISTINCT FROM new.available_at)) OR (old.lease_until IS DISTINCT FROM new.lease_until)) OR (old.recipient IS DISTINCT FROM new.recipient)) OR (old.receipt_position IS DISTINCT FROM new.receipt_position)) OR (old.outbox_id IS DISTINCT FROM new.outbox_id)) OR (old.subscription_id IS DISTINCT FROM new.subscription_id))) EXECUTE FUNCTION public.project_event_routing_backlog_recipient();
 
 
 --
@@ -84418,6 +84821,14 @@ ALTER TABLE ONLY public.alert_rules
 
 ALTER TABLE ONLY public.alert_rules
     ADD CONSTRAINT alert_rules_synthetic_check_id_fkey FOREIGN KEY (synthetic_check_id) REFERENCES public.synthetic_checks(id) ON DELETE CASCADE;
+
+
+--
+-- Name: alert_test_sends alert_test_sends_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_test_sends
+    ADD CONSTRAINT alert_test_sends_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
 
 
 --
@@ -92101,6 +92512,22 @@ ALTER TABLE ONLY public.jobs
 
 
 --
+-- Name: log_archive_erasure_instances log_archive_erasure_instances_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasure_instances
+    ADD CONSTRAINT log_archive_erasure_instances_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.log_archive_erasures(account_id) ON DELETE CASCADE;
+
+
+--
+-- Name: log_archive_erasures log_archive_erasures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasures
+    ADD CONSTRAINT log_archive_erasures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: log_saved_searches log_saved_searches_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -93338,6 +93765,14 @@ ALTER TABLE ONLY public.notification_channels
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_cors object_bucket_cors_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_cors
+    ADD CONSTRAINT object_bucket_cors_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --

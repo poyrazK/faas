@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"filippo.io/age"
 	"github.com/gofrs/flock"
 	"github.com/onebox-faas/faas/pkg/gateway"
 	"github.com/onebox-faas/faas/pkg/logdrain"
@@ -759,13 +760,11 @@ func newAppLogDrainHTTPClient() *http.Client {
 	return client
 }
 
-func newAppLogDrainUnsealer(hostKeyDir string) (func([]byte) (string, error), error) {
-	if hostKeyDir == "" {
-		return nil, nil
-	}
-	identities, err := secretbox.LoadFleetAndHostKeys(hostKeyDir)
-	if err != nil {
-		return nil, err
+// newAppLogDrainUnsealer opens drain authentication headers with the edge
+// readers (edgeReaders); nil leaves drains with a header undeliverable.
+func newAppLogDrainUnsealer(identities []*age.X25519Identity) func([]byte) (string, error) {
+	if len(identities) == 0 {
+		return nil
 	}
 	return func(sealed []byte) (string, error) {
 		namespace, plaintext, err := secretbox.OpenBytesMulti(identities, sealed)
@@ -779,5 +778,5 @@ func newAppLogDrainUnsealer(hostKeyDir string) (func([]byte) (string, error), er
 			return "", errors.New("sealed log drain credential exceeds size limit")
 		}
 		return string(plaintext), nil
-	}, nil
+	}
 }

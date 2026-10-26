@@ -12,6 +12,7 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -237,7 +238,7 @@ func (s *server) projectEnvironmentWorkloadConfigIdentity(ctx context.Context, a
 }
 
 func projectEnvironmentWorkloadURL(environmentID, appID string) string {
-	host := gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, environmentID, appID)
+	host := gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), environmentID, appID)
 	if host == "" {
 		return ""
 	}

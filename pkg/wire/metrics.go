@@ -18,6 +18,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -111,6 +112,12 @@ type OpsMetrics struct {
 	initSnapshotAttempts        *prometheus.CounterVec
 	initSnapshotCaptureDuration *prometheus.HistogramVec
 	snapshotPublication         *prometheus.CounterVec
+	// wakeFailover counts schedd's re-placements of a wake a node refused
+	// before the VM started (ADR-20261022184531). Closed labels only.
+	wakeFailover *prometheus.CounterVec
+	// computeNodeReadiness is one-hot per node: 1 for the node's current
+	// readiness, 0 for the others (ADR-20261022184531).
+	computeNodeReadiness *prometheus.GaugeVec
 	// warmPoolSize (issue #1056 / ADR-074) exposes the desired paused
 	// warm-pool size by plan. Runtime reconciliation will update the
 	// gauge in a follow-up; registering it here makes the contract
@@ -2204,6 +2211,21 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		Name: prefix + "_init_snapshot_attempt_total",
 		Help: "Terminal init snapshot path outcomes by site (prime or park). Reuse is counted separately from new captures; reuse_cleanup_failed means destroying the source guest failed.",
 	}, []string{"site", "outcome"})
+	wakeFailover := prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: prefix + "_wake_failover_total",
+		Help: "Wakes a compute node refused before the VM started, by refusal reason and what schedd's re-placement did (ADR-20261022184531). outcome=succeeded is a wake another node served; refused_again means the alternate node refused too; no_alternate means no other node fit; out_of_time means too little of the wake's deadline remained; failed means the alternate attempt failed for another reason.",
+	}, []string{"reason", "outcome"})
+	if prefix == "schedd" {
+		for _, reason := range WakeFailoverReasons {
+			for _, outcome := range WakeFailoverOutcomes {
+				wakeFailover.WithLabelValues(reason, outcome)
+			}
+		}
+	}
+	computeNodeReadiness := prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: prefix + "_compute_node_readiness",
+		Help: "One-hot readiness of each compute node this schedd heartbeats (ADR-20261022184531): 1 on the state the node last proved, 0 on the others. state is ready, degraded (answers but cannot serve a wake), unavailable or draining (both mirror lifecycle). node is the compute node name.",
+	}, []string{"node", "state"})
 	initSnapshotCaptureDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_init_snapshot_capture_duration_seconds",
 		Help:    "Wall-clock duration of new terminal init snapshot captures, including before_checkpoint, by site and outcome. Reused snapshots are excluded.",
@@ -2521,10 +2543,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// break the wake-latency panel that ships to day-1.
 	wakeRPCDuration := prometheus.NewHistogramVec(prometheus.HistogramOpts{
 		Name:    prefix + "_wake_rpc_duration_seconds",
-		Help:    "Wall-clock seconds for each schedd-side wake RPC phase (ADR-097). phase ∈ {before_admission, lock_wait, reads, admit, post_admit, admit_to_rpc, rpc_call, rpc_to_running, resume}; app label is apps.id. before_admission .. post_admit split the work before the boot inputs exist: Wake's fast path, the admission gates and per-app lock, the app/deployment/runtime/snapshot reads, placement plus the instance admission insert, and the reads and writes after admission (they also ride wake.boot_started as pre_rpc_*_ms). admit_to_rpc covers the boot inputs → vmmd RPC start window. rpc_call covers the vmmd Create{FromSnapshot,ColdBoot} round trip. rpc_to_running covers the RPC return → WAKING/COLD_BOOTING → RUNNING transition. resume covers vmmd's in-place warm-pool resume. wake_id is attached as a prometheus.Exemplar on each observation so operators can join to gateway_wake_latency_seconds and to the events table. Bucket set reuses spec §6.3 verbatim with a 0.01 low-end bucket for admit_to_rpc.",
+		Help:    "Wall-clock seconds for each schedd-side wake RPC phase (ADR-097). phase ∈ {pre_wake_authorize, pre_wake_environment, pre_wake_coordinate, pre_wake_transition, before_admission, lock_wait, reads, admit, post_admit, admit_to_rpc, rpc_call, rpc_to_running, resume}; app label is apps.id. pre_wake_* split an EnsureWake RPC before Engine.Wake starts: authorization, the app and admission reads, coordination, and the parked -> active claim (they also ride wake.boot_started as pre_wake_*_ms). before_admission .. post_admit split the work before the boot inputs exist: Wake's fast path, the admission gates and per-app lock, the app/deployment/runtime/snapshot reads, placement plus the instance admission insert, and the reads and writes after admission (they also ride wake.boot_started as pre_rpc_*_ms). admit_to_rpc covers the boot inputs → vmmd RPC start window. rpc_call covers the vmmd Create{FromSnapshot,ColdBoot} round trip. rpc_to_running covers the RPC return → WAKING/COLD_BOOTING → RUNNING transition. resume covers vmmd's in-place warm-pool resume. wake_id is attached as a prometheus.Exemplar on each observation so operators can join to gateway_wake_latency_seconds and to the events table. Bucket set reuses spec §6.3 verbatim with a 0.01 low-end bucket for admit_to_rpc.",
 		Buckets: []float64{0.01, 0.05, 0.1, 0.2, 0.35, 0.5, 0.8, 1, 1.5, 3, 5},
 	}, []string{"app", "phase"})
-	for _, phase := range []string{"before_admission", "lock_wait", "reads", "admit", "post_admit"} {
+	for _, phase := range []string{"pre_wake_authorize", "pre_wake_environment", "pre_wake_coordinate", "pre_wake_transition", "before_admission", "lock_wait", "reads", "admit", "post_admit"} {
 		wakeRPCDuration.WithLabelValues("", phase)
 	}
 	wakeRPCDuration.WithLabelValues("", "admit_to_rpc")
@@ -4050,7 +4072,7 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		planGateRescuedByExclude,
 	}
 	if prefix == "schedd" {
-		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration)
+		commonCollectors = append(commonCollectors, initSnapshotAttempts, initSnapshotCaptureDuration, wakeFailover, computeNodeReadiness)
 	}
 	if prefix == "imaged" {
 		commonCollectors = append(commonCollectors, snapshotPublication)
@@ -4424,10 +4446,10 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 	// ObserveAppErrorsPurge convention.
 	previewJanitorOutcomes := prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: prefix + "_preview_janitor_outcomes_total",
-		Help: "Preview teardown cron outcomes (ADR-095 PR-C, issue #272), labelled by outcome ∈ {ok, failed, torn_down}. `ok` fires every tick the sweep ran cleanly (whether or not it tombstoned a row); `torn_down` fires per-row when a preview app reaches torn_down and is soft-deleted (the §12 teardown-rate panel sums this over 1h to chart PR-close cadence); `failed` is the tripwire for a SQL-level failure (alertable). Single-registry: registered on every daemon; only apid increments via ObservePreviewJanitor.",
+		Help: "Preview teardown cron outcomes (ADR-095 PR-C, issue #272), labelled by outcome ∈ {ok, failed, torn_down, row_failed}. `ok` fires every tick the sweep ran cleanly (whether or not it tombstoned a row); `torn_down` fires per-row when a preview app reaches torn_down and is soft-deleted (the §12 teardown-rate panel sums this over 1h to chart PR-close cadence); `failed` is the tripwire for a SQL-level failure of a whole sweep and `row_failed` for one preview that could not be claimed or torn down (both alertable). Single-registry: registered on every daemon; only apid increments via ObservePreviewJanitor.",
 	}, []string{"outcome"})
 	commonCollectors = append(commonCollectors, previewJanitorOutcomes)
-	for _, outcome := range []string{"ok", "failed", "torn_down"} {
+	for _, outcome := range []string{"ok", "failed", "torn_down", "row_failed"} {
 		previewJanitorOutcomes.WithLabelValues(outcome)
 	}
 	// ADR-067 / Tier A6: migrating-instance watchdog reconcile counter.
@@ -5489,6 +5511,8 @@ func NewOpsMetrics(prefix string) *OpsMetrics {
 		warmSnapshotErrors:                         warmSnapshotErrors,
 		initSnapshotAttempts:                       initSnapshotAttempts,
 		initSnapshotCaptureDuration:                initSnapshotCaptureDuration,
+		wakeFailover:                               wakeFailover,
+		computeNodeReadiness:                       computeNodeReadiness,
 		snapshotPublication:                        snapshotPublication,
 		warmPoolSize:                               warmPoolSize,
 		warmPoolResumeTotal:                        warmPoolResumeTotal,
@@ -6218,6 +6242,55 @@ func (m *OpsMetrics) RecordInitSnapshotAttempt(site, outcome string, duration ti
 	}
 }
 
+// Closed label values of schedd_wake_failover_total (ADR-20261022184531).
+const (
+	WakeFailoverReasonBaseGeneration     = "base_generation"
+	WakeFailoverReasonScanSidecarMissing = "scan_sidecar_missing"
+
+	WakeFailoverOutcomeSucceeded    = "succeeded"
+	WakeFailoverOutcomeRefusedAgain = "refused_again"
+	WakeFailoverOutcomeNoAlternate  = "no_alternate"
+	WakeFailoverOutcomeOutOfTime    = "out_of_time"
+	WakeFailoverOutcomeFailed       = "failed"
+)
+
+// WakeFailoverReasons and WakeFailoverOutcomes are pre-instantiated so the
+// counter reads zero, not absent, on a fleet that has never failed over.
+var (
+	WakeFailoverReasons  = []string{WakeFailoverReasonBaseGeneration, WakeFailoverReasonScanSidecarMissing}
+	WakeFailoverOutcomes = []string{WakeFailoverOutcomeSucceeded, WakeFailoverOutcomeRefusedAgain, WakeFailoverOutcomeNoAlternate, WakeFailoverOutcomeOutOfTime, WakeFailoverOutcomeFailed}
+)
+
+// ComputeNodeReadinessStates are the closed state label values of
+// schedd_compute_node_readiness; they mirror compute_nodes_readiness_chk.
+var ComputeNodeReadinessStates = []string{"ready", "degraded", "unavailable", "draining"}
+
+// SetComputeNodeReadiness marks node's current readiness. Only schedd
+// exports the gauge; an unknown state or empty node is dropped.
+func (m *OpsMetrics) SetComputeNodeReadiness(node, readiness string) {
+	if m == nil || m.computeNodeReadiness == nil || m.metricPrefix != "schedd" ||
+		node == "" || !slices.Contains(ComputeNodeReadinessStates, readiness) {
+		return
+	}
+	for _, candidate := range ComputeNodeReadinessStates {
+		value := 0.0
+		if candidate == readiness {
+			value = 1
+		}
+		m.computeNodeReadiness.WithLabelValues(node, candidate).Set(value)
+	}
+}
+
+// RecordWakeFailover counts one refused wake attempt by what its failover
+// did. Only schedd exports the collector; unknown labels are dropped.
+func (m *OpsMetrics) RecordWakeFailover(reason, outcome string) {
+	if m == nil || m.wakeFailover == nil || m.metricPrefix != "schedd" ||
+		!slices.Contains(WakeFailoverReasons, reason) || !slices.Contains(WakeFailoverOutcomes, outcome) {
+		return
+	}
+	m.wakeFailover.WithLabelValues(reason, outcome).Inc()
+}
+
 const (
 	SnapshotPublicationPublished         = "published"
 	SnapshotPublicationDuplicate         = "duplicate"
@@ -6588,7 +6661,7 @@ var WakeColdReasons = []string{
 	"no_snapshot", "snapshots_stale", "snapshot_lookup_failed",
 	"fc_version_mismatch", "snapshot_without_drive", "ram_mismatch",
 	"base_image_mismatch", "snapshot_stale", "instance_mode",
-	"ephemeral_secret", "secret_policy_unavailable",
+	"ephemeral_secret", "secret_policy_unavailable", "cpu_incompatible",
 }
 
 // WakeColdReason returns the counter for one cold-boot reason. Values outside

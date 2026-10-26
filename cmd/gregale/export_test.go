@@ -417,6 +417,7 @@ const DevDiagImportFailure = devDiagImportFailure
 const DevDiagStartupCrash = devDiagStartupCrash
 const DevDiagUpstreamFailure = devDiagUpstreamFailure
 const DevEditToLiveTarget = devEditToLiveTarget
+const DevGroupWorkspaceEnv = devGroupWorkspaceEnv
 const DevPhaseBuild = devPhaseBuild
 const DevPhaseReady = devPhaseReady
 const DevPhaseSync = devPhaseSync
@@ -545,6 +546,10 @@ var TestOnlyTTY = &testOnlyTTY
 var UpdateAppRequestCLISurfaces = &updateAppRequestCLISurfaces
 
 // Package-level funcs
+var ValidCLISlug = validCLISlug
+var CollectPreviewRouteReport = collectPreviewRouteReport
+var ErrPreviewNoProductionParent = errPreviewNoProductionParent
+var PreviewEnvironmentReviewNote = previewEnvironmentReviewNote
 var AddRouteMonitorSourceOwners = addRouteMonitorSourceOwners
 var AddSafeReleasePreview = addSafeReleasePreview
 var AddValidateParamFlags = addValidateParamFlags
@@ -1207,6 +1212,7 @@ var DescribeRolloutDecision = describeRolloutDecision
 var DetectGithubSnippetEnv = detectGithubSnippetEnv
 var DevDiagnosticFromDeployment = devDiagnosticFromDeployment
 var DevDiagnosticFromError = devDiagnosticFromError
+var DevGroupWorkspace = devGroupWorkspace
 var DevHistoryPatchNote = devHistoryPatchNote
 var DevPatchExplanation = devPatchExplanation
 var DevSetupManifestEdit = devSetupManifestEdit
@@ -1219,6 +1225,7 @@ var DiffAutomationDefinition = diffAutomationDefinition
 var DiffDataAPISnapshots = diffDataAPISnapshots
 var DiffPreviewRoutePolicy = diffPreviewRoutePolicy
 var DiffRequestFromCLI = diffRequestFromCLI
+var DiscoverProjectSources = discoverProjectSources
 var DocsURLForCode = docsURLForCode
 var DocsURLForTemplate = docsURLForTemplate
 var DocsURLForTopic = docsURLForTopic
@@ -1337,6 +1344,7 @@ var IsCompletedDeployment = isCompletedDeployment
 var IsTerminalBuildStatus = isTerminalBuildStatus
 var IsTerminalDeploymentStatus = isTerminalDeploymentStatus
 var IsValidDeploymentAnnotationTag = isValidDeploymentAnnotationTag
+var JoinDevGroup = joinDevGroup
 var JsonOut = jsonOut
 var LinkedAppSlug = linkedAppSlug
 var LinkedProjectContext = linkedProjectContext
@@ -1628,6 +1636,7 @@ var RecoveryReportDuration = recoveryReportDuration
 var RecoveryTrendReceipt = recoveryTrendReceipt
 var RedactErrorText = redactErrorText
 var RedactTestDiagnosticText = redactTestDiagnosticText
+var RehearsalTestGit = rehearsalTestGit
 var RehearsalTestRepo = rehearsalTestRepo
 var RejectDevTriggerAppSelection = rejectDevTriggerAppSelection
 var ReleaseDiffLines = releaseDiffLines
@@ -1899,6 +1908,7 @@ var TestLatencySelection = testLatencySelection
 var TestManagedWorkDigest = testManagedWorkDigest
 var TestPhaseRecoveryEvidence = testPhaseRecoveryEvidence
 var TestRecoveryDeadlineSpec = testRecoveryDeadlineSpec
+var TestRehearsalLocalExecution = testRehearsalLocalExecution
 var TestStabilityMinimizationOutcome = testStabilityMinimizationOutcome
 var TestStabilitySelection = testStabilitySelection
 var TokenFingerprint = tokenFingerprint
@@ -2445,3 +2455,17 @@ var InspectAttention = inspectAttention
 var RemoveCLITestSandbox = removeCLITestSandbox
 var WorkerScalingMetrics = workerScalingMetrics
 var WorkerMetricLabel = workerMetricLabel
+
+// ADR-20261025110000: registry credentials from a Docker config.
+type DockerCredentialHelper = dockerCredentialHelper
+
+func DockerConfigRegistryAuth(ctx context.Context, configPath, image string, helper DockerCredentialHelper) (*api.ImageRunRegistryAuth, error) {
+	return dockerConfigRegistryAuth(ctx, configPath, image, helper)
+}
+
+var RenderRouteMonitorReport = renderRouteMonitorReport
+
+var PreviewCompanionsFromManifest = previewCompanionsFromManifest
+
+// FormatStageDuration is the live ticker's stage duration cell.
+var FormatStageDuration = formatStageDuration

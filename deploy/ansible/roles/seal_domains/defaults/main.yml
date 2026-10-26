@@ -93,5 +93,69 @@ faas_seal_domain_build_writes: ""
 # the rollback window. Required for writes=domain.
 faas_seal_domain_build_readers_verified: false
 
+# Operator-local files from `gregalectl seal-domain init --domain edge`.
+# Compute hosts stage the identity (gatewayd-internal opens basic-auth
+# credentials and log drain headers), control-plane hosts the recipient
+# (apid seals to it).
+faas_seal_domain_edge_identity_src: ""
+faas_seal_domain_edge_recipient_src: ""
+
+# Who apid seals app basic-auth credentials and log drain headers to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose gatewayd-internal holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_edge_readers_verified
+faas_seal_domain_edge_writes: ""
+
+# Set true only after every gatewayd-internal reports
+# faas_seal_domain_loaded{domain="edge"} 1 and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_edge_readers_verified: false
+
+# Operator-local files from `gregalectl seal-domain init --domain alerting`.
+# Control-plane hosts stage both: meterd opens alert rule webhook secrets,
+# notification channel destinations and MCP readiness provider keys with the
+# identity, and apid seals them to the recipient.
+faas_seal_domain_alerting_identity_src: ""
+faas_seal_domain_alerting_recipient_src: ""
+
+# Who apid seals alerting values to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose meterd holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_alerting_readers_verified
+faas_seal_domain_alerting_writes: ""
+
+# Set true only after every meterd reports
+# faas_seal_domain_loaded{domain="alerting"} 1 and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_alerting_readers_verified: false
+
+# Operator-local files from `gregalectl seal-domain init --domain storage`.
+# Control-plane hosts stage both: s3-gatewayd opens Gregale S3 secret access
+# keys with the identity, and apid seals them to the recipient.
+faas_seal_domain_storage_identity_src: ""
+faas_seal_domain_storage_recipient_src: ""
+
+# Who apid seals S3 secret access keys to:
+#   ""      the domain and the fleet recipient (safe beside the previous
+#           release, whose s3-gatewayd holds only the fleet identity)
+#   fleet   the fleet recipient alone (opt out)
+#   domain  the domain recipient alone; needs
+#           faas_seal_domain_storage_readers_verified
+faas_seal_domain_storage_writes: ""
+
+# Set true only after every s3-gatewayd reports
+# faas_seal_domain_loaded{domain="storage"} 1 and the previous release left
+# the rollback window. Required for writes=domain.
+faas_seal_domain_storage_readers_verified: false
+
+# Operator-local file from `gregalectl seal-domain init --domain control`.
+# Every host stages it: schedd runs on both node roles and opens the cluster
+# signing key with it. The key has no writer drop-in and no write mode.
+faas_seal_domain_control_identity_src: ""
+
 faas_seal_domain_db_env: /etc/faas/compute-db.env
 faas_seal_domain_textfile_dir: /var/lib/node_exporter/textfile_collector

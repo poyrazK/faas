@@ -1059,22 +1059,29 @@ provider-check catalog observer
 
 ### mcp access
 
-Audit stored MCP policy and admission evidence
+Audit MCP access-policy drift and admission evidence
 
 #### mcp access audit
 
-audit MCP access evidence
+Compare source and role policy with stored account gateway rules
 
-`gregale mcp access audit [--app <VALUE>] [--path <VALUE>] [--auth-placement <VALUE>] [--algorithms <VALUE>] [--release-policy <VALUE>] [--timeout <VALUE>]`
+`gregale mcp access audit --app <SLUG> [--path <DIR>] --auth-placement <PLACEMENT> [--algorithms <LIST>] [--release-policy <PATH>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <VALUE>` | MCP application slug |  |
-| `--path <VALUE>` | reviewed MCP source directory |  |
-| `--auth-placement <VALUE>` | gateway or guest-only (required) |  |
-| `--algorithms <VALUE>` | reviewed gateway algorithms (default RS256,ES256) |  |
-| `--release-policy <VALUE>` | optional role baselines and authorization exclusions |  |
-| `--timeout <VALUE>` | overall audit deadline, at most 2m |  |
+| `--app <SLUG>` | MCP application slug | required |
+| `--path <DIR>` | reviewed source directory (default .) |  |
+| `--auth-placement <PLACEMENT>` | explicit authentication placement | required; one of `gateway` · `guest-only` |
+| `--algorithms <LIST>` | reviewed gateway algorithms (default RS256,ES256) |  |
+| `--release-policy <PATH>` | optional confined role baselines and exclusions; tokens are not read |  |
+| `--timeout <DURATION>` | overall audit deadline (default 30s, at most 2m) |  |
+
+Examples:
+
+```sh
+gregale mcp access audit --app my-mcp --path ./my-mcp --auth-placement gateway --json
+gregale mcp access audit --app my-mcp --auth-placement guest-only --release-policy release.json
+```
 
 #### mcp access history
 
@@ -1226,32 +1233,6 @@ Examples:
 
 ```sh
 gregale mcp deploy --path ./my-mcp --name my-mcp --size small
-```
-
-### mcp access
-
-Inspect reviewed OAuth and gateway access-policy drift
-
-#### mcp access audit
-
-Compare source and role policy with stored account gateway rules
-
-`gregale mcp access audit --app <SLUG> [--path <DIR>] --auth-placement <PLACEMENT> [--algorithms <LIST>] [--release-policy <PATH>] [--timeout <DURATION>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | MCP application slug | required |
-| `--path <DIR>` | reviewed source directory (default .) |  |
-| `--auth-placement <PLACEMENT>` | explicit authentication placement | required; one of `gateway` · `guest-only` |
-| `--algorithms <LIST>` | reviewed gateway algorithms (default RS256,ES256) |  |
-| `--release-policy <PATH>` | optional confined role baselines and exclusions; tokens are not read |  |
-| `--timeout <DURATION>` | overall audit deadline (default 30s, at most 2m) |  |
-
-Examples:
-
-```sh
-gregale mcp access audit --app my-mcp --path ./my-mcp --auth-placement gateway --json
-gregale mcp access audit --app my-mcp --auth-placement guest-only --release-policy release.json
 ```
 
 ### mcp overview
@@ -3630,11 +3611,12 @@ Search your account&#39;s audit log
 
 List audit events
 
-`gregale audit-events list [--kind-prefix <PREFIX>] [--app-id <UUID>] [--since <RFC3339>] [--limit <N>] [--include-anonymous] [--verbose]`
+`gregale audit-events list [--kind-prefix <PREFIX>] [--app <SLUG>] [--app-id <UUID>] [--since <RFC3339>] [--limit <N>] [--include-anonymous] [--verbose]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--kind-prefix <PREFIX>` | filter by kind prefix |  |
+| `--app <SLUG>` | filter by app slug |  |
 | `--app-id <UUID>` | filter by app UUID |  |
 | `--since <RFC3339>` | RFC3339 lower bound |  |
 | `--limit <N>` | maximum rows (1..100; default 50) |  |
@@ -6687,7 +6669,11 @@ Inspect and manage background worker pools
 
 List background worker pools, or one pool by app
 
-`gregale workers list [<app>]`
+`gregale workers list [--app <slug>] [<app>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | list only this app&#39;s worker pool |  |
 
 ### workers status
 
@@ -8924,7 +8910,7 @@ See also: [`deploy`](#deploy), [`deploys`](#deploys), [`deployment`](#deployment
 Examples:
 
 ```sh
-gregale deployments --app my-api --limit 10
+gregale deployments my-api --limit 10
 gregale deployments --app my-api --wide
 ```
 
@@ -11289,7 +11275,7 @@ Show sampled requests that rules matched, newest first
 | `--app <slug>` | app slug | required |
 | `--rule <ID>` | only this rule id |  |
 | `--request-id <ID>` | only this request, e.g. the reference a visitor without JavaScript saw on the challenge page |  |
-| `--outcome <OUTCOME>` | outcome filter; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes | one of `matched` · `logged` · `detected` · `warned` · `blocked` · `challenged` · `rejected` · `solved` · `failed` |
+| `--outcome <OUTCOME>` | outcome filter; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes; boxed is a client put in a penalty box | one of `matched` · `logged` · `detected` · `warned` · `blocked` · `challenged` · `rejected` · `solved` · `failed` · `boxed` |
 | `--since <DURATION>` | how far back, e.g. 1h, 24h, 7d (clamped to the plan window) |  |
 | `--limit <N>` | events per page (1..200) |  |
 | `--cursor <CURSOR>` | continue from a previous page&#39;s next cursor |  |
@@ -12506,12 +12492,14 @@ gregale inspect my-api --upstreams
 
 Call an app or function once to smoke-test it
 
-`gregale invoke [<slug>] [--async] [--payload <J|@file|->] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>]`
+`gregale invoke [<slug>] [--async] [--payload <J|@file|->] [--method <METHOD>] [--path <PATH>] [--on-success-webhook <ID>] [--on-failure-webhook <ID>] [--work-policy <NAME>] [--work-key <JSON>] [--work-fairness-key <JSON>]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--async` | return immediately with status_url |  |
 | `--payload <J|@file|->` | JSON payload (inline \| @file \| -) |  |
+| `--method <METHOD>` | HTTP method (default POST, or the function handler&#39;s) |  |
+| `--path <PATH>` | URL path (default /, or the function handler&#39;s) |  |
 | `--on-success-webhook <ID>` | app webhook id for completed invocation callbacks |  |
 | `--on-failure-webhook <ID>` | app webhook id for failed or dead-lettered callbacks |  |
 | `--work-policy <NAME>` | named app work policy for async invocation |  |
@@ -12525,7 +12513,7 @@ Run code, or one command from an image, in a disposable sandbox
 
 See also: [`runs`](#runs).
 
-`gregale run [--image <REF>] [--interactive] [--tty] [--entrypoint <CMD|FILE>] [--env <KEY[=VALUE]>] [--env-file <FILE>] [--user <USER>] [--workdir <DIR>] [--registry-username <USER>] [--registry-password-stdin] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
+`gregale run [--image <REF>] [--interactive] [--tty] [--entrypoint <CMD|FILE>] [--env <KEY[=VALUE]>] [--env-file <FILE>] [--user <USER>] [--workdir <DIR>] [--registry-username <USER>] [--registry-password-stdin] [--docker-config <PATH>] [--ram <MB>] [--timeout <D>] [--pull <P>] [--detach] [--workflow-id <ID>] [--step-label <LABEL>] [--profile <P>] [--runtime <R>] [--source <CODE>] [--file <PATH>] [--input <J|@file|->] [--timeout-ms <N>] [--memory-mb <N>] [--cpu-millicores <N>] [--ephemeral-disk-mb <N>] [--max-output-bytes <N>] [--output-file <PATH>] [--output-dir <DIR>] [--wait] [--watch] [--poll-interval <D>] [--wait-timeout <D>]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -12539,6 +12527,7 @@ See also: [`runs`](#runs).
 | `--workdir <DIR>` | with --image, absolute working directory instead of the image WORKDIR (-w) |  |
 | `--registry-username <USER>` | with --image, username for a private registry; the password comes from --registry-password-stdin, $GREGALE_REGISTRY_PASSWORD or a prompt |  |
 | `--registry-password-stdin` | with --registry-username, read the registry password or token from stdin |  |
+| `--docker-config <PATH>` | with --image, use the credentials `docker login` stored for the image&#39;s registry, from this config.json or its directory, including credential helpers |  |
 | `--ram <MB>` | with --image, memory in MB (default: Job default) |  |
 | `--timeout <D>` | with --image, task deadline (default: the plan&#39;s Job ceiling) |  |
 | `--pull <P>` | with --image, re-pull a cached tag (always) or reuse it (missing) | one of `missing` · `always` |
@@ -12570,6 +12559,7 @@ gregale run --image python:3.12-slim -e MODE=batch python -c 'print(42)'
 gregale run -it --image alpine sh
 gregale run -u nobody -w /data --env-file .env alpine env
 printf '%s' "$TOKEN" | gregale run --registry-username ci --registry-password-stdin ghcr.io/acme/tool:1.4 --version
+gregale run --docker-config ~/.docker ghcr.io/acme/tool:1.4 --version
 ```
 
 
@@ -16931,7 +16921,7 @@ Qualify binds probes to release, config and secret revisions.
 
 List environments
 
-`gregale projects environments list`
+`gregale projects environments list <project-slug>`
 
 #### projects environments create
 
@@ -17746,7 +17736,7 @@ Preview or delete a project
 
 Show how a source tree splits into deployable workloads
 
-`gregale scan [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--project-slug <SLUG>] [--environment <SLUG>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
+`gregale scan [<dir>] [--tarball <PATH>] [--path <DIR>] [--repo <OWNER/NAME>] [--repository <OWNER/NAME>] [--install-id <N>] [--production-branch <BRANCH>] [--project-slug <SLUG>] [--environment <SLUG>] [--exclude <SLUGS>] [--show-affected] [--explain] [--persist-exclude]`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -18005,7 +17995,7 @@ gregale secrets list --app my-api --older-than 90d
 
 Set a sealed secret
 
-`gregale secrets set [--wait-for-ack] [--timeout <DURATION>] [--dry-run] [--app <slug>] [--interactive] [--from-stdin] [--file <PATH>] [--scope <SCOPE>] [--class <CLASS>] [--restart] [--no-guard] [<KEY=VALUE>...]`
+`gregale secrets set [--wait-for-ack] [--timeout <DURATION>] [--dry-run] [--app <slug>] [--interactive] [--from-stdin] [--file <PATH>] [--scope <SCOPE>] [--class <CLASS>] [--restart] [--no-guard] [<slug>] [<KEY=VALUE>...]`
 
 | Flag | Meaning | |
 |---|---|---|

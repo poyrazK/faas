@@ -67,6 +67,14 @@ type RegistryClient struct {
 	blobHC *http.Client
 	// stallTimeout is the longest one blob body read may wait for data.
 	stallTimeout time.Duration
+	// dockerHubMirrors serve anonymous Docker Hub pulls before Docker Hub
+	// itself (WithDockerHubMirrors); onMirrorFallback hears each failure.
+	dockerHubMirrors []string
+	onMirrorFallback func(mirror string, err error)
+	// ecrTokens caches ECR passwords exchanged for an IAM access key
+	// (registryAuth); ecrAPIBase overrides the ECR API endpoint in tests.
+	ecrTokens  sync.Map
+	ecrAPIBase string
 }
 
 // compile-time assertion the client satisfies the puller seam imaged consumes.
@@ -276,11 +284,7 @@ var imageManifestMediaTypes = []string{
 // confirmed to exist; a tag reference is resolved to the digest the registry
 // currently serves. Satisfies Puller.
 func (c *RegistryClient) PullDigest(ctx context.Context, ref string) (string, error) {
-	r, err := ParseReference(ref)
-	if err != nil {
-		return "", err
-	}
-	return c.resolveDigest(ctx, r)
+	return c.PullDigestWithAuth(ctx, ref, nil)
 }
 
 // PullDigestWithAuth is the AuthPuller variant (issue #461 / ADR-062).
@@ -290,7 +294,9 @@ func (c *RegistryClient) PullDigestWithAuth(ctx context.Context, ref string, aut
 	if err != nil {
 		return "", err
 	}
-	return c.resolveDigestWithAuth(ctx, r, auth)
+	return pullFrom(ctx, c, r, auth, func(at Reference, auth *BasicAuth) (string, error) {
+		return c.resolveDigestWithAuth(ctx, at, auth)
+	})
 }
 
 // imageManifest is the subset of an OCI / Docker image manifest we consume.
@@ -319,26 +325,7 @@ type imageManifest struct {
 // issue #6: a no-Cmd image was previously fetching dozens of MB before
 // imaged's manifest validation even ran).
 func (c *RegistryClient) PullImageConfig(ctx context.Context, ref string) (ImageConfig, error) {
-	r, err := ParseReference(ref)
-	if err != nil {
-		return ImageConfig{}, err
-	}
-	m, _, err := c.fetchManifest(ctx, r)
-	if err != nil {
-		return ImageConfig{}, err
-	}
-	if m.Config.Digest == "" {
-		return ImageConfig{}, fmt.Errorf("oci: %s manifest has no config descriptor", r.String())
-	}
-	cfgBytes, err := c.fetchBlob(ctx, r, m.Config.Digest)
-	if err != nil {
-		return ImageConfig{}, fmt.Errorf("oci: fetch image config %s: %w", r.String(), err)
-	}
-	cfg, err := parseImageConfig(cfgBytes)
-	if err != nil {
-		return ImageConfig{}, fmt.Errorf("oci: parse image config %s: %w", r.String(), err)
-	}
-	return cfg, nil
+	return c.PullImageConfigWithAuth(ctx, ref, nil)
 }
 
 // PullImageConfigWithAuth is the AuthPuller variant (issue #461 /
@@ -348,6 +335,12 @@ func (c *RegistryClient) PullImageConfigWithAuth(ctx context.Context, ref string
 	if err != nil {
 		return ImageConfig{}, err
 	}
+	return pullFrom(ctx, c, r, auth, func(at Reference, auth *BasicAuth) (ImageConfig, error) {
+		return c.pullImageConfig(ctx, at, auth)
+	})
+}
+
+func (c *RegistryClient) pullImageConfig(ctx context.Context, r Reference, auth *BasicAuth) (ImageConfig, error) {
 	m, _, err := c.fetchManifestWithAuth(ctx, r, auth)
 	if err != nil {
 		return ImageConfig{}, err
@@ -383,46 +376,7 @@ func (c *RegistryClient) PullImageConfigWithAuth(ctx context.Context, ref string
 // and pays for a stable, self-contained PullLayers interface that doesn't
 // require the caller to thread an image config through.
 func (c *RegistryClient) PullLayers(ctx context.Context, ref string) (PullLayersResult, error) {
-	r, err := ParseReference(ref)
-	if err != nil {
-		return PullLayersResult{}, err
-	}
-	m, manifestBytes, err := c.fetchManifest(ctx, r)
-	if err != nil {
-		return PullLayersResult{}, err
-	}
-	if m.Config.Digest == "" {
-		return PullLayersResult{}, fmt.Errorf("oci: %s manifest has no config descriptor", r.String())
-	}
-	cfgBytes, err := c.fetchBlob(ctx, r, m.Config.Digest)
-	if err != nil {
-		return PullLayersResult{}, fmt.Errorf("oci: fetch image config %s: %w", r.String(), err)
-	}
-	cfg, err := parseImageConfig(cfgBytes)
-	if err != nil {
-		return PullLayersResult{}, fmt.Errorf("oci: parse image config %s: %w", r.String(), err)
-	}
-
-	// Open each layer as a streaming ReadCloser. We do NOT eagerly read.
-	layers := make([]io.ReadCloser, 0, len(m.Layers))
-	for i, layer := range m.Layers {
-		rc, err := c.fetchBlobStream(ctx, r, layer.Digest)
-		if err != nil {
-			// Close any we already opened so a partial result doesn't leak.
-			for _, l := range layers {
-				_ = l.Close()
-			}
-			return PullLayersResult{}, fmt.Errorf("oci: fetch layer %d (%s) of %s: %w", i, layer.Digest, r.String(), err)
-		}
-		layers = append(layers, rc)
-	}
-
-	// The manifest digest is sha256(content) of the manifest body bytes — not
-	// the layer blobs, which would be wildly different sizes per arch.
-	sum := sha256.Sum256(manifestBytes)
-	digest := digestAlgo + hex.EncodeToString(sum[:])
-
-	return PullLayersResult{Layers: layers, Config: cfg, Digest: digest}, nil
+	return c.PullLayersWithAuth(ctx, ref, nil)
 }
 
 // PullLayersWithAuth is the AuthPuller variant (issue #461 / ADR-062).
@@ -432,6 +386,12 @@ func (c *RegistryClient) PullLayersWithAuth(ctx context.Context, ref string, aut
 	if err != nil {
 		return PullLayersResult{}, err
 	}
+	return pullFrom(ctx, c, r, auth, func(at Reference, auth *BasicAuth) (PullLayersResult, error) {
+		return c.pullLayers(ctx, at, auth)
+	})
+}
+
+func (c *RegistryClient) pullLayers(ctx context.Context, r Reference, auth *BasicAuth) (PullLayersResult, error) {
 	m, manifestBytes, err := c.fetchManifestWithAuth(ctx, r, auth)
 	if err != nil {
 		return PullLayersResult{}, err
@@ -470,17 +430,11 @@ func (c *RegistryClient) PullLayersWithAuth(ctx context.Context, ref string, aut
 	return PullLayersResult{Layers: layers, Config: cfg, Digest: digest}, nil
 }
 
-// fetchManifest performs the authenticated GET on a manifest URL and parses
-// it. Returns (imageManifest, raw manifest body bytes, err). Shared by
+// fetchManifestWithAuth performs the GET on a manifest URL and parses it.
+// Returns (imageManifest, raw manifest body bytes, err). Shared by
 // PullImageConfig (cheap path) and PullLayers (full path), so the two can't
-// drift in manifest-acceptance rules.
-func (c *RegistryClient) fetchManifest(ctx context.Context, r Reference) (imageManifest, []byte, error) {
-	return c.fetchManifestWithAuth(ctx, r, nil)
-}
-
-// fetchManifestWithAuth is the AuthPuller variant of fetchManifest
-// (issue #461 / ADR-062). The `auth` value is forwarded to the
-// realm endpoint on a 401 challenge.
+// drift in manifest-acceptance rules. The `auth` value is forwarded to the
+// realm endpoint on a 401 challenge (issue #461 / ADR-062).
 func (c *RegistryClient) fetchManifestWithAuth(ctx context.Context, r Reference, auth *BasicAuth) (imageManifest, []byte, error) {
 	resolved, err := c.resolveImageManifest(ctx, r, auth)
 	return resolved.manifest, resolved.body, err
@@ -562,13 +516,13 @@ func (c *RegistryClient) fetchManifestJSONWithAuthLimit(ctx context.Context, url
 		return nil, "", err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(strings.Join(resp.Header.Values("Www-Authenticate"), ", "))
+		challenges := resp.Header.Values("Www-Authenticate")
 		_ = resp.Body.Close()
-		token, err := c.fetchToken(ctx, ch, auth)
+		authz, err := c.authorization(ctx, challenges, auth)
 		if err != nil {
 			return nil, "", err
 		}
-		resp, err = c.getManifest(ctx, url, token)
+		resp, err = c.getManifest(ctx, url, authz)
 		if err != nil {
 			return nil, "", err
 		}
@@ -591,13 +545,9 @@ func (c *RegistryClient) fetchManifestJSONWithAuthLimit(ctx context.Context, url
 	return body, resp.Header.Get("Content-Type"), nil
 }
 
-// fetchBlob fetches a blob by digest and returns its full body. Used for the
-// small image-config blob (manifests cap at 8 MiB; configs are usually < 64 KiB).
-func (c *RegistryClient) fetchBlob(ctx context.Context, r Reference, digest string) ([]byte, error) {
-	return c.fetchBlobWithAuth(ctx, r, digest, nil)
-}
-
-// fetchBlobWithAuth is the AuthPuller variant of fetchBlob.
+// fetchBlobWithAuth fetches a blob by digest and returns its full body. Used
+// for the small image-config blob (manifests cap at 8 MiB; configs are
+// usually < 64 KiB).
 func (c *RegistryClient) fetchBlobWithAuth(ctx context.Context, r Reference, digest string, auth *BasicAuth) ([]byte, error) {
 	_, rc, err := c.openBlobWithAuth(ctx, r, digest, auth)
 	if err != nil {
@@ -614,13 +564,8 @@ func (c *RegistryClient) fetchBlobWithAuth(ctx context.Context, r Reference, dig
 	return body, nil
 }
 
-// fetchBlobStream opens a blob as a streaming ReadCloser. The caller is
-// responsible for closing it; the body is not buffered.
-func (c *RegistryClient) fetchBlobStream(ctx context.Context, r Reference, digest string) (io.ReadCloser, error) {
-	return c.fetchBlobStreamWithAuth(ctx, r, digest, nil)
-}
-
-// fetchBlobStreamWithAuth is the AuthPuller variant of fetchBlobStream.
+// fetchBlobStreamWithAuth opens a blob as a streaming ReadCloser. The caller
+// is responsible for closing it; the body is not buffered.
 func (c *RegistryClient) fetchBlobStreamWithAuth(ctx context.Context, r Reference, digest string, auth *BasicAuth) (io.ReadCloser, error) {
 	_, body, err := c.openBlobWithAuth(ctx, r, digest, auth)
 	if err != nil {
@@ -672,14 +617,14 @@ func (c *RegistryClient) confirmBlobInRepository(ctx context.Context, r Referenc
 	url := c.baseURL(r) + "/v2/" + r.Repository + "/blobs/" + digest
 	hc := *c.hc
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	head := func(token string) (int, http.Header, error) {
+	head := func(authz string) (int, http.Header, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 		if err != nil {
 			return 0, nil, fmt.Errorf("oci: build blob check: %w", err)
 		}
 		req.Header.Set("User-Agent", c.ua)
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
+		if authz != "" {
+			req.Header.Set("Authorization", authz)
 		}
 		resp, err := c.doPullRequestWith(ctx, &hc, req)
 		if err != nil {
@@ -693,11 +638,11 @@ func (c *RegistryClient) confirmBlobInRepository(ctx context.Context, r Referenc
 		return err
 	}
 	if status == http.StatusUnauthorized {
-		token, err := c.fetchToken(ctx, parseChallenge(strings.Join(header.Values("Www-Authenticate"), ", ")), auth)
+		authz, err := c.authorization(ctx, header.Values("Www-Authenticate"), auth)
 		if err != nil {
 			return err
 		}
-		if status, _, err = head(token); err != nil {
+		if status, _, err = head(authz); err != nil {
 			return err
 		}
 	}
@@ -718,13 +663,13 @@ func (c *RegistryClient) openBlobNetworkWithAuth(ctx context.Context, r Referenc
 		return "", nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(strings.Join(resp.Header.Values("Www-Authenticate"), ", "))
+		challenges := resp.Header.Values("Www-Authenticate")
 		_ = resp.Body.Close()
-		token, err := c.fetchToken(ctx, ch, auth)
+		authz, err := c.authorization(ctx, challenges, auth)
 		if err != nil {
 			return "", nil, err
 		}
-		resp, err = c.getBlob(ctx, url, token)
+		resp, err = c.getBlob(ctx, url, authz)
 		if err != nil {
 			return "", nil, err
 		}
@@ -737,9 +682,9 @@ func (c *RegistryClient) openBlobNetworkWithAuth(ctx context.Context, r Referenc
 	return resp.Header.Get("Content-Type"), resp.Body, nil
 }
 
-func (c *RegistryClient) getBlob(ctx context.Context, url, token string) (*http.Response, error) {
+func (c *RegistryClient) getBlob(ctx context.Context, url, authz string) (*http.Response, error) {
 	if c.blobHC == nil {
-		return c.getBlobWith(ctx, c.hc, url, token)
+		return c.getBlobWith(ctx, c.hc, url, authz)
 	}
 	stallCtx, stall := context.WithCancelCause(ctx)
 	transferCtx, cancelTransfer := context.WithTimeoutCause(stallCtx,
@@ -748,7 +693,7 @@ func (c *RegistryClient) getBlob(ctx context.Context, url, token string) (*http.
 		cancelTransfer()
 		stall(nil)
 	}
-	resp, err := c.getBlobWith(transferCtx, c.blobHC, url, token)
+	resp, err := c.getBlobWith(transferCtx, c.blobHC, url, authz)
 	if err != nil {
 		release()
 		return nil, err
@@ -757,14 +702,14 @@ func (c *RegistryClient) getBlob(ctx context.Context, url, token string) (*http.
 	return resp, nil
 }
 
-func (c *RegistryClient) getBlobWith(ctx context.Context, hc *http.Client, url, token string) (*http.Response, error) {
+func (c *RegistryClient) getBlobWith(ctx context.Context, hc *http.Client, url, authz string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("oci: build blob request: %w", err)
 	}
 	req.Header.Set("User-Agent", c.ua)
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if authz != "" {
+		req.Header.Set("Authorization", authz)
 	}
 	resp, err := c.doPullRequestWith(ctx, hc, req)
 	if err != nil {
@@ -781,12 +726,8 @@ func (c *RegistryClient) baseURL(r Reference) string {
 	return c.scheme + "://" + host
 }
 
-func (c *RegistryClient) resolveDigest(ctx context.Context, r Reference) (string, error) {
-	return c.resolveDigestWithAuth(ctx, r, nil)
-}
-
-// resolveDigestWithAuth is the AuthPuller variant of resolveDigest.
-// `auth == nil` is the anonymous path (issue #461 / ADR-062).
+// resolveDigestWithAuth resolves r to its manifest digest. `auth == nil` is
+// the anonymous path (issue #461 / ADR-062).
 func (c *RegistryClient) resolveDigestWithAuth(ctx context.Context, r Reference, auth *BasicAuth) (string, error) {
 	if r.Digest != "" {
 		body, _, err := c.fetchManifestJSONWithAuth(ctx, c.baseURL(r)+"/v2/"+r.Repository+"/manifests/"+r.Digest, auth)
@@ -806,13 +747,13 @@ func (c *RegistryClient) resolveDigestWithAuth(ctx context.Context, r Reference,
 	}
 	// A 401 carries the token challenge: fetch a bearer token and retry once.
 	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(strings.Join(resp.Header.Values("Www-Authenticate"), ", "))
+		challenges := resp.Header.Values("Www-Authenticate")
 		_ = resp.Body.Close()
-		token, err := c.fetchToken(ctx, ch, auth)
+		authz, err := c.authorization(ctx, challenges, auth)
 		if err != nil {
 			return "", err
 		}
-		if resp, err = c.getManifest(ctx, url, token); err != nil {
+		if resp, err = c.getManifest(ctx, url, authz); err != nil {
 			return "", err
 		}
 	}
@@ -850,15 +791,15 @@ func (c *RegistryClient) resolveDigestWithAuth(ctx context.Context, r Reference,
 	return digestAlgo + hex.EncodeToString(sum[:]), nil
 }
 
-func (c *RegistryClient) getManifest(ctx context.Context, url, token string) (*http.Response, error) {
+func (c *RegistryClient) getManifest(ctx context.Context, url, authz string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("oci: build manifest request: %w", err)
 	}
 	req.Header.Set("Accept", manifestAccept)
 	req.Header.Set("User-Agent", c.ua)
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if authz != "" {
+		req.Header.Set("Authorization", authz)
 	}
 	resp, err := c.doPullRequest(ctx, req)
 	if err != nil {
@@ -982,6 +923,27 @@ func retryablePullError(err error) bool {
 // returned error is scrubbed of any Authorization header so the
 // underlying Basic Auth value cannot leak through slog / RFC 7807
 // error surfaces.
+// authorization answers a 401 with the Authorization value to retry with. A
+// Bearer challenge gets a token from its realm. A registry that offers only
+// Basic, as Amazon ECR and htpasswd registries do, gets the pull's credential
+// directly, over HTTPS only (ADR-20261025124445). An anonymous pull has
+// nothing to answer Basic with and fails as before.
+func (c *RegistryClient) authorization(ctx context.Context, challenges []string, auth *BasicAuth) (string, error) {
+	header := strings.Join(challenges, ", ")
+	ch := parseChallenge(header)
+	if ch.realm == "" && auth != nil && auth.Username != "" && challengeOffersBasic(header) {
+		if c.scheme != "https" {
+			return "", errors.New("oci: registry must use https to receive credentials")
+		}
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(auth.Username+":"+auth.Password)), nil
+	}
+	token, err := c.fetchToken(ctx, ch, auth)
+	if err != nil {
+		return "", err
+	}
+	return "Bearer " + token, nil
+}
+
 func (c *RegistryClient) fetchToken(ctx context.Context, ch authChallenge, auth *BasicAuth) (string, error) {
 	challenge := newAuthChallenge(ch)
 	if auth != nil && c.scheme == "https" {

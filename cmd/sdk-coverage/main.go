@@ -310,6 +310,7 @@ var routeExclude = map[string]bool{
 	"GET /v1/admin/obs/incidents/{kind}/{id}/evidence":               true,
 	"GET /v1/admin/obs/incidents/platform_alert/recurrence":          true, // private retained-episode recurrence diagnostics
 	"GET /v1/admin/obs/incidents/platform_alert/response-times":      true, // private retained-episode response analytics
+	"GET /v1/admin/obs/wakes/{wake_id}":                              true, // private one-wake event timeline (gregalectl obs wake)
 	"GET /v1/admin/obs/notification-health":                          true, // private notification pipeline health
 	"GET /v1/admin/obs/collection-history":                           true, // private prospective collection evidence
 	"GET /v1/admin/obs/rule-health":                                  true, // private current alert-rule diagnostics
@@ -2044,6 +2045,9 @@ var methodRouteMap = map[string]string{
 	"GET /v1/apps/{slug}/buckets/{bucket}/notifications":                                        "GetObjectBucketNotifications",
 	"PUT /v1/apps/{slug}/buckets/{bucket}/notifications":                                        "PutObjectBucketNotifications",
 	"DELETE /v1/apps/{slug}/buckets/{bucket}/notifications":                                     "DeleteObjectBucketNotifications",
+	"GET /v1/apps/{slug}/buckets/{bucket}/cors":                                                 "GetObjectBucketCORS",
+	"PUT /v1/apps/{slug}/buckets/{bucket}/cors":                                                 "PutObjectBucketCORS",
+	"DELETE /v1/apps/{slug}/buckets/{bucket}/cors":                                              "DeleteObjectBucketCORS",
 	"GET /v1/apps/{slug}/buckets/{bucket}/versioning":                                           "GetObjectBucketVersioning",
 	"PUT /v1/apps/{slug}/buckets/{bucket}/versioning":                                           "PutObjectBucketVersioning",
 	"GET /v1/apps/{slug}/buckets/{bucket}/lifecycle":                                            "GetObjectBucketLifecycle",

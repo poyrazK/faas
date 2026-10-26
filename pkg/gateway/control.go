@@ -14,6 +14,7 @@ package gateway
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
 	"time"
 
@@ -171,16 +172,29 @@ type ReadyFunc func() bool
 // // metrics variant because the control plane only serves /healthz,
 // // /readyz, /metrics — no slow-client body, no slow headers.
 func RunControlServer(ctx context.Context, addr string, mux *http.ServeMux) error {
-	if addr == "" {
-		addr = ControlAddr
-	}
-	srv := NewControlHTTPServer(addr, mux)
-	// A hand-off successor inherits the listener its predecessor serves on
-	// (ADR-1736) instead of failing to bind the same port.
-	l, err := wire.ListenInherited("tcp", addr)
+	l, err := ListenControl(addr)
 	if err != nil {
 		return err
 	}
+	return ServeControl(ctx, l, mux)
+}
+
+// ListenControl opens the control listener for addr (ControlAddr when empty),
+// claiming the socket a hand-off predecessor passed for it (ADR-1736). A
+// daemon calls it before it reports ready: readiness releases every passed
+// socket nobody has claimed, and a later bind of that address then fails
+// while the predecessor still holds it.
+func ListenControl(addr string) (net.Listener, error) {
+	if addr == "" {
+		addr = ControlAddr
+	}
+	return wire.ListenInherited("tcp", addr)
+}
+
+// ServeControl serves mux on l until ctx is cancelled, then shuts down
+// gracefully within 5 s. Errors other than http.ErrServerClosed are returned.
+func ServeControl(ctx context.Context, l net.Listener, mux *http.ServeMux) error {
+	srv := NewControlHTTPServer(l.Addr().String(), mux)
 	errc := make(chan error, 1)
 	go func() {
 		if err := srv.Serve(l); err != nil && !errors.Is(err, http.ErrServerClosed) {

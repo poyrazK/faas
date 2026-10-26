@@ -18,7 +18,7 @@
   "artifacts": [
     "apid", "schedd", "vmmd", "imaged", "gatewayd-internal", "gatewayd-public",
     "meterd", "builderd", "vmmd-stream-bridge", "vmmd-raw-bridge", "vmmd-tcp-bridge",
-    "vmmd-udp-bridge", "vmmd-jail-helper", "guest_init", "kernel", "builder_base",
+    "vmmd-udp-bridge", "vmmd-jail-helper", "vmmd-guestdisk", "guest_init", "kernel", "builder_base",
     "firecracker", "jailer", "e2e_test", "node22_base",
     "initial_app_layer", "candidate_app_layer", "source_archive"
   ]

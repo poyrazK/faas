@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/incidents"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
+	"github.com/onebox-faas/faas/pkg/apid/logerasure"
 	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
@@ -214,20 +215,29 @@ type server struct {
 	managedPostgresReconciler     *managedpostgres.Reconciler
 	managedPostgresBindings       *managedpostgres.BindingService
 	managedPostgresCutovers       *managedpostgres.CutoverService
+	// logArchive reaches the runtime-log archive bucket; nil when this apid
+	// has none configured. The grace sweep erases archived logs through it.
+	logArchive logerasure.Objects
 	// databaseSwitchDrainOverride feeds the database switch worker drain
 	// evidence on stores without schedd's drain plans (tests).
 	databaseSwitchDrainOverride      state.DatabaseSwitchDrainStore
 	managedPostgresBindingReconciler *managedpostgres.BindingReconciler
 	managedPostgresUsageCollector    *managedpostgres.UsageCollector
-	managedPostgresHealthCollector   *managedpostgres.HealthCollector
-	store                            state.Store
-	domainVerificationMetrics        *domainVerificationMetrics
-	log                              *slog.Logger
+	// managedPostgresCapMode is FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT, read
+	// by the usage views (ADR-20261025094915).
+	managedPostgresCapMode         managedpostgres.CapEnforcementMode
+	managedPostgresHealthCollector *managedpostgres.HealthCollector
+	store                          state.Store
+	domainVerificationMetrics      *domainVerificationMetrics
+	log                            *slog.Logger
 	// devSourceCacheMu serializes reconstruction with best-effort cache
 	// replacement. The cache is node-local and disposable; this lock is not
 	// cross-node coordination and never guards customer-intent state.
 	devSourceCacheMu sync.Mutex
 	domain           string // apps base domain for URLs
+	// platformDomain is the domain of the site, dashboard and API hosts when
+	// it differs from the apps domain (ADR-20261026100000); see platformHost.
+	platformDomain string
 	// companionImages is the operator-owned catalog behind preset-only
 	// companion declarations. Values are immutable OCI digest references.
 	companionImages map[string]string
@@ -1711,6 +1721,10 @@ func (s *server) handler() http.Handler {
 	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/encryption", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.PutObjectBucketEncryption))))
 	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/encryption", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.DeleteObjectBucketEncryption))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/versioning", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.PutObjectBucketVersioning))))
+	// ADR-20261025202805: customer bucket CORS, behind the bucket-cors capability.
+	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/cors", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.GetObjectBucketCORS))))
+	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/cors", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.PutObjectBucketCORS))))
+	mux.HandleFunc("DELETE /v1/apps/{slug}/buckets/{bucket}/cors", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.DeleteObjectBucketCORS))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/lifecycle", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.ObjectBucketLifecycle))))
 	mux.HandleFunc("PUT /v1/apps/{slug}/buckets/{bucket}/compute-triggers", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.ReconcileObjectStorageComputeTriggers))))
 	mux.HandleFunc("GET /v1/apps/{slug}/buckets/{bucket}/notifications", s.authLimited(s.requireMFA(s.requireScope(api.ScopesStorageManageSurface...)(s.object.ObjectBucketNotifications))))
@@ -1966,7 +1980,10 @@ func (s *server) handler() http.Handler {
 	// and a retry without one would emit two overage.cap_changed
 	// audit rows for the same logical operation (review finding #9).
 	mux.HandleFunc("GET /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesReadSurface...)(s.getOverageCap))))
-	mux.HandleFunc("POST /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesDeployWriteSurface...)(s.idempotent(s.raiseOverageCap)))))
+	// Raising or clearing the spend cap is a billing change: admin, like
+	// the plan and billing routes, so a deploy-scoped CI key or MCP
+	// connection cannot remove the account's spending ceiling.
+	mux.HandleFunc("POST /v1/account/overage-cap", s.authLimited(s.requireMFA(s.requireScope(api.ScopesAdminOnly...)(s.idempotent(s.raiseOverageCap)))))
 	// IAM-5 (issue #189): per-account rotation grace-window
 	// override. Admin-only because the rotation primitive is
 	// admin-only (POST /v1/keys/{id}/rotate mirrors the same
@@ -4248,6 +4265,7 @@ func (s *server) handler() http.Handler {
 		s.authLimited(s.requireOperatorSessionRead(s.obsIncidentContext)))
 
 	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/response-times", s.authLimited(s.requireOperatorRead(s.obsAlertResponseTimes)))
+	mux.HandleFunc("GET /v1/admin/obs/wakes/{wake_id}", s.authLimited(s.requireOperatorSessionRead(s.obsWakeTimeline)))
 	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/recurrence", s.authLimited(s.requireOperatorSessionRead(s.obsAlertRecurrence)))
 	mux.HandleFunc("GET /v1/admin/obs/collection-history", s.authLimited(s.requireOperatorRead(s.obsAlertCollectionHistory)))
 	mux.HandleFunc("GET /v1/admin/obs/incidents/platform_alert/summary", s.authLimited(s.requireOperatorRead(s.obsAlertWorkload)))
@@ -4901,6 +4919,7 @@ func (s *server) handler() http.Handler {
 	mux.Handle("POST /dashboard/apps/{slug}/github/sync", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubSync))))
 	mux.Handle("POST /dashboard/apps/{slug}/github/disconnect", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubDisconnect))))
 	mux.Handle("POST /dashboard/apps/{slug}/github/activity/retry", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardGitHubRetry))))
+	mux.Handle("POST /dashboard/apps/{slug}/preview/{previewSlug}/destroy", s.dashboardChain(s.sessionAuth(http.HandlerFunc(s.dashboardDestroyPreview))))
 	// Issue #961 / Mega-B PR-3 — GET /v1/templates is the dashboard's
 	// source of truth for the template catalog (handlers_templates.go).
 	// Mirrors cmd/gregale/templates.Names without importing the CLI's
@@ -5321,7 +5340,7 @@ func (s *server) handler() http.Handler {
 	//
 	// Issue #249 / spec §11: security response headers sit OUTERMOST
 	// (above observeWrap) so every status code carries them — even
-	// the ones observeWrap synthesizes on panic. httpsec.Static sets
+	// the 500 observeWrap's Recovery synthesizes on panic. httpsec.Static sets
 	// the five static headers; httpsec.Nonce mints a per-request CSP
 	// nonce and stamps it on the context that dashboard.Render reads
 	// to mark up <script>/<style> tags. apid serves only dashboard
@@ -5400,7 +5419,13 @@ func (p *fallbackProbe) Write(body []byte) (int, error) {
 // a scanner explode the label set unbounded (review finding #2 on
 // PR #132); the unmatched bucket still surfaces scanner traffic as
 // one series per code so the §12 dashboard can alert on it.
+//
+// Issue #4385: middleware.Recovery wraps the inner chain here, so a
+// handler panic becomes a problem+json 500 that carries the request ID
+// and is still counted below as a 5xx. Without it the panic unwound to
+// net/http, which dropped the connection and skipped every counter.
 func (s *server) observeWrap(h http.Handler) http.Handler {
+	h = middleware.Recovery(s.log)(h)
 	if s.ops == nil {
 		return h
 	}

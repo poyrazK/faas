@@ -7885,27 +7885,35 @@ func (s *PgStore) ListAllDeployments(ctx context.Context) ([]Deployment, error) 
 // OOM, ...). Other failures after a successful build (scan, snapshot,
 // readiness timeouts) remain visible as platform failures. Deleted apps
 // remain in the aggregate because release-acceptance apps are deliberately
-// cleaned up after their terminal result is recorded.
+// cleaned up after their terminal result is recorded. FailedAccounts counts the
+// tenants behind the failures; a deployment whose app row is gone counts as
+// its own tenant.
 func (s *PgStore) CountDeploymentOutcomesSince(ctx context.Context, since time.Time) (DeploymentOutcomeCounts, error) {
 	var out DeploymentOutcomeCounts
 	err := s.pool.QueryRow(ctx, `
-		select
-			count(*) filter (where d.status in ('live', 'superseded')),
-			count(*) filter (
-				where d.status = 'failed'
-				  and coalesce(d.error_code, '') <> all($2::text[])
-				  and not exists (
+		with outcomes as (
+			select coalesce(a.account_id, d.app_id) as tenant,
+			       d.status in ('live', 'superseded') as succeeded,
+			       d.status = 'failed'
+			         and coalesce(d.error_code, '') <> all($2::text[])
+			         and not exists (
 					select 1 from builds b
 					 where b.deployment_id = d.id
 					   and b.failure_class = 'user_error'
-				  )
-			)
-		  from deployments d
-		 where (
-			(d.status in ('live', 'superseded') and coalesce(d.rollout_completed_at, d.created_at) >= $1)
-			or
-			(d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) >= $1)
-		   )`, since.UTC(), api.CustomerCausedDeploymentFailureCodes()).Scan(&out.Succeeded, &out.Failed)
+				 ) as platform_failed
+			  from deployments d
+			  left join apps a on a.id = d.app_id
+			 where (
+				(d.status in ('live', 'superseded') and coalesce(d.rollout_completed_at, d.created_at) >= $1)
+				or
+				(d.status = 'failed' and coalesce(d.rollout_aborted_at, d.created_at) >= $1)
+			   )
+		)
+		select
+			count(*) filter (where succeeded),
+			count(*) filter (where platform_failed),
+			count(distinct tenant) filter (where platform_failed)
+		  from outcomes`, since.UTC(), api.CustomerCausedDeploymentFailureCodes()).Scan(&out.Succeeded, &out.Failed, &out.FailedAccounts)
 	return out, err
 }
 
@@ -8277,17 +8285,34 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 			}
 		}
 	}
-	if _, err := tx.Exec(ctx,
-		`update deployments set traffic_percent = $2 where id = $1`,
-		id, newPercent); err != nil {
-		return Deployment{}, fmt.Errorf("state: stamp traffic_percent %s: %w", id, mapErr(err))
+	// Lower rows before raising any, so deployments_app_scope_live_uniq never
+	// sees two stable rows serving mid-transaction (a promote raised the
+	// target while the old stable row still held 100), and mark split members
+	// explicit (manualTrafficExplicit; Hunt 14 H14-71).
+	type trafficStamp struct {
+		id          string
+		prior, next int
+		target      bool
 	}
-
-	for i, s := range siblings {
+	stamps := make([]trafficStamp, 0, len(siblings)+1)
+	stamps = append(stamps, trafficStamp{id: id, prior: currentTrafficPercent, next: newPercent, target: true})
+	for i, sibling := range siblings {
+		stamps = append(stamps, trafficStamp{id: sibling.ID, prior: sibling.Prior, next: newWeights[i]})
+	}
+	sort.SliceStable(stamps, func(a, b int) bool {
+		return stamps[a].next-stamps[a].prior < stamps[b].next-stamps[b].prior
+	})
+	for _, stamp := range stamps {
 		if _, err := tx.Exec(ctx,
-			`update deployments set traffic_percent = $2 where id = $1`,
-			s.ID, newWeights[i]); err != nil {
-			return Deployment{}, fmt.Errorf("state: stamp sibling %s traffic_percent: %w", s.ID, mapErr(err))
+			`update deployments
+			    set traffic_percent = $2,
+			        traffic_percent_explicit = case when traffic_percent = $2 then traffic_percent_explicit else $3 end
+			  where id = $1`,
+			stamp.id, stamp.next, manualTrafficExplicit(stamp.prior, stamp.next, false)); err != nil {
+			if stamp.target {
+				return Deployment{}, fmt.Errorf("state: stamp traffic_percent %s: %w", stamp.id, mapErr(err))
+			}
+			return Deployment{}, fmt.Errorf("state: stamp sibling %s traffic_percent: %w", stamp.id, mapErr(err))
 		}
 	}
 
@@ -10886,6 +10911,9 @@ func (s *PgStore) AppendDeploymentStage(ctx context.Context, id string, from, to
 		EndedAt:    &endedAt,
 		DurationMs: durMs,
 		Status:     stageHistoryStatusCompleted,
+		// A note on the closed stage, such as the builder-slot wait booked to
+		// source_download (Hunt 12 H12-5).
+		Reason: reason,
 	})
 	state.Current = to
 	state.CurrentStartedAt = &startedAt
@@ -11073,16 +11101,24 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	if !stageNameClosedSet[fromStage] {
 		return Deployment{}, ErrInvalidArgument
 	}
+	return retryTrafficSerialization(ctx, func() (Deployment, error) {
+		return s.retryDeploymentFromStageOnce(ctx, failedID, fromStage)
+	})
+}
+
+// The retry takes the app's next revision, so its revision URL is a new
+// binding: the insert joins the shared binding guard (ADR-570).
+func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID string, fromStage StageName) (Deployment, error) {
 	// Step 2 — read the failed row.
 	src, err := s.DeploymentByID(ctx, failedID)
 	if err != nil {
 		return Deployment{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAppTrafficMutation(ctx, src.AppID)
 	if err != nil {
 		return Deployment{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var deployable int
 	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 and status in ('active', 'evicted_cold') for update`, src.AppID).Scan(&deployable); err != nil {
 		return Deployment{}, mapErr(err)
@@ -11308,11 +11344,19 @@ func (s *PgStore) MarkAutoRollback(ctx context.Context, deploymentID, reason str
 //
 // Migration 00297 / Mega-C PR-2 / issue #961 leaf 8.
 func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentDeploymentID string) (string, error) {
-	tx, err := s.pool.Begin(ctx)
+	return retryTrafficSerialization(ctx, func() (string, error) {
+		return s.autoRollbackDeploymentsOnce(ctx, appID, currentDeploymentID)
+	})
+}
+
+// The rollback target's revision URL serves again; the binding guard
+// (ADR-570) validates it before commit.
+func (s *PgStore) autoRollbackDeploymentsOnce(ctx context.Context, appID, currentDeploymentID string) (string, error) {
+	tx, err := s.beginAppTrafficMutation(ctx, appID)
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck
 
 	if err := pgLockProductionLifecycleApp(ctx, tx, appID); err != nil {
 		return "", err
@@ -11428,11 +11472,19 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 	if appID == "" || targetDeploymentID == "" {
 		return Deployment{}, ErrInvalidArgument
 	}
-	tx, err := s.pool.Begin(ctx)
+	return retryTrafficSerialization(ctx, func() (Deployment, error) {
+		return s.prepareDeploymentRollbackOnce(ctx, appID, targetDeploymentID)
+	})
+}
+
+// A superseded target's revision URL serves again, so the preparation joins
+// the shared binding guard (ADR-570) and commits only after its analysis.
+func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targetDeploymentID string) (Deployment, error) {
+	tx, err := s.beginAppTrafficMutation(ctx, appID)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: prepare rollback begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var locked int
 	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&locked); err != nil {
@@ -16197,6 +16249,10 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 type InvocationDueCursor struct {
 	DueAt time.Time
 	ID    string
+	// OwnerNodeID, when set, keeps only invocations of apps with no node or
+	// with this node, the apps a scheduler on that node may claim. Without it
+	// a walk bounded in pages could fill every page with other nodes' rows.
+	OwnerNodeID string
 }
 
 // ListDueInvocationsAfter is ListDueInvocations ordered by (due_at, id) and
@@ -16215,13 +16271,23 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 		}
 		afterDue, afterID = after.DueAt.UTC(), after.ID
 	}
+	var owner pgtype.UUID
+	if after.OwnerNodeID != "" {
+		// A node ID that is not a UUID matches no app's node, as in the
+		// scheduler's string compare: it owns only apps with no node.
+		parsed, err := uuid.Parse(after.OwnerNodeID)
+		if err != nil {
+			parsed = uuid.Nil
+		}
+		owner = pgtype.UUID{Bytes: parsed, Valid: true}
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("state: invocations begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := sqlc.New().ListDueInvocationRowsAfter(ctx, tx, sqlc.ListDueInvocationRowsAfterParams{NowAt: pgtype.Timestamptz{Time: now.UTC(), Valid: true}, BatchLimit: int64(limit),
-		FirstPage: after.ID == "", AfterDueAt: pgtype.Timestamptz{Time: afterDue, Valid: true}, AfterID: mustPgUUID(afterID)})
+		FirstPage: after.ID == "", AfterDueAt: pgtype.Timestamptz{Time: afterDue, Valid: true}, AfterID: mustPgUUID(afterID), OwnerNodeID: owner})
 	if err != nil {
 		return nil, fmt.Errorf("state: invocations list-due-after: %w", err)
 	}
@@ -18505,6 +18571,7 @@ func createSnapshotWithQuerier(ctx context.Context, q sqlc.DBTX, snap Snapshot) 
 		DeploymentID:       mustPgUUID(snap.DeploymentID), FcVersion: snap.FCVersion, BaseImageVersion: snap.BaseImageVersion,
 		MemBytes: snap.MemBytes, DiskBytes: snap.DiskBytes, StoredBytes: snap.StoredBytes, StorageKey: snap.StorageKey,
 		Stale: snap.Stale, Tier: tier, ApplicationStandardCaptureToken: mustPgUUID(snap.ApplicationStandardCaptureToken),
+		CpuTemplate: snap.CPUTemplate, CpuModel: snap.CPUModel,
 	})
 	if err != nil {
 		return Snapshot{}, mapErr(err)
@@ -18547,6 +18614,25 @@ func (s *PgStore) LatestSnapshotForTier(ctx context.Context, deploymentID, tier 
 		return Snapshot{}, mapErr(err)
 	}
 	return snapshotFromSQLC(row), nil
+}
+
+// LiveSnapshotsForTier returns every live snapshot of the deployment's tier,
+// one per CPU platform, newest first (ADR-20261024225612 amendment 1).
+func (s *PgStore) LiveSnapshotsForTier(ctx context.Context, deploymentID, tier string) ([]Snapshot, error) {
+	if tier == "" {
+		tier = SnapshotTierInit
+	}
+	rows, err := sqlc.New().LiveSnapshotsForTier(ctx, s.pool, sqlc.LiveSnapshotsForTierParams{
+		DeploymentID: mustPgUUID(deploymentID), Tier: tier,
+	})
+	if err != nil {
+		return nil, mapErr(err)
+	}
+	out := make([]Snapshot, 0, len(rows))
+	for _, row := range rows {
+		out = append(out, snapshotFromSQLC(row))
+	}
+	return out, nil
 }
 
 // MarkSnapshotStale flags a snapshot unusable after a failed restore (ADR-005):
@@ -18834,7 +18920,9 @@ func scanComputeNode(row pgx.Row) (ComputeNode, error) {
 		&n.LastHeartbeatAt, &n.CreatedAt, &n.Region, &n.Zone,
 		&n.ScheddTargetURL, &n.GatewayTargetURL, &n.PublicIp, &n.PublicIpSetAt,
 		&n.ReleaseID, &n.ManifestHash, &n.HostCertificate, &n.CertFingerprint,
-		&n.Role, &n.Generation, &n.Lifecycle, &n.LifecycleGeneration); err != nil {
+		&n.Role, &n.Generation, &n.Lifecycle, &n.LifecycleGeneration,
+		&n.Readiness, &n.ReadinessReason,
+		&n.CPUTemplate, &n.CPUModel); err != nil {
 		return ComputeNode{}, mapErr(err)
 	}
 	return n, nil
@@ -18847,7 +18935,7 @@ func (s *pgCore) ActiveComputeNodes(ctx context.Context) ([]ComputeNode, error) 
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 		  from compute_nodes
 		 where active = true
 		 order by name
@@ -18879,7 +18967,7 @@ func (s *PgStore) ListAllComputeNodes(ctx context.Context) ([]ComputeNode, error
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 		  from compute_nodes
 		 order by name
 	`)
@@ -18905,7 +18993,7 @@ func (s *pgCore) ComputeNodeByID(ctx context.Context, id string) (ComputeNode, e
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 		  from compute_nodes
 		 where id = $1
 	`, id)
@@ -18923,7 +19011,7 @@ func (s *PgStore) ComputeNodeByName(ctx context.Context, name string) (ComputeNo
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 		  from compute_nodes
 		 where name = $1
 	`, name)
@@ -19079,6 +19167,25 @@ func (s *PgStore) ComputeNodeUsedCPUMillicoresByNode(ctx context.Context, nodeID
 		used[resource.NodeID] += resource.CpuMillicores
 	}
 	return used, nil
+}
+
+// SetComputeNodeReadiness implements ComputeNodeReadinessStore. The update
+// matches only a changed verdict, so an unchanged one neither writes the row
+// nor fires compute_node_changed.
+func (s *PgStore) SetComputeNodeReadiness(ctx context.Context, nodeID string, readiness NodeReadiness, reason string) (bool, error) {
+	if !readiness.Valid() {
+		return false, fmt.Errorf("state: set compute_node %s readiness: invalid value %q", nodeID, readiness)
+	}
+	tag, err := s.pool.Exec(ctx, `
+		update compute_nodes
+		   set readiness = $2, readiness_reason = nullif($3, '')
+		 where id = $1
+		   and (readiness is distinct from $2 or readiness_reason is distinct from nullif($3, ''))
+	`, nodeID, string(readiness), reason)
+	if err != nil {
+		return false, fmt.Errorf("state: set compute_node %s readiness: %w", nodeID, err)
+	}
+	return tag.RowsAffected() > 0, nil
 }
 
 func (s *PgStore) HeartbeatComputeNode(ctx context.Context, nodeID string) error {
@@ -19548,7 +19655,7 @@ func (s *PgStore) CreateComputeNode(ctx context.Context, node ComputeNode) (Comp
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget, string(lifecycle),
 		node.Region, node.Zone, node.GatewayTargetURL,
@@ -19594,11 +19701,13 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		    (name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency, admission_ceiling_mb, vcpu_budget, lifecycle,
 		     region, zone, gateway_target_url,
 		     public_ip, public_ip_set_at,
-		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation)
+		     release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
+		     cpu_template, cpu_model)
 		values ($1, $2, $3, $4, $5, $6, $7, $8, 'active'::compute_node_lifecycle,
 		        $9, $10, $11,
 		        $12, $13,
-		        $14, $15, $16, $17, $18, $19)
+		        $14, $15, $16, $17, $18, $19,
+		        $20, $21)
 		on conflict (name) do update
 		  set target_url          = excluded.target_url,
 		      vpcpus              = excluded.vpcpus,
@@ -19620,19 +19729,24 @@ func (s *PgStore) UpsertComputeNode(ctx context.Context, node ComputeNode) (Comp
 		      role                = excluded.role,
 		      host_certificate    = coalesce(compute_nodes.host_certificate, excluded.host_certificate),
 		      cert_fingerprint    = coalesce(compute_nodes.cert_fingerprint, excluded.cert_fingerprint),
-		      generation          = coalesce(compute_nodes.generation, excluded.generation)
+		      generation          = coalesce(compute_nodes.generation, excluded.generation),
+		      -- vmmd owns its CPU identity (ADR-20261024225612): every
+		      -- registration reports what this boot of vmmd runs with.
+		      cpu_template        = excluded.cpu_template,
+		      cpu_model           = excluded.cpu_model
 		returning id, name, target_url, overlay_ip, vpcpus, mem_mb, max_concurrency,
 		          admission_ceiling_mb, vcpu_budget, active, last_heartbeat_at, created_at,
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.GatewayTargetURL,
 		node.PublicIp, node.PublicIpSetAt,
 		node.ReleaseID, node.ManifestHash, node.HostCertificate, node.CertFingerprint,
-		node.Role, node.Generation)
+		node.Role, node.Generation,
+		node.CPUTemplate, node.CPUModel)
 	n, err := scanComputeNode(row)
 	if err != nil {
 		return ComputeNode{}, fmt.Errorf("state: upsert compute_node %q: %w", node.Name, err)
@@ -19704,7 +19818,7 @@ func (s *PgStore) UpsertComputeNodeFromOperator(ctx context.Context, node Comput
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 	`, node.Name, node.TargetURL, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, vcpuBudget, lifecycle,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -19827,7 +19941,7 @@ func (s *PgStore) UpsertComputeNodeFromVmmd(ctx context.Context, node ComputeNod
 		          region, zone, schedd_target_url, gateway_target_url,
 		          public_ip, public_ip_set_at,
 		          release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		          lifecycle, lifecycle_generation
+		          lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 	`, node.Name, node.TargetURL, node.OverlayIP, node.VPCPUs, node.MemMB, node.MaxConcurrency,
 		node.AdmissionCeilingMB, node.VCPUBudget,
 		node.Region, node.Zone, node.ScheddTargetURL, node.GatewayTargetURL,
@@ -20088,7 +20202,7 @@ func (s *PgStore) ListComputeNodes(ctx context.Context, includeInactive bool) ([
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -20124,7 +20238,7 @@ func (s *PgStore) ListComputeNodesPage(ctx context.Context, includeInactive bool
 		       region, zone, schedd_target_url, gateway_target_url,
 		       public_ip, public_ip_set_at,
 		       release_id, manifest_hash, host_certificate, cert_fingerprint, role, generation,
-		       lifecycle, lifecycle_generation
+		       lifecycle, lifecycle_generation, readiness, readiness_reason, cpu_template, cpu_model
 		  from compute_nodes
 	`
 	if !includeInactive {
@@ -26161,6 +26275,8 @@ func snapshotFromSQLC(row sqlc.Snapshot) Snapshot {
 		StorageKey: row.StorageKey, Tier: row.Tier, Stale: row.Stale, DeletePending: row.DeletePending, CreatedAt: row.CreatedAt.Time,
 		ApplicationStandardCaptureToken: pgUUIDString(row.ApplicationStandardCaptureToken),
 		RecoveryGeneration:              row.RecoveryGeneration,
+		CPUTemplate:                     row.CpuTemplate,
+		CPUModel:                        row.CpuModel,
 	}
 }
 

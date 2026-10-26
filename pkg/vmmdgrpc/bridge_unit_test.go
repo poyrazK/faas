@@ -26,10 +26,15 @@ type fakeUnits struct {
 	mu      sync.Mutex
 	started []string
 	svcs    map[string]sdunit.Service
-	running map[string]bool
+	running map[string]sdunit.Unit
 	stopped []string
 	listed  []string
 	closed  bool
+}
+
+func runningUnit(name string, pid int) sdunit.Unit {
+	return sdunit.Unit{Name: name, LoadState: "loaded", ActiveState: "active", MainPID: pid,
+		ControlGroup: "/faas.slice/faas-tenant.slice/faas-tenant-ibridge.slice/" + name, InvocationID: "0123456789abcdef0123456789abcdef"}
 }
 
 func (f *fakeUnits) StartService(_ context.Context, name string, svc sdunit.Service) (sdunit.Unit, error) {
@@ -37,9 +42,8 @@ func (f *fakeUnits) StartService(_ context.Context, name string, svc sdunit.Serv
 	defer f.mu.Unlock()
 	f.started = append(f.started, name)
 	f.svcs[name] = svc
-	f.running[name] = true
-	return sdunit.Unit{Name: name, LoadState: "loaded", ActiveState: "active", MainPID: 4242,
-		ControlGroup: "/faas.slice/faas-tenant.slice/faas-tenant-ibridge.slice/" + name, InvocationID: "0123456789abcdef0123456789abcdef"}, nil
+	f.running[name] = runningUnit(name, 4242)
+	return f.running[name], nil
 }
 
 func (f *fakeUnits) Stop(_ context.Context, name string) error {
@@ -53,10 +57,11 @@ func (f *fakeUnits) Stop(_ context.Context, name string) error {
 func (f *fakeUnits) Unit(_ context.Context, name string) (sdunit.Unit, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	if !f.running[name] {
+	u, ok := f.running[name]
+	if !ok {
 		return sdunit.Unit{Name: name, LoadState: "not-found"}, nil
 	}
-	return sdunit.Unit{Name: name, LoadState: "loaded", ActiveState: "active"}, nil
+	return u, nil
 }
 
 func (f *fakeUnits) List(context.Context, string) ([]string, error) {
@@ -120,7 +125,7 @@ func newUnitFixture(t *testing.T) *unitFixture {
 			t.Fatal(err)
 		}
 	}
-	f := &unitFixture{units: &fakeUnits{svcs: map[string]sdunit.Service{}, running: map[string]bool{}}, now: time.Unix(1_800_000_000, 0)}
+	f := &unitFixture{units: &fakeUnits{svcs: map[string]sdunit.Service{}, running: map[string]sdunit.Unit{}}, now: time.Unix(1_800_000_000, 0)}
 	f.manager = newTestStreamBridgeManager(t, func() { f.spawns.Add(1) })
 	f.manager.now = func() time.Time { return f.now }
 	f.manager.unitsOn = func() bool { return true }
@@ -264,12 +269,12 @@ func TestSweepInstanceBridgeUnits(t *testing.T) {
 	f := newUnitFixture(t)
 	f.acquire(t, "b", bridgeUID(2))
 	f.units.listed = []string{"faas-ibridge-a-0123abcd.service", "faas-ibridge-b-89abcdef.service", "faas-ibridge-bogus.service", "sshd.service"}
-	n, err := f.manager.sweepUnits(context.Background())
+	adopted, n, err := f.manager.reconcileUnits(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, stopped := f.units.snapshot(); n != 1 || !slices.Equal(stopped, []string{"faas-ibridge-a-0123abcd.service"}) {
-		t.Fatalf("swept %d: %v", n, stopped)
+	if _, stopped := f.units.snapshot(); adopted != 0 || n != 1 || !slices.Equal(stopped, []string{"faas-ibridge-a-0123abcd.service"}) {
+		t.Fatalf("adopted %d, stopped %d: %v", adopted, n, stopped)
 	}
 	// The stopped run's socket directory goes; the live entry's stays.
 	live := filepath.Dir(f.manager.entries["b"].socket)
@@ -305,6 +310,273 @@ func TestBridgeUnitNames(t *testing.T) {
 	for _, bad := range []string{"faas-ibridge-a.service", "faas-ibridge-a-0123abcz.service", "faas-ibridge--0123abcd.service", "faas-ibridge-a-0123abcd.scope", "x-a-0123abcd.service"} {
 		if _, ok := bridgeUnitInstance(bad); ok {
 			t.Errorf("parsed %q", bad)
+		}
+	}
+}
+
+type fakeBridgeJournal struct {
+	mu        sync.Mutex
+	notLive   bool
+	records   int
+	recorded  map[string]fcvm.InstanceBridge
+	forgotten []string
+	adopted   map[string]fcvm.InstanceBridge
+	proveErr  error
+}
+
+func (j *fakeBridgeJournal) RecordInstanceBridge(instance string, b fcvm.InstanceBridge) error {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.records++
+	if j.notLive {
+		return fcvm.ErrInstanceNotLive
+	}
+	j.recorded[instance] = b
+	return nil
+}
+
+func (j *fakeBridgeJournal) ForgetInstanceBridge(_, unit string) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.forgotten = append(j.forgotten, unit)
+}
+
+func (j *fakeBridgeJournal) AdoptedInstanceBridge(instance string) (fcvm.InstanceBridge, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	b, ok := j.adopted[instance]
+	return b, ok
+}
+
+func (j *fakeBridgeJournal) ProveInstanceBridge(string, int) error { return j.proveErr }
+
+func TestInstanceBridgeUnitRunIsRecordedAndForgotten(t *testing.T) {
+	f := newUnitFixture(t)
+	j := &fakeBridgeJournal{recorded: map[string]fcvm.InstanceBridge{}}
+	f.manager.journal = j
+	lease, err := f.manager.acquire(context.Background(), &vmmdpb.ForwardHTTPRequestInit{Instance: "a", Port: 8080, AppProtocol: "http2"}, "fc-a", bridgeUID(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.release()
+	started, _ := f.units.snapshot()
+	rec := j.recorded["a"]
+	if rec.Unit != started[0] || rec.PID != 4242 || rec.InvocationID == "" || rec.Socket != f.units.svcs[started[0]].ExecStart[1] || rec.Port != 8080 || rec.AppProtocol != "http2" {
+		t.Fatalf("recorded %+v", rec)
+	}
+	f.manager.forget(context.Background(), "a")
+	if !slices.Equal(j.forgotten, started) {
+		t.Fatalf("forgotten %v, want %v", j.forgotten, started)
+	}
+}
+
+// A planned stop whose successor adopts the guests leaves the units, their
+// sockets and their records alone.
+func TestInstanceBridgeUnitsKeptForTheSuccessor(t *testing.T) {
+	f := newUnitFixture(t)
+	f.manager.keepUnits = true
+	f.acquire(t, "a", bridgeUID(1))
+	if err := f.manager.close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if _, stopped := f.units.snapshot(); len(stopped) != 0 {
+		t.Fatalf("handoff stopped %v", stopped)
+	}
+	if !f.proc(0).closed.Load() {
+		t.Fatal("pidfd left open at handoff")
+	}
+	started, _ := f.units.snapshot()
+	if _, err := os.Stat(filepath.Dir(f.units.svcs[started[0]].ExecStart[1])); err != nil {
+		t.Fatalf("socket directory removed at handoff: %v", err)
+	}
+}
+
+type bridgeCredVMM struct {
+	VmmdAPI
+	uid int
+}
+
+func (v bridgeCredVMM) BridgeCredential(string) (int, int, bool) { return v.uid, v.uid, true }
+
+// adoptFixture is a successor with a predecessor's unit for instance a.
+func adoptFixture(t *testing.T) (*unitFixture, *Server, *fakeBridgeJournal, string) {
+	t.Helper()
+	t.Setenv(bridgeUnprivilegedEnv, bridgeUnprivilegedValue)
+	f := newUnitFixture(t)
+	name := "faas-ibridge-a-0123abcd.service"
+	f.units.running[name] = runningUnit(name, 7777)
+	j := &fakeBridgeJournal{recorded: map[string]fcvm.InstanceBridge{}, adopted: map[string]fcvm.InstanceBridge{
+		"a": {Unit: name, InvocationID: "0123456789abcdef0123456789abcdef", PID: 7777, Socket: filepath.Join(bridgeRunRoot, "a-77-1", bridgeSocketName),
+			Port: 8080, AppProtocol: "http2", Netns: "fc-a"},
+	}}
+	f.manager.journal = j
+	f.manager.probeSocket = func(string, bridgeIdentity) error { return nil }
+	s := &Server{log: f.manager.log, streamBridges: f.manager, vmm: bridgeCredVMM{uid: fcvm.BridgeUIDBase + 1}}
+	return f, s, j, name
+}
+
+// The successor keeps a proven unit and serves through it without starting
+// a bridge of its own.
+func TestReconcileAdoptsAProvenBridgeUnit(t *testing.T) {
+	f, s, _, name := adoptFixture(t)
+	adopted, stopped, err := f.manager.reconcileUnits(context.Background(), s.adoptBridgeUnit)
+	if err != nil || adopted != 1 || stopped != 0 {
+		t.Fatalf("adopted %d stopped %d: %v", adopted, stopped, err)
+	}
+	lease, err := f.manager.acquireSession(context.Background(), "a", "fc-a", bridgeUID(1), 5432)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease.release()
+	if started, stopped := f.units.snapshot(); len(started) != 0 || len(stopped) != 0 || lease.entry.unit.name != name {
+		t.Fatalf("started %v stopped %v via %s", started, stopped, lease.entry.unit.name)
+	}
+	if start := f.manager.started["a"]; start.appProtocol != "http2" || start.port != 8080 {
+		t.Fatalf("adopted start parameters %+v", start)
+	}
+}
+
+// A successor with units switched off stops the units a predecessor left
+// for a hand-off instead of leaking them, and touches systemd only when a
+// transient faas-ibridge unit exists.
+func TestReconcileWithUnitsOffStopsLeftoverUnits(t *testing.T) {
+	f, s, _, name := adoptFixture(t)
+	t.Setenv(instanceBridgeUnitEnv, "")
+	saved := transientUnitDir
+	t.Cleanup(func() { transientUnitDir = saved })
+	transientUnitDir = t.TempDir()
+
+	s.ReconcileInstanceBridgeUnits(context.Background())
+	if _, stopped := f.units.snapshot(); len(stopped) != 0 {
+		t.Fatalf("no transient unit file, yet stopped %v", stopped)
+	}
+	if err := os.WriteFile(filepath.Join(transientUnitDir, name), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.ReconcileInstanceBridgeUnits(context.Background())
+	if _, stopped := f.units.snapshot(); !slices.Equal(stopped, []string{name}) || f.manager.entries["a"] != nil {
+		t.Fatalf("stopped %v, adopted entry %v", stopped, f.manager.entries["a"])
+	}
+}
+
+func TestReconcileStopsWhatItCannotProve(t *testing.T) {
+	for name, spoil := range map[string]func(*unitFixture, *fakeBridgeJournal, string){
+		"no record": func(_ *unitFixture, j *fakeBridgeJournal, _ string) { delete(j.adopted, "a") },
+		"another run": func(f *unitFixture, _ *fakeBridgeJournal, unit string) {
+			u := f.units.running[unit]
+			u.InvocationID = "ffff" + u.InvocationID[4:]
+			f.units.running[unit] = u
+		},
+		"another pid": func(f *unitFixture, _ *fakeBridgeJournal, unit string) {
+			f.units.running[unit] = runningUnit(unit, 8888)
+		},
+		"process proof": func(_ *unitFixture, j *fakeBridgeJournal, _ string) { j.proveErr = errors.New("another executable") },
+		"silent socket": func(f *unitFixture, _ *fakeBridgeJournal, _ string) {
+			f.manager.probeSocket = func(string, bridgeIdentity) error { return errors.New("refused") }
+		},
+		"other socket": func(_ *unitFixture, j *fakeBridgeJournal, _ string) {
+			b := j.adopted["a"]
+			b.Socket = "/run/faas-ibridge/b/http.sock"
+			j.adopted["a"] = b
+		},
+		"unprovable process": func(f *unitFixture, _ *fakeBridgeJournal, _ string) { f.openErr = errors.New("pid in another cgroup") },
+	} {
+		t.Run(name, func(t *testing.T) {
+			f, s, j, unit := adoptFixture(t)
+			spoil(f, j, unit)
+			adopted, stopped, err := f.manager.reconcileUnits(context.Background(), s.adoptBridgeUnit)
+			if err != nil || adopted != 0 || stopped != 1 {
+				t.Fatalf("adopted %d stopped %d: %v", adopted, stopped, err)
+			}
+			if _, stopped := f.units.snapshot(); !slices.Equal(stopped, []string{unit}) {
+				t.Fatalf("stopped %v", stopped)
+			}
+		})
+	}
+}
+
+// The wake's prewarm starts the bridge before the instance is live, so the
+// first record fails; the first lease after the wake records it, once.
+func TestInstanceBridgeUnitRecordedOnceItsInstanceIsLive(t *testing.T) {
+	f := newUnitFixture(t)
+	j := &fakeBridgeJournal{recorded: map[string]fcvm.InstanceBridge{}, notLive: true}
+	f.manager.journal = j
+	f.acquire(t, "a", bridgeUID(1)) // the start, then the lease in the same call
+	if _, ok := j.recorded["a"]; ok || j.records != 2 {
+		t.Fatalf("recorded %v after %d attempts, want two failed attempts", j.recorded, j.records)
+	}
+	j.notLive = false
+	f.acquire(t, "a", bridgeUID(1))
+	if lease, err := f.manager.acquireSession(context.Background(), "a", "fc-a", bridgeUID(1), 5432); err != nil {
+		t.Fatal(err)
+	} else {
+		lease.release()
+	}
+	started, _ := f.units.snapshot()
+	if j.recorded["a"].Unit != started[0] || j.records != 3 {
+		t.Fatalf("recorded %+v after %d attempts, want %s once more", j.recorded["a"], j.records, started[0])
+	}
+}
+
+func TestIsInstanceBridgeSocket(t *testing.T) {
+	saved := bridgeRunRoot
+	t.Cleanup(func() { bridgeRunRoot = saved })
+	bridgeRunRoot = "/run/faas-ibridge"
+	for socket, ok := range map[string]bool{
+		"/run/faas-ibridge/a-77-1/http.sock":      true,
+		"/run/faas-ibridge/a/http.sock":           false, // not a run directory
+		"/run/faas-ibridge/a-77-1/other.sock":     false,
+		"/run/faas-ibridge/ab-77-1/http.sock":     false, // another instance
+		"/run/faas-ibridge/a-b-77-1/http.sock":    false,
+		"/run/faas/a-77-1/http.sock":              false,
+		"/run/faas-ibridge/x/../a-77-1/http.sock": false,
+	} {
+		if got := isInstanceBridgeSocket(socket, "a"); got != ok {
+			t.Errorf("isInstanceBridgeSocket(%q) = %v", socket, got)
+		}
+	}
+}
+
+// Reconcile keeps the adopted run's socket directory and removes the rest.
+func TestReconcileRemovesStaleSocketDirectories(t *testing.T) {
+	f, s, j, _ := adoptFixture(t)
+	adoptedDir := filepath.Dir(j.adopted["a"].Socket)
+	stale := filepath.Join(bridgeRunRoot, "b-77-2")
+	for _, dir := range []string{adoptedDir, stale} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if adopted, _, err := f.manager.reconcileUnits(context.Background(), s.adoptBridgeUnit); err != nil || adopted != 1 {
+		t.Fatalf("adopted %d: %v", adopted, err)
+	}
+	if _, err := os.Stat(stale); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("stale socket directory kept: %v", err)
+	}
+	if _, err := os.Stat(adoptedDir); err != nil {
+		t.Fatalf("adopted run's socket directory removed: %v", err)
+	}
+}
+
+// The node's bridge memory is the slice's memory.current; a slice systemd
+// has not created yet holds no bridge.
+func TestInstanceBridgeResidentBytes(t *testing.T) {
+	saved := instanceBridgeSliceDir
+	t.Cleanup(func() { instanceBridgeSliceDir = saved })
+	instanceBridgeSliceDir = filepath.Join(t.TempDir(), instanceBridgeSlice)
+	if b, ok := instanceBridgeResidentBytes(); !ok || b != 0 {
+		t.Fatalf("absent slice = %d %v, want 0", b, ok)
+	}
+	if err := os.MkdirAll(instanceBridgeSliceDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for body, want := range map[string]int64{"50331648\n": 50331648, "garbage\n": -1, "-4\n": -1} {
+		if err := os.WriteFile(filepath.Join(instanceBridgeSliceDir, "memory.current"), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		b, ok := instanceBridgeResidentBytes()
+		if (want < 0 && ok) || (want >= 0 && (!ok || b != want)) {
+			t.Errorf("memory.current %q = %d %v, want %d", body, b, ok, want)
 		}
 	}
 }

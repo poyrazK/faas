@@ -76,6 +76,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/writegate"
 	"github.com/onebox-faas/faas/pkg/gatewayconfirmation"
 	"github.com/onebox-faas/faas/pkg/geoip"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -85,6 +86,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	schedpkg "github.com/onebox-faas/faas/pkg/sched"
 	"github.com/onebox-faas/faas/pkg/scheddgrpc"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -1253,9 +1255,10 @@ type runDeps struct {
 	// gatewayd.toml `apid_loopback`). Empty in tests; run() populates it
 	// from cfg before invoking runWithDeps.
 	apidLoopback string
-	// appsDomain scopes platform path reservations to platform hosts
-	// (ADR-480). Empty keeps the pre-ADR-480 every-host reservation.
-	appsDomain string
+	// domains is the host layout (ADR-20261026100000). Its platform domain
+	// scopes platform path reservations to platform hosts (ADR-480); empty
+	// keeps the pre-ADR-480 every-host reservation.
+	domains hostidentity.Domains
 	// writeTimeout is the http.Server.WriteTimeout override (issue #471 /
 	// ADR-047). When 0, the legacy 300 s default (spec §4.1) applies.
 	// run() resolves this from cfg.ResponseWriteTimeout || api.ResponseWriteTimeoutDefault
@@ -1313,6 +1316,10 @@ type runDeps struct {
 	// FAAS_HOST_KEY_PATH (the same convention cmd/meterd +
 	// cmd/vmmd use); production points at /etc/faas/keys.
 	hostKeyDir string
+	// edgeIdentities open app basic-auth credentials and log drain
+	// headers: the edge seal-domain identity first once staged, then the
+	// fleet and host identities (ADR 20261022111812).
+	edgeIdentities []*age.X25519Identity
 	// audit is the *pkg/audit.Auditor that emits the auth.mfa_gate_hit
 	// / auth.session.stolen rows. nil in tests.
 	audit *audit.Auditor
@@ -1649,11 +1656,13 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// Env-derived AppsDomain wins over the TOML file so the e2e harness can
 	// run without writing a TOML. The legacy path is plain :8080 with the
 	// suffix filter on; the production path is certmagic + :443/:80.
-	appsDomain := os.Getenv("FAAS_APPS_DOMAIN")
-	if appsDomain == "" {
-		appsDomain = cfg.AppsDomain
+	domains, err := hostidentity.DomainsFromEnv(osGetenv, cfg.AppsDomain, cfg.FileConfig)
+	if err != nil {
+		return fmt.Errorf("gatewayd: %w", err)
 	}
-	deps.appsDomain = appsDomain
+	hostidentity.Configure(domains)
+	deps.domains = domains
+	appsDomain := domains.Apps
 	tenantSurfacesFlag := runtimeconfig.NewBoolFlag(api.TenantSurfacesEnabled())
 	apiMonetizationFlag := runtimeconfig.NewBoolFlag(api.APIMonetizationEnabled())
 	deps.apiMonetization = apiMonetizationFlag.Load
@@ -1673,7 +1682,7 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	router := pgRouter{
 		store:                 pgStore,
 		appsSuffix:            appsSuffix(appsDomain),
-		deploySuffix:          wire.DeployWildcardSuffix,
+		deploySuffix:          hostidentity.DeploySuffix(),
 		tenantSurfacesEnabled: tenantSurfacesFlag.Load,
 		cachedHostPolicy:      deps.cachedHostPolicy,
 	}
@@ -2435,18 +2444,29 @@ func runOnPool(ctx context.Context, log *slog.Logger, pool *pgxpool.Pool) error 
 	// cmd/meterd/main.go:983) — the same identities slice
 	// the apid + meterd daemons load.
 	deps.publicAuthCache = gateway.NewPublicAuthCache()
+	// ADR 20261022111812: once the seal_domains role stages the edge
+	// domain, its identity opens basic-auth credentials and log drain
+	// headers ahead of the fleet and host identities.
+	edgeDomainIdentities, err := loadEdgeSealDomain(osGetenv)
+	if err != nil {
+		return err
+	}
+	sealdomain.RegisterLoaded(gatewayOps.Registry(), sealdomain.Edge, len(edgeDomainIdentities) > 0)
+	var legacyIdentities []*age.X25519Identity
 	if deps.hostKeyDir != "" {
 		if identities, loadErr := secretbox.LoadFleetAndHostKeys(deps.hostKeyDir); loadErr != nil {
-			log.Warn("gatewayd-internal: LoadHostKeys (rotation overlap) failed; basic-auth will be unseal-disabled until next boot",
+			log.Warn("gatewayd-internal: LoadHostKeys (rotation overlap) failed; edge credentials sealed to the fleet key will not open until next boot",
 				"dir", deps.hostKeyDir, "err", loadErr.Error())
 		} else {
-			loader := func() []*age.X25519Identity { return identities }
-			deps.publicAuthUnsealer = newPublicAuthUnsealer(loader)
-			if len(identities) > 1 {
-				log.Info("gatewayd-internal: rotation overlap active — basic-auth unseals across current + previous host.age")
-			}
+			legacyIdentities = identities
 		}
 	}
+	deps.edgeIdentities = edgeReaders(edgeDomainIdentities, legacyIdentities)
+	if len(deps.edgeIdentities) > 0 {
+		identities := deps.edgeIdentities
+		deps.publicAuthUnsealer = newPublicAuthUnsealer(func() []*age.X25519Identity { return identities })
+	}
+	log.Info("edge seal domain", "domain_identity", len(edgeDomainIdentities) > 0, "identities", len(deps.edgeIdentities))
 	// PR-3 / ADR-125 fleet-wide signing key: try the
 	// cluster_signing_keys PG row FIRST so a JWT minted by
 	// schedd on box A is verifiable by gatewayd-internal on
@@ -2774,7 +2794,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	handler := gateway.NewHandlerWith(deps.backend, deps.metrics, log).WithRetryBudget(retryBudget).
 		WithTrafficDeadlines(deps.trafficDeadlines).WithTrafficRevocations(deps.trafficRevocations).
-		WithSelectorSuffixes(appsSuffix(deps.appsDomain), wire.DeployWildcardSuffix)
+		WithSelectorSuffixes(appsSuffix(deps.domains.Apps), hostidentity.DeploySuffix())
 	if deps.pgStore != nil {
 		handler.WithFinancialBudgetAdmission(newFinancialBudgetAdmission(deps.pgStore))
 	}
@@ -2841,7 +2861,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if routingStore == nil {
 			routingStore = state.NewPgStore(deps.pool)
 		}
-		handler.WithPublicRoutingPolicy(newPublicRoutingPinner(routingStore))
+		handler.WithPublicRoutingPolicy(publicRoutingPinnerFor(routingStore, deps.cachedHostPolicy))
 	}
 	if deps.declaredRoutesMatcher != nil && deps.pool != nil {
 		go watchDeclaredRouteInvalidations(ctx, deps.pool, deps.declaredRoutesMatcher, log)
@@ -3598,10 +3618,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// reconciles enabled rows so create/update/delete changes take effect
 	// without a gateway restart; delivery remains bounded and non-blocking.
 	if deps.pgStore != nil && deps.scheddRouter != nil {
-		unseal, unsealErr := newAppLogDrainUnsealer(deps.hostKeyDir)
-		if unsealErr != nil {
-			log.Warn("gatewayd-internal: customer log drains disabled until gateway restart", "err", unsealErr)
-		}
+		unseal := newAppLogDrainUnsealer(deps.edgeIdentities)
 		manager := newAppLogDrainManager(
 			deps.pgStore,
 			appLogsScheddResolver{store: deps.pgStore, router: deps.scheddRouter},
@@ -3672,7 +3689,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-741: the `gregale dev --debug` tunnel is compute-owned like the
 	// log stream. Its waker is the service proxy, wired below once built.
 	debugTunnel := newDevDebugTunnel(deps, log)
-	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, gateway.TrustedTrafficIngress(handler), logsHandler, writeGate, deps.appsDomain, log))
+	apidHandler := devDebugRoute(debugTunnel, newApidProxyWithGate(apidTarget, gateway.TrustedTrafficIngress(handler), logsHandler, writeGate, deps.domains.Platform, log))
 	// ADR-1037: interactive app-task attach is compute-owned too. The
 	// handler dials the task node's vmmd, which apid must never do.
 	if deps.authMw != nil && deps.pgStore != nil && deps.nodeCache != nil {
@@ -3701,7 +3718,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		githubdTarget = "http://127.0.0.1:8083"
 	}
 	githubdSecret := loadGithubWebhookSecret(osGetenv)
-	platformDomain := osGetenv("FAAS_APPS_DOMAIN")
+	platformDomain := deps.domains.Platform
 	if platformDomain == "" {
 		platformDomain = cfg.AppsDomain
 	}
@@ -3789,9 +3806,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// ADR-830: Gregale-owned hosts keep the forced static set; on customer
 	// hosts this hop sets nothing so the app's own value is the only copy
 	// gatewayd-public sees, and gatewayd-public fills defaults.
-	appsDomain := deps.appsDomain
+	domains := deps.domains
 	publicHandler = httpsec.ForSurface(
-		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHost(r.Host, appsDomain) },
+		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHostIn(r.Host, domains) },
 		false,
 		httpsec.Nonce(func(r *http.Request) bool { return isApidPath(r.URL.Path) }, publicHandler),
 	)
@@ -3950,7 +3967,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if deps.nodeCache != nil {
 		responseForward = deps.nodeCache.Forwarding()
 	}
-	responseChecker := deploymentResponseChecker{store: responseStore, picker: responsePicker, ensure: handler.EnsureServiceDeploymentCapacity, forward: responseForward, appsDomain: deps.appsDomain}
+	responseChecker := deploymentResponseChecker{store: responseStore, picker: responsePicker, ensure: handler.EnsureServiceDeploymentCapacity, forward: responseForward, appsDomain: deps.domains.Apps}
 	controlMux.HandleFunc(api.DeploymentResponseCheckCapabilitiesControlPath, responseChecker.Capabilities)
 	// ADR-093: mount the per-route observability reader on the
 	// control mux so apid can reverse-proxy
@@ -4505,10 +4522,20 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			}
 		}
 	}
+	// Claim both control sockets here, not in their serving goroutines: a
+	// hand-off successor's readiness (below) closes every socket its
+	// predecessor passed that nothing has claimed yet, and a later bind of the
+	// same address fails while the predecessor still holds it. That race
+	// restarted gatewayd-internal on fsn-3 on 2026-10-25 (bind 0.0.0.0:9097:
+	// address already in use).
+	ctrlListener, err := gateway.ListenControl(ctrlAddr)
+	if err != nil {
+		return fmt.Errorf("gatewayd: control listen %s: %w", ctrlAddr, err)
+	}
 	go func() {
 		log.Info("gatewayd control listening", "addr", ctrlAddr)
 		// A hand-off ends handoffCtx: the successor answers /metrics and probes.
-		if err := gateway.RunControlServer(handoffCtx, ctrlAddr, controlMux); err != nil {
+		if err := gateway.ServeControl(handoffCtx, ctrlListener, controlMux); err != nil {
 			errc <- err
 		}
 	}()
@@ -4518,9 +4545,13 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			apps = appsControl
 		}
 		privateMux := newPrivateControlMux(apps, http.HandlerFunc(responseChecker.Capabilities))
+		privateListener, err := gateway.ListenControl(addr)
+		if err != nil {
+			return fmt.Errorf("gatewayd: private control listen %s: %w", addr, err)
+		}
 		go func() {
 			log.Info("gatewayd private control listening", "addr", addr)
-			if err := gateway.RunControlServer(handoffCtx, addr, privateMux); err != nil {
+			if err := gateway.ServeControl(handoffCtx, privateListener, privateMux); err != nil {
 				errc <- err
 			}
 		}()

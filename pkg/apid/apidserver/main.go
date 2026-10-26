@@ -70,11 +70,11 @@ import (
 	"github.com/onebox-faas/faas/pkg/eventretention"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/grace"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/internalmail"
 
 	"github.com/onebox-faas/faas/pkg/issuetracker"
-	"github.com/onebox-faas/faas/pkg/logarchive"
 	"github.com/onebox-faas/faas/pkg/logintoken"
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
@@ -691,6 +691,14 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if _, err := api.CustomDomainAddresses(); err != nil {
 		return fmt.Errorf("apid: %w", err)
 	}
+	// ADR-20261026100000: the deployment-preview host builders read the
+	// process-wide layout; a bad alias list fails the start, not a request.
+	domains, err := cfg.Domains(deps.getenv)
+	if err != nil {
+		return fmt.Errorf("apid: %w", err)
+	}
+	hostidentity.Configure(domains)
+	ownedDomainsFunc = domains.OwnedDomains
 
 	pool, err := db.OpenWithAppName(ctx, cfg.DBURL, "faas-apid")
 	if err != nil {
@@ -939,6 +947,12 @@ func run(ctx context.Context, log *slog.Logger) error {
 		// matches the grace-side precision we need; sweep is a
 		// ListAllAccounts walk so it stays bounded by the customer
 		// count on the one box.
+		// Opened before the grace sweep starts: the sweep erases a deleted
+		// account's archived logs through this client.
+		archiveCfg, archiveClient := openLogArchive(log)
+		if archiveClient != nil {
+			srv.logArchive = archiveClient
+		}
 		graceLoop := grace.New(grace.Params{
 			Store:               srv.store,
 			BeforeAccountDelete: srv.beforeAccountDelete,
@@ -999,62 +1013,8 @@ func run(ctx context.Context, log *slog.Logger) error {
 			}
 			go func() { _ = insights.Run(ctx) }()
 		}
-		// Issue #562 / PR-A: log archive shipper. Walks the local
-		// spool dir every cfg.FlushInterval (5 min default) and
-		// gzip-PUTs .partial files to s3://{bucket}/faas-logs/{instance}/
-		// {YYYY}/{MM}/{DD}.jsonl.gz. Disabled (returns nil on ctx
-		// cancel) when FAAS_LOG_ARCHIVE_BUCKET is unset — the
-		// pgAdmin-style on-box ring buffer is the only log surface
-		// for Free + Hobby tiers in that mode.
-		//
-		// Credentials are read from the archive-creds.json envelope
-		// unsealed by `gregale backup unseal-archive-creds` and
-		// mounted at the systemd credential path. On a host that
-		// hasn't been unsealed yet the optional credential is absent
-		// and the shipper remains disabled.
-		shipCfg, shipErr := logarchive.ConfigFromEnv(os.Getenv, log)
-		if shipErr == nil {
-			archiveCredsPath := envOr(logarchive.EnvCredentialsPath, logarchive.DefaultCredentialsPath)
-			if creds, err := logarchive.ReadCredentials(archiveCredsPath); err != nil {
-				if !errors.Is(err, os.ErrNotExist) {
-					log.Warn("logarchive.creds_unavailable", "path", archiveCredsPath, "err", err)
-				}
-			} else {
-				shipCfg = shipCfg.WithCredentials(creds)
-			}
-		}
-		switch {
-		case shipErr != nil:
-			log.Warn("logarchive.config_failed", "err", shipErr)
-		case !shipCfg.Enabled():
-			log.Info("logarchive.disabled", "reason", "FAAS_LOG_ARCHIVE_BUCKET unset")
-		default:
-			s3, err := logarchive.NewS3Client(
-				shipCfg.Endpoint,
-				shipCfg.Region,
-				shipCfg.Bucket,
-				shipCfg.KeyID,
-				shipCfg.Secret,
-				shipCfg.AuthMode,
-			)
-			if err != nil {
-				log.Warn("logarchive.s3client_init_failed", "err", err)
-			} else {
-				spool := logarchive.NewSpool(shipCfg.SpoolRoot, shipCfg.LocalBytesMax)
-				shipMetrics := logarchive.NewMetrics(srv.ops.Registry())
-				sh, err := logarchive.NewShipper(shipCfg, spool, s3, log, shipMetrics)
-				if err != nil {
-					log.Warn("logarchive.shipper_init_failed", "err", err)
-				} else {
-					go func() {
-						if err := sh.Run(ctx); err != nil && ctx.Err() == nil {
-							log.Warn("logarchive.run_returned_error", "err", err)
-						}
-						_ = sh.Spool().CloseAll()
-					}()
-				}
-			}
-		}
+		// Issue #562 / PR-A: apid's log archive shipper (log_archive.go).
+		startLogArchiveShipper(ctx, log, srv, archiveCfg, archiveClient)
 		// Issue #300: topNSampler drives the apid_top_tenant_rps
 		// gauge from the rolling per-account count fed by
 		// observeWrap (server.go:observeWrap). 5s tick; runs for
@@ -1560,6 +1520,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	}
 	srv := newServerWithDeps(store, log, cfg.GetAppsDomain(deps.getenv), deps.notif(), stripeSecret, mailer, githubd, sessions, nil, deps.loginTTL, dpaPathFromEnv(deps.getenv)).
 		WithCLIAuthURLBase(cfg.GetCLIAuthURLBase(deps.getenv)).
+		WithPlatformDomain(platformDomainFromConfig(cfg, deps.getenv)).
 		WithCompanionImages(cfg.CompanionImages).
 		WithWorkflowRuntimeEnabled(workflowsEnabledFromEnv(deps.getenv)).
 		WithExecutionAPIEnabled(executionAPIEnabledFromEnv(deps.getenv)).
@@ -1685,6 +1646,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
+	srv.configureManagedPostgresCapMode(deps.getenv)
 	if err := srv.configureRealtimePreview(deps.getenv); err != nil {
 		return fmt.Errorf("apid realtime preview: %w", err)
 	}

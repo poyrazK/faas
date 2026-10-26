@@ -75,13 +75,16 @@ func cmdAuditEvents(args []string) int {
 }
 
 // cmdAuditEventsList implements `gregale audit-events list
-// [--kind-prefix P] [--app-id <uuid>] [--since RFC3339] [--limit N]
+// [--kind-prefix P] [--app <slug> | --app-id <uuid>] [--since RFC3339] [--limit N]
 // [--include-anonymous] [--verbose]`. Returns 0 on success, 1 on
 // invalid input, 2 on authentication failure, and 3 on platform failure.
 func cmdAuditEventsList(args []string) int {
 	fs := newFlagSet("audit-events list", flag.ContinueOnError)
 	kindPrefix := fs.String("kind-prefix", "", "filter by `kind` prefix (e.g. stateless.advisory)")
 	appID := fs.String("app-id", "", "filter to one app's events (matches data.app_id)")
+	// Every other command names an app by slug; `--app h14-py` answered
+	// "unknown flag" on production-us rc.294 (Hunt 14 H14-64).
+	appSlug := fs.String("app", "", "filter to one app's events, by slug")
 	since := fs.String("since", "", "RFC 3339 lower bound on `at`")
 	limit := fs.Int("limit", 50, "max rows (1..100; server caps at 100)")
 	includeAnon := fs.Bool("include-anonymous", false, "also surface subject=NULL rows (operator post-mortem)")
@@ -89,8 +92,8 @@ func cmdAuditEventsList(args []string) int {
 	if err := fs.Parse(args); err != nil {
 		return 1
 	}
-	if fs.NArg() != 0 {
-		printCommandValidation(os.Stderr, "usage: gregale audit-events list [--kind-prefix P] [--app-id <uuid>] [--since RFC3339] [--limit N] [--include-anonymous] [--verbose]\n")
+	if fs.NArg() != 0 || (*appSlug != "" && *appID != "") {
+		printCommandValidation(os.Stderr, "usage: gregale audit-events list [--kind-prefix P] [--app <slug> | --app-id <uuid>] [--since RFC3339] [--limit N] [--include-anonymous] [--verbose]\n")
 		return 1
 	}
 	if err := validateCLILimit("limit", *limit, 100); err != nil {
@@ -109,6 +112,13 @@ func cmdAuditEventsList(args []string) int {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
+	if *appSlug != "" {
+		app, err := client.GetApp(ctx, *appSlug)
+		if err != nil {
+			return printErr("Could not resolve app", err)
+		}
+		*appID = app.ID
+	}
 	resp, err := client.ListAuditEvents(ctx, *since, *kindPrefix, *appID, *limit, *includeAnon)
 	if err != nil {
 		return printErr("Could not list audit events", err)

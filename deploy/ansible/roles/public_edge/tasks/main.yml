@@ -6,9 +6,7 @@
 - name: public_edge — inspect the operator-provisioned Origin CA material
   ansible.builtin.stat:
     path: "{{ item }}"
-  loop:
-    - "{{ faas_public_edge_cert }}"
-    - "{{ faas_public_edge_key }}"
+  loop: "{{ [faas_public_edge_cert, faas_public_edge_key] + faas_public_edge_extra_tls_files }}"
   register: faas_public_edge_tls_stat
   when:
     - faas_public_edge_enabled | bool
@@ -22,9 +20,10 @@
       - item.stat.size > 0
     fail_msg: >-
       {{ item.item }} is missing. Create a Cloudflare Origin CA certificate for
-      {{ faas_public_edge_domain }} and *.{{ faas_public_edge_domain }} and install
-      the certificate and key there (key 0440 root:caddy) before enabling the
-      public edge.
+      the zone it serves and its wildcard ({{ faas_public_edge_domain }} for
+      {{ faas_public_edge_cert | basename }}, the named domain for
+      cloudflare-origin-<domain>.pem) and install the certificate and key there
+      (key 0440 root:caddy) before enabling the public edge.
   loop: "{{ faas_public_edge_tls_stat.results | default([]) }}"
   loop_control:
     label: "{{ item.item }}"
@@ -43,13 +42,57 @@
       sends expiry and policy notices there.
   when: faas_custom_domain_tls | bool
 
+- name: public_edge — install the Caddy repository keyring directory
+  ansible.builtin.file:
+    path: /etc/apt/keyrings
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_public_edge_enabled | bool
+
+- name: public_edge — install the Caddy repository keyring
+  ansible.builtin.get_url:
+    url: "{{ faas_public_edge_caddy_repo }}/gpg.key"
+    dest: /etc/apt/keyrings/caddy-stable.asc
+    owner: root
+    group: root
+    mode: "0644"
+  when: faas_public_edge_enabled | bool
+
+- name: public_edge — add the Caddy apt repository
+  ansible.builtin.deb822_repository:
+    name: caddy-stable
+    types: deb
+    uris: "{{ faas_public_edge_caddy_repo }}/deb/debian"
+    suites: any-version
+    components: [main]
+    signed_by: /etc/apt/keyrings/caddy-stable.asc
+    state: present
+    enabled: true
+  when: faas_public_edge_enabled | bool
+
+# The pin keeps an unattended upgrade from moving Caddy, and outranks the
+# distro's older package (H14-7).
+- name: public_edge — pin the Caddy version
+  ansible.builtin.copy:
+    dest: /etc/apt/preferences.d/caddy-pref
+    owner: root
+    group: root
+    mode: "0644"
+    content: |
+      Package: caddy
+      Pin: version {{ faas_public_edge_caddy_version }}
+      Pin-Priority: 1001
+  when: faas_public_edge_enabled | bool
+
 - name: public_edge — install Caddy
   ansible.builtin.apt:
-    name: caddy
+    name: "caddy={{ faas_public_edge_caddy_version }}"
     state: present
     update_cache: true
-    cache_valid_time: 3600
   when: faas_public_edge_enabled | bool
+  notify: public_edge — restart caddy
 
 - name: public_edge — keep the Origin CA key readable by caddy only
   ansible.builtin.file:
@@ -57,6 +100,17 @@
     owner: root
     group: caddy
     mode: "0440"
+  when:
+    - faas_public_edge_enabled | bool
+    - faas_public_edge_platform_tls | bool
+
+- name: public_edge — keep the other zones' Origin CA keys readable by caddy only
+  ansible.builtin.file:
+    path: "{{ faas_public_edge_tls_dir }}/cloudflare-origin-{{ item }}.key"
+    owner: root
+    group: caddy
+    mode: "0440"
+  loop: "{{ faas_public_edge_extra_domains }}"
   when:
     - faas_public_edge_enabled | bool
     - faas_public_edge_platform_tls | bool
@@ -113,8 +167,13 @@
 
       {% endif %}
       {% if faas_public_edge_platform_tls | default(true) | bool %}
-      {{ faas_public_edge_domain }}, *.{{ faas_public_edge_domain }} {
-          tls {{ faas_public_edge_cert }} {{ faas_public_edge_key }}
+      {% set faas_public_edge_sites = [[faas_public_edge_domain, faas_public_edge_cert, faas_public_edge_key]] %}
+      {% for domain in faas_public_edge_extra_domains | default([]) %}
+      {% set _ = faas_public_edge_sites.append([domain, (faas_public_edge_tls_dir | default('/etc/caddy/tls')) ~ '/cloudflare-origin-' ~ domain ~ '.pem', (faas_public_edge_tls_dir | default('/etc/caddy/tls')) ~ '/cloudflare-origin-' ~ domain ~ '.key']) %}
+      {% endfor %}
+      {% for site in faas_public_edge_sites %}
+      {{ site[0] }}, *.{{ site[0] }} {
+          tls {{ site[1] }} {{ site[2] }}
       {% if faas_custom_domain_tls | default(false) | bool %}
           @direct not remote_ip {{ faas_public_edge_cloudflare_cidrs | join(' ') }}
       {% if faas_public_edge_grpc_h2c | default(false) | bool %}
@@ -147,6 +206,7 @@
           }
       {% endif %}
       }
+      {% endfor %}
       {% endif %}
       {% if faas_custom_domain_tls | default(false) | bool %}
 

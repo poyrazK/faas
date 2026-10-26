@@ -360,6 +360,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 					return fmt.Errorf("githubd: new checks api: %w", checksErr)
 				}
 				checks.WithCheckRunStore(deliveryStore).WithGitHubDeploymentStore(deliveryStore)
+				if id, parseErr := strconv.ParseInt(appID, 10, 64); parseErr == nil && id > 0 {
+					checks.AppID = id
+				}
 				// PR-C: load the host age keypair so the install
 				// token can be sealed at rest (SealOne at mint)
 				// and unsealed at cold-start rehydrate (Open).

@@ -876,6 +876,7 @@ type Querier interface {
 	DeleteExternalTriggerDeadLetterAudit(ctx context.Context, db DBTX, recordID pgtype.UUID) error
 	DeleteGitLabOAuthConnection(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	DeleteGuardedCron(ctx context.Context, db DBTX, arg DeleteGuardedCronParams) error
+	DeleteLogArchiveErasure(ctx context.Context, db DBTX, accountID pgtype.UUID) error
 	DeleteManagedPostgresBindingSecrets(ctx context.Context, db DBTX, bindingID string) (int64, error)
 	DeleteNotificationChannel(ctx context.Context, db DBTX, arg DeleteNotificationChannelParams) (int64, error)
 	// Operator-driven revoke path (PR-C). Returns 0 rows on miss;
@@ -1169,7 +1170,10 @@ type Querier interface {
 	EventReceiptRecipients(ctx context.Context, db DBTX, arg EventReceiptRecipientsParams) ([]EventReceiptRecipientsRow, error)
 	EventReceiptReplayHistory(ctx context.Context, db DBTX, arg EventReceiptReplayHistoryParams) ([]EventReceiptReplayHistoryRow, error)
 	EventReceiptReplaySummaries(ctx context.Context, db DBTX, arg EventReceiptReplaySummariesParams) ([]EventReceiptReplaySummariesRow, error)
-	EventReceiptReplayTarget(ctx context.Context, db DBTX, arg EventReceiptReplayTargetParams) (pgtype.UUID, error)
+	EventReceiptReplayTarget(ctx context.Context, db DBTX, arg EventReceiptReplayTargetParams) (EventReceiptReplayTargetRow, error)
+	// The producer and each recipient's app, for company access on the account
+	// routes (ADR-20261025211616).
+	EventReceiptScope(ctx context.Context, db DBTX, arg EventReceiptScopeParams) (EventReceiptScopeRow, error)
 	EventRecipientAppendHistory(ctx context.Context, db DBTX, arg EventRecipientAppendHistoryParams) (int64, error)
 	EventRecipientBlockerTarget(ctx context.Context, db DBTX, arg EventRecipientBlockerTargetParams) (EventRecipientBlockerTargetRow, error)
 	EventRecipientBlockerWaiting(ctx context.Context, db DBTX, arg EventRecipientBlockerWaitingParams) ([]EventRecipientBlockerWaitingRow, error)
@@ -2340,6 +2344,7 @@ type Querier interface {
 	// ADR-732 live fork: pinned to the live_fork capture written in the same
 	// transaction, which is still requested. The claim waits for it.
 	InsertLiveAppFork(ctx context.Context, db DBTX, arg InsertLiveAppForkParams) (AppFork, error)
+	InsertLogArchiveErasure(ctx context.Context, db DBTX, arg InsertLogArchiveErasureParams) (int64, error)
 	InsertMCPAttentionAction(ctx context.Context, db DBTX, arg InsertMCPAttentionActionParams) error
 	InsertMCPNotificationAction(ctx context.Context, db DBTX, arg InsertMCPNotificationActionParams) error
 	InsertMCPOAuthRetirement(ctx context.Context, db DBTX, arg InsertMCPOAuthRetirementParams) (int64, error)
@@ -3559,6 +3564,7 @@ type Querier interface {
 	// whose 13-way join took 0.6-0.8 s to plan on every service call through the
 	// transaction pooler (Hunt 14 H14-33).
 	LiveServiceProxyInstanceRowsByHostIP(ctx context.Context, db DBTX, arg LiveServiceProxyInstanceRowsByHostIPParams) ([]LiveServiceProxyInstanceRowsByHostIPRow, error)
+	LiveSnapshotsForTier(ctx context.Context, db DBTX, arg LiveSnapshotsForTierParams) ([]Snapshot, error)
 	// Both collections come from one statement snapshot, including empty drain sets.
 	LoadApplicationStandardLogConsumerSnapshot(ctx context.Context, db DBTX) ([]byte, error)
 	// ADR-732: production fork intent (app_forks). apid admits forks under a
@@ -3995,6 +4001,8 @@ type Querier interface {
 	LockWorkflowScheduleOccurrenceForReplay(ctx context.Context, db DBTX, arg LockWorkflowScheduleOccurrenceForReplayParams) (WorkflowScheduleOccurrence, error)
 	LockWorkflowScheduleTarget(ctx context.Context, db DBTX, appID pgtype.UUID) (LockWorkflowScheduleTargetRow, error)
 	LockWorkflowStepsForManualRetry(ctx context.Context, db DBTX, runID string) ([]WorkflowStep, error)
+	// The deletion request the account's archived-log snapshot was taken for.
+	LogArchiveErasureRequestedAt(ctx context.Context, db DBTX, accountID pgtype.UUID) (pgtype.Timestamptz, error)
 	LookupCustomerOperationSubmission(ctx context.Context, db DBTX, arg LookupCustomerOperationSubmissionParams) (LookupCustomerOperationSubmissionRow, error)
 	MCPAdmissionEvidenceExists(ctx context.Context, db DBTX, arg MCPAdmissionEvidenceExistsParams) (bool, error)
 	MCPConnectionHealthBindings(ctx context.Context, db DBTX, arg MCPConnectionHealthBindingsParams) ([][]byte, error)
@@ -4033,6 +4041,7 @@ type Querier interface {
 	// Recovery callers must lock an unmarked run and execute unknown-effect marking,
 	// attempt closure and running-step reset in that order in one transaction.
 	MarkLegacyWorkflowOutboundUnknown(ctx context.Context, db DBTX, runID pgtype.UUID) error
+	MarkLogArchiveInstanceErased(ctx context.Context, db DBTX, arg MarkLogArchiveInstanceErasedParams) error
 	MarkMCPReadinessReminderFired(ctx context.Context, db DBTX, arg MarkMCPReadinessReminderFiredParams) error
 	MarkMFAEnrolled(ctx context.Context, db DBTX, id pgtype.UUID) (int64, error)
 	MarkManagedPostgresCreationCleanup(ctx context.Context, db DBTX, arg MarkManagedPostgresCreationCleanupParams) (ManagedPostgresCreationReceipt, error)
@@ -4190,6 +4199,12 @@ type Querier interface {
 	ObjectBucketAccessGrantList(ctx context.Context, db DBTX, arg ObjectBucketAccessGrantListParams) ([]ObjectBucketAccessGrantListRow, error)
 	ObjectBucketAccessGrantUpsert(ctx context.Context, db DBTX, arg ObjectBucketAccessGrantUpsertParams) (int64, error)
 	ObjectBucketByName(ctx context.Context, db DBTX, arg ObjectBucketByNameParams) (ObjectBucket, error)
+	ObjectBucketCORSDelete(ctx context.Context, db DBTX, bucketID pgtype.UUID) error
+	// ADR-20261025202805: a customer's bucket CORS rules.
+	ObjectBucketCORSGet(ctx context.Context, db DBTX, bucketID pgtype.UUID) (ObjectBucketCORSGetRow, error)
+	ObjectBucketCORSPut(ctx context.Context, db DBTX, arg ObjectBucketCORSPutParams) (ObjectBucketCORSPutRow, error)
+	// The gateway's read: rules of a ready bucket only.
+	ObjectBucketCORSRules(ctx context.Context, db DBTX, bucketID pgtype.UUID) ([]byte, error)
 	ObjectBucketClaim(ctx context.Context, db DBTX, arg ObjectBucketClaimParams) (ObjectBucket, error)
 	ObjectBucketCount(ctx context.Context, db DBTX, appID pgtype.UUID) (int64, error)
 	ObjectBucketCountForAccount(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
@@ -4227,6 +4242,9 @@ type Querier interface {
 	ObjectCapacityDeleteWrites(ctx context.Context, db DBTX, bucketID pgtype.UUID) error
 	ObjectCapacityDue(ctx context.Context, db DBTX, limit int32) ([]ObjectStorageCapacityReconciliation, error)
 	ObjectCapacityFenced(ctx context.Context, db DBTX, bucketID pgtype.UUID) (bool, error)
+	// ObjectCapacityFenced, except that only a deletion of this key fences it
+	// (ADR-20261025115958).
+	ObjectCapacityFencedForKey(ctx context.Context, db DBTX, arg ObjectCapacityFencedForKeyParams) (bool, error)
 	ObjectCapacityGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectCapacityGetRow, error)
 	ObjectCapacityInsert(ctx context.Context, db DBTX, arg ObjectCapacityInsertParams) (ObjectStorageCapacityReconciliation, error)
 	ObjectCapacityLock(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectStorageCapacityReconciliation, error)
@@ -4247,11 +4265,16 @@ type Querier interface {
 	ObjectDeletionDue(ctx context.Context, db DBTX, limit int32) ([]pgtype.UUID, error)
 	ObjectDeletionGet(ctx context.Context, db DBTX, id pgtype.UUID) (ObjectDeletionGetRow, error)
 	ObjectDeletionInsert(ctx context.Context, db DBTX, arg ObjectDeletionInsertParams) error
+	// ADR-20261025115958: a deletion waits only for work on its own key; the
+	// bucket's accounting mode (unsafe grants, observed versions) stays bucket-wide.
+	ObjectDeletionKeyReadiness(ctx context.Context, db DBTX, arg ObjectDeletionKeyReadinessParams) (ObjectDeletionKeyReadinessRow, error)
 	ObjectDeletionSave(ctx context.Context, db DBTX, arg ObjectDeletionSaveParams) error
 	ObjectGatewayUploadInsert(ctx context.Context, db DBTX, arg ObjectGatewayUploadInsertParams) (ObjectUploadCompletion, error)
 	ObjectInventoriesDue(ctx context.Context, db DBTX, limit int32) ([]ObjectBucket, error)
 	ObjectInventoryClaim(ctx context.Context, db DBTX, arg ObjectInventoryClaimParams) (int64, error)
 	ObjectInventoryFinish(ctx context.Context, db DBTX, arg ObjectInventoryFinishParams) (int64, error)
+	// Give up a claim without publishing; attempt_at keeps the retry cadence.
+	ObjectInventoryRelease(ctx context.Context, db DBTX, arg ObjectInventoryReleaseParams) (int64, error)
 	ObjectInventorySample(ctx context.Context, db DBTX, arg ObjectInventorySampleParams) error
 	ObjectLifecycleMultipartAdmit(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartAdmitParams) (int64, error)
 	ObjectLifecycleMultipartList(ctx context.Context, db DBTX, arg ObjectLifecycleMultipartListParams) ([]ObjectStorageMultipartUpload, error)
@@ -4583,6 +4606,7 @@ type Querier interface {
 	// enforced candidates that have no receipt for their current credential.
 	PendingEnvironmentQualificationPostgresChecks(ctx context.Context, db DBTX, graphID pgtype.UUID) ([]PendingEnvironmentQualificationPostgresChecksRow, error)
 	PendingLayerArtifactDeletions(ctx context.Context, db DBTX) ([]PendingLayerArtifactDeletionsRow, error)
+	PendingLogArchiveErasureInstances(ctx context.Context, db DBTX, arg PendingLogArchiveErasureInstancesParams) ([]pgtype.UUID, error)
 	PendingManagedPostgresCutoverPreflights(ctx context.Context, db DBTX, batchSize int32) ([]ManagedPostgresCutover, error)
 	PendingPromotionHealth(ctx context.Context, db DBTX, batchSize int32) ([]PendingPromotionHealthRow, error)
 	PendingPromotionRecoveryQuiescence(ctx context.Context, db DBTX, batchSize int32) ([]PendingPromotionRecoveryQuiescenceRow, error)
@@ -5914,6 +5938,8 @@ type Querier interface {
 	RetireCloneCheckpointPgTargetDatabase(ctx context.Context, db DBTX, arg RetireCloneCheckpointPgTargetDatabaseParams) (int64, error)
 	RetireEnvironmentQualificationExecution(ctx context.Context, db DBTX, arg RetireEnvironmentQualificationExecutionParams) (int64, error)
 	RetireGatewayTrafficRuntime(ctx context.Context, db DBTX, arg RetireGatewayTrafficRuntimeParams) (int64, error)
+	// A retired sibling is a retained stable revision, not a manual dark
+	// deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71).
 	RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg RetireLiveDeploymentSiblingsParams) (int64, error)
 	// The copy's binding takes the same key at once, and only one binding per
 	// key may be undeleted, so the source binding is deleted here. Its provider
@@ -6202,6 +6228,9 @@ type Querier interface {
 	ServiceRolloutBindingEnforced(ctx context.Context, db DBTX, arg ServiceRolloutBindingEnforcedParams) (bool, error)
 	ServiceRolloutRecipientReady(ctx context.Context, db DBTX, arg ServiceRolloutRecipientReadyParams) (bool, error)
 	ServiceRolloutRecipientTraffic(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int32, error)
+	// An app that never set wake-ahead gets state.ServiceWakeAheadDefault: on for
+	// a production project member under the project service policy
+	// (ADR-20261025105812).
 	ServiceWakeAheadEnabled(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
 	// Billable RAM of live instances against the active nodes' admission ceilings.
 	ServiceWakeAheadFleetResidency(ctx context.Context, db DBTX, overheadMb int32) (ServiceWakeAheadFleetResidencyRow, error)
@@ -6307,6 +6336,10 @@ type Querier interface {
 	SkipPendingWorkflowStep(ctx context.Context, db DBTX, arg SkipPendingWorkflowStepParams) error
 	SkipWorkflowForEachRemaining(ctx context.Context, db DBTX, arg SkipWorkflowForEachRemainingParams) error
 	SnapshotLocalityNodes(ctx context.Context, db DBTX, dollar_1 pgtype.UUID) ([]SnapshotLocalityNodesRow, error)
+	// Every instance whose archived logs go with the account: the instances and
+	// billing rows DeleteAccount removes, that is apps with no org or a personal
+	// org. Billing rows outlive instance rows, so they cover parked history.
+	SnapshotLogArchiveErasureInstances(ctx context.Context, db DBTX, accountID pgtype.UUID) (int64, error)
 	SnapshotPublicationRuntimeChangedAt(ctx context.Context, db DBTX, appID pgtype.UUID) (pgtype.Timestamptz, error)
 	SnapshotPublicationSource(ctx context.Context, db DBTX, instanceID pgtype.UUID) (SnapshotPublicationSourceRow, error)
 	SnapshotRecoveryAdmissionValid(ctx context.Context, db DBTX, arg SnapshotRecoveryAdmissionValidParams) (bool, error)

@@ -26,7 +26,7 @@ func TestAggregatePRPreviewMembers(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := aggregatePRPreviewMembers(42, "root", tc.members)
+			got := aggregatePRPreviewMembers(42, "root", tc.members, "")
 			if got.Phase != tc.wantPhase || !strings.Contains(got.Summary, tc.wantDetail) {
 				t.Fatalf("aggregate = (%v, %q), want phase %v and %q", got.Phase, got.Summary, tc.wantPhase, tc.wantDetail)
 			}

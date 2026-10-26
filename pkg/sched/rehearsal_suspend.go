@@ -104,8 +104,7 @@ func (e *Engine) RunScenarioSuspendResume(ctx context.Context, id string) (err e
 		if ins.State != string(state.StateRunning) {
 			return state.ErrConflict
 		}
-		r, err = store.ClaimScenarioSuspendResume(ctx, id)
-		if err != nil {
+		if _, err = store.ClaimScenarioSuspendResume(ctx, id); err != nil {
 			return err
 		}
 		v, capable := e.vmm.(routedSuspendResumeVMM)

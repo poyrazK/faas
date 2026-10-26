@@ -38,6 +38,15 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		usageOptions.Observe = metrics.ObserveUsage
 		usageOptions.ObserveSweep = metrics.ObserveUsageSweep
 	}
+	capEnforcer, err := loadManagedPostgresCapEnforcer(registry, store, accountStore, getenv, log, registerers...)
+	if err != nil {
+		return nil, nil, nil, nil, nil, nil, err
+	}
+	usageOptions.AfterSweep = func(ctx context.Context) {
+		if _, err := capEnforcer.Enforce(ctx); err != nil && ctx.Err() == nil {
+			log.Warn("managed postgres compute cap sweep failed", "error", err)
+		}
+	}
 	usageCollector, err := managedpostgres.NewUsageCollector(registry, store, usageOptions)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
@@ -203,6 +212,42 @@ func hostCredentialIdentities() []*age.X25519Identity {
 		}
 	}
 	return nil
+}
+
+// loadManagedPostgresCapEnforcer builds the compute cap enforcer
+// (ADR-20261025094915). Each account's ceiling is its plan's monthly compute
+// allowance; the enforcer intersects it with the operator's usage cap.
+func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store managedpostgres.UsageStore, accountStore state.AppOwnerReader, getenv func(string) string, log *slog.Logger, registerers ...prometheus.Registerer) (*managedpostgres.CapEnforcer, error) {
+	mode, err := managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
+	if err != nil {
+		return nil, err
+	}
+	options := managedpostgres.CapEnforcerOptions{
+		Mode:   mode,
+		Logger: log,
+		Ceiling: func(ctx context.Context, accountID string) (int64, error) {
+			account, err := state.BillingResourceAccount(ctx, accountStore, accountID)
+			if err != nil {
+				return 0, err
+			}
+			limits, _ := api.ManagedPostgresLimitsFor(api.Plan(account.Plan))
+			return limits.MonthlyComputeUnitSeconds, nil
+		},
+	}
+	if len(registerers) > 0 {
+		metrics, err := managedpostgres.NewCapMetrics(registerers[0], "apid", mode)
+		if err != nil {
+			return nil, err
+		}
+		options.Observe = metrics.Observe
+	}
+	return managedpostgres.NewCapEnforcer(registry, store, options)
+}
+
+// configureManagedPostgresCapMode records the compute cap enforcement mode for
+// the usage views. loadManagedPostgres already refused an invalid value.
+func (s *server) configureManagedPostgresCapMode(getenv func(string) string) {
+	s.managedPostgresCapMode, _ = managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
 }
 
 func managedPostgresUsageCeilings(limits api.ManagedPostgresPlanLimits) managedpostgres.UsageCeilings {

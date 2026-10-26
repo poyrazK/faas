@@ -68,7 +68,7 @@ var catalog = map[string]Render{
 		Title: "No process listening on $PORT",
 		Hint:  "your app isn't accepting traffic on the port we expect",
 		Why:   "the wake readiness probe found no listener on $PORT after the wake timeout — either nothing is bound, or your listener bound to a different port/address",
-		Fix:   "• make sure your app listens on process.env.PORT (or 8080)\n• if you bind manually, bind to 0.0.0.0 not 127.0.0.1\n• run `gregale doctor` to scan your source for bind issues",
+		Fix:   "• make sure your app listens on process.env.PORT\n• if your app must use a fixed port, declare it: hosting.port in gregale.yaml\n• if you bind manually, bind to 0.0.0.0 not 127.0.0.1\n• run `gregale doctor` to scan your source for bind issues",
 		Observed: func(observed any) (why, fix string) {
 			if observed == nil {
 				return "", ""

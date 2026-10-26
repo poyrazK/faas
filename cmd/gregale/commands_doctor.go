@@ -196,7 +196,7 @@ func cmdDoctorWithImageInspector(args []string, inspector doctorImageInspector) 
 	if _, err := os.ReadDir(abs); err != nil {
 		return printErr("Could not read source directory", err)
 	}
-	report := runDoctorChecks(abs)
+	report := withSourceCheck(runDoctorChecks(abs), abs)
 	// Honour --strict: a warn under strict promotes to exit 1.
 	// Use the doctorReport helpers so the standalone cmdDoctor
 	// exit semantics stay in sync with `gregale deploy --doctor-strict`
@@ -251,6 +251,30 @@ func runDoctorChecksForShape(path string, deploymentShape shape) doctorReport {
 	rep.Checks = append(rep.Checks, doctorCheckDepInstall())
 	rep.Checks = append(rep.Checks, doctorCheckStartupTimeout())
 	return rep
+}
+
+// withSourceCheck adds the source finding to standalone doctor. Deploy
+// refuses a directory with no app marker or function handler; a Compose root
+// deploys with --project instead, and deploy preflights check their own shape.
+func withSourceCheck(report doctorReport, dir string) doctorReport {
+	if detectShape(dir) != shapeUnknown || composeFileIn(dir) != "" {
+		return report
+	}
+	report.Checks = append([]doctorCheck{doctorCheckNoSource()}, report.Checks...)
+	return report
+}
+
+// doctorCheckNoSource reports a directory deploy would refuse: no app marker
+// and no function handler. doctor used to pass every local check there and
+// end with "No local findings" (Hunt 14 H14-61).
+func doctorCheckNoSource() doctorCheck {
+	return doctorCheck{
+		Name:   "source",
+		Status: "error",
+		Code:   "no_deployable_source",
+		Hint:   "No app or function source was found in this directory, so gregale deploy would refuse it.",
+		Fix:    "add package.json, requirements.txt / pyproject.toml / Pipfile / setup.py, go.mod or a Dockerfile at the root for an app, or a single handler.{js,ts,py,go} for a function; or point doctor at the source with --path",
+	}
 }
 
 // hardCodedPortBindRegex covers common Node, Go, and Python listener forms.

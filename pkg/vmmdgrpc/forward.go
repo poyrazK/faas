@@ -50,6 +50,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/http/httptrace"
 	"net/http/httputil"
 	"os"
 	"os/exec"
@@ -236,14 +237,18 @@ func (s *Server) ForwardHTTPStream(stream grpc.BidiStreamingServer[vmmdpb.Forwar
 		return err
 	}
 	// Per-invocation extension hooks are deliberately asynchronous. A slow or
-	// absent extension must never add latency to the customer request path.
-	if hooker, ok := s.vmm.(extensionHookVMM); ok {
+	// absent extension must never add latency to the customer request path,
+	// and with invoke_hook_backoff on, an instance without one gets no events
+	// for a while (ADR-20261025150000).
+	if hooker, ok := s.vmm.(extensionHookVMM); ok && s.invokeHookAllowed(reqInit.GetInstance(), time.Now()) {
 		if metadata := invocationExtensionMetadata(reqInit); len(metadata) > 0 {
 			instance := reqInit.GetInstance()
 			go func() {
 				hookCtx, cancel := context.WithTimeout(context.Background(), extension.DefaultTimeout)
 				defer cancel()
-				if err := hooker.TriggerExtensionHook(hookCtx, instance, string(extension.PhaseInvoke), metadata); err != nil {
+				err := hooker.TriggerExtensionHook(hookCtx, instance, string(extension.PhaseInvoke), metadata)
+				s.recordInvokeHook(instance, err, time.Now())
+				if err != nil {
 					s.log.Debug("invocation extension hook unavailable", "instance", instance, "err", err)
 				}
 			}()
@@ -1646,7 +1651,7 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 	)
 	if persistent {
 		if s.streamBridges == nil {
-			s.streamBridges = newStreamBridgeManager(s.log)
+			s.streamBridges = s.newBridgeManager()
 		}
 		bridgeLease, err = s.streamBridges.acquire(ctx, reqInit, netnsName, bridgeID)
 		if err != nil {
@@ -1798,6 +1803,15 @@ func (s *Server) forwardHTTPStreamV2(stream grpc.BidiStreamingServer[vmmdpb.Forw
 		bridgeOp = "bridge_h2c_roundtrip"
 	}
 	bridgeStart := time.Now()
+	if s.ops != nil {
+		// bridge_stream_wait ends when the request headers reach the bridge
+		// connection: it is the time spent getting a connection and a free
+		// HTTP/2 stream on it, which a saturated bridge turns into queueing
+		// the gateways cannot see (ADR-20261026120000).
+		httpReq = httpReq.WithContext(httptrace.WithClientTrace(httpReq.Context(), &httptrace.ClientTrace{
+			WroteHeaders: func() { s.ops.Observe("bridge_stream_wait", time.Since(bridgeStart), nil) },
+		}))
+	}
 	httpResp, err := client.Do(httpReq)
 	if s.ops != nil {
 		s.ops.Observe(bridgeOp, time.Since(bridgeStart), err)

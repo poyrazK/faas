@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -126,13 +127,28 @@ type streamBridgeManager struct {
 	units           sdunit.Manager
 	connectUnits    func(context.Context) (sdunit.Manager, error)
 	openUnitProcess unitProcessOpener
+	probeSocket     func(string, bridgeIdentity) error
+	// journal records unit runs for adoption (bridge_unit_adopt.go);
+	// keepUnits leaves units running at shutdown for a successor.
+	journal   instanceBridgeJournal
+	keepUnits bool
 
 	reaperOnce sync.Once
 	reaperCtx  context.Context
 	cancel     context.CancelFunc
 	closed     bool
 	starts     sync.WaitGroup
+
+	// headroom is vmmd's bridge_stream_headroom switch
+	// (ADR-20261026120000): a saturated bridge connection opens another
+	// instead of queueing requests, and the bridge sizes its guest pool to
+	// its stream cap with a short guest dial timeout.
+	headroom atomic.Bool
 }
+
+// bridgeGuestHeadroomEnv tells a bridge to size its guest pool to its stream
+// cap and to dial the guest with a short timeout (cmd/vmmd-stream-bridge).
+const bridgeGuestHeadroomEnv = "FAAS_BRIDGE_GUEST_HEADROOM"
 
 func newStreamBridgeManager(log *slog.Logger) *streamBridgeManager {
 	if log == nil {
@@ -156,6 +172,7 @@ func newStreamBridgeManager(log *slog.Logger) *streamBridgeManager {
 		unitsOn:         InstanceBridgeUnitsEnabled,
 		connectUnits:    connectSystemd,
 		openUnitProcess: openUnitProcessReal,
+		probeSocket:     probeBridgeSocket,
 	}
 }
 
@@ -266,7 +283,11 @@ func (m *streamBridgeManager) acquire(ctx context.Context, req *vmmdpb.ForwardHT
 		}
 		entry.active++
 		entry.lastUsed = m.now()
+		record := m.needsRecordLocked(entry)
 		m.mu.Unlock()
+		if record {
+			m.recordUnit(entry)
+		}
 		return &streamBridgeLease{manager: m, entry: entry}, nil
 	}
 }
@@ -288,7 +309,11 @@ func (m *streamBridgeManager) acquireSession(ctx context.Context, instance, netn
 		samePublicTarget(entry.target, target) && entry.alive() {
 		entry.active++
 		entry.lastUsed = m.now()
+		record := m.needsRecordLocked(entry)
 		m.mu.Unlock()
+		if record {
+			m.recordUnit(entry)
+		}
 		return &streamBridgeLease{manager: m, entry: entry}, nil
 	}
 	req := &vmmdpb.ForwardHTTPRequestInit{Instance: instance, Port: port}
@@ -450,9 +475,9 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 	}
 	deadline := m.now().Add(streamBridgeSessionDeadline).UTC().Format(time.RFC3339)
 	spawnNetns, guestIP := streamBridgeTarget(withPublicTarget(ctx, entry.target), entry.netns)
-	env := netns.PublicForwardEnv(streamBridgeStaticEnv(req), entry.target)
+	env := m.bridgeEnv(req, entry.target)
 	if m.useUnit(entry) {
-		if err := m.startEntryUnit(ctx, entry, bridgePath, spawnNetns, guestIP, port, deadline, env); err != nil {
+		if err := m.startEntryUnit(ctx, entry, bridgePath, spawnNetns, guestIP, port, deadline, env, req.GetAppProtocol()); err != nil {
 			return err
 		}
 		if err := m.waitSocket(entry.socket, streamBridgeSocketReadyTimeout); err != nil {
@@ -461,7 +486,11 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 		if !entry.alive() {
 			return fmt.Errorf("instance bridge unit %s exited before becoming ready", entry.unit.name)
 		}
-		return m.connectEntry(entry)
+		if err := m.connectEntry(entry); err != nil {
+			return err
+		}
+		m.recordUnit(entry)
+		return nil
 	}
 	if entry.identity.unprivileged() {
 		if err := entry.identity.prepareSocketDir(entry.socket); err != nil {
@@ -489,9 +518,23 @@ func (m *streamBridgeManager) startEntryProcess(ctx context.Context, entry *stre
 	return m.connectEntry(entry)
 }
 
+// bridgeEnv is the environment a persistent bridge starts with.
+func (m *streamBridgeManager) bridgeEnv(req *vmmdpb.ForwardHTTPRequestInit, target *netns.PublicForwardTarget) []string {
+	env := netns.PublicForwardEnv(streamBridgeStaticEnv(req), target)
+	if m.headroom.Load() {
+		env = append(env, bridgeGuestHeadroomEnv+"=1")
+	}
+	return env
+}
+
 // connectEntry gives a started bridge its H2C transport.
 func (m *streamBridgeManager) connectEntry(entry *streamBridgeEntry) error {
 	transport := m.newTransport(entry.socket, entry.identity)
+	if m.headroom.Load() {
+		// The bridge still caps each connection at 100 streams; vmmd opens
+		// another connection instead of queueing requests behind a full one.
+		transport.StrictMaxConcurrentStreams = false
+	}
 	m.mu.Lock()
 	if entry.closed {
 		m.mu.Unlock()
@@ -696,6 +739,10 @@ func (m *streamBridgeManager) close(ctx context.Context) error {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
+			if m.keepUnits && entry.unit != nil {
+				m.releaseForHandoff(entry)
+				return
+			}
 			m.closeEntry(ctx, entry)
 		}()
 	}

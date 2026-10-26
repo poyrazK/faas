@@ -25,6 +25,8 @@ import (
 	"time"
 
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/session"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -96,7 +98,7 @@ func (s *server) eventsHandler(log *slog.Logger) http.HandlerFunc {
 				"Insufficient scope", "event stream requires the apps:read or admin scope"))
 			return
 		}
-		ownedApps := s.buildOwnedAppCache(r.Context(), acct.ID)
+		ownedApps, hiddenApps := s.buildOwnedAppCache(r.Context(), acct, key)
 
 		w, ctx, cancelStream := startSSEStream(w, r)
 		defer cancelStream()
@@ -131,7 +133,7 @@ func (s *server) eventsHandler(log *slog.Logger) http.HandlerFunc {
 				if !ok {
 					return
 				}
-				scoped, ok := normalizedEventsFrameForAccount(n, acct.ID, ownedApps)
+				scoped, ok := normalizedEventsFrameForAccount(n, acct.ID, ownedApps, hiddenApps)
 				if !ok {
 					if n.Channel == db.NotifyAppChanged {
 						if _, err := db.ParseAppChangedPayload(n.Payload); err != nil {
@@ -185,26 +187,43 @@ func resolveEventsCaller(r *http.Request, s *server) (state.Account, *state.APIK
 }
 
 // buildOwnedAppCache returns a lookup set of app IDs that belong to
-// the account. O(apps) at request time; the SSE consumer keeps the
-// set frozen for the lifetime of the connection (slice 6).
-func (s *server) buildOwnedAppCache(ctx context.Context, accountID string) map[string]struct{} {
-	apps, err := s.store.ListApps(ctx, accountID)
+// the account, and the subset the caller may not see: a company app whose
+// creator has left the company, or one outside the key's app or
+// organization (appaccess.VisibleAppsContext). Frames about a hidden app
+// are dropped even when they carry the account's ID. A failed access read
+// hides every app. O(apps) at request time; the SSE consumer keeps the
+// sets frozen for the lifetime of the connection (slice 6).
+func (s *server) buildOwnedAppCache(ctx context.Context, acct state.Account, key *state.APIKey) (owned, hidden map[string]struct{}) {
+	apps, err := s.store.ListApps(ctx, acct.ID)
 	if err != nil {
-		return map[string]struct{}{}
+		return map[string]struct{}{}, map[string]struct{}{}
 	}
-	out := make(map[string]struct{}, len(apps))
+	owned = make(map[string]struct{}, len(apps))
+	hidden = make(map[string]struct{})
 	for _, a := range apps {
-		out[a.ID] = struct{}{}
+		owned[a.ID] = struct{}{}
+		hidden[a.ID] = struct{}{}
 	}
-	return out
+	visible, err := appaccess.VisibleAppsContext(authmw.WithPrincipal(ctx, acct, key, nil), s.store, acct, apps)
+	if err != nil {
+		s.log.WarnContext(ctx, "event stream: app access", "account_id", acct.ID, "err", err)
+		return owned, hidden
+	}
+	for _, a := range visible {
+		delete(hidden, a.ID)
+	}
+	return owned, hidden
 }
 
 // normalizedEventsFrameForAccount also upgrades a legacy raw app_changed UUID
 // to the canonical JSON envelope before it reaches a customer-visible stream.
-func normalizedEventsFrameForAccount(n db.Notification, accountID string, apps map[string]struct{}) (db.Notification, bool) {
+func normalizedEventsFrameForAccount(n db.Notification, accountID string, apps, hidden map[string]struct{}) (db.Notification, bool) {
 	if n.Channel == db.NotifyAppChanged {
 		payload, err := db.ParseAppChangedPayload(n.Payload)
 		if err != nil {
+			return db.Notification{}, false
+		}
+		if _, ok := hidden[payload.AppID]; ok {
 			return db.Notification{}, false
 		}
 		if payload.AccountID != "" {
@@ -231,6 +250,9 @@ func normalizedEventsFrameForAccount(n db.Notification, accountID string, apps m
 	if err := json.Unmarshal([]byte(n.Payload), &f); err != nil {
 		// Unparseable — drop. Logging is the caller's job (the SSE
 		// handler logs every frame; this filter only decides drop/deliver).
+		return db.Notification{}, false
+	}
+	if _, ok := hidden[f.AppID]; ok {
 		return db.Notification{}, false
 	}
 	if f.AccountID != "" {
