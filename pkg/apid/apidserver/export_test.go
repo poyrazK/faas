@@ -1723,6 +1723,17 @@ func (s *server) IncidentAppVisibleForTest(ctx context.Context, acct state.Accou
 	return incidentsHost{s}.AppVisible(ctx, acct, app)
 }
 
+// ServiceMapAppsForTest lists the apps the service map draws (ADR-1131).
+func (s *server) ServiceMapAppsForTest(ctx context.Context, accountID string) ([]state.App, error) {
+	return serviceMapHost{s}.Apps(ctx, accountID)
+}
+
+// EventsAppScopeForTest returns the /v1/events stream's owned and hidden
+// app sets for a caller.
+func (s *server) EventsAppScopeForTest(ctx context.Context, acct state.Account, key *state.APIKey) (owned, hidden map[string]struct{}) {
+	return s.buildOwnedAppCache(ctx, acct, key)
+}
+
 var ValidateAndPlanSidecars = validateAndPlanSidecars
 
 // StatusPageFromStore evaluates the public status page against a Prometheus
