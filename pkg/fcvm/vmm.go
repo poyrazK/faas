@@ -4476,14 +4476,20 @@ func consoleShowsBuilderReady(path string) bool {
 }
 
 func consoleContains(path, marker string) bool {
+	return bytes.Contains(consoleTail(path), []byte(marker))
+}
+
+// consoleTail returns the last 16 KiB of a serial console file, or nil when it
+// cannot be read.
+func consoleTail(path string) []byte {
 	f, err := os.Open(path)
 	if err != nil {
-		return false
+		return nil
 	}
 	defer func() { _ = f.Close() }()
 	info, err := f.Stat()
 	if err != nil {
-		return false
+		return nil
 	}
 	const tailBytes int64 = 16 * 1024
 	offset := info.Size() - tailBytes
@@ -4492,9 +4498,9 @@ func consoleContains(path, marker string) bool {
 	}
 	buf := make([]byte, info.Size()-offset)
 	if _, err := f.ReadAt(buf, offset); err != nil && !errors.Is(err, io.EOF) {
-		return false
+		return nil
 	}
-	return bytes.Contains(buf, []byte(marker))
+	return buf
 }
 
 // WaitBuilderReady waits for a KeepWarm builder to finish a successful build
