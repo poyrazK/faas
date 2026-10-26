@@ -52,6 +52,7 @@
   <main>
     {{template "email-verification-banner" .}}
     <h1>{{.Title}}</h1>
+    {{if .Flash}}<p role="status">{{.Flash}}</p>{{end}}
     {{if .Data}}
       {{$items := .Data}}
       {{if $items}}
@@ -68,6 +69,7 @@
                 <td><a href="https://{{.Hostname}}">{{.Hostname}}</a></td>
                 <td>
                   <form method="POST" action="{{.DestroyAction}}" style="display:inline">
+                    <input type="hidden" name="csrf_token" value="{{.DestroyCSRF}}">
                     <button type="submit" class="btn-danger" onclick="return confirm('Tear down preview {{.Slug}}?')">Tear down</button>
                   </form>
                 </td>

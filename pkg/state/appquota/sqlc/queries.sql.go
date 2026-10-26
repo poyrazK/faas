@@ -52,6 +52,62 @@ func (q *Queries) CountApps(ctx context.Context, db DBTX, arg CountAppsParams) (
 	return count, err
 }
 
+const countOpenPreviewEnvironmentMembers = `-- name: CountOpenPreviewEnvironmentMembers :one
+SELECT count(*) FROM apps
+WHERE account_id = $1::uuid
+  AND project_id = $2::uuid
+  AND preview_pr_number = $3::integer
+  AND preview_of_slug IS NOT NULL
+  AND status IN ('active', 'evicted_cold')
+  AND coalesce(preview_pr_state, 'open') = 'open'
+  AND id IS DISTINCT FROM $4::uuid
+`
+
+type CountOpenPreviewEnvironmentMembersParams struct {
+	AccountID pgtype.UUID
+	ProjectID pgtype.UUID
+	PrNumber  int32
+	AppID     pgtype.UUID
+}
+
+func (q *Queries) CountOpenPreviewEnvironmentMembers(ctx context.Context, db DBTX, arg CountOpenPreviewEnvironmentMembersParams) (int64, error) {
+	row := db.QueryRow(ctx, countOpenPreviewEnvironmentMembers,
+		arg.AccountID,
+		arg.ProjectID,
+		arg.PrNumber,
+		arg.AppID,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
+const countOpenPreviewEnvironments = `-- name: CountOpenPreviewEnvironments :one
+SELECT count(DISTINCT coalesce(project_id::text, id::text) || '/' || preview_pr_number::text) FROM apps
+WHERE (org_id = $1::uuid OR
+       (org_id IS NULL AND account_id = $2::uuid AND $3::boolean))
+  AND status IN ('active', 'evicted_cold')
+  AND preview_of_slug IS NOT NULL AND preview_pr_number > 0
+  AND coalesce(preview_pr_state, 'open') = 'open'
+`
+
+type CountOpenPreviewEnvironmentsParams struct {
+	OrgID     pgtype.UUID
+	AccountID pgtype.UUID
+	Personal  bool
+}
+
+// PreviewApps caps open PR preview environments: the open previews of one
+// project and pull request. A legacy preview without a project is its own
+// environment. A closed preview in its grace window holds no allowance; a
+// preview without a recorded state holds one.
+func (q *Queries) CountOpenPreviewEnvironments(ctx context.Context, db DBTX, arg CountOpenPreviewEnvironmentsParams) (int64, error) {
+	row := db.QueryRow(ctx, countOpenPreviewEnvironments, arg.OrgID, arg.AccountID, arg.Personal)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const countPersonalApps = `-- name: CountPersonalApps :one
 SELECT count(*) FROM apps
 WHERE account_id = $1::uuid

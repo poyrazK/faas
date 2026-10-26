@@ -1008,6 +1008,12 @@ kernel boot ID, PID and process start ticks before guest boot returns
 The generated service provisions it with mode 0700. A `resource_journal_dir`
 TOML override requires a private, writable persistent directory and an existing
 parent hierarchy; provide any necessary service filesystem permissions.
+vmmd also reads tmpfs copies of the records from `/run/faas/vmmd-resources`
+(`resource_journal_volatile_dir`), which hold each record's newest version on
+the current boot. With `resource_journal_volatile_writes` on, writes for
+resources a reboot destroys go only to those copies and skip the disk fsync
+([ADR-20261026113920](adr/20261026113920-resource-journal-volatile-tmpfs.md)).
+Turn it on only where the rollback target is that release or later.
 Unknown versions, corrupt records, another journal writer or persistence errors
 fail closed. Live cleanup retires a record only after physical cleanup is confirmed,
 and commits removal before releasing the slot.

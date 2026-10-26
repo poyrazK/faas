@@ -125,6 +125,39 @@ func TestE2E_GitHubWebhookEnqueuesDeployments(t *testing.T) {
 		t.Fatalf("preview deployment on app %s (%s), want a pr-7- preview app separate from %s", preview.appSlug, preview.appID, pushed.appID)
 	}
 	t.Logf("pull request: preview app %s deployment %s build %s (%s)", preview.appSlug, preview.deploymentID, preview.buildID, preview.buildStatus)
+
+	// -- pull request closed --------------------------------------------------
+	// The preview keeps serving through its grace window, but its set closes
+	// and it no longer holds a PR preview environment (ADR-20261026090000).
+	postGitHubWebhook(t, webhookURL, "pull_request", fmt.Sprintf(`{"action":"closed","number":7,
+		"pull_request":{"state":"closed","merged":true,"head_sha":%q,"head_ref":"feat/x","base":{"ref":"main"},
+		"head":{"ref":"feat/x","sha":%q,"repo":{"full_name":%q}}},
+		"repository":{"full_name":%q,"name":"e2e-api"},"installation":{"id":%d},"sender":{"login":"octocat"}}`,
+		prSHA, prSHA, githubE2ERepo, githubE2ERepo, githubE2EInstallation))
+	waitForClosedPreview(t, pool, preview.appID, githubE2EInstallation, githubE2ERepo, 7)
+}
+
+// waitForClosedPreview waits for the close delivery: the preview app is
+// closed with a grace deadline and still active, and its PR set is closed.
+func waitForClosedPreview(t *testing.T, pool *pgxpool.Pool, appID string, installationID int64, repo string, prNumber int) {
+	t.Helper()
+	deadline := time.Now().Add(90 * time.Second)
+	for {
+		var prState, appStatus string
+		var setClosed bool
+		err := pool.QueryRow(context.Background(), `
+			select a.preview_pr_state, a.status, s.closed_at is not null
+			  from apps a
+			  join pr_preview_sets s on s.installation_id = $2 and s.repo_full_name = $3 and s.pr_number = $4
+			 where a.id = $1 and a.preview_expires_at > now()`, appID, installationID, repo, prNumber).Scan(&prState, &appStatus, &setClosed)
+		if err == nil && prState == state.PreviewPrStateClosed && appStatus == string(state.AppActive) && setClosed {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("preview %s after close = (%s, %s, set closed %t, %v), want closed in grace", appID, prState, appStatus, setClosed, err)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 // startGitHubd runs githubd's production webhook path in process against

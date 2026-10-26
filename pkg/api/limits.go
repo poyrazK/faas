@@ -2981,8 +2981,11 @@ type Limits struct {
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
 	DeployedApps int // max apps in state active|evicted_cold
-	// PreviewApps caps live PR preview apps separately from production apps.
-	// A preview lease is temporary and never consumes a DeployedApps slot.
+	// PreviewApps caps open PR preview environments (the open previews of one
+	// project and pull request) separately from production apps. One
+	// environment holds at most DeployedApps workloads; a closed pull
+	// request's preview holds none (ADR-20261026090000). A preview lease is
+	// temporary and never consumes a DeployedApps slot.
 	PreviewApps int
 	// OutboundRequestsPerDayMax (ADR-257) caps the customer-selected daily
 	// request limit on any one managed outbound integration. It is a policy

@@ -18,6 +18,7 @@ package apidserver
 import (
 	"log/slog"
 	"net/http"
+	"net/url"
 
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/httpsec"
@@ -44,6 +45,7 @@ func (s *server) renderPreviewsList(w http.ResponseWriter, r *http.Request, log 
 		return
 	}
 	items := make([]dashboard.PreviewListItem, 0, len(rows))
+	csrf := s.issueDashboardPreviewDestroyCSRF(w, acct.ID)
 	for _, p := range rows {
 		items = append(items, dashboard.PreviewListItem{
 			Slug:          p.Slug,
@@ -54,7 +56,8 @@ func (s *server) renderPreviewsList(w http.ResponseWriter, r *http.Request, log 
 			ExpiresAt:     p.PreviewExpiresAt,
 			CreatedAt:     p.CreatedAt,
 			Hostname:      previewHostnameFor(p.Slug, s.domain),
-			DestroyAction: "/dashboard/apps/" + p.PreviewOfSlug + "/preview/" + p.Slug + "/destroy",
+			DestroyAction: "/dashboard/apps/" + url.PathEscape(p.PreviewOfSlug) + "/preview/" + url.PathEscape(p.Slug) + "/destroy",
+			DestroyCSRF:   csrf,
 		})
 	}
 	nonce := httpsec.NonceFromContext(ctx)
@@ -63,6 +66,11 @@ func (s *server) renderPreviewsList(w http.ResponseWriter, r *http.Request, log 
 		Body:    "previews_list",
 		Account: dashboardAccountView(acct, len(items)),
 		Data:    items,
+	}
+	if slug := r.URL.Query().Get("destroyed"); slug != "" {
+		page.Flash = "Preview " + slug + " and its PR environment were torn down."
+	} else if slug := r.URL.Query().Get("error"); slug != "" {
+		page.Flash = "Preview " + slug + " could not be torn down. Try again, or run gregale preview destroy " + slug + "."
 	}
 	if err := dashboard.Render(w, log, nonce, page); err != nil {
 		log.Error("dashboard renderPreviewsList: template", "err", err, "account_id", acct.ID)

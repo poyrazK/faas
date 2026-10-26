@@ -4399,3 +4399,19 @@ retry; all four memory modes fail without the change. The existing ten
 `TestPgTrafficRevisionRevivalPublication` modes and the memory
 rollback/retry/alert/revision/alias tests pass. Native, deployed and load
 acceptance remain open.
+
+## GitOps and release-addition publication — 2026-10-26
+
+GitOps workload creation (`PrepareEnvironmentGitOpsWorkloads`), GitOps
+candidate preparation (`PrepareEnvironmentGitOpsCandidates`) and safe-release
+service reservation (`StageProjectReleaseAdditions`) created apps or revision
+URLs in PostgreSQL transactions outside the binding guard. They now begin
+through the account binding guard and retry serialization failures; the memory
+candidate writer stages and analyzes its new rows before publication.
+
+Evidence: `TestMemTrafficReleaseAdditionPublication`,
+`TestPgTrafficReleaseAdditionPublication` and
+`TestPgGitOpsCandidateRevisionURLJoinsBindingGuard` refuse an oversized
+legacy policy on the new hostname without changing intent and succeed after
+repair. The GitOps workload-creation writer has no dedicated refusal fixture;
+it shares the guarded transaction helper with candidate preparation.

@@ -2,8 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -19,7 +19,7 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	if deploymentID == "" {
 		return fmt.Errorf("githubd: deployment check: empty deployment id")
 	}
-	var commitSHA, kind, status, failure, repo, appSlug, previewOf, scope string
+	var commitSHA, kind, status, failure, repo, appSlug, previewOf, scope, appStatus string
 	var rolloutState, rolloutAbortedReason string
 	var canaryStep, canaryTotalSteps, trafficPercent int
 	var reason, tag, deployedBy string
@@ -32,7 +32,7 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		       coalesce(d.reason, ''), coalesce(d.tag, ''), coalesce(nullif(d.deployed_by, ''), d.pusher_login, ''), coalesce(d.pr_number, 0),
 		       coalesce(preview_set.repo_full_name, nullif(parent.github_repo_full_name, ''),
 		                nullif(a.github_repo_full_name, ''), nullif(p.repo_full_name, ''), ''),
-		       a.slug, coalesce(a.preview_of_slug, ''), coalesce(a.preview_pr_number, 0),
+		       a.slug, coalesce(a.preview_of_slug, ''), coalesce(a.preview_pr_number, 0), a.status,
 		       coalesce(preview_set.installation_id, nullif(parent.github_install_id, 0),
 		                nullif(a.github_install_id, 0), nullif(p.install_id, 0), 0)
 		from deployments d
@@ -51,7 +51,7 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 		where d.id = $1`, deploymentID).Scan(
 		&commitSHA, &kind, &status, &failure, &scope, &rolloutState, &rolloutAbortedReason,
 		&canaryStep, &canaryTotalSteps, &trafficPercent, &reason, &tag, &deployedBy, &prNumber,
-		&repo, &appSlug, &previewOf, &previewPRNumber, &installationID)
+		&repo, &appSlug, &previewOf, &previewPRNumber, &appStatus, &installationID)
 	if err != nil {
 		return fmt.Errorf("githubd: deployment check lookup %s: %w", deploymentID, err)
 	}
@@ -67,20 +67,26 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	if !project {
 		return nil
 	}
+	if appStatus == string(state.AppDeleted) && (kind == string(state.DeploymentKindPreview) || previewOf != "") {
+		return syncTornDownPreview(ctx, checks, tornDownPreview{
+			deploymentID: deploymentID, installationID: installationID, repo: repo, commitSHA: commitSHA,
+			environment: githubDeploymentEnvironment(kind, scope, appSlug, previewOf), appSlug: appSlug, prNumber: previewPRNumber,
+		})
+	}
 	phase, ok := checkPhaseForDeploymentStatusForRollout(status, rolloutState, canaryTotalSteps)
 	if !ok {
 		return nil
 	}
-	platform, domain := githubd.PlatformDomain(), githubd.AppsDomain()
+	domain := githubd.AppsDomain()
 	// Annotation fields are customer-controlled text. Keep the Check Run
 	// summary and PR comment single-line and predictable; the provider writer
 	// applies the same compaction to the Deployment payload.
 	deployedByText := strings.Join(strings.Fields(deployedBy), " ")
 	reasonText := strings.Join(strings.Fields(reason), " ")
-	deploymentURL := fmt.Sprintf("https://%s/dashboard/apps/%s/deployments/%s", platform, appSlug, deploymentID)
-	logsURL := fmt.Sprintf("https://%s/v1/deployments/%s/logs", platform, deploymentID)
+	deploymentURL := githubd.DashboardDeploymentURL(appSlug, deploymentID)
+	logsURL := githubd.DashboardLogsURL(appSlug)
 	environmentURL := fmt.Sprintf("https://%s.%s", appSlug, domain)
-	environment := githubDeploymentEnvironment(kind, scope, appSlug)
+	environment := githubDeploymentEnvironment(kind, scope, appSlug, previewOf)
 	if err := checks.WriteGitHubDeploymentStatus(ctx, githubd.GitHubDeploymentUpdate{
 		LocalDeploymentID:     deploymentID,
 		InstallationID:        installationID,
@@ -156,18 +162,19 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 			// best-effort companion: a missing Issues:write grant must not
 			// prevent the Check Run worker from making progress.
 			previewURL := "https://" + appSlug + "." + domain
-			commentSlug, commentParent, commentStatus := appSlug, previewOf, status
+			commentSlug, commentStatus := appSlug, status
 			if setCheck.CurrentHead && setCheck.RootSlug != "" {
 				// Every sibling updates the same root comment with the aggregate
 				// result. A live root must not advertise a complete environment
 				// while a dependency is still building or has failed.
 				previewURL = environmentURL
-				commentSlug, commentParent, commentStatus = setCheck.RootSlug, setCheck.RootParentSlug, setCheck.CommentSummary
+				commentSlug, commentStatus = setCheck.RootSlug, setCheck.CommentSummary
 			}
-			dashboardBase := "https://" + domain
 			marker := "<!-- gregale-preview:" + commentSlug + " -->"
-			body := fmt.Sprintf("%s\n### Gregale preview\n\nPreview status: **%s**\n\n[Open preview](%s) · [Latest workload deployment](%s/dashboard/apps/%s/deployments/%s) · [Deployment logs](%s/v1/deployments/%s/logs) · [Destroy preview](%s/dashboard/apps/%s/preview/%s/destroy)\n\nCommit: `%s`", marker, commentStatus, previewURL, dashboardBase, appSlug, deploymentID, dashboardBase, deploymentID, dashboardBase, commentParent, commentSlug, commitSHA)
-			body += fmt.Sprintf("\n\n[Preview environment details](%s/dashboard/apps/%s)", dashboardBase, url.PathEscape(commentSlug))
+			// The details page is the root preview's dashboard page: it shows
+			// the whole workload set and its app menu tears the environment down.
+			body := fmt.Sprintf("%s\n### Gregale preview\n\nPreview status: **%s**\n\n[Open preview](%s) · [Preview details and teardown](%s) · [Latest workload deployment](%s) · [Logs](%s)\n\nCommit: `%s`",
+				marker, commentStatus, previewURL, githubd.DashboardAppURL(commentSlug), deploymentURL, logsURL, commitSHA)
 			if deployedByText != "" {
 				body += "\nDeployed by: **" + deployedByText + "**"
 			}
@@ -202,14 +209,62 @@ func validateDeploymentCheckTarget(deploymentID, kind, commitSHA, repo string, i
 	return true, nil
 }
 
-func githubDeploymentEnvironment(kind, scope, appSlug string) string {
-	prefix := "production"
+// githubDeploymentEnvironment names the GitHub environment a deployment
+// reports to. A preview reports to its production app's preview
+// environment, preview/<app>: GitHub keeps every environment a deployment
+// names, so naming one per pull request would leave a new environment in
+// the repository for every PR.
+func githubDeploymentEnvironment(kind, scope, appSlug, previewOf string) string {
 	if kind == string(state.DeploymentKindPreview) {
-		prefix = "preview"
-	} else if scope != "" && scope != string(state.DefaultEnvScope) {
+		if previewOf != "" {
+			appSlug = previewOf
+		}
+		return "preview/" + appSlug
+	}
+	prefix := "production"
+	if scope != "" && scope != string(state.DefaultEnvScope) {
 		prefix = scope
 	}
 	return prefix + "/" + appSlug
+}
+
+type tornDownPreview struct {
+	deploymentID, repo, commitSHA, environment, appSlug string
+	installationID                                      int64
+	prNumber                                            int
+}
+
+// syncTornDownPreview reports a torn-down preview to GitHub. Its deployment
+// goes inactive, so the PR stops offering a dead preview link, and the PR's
+// status comment, when this preview owns one, says the preview is gone.
+// The Check Run keeps the result of the commit it reported.
+func syncTornDownPreview(ctx context.Context, checks *githubd.ChecksAPI, preview tornDownPreview) error {
+	if checks.Deployments != nil {
+		_, err := checks.Deployments.GitHubDeploymentID(ctx, preview.deploymentID)
+		switch {
+		case err == nil:
+			if err := checks.WriteGitHubDeploymentStatus(ctx, githubd.GitHubDeploymentUpdate{
+				LocalDeploymentID: preview.deploymentID, InstallationID: preview.installationID,
+				RepoFullName: preview.repo, CommitSHA: preview.commitSHA, Ref: preview.commitSHA,
+				Environment: preview.environment, Status: githubd.GitHubDeploymentStatusTornDown,
+				Description: "Gregale preview torn down", TransientEnvironment: true,
+			}); err != nil {
+				return err
+			}
+		case !errors.Is(err, githubd.ErrGitHubDeploymentNotFound):
+			return err
+		}
+	}
+	if preview.prNumber <= 0 {
+		return nil
+	}
+	marker := "<!-- gregale-preview:" + preview.appSlug + " -->"
+	body := fmt.Sprintf("%s\n### Gregale preview — torn down\n\nThe preview was torn down: its pull request closed, its lease expired, or it was destroyed. Push a commit to an open pull request to create it again.\n\nCommit: `%s`",
+		marker, preview.commitSHA)
+	// Best effort, as for every status comment: Check Runs and deployments
+	// are the durable status.
+	_ = checks.UpdatePreviewComment(ctx, preview.installationID, preview.repo, preview.prNumber, marker, body)
+	return nil
 }
 
 func checkPhaseForDeploymentStatusForRollout(status, rolloutState string, canaryTotalSteps int) (githubdgrpc.CheckPhase, bool) {
