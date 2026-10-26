@@ -97,13 +97,21 @@ func projectAliasAllowed(ctx context.Context, store any, caller state.App, servi
 		(caller.PreviewOfSlug != "" && caller.PreviewPrNumber == 0) {
 		return false, nil
 	}
-	reader, ok := store.(state.ProjectServiceReader)
-	if !ok {
-		return false, nil
-	}
 	production := caller
 	production.PreviewOfSlug = ""
-	target, err := state.AppByServiceName(ctx, reader, production, service)
+	var target state.App
+	var err error
+	switch reader := store.(type) {
+	case state.ProjectServiceLookupReader:
+		// The gateway's pinned service-policy view (ADR-570) has only this
+		// indexed read. Requiring the inventory reader refused every
+		// undeclared same-project alias call there (Hunt 14 H14-81).
+		target, err = state.AppByServiceLookup(ctx, reader, production, service)
+	case state.ProjectServiceReader:
+		target, err = state.AppByServiceName(ctx, reader, production, service)
+	default:
+		return false, nil
+	}
 	if errors.Is(err, state.ErrNotFound) || errors.Is(err, state.ErrConflict) {
 		return false, nil
 	}
