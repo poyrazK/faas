@@ -48,6 +48,9 @@ func TestReleaseGuardsDrillMetal(t *testing.T) {
 	if err := dbMigrateUp(t, pool); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	// Canary releases run the post-readiness smoke through the harness's
+	// public hosting verifier.
+	t.Setenv("FAAS_E2E_API_HOSTING_SMOKE", "1")
 
 	registry := e2etest.NewFakeRegistry()
 	t.Cleanup(func() { registry.Close() })
@@ -389,13 +392,14 @@ func (g *guardsDrill) deploymentCount(t *testing.T, appID string) int {
 }
 
 // waitAudit waits for an audit event of kind whose data mentions text.
+// apid's auditor writes to the events table.
 func (g *guardsDrill) waitAudit(t *testing.T, kind, text string) {
 	t.Helper()
 	deadline := time.Now().Add(time.Minute)
 	for {
 		var n int
 		err := g.d.h.Pool.QueryRow(context.Background(),
-			`SELECT count(*) FROM audit_log WHERE kind = $1 AND data::text LIKE '%' || $2 || '%'`, kind, text).Scan(&n)
+			`SELECT count(*) FROM events WHERE kind = $1 AND data::text LIKE '%' || $2 || '%'`, kind, text).Scan(&n)
 		if err == nil && n > 0 {
 			return
 		}
