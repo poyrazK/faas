@@ -4737,6 +4737,15 @@ func throttleIPKey(ip net.IP) string {
 	return (&net.IPNet{IP: ip.Mask(net.CIDRMask(64, 128)), Mask: net.CIDRMask(64, 128)}).String()
 }
 
+// TrustedClientIP is the customer address gatewayd-public established: the
+// single X-Forwarded-For entry it pins before the hop to gatewayd-internal.
+// Every gatewayd-internal caller is a gatewayd-public (over the unix socket,
+// or a peer node's edge over TCP), so r.RemoteAddr is never the customer.
+// Missing or ambiguous chains report false.
+func TrustedClientIP(r *http.Request) (net.IP, bool) {
+	return clientIPFromTrustedXFF(r)
+}
+
 func clientIPFromTrustedXFF(r *http.Request) (net.IP, bool) {
 	values := r.Header.Values("X-Forwarded-For")
 	if len(values) != 1 {
