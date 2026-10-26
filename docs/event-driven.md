@@ -356,6 +356,14 @@ the provider your Gregale API key. There is no per-callback public URL.
 For repeatable or broadcast signals, continue using `wait_for_event` and
 `POST /v1/workflows/runs/{id}/events` with a stable `Idempotency-Key`.
 
+A `wait_for_event` step completes with the earliest event of that name the run
+has received, including one that arrived before the step started waiting and
+one an earlier step already completed with. Events are facts on the run, not a
+queue, so every wait for a name matches the same first event. To wait for a
+second, distinct signal (a second approval, say), give it its own event name,
+or use a [code-first workflow](code-workflows.md), where each `waitForEvent`
+consumes one event of its name in arrival order.
+
 Stripe can instead complete a callback without waking your app. Create a
 [durable inbound Stripe webhook endpoint](inbound-webhooks.md) for the
 same app and configure its one-time-disclosed URL in Stripe. Then bind the
