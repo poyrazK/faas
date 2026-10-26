@@ -51,11 +51,21 @@ const (
 	subRestart = "restart"
 )
 
+// previewCLISlugMaxLen is the longest PR preview slug the CLI accepts: one
+// DNS label.
+const previewCLISlugMaxLen = 63
+
 // validCLISlug matches the server-side validSlug regex in cmd/apid/handlers.go.
 // Duplicated here so the CLI can reject malformed slugs before paying a
 // network round-trip — the server still re-validates as defence in depth.
+// A PR preview slug is pr-<N>- plus its parent's slug of up to 40
+// characters, so it may run past 40; it still fits one DNS label.
 func validCLISlug(s string) bool {
-	if len(s) < 3 || len(s) > 40 {
+	maxLen := 40
+	if api.IsPreviewAppSlug(s) {
+		maxLen = previewCLISlugMaxLen
+	}
+	if len(s) < 3 || len(s) > maxLen {
 		return false
 	}
 	for i, r := range s {

@@ -545,6 +545,10 @@ var TestOnlyTTY = &testOnlyTTY
 var UpdateAppRequestCLISurfaces = &updateAppRequestCLISurfaces
 
 // Package-level funcs
+var ValidCLISlug = validCLISlug
+var CollectPreviewRouteReport = collectPreviewRouteReport
+var ErrPreviewNoProductionParent = errPreviewNoProductionParent
+var PreviewEnvironmentReviewNote = previewEnvironmentReviewNote
 var AddRouteMonitorSourceOwners = addRouteMonitorSourceOwners
 var AddSafeReleasePreview = addSafeReleasePreview
 var AddValidateParamFlags = addValidateParamFlags

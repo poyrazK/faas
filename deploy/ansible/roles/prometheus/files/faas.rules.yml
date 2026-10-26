@@ -3406,6 +3406,18 @@ groups:
           description: "At least one GitHub Check Run projection exhausted its retry budget. Deployments continue, but customer GitHub status may be stale. Inspect and retry with gregalectl github status / retry-check."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
 
+      - alert: FaasPreviewJanitorFailing
+        expr: sum(increase(faas_preview_janitor_outcomes_total{outcome=~"failed|row_failed"}[30m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: github_recovery
+        annotations:
+          summary: "Preview teardown janitor is failing"
+          description: "The preview janitor could not sweep, or could not claim or tear down a preview, in the last 30 minutes. Closed and expired PR previews keep running and keep their PR preview allowance until it recovers. Check `journalctl -u faas-apid` for `preview janitor:` warnings."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PreviewSubdomainRouting.md"
+
       - alert: FaasGithubRecoveryQueueStalled
         expr: githubd_recovery_oldest_actionable_seconds{status=~"pending|processing"} > 900
         for: 5m

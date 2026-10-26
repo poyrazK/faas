@@ -191,8 +191,14 @@ func cmdPreviewReport(args []string) int {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	report, err := collectPreviewRouteReport(ctx, client, pos[0], *baseline, *since)
+	if errors.Is(err, errPreviewNoProductionParent) {
+		return printErr("No production baseline", err)
+	}
 	if err != nil {
 		return printErr("Could not build route change report", err)
+	}
+	if note, ok := previewEnvironmentReviewNote(ctx, client, pos[0]); ok {
+		report.Notes = append(report.Notes, note)
 	}
 	attachPreviewReportTests(&report, receipts, digest)
 	collectPreviewCustomerUsage(ctx, client, &report, *since, *customerDetails)
@@ -230,10 +236,34 @@ func cmdPreviewReport(args []string) int {
 	return 0
 }
 
+// errPreviewNoProductionParent reports a preview of a service a pull request
+// introduces: there is no production app to compare it with yet.
+var errPreviewNoProductionParent = errors.New("this preview runs a service the pull request adds; it has no production app to compare with until the service ships")
+
+// previewEnvironmentReviewNote points a report on one workload of a PR
+// preview environment at the review that covers every workload.
+func previewEnvironmentReviewNote(ctx context.Context, client *api.Client, slug string) (string, bool) {
+	environment, err := client.GetPreviewEnvironmentStatus(ctx, slug)
+	if err != nil || environment.RootSlug != slug || len(environment.Members) < 2 {
+		return "", false
+	}
+	slugs := make([]string, 0, len(environment.Members))
+	for _, member := range environment.Members {
+		if member.Slug != "" {
+			slugs = append(slugs, member.Slug)
+		}
+	}
+	return fmt.Sprintf("PR #%d's preview environment runs %d workloads and this report covers %s only. Review them together with: gregale preview review %s",
+		environment.PRNumber, len(environment.Members), slug, strings.Join(slugs, " ")), true
+}
+
 func collectPreviewRouteReport(ctx context.Context, client *api.Client, slug, baselineID, since string) (previewRouteReport, error) {
 	preview, err := client.GetPreview(ctx, slug)
 	if err != nil {
 		return previewRouteReport{}, err
+	}
+	if preview.App.Slug == slug && preview.App.PreviewOfSlug != "" && preview.App.PreviewPRNumber > 0 && preview.Parent == nil {
+		return previewRouteReport{}, errPreviewNoProductionParent
 	}
 	if preview.App.Slug != slug || preview.App.PreviewOfSlug == "" || preview.Parent == nil || preview.Parent.Slug != preview.App.PreviewOfSlug {
 		return previewRouteReport{}, errors.New("preview has no accessible parent app")
