@@ -172,6 +172,7 @@ func run(args []string) (status int) {
 	if err != nil {
 		return printErr("Invalid app target", err)
 	}
+	args = normalizeTreeFlags(args)
 	if noun, ok := cliTreeHelpTopic(args); ok {
 		printCliTreeHelp(osStdout, noun)
 		return 0

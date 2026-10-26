@@ -347,3 +347,26 @@ func TestCliTreeVerbBaseline(t *testing.T) {
 		}
 	}
 }
+
+// ADR-20261026145832 step 4: canonical flag spellings run today's
+// equivalent flag, only where its help names the same concept.
+func TestCliTreeFlagSpellings(t *testing.T) {
+	enableEveryCLIFeature(t)
+	cases := []struct{ in, want string }{
+		{"app api health --env staging", "app api health --environment staging"},
+		{"app api health --cursor=c1 --history", "app api health --before=c1 --history"},
+		{"env pull --env staging", "env pull --scope staging"},
+		{"debug requests list --release d1", "debug requests list --deployment-id d1"},
+		{"dlq list demo --cursor c2", "dlq list demo --before c2"},
+		{"events backfill demo --since 2026-10-01T00:00:00Z", "events backfill demo --from 2026-10-01T00:00:00Z"},
+		{"trace t1 --follow", "trace t1 --watch"},
+		{"env create --since x staging", "env create --since x staging"},
+		{"logs api --release v3", "logs api --release v3"},
+		{"help app --env", "help app --env"},
+	}
+	for _, tc := range cases {
+		if got := strings.Join(main.NormalizeTreeFlags(strings.Fields(tc.in)), " "); got != tc.want {
+			t.Errorf("%q normalized to %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}

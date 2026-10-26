@@ -2530,3 +2530,5 @@ func CheckDevGoCommand(dir string, function bool, command string) error {
 func DevGoCommandRequest(command string) api.UpsertDevSessionRequest {
 	return withDevGoCommand(devSourceConfig{shape: shapeApp}.sessionRequest("", false, "", 0, nil), command)
 }
+
+var NormalizeTreeFlags = normalizeTreeFlags
