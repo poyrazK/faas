@@ -336,3 +336,55 @@ func TestStoreLogins(t *testing.T) {
 		t.Fatalf("a failed issue stored keys %v, %v", keys, err)
 	}
 }
+
+// The operator re-seal pages every key and login and swaps a seal only while
+// the row still holds the one it read, so a rotation or a revocation made
+// meanwhile wins (ADR-20261016151947, at-rest binding, release 2).
+func TestStoreResealSwapsOnlyTheSealItRead(t *testing.T) {
+	pool := open(t)
+	store := livekeys.New(pool)
+	ctx := context.Background()
+	login := &livekeys.Login{Sealed: []byte("sealed-login"), Recipient: recipient, Identity: "gregale_live_ab12", Slot: "gregale_live_db"}
+	if err := store.Enable(ctx, account, dbID, key("aaaaaaaaaaaaaaaa"), func(context.Context) (*livekeys.Login, error) { return login, nil }); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.Rotate(ctx, account, dbID, key("bbbbbbbbbbbbbbbb"), time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	keys, err := store.SealedKeysAfter(ctx, "", 1)
+	if err != nil || len(keys) != 1 || keys[0].ID != "aaaaaaaaaaaaaaaa" || keys[0].DatabaseID != dbID || string(keys[0].Blob) != "sealed-aaaaaaaaaaaaaaaa" || keys[0].Recipient != recipient {
+		t.Fatalf("first key page = %+v, %v", keys, err)
+	}
+	next, err := store.SealedKeysAfter(ctx, keys[0].ID, 10)
+	if err != nil || len(next) != 1 || next[0].ID != "bbbbbbbbbbbbbbbb" {
+		t.Fatalf("second key page = %+v, %v; want the retiring and the active key across pages", next, err)
+	}
+	if swapped, err := store.ResealKey(ctx, keys[0], []byte("bound-a")); err != nil || !swapped {
+		t.Fatalf("re-seal key = %v, %v", swapped, err)
+	}
+	if swapped, err := store.ResealKey(ctx, keys[0], []byte("bound-again")); err != nil || swapped {
+		t.Fatalf("re-seal from a stale read = %v, %v; want it refused", swapped, err)
+	}
+	ring, err := store.Ring(ctx, dbID)
+	if err != nil || len(ring) != 2 || string(ring[0].Sealed) != "bound-a" || string(ring[1].Sealed) != "sealed-bbbbbbbbbbbbbbbb" {
+		t.Fatalf("ring after re-seal = %+v, %v", ring, err)
+	}
+
+	logins, err := store.SealedLoginsAfter(ctx, "", 10)
+	if err != nil || len(logins) != 1 || logins[0].ID != dbID || logins[0].DatabaseID != dbID || string(logins[0].Blob) != "sealed-login" {
+		t.Fatalf("login page = %+v, %v", logins, err)
+	}
+	if rest, err := store.SealedLoginsAfter(ctx, logins[0].ID, 10); err != nil || len(rest) != 0 {
+		t.Fatalf("login page after the last = %+v, %v", rest, err)
+	}
+	if swapped, err := store.ResealLogin(ctx, logins[0], []byte("bound-login")); err != nil || !swapped {
+		t.Fatalf("re-seal login = %v, %v", swapped, err)
+	}
+	if swapped, err := store.ResealLogin(ctx, logins[0], []byte("bound-again")); err != nil || swapped {
+		t.Fatalf("re-seal login from a stale read = %v, %v; want it refused", swapped, err)
+	}
+	dbs, err := store.LiveDatabases(ctx, []string{"native-a"})
+	if err != nil || len(dbs) != 1 || string(dbs[0].Sealed) != "bound-login" {
+		t.Fatalf("discovered after re-seal = %+v, %v", dbs, err)
+	}
+}

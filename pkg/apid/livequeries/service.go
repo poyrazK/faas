@@ -89,7 +89,7 @@ func (s *Service) Enable(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !ok || !s.supported(w, db) {
 		return
 	}
-	secret, key, ok := s.newKey(w, r)
+	secret, key, ok := s.newKey(w, r, db.ID)
 	if !ok {
 		return
 	}
@@ -124,7 +124,7 @@ func (s *Service) Rotate(w http.ResponseWriter, r *http.Request, acct state.Acco
 	if !ok {
 		return
 	}
-	secret, key, ok := s.newKey(w, r)
+	secret, key, ok := s.newKey(w, r, db.ID)
 	if !ok {
 		return
 	}
@@ -195,8 +195,9 @@ func (s *Service) supported(w http.ResponseWriter, db managedpostgres.Database) 
 	return true
 }
 
-// newKey generates a secret and seals it for livequeryd.
-func (s *Service) newKey(w http.ResponseWriter, r *http.Request) (string, livekeys.NewKey, bool) {
+// newKey generates a secret and seals it for livequeryd, bound to its
+// database (livekeys.KeySealNamespaceFor) so it opens for no other.
+func (s *Service) newKey(w http.ResponseWriter, r *http.Request, databaseID string) (string, livekeys.NewKey, bool) {
 	if s.Recipient == nil {
 		api.WriteProblem(w, unavailable())
 		return "", livekeys.NewKey{}, false
@@ -206,7 +207,7 @@ func (s *Service) newKey(w http.ResponseWriter, r *http.Request) (string, liveke
 		var parsed seal.Secret
 		if parsed, err = seal.ParseSecret(secret); err == nil {
 			var sealed []byte
-			if sealed, err = secretbox.SealBytes(s.Recipient, livekeys.SealNamespace, []byte(secret), 256); err == nil {
+			if sealed, err = secretbox.SealBytes(s.Recipient, livekeys.KeySealNamespaceFor(databaseID), []byte(secret), livekeys.KeyMaxBytes); err == nil {
 				return secret, livekeys.NewKey{KID: parsed.KID, Sealed: sealed, Recipient: s.Recipient.String()}, true
 			}
 		}
@@ -216,7 +217,8 @@ func (s *Service) newKey(w http.ResponseWriter, r *http.Request) (string, liveke
 }
 
 // issueLogin issues db's live login and seals its connection string for
-// livequeryd, or returns nil when db's provider issues none.
+// livequeryd, bound to db (livekeys.LoginSealNamespaceFor), or returns nil
+// when db's provider issues none.
 func (s *Service) issueLogin(ctx context.Context, db managedpostgres.Database) (*livekeys.Login, error) {
 	slot := schemalog.Slot(db.ID)
 	live, ok, err := s.Databases.IssueLiveLogin(ctx, db, slot)
@@ -231,7 +233,7 @@ func (s *Service) issueLogin(ctx context.Context, db managedpostgres.Database) (
 	if err != nil {
 		return nil, &loginError{err}
 	}
-	sealed, err := secretbox.SealBytes(s.Recipient, livekeys.LoginSealNamespace, []byte(dsn), 4096)
+	sealed, err := secretbox.SealBytes(s.Recipient, livekeys.LoginSealNamespaceFor(db.ID), []byte(dsn), livekeys.LoginMaxBytes)
 	if err != nil {
 		return nil, err
 	}
