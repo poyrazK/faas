@@ -41,6 +41,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/incidents"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
 	"github.com/onebox-faas/faas/pkg/apid/livequeries"
+	"github.com/onebox-faas/faas/pkg/apid/logerasure"
 	"github.com/onebox-faas/faas/pkg/apid/logsearch"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/mcpadmission"
@@ -214,6 +215,9 @@ type server struct {
 	managedPostgresReconciler     *managedpostgres.Reconciler
 	managedPostgresBindings       *managedpostgres.BindingService
 	managedPostgresCutovers       *managedpostgres.CutoverService
+	// logArchive reaches the runtime-log archive bucket; nil when this apid
+	// has none configured. The grace sweep erases archived logs through it.
+	logArchive logerasure.Objects
 	// databaseSwitchDrainOverride feeds the database switch worker drain
 	// evidence on stores without schedd's drain plans (tests).
 	databaseSwitchDrainOverride      state.DatabaseSwitchDrainStore

@@ -2484,6 +2484,13 @@ const (
 	ObjectUploadMinBytesPerSecond = 8 << 10
 )
 
+// ProjectWorkloadDefaultRAMMB is the RAM a project service gets when its
+// Compose file declares no memory (deploy.resources.limits.memory or
+// mem_limit). It is also the store's floor for an app created without RAM.
+// Standalone apps default to the plan's RAM instead; the project plan shows
+// which services start at this default (Hunt 14 H14-36).
+const ProjectWorkloadDefaultRAMMB = 128
+
 // App CPU is expressed as sustained millicores enforced by cgroup v2 cpu.max.
 // Keep the first release deliberately small: it lets customers right-size
 // CPU-bound behavior without changing plan capacity or billing semantics.
@@ -7169,6 +7176,11 @@ const (
 	// quota/limit lives in this one table" rule, never inline at the
 	// point of use.
 	MaxAppManifestStopGracePeriod = 5 * time.Minute
+
+	// MaxDockerHubMirrors bounds the operator's Docker Hub mirror list
+	// (DockerHubMirrorsEnv, ADR-20261025114554): every miss costs a round
+	// trip before the next mirror or Docker Hub itself is tried.
+	MaxDockerHubMirrors = 4
 
 	// ColdBootReadyWindowS is how long an app may take to become ready
 	// on any cold boot: the spec §6.1 COLD_BOOTING budget the scheduler's

@@ -693,6 +693,20 @@ groups:
           summary: "Non-payment deletion is blocked for suspended accounts ({{ $labels.reason }})"
           description: "The dunning sweep cannot move suspended accounts past the non-payment deadline to deleted_pending because a deletion guard holds (managed_postgres_databases: the account still owns live managed PostgreSQL databases; shared_app_ownership: company apps still reference it). The accounts stay suspended, their provider databases keep running and erasure does not start. meterd logs each one as 'meter: non-payment deletion blocked'."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasDunningDeletionBlocked.md"
+      # apid's grace sweep sets this gauge every tick (60 s). A day of holds
+      # leaves most of the DPA's 30-day deletion window to fix the cause.
+      - alert: FaasAccountErasureDeferred
+        expr: max(apid_account_grace_deferred_accounts) > 0
+        for: 24h
+        labels:
+          severity: warn
+          component: apid
+          family: account_lifecycle
+          public_status: internal
+        annotations:
+          summary: "Expired account deletions are held by unfinished external cleanup"
+          description: "{{ $value }} account(s) are past their deletion grace but the grace sweep keeps their rows because external cleanup (object buckets, managed PostgreSQL, archived runtime logs) is not finished. apid logs each one as 'grace: external cleanup deferred' with the failing step. The DPA promises erasure within 30 days of the grace ending."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasAccountErasureDeferred.md"
 
   - name: postgres_capacity
     interval: 30s

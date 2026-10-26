@@ -55,6 +55,10 @@ type Config struct {
 	Region         string
 	SpoolDir       string
 	MaxPutBytes    int64
+	// UploadGrants serves ?gregale-upload= grant uploads. Nothing issues
+	// grants yet, so the path stays off: an unauthenticated request then never
+	// reaches the grant store, and a stray grant row authorizes nothing.
+	UploadGrants bool
 	// MaxConcurrentPuts bounds local disk consumed by authenticated uploads
 	// waiting to be verified or forwarded. Zero selects a conservative default.
 	MaxConcurrentPuts int
@@ -79,6 +83,7 @@ type Handler struct {
 	region          string
 	spoolDir        string
 	maxPutBytes     int64
+	uploadGrants    bool
 	putSlots        chan struct{}
 	slotMu          sync.Mutex
 	accountSlots    map[string]int
@@ -173,7 +178,7 @@ func New(c Config) (*Handler, error) {
 		registry: c.Registry, store: c.Store, requestMetrics: c.RequestMetrics, openSecret: c.OpenSecret, client: c.HTTPClient,
 		multipartStore: multipartStore(c.Store),
 		enabled:        c.Enabled, host: strings.ToLower(c.Host), region: c.Region, spoolDir: c.SpoolDir,
-		maxPutBytes: c.MaxPutBytes, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
+		maxPutBytes: c.MaxPutBytes, uploadGrants: c.UploadGrants, putSlots: make(chan struct{}, c.MaxConcurrentPuts),
 		maxSpoolBytes: c.MaxSpoolBytes, minSpoolFree: c.MinSpoolFreeBytes,
 		transferTimeout: c.Registry.TransferTimeout(),
 		spoolAvailable:  func() (uint64, error) { return availableSpoolBytes(c.SpoolDir) },
@@ -423,7 +428,7 @@ func parsePath(escapedPath string) (bucket, key string, hasBucket, hasKey bool, 
 		return bucket, "", true, false, nil
 	}
 	key, err = url.PathUnescape(parts[1])
-	if err != nil || !objectstorage.ValidKey(key) {
+	if err != nil || !objectstorage.ValidRequestKey(key) {
 		return "", "", false, false, errors.New("invalid key")
 	}
 	return bucket, key, true, true, nil

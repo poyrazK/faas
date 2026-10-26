@@ -234,9 +234,13 @@ Every step is dark until the manifest turns it on:
    `APP_EDGE_HOSTS` (exact hostnames) resolve to `APP_EDGE_ORIGIN_HOSTNAME`,
    a proxied in-zone CNAME to the tunnel, and every other host keeps the
    control-plane origin. The pilot is that list with one test app; rollback
-   is removing it. Moving the wildcard needs the Worker to tell app hosts
-   from platform hosts (the §3 split list); the cutover steps are in
-   `docs/runbooks/AppEdgeCutover.md`.
+   is removing it. `APP_EDGE_HOSTS = "*"` then moves every app host: the
+   §3 split is the app-name rule itself (one label that `pkg/api` accepts as
+   a valid, unreserved app slug), mirrored in the Worker's `app-hosts.json`
+   and kept equal to Go by a test, rather than a list of platform hosts. A
+   reserved name can never be an app, so every platform host, including ones
+   added later, stays on the control plane once it is reserved. The cutover
+   steps are in `docs/runbooks/AppEdgeCutover.md`.
 
 The OVH launch (ADR-1344 §8) turns it on from day one. Whether the GCP beta
 moves first is decided after the pilot.

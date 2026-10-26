@@ -412,6 +412,12 @@ every apply and replace values set with `gregale app <slug> --ram` and the like;
 file does not declare keep the app's. Reservations and the other `deploy` keys
 are warned.
 
+A new service whose file declares no memory starts with 128 MB
+(`ProjectWorkloadDefaultRAMMB`), not the plan's RAM a standalone app gets. The
+project plan marks such services `memory=128MB (default)` and lists them under
+"Starts with the default 128 MB". Node and Python services often need more, so
+declare `memory`, or raise it with `gregale app <slug> --ram` after the deploy.
+
 `extends` and top-level `include` are resolved as Compose resolves them
 ([ADR-20261019190527](adr/20261019190527-compose-extends-and-include.md)):
 
@@ -448,7 +454,8 @@ The scan reports every other Compose key instead of dropping it silently:
 
 | Keys | Result |
 |---|---|
-| `build` (`context`, `dockerfile`, `args`, `target`, `secrets`), `command`, `cpus`, `depends_on`, `deploy` (`replicas`, `resources.limits.memory`, `resources.limits.cpus`), `entrypoint`, `env_file`, `environment`, `expose`, `healthcheck`, `image`, `mem_limit`, `ports`, `profiles`, `scale`, `secrets` (`environment:` sources), `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
+| `build` (`context`, `dockerfile`, `args`, `target`, `secrets`), `command`, `cpus`, `depends_on`, `deploy` (`replicas`, `resources.limits.memory`, `resources.limits.cpus`), `entrypoint`, `expose`, `healthcheck`, `image`, `mem_limit`, `ports`, `profiles`, `scale`, `secrets` (`environment:` sources), `stop_grace_period`, `stop_signal`, `user`, `working_dir`, `x-gregale-*` | Applied. |
+| `environment`, `env_file` | Names applied: the plan lists each one without a value under **Needs a value**. Plain `environment:` values are imported only with `x-gregale-env-import: true`, on a reviewed deploy; `env_file` values are never imported. See above. |
 | `container_name`, `init`, `stdin_open`, `tty`, `platform: linux/amd64`, `x-*` extensions | Ignored without a warning; they have no effect on a microVM service. |
 | `volumes`, `tmpfs` | Warning: no persistent volumes or bind mounts; each start gets a fresh filesystem. |
 | Other `deploy` keys (`restart_policy`, `placement`, `update_config`, `resources.reservations`, …), `cpu_shares`, `cpu_quota`, `cpuset`, `mem_reservation`, `memswap_limit` | Warning, with the reason for each. |
@@ -482,8 +489,8 @@ their keys: the managed resource replaces the container.
 | Snapshot restore | Restorable cache with cold-boot fallback; optional lifecycle callbacks | External connections and durable state require application recovery handling. |
 
 Availability is defined by the [capability matrix](capabilities.md), not by this
-compatibility table. In particular, container deployment is beta while
-companions and worker pools are preview.
+compatibility table. In particular, container deployment is generally
+available while companions and worker pools are preview.
 
 ## Image preflight
 
