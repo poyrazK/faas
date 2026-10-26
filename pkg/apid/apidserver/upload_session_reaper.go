@@ -78,10 +78,11 @@ func sweepUploadSessions(ctx context.Context, s *server, log *slog.Logger) {
 	}
 	// PR-1 fixup #5: sweep .part files for terminal-row sessions
 	// (status IN committed/cancelled/expired, last_patched_at
-	// < now() - 1h). The commit handler leaves .part in place
+	// past their grace: 24h for committed, 1h otherwise, never while the
+	// deployment is in flight). The commit handler leaves .part in place
 	// for builderd to consume; the cancel handler removes its
 	// .part at the same time it flips status='cancelled'; but
-	// neither has a 1h cleanup guarantee for committed rows.
+	// neither bounds a committed row by itself.
 	// Stale part sweep runs separately from the open-expired
 	// sweep so a partial failure in one does not block the
 	// other.

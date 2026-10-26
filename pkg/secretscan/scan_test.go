@@ -378,3 +378,20 @@ func TestSeverityString(t *testing.T) {
 		t.Errorf("invalid Severity = %q, want %q", got, "unknown")
 	}
 }
+
+// TestBlockingKeepsCredentialFormatsOnly pins ADR-20261026120000: servers
+// refuse source only for High findings; heuristics stay advisory.
+func TestBlockingKeepsCredentialFormatsOnly(t *testing.T) {
+	findings := []Finding{
+		{File: "a.js", Provider: "high_entropy", Severity: SeverityMedium},
+		{File: "b.js", Provider: "stripe_test", Severity: SeverityMedium},
+		{File: "c.js", Provider: "aws_access", Severity: SeverityHigh},
+	}
+	got := Blocking(findings)
+	if len(got) != 1 || got[0].Provider != "aws_access" {
+		t.Fatalf("Blocking = %+v, want only aws_access", got)
+	}
+	if Blocking(findings[:2]) != nil {
+		t.Fatal("medium-only findings must not block")
+	}
+}
