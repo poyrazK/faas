@@ -23,5 +23,13 @@ export type AccountTraceWake = {
    * Closed reason for a restore that fell back to a cold boot, when one is reported.
    */
   restore_fallback_reason?: 'after_restore_failed';
+  /**
+   * True when the request resumed this wake's frozen instance instead of waiting for its boot. A thaw keeps the instance's original wake ID; method and ready_in_ms, which describe the original boot, are then omitted.
+   */
+  thawed?: boolean;
+  /**
+   * Milliseconds the thaw took from the wake request to the answer, when thawed.
+   */
+  thaw_ms?: number;
 };
 

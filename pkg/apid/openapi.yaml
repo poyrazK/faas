@@ -113807,6 +113807,8 @@ components:
         ready_in_ms: { type: integer, format: int32, minimum: 0, description: "Milliseconds from boot start to ready; omitted until the wake completed." }
         planned_method: { type: string, description: "The method schedd planned when vmmd ran another one, for example restore on a wake that fell back to a cold boot. Absent otherwise." }
         restore_fallback_reason: { type: string, enum: [after_restore_failed], description: "Closed reason for a restore that fell back to a cold boot, when one is reported." }
+        thawed: { type: boolean, description: "True when the request resumed this wake's frozen instance instead of waiting for its boot. A thaw keeps the instance's original wake ID; method and ready_in_ms, which describe the original boot, are then omitted." }
+        thaw_ms: { type: integer, format: int32, minimum: 0, description: "Milliseconds the thaw took from the wake request to the answer, when thawed." }
 
     AccountTraceInvocation:
       type: object
