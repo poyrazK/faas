@@ -366,6 +366,7 @@ request started over.
 
 The leader now runs under `max(TTL, cold-boot budget + 10 s)`, 45 s in
 production. Followers still wait on their own contexts, so a gateway gives
-up at its 30 s hold while the boot completes for the next request. The
-budget stays under the main loop's 60 s stall budget, where explicit app
-wakes run. `TestWakeLeaderBudgetCoversTheColdBoot` pins both bounds.
+up at its 30 s hold while the boot completes for the next request.
+Explicit app wakes run on the scheduler's work pool (ADR-191 amendment
+2026-10-26), so a longer leader holds no main-loop goroutine.
+`TestWakeLeaderBudgetCoversTheColdBoot` pins the bound.

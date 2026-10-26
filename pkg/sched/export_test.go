@@ -24,6 +24,7 @@ import (
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/nodereport"
 	"github.com/onebox-faas/faas/pkg/runtimeadmission"
@@ -275,6 +276,12 @@ func (e *Engine) XWakeLeaderBudget() time.Duration { return e.wakeLeaderBudget()
 const XEventFanoutSafetyTick = eventFanoutSafetyTick
 
 func (l *Loop) XRunEventFanoutSweep(ctx context.Context) { l.runEventFanoutSweep(ctx) }
+
+// XDispatchExplicitWake is Loop.Run's arm for app_wake and
+// runtime_config_restart deliveries.
+func (l *Loop) XDispatchExplicitWake(ctx context.Context, n db.Notification) {
+	l.dispatchExplicitWake(ctx, n)
+}
 
 // XRunEventRecipientSweep runs only the sweep's independent recipient stage.
 // adr: 614 — recipients are claimed in batches and unrouted claims released.
@@ -827,4 +834,27 @@ func (r *fakeNotifier) LastPayload(channel string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// WithPreWakeClockForTest starts a pre-wake clock with every stamp given.
+func WithPreWakeClockForTest(ctx context.Context, rpc, ensure, env, leader time.Time) context.Context {
+	return context.WithValue(ctx, preWakeClockKey{}, &preWakeClock{rpcStarted: rpc, ensureStarted: ensure, envReady: env, leader: leader})
+}
+
+// WithWakeStartedForTest is withWakeStarted.
+func WithWakeStartedForTest(ctx context.Context, at time.Time) context.Context {
+	return withWakeStarted(ctx, at)
+}
+
+// PreRPCWithPreWakeForTest is preRPCWithPreWake.
+func PreRPCWithPreWakeForTest(ctx context.Context, t events.PreRPCTimings, attempt time.Time) events.PreRPCTimings {
+	return preRPCWithPreWake(ctx, t, attempt)
+}
+
+// MarkPreWakeForTest stamps the ensure-started, environment-ready and leader
+// marks in order.
+func MarkPreWakeForTest(ctx context.Context) {
+	markPreWake(ctx, preWakeEnsureStarted)
+	markPreWake(ctx, preWakeEnvironmentReady)
+	markPreWake(ctx, preWakeLeader)
 }

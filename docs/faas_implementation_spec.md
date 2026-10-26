@@ -1855,7 +1855,7 @@ The `account_id="__other__"` series is the bounded overflow bucket — drill-dow
 
 **SLOs (public, on the status page):** API availability 99.5 % monthly; wake p95 < 1 s; build success (non-`user_error`) 99 %. Error budgets, not promises — single-node deployments (until Gate A) are stated honestly on the status page. The `faas_slo_monthly` recording group computes each as a rolling 30 d ratio (`faas_slo_api_availability:ratio_30d`, `faas_slo_wakes_within_1s:ratio_30d`, `faas_slo_build_success:ratio_30d`, plus `faas_slo_platform_wakes_within_350ms:ratio_30d` for the 350 ms platform gate), shown on the fleet dashboard; Prometheus keeps 35 d so the window is whole (ADR-20261023124955).
 
-Logs: journald → Loki free tier; tenant app stdout/stderr ring-buffered per instance (10 MB), surfaced via `GET /v1/apps/{app}/logs` (tail + follow).
+Logs: journald → Promtail on every host → Loki on the control plane, chunks in object storage, 14 d, behind `faas_obs_logs_enabled` (ADR-20261023124955; `docs/ops/logs.md`); tenant app stdout/stderr ring-buffered per instance (10 MB), surfaced via `GET /v1/apps/{app}/logs` (tail + follow).
 
 ### 12.4 Per-tenant noisy-customer gauge (issue #300, ADR-041)
 

@@ -36,6 +36,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/dashboard/stages"
 	"github.com/onebox-faas/faas/pkg/dashboard/views"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/middleware"
@@ -3067,7 +3068,7 @@ func (s *server) renderDeploymentDetail(w http.ResponseWriter, r *http.Request, 
 	alive := dep.DeploymentPreviewActive()
 	preview := dashboard.DeploymentPreviewURL{Alive: alive}
 	if alive {
-		suffix := wire.DeployWildcardSuffix
+		suffix := hostidentity.DeploySuffix()
 		if suffix != "" {
 			ord, ordErr := s.store.DeploymentOrdinal(ctx, app.ID, dep.ID)
 			if ordErr == nil {

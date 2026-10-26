@@ -1007,6 +1007,10 @@ canary-artifact-retention-test: ## Test bounded validation-artifact inventory, s
 serving-probe-test: ## Test the compute-node serving probe (ADR-20261023124955 §5)
 	python3 scripts/ops/faas_serving_probe_test.py
 
+.PHONY: cgroup-metrics-test
+cgroup-metrics-test: ## Test the per-slice cgroup metrics collector (ADR-20261023124955)
+	python3 scripts/ops/faas_cgroup_metrics_test.py
+
 .PHONY: gcp-public-beta-policy-test
 gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM transformer
 	python3 scripts/ops/gcp_public_beta_audit_test.py
@@ -1127,10 +1131,6 @@ verify-fleet: ## Strict post-activation verification: every required daemon enab
 .PHONY: object-storage-reconcile
 object-storage-reconcile: ## After a PostgreSQL restore: compare the object bucket catalog with each provider, read-only; ACCEPT=1 once findings are handled (ADR 20261025111015)
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/object_storage_reconcile.yml $(if $(ACCEPT),-e faas_object_storage_reconcile_accept=true)
-
-.PHONY: bootstrap-observability
-bootstrap-observability: ## Deploy the off-host Loki backend and FaaS Promtail shippers
-	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/site.yml
 
 .PHONY: manifest-scale-check
 manifest-scale-check: ## Validate manifest/Ansible generation at 1, 10, 100, and 1000 compute nodes

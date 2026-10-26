@@ -67,6 +67,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/grpcproblem"
 	"github.com/onebox-faas/faas/pkg/gateway/ingress"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/oauthmetadata"
 	"github.com/onebox-faas/faas/pkg/objectstorage"
@@ -248,6 +249,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 		}
 		log.Info("gatewayd-public: compute-node app edge (ADR-1343)")
 	}
+	// ADR-20261026100000: the platform, apps, deployment-preview and alias
+	// domains. Only FAAS_APPS_DOMAIN set keeps the shared layout.
+	domains, err := hostidentity.DomainsFromEnv(os.Getenv, hostidentity.DefaultAppsDomain, hostidentity.FileConfig{})
+	if err != nil {
+		return fmt.Errorf("gatewayd-public: %w", err)
+	}
+	hostidentity.Configure(domains)
 
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): capture FAAS_NODE_NAME
 	// before any control-plane handshake so the boot log carries the
@@ -567,7 +575,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	traceMux := http.NewServeMux()
 	var tenantRoot http.Handler
-	installPublicStaticRoutes(traceMux, platformAppsDomain(), func() http.Handler { return tenantRoot })
+	installPublicStaticRoutes(traceMux, domains.Platform, func() http.Handler { return tenantRoot })
 	traceMux.Handle("/v1/traces/", traceSetup.Handler)
 	if edgeMode == edgeModeCompute {
 		traceMux.Handle(otelTracesPath, edgeForward)
@@ -648,13 +656,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if edgeMode == edgeModeCompute {
 		// No storage credentials here: upload routes and public bucket
 		// reads go to the control plane's edge.
-		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, pgStore, platformAppsDomain(), log)
+		rootHandler, err = computeEdgeRoot(controlPlaneHandler, edgeForward, pgStore, domains, log)
 		if err != nil {
 			return fmt.Errorf("gatewayd-public: compute edge routes: %w", err)
 		}
 	} else if publicStorageRegistry != nil {
 		rootHandler, err = publicObjectStorageRoot(pgStore, publicStorageRegistry, s3Flag.Load,
-			os.Getenv("FAAS_APPS_DOMAIN"), controlPlaneHandler, log)
+			domains, controlPlaneHandler, log)
 		if err != nil {
 			return err
 		}
@@ -682,7 +690,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	// of where the slowness lives.
 	edgeRoot := http.Handler(traceMux)
 	if edgeMode == edgeModeCompute {
-		edgeRoot = appHostsOnly(traceMux, platformAppsDomain(), edgeMetricsSet.misdirected)
+		edgeRoot = appHostsOnly(traceMux, domains, edgeMetricsSet.misdirected)
 	}
 	publicHandler := budgetCfg.Middleware(otelhttp.NewHandler(
 		trace.WithTraceIDHeader(edgeRoot), "gatewayd-public.handler"))
@@ -692,10 +700,13 @@ func run(ctx context.Context, log *slog.Logger) error {
 	publicHandler = gateway.RequestIDMiddleware(publicHandler)
 	// ADR-830: forced headers on Gregale-owned hosts; on customer hosts the
 	// platform values are defaults the proxy hop replaces with the app's.
-	appsDomain := platformAppsDomain()
 	publicHandler = httpsec.ForSurface(
-		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHost(r.Host, appsDomain) },
+		func(r *http.Request) httpsec.Surface { return httpsec.ClassifyHostIn(r.Host, domains) },
 		true, publicHandler)
+	// An alias apps domain host becomes its canonical host here, before
+	// host classification, routing and every host-keyed policy; in redirect
+	// mode it is answered here and never reaches tenant code.
+	publicHandler = aliasHosts(publicHandler, domains)
 	if edgeMode == edgeModeCompute {
 		// Outermost, so every layer below sees the canonical client address.
 		publicHandler = cloudflareClientIP(publicHandler, trustedIngressCIDRs)
@@ -719,7 +730,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	controlMux := gateway.ControlMuxWithExtra(gatewayMetrics,
 		prometheus.Gatherers{opsMetrics.Registry(), budgetReg, tcpMetrics.Registry(), udpMetrics.Registry(), tlsAskReg, edgeMetricsSet.registry},
 		probe.ReadyFunc(), drainTracker)
-	installOnDemandTLSAsk(controlMux, pgStore, platformAppsDomain(), tlsAskReg, log)
+	installOnDemandTLSAsk(controlMux, pgStore, domains, tlsAskReg, log)
 	controlAddr := envOr("FAAS_PUBLIC_CONTROL_ADDR", defaultPublicControlAddr)
 	listenAddr := envOr("FAAS_PUBLIC_LISTEN_ADDR", defaultListenAddr)
 	// Multi-host safety cluster PR-8 (audit F8-A): in multi-host
@@ -763,13 +774,21 @@ func run(ctx context.Context, log *slog.Logger) error {
 	if err := startHAComponents(handoffCtx, log, pool, pgStore, inflight, envOr("FAAS_NODE_NAME", ""), envOr("FAAS_NODE_PUBLIC_IP", listenAddr), opsMetrics); err != nil {
 		return err
 	}
+	// Claim every listening socket before reporting ready: a hand-off
+	// successor's readiness closes the sockets its predecessor passed that
+	// nothing has claimed, and binding one of those addresses afterwards
+	// fails while the predecessor still holds it.
+	listeners, err := openEdgeListeners(publicSrv.Addr, strings.TrimSpace(os.Getenv(publicPrivateListenEnv)), controlSrv.Addr)
+	if err != nil {
+		return err
+	}
 	notifyStop := wire.NotifyReadyWhen(ctx, probe.ReadyFunc())
 	defer notifyStop()
 	defer wire.StartWatchdog(ctx, wire.NewLiveness(), opsMetrics, log)()
 
 	// Drain orchestration.
 	checks := handoffChecks(publicSrv.Addr, controlSrv.Addr, edgeMode == edgeModeCompute)
-	if err := runDrain(ctx, log, publicSrv, controlSrv, strings.TrimSpace(os.Getenv(publicPrivateListenEnv)), pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain, endHandoffWork, checks); err != nil {
+	if err := runDrain(ctx, log, publicSrv, controlSrv, listeners, pgProbeSig, pgStop, traceSetup, drainTracker, gatewayMetrics, rawIngressDrain, endHandoffWork, checks); err != nil {
 		return err
 	}
 	return nil
@@ -782,16 +801,16 @@ func run(ctx context.Context, log *slog.Logger) error {
 // server must publish its own RFC 8414 metadata, and RFC 9116 security.txt is
 // per origin. tenant resolves the handler that serves those hosts; it is a
 // func because the catch-all is built after these routes are mounted.
-func installPublicStaticRoutes(mux *http.ServeMux, appsDomain string, tenant func() http.Handler) {
-	mux.Handle("/.well-known/security.txt", platformHostOnly(securitytxt.Handler(), appsDomain, tenant))
-	mux.Handle(oauthmetadata.Path, platformHostOnly(oauthmetadata.Handler(), appsDomain, tenant))
+func installPublicStaticRoutes(mux *http.ServeMux, platformDomain string, tenant func() http.Handler) {
+	mux.Handle("/.well-known/security.txt", platformHostOnly(securitytxt.Handler(), platformDomain, tenant))
+	mux.Handle(oauthmetadata.Path, platformHostOnly(oauthmetadata.Handler(), platformDomain, tenant))
 }
 
 // platformHostOnly serves platform on platform hosts and hands every other
 // Host to the tenant handler (404 when none is wired yet).
-func platformHostOnly(platform http.Handler, appsDomain string, tenant func() http.Handler) http.Handler {
+func platformHostOnly(platform http.Handler, platformDomain string, tenant func() http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if apid.IsPlatformHost(r.Host, appsDomain) {
+		if apid.IsPlatformHost(r.Host, platformDomain) {
 			platform.ServeHTTP(w, r)
 			return
 		}
@@ -942,11 +961,11 @@ func buildServers(listenAddr, controlAddr string, publicHandler http.Handler, co
 //     that same budget. A second SIGTERM cancels the drain immediately.
 //  5. The caller's deferred pgStop runs again as an idempotent safety net.
 //
-// privateAddr, when set, adds a second listener for publicSrv on the control
-// plane's private address (ADR-1343 §2): compute-node edges forward
+// listeners.private, when set, is a second listener for publicSrv on the
+// control plane's private address (ADR-1343 §2): compute-node edges forward
 // credential-bound requests there. It shares publicSrv, so Shutdown closes and
 // drains it with the public listener.
-func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, privateAddr string, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error, endHandoffWork func(), checks []wire.HandoffCheck) error {
+func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http.Server, listeners edgeListeners, pgProbeSig *gateway.ReadySignal, pgStop func(), traceSetup *gateway.TraceSetup, drainTracker *drain.Tracker, gMetrics *gateway.Metrics, tcpDrain func(context.Context) error, endHandoffWork func(), checks []wire.HandoffCheck) error {
 	drainCtx, cancelDrain := context.WithCancel(context.Background())
 	defer cancelDrain()
 	forceCtx, forceCancel := context.WithCancel(context.WithoutCancel(ctx))
@@ -984,36 +1003,23 @@ func runDrain(ctx context.Context, log *slog.Logger, publicSrv, controlSrv *http
 	// shutdown deliver their requests instead of being closed unanswered.
 	publicDrain := wire.NewHTTPDrain(publicSrv)
 	errc := make(chan error, 3)
-	if privateAddr != "" {
-		privateLn, lerr := wire.ListenInherited("tcp", privateAddr)
-		if lerr != nil {
-			return fmt.Errorf("gatewayd-public: listen private %s: %w", privateAddr, lerr)
-		}
+	if listeners.private != nil {
 		go func() {
-			log.Info("gatewayd-public: private listening for compute edges", "addr", privateAddr)
-			if err := publicDrain.ServeErr(publicSrv.Serve(publicDrain.Listener(privateLn))); err != nil {
+			log.Info("gatewayd-public: private listening for compute edges", "addr", listeners.private.Addr().String())
+			if err := publicDrain.ServeErr(publicSrv.Serve(publicDrain.Listener(listeners.private))); err != nil {
 				errc <- err
 			}
 		}()
 	}
 	go func() {
-		l, lerr := publicListener(publicSrv.Addr)
-		if lerr != nil {
-			errc <- fmt.Errorf("gatewayd-public: listen %s: %w", publicSrv.Addr, lerr)
-			return
-		}
 		log.Info("gatewayd-public: public listening", "addr", publicSrv.Addr)
-		if err := publicDrain.ServeErr(publicSrv.Serve(publicDrain.Listener(l))); err != nil {
+		if err := publicDrain.ServeErr(publicSrv.Serve(publicDrain.Listener(listeners.public))); err != nil {
 			errc <- err
 		}
 	}()
-	controlLn, err := wire.ListenInherited("tcp", controlSrv.Addr)
-	if err != nil {
-		return fmt.Errorf("gatewayd-public: listen control %s: %w", controlSrv.Addr, err)
-	}
 	go func() {
 		log.Info("gatewayd-public: control listening", "addr", controlSrv.Addr)
-		if err := controlSrv.Serve(controlLn); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := controlSrv.Serve(listeners.control); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errc <- err
 		}
 	}()
@@ -1193,6 +1199,41 @@ func shutdownGatewayServers(ctx context.Context, log *slog.Logger, publicSrv *ht
 // connections wait in the kernel backlog for the replacement. Local/dev runs
 // without LISTEN_PID/LISTEN_FDS retain the normal net.Listen path.
 //
+// edgeListeners are gatewayd-public's listening sockets, opened before the
+// daemon reports ready. private is nil when no private address is set.
+type edgeListeners struct {
+	public, private, control net.Listener
+}
+
+// openEdgeListeners opens the public, optional private and control listeners,
+// claiming any socket a hand-off predecessor passed for them. On error it
+// closes the ones it already opened.
+func openEdgeListeners(publicAddr, privateAddr, controlAddr string) (edgeListeners, error) {
+	var l edgeListeners
+	var err error
+	closeAll := func() {
+		for _, ln := range []net.Listener{l.public, l.private, l.control} {
+			if ln != nil {
+				_ = ln.Close()
+			}
+		}
+	}
+	if privateAddr != "" {
+		if l.private, err = wire.ListenInherited("tcp", privateAddr); err != nil {
+			return edgeListeners{}, fmt.Errorf("gatewayd-public: listen private %s: %w", privateAddr, err)
+		}
+	}
+	if l.public, err = publicListener(publicAddr); err != nil {
+		closeAll()
+		return edgeListeners{}, fmt.Errorf("gatewayd-public: listen %s: %w", publicAddr, err)
+	}
+	if l.control, err = wire.ListenInherited("tcp", controlAddr); err != nil {
+		closeAll()
+		return edgeListeners{}, fmt.Errorf("gatewayd-public: listen control %s: %w", controlAddr, err)
+	}
+	return l, nil
+}
+
 // Issue #607 / ADR-068: this closes the remaining connection-refused window
 // between the existing Caddy edge and gatewayd-public's graceful drain.
 func publicListener(addr string) (net.Listener, error) {

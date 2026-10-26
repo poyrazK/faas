@@ -14,8 +14,8 @@ import (
 	"github.com/onebox-faas/faas/pkg/environmentgitops"
 	"github.com/onebox-faas/faas/pkg/environmentsync"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // This backend is owned by apid. It retains the existing policy barrier and
@@ -185,7 +185,7 @@ func (b *environmentGitOpsBackend) preparePolicies(ctx context.Context, lease st
 	convergences := []*edgerules.EdgeRuleConvergence{}
 	specs := []state.EnvironmentGitOpsEffectSpec{}
 	for _, app := range apps {
-		host := gateway.BuildEnvironmentHost(wire.DeployWildcardSuffix, lease.Source.EnvironmentID, app)
+		host := gateway.BuildEnvironmentHost(hostidentity.DeploySuffix(), lease.Source.EnvironmentID, app)
 		if host == "" {
 			for _, convergence := range convergences {
 				convergence.Abort(ctx)

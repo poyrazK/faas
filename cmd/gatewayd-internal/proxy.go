@@ -80,8 +80,9 @@ type apidProxy struct {
 	// hop; the gate's bypass path is a true no-op so the proxy
 	// hop is unchanged for reads and same-box writes.
 	writeGate http.Handler
-	// appsDomain scopes the reservation to platform hosts (ADR-480).
-	appsDomain string
+	// platformDomain scopes the reservation to platform hosts (ADR-480,
+	// ADR-20261026100000).
+	platformDomain string
 }
 
 // newApidProxy parses target and returns the wrapping handler.
@@ -108,7 +109,7 @@ func newApidProxyWithLogs(target string, next http.Handler, logsHandler http.Han
 // exists so single-node tests that don't care about the gate
 // don't have to thread a no-op handler through every
 // constructor call.
-func newApidProxyWithGate(target string, next, logsHandler, writeGate http.Handler, appsDomain string, log *slog.Logger) http.Handler {
+func newApidProxyWithGate(target string, next, logsHandler, writeGate http.Handler, platformDomain string, log *slog.Logger) http.Handler {
 	if target == "" || log == nil {
 		return next
 	}
@@ -122,12 +123,12 @@ func newApidProxyWithGate(target string, next, logsHandler, writeGate http.Handl
 		"write_gate", writeGate != nil,
 	)
 	return &apidProxy{
-		target:      u,
-		next:        next,
-		logsHandler: logsHandler,
-		writeGate:   writeGate,
-		appsDomain:  appsDomain,
-		log:         log,
+		target:         u,
+		next:           next,
+		logsHandler:    logsHandler,
+		writeGate:      writeGate,
+		platformDomain: platformDomain,
+		log:            log,
 	}
 }
 
@@ -158,7 +159,7 @@ func (a *apidProxy) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// ADR-480: on an app, preview or customer host the platform paths
 	// belong to the app. The compute-owned log stream above stays on every
 	// host because the CLI and dashboard address it that way.
-	if isApidPath(r.URL.Path) && apid.IsPlatformHost(r.Host, a.appsDomain) {
+	if isApidPath(r.URL.Path) && apid.IsPlatformHost(r.Host, a.platformDomain) {
 		// Tier A9 / ADR-084: route every apid-bound
 		// request through the standby write-redirect
 		// gate BEFORE the proxy hop. The gate's

@@ -120,8 +120,8 @@ func TestWakeReplacesANodeTheDurableReservationFindsFull(t *testing.T) {
 }
 
 // A coordinated wake's leader must outlive the cold-boot budget a snapshot
-// wake may spend after a refused restore (ADR-640), and still return inside
-// the main loop's stall budget, where explicit app wakes run.
+// wake may spend after a refused restore (ADR-640), and never be shorter than
+// the wake queue's hold.
 func TestWakeLeaderBudgetCoversTheColdBoot(t *testing.T) {
 	f := newFailoverFleet(t, 1, 1024, func(string) error { return nil })
 	got := f.e.XWakeLeaderBudget()
@@ -130,8 +130,5 @@ func TestWakeLeaderBudgetCoversTheColdBoot(t *testing.T) {
 	}
 	if hold := time.Duration(api.WakeQueueTTLSeconds) * time.Second; got < hold {
 		t.Fatalf("leader budget %s is shorter than the %s wake queue hold", got, hold)
-	}
-	if got >= sched.MainLoopBudget {
-		t.Fatalf("leader budget %s reaches the %s main loop stall budget", got, sched.MainLoopBudget)
 	}
 }

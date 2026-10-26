@@ -1,0 +1,64 @@
+---
+# The control domain (ADR 20261022111812). schedd, on control-plane and
+# compute hosts alike, is the only reader of the cluster signing key, which
+# it uses to mint internal service tokens. gregalectl fleet-seal creates the
+# key; apid never writes it, so there is no writer drop-in and no write mode:
+# the key moves into the domain only through `gregalectl seal-domain migrate
+# --domain control`, once every schedd holds the identity.
+- name: seal_domains — require the control domain identity
+  ansible.builtin.assert:
+    that:
+      - faas_seal_domain_control_identity_src | length > 0
+    fail_msg: >-
+      Set faas_seal_domain_control_identity_src to the control.age from
+      `gregalectl seal-domain init --domain control`. Every host that runs
+      schedd stages it.
+
+# 0400 root:root. systemd hands the identity to schedd alone as a
+# credential; fleet-seal verify reads it as root at node join.
+- name: seal_domains — install the control domain identity
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_control_identity_src }}"
+    dest: /etc/faas/secrets/domains/control.age
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-schedd for seal domains
+
+- name: seal_domains — create the schedd drop-in directory
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-schedd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+
+- name: seal_domains — give schedd the control domain identity
+  ansible.builtin.template:
+    src: 60-faas-seal-domain-control-reader.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/60-faas-seal-domain-control.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-schedd for seal domains
+
+- name: seal_domains — restart schedd before proving the domain
+  ansible.builtin.meta: flush_handlers
+
+- name: seal_domains — prove this node opens the control domain probe
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - verify
+      - --domain
+      - control
+      - --publish
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --metrics-file
+      - "{{ faas_seal_domain_textfile_dir }}/faas_seal_domain_control.prom"
+      - --json
+  register: faas_seal_domain_control_verify
+  changed_when: (faas_seal_domain_control_verify.stdout | from_json).probe_written | default(false)

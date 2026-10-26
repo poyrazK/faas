@@ -67,8 +67,7 @@ const (
 
 	// wakeLeaderAdmissionAllowance is the leader's time for admission,
 	// layer verification and failover refusals before the boot budget
-	// starts. The main loop's 60 s stall budget assumes the cold-boot
-	// budget plus admission fits inside it (loop.go MainLoopBudget).
+	// starts.
 	wakeLeaderAdmissionAllowance = 10 * time.Second
 )
 
