@@ -1,5 +1,5 @@
 -- migration-compat: expand
--- filename: 20261026004017203_object_bucket_cors.sql
+-- filename: 20261026051220122_object_bucket_cors.sql
 --
 -- ADR-20261025202805: a customer's CORS rules for one bucket, written by apid
 -- and read by s3-gatewayd. A new table; the previous release never reads it.
