@@ -2,6 +2,7 @@
 package gateway
 
 import (
+	"errors"
 	"io"
 	"log/slog"
 	"net/http"
@@ -11,7 +12,10 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
+	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
 )
 
@@ -130,4 +134,76 @@ func TestPublicProxyServesAPlainN1Answer(t *testing.T) {
 	if rec.Code != http.StatusOK || rec.Body.String() != "hello from an older gateway" {
 		t.Fatalf("status=%d body=%q, want the N-1 answer served", rec.Code, rec.Body)
 	}
+}
+
+// An N-1 compute gateway marks a stream only with Streaming-Status; it never
+// sends the long-lived session header. While the edge forwards that node's
+// answers unverified, such a stream must outlive the public request budget as
+// it did on N-1, instead of being cut at 30 s. An N-shaped answer (it carries
+// a compute deadline) and an enforcing edge keep the strict rule.
+func TestPublicTrafficSecurityKeepsN1StreamsOpen(t *testing.T) {
+	const want = "data: one\n\ndata: two\n\n"
+	for _, tc := range []struct {
+		name     string
+		required bool
+		status   string
+		deadline bool
+		wantCode int
+		wantBody bool
+	}{
+		{"n-1 event stream", false, string(api.StreamingStatusStreaming), false, 200, true},
+		{"n-1 upgrade bypass", false, string(api.StreamingStatusUpgradeBypass), false, 200, true},
+		{"n-1 buffered answer", false, string(api.StreamingStatusAcceptJSONDowngrade), false, 200, false},
+		{"n answer with a compute deadline", false, string(api.StreamingStatusStreaming), true, 200, false},
+		{"every gateway stamps: unstamped stream", true, string(api.StreamingStatusStreaming), false, 503, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			registry := trafficrevocation.New(&gatewaySecurityStore{})
+			defer registry.Close()
+			compute := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.Header().Set(api.StreamingStatusHeader, tc.status)
+				if tc.deadline {
+					w.Header().Set(trafficResponseDeadlineHeader, strconv.FormatInt(time.Now().Add(time.Hour).UnixNano(), 10))
+				}
+				w.WriteHeader(http.StatusOK)
+				_, _ = io.WriteString(w, "data: one\n\n")
+				w.(http.Flusher).Flush()
+				time.Sleep(150 * time.Millisecond)
+				_, _ = io.WriteString(w, "data: two\n\n")
+			}))
+			defer compute.Close()
+			proxy := NewInternalReverseProxy(&stubDialer{server: compute}, &url.URL{Scheme: "http", Host: "compute"}, slog.Default(), false).
+				WithTrafficRevocations(registry).WithTrafficSecurityPeers(&fakeTrafficSecurityPeers{required: tc.required})
+			request := httptest.NewRequest(http.MethodGet, "http://app.test/events", nil)
+			ctx, cancel, _ := reqbudget.WithRemaining(request.Context(), 50*time.Millisecond, api.RequestBudgetMax, "forward", "GET:/events")
+			defer cancel()
+			rec := httptest.NewRecorder()
+			aborted := serveRecoveringAbort(proxy, rec, request.WithContext(ctx))
+			if rec.Code != tc.wantCode {
+				t.Fatalf("status=%d, want %d; body=%q", rec.Code, tc.wantCode, rec.Body)
+			}
+			if full := !aborted && rec.Body.String() == want; full != tc.wantBody {
+				t.Fatalf("full stream=%v (aborted=%v body=%q), want %v", full, aborted, rec.Body, tc.wantBody)
+			}
+			if rec.Header().Get(trafficResponseSessionHeader) != "" || rec.Header().Get(trafficResponseDeadlineHeader) != "" {
+				t.Fatalf("compute response controls leaked to the client: %v", rec.Header())
+			}
+		})
+	}
+}
+
+// serveRecoveringAbort reports whether the proxy aborted the response with
+// http.ErrAbortHandler, as it does when a body outlives its budget.
+func serveRecoveringAbort(h http.Handler, w http.ResponseWriter, r *http.Request) (aborted bool) {
+	defer func() {
+		if v := recover(); v != nil {
+			if err, ok := v.(error); !ok || !errors.Is(err, http.ErrAbortHandler) {
+				panic(v)
+			}
+			aborted = true
+		}
+	}()
+	h.ServeHTTP(w, r)
+	return false
 }
