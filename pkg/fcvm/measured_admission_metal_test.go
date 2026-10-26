@@ -1,7 +1,8 @@
 //go:build metal
 
 // adr: 909 — on a real node, measured admission admits more 1 GiB VMs than
-// reservations allow, and every admitted VM keeps serving through a burst.
+// reservations allow, through the durable per-node reservation too (ADR-909
+// amendment 1), and every admitted VM keeps serving through a burst.
 package fcvm_test
 
 import (
@@ -28,9 +29,12 @@ import (
 // starting an app on :8080 that answers /heavy, /alloc?mb= and /free) while a
 // sched.NodeLedger with measured admission, fed by the VMs' cgroup
 // memory.current, admits them against FAAS_TEST_ADMISSION_CEILING_MB (default
-// 8,593 MB, a 16 GB compute node). After a burst it checks pressure
-// eviction: SelectMemoryEvictions, given the VMs' real memory and a ceiling
-// just under it, brings the node back under 90% of that ceiling.
+// 8,593 MB, a 16 GB compute node). Each admission then takes the durable
+// per-node reservation, as schedd's instance insert does, with the allowance
+// the ledger grants for a measured node; that guard used to stop the node at
+// the bare ceiling. After a burst it checks pressure eviction:
+// SelectMemoryEvictions, given the VMs' real memory and a ceiling just under
+// it, brings the node back under 90% of that ceiling.
 func TestMetalMeasuredAdmissionDensity(t *testing.T) {
 	if os.Getenv("FAAS_TEST_MEASURED_ADMISSION") != "1" {
 		t.Skip("set FAAS_TEST_MEASURED_ADMISSION=1 (boots up to 16 1 GiB VMs)")
@@ -80,6 +84,8 @@ func TestMetalMeasuredAdmissionDensity(t *testing.T) {
 		defer mu.Unlock()
 		return sampleMB, sampleAt, !sampleAt.IsZero()
 	})
+	durable, node, appID, depID := durableReservationFixture(t, ceiling)
+	nodeID := node.ID
 
 	before := fcvm.MemAvailableMBForTest(t)
 	hosts := map[string]string{}
@@ -89,8 +95,15 @@ func TestMetalMeasuredAdmissionDensity(t *testing.T) {
 		measure()
 		id := fmt.Sprintf("madm-%d", i)
 		req := sched.Request{Instance: id, AppID: "app-" + id, Plan: api.PlanScale, RAMMB: 1024, VCPU: 2,
-			MaxConcurrency: 1, NodeID: "metal", NodeCeilingMB: ceiling}
+			MaxConcurrency: 1, NodeID: nodeID, NodeCeilingMB: ceiling}
 		if refusal = ledger.Admit(req); refusal != nil {
+			break
+		}
+		bound := state.WithNodeAdmission(ctx, state.NodeAdmission{NodeID: nodeID, Generation: node.LifecycleGeneration,
+			ReservationPercent: ledger.ReservationPercent(nodeID)})
+		if _, refusal = durable.CreateInstanceWithMode(bound, appID, depID, string(state.StateColdBooting), 1024, nodeID,
+			"", string(state.InstanceModeNormal)); refusal != nil {
+			ledger.Release(id)
 			break
 		}
 		if avail := fcvm.MemAvailableMBForTest(t); avail < minAvailableMB {
@@ -116,12 +129,19 @@ func TestMetalMeasuredAdmissionDensity(t *testing.T) {
 		time.Sleep(2 * time.Second)
 	}
 	reservationsAllow := ceiling / api.BillableRAMMB(1024)
-	t.Logf("measured admission: %d VMs on a %d MB ceiling (reservations allow %d); reservations %d MB, measured %d MB; "+
+	booked, err := durable.ComputeNodeUsedMB(ctx, nodeID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("measured admission: %d VMs on a %d MB ceiling (reservations allow %d); reservations %d MB (durable %d MB), measured %d MB; "+
 		"host MemAvailable %d -> %d MB, memory PSI %s; refusal: %v",
-		len(ids), ceiling, reservationsAllow, ledger.ResidentRAMForNode("metal"), measure(),
+		len(ids), ceiling, reservationsAllow, ledger.ResidentRAMForNode(nodeID), booked, measure(),
 		before, fcvm.MemAvailableMBForTest(t), memoryPSI(t), refusal)
 	if len(ids) <= reservationsAllow {
 		t.Fatalf("admitted %d VMs, want more than the %d reservations allow", len(ids), reservationsAllow)
+	}
+	if bound := int64(ceiling * api.MeasuredAdmissionMaxOvercommitPercent / 100); booked > bound {
+		t.Fatalf("durable reservations %d MB exceed the %d MB overcommit bound", booked, bound)
 	}
 
 	// Burst: as many VMs as the shared host can spare each allocate 320 MB,
@@ -156,10 +176,10 @@ func TestMetalMeasuredAdmissionDensity(t *testing.T) {
 	infos := make([]sched.InstanceInfo, 0, len(ids))
 	for _, id := range ids {
 		infos = append(infos, sched.InstanceInfo{Instance: id, AppID: "app-" + id, Plan: api.PlanScale, State: state.StateRunning,
-			RAMMB: 1024, NodeID: "metal", Started: started[id], LastRequest: lastRequest[id]})
+			RAMMB: 1024, NodeID: nodeID, Started: started[id], LastRequest: lastRequest[id]})
 	}
-	evict := sched.SelectMemoryEvictions(time.Now(), infos, map[string]int{"metal": used},
-		map[string]int{"metal": evictCeiling}, resident)
+	evict := sched.SelectMemoryEvictions(time.Now(), infos, map[string]int{nodeID: used},
+		map[string]int{nodeID: evictCeiling}, resident)
 	gone := map[string]bool{}
 	for _, id := range evict {
 		if err := m.Destroy(ctx, id); err != nil {
@@ -187,6 +207,36 @@ func TestMetalMeasuredAdmissionDensity(t *testing.T) {
 			mustGet(t, hosts[id]+"/free")
 		}
 	}
+}
+
+// durableReservationFixture is the instance store schedd inserts into, with
+// one node carrying the test's admission ceiling and one app to book against
+// it. MemStore applies the same per-node reservation as PostgreSQL's
+// admission_reserve_node (pkg/state pins the two together).
+func durableReservationFixture(t *testing.T, ceilingMB int) (*state.MemStore, state.ComputeNode, string, string) {
+	t.Helper()
+	ctx := context.Background()
+	store := state.NewMemStore()
+	node, err := store.CreateComputeNode(ctx, state.ComputeNode{Name: "metal-madm", TargetURL: "unix:///run/faas/vmmd.sock",
+		VPCPUs: 64, MemMB: 2 * ceilingMB, MaxConcurrency: 64, AdmissionCeilingMB: ceilingMB, VCPUBudget: 160, Active: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	acct, err := store.CreateAccount(ctx, "madm@example.com", api.PlanScale)
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, err := store.CreateApp(ctx, state.App{AccountID: acct.ID, Slug: "madm", RAMMB: 1024, MaxConcurrency: 64,
+		NodeID: node.ID, Status: state.AppActive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dep, err := store.CreateDeployment(ctx, state.Deployment{AppID: app.ID, Kind: state.DeploymentKindImage,
+		ImageDigest: "sha256:madm", Status: state.DeployLive})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return store, node, app.ID, dep.ID
 }
 
 // vmMemory is the VMs' cgroup memory.current, in total and per VM, in MB.
