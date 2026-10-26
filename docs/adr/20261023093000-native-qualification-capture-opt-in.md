@@ -120,8 +120,12 @@ ADR-568 requires.
     probe failed with `instance "…" not live`.
   - `NetnsFor` now also resolves a restored qualification target (restore
     method, not a Job) from that registry.
-  - This gives the probe the same reach a source candidate already has. The
-    serving index and routing are unchanged.
+  - On a native host the forward also needs the captured public forward
+    target. The restore now enables public forwarding on its network, as the
+    wake does, and captures the target after network setup.
+    `PublicForwardTarget` resolves it under the same rule.
+  - Together these give the probe the same reach a source candidate already
+    has. The serving index and routing are unchanged.
 - **What the receipt proves.** A capture made from different inputs cannot
   satisfy the restore request's expectation. Restore still refuses sidecars,
   so only the main workload re-attests.
@@ -148,7 +152,11 @@ ADR-568 requires.
   - Every restored guest's receipt arrived within 110–292 ms and was
     accepted.
   - The restored-graph smoke then failed with `not live`, as described above.
-- Pending: the n2 native GitOps journey with the restored-target lookup.
+- 2026-10-26, n2, rerun with 170e8ed217 (`NetnsFor` only):
+  - Restore and receipts passed again.
+  - The probe then failed with `public forward instance is not live`.
+- Pending: the n2 native GitOps journey with the restored public forward
+  target.
 
 ## Rejected alternatives
 

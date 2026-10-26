@@ -248,6 +248,9 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 	if err != nil {
 		return nil, err
 	}
+	// Like a source candidate's wake: the isolated smoke reaches a native
+	// target only through its captured public forward target.
+	nc.PublicForwarding = m.nativeVMM() != nil
 	if err := m.prepareNativeLease(bootCtx, lease); err != nil {
 		return nil, fmt.Errorf("native qualification restore: prepare target ownership: %w", err)
 	}
@@ -263,6 +266,10 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 	m.mu.Unlock()
 	if err := m.setupNetwork(bootCtx, nc); err != nil {
 		return nil, fmt.Errorf("native qualification restore: private network setup: %w", err)
+	}
+	publicTarget, err := m.capturePublicForwardTarget(bootCtx, nc)
+	if err != nil {
+		return nil, fmt.Errorf("native qualification restore: private forward target: %w", err)
 	}
 	if err := bootCtx.Err(); err != nil {
 		return nil, err
@@ -288,7 +295,7 @@ func (m *Manager) RestoreEnvironmentQualification(ctx context.Context, frame sta
 	if err := restorer.RestoreNativeQualification(bootCtx, frame, lease, req, [2]string{kernelPath, basePath}, m.fcVersion); err != nil {
 		return nil, fmt.Errorf("native qualification restore: dedicated native restore: %w", err)
 	}
-	inst := &Instance{Lease: lease, Net: nc, Method: WakeRestore, QualificationOnly: true, AppID: req.AppID, AccountID: req.AccountID,
+	inst := &Instance{publicForwardTarget: publicTarget, Lease: lease, Net: nc, Method: WakeRestore, QualificationOnly: true, AppID: req.AppID, AccountID: req.AccountID,
 		DeploymentID: req.DeploymentID, Plan: req.Plan, Port: req.Port, HealthcheckPath: req.HealthcheckPath,
 		StartupDeadlineS: req.StartupDeadlineS}
 	if err := m.stampNativeInstanceGeneration(inst); err != nil {
