@@ -6223,6 +6223,9 @@ type Querier interface {
 	ServiceRolloutBindingEnforced(ctx context.Context, db DBTX, arg ServiceRolloutBindingEnforcedParams) (bool, error)
 	ServiceRolloutRecipientReady(ctx context.Context, db DBTX, arg ServiceRolloutRecipientReadyParams) (bool, error)
 	ServiceRolloutRecipientTraffic(ctx context.Context, db DBTX, deploymentID pgtype.UUID) (int32, error)
+	// An app that never set wake-ahead gets state.ServiceWakeAheadDefault: on for
+	// a production project member under the project service policy
+	// (ADR-20261025105812).
 	ServiceWakeAheadEnabled(ctx context.Context, db DBTX, appID pgtype.UUID) (bool, error)
 	// Billable RAM of live instances against the active nodes' admission ceilings.
 	ServiceWakeAheadFleetResidency(ctx context.Context, db DBTX, overheadMb int32) (ServiceWakeAheadFleetResidencyRow, error)
