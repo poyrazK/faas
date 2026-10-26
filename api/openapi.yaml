@@ -9180,7 +9180,7 @@ paths:
         '204':
           description: Rules removed
         default:
-          description: Bucket not found or access denied
+          description: Bucket not found, or its CORS rules are not yours to remove
           content:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
