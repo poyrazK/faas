@@ -7532,8 +7532,8 @@ type PlanManaged struct {
 	// NotProvisionedReason.
 	Provision *PlanManagedProvision `json:"provision,omitempty"`
 	// NotProvisionedReason says why a Compose postgres service is not
-	// provided: unavailable, plan, quota, unsupported, configured or
-	// not_referenced. Empty for other datastores.
+	// provided: unavailable, plan, quota, unsupported, configured,
+	// not_referenced or permission. Empty for other datastores.
 	NotProvisionedReason string `json:"not_provisioned_reason,omitempty"`
 }
 

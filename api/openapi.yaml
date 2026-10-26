@@ -106147,7 +106147,7 @@ components:
           $ref: '#/components/schemas/PlanManagedProvision'
         not_provisioned_reason:
           type: string
-          enum: [unavailable, plan, quota, unsupported, configured, not_referenced]
+          enum: [unavailable, plan, quota, unsupported, configured, not_referenced, permission]
           description: "Why apply does not provide a Compose postgres service (ADR-20261025111824). Omitted for other datastores and when provision is set."
 
     PlanManagedProvision:
