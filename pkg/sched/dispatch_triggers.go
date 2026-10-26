@@ -356,6 +356,7 @@ func (l *Loop) runTriggerTick(ctx context.Context) {
 		l.log.Warn("sched trigger tick: list", "err", err)
 		return
 	}
+	l.evictTriggerPollers(triggers)
 	if len(triggers) == 0 {
 		return
 	}
@@ -435,9 +436,12 @@ func (l *Loop) dispatchOneTrigger(ctx context.Context, t sqlc.Trigger, store sto
 			return fmt.Errorf("load exclusive broker binding: %w", bindingErr)
 		}
 	}
-	// 1. Poller lookup. Cached on the Loop.
+	// 1. Poller lookup. Cached on the Loop. A poller that cannot be built
+	// (unreachable broker, credentials that do not open) is the trigger's
+	// health error too, so the customer sees it, not only the scheduler log.
 	poller, _, err := l.pollerForTrigger(t)
 	if err != nil {
+		l.recordTriggerConsumerHealth(ctx, store, t, PollResult{Error: err})
 		return err
 	}
 	if poller == nil {
@@ -2529,8 +2533,15 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 	if l.triggerPollers == nil {
 		l.triggerPollers = map[string]triggerSource{}
 	}
-	if p, ok := l.triggerPollers[t.ID.String()]; ok {
-		return p, true, nil
+	id, fingerprint := t.ID.String(), triggerPollerFingerprint(t)
+	if p, ok := l.triggerPollers[id]; ok {
+		if built, tracked := l.triggerPollerConfigs[id]; !tracked || built == fingerprint {
+			return p, true, nil
+		}
+		// The trigger changed since its poller was built: a rotated
+		// credential, a new topic or URL. Kafka joins its consumer group
+		// when the reader is built, so the old reader must leave.
+		l.closeTriggerPollerLocked(id)
 	}
 	pollerTrigger := t
 	openedConfig, err := triggerconfig.Open(api.TriggerKind(t.Kind), t.Config, l.triggerSecretIdentities)
@@ -2550,8 +2561,52 @@ func (l *Loop) pollerForTrigger(t sqlc.Trigger) (triggerSource, bool, error) {
 	if err != nil {
 		return nil, true, fmt.Errorf("construct %s trigger poller: %w", t.Kind, err)
 	}
-	l.triggerPollers[t.ID.String()] = src
+	l.triggerPollers[id] = src
+	if l.triggerPollerConfigs == nil {
+		l.triggerPollerConfigs = map[string]string{}
+	}
+	l.triggerPollerConfigs[id] = fingerprint
 	return src, true, nil
+}
+
+// triggerPollerFingerprint identifies the trigger config a poller is
+// built from (kind plus the stored, possibly sealed, config).
+func triggerPollerFingerprint(t sqlc.Trigger) string {
+	sum := sha256.Sum256(append([]byte(t.Kind+"\x00"), t.Config...))
+	return hex.EncodeToString(sum[:])
+}
+
+// closeTriggerPollerLocked closes and forgets a cached poller. Caller
+// holds triggerPollersMu.
+func (l *Loop) closeTriggerPollerLocked(id string) {
+	if p := l.triggerPollers[id]; p != nil {
+		if err := p.Close(); err != nil && l.log != nil {
+			l.log.Warn("sched trigger tick: close poller", "trigger_id", id, "err", err)
+		}
+	}
+	delete(l.triggerPollers, id)
+	delete(l.triggerPollerConfigs, id)
+}
+
+// evictTriggerPollers closes the pollers of triggers that are no longer
+// enabled (deleted, disabled, paused), so a Kafka reader leaves its
+// consumer group instead of holding partitions for the process lifetime.
+// Only pollers this loop built are evicted.
+func (l *Loop) evictTriggerPollers(enabled []sqlc.Trigger) {
+	l.triggerPollersMu.Lock()
+	defer l.triggerPollersMu.Unlock()
+	if len(l.triggerPollerConfigs) == 0 {
+		return
+	}
+	live := make(map[string]bool, len(enabled))
+	for i := range enabled {
+		live[enabled[i].ID.String()] = true
+	}
+	for id := range l.triggerPollerConfigs {
+		if !live[id] {
+			l.closeTriggerPollerLocked(id)
+		}
+	}
 }
 
 // BrokerLag implements BrokerLagReader on Loop. It queries active broker

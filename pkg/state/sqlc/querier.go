@@ -1171,6 +1171,9 @@ type Querier interface {
 	EventReceiptReplayHistory(ctx context.Context, db DBTX, arg EventReceiptReplayHistoryParams) ([]EventReceiptReplayHistoryRow, error)
 	EventReceiptReplaySummaries(ctx context.Context, db DBTX, arg EventReceiptReplaySummariesParams) ([]EventReceiptReplaySummariesRow, error)
 	EventReceiptReplayTarget(ctx context.Context, db DBTX, arg EventReceiptReplayTargetParams) (pgtype.UUID, error)
+	// The producer and each recipient's app, for company access on the account
+	// routes (ADR-20261025211616).
+	EventReceiptScope(ctx context.Context, db DBTX, arg EventReceiptScopeParams) (EventReceiptScopeRow, error)
 	EventRecipientAppendHistory(ctx context.Context, db DBTX, arg EventRecipientAppendHistoryParams) (int64, error)
 	EventRecipientBlockerTarget(ctx context.Context, db DBTX, arg EventRecipientBlockerTargetParams) (EventRecipientBlockerTargetRow, error)
 	EventRecipientBlockerWaiting(ctx context.Context, db DBTX, arg EventRecipientBlockerWaitingParams) ([]EventRecipientBlockerWaitingRow, error)
@@ -5935,6 +5938,8 @@ type Querier interface {
 	RetireCloneCheckpointPgTargetDatabase(ctx context.Context, db DBTX, arg RetireCloneCheckpointPgTargetDatabaseParams) (int64, error)
 	RetireEnvironmentQualificationExecution(ctx context.Context, db DBTX, arg RetireEnvironmentQualificationExecutionParams) (int64, error)
 	RetireGatewayTrafficRuntime(ctx context.Context, db DBTX, arg RetireGatewayTrafficRuntimeParams) (int64, error)
+	// A retired sibling is a retained stable revision, not a manual dark
+	// deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71).
 	RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg RetireLiveDeploymentSiblingsParams) (int64, error)
 	// The copy's binding takes the same key at once, and only one binding per
 	// key may be undeleted, so the source binding is deleted here. Its provider

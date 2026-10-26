@@ -241,7 +241,7 @@ func verifySealDomainRecipient(d sealdomain.Domain, dir, dsn, dbEnv string, json
 func runSealDomainMigrate(args []string) error {
 	fs := flag.NewFlagSet("seal-domain migrate", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
-	domainName := fs.String("domain", "", "seal domain to migrate (outbound, runtime, source, build, edge or alerting)")
+	domainName := fs.String("domain", "", "seal domain to migrate (outbound, runtime, source, build, edge, alerting or storage)")
 	dir := fs.String("dir", sealdomain.DefaultDir, "directory holding <domain>.age")
 	fleetKey := fs.String("fleet-key", secretbox.DefaultFleetKeyPath, "fleet.age identity (its .previous twin is loaded when present)")
 	hostKey := fs.String("host-key", secretbox.DefaultHostKeyPath, "host.age identity for legacy rows (optional)")
@@ -267,9 +267,9 @@ func runSealDomainMigrate(args []string) error {
 		return runRuntimeBindingPass(*dsn, *dbEnv, *dir, *fleetKey, *hostKey, *jsonOut || jsonOutput)
 	}
 	switch d {
-	case sealdomain.Outbound, sealdomain.Runtime, sealdomain.Source, sealdomain.Build, sealdomain.Edge, sealdomain.Alerting:
+	case sealdomain.Outbound, sealdomain.Runtime, sealdomain.Source, sealdomain.Build, sealdomain.Edge, sealdomain.Alerting, sealdomain.Storage:
 	default:
-		return fmt.Errorf("domain %s is not wired in this release; only outbound, runtime, source, build, edge and alerting migrate", d)
+		return fmt.Errorf("domain %s is not wired in this release; only outbound, runtime, source, build, edge, alerting and storage migrate", d)
 	}
 	fleet, err := secretbox.LoadHostKey(*fleetKey)
 	if err != nil {
@@ -291,6 +291,11 @@ func runSealDomainMigrate(args []string) error {
 	case sealdomain.Build:
 		if !*readersVerified {
 			return errors.New("re-sealed registry passwords no longer open with the fleet identity; pass --readers-verified once every imaged reports faas_seal_domain_loaded{domain=\"build\"} 1 and the previous release left the rollback window")
+		}
+		report, err = migrateDomain(ctx, store, d, *dir, *fleetKey, *hostKey)
+	case sealdomain.Storage:
+		if !*readersVerified {
+			return errors.New("re-sealed S3 credentials no longer open with the fleet identity, and an s3-gatewayd without the storage identity refuses to start over them; pass --readers-verified once every s3-gatewayd reports faas_seal_domain_loaded{domain=\"storage\"} 1 and the previous release left the rollback window")
 		}
 		report, err = migrateDomain(ctx, store, d, *dir, *fleetKey, *hostKey)
 	case sealdomain.Alerting:
@@ -426,6 +431,8 @@ func migrateDomain(ctx context.Context, store *state.PgStore, d sealdomain.Domai
 		return sealmigrate.MigrateEdge(ctx, store, domain, legacy)
 	case sealdomain.Alerting:
 		return sealmigrate.MigrateAlerting(ctx, store, domain, legacy)
+	case sealdomain.Storage:
+		return sealmigrate.MigrateStorage(ctx, store, domain, legacy)
 	}
 	return sealmigrate.MigrateOutbound(ctx, store, domain, legacy)
 }

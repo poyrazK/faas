@@ -87,7 +87,8 @@ func goMainPackageAt(dir string) bool {
 }
 
 // nestedServiceCount is how many services the project scanner finds below
-// root: workspace, convention and Compose workloads, not the root itself.
+// root: workspace, convention and Compose workloads and the commands of a Go
+// module (ADR-20261025134512), not the root itself.
 func nestedServiceCount(root string) int {
 	scan, err := reposcan.Scan(os.DirFS(root))
 	if err != nil {
@@ -95,7 +96,7 @@ func nestedServiceCount(root string) int {
 	}
 	n := 0
 	for _, workload := range scan.Workloads {
-		if (workload.RootDir != "" && workload.RootDir != ".") || workload.Tier == reposcan.TierCompose {
+		if (workload.RootDir != "" && workload.RootDir != ".") || workload.Tier == reposcan.TierCompose || workload.GoCommand != "" {
 			n++
 		}
 	}

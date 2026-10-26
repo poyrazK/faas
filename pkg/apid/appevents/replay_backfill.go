@@ -89,12 +89,30 @@ func (s *Service) GetEventReplayBackfill(w http.ResponseWriter, r *http.Request,
 		api.WriteProblem(w, api.ErrInternal("event replay backfill store"))
 		return
 	}
-	job, err := store.GetEventReplayBackfill(ctx, acct.ID, r.PathValue("jobID"))
+	job, err := s.visibleEventReplayBackfill(ctx, store, acct, r.PathValue("jobID"))
 	if err != nil {
 		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
 		return
 	}
 	httpkit.WriteJSON(w, http.StatusOK, job)
+}
+
+// visibleEventReplayBackfill reads a replay job and answers ErrNotFound for one
+// whose app the caller may not see (ADR-20261025211616).
+func (s *Service) visibleEventReplayBackfill(ctx context.Context, store state.EventReplayBackfillStore, acct state.Account, jobID string) (api.EventReplayBackfillJobResponse, error) {
+	job, err := store.GetEventReplayBackfill(ctx, acct.ID, jobID)
+	if err != nil || job.AppSlug == "" {
+		return job, err
+	}
+	access, err := s.eventAccess(ctx, acct)
+	if err != nil {
+		return job, err
+	}
+	visible, err := access.appSlug(job.AppSlug)
+	if err == nil && !visible {
+		err = state.ErrNotFound
+	}
+	return job, err
 }
 
 func (s *Service) ListEventReplayBackfillItems(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -111,7 +129,11 @@ func (s *Service) ListEventReplayBackfillItems(w http.ResponseWriter, r *http.Re
 		api.WriteProblem(w, api.ErrInternal("event replay backfill store"))
 		return
 	}
-	result, err := store.ListEventReplayBackfillItems(ctx, acct.ID, r.PathValue("jobID"), query)
+	_, err := s.visibleEventReplayBackfill(ctx, store, acct, r.PathValue("jobID"))
+	var result api.EventReplayBackfillItemsResponse
+	if err == nil {
+		result, err = store.ListEventReplayBackfillItems(ctx, acct.ID, r.PathValue("jobID"), query)
+	}
 	if err != nil {
 		problem := eventReplayBackfillItemsProblem(err, ctx.Err())
 		if problem.Status >= http.StatusInternalServerError {
@@ -143,6 +165,10 @@ func (s *Service) RetryFailedEventReplayBackfill(w http.ResponseWriter, r *http.
 	store, ok := s.Host.Store().(state.EventReplayBackfillStore)
 	if !ok {
 		api.WriteProblem(w, api.ErrInternal("event replay backfill store"))
+		return
+	}
+	if _, err := s.visibleEventReplayBackfill(ctx, store, acct, r.PathValue("jobID")); err != nil {
+		api.WriteProblem(w, eventReplayBackfillProblem(err, ctx.Err()))
 		return
 	}
 	result, err := store.RetryFailedEventReplayBackfill(ctx, acct.ID, r.PathValue("jobID"), limit)

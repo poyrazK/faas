@@ -45,6 +45,12 @@ func (s *Service) PublishEvent(w http.ResponseWriter, r *http.Request, acct stat
 	if !s.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {
 		return
 	}
+	producer, problem := s.accountProducer(r.Context(), acct)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
+	envelope.Producer = producer
 	traceHeaders := pkgtrace.InjectHeaders(r.Context())
 	envelope.Traceparent = traceHeaders["traceparent"]
 	envelope.Tracestate = traceHeaders["tracestate"]
