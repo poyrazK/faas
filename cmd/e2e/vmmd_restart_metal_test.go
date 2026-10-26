@@ -117,6 +117,15 @@ func TestVMMDRestartKeepsRunningAppMetal(t *testing.T) {
 		bridgeUnit = units[0]
 		bridgeRun = systemctlShow(t, bridgeUnit, "InvocationID", "MainPID", "ActiveState")
 	}
+	// FAAS_E2E_SUCCESSOR_BRIDGE_UNIT=0 restarts into a vmmd with bridge
+	// units switched off: it must stop the unit its predecessor handed off
+	// instead of leaking it past the instance (invariant 4).
+	unitsOffAfter := unitsOn && os.Getenv("FAAS_E2E_SUCCESSOR_BRIDGE_UNIT") == "0"
+	if unitsOffAfter {
+		if err := h.SetVMMDEnv("FAAS_INSTANCE_BRIDGE_UNIT", "0"); err != nil {
+			t.Fatal(err)
+		}
+	}
 
 	// Traffic through the whole restart. A running guest is proxied
 	// directly; nothing on the request path needs vmmd.
@@ -175,7 +184,13 @@ func TestVMMDRestartKeepsRunningAppMetal(t *testing.T) {
 	if n := countInstances(t, pool, appID, "failed"); n != 0 {
 		t.Fatalf("%d instance(s) failed across the restart", n)
 	}
-	if unitsOn {
+	if unitsOffAfter {
+		if left := bridgeUnits(t, before.ID); len(left) != 0 {
+			t.Fatalf("successor with bridge units off left %v running (handed off: %s)", left, bridgeUnit)
+		}
+		// A fresh bridge process serves the adopted guest.
+		upgradeEchoRound(t, gateway, host, "after the restart")
+	} else if unitsOn {
 		upgradeEchoRound(t, gateway, host, "after the restart")
 		units := bridgeUnits(t, before.ID)
 		run := systemctlShow(t, bridgeUnit, "InvocationID", "MainPID", "ActiveState")

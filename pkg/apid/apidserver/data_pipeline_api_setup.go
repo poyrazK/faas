@@ -16,7 +16,10 @@ func (s *server) configurePipelineDataAPI(service *datapipeline.Service) {
 	if s.managedPostgresBindings == nil || s.notif == nil {
 		return
 	}
-	setup := &pipelineapi.DataAPISetup{Store: s.store, Bindings: s.managedPostgresBindings, Notifier: s.notif, Log: s.log, Spool: spoolRoot(), Origin: s.dashboardAppOrigin, AppCreated: s.emitAppCreated}
+	setup := &pipelineapi.DataAPISetup{Store: s.store, Bindings: s.managedPostgresBindings, Notifier: s.notif, Log: s.log, Spool: spoolRoot(), Origin: s.dashboardAppOrigin, AppCreated: s.emitAppCreated,
+		AppVisible: func(ctx context.Context, acct state.Account, app state.App) bool {
+			return accountViewAppVisible(ctx, s.store, s.log, acct, app)
+		}}
 	setup.BuildApp = func(a state.Account, name string) (state.App, error) {
 		requireAuthn := false
 		app, problem := s.buildApp(a, api.CreateAppRequest{Slug: name, Type: "app", RequireAuthn: &requireAuthn}, api.MustLimitsFor(a.Plan))

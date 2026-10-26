@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/datapipeline"
 	"github.com/onebox-faas/faas/pkg/db"
 	"github.com/onebox-faas/faas/pkg/db/pgtest"
@@ -211,5 +212,56 @@ func TestDataAPISetupPostgresPreservesReservedAppIdentity(t *testing.T) {
 	rows, err := store.ListApps(t.Context(), account.ID)
 	if err != nil || len(rows) != 1 {
 		t.Fatal("lost reply recovery duplicated app", err)
+	}
+}
+
+// A setup names its Auth app in the request body, outside appaccess.Wrap.
+// A company Auth app stays available to its creator while a member and
+// becomes unknown once the company removes them.
+func TestDataAPISetupRefusesCompanyAuthAfterOffboarding(t *testing.T) {
+	setup, store, job := apiSetupFixture(t)
+	ctx := t.Context()
+	creator, err := store.AccountByID(ctx, job.AccountID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owner, err := store.CreateAccount(ctx, "acme-owner@example.com", api.PlanPro)
+	if err != nil {
+		t.Fatal(err)
+	}
+	org, err := store.CreateOrg(ctx, state.Org{Slug: "acme", Name: "Acme", Plan: api.PlanPro})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddOrgMember(ctx, org.ID, owner.ID, state.OrgRoleOwner, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddOrgMember(ctx, org.ID, creator.ID, state.OrgRoleDeveloper, nil); err != nil {
+		t.Fatal(err)
+	}
+	auth, err := store.CreateApp(ctx, state.App{AccountID: creator.ID, OrgID: org.ID, Slug: "acme-auth", Type: state.AppTypeApp})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = store.CreateDeployment(ctx, state.Deployment{AppID: auth.ID, Kind: state.DeploymentKindImage, Status: state.DeployLive, ImageDigest: "sha256:" + strings.Repeat("3", 64)}); err != nil {
+		t.Fatal(err)
+	}
+	setup.AppVisible = func(ctx context.Context, acct state.Account, app state.App) bool {
+		visible, err := appaccess.VisibleAppsContext(ctx, store, acct, []state.App{app})
+		return err == nil && len(visible) == 1
+	}
+	request := job.Request
+	request.AuthAppID = auth.ID
+	if _, err := setup.Plan(ctx, creator.ID, request); err != nil {
+		t.Fatalf("a member's company Auth app = %v", err)
+	}
+	if err := store.RemoveOrgMember(ctx, org.ID, creator.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := setup.Plan(ctx, creator.ID, request); !errors.Is(err, datapipeline.ErrNotFound) {
+		t.Fatalf("an offboarded creator's company Auth app = %v, want not found", err)
+	}
+	if _, err := setup.Plan(ctx, creator.ID, job.Request); err != nil {
+		t.Fatalf("the creator's own Auth app = %v", err)
 	}
 }

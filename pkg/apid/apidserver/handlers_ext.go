@@ -2521,7 +2521,7 @@ func (s *server) rollbackAppCore(r *http.Request, acct state.Account, app state.
 		if errors.Is(err, state.ErrNoRollbackTarget) || errors.Is(err, state.ErrRollbackTargetAlreadyLive) {
 			return state.Deployment{}, nil, api.ErrRollbackTargetIneligible("rollback target changed state while the request was being validated; refresh deployments and retry")
 		}
-		return state.Deployment{}, nil, api.ErrCapacity("could not prepare rollback target")
+		return state.Deployment{}, nil, trafficproblem.Policy(err, api.ErrCapacity("could not prepare rollback target"))
 	}
 	primePayload, marshalErr := json.Marshal(map[string]string{
 		"app_id": app.ID, "deployment_id": target.ID,

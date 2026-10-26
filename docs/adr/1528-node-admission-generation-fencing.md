@@ -76,3 +76,11 @@ statetest race checks pass, as do scoped production/test lint, SQLC diff and
 restored-schema parity. Schedd links successfully. Nothing deployed. This
 environment has no KVM device; native migration and evacuation acceptance remains
 a separate fleet gate.
+
+## Amendment 1 — Durable capacity refusals are re-placed (2026-10-26)
+
+Decision 4 retried only a definite stale-placement refusal. ADR-909
+amendment 1 adds the other definite refusal: `ErrNodeCapacity` from the
+durable per-node reservation. Placement excludes that node and chooses
+again within the same `NodeAdmissionPlacementAttempts`. The placement
+binding also carries the reservation allowance that amendment defines.
