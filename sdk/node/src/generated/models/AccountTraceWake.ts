@@ -16,7 +16,7 @@ export type AccountTraceWake = {
    */
   ready_in_ms?: number;
   /**
-   * The method schedd planned when vmmd ran another one, for example restore on a wake that fell back to a cold boot. Absent otherwise.
+   * What schedd planned for this wake when it differs from method, such as restore for a restore that fell back to a cold boot.
    */
   planned_method?: string;
   /**
