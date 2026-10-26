@@ -2529,6 +2529,11 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	var runtimeLogs *receivers.RuntimeLogEventsReceiver
 	if deps.getenv("FAAS_OTEL_SPANS_WRITER_ENABLED") != "false" {
 		runtimeLogs = receivers.NewRuntimeLogEventsReceiver(srv.store, deps.getenv("FAAS_LOG_SEARCH_ENABLED") == "1", srv.ops.Registry(), log)
+		// Multi-box: a node's vmmd/apid-client leaf names the node, so its
+		// lines must come from instances on that node.
+		if nodes, ok := nodeVerifier.(wire.NodeIdentityResolver); ok {
+			runtimeLogs.WithPeerNodes(nodes)
+		}
 	}
 	// H5-34: one gate across both telemetry listeners bounds their share of
 	// apid's database pool.
