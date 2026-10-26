@@ -178,23 +178,27 @@ func (a *stringAlias) Set(value string) error {
 // allowance until twice it; off, the default, suspends them at the allowance.
 func cmdPostgresOverage(args []string) int {
 	fs := newFlagSet("postgres overage", flag.ContinueOnError)
-	if err := fs.Parse(args); err != nil || fs.NArg() > 1 {
+	if err := fs.Parse(args); err != nil {
 		PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
 		return 1
+	}
+	choice := ""
+	if fs.NArg() != 0 {
+		choice = fs.Arg(0)
+		if fs.NArg() != 1 || (choice != "on" && choice != "off") {
+			PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
+			return 1
+		}
 	}
 	client, err := authedClient()
 	if err != nil {
 		return printErr("Not logged in", err)
 	}
 	var result api.ManagedPostgresOverage
-	switch fs.Arg(0) {
-	case "":
+	if choice == "" {
 		result, err = client.GetManagedPostgresOverage(context.Background())
-	case "on", "off":
-		result, err = client.SetManagedPostgresOverage(context.Background(), fs.Arg(0) == "on")
-	default:
-		PrintUsage(os.Stderr, "usage: gregale postgres overage [on|off]", "postgres")
-		return 1
+	} else {
+		result, err = client.SetManagedPostgresOverage(context.Background(), choice == "on")
 	}
 	if err != nil {
 		return printErr("Could not update managed PostgreSQL compute overage", err)
