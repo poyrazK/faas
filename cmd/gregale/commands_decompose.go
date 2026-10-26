@@ -720,6 +720,7 @@ var managedNotProvidedText = map[string]string{
 	"unsupported":    "not supported as a managed database, or its PostgreSQL version is not offered",
 	"configured":     "every service already has its database configured",
 	"not_referenced": "no service uses it",
+	"permission":     "your organization role or key cannot create and bind databases (needs postgres:manage)",
 }
 
 // printPublicURLs names every workload the plan puts on the public edge, so
