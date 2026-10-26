@@ -6189,6 +6189,8 @@ var cliCommands = []cliCommand{
 		Name:    "scan",
 		DocSlug: "scan",
 		Short:   "Show how a source tree splits into deployable workloads",
+		// A lone directory positional is --path, as `doctor <dir>` takes it.
+		Positionals: []string{"[<dir>]"},
 		Flags: []cliFlag{
 			{Name: "tarball", Short: "scan a source tarball", Value: "PATH"},
 			{Name: "path", Short: "scan a local directory", Value: "DIR"},
