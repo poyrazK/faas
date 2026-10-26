@@ -172,7 +172,7 @@ func (s *server) listManagedPostgresDatabases(w http.ResponseWriter, r *http.Req
 // managedPostgresUsageView projects the internal normalized usage summary to
 // the customer-safe API shape. In particular, it never serializes policy
 // rates, provider cost, backend IDs, or credential material.
-func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits) api.ManagedPostgresUsageResponse {
+func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode) api.ManagedPostgresUsageResponse {
 	storageLimit := managedPostgresUsageCeilings(limits).MaxMonthlyStorageByteSeconds
 	remaining := int64(0)
 	if storageLimit > summary.Snapshot.StorageByteSeconds {
@@ -199,11 +199,34 @@ func managedPostgresUsageView(summary managedpostgres.UsageSummary, limits api.M
 		StorageByteSecondsLimit: storageLimit, StorageByteSecondsRemaining: remaining,
 		HistoryByteSeconds: summary.Snapshot.HistoryByteSeconds, EgressBytes: summary.Snapshot.EgressBytes,
 	}
+	if limits.MonthlyComputeUnitSeconds > 0 {
+		view.ComputeAllowanceUnitSeconds = limits.MonthlyComputeUnitSeconds
+		if summary.PolicyEnabled {
+			view.ComputeCeilingUnitSeconds = summary.EffectivePolicy.MaxMonthlyComputeUnitSeconds
+		}
+		view.ComputeCapState = managedPostgresComputeCapState(summary, view.ComputeAllowanceUnitSeconds, view.ComputeCeilingUnitSeconds, capMode)
+	}
 	if !summary.Snapshot.LastObservedAt.IsZero() {
 		observed := summary.Snapshot.LastObservedAt.UTC()
 		view.ObservedAt = &observed
 	}
 	return view
+}
+
+// managedPostgresComputeCapState (ADR-20261025094915 decision 8). Suspension
+// is reported only while caps are enforced, so shadow mode never tells a
+// customer a running database is stopped; it is judged from the ledger, which
+// can trail the provider by up to two hours.
+func managedPostgresComputeCapState(summary managedpostgres.UsageSummary, allowance, ceiling int64, capMode managedpostgres.CapEnforcementMode) string {
+	used := summary.Snapshot.ComputeUnitSeconds
+	switch {
+	case capMode == managedpostgres.CapEnforcementOn && ceiling > 0 && used >= ceiling:
+		return api.ManagedPostgresComputeCapSuspended
+	case used >= allowance-allowance/5:
+		return api.ManagedPostgresComputeCapWarning
+	default:
+		return api.ManagedPostgresComputeCapHealthy
+	}
 }
 
 func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request, acct state.Account) {
@@ -222,11 +245,11 @@ func (s *server) getManagedPostgresUsage(w http.ResponseWriter, r *http.Request,
 		managedPostgresProblem(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, managedPostgresUsageView(summary, limits))
+	writeJSON(w, http.StatusOK, managedPostgresUsageView(summary, limits, s.managedPostgresCapMode))
 }
 
-func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits) (api.ManagedPostgresUsageOperatorResponse, error) {
-	customer := managedPostgresUsageView(summary, limits)
+func managedPostgresUsageOperatorView(accountID string, summary managedpostgres.UsageSummary, limits api.ManagedPostgresPlanLimits, capMode managedpostgres.CapEnforcementMode) (api.ManagedPostgresUsageOperatorResponse, error) {
+	customer := managedPostgresUsageView(summary, limits, capMode)
 	lineItems, err := summary.EffectivePolicy.LineItems(summary.Snapshot)
 	if err != nil {
 		return api.ManagedPostgresUsageOperatorResponse{}, err
@@ -294,7 +317,7 @@ func (s *server) getManagedPostgresUsageOperator(w http.ResponseWriter, r *http.
 		managedPostgresProblem(w, err)
 		return
 	}
-	view, err := managedPostgresUsageOperatorView(target.ID, summary, limits)
+	view, err := managedPostgresUsageOperatorView(target.ID, summary, limits, s.managedPostgresCapMode)
 	if err != nil {
 		managedPostgresProblem(w, err)
 		return

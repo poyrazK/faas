@@ -2635,6 +2635,7 @@ from .managed_postgres_usage_line_item_code import ManagedPostgresUsageLineItemC
 from .managed_postgres_usage_operator_response import ManagedPostgresUsageOperatorResponse
 from .managed_postgres_usage_operator_response_guardrail_state import ManagedPostgresUsageOperatorResponseGuardrailState
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
+from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .managed_realtime_access_request import ManagedRealtimeAccessRequest
 from .managed_realtime_access_request_action import ManagedRealtimeAccessRequestAction
@@ -8706,6 +8707,7 @@ __all__ = (
     "ManagedPostgresUsageOperatorResponse",
     "ManagedPostgresUsageOperatorResponseGuardrailState",
     "ManagedPostgresUsageResponse",
+    "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseGuardrailState",
     "ManagedRealtimeAccessRequest",
     "ManagedRealtimeAccessRequestAction",

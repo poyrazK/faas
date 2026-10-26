@@ -986,6 +986,7 @@ from .managed_operation_effect import ManagedOperationEffect
 from .managed_operation_result import ManagedOperationResult
 from .managed_operation_result_gregale_operation_result import ManagedOperationResultGregaleOperationResult
 from .managed_postgres_usage_response import ManagedPostgresUsageResponse
+from .managed_postgres_usage_response_compute_cap_state import ManagedPostgresUsageResponseComputeCapState
 from .managed_postgres_usage_response_guardrail_state import ManagedPostgresUsageResponseGuardrailState
 from .managed_service_probe_spec import ManagedServiceProbeSpec
 from .mcp_policy_convergence_snapshot import MCPPolicyConvergenceSnapshot
@@ -3400,6 +3401,7 @@ __all__ = (
     "ManagedOperationResult",
     "ManagedOperationResultGregaleOperationResult",
     "ManagedPostgresUsageResponse",
+    "ManagedPostgresUsageResponseComputeCapState",
     "ManagedPostgresUsageResponseGuardrailState",
     "ManagedServiceProbeSpec",
     "MCPPolicyConvergenceSnapshot",

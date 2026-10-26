@@ -1636,6 +1636,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		return fmt.Errorf("apid managed postgres configuration: %w", err)
 	}
 	srv.WithManagedPostgres(managedPostgresService, managedPostgresReconciler, managedPostgresBindings, managedPostgresBindingReconciler, managedPostgresUsageCollector, managedPostgresHealthCollector)
+	srv.configureManagedPostgresCapMode(deps.getenv)
 	if err := srv.configureRealtimePreview(deps.getenv); err != nil {
 		return fmt.Errorf("apid realtime preview: %w", err)
 	}
