@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -48,6 +49,24 @@ func requestSecurityGateway(server *httptest.Server, path string) <-chan securit
 	return result
 }
 
+// gatewayClock lets the test move one gateway past its outage grace.
+type gatewayClock struct {
+	mu     sync.Mutex
+	offset time.Duration
+}
+
+func (c *gatewayClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().Add(c.offset)
+}
+
+func (c *gatewayClock) Advance(d time.Duration) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.offset += d
+}
+
 func TestPGSecurityTwoGatewayHTTPMissedNotificationsOutageAndReplacement(t *testing.T) {
 	pool := pgtest.OpenMigrated(t)
 	ctx := t.Context()
@@ -73,13 +92,13 @@ func TestPGSecurityTwoGatewayHTTPMissedNotificationsOutageAndReplacement(t *test
 	}
 	defer otherPool.Close()
 	started := make(chan context.Context, 8)
-	newGateway := func(source *pgxpool.Pool) (*httptest.Server, *trafficrevocation.Registry) {
+	newGateway := func(source *pgxpool.Pool, clock *gatewayClock) (*httptest.Server, *trafficrevocation.Registry) {
 		t.Helper()
 		backend := state.NewPGTrafficSecurityBackend(source)
 		if _, err := backend.Read(ctx, nil); err != nil {
 			t.Fatal(err)
 		}
-		registry := trafficrevocation.New(backend)
+		registry := trafficrevocation.New(backend).WithClock(clock.Now)
 		runCtx, stop := context.WithCancel(ctx)
 		go registry.Run(runCtx) // deliberately no LISTEN subscriber: periodic repair must suffice
 		t.Cleanup(func() { stop(); registry.Close() })
@@ -113,8 +132,9 @@ func TestPGSecurityTwoGatewayHTTPMissedNotificationsOutageAndReplacement(t *test
 		t.Cleanup(func() { server.CloseClientConnections(); server.Close() })
 		return server, registry
 	}
-	first, firstRegistry := newGateway(pool)
-	second, secondRegistry := newGateway(otherPool)
+	secondClock := &gatewayClock{}
+	first, firstRegistry := newGateway(pool, &gatewayClock{})
+	second, secondRegistry := newGateway(otherPool, secondClock)
 	waitStarted := func() context.Context {
 		t.Helper()
 		select {
@@ -157,6 +177,17 @@ func TestPGSecurityTwoGatewayHTTPMissedNotificationsOutageAndReplacement(t *test
 	one, two = requestSecurityGateway(first, "wait"), requestSecurityGateway(second, "wait")
 	firstCtx, secondCtx := waitStarted(), waitStarted()
 	otherPool.Close() // only the second gateway loses its authoritative pool
+	// ADR-20261026160000: inside the outage grace the second gateway keeps its
+	// admitted exchange and admits the same scopes from its last verified
+	// generations, though its periodic refresh now fails.
+	time.Sleep(3 * api.TrafficSecurityRefreshInterval)
+	if firstCtx.Err() != nil || secondCtx.Err() != nil {
+		t.Fatal("a store outage inside the grace canceled admitted traffic")
+	}
+	if warm := <-requestSecurityGateway(second, "fresh"); warm.status != http.StatusNoContent || warm.err != nil {
+		t.Fatalf("verified scopes refused inside the outage grace: %+v", warm)
+	}
+	secondClock.Advance(api.TrafficSecurityOutageGrace + time.Second)
 	waitAbort(two)
 	if firstCtx.Err() != nil && secondCtx.Err() != nil {
 		t.Fatal("one gateway store failure canceled the healthy peer")
@@ -177,7 +208,7 @@ func TestPGSecurityTwoGatewayHTTPMissedNotificationsOutageAndReplacement(t *test
 	if released, err := store.ReleaseAccountAbuseHold(ctx, account.ID); err != nil || !released {
 		t.Fatalf("second release=%v/%v", released, err)
 	}
-	replacement, _ := newGateway(pool)
+	replacement, _ := newGateway(pool, &gatewayClock{})
 	fresh := <-requestSecurityGateway(replacement, "fresh")
 	if fresh.status != http.StatusNoContent || fresh.err != nil {
 		t.Fatalf("replacement did not verify released durable generation: %+v", fresh)

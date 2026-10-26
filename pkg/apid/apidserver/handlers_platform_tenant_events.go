@@ -14,6 +14,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appevents"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
@@ -115,6 +116,14 @@ func (s *server) publishPlatformTenantSelfEvent(w http.ResponseWriter, r *http.R
 	}
 	if strings.HasPrefix(envelope.Source, "gregale.") {
 		api.WriteProblem(w, api.ErrValidation("gregale.* sources are reserved for platform events"))
+		return
+	}
+	if _, reserved := eventcontract.AppSource(envelope.Source); reserved {
+		api.WriteProblem(w, appevents.AppSourceReservedProblem())
+		return
+	}
+	if problem := s.appEvents.PublishRateProblem(acct, 1); problem != nil {
+		api.WriteProblem(w, problem)
 		return
 	}
 	if !s.appEvents.ValidateEventSchemaForIngress(w, r, acct.ID, envelope) {

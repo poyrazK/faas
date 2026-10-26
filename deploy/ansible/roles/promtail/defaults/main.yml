@@ -58,10 +58,13 @@ promtail_journal_units:
   - faas-cgroup-metrics.service
   - faas-canary-artifact-sweep.service
   - faas-cp-state-backup.service
+  - faas-audit-anchor.service
+  - faas-audit-verify.service
   - faas-pg-basebackup.service
   - faas-pg-basebackup-push.service
   - faas-pg-wal-prune.service
   - faas-postgres-connection-metrics.service
+  - faas-postgres-activity-metrics.service
   - faas-internal-mail-metrics.service
   - faas-internal-pki-metrics.service
   - faas-tenant-egress-firewall.service

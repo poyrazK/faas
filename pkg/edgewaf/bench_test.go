@@ -306,7 +306,7 @@ func cpuSeconds(t *testing.T) float64 {
 func runInlineLoad(t *testing.T, rate, apps, seconds, slots int, wait time.Duration, benign, attacks []gateway.WAFSample) {
 	t.Helper()
 	i := New(&recordingObserver{}, nil)
-	i.inlineSlots, i.inlineWait = make(chan struct{}, slots), wait
+	i.inlineSlots, i.inlineWait = newSlotPool(slots, api.EdgeWAFInlineAccountSharePercent), wait
 	if _, err := i.inlineWAF(); err != nil {
 		t.Fatal(err)
 	}

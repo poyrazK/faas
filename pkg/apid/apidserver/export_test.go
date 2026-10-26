@@ -59,6 +59,7 @@ import (
 	objruntime "github.com/onebox-faas/faas/pkg/rehearsalobj/runtime"
 	pgruntime "github.com/onebox-faas/faas/pkg/rehearsalpg/runtime"
 	"github.com/onebox-faas/faas/pkg/session"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/wire"
 	"github.com/onebox-faas/faas/pkg/workloadidentity"
@@ -153,6 +154,7 @@ const CsrfActionSessionsRevokeAll = csrfActionSessionsRevokeAll
 const DashboardAsyncInvocationPath = dashboardAsyncInvocationPath
 const DashboardDataAPICookie = dashboardDataAPICookie
 const DashboardAuthSettingsCookie = dashboardAuthSettingsCookie
+const DashboardPreviewDestroyCSRFCookie = dashboardPreviewDestroyCSRFCookie
 const DashboardDebugReplayCSRFCookie = dashboardDebugReplayCSRFCookie
 const DashboardDevBridgeAction = dashboardDevBridgeAction
 const DashboardDevBridgeCSRFCookie = dashboardDevBridgeCSRFCookie
@@ -240,6 +242,11 @@ const ScheddMetricsDiscoveryPath = scheddMetricsDiscoveryPath
 const GatewaydPublicEdgeMetricsDiscoveryPath = gatewaydPublicEdgeMetricsDiscoveryPath
 const CloudflaredMetricsDiscoveryPath = cloudflaredMetricsDiscoveryPath
 const ServiceCallerKeysCacheControl = serviceCallerKeysCacheControl
+
+// sessionCookie is the legacy session cookie name test fixtures send; the
+// handlers read both names through pkg/sessioncookie (ADR-20261026112500).
+const sessionCookie = sessioncookie.LegacyName
+
 const SessionCookie = sessionCookie
 const SessionCookieLifetime = sessionCookieLifetime
 const SourceSpoolRootEnv = sourceSpoolRootEnv
@@ -304,6 +311,11 @@ var AlertingWriteMode = &alertingWriteMode
 var StorageDomainRecipient = &storageDomainRecipient
 var StorageWriteMode = &storageWriteMode
 var StorageCredentialRecipients = storageCredentialRecipients
+var DeliveryDomainRecipient = &deliveryDomainRecipient
+var DeliveryWriteMode = &deliveryWriteMode
+var CommitConnectionRecipients = commitConnectionRecipients
+var ExecutionPayloadRecipients = executionPayloadRecipients
+var SealAppWebhookSecret = sealAppWebhookSecret
 var SealPresetWebhookSecret = sealPresetWebhookSecret
 var SealMCPFallbackSecret = sealMCPFallbackSecret
 var SealMCPPagerDutyKey = sealMCPPagerDutyKey

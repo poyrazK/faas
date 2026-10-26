@@ -829,6 +829,11 @@ type UpsertDevSessionRequest struct {
 	// the app's development server, instead of the production build. Omitted
 	// turns watch mode off. Takes effect from the next developer build.
 	Watch *DevWatch `json:"watch,omitempty"`
+	// GoCommand builds `cmd/<GoCommand>` of the Go module at the source root
+	// (ADR-20261026120412), as a project service's build_go_command does.
+	// Omitted builds what the source builds by default. Takes effect from the
+	// next developer build.
+	GoCommand string `json:"go_command,omitempty"`
 }
 
 // DevWatch is a developer environment's watch-mode setting (ADR-1170).
@@ -891,6 +896,10 @@ type DevSessionResponse struct {
 	Buckets   []DevBucketResponse  `json:"buckets,omitempty"`
 	// Watch is the stored watch-mode setting (ADR-1170); omitted when off.
 	Watch *DevWatch `json:"watch,omitempty"`
+	// GoCommand is the stored Go command (ADR-20261026120412); omitted when
+	// none. A client that asked for one and finds it missing is talking to an
+	// API that ignores the request field.
+	GoCommand string `json:"go_command,omitempty"`
 }
 
 // RegisterScenarioTestRequest binds developer sessions to one isolated run.
@@ -5845,6 +5854,16 @@ type AccountTraceWake struct {
 	WakeID    string `json:"wake_id"`
 	Method    string `json:"method,omitempty"`
 	ReadyInMS int32  `json:"ready_in_ms,omitempty"`
+	// PlannedMethod and RestoreFallbackReason are set when a planned restore
+	// fell back to a cold boot, as on WakeTimelineJSONRow.
+	PlannedMethod         string `json:"planned_method,omitempty"`
+	RestoreFallbackReason string `json:"restore_fallback_reason,omitempty"`
+	// Thawed marks a request that resumed this wake's frozen instance
+	// (ADR-1151) instead of waiting for its boot; a thaw keeps the instance's
+	// original wake ID. ThawMS is how long the thaw took, and Method and
+	// ReadyInMS, which describe the original boot, are omitted.
+	Thawed bool  `json:"thawed,omitempty"`
+	ThawMS int32 `json:"thaw_ms,omitempty"`
 }
 
 // AccountTraceInvocation is a safe durable invocation lifecycle projection.
@@ -7181,6 +7200,12 @@ type WakeTimelineJSONRow struct {
 	AtCapacity         bool   `json:"at_capacity"`
 	AtCapacityPresent  bool   `json:"at_capacity_present"`
 	ReadyInMS          int32  `json:"ready_in_ms,omitempty"` // -1 = em-dash on absent
+	// PlannedMethod is the method schedd planned when vmmd ran another one,
+	// such as a restore that fell back to a cold boot; empty otherwise.
+	PlannedMethod string `json:"planned_method,omitempty"`
+	// RestoreFallbackReason is the closed reason for that fallback when one
+	// is reported (after_restore_failed); empty otherwise.
+	RestoreFallbackReason string `json:"restore_fallback_reason,omitempty"`
 }
 
 // AccountSLOResponse is the flat account-wide SLO rollup returned by
@@ -7516,8 +7541,8 @@ type PlanManaged struct {
 	// NotProvisionedReason.
 	Provision *PlanManagedProvision `json:"provision,omitempty"`
 	// NotProvisionedReason says why a Compose postgres service is not
-	// provided: unavailable, plan, quota, unsupported, configured or
-	// not_referenced. Empty for other datastores.
+	// provided: unavailable, plan, quota, unsupported, configured,
+	// not_referenced or permission. Empty for other datastores.
 	NotProvisionedReason string `json:"not_provisioned_reason,omitempty"`
 }
 

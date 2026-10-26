@@ -10,8 +10,10 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
+	"github.com/onebox-faas/faas/pkg/apid/postgresaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectaccess"
 	"github.com/onebox-faas/faas/pkg/apid/projectsetup"
+	"github.com/onebox-faas/faas/pkg/authz"
 	"github.com/onebox-faas/faas/pkg/managedpostgres"
 	"github.com/onebox-faas/faas/pkg/reposcan"
 	"github.com/onebox-faas/faas/pkg/state"
@@ -25,7 +27,31 @@ const (
 	composePostgresUnsupported   = "unsupported"
 	composePostgresConfigured    = "configured"
 	composePostgresNotReferenced = "not_referenced"
+	// composePostgresPermission: in an organization-owned project, the
+	// caller's role or key cannot create and bind organization databases
+	// (ADR-20261026151530).
+	composePostgresPermission = "permission"
 )
+
+// sharedComposePostgres reports whether ctx acts on an organization-owned
+// project or app, where creating and binding a database are organization
+// actions.
+func sharedComposePostgres(ctx context.Context) bool {
+	_, sharedProject := projectaccess.From(ctx)
+	_, sharedApp := appaccess.FromContext(ctx)
+	return sharedProject || sharedApp
+}
+
+// authorizeComposePostgres applies the organization permissions and key
+// scope that `gregale postgres create` and a manifest database binding need.
+// The plan asks with no audit emitter, so a dry run records no denial; apply
+// asks with one.
+func authorizeComposePostgres(ctx context.Context, audit authz.AuditEmitter) *api.Problem {
+	if problem := authz.AuthorizeOrgAction(ctx, authz.OrgActionManagePostgres, audit); problem != nil {
+		return problem
+	}
+	return postgresaccess.AuthorizeManifestBindings(ctx, audit)
+}
 
 // composePostgresProvision is one Compose postgres service a project apply
 // provides as a managed database.
@@ -107,13 +133,10 @@ func (s *server) composePostgresPlan(ctx context.Context, acct state.Account, pr
 	if s.managedPostgres == nil || s.managedPostgresBindings == nil {
 		return notProvided(composePostgresUnavailable)
 	}
-	// Organization-owned projects bind databases through their own access
-	// path; they keep attaching databases explicitly.
-	if _, shared := projectaccess.From(ctx); shared {
-		return notProvided(composePostgresUnavailable)
-	}
-	if _, shared := appaccess.FromContext(ctx); shared {
-		return notProvided(composePostgresUnavailable)
+	// An organization-owned project provides an organization database, where
+	// the caller may create and bind one (ADR-20261026151530).
+	if sharedComposePostgres(ctx) && authorizeComposePostgres(ctx, nil) != nil {
+		return notProvided(composePostgresPermission)
 	}
 	ctx, err := s.composePostgresOwnership(ctx, acct)
 	if err != nil {
@@ -215,6 +238,11 @@ func (s *server) applyComposePostgres(ctx context.Context, acct state.Account, s
 ) *api.Problem {
 	if len(provisions) == 0 {
 		return nil
+	}
+	if sharedComposePostgres(ctx) {
+		if problem := authorizeComposePostgres(ctx, loadOrgAuditFrom(s.audit)); problem != nil {
+			return problem
+		}
 	}
 	ctx, err := s.composePostgresOwnership(ctx, acct)
 	if err != nil {

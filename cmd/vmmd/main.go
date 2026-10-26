@@ -719,8 +719,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load runtime seal domain: %w", err)
 	}
+	// ADR-20261026090000: builder VMs pull private base images with the
+	// built app's registry credentials, which the build domain opens.
+	buildIdentities, err := loadBuildSealDomain(filepath.Dir(keyPath))
+	if err != nil {
+		return fmt.Errorf("vmmd: load build seal domain: %w", err)
+	}
+	registryIdentities := append(append([]*age.X25519Identity(nil), buildIdentities...), hostIdentities...)
 	hostIdentities = append(runtimeIdentities, hostIdentities...)
-	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Runtime, len(runtimeIdentities) > 0)
+	sealdomain.RegisterLoadedDomains(ops.Registry(), map[sealdomain.Domain]bool{sealdomain.Runtime: len(runtimeIdentities) > 0, sealdomain.Build: len(buildIdentities) > 0})
 	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities))
 
 	// Issue #98 / ADR-028: vmmd self-registers in compute_nodes
@@ -1252,6 +1259,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			jailer.VsockUDSSocketPath(instance), func() (bool, uint64) { return mgr.QuietGate(instance) })
 	})
 	mgr.SetHostIdentities(hostIdentities)
+	mgr.SetRegistryIdentities(registryIdentities)
 	mgr.RequireSecretBinding(cfg.RequireSecretBinding)
 	sealdomain.RegisterBindingRequired(ops.Registry(), cfg.RequireSecretBinding)
 	if cfg.RequireSecretBinding {
@@ -1492,6 +1500,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		// event envelope as POST /v1/events:publish. A missing database is the
 		// expected default-local development posture, so the endpoint reports
 		// a bounded transport error instead of accepting an unverifiable event.
+		guestRate := &guestEventRate{}
 		recv.WithEventPublisher(func(publishCtx context.Context, instance string, body []byte) error {
 			if store == nil || pool == nil {
 				return errors.New("event publish persistence is not configured")
@@ -1500,7 +1509,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if identityErr != nil {
 				return identityErr
 			}
-			envelope, err := normalizeGuestEvent(publishCtx, store, accountID, body, time.Now().UTC())
+			envelope, err := normalizeGuestEvent(publishCtx, store, appID, accountID, body, time.Now().UTC())
 			if err != nil {
 				return err
 			}
@@ -1509,6 +1518,9 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			// A capture-only rehearsal keeps its ordinary network, but its
 			// events still belong to its run (ADR-20261020090000).
 			if captured, err := captureGuestEvent(publishCtx, store, appID, "", accountID, envelope); captured || err != nil {
+				return err
+			}
+			if err := guestRate.allow(publishCtx, store, accountID); err != nil {
 				return err
 			}
 			payload, err := json.Marshal(envelope)
@@ -1529,7 +1541,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if store == nil {
 				return errors.New("rehearsal event capture persistence is not configured")
 			}
-			envelope, err := normalizeGuestEvent(captureCtx, store, accountID, body, time.Now().UTC())
+			envelope, err := normalizeGuestEvent(captureCtx, store, appID, accountID, body, time.Now().UTC())
 			if err != nil {
 				return err
 			}

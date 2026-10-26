@@ -35,6 +35,21 @@
     <h1>Managed PostgreSQL</h1>
     <p>Provisioned databases and app bindings for <code>{{.Account.Email}}</code>. Use <code>gregale postgres</code> for create, restore, and delete operations.</p>
     {{if .Data.Error}}<p class="error">{{.Data.Error}}</p>{{end}}
+    {{with .Data.Overage}}
+      <section aria-label="Compute overage">
+        <h2>Compute overage</h2>
+        {{if .Flash}}<p><strong>{{.Flash}}</strong></p>{{end}}
+        <p>Your plan includes {{.AllowanceLabel}} of database compute a month.
+        {{if .Enabled}}Overage is <strong>on</strong>: databases keep running past it until {{.CeilingLabel}}, then are suspended.
+        {{else}}Overage is <strong>off</strong>: databases are suspended when the allowance is used, until next month or an upgrade.{{end}}
+        Suspended databases keep their data.</p>
+        <form method="POST" action="/dashboard/postgres/overage">
+          <input type="hidden" name="csrf_token" value="{{.ConfirmToken}}">
+          <input type="hidden" name="enabled" value="{{if .Enabled}}off{{else}}on{{end}}">
+          <button type="submit">{{if .Enabled}}Turn overage off{{else}}Turn overage on{{end}}</button>
+        </form>
+      </section>
+    {{end}}
     {{if and .Data.Available (not .Data.Error) (not .Data.Databases)}}
       <p>No managed PostgreSQL databases yet. Create one with <code>gregale postgres create NAME --region REGION</code>.</p>
     {{end}}

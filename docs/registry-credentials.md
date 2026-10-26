@@ -17,6 +17,13 @@ Image runs (`gregale run`) take the credential per run instead:
 runner job, for the image's registry only, and refreshed by every run that
 passes it (ADR-1790). See [Jobs](jobs.md#image-runs).
 
+A Dockerfile build uses the same credentials for its `FROM` images, so an app can
+build on a private base image ([ADR-20261026090000](adr/20261026090000-builder-private-base-images.md)).
+The build log names the registries it authenticates to. Such a build never reuses
+a warm builder, and its cached image is reused only by the same app. An ECR access
+key cannot be used for `FROM` images; store an ECR password with the username `AWS`
+for those, or build on a public base.
+
 ## Cloud registries
 
 ([ADR-20261025124445](adr/20261025124445-cloud-registry-auth.md))

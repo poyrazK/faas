@@ -40,6 +40,7 @@ from .account_trace_lookup_error import AccountTraceLookupError
 from .account_trace_lookup_response import AccountTraceLookupResponse
 from .account_trace_match import AccountTraceMatch
 from .account_trace_wake import AccountTraceWake
+from .account_trace_wake_restore_fallback_reason import AccountTraceWakeRestoreFallbackReason
 from .account_usage_response import AccountUsageResponse
 from .activity_actor_response import ActivityActorResponse
 from .activity_actor_response_type import ActivityActorResponseType
@@ -2621,6 +2622,8 @@ from .managed_postgres_health_compute_state import ManagedPostgresHealthComputeS
 from .managed_postgres_health_last_error_code import ManagedPostgresHealthLastErrorCode
 from .managed_postgres_health_provider_status import ManagedPostgresHealthProviderStatus
 from .managed_postgres_health_status import ManagedPostgresHealthStatus
+from .managed_postgres_overage import ManagedPostgresOverage
+from .managed_postgres_overage_request import ManagedPostgresOverageRequest
 from .managed_postgres_resize import ManagedPostgresResize
 from .managed_postgres_resize_from_class import ManagedPostgresResizeFromClass
 from .managed_postgres_resize_state import ManagedPostgresResizeState
@@ -3250,6 +3253,9 @@ from .obs_rule_health_item_state import ObsRuleHealthItemState
 from .obs_rule_health_response import ObsRuleHealthResponse
 from .obs_rule_health_response_state import ObsRuleHealthResponseState
 from .obs_rule_health_totals import ObsRuleHealthTotals
+from .obs_wake_event import ObsWakeEvent
+from .obs_wake_event_data import ObsWakeEventData
+from .obs_wake_timeline import ObsWakeTimeline
 from .oci_healthcheck_timing import OCIHealthcheckTiming
 from .oidc_exchange_request import OIDCExchangeRequest
 from .oidc_exchange_request_capability import OIDCExchangeRequestCapability
@@ -5495,6 +5501,11 @@ from .seal_scenario_postgres_request import SealScenarioPostgresRequest
 from .search_app_log_events_source import SearchAppLogEventsSource
 from .seat_usage_response import SeatUsageResponse
 from .seat_usage_response_plan import SeatUsageResponsePlan
+from .secret_entry_request import SecretEntryRequest
+from .secret_entry_response import SecretEntryResponse
+from .secret_entry_status import SecretEntryStatus
+from .secret_entry_status_request import SecretEntryStatusRequest
+from .secret_entry_status_status import SecretEntryStatusStatus
 from .secret_file import SecretFile
 from .secret_finding import SecretFinding
 from .secret_finding_severity import SecretFindingSeverity
@@ -5939,6 +5950,7 @@ from .wake_timeline_event import WakeTimelineEvent
 from .wake_timeline_event_data import WakeTimelineEventData
 from .wake_timeline_json_row import WakeTimelineJSONRow
 from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
+from .wake_timeline_json_row_restore_fallback_reason import WakeTimelineJSONRowRestoreFallbackReason
 from .wake_timeline_json_row_tier import WakeTimelineJSONRowTier
 from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClass
 from .wake_timeline_page import WakeTimelinePage
@@ -6235,6 +6247,7 @@ __all__ = (
     "AccountTraceLookupResponse",
     "AccountTraceMatch",
     "AccountTraceWake",
+    "AccountTraceWakeRestoreFallbackReason",
     "AccountUsageResponse",
     "ActivityActorResponse",
     "ActivityActorResponseType",
@@ -8700,6 +8713,8 @@ __all__ = (
     "ManagedPostgresHealthLastErrorCode",
     "ManagedPostgresHealthProviderStatus",
     "ManagedPostgresHealthStatus",
+    "ManagedPostgresOverage",
+    "ManagedPostgresOverageRequest",
     "ManagedPostgresResize",
     "ManagedPostgresResizeFromClass",
     "ManagedPostgresResizeState",
@@ -9303,6 +9318,9 @@ __all__ = (
     "ObsRuleHealthResponse",
     "ObsRuleHealthResponseState",
     "ObsRuleHealthTotals",
+    "ObsWakeEvent",
+    "ObsWakeEventData",
+    "ObsWakeTimeline",
     "OCIHealthcheckTiming",
     "OIDCExchangeRequest",
     "OIDCExchangeRequestCapability",
@@ -11372,6 +11390,11 @@ __all__ = (
     "SearchAppLogEventsSource",
     "SeatUsageResponse",
     "SeatUsageResponsePlan",
+    "SecretEntryRequest",
+    "SecretEntryResponse",
+    "SecretEntryStatus",
+    "SecretEntryStatusRequest",
+    "SecretEntryStatusStatus",
     "SecretFile",
     "SecretFinding",
     "SecretFindingSeverity",
@@ -11780,6 +11803,7 @@ __all__ = (
     "WakeTimelineEventData",
     "WakeTimelineJSONRow",
     "WakeTimelineJSONRowKind",
+    "WakeTimelineJSONRowRestoreFallbackReason",
     "WakeTimelineJSONRowTier",
     "WakeTimelineJSONRowTriggerClass",
     "WakeTimelinePage",

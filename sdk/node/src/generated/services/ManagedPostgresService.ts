@@ -19,6 +19,8 @@ import type { ManagedPostgresCutover } from '../models/ManagedPostgresCutover.js
 import type { ManagedPostgresCutoverPreflight } from '../models/ManagedPostgresCutoverPreflight.js';
 import type { ManagedPostgresDatabase } from '../models/ManagedPostgresDatabase.js';
 import type { ManagedPostgresDatabaseList } from '../models/ManagedPostgresDatabaseList.js';
+import type { ManagedPostgresOverage } from '../models/ManagedPostgresOverage.js';
+import type { ManagedPostgresOverageRequest } from '../models/ManagedPostgresOverageRequest.js';
 import type { ManagedPostgresResize } from '../models/ManagedPostgresResize.js';
 import type { ManagedPostgresUsageResponse } from '../models/ManagedPostgresUsageResponse.js';
 import type { PrepareManagedPostgresCutoverRequest } from '../models/PrepareManagedPostgresCutoverRequest.js';
@@ -50,6 +52,38 @@ export class ManagedPostgresService {
       query: {
         'region': region,
       },
+    });
+  }
+  /**
+   * Show whether compute overage is on
+   * With overage on, a paid account's managed PostgreSQL databases keep running past the plan's monthly compute allowance until the ceiling, twice the allowance, and are then suspended. Off is the default; the databases are then suspended at the allowance. A cap never deletes a database (ADR-20261025094915).
+   * @returns ManagedPostgresOverage The account's overage setting and compute ceiling
+   * @returns Problem Authentication, plan or capability error
+   * @throws ApiError
+   */
+  public static getManagedPostgresOverage(): CancelablePromise<ManagedPostgresOverage | Problem> {
+    return __request(OpenAPI, {
+      method: 'GET',
+      url: '/v1/postgres/overage',
+    });
+  }
+  /**
+   * Turn compute overage on or off
+   * Paid plans only; Free stops at its allowance and answers 403 managed_postgres_not_in_plan. Turning overage off while past the allowance suspends the databases at the next cap sweep. Compute above the allowance is not billed until managed PostgreSQL has invoicing.
+   * @returns ManagedPostgresOverage The new overage setting and compute ceiling
+   * @returns Problem Validation, authentication, plan or capability error
+   * @throws ApiError
+   */
+  public static setManagedPostgresOverage({
+    requestBody,
+  }: {
+    requestBody: ManagedPostgresOverageRequest,
+  }): CancelablePromise<ManagedPostgresOverage | Problem> {
+    return __request(OpenAPI, {
+      method: 'PUT',
+      url: '/v1/postgres/overage',
+      body: requestBody,
+      mediaType: 'application/json',
     });
   }
   /**

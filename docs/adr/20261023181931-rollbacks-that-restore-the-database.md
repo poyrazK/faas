@@ -1,6 +1,6 @@
 # ADR-20261023181931 · Rollbacks that restore the database
 
-- **Status:** accepted
+- **Status:** proposed; shipped in PR 5305 (2026-10-25) behind the preview `postgres-restore` flag. Acceptance needs an end-to-end drill with a real provider restore; the n2 fixture providers do not restore. Amendment 1 (2026-10-26)
 - **Date:** 2026-10-23
 - **Amends:** [ADR-1448](1448-releases-that-change-the-database.md) (rollbacks over release commands), [ADR-1333](1333-managed-postgres-activation-preflight.md) and [ADR-1335](1335-managed-postgres-source-writer-isolation.md) (activation stays disabled for every cutover except this one), [ADR-464](464-managed-postgres-cutover-preparation.md), [ADR-466](466-managed-postgres-cutover-admission-fence.md) and [ADR-1153](1153-managed-postgres-durable-drain-plans.md) (cancellation is no longer the only way to release pins and the admission fence)
 - **Decision:** An acknowledged rollback may set `restore_databases`. Gregale then switches the app's managed PostgreSQL database back with the code. It restores the database to just before the earliest release the rollback crosses, into a new database. It stages and verifies the app's credentials for that copy, and fences the app so nothing new starts. It drains the app's running instances and makes the rollback target the live release. In one transaction it then replaces the app's bindings to the source database with bindings to the copy. Last, it invalidates the app's snapshots and lifts the fence. Writes made after the restore point stay in the source database, which Gregale does not change. `gregale rollback --restore-databases` runs it and reports each phase.
@@ -121,3 +121,9 @@ The switch ships with the migration that adds `release_database_switches`, the n
 - **apid:** the request checks, the switch routes and the rollback guard.
 - **schedd:** the capture loop.
 - **CLI:** the plan, confirmation and progress output.
+
+## Amendment 1 (2026-10-26): the preview flag gates the request too
+
+`postgres-restore` (preview) owns the `database-switches` routes, but `restore_databases` on `POST /v1/apps/{slug}/rollback`, a GA route, started a switch for every account. While the capability is off for the caller, the field now answers `400` as the unknown field it is to them, like its hidden routes. The status is back to proposed until an end-to-end drill restores a real provider database.
+
+Operations: the worker reports each tick and each retried step (`faas_release_worker_*{worker="database_switches"}`), and each outcome (`faas_release_guard_decisions_total{guard="database_switch"}`). `FaasDatabaseSwitchAborting` and `FaasDatabaseSwitchFailed` alert. A failed switch has already undone itself: the previous release serves on the source database, and the restored copy is kept. See `docs/runbooks/FaasReleaseGuards.md`.

@@ -2359,6 +2359,14 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 		}
 	}
 	if req.RestoreDatabases {
+		// The switch belongs to postgres-restore (ADR-20261023181931): while
+		// that capability is off for the caller, the field answers as the
+		// unknown field it is to them, like its hidden routes.
+		if !s.capabilityEnabledFor("postgres-restore", acct, app) {
+			api.WriteProblem(w, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
+				"Invalid rollback request", `json: unknown field "restore_databases"`))
+			return
+		}
 		s.startDatabaseSwitch(w, r, acct, app, req)
 		return
 	}
@@ -6951,12 +6959,17 @@ func (s *server) accountUsage(w http.ResponseWriter, r *http.Request, acct state
 
 	if s.managedPostgres != nil {
 		if limits, ok := api.ManagedPostgresLimitsFor(acct.Plan); ok && limits.DatabasesMax > 0 {
-			usage, err := s.managedPostgres.UsageSummary(r.Context(), acct.ID, now, managedPostgresUsageCeilings(limits))
+			overage, err := s.managedPostgresOverageOn(r.Context(), acct, acct.ID)
 			if err != nil {
 				managedPostgresProblem(w, err)
 				return
 			}
-			view := managedPostgresUsageView(usage, limits, s.managedPostgresCapMode)
+			usage, err := s.managedPostgres.UsageSummary(r.Context(), acct.ID, now, managedPostgresUsageCeilings(limits, overage))
+			if err != nil {
+				managedPostgresProblem(w, err)
+				return
+			}
+			view := managedPostgresUsageView(usage, limits, s.managedPostgresCapMode, overage)
 			out.ManagedPostgres = &view
 		}
 	}

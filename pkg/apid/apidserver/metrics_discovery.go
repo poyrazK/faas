@@ -4,6 +4,8 @@ import (
 	"net"
 	"net/http"
 	"strings"
+
+	"github.com/onebox-faas/faas/pkg/daemonunitspec"
 )
 
 const (
@@ -101,7 +103,7 @@ func (s *server) scheddMetricsDiscovery(w http.ResponseWriter, r *http.Request) 
 // on its metrics port. Prometheus queries them only when the cell runs the
 // edge, so a node without it is never probed.
 func (s *server) gatewaydPublicEdgeMetricsDiscovery(w http.ResponseWriter, r *http.Request) {
-	s.metricsDiscovery(w, r, "gatewayd-public-edge", daemonMetricsTarget("9092"))
+	s.metricsDiscovery(w, r, "gatewayd-public-edge", daemonMetricsTarget(daemonunitspec.ComputeEdgeControlPort))
 }
 
 func (s *server) cloudflaredMetricsDiscovery(w http.ResponseWriter, r *http.Request) {

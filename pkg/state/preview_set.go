@@ -22,6 +22,9 @@ type PRPreviewSet struct {
 	RootAppID      string
 	MemberAppIDs   []string
 	Closed         bool
+	// SetupError says why githubd could not reserve or start the recorded
+	// head. A new head clears it.
+	SetupError string
 }
 
 // PRPreviewSetStore is separate from Store so preview-only state does not
@@ -160,6 +163,7 @@ func (s *PgStore) PutPRPreviewSet(ctx context.Context, set PRPreviewSet) error {
 		              root_app_id = excluded.root_app_id,
 		              member_app_ids = excluded.member_app_ids,
 		              closed_at = null,
+		              setup_error = null,
 		              updated_at = now()`, set.InstallationID, set.RepoFullName,
 		set.PRNumber, set.CommitSHA, set.RootAppID, set.MemberAppIDs)
 	if err != nil {
@@ -201,9 +205,10 @@ func (s *PgStore) ClosePRPreviewSet(ctx context.Context, installationID int64, r
 func (s *PgStore) GetPRPreviewSet(ctx context.Context, installationID int64, repo string, prNumber int) (PRPreviewSet, error) {
 	var set PRPreviewSet
 	var closed bool
-	err := s.pool.QueryRow(ctx, `select commit_sha, root_app_id::text, member_app_ids, closed_at is not null
+	err := s.pool.QueryRow(ctx, `select commit_sha, root_app_id::text, member_app_ids, closed_at is not null,
+		coalesce(setup_error, '')
 		from pr_preview_sets where installation_id = $1 and repo_full_name = $2 and pr_number = $3`,
-		installationID, repo, prNumber).Scan(&set.CommitSHA, &set.RootAppID, &set.MemberAppIDs, &closed)
+		installationID, repo, prNumber).Scan(&set.CommitSHA, &set.RootAppID, &set.MemberAppIDs, &closed, &set.SetupError)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return PRPreviewSet{}, ErrNotFound
 	}
@@ -221,12 +226,12 @@ func (s *PgStore) PRPreviewEnvironmentByRoot(ctx context.Context, rootAppID stri
 	rows, err := s.pool.Query(ctx, `
 		with selected as (
 			select installation_id, repo_full_name, pr_number, commit_sha, root_app_id,
-			       member_app_ids, closed_at is not null as closed
+			       member_app_ids, closed_at is not null as closed, coalesce(setup_error, '') as setup_error
 			from pr_preview_sets where root_app_id = $1::uuid
 			order by updated_at desc limit 1
 		)
 		select selected.installation_id, selected.repo_full_name, selected.pr_number,
-		       selected.commit_sha, selected.closed, expected.app_id,
+		       selected.commit_sha, selected.closed, selected.setup_error, expected.app_id,
 		       coalesce(a.slug, ''), coalesce(a.preview_of_slug, ''),
 		       coalesce(nullif(a.workload_name, ''), a.slug, expected.app_id),
 		       coalesce(a.status, 'missing'), coalesce(a.preview_pr_state, ''),
@@ -254,7 +259,7 @@ func (s *PgStore) PRPreviewEnvironmentByRoot(ctx context.Context, rootAppID stri
 		var member previewset.Member
 		if err := rows.Scan(&environment.Set.InstallationID, &environment.Set.RepoFullName,
 			&environment.Set.PRNumber, &environment.Set.CommitSHA, &environment.Set.Closed,
-			&member.AppID, &member.Slug, &member.PreviewOfSlug, &member.WorkloadName,
+			&environment.Set.SetupError, &member.AppID, &member.Slug, &member.PreviewOfSlug, &member.WorkloadName,
 			&member.AppStatus, &member.PreviewState, &member.DeploymentID, &member.DeploymentStatus); err != nil {
 			return PRPreviewEnvironment{}, fmt.Errorf("state: scan PR preview environment: %w", err)
 		}
@@ -295,6 +300,7 @@ func (m *MemStore) PutPRPreviewSet(_ context.Context, set PRPreviewSet) error {
 	previous := m.previewSets[key]
 	set.MemberAppIDs = append([]string(nil), set.MemberAppIDs...)
 	set.Closed = false
+	set.SetupError = ""
 	m.previewSets[key] = set
 	for _, id := range previous.MemberAppIDs {
 		inUse := false
