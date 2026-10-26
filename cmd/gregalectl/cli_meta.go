@@ -290,6 +290,7 @@ var cliCommands = []cliCommand{
 		Short:   "Reconcile the object bucket catalog with each provider after a database restore (ADR 20261025111015)",
 		Subcommands: []cliSub{
 			{Name: "reconcile", Short: "List each backend's Gregale buckets and report catalog disagreements, read-only (exit 4 on findings)", Flags: []cliFlag{{Name: "config", Short: "provider registry JSON"}, {Name: "provider-env", Short: "provider credential env file"}, {Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}, {Name: "json", Short: "emit structured JSON"}}},
+			{Name: "hold", Short: "Turn s3_enabled off directly in the database, without apid, right after a restore", Flags: []cliFlag{{Name: "pg-dsn", Short: "PostgreSQL DSN"}, {Name: "db-env", Short: "file containing DATABASE_URL"}}},
 		},
 	},
 	{

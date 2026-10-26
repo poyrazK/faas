@@ -153,7 +153,7 @@ func (s *Service) RevokeObjectS3Credential(w http.ResponseWriter, r *http.Reques
 			if changed {
 				s.Host.NotifyRuntimeConfigChange(r.Context(), db.NotifySecretRotated, acct, state.App{ID: credential.ManagedAppID}, "binding_revoked", credential.ManagedScope, "")
 			}
-			s.Host.EmitAudit(r.Context(), "object_storage.s3_credential_revoked", &acct.ID, map[string]any{
+			s.emitRevocation(r.Context(), "object_storage.s3_credential_revoked", acct.ID, map[string]any{
 				"app_id": bucket.AppID, "bucket_id": bucket.ID, "credential_id": credentialID,
 			})
 			w.WriteHeader(http.StatusNoContent)
@@ -164,7 +164,7 @@ func (s *Service) RevokeObjectS3Credential(w http.ResponseWriter, r *http.Reques
 		BucketProblem(w, err)
 		return
 	}
-	s.Host.EmitAudit(r.Context(), "object_storage.s3_credential_revoked", &acct.ID, map[string]any{
+	s.emitRevocation(r.Context(), "object_storage.s3_credential_revoked", acct.ID, map[string]any{
 		"app_id": bucket.AppID, "bucket_id": bucket.ID, "credential_id": credentialID,
 	})
 	w.WriteHeader(http.StatusNoContent)

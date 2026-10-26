@@ -20,6 +20,24 @@
         path: /etc/faas/object-storage.json
       register: faas_object_storage_registry
 
+    # A managed gateway without its registry is a host that was not
+    # converged, not one without object storage: passing would report a
+    # clean reconcile that compared nothing.
+    - name: Refuse a managed gateway without its registry
+      ansible.builtin.fail:
+        msg: >-
+          The manifest manages the S3 gateway but /etc/faas/object-storage.json
+          is missing on {{ inventory_hostname }}. Converge the control plane
+          (make bootstrap-control-plane) before reconciling.
+      when:
+        - not faas_object_storage_registry.stat.exists
+        - faas_object_storage_gateway_managed | default(false) | bool
+
+    - name: Say there is nothing to reconcile
+      ansible.builtin.debug:
+        msg: No object storage is configured on {{ inventory_hostname }}; nothing to reconcile.
+      when: not faas_object_storage_registry.stat.exists
+
     - name: Compare every backend with the catalog
       ansible.builtin.command:
         argv:

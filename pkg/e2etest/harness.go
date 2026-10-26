@@ -2053,6 +2053,26 @@ func (h *Harness) PlannedRestartVMMD(stopTimeout time.Duration) error {
 	return nil
 }
 
+// SetVMMDEnv changes one variable of the retained vmmd launch recipe; the
+// next PlannedRestartVMMD starts the successor with it. Launch entries come
+// after the inherited environment, so this overrides the test's own.
+func (h *Harness) SetVMMDEnv(key, value string) error {
+	if h == nil || len(h.vmmdLaunchEnv) == 0 {
+		return fmt.Errorf("e2etest: vmmd launch recipe unavailable")
+	}
+	if key == "" || strings.ContainsAny(key, "=\x00") || strings.ContainsRune(value, '\x00') {
+		return fmt.Errorf("e2etest: invalid vmmd environment entry")
+	}
+	env := h.vmmdLaunchEnv[:0]
+	for _, existing := range h.vmmdLaunchEnv {
+		if !strings.HasPrefix(existing, key+"=") {
+			env = append(env, existing)
+		}
+	}
+	h.vmmdLaunchEnv = append(env, key+"="+value)
+	return nil
+}
+
 // SetAPIDEnv updates the retained apid launch recipe without exposing private
 // runtime settings to other daemons or guests. RestartAPID applies the change.
 func (h *Harness) SetAPIDEnv(key, value string) error {

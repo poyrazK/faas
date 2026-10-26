@@ -2624,6 +2624,27 @@ func ErrPlanLimitDeveloperApps(l Limits, observed int) *Problem {
 		WithDocs(docsBase + "/plans#developer-environments")
 }
 
+// ErrPlanLimitPreviewEnvironments is returned when a pull-request preview
+// would open more PR preview environments than the plan allows. A closed
+// PR's preview holds no allowance. It keeps the plan_limit_apps code.
+func ErrPlanLimitPreviewEnvironments(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitApps,
+		"PR preview limit reached",
+		fmt.Sprintf("%s plan allows %d open PR preview environment(s); you have %d. Close a pull request or run `gregale preview destroy` on one of its previews.", l.Plan, l.PreviewApps, observed)).
+		WithLimit(int64(l.PreviewApps), int64(observed)).
+		WithDocs(docsBase + "/plans#apps")
+}
+
+// ErrPlanLimitPreviewWorkloads is returned when one PR preview environment
+// would hold more workloads than the plan can deploy.
+func ErrPlanLimitPreviewWorkloads(l Limits, observed int) *Problem {
+	return NewProblem(http.StatusForbidden, CodePlanLimitApps,
+		"PR preview environment too large",
+		fmt.Sprintf("%s plan allows %d workload(s) in one PR preview environment; this one already has %d.", l.Plan, l.DeployedApps, observed)).
+		WithLimit(int64(l.DeployedApps), int64(observed)).
+		WithDocs(docsBase + "/plans#apps")
+}
+
 // ErrDevWatchRAM refuses watch mode (ADR-1170) for a developer app whose RAM
 // is below DevWatchMinRAMMB. Limit and observed are MB.
 func ErrDevWatchRAM(ramMB int) *Problem {
@@ -6278,6 +6299,12 @@ func ErrPlanFeatureGated(feature string, p Plan) *Problem {
 			"Plan doesn't include the AI gateway",
 			fmt.Sprintf("the %s plan doesn't include the AI gateway; upgrade to Hobby or higher to call AI providers through managed integrations.", p)).
 			WithDocs(docsBase + "/ai-gateway#plans")
+	}
+	if feature == "route_controls" {
+		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,
+			"Plan doesn't include route controls",
+			fmt.Sprintf("the %s plan doesn't include route priorities, throttle suggestions or route lifecycle review; upgrade to Hobby or higher.", p)).
+			WithDocs(docsBase + "/plans")
 	}
 	if feature == "sync_invoke" {
 		return NewProblem(http.StatusPaymentRequired, CodePlanFeatureGated,

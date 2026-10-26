@@ -93,7 +93,7 @@ FAILURE_REASON="-"
 RECORD_FILE=""
 READY=0
 
-DAEMONS=(apid gatewayd-internal gatewayd-public schedd vmmd imaged builderd meterd githubd)
+DAEMONS=(apid gatewayd-internal gatewayd-public s3-gatewayd schedd vmmd imaged builderd meterd githubd)
 ACTIVE_DAEMONS=()
 
 daemon_was_active() {

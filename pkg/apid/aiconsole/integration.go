@@ -48,7 +48,7 @@ func (s *Service) integrationPage(w http.ResponseWriter, r *http.Request, acct s
 		s.Host.Render(w, r, acct, page)
 		return
 	}
-	apps := s.appNames(ctx, acct.ID)
+	apps, hidden := s.appNames(ctx, acct)
 	store := s.Host.Store()
 	if usageStore, ok := store.(state.OutboundAIStore); ok {
 		usage, err := usageStore.GetOutboundAIUsage(ctx, acct.ID, integrationID, day)
@@ -56,20 +56,21 @@ func (s *Service) integrationPage(w http.ResponseWriter, r *http.Request, acct s
 			s.log().Warn("dashboard ai: usage unavailable", "account_id", acct.ID, "integration_id", integrationID, "err", err)
 			data.Unavailable = unavailable("usage", err)
 		} else {
-			data.Summary, data.Models, data.Callers = usageViews(usage, apps)
+			data.Summary, data.Models, data.Callers = usageViews(usage, apps, hidden)
 		}
 	}
 	s.spendViews(r, acct, offer, day, now, &data)
 	s.latencyView(r, acct, offer, &data)
 	s.alertViews(r, acct, integrationID, &data)
-	s.recentTraceViews(r, acct, offer, apps, &data)
+	s.recentTraceViews(r, acct, offer, apps, hidden, &data)
 	page.Data = data
 	s.Host.Render(w, r, acct, page)
 }
 
 // usageViews turns a day's rollup into the summary and the by-model and
-// by-caller tables, most expensive first.
-func usageViews(usage state.OutboundAIUsage, apps map[string]string) (dashboard.AIUsageSummary, []dashboard.AIUsageRow, []dashboard.AIUsageRow) {
+// by-caller tables, most expensive first. The integration's spend is the
+// account's, so hidden apps still count, as one otherApps row.
+func usageViews(usage state.OutboundAIUsage, apps map[string]string, hidden map[string]bool) (dashboard.AIUsageSummary, []dashboard.AIUsageRow, []dashboard.AIUsageRow) {
 	total := sumUsage(usage.Items)
 	summary := dashboard.AIUsageSummary{
 		Requests: count(total.Requests), Errors: count(total.ErrorRequests), ErrorRate: percent(total.ErrorRequests, total.Requests),
@@ -80,10 +81,14 @@ func usageViews(usage state.OutboundAIUsage, apps map[string]string) (dashboard.
 	}
 	byModel, byCaller := map[string]*state.OutboundAIUsageItem{}, map[string]*state.OutboundAIUsageItem{}
 	for _, item := range usage.Items {
+		caller := callerName(item.Caller, apps)
+		if hidden[item.Caller] {
+			caller = otherApps
+		}
 		for _, group := range []struct {
 			rows map[string]*state.OutboundAIUsageItem
 			key  string
-		}{{byModel, item.Model}, {byCaller, callerName(item.Caller, apps)}} {
+		}{{byModel, item.Model}, {byCaller, caller}} {
 			row := group.rows[group.key]
 			if row == nil {
 				row = &state.OutboundAIUsageItem{}
@@ -222,7 +227,7 @@ func (s *Service) alertViews(r *http.Request, acct state.Account, integrationID 
 
 // recentTraceViews fills the latest traces.
 func (s *Service) recentTraceViews(r *http.Request, acct state.Account, offer state.OutboundIntegrationOffer, apps map[string]string,
-	data *dashboard.AIIntegrationData) {
+	hidden map[string]bool, data *dashboard.AIIntegrationData) {
 	traces, ok := s.Host.Store().(state.OutboundAITraceStore)
 	if !ok {
 		return
@@ -233,9 +238,11 @@ func (s *Service) recentTraceViews(r *http.Request, acct state.Account, offer st
 		return
 	}
 	for _, trace := range list {
-		data.Traces = append(data.Traces, traceRow(offer.ID, trace, apps, offer.AITraceMaxRepeatedToolCalls))
+		if !hidden[trace.Caller] {
+			data.Traces = append(data.Traces, traceRow(offer.ID, trace, apps, offer.AITraceMaxRepeatedToolCalls))
+		}
 	}
-	if len(list) == 0 {
+	if len(data.Traces) == 0 {
 		data.TracesNote = "No traces yet. Send X-Gregale-AI-Trace (or traceparent) with an agent's calls; traces are recorded " +
 			"when the request log or trace limits are on."
 	}

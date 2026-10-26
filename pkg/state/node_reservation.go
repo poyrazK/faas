@@ -33,6 +33,12 @@
 //     a row, so it can still push a destination node past its ceiling. That
 //     path needs the same treatment and is recorded as follow-up work in
 //     ADR-193.
+//
+// Measured admission (ADR-909 amendment 1): the ceiling bounds Σ(ram_mb +
+// overhead) for an admission without a measurement. A scheduler that admits
+// by a fresh measurement of the node binds a reservation allowance through
+// NodeAdmission, and this guard then bounds the sum by that percent of the
+// ceiling, never beyond api.MeasuredAdmissionMaxOvercommitPercent.
 package state
 
 import (
@@ -241,10 +247,11 @@ func reserveNodeStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState st
 			}
 			usedMB += residentExtra
 			admitMB := int64(ramMB) + int64(api.PerVMOverheadMB)
-			if ceilingMB > 0 && usedMB+admitMB > ceilingMB {
+			capMB := nodeReservationCapMB(ceilingMB, nodeReservationPercent(ctx, nodeID))
+			if ceilingMB > 0 && usedMB+admitMB > capMB {
 				return fmt.Errorf(
-					"state: %w: node=%s used_mb=%d admit_mb=%d ceiling_mb=%d",
-					ErrNodeCapacity, nodeID, usedMB, admitMB, ceilingMB,
+					"state: %w: node=%s used_mb=%d admit_mb=%d ceiling_mb=%d cap_mb=%d",
+					ErrNodeCapacity, nodeID, usedMB, admitMB, ceilingMB, capMB,
 				)
 			}
 		}
@@ -263,6 +270,16 @@ func reserveNodeStatementsDB(ctx context.Context, tx pgx.Tx, nodeID, newState st
 // divergence — exactly the MemStore/PgStore drift that the uppercase-state
 // literal bug was made of.
 func (m *MemStore) checkNodeReservationLocked(nodeID, newState string, ramMB int) error {
+	return m.checkNodeReservationWithinLocked(nodeID, newState, ramMB, 100)
+}
+
+// checkNodeAdmissionReservationLocked is checkNodeReservationLocked with the
+// reservation allowance ctx's placement binding grants (ADR-909 amendment 1).
+func (m *MemStore) checkNodeAdmissionReservationLocked(ctx context.Context, nodeID, newState string, ramMB int) error {
+	return m.checkNodeReservationWithinLocked(nodeID, newState, ramMB, nodeReservationPercent(ctx, nodeID))
+}
+
+func (m *MemStore) checkNodeReservationWithinLocked(nodeID, newState string, ramMB, percent int) error {
 	if !nodeUsageCounts(State(newState)) {
 		return nil
 	}
@@ -285,10 +302,11 @@ func (m *MemStore) checkNodeReservationLocked(nodeID, newState string, ramMB int
 		}
 	}
 	admitMB := int64(ramMB) + int64(api.PerVMOverheadMB)
-	if usedMB+admitMB > int64(node.AdmissionCeilingMB) {
+	capMB := nodeReservationCapMB(int64(node.AdmissionCeilingMB), percent)
+	if usedMB+admitMB > capMB {
 		return fmt.Errorf(
-			"state: %w: node=%s used_mb=%d admit_mb=%d ceiling_mb=%d",
-			ErrNodeCapacity, nodeID, usedMB, admitMB, node.AdmissionCeilingMB,
+			"state: %w: node=%s used_mb=%d admit_mb=%d ceiling_mb=%d cap_mb=%d",
+			ErrNodeCapacity, nodeID, usedMB, admitMB, node.AdmissionCeilingMB, capMB,
 		)
 	}
 	return nil

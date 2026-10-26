@@ -62,6 +62,19 @@ type Config struct {
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
+	// ResourceJournalVolatileDir keeps tmpfs copies of journal records for a
+	// restart on the same boot (ADR-20261026113920). It defaults to
+	// /run/faas/vmmd-resources, and to none when
+	// FAAS_VMMD_RESOURCE_JOURNAL_DIR moves the journal, so a private test
+	// journal never reads another vmmd's copies.
+	// FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR overrides both; "" disables it.
+	ResourceJournalVolatileDir string `toml:"resource_journal_volatile_dir"`
+	// ResourceJournalVolatileWrites sends volatile journal commits only to
+	// the tmpfs copies, so they skip the disk fsync (ADR-20261026113920). Off
+	// by default. Older vmmd binaries ignore the copies, so turn it on only
+	// where the rollback target is this release or later.
+	// FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES overrides TOML.
+	ResourceJournalVolatileWrites bool `toml:"resource_journal_volatile_writes"`
 	// AdoptionRecord writes version-7 adoption blocks into the resource
 	// journal (vmmd restart adoption ADR, slice 1). Older vmmd binaries
 	// refuse to open a journal holding version 7, so turn it on only after
@@ -568,10 +581,11 @@ func LoadConfig(path string) (*Config, error) {
 		"non_tenant_reserve_mb", sizing.NonTenantReserveMB,
 		"vcpu_slots", sizing.VCPUSlots)
 	c := &Config{
-		ResourceJournalDir: "/var/lib/faas/vmmd-resources",
-		FailureReportDir:   "/var/lib/faas/vmmd-failures",
-		SocketPath:         "/run/faas/vmmd.sock",
-		RestoreConcurrency: 3,
+		ResourceJournalDir:         "/var/lib/faas/vmmd-resources",
+		ResourceJournalVolatileDir: "/run/faas/vmmd-resources",
+		FailureReportDir:           "/var/lib/faas/vmmd-failures",
+		SocketPath:                 "/run/faas/vmmd.sock",
+		RestoreConcurrency:         3,
 		// ADR-149 (amended 2026-10-12): on unless vmmd.toml or
 		// FAAS_PREPARED_NETWORKS sets 0, or native recovery is on
 		// (below), so a node does not depend on an Ansible drop-in to
@@ -898,6 +912,23 @@ func LoadConfig(path string) (*Config, error) {
 			return nil, fmt.Errorf("vmmd: FAAS_VMMD_RESOURCE_JOURNAL_DIR must be absolute (got %q)", v)
 		}
 		c.ResourceJournalDir = v
+		c.ResourceJournalVolatileDir = ""
+	}
+	if v, ok := os.LookupEnv("FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR"); ok {
+		if v != "" && !filepath.IsAbs(v) {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_DIR must be absolute (got %q)", v)
+		}
+		c.ResourceJournalVolatileDir = v
+	}
+	if v := os.Getenv("FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_VMMD_RESOURCE_JOURNAL_VOLATILE_WRITES must be a boolean (got %q)", v)
+		}
+		c.ResourceJournalVolatileWrites = enabled
+	}
+	if c.ResourceJournalVolatileWrites && c.ResourceJournalVolatileDir == "" {
+		return nil, errors.New("vmmd: resource_journal_volatile_writes needs resource_journal_volatile_dir")
 	}
 	if c.RestoreConcurrency < 1 || c.RestoreConcurrency > 64 {
 		return nil, fmt.Errorf("vmmd: restore_concurrency must be between 1 and 64 (got %d)", c.RestoreConcurrency)
@@ -1254,4 +1285,13 @@ func vpcpusDefault(sizing api.NodeSizing) int {
 		return sizing.HostCPUs
 	}
 	return api.VCPUSlots
+}
+
+// resourceJournal locates the resource journal and its tmpfs copies.
+func (c *Config) resourceJournal() fcvm.ResourceJournalConfig {
+	return fcvm.ResourceJournalConfig{
+		Dir:            c.ResourceJournalDir,
+		VolatileDir:    c.ResourceJournalVolatileDir,
+		VolatileWrites: c.ResourceJournalVolatileWrites,
+	}
 }

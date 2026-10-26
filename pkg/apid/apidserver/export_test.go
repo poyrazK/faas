@@ -153,6 +153,7 @@ const CsrfActionSessionsRevokeAll = csrfActionSessionsRevokeAll
 const DashboardAsyncInvocationPath = dashboardAsyncInvocationPath
 const DashboardDataAPICookie = dashboardDataAPICookie
 const DashboardAuthSettingsCookie = dashboardAuthSettingsCookie
+const DashboardPreviewDestroyCSRFCookie = dashboardPreviewDestroyCSRFCookie
 const DashboardDebugReplayCSRFCookie = dashboardDebugReplayCSRFCookie
 const DashboardDevBridgeAction = dashboardDevBridgeAction
 const DashboardDevBridgeCSRFCookie = dashboardDevBridgeCSRFCookie

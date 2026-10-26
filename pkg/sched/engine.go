@@ -2432,8 +2432,8 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 		return out, nil
 	}
 	markPreWake(ctx, preWakeLeader)
-	// Leader path: run e.Wake on a detached ctx bounded by the
-	// coordinator's TTL so a cancelled triggering request cannot kill
+	// Leader path: run e.Wake on a detached ctx bounded by
+	// wakeLeaderBudget so a cancelled triggering request cannot kill
 	// the in-flight boot. The deferred Complete is the single
 	// decrement site for all five completion paths inside e.Wake.
 	//
@@ -2441,10 +2441,10 @@ func (e *Engine) ensureWake(ctx context.Context, appID, deploymentID string, wak
 	// correlation values. Using context.Background here dropped the request ID
 	// after the gateway -> schedd gRPC hop, so queue/admit/boot events could not
 	// be joined to the customer-visible x-faas-request-id. The wake still
-	// outlives the triggering request and remains bounded by the coordinator TTL.
+	// outlives the triggering request and remains bounded by wakeLeaderBudget.
 	//
 	//nolint:contextcheck // detachment is the coordinated-wake invariant.
-	leaderCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), e.wakeCoord.TTL())
+	leaderCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), e.wakeLeaderBudget())
 	defer cancel()
 	// The coordinator deliberately detaches from the triggering request, but
 	// preserves the restart correlation id while doing so.

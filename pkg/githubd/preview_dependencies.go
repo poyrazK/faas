@@ -33,13 +33,13 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 	for _, workload := range scan.Workloads {
 		key := strings.ToLower(workload.Name)
 		if _, duplicate := workloads[key]; duplicate {
-			return nil, fmt.Errorf("githubd: ambiguous PR workload %q", workload.Name)
+			return nil, previewSetupFailure("the project declares the workload %q more than once", workload.Name)
 		}
 		workloads[key] = workload
 	}
 	root := strings.ToLower(parent.WorkloadName)
 	if _, found := workloads[root]; !found {
-		return nil, fmt.Errorf("githubd: bound workload %q is absent from PR source", parent.WorkloadName)
+		return nil, previewSetupFailure("the previewed workload %q is not in the project at this commit", parent.WorkloadName)
 	}
 	selected := make(map[string]reposcan.Workload)
 	var visit func(string) error
@@ -53,7 +53,7 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 			if managed[key] {
 				return nil // external managed services are not app previews
 			}
-			return fmt.Errorf("githubd: PR workload %q depends on missing service %q", parent.WorkloadName, name)
+			return previewSetupFailure("a workload depends on %q, which is not in the project at this commit", name)
 		}
 		selected[key] = workload
 		for _, dependency := range workload.DependsOn {
@@ -89,7 +89,7 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 	}
 	order, err := reposcan.DependencyOrder(closure, scan.Managed)
 	if err != nil {
-		return nil, fmt.Errorf("githubd: PR dependency graph: %w", err)
+		return nil, previewSetupFailure("the project's service dependencies are invalid: %s", err)
 	}
 	parents := make([]state.App, 0, len(order)-1)
 	for _, name := range order {
@@ -101,19 +101,24 @@ func (s *Service) previewDependencyParents(ctx context.Context, parent state.App
 		if !found {
 			// A PR may introduce a new dependency before it exists in
 			// production. Start with a clean preview template, without
-			// copying the root app's env or credentials.
+			// copying the root app's env or credentials. It answers on a
+			// guessable preview host, so it keeps the bound app's access
+			// and egress gates, and the visibility production would give
+			// it: a service without ports or declared internal stays off
+			// the internet.
 			if !api.ValidAppSlug(name) {
-				return nil, fmt.Errorf("githubd: PR dependency %q is not a valid app slug", name)
+				return nil, previewSetupFailure("the new service %q needs a name of 3 to 40 lowercase letters, digits and dashes to be previewed", name)
 			}
-			app = state.App{
+			app = withParentAccessGates(state.App{
 				AccountID: parent.AccountID, ProjectID: parent.ProjectID,
 				Slug: name, WorkloadName: name, Type: state.AppTypeApp,
 				RAMMB: 128, MaxConcurrency: 1, CPUMillicores: api.DefaultAppCPUMillicores,
-				Status: state.AppActive,
-			}
+				Status:     state.AppActive,
+				Visibility: reposcan.NewWorkloadVisibility(workloads[key]),
+			}, parent)
 		}
-		if app.Status != state.AppActive {
-			return nil, fmt.Errorf("githubd: PR dependency %q has no active production app", name)
+		if !previewableProductionApp(app) {
+			return nil, previewSetupFailure("the dependency %q has a production app that is not active", name)
 		}
 		// A production app can appear after the first PR preview, possibly
 		// with a different slug. Reuse the already-reserved preview identity

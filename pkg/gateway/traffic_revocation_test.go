@@ -23,6 +23,25 @@ import (
 	"google.golang.org/grpc"
 )
 
+// securityClock moves a registry past its outage grace
+// (ADR-20261026160000) without waiting five minutes.
+type securityClock struct {
+	mu     sync.Mutex
+	offset time.Duration
+}
+
+func (c *securityClock) Now() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return time.Now().Add(c.offset)
+}
+
+func (c *securityClock) pastOutageGrace() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.offset += api.TrafficSecurityOutageGrace + time.Second
+}
+
 type gatewaySecurityStore struct {
 	mu     sync.Mutex
 	states map[trafficrevocation.Scope]trafficrevocation.State
@@ -98,7 +117,8 @@ func TestTrafficRevocationCancelsPublicExchangeUntilForwardCleanup(t *testing.T)
 			backend.setLegacyHot()
 			backend.targets[0].DeploymentID = "dep-1"
 			store := &gatewaySecurityStore{}
-			registry := trafficrevocation.New(store)
+			clock := &securityClock{}
+			registry := trafficrevocation.New(store).WithClock(clock.Now)
 			defer registry.Close()
 			h.WithTrafficRevocations(registry)
 			started := make(chan context.Context, 1)
@@ -134,6 +154,7 @@ func TestTrafficRevocationCancelsPublicExchangeUntilForwardCleanup(t *testing.T)
 				store.mu.Lock()
 				store.err = errors.New("store offline")
 				store.mu.Unlock()
+				clock.pastOutageGrace() // an outage cancels only once the grace has run out
 				wantCause, wantStatus, wantCode = trafficrevocation.ErrUnavailable, http.StatusServiceUnavailable, api.CodeTrafficRevocationUnavailable
 			} else if kind == "missed-revoke-release" {
 				scope = trafficrevocation.Scope{Kind: "account", ID: "acct-1"}

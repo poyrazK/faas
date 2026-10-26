@@ -41971,7 +41971,8 @@ WITH page AS MATERIALIZED (
 )
 SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
        p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
-       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at,
+       bc.data AS completed_data
 FROM page p
 LEFT JOIN LATERAL (
  SELECT id, data, at FROM events
@@ -41979,7 +41980,7 @@ LEFT JOIN LATERAL (
  ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
 ) bs ON true
 LEFT JOIN LATERAL (
- SELECT at FROM events
+ SELECT at, data FROM events
  WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
  ORDER BY at ASC, id ASC LIMIT 1
 ) bc ON true
@@ -41996,15 +41997,16 @@ type ListAppWakeHistoryPageParams struct {
 }
 
 type ListAppWakeHistoryPageRow struct {
-	InstanceID  string
-	AppID       string
-	WakeID      string
-	State       string
-	StartedAt   pgtype.Timestamptz
-	BootData    []byte
-	BootAt      pgtype.Timestamptz
-	HasMeta     bool
-	CompletedAt pgtype.Timestamptz
+	InstanceID    string
+	AppID         string
+	WakeID        string
+	State         string
+	StartedAt     pgtype.Timestamptz
+	BootData      []byte
+	BootAt        pgtype.Timestamptz
+	HasMeta       bool
+	CompletedAt   pgtype.Timestamptz
+	CompletedData []byte
 }
 
 // ADR-1638: retained history is scoped and windowed before limiting. Metadata
@@ -42035,6 +42037,7 @@ func (q *Queries) ListAppWakeHistoryPage(ctx context.Context, db DBTX, arg ListA
 			&i.BootAt,
 			&i.HasMeta,
 			&i.CompletedAt,
+			&i.CompletedData,
 		); err != nil {
 			return nil, err
 		}
@@ -52086,7 +52089,8 @@ WITH page AS MATERIALIZED (
 )
 SELECT p.id::text AS instance_id, p.app_id::text AS app_id, p.wake_id::text AS wake_id,
        p.state, p.started_at, bs.data AS boot_data, bs.at AS boot_at,
-       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at
+       (bs.id IS NOT NULL)::boolean AS has_meta, bc.at AS completed_at,
+       bc.data AS completed_data
 FROM page p
 LEFT JOIN LATERAL (
  SELECT id, data, at FROM events
@@ -52094,7 +52098,7 @@ LEFT JOIN LATERAL (
  ORDER BY (actor = 'schedd') DESC, at ASC, id ASC LIMIT 1
 ) bs ON true
 LEFT JOIN LATERAL (
- SELECT at FROM events
+ SELECT at, data FROM events
  WHERE kind = 'wake.boot_completed' AND data->>'app_id' = p.app_id::text AND data->>'wake_id' = p.wake_id::text
  ORDER BY at ASC, id ASC LIMIT 1
 ) bc ON true
@@ -52107,15 +52111,16 @@ type ListWakeHistoryByWakeIDsParams struct {
 }
 
 type ListWakeHistoryByWakeIDsRow struct {
-	InstanceID  string
-	AppID       string
-	WakeID      string
-	State       string
-	StartedAt   pgtype.Timestamptz
-	BootData    []byte
-	BootAt      pgtype.Timestamptz
-	HasMeta     bool
-	CompletedAt pgtype.Timestamptz
+	InstanceID    string
+	AppID         string
+	WakeID        string
+	State         string
+	StartedAt     pgtype.Timestamptz
+	BootData      []byte
+	BootAt        pgtype.Timestamptz
+	HasMeta       bool
+	CompletedAt   pgtype.Timestamptz
+	CompletedData []byte
 }
 
 // The account trace view's per-request wakes: one canonical instance per wake
@@ -52140,6 +52145,7 @@ func (q *Queries) ListWakeHistoryByWakeIDs(ctx context.Context, db DBTX, arg Lis
 			&i.BootAt,
 			&i.HasMeta,
 			&i.CompletedAt,
+			&i.CompletedData,
 		); err != nil {
 			return nil, err
 		}

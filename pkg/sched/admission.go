@@ -971,6 +971,23 @@ func (l *NodeLedger) MeasuredAdmissionEnabled() bool {
 	return l.measured != nil
 }
 
+// ReservationPercent is how far Σ(ram_mb + 8) on nodeID may reach, as a
+// percent of its admission ceiling, for an admission this ledger makes now:
+// the ADR-909 overcommit bound while a fresh measurement of the node drives
+// admission, otherwise 100. The durable per-node guard enforces it (ADR-909
+// amendment 1), so a measured admission is not refused at the bare ceiling.
+func (l *NodeLedger) ReservationPercent(nodeID string) int {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.measured == nil {
+		return 100
+	}
+	if _, _, ok := l.measured(nodeID); !ok {
+		return 100
+	}
+	return api.MeasuredAdmissionMaxOvercommitPercent
+}
+
 // CeilingForNode is the RAM admission ceiling the ledger last applied on a
 // node, or the global ceiling for a node it has not admitted to.
 func (l *NodeLedger) CeilingForNode(nodeID string) int {
