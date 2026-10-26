@@ -1,6 +1,7 @@
 package apidserver
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -86,9 +87,20 @@ func (s *server) provisionPreview(r *http.Request, acct state.Account, parent st
 		if !samePreview(existing, parent, req.PRNumber) {
 			return state.App{}, false, previewSlugTakenProblem(slug)
 		}
-		if reopened, reopenErr := s.store.RefreshPRPreview(r.Context(), existing.ID, expiresAt); reopenErr == nil {
+		reopen := s.store.RefreshPRPreview
+		if reopener, ok := s.store.(state.PRPreviewReopenStore); ok {
+			reopen = func(ctx context.Context, id string, expiresAt time.Time) (state.App, error) {
+				return reopener.ReopenPRPreview(ctx, id, expiresAt, api.MustLimitsFor(acct.Plan))
+			}
+		}
+		reopened, reopenErr := reopen(r.Context(), existing.ID, expiresAt)
+		var qe *state.QuotaError
+		switch {
+		case reopenErr == nil:
 			existing = reopened
-		} else if !errors.Is(reopenErr, state.ErrNotFound) {
+		case errors.As(reopenErr, &qe):
+			return state.App{}, false, previewQuotaProblem(qe, acct.Plan)
+		case !errors.Is(reopenErr, state.ErrNotFound):
 			return state.App{}, false, api.ErrCapacity("refresh preview")
 		}
 		return existing, false, nil
@@ -118,9 +130,30 @@ func (s *server) provisionPreview(r *http.Request, acct state.Account, parent st
 	}
 	var qe *state.QuotaError
 	if errors.As(err, &qe) {
-		return state.App{}, false, api.ErrPlanLimitApps(api.MustLimitsFor(acct.Plan), qe.Observed)
+		return state.App{}, false, previewQuotaProblem(qe, acct.Plan)
 	}
 	return state.App{}, false, api.ErrCapacity("create preview")
+}
+
+// previewQuotaProblem reports a PR preview admission failure with the
+// limits of the plan the admission transaction observed.
+func previewQuotaProblem(qe *state.QuotaError, plan api.Plan) *api.Problem {
+	limits := api.MustLimitsFor(plan)
+	if qe.Plan != "" {
+		if authoritative, ok := api.LimitsFor(qe.Plan); ok {
+			limits = authoritative
+		}
+	}
+	switch qe.Kind {
+	case state.QuotaErrorKindPreviewApps:
+		limits.PreviewApps = qe.Limit
+		return api.ErrPlanLimitPreviewEnvironments(limits, qe.Observed)
+	case state.QuotaErrorKindPreviewWorkloads:
+		limits.DeployedApps = qe.Limit
+		return api.ErrPlanLimitPreviewWorkloads(limits, qe.Observed)
+	default:
+		return api.ErrPlanLimitApps(limits, qe.Observed)
+	}
 }
 
 func previewSlugTakenProblem(slug string) *api.Problem {

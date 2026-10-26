@@ -2976,8 +2976,11 @@ type Limits struct {
 
 	// Deploy-time quotas (enforced by apid before work happens, spec §4.2).
 	DeployedApps int // max apps in state active|evicted_cold
-	// PreviewApps caps live PR preview apps separately from production apps.
-	// A preview lease is temporary and never consumes a DeployedApps slot.
+	// PreviewApps caps open PR preview environments (the open previews of one
+	// project and pull request) separately from production apps. One
+	// environment holds at most DeployedApps workloads; a closed pull
+	// request's preview holds none (ADR-20261026090000). A preview lease is
+	// temporary and never consumes a DeployedApps slot.
 	PreviewApps int
 	// OutboundRequestsPerDayMax (ADR-257) caps the customer-selected daily
 	// request limit on any one managed outbound integration. It is a policy
@@ -7053,10 +7056,14 @@ const (
 	// EdgePenaltyBoxMaxPerApp and EdgePenaltyBoxMaxEntries bound one
 	// gateway's boxes (and its pending rejection counts) per app and in
 	// total, so a flood from rotating addresses costs bounded memory and
-	// one app cannot push out another's boxes. A full app box drops its
-	// soonest-ending entry.
+	// one app cannot push out another's boxes. A full app drops its
+	// soonest-ending box; a full gateway drops the soonest-ending box of
+	// the app holding the most. EdgePenaltyHitsMaxPerApp bounds one app's
+	// pending counts; past it the app's new clients are refused but not
+	// counted.
 	EdgePenaltyBoxMaxPerApp  = 10000
 	EdgePenaltyBoxMaxEntries = 200000
+	EdgePenaltyHitsMaxPerApp = 10000
 
 	// --- ADR-20261021220456: attack mode ------------------------------
 
@@ -14100,6 +14107,18 @@ const (
 	LogSearchStatementTimeout = 5 * time.Second
 	// LogSavedSearchesPerApp caps an app's saved searches (slice D).
 	LogSavedSearchesPerApp = 25
+)
+
+// Log reads in flight. Each ledger read holds one of an apid's database
+// connections for up to LogSearchStatementTimeout, so an apid runs at most
+// LogReadsInFlightPerAccount of one account's log reads (searches, facets,
+// log widgets, log pages, trace lookups) at once and LogReadsInFlightMax in
+// all, leaving the rest of its pool to every other request. A read that
+// finds no slot within LogReadSlotWait is refused as busy (429).
+const (
+	LogReadsInFlightPerAccount = 2
+	LogReadsInFlightMax        = 4
+	LogReadSlotWait            = 2 * time.Second
 )
 
 // Alert log context (ADR-20261022172052): a firing app alert reads the log

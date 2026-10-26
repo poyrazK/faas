@@ -40,6 +40,7 @@ from .account_trace_lookup_error import AccountTraceLookupError
 from .account_trace_lookup_response import AccountTraceLookupResponse
 from .account_trace_match import AccountTraceMatch
 from .account_trace_wake import AccountTraceWake
+from .account_trace_wake_restore_fallback_reason import AccountTraceWakeRestoreFallbackReason
 from .account_usage_response import AccountUsageResponse
 from .activity_actor_response import ActivityActorResponse
 from .activity_actor_response_type import ActivityActorResponseType
@@ -3250,6 +3251,9 @@ from .obs_rule_health_item_state import ObsRuleHealthItemState
 from .obs_rule_health_response import ObsRuleHealthResponse
 from .obs_rule_health_response_state import ObsRuleHealthResponseState
 from .obs_rule_health_totals import ObsRuleHealthTotals
+from .obs_wake_event import ObsWakeEvent
+from .obs_wake_event_data import ObsWakeEventData
+from .obs_wake_timeline import ObsWakeTimeline
 from .oci_healthcheck_timing import OCIHealthcheckTiming
 from .oidc_exchange_request import OIDCExchangeRequest
 from .oidc_exchange_request_capability import OIDCExchangeRequestCapability
@@ -5939,6 +5943,7 @@ from .wake_timeline_event import WakeTimelineEvent
 from .wake_timeline_event_data import WakeTimelineEventData
 from .wake_timeline_json_row import WakeTimelineJSONRow
 from .wake_timeline_json_row_kind import WakeTimelineJSONRowKind
+from .wake_timeline_json_row_restore_fallback_reason import WakeTimelineJSONRowRestoreFallbackReason
 from .wake_timeline_json_row_tier import WakeTimelineJSONRowTier
 from .wake_timeline_json_row_trigger_class import WakeTimelineJSONRowTriggerClass
 from .wake_timeline_page import WakeTimelinePage
@@ -6235,6 +6240,7 @@ __all__ = (
     "AccountTraceLookupResponse",
     "AccountTraceMatch",
     "AccountTraceWake",
+    "AccountTraceWakeRestoreFallbackReason",
     "AccountUsageResponse",
     "ActivityActorResponse",
     "ActivityActorResponseType",
@@ -9303,6 +9309,9 @@ __all__ = (
     "ObsRuleHealthResponse",
     "ObsRuleHealthResponseState",
     "ObsRuleHealthTotals",
+    "ObsWakeEvent",
+    "ObsWakeEventData",
+    "ObsWakeTimeline",
     "OCIHealthcheckTiming",
     "OIDCExchangeRequest",
     "OIDCExchangeRequestCapability",
@@ -11780,6 +11789,7 @@ __all__ = (
     "WakeTimelineEventData",
     "WakeTimelineJSONRow",
     "WakeTimelineJSONRowKind",
+    "WakeTimelineJSONRowRestoreFallbackReason",
     "WakeTimelineJSONRowTier",
     "WakeTimelineJSONRowTriggerClass",
     "WakeTimelinePage",

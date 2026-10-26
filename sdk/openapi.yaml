@@ -21224,7 +21224,7 @@ components:
         vcpu: {type: integer, minimum: 1, maximum: 4, description: "Plan-derived guest vCPU topology. Free/Hobby/Pro use 2; Scale uses 4. This is informational on account reads."}
         max_concurrency: {type: integer}
         deployed_apps: {type: integer}
-        preview_apps: {type: integer, description: "Maximum live pull-request preview apps, separate from production apps."}
+        preview_apps: {type: integer, description: "Maximum open PR preview environments, separate from production apps."}
         deploys_per_hour: {type: integer, minimum: 1, description: "Account-wide deployment admissions per fixed one-hour window."}
         developer_apps: {type: integer, description: "Maximum live `gregale dev` environments for this plan."}
         included_gb_hours: {type: integer, format: int64}
@@ -34826,11 +34826,11 @@ components:
           description: "Bounded User-Agent classification for the request that caused the wake. Empty/absent on pre-M3 fleet rows."
         method:
           type: string
-          description: "Wake method (restore or cold_boot), when telemetry is available."
+          description: "Wake method vmmd ran (restore or cold_boot), when telemetry is available. A planned restore that fell back to a cold boot reads cold_boot."
         tier:
           type: string
           enum: [warm, init, cold_boot_fallback]
-          description: "Snapshot tier selected for the wake."
+          description: "Snapshot tier selected for the wake; cold_boot_fallback when a planned restore fell back to a cold boot."
         queued_count:
           type: integer
           format: int32
@@ -34849,6 +34849,13 @@ components:
           type: integer
           format: int32
           description: "Wall-clock boot_started → boot_completed delta in ms. -1 when still booting or rejected. 0 is impossible (a 0ms wake would round to a positive integer)."
+        planned_method:
+          type: string
+          description: "The method schedd planned when vmmd ran another one, for example restore on a wake that fell back to a cold boot. Absent otherwise."
+        restore_fallback_reason:
+          type: string
+          enum: [after_restore_failed]
+          description: "Closed reason for a restore that fell back to a cold boot, when one is reported. Absent for other fallbacks, such as a snapshot made from an older base."
     AppWakeTimelineResponse:
       description: |
         JSON mirror of the dashboard per-app wake-timeline page.

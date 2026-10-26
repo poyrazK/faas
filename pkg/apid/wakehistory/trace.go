@@ -33,7 +33,7 @@ func TraceWakes(ctx context.Context, store any, appIDs, wakeIDs []string) (map[s
 	for _, record := range records {
 		wake := api.AccountTraceWake{WakeID: record.WakeID}
 		if row, err := project(record); err == nil {
-			wake.Method = row.Method
+			wake.Method, wake.PlannedMethod, wake.RestoreFallbackReason = row.Method, row.PlannedMethod, row.RestoreFallbackReason
 			if row.ReadyInMS > 0 {
 				wake.ReadyInMS = row.ReadyInMS
 			}

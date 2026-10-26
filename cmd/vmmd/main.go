@@ -719,8 +719,15 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	if err != nil {
 		return fmt.Errorf("vmmd: load runtime seal domain: %w", err)
 	}
+	// ADR-20261026090000: builder VMs pull private base images with the
+	// built app's registry credentials, which the build domain opens.
+	buildIdentities, err := loadBuildSealDomain(filepath.Dir(keyPath))
+	if err != nil {
+		return fmt.Errorf("vmmd: load build seal domain: %w", err)
+	}
+	registryIdentities := append(append([]*age.X25519Identity(nil), buildIdentities...), hostIdentities...)
 	hostIdentities = append(runtimeIdentities, hostIdentities...)
-	sealdomain.RegisterLoaded(ops.Registry(), sealdomain.Runtime, len(runtimeIdentities) > 0)
+	sealdomain.RegisterLoadedDomains(ops.Registry(), map[sealdomain.Domain]bool{sealdomain.Runtime: len(runtimeIdentities) > 0, sealdomain.Build: len(buildIdentities) > 0})
 	log.Info("vmmd: unseal identities loaded", "runtime_domain", len(runtimeIdentities) > 0, "identities", len(hostIdentities))
 
 	// Issue #98 / ADR-028: vmmd self-registers in compute_nodes
@@ -1252,6 +1259,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			jailer.VsockUDSSocketPath(instance), func() (bool, uint64) { return mgr.QuietGate(instance) })
 	})
 	mgr.SetHostIdentities(hostIdentities)
+	mgr.SetRegistryIdentities(registryIdentities)
 	mgr.RequireSecretBinding(cfg.RequireSecretBinding)
 	sealdomain.RegisterBindingRequired(ops.Registry(), cfg.RequireSecretBinding)
 	if cfg.RequireSecretBinding {

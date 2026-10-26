@@ -1280,6 +1280,106 @@ groups:
           description: "faas-serving-probe.timer has not completed a run on {{ $labels.instance }} for over 15 minutes, so an outage seen from that node would not be reported. Check systemctl status faas-serving-probe.timer and journalctl -u faas-serving-probe."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbe.md"
 
+  # ─────────────────────────────────────────────────────────────────────
+  # Control-plane PostgreSQL activity. faas-postgres-activity-metrics (role
+  # postgres_metrics) exports transactions, backends by daemon and host,
+  # waits, transaction ages, checkpoints, the busiest tables and the top
+  # pg_stat_statements entries every 30 s. These are warnings for the daily
+  # review; PostgreSQL waiting for CPU is FaasPostgresCPUStalled
+  # (cgroup_resources).
+  - name: faas_postgres_activity
+    interval: 30s
+    rules:
+      - alert: FaasPostgresLongTransaction
+        expr: max(faas_postgres_oldest_transaction_seconds) > 600
+        for: 5m
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "A PostgreSQL transaction has been open for {{ $value | humanizeDuration }}"
+          description: "The oldest open transaction in the faas database is over 10 minutes old. It holds back vacuum on every table it touched and may hold locks other daemons queue behind. The application and client of the session are on the PostgreSQL dashboard (backends by daemon); end it with pg_terminate_backend only after checking what it is."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+      - alert: FaasPostgresIdleInTransaction
+        expr: max(faas_postgres_idle_in_transaction_max_seconds) > 300
+        for: 5m
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "A PostgreSQL session has sat idle in a transaction for {{ $value | humanizeDuration }}"
+          description: "A client opened a transaction and has done nothing in it for over 5 minutes, usually a daemon that leaked a transaction on an error path. Find it in pg_stat_activity (state = 'idle in transaction') by application_name."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+      - alert: FaasPostgresLockWaits
+        expr: sum(faas_postgres_backends_waiting{wait_event_type="Lock"}) > 5
+        for: 10m
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "{{ $value }} PostgreSQL backends are waiting on locks"
+          description: "More than 5 active backends have been waiting on heavyweight locks for 10 minutes. Requests that need those rows are stalled. Look for a long or idle-in-transaction session holding the lock (pg_locks joined to pg_stat_activity)."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+      - alert: FaasPostgresDeadlocks
+        expr: increase(faas_postgres_deadlocks_total[15m]) > 0
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "PostgreSQL detected a deadlock in the faas database"
+          description: "PostgreSQL aborted at least one transaction to break a deadlock in the last 15 minutes. The PostgreSQL log names both statements; two daemons are taking the same locks in opposite orders."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+      - alert: FaasPostgresCacheHitRatioLow
+        expr: (sum(rate(faas_postgres_blocks_hit_total[30m])) / (sum(rate(faas_postgres_blocks_hit_total[30m])) + sum(rate(faas_postgres_blocks_read_total[30m])))) < 0.95 and sum(rate(faas_postgres_blocks_read_total[30m])) > 50
+        for: 30m
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "PostgreSQL serves under 95% of blocks from shared_buffers"
+          description: "Over 30 minutes, more than 5% of block reads missed shared_buffers while reads were frequent. Either the working set outgrew shared_buffers or a query started scanning a large table; the top statements by blocks read on the PostgreSQL dashboard show which."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+      - alert: FaasPostgresActivityMetricsStale
+        expr: time() - faas_postgres_activity_metrics_last_run_timestamp_seconds > 300
+        for: 5m
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "The PostgreSQL activity collector has not written for over 5 minutes"
+          description: "faas-postgres-activity-metrics has stopped, so the postgres_activity alerts and the PostgreSQL dashboard are stale. Check systemctl status faas-postgres-activity-metrics.timer and journalctl -u faas-postgres-activity-metrics."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
+      - alert: FaasPostgresActivityMetricsFailing
+        expr: faas_postgres_activity_metrics_errors == 1
+        for: 15m
+        labels:
+          severity: warn
+          component: postgres
+          family: postgres_activity
+          public_status: internal
+        annotations:
+          summary: "The PostgreSQL activity collector's {{ $labels.section }} section is failing"
+          description: "One section of faas-postgres-activity-metrics has failed on every run for 15 minutes, so its series are missing. journalctl -u faas-postgres-activity-metrics names the error; a statements failure usually means pg_stat_statements is not loaded in the postgres database."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasPostgresActivity.md"
+
   - name: faas_cgroup_resources
     interval: 30s
     rules:
@@ -3648,6 +3748,18 @@ groups:
           summary: "githubd has dead Check Run updates"
           description: "At least one GitHub Check Run projection exhausted its retry budget. Deployments continue, but customer GitHub status may be stale. Inspect and retry with gregalectl github status / retry-check."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasGithubRecoveryQueue.md"
+
+      - alert: FaasPreviewJanitorFailing
+        expr: sum(increase(faas_preview_janitor_outcomes_total{outcome=~"failed|row_failed"}[30m])) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: apid
+          family: github_recovery
+        annotations:
+          summary: "Preview teardown janitor is failing"
+          description: "The preview janitor could not sweep, or could not claim or tear down a preview, in the last 30 minutes. Closed and expired PR previews keep running and keep their PR preview allowance until it recovers. Check `journalctl -u faas-apid` for `preview janitor:` warnings."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/PreviewSubdomainRouting.md"
 
       - alert: FaasGithubRecoveryQueueStalled
         expr: githubd_recovery_oldest_actionable_seconds{status=~"pending|processing"} > 900

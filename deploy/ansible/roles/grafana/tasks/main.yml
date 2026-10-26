@@ -381,6 +381,19 @@
     - restart grafana-server
     - reload grafana provisioning
 
+# Control-plane PostgreSQL activity (role postgres_metrics). Byte-identical
+# copy of deploy/grafana/postgres.json (make grafana-mirror-check).
+- name: grafana — drop postgres dashboard JSON
+  ansible.builtin.copy:
+    src: postgres.json
+    dest: "{{ gv_dashboards_dir }}/postgres.json"
+    owner: grafana
+    group: grafana
+    mode: "0640"
+  notify:
+    - restart grafana-server
+    - reload grafana provisioning
+
 # ADR-20261023124955: per-slice CPU, memory, IO and pressure-stall time from
 # faas-cgroup-metrics. Byte-identical copy of
 # deploy/grafana/control-plane-resources.json (make grafana-mirror-check).
