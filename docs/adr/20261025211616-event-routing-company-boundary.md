@@ -77,11 +77,8 @@ Event routing names no app, which leaves two holes:
   recipients and consumers in hidden apps (aggregate counts still cover the
   account); recipient blockers answer `receipt_unavailable`; and replay jobs
   of a hidden app answer 404.
-- Still open: the account routes accept `app.<id>` sources, which the app
-  producer route uses for its identities (ADR-929 makes that namespace a
-  convenience, not a boundary). A creator who left can no longer reach company
-  recipients with them, but could pre-publish an identity a company app later
-  uses.
+- `app.<id>` sources are reserved to their app since
+  [ADR 20261026140000](20261026140000-event-app-sources-and-publish-rate.md).
 
 ## Alternatives
 
