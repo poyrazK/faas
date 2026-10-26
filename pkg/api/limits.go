@@ -6509,6 +6509,12 @@ const (
 	JobDefaultRetryMax       = 0
 	JobDefaultRAMMB          = 256
 
+	// JobMinRAMMB is the smallest ram_mb a job or image run accepts: the
+	// smallest guest the metal suite boots to guest-init
+	// (pkg/fcvm/vmm_lifecycle_metal_test.go). Below it every attempt
+	// cold-boots a VM that cannot start.
+	JobMinRAMMB = 64
+
 	// Snapshots / disk (spec §1, §8).
 	FleetSnapshotAvgTargetMB = 130 // business metric; alert >160 warn, >200 page
 	SnapshotBudgetGB         = 452
