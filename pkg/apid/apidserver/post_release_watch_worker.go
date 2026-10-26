@@ -13,6 +13,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/canary"
 	"github.com/onebox-faas/faas/pkg/releasegate"
 	"github.com/onebox-faas/faas/pkg/releasegate/gather"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -29,14 +30,19 @@ func (s *server) postReleaseWatchSweep(ctx context.Context, now time.Time) error
 	}
 	rows, err := store.ListPostReleaseWatchCandidates(ctx, api.PostReleaseWatchWindow+api.RollbackOn5xxTelemetryGrace, api.PostReleaseWatchBatchSize)
 	if err != nil {
+		if ctx.Err() == nil {
+			s.releaseMetrics.Error(releasemetrics.WorkerPostReleaseWatch)
+		}
 		return err
 	}
+	s.releaseMetrics.Pass(releasemetrics.WorkerPostReleaseWatch, now)
 	for _, c := range rows {
 		if err := s.evaluatePostRelease(ctx, store, telemetry, c, now); err != nil {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			s.log.Warn("post-release watch: evaluate release", "app", c.AppID, "deployment", c.DeploymentID, "err", err)
+			s.releaseMetrics.Error(releasemetrics.WorkerPostReleaseWatch)
 		}
 	}
 	return nil
@@ -115,10 +121,12 @@ func (s *server) postReleaseRollback(ctx context.Context, store state.PostReleas
 			// served with. The release keeps serving; a person decides.
 			s.log.Warn("post-release watch: rollback skipped; it would cross release commands",
 				"app", app.ID, "deployment", c.DeploymentID, "target", target, "detail", problem.Detail)
+			s.releaseMetrics.Decision(releasemetrics.GuardPostRelease, "kept")
 			return nil
 		}
 		return fmt.Errorf("roll back to %s: %s: %s", target, problem.Code, problem.Detail)
 	}
+	s.releaseMetrics.Decision(releasemetrics.GuardPostRelease, "rolled_back")
 	if _, err := s.store.MarkAutoRollback(ctx, c.DeploymentID, string(state.AutoRollbackReasonPostReleaseRegression), time.Now().UTC()); err != nil {
 		return fmt.Errorf("record post-release rollback: %w", err)
 	}

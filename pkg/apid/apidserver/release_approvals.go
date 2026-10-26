@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,8 +18,10 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/apid/approval"
+	"github.com/onebox-faas/faas/pkg/apid/freeze"
 	"github.com/onebox-faas/faas/pkg/apid/schedule"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/state"
 )
 
@@ -216,25 +219,33 @@ func (s *server) listReleaseApprovals(w http.ResponseWriter, r *http.Request, ac
 	if !ok {
 		return
 	}
-	rows, err := s.store.LiveDeployments(r.Context(), app.ID)
+	items, err := s.waitingReleaseApprovals(r.Context(), app)
 	if err != nil {
 		writeCustomerInternalProblem(w, r, s.log, "list release approvals",
-			"Gregale could not list this app's releases.", "Retry in a moment.", err)
+			"Gregale could not list this app's approvals.", "Retry in a moment.", err)
 		return
 	}
-	out := api.ListReleaseApprovalsResponse{Items: []api.ReleaseApprovalStatus{}}
+	writeJSON(w, http.StatusOK, api.ListReleaseApprovalsResponse{Items: items})
+}
+
+// waitingReleaseApprovals lists the app's live releases that wait for
+// approval or waited past their timeout.
+func (s *server) waitingReleaseApprovals(ctx context.Context, app state.App) ([]api.ReleaseApprovalStatus, error) {
+	rows, err := s.store.LiveDeployments(ctx, app.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list live releases: %w", err)
+	}
+	out := []api.ReleaseApprovalStatus{}
 	for _, d := range rows {
-		_, status, err := s.releaseApprovalState(r.Context(), app, d)
+		_, status, err := s.releaseApprovalState(ctx, app, d)
 		if err != nil {
-			writeCustomerInternalProblem(w, r, s.log, "list release approvals",
-				"Gregale could not read this app's approvals.", "Retry in a moment.", err)
-			return
+			return nil, fmt.Errorf("read release approvals: %w", err)
 		}
 		if status.State == api.ReleaseApprovalStateWaiting || status.State == api.ReleaseApprovalStateExpired {
-			out.Items = append(out.Items, status)
+			out = append(out, status)
 		}
 	}
-	writeJSON(w, http.StatusOK, out)
+	return out, nil
 }
 
 // getReleaseApproval serves GET /v1/deployments/{id}/approvals.
@@ -360,9 +371,11 @@ func (s *server) afterReleaseApprovalDecision(r *http.Request, acct state.Accoun
 	}))
 	switch {
 	case decision.Decision == state.ReleaseApprovalReject:
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "rejected")
 		s.abortForApproval(r.Context(), app, d, api.RolloutRuleAbortApprovalReject, "rejected by "+decision.Approver)
 		s.notifyReleaseApproval(r.Context(), app, d, policy, state.ReleaseApprovalEventRejected, status, decision.Approver, decision.Comment)
 	case status.State == api.ReleaseApprovalStateApproved:
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "approved")
 		s.notifyReleaseApproval(r.Context(), app, d, policy, state.ReleaseApprovalEventApproved, status, decision.Approver, decision.Comment)
 	}
 }
@@ -503,6 +516,7 @@ func (s *server) releaseApprovalAdvanceProblem(r *http.Request, app state.App, d
 func (s *server) recordApprovalWait(ctx context.Context, app state.App, d state.Deployment, policy *state.ReleaseApprovalPolicy, status api.ReleaseApprovalStatus) {
 	switch status.State {
 	case api.ReleaseApprovalStateExpired:
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "expired")
 		s.abortForApproval(ctx, app, d, api.RolloutRuleAbortApprovalTimeout, "waited past its approval timeout")
 		s.notifyReleaseApproval(ctx, app, d, policy, state.ReleaseApprovalEventExpired, status, "", "")
 		return
@@ -531,6 +545,7 @@ func (s *server) recordApprovalWait(ctx context.Context, app state.App, d state.
 	if err == nil && !recorded {
 		return
 	}
+	s.releaseMetrics.Decision(releasemetrics.GuardApproval, "held")
 	s.notifyReleaseApproval(ctx, app, d, policy, state.ReleaseApprovalEventRequested, status, "", "")
 }
 
@@ -576,6 +591,34 @@ func releaseApprovalActorLabel(r *http.Request, acct state.Account) string {
 	return "account:" + actor.ID
 }
 
+// promotionApprovalProblem refuses a promotion into an unprotected
+// production environment that would release an app requiring approvals
+// (ADR-20261020085706 amendment 1). A promotion has no canary to wait in,
+// so only the protected environment's promotion approval stands in for the
+// app's policy. Apps are checked in slug order.
+func (s *server) promotionApprovalProblem(ctx context.Context, plan projectEnvironmentPromotionPlan, toEnvironment string) *api.Problem {
+	if plan.Preview.ApprovalRequired || !freeze.IsProductionScope(toEnvironment) {
+		return nil
+	}
+	apps := make([]state.App, 0, len(plan.Apps))
+	for _, app := range plan.Apps {
+		apps = append(apps, app)
+	}
+	sort.Slice(apps, func(i, j int) bool { return apps[i].Slug < apps[j].Slug })
+	for _, app := range apps {
+		required, err := approval.CanaryRequired(ctx, s.store, app, toEnvironment, "")
+		if err != nil {
+			logCustomerFailure(s.log, "read release approval policy", err)
+			return api.ErrInternal("Gregale could not read an app's release approval policy.").WithHint("Retry in a moment.")
+		}
+		if required {
+			s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
+			return api.ErrReleaseApprovalPromotionUnprotected(app.Slug, plan.Preview.ProjectSlug, toEnvironment)
+		}
+	}
+	return nil
+}
+
 // releaseApprovalCanaryProblem refuses a production release that would take
 // traffic without a canary while the app requires approvals.
 func (s *server) releaseApprovalCanaryProblem(ctx context.Context, app state.App, req *api.CreateDeploymentRequest) *api.Problem {
@@ -588,6 +631,7 @@ func (s *server) releaseApprovalCanaryProblem(ctx context.Context, app state.App
 		return api.ErrInternal("Gregale could not read this app's release approval policy.").WithHint("Retry in a moment.")
 	}
 	if required {
+		s.releaseMetrics.Decision(releasemetrics.GuardApproval, "canary_required")
 		return api.ErrReleaseApprovalCanaryRequired(app.Slug)
 	}
 	return nil

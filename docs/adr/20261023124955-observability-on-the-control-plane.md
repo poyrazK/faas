@@ -130,6 +130,8 @@ Measured on the production-us control plane on 2026-10-23 (read-only):
 
 ### 4. Traces: no trace backend in this phase
 
+> [ADR-20261025095104](20261025095104-platform-traces-alloy-and-tempo.md) (proposed, 2026-10-25) answers this section's revisit conditions. It proposes Alloy and a Tempo on the control plane, switched off until the §7 gate runs with traces on.
+
 - OTLP export stays off: no `/etc/faas/otel.env`, no collector, no Tempo. A collector plus a trace store is a second process family that the control plane cannot be shown to afford until §7's numbers exist.
 - Operators get per-request correlation from what is already emitted:
   - The correlation fields on every daemon log line become searchable across hosts in Loki.

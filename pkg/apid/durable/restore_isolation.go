@@ -35,11 +35,11 @@ func (s *Service) enqueueIsolatedRestoreValidator(ctx context.Context, acct stat
 	if problem != nil {
 		return nil, "", problem
 	}
-	recipient := s.Host.SecretRecipient()
-	if recipient == nil {
+	recipients, kid, err := s.Host.ExecutionPayloadRecipients()
+	if err != nil {
 		return nil, "", restoreIsolationUnavailable()
 	}
-	sealed, err := executionpayload.SealRequest(recipient, resolved)
+	sealed, err := executionpayload.SealRequestTo(recipients, resolved)
 	if err != nil {
 		return nil, "", restoreIsolationUnavailable()
 	}
@@ -48,7 +48,7 @@ func (s *Service) enqueueIsolatedRestoreValidator(ctx context.Context, acct stat
 	if parent, ok := ctx.Deadline(); ok && parent.Before(deadline) {
 		deadline = parent
 	}
-	row, err := s.Host.Store().CreateExecution(ctx, state.CreateExecutionParams{AccountID: acct.ID, Request: resolved, SourceBytes: resolved.SourceBytes(), InputBytes: len(body), AdmittedAt: now, DeadlineAt: deadline, SealedPayload: sealed, PayloadKID: recipient.String()})
+	row, err := s.Host.Store().CreateExecution(ctx, state.CreateExecutionParams{AccountID: acct.ID, Request: resolved, SourceBytes: resolved.SourceBytes(), InputBytes: len(body), AdmittedAt: now, DeadlineAt: deadline, SealedPayload: sealed, PayloadKID: kid})
 	if err != nil {
 		return nil, "", err
 	}
