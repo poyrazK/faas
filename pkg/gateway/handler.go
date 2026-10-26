@@ -3200,6 +3200,21 @@ func (h *Handler) verifyJWTWithDeadline(ctx context.Context, raw string, rule *E
 //
 // nil-safe: h.edgeRules nil short-circuits to fall-through. Same-
 // account posture mirrors matchAndSubstituteRoute.
+// edgeRuleIPDeniedProblem answers a deny. A recipe rule (allow only listed
+// IPs, block countries or bots) matches its condition and denies every
+// address, so "client IP matches a deny CIDR" told a refused client, and the
+// app owner reading the 403, the wrong reason: the allowlisted path refused
+// an IP for being absent from the list (Hunt 14 H14-68). The code stays
+// ip_denied for clients that match it.
+func edgeRuleIPDeniedProblem(rule *EdgeRuleIPResolved) *api.Problem {
+	if rule.Match != nil {
+		return api.NewProblem(http.StatusForbidden, api.CodeIPDenied, "Refused by edge rule",
+			fmt.Sprintf("the request matches edge rule %s, which refuses it", rule.ID))
+	}
+	return api.NewProblem(http.StatusForbidden, api.CodeIPDenied, "IP denied",
+		"client IP matches a deny CIDR on this edge rule")
+}
+
 func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app App) bool {
 	if h.edgeRules == nil {
 		return false
@@ -3256,9 +3271,7 @@ func (h *Handler) applyEdgeRuleIP(w http.ResponseWriter, r *http.Request, app Ap
 		if denyNet.Contains(clientIP) {
 			// ip_denied, not the API-key code insufficient_scope (Hunt 12
 			// H12-39).
-			api.WriteProblem(w, api.NewProblem(http.StatusForbidden,
-				api.CodeIPDenied, "IP denied",
-				"client IP matches a deny CIDR on this edge rule"))
+			api.WriteProblem(w, edgeRuleIPDeniedProblem(rule))
 			h.penalizeEdgeRuleRejection(r, app, rule.ID)
 			if h.edgeRuleAudit != nil {
 				h.edgeRuleAudit.Emit(r.Context(), "edge_rule.ip_blocked", nil, map[string]any{

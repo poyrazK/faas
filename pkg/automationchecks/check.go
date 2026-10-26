@@ -26,10 +26,11 @@ func ValidateExpectations(def api.WorkflowSpec, expectations []api.AutomationChe
 	seen := map[expectationKey]bool{}
 	for _, e := range expectations {
 		key := expectationKey{step: e.Step}
-		step, ok := steps[e.Step]
+		_, ok := steps[e.Step]
 		if e.Loop != "" {
-			step, ok = steps[e.Loop]
-			if !ok || step.ForEach == nil || e.Step != e.Loop+"/action" || e.ItemIndex == nil || *e.ItemIndex < 0 || *e.ItemIndex >= api.WorkflowForEachMaxItems {
+			var loop api.WorkflowStepSpec
+			loop, ok = steps[e.Loop]
+			if !ok || loop.ForEach == nil || e.Step != e.Loop+"/action" || e.ItemIndex == nil || *e.ItemIndex < 0 || *e.ItemIndex >= api.WorkflowForEachMaxItems {
 				return errors.New("invalid item expectation")
 			}
 			key = expectationKey{loop: e.Loop, index: *e.ItemIndex}

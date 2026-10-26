@@ -7,15 +7,14 @@ import (
 	"github.com/onebox-faas/faas/pkg/secretbox"
 )
 
+// sealMCPFallbackSecret and sealMCPPagerDutyKey seal what meterd opens to
+// deliver MCP readiness incidents: the alerting domain (ADR 20261022111812).
 func sealMCPFallbackSecret(_ context.Context, value string) ([]byte, *api.Problem) {
-	if setSecretRecipient == nil {
-		return nil, api.ErrCapacity("host age recipient not loaded")
+	recipients, err := alertingCredentialRecipients()
+	if err != nil {
+		return nil, api.ErrCapacity("alerting recipient not loaded")
 	}
-	recipient := setSecretRecipient()
-	if recipient == nil {
-		return nil, api.ErrCapacity("host age recipient not loaded")
-	}
-	sealed, err := secretbox.SealBytes(recipient, alertRuleSecretSealLabel, []byte(value), api.AlertRuleWebhookSecretMaxBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, alertRuleSecretSealLabel, []byte(value), api.AlertRuleWebhookSecretMaxBytes)
 	if err != nil {
 		return nil, api.ErrCapacity("could not seal fallback signing secret")
 	}
@@ -23,14 +22,11 @@ func sealMCPFallbackSecret(_ context.Context, value string) ([]byte, *api.Proble
 }
 
 func sealMCPPagerDutyKey(_ context.Context, value string) ([]byte, *api.Problem) {
-	if setSecretRecipient == nil {
-		return nil, api.ErrCapacity("host age recipient not loaded")
+	recipients, err := alertingCredentialRecipients()
+	if err != nil {
+		return nil, api.ErrCapacity("alerting recipient not loaded")
 	}
-	recipient := setSecretRecipient()
-	if recipient == nil {
-		return nil, api.ErrCapacity("host age recipient not loaded")
-	}
-	sealed, err := secretbox.SealBytes(recipient, api.MCPReadinessPagerDutySecretNamespace, []byte(value), api.MCPReadinessPagerDutyKeyBytes)
+	sealed, err := secretbox.SealBytesTo(recipients, api.MCPReadinessPagerDutySecretNamespace, []byte(value), api.MCPReadinessPagerDutyKeyBytes)
 	if err != nil {
 		return nil, api.ErrCapacity("could not seal PagerDuty integration key")
 	}

@@ -8,7 +8,7 @@ export GOOS GOARCH
 TLS_CUTOVER_MODE ?= dry-run
 PKGS    := ./...
 COVERAGE_DIR := coverage
-DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd maild mail-report mail-metrics mail-feedback mailctl schedd vmmd vmmd-jail-helper vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
+DAEMONS := apid profiled bridged gatewayd-public gatewayd-internal realtimed s3-gatewayd livequeryd maild mail-report mail-metrics mail-feedback mailctl schedd vmmd vmmd-jail-helper vmmd-guestdisk vmmd-raw-bridge vmmd-tcp-bridge vmmd-udp-bridge vmmd-stream-bridge builderd imaged meterd githubd outboundd hostage-gen
 GOVULNCHECK_VERSION ?= 1.7.0
 # gregale is the customer-facing CLI; gregalectl is the
 # operator-only companion CLI (issue #911 / ADR-110 PR-6.5).
@@ -584,6 +584,7 @@ test-metal: ## Integration tests tagged //go:build metal — needs KVM + root (R
 	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
 	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-jail-helper" ./cmd/vmmd-jail-helper; \
+	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-guestdisk" ./cmd/vmmd-guestdisk; \
 	  if [ -n "$${RUN_REGEX:-}" ]; then set -- -run "$$RUN_REGEX"; else set --; fi; \
 	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" $(GO) test -tags "$${FAAS_METAL_TEST_TAGS:-metal}" -race -count=1 $(RUN_ARGS) "$$@" $(PKGS)
 
@@ -619,6 +620,7 @@ test-metal-builder: ## Native KVM builder acceptance — requires staged release
 	@set -eu; helper_dir=$$(mktemp -d); trap 'rm -rf "$$helper_dir"' EXIT; \
 	  CGO_ENABLED=$(BUILD_CGO_ENABLED) $(GO) build $(GO_BUILD_FLAGS) -o "$$helper_dir/vmmd" ./cmd/vmmd; \
 	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-jail-helper" ./cmd/vmmd-jail-helper; \
+	  CGO_ENABLED=0 $(GO) build -o "$$helper_dir/vmmd-guestdisk" ./cmd/vmmd-guestdisk; \
 	  FAAS_TEST_VMMD_BINARY="$$helper_dir/vmmd" FAAS_METAL_BUILD_ACCEPTANCE=1 \
 	  $(GO) test -tags metal -race -count=1 -run '^TestMetalBuilderAcceptance$$' \
 	  -v -timeout "$${METAL_BUILDER_TIMEOUT:-30m}" ./pkg/fcvm
@@ -708,6 +710,8 @@ lint-drill: ## Static lint of restore, backup-retention, and TLS drill scripts
 	bash deploy/scripts/faas-pg-wal-prune_test.sh
 	bash deploy/scripts/faas-pg-backup-contract-preflight_test.sh
 	bash deploy/scripts/faas-check-compute-edges_test.sh
+	bash deploy/scripts/faas-app-edge-pilot-check_test.sh
+	bash deploy/scripts/cloudflare-app-edge-tunnel_test.sh
 	bash deploy/ansible/roles/cp_state_backup/files/faas-cp-state-backup_test.sh
 
 .PHONY: m8-evidence-check

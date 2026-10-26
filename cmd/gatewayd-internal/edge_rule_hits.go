@@ -25,6 +25,10 @@ const (
 	// ADR-831 amendment 5: kind=waf detections get their own per-rule
 	// budget, so ordinary matches never use it up.
 	edgeRuleDetectionEventsPerRule = 10
+	// ADR-20261022105846 amendment 2: penalty box events get a per-rule
+	// budget of their own. A box is rare outside a flood, so the budget
+	// keeps them all then and bounds them in one.
+	edgeRulePenaltyEventsPerRule = 10
 )
 
 type edgeRuleHitCount struct {
@@ -47,6 +51,7 @@ type edgeRuleHitCounter struct {
 	events        []gateway.EdgeRuleEvent
 	droppedEvents int64          // guarded by eventsMu
 	detections    map[string]int // detection events sampled per rule this interval; guarded by eventsMu
+	penalties     map[string]int // penalty box events sampled per rule this interval; guarded by eventsMu
 }
 
 func newEdgeRuleHitCounter() *edgeRuleHitCounter {
@@ -92,15 +97,31 @@ func (c *edgeRuleHitCounter) SampleEdgeRuleEvent(ruleID string) bool {
 func (c *edgeRuleHitCounter) SampleEdgeRuleDetection(ruleID string) bool {
 	c.eventsMu.Lock()
 	defer c.eventsMu.Unlock()
-	if c.detections == nil {
-		c.detections = map[string]int{}
+	return sampleRuleBudget(&c.detections, ruleID, edgeRuleDetectionEventsPerRule)
+}
+
+// SampleEdgePenaltyBox implements gateway.PenaltyEventRecorder: it admits
+// the first edgeRulePenaltyEventsPerRule penalty boxes of a rule per
+// interval, independently of the other budgets.
+func (c *edgeRuleHitCounter) SampleEdgePenaltyBox(ruleID string) bool {
+	c.eventsMu.Lock()
+	defer c.eventsMu.Unlock()
+	return sampleRuleBudget(&c.penalties, ruleID, edgeRulePenaltyEventsPerRule)
+}
+
+// sampleRuleBudget counts one event against ruleID's budget of perRule in
+// *counts, which it creates on first use, and reports whether it fits. Past
+// edgeRuleHitMaxRules rules a new rule gets nothing. Callers hold eventsMu.
+func sampleRuleBudget(counts *map[string]int, ruleID string, perRule int) bool {
+	if *counts == nil {
+		*counts = map[string]int{}
 	}
-	n, ok := c.detections[ruleID]
-	if !ok && len(c.detections) >= edgeRuleHitMaxRules {
+	n, ok := (*counts)[ruleID]
+	if !ok && len(*counts) >= edgeRuleHitMaxRules {
 		return false
 	}
-	c.detections[ruleID] = n + 1
-	return n < edgeRuleDetectionEventsPerRule
+	(*counts)[ruleID] = n + 1
+	return n < perRule
 }
 
 // RecordEdgeRuleEvent queues a sampled event for the next flush.
@@ -118,7 +139,7 @@ func (c *edgeRuleHitCounter) RecordEdgeRuleEvent(ev gateway.EdgeRuleEvent) {
 func (c *edgeRuleHitCounter) drainEvents() ([]state.EdgeRuleEvent, int64) {
 	c.eventsMu.Lock()
 	queued, dropped := c.events, c.droppedEvents
-	c.events, c.droppedEvents, c.detections = nil, 0, nil
+	c.events, c.droppedEvents, c.detections, c.penalties = nil, 0, nil, nil
 	c.eventsMu.Unlock()
 	out := make([]state.EdgeRuleEvent, 0, len(queued))
 	for _, ev := range queued {

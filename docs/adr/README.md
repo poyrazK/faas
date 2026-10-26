@@ -1,10 +1,17 @@
 # Architecture Decision Records
 
+- [ADR-20261025232118: Workflow dispatch slots give back their database token while a step runs](20261025232118-workflow-dispatch-db-phase-tokens.md) — accepted; up to 32 dispatch slots per scheduler (4 offered every tick, one more while all are busy) wait on step handlers, while 4 tokens bound their database work; amends ADR-649
+- [ADR-20261024225612: Firecracker CPU templates and CPU-compatible snapshot restore](20261024225612-firecracker-cpu-templates.md) — proposed; vmmd `cpu_template` (T2CL for Cascade Lake + Ice Lake), nodes and snapshots record their CPU identity, a snapshot restores only on a compatible node (amends ADR-005); amendment 1: one live snapshot per tier per CPU platform, a new platform captures its own
+- [Customer bucket CORS on the branded S3 endpoint](20261025202805-object-storage-bucket-cors.md) — per-bucket S3-shaped CORS rules set through apid (preview `bucket-cors`); the gateway applies them to preflights that carry a presigned URL or upload grant and to the actual requests
+- [Per-key object deletion fences](20261025115958-object-storage-per-key-deletion.md) — one active deletion per key, not per bucket; writes are fenced only by a deletion of their key; deletions yield to inventory; bulk deletes run eight entries at once (amends ADR-547)
+- [ADR-20261025131406: One tenant's deployment failures do not degrade public status](20261025131406-status-deployment-breach-needs-two-accounts.md) — proposed; deployment success degrades the status page only when platform-attributed failures span two or more accounts in the 24 h window; the percentage is unchanged (Hunt 14 H14-22; amends ADR-130)
+- [ADR-20261025121530: `gregale dev --all` runs its apps in one developer namespace](20261025121530-dev-all-namespace.md) — accepted; one group workspace, each child registers in the `gregale test` run namespace, so `<name>.internal` and `<name>.svc.gregale` reach the group and never production; source-built Compose services join `dev --all`
 - [ADR-20261025094915: Managed PostgreSQL compute caps hold on running databases](20261025094915-managed-postgres-compute-caps-on-running-databases.md) — proposed; Free suspends at its allowance, paid plans suspend at it unless the customer turns overage on (then at 2×); Neon project quotas, never a deletion (amends ADR-1430, ADR-155)
 - [Each Compose include interpolates with its own .env](20261025090000-compose-include-env-files.md)
 - [Image runs read registry credentials from a Docker config](20261025110000-image-run-docker-config.md)
 - [ADR-20261025092617: The curl installer resolves its version from a release-published pointer, not the GitHub API](20261025092617-cli-install-channel-pointer.md) — accepted; `release.yml` keeps forward-only `CLI-STABLE`/`CLI-LATEST` pointers on a `cli-channel` release, read through `releases/download` (no anonymous API limit), with the API path as fallback; amends ADR-172
 - [Manifest-managed S3 gateway and restore reconciliation](20261025111015-object-storage-managed-gateway-and-restore-reconcile.md) — `object_storage.gateway: managed` in the deploy manifest, strict verify fails on an unmanaged gateway, read-only `gregalectl object-storage reconcile` after a PostgreSQL restore
+- [ADR-20261025090100: The host kernel never mounts a drive a guest has written](20261025090100-host-never-mounts-guest-drives.md) — restore staging, fork scrub and build export read and edit VM drives with e2fsprogs in the vmmd-guestdisk sandbox (jail uid, private namespaces, Landlock, rlimits) after an `e2fsck` journal replay; no ext4 or loop mount remains in pkg/fcvm; amends ADR-192 and ADR-568
 - [Every capability behind a platform flag](20261023115741-every-capability-behind-a-platform-flag.md)
 - [Per-account realtime preview rollout and realtime apps declared in gregale.yaml](20261019102657-realtime-preview-rollout-and-declared-apps.md)
 - [Gateway-metered object storage billing](20261024132844-gateway-metered-object-storage-billing.md) — gateway safety meters stored byte-hours from inventory; storage-only rate card bills ADR-1430's $0.03/GiB-month
@@ -35,6 +42,7 @@
 - [ADR-20261023104734: Daemons log in as runtime roles, not the schema owner](20261023104734-database-runtime-roles.md) — faas_runtime group, per-daemon roles, opt-in FAAS_DB_ROLE
 - [Product Control trial-to-paid conversion](20261022180921-product-control-trial-conversion.md)
 - [Native runtime snapshot capture for park and warm](20261022184951-native-runtime-snapshot-capture.md)
+- [ADR-20261022184531: Wake failover away from a node that is up but not ready](20261022184531-node-wake-failover.md)
 - [ADR-20261022155043: Rehearsal evidence follows the run](20261022155043-rehearsal-evidence-follows-the-run.md)
 - [Compose process overrides on source-built services](20261022160000-compose-process-on-built-services.md)
 - [ADR-20261024014500: Honeytokens and unseal telemetry](20261024014500-honeytokens-and-unseal-telemetry.md)
@@ -1885,3 +1893,4 @@ A renumber plus a CI uniqueness gate is worth its own PR.
 - [ADR-20261023220532: Move the Debian-based runtime bases to Debian 13](20261023220532-debian-13-runtime-bases.md) — accepted; clears the bookworm `<no-dsa>` glibc/SQLite criticals (#5206), matches Railpack's Debian 13 builder, audits `base-minimal` apps first
 - [ADR-20261024154324: Route subsystems at public scale](20261024154324-route-subsystems-at-public-scale.md) — per-gateway per-route series budget with idle eviction, fair route insight scheduling, concurrent route monitor drain, route worker alerts (amends ADR-093, ADR-1198)
 - [ADR-20261024230731: Rehearsal checks on webhook deliveries and private DNS stay off other apps' critical path](20261024230731-rehearsal-webhook-and-dns-hot-paths.md)
+- [ADR-20261025114554: Anonymous Docker Hub pulls go through operator mirrors](20261025114554-docker-hub-mirrors.md) — `FAAS_DOCKER_HUB_MIRRORS` / `faas_docker_hub_mirrors`: imaged and builder BuildKit try mirrors (e.g. `mirror.gcr.io`) before Docker Hub; never with a credential

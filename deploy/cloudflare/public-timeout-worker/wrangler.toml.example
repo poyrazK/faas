@@ -9,6 +9,16 @@ workers_dev = false
 [vars]
 ORIGIN_HOSTNAME = "origin.gregale.dev"
 FRONTEND_HOSTNAME = "gregale.dev"
+# ADR-1343 app edge pilot (docs/runbooks/AppEdgeCutover.md). Hosts listed in
+# APP_EDGE_HOSTS (exact names, comma-separated, or "*" for every app host)
+# resolve to the compute-node app edge instead: APP_EDGE_ORIGIN_HOSTNAME is a
+# proxied, in-zone CNAME to <tunnel-id>.cfargotunnel.com.
+# APP_EDGE_EXCLUDE_HOSTS keeps exact names on ORIGIN_HOSTNAME either way.
+# Leave APP_EDGE_HOSTS unset to keep every host on ORIGIN_HOSTNAME.
+# APP_EDGE_ORIGIN_HOSTNAME = "app-edge.gregale.dev"
+# APP_EDGE_HOSTS = "h10-fn-go.gregale.dev"
+# APP_EDGE_EXCLUDE_HOSTS = ""
+# APPS_DOMAIN = "gregale.dev"
 
 # Configure the route in the Cloudflare dashboard or with your deployment
 # pipeline. Keep the Worker on the customer-facing routes only:

@@ -332,6 +332,10 @@ type WorkflowRun struct {
 	LastError          *string         `json:"last_error,omitempty"`
 	CreatedAt          time.Time       `json:"created_at"`
 	UpdatedAt          time.Time       `json:"updated_at"`
+	// ClaimedDueAt is set only on a run returned by ClaimNextDueWorkflowRun
+	// that was claimed because it was due: the scheduled_for it was due at.
+	// It is nil for a run recovered from an expired lease.
+	ClaimedDueAt *time.Time `json:"-"`
 }
 
 func earlierWorkflowWake(current, candidate, now time.Time) time.Time {

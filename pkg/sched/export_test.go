@@ -208,6 +208,21 @@ var TaskObservationStore = taskObservationStore
 var TestLog = testLog
 var TriggerDispatchParent = triggerDispatchParent
 var TruncateCodeError = truncateCodeError
+
+var JobDispatchResult = jobDispatchResult
+
+// Dispatch DB-phase tokens (ADR-20261025232118).
+func (o *WorkflowOrchestrator) SetDBPhaseSlotsForTest(slots int) {
+	o.dbPhase = newWorkflowDBPhase(slots)
+}
+func (o *WorkflowOrchestrator) EnterDBPhaseForTest(ctx context.Context) (context.Context, func(), error) {
+	return o.enterDBPhase(ctx)
+}
+func (o *WorkflowOrchestrator) ChildDBPhaseForTest(ctx context.Context) (context.Context, func()) {
+	return o.childDBPhase(ctx)
+}
+func OutsideDBPhaseForTest(ctx context.Context, wait func()) { outsideDBPhase(ctx, wait) }
+
 var UntilNextMinuteTick = untilNextMinuteTick
 var ValidEnvironmentGitOpsJobVariables = validEnvironmentGitOpsJobVariables
 var ValidRuntimeSnapshot = validRuntimeSnapshot
@@ -511,6 +526,25 @@ func (r *fakeNotifier) Mu() *sync.Mutex        { return &r.mu }
 func (r *fakeNotifier) Count(p0 string) int    { return r.count(p0) }
 
 // Members of fakeVMM
+// SetPingResult sets what Ping returns for target: err when non-nil, else
+// a success carrying bases (ADR-20261022184531).
+func (h *heartbeatFakeDialer) SetPingResult(target string, bases []BaseGenerationReadiness, err error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.pingErr == nil {
+		h.pingErr = map[string]error{}
+	}
+	if h.baseGenerations == nil {
+		h.baseGenerations = map[string][]BaseGenerationReadiness{}
+	}
+	h.pingErr[target], h.baseGenerations[target] = err, bases
+	if err == nil {
+		delete(h.pingErr, target)
+	}
+}
+
+var EvaluateNodeReadiness = evaluateNodeReadiness
+
 func (r *fakeVMM) ColdBootHook() *func()            { return &r.coldBootHook }
 func (r *fakeVMM) ColdBoots() *int                  { return &r.coldBoots }
 func (r *fakeVMM) DestroyErr() *error               { return &r.destroyErr }
@@ -740,3 +774,29 @@ var QueueDeadLetterError = queueDeadLetterError
 var PrimeRuntimeBusyBackoff = &primeRuntimeBusyBackoff
 var ApplicationStandardRuntimeProblem = applicationStandardRuntimeProblem
 var HealthcheckGRPCForApp = healthcheckGRPCForApp
+
+// ADR-20261024225612 (CPU-compatible restore, per-platform snapshot slots).
+var (
+	SnapshotRestorableOn      = snapshotRestorableOn
+	LegacySnapshotsRestorable = legacySnapshotsRestorable
+)
+
+func (r *Engine) XReusableSnapshotOn(ctx context.Context, depID, tier, nodeID string) (state.Snapshot, bool) {
+	return r.reusableSnapshotOn(ctx, depID, tier, nodeID)
+}
+
+func (r *Engine) XEmitSnapshotWritten(ctx context.Context, nodeID string) {
+	r.emitSnapshotWritten(ctx, "ins", time.Time{}, "dep", nodeID, "", "key", SnapshotBytes{}, state.SnapshotTierInit, nil)
+}
+
+// LastPayload is the newest notification payload on channel.
+func (r *fakeNotifier) LastPayload(channel string) (string, bool) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for i := len(r.events) - 1; i >= 0; i-- {
+		if r.events[i].channel == channel {
+			return r.events[i].payload, true
+		}
+	}
+	return "", false
+}

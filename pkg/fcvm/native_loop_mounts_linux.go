@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -21,19 +20,6 @@ const nativeLoopMarker = "gregale-loop:"
 type linuxNativeLoopMounts struct{}
 
 func newNativeLoopMountBackend() nativeLoopMountBackend { return linuxNativeLoopMounts{} }
-
-type linuxNativeLoopReservation struct {
-	source *os.File
-	loop   *os.File
-	device nativeLoopDevice
-	id     string
-}
-
-func (r *linuxNativeLoopReservation) Device() nativeLoopDevice { return r.device }
-
-func (r *linuxNativeLoopReservation) Close() error {
-	return errors.Join(r.loop.Close(), r.source.Close())
-}
 
 func nativeLoopNamespaceIdentity() (nativeLoopIdentity, error) {
 	var stat unix.Stat_t
@@ -70,72 +56,6 @@ func openNativeLoopDevice(number int) (*os.File, uint64, error) {
 		return nil, 0, errors.Join(err, file.Close())
 	}
 	return file, uint64(stat.Rdev), nil
-}
-
-func (linuxNativeLoopMounts) Prepare(drive, id string) (reservation nativeLoopReservation, err error) {
-	if !filepath.IsAbs(drive) || filepath.Clean(drive) != drive || !canonicalNativeHelperID(id) {
-		return nil, errors.New("native loop mount: invalid source or session identity")
-	}
-	source, err := os.OpenFile(drive, os.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, err
-	}
-	defer func() {
-		if reservation == nil {
-			err = errors.Join(err, source.Close())
-		}
-	}()
-	var stat unix.Stat_t
-	if err := unix.Fstat(int(source.Fd()), &stat); err != nil {
-		return nil, err
-	}
-	if stat.Mode&unix.S_IFMT != unix.S_IFREG || stat.Size <= 0 {
-		return nil, errors.New("native loop mount: backing is not a nonempty regular file")
-	}
-	namespace, err := nativeLoopNamespaceIdentity()
-	if err != nil {
-		return nil, err
-	}
-	control, err := os.OpenFile("/dev/loop-control", os.O_RDWR|unix.O_NOFOLLOW|unix.O_CLOEXEC, 0)
-	if err != nil {
-		return nil, err
-	}
-	number, ioctlErr := unix.IoctlRetInt(int(control.Fd()), unix.LOOP_CTL_GET_FREE)
-	if err := errors.Join(ioctlErr, control.Close()); err != nil {
-		return nil, err
-	}
-	loop, rdev, err := openNativeLoopDevice(number)
-	if err != nil {
-		return nil, err
-	}
-	return &linuxNativeLoopReservation{source: source, loop: loop, id: id, device: nativeLoopDevice{Number: number, Rdev: rdev, Source: nativeLoopIdentity{Device: uint64(stat.Dev), Inode: stat.Ino}, Namespace: namespace}}, nil
-}
-
-func (r *linuxNativeLoopReservation) Configure() error {
-	config := unix.LoopConfig{Fd: uint32(r.source.Fd()), Info: unix.LoopInfo64{Flags: unix.LO_FLAGS_AUTOCLEAR}}
-	copy(config.Info.File_name[:], nativeLoopMarker+r.id)
-	// No SET_FD/SET_STATUS fallback: daemon death between those calls would
-	// leave an attached device without its ownership marker or AUTOCLEAR flag.
-	return unix.IoctlLoopConfigure(int(r.loop.Fd()), &config)
-}
-
-// nativeGuestDiskMountData is the ext4 data string for the native loop
-// mount, whose flags already carry nodev, nosuid and noexec: the same error
-// behaviour override as guestDiskMountOptions.
-const nativeGuestDiskMountData = "errors=remount-ro"
-
-func (r *linuxNativeLoopReservation) Mount(point string) (uint64, error) {
-	if err := unix.Mount(nativeLoopDevicePath(r.device.Number), point, "ext4", unix.MS_NODEV|unix.MS_NOSUID|unix.MS_NOEXEC, nativeGuestDiskMountData); err != nil {
-		return 0, err
-	}
-	entry, err := readNativeLoopMount(point)
-	if err != nil {
-		return 0, err
-	}
-	if entry == nil || entry.device != r.device.Rdev {
-		return 0, errors.New("native loop mount: mounted image has no original block identity")
-	}
-	return entry.id, nil
 }
 
 func matchesNativeLoop(info *unix.LoopInfo64, record nativeLoopMountRecord) bool {

@@ -436,6 +436,29 @@ func TestReconcileAdoptsAProvenBridgeUnit(t *testing.T) {
 	}
 }
 
+// A successor with units switched off stops the units a predecessor left
+// for a hand-off instead of leaking them, and touches systemd only when a
+// transient faas-ibridge unit exists.
+func TestReconcileWithUnitsOffStopsLeftoverUnits(t *testing.T) {
+	f, s, _, name := adoptFixture(t)
+	t.Setenv(instanceBridgeUnitEnv, "")
+	saved := transientUnitDir
+	t.Cleanup(func() { transientUnitDir = saved })
+	transientUnitDir = t.TempDir()
+
+	s.ReconcileInstanceBridgeUnits(context.Background())
+	if _, stopped := f.units.snapshot(); len(stopped) != 0 {
+		t.Fatalf("no transient unit file, yet stopped %v", stopped)
+	}
+	if err := os.WriteFile(filepath.Join(transientUnitDir, name), nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	s.ReconcileInstanceBridgeUnits(context.Background())
+	if _, stopped := f.units.snapshot(); !slices.Equal(stopped, []string{name}) || f.manager.entries["a"] != nil {
+		t.Fatalf("stopped %v, adopted entry %v", stopped, f.manager.entries["a"])
+	}
+}
+
 func TestReconcileStopsWhatItCannotProve(t *testing.T) {
 	for name, spoil := range map[string]func(*unitFixture, *fakeBridgeJournal, string){
 		"no record": func(_ *unitFixture, j *fakeBridgeJournal, _ string) { delete(j.adopted, "a") },

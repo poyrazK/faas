@@ -34,6 +34,15 @@
 # Default: "" (disabled)
 # native_runtime_snapshot_root = "/srv/fc/native-snap"
 
+# native_launch_owner_records: publish ordinary native launches as version-3
+# records that name this vmmd incarnation, so a restarted vmmd can prove the
+# old one exited and clean up its VMs (ADR-2026101710 Amendment 1). Without it,
+# a crashed vmmd's native VMs stay quarantined. vmmd binaries without a
+# version-3 reader refuse the journal, so enable this only once every compute
+# node and any rollback target can read it. Requires native_process_recovery.
+# Default: false
+# native_launch_owner_records = true
+
 # adoption_record: write version-7 adoption blocks into the resource journal
 # (vmmd restart adoption ADR, slice 1). Shadow only: nothing adopts yet, and
 # startup classifies records in a dry run either way. vmmd binaries without a
@@ -96,6 +105,16 @@
 # they capture change. FAAS_RESTORE_RESEED_THREAD overrides.
 # Default: false
 # restore_reseed_thread = false
+
+# cpu_template: the Firecracker CPU template every guest boots with
+# (ADR-20261024225612). Use one value for the whole cell. "T2CL" lets a cell
+# mix Intel Cascade Lake and Ice Lake nodes and restore snapshots across them;
+# "T2S" covers Skylake + Cascade Lake, "C3"/"T2" Skylake through Ice Lake,
+# "T2A" AMD Milan. vmmd refuses to start on a CPU the template does not list.
+# Turning a template on or off makes every app cold-boot once. Empty boots
+# with the host's CPUID. FAAS_CPU_TEMPLATE overrides.
+# Default: ""
+# cpu_template = "T2CL"
 
 # quiet_pause: pause an eligible instance's vCPUs between requests and resume
 # it when the next one arrives (ADR-957). The instance stays RUNNING and

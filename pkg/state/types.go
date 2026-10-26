@@ -129,6 +129,10 @@ type DeploymentStatus string
 type DeploymentOutcomeCounts struct {
 	Succeeded int
 	Failed    int
+	// FailedAccounts counts the distinct accounts behind Failed, so public
+	// status can tell one tenant's failing apps from a platform-wide problem
+	// (Hunt 14 H14-22).
+	FailedAccounts int
 }
 
 // LatestDeploymentOutcome is the last platform-attributable terminal
@@ -5665,6 +5669,71 @@ type ComputeNode struct {
 	// nil on a never-recovered node. The DB CHECK constraint
 	// (00582) rejects values outside this closed set.
 	LastRecoveryOutcome *string
+	// CPUTemplate is the Firecracker CPU template vmmd boots guests with,
+	// and CPUModel the host CPU signature (fcvm.HostCPU.Signature). vmmd
+	// writes both at registration; empty means "not reported", a vmmd from
+	// before ADR-20261024225612.
+	CPUTemplate string
+	CPUModel    string
+	// Readiness is what schedd's heartbeat last proved about the node
+	// (ADR-20261022184531). Placement prefers ready nodes; Lifecycle stays
+	// the authority for operator and recovery states.
+	Readiness NodeReadiness
+	// ReadinessReason says why a node is not ready; nil when it is.
+	ReadinessReason *string
+}
+
+// NodeReadiness is whether a compute node has proven it can take a wake
+// (ADR-20261022184531). The values mirror compute_nodes_readiness_chk.
+type NodeReadiness string
+
+const (
+	// NodeReadinessReady: the node answers its heartbeat and its vmmd can
+	// adopt its configured base generations. Rows default to ready.
+	NodeReadinessReady NodeReadiness = "ready"
+	// NodeReadinessDegraded: the node answers but has proven it cannot serve
+	// a wake. Placement uses it only when no ready node fits.
+	NodeReadinessDegraded NodeReadiness = "degraded"
+	// NodeReadinessUnavailable and NodeReadinessDraining mirror lifecycle.
+	NodeReadinessUnavailable NodeReadiness = "unavailable"
+	NodeReadinessDraining    NodeReadiness = "draining"
+)
+
+// Valid reports whether r is one of the values the column admits.
+func (r NodeReadiness) Valid() bool {
+	switch r {
+	case NodeReadinessReady, NodeReadinessDegraded, NodeReadinessUnavailable, NodeReadinessDraining:
+		return true
+	}
+	return false
+}
+
+// EffectiveReadiness is the node's readiness with lifecycle applied: a node
+// that lifecycle keeps out of placement reads unavailable or draining even
+// before the heartbeat writes it, and a row with no readiness reads ready.
+func (n ComputeNode) EffectiveReadiness() NodeReadiness {
+	switch n.Lifecycle {
+	case NodeLifecycleDraining, NodeLifecycleForceDraining, NodeLifecycleMaintenance:
+		return NodeReadinessDraining
+	case NodeLifecycleUnavailable, NodeLifecycleRetired:
+		return NodeReadinessUnavailable
+	}
+	if n.Lifecycle == "" && !n.Active {
+		return NodeReadinessUnavailable
+	}
+	if n.Readiness == "" {
+		return NodeReadinessReady
+	}
+	return n.Readiness
+}
+
+// ComputeNodeReadinessStore records a node's proven readiness. schedd's
+// heartbeat is the only writer (ADR-20261022184531).
+type ComputeNodeReadinessStore interface {
+	// SetComputeNodeReadiness writes readiness and reason (empty clears it)
+	// and reports whether either changed. Only a change fires
+	// compute_node_changed, so an unchanged verdict costs no notification.
+	SetComputeNodeReadiness(ctx context.Context, nodeID string, readiness NodeReadiness, reason string) (bool, error)
 }
 
 // NodeLifecycle is the compute-node controller state. Constants mirror the
@@ -6829,6 +6898,12 @@ type Snapshot struct {
 	Stale                           bool
 	DeletePending                   bool
 	CreatedAt                       time.Time
+	// CPUTemplate and CPUModel are the capturing node's CPU identity
+	// (ADR-20261024225612): a templated snapshot restores on any node
+	// class the template supports, a template-less one only on the same
+	// CPUModel. Both empty identifies a legacy row.
+	CPUTemplate string
+	CPUModel    string
 }
 
 // Snapshot tier constants (issue #470 / ADR-055). Use these rather

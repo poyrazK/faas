@@ -32,8 +32,8 @@ func cmdFreeze(args []string) int {
 	case "status":
 		return freezeStatus(args[1:])
 	}
-	fmt.Fprintf(os.Stderr, "gregale freeze: unknown subcommand %q\n", args[0])
-	return 1
+	printCommandValidation(os.Stderr, "gregale freeze: unknown subcommand %q\n", args[0])
+	return unknownSubcommandChoices(os.Stderr, "freeze", nestedCliCommand("freeze"), args[0])
 }
 
 // freezeAppFlag resolves --app from the flag or the linked project; an
@@ -272,8 +272,9 @@ func freezeStatus(args []string) int {
 		return printErr("Could not read local project context", err)
 	}
 	if slug == "" {
-		PrintUsage(os.Stderr, "usage: gregale freeze status [--app <slug>]", "freeze")
-		return 1
+		// `freeze status` outside a linked checkout printed bare usage on
+		// production-us rc.294 (Hunt 14 H14-64).
+		return printErr("App required", errors.New("pass --app <slug>, or link this checkout with gregale link <project> --app <slug>"))
 	}
 	client, err := authedClient()
 	if err != nil {

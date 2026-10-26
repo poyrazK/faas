@@ -563,16 +563,29 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// was soft-deleted between NOTIFY and the SELECT — write "" so
 	// the next resolveFor returns ErrCapacity (the same path an
 	// unknown node takes).
+	// ADR-20261024225612: say once, and again whenever it changes, when the
+	// active nodes cannot share snapshots. The watcher runs on one goroutine.
+	lastCPUWarning := ""
+	warnCPUIdentities := func() {
+		distinct, warning := sched.CPUIdentityWarning(nodeRegistry.Snapshot())
+		if warning != lastCPUWarning && warning != "" {
+			log.Warn("schedd: "+warning, "cpu_identities", distinct)
+		}
+		lastCPUWarning = warning
+	}
+	warnCPUIdentities()
 	routerRefreshFn := func(rctx context.Context, nodeID string) error {
 		row, err := store.ComputeNodeByID(rctx, nodeID)
 		switch {
 		case err == nil:
 			vmmRouter.Refresh(nodeID, row.TargetURL)
 			nodeRegistry.Refresh(row)
+			warnCPUIdentities()
 			return nil
 		case errors.Is(err, state.ErrNotFound):
 			vmmRouter.Refresh(nodeID, "")
 			nodeRegistry.Remove(nodeID)
+			warnCPUIdentities()
 			return nil
 		default:
 			return err
@@ -662,6 +675,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	engine.WithStoreOutageAtStartup(storeOutageAtStartup)
 	engine.WithOpsMetrics(ops)
 	engine.WithJobFlexibleMetrics(wire.NewJobFlexibleMetrics(ops.Registry(), ops.MetricPrefix()))
+	engine.WithJobDispatchMetrics(wire.NewJobDispatchMetrics(ops.Registry(), ops.MetricPrefix()))
 	// Keep the engine's ownership scope aligned with the gRPC server,
 	// heartbeat, and floor trigger. An empty owner preserves the central
 	// scheduler's fleet-wide placement; a configured owner pins this
@@ -786,7 +800,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			api.UpstreamAffinityTTL, // one probe cadence
 			0,                       // default: four intervals
 			log,
-		).WithAppLister(store.ListAppEgressCircuitAppIDs)
+		).WithAppLister(store.ListAppEgressCircuitAppIDs).WithAppAllowed(engine.EgressCircuitAllowed)
 		// One pass before the first tick so a schedd restart re-derives
 		// breaker state from the probe history instead of starting blind
 		// with every circuit closed.
@@ -1639,6 +1653,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		WithStoreOutageAtStartup(storeOutageAtStartup).
 		WithNodeRegistry(nodeRegistry).
 		WithEvents(eventsPlatform).
+		WithOpsMetrics(ops).
 		WithReachableHook(engine.DestroyLostVMs)
 	if leaseGuard != nil {
 		hb.WithTakeoverGuard(leaseGuard)

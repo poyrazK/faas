@@ -38,6 +38,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/apid/durable"
 	"github.com/onebox-faas/faas/pkg/apid/edgerules"
 	"github.com/onebox-faas/faas/pkg/apid/issuetrackers"
+	"github.com/onebox-faas/faas/pkg/apid/logerasure"
 	"github.com/onebox-faas/faas/pkg/apid/managedrealtime"
 	"github.com/onebox-faas/faas/pkg/apid/object"
 	"github.com/onebox-faas/faas/pkg/apid/operation"
@@ -253,6 +254,8 @@ var CapsDecl = &capsDecl
 var CertDialContextFunc = &certDialContextFunc
 var CertLookupIPFunc = &certLookupIPFunc
 var ChannelSender = &channelSender
+var TestRelayPoll = &testRelayPoll
+var ChannelTestRelayWait = &channelTestRelayWait
 var CnameLookupFunc = &cnameLookupFunc
 var DialCertFunc = &dialCertFunc
 var ErrCertAddressBlocked = &errCertAddressBlocked
@@ -295,6 +298,11 @@ var BuildDomainRecipient = &buildDomainRecipient
 var BuildWriteMode = &buildWriteMode
 var EdgeDomainRecipient = &edgeDomainRecipient
 var EdgeWriteMode = &edgeWriteMode
+var AlertingDomainRecipient = &alertingDomainRecipient
+var AlertingWriteMode = &alertingWriteMode
+var SealPresetWebhookSecret = sealPresetWebhookSecret
+var SealMCPFallbackSecret = sealMCPFallbackSecret
+var SealMCPPagerDutyKey = sealMCPPagerDutyKey
 var SealAppLogDrainAuthHeader = sealAppLogDrainAuthHeader
 var SourceWriteMode = &sourceWriteMode
 var SseChannels = &sseChannels
@@ -910,6 +918,7 @@ func (r *server) Log() **slog.Logger                                 { return &r
 func (r *server) MailBounce() *mailBounceHandler                     { return &r.mailBounce }
 func (r *server) Mailer() *Mailer                                    { return &r.mailer }
 func (r *server) ManagedPostgres() **managedpostgres.Service         { return &r.managedPostgres }
+func (r *server) LogArchive() *logerasure.Objects                    { return &r.logArchive }
 func (r *server) BeforeAccountDelete(ctx context.Context, acct state.Account) error {
 	return r.beforeAccountDelete(ctx, acct)
 }
@@ -1713,3 +1722,29 @@ func (s *server) DashboardWidgetAppForTest(ctx context.Context, acct state.Accou
 func (s *server) IncidentAppVisibleForTest(ctx context.Context, acct state.Account, app state.App) bool {
 	return incidentsHost{s}.AppVisible(ctx, acct, app)
 }
+
+// ServiceMapAppsForTest lists the apps the service map draws (ADR-1131).
+func (s *server) ServiceMapAppsForTest(ctx context.Context, accountID string) ([]state.App, error) {
+	return serviceMapHost{s}.Apps(ctx, accountID)
+}
+
+// EventsAppScopeForTest returns the /v1/events stream's owned and hidden
+// app sets for a caller.
+func (s *server) EventsAppScopeForTest(ctx context.Context, acct state.Account, key *state.APIKey) (owned, hidden map[string]struct{}) {
+	return s.buildOwnedAppCache(ctx, acct, key)
+}
+
+var ValidateAndPlanSidecars = validateAndPlanSidecars
+
+// StatusPageFromStore evaluates the public status page against a Prometheus
+// URL and a store with the durable deployment-outcome aggregate.
+func StatusPageFromStore(ctx context.Context, promURL string, store state.Store) (StatusPage, error) {
+	return newStatusCacheWithStore(promURL, store, slog.Default()).Get(ctx)
+}
+
+// WriteExclusiveError maps a managed operation store error to its problem.
+var WriteExclusiveError = writeExclusiveError
+
+// ResolveAndCheckEgress is the create-time egress check every outbound URL
+// (alert, log drain, webhook, channel) passes.
+var ResolveAndCheckEgress = resolveAndCheckEgress

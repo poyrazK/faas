@@ -527,6 +527,9 @@ func appURLForDomain(slug, domain string) string {
 func (s *server) renderAppsList(w http.ResponseWriter, r *http.Request, log *slog.Logger, acct state.Account) {
 	ctx := r.Context()
 	apps, err := s.store.ListApps(ctx, acct.ID)
+	if err == nil {
+		apps, _, err = s.visibleAccountApps(r, acct, apps)
+	}
 	if err != nil {
 		renderProblem(w, log, err)
 		return

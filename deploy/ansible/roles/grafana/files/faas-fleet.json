@@ -3230,6 +3230,70 @@
       ],
       "fieldConfig": {"defaults": {"unit": "s", "min": 0}, "overrides": []},
       "options": {"legend": {"displayMode": "table", "placement": "bottom"}, "tooltip": {"mode": "multi"}}
+    },
+    {
+      "id": 432,
+      "type": "stat",
+      "title": "API availability (30 d)",
+      "description": "Requests answered without a platform-produced 5xx over eligible requests, rolling 30 d (spec §12 public SLO 99.5 %, ADR-20261023124955 §3). Red below 99.5 %.",
+      "gridPos": {"h": 6, "w": 6, "x": 0, "y": 334},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "faas_slo_api_availability:ratio_30d",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 3, "noValue": "no eligible events", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.995}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"}
+    },
+    {
+      "id": 433,
+      "type": "stat",
+      "title": "Wakes within 1 s (30 d)",
+      "description": "Share of wakes whose first upstream byte came within 1 s, rolling 30 d. Wake p95 < 1 s (spec §12) holds while this stays at or above 95 %.",
+      "gridPos": {"h": 6, "w": 6, "x": 6, "y": 334},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "faas_slo_wakes_within_1s:ratio_30d",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 3, "noValue": "no eligible events", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.95}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"}
+    },
+    {
+      "id": 434,
+      "type": "stat",
+      "title": "Platform wakes within 350 ms (30 d)",
+      "description": "Share of platform-only wakes within 350 ms, rolling 30 d. The public-beta gate (p95 < 0.35 s) holds while this stays at or above 95 %.",
+      "gridPos": {"h": 6, "w": 6, "x": 12, "y": 334},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "faas_slo_platform_wakes_within_350ms:ratio_30d",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 3, "noValue": "no eligible events", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.95}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"}
+    },
+    {
+      "id": 435,
+      "type": "stat",
+      "title": "Build success (30 d)",
+      "description": "Builds that succeeded over builds that did not fail on the customer's code, rolling 30 d (spec §12 public SLO 99 %). Red below 99 %.",
+      "gridPos": {"h": 6, "w": 6, "x": 18, "y": 334},
+      "datasource": {"type": "prometheus", "uid": "prometheus"},
+      "targets": [
+        {
+          "expr": "faas_slo_build_success:ratio_30d",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {"defaults": {"unit": "percentunit", "decimals": 3, "noValue": "no eligible events", "thresholds": {"mode": "absolute", "steps": [{"color": "red", "value": null}, {"color": "green", "value": 0.99}]}}, "overrides": []},
+      "options": {"colorMode": "background", "graphMode": "area", "reduceOptions": {"calcs": ["lastNotNull"], "fields": "", "values": false}, "textMode": "auto"}
     }
   ],
   "refresh": "30s",

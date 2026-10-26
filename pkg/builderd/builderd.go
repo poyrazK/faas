@@ -1070,7 +1070,7 @@ func (b *Builderd) processClaimedBuild(ctx context.Context, build state.Build) (
 		return BuildResult{}, ErrNoSlot
 	}
 	defer releaseSlot()
-	b.emitBuildLog(ctx, build.ID, fmt.Sprintf("allocated builder slot (%s)\n", slot.Label))
+	b.emitBuildLog(ctx, build.ID, builderSlotLogLine(slot.Label, time.Since(build.EnqueuedAt)))
 	if b.stopIfBuildCancelled(ctx, build) {
 		return BuildResult{}, nil
 	}

@@ -27,10 +27,7 @@ func TestMigrationQueueBindingEnvironmentScopePreservesLegacyAndCapturedWork(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	app, err := store.CreateApp(ctx, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "queue-scope-migration", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker})
-	if err != nil {
-		t.Fatal(err)
-	}
+	app := seedHistoricalInvocationApp(t, ctx, pool, state.App{AccountID: account.ID, ProjectID: project.ID, Slug: "queue-scope-migration", Type: state.AppTypeApp, WorkloadClass: state.WorkloadClassWorker})
 	legacy := seedLegacyQueueBindingConsumer(t, pool, account.ID, app.ID, "orders", true)
 	var old string
 	if err := pool.QueryRow(ctx, `insert into invocations(account_id,app_id,source,queue_name,deployment_scope,payload,due_at)

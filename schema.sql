@@ -4380,6 +4380,8 @@ CREATE TABLE public.snapshots (
     delete_pending boolean DEFAULT false NOT NULL,
     application_standard_capture_token uuid,
     recovery_generation bigint DEFAULT 0 NOT NULL,
+    cpu_template text DEFAULT ''::text NOT NULL,
+    cpu_model text DEFAULT ''::text NOT NULL,
     CONSTRAINT snapshots_recovery_generation_check CHECK ((recovery_generation >= 0)),
     CONSTRAINT snapshots_stored_bytes_nonnegative CHECK ((stored_bytes >= 0)),
     CONSTRAINT snapshots_tier_check CHECK ((tier = ANY (ARRAY['init'::text, 'warm'::text])))
@@ -4405,6 +4407,20 @@ COMMENT ON COLUMN public.snapshots.base_image_version IS 'Runner base-image comp
 --
 
 COMMENT ON COLUMN public.snapshots.application_standard_capture_token IS 'Immutable historical capture reference. A fresh restore grant and current artifact approval are still required.';
+
+
+--
+-- Name: COLUMN snapshots.cpu_template; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.cpu_template IS 'CPU template of the capturing node; a templated snapshot restores on any node class the template supports.';
+
+
+--
+-- Name: COLUMN snapshots.cpu_model; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.snapshots.cpu_model IS 'Host CPU signature of the capturing node; a template-less snapshot restores only on the identical signature.';
 
 
 --
@@ -12436,7 +12452,7 @@ END $$;
 CREATE FUNCTION public.fence_object_deletion() RETURNS trigger
     LANGUAGE plpgsql
     AS $$
-DECLARE bid uuid;
+DECLARE bid uuid; fence_key text; fence_key_hash text;
 BEGIN
  IF TG_TABLE_NAME='object_buckets' THEN
   IF TG_OP='DELETE' THEN bid:=OLD.id;
@@ -12444,8 +12460,14 @@ BEGIN
  ELSE
   bid:=NEW.bucket_id;
   IF TG_TABLE_NAME='object_bucket_versioning' THEN IF NEW.state='ready' THEN RETURN NEW; END IF; END IF;
+  -- Writes, multipart uploads and key grants touch one key.
+  IF TG_TABLE_NAME IN ('object_storage_write_admissions','object_storage_key_grants') THEN fence_key_hash:=NEW.key_hash;
+  ELSIF TG_TABLE_NAME='object_storage_multipart_uploads' THEN fence_key:=NEW.object_key;
+  END IF;
  END IF;
- IF EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=bid AND d.state IN ('prepared','dispatched')) THEN
+ IF EXISTS(SELECT 1 FROM object_deletions d WHERE d.bucket_id=bid AND d.state IN ('prepared','dispatched')
+  AND (fence_key IS NULL OR d.object_key=fence_key)
+  AND (fence_key_hash IS NULL OR encode(sha256(convert_to(d.object_key,'UTF8')),'hex')=fence_key_hash)) THEN
   RAISE EXCEPTION USING ERRCODE='23514',CONSTRAINT='object_deletion_fenced',MESSAGE='Unsettled deletion fences mutation and inventory';
  END IF;
  IF TG_OP='DELETE' THEN RETURN OLD; END IF;
@@ -28187,6 +28209,38 @@ END)::double precision)) OR ((metric <> ALL (ARRAY['mcp_protocol_error_rate_pct'
 
 
 --
+-- Name: alert_test_sends; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.alert_test_sends (
+    id uuid NOT NULL,
+    account_id uuid NOT NULL,
+    kind text NOT NULL,
+    subject_id uuid NOT NULL,
+    event jsonb DEFAULT '{}'::jsonb NOT NULL,
+    state text DEFAULT 'pending'::text NOT NULL,
+    claim_token uuid,
+    claimed_until timestamp with time zone,
+    result jsonb,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    completed_at timestamp with time zone,
+    CONSTRAINT alert_test_sends_check CHECK (((state = 'claimed'::text) = ((claim_token IS NOT NULL) AND (claimed_until IS NOT NULL)))),
+    CONSTRAINT alert_test_sends_check1 CHECK (((state = 'done'::text) = ((result IS NOT NULL) AND (completed_at IS NOT NULL)))),
+    CONSTRAINT alert_test_sends_event_check CHECK ((pg_column_size(event) <= 65536)),
+    CONSTRAINT alert_test_sends_kind_check CHECK ((kind = ANY (ARRAY['notification_channel'::text, 'alert_rule_webhook'::text]))),
+    CONSTRAINT alert_test_sends_result_check CHECK (((result IS NULL) OR (pg_column_size(result) <= 8192))),
+    CONSTRAINT alert_test_sends_state_check CHECK ((state = ANY (ARRAY['pending'::text, 'claimed'::text, 'done'::text])))
+);
+
+
+--
+-- Name: TABLE alert_test_sends; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON TABLE public.alert_test_sends IS 'Test sends apid relays to meterd, which holds the alerting seal-domain key (ADR 20261022111812). Short-lived: apid deletes a row once it reads the result, meterd prunes abandoned ones.';
+
+
+--
 -- Name: api_consumer_billing_policies; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -32272,6 +32326,10 @@ CREATE TABLE public.compute_nodes (
     vmmd_epoch_incarnation uuid,
     vmmd_predecessor_incarnation uuid,
     vmmd_restart_notice_until timestamp with time zone,
+    cpu_template text DEFAULT ''::text NOT NULL,
+    cpu_model text DEFAULT ''::text NOT NULL,
+    readiness text DEFAULT 'ready'::text NOT NULL,
+    readiness_reason text,
     CONSTRAINT compute_nodes_admission_ceiling_mb_check CHECK ((admission_ceiling_mb > 0)),
     CONSTRAINT compute_nodes_gateway_target_url_scheme_chk CHECK (((gateway_target_url IS NULL) OR (gateway_target_url ~ '^tcp://[^/:][^/]*:[0-9]+$'::text))),
     CONSTRAINT compute_nodes_last_recovery_outcome_chk CHECK (((last_recovery_outcome IS NULL) OR (last_recovery_outcome = ANY (ARRAY['succeeded'::text, 'failed'::text, 'partial'::text])))),
@@ -32280,6 +32338,7 @@ CREATE TABLE public.compute_nodes (
     CONSTRAINT compute_nodes_mem_mb_check CHECK ((mem_mb > 0)),
     CONSTRAINT compute_nodes_overlay_ip_family_chk CHECK (((overlay_ip IS NULL) OR (family(overlay_ip) = 4))),
     CONSTRAINT compute_nodes_public_ip_format_chk CHECK (((public_ip IS NULL) OR (family(public_ip) = ANY (ARRAY[4, 6])))),
+    CONSTRAINT compute_nodes_readiness_chk CHECK ((readiness = ANY (ARRAY['ready'::text, 'degraded'::text, 'unavailable'::text, 'draining'::text]))),
     CONSTRAINT compute_nodes_schedd_target_url_scheme_chk CHECK (((schedd_target_url IS NULL) OR (schedd_target_url ~ '^(unix|tcp)://'::text))),
     CONSTRAINT compute_nodes_target_url_check CHECK ((target_url ~ '^(unix|tcp|dns)://'::text)),
     CONSTRAINT compute_nodes_vcpu_budget_check CHECK ((vcpu_budget > 0)),
@@ -32349,6 +32408,20 @@ COMMENT ON COLUMN public.compute_nodes.generation IS 'monotonic counter bumped b
 --
 
 COMMENT ON COLUMN public.compute_nodes.overlay_ip IS 'vmmd-registered IPv4 address on the operator-managed regional overlay';
+
+
+--
+-- Name: COLUMN compute_nodes.cpu_template; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.compute_nodes.cpu_template IS 'Firecracker CPU template vmmd boots guests with; empty for none (ADR-20261024225612).';
+
+
+--
+-- Name: COLUMN compute_nodes.cpu_model; Type: COMMENT; Schema: public; Owner: -
+--
+
+COMMENT ON COLUMN public.compute_nodes.cpu_model IS 'Host CPU signature <class>/<vendor>-<family>-<model>-<stepping>/<flags hash>; empty before vmmd reports it.';
 
 
 --
@@ -35024,7 +35097,7 @@ CREATE TABLE public.edge_rule_events (
     CONSTRAINT edge_rule_events_country_check CHECK ((length(country) <= 8)),
     CONSTRAINT edge_rule_events_host_check CHECK ((length(host) <= 253)),
     CONSTRAINT edge_rule_events_method_check CHECK ((length(method) <= 16)),
-    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text, 'detected'::text, 'warned'::text, 'blocked'::text, 'challenged'::text, 'rejected'::text, 'solved'::text, 'failed'::text]))),
+    CONSTRAINT edge_rule_events_outcome_check CHECK ((outcome = ANY (ARRAY['matched'::text, 'logged'::text, 'detected'::text, 'warned'::text, 'blocked'::text, 'challenged'::text, 'rejected'::text, 'solved'::text, 'failed'::text, 'boxed'::text]))),
     CONSTRAINT edge_rule_events_path_check CHECK ((octet_length(path) <= 1024)),
     CONSTRAINT edge_rule_events_request_id_check CHECK ((length(request_id) <= 128)),
     CONSTRAINT edge_rule_events_user_agent_check CHECK ((octet_length(user_agent) <= 256)),
@@ -41512,6 +41585,31 @@ CREATE TABLE public.layer_artifact_retention (
 
 
 --
+-- Name: log_archive_erasure_instances; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.log_archive_erasure_instances (
+    account_id uuid NOT NULL,
+    instance_id uuid NOT NULL,
+    erased_at timestamp with time zone,
+    CONSTRAINT log_archive_erasure_instances_erased_at_check CHECK (((erased_at IS NULL) OR isfinite(erased_at)))
+);
+
+
+--
+-- Name: log_archive_erasures; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.log_archive_erasures (
+    account_id uuid NOT NULL,
+    deletion_requested_at timestamp with time zone NOT NULL,
+    snapshotted_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT log_archive_erasures_deletion_requested_at_check CHECK (isfinite(deletion_requested_at)),
+    CONSTRAINT log_archive_erasures_snapshotted_at_check CHECK (isfinite(snapshotted_at))
+);
+
+
+--
 -- Name: log_events; Type: TABLE; Schema: public; Owner: -
 --
 
@@ -44507,6 +44605,20 @@ CREATE TABLE public.oauth_links (
     email text NOT NULL,
     email_verified boolean NOT NULL,
     created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+
+--
+-- Name: object_bucket_cors; Type: TABLE; Schema: public; Owner: -
+--
+
+CREATE TABLE public.object_bucket_cors (
+    bucket_id uuid NOT NULL,
+    rules jsonb NOT NULL,
+    revision bigint NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT object_bucket_cors_revision_check CHECK ((revision > 0)),
+    CONSTRAINT object_bucket_cors_rules_check CHECK (((jsonb_typeof(rules) = 'array'::text) AND ((jsonb_array_length(rules) >= 1) AND (jsonb_array_length(rules) <= 100)) AND (octet_length((rules)::text) <= 65536)))
 );
 
 
@@ -55430,6 +55542,14 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: alert_test_sends alert_test_sends_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_test_sends
+    ADD CONSTRAINT alert_test_sends_pkey PRIMARY KEY (id);
+
+
+--
 -- Name: api_consumer_billing_policies api_consumer_billing_policies_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -61590,6 +61710,22 @@ ALTER TABLE ONLY public.layer_artifact_retention
 
 
 --
+-- Name: log_archive_erasure_instances log_archive_erasure_instances_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasure_instances
+    ADD CONSTRAINT log_archive_erasure_instances_pkey PRIMARY KEY (account_id, instance_id);
+
+
+--
+-- Name: log_archive_erasures log_archive_erasures_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasures
+    ADD CONSTRAINT log_archive_erasures_pkey PRIMARY KEY (account_id);
+
+
+--
 -- Name: log_events log_events_pkey; Type: CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -62707,6 +62843,14 @@ ALTER TABLE ONLY public.notification_outbox
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_pkey PRIMARY KEY (provider, provider_subject);
+
+
+--
+-- Name: object_bucket_cors object_bucket_cors_pkey; Type: CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_cors
+    ADD CONSTRAINT object_bucket_cors_pkey PRIMARY KEY (bucket_id);
 
 
 --
@@ -67670,6 +67814,13 @@ CREATE INDEX alert_rules_slo_id_idx ON public.alert_rules USING btree (slo_id) W
 --
 
 CREATE INDEX alert_rules_synthetic_check_id_idx ON public.alert_rules USING btree (synthetic_check_id) WHERE (synthetic_check_id IS NOT NULL);
+
+
+--
+-- Name: alert_test_sends_open; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX alert_test_sends_open ON public.alert_test_sends USING btree (created_at) WHERE (state <> 'done'::text);
 
 
 --
@@ -72661,6 +72812,13 @@ CREATE INDEX jobs_legacy_artifact_verification_idx ON public.jobs USING btree (u
 
 
 --
+-- Name: log_archive_erasure_instances_pending_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX log_archive_erasure_instances_pending_idx ON public.log_archive_erasure_instances USING btree (account_id, instance_id) WHERE (erased_at IS NULL);
+
+
+--
 -- Name: log_events_app_deployment_time_idx; Type: INDEX; Schema: public; Owner: -
 --
 
@@ -73872,10 +74030,10 @@ CREATE INDEX object_deletion_lifecycle_scan ON public.object_deletions USING btr
 
 
 --
--- Name: object_deletions_active_bucket; Type: INDEX; Schema: public; Owner: -
+-- Name: object_deletions_active_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX object_deletions_active_bucket ON public.object_deletions USING btree (bucket_id) WHERE (state = ANY (ARRAY['prepared'::text, 'dispatched'::text]));
+CREATE UNIQUE INDEX object_deletions_active_key ON public.object_deletions USING btree (bucket_id, object_key) WHERE (state = ANY (ARRAY['prepared'::text, 'dispatched'::text]));
 
 
 --
@@ -76616,10 +76774,14 @@ CREATE INDEX snapshots_deployment_idx ON public.snapshots USING btree (deploymen
 
 
 --
--- Name: snapshots_deployment_tier_key; Type: INDEX; Schema: public; Owner: -
+-- Name: snapshots_deployment_tier_platform_key; Type: INDEX; Schema: public; Owner: -
 --
 
-CREATE UNIQUE INDEX snapshots_deployment_tier_key ON public.snapshots USING btree (deployment_id, tier) WHERE (stale = false);
+CREATE UNIQUE INDEX snapshots_deployment_tier_platform_key ON public.snapshots USING btree (deployment_id, tier, (
+CASE
+    WHEN (cpu_template <> ''::text) THEN ('template:'::text || cpu_template)
+    ELSE cpu_model
+END)) WHERE (stale = false);
 
 
 --
@@ -84449,6 +84611,14 @@ ALTER TABLE ONLY public.alert_rules
 
 
 --
+-- Name: alert_test_sends alert_test_sends_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.alert_test_sends
+    ADD CONSTRAINT alert_test_sends_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: api_consumer_billing_policies api_consumer_billing_policies_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -92129,6 +92299,22 @@ ALTER TABLE ONLY public.jobs
 
 
 --
+-- Name: log_archive_erasure_instances log_archive_erasure_instances_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasure_instances
+    ADD CONSTRAINT log_archive_erasure_instances_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.log_archive_erasures(account_id) ON DELETE CASCADE;
+
+
+--
+-- Name: log_archive_erasures log_archive_erasures_account_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.log_archive_erasures
+    ADD CONSTRAINT log_archive_erasures_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
 -- Name: log_saved_searches log_saved_searches_app_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
 --
 
@@ -93366,6 +93552,14 @@ ALTER TABLE ONLY public.notification_channels
 
 ALTER TABLE ONLY public.oauth_links
     ADD CONSTRAINT oauth_links_account_id_fkey FOREIGN KEY (account_id) REFERENCES public.accounts(id) ON DELETE CASCADE;
+
+
+--
+-- Name: object_bucket_cors object_bucket_cors_bucket_id_fkey; Type: FK CONSTRAINT; Schema: public; Owner: -
+--
+
+ALTER TABLE ONLY public.object_bucket_cors
+    ADD CONSTRAINT object_bucket_cors_bucket_id_fkey FOREIGN KEY (bucket_id) REFERENCES public.object_buckets(id) ON DELETE CASCADE;
 
 
 --

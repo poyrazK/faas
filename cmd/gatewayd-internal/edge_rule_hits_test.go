@@ -92,6 +92,37 @@ func TestEdgeRuleHitCounterDetectionEvents(t *testing.T) {
 	}
 }
 
+// ADR-20261022105846 amendment 2: penalty box events have a per-rule budget
+// of their own, untouched by detections and reset each flush, and reach the
+// store as boxed, an outcome its CHECK accepts.
+func TestEdgeRuleHitCounterPenaltyBoxEvents(t *testing.T) {
+	var _ gateway.PenaltyEventRecorder = (*edgeRuleHitCounter)(nil)
+	c := newEdgeRuleHitCounter()
+	for range edgeRuleDetectionEventsPerRule + 5 {
+		c.SampleEdgeRuleDetection("rule")
+	}
+	admitted := 0
+	for range edgeRulePenaltyEventsPerRule + 5 {
+		if c.SampleEdgePenaltyBox("rule") {
+			admitted++
+		}
+	}
+	if admitted != edgeRulePenaltyEventsPerRule {
+		t.Fatalf("admitted %d boxes, want %d", admitted, edgeRulePenaltyEventsPerRule)
+	}
+	c.RecordEdgeRuleEvent(gateway.EdgeRuleEvent{RuleID: "rule", AppID: "app", Outcome: gateway.EdgeRuleEventBoxed, ClientIP: "203.0.113.7"})
+	events, _ := c.drainEvents()
+	if len(events) != 1 || events[0].Outcome != state.EdgeRuleEventBoxed || events[0].ClientIP != "203.0.113.7" {
+		t.Fatalf("drained = %+v", events)
+	}
+	if !c.SampleEdgePenaltyBox("rule") {
+		t.Fatal("penalty box budget not reset by the flush")
+	}
+	if gateway.EdgeRuleEventBoxed != state.EdgeRuleEventBoxed || !state.IsEdgeRuleEventOutcome(gateway.EdgeRuleEventBoxed) {
+		t.Fatalf("gateway outcome %q is not the store's", gateway.EdgeRuleEventBoxed)
+	}
+}
+
 // The gateway and the store name detection outcomes independently; the
 // stored CHECK accepts only the store's names.
 func TestDetectionOutcomesMatchStore(t *testing.T) {

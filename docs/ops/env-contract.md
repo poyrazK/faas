@@ -83,12 +83,14 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_BRIDGED_ROLE` | bridged, shared | `envfile` |  |  | `` | optional control-plane relay; delivered by dev-bridge.env |
 | `FAAS_BRIDGE_DROP_TO_UID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for a bridge unit (FAAS_INSTANCE_BRIDGE_UNIT=1), which systemd starts as root because User= refuses a uid with no account; the bridge drops to this uid before reading anything (pkg/bridgeproc) |
 | `FAAS_BRIDGE_EXPECT_UID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for an unprivileged bridge; the bridge exits unless it runs as this uid with no capability (pkg/bridgeproc) |
+| `FAAS_BRIDGE_GUEST_HEADROOM` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set to 1 by vmmd when bridge_stream_headroom is on: the bridge keeps one idle guest connection per accepted stream (100) and dials the guest with a 5 s timeout (ADR-20261026120000) |
 | `FAAS_BRIDGE_HEADERS` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BRIDGE_HOST` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BRIDGE_METHOD` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BRIDGE_PARENT_PID` | vmmd-stream-bridge, shared | `internal` |  |  | `` | set by vmmd for an unprivileged bridge; the bridge exits with that process (pkg/bridgeproc) |
 | `FAAS_BRIDGE_PROTOCOL` | vmmd-stream-bridge, shared | `default` |  |  | `` | rollback lever, see docs/ops/h2c-rollback.md |
-| `FAAS_BRIDGE_UNPRIVILEGED` | vmmd, shared | `default` |  |  | `` | 1 runs each instance's bridges as its own bridge uid with no capability (connection-survival ADR slice 1a); default off |
+| `FAAS_BRIDGE_STREAM_HEADROOM` | vmmd | `default` |  |  | `` | optional boolean switch: vmmd opens another HTTP/2 connection to a bridge at its 100-stream cap instead of queueing requests, and starts bridges with FAAS_BRIDGE_GUEST_HEADROOM=1 (ADR-20261026120000); production default is off |
+| `FAAS_BRIDGE_UNPRIVILEGED` | vmmd, shared | `dropin` |  |  | `` | 1 runs each instance's bridges as its own bridge uid with no capability (connection-survival ADR slice 1a); ansible vmmd_bridge_unprivileged, default off |
 | `FAAS_BRIDGE_URL` | vmmd-stream-bridge | `internal` |  |  | `` | set by vmmd for the per-request stream-bridge subprocess |
 | `FAAS_BROKER_EGRESS_IFNAME` | schedd | `default` |  |  | `` |  |
 | `FAAS_BROKER_EGRESS_MBIT` | schedd | `default` |  |  | `` |  |
@@ -135,6 +137,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_COMPUTE_VCPUS` | vmmd | `dropin` |  |  | `` | host vCPU count reported by node_join |
 | `FAAS_CONSUMER_USAGE_OUTBOX_ROOT` | gatewayd-internal | `default` |  |  | `` | optional durable financial usage spool override; defaults to /var/lib/faas/consumer-usage |
 | `FAAS_CONTROL_PLANE_API_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
+| `FAAS_CPU_TEMPLATE` | vmmd | `default` |  |  | `` | optional Firecracker CPU template every guest boots with (ADR-20261024225612), e.g. T2CL for a Cascade Lake + Ice Lake cell; empty default boots with the host CPUID; vmmd refuses a template its host CPU is not documented as safe on |
 | `FAAS_CRASH_SNAPSHOTS` | apid, gatewayd-internal, schedd, vmmd | `default` |  |  | `` | exact opt-in for ADR-733 crash snapshots; apid serves the routes, gatewayd-internal requests 5xx captures, schedd captures and vmmd serves the guest SDK capture receiver only when 1; default off |
 | `FAAS_CUSTOM_DASHBOARDS_ENABLED` | apid | `default` |  | 0 | `` | ADR-20261022173833 operator gate for /v1/dashboards (saved custom dashboards); explicit 1 enables the internal preview |
 | `FAAS_CUSTOM_DOMAIN_ADDRESSES` | apid, shared | `dropin` |  |  | `` | ADR-520; comma-separated public edge addresses offered for apex A/AAAA records and accepted by the routing probe; invalid entries fail apid at boot |
@@ -178,6 +181,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_DNS_PROVIDER` | gatewayd-public, shared | `default` |  |  | `` |  |
 | `FAAS_DNS_PROVIDER_SEALED` | gatewayd-public | `default` |  |  | `` |  |
 | `FAAS_DNS_ZONE` | gatewayd-public | `default` |  |  | `` |  |
+| `FAAS_DOCKER_HUB_MIRRORS` | builderd, imaged, shared | `dropin` |  |  | `` | ADR-20261025114554 comma-separated Docker Hub mirror hosts (for example mirror.gcr.io) tried before Docker Hub for anonymous pulls; set faas_docker_hub_mirrors in the inventory. Empty pulls from Docker Hub directly; an invalid list fails startup |
 | `FAAS_DOMAIN_DOCTOR_ENABLED` | apid, shared | `runtime-config` |  |  | `` |  |
 | `FAAS_DOMAIN_DOCTOR_TTL_SECONDS` | apid | `runtime-config` |  |  | `` |  |
 | `FAAS_DPA_PATH` | apid | `unit` |  |  | `` |  |
@@ -385,8 +389,8 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_IMAGE_DIGEST` | shared | `guest` |  |  | `` | platform-authored workload identity; immutable image/artifact digest when available, never customer-controlled |
 | `FAAS_IMAGE_RUNS` | apid, shared | `dropin` |  | 0 | `` | operator gate for POST /v1/image-runs (gregale run --image); 99-faas-image-runs.conf drop-in from control_plane_service (faas_image_runs_enabled); enable after the image-run migration and imaged are deployed (ADR-1161) |
 | `FAAS_INCIDENTS_ENABLED` | apid | `default` |  | 0 | `` | ADR-20261022193512 operator gate for /v1/incidents (unified incident list); explicit 1 enables the internal preview |
-| `FAAS_INSTANCE_BRIDGE_SESSIONS` | vmmd, shared | `default` |  | 0 | `` | 1 carries raw, TCP and UDP forwards as sessions on the instance's persistent bridge instead of a bridge process per connection (connection-survival ADR P1b); needs the persistent v2 bridge; default off |
-| `FAAS_INSTANCE_BRIDGE_UNIT` | vmmd, shared | `default` |  | 0 | `` | 1 runs each instance's persistent bridge as a transient systemd service (faas-ibridge-<instance>-<gen>.service in faas-tenant-ibridge.slice, sandboxed, as its bridge uid) that lives as long as the instance (connection-survival ADR P1c); applies to namespace bridges with FAAS_BRIDGE_UNPRIVILEGED=1 and the persistent v2 bridge; default off |
+| `FAAS_INSTANCE_BRIDGE_SESSIONS` | vmmd, shared | `dropin` |  | 0 | `` | 1 carries raw, TCP and UDP forwards as sessions on the instance's persistent bridge instead of a bridge process per connection (connection-survival ADR P1b); needs the persistent v2 bridge; ansible vmmd_instance_bridge_sessions, default off |
+| `FAAS_INSTANCE_BRIDGE_UNIT` | vmmd, shared | `dropin` |  | 0 | `` | 1 runs each instance's persistent bridge as a transient systemd service (faas-ibridge-<instance>-<gen>.service in faas-tenant-ibridge.slice, sandboxed, as its bridge uid) that lives as long as the instance (connection-survival ADR P1c); applies to namespace bridges with FAAS_BRIDGE_UNPRIVILEGED=1 and the persistent v2 bridge; off, vmmd stops any bridge unit it finds at startup; ansible vmmd_instance_bridge_unit, default off |
 | `FAAS_INSTANCE_ID` | shared | `guest` |  |  | `` | platform-authored workload identity; injected by the scheduler and gateway, never customer-controlled |
 | `FAAS_INTERACTIVE_APP_TASKS` | apid, shared | `default` |  |  | `` | exact opt-in for ADR-1037 interactive app tasks (exec -it, cp, port-forward) on top of FAAS_APP_TASK_API_ENABLED; default off until vmmd, schedd, gateways and guest-init carry the attach path |
 | `FAAS_INTERACTIVE_IMAGE_RUNS` | apid, shared | `default` |  | 0 | `` | exact opt-in for ADR-1330 interactive image runs (gregale run -it --image) on top of FAAS_IMAGE_RUNS; default off until vmmd, schedd, gateways and the platform base image carry the job attach path |
@@ -465,6 +469,7 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_INTERNAL_SVC_KEY_SEALED_NAMESPACE` | schedd | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_SVC_PUBKEYS` | gatewayd-internal | `default` |  |  | `` |  |
 | `FAAS_INTERNAL_TARGET` | gatewayd-public, shared | `unit` |  |  | `` |  |
+| `FAAS_INVOKE_HOOK_BACKOFF` | vmmd | `default` |  |  | `` | optional boolean switch: stop per-request invoke extension events to an instance for 30 s after its guest reports no extension endpoint (ADR-20261025150000); production default is off |
 | `FAAS_ISSUE_SLACK_APP_ID` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack app identity; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
 | `FAAS_ISSUE_SLACK_CLIENT_ID` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack OAuth client; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
 | `FAAS_ISSUE_SLACK_CLIENT_SECRET` | apid, shared | `secrets-env` |  |  | `` | optional managed Issues Slack OAuth client secret; delivered by /etc/faas/sealed.env on apid (ADR-1497) |
@@ -749,6 +754,9 @@ delivers it. Enforced by `pkg/daemonunitspec/envcontract_test.go` (ADR-143).
 | `FAAS_SCHEDD_RECONCILE_ENFORCE` | schedd, shared | `default` |  |  | `` | ADR-191; "1" lets the instance-divergence sweep write. Default off ships the sweep report-only: it counts and logs what it would repair and touches no row |
 | `FAAS_SCHEDD_ROLE` | schedd, shared | `dropin` |  |  | `` |  |
 | `FAAS_SCHEDD_SOCKET` | gatewayd-internal | `dropin` |  |  | `` |  |
+| `FAAS_SEAL_DOMAIN_ALERTING_IDENTITY_PATH` | meterd | `dropin` |  |  | `` | alerting seal-domain identity (ADR 20261022111812) via LoadCredential=faas_seal_domain_alerting in the seal_domains role's meterd drop-in; meterd opens alert rule webhook secrets, notification channel destinations and MCP readiness provider keys with it ahead of the fleet and host identities; unset keeps them on the fleet identity |
+| `FAAS_SEAL_DOMAIN_ALERTING_RECIPIENT_PATH` | apid | `dropin` |  |  | `` | alerting seal-domain recipient (ADR 20261022111812) via LoadCredential=faas_seal_domain_alerting_recipient in the seal_domains role's apid drop-in; apid seals alert rule webhook secrets, notification channel destinations and MCP readiness provider keys to it and cannot open them; tests it cannot open go through meterd; unset seals to the fleet recipient alone |
+| `FAAS_SEAL_DOMAIN_ALERTING_WRITES` | apid | `dropin` |  |  | `` | alerting seal-domain write mode (ADR 20261022111812): empty seals alerting values to the domain and fleet recipients once the domain recipient is staged; fleet keeps the fleet recipient alone; domain seals to the domain alone and is set by the seal_domains role only after every meterd reports faas_seal_domain_loaded{domain="alerting"} 1 and the previous release left the rollback window |
 | `FAAS_SEAL_DOMAIN_BUILD_IDENTITY_PATH` | imaged | `dropin` |  |  | `` | build seal-domain identity (ADR 20261022111812) via LoadCredential=faas_seal_domain_build in the seal_domains role's imaged drop-in; imaged opens app and job private-registry passwords with it ahead of the fleet and host identities; unset keeps them on the fleet identity |
 | `FAAS_SEAL_DOMAIN_BUILD_RECIPIENT_PATH` | apid | `dropin` |  |  | `` | build seal-domain recipient (ADR 20261022111812) via LoadCredential=faas_seal_domain_build_recipient in the seal_domains role's apid drop-in; apid seals private-registry passwords to it and cannot open them; unset seals to the fleet recipient alone |
 | `FAAS_SEAL_DOMAIN_BUILD_WRITES` | apid | `dropin` |  |  | `` | build seal-domain write mode (ADR 20261022111812): empty seals private-registry passwords to the domain and fleet recipients once the domain recipient is staged; fleet keeps the fleet recipient alone; domain seals to the domain alone and is set by the seal_domains role only after every imaged reports faas_seal_domain_loaded{domain="build"} 1 and the previous release left the rollback window |

@@ -53,6 +53,12 @@ type Config struct {
 	// Keep it configured after turning capture off: restores and collection
 	// still read the snapshots it holds.
 	NativeRuntimeSnapshotRoot string `toml:"native_runtime_snapshot_root"`
+	// NativeLaunchOwnerRecords publishes ordinary native launches as
+	// version-three records naming this vmmd incarnation, so a restarted
+	// vmmd can prove it exited and clean up after it (ADR-2026101710
+	// Amendment 1). Older vmmd binaries refuse such a journal: enable it only
+	// once every compute node and any rollback target can read version three.
+	NativeLaunchOwnerRecords bool `toml:"native_launch_owner_records"`
 	// ResourceJournalDir persists lease intent and process incarnations before
 	// resource creation (ADR-473). Keep it outside jail tmpfs and /run.
 	ResourceJournalDir string `toml:"resource_journal_dir"`
@@ -101,11 +107,28 @@ type Config struct {
 	// loop (ADR-20261024105607). Off by default; FAAS_RESTORE_RESEED_THREAD
 	// overrides TOML.
 	RestoreReseedThread bool `toml:"restore_reseed_thread"`
+	// CPUTemplate is the Firecracker CPU template every guest boots with
+	// (ADR-20261024225612), e.g. "T2CL" for a cell that mixes Cascade
+	// Lake and Ice Lake nodes. Empty (the default) boots with the host's
+	// CPUID. vmmd refuses to start when the host CPU is not one the
+	// template is documented as safe on. FAAS_CPU_TEMPLATE overrides TOML.
+	CPUTemplate string `toml:"cpu_template"`
 	// QuietPause enables ADR-1151 quiet pause: vmmd pauses an eligible
 	// instance's vCPUs between requests and resumes it on the next one.
 	// Off by default; schedd decides which instances are eligible.
 	// FAAS_QUIET_PAUSE overrides TOML.
 	QuietPause bool `toml:"quiet_pause"`
+	// InvokeHookBackoff stops per-request invoke extension events to an
+	// instance for extension.InvokeUnavailableBackoff after its guest reports
+	// that no extension endpoint is listening (ADR-20261025150000). Off by
+	// default; FAAS_INVOKE_HOOK_BACKOFF overrides TOML.
+	InvokeHookBackoff bool `toml:"invoke_hook_backoff"`
+	// BridgeStreamHeadroom lets vmmd open another HTTP/2 connection to an
+	// instance's stream bridge when one is at its stream cap instead of
+	// queueing requests, sizes the bridge's guest pool to that cap and
+	// shortens its guest dial timeout (ADR-20261026120000). Off by default;
+	// FAAS_BRIDGE_STREAM_HEADROOM overrides TOML.
+	BridgeStreamHeadroom bool `toml:"bridge_stream_headroom"`
 	// RequireSecretBinding refuses runtime secret envelopes that carry no
 	// account binding (ADR-20261023173624, contract step). Off by default;
 	// the seal_domains role turns it on once every stored envelope is
@@ -321,6 +344,11 @@ type Config struct {
 // fallback (legacy default-local single-box path) is
 // `unix://`+SocketPath.
 type ComputeNodeConfig struct {
+	// CPUTemplate and CPUModel are not configuration: resolveCPUIdentity
+	// fills them from cpu_template and the probed host CPU before
+	// registration (ADR-20261024225612).
+	CPUTemplate        string `toml:"-"`
+	CPUModel           string `toml:"-"`
 	NodeName           string `toml:"name"`                 // defaults to short hostname when empty
 	TargetURL          string `toml:"target_url"`           // dial target written to compute_nodes.target_url
 	VPCPUs             int    `toml:"vpcpus"`               // total vCPUs this box offers
@@ -682,7 +710,6 @@ func LoadConfig(path string) (*Config, error) {
 			"tenant_budget_mb", computeSizing.TenantBudgetMB,
 			"admission_ceiling_mb", computeSizing.AdmissionCeilingMB,
 			"single_box_admission_ceiling_mb", sizing.AdmissionCeilingMB)
-		sizing = computeSizing
 	}
 	// Mega-PR-A (issue #911 / ADR-110 PR-1): env-var overlay for
 	// [compute_node].name so the systemd drop-in (deploy/ansible/
@@ -819,12 +846,32 @@ func LoadConfig(path string) (*Config, error) {
 		}
 		c.QuietPause = enabled
 	}
+	if v, ok := os.LookupEnv("FAAS_CPU_TEMPLATE"); ok {
+		c.CPUTemplate = strings.TrimSpace(v)
+	}
+	if !fcvm.ValidCPUTemplate(c.CPUTemplate) {
+		return nil, fmt.Errorf("vmmd: cpu_template %q is not one of %s (empty for none)", c.CPUTemplate, strings.Join(fcvm.CPUTemplateNames(), ", "))
+	}
 	if v := os.Getenv("FAAS_RUNTIME_SECRET_BINDING_REQUIRED"); v != "" {
 		required, perr := strconv.ParseBool(v)
 		if perr != nil {
 			return nil, fmt.Errorf("vmmd: FAAS_RUNTIME_SECRET_BINDING_REQUIRED must be a boolean (got %q)", v)
 		}
 		c.RequireSecretBinding = required
+	}
+	if v := os.Getenv("FAAS_BRIDGE_STREAM_HEADROOM"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_BRIDGE_STREAM_HEADROOM must be a boolean (got %q)", v)
+		}
+		c.BridgeStreamHeadroom = enabled
+	}
+	if v := os.Getenv("FAAS_INVOKE_HOOK_BACKOFF"); v != "" {
+		enabled, perr := strconv.ParseBool(v)
+		if perr != nil {
+			return nil, fmt.Errorf("vmmd: FAAS_INVOKE_HOOK_BACKOFF must be a boolean (got %q)", v)
+		}
+		c.InvokeHookBackoff = enabled
 	}
 	if v := os.Getenv("FAAS_RESTORE_RESEED_THREAD"); v != "" {
 		enabled, perr := strconv.ParseBool(v)
@@ -996,6 +1043,9 @@ func validateNativeSnapshotPublicationConfig(nativeRecovery bool, root string) e
 func validateNativeRuntimeCaptureConfig(c *Config) error {
 	if root := c.NativeRuntimeSnapshotRoot; root != "" && (!filepath.IsAbs(root) || filepath.Clean(root) != root || root == string(filepath.Separator)) {
 		return errors.New("vmmd: native_runtime_snapshot_root must be a clean absolute non-root path")
+	}
+	if c.NativeLaunchOwnerRecords && !c.NativeProcessRecovery {
+		return errors.New("vmmd: native_launch_owner_records requires native_process_recovery = true")
 	}
 	if !c.NativeRuntimeCapture {
 		return nil

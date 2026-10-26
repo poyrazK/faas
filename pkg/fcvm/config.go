@@ -104,6 +104,10 @@ type Machine struct {
 	VcpuCount  int  `json:"vcpu_count"`
 	MemSizeMib int  `json:"mem_size_mib"`
 	Smt        bool `json:"smt"`
+	// CPUTemplate is the static Firecracker CPU template, e.g. "T2CL"
+	// (ADR-20261024225612). Empty omits the field: the guest sees the
+	// host's CPUID. JailerVMM.WithCPUTemplate sets it at boot.
+	CPUTemplate string `json:"cpu_template,omitempty"`
 }
 
 type NetIface struct {
