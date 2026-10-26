@@ -2364,6 +2364,36 @@ Remove notification rules
 
 `gregale bucket notifications clear <app> <bucket-id>`
 
+### bucket cors
+
+Let your own sites&#39; browsers use the bucket&#39;s signed URLs
+
+The rules file is {&#34;rules&#34;: [...]}, each rule with allowed_origins, allowed_methods and optional allowed_headers, expose_headers and max_age_seconds. CORS is not authorization: every request still needs a signature or grant.
+
+#### bucket cors get
+
+Read CORS rules and their revision
+
+`gregale bucket cors get <app> <bucket-id>`
+
+#### bucket cors set
+
+Replace rules from a JSON file or stdin
+
+`gregale bucket cors set <app> <bucket-id> <JSON-file|->`
+
+Examples:
+
+```sh
+gregale bucket cors set my-api 4f1c2a7e-0b9d-4c8e-9a51-2f6d3e8b7c10 cors.json
+```
+
+#### bucket cors delete
+
+Remove every CORS rule
+
+`gregale bucket cors delete <app> <bucket-id>`
+
 ### bucket lifecycle
 
 Manage lifecycle rules and discovery progress

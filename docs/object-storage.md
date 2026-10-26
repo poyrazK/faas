@@ -510,6 +510,14 @@ preview, released per account). Set S3-shaped rules with
             "max_age_seconds": 3600}]}
 ```
 
+From the CLI, save that body to a file and run:
+
+```sh
+gregale bucket cors set my-api <bucket-id> cors.json   # replace the rules
+gregale bucket cors get my-api <bucket-id>             # rules and revision
+gregale bucket cors delete my-api <bucket-id>          # remove every rule
+```
+
 A bucket holds up to 100 rules; the first rule matching a request's origin,
 method and requested headers applies. An origin is `*` or an `http(s)` origin
 with at most one `*` (`https://*.example.com`). `GET` returns the rules and

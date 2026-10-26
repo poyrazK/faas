@@ -737,6 +737,12 @@ var cliCommands = []cliCommand{
 				{Name: "get", Short: "Read notification rules", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "set", Short: "Replace rules from a JSON file or stdin", Positionals: []string{"<app>", "<bucket-id>", "<JSON-file|->"}},
 				{Name: "clear", Short: "Remove notification rules", Positionals: []string{"<app>", "<bucket-id>"}},
+			}}, {Name: "cors", Short: "Let your own sites' browsers use the bucket's signed URLs", Notes: []string{
+				`The rules file is {"rules": [...]}, each rule with allowed_origins, allowed_methods and optional allowed_headers, expose_headers and max_age_seconds. CORS is not authorization: every request still needs a signature or grant.`,
+			}, Subcommands: []cliSub{
+				{Name: "get", Short: "Read CORS rules and their revision", Positionals: []string{"<app>", "<bucket-id>"}},
+				{Name: "set", Short: "Replace rules from a JSON file or stdin", Positionals: []string{"<app>", "<bucket-id>", "<JSON-file|->"}, Examples: []string{"gregale bucket cors set my-api 4f1c2a7e-0b9d-4c8e-9a51-2f6d3e8b7c10 cors.json"}},
+				{Name: "delete", Aliases: []string{"clear"}, Short: "Remove every CORS rule", Positionals: []string{"<app>", "<bucket-id>"}},
 			}}, {Name: "lifecycle", Short: "Manage lifecycle rules and discovery progress", Subcommands: []cliSub{
 				{Name: "get", Short: "Read the complete lifecycle policy", Positionals: []string{"<app>", "<bucket-id>"}},
 				{Name: "set", Short: "Replace rules from a JSON file or stdin", Positionals: []string{"<app>", "<bucket-id>", "<JSON-file|->"}},
