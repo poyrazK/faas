@@ -1,6 +1,7 @@
 -- Minimal projections of platform-owned and maild-owned read dependencies.
 -- This is sqlc input, not an independently applied account migration.
 CREATE TABLE accounts (id uuid PRIMARY KEY,email text NOT NULL,status text NOT NULL,plan text NOT NULL DEFAULT 'free',provider_customer_id text,stripe_subscription_item text,last_quota_warning_at timestamptz,deletion_requested_at timestamptz,email_verified_at timestamptz,abuse_hold_at timestamptz,mfa_enrolled_at timestamptz,mfa_recovery_codes_hash bytea[],mfa_secret_encrypted bytea,mfa_required boolean NOT NULL DEFAULT false,past_due_at timestamptz,suspended_reason text,deletion_includes_managed_postgres boolean NOT NULL DEFAULT false);
+CREATE TABLE resource_namespaces (id uuid PRIMARY KEY);
 CREATE TABLE email_verification_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz,created_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE account_passwords(account_id uuid PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,hash text NOT NULL,updated_at timestamptz NOT NULL DEFAULT now());
 CREATE TABLE login_tokens(token_hash bytea PRIMARY KEY,account_id uuid NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,expires_at timestamptz NOT NULL,consumed_at timestamptz);
@@ -955,4 +956,176 @@ ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_
         AND deployment_failure_scope IS NULL AND deployment_failure_revision IS NULL AND deployment_failure_account_revision IS NULL
         AND deployment_failure_app_revision IS NULL AND deployment_failure_success_revision IS NULL AND deployment_failure_at IS NULL)
 );
+
+
+SET lock_timeout = '5s';
+
+CREATE TABLE IF NOT EXISTS managed_postgres_cap_events (
+    subject_id uuid NOT NULL REFERENCES resource_namespaces(id) ON DELETE CASCADE,
+    period_start timestamptz NOT NULL
+        CHECK (period_start = (date_trunc('month', period_start AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')),
+    threshold text NOT NULL CHECK (threshold IN ('warning', 'allowance', 'ceiling_warning', 'suspended')),
+    reached_at timestamptz NOT NULL CHECK (isfinite(reached_at) AND reached_at >= period_start),
+    used_unit_seconds bigint NOT NULL CHECK (used_unit_seconds >= 0),
+    allowance_unit_seconds bigint NOT NULL CHECK (allowance_unit_seconds > 0),
+    ceiling_unit_seconds bigint NOT NULL CHECK (ceiling_unit_seconds >= allowance_unit_seconds),
+    overage_enabled boolean NOT NULL,
+    mail_intent_id uuid,
+    PRIMARY KEY (subject_id, period_start, threshold)
+);
+COMMENT ON TABLE managed_postgres_cap_events IS 'Compute cap thresholds a managed PostgreSQL usage subject reached in a UTC month; written only by apid (ADR-20261025094915).';
+
+-- +goose StatementBegin
+DO $cap_mail$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'platform_mail_producer_outbox'::regclass AND conname = 'platform_mail_producer_outbox_template_check_v2') THEN
+    ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_template_check_v2
+    CHECK (template IN ('account_deletion_pending','email_verification','password_reset','magic_link','mfa_recovery_used','mfa_disable_request','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended','deployment_failed','managed_postgres_cap')) NOT VALID;
+  END IF;
+END
+$cap_mail$;
+-- +goose StatementEnd
+
+ALTER TABLE platform_mail_producer_outbox VALIDATE CONSTRAINT platform_mail_producer_outbox_template_check_v2;
+
+ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_template_check;
+
+-- +goose StatementBegin
+DO $cap_mail$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'platform_mail_producer_outbox'::regclass AND conname = 'platform_mail_producer_outbox_template_check') THEN
+    ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_template_check
+    CHECK (template IN ('account_deletion_pending','email_verification','password_reset','magic_link','mfa_recovery_used','mfa_disable_request','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended','deployment_failed','managed_postgres_cap')) NOT VALID;
+  END IF;
+END
+$cap_mail$;
+-- +goose StatementEnd
+
+ALTER TABLE platform_mail_producer_outbox VALIDATE CONSTRAINT platform_mail_producer_outbox_template_check;
+
+ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_template_check_v2;
+
+-- +goose StatementBegin
+DO $cap_mail$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'platform_mail_producer_outbox'::regclass AND conname = 'platform_mail_producer_outbox_verification_check_v2') THEN
+    ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_verification_check_v2
+    CHECK (
+        (template='account_deletion_pending' AND deletion_requested_at IS NOT NULL AND restore_until IS NOT NULL
+            AND verification_token_hash IS NULL AND octet_length(sealed_verification)=0 AND verification_key_id='' AND verification_origin='')
+        OR (template IN ('mfa_recovery_used','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended','deployment_failed','managed_postgres_cap') AND deletion_requested_at IS NULL AND restore_until IS NULL
+            AND verification_token_hash IS NULL AND octet_length(sealed_verification)=0 AND verification_key_id='' AND verification_origin='')
+        OR (template IN ('email_verification','password_reset','magic_link','mfa_disable_request') AND deletion_requested_at IS NULL AND restore_until IS NULL
+            AND ((state IN ('queued','claimed') AND verification_token_hash IS NOT NULL AND octet_length(verification_token_hash)=32
+                AND octet_length(sealed_verification) BETWEEN 64 AND 4096 AND verification_key_id ~ '^[0-9a-f]{64}$'
+                AND length(verification_origin) BETWEEN 9 AND 2048 AND verification_origin ~ '^https://[^/?#[:space:]]+$')
+            OR (state NOT IN ('queued','claimed') AND verification_token_hash IS NULL AND octet_length(sealed_verification)=0
+                AND verification_key_id='' AND verification_origin='')))
+    ) NOT VALID;
+  END IF;
+END
+$cap_mail$;
+-- +goose StatementEnd
+
+ALTER TABLE platform_mail_producer_outbox VALIDATE CONSTRAINT platform_mail_producer_outbox_verification_check_v2;
+
+ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_verification_check;
+
+-- +goose StatementBegin
+DO $cap_mail$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'platform_mail_producer_outbox'::regclass AND conname = 'platform_mail_producer_outbox_verification_check') THEN
+    ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_verification_check
+    CHECK (
+        (template='account_deletion_pending' AND deletion_requested_at IS NOT NULL AND restore_until IS NOT NULL
+            AND verification_token_hash IS NULL AND octet_length(sealed_verification)=0 AND verification_key_id='' AND verification_origin='')
+        OR (template IN ('mfa_recovery_used','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended','deployment_failed','managed_postgres_cap') AND deletion_requested_at IS NULL AND restore_until IS NULL
+            AND verification_token_hash IS NULL AND octet_length(sealed_verification)=0 AND verification_key_id='' AND verification_origin='')
+        OR (template IN ('email_verification','password_reset','magic_link','mfa_disable_request') AND deletion_requested_at IS NULL AND restore_until IS NULL
+            AND ((state IN ('queued','claimed') AND verification_token_hash IS NOT NULL AND octet_length(verification_token_hash)=32
+                AND octet_length(sealed_verification) BETWEEN 64 AND 4096 AND verification_key_id ~ '^[0-9a-f]{64}$'
+                AND length(verification_origin) BETWEEN 9 AND 2048 AND verification_origin ~ '^https://[^/?#[:space:]]+$')
+            OR (state NOT IN ('queued','claimed') AND verification_token_hash IS NULL AND octet_length(sealed_verification)=0
+                AND verification_key_id='' AND verification_origin='')))
+    ) NOT VALID;
+  END IF;
+END
+$cap_mail$;
+-- +goose StatementEnd
+
+ALTER TABLE platform_mail_producer_outbox VALIDATE CONSTRAINT platform_mail_producer_outbox_verification_check;
+
+ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_verification_check_v2;
+
+-- +goose StatementBegin
+DO $cap_mail$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'platform_mail_producer_outbox'::regclass AND conname = 'platform_mail_producer_outbox_security_alert_check_v2') THEN
+    ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_security_alert_check_v2
+    CHECK (
+        (template NOT IN ('mfa_recovery_used','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended','deployment_failed','managed_postgres_cap') AND octet_length(sealed_security_alert)=0 AND security_alert_key_id='')
+        OR (template IN ('mfa_recovery_used','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended','deployment_failed','managed_postgres_cap') AND
+            ((state IN ('queued','claimed') AND octet_length(sealed_security_alert) BETWEEN 64 AND 4096 AND security_alert_key_id ~ '^[0-9a-f]{64}$')
+            OR (state NOT IN ('queued','claimed') AND octet_length(sealed_security_alert)=0 AND security_alert_key_id='')))
+    ) NOT VALID;
+  END IF;
+END
+$cap_mail$;
+-- +goose StatementEnd
+
+ALTER TABLE platform_mail_producer_outbox VALIDATE CONSTRAINT platform_mail_producer_outbox_security_alert_check_v2;
+
+ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_security_alert_check;
+
+-- +goose StatementBegin
+DO $cap_mail$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'platform_mail_producer_outbox'::regclass AND conname = 'platform_mail_producer_outbox_security_alert_check') THEN
+    ALTER TABLE platform_mail_producer_outbox ADD CONSTRAINT platform_mail_producer_outbox_security_alert_check
+    CHECK (
+        (template NOT IN ('mfa_recovery_used','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended','deployment_failed','managed_postgres_cap') AND octet_length(sealed_security_alert)=0 AND security_alert_key_id='')
+        OR (template IN ('mfa_recovery_used','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended','deployment_failed','managed_postgres_cap') AND
+            ((state IN ('queued','claimed') AND octet_length(sealed_security_alert) BETWEEN 64 AND 4096 AND security_alert_key_id ~ '^[0-9a-f]{64}$')
+            OR (state NOT IN ('queued','claimed') AND octet_length(sealed_security_alert)=0 AND security_alert_key_id='')))
+    ) NOT VALID;
+  END IF;
+END
+$cap_mail$;
+-- +goose StatementEnd
+
+ALTER TABLE platform_mail_producer_outbox VALIDATE CONSTRAINT platform_mail_producer_outbox_security_alert_check;
+
+ALTER TABLE platform_mail_producer_outbox DROP CONSTRAINT IF EXISTS platform_mail_producer_outbox_security_alert_check_v2;
+
+-- +goose StatementBegin
+DO $cap_mail$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'platform_mail_outbox_reconciliations'::regclass AND conname = 'platform_mail_outbox_reconciliations_template_check_v2') THEN
+    ALTER TABLE platform_mail_outbox_reconciliations ADD CONSTRAINT platform_mail_outbox_reconciliations_template_check_v2
+    CHECK (template IN ('account_deletion_pending','email_verification','password_reset','magic_link','mfa_recovery_used','mfa_disable_request','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended','deployment_failed','managed_postgres_cap')) NOT VALID;
+  END IF;
+END
+$cap_mail$;
+-- +goose StatementEnd
+
+ALTER TABLE platform_mail_outbox_reconciliations VALIDATE CONSTRAINT platform_mail_outbox_reconciliations_template_check_v2;
+
+ALTER TABLE platform_mail_outbox_reconciliations DROP CONSTRAINT IF EXISTS platform_mail_outbox_reconciliations_template_check;
+
+-- +goose StatementBegin
+DO $cap_mail$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'platform_mail_outbox_reconciliations'::regclass AND conname = 'platform_mail_outbox_reconciliations_template_check') THEN
+    ALTER TABLE platform_mail_outbox_reconciliations ADD CONSTRAINT platform_mail_outbox_reconciliations_template_check
+    CHECK (template IN ('account_deletion_pending','email_verification','password_reset','magic_link','mfa_recovery_used','mfa_disable_request','mfa_disabled','password_changed','mfa_enabled','payment_failed','account_restored','account_suspended','nonpayment_deletion','quota_warning','subscription_ended','deployment_failed','managed_postgres_cap')) NOT VALID;
+  END IF;
+END
+$cap_mail$;
+-- +goose StatementEnd
+
+ALTER TABLE platform_mail_outbox_reconciliations VALIDATE CONSTRAINT platform_mail_outbox_reconciliations_template_check;
+
+ALTER TABLE platform_mail_outbox_reconciliations DROP CONSTRAINT IF EXISTS platform_mail_outbox_reconciliations_template_check_v2;
+
+RESET lock_timeout;
 

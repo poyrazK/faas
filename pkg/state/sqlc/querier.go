@@ -4051,6 +4051,7 @@ type Querier interface {
 	ManagedPostgresCutoverUnreleasedSourceFences(ctx context.Context, db DBTX, cutoverID string) (int64, error)
 	ManagedPostgresDrainPlanHasUnplannedInstances(ctx context.Context, db DBTX, arg ManagedPostgresDrainPlanHasUnplannedInstancesParams) (bool, error)
 	ManagedPostgresDueBindings(ctx context.Context, db DBTX, arg ManagedPostgresDueBindingsParams) ([]ManagedPostgresBinding, error)
+	ManagedPostgresMostSevereCapEvent(ctx context.Context, db DBTX, arg ManagedPostgresMostSevereCapEventParams) (ManagedPostgresMostSevereCapEventRow, error)
 	// ADR-20261025094915: managed PostgreSQL compute overage and cap subjects.
 	ManagedPostgresOverageEnabled(ctx context.Context, db DBTX, subjectID pgtype.UUID) (bool, error)
 	ManagedPostgresPersonalBindingReference(ctx context.Context, db DBTX, arg ManagedPostgresPersonalBindingReferenceParams) (bool, error)

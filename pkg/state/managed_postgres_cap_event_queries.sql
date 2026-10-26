@@ -15,3 +15,11 @@ RETURNING true AS recorded;
 SELECT e.reached_at FROM managed_postgres_cap_events e
 WHERE e.subject_id = sqlc.arg(subject_id)::uuid AND e.period_start = sqlc.arg(period_start)::timestamptz
   AND e.threshold = 'suspended';
+
+-- name: ManagedPostgresMostSevereCapEvent :one
+SELECT e.threshold, e.reached_at, e.used_unit_seconds, e.allowance_unit_seconds, e.ceiling_unit_seconds,
+    e.overage_enabled, (e.mail_intent_id IS NOT NULL)::boolean AS mailed
+FROM managed_postgres_cap_events e
+WHERE e.subject_id = sqlc.arg(subject_id)::uuid AND e.period_start = sqlc.arg(period_start)::timestamptz
+ORDER BY array_position(ARRAY['warning', 'allowance', 'ceiling_warning', 'suspended']::text[], e.threshold) DESC
+LIMIT 1;

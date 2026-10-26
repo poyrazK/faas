@@ -3105,6 +3105,32 @@ before switching. Admission does not establish SMTP custody or destination
 delivery. No activation, deployment or real email is part of this change; live
 qualification remains separate.
 
+## Managed PostgreSQL compute cap notices
+
+`FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED=0` independently gates
+the compute cap emails of
+[ADR-20261025094915](../adr/20261025094915-managed-postgres-compute-caps-on-running-databases.md)
+in apid, maild and private reconciliation. Units and examples keep it off. Apply
+[`20261027101817572_managed_postgres_cap_events.sql`](../../migrations/20261027101817572_managed_postgres_cap_events.sql)
+before opting in.
+
+It requires the existing master, producer, scheduling and producer-outbox gates,
+scoped `internal-producer` transport and the dedicated apid readers under
+`FAAS_INTERNAL_MAIL_VERIFICATION_IDENTITY_PATH` and
+`FAAS_INTERNAL_MAIL_VERIFICATION_PREVIOUS_IDENTITY_PATH`. Maild and mailctl
+receive neither reader.
+
+Apid queues mail only while `FAAS_MANAGED_POSTGRES_CAP_ENFORCEMENT=on`. Each
+sweep, for every usage subject with a live database, it takes the most severe
+threshold the subject reached this UTC month (80% of the allowance, the
+allowance with overage on, 80% of the ceiling, suspended). If that threshold is
+unmailed and under 24 hours old, apid encrypts a frozen snapshot of the usage
+and links the intent to the threshold in one transaction, so each threshold is
+mailed at most once and a jump past several thresholds sends one email. A
+failed save is retried on the next sweep. An organization subject has no account
+row and gets no email yet. Maild re-checks the account at submission and
+cancels the email if the account is no longer active or is being deleted.
+
 ## Durable overdue-account suspension notices
 
 `FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED=0` independently gates

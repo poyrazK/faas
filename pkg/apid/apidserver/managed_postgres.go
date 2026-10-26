@@ -21,7 +21,29 @@ import (
 // past the compute allowance (plan and capability); nil means never.
 type managedPostgresOverageGate func(state.Account) bool
 
-func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, overage managedPostgresOverageGate, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
+// managedPostgresHooks connects the managed PostgreSQL loader to the rest of
+// apid. Workers pass nil: no overage and no cap email.
+type managedPostgresHooks struct {
+	Overage managedPostgresOverageGate
+	// NotifyCap queues a compute cap email (ADR-20261025094915 decision 8).
+	NotifyCap func(context.Context, managedpostgres.CapEvent) error
+}
+
+func (h *managedPostgresHooks) overage() managedPostgresOverageGate {
+	if h == nil {
+		return nil
+	}
+	return h.Overage
+}
+
+func (h *managedPostgresHooks) notifyCap() func(context.Context, managedpostgres.CapEvent) error {
+	if h == nil {
+		return nil
+	}
+	return h.NotifyCap
+}
+
+func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.Service, *managedpostgres.Reconciler, *managedpostgres.BindingService, *managedpostgres.BindingReconciler, *managedpostgres.UsageCollector, *managedpostgres.HealthCollector, error) {
 	registry, err := managedpostgres.Load(getenv, managedPostgresFactories())
 	if err != nil || registry == nil {
 		return nil, nil, nil, nil, nil, nil, err
@@ -43,7 +65,8 @@ func loadManagedPostgres(pool *pgxpool.Pool, getenv func(string) string, log *sl
 		usageOptions.Observe = metrics.ObserveUsage
 		usageOptions.ObserveSweep = metrics.ObserveUsageSweep
 	}
-	capEnforcer, err := loadManagedPostgresCapEnforcer(registry, store, accountStore, getenv, log, overage, registerers...)
+	overage := hooks.overage()
+	capEnforcer, err := loadManagedPostgresCapEnforcer(registry, store, accountStore, getenv, log, hooks, registerers...)
 	if err != nil {
 		return nil, nil, nil, nil, nil, nil, err
 	}
@@ -227,7 +250,8 @@ func hostCredentialIdentities() []*age.X25519Identity {
 // (ADR-20261025094915). Each subject's ceiling is its plan's monthly compute
 // allowance, or twice it with overage on; the enforcer intersects it with the
 // operator's usage cap.
-func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *managedpostgres.PostgresStore, accountStore state.AppOwnerReader, getenv func(string) string, log *slog.Logger, overage managedPostgresOverageGate, registerers ...prometheus.Registerer) (*managedpostgres.CapEnforcer, error) {
+func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *managedpostgres.PostgresStore, accountStore state.AppOwnerReader, getenv func(string) string, log *slog.Logger, hooks *managedPostgresHooks, registerers ...prometheus.Registerer) (*managedpostgres.CapEnforcer, error) {
+	overage := hooks.overage()
 	mode, err := managedpostgres.ParseCapEnforcementMode(getenv(managedpostgres.CapEnforcementEnv))
 	if err != nil {
 		return nil, err
@@ -235,6 +259,7 @@ func loadManagedPostgresCapEnforcer(registry *managedpostgres.Registry, store *m
 	options := managedpostgres.CapEnforcerOptions{
 		Mode:   mode,
 		Logger: log,
+		Notify: hooks.notifyCap(),
 		Ceiling: func(ctx context.Context, subject string) (managedpostgres.CapLimits, error) {
 			account, err := state.BillingResourceAccount(ctx, accountStore, subject)
 			if err != nil {

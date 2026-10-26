@@ -25,6 +25,19 @@ func TestPostgresStoreCapEvents(t *testing.T) {
 	if recorded, err := store.RecordCapEvent(ctx, repeat); err != nil || recorded {
 		t.Fatalf("repeat record: %v, %v", recorded, err)
 	}
+	warning := event
+	warning.Threshold, warning.ReachedAt = CapThresholdWarning, month.Add(time.Hour)
+	if recorded, err := store.RecordCapEvent(ctx, warning); err != nil || !recorded {
+		t.Fatalf("warning record: %v, %v", recorded, err)
+	}
+	severe, err := store.MostSevereCapEvent(ctx, accountID, month.Add(time.Hour))
+	if err != nil || severe == nil || severe.Threshold != CapThresholdSuspended || severe.Mailed || !severe.ReachedAt.Equal(event.ReachedAt) ||
+		severe.Used != event.Used || severe.Ceiling != event.Ceiling || !severe.PeriodStart.Equal(month) {
+		t.Fatalf("most severe %+v, %v; want the unmailed suspension", severe, err)
+	}
+	if next, err := store.MostSevereCapEvent(ctx, accountID, month.AddDate(0, 1, 0)); err != nil || next != nil {
+		t.Fatalf("next month: %+v, %v", next, err)
+	}
 	at, err := store.CapSuspendedAt(ctx, accountID, month.Add(10*24*time.Hour))
 	if err != nil || at == nil || !at.Equal(event.ReachedAt) {
 		t.Fatalf("suspended at %v, %v; want the first record's %v", at, err, event.ReachedAt)

@@ -12,36 +12,39 @@ import (
 )
 
 const (
-	EnableEnv                           = "FAAS_INTERNAL_MAIL_ENABLED"
-	DeliveryEnableEnv                   = "FAAS_INTERNAL_MAIL_DELIVERY_ENABLED"
-	ReportsEnableEnv                    = "FAAS_INTERNAL_MAIL_REPORTS_ENABLED"
-	FeedbackEnableEnv                   = "FAAS_INTERNAL_MAIL_FEEDBACK_ENABLED"
-	RetentionEnableEnv                  = "FAAS_INTERNAL_MAIL_RETENTION_ENABLED"
-	OperationsEnableEnv                 = "FAAS_INTERNAL_MAIL_OPERATIONS_ENABLED"
-	RotationEnableEnv                   = "FAAS_INTERNAL_MAIL_DKIM_ROTATION_ENABLED"
-	ReverifyEnableEnv                   = "FAAS_INTERNAL_MAIL_DOMAIN_REVERIFY_ENABLED"
-	ControlsEnableEnv                   = "FAAS_INTERNAL_MAIL_DELIVERY_CONTROLS_ENABLED"
-	ProducersEnableEnv                  = "FAAS_INTERNAL_MAIL_PRODUCERS_ENABLED"
-	SchedulingEnableEnv                 = "FAAS_INTERNAL_MAIL_SCHEDULING_ENABLED"
-	PacingEnableEnv                     = "FAAS_INTERNAL_MAIL_DOMAIN_PACING_ENABLED"
-	BackpressureEnableEnv               = "FAAS_INTERNAL_MAIL_RELAY_BACKPRESSURE_ENABLED"
-	ReputationEnableEnv                 = "FAAS_INTERNAL_MAIL_REPUTATION_ENABLED"
-	EventFeedEnableEnv                  = "FAAS_INTERNAL_MAIL_EVENT_FEED_ENABLED"
-	ProducerSchedulingEnableEnv         = "FAAS_INTERNAL_MAIL_PRODUCER_SCHEDULING_ENABLED"
-	ProducerLifecycleEnableEnv          = "FAAS_INTERNAL_MAIL_PRODUCER_LIFECYCLE_ENABLED"
-	EncryptionRotationEnableEnv         = "FAAS_INTERNAL_MAIL_ENCRYPTION_ROTATION_ENABLED"
-	SuppressionControlsEnableEnv        = "FAAS_INTERNAL_MAIL_SUPPRESSION_CONTROLS_ENABLED"
-	ProducerOutboxEnableEnv             = "FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED"
-	OutboxReconciliationEnableEnv       = "FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED"
-	VerificationOutboxEnableEnv         = "FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED"
-	PasswordResetOutboxEnableEnv        = "FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED"
-	MagicLinkOutboxEnableEnv            = "FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED"
-	MFADisableOutboxEnableEnv           = "FAAS_INTERNAL_MAIL_MFA_DISABLE_OUTBOX_ENABLED"
-	DeploymentFailedOutboxEnableEnv     = "FAAS_INTERNAL_MAIL_DEPLOYMENT_FAILED_OUTBOX_ENABLED"
-	SubscriptionEndedOutboxEnableEnv    = "FAAS_INTERNAL_MAIL_SUBSCRIPTION_ENDED_OUTBOX_ENABLED"
-	QuotaWarningOutboxEnableEnv         = "FAAS_INTERNAL_MAIL_QUOTA_WARNING_OUTBOX_ENABLED"
-	NonpaymentDeletionOutboxEnableEnv   = "FAAS_INTERNAL_MAIL_NONPAYMENT_DELETION_OUTBOX_ENABLED"
-	AccountSuspendedOutboxEnableEnv     = "FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED"
+	EnableEnv                         = "FAAS_INTERNAL_MAIL_ENABLED"
+	DeliveryEnableEnv                 = "FAAS_INTERNAL_MAIL_DELIVERY_ENABLED"
+	ReportsEnableEnv                  = "FAAS_INTERNAL_MAIL_REPORTS_ENABLED"
+	FeedbackEnableEnv                 = "FAAS_INTERNAL_MAIL_FEEDBACK_ENABLED"
+	RetentionEnableEnv                = "FAAS_INTERNAL_MAIL_RETENTION_ENABLED"
+	OperationsEnableEnv               = "FAAS_INTERNAL_MAIL_OPERATIONS_ENABLED"
+	RotationEnableEnv                 = "FAAS_INTERNAL_MAIL_DKIM_ROTATION_ENABLED"
+	ReverifyEnableEnv                 = "FAAS_INTERNAL_MAIL_DOMAIN_REVERIFY_ENABLED"
+	ControlsEnableEnv                 = "FAAS_INTERNAL_MAIL_DELIVERY_CONTROLS_ENABLED"
+	ProducersEnableEnv                = "FAAS_INTERNAL_MAIL_PRODUCERS_ENABLED"
+	SchedulingEnableEnv               = "FAAS_INTERNAL_MAIL_SCHEDULING_ENABLED"
+	PacingEnableEnv                   = "FAAS_INTERNAL_MAIL_DOMAIN_PACING_ENABLED"
+	BackpressureEnableEnv             = "FAAS_INTERNAL_MAIL_RELAY_BACKPRESSURE_ENABLED"
+	ReputationEnableEnv               = "FAAS_INTERNAL_MAIL_REPUTATION_ENABLED"
+	EventFeedEnableEnv                = "FAAS_INTERNAL_MAIL_EVENT_FEED_ENABLED"
+	ProducerSchedulingEnableEnv       = "FAAS_INTERNAL_MAIL_PRODUCER_SCHEDULING_ENABLED"
+	ProducerLifecycleEnableEnv        = "FAAS_INTERNAL_MAIL_PRODUCER_LIFECYCLE_ENABLED"
+	EncryptionRotationEnableEnv       = "FAAS_INTERNAL_MAIL_ENCRYPTION_ROTATION_ENABLED"
+	SuppressionControlsEnableEnv      = "FAAS_INTERNAL_MAIL_SUPPRESSION_CONTROLS_ENABLED"
+	ProducerOutboxEnableEnv           = "FAAS_INTERNAL_MAIL_PRODUCER_OUTBOX_ENABLED"
+	OutboxReconciliationEnableEnv     = "FAAS_INTERNAL_MAIL_OUTBOX_RECONCILIATION_ENABLED"
+	VerificationOutboxEnableEnv       = "FAAS_INTERNAL_MAIL_VERIFICATION_OUTBOX_ENABLED"
+	PasswordResetOutboxEnableEnv      = "FAAS_INTERNAL_MAIL_PASSWORD_RESET_OUTBOX_ENABLED"
+	MagicLinkOutboxEnableEnv          = "FAAS_INTERNAL_MAIL_MAGIC_LINK_OUTBOX_ENABLED"
+	MFADisableOutboxEnableEnv         = "FAAS_INTERNAL_MAIL_MFA_DISABLE_OUTBOX_ENABLED"
+	DeploymentFailedOutboxEnableEnv   = "FAAS_INTERNAL_MAIL_DEPLOYMENT_FAILED_OUTBOX_ENABLED"
+	SubscriptionEndedOutboxEnableEnv  = "FAAS_INTERNAL_MAIL_SUBSCRIPTION_ENDED_OUTBOX_ENABLED"
+	QuotaWarningOutboxEnableEnv       = "FAAS_INTERNAL_MAIL_QUOTA_WARNING_OUTBOX_ENABLED"
+	NonpaymentDeletionOutboxEnableEnv = "FAAS_INTERNAL_MAIL_NONPAYMENT_DELETION_OUTBOX_ENABLED"
+	AccountSuspendedOutboxEnableEnv   = "FAAS_INTERNAL_MAIL_ACCOUNT_SUSPENDED_OUTBOX_ENABLED"
+	// ManagedPostgresCapOutboxEnableEnv sends the managed PostgreSQL compute
+	// cap warnings (ADR-20261025094915); off by default.
+	ManagedPostgresCapOutboxEnableEnv   = "FAAS_INTERNAL_MAIL_MANAGED_POSTGRES_CAP_OUTBOX_ENABLED"
 	AccountRestoredOutboxEnableEnv      = "FAAS_INTERNAL_MAIL_ACCOUNT_RESTORED_OUTBOX_ENABLED"
 	PaymentFailedOutboxEnableEnv        = "FAAS_INTERNAL_MAIL_PAYMENT_FAILED_OUTBOX_ENABLED"
 	MFAEnabledAlertOutboxEnableEnv      = "FAAS_INTERNAL_MAIL_MFA_ENABLED_ALERT_OUTBOX_ENABLED"
@@ -377,6 +380,10 @@ func AccountRestoredOutboxEnabled(getenv func(string) string) bool {
 
 func AccountSuspendedOutboxEnabled(getenv func(string) string) bool {
 	return getenv(AccountSuspendedOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
+}
+
+func ManagedPostgresCapOutboxEnabled(getenv func(string) string) bool {
+	return getenv(ManagedPostgresCapOutboxEnableEnv) == "1" && ProducerOutboxEnabled(getenv)
 }
 
 func NonpaymentDeletionOutboxEnabled(getenv func(string) string) bool {

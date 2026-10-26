@@ -29,6 +29,45 @@ func (q *Queries) ManagedPostgresCapSuspendedAt(ctx context.Context, db DBTX, ar
 	return reached_at, err
 }
 
+const managedPostgresMostSevereCapEvent = `-- name: ManagedPostgresMostSevereCapEvent :one
+SELECT e.threshold, e.reached_at, e.used_unit_seconds, e.allowance_unit_seconds, e.ceiling_unit_seconds,
+    e.overage_enabled, (e.mail_intent_id IS NOT NULL)::boolean AS mailed
+FROM managed_postgres_cap_events e
+WHERE e.subject_id = $1::uuid AND e.period_start = $2::timestamptz
+ORDER BY array_position(ARRAY['warning', 'allowance', 'ceiling_warning', 'suspended']::text[], e.threshold) DESC
+LIMIT 1
+`
+
+type ManagedPostgresMostSevereCapEventParams struct {
+	SubjectID   pgtype.UUID
+	PeriodStart pgtype.Timestamptz
+}
+
+type ManagedPostgresMostSevereCapEventRow struct {
+	Threshold            string
+	ReachedAt            pgtype.Timestamptz
+	UsedUnitSeconds      int64
+	AllowanceUnitSeconds int64
+	CeilingUnitSeconds   int64
+	OverageEnabled       bool
+	Mailed               bool
+}
+
+func (q *Queries) ManagedPostgresMostSevereCapEvent(ctx context.Context, db DBTX, arg ManagedPostgresMostSevereCapEventParams) (ManagedPostgresMostSevereCapEventRow, error) {
+	row := db.QueryRow(ctx, managedPostgresMostSevereCapEvent, arg.SubjectID, arg.PeriodStart)
+	var i ManagedPostgresMostSevereCapEventRow
+	err := row.Scan(
+		&i.Threshold,
+		&i.ReachedAt,
+		&i.UsedUnitSeconds,
+		&i.AllowanceUnitSeconds,
+		&i.CeilingUnitSeconds,
+		&i.OverageEnabled,
+		&i.Mailed,
+	)
+	return i, err
+}
+
 const recordManagedPostgresCapEvent = `-- name: RecordManagedPostgresCapEvent :one
 
 INSERT INTO managed_postgres_cap_events (subject_id, period_start, threshold, reached_at,

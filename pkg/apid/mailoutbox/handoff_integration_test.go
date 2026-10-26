@@ -50,6 +50,7 @@ CREATE TABLE apps(id uuid PRIMARY KEY,account_id uuid NOT NULL REFERENCES accoun
 CREATE TABLE deployments(id uuid PRIMARY KEY,app_id uuid NOT NULL REFERENCES apps(id) ON DELETE CASCADE,status text NOT NULL DEFAULT 'pending',scope text NOT NULL DEFAULT 'default',deployed_by_user_id uuid REFERENCES accounts(id) ON DELETE SET NULL,deleted_at timestamptz,created_at timestamptz NOT NULL DEFAULT now(),error_code text,error text,error_hint text,error_why text,error_fix text);
 CREATE TABLE org_memberships(org_id uuid NOT NULL,account_id uuid NOT NULL,role text NOT NULL,removed_at timestamptz,PRIMARY KEY(org_id,account_id));
 CREATE TABLE mail_suppressions(email text NOT NULL,expires_at timestamptz);
+CREATE TABLE resource_namespaces(id uuid PRIMARY KEY);
 CREATE TABLE scenario_test_action_policies(app_id uuid PRIMARY KEY REFERENCES apps(id) ON DELETE CASCADE)`); err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +102,7 @@ CREATE TABLE scenario_test_action_policies(app_id uuid PRIMARY KEY REFERENCES ap
 	var accountRestoredGate atomic.Bool
 	var paymentFailedGate atomic.Bool
 	var mfaEnabledAlertGate atomic.Bool
+	var managedPostgresCapGate atomic.Bool
 	outboxGate.Store(true)
 	daemon := &internalmail.Service{Store: store, Codec: internalmail.AgeCodec{Identity: identity, Namespace: "platform"}, Resolver: resolver, SendingIP: netip.MustParseAddr("192.0.2.10"),
 		Enabled: func() bool { return true }, ProducersEnabled: func() bool { return true }, SchedulingEnabled: func() bool { return true }, DeliveryEnabled: func() bool { return true },
@@ -121,6 +123,7 @@ CREATE TABLE scenario_test_action_policies(app_id uuid PRIMARY KEY REFERENCES ap
 		AccountRestoredOutboxEnabled:      accountRestoredGate.Load,
 		PaymentFailedOutboxEnabled:        paymentFailedGate.Load,
 		MFAEnabledAlertOutboxEnabled:      mfaEnabledAlertGate.Load,
+		ManagedPostgresCapOutboxEnabled:   managedPostgresCapGate.Load,
 		Producers:                         map[string]internalmail.Producer{"auth": {ID: "auth", Token: testProducerToken, From: []string{"notify@example.test"}, DailyRecipientLimit: 100, PendingRecipientLimit: 100}},
 		RecipientAllowed:                  func(string) bool { return true }, Transport: smtp}
 	domain, err := daemon.RegisterDomain(t.Context(), "example.test")
@@ -734,6 +737,7 @@ CREATE TABLE scenario_test_action_policies(app_id uuid PRIMARY KEY REFERENCES ap
 	expectedMailCount += exerciseQuotaWarningHandoff(t, f, daemon, smtp, &quotaWarningGate, &dropped)
 	expectedMailCount += exerciseSubscriptionEndedHandoff(t, f, daemon, smtp, &subscriptionEndedGate, &dropped)
 	expectedMailCount += exerciseDeploymentFailedHandoff(t, f, daemon, smtp, &deploymentFailedGate, &dropped)
+	expectedMailCount += exerciseManagedPostgresCapHandoff(t, f, daemon, smtp, &managedPostgresCapGate)
 	// The producer must retain no recovery advisory lock across HTTP. Start
 	// and release a new recovery after producer preflight but before maild
 	// admission: the owner's generation check must reject this stale request.
@@ -1491,6 +1495,73 @@ func exerciseQuotaWarningHandoff(t *testing.T, f *fixture, daemon *internalmail.
 		}
 	}
 	f.env[internalmail.QuotaWarningOutboxEnableEnv] = "0"
+	return admitted
+}
+
+// exerciseManagedPostgresCapHandoff admits one cap email per account and has
+// maild cancel those whose account changed after admission.
+func exerciseManagedPostgresCapHandoff(t *testing.T, f *fixture, daemon *internalmail.Service, smtp *fixtureSMTP, gate *atomic.Bool) int {
+	t.Helper()
+	if err := daemon.Store.(*internalmail.PGStore).ManagedPostgresCapOutboxReady(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	f.env[internalmail.ManagedPostgresCapOutboxEnableEnv] = "1"
+	if err := f.service.ConfigureManagedPostgresCap(t.Context(), func(k string) string { return f.env[k] }); err != nil {
+		t.Fatal(err)
+	}
+	gate.Store(true)
+	accepted := smtp.accepted.Load()
+	admitted := 0
+	for _, mode := range []string{"current", "status", "deleting", "address", "erasure"} {
+		id := account(t, f)
+		event := capEvent(t, f, id, "warning", false, time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond))
+		if err := f.service.NoticeManagedPostgresCap(t.Context(), id, event); err != nil {
+			t.Fatal(mode, err)
+		}
+		intents := capIntents(t, f, id)
+		if len(intents) != 1 {
+			t.Fatal("cap notice not queued", mode, intents)
+		}
+		if err := f.service.DeliverOne(t.Context()); err != nil {
+			t.Fatal(mode, err)
+		}
+		if got := row(t, f, intents[0]); got.State != "admitted" {
+			t.Fatal("cap notice not admitted", mode, got.State)
+		}
+		admitted++
+		var err error
+		switch mode {
+		case "status":
+			_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET status='deleted_pending' WHERE id=$1", id)
+		case "deleting":
+			_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET deletion_requested_at=clock_timestamp() WHERE id=$1", id)
+		case "address":
+			_, err = f.pool.Exec(t.Context(), "UPDATE accounts SET email='other@example.net' WHERE id=$1", id)
+		case "erasure":
+			_, err = f.pool.Exec(t.Context(), "DELETE FROM accounts WHERE id=$1", id)
+		}
+		if err != nil {
+			t.Fatal(mode, err)
+		}
+		for range 2 {
+			if err := daemon.DeliverOne(t.Context()); err != nil {
+				t.Fatal(mode, err)
+			}
+		}
+		want, status := accepted, "cancelled"
+		if mode == "current" {
+			want, status = accepted+1, "sent"
+		}
+		if got := smtp.accepted.Load(); got != want {
+			t.Fatal("cap notice SMTP custody", mode, got, want)
+		}
+		accepted = want
+		var got string
+		if err := f.pool.QueryRow(t.Context(), "SELECT r.status FROM internal_mail_recipients r JOIN internal_mail_messages m ON m.id=r.message_id WHERE m.idempotency_key=$1", "managed-postgres-cap:"+intents[0]).Scan(&got); err != nil || (mode != "current" && got != status) {
+			t.Fatal("maild kept a stale cap notice", mode, got, err)
+		}
+	}
+	f.env[internalmail.ManagedPostgresCapOutboxEnableEnv] = "0"
 	return admitted
 }
 
