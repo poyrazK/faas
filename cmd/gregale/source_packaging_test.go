@@ -52,7 +52,7 @@ func writeSourceFiles(t *testing.T, root string, files map[string]string) {
 // root directory stripped.
 func archiveFiles(t *testing.T, archive string) map[string]string {
 	t.Helper()
-	f, err := os.Open(archive)
+	f, err := main.OpenCustomerFile(archive)
 	if err != nil {
 		t.Fatal(err)
 	}
