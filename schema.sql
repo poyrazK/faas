@@ -70614,6 +70614,13 @@ CREATE INDEX edge_rule_hit_counts_app_bucket_idx ON public.edge_rule_hit_counts 
 
 
 --
+-- Name: edge_rules_account_enabled_idx; Type: INDEX; Schema: public; Owner: -
+--
+
+CREATE INDEX edge_rules_account_enabled_idx ON public.edge_rules USING btree (account_id) WHERE enabled;
+
+
+--
 -- Name: edge_rules_app_id_enabled_idx; Type: INDEX; Schema: public; Owner: -
 --
 

@@ -6903,6 +6903,22 @@ groups:
           summary: "Edge rules of kind {{ $labels.kind }} are failing to compile"
           description: "gatewayd-internal dropped at least one {{ $labels.kind }} edge rule at load time in the last 10m. A shipped rule is broken and is not being enforced; the counter is cumulative, so this alert reads new ticks only."
           runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleCompileError.md"
+      # ADR-091 amendment (2026-10-26): a gateway could not read a host's
+      # edge rules. last_known: it serves the host's last compiled set, so
+      # rule edits do not apply; failed: it had none and refuses the host's
+      # requests with 503 until a read succeeds.
+      - alert: FaasEdgeRuleLoadFailing
+        expr: sum by (instance, outcome) (increase(gateway_edge_rule_load_total{outcome=~"failed|last_known"}[10m])) > 0
+        for: 5m
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: edge_rules
+          public_status: internal
+        annotations:
+          summary: "{{ $labels.instance }} cannot read edge rules ({{ $labels.outcome }})"
+          description: "gateway_edge_rule_load_total{outcome=\"{{ $labels.outcome }}\"} kept rising on {{ $labels.instance }} for 5m. last_known: hosts get their last compiled rules and rule edits do not apply. failed: hosts with nothing compiled are refused with 503 Edge security unavailable."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasEdgeRuleLoadFailing.md"
       - alert: FaasEdgeRuleJWTFailures
         expr: sum(rate(gateway_edge_rule_match_total{kind="jwt",outcome="failed"}[5m])) * 60 > 5
         for: 5m

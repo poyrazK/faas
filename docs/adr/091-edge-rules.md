@@ -1096,3 +1096,61 @@ the two is required.
 Rejected: coercing values inside the JSON Schema (custom keywords tie rules
 to one validator); validating cookies (session data, not API contract);
 treating a non-converting value as absent (it would hide malformed input).
+
+## Amendment (2026-10-26): rules load for the host's owner; unreadable policy refuses once
+
+A GA-readiness review of the cached rule path (production, unless
+`FAAS_TRAFFIC_AUTHORITATIVE_HOST_POLICY` turns on the ADR-570 snapshots) found
+two costs other tenants could impose, and one guarantee that held only by
+accident.
+
+- **Every read scanned every tenant's rules.** `MatchEdgeRulesForHost` matches
+  with `$1 LIKE replace(match_host, ...)`, which no index serves. It also
+  returns every account's rules whose `match_host` covers the host:
+  `match_host` may be `*` or any pattern, unchecked against the account's
+  hosts. So one account's `*` rules (up to 500 per app) were read and compiled
+  into the cached set of every host on the fleet, and the appliers then
+  dropped them (`OwnedEdgeRules`).
+- **One edit flushed the fleet.** A mutation drops the cached sets its
+  `match_host` patterns cover. A `*` or `@app` rule covers every host, so any
+  tenant's edit of one reloaded every host's rules on every gateway.
+- **An unreadable policy failed closed only by ordering.** With a host's
+  rules unreadable and no last-known set, every kind but `jwt` treated the
+  failed read as no rule. Requests were still refused, because `kind=jwt`
+  returns an "unavailable" rule for every host and its gate runs after the
+  IP, geo and maintenance gates. The refusal was counted as a JWT error, and
+  no metric showed a failed or stale read.
+
+Decision:
+
+1. **Rules are read for the host's owner.** When the request's owner is known
+  (as it is once the host resolves to an app), the loader reads
+  `OwnedEdgeRulesForHost(host, account, app)`: that account's enabled,
+  unexpired rules covering the host plus the app's `@app` rules, in
+  evaluation order, using the new `edge_rules_account_enabled_idx`
+  (migration `20261026095955220`). Without an owner it reads as before.
+  Behaviour is unchanged, because the appliers applied only the owner's
+  rules already.
+2. **Invalidation is per account.** A cached set records the account it was
+  read for. The `edge_rule_changed` notification carries the mutating
+  account, and the gateway drops only that account's sets (and unowned ones)
+  for the covered hosts. For `@app`, it drops only the rule's app's sets. The
+  durable repair ledger has no account and keeps host scoping. Response-cache
+  invalidation is unchanged: a wildcard pattern still flushes it, because its
+  entries are keyed by app and an account's apps cannot be enumerated at the
+  gateway. That is a follow-up.
+3. **An unreadable policy is refused once, first.** The handler asks the
+  matcher whether the host's policy is available before any rule kind runs.
+  When it can be neither read nor served from a last-known set, the request
+  gets the existing `503 capacity_unavailable` ("Edge security
+  unavailable"), counted as `gateway_edge_rejections_total{kind="policy_unavailable"}`
+  and `gateway_edge_rule_apply_total{kind="policy"}`. The `kind=jwt`
+  unavailable rule stays as a second line.
+4. **Reads are counted.** `gateway_edge_rule_load_total{outcome}` counts
+  `loaded`, `last_known` (served the last compiled set) and `failed`
+  (nothing to serve). `FaasEdgeRuleLoadFailing` (warn, runbook
+  `docs/runbooks/FaasEdgeRuleLoadFailing.md`) fires while reads fail.
+
+Not changed: what a `match_host` may say. Restricting it to the account's
+hosts would break existing `*` rules, and with owned reads they no longer
+reach other tenants.

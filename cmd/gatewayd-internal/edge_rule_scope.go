@@ -16,6 +16,12 @@ type edgeRuleScopedInvalidator interface {
 	Lookup(context.Context, string) (gateway.App, bool)
 }
 
+// edgeRuleAccountScopedInvalidator narrows a mutation to the sets that hold
+// its account's rules (ADR-091 amendment 2026-10-26).
+type edgeRuleAccountScopedInvalidator interface {
+	InvalidateEdgeRuleAccountHosts(accountID, appID string, patterns []string)
+}
+
 // invalidateEdgeRuleScope applies one edge-rule mutation to the gateway's
 // caches. A rule only applies to hosts its match_host pattern covers, so only
 // those hosts' compiled rule sets are dropped, and only the apps that can
@@ -25,18 +31,26 @@ type edgeRuleScopedInvalidator interface {
 // one account editing rules in a loop forced fleet-wide cold reloads and
 // cache misses for everyone.
 //
+// With the mutating account known (the live notification carries it; the
+// durable repair ledger does not), only sets holding that account's rules are
+// dropped, so a "*" or "@app" edit no longer reloads every tenant's hosts.
+//
 // An unknown scope (no hosts, or no scoped invalidator) still flushes
 // everything. A wildcard pattern scopes the rule cache but flushes the
 // response cache, whose entries are keyed by app and cannot be enumerated by
 // host pattern.
-func invalidateEdgeRuleScope(ctx context.Context, inv edgeRuleRepairInvalidator, appID string, hosts []string) {
+func invalidateEdgeRuleScope(ctx context.Context, inv edgeRuleRepairInvalidator, accountID, appID string, hosts []string) {
 	scoped, ok := inv.(edgeRuleScopedInvalidator)
 	if !ok || len(hosts) == 0 {
 		inv.ResetEdgeRules()
 		inv.InvalidateResponseCacheAll()
 		return
 	}
-	scoped.InvalidateEdgeRuleHosts(hosts)
+	if byAccount, ok := inv.(edgeRuleAccountScopedInvalidator); ok && accountID != "" {
+		byAccount.InvalidateEdgeRuleAccountHosts(accountID, appID, hosts)
+	} else {
+		scoped.InvalidateEdgeRuleHosts(hosts)
+	}
 	apps := map[string]struct{}{}
 	if appID != "" {
 		apps[appID] = struct{}{}
