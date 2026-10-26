@@ -957,11 +957,32 @@ CREATE POLICY own_notes ON api.notes
 
 Every valid application token uses the same restricted SQL role, with the
 original JWT subject and claims available to RLS. A token's external `role`
-claim cannot select an administrator. A table without RLS grants every
-authenticated user the binding's table access, so define policies before
-exposing user-specific data. On PostgreSQL 15+, use `security_invoker=true`
-for exposed views that must follow the underlying table's RLS; ordinary views
-can run with their owner's privileges. Only explicitly opted-in security-invoker RPC functions are exposed; see the RPC section below.
+claim cannot select an administrator. Only explicitly opted-in security-invoker RPC functions are exposed; see the RPC section below.
+
+### Row-level security is required
+
+Signed-in requests reach only relations whose rows PostgreSQL decides: tables
+with RLS enabled, and views created `WITH (security_invoker = true)` (PostgreSQL
+15+), which follow the RLS of the tables they read. The rule covers the request
+target, every relation embedded with `select=...,other(...)`, and the target
+table of a computed relationship. Any other relation (a table without RLS, a
+view running as its owner, a materialized view) answers `403 rls_required`
+without reaching the database, for reads and writes alike.
+
+To share a relation with every signed-in user on purpose, for example a
+reference table, exempt it:
+
+```sh
+gregale data-api configure notes-data --allow-without-rls api.countries,api.plans
+gregale data-api configure notes-data --no-allow-without-rls   # remove all exemptions
+```
+
+Exemptions use the `--public-read` format (at most 64 `schema.relation`
+names). In local development, list them as `"allow_without_rls": [...]` in
+`data-api.dev.json`. The API reads its relations at startup: a table created
+later answers `404 not_found` until `gregale data-api refresh`. Server keys are
+trusted backends and are not checked; anonymous requests follow the
+[public read](#public-reads) rules.
 
 ## Generate types and use the client
 

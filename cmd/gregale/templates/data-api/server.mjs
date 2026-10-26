@@ -20,7 +20,7 @@ import { createPoolObservation } from './pool.mjs'
 import { createUsage, addResponseBytes, accessReport } from './usage.mjs'
 import { storageRoute, handleStorage, storageAnonymousTarget, storageServerKeyAllows, checkStorageTable } from './storage.mjs'
 import { createEngine, lifecyclePaths } from './engine.mjs'
-import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions } from './access.mjs'
+import { publicReadTarget, publicRpcTarget, publicRpcListed, publicReadCache, clientKey, matchServerKey, serverKeyAllows, serverSubject, checkPublicRelations, checkPublicFunctions, loadRowSecurity, rowSecurityDenial } from './access.mjs'
 
 export function createServer(config, verify, upstreamPort = 3000, readyPort = 3001, log) {
   const servingFingerprint = config.fingerprint
@@ -167,6 +167,9 @@ export function createServer(config, verify, upstreamPort = 3000, readyPort = 30
           if (payload.gregale_read_only !== undefined && typeof payload.gregale_read_only !== 'boolean') return problem(res, 401, 'token_invalid')
           if (!admitRateLimit(rateLimiter, payload.sub, res, problem)) return
           if ((config.readOnly === true || payload.gregale_read_only === true) && writes) return problem(res, 403, 'read_only_identity')
+          // Storage authorizes through storage_objects' own RLS policies.
+          const denial = storage ? null : rowSecurityDenial(req, config, rpc)
+          if (denial) return problem(res, denial.status, denial.code)
           concurrencyKey = payload.sub
         } else if (access === 'anonymous') {
           const client = ['anonymous', clientKey(req)]
@@ -386,6 +389,7 @@ export async function main(env = process.env) {
   const snapshot = await inspect(config.connection, config.schemas)
   config.snapshot = snapshot
   config.functions = snapshot.functions
+  config.rowSecurity = await loadRowSecurity(config.connection, config.schemas)
   if (config.publicRpc) {
     try { await checkPublicFunctions(config.connection, config.publicRpc, snapshot.functions) } catch (error) {
       runtimeFailure('data_api_public_rpc_unsafe')

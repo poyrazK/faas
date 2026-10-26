@@ -12,8 +12,18 @@ const schemaPart = /^[a-z][a-z0-9_]{0,62}$/
 
 // Owner allowlist of schema-qualified relations readable without a token.
 export function publicReadConfig(value, schemas) {
+  return relationListConfig(value, schemas, 'DATA_API_PUBLIC_READ')
+}
+
+// Owner list of relations signed-in users may reach without row-level security
+// (ADR 20261026140223), in the public-read format.
+export function allowWithoutRLSConfig(value, schemas) {
+  return relationListConfig(value, schemas, 'DATA_API_ALLOW_WITHOUT_RLS')
+}
+
+function relationListConfig(value, schemas, setting) {
   if (value === undefined) return null
-  const invalid = () => { throw new Error('Invalid DATA_API_PUBLIC_READ') }
+  const invalid = () => { throw new Error(`Invalid ${setting}`) }
   if (typeof value !== 'string' || !value) return invalid()
   const names = value.split(',')
   if (names.length > limits.publicReadMaxRelations || new Set(names).size !== names.length) return invalid()
@@ -336,7 +346,7 @@ export function runtimeConfig(env) {
   const storage = storageConfig(env, schemas)
   const pool = poolConfig(env.DATA_API_POOL, coordinatedRefresh)
   const engine = coordinatedRefresh ? pool - 1 : pool
-  return { connection, role, schemas, auth, secret, storage, pool, engine, serverKeyConcurrency: serverKeyConcurrencyConfig(env.DATA_API_SERVER_KEY_CONCURRENCY, engine), serverKeyRateLimit: rateLimitConfig(env, 'DATA_API_SERVER_KEY_RATE_LIMIT'), coordinatedRefresh, sqlDeadline, queryShapes, readOnly, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), serverKeys: serverKeyConfig(env),
+  return { connection, role, schemas, auth, secret, storage, pool, engine, serverKeyConcurrency: serverKeyConcurrencyConfig(env.DATA_API_SERVER_KEY_CONCURRENCY, engine), serverKeyRateLimit: rateLimitConfig(env, 'DATA_API_SERVER_KEY_RATE_LIMIT'), coordinatedRefresh, sqlDeadline, queryShapes, readOnly, aggregates, publicRead: publicReadConfig(env.DATA_API_PUBLIC_READ, schemas), allowWithoutRLS: allowWithoutRLSConfig(env.DATA_API_ALLOW_WITHOUT_RLS, schemas), serverKeys: serverKeyConfig(env),
     publicRpc: publicRpcConfig(env.DATA_API_PUBLIC_RPC, schemas), usage: usageConfig(env), publicReadMaxAge: publicReadMaxAge(env.DATA_API_PUBLIC_READ_MAX_AGE, env.DATA_API_PUBLIC_READ !== undefined || env.DATA_API_PUBLIC_RPC !== undefined), connectionObservation: connectionObservationConfig(env), rateLimit: rateLimitConfig(env), userConcurrency: userConcurrencyConfig(env, engine), acceptedContracts: acceptedContracts(env.DATA_API_ACCEPTED_CONTRACTS), origins: (env.DATA_API_ALLOWED_ORIGINS ?? '').split(',').filter(Boolean),
     postgrestEnv: { PGRST_DB_URI: engineDatabaseURL(connection, env), PGRST_DB_SCHEMAS: schemas.join(','), PGRST_JWT_SECRET: secret.toString('base64url'),
       PGRST_SERVER_HOST: '127.0.0.1', PGRST_SERVER_PORT: '3000', PGRST_ADMIN_SERVER_PORT: '3001', PGRST_SERVER_TIMING_ENABLED: 'true',

@@ -16,6 +16,14 @@ fixes two faults that only a hosted database exposes:
   longer fails on a dead captured session. `data-api create` and `data-api
   deploy` register the hooks.
 
+## Row-level security required for signed-in requests
+
+[ADR 20261026140223](adr/20261026140223-data-api-requires-row-level-security.md):
+signed-in requests reach only RLS tables and security-invoker views (target,
+embeddings and computed relationships); others answer `403 rls_required`.
+Owners exempt intentionally shared relations with `data-api configure
+--allow-without-rls`, or `allow_without_rls` in the dev config.
+
 ## Public reads, server keys, aggregates, single-app projects and Python/Go clients
 
 [ADR 20261018170742](adr/20261018170742-data-api-access-modes-and-clients.md)

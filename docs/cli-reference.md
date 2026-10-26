@@ -15937,7 +15937,7 @@ Deploy a single-app Data API with its migrations as the release task
 
 Change access, aggregates, usage reporting or caps
 
-`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--pool <N|default>] [--server-key-concurrency <N|default>] [--server-key-rate-limit <N[,burst=M]|off>] [--scope <SCOPE>] [--no-restart] <name>`
+`gregale data-api configure [--public-read <SCHEMA.RELATION[,...]>] [--no-public-read] [--public-rpc <SCHEMA.FUNCTION[,...]>] [--no-public-rpc] [--allow-without-rls <SCHEMA.RELATION[,...]>] [--no-allow-without-rls] [--public-read-cache <DURATION|off>] [--usage-reporting <on|off>] [--monthly-caps <requests=N[,anonymous=N]|off>] [--aggregates <on|off>] [--pool <N|default>] [--server-key-concurrency <N|default>] [--server-key-rate-limit <N[,burst=M]|off>] [--scope <SCOPE>] [--no-restart] <name>`
 
 | Flag | Meaning | |
 |---|---|---|
@@ -15945,6 +15945,8 @@ Change access, aggregates, usage reporting or caps
 | `--no-public-read` | disable anonymous reads |  |
 | `--public-rpc <SCHEMA.FUNCTION[,...]>` | approved STABLE or IMMUTABLE functions callable without a token by GET |  |
 | `--no-public-rpc` | disable anonymous RPC calls |  |
+| `--allow-without-rls <SCHEMA.RELATION[,...]>` | relations signed-in users may reach without row-level security |  |
+| `--no-allow-without-rls` | require row-level security on every relation again |  |
 | `--public-read-cache <DURATION|off>` | cache canonical public reads and RPC calls at the edge (max 1h) |  |
 | `--usage-reporting <on|off>` | report usage to the platform (on for new Data APIs) | one of `on` · `off` |
 | `--monthly-caps <requests=N[,anonymous=N]|off>` | monthly owner caps; reached caps answer 429 until the next UTC month |  |
