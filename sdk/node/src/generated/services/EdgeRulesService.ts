@@ -702,9 +702,9 @@ export class EdgeRulesService {
      */
     rule?: string,
     /**
-     * Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
+     * Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes; boxed is a client put in a penalty box.
      */
-    outcome?: 'matched' | 'logged' | 'detected' | 'warned' | 'blocked' | 'challenged' | 'rejected' | 'solved' | 'failed',
+    outcome?: 'matched' | 'logged' | 'detected' | 'warned' | 'blocked' | 'challenged' | 'rejected' | 'solved' | 'failed' | 'boxed',
     /**
      * Only events for this request ID, such as the reference a visitor without JavaScript sees on the challenge page (ADR-831 amendment 8).
      */

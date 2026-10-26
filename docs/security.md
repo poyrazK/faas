@@ -570,6 +570,11 @@ Some details to know:
   its clients go. A log-mode rule never boxes anyone.
 - The edge protection summary shows how many clients were boxed and how many
   of their requests were refused.
+- Each box is also an event, from the request that tipped the client in:
+  `gregale edge-rules events --app my-site --outcome boxed` lists the
+  address, path and User-Agent, so you can tell a scanner from a customer.
+  Events are sampled (up to 10 boxes per rule per minute on each edge node)
+  and kept for 7 days.
 
 ## Outbound connections and DNS
 
