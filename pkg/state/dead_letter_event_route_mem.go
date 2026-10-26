@@ -1,7 +1,7 @@
 package state
 
 import (
-	"crypto/md5"
+	"crypto/md5" // #nosec G501 -- mirrors the capture trigger's md5()::uuid entry identity; not a security boundary.
 	"encoding/json"
 	"fmt"
 	"time"
@@ -12,7 +12,7 @@ import (
 // eventRouteSourceID mirrors the capture trigger's
 // md5(outbox_id || '/' || subscription_id)::uuid.
 func eventRouteSourceID(outboxID int64, subscriptionID string) string {
-	return uuid.UUID(md5.Sum(fmt.Appendf(nil, "%d/%s", outboxID, subscriptionID))).String()
+	return uuid.UUID(md5.Sum(fmt.Appendf(nil, "%d/%s", outboxID, subscriptionID))).String() // #nosec G401 -- identity, not a security boundary.
 }
 
 // captureEventRouteDeadLettersLocked mirrors capture_event_route_dead_letters
