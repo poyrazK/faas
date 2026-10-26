@@ -1747,6 +1747,10 @@ bounded per app to 50 distinct real routes + the reserved
 `__route_other__` overflow bucket (ADR-093 D2). The bounded
 admission set is the only thing standing between us and
 `O(paths)` Prometheus cardinality under wildcard path patterns.
+A route earns a label only once the app answers it with a status
+that shows the route exists, or when it is declared; scanner 404s
+and non-standard methods stay `__route_other__`
+(ADR-20261026143210).
 The in-memory reader is also exposed via the control listener at
 `GET /v1/internal/apps/{slug}/routes` (loopback-only, mTLS-free
 within the same box) and reverse-proxied by apid as
@@ -1855,7 +1859,7 @@ The `account_id="__other__"` series is the bounded overflow bucket — drill-dow
 
 **SLOs (public, on the status page):** API availability 99.5 % monthly; wake p95 < 1 s; build success (non-`user_error`) 99 %. Error budgets, not promises — single-node deployments (until Gate A) are stated honestly on the status page. The `faas_slo_monthly` recording group computes each as a rolling 30 d ratio (`faas_slo_api_availability:ratio_30d`, `faas_slo_wakes_within_1s:ratio_30d`, `faas_slo_build_success:ratio_30d`, plus `faas_slo_platform_wakes_within_350ms:ratio_30d` for the 350 ms platform gate), shown on the fleet dashboard; Prometheus keeps 35 d so the window is whole (ADR-20261023124955).
 
-Logs: journald → Loki free tier; tenant app stdout/stderr ring-buffered per instance (10 MB), surfaced via `GET /v1/apps/{app}/logs` (tail + follow).
+Logs: journald → Promtail on every host → Loki on the control plane, chunks in object storage, 14 d, behind `faas_obs_logs_enabled` (ADR-20261023124955; `docs/ops/logs.md`); tenant app stdout/stderr ring-buffered per instance (10 MB), surfaced via `GET /v1/apps/{app}/logs` (tail + follow).
 
 ### 12.4 Per-tenant noisy-customer gauge (issue #300, ADR-041)
 
@@ -1996,6 +2000,14 @@ same values, so rules and panels aggregate with `max`. Alerts are `warn`
 | Metric name | Labels | Producer | Semantics |
 |---|---|---|---|
 | `apid_idempotency_key_reused_total` | `route` | `pkg/apid/apidserver/idempotency_metrics.go` | Requests refused with `422 idempotency_key_reused` because their key was bound to a different request. `route` is the matched route pattern (`POST /v1/apps/{slug}/inbox`). A rising route names a client that reuses keys. |
+
+### 12.11 Public-edge traffic security enforcement (ADR-570, amendment of 2026-10-26)
+
+| Metric name | Labels | Producer | Semantics |
+|---|---|---|---|
+| `gatewayd_public_traffic_security_enforced` | — | `cmd/gatewayd-public/traffic_security_peers.go` | 1 while every compute gateway this edge may dial freshly reports traffic-security wiring and the edge requires the `X-Faas-Traffic-Security` snapshot. 0 while a gateway predates it (N-1), lacks the wiring, or its report is stale or retired, and answers pass unverified. Expect 0 during a rollout; a 0 that outlives one, with every node on the same release, means a gateway stopped reporting. |
+| `gatewayd_public_traffic_security_legacy_gateways` | — | same | How many gateways the edge may dial lack a fresh wiring report. |
+| `gatewayd_public_traffic_security_unverified_total` | — | same, through `pkg/gateway` `TrafficSecurityPeers.Unverified` | Answers forwarded without snapshot verification (a stamped value from such a fleet is dropped, never trusted). |
 
 ---
 

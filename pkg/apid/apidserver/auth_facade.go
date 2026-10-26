@@ -215,7 +215,7 @@ func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 // customer app, unlike the <slug>.<domain> hosts this guard exists to stop.
 // Provider-admin mutations keep the narrower isTrustedAdminOrigin.
 func (s *server) isWebDashboardOrigin(origin *url.URL) bool {
-	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.domain), "."))
+	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.platformHost()), "."))
 	return base != "" && base != domainUnset && strings.EqualFold(origin.Scheme, "https") &&
 		strings.ToLower(origin.Hostname()) == base && origin.Port() == ""
 }
@@ -459,7 +459,7 @@ func (s *server) isTrustedAdminOrigin(origin *url.URL, r *http.Request) bool {
 	if originHost == requestHost {
 		return true
 	}
-	base := strings.ToLower(strings.TrimSpace(s.domain))
+	base := strings.ToLower(strings.TrimSpace(s.platformHost()))
 	return base != "" && originHost == "operations."+base
 }
 
@@ -647,12 +647,10 @@ func sessionFrom(r *http.Request) (state.Session, bool) {
 	return *sess, true
 }
 
-// clearSessionCookie evicts the faas_sid cookie on the client.
-// Bridges to pkg/auth's Middleware.ClearSessionCookie so the cookie
-// attribute set matches the issuer in handlers_auth.go (Path "/" +
-// Secure + SameSite=Lax). The cookie name reads from
-// pkg/auth.Middleware.SessionCookieName — default "faas_sid"; cmd/apid
-// never overrides the name so the default is what callers see.
+// clearSessionCookie evicts the session cookie on the client, under both
+// pkg/sessioncookie names. Bridges to pkg/auth's
+// Middleware.ClearSessionCookie so the cookie attribute set matches the
+// issuers (Path "/" + Secure + SameSite=Lax).
 func (s *server) clearSessionCookie(w http.ResponseWriter, _ *http.Request) {
 	s.authMw.ClearSessionCookie(w)
 }

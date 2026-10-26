@@ -44,6 +44,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/appmetrics"
 	"github.com/onebox-faas/faas/pkg/audit"
 	"github.com/onebox-faas/faas/pkg/pagerduty"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/secretbox"
 	"github.com/onebox-faas/faas/pkg/state"
 	"github.com/onebox-faas/faas/pkg/webhookout"
@@ -197,6 +198,8 @@ type Evaluator struct {
 	dashboardBaseURL string
 	// logContextEnabled attaches the ADR-20261022172052 log context to fires.
 	logContextEnabled bool
+	// releaseMetrics counts release notice deliveries; nil records nothing.
+	releaseMetrics *releasemetrics.Metrics
 
 	// anomaly caches ADR-744 baselines per rule; see anomaly.go.
 	anomaly anomalyState
@@ -271,6 +274,9 @@ type EvaluatorOptions struct {
 	// DashboardBaseURL ("https://gregale.dev") links notifications to the
 	// app dashboard; empty omits the link.
 	DashboardBaseURL string
+	// ReleaseMetrics counts release approval and schedule notice
+	// deliveries; nil records nothing.
+	ReleaseMetrics *releasemetrics.Metrics
 }
 
 // NewEvaluator returns a wired Evaluator. nil-coerced dependencies
@@ -307,6 +313,7 @@ func NewEvaluator(o EvaluatorOptions) *Evaluator {
 		channels:         o.Channels,
 		channelOutcome:   o.ChannelOutcome,
 		dashboardBaseURL: o.DashboardBaseURL,
+		releaseMetrics:   o.ReleaseMetrics,
 	}
 	if o.ActionExec != nil {
 		e.actionExec = o.ActionExec

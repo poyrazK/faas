@@ -54,10 +54,12 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/httpsec"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/reqbudget"
 	"github.com/onebox-faas/faas/pkg/trafficrevocation"
+	"slices"
 )
 
 // InternalDialer is the seam the public daemon wires to reach a
@@ -127,6 +129,10 @@ func (d *tcpDialer) DialContext(ctx context.Context, _ string) (net.Conn, error)
 //
 // The zero value is unusable; construct via NewInternalReverseProxy.
 type InternalReverseProxy struct {
+	// trafficSecurityPeers says whether every compute gateway behind this edge
+	// stamps the traffic security snapshot; nil means it does.
+	trafficSecurityPeers TrafficSecurityPeers
+
 	trafficRevocations  *trafficrevocation.Registry
 	Dialer              InternalDialer
 	Target              *url.URL
@@ -145,7 +151,9 @@ type InternalReverseProxy struct {
 }
 
 const (
-	cloudflareWorkerHeader       = "CF-Worker"
+	cloudflareWorkerHeader = "CF-Worker"
+	// cloudflareWorkerZone is the original Worker zone; the Worker in any
+	// other owned zone is accepted too (isEdgeWorkerZone).
 	cloudflareWorkerZone         = "gregale.dev"
 	edgeOriginalStatusHeader     = "X-Faas-Edge-Original-Status"
 	edgeOrigin504TransportStatus = http.StatusConflict
@@ -153,6 +161,14 @@ const (
 	// from the 409 transport ("502,504").
 	edgeRestorableHeader = "X-Faas-Edge-Restorable"
 )
+
+// isEdgeWorkerZone reports whether a CF-Worker header names the zone of a
+// Gregale edge Worker: the original zone or any domain the layout owns, since
+// each apps domain has its own zone and Worker (ADR-20261026100000).
+func isEdgeWorkerZone(zone string) bool {
+	zone = strings.ToLower(strings.TrimSpace(zone))
+	return zone != "" && (zone == cloudflareWorkerZone || slices.Contains(hostidentity.Configured().OwnedDomains(), zone))
+}
 
 // edgeTransportStatus reports whether an origin status must cross the
 // Cloudflare Worker hop as 409 + X-Faas-Edge-Original-Status, because
@@ -163,7 +179,7 @@ const (
 // hunt #9 (H9-96): an app OOM-killed mid-request reached API clients as
 // Cloudflare HTML with no request id.
 func edgeTransportStatus(r *http.Request, status int) bool {
-	if r == nil || !strings.EqualFold(strings.TrimSpace(r.Header.Get(cloudflareWorkerHeader)), cloudflareWorkerZone) {
+	if r == nil || !isEdgeWorkerZone(r.Header.Get(cloudflareWorkerHeader)) {
 		return false
 	}
 	switch status {
@@ -634,7 +650,7 @@ func (p *InternalReverseProxy) serveHTTP(w http.ResponseWriter, r *http.Request)
 		}
 		return
 	}
-	longLived := isLongLivedResponse(resp.StatusCode, resp.Header)
+	longLived := isLongLivedResponse(resp.StatusCode, resp.Header) || isUnverifiedPeerStream(r, resp)
 	publicBudget := r.Context()
 	if longLived {
 		detachBudget()

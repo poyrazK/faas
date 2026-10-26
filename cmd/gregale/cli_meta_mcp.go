@@ -53,6 +53,7 @@ func mcpCLICommand() cliCommand {
 			{Name: "transport", Short: "management MCP transport (default stdio)", Value: "TRANSPORT", ClosedSet: []string{"stdio", "streamable-http"}},
 			{Name: "timeout", Short: "per-tool API timeout (default 30s, maximum 1m)", Value: "DURATION"},
 			{Name: "allow-writes", Short: "enable reviewed deploy, promotion, and rollback actions", Bool: true},
+			{Name: "tools", Short: "toolsets to list, comma-separated: core, release, diagnose (default all)", Value: "TOOLSETS"},
 			{Name: "listen", Short: "HTTP listen address behind TLS proxy (default 127.0.0.1:8787)", Value: "ADDR"},
 			{Name: "resource-url", Short: "public HTTPS URL ending in /mcp (required for HTTP)", Value: "URL"},
 			{Name: "oauth-onboarding", Short: "remote onboarding (default browser)", Value: "MODE", ClosedSet: []string{"browser", "api-key"}},

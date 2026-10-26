@@ -17,8 +17,9 @@ fires before an operator stages a domain.
   - the database was unreachable.
 - **FaasSealDomainIdentityMissing:** a reader daemon (outboundd for
   `outbound`, vmmd for `runtime`, githubd for `source`, imaged for `build`,
-  gatewayd-internal for `edge`, meterd for `alerting`) started without the domain identity while other readers of the same
-  domain hold it. This is usually a node that joined or was rebuilt after
+  gatewayd-internal for `edge`, meterd for `alerting`, s3-gatewayd for
+  `storage`, schedd for `control` and `delivery`) started without the
+  domain identity while other readers of the same domain hold it. This is usually a node that joined or was rebuilt after
   the rollout, before the domain's `SEAL_DOMAIN_*` secrets were in CD, or a
   vmmd that has not restarted since its key was staged.
 

@@ -510,3 +510,126 @@ func (s *PgStore) ResealAlertingCredential(ctx context.Context, c AlertingSealed
 	}
 	return tag.RowsAffected() == 1, nil
 }
+
+// ResealStorageCredential replaces an active S3 credential's sealed secret
+// and key id for the storage seal-domain re-seal (ADR 20261022111812), only
+// while it still holds old: a binding rotation can replace a credential's
+// secret in place, and must win. A row a guard holds for now (a project
+// clone in progress) is left for the next run too.
+func (s *PgStore) ResealStorageCredential(ctx context.Context, id string, old []byte, kid string, sealed []byte) (bool, error) {
+	if len(old) == 0 || len(sealed) == 0 || kid == "" {
+		return false, errors.New("state: reseal storage credential needs the old and new ciphertext and a key id")
+	}
+	tag, err := s.pool.Exec(ctx, `
+		UPDATE object_storage_s3_credentials SET secret_sealed = $3, kid = $4
+		 WHERE id = $1::uuid AND secret_sealed = $2 AND status = 'active'`, id, old, sealed, kid)
+	if err != nil {
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23514" {
+			return false, nil
+		}
+		return false, fmt.Errorf("state: reseal storage credential %s: %w", id, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}
+
+// Delivery value kinds (ADR 20261022111812): an app webhook's signing
+// secret, a commit source's database connection and a pending execution's
+// payload, which apid seals and schedd opens.
+const (
+	DeliverySealedAppWebhook       = "app_webhook"
+	DeliverySealedCommitConnection = "commit_connection"
+	DeliverySealedExecutionPayload = "execution_payload"
+)
+
+// DeliverySealedValue is one sealed delivery value, listed for the delivery
+// seal-domain re-seal. ID is the webhook's, the commit source's or the
+// execution's id. KID is an execution payload's key id: schedd opens a
+// payload only with the identity it names.
+type DeliverySealedValue struct {
+	Kind   string
+	ID     string
+	Sealed []byte
+	KID    string
+}
+
+// ListDeliverySealedValues pages through one kind's sealed delivery values
+// in id order after afterID. Payloads of finished executions are left out:
+// nothing opens them again, and retention deletes them.
+func (s *PgStore) ListDeliverySealedValues(ctx context.Context, kind, afterID string, limit int) ([]DeliverySealedValue, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 1000
+	}
+	if afterID == "" {
+		afterID = "00000000-0000-0000-0000-000000000000"
+	}
+	var query string
+	switch kind {
+	case DeliverySealedAppWebhook:
+		query = `SELECT id::text, secret_sealed, '' FROM app_webhooks
+		          WHERE id > $1::uuid ORDER BY id LIMIT $2`
+	case DeliverySealedCommitConnection:
+		query = `SELECT id::text, sealed_connection, '' FROM commit_sources
+		          WHERE sealed_connection IS NOT NULL AND id > $1::uuid ORDER BY id LIMIT $2`
+	case DeliverySealedExecutionPayload:
+		query = `SELECT p.execution_id::text, p.sealed_payload, p.kid
+		           FROM execution_payloads p JOIN executions e ON e.id = p.execution_id
+		          WHERE e.status NOT IN ('succeeded', 'failed', 'timed_out', 'out_of_memory', 'cancelled')
+		            AND p.execution_id > $1::uuid
+		          ORDER BY p.execution_id LIMIT $2`
+	default:
+		return nil, fmt.Errorf("state: list delivery sealed values: unknown kind %q", kind)
+	}
+	rows, err := s.pool.Query(ctx, query, afterID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("state: list delivery sealed values %s: %w", kind, err)
+	}
+	defer rows.Close()
+	var out []DeliverySealedValue
+	for rows.Next() {
+		v := DeliverySealedValue{Kind: kind}
+		if err := rows.Scan(&v.ID, &v.Sealed, &v.KID); err != nil {
+			return nil, fmt.Errorf("state: scan delivery sealed value %s: %w", kind, err)
+		}
+		out = append(out, v)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("state: list delivery sealed values %s: %w", kind, err)
+	}
+	return out, nil
+}
+
+// ResealDeliveryValue replaces v's ciphertext only while it still holds
+// v.Sealed, so a customer rotation between the read and the write wins.
+// An execution payload's key id moves with it. It reports whether the row
+// was replaced; updated_at and the commit source's credential revision are
+// left alone because the value did not change.
+func (s *PgStore) ResealDeliveryValue(ctx context.Context, v DeliverySealedValue, sealed []byte, kid string) (bool, error) {
+	if len(v.Sealed) == 0 || len(sealed) == 0 {
+		return false, errors.New("state: reseal delivery value needs the old and new ciphertext")
+	}
+	var (
+		tag pgconn.CommandTag
+		err error
+	)
+	switch v.Kind {
+	case DeliverySealedAppWebhook:
+		tag, err = s.pool.Exec(ctx, `UPDATE app_webhooks SET secret_sealed = $3
+		                             WHERE id = $1::uuid AND secret_sealed = $2`, v.ID, v.Sealed, sealed)
+	case DeliverySealedCommitConnection:
+		tag, err = s.pool.Exec(ctx, `UPDATE commit_sources SET sealed_connection = $3
+		                             WHERE id = $1::uuid AND sealed_connection = $2`, v.ID, v.Sealed, sealed)
+	case DeliverySealedExecutionPayload:
+		if kid == "" {
+			return false, errors.New("state: reseal execution payload needs a key id")
+		}
+		tag, err = s.pool.Exec(ctx, `UPDATE execution_payloads SET sealed_payload = $3, kid = $4
+		                             WHERE execution_id = $1::uuid AND sealed_payload = $2`, v.ID, v.Sealed, sealed, kid)
+	default:
+		return false, fmt.Errorf("state: reseal delivery value: unknown kind %q", v.Kind)
+	}
+	if err != nil {
+		return false, fmt.Errorf("state: reseal delivery value %s %s: %w", v.Kind, v.ID, err)
+	}
+	return tag.RowsAffected() == 1, nil
+}

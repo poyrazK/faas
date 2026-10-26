@@ -81,19 +81,21 @@
       "capabilities": ["account-release-webhooks", "async-invocations", "crons", "dead-letter-queues", "event-acknowledgments", "event-delivery-controls", "event-recoveries", "event-replays", "event-schemas", "event-subscriptions", "event-triggers", "events", "execution-workflows", "failed-events-console", "jobs", "operation-approvals", "operation-artifacts", "operation-children", "operation-concurrency", "operation-effects", "operation-milestones", "operation-recovery", "operation-schedules", "operation-signals", "operations", "outbound-webhooks", "queue-bindings", "queue-pull-leases", "queues", "work-policies", "workflow-insights", "workflow-recovery", "workflow-schedules", "workflows"],
       "targets": [{"metric": "ratio", "operator": "gte", "value": 100, "unit": "percent"}],
       "evidence": [
+        {"kind": "test", "locator": "cmd/e2e/events_fanout_e2e_test.go::TestE2E_EventFanout_MatchesFiltersAndIsolatesAccounts"},
         {"kind": "test", "locator": "cmd/e2e/workflows_e2e_test.go::TestE2E_Workflows_Lifecycle"},
         {"kind": "test", "locator": "cmd/gregale/customer_operations_signal_test.go::TestCustomerOperationSignal"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/event_acknowledgment_acceptance_test.go::TestEventAcknowledgmentLifecycle"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/event_delivery_controls_acceptance_test.go::TestEventDeliveryControlsPauseAndResume"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_account_release_webhooks_test.go::TestAccountReleaseWebhooks_CRUDAndScope"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_failed_events_test.go::TestDashboardFailedEvents_PaginatesAtPageSize"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_jobs_test.go::TestParseAppJobsPath"},
-        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dashboard_webhooks_test.go::TestParseAppWebhooksPath"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_dead_letter_test.go::TestUnifiedDeadLetter_QueueListInspectAndReplay"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_event_replay_preview_test.go::TestEventReplayPreviewAPIReadScopes"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_event_schemas_test.go::TestEventSchemaRegistrationAndPublishValidation"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_event_subscriptions_test.go::TestListEventSubscriptions_CrossAccountIsNotVisible"},
-        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_event_subscriptions_test.go::TestListEventSubscriptions_ReturnsReconciledManifestRows"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_event_workflow_recovery_test.go::TestWorkflowRecoveryJobHTTP"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_executions_test.go::TestExecutionWorkflowSummariesRespectKeyFamilyBoundaries"},
-        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_ext_test.go::TestAsyncInvoke_FreeRejected"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/handlers_ext_test.go::TestAsyncInvoke_AcceptedWithId"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_ext_test.go::TestListCrons_HappyPath"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_ext_test.go::TestQueueReceive_TimeoutReturns204"},
         {"kind": "test", "locator": "pkg/apid/apidserver/handlers_keyed_invocation_replay_test.go::TestKeyedInvocationReplayIndependentEventRecovery"},
@@ -106,14 +108,12 @@
         {"kind": "test", "locator": "pkg/apid/apidserver/operations_approval_inputs_test.go::TestOperationApprovalFormsAreHiddenUntilAllowlisted"},
         {"kind": "test", "locator": "pkg/apid/apidserver/operations_children_test.go::TestOperationChildrenPlanLimit"},
         {"kind": "test", "locator": "pkg/apid/apidserver/operations_signals_test.go::TestOperationSignalRoutes"},
-        {"kind": "test", "locator": "pkg/internalmail/control_pg_test.go::TestPGDeliveryControlPersistenceCASAndReplay"},
-        {"kind": "test", "locator": "pkg/objectstorage/gcs_features_test.go::TestGCSTrackedWriteLostAcknowledgment"},
         {"kind": "test", "locator": "pkg/operations/acceptance/artifacts_test.go::TestPgOperationArtifacts"},
         {"kind": "test", "locator": "pkg/operations/acceptance/recovery_test.go::TestPgOperationRecovery"},
         {"kind": "test", "locator": "pkg/operations/milestones_test.go::TestMilestoneContracts"},
         {"kind": "test", "locator": "pkg/state/operation_concurrency_test.go::TestOperationConcurrencyPolicies"},
         {"kind": "test", "locator": "pkg/state/operation_schedules_test.go::TestOperationScheduleChanges"},
-        {"kind": "test", "locator": "pkg/webhook/dispatcher_test.go::TestDispatcher_Attempt7DLQs"},
+        {"kind": "test", "locator": "pkg/webhook/dispatcher_test.go::TestDispatch_HeaderShape"},
         {"kind": "test", "locator": "pkg/webhook/operation_effect_compatibility_test.go::TestDispatcher_OrdinaryOutboxOperationEffectType"}
       ]
     },
@@ -553,7 +553,9 @@
       "evidence": [
         {"kind": "test", "locator": "pkg/githubdgrpc/handlers_round_trip_test.go::TestCreateDeploymentFromPush_HappyPath"},
         {"kind": "test", "locator": "pkg/dashboard/preview_panel_test.go::TestRender_AppDetail_PreviewPanel_Shape"},
-        {"kind": "test", "locator": "cmd/e2e/preview_e2e_test.go::TestPreview_E2E_HappyPath_PreviewAppsByParent"}
+        {"kind": "test", "locator": "cmd/e2e/preview_e2e_test.go::TestPreview_E2E_HappyPath_PreviewAppsByParent"},
+        {"kind": "test", "locator": "cmd/e2e/github_webhook_deploy_e2e_test.go::TestE2E_GitHubWebhookEnqueuesDeployments"},
+        {"kind": "test", "locator": "pkg/apid/apidserver/preview_environment_ga_test.go::TestCreatePreviewDoesNotCopyProductionEnv"}
       ]
     },
     {

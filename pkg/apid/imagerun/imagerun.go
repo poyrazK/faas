@@ -350,6 +350,9 @@ func resources(plan api.Plan, ramMB, timeoutSec int) (int, int, *api.Problem) {
 		return 0, 0, api.NewProblem(http.StatusBadRequest, api.CodeValidation,
 			"Invalid resources", "ram_mb and timeout_sec must be positive")
 	}
+	if prob := api.ValidateJobRAMMB(ramMB); prob != nil {
+		return 0, 0, prob
+	}
 	if limit := api.JobRAMMB[idx]; ramMB > limit {
 		return 0, 0, api.ErrJobQuota(plan, "ram_mb", limit, ramMB)
 	}

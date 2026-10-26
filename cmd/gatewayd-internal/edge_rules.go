@@ -37,8 +37,8 @@ import (
 
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/state"
-	"github.com/onebox-faas/faas/pkg/wire"
 )
 
 // edgeRuleStore is the slice of state.Store the matcher needs.
@@ -155,6 +155,7 @@ func (g *gatewaydEdgeRules) BeginConvergence(accountID string, hosts []string, g
 		return
 	}
 	now := time.Now()
+	hosts = withCanonicalHostPatterns(hosts)
 	g.fenceMu.Lock()
 	for _, host := range hosts {
 		host = strings.ToLower(strings.TrimSpace(host))
@@ -178,6 +179,7 @@ func (g *gatewaydEdgeRules) EndConvergence(accountID string, hosts []string, gen
 	if g == nil || generation <= 0 {
 		return
 	}
+	hosts = withCanonicalHostPatterns(hosts)
 	g.fenceMu.Lock()
 	for _, host := range hosts {
 		key := edgeRuleFenceKey{pattern: strings.ToLower(strings.TrimSpace(host)), accountID: accountID}
@@ -284,6 +286,14 @@ func (g *gatewaydEdgeRules) SetLoadedGeneration(generation int64) {
 func (g *gatewaydEdgeRules) loadHostUncached(ctx context.Context, host string) (*gateway.HostEntry, error) {
 	generation := g.cache.Generation()
 	storeRules, owner, err := g.hostStoreRules(ctx, host)
+	if err != nil {
+		return nil, err
+	}
+	// An alias name is read the same way as host: for its owner when known.
+	storeRules, err = withAliasHostRules(storeRules, host, func(alias string) ([]state.EdgeRule, error) {
+		rules, _, aliasErr := g.hostStoreRules(ctx, alias)
+		return rules, aliasErr
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -502,7 +512,7 @@ func activeEdgeRules(rules []state.EdgeRule, now time.Time) ([]state.EdgeRule, t
 }
 
 func (g *gatewaydEdgeRules) environmentEdgeRules(ctx context.Context, host string, global []state.EdgeRule) ([]state.EdgeRule, error) {
-	environmentID, appID, matched := gateway.EnvironmentIDsFromHost(wire.DeployWildcardSuffix, host)
+	environmentID, appID, matched := gateway.EnvironmentIDsFromHost(hostidentity.DeploySuffix(), host)
 	if !matched {
 		return global, nil
 	}

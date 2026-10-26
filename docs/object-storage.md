@@ -1319,11 +1319,30 @@ separate tenant IAM adapter; never hand out the operator-wide credential.
   bytes or costs; configure and qualify the accounting controls above. Presign
   counts cannot meter actual usage. The optional rate card is only an estimate;
   plan allowances and invoice lines do not ship here.
-- Before paid/general availability, qualify the real provider usage exporter,
-  pricing/margin policy and budget cutoffs, tenant native storage keys if needed,
-  and a coordinated account-deletion workflow. Active buckets block account
-  hard-deletion; confirmed-deleted bucket metadata is purged with the account.
-  Do not bypass these guards and orphan customer data.
+- Paid and general availability (audited 2026-10-26):
+  - **Metering.** Gateway safety meters stored byte-hours from inventory
+    ([ADR-20261024132844](adr/20261024132844-gateway-metered-object-storage-billing.md)),
+    so storage billing does not need a provider usage exporter.
+  - **Pricing and budget cutoffs.** ADR-1430 prices storage. At the spend cap,
+    storage keeps serving within plan limits and is billed only up to the cap
+    ([ADR 20261020160000](adr/20261020160000-object-storage-in-budgets.md));
+    budgets count the uncapped estimate. Free stops at 1 GiB. Paid plans have
+    no stored-bytes ceiling of their own, so the operator's
+    `max_account_bytes` bounds the storage above a customer's cap that nobody
+    pays for. Set it with that cost in mind.
+  - **Account deletion.** Deleting an account, or 21 days of non-payment,
+    starts the 30-day grace. Suspension, pending deletion and an abuse hold
+    stop every data path at once: S3 credentials, signed URLs, upload grants
+    and public reads all check the owner's status at admission. After the
+    grace, the purge sweep empties and deletes every bucket the account owns,
+    retained versions included, and keeps the account row until each is
+    confirmed deleted. Object Lock retention keeps a bucket, and the account,
+    until it expires; `FaasAccountErasureDeferred` reports a purge held longer
+    than a day. An app with buckets cannot be deleted. A company bucket
+    belongs to its organization, so purging the creator's account leaves it;
+    its owner follows UTC billing months whatever the database's time zone.
+    Do not bypass these guards and orphan customer data.
+  - **Open:** tenant native storage keys, if a customer needs them.
 
 Deferred: the S3 compatibility gaps listed above, production edge/service
 activation, unsupported lifecycle/version behavior, untracked object-capacity rebasing,

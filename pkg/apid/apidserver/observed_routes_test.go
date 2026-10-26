@@ -118,8 +118,8 @@ func TestAppRoutesFleetAggregateMoreThanTwoNodes(t *testing.T) {
 	}
 	// adr: 20261024154324 — gateways evict idle apps' series, so the
 	// listing looks back over the observed window.
-	if !strings.Contains(joinedQueries, `last_over_time(gateway_requests_by_route_total{app="`+app.ID+`"}[604800s])`) {
-		t.Fatalf("route query does not look back over the observed window: %s", joinedQueries)
+	if !strings.Contains(joinedQueries, `last_over_time(gateway_requests_by_route_total{app="`+app.ID+`",code=~"[1235].."}[604800s])`) {
+		t.Fatalf("route query does not look back over the observed window for routes the app answered: %s", joinedQueries)
 	}
 }
 

@@ -40,9 +40,8 @@ gv_config_path: /etc/grafana/grafana.ini
 gv_provisioning_dir: /etc/grafana/provisioning
 gv_dashboards_dir: /var/lib/grafana/dashboards
 
-# Admin password is read from a file (Grafana's native `*_FILE`
-# indirection via GF_SECURITY_ADMIN_PASSWORD__FILE) so the secret
-# never enters Ansible vars or the rendered config. Same precedent as
+# Admin password is read from a file (grafana.ini's $__file{} expansion)
+# so the secret never enters Ansible vars or the rendered config. Same precedent as
 # the alertmanager secret files (gap G2 lean §17, sealed at rest).
 # Mode 0400, owner grafana:grafana — asserted before systemd enable.
 gv_admin_password_file: /etc/grafana/secrets/admin_password
@@ -56,14 +55,17 @@ gv_prom_url: "http://127.0.0.1:9095"
 # `make bootstrap` completes without operator-provisioned secrets.
 gv_dev_mode: false
 
-# Optional off-host Loki datasource. The URL and server name are provider-
-# owned because the Loki host is outside the control-plane inventory shipped
-# with the repository. The TLS PEM values are loaded from the provider-owned
-# EnvironmentFile below; they never enter Ansible vars or Git.
-gv_loki_url: ""
+# Loki datasource (ADR-20261023124955 §2). Loki runs on this control plane
+# at faas_obs_loki_address once faas_obs_logs_enabled is set. Grafana reads
+# its fleet-PKI client leaf (issued by the platform_logs_pki role) with
+# $__file{} in the datasource provisioning, so no certificate passes through
+# Ansible variables or templates.
+gv_loki_url: "{{ ('https://' ~ faas_obs_loki_address ~ ':3100') if (faas_obs_logs_enabled | default(false) | bool and (faas_obs_loki_address | default(''))) else '' }}"
 gv_loki_tenant_id: gregale
-gv_loki_server_name: ""
-gv_loki_credentials_file: /etc/grafana/secrets/loki.env
+gv_loki_server_name: "{{ faas_obs_loki_server_name | default('loki.faas', true) }}"
+gv_loki_ca_file: /etc/faas/tls/ca/ca.crt
+gv_loki_client_cert_file: /etc/faas/tls/grafana/loki-client.crt
+gv_loki_client_key_file: /etc/faas/tls/grafana/loki-client.key
 
 # Optional Prometheus exemplar destination. Set gv_trace_datasource_uid when
 # Grafana already has a Tempo/Jaeger/Datadog-compatible trace datasource, or

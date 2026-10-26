@@ -108,9 +108,9 @@ sealing customer secrets but can no longer open them.
 | `edge` | `domains/edge.age` | gatewayd-internal | compute | `apps.public_auth_basic`, `app_log_drains`, `application_standard_log_destinations`, rehearsal object credentials |
 | `alerting` | `domains/alerting.age` | meterd | control plane | `alert_rules`, `notification_channels`, `mcp_readiness_pagerduty_policies`, `mcp_readiness_fallback_policies` |
 | `storage` | `domains/storage.age` | s3-gatewayd | where s3-gatewayd runs | `object_storage_s3_credentials` |
-| `delivery` | `domains/delivery.age` | schedd | both | `execution_payloads`, `agent_execution_workflows.sealed_plan`, `app_webhooks`, trigger config envelopes, `commit_sources` |
+| `delivery` | `domains/delivery.age` | schedd | both | `execution_payloads`, `app_webhooks`, trigger config envelopes, `commit_sources` |
 | `control` | `domains/control.age` | schedd; `gregalectl` at node join | both | `cluster_signing_keys`, internal service keys (`internal_svc`, `cluster_svc`) |
-| `account` | `domains/account.age` | apid, apid clone worker, apid data-pipeline worker | control plane | `accounts.mfa_secret_encrypted`, `inbound_webhook_endpoints`, GitLab, Slack, Linear and MCP OAuth rows, `managed_realtime_*`, `project_environment_clone_*`, `data_pipeline_*`, `product_control_email_*`, `account_billing_connections`, `mcp_readiness_pagerduty_acknowledgements` |
+| `account` | `domains/account.age` | apid, apid clone worker, apid data-pipeline worker | control plane | `accounts.mfa_secret_encrypted`, `agent_execution_workflows.sealed_plan`, `inbound_webhook_endpoints`, GitLab, Slack, Linear and MCP OAuth rows, `managed_realtime_*`, `project_environment_clone_*`, `data_pipeline_*`, `product_control_email_*`, `account_billing_connections`, `mcp_readiness_pagerduty_acknowledgements` |
 
 Internal mail and livequeryd keep their existing dedicated identities and
 join the registry as the `mail`, `mail-verification` and `livequery` domains.
@@ -137,6 +137,8 @@ provider credentials, GitHub tokens or account material.
 | apid opens alert rule webhook secrets and notification channel targets for preset and test sends (`handlers_alert_presets.go`, `handlers_notification_channel_test_send.go`) | apid records a test-send request; meterd opens the target and sends it |
 | apid opens GitLab OAuth tokens (`environment_gitlab_source.go`) | stays in `account` for now; moving source fetches behind githubd is a follow-up |
 | the apid clone worker opens managed Postgres checkpoint material and seals a `DATABASE_URL` into `app_secrets` | unchanged: it opens `account` and seals to the `runtime` recipient |
+| apid's managed workflow worker opens the workflow plans apid sealed | unchanged: the plans belong to `account`, not `delivery`, since schedd never reads them |
+| apid opens a stored trigger config to keep its secret across an update (`MergeForUpdate`) | the merge keeps the stored ciphertext without opening it; until then trigger configs stay on the fleet key |
 
 ### 4. A registry and three ratchet gates keep it that way
 
@@ -439,6 +441,97 @@ identity opens none that is still valid.
   incidents keep copies of their route's key in `delivery_routing` (jsonb);
   those are not re-sealed and age out with the incidents.
 
+## Implemented in the seventh slice: the storage domain
+
+- **s3-gatewayd** loads `domains/storage.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_STORAGE_IDENTITY_PATH` on control-plane hosts, opens S3
+  credentials with it ahead of the fleet and host identities, and exports
+  `faas_seal_domain_loaded{domain="storage"}`.
+- **The startup rekey stays out of the domain.** s3-gatewayd re-seals every
+  credential whose `kid` is not its current key when it starts. Two rules
+  keep that from undoing the domain or moving rows into it ungated:
+  - it skips any credential the storage identity opens;
+  - apid files a credential under the fleet recipient's key id while the
+    credential still opens with the fleet key (write modes empty, `fleet`
+    and `dual`), and under the domain's only in `domain` mode
+    (`sealdomain.KeyID`).
+
+  A gateway without the domain still refuses to start over a credential it
+  cannot open, so `readers_verified` must cover every s3-gatewayd and its
+  previous release.
+- **apid seals all eight writers** to `FAAS_SEAL_DOMAIN_STORAGE_RECIPIENT_PATH`
+  under `FAAS_SEAL_DOMAIN_STORAGE_WRITES`: customer credentials, compute
+  bindings and their rotation, signed URLs, and the project environment
+  clone, shared binding and clone checkpoint credentials.
+- **Re-seal:** `gregalectl seal-domain migrate --domain storage
+  --readers-verified` re-seals every active credential, signed URLs
+  included, to the domain alone under the domain's key id. Its
+  compare-and-swap is on the ciphertext, not the key id, because a binding
+  rotation replaces a secret in place. Revoked credentials and expired
+  signed URLs are left as they are. The binding promotion revision bumps,
+  as for outbound.
+
+## Implemented in the eighth slice: the control domain
+
+- **schedd** loads `domains/control.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_CONTROL_IDENTITY_PATH` on control-plane and compute
+  hosts. It opens the cluster signing key with the control identity first,
+  then fleet and host, and keeps working with the control identity alone
+  once the contract step removes `fleet.age`. It exports
+  `faas_seal_domain_loaded{domain="control"}`, and a configured identity
+  that does not load fails startup.
+- **No writer and no write mode.** apid never writes the key. `gregalectl
+  fleet-seal migrate` creates it, sealed to fleet, only on a new fleet; it
+  moves into the domain only through `gregalectl seal-domain migrate
+  --domain control --readers-verified`, a compare-and-swap on the single
+  row.
+- **fleet-seal follows the domain.**
+  - `fleet-seal migrate` leaves a cluster key the control identity opens
+    where it is, instead of re-sealing it to fleet.
+  - `fleet-seal verify`, which node join runs before activation, opens it
+    with the control identity when the fleet key no longer does, and
+    reports `cluster_key_sealed_to`.
+  - Both read the staged `control.age` (`--control-key` overrides). The
+    join stages it first: `seal_domains` runs in `bootstrap.yml`, ahead of
+    the activation play.
+- **CD** stages the control identity on both node roles; it has no
+  recipient to stage, since nothing seals to it but the migration.
+
+## Implemented in the ninth slice: the delivery domain
+
+- **schedd** loads `domains/delivery.age` (and its `.previous`) through
+  `FAAS_SEAL_DOMAIN_DELIVERY_IDENTITY_PATH` on control-plane and compute
+  hosts. Its webhook dispatcher, commit relay and execution payload decoder
+  open with the delivery identity first, then fleet and host. It exports
+  `faas_seal_domain_loaded{domain="delivery"}`, and a configured identity
+  that does not load fails startup.
+- **apid seals three kinds of value** to
+  `FAAS_SEAL_DOMAIN_DELIVERY_RECIPIENT_PATH` under
+  `FAAS_SEAL_DOMAIN_DELIVERY_WRITES`:
+  - app and account release webhook signing secrets (all four writers share
+    one helper);
+  - commit-source connections, whose fleet recipient must still be the
+    shared one (`FAAS_FLEET_AGE_RECIPIENT_PATH`), never a host's own;
+  - execution payloads: the API, the managed workflow worker's steps and
+    the durable restore validator.
+- **An execution payload's key id names the identity schedd opens it
+  with.** apid files a payload under the fleet recipient while the fleet
+  key still opens it, and under the domain's only in `domain` mode
+  (`sealdomain.KeyID`, as for storage). So a schedd that holds only the
+  fleet identity keeps opening dual-sealed payloads.
+- **Re-seal:** `gregalectl seal-domain migrate --domain delivery
+  --readers-verified` re-seals webhook secrets, connections and the
+  payloads of unfinished executions to the domain alone, each with a
+  compare-and-swap on its ciphertext; a payload moves to the domain's key
+  id with it. A finished execution's payload is left for retention to
+  delete. A connection's `credential_revision` is not bumped, since the
+  value did not change.
+- **Left out of the slice:**
+  - trigger config envelopes stay on the fleet key, because apid still
+    opens a stored config to merge an update (section 3);
+  - `agent_execution_workflows.sealed_plan` moves to the `account` row of
+    the registry: apid seals it and its own workflow worker opens it.
+
 ## Implemented: the alerting test-send relay
 
 Section 3 moves apid's alerting test sends behind meterd, ahead of the
@@ -468,9 +561,10 @@ Each domain's key pair is a pair of GitHub environment secrets:
 
 - `scripts/ci/seal_domain_vars.sh` writes the files a host role needs on the
   runner and points the `seal_domains` role at them:
-  - control plane: the `outbound`, `source` and `alerting` identities and
-    every recipient;
-  - compute: the `runtime`, `build` and `edge` identities.
+  - control plane: the `outbound`, `source`, `alerting`, `storage`,
+    `control` and `delivery` identities and every recipient;
+  - compute: the `runtime`, `build`, `edge`, `control` and `delivery`
+    identities.
 - The control-plane converges (the full one and the host-configuration
   lane) and the compute join run the role with those variables.
 - A join whose `seal-domain verify` fails leaves the node drained.

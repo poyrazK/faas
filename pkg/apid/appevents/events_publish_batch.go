@@ -12,6 +12,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/api"
 	"github.com/onebox-faas/faas/pkg/apid/httpkit"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/state"
 	pkgtrace "github.com/onebox-faas/faas/pkg/trace"
 )
@@ -38,11 +39,19 @@ func (s *Service) PublishEventBatch(w http.ResponseWriter, r *http.Request, acct
 		api.WriteProblem(w, api.ErrInternal("event acceptance store"))
 		return
 	}
+	producer, problem := s.accountProducer(r.Context(), acct)
+	if problem == nil {
+		problem = s.PublishRateProblem(acct, len(wire.Events))
+	}
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), api.EventPublishBatchTimeout)
 	defer cancel()
 	response := api.PublishEventBatchResponse{Results: make([]api.PublishEventBatchResult, 0, len(wire.Events))}
 	for index, raw := range wire.Events {
-		result := s.publishEventBatchItem(ctx, store, acct, raw)
+		result := s.publishEventBatchItem(ctx, store, acct, producer, raw)
 		result.Index = index
 		response.Results = append(response.Results, result)
 	}
@@ -51,7 +60,7 @@ func (s *Service) PublishEventBatch(w http.ResponseWriter, r *http.Request, acct
 	httpkit.WriteJSON(w, http.StatusOK, response)
 }
 
-func (s *Service) publishEventBatchItem(ctx context.Context, store state.PublishedEventAcceptanceStore, acct state.Account, raw json.RawMessage) api.PublishEventBatchResult {
+func (s *Service) publishEventBatchItem(ctx context.Context, store state.PublishedEventAcceptanceStore, acct state.Account, producer string, raw json.RawMessage) api.PublishEventBatchResult {
 	if ctx.Err() != nil {
 		return batchPublishFailure("rejected", true, api.NewProblem(http.StatusServiceUnavailable, "event_publish_not_attempted", "Event not attempted", "retry the same source and id"))
 	}
@@ -69,9 +78,13 @@ func (s *Service) publishEventBatchItem(ctx context.Context, store state.Publish
 	if strings.HasPrefix(envelope.Source, "gregale.") {
 		return batchPublishFailure("rejected", false, api.ErrValidation("gregale.* sources are reserved for platform events"))
 	}
+	if _, reserved := eventcontract.AppSource(envelope.Source); reserved {
+		return batchPublishFailure("rejected", false, AppSourceReservedProblem())
+	}
 	if problem, retryable := s.batchEventSchemaProblem(ctx, acct.ID, req); problem != nil {
 		return batchPublishFailure("rejected", retryable, problem)
 	}
+	envelope.Producer = producer
 	trace := pkgtrace.InjectHeaders(ctx)
 	envelope.Traceparent, envelope.Tracestate, envelope.Baggage = trace["traceparent"], trace["tracestate"], trace["baggage"]
 	payload, err := json.Marshal(envelope)

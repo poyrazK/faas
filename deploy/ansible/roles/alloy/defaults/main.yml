@@ -1,0 +1,92 @@
+---
+# alloy — Grafana Alloy journal shipper on every FaaS host
+# (ADR-20261023185953, replacing Promtail, which reached end of life on
+# 2026-03-02). The pipeline is Promtail's translated stage for stage: one
+# journal reader, the daemon's own JSON line, labels only from validated
+# fields (ADR-143), DEBUG kept local, mTLS to Loki on the control plane.
+alloy_version: "1.20.1"
+# SHA-256 of alloy-linux-amd64.zip from the upstream v{{ alloy_version }}
+# release; it matches both GitHub's asset digest and Grafana's SHA256SUMS.
+alloy_release_sha256: "451fe650e8277d22d69cb8db50bba809f581fe78decba7fce4027ef185457be9"
+# Metrics (and Alloy's own UI) on the port Promtail used: apid's discovery
+# hard-codes host:9080, and Prometheus keeps the promtail/promtail-compute job
+# names. "auto" is the private transport address on compute nodes and
+# loopback on the control plane.
+alloy_listen_address: auto
+alloy_listen_port: 9080
+alloy_config_path: /etc/alloy/config.alloy
+alloy_storage_path: /var/lib/alloy
+alloy_environment: production
+alloy_host_label: "{{ faas_node_name | default(inventory_hostname) }}"
+alloy_loki_url: "{{ ('https://' ~ faas_obs_loki_address ~ ':3100/loki/api/v1/push') if (faas_obs_loki_address | default('')) else '' }}"
+alloy_loki_tenant_id: gregale
+alloy_loki_server_name: "{{ faas_obs_loki_server_name | default('loki.faas', true) }}"
+# The platform-logs fleet-PKI leaf Promtail used; platform_logs_pki issues it.
+alloy_loki_ca_file: /etc/faas/tls/ca/ca.crt
+alloy_loki_client_cert_file: /etc/faas/tls/promtail/loki-client.crt
+alloy_loki_client_key_file: /etc/faas/tls/promtail/loki-client.key
+alloy_journal_units:
+  # Control-plane and compute daemons.
+  - faas-apid.service
+  - faas-apid-clone-worker.service
+  - faas-apid-data-pipeline-worker.service
+  - faas-apid-data-pipeline-alert-worker.service
+  - faas-schedd.service
+  - faas-meterd.service
+  - faas-gatewayd-public.service
+  - faas-gatewayd-public-edge.service
+  - faas-gatewayd-internal.service
+  - faas-githubd.service
+  - faas-vmmd.service
+  - faas-imaged.service
+  - faas-builderd.service
+  - faas-bridged.service
+  - faas-outboundd.service
+  - faas-realtimed.service
+  - faas-profiled.service
+  - faas-livequeryd.service
+  - faas-maild.service
+  - faas-s3-gatewayd.service
+  - faas-cloudflared.service
+  # Host helpers and timers.
+  - faas-serving-probe.service
+  - faas-cgroup-metrics.service
+  - faas-canary-artifact-sweep.service
+  - faas-cp-state-backup.service
+  - faas-audit-anchor.service
+  - faas-audit-verify.service
+  - faas-pg-basebackup.service
+  - faas-pg-basebackup-push.service
+  - faas-pg-wal-prune.service
+  - faas-postgres-connection-metrics.service
+  - faas-postgres-activity-metrics.service
+  - faas-internal-mail-metrics.service
+  - faas-internal-pki-metrics.service
+  - faas-tenant-egress-firewall.service
+  - faas-overlay-tailscale.service
+  - faas-overlay-wireguard.service
+  - faas-rsyslog-rotate.service
+  - faas-zswap.service
+  # Platform dependencies.
+  - postgresql@16-main.service
+  - prometheus.service
+  - alertmanager.service
+  - grafana-server.service
+  - loki.service
+  - node_exporter.service
+alloy_journal_max_age: 12h
+# First start on a host that ran Promtail: read back only this far, so the
+# cutover gap is covered and at most this much is sent twice (Loki drops exact
+# duplicates in the same stream). Once Alloy has saved its own position the
+# role switches back to alloy_journal_max_age.
+alloy_cutover_max_age: 10m
+alloy_batch_wait: 1s
+alloy_batch_size: 1MiB
+alloy_min_backoff: 500ms
+alloy_max_backoff: 5m
+alloy_max_retries: 10
+# faas-obs.slice budget (spec §13 "loki/promtail agents" line).
+alloy_memory_max: 256M
+alloy_gomemlimit: 200MiB
+# Dev mode only permits a local HTTP target and skips mTLS-file assertions.
+alloy_dev_mode: false

@@ -190,6 +190,7 @@ func buildManifestForRequest(req VMRequest, timeoutSec int) (api.BuildManifest, 
 	return api.BuildManifest{
 		PublicBuildURLs:       req.PublicBuildURLs,
 		DockerfileBuild:       req.DockerfileBuild.Clone(),
+		GoCommand:             req.GoCommand,
 		BuildDependencyDigest: req.BuildDependencyDigest,
 		SchemaVersion:         1,
 		BuildID:               req.BuildID,
@@ -343,6 +344,10 @@ func (d *VMMDriver) Spawn(ctx context.Context, req VMRequest) (BuildHandle, erro
 		Build: &vmmdpb.BuildSpec{
 			ExportDir:  buildExportDir,
 			TimeoutSec: int32(timeoutSec),
+			// ADR-20261026090000: vmmd opens these into the builder's
+			// Docker config for its base-image pulls. A build that has
+			// them never uses a warm builder.
+			RegistryCredentials: registryCredentialsToProto(req.RegistryCredentials),
 		},
 		// Issue #301 / ADR-043: vmmd validates Plan on every cold
 		// boot and routes the VM into the per-plan cgroup slice.
@@ -712,6 +717,7 @@ func (d *VMMDriver) waitForCompletion(ctx context.Context, h BuildHandle, retain
 		res.ExitCode = exitCode
 		res.PublicBuildURLsSHA256 = done.PublicBuildURLsSHA256
 		res.DockerfileBuildSHA256 = done.DockerfileBuildSHA256
+		res.GoCommand = done.GoCommand
 		res.BuildDependencyDigest = done.BuildDependencyDigest
 		res.LogTailBytes = int64(len(done.LogTail))
 		res.LogTail = done.LogTail

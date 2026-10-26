@@ -491,6 +491,15 @@ jobs:
       - name: serving probe gate
         run: make serving-probe-test
 
+      - name: cgroup metrics gate
+        run: make cgroup-metrics-test
+
+      - name: observability go/no-go check tests
+        run: make obs-gate-test
+
+      - name: PostgreSQL activity collector tests
+        run: make postgres-activity-metrics-test
+
       - name: GCP public-beta policy gate
         run: make gcp-public-beta-policy-test
 
@@ -2082,6 +2091,8 @@ jobs:
               "${COLLECTIONS_PATH}/ansible_collections/community/postgresql"
           fi
           ansible-playbook -i localhost, -c local tests/tcp_tls_config.yml
+          # The observability smoke playbook converges only in obs-stack-smoke.yml.
+          ansible-playbook --syntax-check -i localhost, tests/obs_stack_smoke.yml
           # Gate-A: parse the complete-inventory safety preflight.
           ansible-playbook --syntax-check preflight.yml
           # Gate-B: syntax-check the only production bootstrap playbook

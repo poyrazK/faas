@@ -203,7 +203,7 @@ func (m *hostAnalysisMachine) addEnvironmentNamespace(ref hostAnalysisRef) error
 			}
 		}
 	}
-	position, err = m.literalPath(position, hostidentity.DeployWildcardSuffix)
+	position, err = m.literalPath(position, hostidentity.DeploySuffix())
 	if err == nil {
 		m.nodes[position].accepted = append(m.nodes[position].accepted, ref)
 	}
@@ -226,7 +226,7 @@ func (m *hostAnalysisMachine) addRevisionNamespace(ref hostAnalysisRef) error {
 	for _, character := range "abcdefghijklmnopqrstuvwxyz0123456789-" {
 		m.nodes[slug].literal[character] = slug
 	}
-	end, err := m.literalPath(slug, hostidentity.DeployWildcardSuffix)
+	end, err := m.literalPath(slug, hostidentity.DeploySuffix())
 	if err != nil {
 		return err
 	}

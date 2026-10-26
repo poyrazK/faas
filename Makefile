@@ -414,6 +414,16 @@ release-safety-check-test: ## Unit tests of the version-skew check, migration li
 	python3 scripts/ci/slo_gate_test.py
 	$(GO) test -count=1 ./scripts/ci/versionskew
 
+.PHONY: agent-eval-test
+agent-eval-test: ## Unit tests of the coding-agent eval harness; runs no agents (ADR-20261026152009)
+	python3 scripts/agent-eval/agent_eval_test.py
+
+AGENT_EVAL_AGENTS ?= claude
+AGENT_EVAL_TOOLSETS ?= core,all
+.PHONY: agent-eval
+agent-eval: ## Run coding agents against Gregale tasks; deploys real apps, needs GREGALE_EVAL_TOKEN (AGENT_EVAL_AGENTS, AGENT_EVAL_TOOLSETS, AGENT_EVAL_TASKS, AGENT_EVAL_REPEAT)
+	python3 scripts/agent-eval/agent_eval.py run --agents $(AGENT_EVAL_AGENTS) --toolsets $(AGENT_EVAL_TOOLSETS) $(if $(AGENT_EVAL_TASKS),--tasks $(AGENT_EVAL_TASKS)) --repeat $(or $(AGENT_EVAL_REPEAT),1)
+
 .PHONY: text-encoding-check-test
 text-encoding-check-test: ## Exercise the text-encoding gate against fixture trees in both directions
 	bash scripts/ci/check_text_encoding_test.sh
@@ -1007,6 +1017,18 @@ canary-artifact-retention-test: ## Test bounded validation-artifact inventory, s
 serving-probe-test: ## Test the compute-node serving probe (ADR-20261023124955 §5)
 	python3 scripts/ops/faas_serving_probe_test.py
 
+.PHONY: cgroup-metrics-test
+cgroup-metrics-test: ## Test the per-slice cgroup metrics collector (ADR-20261023124955)
+	python3 scripts/ops/faas_cgroup_metrics_test.py
+
+.PHONY: postgres-activity-metrics-test
+postgres-activity-metrics-test: ## Test the control-plane PostgreSQL activity collector
+	python3 scripts/ops/faas_postgres_activity_metrics_test.py
+
+.PHONY: obs-gate-test
+obs-gate-test: ## Test the observability go/no-go check (ADR-20261023124955 §7)
+	python3 scripts/ops/obs_gate_test.py
+
 .PHONY: gcp-public-beta-policy-test
 gcp-public-beta-policy-test: ## Test the read-only GCP production policy and IAM transformer
 	python3 scripts/ops/gcp_public_beta_audit_test.py
@@ -1127,10 +1149,6 @@ verify-fleet: ## Strict post-activation verification: every required daemon enab
 .PHONY: object-storage-reconcile
 object-storage-reconcile: ## After a PostgreSQL restore: compare the object bucket catalog with each provider, read-only; ACCEPT=1 once findings are handled (ADR 20261025111015)
 	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/object_storage_reconcile.yml $(if $(ACCEPT),-e faas_object_storage_reconcile_accept=true)
-
-.PHONY: bootstrap-observability
-bootstrap-observability: ## Deploy the off-host Loki backend and FaaS Promtail shippers
-	$(ANSIBLE_PLAYBOOK) -i $(ANSIBLE_INVENTORY) deploy/ansible/site.yml
 
 .PHONY: manifest-scale-check
 manifest-scale-check: ## Validate manifest/Ansible generation at 1, 10, 100, and 1000 compute nodes
@@ -1485,6 +1503,7 @@ capabilities-check: ## Verify the product capability registry and generated matr
 capability-coverage-check: ## CI gate: every customer entry point maps to a row of docs/ga-capability-inventory.md (ADR-20261023115741)
 	@python3 -I scripts/ga/capability_coverage_test.py
 	@python3 -I scripts/ga/capability_coverage.py
+	@python3 -I scripts/ci/require_capabilities_test.py
 
 .PHONY: sdk-spec
 sdk-spec: ## Regenerate sdk/openapi.yaml, the GA and beta spec the SDKs are generated from (ADR-20261023115741)

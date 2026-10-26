@@ -60,6 +60,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/mail"
 	"github.com/onebox-faas/faas/pkg/meter"
 	"github.com/onebox-faas/faas/pkg/promql"
+	"github.com/onebox-faas/faas/pkg/releasemetrics"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/runtimeconfig"
 	"github.com/onebox-faas/faas/pkg/safedeploy"
@@ -1628,7 +1629,18 @@ func buildAlertEvaluatorWithPromQL(deps runDeps, store state.Store, log *slog.Lo
 		Dispatcher: dispatcher,
 		Log:        log,
 		Ops:        ops,
+		// A nil ops (unit wiring) leaves release metrics off.
+		ReleaseMetrics: releaseMetricsFor(ops),
 	})
+}
+
+// releaseMetricsFor registers the release guard metrics on meterd's
+// registry (ADR-20261020085706 amendment 1).
+func releaseMetricsFor(ops *wire.OpsMetrics) *releasemetrics.Metrics {
+	if ops == nil {
+		return nil
+	}
+	return releasemetrics.New(ops.Registry())
 }
 
 // buildUpstreamProbe (ADR-098 PR-C) wires the connection-aware

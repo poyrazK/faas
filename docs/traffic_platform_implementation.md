@@ -4370,3 +4370,85 @@ to the Git source inventory before the next dispatch. Fresh complete software
 CI must qualify the correction. All six release requirements remain unchecked;
 native KVM/network/firewall/leak and deployed/staging acceptance still require
 their own evidence, and no acceptance host is available.
+
+## Rollback and retry revision revival — 2026-10-26
+
+An inventory of every `pkg/state` write (sqlc and raw SQL) to a table the
+binding projection reads found writers that publish a revision URL outside the
+shared binding guard. Plain, checked and alert-triggered historical rollback
+preparation and automatic rollback return a superseded target to a serving
+status. Retry-from-stage inserts the app's next revision. Each PostgreSQL
+writer now begins through the app binding guard, commits only after the
+before/after analysis, and retries a serialization failure with a fresh
+snapshot. The memory twins analyze the proposed target before publishing any
+rollback, retry or preparation state. API rollback, checked-rollback and retry
+refusals map to the existing traffic-policy problems instead of a capacity or
+internal error.
+
+Service-rollout abort and rollout recovery only change traffic among
+already-live rows; terminal status writers withdraw revision URLs whose
+namespace stays reserved. They remain outside the global binding
+serialization. GitOps workload/candidate creation, project release additions,
+promotion visibility, environment policy writes and verification/environment
+withdrawals are separate follow-ups.
+
+Local evidence (shared scratch cluster, Mac load 70–100):
+`TestMemTrafficRollbackRevivalPublication` and
+`TestPgTrafficRollbackRevivalPublication` pass for prepare, checked, auto and
+retry; all four memory modes fail without the change. The existing ten
+`TestPgTrafficRevisionRevivalPublication` modes and the memory
+rollback/retry/alert/revision/alias tests pass. Native, deployed and load
+acceptance remain open.
+
+## GitOps and release-addition publication — 2026-10-26
+
+GitOps workload creation (`PrepareEnvironmentGitOpsWorkloads`), GitOps
+candidate preparation (`PrepareEnvironmentGitOpsCandidates`) and safe-release
+service reservation (`StageProjectReleaseAdditions`) created apps or revision
+URLs in PostgreSQL transactions outside the binding guard. They now begin
+through the account binding guard and retry serialization failures; the memory
+candidate writer stages and analyzes its new rows before publication.
+
+Evidence: `TestMemTrafficReleaseAdditionPublication`,
+`TestPgTrafficReleaseAdditionPublication` and
+`TestPgGitOpsCandidateRevisionURLJoinsBindingGuard` refuse an oversized
+legacy policy on the new hostname without changing intent and succeed after
+repair. The GitOps workload-creation writer has no dedicated refusal fixture;
+it shares the guarded transaction helper with candidate preparation.
+
+## Environment deletion and DNS-drift withdrawal — 2026-10-26
+
+`DeleteProjectEnvironment` (and its cleanup-job form) and
+`RollbackProjectEnvironmentClone` delete an environment whose bound custom
+domains cascade. They now begin through the account binding guard and retry
+serialization failures; the memory twin projects the environment, its bound
+domains and policies before deleting anything. Clone environment cleanup
+already counts bound custom domains as borrowers and refuses.
+`MarkCustomDomainDNSDrifted` stays unguarded by decision: it records external
+DNS state and always commits. `MarkTenantHostnameCheckFailed` keeps
+verification and changes no binding.
+
+Evidence: `TestMemTrafficEnvironmentRemoval` and
+`TestPgTrafficEnvironmentRemoval` refuse a deletion that would let a foreign
+wildcard's oversized policy serve the bound host, keep environment and domain
+intent, and succeed after repair. `TestMemTrafficDNSDriftWithdrawal` and
+`TestPgTrafficDNSDriftWithdrawal` show drift committing in the same topology.
+
+## Promotion visibility and GitOps environment policies — 2026-10-26
+
+`PublishProjectEnvironmentPromotionReleaseSet` and
+`RollbackProjectEnvironmentPromotionReleaseSet` project promoted settings,
+including visibility, onto production apps; both now begin through the account
+binding guard. The memory writer analyzes apps whose visibility changes before
+publishing anything. A GitOps apply whose reviewed plan changes environment
+edge policies runs inside the binding guard; its memory twin analyzes the
+staged policies first.
+
+Evidence: `TestMemTrafficPromotionVisibility` refuses an internal-to-public
+projection under an oversized legacy primary-host policy and ignores
+settings-only and non-production changes. The guarded PostgreSQL paths pass
+`TestPgPromotionActivatesAndRestoresWorkloadSettings`,
+`TestPgPromotionRollbackRejectsConcurrentWorkloadEdit` and
+`TestRealEnvironmentGitOpsAdoptionAndEnforcement` (memory and PostgreSQL),
+which applies a workload policy through the GitOps worker. No dedicated
+PostgreSQL refusal fixture exists for these two writers.

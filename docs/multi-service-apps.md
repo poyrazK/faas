@@ -44,6 +44,13 @@ Gregale reads, in this order:
   `go.work`, Cargo, Nx or Turborepo that carry a Dockerfile or language marker.
 - **Folders**: each member of `services/`, `apps/`, `packages/` or `cmd/` with a
   Dockerfile or language marker.
+- **Go commands**: in a Go module with a `go.mod` at the root and no `main`
+  package there, each `cmd/<name>` main package becomes a service named
+  `<name>` once there are two or more. Each builds from the module root, so
+  shared `internal/` packages are included, and runs only its own binary. The
+  plan shows it as `builds=cmd/<name>`. A root `main` package, a single
+  command or a root Dockerfile keeps the repository as one app
+  ([ADR-20261025134512](adr/20261025134512-go-module-commands-as-services.md)).
 
 Datastore images in Compose (`postgres`, `redis`, `mysql`, `mongo` and similar)
 are not run as apps.
@@ -60,7 +67,11 @@ nearest newer one Gregale offers; an untagged image gets the newest. The plan
 shows the database and its version under **Managed PostgreSQL (provided by this
 deploy)**. A variable
 you already set on the app keeps its value, and a later deploy reuses the same
-database. Removing the service never deletes the database.
+database. Removing the service never deletes the database. In an organization-owned
+project the database belongs to the organization, and the deploy needs a role
+and key that may create and bind organization databases (`postgres:manage`);
+otherwise the plan lists the service with the reason `permission`
+([ADR-20261026151530](adr/20261026151530-compose-postgres-org-projects.md)).
 
 Other datastores, and `postgres` where managed PostgreSQL is not available, are
 listed under **Managed (not provisioned)** with the variable your services

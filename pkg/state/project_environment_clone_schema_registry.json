@@ -27,6 +27,17 @@
     "kind": "account_identity"
   },
   {
+    "table": "account_spend_cap_holds",
+    "columns": [
+      "account_id",
+      "month",
+      "cap_cents",
+      "observed_cents",
+      "reached_at"
+    ],
+    "kind": "operational"
+  },
+  {
     "table": "alert_test_sends",
     "columns": [
       "id",
@@ -3363,6 +3374,8 @@
       "overlay_ip",
       "public_ip",
       "public_ip_set_at",
+      "readiness",
+      "readiness_reason",
       "recovery_initiated_at",
       "region",
       "release_id",
@@ -9001,6 +9014,15 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_postgres_account_overage",
+    "columns": [
+      "enabled",
+      "subject_id",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "managed_postgres_bindings",
     "columns": [
       "access",
@@ -13069,6 +13091,7 @@
       "pr_number",
       "repo_full_name",
       "root_app_id",
+      "setup_error",
       "updated_at"
     ],
     "kind": "operational"

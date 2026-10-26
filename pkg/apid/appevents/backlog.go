@@ -57,6 +57,12 @@ func (s *Service) GetEventBacklog(w http.ResponseWriter, r *http.Request, acct s
 		return
 	}
 	result, err := store.EventBacklog(ctx, acct.ID, query)
+	if err == nil {
+		var access *eventAccess
+		if access, err = s.eventAccess(ctx, acct); err == nil {
+			err = access.backlog(&result)
+		}
+	}
 	if err != nil {
 		s.Host.Logger().ErrorContext(ctx, "read event backlog", "err", err)
 		if ctx.Err() != nil || errors.Is(err, context.DeadlineExceeded) {

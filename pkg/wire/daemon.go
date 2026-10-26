@@ -145,6 +145,10 @@ func BootStamps(ctx context.Context, name string, ops *OpsMetrics) {
 	// moment of shutdown" rather than a zero).
 	go recordUptimeWithOps(ctx, name, time.Now(), ops)
 	startOTLPMetrics(ctx, name, ops)
+
+	// ADR-20261023200002: root-only pprof on @faas-debug/<name>, so a leaking
+	// or spinning daemon can be profiled in place. Never fails the daemon.
+	startDebugProfiling(ctx, name, Logger())
 }
 
 // startOTLPMetrics binds the optional OTLP metrics exporter to the same

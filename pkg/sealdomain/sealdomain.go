@@ -118,7 +118,7 @@ var registry = []Spec{
 		cols("outbound_integration_credentials", "authorization_sealed"),
 		cols("outbound_integration_credential_keys", "authorization_sealed"),
 	)},
-	{Domain: Build, Readers: []string{"imaged"}, Roles: computeOnly, Wired: true, Columns: join(
+	{Domain: Build, Readers: []string{"imaged", "vmmd"}, Roles: computeOnly, Wired: true, Columns: join(
 		cols("app_registry_credentials", "password_encrypted"),
 		cols("job_registry_credentials", "password_encrypted"),
 	)},
@@ -140,20 +140,25 @@ var registry = []Spec{
 		cols("mcp_readiness_pagerduty_policies", "integration_key_sealed"),
 		cols("mcp_readiness_fallback_policies", "integration_key_sealed", "webhook_secret_sealed"),
 	)},
-	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Columns: join(
+	{Domain: Storage, Readers: []string{"s3-gatewayd"}, Roles: cpOnly, Wired: true, Columns: join(
 		cols("object_storage_s3_credentials", "secret_sealed"),
 	)},
-	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Columns: join(
+	// Trigger config envelopes (jsonb leaves, not listed here) belong to
+	// delivery too, but stay on the fleet key until apid stops opening a
+	// stored config to merge an update into it.
+	{Domain: Delivery, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("execution_payloads", "sealed_payload"),
-		cols("agent_execution_workflows", "sealed_plan"),
 		cols("app_webhooks", "secret_sealed"),
 		cols("commit_sources", "sealed_connection"),
 	)},
-	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Columns: join(
+	{Domain: Control, Readers: []string{"schedd"}, Roles: bothRoles, Wired: true, Columns: join(
 		cols("cluster_signing_keys", "sealed_blob"),
 	)},
 	{Domain: Account, Readers: []string{"apid", "apid-clone-worker", "apid-data-pipeline-worker"}, Roles: cpOnly, Columns: join(
 		cols("accounts", "mfa_secret_encrypted"),
+		// apid seals a managed workflow's plan and its workflow worker
+		// opens it; schedd never reads it.
+		cols("agent_execution_workflows", "sealed_plan"),
 		cols("account_billing_connections", "sealed_secret"),
 		cols("inbound_webhook_endpoints", "signing_secret_sealed"),
 		cols("gitlab_oauth_connections", "credentials_sealed"),

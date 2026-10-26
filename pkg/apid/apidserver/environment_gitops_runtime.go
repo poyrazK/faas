@@ -192,6 +192,14 @@ func (b *environmentGitOpsBackend) prepareWorkloadCandidates(ctx context.Context
 		if err := b.verifyCandidateCredentials(ctx, graph.ID); err != nil {
 			return false, err
 		}
+		hold, err := b.gitOpsReleaseHold(ctx, lease, graph)
+		if err != nil {
+			return false, err
+		}
+		if hold != "" {
+			b.server.log.Info("environment gitops: activation held", "source", lease.Source.ID, "graph", graph.ID, "hold", hold)
+			return false, nil
+		}
 		if activator, ok := b.intent.(state.EnvironmentGitOpsGraphActivationStore); ok {
 			_, activated, err := activator.ActivateEnvironmentGitOpsWorkloadGraph(ctx, lease, plan)
 			if err != nil {

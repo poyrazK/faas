@@ -70,6 +70,9 @@ class PlanWorkload:
     the final stage."""
     build_args: list[str] | Unset = UNSET
     """Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."""
+    go_command: str | Unset = UNSET
+    """The cmd/<name> main package this service builds from the root of a Go module with several commands
+    (ADR-20261025134512)."""
     secret_files: list[SecretFile] | Unset = UNSET
     """Compose secrets written to /run/secrets (ADR-20261023090000)."""
     resources: ComposeResources | Unset = UNSET
@@ -171,6 +174,8 @@ class PlanWorkload:
         build_args: list[str] | Unset = UNSET
         if not isinstance(self.build_args, Unset):
             build_args = self.build_args
+
+        go_command = self.go_command
 
         secret_files: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.secret_files, Unset):
@@ -287,6 +292,8 @@ class PlanWorkload:
             field_dict["build_target"] = build_target
         if build_args is not UNSET:
             field_dict["build_args"] = build_args
+        if go_command is not UNSET:
+            field_dict["go_command"] = go_command
         if secret_files is not UNSET:
             field_dict["secret_files"] = secret_files
         if resources is not UNSET:
@@ -389,6 +396,8 @@ class PlanWorkload:
         build_target = d.pop("build_target", UNSET)
 
         build_args = cast(list[str], d.pop("build_args", UNSET))
+
+        go_command = d.pop("go_command", UNSET)
 
         _secret_files = d.pop("secret_files", UNSET)
         secret_files: list[SecretFile] | Unset = UNSET
@@ -516,6 +525,7 @@ class PlanWorkload:
             image_process=image_process,
             build_target=build_target,
             build_args=build_args,
+            go_command=go_command,
             secret_files=secret_files,
             resources=resources,
             depends_on=depends_on,

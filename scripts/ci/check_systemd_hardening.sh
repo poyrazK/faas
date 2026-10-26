@@ -19,7 +19,9 @@ units=(
   "vmmd_service/files/faas-vmmd.service"
   "loki/templates/loki.service.j2"
   "promtail/templates/promtail.service.j2"
+  "alloy/templates/alloy.service.j2"
   "serving_probe/templates/faas-serving-probe.service.j2"
+  "cgroup_metrics/templates/faas-cgroup-metrics.service.j2"
 )
 
 required=(NoNewPrivileges=yes ProtectSystem=strict ProtectHome=yes ProtectKernelModules=yes)

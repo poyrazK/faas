@@ -58,11 +58,19 @@ func (s *PgStore) StageProjectReleaseAdditions(ctx context.Context, accountID, a
 	if err := validateAdditionDrafts(accountID, projectID, safe, drafts); err != nil {
 		return nil, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	return retryTrafficSerialization(ctx, func() ([]App, error) {
+		return s.stageProjectReleaseAdditionsOnce(ctx, accountID, attemptID, projectID, safe, drafts)
+	})
+}
+
+// A reserved addition is an ordinary app with a primary hostname, so the
+// reservation joins the account's binding guard (ADR-570).
+func (s *PgStore) stageProjectReleaseAdditionsOnce(ctx context.Context, accountID, attemptID, projectID string, safe *api.ProjectSafeRelease, drafts []App) ([]App, error) {
+	tx, err := s.beginAccountAppTrafficMutation(ctx, accountID, "")
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	q := sqlc.New()
 	entry, err := q.LockSafeProjectSubmission(ctx, tx, sqlc.LockSafeProjectSubmissionParams{AccountID: accountID, AttemptID: attemptID})
 	if err != nil {

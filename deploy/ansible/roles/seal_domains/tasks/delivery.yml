@@ -1,0 +1,132 @@
+---
+# The delivery domain (ADR 20261022111812). schedd, on control-plane and
+# compute hosts alike, is the only reader of app webhook signing secrets,
+# commit-source connections and execution payloads; apid on the control
+# plane seals them. Every host that runs schedd gets the identity, a
+# restarted schedd and a proved probe; a control-plane host also gets the
+# recipient. Until faas_seal_domain_delivery_writes is domain, apid also
+# seals to the fleet key, so the order of the converges does not matter.
+- name: seal_domains — check the delivery domain settings
+  ansible.builtin.assert:
+    that:
+      - faas_seal_domain_delivery_writes in ['', 'fleet', 'dual', 'domain']
+      - faas_seal_domain_delivery_writes != 'domain' or (faas_seal_domain_delivery_readers_verified | bool)
+    fail_msg: >-
+      faas_seal_domain_delivery_writes is '', fleet, dual or domain. domain
+      needs faas_seal_domain_delivery_readers_verified once every schedd on
+      both node roles reports faas_seal_domain_loaded{domain="delivery"} 1
+      and the previous release left the rollback window.
+
+# 0400 root:root. systemd hands the identity to schedd alone as a
+# credential; no other unit names it.
+- name: seal_domains — install the delivery domain identity
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_delivery_identity_src }}"
+    dest: /etc/faas/secrets/domains/delivery.age
+    owner: root
+    group: root
+    mode: "0400"
+  no_log: true
+  notify: restart faas-schedd for seal domains
+  when: faas_seal_domain_delivery_identity_src | length > 0
+
+- name: seal_domains — create the schedd drop-in directory for the delivery domain
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-schedd.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when: faas_seal_domain_delivery_identity_src | length > 0
+
+- name: seal_domains — give schedd the delivery domain identity
+  ansible.builtin.template:
+    src: 60-faas-seal-domain-delivery-reader.conf.j2
+    dest: /etc/systemd/system/faas-schedd.service.d/60-faas-seal-domain-delivery.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-schedd for seal domains
+  when: faas_seal_domain_delivery_identity_src | length > 0
+
+- name: seal_domains — restart schedd before proving the delivery domain
+  ansible.builtin.meta: flush_handlers
+
+- name: seal_domains — prove this node opens the delivery domain probe
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - verify
+      - --domain
+      - delivery
+      - --publish
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --metrics-file
+      - "{{ faas_seal_domain_textfile_dir }}/faas_seal_domain_delivery.prom"
+      - --json
+  register: faas_seal_domain_delivery_verify
+  changed_when: (faas_seal_domain_delivery_verify.stdout | from_json).probe_written | default(false)
+  when: faas_seal_domain_delivery_identity_src | length > 0
+
+- name: seal_domains — install the delivery domain recipient
+  ansible.builtin.copy:
+    src: "{{ faas_seal_domain_delivery_recipient_src }}"
+    dest: /etc/faas/secrets/domains/delivery.age.pub
+    owner: root
+    group: root
+    mode: "0444"
+  notify: restart faas-apid for seal domains
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_delivery_recipient_src | length > 0
+
+- name: seal_domains — create the apid drop-in directory for the delivery domain
+  ansible.builtin.file:
+    path: /etc/systemd/system/faas-apid.service.d
+    state: directory
+    owner: root
+    group: root
+    mode: "0755"
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_delivery_recipient_src | length > 0
+
+# The recipient apid seals to must be the one readers published the probe
+# with; a recipient from another pair would seal to a key no reader holds.
+# Before any reader published the probe there is nothing to compare, which
+# is only acceptable while apid still seals to the fleet key too.
+- name: seal_domains — check the delivery recipient against the published probe
+  ansible.builtin.command:
+    argv:
+      - /usr/local/bin/gregalectl
+      - seal-domain
+      - verify
+      - --domain
+      - delivery
+      - --recipient-only
+      - --db-env
+      - "{{ faas_seal_domain_db_env }}"
+      - --json
+  register: faas_seal_domain_delivery_recipient_check
+  changed_when: false
+  failed_when: >-
+    faas_seal_domain_delivery_recipient_check.rc != 0 or
+    (faas_seal_domain_delivery_writes == 'domain' and
+     not (faas_seal_domain_delivery_recipient_check.stdout | from_json).probe_published)
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_delivery_recipient_src | length > 0
+
+- name: seal_domains — have apid seal delivery values to the domain
+  ansible.builtin.template:
+    src: 60-faas-seal-domain-delivery-writer.conf.j2
+    dest: /etc/systemd/system/faas-apid.service.d/60-faas-seal-domain-delivery.conf
+    owner: root
+    group: root
+    mode: "0644"
+  notify: restart faas-apid for seal domains
+  when:
+    - faas_box_role | default('single-box') in ['control-plane', 'single-box']
+    - faas_seal_domain_delivery_recipient_src | length > 0

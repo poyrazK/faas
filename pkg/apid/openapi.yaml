@@ -7827,6 +7827,45 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/postgres/overage:
+    get:
+      operationId: getManagedPostgresOverage
+      summary: Show whether compute overage is on
+      description: With overage on, a paid account's managed PostgreSQL databases keep running past the plan's monthly compute allowance until the ceiling, twice the allowance, and are then suspended. Off is the default; the databases are then suspended at the allowance. A cap never deletes a database (ADR-20261025094915).
+      tags: [managed_postgres]
+      responses:
+        '200':
+          description: The account's overage setting and compute ceiling
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresOverage' }
+        default:
+          description: Authentication, plan or capability error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: setManagedPostgresOverage
+      summary: Turn compute overage on or off
+      description: Paid plans only; Free stops at its allowance and answers 403 managed_postgres_not_in_plan. Turning overage off while past the allowance suspends the databases at the next cap sweep. Compute above the allowance is not billed until managed PostgreSQL has invoicing.
+      tags: [managed_postgres]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ManagedPostgresOverageRequest' }
+      responses:
+        '200':
+          description: The new overage setting and compute ceiling
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ManagedPostgresOverage' }
+        default:
+          description: Validation, authentication, plan or capability error
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/postgres/databases:
     get:
       operationId: listManagedPostgresDatabases
@@ -21466,7 +21505,9 @@ paths:
         combine with AND. A text search (`q`) covers at most 24 hours and
         answers 400 `log_search_window_too_large` beyond that; every search
         runs under a 5 second statement timeout and answers 503
-        `log_search_timeout` when it trips. Pass `next_cursor` back as
+        `log_search_timeout` when it trips. An account runs at most 2 log
+        reads at once; a read that waits over 2 seconds for one answers 429
+        `log_reads_busy` with Retry-After. Pass `next_cursor` back as
         `cursor` for the following page.
       parameters:
         - $ref: '#/components/parameters/LogSearchSince'
@@ -54619,6 +54660,37 @@ paths:
         '429': { $ref: '#/components/responses/TooManyRequests' }
         '503': { description: Response timing storage could not be read within its deadline. }
 
+  /v1/admin/obs/wakes/{wake_id}:
+    get:
+      tags: [admin]
+      operationId: getObsWakeTimeline
+      summary: Read every platform event recorded for one wake.
+      description: |
+        Returns the events whose data carries this wake_id, oldest first, for an
+        operator who has only the wake_id (from a log line, a latency exemplar or
+        a customer report) and not the app or account. At most 1000 events are
+        returned; truncated is true when the wake recorded more. Reads use the
+        events wake_id index and a five-second budget. gregalectl obs wake
+        merges these events with the wake's platform log lines.
+      parameters:
+        - in: path
+          name: wake_id
+          required: true
+          description: The wake's id, 8-64 letters, digits or dashes.
+          schema: { type: string, pattern: '^[A-Za-z0-9-]{8,64}$' }
+      responses:
+        '200':
+          description: The wake's events, oldest first.
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObsWakeTimeline' }
+        '400': { description: Malformed wake_id or unexpected query parameters. }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+        '403': { description: Wake read denied by operator scope or MFA or allowlist policy. }
+        '404': { description: No events are recorded for this wake_id. }
+        '429': { $ref: '#/components/responses/TooManyRequests' }
+        '503': { description: Event storage could not be read within its deadline. }
+
   /v1/admin/obs/incidents/platform_alert/summary:
     get:
       tags: [admin]
@@ -81976,6 +82048,32 @@ components:
           description: "healthy; warning at 80% of the allowance; overage past the allowance while the account allows overage; suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and resume next month or after an upgrade."
           type: string
           enum: [healthy, warning, overage, suspended]
+        overage_enabled:
+          description: True while the account runs its databases past the allowance, up to the ceiling.
+          type: boolean
+    ManagedPostgresOverage:
+      description: An account's managed PostgreSQL compute overage setting (ADR-20261025094915).
+      type: object
+      required: [enabled, compute_allowance_unit_seconds, compute_ceiling_unit_seconds]
+      properties:
+        enabled: { type: boolean }
+        compute_allowance_unit_seconds:
+          description: The plan's monthly compute allowance in compute-unit seconds.
+          type: integer
+          format: int64
+          minimum: 0
+        compute_ceiling_unit_seconds:
+          description: Where running databases are suspended before the operator's usage cap; twice the allowance with overage on.
+          type: integer
+          format: int64
+          minimum: 0
+    ManagedPostgresOverageRequest:
+      description: Turn an account's managed PostgreSQL compute overage on or off (ADR-20261025094915).
+      type: object
+      required: [enabled]
+      additionalProperties: false
+      properties:
+        enabled: { type: boolean }
     ManagedPostgresUsageLineItem:
       description: Normalized operator-only managed PostgreSQL ledger line.
       type: object
@@ -84161,7 +84259,7 @@ components:
         vcpu: { type: integer, minimum: 1, maximum: 4, description: "Plan-derived guest vCPU topology. Free/Hobby/Pro use 2; Scale uses 4. This is informational on account reads." }
         max_concurrency: { type: integer }
         deployed_apps: { type: integer }
-        preview_apps: { type: integer, description: "Maximum live pull-request preview apps, separate from production apps." }
+        preview_apps: { type: integer, description: "Maximum open PR preview environments, separate from production apps." }
         deploys_per_hour: { type: integer, minimum: 1, description: "Account-wide deployment admissions per fixed one-hour window." }
         developer_apps: { type: integer, description: "Maximum live `gregale dev` environments for this plan." }
         included_gb_hours: { type: integer, format: int64 }
@@ -85420,6 +85518,29 @@ components:
         started_at: { type: string, format: date-time }
         resolved_at: { type: [string, 'null'], format: date-time }
         evidence_path: { type: string }
+    ObsWakeTimeline:
+      type: object
+      description: Every platform event recorded for one wake, oldest first.
+      required: [wake_id, events, truncated]
+      properties:
+        wake_id: { type: string }
+        subject: { type: string, description: The first subject the events name (the app), when any does. }
+        events:
+          type: array
+          maxItems: 1000
+          items: { $ref: '#/components/schemas/ObsWakeEvent' }
+        truncated: { type: boolean, description: True when the wake recorded more than 1000 events. }
+    ObsWakeEvent:
+      type: object
+      description: One events row of a wake.
+      required: [at, kind]
+      properties:
+        at: { type: string, format: date-time }
+        kind: { type: string }
+        actor: { type: string }
+        subject: { type: string }
+        trace_id: { type: string }
+        data: { type: object, additionalProperties: true, description: The event's payload as recorded. }
     ObsAlertResponseTimes:
       type: object
       description: Atomic retained activation-cohort timing with explicit evidence and sample limitations.
@@ -89306,6 +89427,10 @@ components:
           description: How long the environment survives after this request. Omit for the 24-hour default. Values above the plan's developer lease maximum return 403 plan_limit_developer_lease.
         watch:
           $ref: '#/components/schemas/DevWatch'
+        go_command:
+          type: string
+          example: worker
+          description: "Builds cmd/<go_command> of the Go module at the source root (ADR-20261026120412), as a project service's Go command does. Omit to build what the source builds by default; applies from the next developer build. Refused with 400 for a function or a name that is not a cmd/ directory name."
 
     DevWatch:
       description: Watch mode (ADR-1170). The environment runs this development server instead of the production build, and live source patches reach the server's own reloader. Omit to turn watch mode off; the change applies from the next developer build. Refused with 422 dev_watch_unsupported when the developer app has less than 512 MB of RAM or does not require authentication.
@@ -90234,6 +90359,9 @@ components:
           description: Active automatic bucket bindings, including resources omitted from the latest upsert. Included only for principals with storage:manage or admin. Revoked bindings are excluded.
           items: { $ref: '#/components/schemas/DevBucketResponse' }
         watch: { $ref: '#/components/schemas/DevWatch' }
+        go_command:
+          type: string
+          description: "The stored Go command (ADR-20261026120412); omitted when none."
 
     DevSyncPhase:
       description: Safe phase-level timing from a developer sync.
@@ -105848,6 +105976,10 @@ components:
           type: array
           items: { type: string }
           description: "Names of the Compose build.args passed to the Dockerfile build, sorted. Values are not returned."
+        go_command:
+          type: string
+          example: api
+          description: "The cmd/<name> main package this service builds from the root of a Go module with several commands (ADR-20261025134512)."
         secret_files:
           type: array
           items:
@@ -106022,7 +106154,7 @@ components:
           $ref: '#/components/schemas/PlanManagedProvision'
         not_provisioned_reason:
           type: string
-          enum: [unavailable, plan, quota, unsupported, configured, not_referenced]
+          enum: [unavailable, plan, quota, unsupported, configured, not_referenced, permission]
           description: "Why apply does not provide a Compose postgres service (ADR-20261025111824). Omitted for other datastores and when provision is set."
 
     PlanManagedProvision:
@@ -112367,11 +112499,11 @@ components:
           description: "Bounded User-Agent classification for the request that caused the wake. Empty/absent on pre-M3 fleet rows."
         method:
           type: string
-          description: "Wake method (restore or cold_boot), when telemetry is available."
+          description: "Wake method vmmd ran (restore or cold_boot), when telemetry is available. A planned restore that fell back to a cold boot reads cold_boot."
         tier:
           type: string
           enum: [warm, init, cold_boot_fallback]
-          description: "Snapshot tier selected for the wake."
+          description: "Snapshot tier selected for the wake; cold_boot_fallback when a planned restore fell back to a cold boot."
         queued_count:
           type: integer
           format: int32
@@ -112390,6 +112522,13 @@ components:
           type: integer
           format: int32
           description: "Wall-clock boot_started → boot_completed delta in ms. -1 when still booting or rejected. 0 is impossible (a 0ms wake would round to a positive integer)."
+        planned_method:
+          type: string
+          description: "The method schedd planned when vmmd ran another one, for example restore on a wake that fell back to a cold boot. Absent otherwise."
+        restore_fallback_reason:
+          type: string
+          enum: [after_restore_failed]
+          description: "Closed reason for a restore that fell back to a cold boot, when one is reported. Absent for other fallbacks, such as a snapshot made from an older base."
 
     AppWakeTimelineResponse:
       description: |
@@ -113792,8 +113931,12 @@ components:
       required: [wake_id]
       properties:
         wake_id: { type: string }
-        method: { type: string, description: "How the instance started, for example restore or cold_boot." }
+        method: { type: string, description: "How the instance started, for example restore or cold_boot. A planned restore that fell back to a cold boot reads cold_boot." }
         ready_in_ms: { type: integer, format: int32, minimum: 0, description: "Milliseconds from boot start to ready; omitted until the wake completed." }
+        planned_method: { type: string, description: "What schedd planned for this wake when it differs from method, such as restore for a restore that fell back to a cold boot." }
+        restore_fallback_reason: { type: string, enum: [after_restore_failed], description: "Closed reason for a restore that fell back to a cold boot, when one is reported." }
+        thawed: { type: boolean, description: "True when the request resumed this wake's frozen instance instead of waiting for its boot. A thaw keeps the instance's original wake ID; method and ready_in_ms, which describe the original boot, are then omitted." }
+        thaw_ms: { type: integer, format: int32, minimum: 0, description: "Milliseconds the thaw took from the wake request to the answer, when thawed." }
 
     AccountTraceInvocation:
       type: object

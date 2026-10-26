@@ -11,12 +11,13 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"regexp"
 	"strings"
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	v4 "github.com/aws/aws-sdk-go-v2/aws/signer/v4"
+
+	"github.com/onebox-faas/faas/pkg/api"
 )
 
 // Amazon ECR authenticates registry requests with a 12-hour password from
@@ -24,11 +25,6 @@ import (
 // an ECR registry whose username is an IAM access key ID is that key: the
 // client signs GetAuthorizationToken with it and pulls with the token it
 // returns. The secret key is never sent to the registry.
-
-var (
-	ecrRegistryHost = regexp.MustCompile(`^([0-9]{12})\.dkr\.ecr(-fips)?\.([a-z0-9-]+)\.amazonaws\.com(\.cn)?$`)
-	awsAccessKeyID  = regexp.MustCompile(`^AKIA[A-Z0-9]{16}$`)
-)
 
 const (
 	ecrGetAuthorizationTokenTarget = "AmazonEC2ContainerRegistry_V20150921.GetAuthorizationToken"
@@ -46,13 +42,10 @@ type ecrToken struct {
 // Only an IAM access key for an ECR registry changes; every other credential
 // is returned as it is.
 func (c *RegistryClient) registryAuth(ctx context.Context, r Reference, auth *BasicAuth) (*BasicAuth, error) {
-	if auth == nil || !awsAccessKeyID.MatchString(auth.Username) {
+	if auth == nil || !api.IsECRAccessKey(r.Registry, auth.Username) {
 		return auth, nil
 	}
-	m := ecrRegistryHost.FindStringSubmatch(r.Registry)
-	if m == nil {
-		return auth, nil
-	}
+	m := api.ECRRegistryHost.FindStringSubmatch(r.Registry)
 	sum := sha256.Sum256([]byte(r.Registry + "\x00" + auth.Username + "\x00" + auth.Password))
 	key := hex.EncodeToString(sum[:])
 	if v, ok := c.ecrTokens.Load(key); ok {

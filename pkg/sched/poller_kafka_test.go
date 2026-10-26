@@ -18,9 +18,8 @@
 //     operators see no change.
 //
 //  2. With broker_poison_strategy="seek-to-offset", the kafka
-//     poller calls SetOffset(msg.Offset) on poison instead. The
-//     broker offset rewinds to the failed offset so the next
-//     Poll re-fetches the same message — the operator-retry
+//     poller keeps the poison record instead: no commit, and the
+//     next Poll hands the same message back — the operator-retry
 //     path described in pkg/api/trigger.go::BrokerPoisonStrategySeekToOffset.
 //
 //  3. With broker_poison_strategy="" (the zero value), the
@@ -30,9 +29,11 @@
 //     the Go side never sees "" in practice, but the test pins
 //     the in-process contract too).
 //
-//  4. Non-poison Nack reasons always rewind via SetOffset
-//     regardless of broker_poison_strategy — the strategy only
-//     governs the poison-specific terminal behaviour.
+//  4. Non-poison Nack reasons always keep the record for
+//     redelivery regardless of broker_poison_strategy — the
+//     strategy only governs the poison-specific terminal behaviour.
+//     (A consumer-group Reader cannot SetOffset, so the old rewind
+//     did nothing and the next commit skipped the record.)
 
 package sched
 
@@ -51,21 +52,9 @@ import (
 	"github.com/onebox-faas/faas/pkg/state/sqlc"
 )
 
-// poisonStrategyOp records the terminal broker op the poller
-// chose. The poller doesn't reach for CommitMessages or
-// SetOffset directly on a non-poison Nack — those branches are
-// not exercised by this test (the test pins audit #10, not the
-// existing Nack-on-failure path).
-type poisonStrategyOp int
-
-const (
-	poisonOpCommit poisonStrategyOp = iota
-	poisonOpSetOffset
-)
-
+// poisonStrategyReader records the offsets the poller commits.
 type poisonStrategyReader struct {
 	mu        sync.Mutex
-	poisonOp  poisonStrategyOp // last terminal op recorded on poison
 	offsets   []int64
 	commitCtx context.Context
 }
@@ -76,19 +65,9 @@ func (r *poisonStrategyReader) CommitMessages(ctx context.Context, msgs ...kafka
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.commitCtx = ctx
-	r.poisonOp = poisonOpCommit
 	for _, m := range msgs {
 		r.offsets = append(r.offsets, m.Offset)
 	}
-	return nil
-}
-
-// SetOffset records the rewind op + the offset.
-func (r *poisonStrategyReader) SetOffset(offset int64) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	r.poisonOp = poisonOpSetOffset
-	r.offsets = append(r.offsets, offset)
 	return nil
 }
 
@@ -139,9 +118,6 @@ func TestKafka_NackPoisonCommit(t *testing.T) {
 	}
 	rdr.mu.Lock()
 	defer rdr.mu.Unlock()
-	if rdr.poisonOp != poisonOpCommit {
-		t.Fatalf("poison op = %v, want %v (commit strategy must CommitMessages)", rdr.poisonOp, poisonOpCommit)
-	}
 	if len(rdr.offsets) != 1 || rdr.offsets[0] != 42 {
 		t.Fatalf("committed offsets = %v, want [42]", rdr.offsets)
 	}
@@ -151,9 +127,8 @@ func TestKafka_NackPoisonCommit(t *testing.T) {
 }
 
 // TestKafka_NackPoisonSeekToOffset asserts that with
-// broker_poison_strategy="seek-to-offset", the poller rewinds
-// via SetOffset — broker offset returns to msg.Offset so the
-// next Poll re-fetches the same message.
+// broker_poison_strategy="seek-to-offset", the poller keeps the
+// record: nothing commits and the next Poll hands it back.
 func TestKafka_NackPoisonSeekToOffset(t *testing.T) {
 	t.Parallel()
 
@@ -171,14 +146,11 @@ func TestKafka_NackPoisonSeekToOffset(t *testing.T) {
 	}
 	rdr.mu.Lock()
 	defer rdr.mu.Unlock()
-	if rdr.poisonOp != poisonOpSetOffset {
-		t.Fatalf("poison op = %v, want %v (seek-to-offset strategy must SetOffset)", rdr.poisonOp, poisonOpSetOffset)
+	if len(rdr.offsets) != 0 {
+		t.Fatalf("committed offsets = %v, want none (seek-to-offset keeps the record)", rdr.offsets)
 	}
-	if len(rdr.offsets) != 1 || rdr.offsets[0] != 77 {
-		t.Fatalf("rewound offsets = %v, want [77]", rdr.offsets)
-	}
-	if _, ok := k.inFlight[id]; ok {
-		t.Fatal("Nack should drop the inFlight handle after SetOffset")
+	if len(k.retry) != 1 || k.retry[0].Offset != 77 {
+		t.Fatalf("kept records = %v, want offset 77 for the next Poll", k.retry)
 	}
 }
 
@@ -205,17 +177,17 @@ func TestKafka_NackPoisonEmptyStrategyDefaultsToCommit(t *testing.T) {
 	}
 	rdr.mu.Lock()
 	defer rdr.mu.Unlock()
-	if rdr.poisonOp != poisonOpCommit {
-		t.Fatalf("poison op = %v, want %v (empty strategy must default to commit)", rdr.poisonOp, poisonOpCommit)
+	if len(rdr.offsets) != 1 || rdr.offsets[0] != 99 {
+		t.Fatalf("committed offsets = %v, want [99] (empty strategy must default to commit)", rdr.offsets)
 	}
 }
 
-// TestKafka_NackBrokerErrorAlwaysRewinds asserts that non-poison
-// Nack reasons (broker_error) always rewind via SetOffset,
-// regardless of broker_poison_strategy. The strategy only
+// TestKafka_NackBrokerErrorRedelivers asserts that non-poison
+// Nack reasons (broker_error) always keep the record for the next
+// Poll, regardless of broker_poison_strategy. The strategy only
 // governs the poison-specific terminal behaviour; transient
 // broker failures must always re-poll.
-func TestKafka_NackBrokerErrorAlwaysRewinds(t *testing.T) {
+func TestKafka_NackBrokerErrorRedelivers(t *testing.T) {
 	t.Parallel()
 
 	for _, stratName := range []string{"commit", "seek-to-offset", ""} {
@@ -232,11 +204,11 @@ func TestKafka_NackBrokerErrorAlwaysRewinds(t *testing.T) {
 			}
 			rdr.mu.Lock()
 			defer rdr.mu.Unlock()
-			if rdr.poisonOp != poisonOpSetOffset {
-				t.Fatalf("broker_error strategy=%q: poison op = %v, want %v (broker_error must always SetOffset)", stratName, rdr.poisonOp, poisonOpSetOffset)
+			if len(rdr.offsets) != 0 {
+				t.Fatalf("broker_error strategy=%q: committed offsets = %v, want none", stratName, rdr.offsets)
 			}
-			if len(rdr.offsets) != 1 || rdr.offsets[0] != 123 {
-				t.Fatalf("broker_error strategy=%q: rewound offsets = %v, want [123]", stratName, rdr.offsets)
+			if len(k.retry) != 1 || k.retry[0].Offset != 123 {
+				t.Fatalf("broker_error strategy=%q: kept records = %v, want offset 123", stratName, k.retry)
 			}
 		})
 	}
@@ -562,9 +534,9 @@ func kafkaSeekFixture(rdr kafkaBrokerOp, offsets ...int64) (*kafkaPoller, []stri
 		inFlight: map[string]kafka.Message{},
 	}
 	for _, off := range offsets {
-		// Mirror the seqStr formula in (*kafkaPoller).Poll so the
-		// in-flight key matches the production hot path.
-		id := fmt.Sprintf("%d-%d-%d", 0, off, off+100)
+		// Mirror kafkaRecordID so the in-flight key matches the
+		// production hot path.
+		id := fmt.Sprintf("%d-%d", 0, off)
 		k.inFlight[id] = kafka.Message{Topic: "orders.v1", Partition: 0, Offset: off}
 		ids = append(ids, id)
 	}
@@ -586,9 +558,6 @@ func TestKafka_AckMultipleSucceeds(t *testing.T) {
 	}
 	rdr.mu.Lock()
 	defer rdr.mu.Unlock()
-	if rdr.poisonOp != poisonOpCommit {
-		t.Fatalf("terminal op = %v, want commit (Ack = CommitMessages)", rdr.poisonOp)
-	}
 	wantOff := []int64{1, 2, 3}
 	if len(rdr.offsets) != 3 {
 		t.Fatalf("CommitMessages offsets = %v, want %v", rdr.offsets, wantOff)
@@ -620,7 +589,6 @@ func (r *flakyCommitReader) FetchMessage(context.Context) (kafka.Message, error)
 func (r *flakyCommitReader) CommitMessages(_ context.Context, _ ...kafka.Message) error {
 	return r.commitErr
 }
-func (r *flakyCommitReader) SetOffset(_ int64) error  { return nil }
 func (r *flakyCommitReader) Stats() kafka.ReaderStats { return kafka.ReaderStats{} }
 func (r *flakyCommitReader) Close() error             { return nil }
 
@@ -646,14 +614,11 @@ func TestKafka_AckCommitBrokerError(t *testing.T) {
 	}
 }
 
-// TestKafka_NackBrokerErrorAlwaysSeeks pins the offset-rebalance
-// path: Nack with reason="broker_error" must always SetOffset —
-// the broker_poison_strategy column is irrelevant outside the
-// poison branch. Doubles the TestKafka_NackBrokerErrorAlwaysRewinds
-// pin with a different in-flight shape to confirm the
-// rebalance-failure surface (commits don't happen on transient
-// broker errors).
-func TestKafka_NackBrokerErrorAlwaysSeeks(t *testing.T) {
+// TestKafka_NackBrokerErrorNeverCommits pins the transient-failure
+// path with a different in-flight shape: Nack with
+// reason="broker_error" never commits — the broker_poison_strategy
+// column is irrelevant outside the poison branch.
+func TestKafka_NackBrokerErrorNeverCommits(t *testing.T) {
 	t.Parallel()
 	for _, off := range []int64{10, 20, 30} {
 		off := off
@@ -666,11 +631,8 @@ func TestKafka_NackBrokerErrorAlwaysSeeks(t *testing.T) {
 				t.Fatalf("Nack offset=%d: %v", off, err)
 			}
 			rdr.mu.Lock()
-			if rdr.poisonOp != poisonOpSetOffset {
-				t.Errorf("offset=%d: terminal op = %v, want SetOffset (broker_error must always rewind)", off, rdr.poisonOp)
-			}
-			if len(rdr.offsets) != 1 || rdr.offsets[0] != off {
-				t.Errorf("offset=%d: SetOffset offsets = %v, want [%d]", off, rdr.offsets, off)
+			if len(rdr.offsets) != 0 {
+				t.Errorf("offset=%d: committed offsets = %v, want none on a transient failure", off, rdr.offsets)
 			}
 			rdr.mu.Unlock()
 		})

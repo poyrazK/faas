@@ -1,5 +1,5 @@
 [Unit]
-Description=Loki off-host log backend for Gregale
+Description=Loki log backend for Gregale
 Documentation=https://grafana.com/docs/loki/latest/
 Wants=network-online.target
 After=network-online.target
@@ -9,11 +9,21 @@ RequiresMountsFor={{ loki_data_dir }}
 User=loki
 Group=loki
 Type=simple
-ExecStart=/usr/local/bin/loki -config.file={{ loki_config_path }}
+{% if loki_storage_backend == 's3' %}
+# Object-storage credentials, read by systemd as root before the switch to the
+# loki user; -config.expand-env substitutes them into the rendered config.
+EnvironmentFile={{ loki_s3_credentials_file }}
+{% endif %}
+ExecStart=/usr/local/bin/loki -config.expand-env=true -config.file={{ loki_config_path }}
 Restart=on-failure
 RestartSec=5s
 LimitNOFILE=65536
-MemoryMax=1G
+# ADR-20261023124955 §1: capped observability slice beside PostgreSQL on the
+# control plane; Loki yields CPU to Prometheus and Alertmanager there.
+Slice=faas-obs.slice
+CPUWeight=50
+MemoryMax={{ loki_memory_max }}
+Environment=GOMEMLIMIT={{ loki_gomemlimit }}
 
 NoNewPrivileges=yes
 PrivateTmp=yes

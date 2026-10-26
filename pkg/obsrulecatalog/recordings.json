@@ -3,10 +3,10 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "4cd305a3836315b20e4f546ad36cdf632f5d0fcc46d649fb463f45444d0e4529",
+      "revision": "82a3fd025183bc6e5cdc19890470d12a708b4851ebf04689854ea31bbab44083",
       "expected": {
         "id": "gregale-core-v1",
-        "revision": "be4034dd7b68bd053ec30f3c03135059d5f6a9978854a3ec9600f9d0eb410251",
+        "revision": "1687432ce22245d54fe46a82da0b2068207e9022db7e9145254836b44065449e",
         "files": [
           "faas.rules.yml"
         ],
@@ -485,11 +485,11 @@
             "group_name": "faas_loki_pipeline",
             "rule_name": "loki_drop_total",
             "definition": {
-              "expression_hash": "ac3a0f4c91b866e365aa692e06060e933323cfa5c8f676bf231c6d5e02092b9c",
+              "expression_hash": "3b9780611dcc23f1003043cf0fc506f269f24b7f7d415aaa52885540002655f5",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "c5d06339e14d318f99254821ecaebc0fb845e007d932437c1480ed66b0c8bf15"
+              "fingerprint": "d56c6421ae874292ad4c43af9589b74b043bc1d59d4d246feb1da0e9cdf14afe"
             }
           },
           {
@@ -498,11 +498,11 @@
             "group_name": "faas_loki_pipeline",
             "rule_name": "loki_send_total",
             "definition": {
-              "expression_hash": "c14073fd267b5dbdfdbe528add08d0fbd1c90e50d68f2e1f23093b20830ec617",
+              "expression_hash": "1dd492701bb78de9446a552161687caaba37c0baabe7313c41e90376c0dda1ae",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "68ef22000928f9779b2b83dac45c1971d1fa059b63c5427cf3fa653e087236bf"
+              "fingerprint": "55bcdb91fefa2fe681fcf7a370b836f4e60cca6571438e67132dd60120051bd8"
             }
           },
           {
@@ -1248,8 +1248,8 @@
           }
         ]
       },
-      "alert_set_revision": "9bb4195ebeac8a8c6d1b4b14c4e20769296b8720ddf7df41614a7c57c7a52377",
-      "alert_count": 423,
+      "alert_set_revision": "5f79df7fb1118dc7ce29d1610192031e3b3f855cd94cdb9cba73995eb1cd9430",
+      "alert_count": 444,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -2826,10 +2826,10 @@
       ]
     },
     {
-      "revision": "95a80fca3851163386978fdf15089d992f13126195e66dd4d2836cbb485fb6c7",
+      "revision": "762199929828b26d0c7f29302d4a78196b85a8a70ece7c6d75b6087459524224",
       "expected": {
         "id": "gregale-full-v1",
-        "revision": "a8b18642a93fd08eba4bcd7d170c605b9fc402d02e4e87444c687b85d5309605",
+        "revision": "fdfb015f00046499c20f4d13eaa6971fa728e8e3292a3f6186a2965c135f13d1",
         "files": [
           "bridge.rules.yml",
           "data_placement.yaml",
@@ -3312,11 +3312,11 @@
             "group_name": "faas_loki_pipeline",
             "rule_name": "loki_drop_total",
             "definition": {
-              "expression_hash": "ac3a0f4c91b866e365aa692e06060e933323cfa5c8f676bf231c6d5e02092b9c",
+              "expression_hash": "3b9780611dcc23f1003043cf0fc506f269f24b7f7d415aaa52885540002655f5",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "c5d06339e14d318f99254821ecaebc0fb845e007d932437c1480ed66b0c8bf15"
+              "fingerprint": "d56c6421ae874292ad4c43af9589b74b043bc1d59d4d246feb1da0e9cdf14afe"
             }
           },
           {
@@ -3325,11 +3325,11 @@
             "group_name": "faas_loki_pipeline",
             "rule_name": "loki_send_total",
             "definition": {
-              "expression_hash": "c14073fd267b5dbdfdbe528add08d0fbd1c90e50d68f2e1f23093b20830ec617",
+              "expression_hash": "1dd492701bb78de9446a552161687caaba37c0baabe7313c41e90376c0dda1ae",
               "labels_hash": "44136fa355b3678a1146ad16f7e8649e94fb4fc21fe77e8310c060f61caaff8a",
               "for_seconds": 0,
               "keep_firing_for_seconds": 0,
-              "fingerprint": "68ef22000928f9779b2b83dac45c1971d1fa059b63c5427cf3fa653e087236bf"
+              "fingerprint": "55bcdb91fefa2fe681fcf7a370b836f4e60cca6571438e67132dd60120051bd8"
             }
           },
           {
@@ -4075,8 +4075,8 @@
           }
         ]
       },
-      "alert_set_revision": "05f77456124aee34fb7882f1f28ddbd09376c863eaacfdec28f2745d5983aa56",
-      "alert_count": 443,
+      "alert_set_revision": "ea76e32a7f9f63d3dc75c30c42ff32b1a1dc06ee7c132b6cc7c77b3563eb74b0",
+      "alert_count": 464,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
