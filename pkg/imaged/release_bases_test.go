@@ -1,8 +1,8 @@
 package imaged
 
-// adr: 20261024191249, 20261026181418 — the rollout pre-stage publishes every
-// runtime base the candidate configures, whoever owns the apps on it, under
-// the generation's own keys.
+// adr: 20261024191249 — the rollout pre-stage publishes every runtime base
+// the candidate configures, whoever owns the apps on it.
+// adr: 20261026181418 — under the generation's own keys.
 
 import (
 	"bytes"

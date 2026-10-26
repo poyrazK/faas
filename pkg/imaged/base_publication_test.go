@@ -1,8 +1,8 @@
 package imaged
 
-// adr: 20261024191249, 20261026181418 — the rollout pre-stage and vmmd
-// base-adoption-check judge a runtime base the way vmmd's
-// ensureBaseGeneration will: the generation's own keys first, then the legacy
+// adr: 20261024191249 — the rollout pre-stage and vmmd base-adoption-check
+// judge a runtime base the way vmmd's ensureBaseGeneration will.
+// adr: 20261026181418 — the generation's own keys first, then the legacy
 // logical key.
 
 import (
