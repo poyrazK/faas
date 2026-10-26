@@ -4150,6 +4150,9 @@ func (m *MemStore) DeleteProjectEnvironmentWithCleanup(
 	if err := m.validateEnvironmentInvocationCleanupLocked(environmentID); err != nil {
 		return ProjectEnvironmentCleanupJob{}, err
 	}
+	if err := m.checkMemTrafficEnvironmentRemovalLocked(ctx, accountID, projectID, slug, environmentID); err != nil {
+		return ProjectEnvironmentCleanupJob{}, err
+	}
 
 	var job ProjectEnvironmentCleanupJob
 	if !resources.Empty() {
