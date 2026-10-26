@@ -38,7 +38,8 @@ and removes both units, their drop-ins and the firewall rules.
 ## Checks
 
 - `systemctl status faas-gatewayd-public-edge faas-cloudflared`
-- `curl -fsS http://127.0.0.1:9092/readyz` (the edge's readiness)
+- `curl -fsS http://127.0.0.1:9109/readyz` (the edge's readiness; 9092 on a
+  compute node is gatewayd-internal's egress listener)
 - `curl -fsS http://127.0.0.1:20241/ready` (the connector holds a tunnel
   connection)
 

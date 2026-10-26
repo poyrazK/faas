@@ -14,13 +14,20 @@ import "github.com/onebox-faas/faas/pkg/daemonunit"
 //     first, credential-bound routes forwarded to the control plane;
 //   - the public socket is 127.0.0.1:8090 (gatewayd-internal holds 8080 on a
 //     compute node) and only the local connector dials it;
-//   - the control listener binds every address on 9092 so the control plane
-//     can probe and scrape it; nftables admits only control-plane addresses;
+//   - the control listener binds every address on ComputeEdgeControlPort so
+//     the control plane can probe and scrape it; nftables admits only
+//     control-plane addresses. It is not the control-plane edge's 9092: on a
+//     compute node gatewayd-internal's egress listener holds 9092;
 //   - no object-storage credentials and no OTLP spans writer.
 //
 // It lives in OptionalRegistry: the manifest turns it on per cell
 // (public_edge.compute_nodes), so it stays out of the core activation and
 // release-health loops of compute nodes that do not run the edge.
+// ComputeEdgeControlPort is the compute-node app edge's control listener
+// (readiness, metrics). apid's metrics discovery, the readiness probe in the
+// registry, nftables (faas_edge_control_port) and the edge scripts use it.
+const ComputeEdgeControlPort = "9109"
+
 func UnitGatewaydPublicEdge() daemonunit.Unit {
 	u := UnitGatewaydPublic()
 	u.Description = "onebox-faas gatewayd-public — compute-node app edge behind Cloudflare Tunnel (ADR-1343)"
@@ -33,7 +40,7 @@ func UnitGatewaydPublicEdge() daemonunit.Unit {
 		{Key: "FAAS_PUBLIC_EDGE_MODE", Value: "compute"},
 		{Key: "FAAS_GATEWAYD_PUBLIC_ROLE", Value: "compute-only"},
 		{Key: "FAAS_PUBLIC_LISTEN_ADDR", Value: "127.0.0.1:8090"},
-		{Key: "FAAS_PUBLIC_CONTROL_ADDR", Value: "0.0.0.0:9092"},
+		{Key: "FAAS_PUBLIC_CONTROL_ADDR", Value: "0.0.0.0:" + ComputeEdgeControlPort},
 		{Key: "FAAS_TRUSTED_INGRESS_CIDRS", Value: "127.0.0.0/8,::1/128"},
 		{Key: "FAAS_OTEL_SPANS_WRITER_ENABLED", Value: "false"},
 	}

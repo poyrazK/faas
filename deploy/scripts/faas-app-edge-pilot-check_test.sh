@@ -42,7 +42,7 @@ case "$script" in
     echo "opens $(cat "$state/opens")"
     printf '1111\t%s\n' "$(cat "$state/stmt")"
     printf '2222\t500\n' ;;
-  *9092/metrics*)
+  *9109/metrics*)
     f=0; [[ "$node" != gregale-compute-1 ]] || f=$(cat "$state/fallback")
     echo "$node $f 0" ;;
 esac
