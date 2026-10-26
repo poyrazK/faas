@@ -92769,7 +92769,7 @@ UPDATE deployments d SET status = CASE WHEN
     OR EXISTS(SELECT 1 FROM project_release_members rm JOIN project_release_sets rs ON rs.id=rm.release_id
         WHERE rm.deployment_id=d.id AND (rs.active OR rs.expires_at>now()))
     OR EXISTS(SELECT 1 FROM durable_work_retained_deployment_refs retained WHERE retained.deployment_id=d.id)
-    THEN 'live' ELSE 'superseded' END, traffic_percent=0
+    THEN 'live' ELSE 'superseded' END, traffic_percent=0, traffic_percent_explicit=false
 WHERE d.app_id=$1::uuid AND d.scope=$2::text
 AND d.status='live' AND d.id<>$3::uuid
 `
@@ -92780,6 +92780,8 @@ type RetireLiveDeploymentSiblingsParams struct {
 	DeploymentID pgtype.UUID
 }
 
+// A retired sibling is a retained stable revision, not a manual dark
+// deployment, so it loses traffic_percent_explicit (Hunt 14 H14-71).
 func (q *Queries) RetireLiveDeploymentSiblings(ctx context.Context, db DBTX, arg RetireLiveDeploymentSiblingsParams) (int64, error) {
 	result, err := db.Exec(ctx, retireLiveDeploymentSiblings, arg.AppID, arg.Scope, arg.DeploymentID)
 	if err != nil {
