@@ -28,6 +28,10 @@ import (
 // from secret managers, rejects megabyte uploads.
 const AppWebhookSecretMaxBytes = 256
 
+// AppWebhookSecretNamespace is the secretbox namespace an app webhook's
+// signing secret is sealed under; schedd's dispatcher accepts no other.
+const AppWebhookSecretNamespace = "APP_WEBHOOK"
+
 // AppWebhookSecretMasked is the literal returned in every response
 // shape that carries the webhook_secret field. Never echo the
 // plaintext back to the customer — same posture as

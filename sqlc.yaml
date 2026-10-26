@@ -173,6 +173,7 @@ sql:
 
   - engine: "postgresql"
     queries:
+      - "pkg/state/audit_anchor_queries.sql"
       - "pkg/state/audit_outbox_delivery_queries.sql"
       - "pkg/state/automation_live_queries.sql"
       - "pkg/state/billing_run_product_queries.sql"

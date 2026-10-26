@@ -162,6 +162,11 @@ type Querier interface {
 	AttachDeploymentSubmission(ctx context.Context, db DBTX, arg AttachDeploymentSubmissionParams) (AttachDeploymentSubmissionRow, error)
 	AttachProjectEnvironmentCloneDeployment(ctx context.Context, db DBTX, arg AttachProjectEnvironmentCloneDeploymentParams) (int64, error)
 	AttestPromotionMigrationRuntime(ctx context.Context, db DBTX, arg AttestPromotionMigrationRuntimeParams) error
+	// One page of the audit rows received in [window_start, window_end), in the
+	// order anchors digest them, after the (received_at, id) cursor. data is
+	// jsonb's canonical text, so the digest does not depend on how a row was
+	// written.
+	AuditLogWindowPage(ctx context.Context, db DBTX, arg AuditLogWindowPageParams) ([]AuditLogWindowPageRow, error)
 	AuthorizeBaseImageProducerInsert(ctx context.Context, db DBTX, id string) error
 	AuthorizeBaseImageScanInsert(ctx context.Context, db DBTX, id pgtype.UUID) error
 	AuthorizeBindingReleaseDeactivation(ctx context.Context, db DBTX, arg AuthorizeBindingReleaseDeactivationParams) (bool, error)
@@ -1719,6 +1724,9 @@ type Querier interface {
 	// pending returns no row.
 	FinishScheduledRelease(ctx context.Context, db DBTX, arg FinishScheduledReleaseParams) (ScheduledRelease, error)
 	FinishWorkflowRunCancellation(ctx context.Context, db DBTX, arg FinishWorkflowRunCancellationParams) (WorkflowRun, error)
+	// The first anchor whose window ends after a time: where a verification of
+	// recent history starts.
+	FirstAuditLogAnchorEndingAfter(ctx context.Context, db DBTX, after pgtype.Timestamptz) ([]int64, error)
 	FirstCustomerOperationWorkflowEvent(ctx context.Context, db DBTX, arg FirstCustomerOperationWorkflowEventParams) (WorkflowEvent, error)
 	// ADR-1740, ADR-1741: read first when a VM freezes, before the rest of its
 	// ticket, so any change after it moves the generation the guarded thaw
@@ -2188,6 +2196,8 @@ type Querier interface {
 	InsertApplicationStandardReviewPlan(ctx context.Context, db DBTX, arg InsertApplicationStandardReviewPlanParams) error
 	InsertApplicationStandardSnapshotCapture(ctx context.Context, db DBTX, arg InsertApplicationStandardSnapshotCaptureParams) error
 	InsertApplicationStandardVersion(ctx context.Context, db DBTX, arg InsertApplicationStandardVersionParams) error
+	// A second anchorer racing for the same seq inserts nothing.
+	InsertAuditLogAnchor(ctx context.Context, db DBTX, arg InsertAuditLogAnchorParams) (int64, error)
 	InsertAutomationLiveBaselinePromotion(ctx context.Context, db DBTX, arg InsertAutomationLiveBaselinePromotionParams) error
 	InsertAutomationLiveBaselineRetirement(ctx context.Context, db DBTX, arg InsertAutomationLiveBaselineRetirementParams) error
 	InsertAutomationLiveSuite(ctx context.Context, db DBTX, arg InsertAutomationLiveSuiteParams) (WorkflowAutomationLiveSuite, error)
@@ -2909,6 +2919,8 @@ type Querier interface {
 	LatchAutomationFailurePause(ctx context.Context, db DBTX, arg LatchAutomationFailurePauseParams) error
 	LatestAppConfigGuard(ctx context.Context, db DBTX, arg LatestAppConfigGuardParams) (AppConfigGuard, error)
 	LatestAppConfigRevision(ctx context.Context, db DBTX, arg LatestAppConfigRevisionParams) (AppConfigRevision, error)
+	// ADR-20261026163015: the newest anchor, or no row before the first.
+	LatestAuditLogAnchor(ctx context.Context, db DBTX) ([]AuditLogAnchor, error)
 	LatestDeployment(ctx context.Context, db DBTX, appID pgtype.UUID) (LatestDeploymentRow, error)
 	LatestDevSourcePatch(ctx context.Context, db DBTX, arg LatestDevSourcePatchParams) (LatestDevSourcePatchRow, error)
 	// Gateway restart hydration: readiness is independent of the instance's
@@ -3098,6 +3110,7 @@ type Querier interface {
 	// Index: request_telemetry_app_received_idx on (app_id, received_at
 	// DESC) makes this DISTINCT scan cheap.
 	ListAppsWithRecentTelemetry(ctx context.Context, db DBTX, dollar_1 pgtype.Interval) ([]pgtype.UUID, error)
+	ListAuditLogAnchors(ctx context.Context, db DBTX, arg ListAuditLogAnchorsParams) ([]AuditLogAnchor, error)
 	ListAutomationFailurePauses(ctx context.Context, db DBTX, appID pgtype.UUID) ([]string, error)
 	ListAutomationFailurePolicyCandidates(ctx context.Context, db DBTX, arg ListAutomationFailurePolicyCandidatesParams) ([]ListAutomationFailurePolicyCandidatesRow, error)
 	ListAutomationLiveBaselineHeads(ctx context.Context, db DBTX, arg ListAutomationLiveBaselineHeadsParams) ([]WorkflowAutomationLiveBaselinePromotion, error)
