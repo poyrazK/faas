@@ -121,6 +121,7 @@ WHERE o.account_id=sqlc.arg(account_id)::uuid
   AND o.created_at >= sqlc.arg(from_at)::timestamptz
   AND o.created_at < sqlc.arg(cutoff_at)::timestamptz
   AND (o.created_at,o.id) > (sqlc.arg(cursor_at)::timestamptz,sqlc.arg(cursor_outbox_id)::bigint)
+  AND event_app_in_producer_reach(o.account_id, o.payload->>'producer', sqlc.arg(app_id)::text)
 ORDER BY o.created_at,o.id
 LIMIT sqlc.arg(page_limit)::integer;
 

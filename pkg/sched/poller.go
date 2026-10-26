@@ -24,7 +24,8 @@
 // broker:
 //   - queue       UPDATE invocations.state (in-platform; rows
 //     already committed before the poller sees them).
-//   - kafka       CommitMessages on Ack; Seek+SetOffset on Nack.
+//   - kafka       CommitMessages up to the lowest open offset on Ack;
+//     a retryable Nack redelivers the record on the next Poll.
 //   - nats        js.Msg.Ack() on Ack; js.Msg.Nak(delay) on Nack.
 //   - redis_streams  XAck on Ack; XClaim after visibility-timeout
 //     on Nack.

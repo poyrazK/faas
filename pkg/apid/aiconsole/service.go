@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/onebox-faas/faas/pkg/apid/appaccess"
 	"github.com/onebox-faas/faas/pkg/dashboard"
 	"github.com/onebox-faas/faas/pkg/state"
 )
@@ -131,18 +132,34 @@ func (s *Service) integration(ctx context.Context, accountID, integrationID stri
 	return state.OutboundIntegrationOffer{}, false, nil
 }
 
-// appNames maps the account's app IDs to their slugs.
-func (s *Service) appNames(ctx context.Context, accountID string) map[string]string {
-	apps, err := s.Host.Store().ListApps(ctx, accountID)
-	names := make(map[string]string, len(apps))
+// otherApps names, in usage rollups, the account's apps the reader may no
+// longer see.
+const otherApps = "Other apps"
+
+// appNames maps the account's app IDs the reader may see to their slugs and
+// returns the rest, whose traces and calls the pages withhold. Company apps
+// share their creator's AccountID, so a creator removed from a company
+// keeps the integration but not the company apps' AI calls.
+func (s *Service) appNames(ctx context.Context, acct state.Account) (map[string]string, map[string]bool) {
+	apps, err := s.Host.Store().ListApps(ctx, acct.ID)
+	names, hidden := make(map[string]string, len(apps)), make(map[string]bool)
 	if err != nil {
-		s.log().Warn("dashboard ai: app list unavailable", "account_id", accountID, "err", err)
-		return names
+		s.log().Warn("dashboard ai: app list unavailable", "account_id", acct.ID, "err", err)
+		return names, hidden
+	}
+	visible, err := appaccess.VisibleAppsContext(ctx, s.Host.Store(), acct, apps)
+	if err != nil {
+		s.log().Warn("dashboard ai: app access unavailable", "account_id", acct.ID, "err", err)
+		visible = nil
 	}
 	for _, app := range apps {
-		names[app.ID] = app.Slug
+		hidden[app.ID] = true
 	}
-	return names
+	for _, app := range visible {
+		names[app.ID] = app.Slug
+		delete(hidden, app.ID)
+	}
+	return names, hidden
 }
 
 func integrationHref(integrationID string) string {

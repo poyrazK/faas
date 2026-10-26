@@ -216,6 +216,71 @@ func runNodeAdmissionTests(t *testing.T, create func(*testing.T) nodeAdmissionTe
 	})
 }
 
+// checkReservationAllowance pins ADR-909 amendment 1 on one store: without a
+// placement binding the node holds Σ(ram_mb + overhead) up to its ceiling;
+// a binding's reservation allowance raises that bound, clamped to
+// api.MeasuredAdmissionMaxOvercommitPercent.
+func checkReservationAllowance(t *testing.T, s state.Store) {
+	t.Helper()
+	const ceilingMB, ramMB = 1024, 248
+	perInstance := ramMB + api.PerVMOverheadMB
+	node, err := s.CreateComputeNode(t.Context(), state.ComputeNode{
+		Name: "allowance-" + uuid.NewString(), Lifecycle: state.NodeLifecycleActive,
+		TargetURL: "unix:///run/faas/vmmd.sock", VPCPUs: 4, VCPUBudget: 160,
+		MemMB: 8192, AdmissionCeilingMB: ceilingMB, MaxConcurrency: 64,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	app, dep := completionApplication(t, s)
+	bound := func(percent int) context.Context {
+		return state.WithNodeAdmission(t.Context(), state.NodeAdmission{
+			NodeID: node.ID, Generation: node.LifecycleGeneration, ReservationPercent: percent,
+		})
+	}
+	fill := func(ctx context.Context, step string) {
+		t.Helper()
+		for {
+			_, err := s.CreateInstanceWithMode(ctx, app, dep, string(state.StateWaking), ramMB, node.ID, uuid.NewString(), string(state.InstanceModeNormal))
+			if errors.Is(err, state.ErrNodeCapacity) {
+				return
+			}
+			if err != nil {
+				t.Fatalf("%s: %v", step, err)
+			}
+		}
+	}
+	used := func() int64 {
+		t.Helper()
+		mb, err := s.ComputeNodeUsedMB(t.Context(), node.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return mb
+	}
+	fill(t.Context(), "unbound")
+	if got, want := used(), int64(ceilingMB/perInstance*perInstance); got != want {
+		t.Fatalf("unbound admissions hold %d MB, want %d (the ceiling)", got, want)
+	}
+	fill(bound(0), "zero allowance")
+	if got, want := used(), int64(ceilingMB/perInstance*perInstance); got != want {
+		t.Fatalf("a zero allowance grew the node to %d MB, want %d", got, want)
+	}
+	capMB := ceilingMB * api.MeasuredAdmissionMaxOvercommitPercent / 100
+	fill(bound(10*api.MeasuredAdmissionMaxOvercommitPercent), "clamped allowance")
+	if got, want := used(), int64(capMB/perInstance*perInstance); got != want {
+		t.Fatalf("an oversized allowance holds %d MB, want %d (clamped to %d%%)", got, want, api.MeasuredAdmissionMaxOvercommitPercent)
+	}
+	_, err = s.CreateInstanceWithMode(bound(api.MeasuredAdmissionMaxOvercommitPercent), app, dep, string(state.StateWaking), ramMB, node.ID, uuid.NewString(), string(state.InstanceModeNormal))
+	if !errors.Is(err, state.ErrNodeCapacity) || !strings.Contains(err.Error(), "cap_mb=") {
+		t.Fatalf("admission past the allowance = %v, want ErrNodeCapacity naming the cap", err)
+	}
+}
+
+func TestNodeReservationAllowanceMemory(t *testing.T) {
+	checkReservationAllowance(t, state.NewMemStore())
+}
+
 func TestNodeAdmissionMemory(t *testing.T) {
 	runNodeAdmissionTests(t, func(*testing.T) nodeAdmissionTestStore { return state.NewMemStore() })
 }

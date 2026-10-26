@@ -123,6 +123,11 @@ type Config struct {
 	// FAAS_APPS_DOMAIN. The public Gregale default is gregale.dev.
 	AppsDomain string `toml:"apps_domain"`
 
+	// FileConfig carries platform_domain, deploy_domain,
+	// apps_domain_aliases and apps_domain_alias_mode (ADR-20261026100000).
+	// Each FAAS_* variable wins over its key.
+	hostidentity.FileConfig
+
 	// CLIAuthURLBase is the public web origin for the browser half of the
 	// CLI device-code flow and the default GitHub App OAuth callback.
 	// The public edge must forward /cli-auth and /oauth/code-callback to apid;
@@ -405,6 +410,12 @@ func (c *Config) GetAppsDomain(env func(string) string) string {
 		return v
 	}
 	return c.AppsDomain
+}
+
+// Domains resolves the host layout (ADR-20261026100000) with the same
+// env-over-TOML precedence as GetAppsDomain.
+func (c *Config) Domains(env func(string) string) (hostidentity.Domains, error) {
+	return hostidentity.DomainsFromEnv(env, c.AppsDomain, c.FileConfig)
 }
 
 const defaultCLIAuthURLBase = "https://gregale.dev"

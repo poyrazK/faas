@@ -196,7 +196,7 @@ func (r *redisPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	if pelErr != nil && !errors.Is(pelErr, redis.Nil) {
 		return PollResult{Error: fmt.Errorf("redis_poller: xreadgroup pel: %w", pelErr)}
 	}
-	r.appendOutFromXReadGroup(out, pelRes)
+	out = r.appendOutFromXReadGroup(out, pelRes)
 	newRes, err := r.client.XReadGroup(ctx, &redis.XReadGroupArgs{
 		Group:    r.group,
 		Consumer: r.consumer,
@@ -207,7 +207,7 @@ func (r *redisPoller) Poll(ctx context.Context, t sqlc.Trigger) PollResult {
 	if err != nil && !errors.Is(err, redis.Nil) {
 		return PollResult{Error: fmt.Errorf("redis_poller: xreadgroup: %w", err)}
 	}
-	r.appendOutFromXReadGroup(out, newRes)
+	out = r.appendOutFromXReadGroup(out, newRes)
 	return PollResult{Records: out}
 }
 

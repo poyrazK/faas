@@ -1,6 +1,6 @@
 # seal_domains
 
-Stages per-reader seal-domain identities (ADR 20261022111812). Six domains
+Stages per-reader seal-domain identities (ADR 20261022111812). Eight domains
 are wired, each opened by one daemon:
 - `outbound`: customer AI provider and other outbound credentials (outboundd);
 - `runtime`: customer env vars and secrets (vmmd);
@@ -9,7 +9,11 @@ are wired, each opened by one daemon:
 - `edge`: app basic-auth credentials and log drain headers (gatewayd-internal);
 - `alerting`: alert rule webhook secrets, notification channel destinations
   and MCP readiness provider keys (meterd, on the control plane like
-  `outbound`).
+  `outbound`);
+- `storage`: Gregale S3 secret access keys (s3-gatewayd, on the control
+  plane);
+- `control`: the cluster signing key (schedd, on every host; no writer
+  drop-in, the key moves only through `seal-domain migrate`).
 
 The `outbound` steps:
 

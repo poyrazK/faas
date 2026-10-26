@@ -158,8 +158,9 @@ type stageTicker struct {
 //
 // `name` is the StageName string, `status` is one of
 // "in_progress" / "completed" / "failed", `durationMs` is the
-// server-measured elapsed time, `reason` is non-empty only on
-// "failed". Unknown names are silently dropped (a strict server
+// server-measured elapsed time, `reason` is the failure on "failed" and an
+// optional note on "completed" (the builder-slot wait). Unknown names are
+// silently dropped (a strict server
 // should never emit one, but the renderer is tolerant so a future
 // stage added by the server doesn't break older CLIs).
 func (t *stageTicker) HandleStageFrame(name, status string, durationMs int64, reason string) {
@@ -224,6 +225,11 @@ func formatStageDuration(durationMs int64, status, reason string) string {
 		// completed / pending — always render the duration so the
 		// column is never blank.
 		d := time.Duration(durationMs) * time.Millisecond
+		// A completed stage may carry a note, such as the builder-slot
+		// wait booked to source_download (Hunt 12 H12-5).
+		if status == stageStatusCompleted && reason != "" {
+			return fmt.Sprintf("%.1fs (%s)", d.Seconds(), reason)
+		}
 		return fmt.Sprintf("%.1fs", d.Seconds())
 	}
 }

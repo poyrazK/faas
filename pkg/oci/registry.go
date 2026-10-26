@@ -71,6 +71,10 @@ type RegistryClient struct {
 	// itself (WithDockerHubMirrors); onMirrorFallback hears each failure.
 	dockerHubMirrors []string
 	onMirrorFallback func(mirror string, err error)
+	// ecrTokens caches ECR passwords exchanged for an IAM access key
+	// (registryAuth); ecrAPIBase overrides the ECR API endpoint in tests.
+	ecrTokens  sync.Map
+	ecrAPIBase string
 }
 
 // compile-time assertion the client satisfies the puller seam imaged consumes.
@@ -290,7 +294,7 @@ func (c *RegistryClient) PullDigestWithAuth(ctx context.Context, ref string, aut
 	if err != nil {
 		return "", err
 	}
-	return viaDockerHubMirrors(ctx, c, r, auth, func(at Reference) (string, error) {
+	return pullFrom(ctx, c, r, auth, func(at Reference, auth *BasicAuth) (string, error) {
 		return c.resolveDigestWithAuth(ctx, at, auth)
 	})
 }
@@ -331,7 +335,7 @@ func (c *RegistryClient) PullImageConfigWithAuth(ctx context.Context, ref string
 	if err != nil {
 		return ImageConfig{}, err
 	}
-	return viaDockerHubMirrors(ctx, c, r, auth, func(at Reference) (ImageConfig, error) {
+	return pullFrom(ctx, c, r, auth, func(at Reference, auth *BasicAuth) (ImageConfig, error) {
 		return c.pullImageConfig(ctx, at, auth)
 	})
 }
@@ -382,7 +386,7 @@ func (c *RegistryClient) PullLayersWithAuth(ctx context.Context, ref string, aut
 	if err != nil {
 		return PullLayersResult{}, err
 	}
-	return viaDockerHubMirrors(ctx, c, r, auth, func(at Reference) (PullLayersResult, error) {
+	return pullFrom(ctx, c, r, auth, func(at Reference, auth *BasicAuth) (PullLayersResult, error) {
 		return c.pullLayers(ctx, at, auth)
 	})
 }
@@ -512,13 +516,13 @@ func (c *RegistryClient) fetchManifestJSONWithAuthLimit(ctx context.Context, url
 		return nil, "", err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(strings.Join(resp.Header.Values("Www-Authenticate"), ", "))
+		challenges := resp.Header.Values("Www-Authenticate")
 		_ = resp.Body.Close()
-		token, err := c.fetchToken(ctx, ch, auth)
+		authz, err := c.authorization(ctx, challenges, auth)
 		if err != nil {
 			return nil, "", err
 		}
-		resp, err = c.getManifest(ctx, url, token)
+		resp, err = c.getManifest(ctx, url, authz)
 		if err != nil {
 			return nil, "", err
 		}
@@ -613,14 +617,14 @@ func (c *RegistryClient) confirmBlobInRepository(ctx context.Context, r Referenc
 	url := c.baseURL(r) + "/v2/" + r.Repository + "/blobs/" + digest
 	hc := *c.hc
 	hc.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
-	head := func(token string) (int, http.Header, error) {
+	head := func(authz string) (int, http.Header, error) {
 		req, err := http.NewRequestWithContext(ctx, http.MethodHead, url, nil)
 		if err != nil {
 			return 0, nil, fmt.Errorf("oci: build blob check: %w", err)
 		}
 		req.Header.Set("User-Agent", c.ua)
-		if token != "" {
-			req.Header.Set("Authorization", "Bearer "+token)
+		if authz != "" {
+			req.Header.Set("Authorization", authz)
 		}
 		resp, err := c.doPullRequestWith(ctx, &hc, req)
 		if err != nil {
@@ -634,11 +638,11 @@ func (c *RegistryClient) confirmBlobInRepository(ctx context.Context, r Referenc
 		return err
 	}
 	if status == http.StatusUnauthorized {
-		token, err := c.fetchToken(ctx, parseChallenge(strings.Join(header.Values("Www-Authenticate"), ", ")), auth)
+		authz, err := c.authorization(ctx, header.Values("Www-Authenticate"), auth)
 		if err != nil {
 			return err
 		}
-		if status, _, err = head(token); err != nil {
+		if status, _, err = head(authz); err != nil {
 			return err
 		}
 	}
@@ -659,13 +663,13 @@ func (c *RegistryClient) openBlobNetworkWithAuth(ctx context.Context, r Referenc
 		return "", nil, err
 	}
 	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(strings.Join(resp.Header.Values("Www-Authenticate"), ", "))
+		challenges := resp.Header.Values("Www-Authenticate")
 		_ = resp.Body.Close()
-		token, err := c.fetchToken(ctx, ch, auth)
+		authz, err := c.authorization(ctx, challenges, auth)
 		if err != nil {
 			return "", nil, err
 		}
-		resp, err = c.getBlob(ctx, url, token)
+		resp, err = c.getBlob(ctx, url, authz)
 		if err != nil {
 			return "", nil, err
 		}
@@ -678,9 +682,9 @@ func (c *RegistryClient) openBlobNetworkWithAuth(ctx context.Context, r Referenc
 	return resp.Header.Get("Content-Type"), resp.Body, nil
 }
 
-func (c *RegistryClient) getBlob(ctx context.Context, url, token string) (*http.Response, error) {
+func (c *RegistryClient) getBlob(ctx context.Context, url, authz string) (*http.Response, error) {
 	if c.blobHC == nil {
-		return c.getBlobWith(ctx, c.hc, url, token)
+		return c.getBlobWith(ctx, c.hc, url, authz)
 	}
 	stallCtx, stall := context.WithCancelCause(ctx)
 	transferCtx, cancelTransfer := context.WithTimeoutCause(stallCtx,
@@ -689,7 +693,7 @@ func (c *RegistryClient) getBlob(ctx context.Context, url, token string) (*http.
 		cancelTransfer()
 		stall(nil)
 	}
-	resp, err := c.getBlobWith(transferCtx, c.blobHC, url, token)
+	resp, err := c.getBlobWith(transferCtx, c.blobHC, url, authz)
 	if err != nil {
 		release()
 		return nil, err
@@ -698,14 +702,14 @@ func (c *RegistryClient) getBlob(ctx context.Context, url, token string) (*http.
 	return resp, nil
 }
 
-func (c *RegistryClient) getBlobWith(ctx context.Context, hc *http.Client, url, token string) (*http.Response, error) {
+func (c *RegistryClient) getBlobWith(ctx context.Context, hc *http.Client, url, authz string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("oci: build blob request: %w", err)
 	}
 	req.Header.Set("User-Agent", c.ua)
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if authz != "" {
+		req.Header.Set("Authorization", authz)
 	}
 	resp, err := c.doPullRequestWith(ctx, hc, req)
 	if err != nil {
@@ -743,13 +747,13 @@ func (c *RegistryClient) resolveDigestWithAuth(ctx context.Context, r Reference,
 	}
 	// A 401 carries the token challenge: fetch a bearer token and retry once.
 	if resp.StatusCode == http.StatusUnauthorized {
-		ch := parseChallenge(strings.Join(resp.Header.Values("Www-Authenticate"), ", "))
+		challenges := resp.Header.Values("Www-Authenticate")
 		_ = resp.Body.Close()
-		token, err := c.fetchToken(ctx, ch, auth)
+		authz, err := c.authorization(ctx, challenges, auth)
 		if err != nil {
 			return "", err
 		}
-		if resp, err = c.getManifest(ctx, url, token); err != nil {
+		if resp, err = c.getManifest(ctx, url, authz); err != nil {
 			return "", err
 		}
 	}
@@ -787,15 +791,15 @@ func (c *RegistryClient) resolveDigestWithAuth(ctx context.Context, r Reference,
 	return digestAlgo + hex.EncodeToString(sum[:]), nil
 }
 
-func (c *RegistryClient) getManifest(ctx context.Context, url, token string) (*http.Response, error) {
+func (c *RegistryClient) getManifest(ctx context.Context, url, authz string) (*http.Response, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("oci: build manifest request: %w", err)
 	}
 	req.Header.Set("Accept", manifestAccept)
 	req.Header.Set("User-Agent", c.ua)
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
+	if authz != "" {
+		req.Header.Set("Authorization", authz)
 	}
 	resp, err := c.doPullRequest(ctx, req)
 	if err != nil {
@@ -919,6 +923,27 @@ func retryablePullError(err error) bool {
 // returned error is scrubbed of any Authorization header so the
 // underlying Basic Auth value cannot leak through slog / RFC 7807
 // error surfaces.
+// authorization answers a 401 with the Authorization value to retry with. A
+// Bearer challenge gets a token from its realm. A registry that offers only
+// Basic, as Amazon ECR and htpasswd registries do, gets the pull's credential
+// directly, over HTTPS only (ADR-20261025124445). An anonymous pull has
+// nothing to answer Basic with and fails as before.
+func (c *RegistryClient) authorization(ctx context.Context, challenges []string, auth *BasicAuth) (string, error) {
+	header := strings.Join(challenges, ", ")
+	ch := parseChallenge(header)
+	if ch.realm == "" && auth != nil && auth.Username != "" && challengeOffersBasic(header) {
+		if c.scheme != "https" {
+			return "", errors.New("oci: registry must use https to receive credentials")
+		}
+		return "Basic " + base64.StdEncoding.EncodeToString([]byte(auth.Username+":"+auth.Password)), nil
+	}
+	token, err := c.fetchToken(ctx, ch, auth)
+	if err != nil {
+		return "", err
+	}
+	return "Bearer " + token, nil
+}
+
 func (c *RegistryClient) fetchToken(ctx context.Context, ch authChallenge, auth *BasicAuth) (string, error) {
 	challenge := newAuthChallenge(ch)
 	if auth != nil && c.scheme == "https" {

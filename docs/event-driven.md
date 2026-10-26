@@ -2,6 +2,12 @@
 
 Use asynchronous invokes, jobs, webhooks, and scheduled triggers when work does not need to finish in the request path.
 
+Internal events (publishing, `event_triggers` subscriptions, acknowledgments
+and delivery controls) are a preview capability. Until it is released to your
+account, a deploy that declares `event_triggers` answers `403
+capability_not_released`. Run `gregale previews list` to see whether you can
+join it with `gregale previews join <key>`, or contact support for access.
+
 ## Start a workflow on a schedule
 
 On Hobby and higher plans, add a scheduled trigger to a workflow in
@@ -350,6 +356,14 @@ the provider your Gregale API key. There is no per-callback public URL.
 For repeatable or broadcast signals, continue using `wait_for_event` and
 `POST /v1/workflows/runs/{id}/events` with a stable `Idempotency-Key`.
 
+A `wait_for_event` step completes with the earliest event of that name the run
+has received, including one that arrived before the step started waiting and
+one an earlier step already completed with. Events are facts on the run, not a
+queue, so every wait for a name matches the same first event. To wait for a
+second, distinct signal (a second approval, say), give it its own event name,
+or use a [code-first workflow](code-workflows.md), where each `waitForEvent`
+consumes one event of its name in arrival order.
+
 Stripe can instead complete a callback without waking your app. Create a
 [durable inbound Stripe webhook endpoint](inbound-webhooks.md) for the
 same app and configure its one-time-disclosed URL in Stripe. Then bind the
@@ -538,14 +552,14 @@ delayed tasks can ask for a shorter window with `retention_seconds`
 (`--retention` in the CLI).
 
 Failed and dead-lettered invocations are kept for at least 30 days, so you can
-inspect and replay them from the dead-letter queue (`gregale dlq <app>`) on
+inspect and replay them from the dead-letter queue (`gregale dlq list <app>`) on
 every plan. After the window, the invocation, its attempt history and its
 replay links are deleted: `gregale crons runs`, queue history and invocation
 lookups only show work inside the window. Duplicate detection that relies on
 a stored invocation, such as inbound webhook receipts and async route
 idempotency keys, lasts as long as that invocation is kept.
 
-A failed queue or delayed-task message is one entry in `gregale dlq <app>`: its
+A failed queue or delayed-task message is one entry in `gregale dlq list <app>`: its
 invocation. When a push binding delivered it, the binding's receipt failure
 stays in `gregale triggers dlq`, and replaying the entry re-arms that receipt.
 See [ADR-20261022203653](adr/20261022203653-one-dead-letter-entry-per-queue-message.md).
@@ -581,7 +595,7 @@ same moment may pass it by their own sizes.
 
 A message that waits longer than its plan allows, counted from its send, moves to
 the dead-letter queue with outcome code `queue_message_expired`. Replay it from
-there (`gregale dlq <app>`) once a worker can take it. A message a worker holds
+there (`gregale dlq list <app>`) once a worker can take it. A message a worker holds
 under a lease does not expire.
 
 ## Application inbox
@@ -787,7 +801,10 @@ until the app has more parked runs than its plan's parked allowance: 100, 1,000
 and 10,000 per app on Hobby, Pro and Scale (ADR-20261023215834). Parked runs
 beyond the allowance count as concurrent. A run woken by its event returns to
 `pending` and counts again, even when that takes the app over its quota; new
-runs are refused until the app is back under it.
+runs are refused until the app is back under it. An event that would start a
+run while the app is at its quota waits like a full delivery capacity (scope
+`app`): it is retried every few seconds without spending its routing attempts,
+and its configured delivery age limit still applies.
 
 Use `gregale events preview` before publishing; its samples include the workflow
 name, deployment ID, and stable recipient ID. Preview checks matching intent and
@@ -919,7 +936,7 @@ reconciliation. Event-only projects may use the equivalent TOML form,
 `[[triggers.event]]`. Both forms use the same source/type/filter validation;
 matching deliveries inherit the router's retry and dead-letter behavior.
 When a delivery reaches a terminal failure, inspect and replay it through the
-app's unified dead-letter queue (`gregale dlq <app>`); its origin is shown as
+app's unified dead-letter queue (`gregale dlq list <app>`); its origin is shown as
 `event_subscription`.
 
 Publish an event from the CLI without learning the CloudEvents envelope. Gregale
@@ -1090,7 +1107,10 @@ ordering guarantee. Delivery remains at least once. See
 Gregale identifies an event by account, source, and id. Repeating that
 identity with the same type, schema version, and JSON data is safe. Changing
 the content returns `409 Conflict` while the plan's [settled-receipt window](#settled-receipt-retention)
-keeps the original receipt. Fanout work is stored with the event, so durable routing resumes after a
+keeps the original receipt. Once that receipt is pruned, publishing the same
+identity again is a new event: it is delivered again under a delivery id of
+its own, which its receipt reports, even while the earlier delivery is still
+retained ([ADR 20261026010000](adr/20261026010000-event-reacceptance-delivery-identity.md)). Fanout work is stored with the event, so durable routing resumes after a
 scheduler outage. Configured delivery age limits can expire stale recipients. New events capture
 their enabled source/type subscription candidates when they are accepted. A
 later subscription edit or deletion does not change that event's recipients;
@@ -2432,7 +2452,7 @@ selection filter or any frozen job item. Changing filters starts a new search.
 The API is `GET /v1/apps/{slug}/event-recoveries`, requiring apps-read/admin scope
 and MFA. SDK clients provide Go `ListEventRecoveries`, Node
 `EventsService.listEventRecoveries`, and Python
-`faas_sdk.api.events.list_event_recoveries`. Pages include `jobs` and, when more jobs exist,
+`faas_sdk.preview.api.events.list_event_recoveries`. Pages include `jobs` and, when more jobs exist,
 `next_cursor`. State changes and retention remain live between pages; stored
 active states can remain visible until the worker processes expiry. See
 [ADR-809](adr/809-recovery-job-discovery.md).
@@ -2462,7 +2482,7 @@ Use `--after NEXT_AFTER` for subsequent oldest-first pages. The API is
 `GET /v1/event-recoveries/{jobID}/history?after=0&limit=20`, requiring apps-read/admin
 scope and MFA. SDK methods are Go `ListEventRecoveryHistory`, Node
 `EventsService.listEventRecoveryHistory`, and Python
-`faas_sdk.api.events.list_event_recovery_history`. History is retained with the
+`faas_sdk.preview.api.events.list_event_recovery_history`. History is retained with the
 job; older actions from before this feature are not reconstructed.
 
 Creation/rate bodies accept `reason`; pause/resume/cancel accept an optional
@@ -2531,7 +2551,7 @@ the existing alert tools; none are created automatically. See
 The API is `GET /v1/apps/{slug}/event-recoveries/health`, requiring apps-read/admin
 scope and MFA. SDK clients expose Go `GetEventRecoveryHealth`, Node
 `EventsService.getEventRecoveryHealth`, and Python
-`faas_sdk.api.events.get_event_recovery_health`.
+`faas_sdk.preview.api.events.get_event_recovery_health`.
 
 Existing alert rules support app-scoped `event_recovery_stalled_jobs` and
 `event_recovery_expiring_jobs`. Configure a threshold greater than zero to notice
@@ -2651,7 +2671,7 @@ expired jobs have `active: false` and cannot be made active by preflight.
 The API is `GET /v1/event-recoveries/{jobID}/preflight`, requiring apps-read/admin
 scope and MFA. SDK clients expose Go `GetEventRecoveryPreflight`, Node
 `EventsService.getEventRecoveryPreflight`, and Python
-`faas_sdk.api.events.get_event_recovery_preflight`. No progress, pacing, audit,
+`faas_sdk.preview.api.events.get_event_recovery_preflight`. No progress, pacing, audit,
 expiry or notification state changes during the read. See
 [ADR-814](adr/814-recovery-preflight.md).
 
@@ -2808,7 +2828,7 @@ read budget. Receiver snapshots are retained with the job for its existing
 The endpoint is `GET /v1/event-recoveries/{jobID}/notifications`, requiring
 apps-read/admin scope and MFA. SDKs expose Go `GetEventRecoveryNotifications`,
 Node `EventsService.getEventRecoveryNotifications`, and Python
-`faas_sdk.api.events.get_event_recovery_notifications`. Apply migration
+`faas_sdk.preview.api.events.get_event_recovery_notifications`. Apply migration
 `20261009225025213` before API/scheduler upgrades. See
 [ADR-918](adr/918-recovery-notification-delivery-report.md) for historical evidence
 and downgrade limits.
@@ -3381,7 +3401,7 @@ Use the same command UUID with the read-only lookup:
 gregale events subscription-capacity-command APP SUBSCRIPTION_ID COMMAND_UUID --timeout 5s
 ```
 
-The GET endpoint `/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}` requires `apps:read` or `admin` and MFA. Go `GetEventSubscriptionCapacityCommand`, Node `getEventSubscriptionCapacityCommand` and Python `faas_sdk.api.events.get_event_subscription_capacity_command` (`sync` or `asyncio`) return the original receipt. `--json` includes the original proposed value, reviewed expectations, previous setting, outcome, original effective and plan ceilings, recording time and fixed retention deadline. The lookup does not change controls or extend the thirty-day retention window.
+The GET endpoint `/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands/{commandID}` requires `apps:read` or `admin` and MFA. Go `GetEventSubscriptionCapacityCommand`, Node `getEventSubscriptionCapacityCommand` and Python `faas_sdk.preview.api.events.get_event_subscription_capacity_command` (`sync` or `asyncio`) return the original receipt. `--json` includes the original proposed value, reviewed expectations, previous setting, outcome, original effective and plan ceilings, recording time and fixed retention deadline. The lookup does not change controls or extend the thirty-day retention window.
 
 A receipt describes the original successful command, even if later commands changed capacity. A 404 means retained evidence is unavailable for the owned target; it does not establish that the command never ran. Inspect current controls separately before deciding whether a new change is needed.
 
@@ -3393,7 +3413,7 @@ gregale events subscription-capacity-commands APP SUBSCRIPTION_ID --outcome any 
 gregale events subscription-capacity-commands APP SUBSCRIPTION_ID --outcome any --limit 25 --after CURSOR
 ```
 
-The read-only GET collection at `/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands` requires `apps:read` or `admin` and MFA. Outcome can be `any`, `applied`, or `unchanged`. The page limit defaults to 25 and accepts 1–100; explicit HTTP zero is invalid. Go `ListEventSubscriptionCapacityCommands`, Node `listEventSubscriptionCapacityCommands`, and Python `faas_sdk.api.events.list_event_subscription_capacity_commands` (`sync` or `asyncio`) expose the same listing. `--json` includes scope, normalized filter, observation time, original receipts, `has_more`, and `next_after` when available. The CLI fetches one page per invocation.
+The read-only GET collection at `/v1/apps/{slug}/event-subscriptions/{subscriptionID}/delivery-control/capacity/commands` requires `apps:read` or `admin` and MFA. Outcome can be `any`, `applied`, or `unchanged`. The page limit defaults to 25 and accepts 1–100; explicit HTTP zero is invalid. Go `ListEventSubscriptionCapacityCommands`, Node `listEventSubscriptionCapacityCommands`, and Python `faas_sdk.preview.api.events.list_event_subscription_capacity_commands` (`sync` or `asyncio`) expose the same listing. `--json` includes scope, normalized filter, observation time, original receipts, `has_more`, and `next_after` when available. The CLI fetches one page per invocation.
 
 Receipts sort newest first by recording time, with command UUID descending as a tie-breaker. Cursors are bound to account, app, subscription and outcome filter; changing page size is allowed. Each page observes current retained evidence, so expiry can remove entries and newer commands above a continuation boundary require refreshing from the first page. An accessible empty history returns an empty array. Recording order does not imply delivery order, and missing evidence does not prove a command never ran. Listing never changes controls or extends receipt retention.
 

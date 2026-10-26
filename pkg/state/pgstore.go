@@ -8285,17 +8285,34 @@ func (s *PgStore) updateDeploymentTraffic(ctx context.Context, id string, newPer
 			}
 		}
 	}
-	if _, err := tx.Exec(ctx,
-		`update deployments set traffic_percent = $2 where id = $1`,
-		id, newPercent); err != nil {
-		return Deployment{}, fmt.Errorf("state: stamp traffic_percent %s: %w", id, mapErr(err))
+	// Lower rows before raising any, so deployments_app_scope_live_uniq never
+	// sees two stable rows serving mid-transaction (a promote raised the
+	// target while the old stable row still held 100), and mark split members
+	// explicit (manualTrafficExplicit; Hunt 14 H14-71).
+	type trafficStamp struct {
+		id          string
+		prior, next int
+		target      bool
 	}
-
-	for i, s := range siblings {
+	stamps := make([]trafficStamp, 0, len(siblings)+1)
+	stamps = append(stamps, trafficStamp{id: id, prior: currentTrafficPercent, next: newPercent, target: true})
+	for i, sibling := range siblings {
+		stamps = append(stamps, trafficStamp{id: sibling.ID, prior: sibling.Prior, next: newWeights[i]})
+	}
+	sort.SliceStable(stamps, func(a, b int) bool {
+		return stamps[a].next-stamps[a].prior < stamps[b].next-stamps[b].prior
+	})
+	for _, stamp := range stamps {
 		if _, err := tx.Exec(ctx,
-			`update deployments set traffic_percent = $2 where id = $1`,
-			s.ID, newWeights[i]); err != nil {
-			return Deployment{}, fmt.Errorf("state: stamp sibling %s traffic_percent: %w", s.ID, mapErr(err))
+			`update deployments
+			    set traffic_percent = $2,
+			        traffic_percent_explicit = case when traffic_percent = $2 then traffic_percent_explicit else $3 end
+			  where id = $1`,
+			stamp.id, stamp.next, manualTrafficExplicit(stamp.prior, stamp.next, false)); err != nil {
+			if stamp.target {
+				return Deployment{}, fmt.Errorf("state: stamp traffic_percent %s: %w", stamp.id, mapErr(err))
+			}
+			return Deployment{}, fmt.Errorf("state: stamp sibling %s traffic_percent: %w", stamp.id, mapErr(err))
 		}
 	}
 
@@ -10894,6 +10911,9 @@ func (s *PgStore) AppendDeploymentStage(ctx context.Context, id string, from, to
 		EndedAt:    &endedAt,
 		DurationMs: durMs,
 		Status:     stageHistoryStatusCompleted,
+		// A note on the closed stage, such as the builder-slot wait booked to
+		// source_download (Hunt 12 H12-5).
+		Reason: reason,
 	})
 	state.Current = to
 	state.CurrentStartedAt = &startedAt
@@ -11081,16 +11101,24 @@ func (s *PgStore) RetryDeploymentFromStage(ctx context.Context, failedID string,
 	if !stageNameClosedSet[fromStage] {
 		return Deployment{}, ErrInvalidArgument
 	}
+	return retryTrafficSerialization(ctx, func() (Deployment, error) {
+		return s.retryDeploymentFromStageOnce(ctx, failedID, fromStage)
+	})
+}
+
+// The retry takes the app's next revision, so its revision URL is a new
+// binding: the insert joins the shared binding guard (ADR-570).
+func (s *PgStore) retryDeploymentFromStageOnce(ctx context.Context, failedID string, fromStage StageName) (Deployment, error) {
 	// Step 2 — read the failed row.
 	src, err := s.DeploymentByID(ctx, failedID)
 	if err != nil {
 		return Deployment{}, err
 	}
-	tx, err := s.pool.Begin(ctx)
+	tx, err := s.beginAppTrafficMutation(ctx, src.AppID)
 	if err != nil {
 		return Deployment{}, err
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 	var deployable int
 	if err := tx.QueryRow(ctx, `select 1 from apps where id=$1 and status in ('active', 'evicted_cold') for update`, src.AppID).Scan(&deployable); err != nil {
 		return Deployment{}, mapErr(err)
@@ -11316,11 +11344,19 @@ func (s *PgStore) MarkAutoRollback(ctx context.Context, deploymentID, reason str
 //
 // Migration 00297 / Mega-C PR-2 / issue #961 leaf 8.
 func (s *PgStore) AutoRollbackDeploymentsTx(ctx context.Context, appID, currentDeploymentID string) (string, error) {
-	tx, err := s.pool.Begin(ctx)
+	return retryTrafficSerialization(ctx, func() (string, error) {
+		return s.autoRollbackDeploymentsOnce(ctx, appID, currentDeploymentID)
+	})
+}
+
+// The rollback target's revision URL serves again; the binding guard
+// (ADR-570) validates it before commit.
+func (s *PgStore) autoRollbackDeploymentsOnce(ctx context.Context, appID, currentDeploymentID string) (string, error) {
+	tx, err := s.beginAppTrafficMutation(ctx, appID)
 	if err != nil {
 		return "", err
 	}
-	defer tx.Rollback(ctx) //nolint:errcheck
+	defer tx.Rollback(context.WithoutCancel(ctx)) //nolint:errcheck
 
 	if err := pgLockProductionLifecycleApp(ctx, tx, appID); err != nil {
 		return "", err
@@ -11436,11 +11472,19 @@ func (s *PgStore) PrepareDeploymentRollback(ctx context.Context, appID, targetDe
 	if appID == "" || targetDeploymentID == "" {
 		return Deployment{}, ErrInvalidArgument
 	}
-	tx, err := s.pool.Begin(ctx)
+	return retryTrafficSerialization(ctx, func() (Deployment, error) {
+		return s.prepareDeploymentRollbackOnce(ctx, appID, targetDeploymentID)
+	})
+}
+
+// A superseded target's revision URL serves again, so the preparation joins
+// the shared binding guard (ADR-570) and commits only after its analysis.
+func (s *PgStore) prepareDeploymentRollbackOnce(ctx context.Context, appID, targetDeploymentID string) (Deployment, error) {
+	tx, err := s.beginAppTrafficMutation(ctx, appID)
 	if err != nil {
 		return Deployment{}, fmt.Errorf("state: prepare rollback begin: %w", err)
 	}
-	defer func() { _ = tx.Rollback(ctx) }()
+	defer func() { _ = tx.Rollback(context.WithoutCancel(ctx)) }()
 
 	var locked int
 	if err := tx.QueryRow(ctx, `select 1 from apps where id = $1 for update`, appID).Scan(&locked); err != nil {
@@ -16205,6 +16249,10 @@ func (s *PgStore) ListDueInvocations(ctx context.Context, now time.Time, limit i
 type InvocationDueCursor struct {
 	DueAt time.Time
 	ID    string
+	// OwnerNodeID, when set, keeps only invocations of apps with no node or
+	// with this node, the apps a scheduler on that node may claim. Without it
+	// a walk bounded in pages could fill every page with other nodes' rows.
+	OwnerNodeID string
 }
 
 // ListDueInvocationsAfter is ListDueInvocations ordered by (due_at, id) and
@@ -16223,13 +16271,23 @@ func (s *PgStore) ListDueInvocationsAfter(ctx context.Context, now time.Time, af
 		}
 		afterDue, afterID = after.DueAt.UTC(), after.ID
 	}
+	var owner pgtype.UUID
+	if after.OwnerNodeID != "" {
+		// A node ID that is not a UUID matches no app's node, as in the
+		// scheduler's string compare: it owns only apps with no node.
+		parsed, err := uuid.Parse(after.OwnerNodeID)
+		if err != nil {
+			parsed = uuid.Nil
+		}
+		owner = pgtype.UUID{Bytes: parsed, Valid: true}
+	}
 	tx, err := s.pool.BeginTx(ctx, pgx.TxOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("state: invocations begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 	rows, err := sqlc.New().ListDueInvocationRowsAfter(ctx, tx, sqlc.ListDueInvocationRowsAfterParams{NowAt: pgtype.Timestamptz{Time: now.UTC(), Valid: true}, BatchLimit: int64(limit),
-		FirstPage: after.ID == "", AfterDueAt: pgtype.Timestamptz{Time: afterDue, Valid: true}, AfterID: mustPgUUID(afterID)})
+		FirstPage: after.ID == "", AfterDueAt: pgtype.Timestamptz{Time: afterDue, Valid: true}, AfterID: mustPgUUID(afterID), OwnerNodeID: owner})
 	if err != nil {
 		return nil, fmt.Errorf("state: invocations list-due-after: %w", err)
 	}

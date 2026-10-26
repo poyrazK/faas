@@ -42,6 +42,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/daemonunit"
 	"github.com/onebox-faas/faas/pkg/datarepair"
 	"github.com/onebox-faas/faas/pkg/db"
+	"github.com/onebox-faas/faas/pkg/eventcontract"
 	"github.com/onebox-faas/faas/pkg/events"
 	"github.com/onebox-faas/faas/pkg/fcvm"
 	"github.com/onebox-faas/faas/pkg/fcvm/activity"
@@ -385,7 +386,7 @@ type runDeps struct {
 	recoverNativeProcesses func(context.Context, *fcvm.Manager) error
 	// recoverResources permits deterministic cancellation during startup inventory.
 	// nil selects the platform restart quarantine implementation.
-	recoverResources func(context.Context, *fcvm.Manager, string, string, *slog.Logger) (*fcvm.ResourceJournal, error)
+	recoverResources func(context.Context, *fcvm.Manager, string, fcvm.ResourceJournalConfig, *slog.Logger) (*fcvm.ResourceJournal, error)
 }
 
 func defaultDeps() runDeps {
@@ -1070,7 +1071,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 	// adoptionReport is what this start adopted, served by AdoptionReport.
 	var adoptionReport *vmmdgrpc.AdoptionReport
 	if cfg.NativeProcessRecovery {
-		resourceJournal, err = fcvm.OpenResourceJournal(cfg.ResourceJournalDir)
+		resourceJournal, err = fcvm.OpenResourceJournalConfig(cfg.resourceJournal())
 		if err != nil {
 			return fmt.Errorf("vmmd: lock legacy resources before native recovery: %w", err)
 		}
@@ -1146,7 +1147,7 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 		if recoverResources == nil {
 			recoverResources = recoverRestartResources
 		}
-		resourceJournal, err = recoverResources(ctx, mgr, jailer.JailRoot(), cfg.ResourceJournalDir, log)
+		resourceJournal, err = recoverResources(ctx, mgr, jailer.JailRoot(), cfg.resourceJournal(), log)
 		if err != nil {
 			if errors.Is(err, context.Canceled) && errors.Is(ctx.Err(), context.Canceled) {
 				return nil
@@ -1503,6 +1504,8 @@ func runWithDeps(ctx context.Context, log *slog.Logger, deps runDeps) error {
 			if err != nil {
 				return err
 			}
+			// Fanout keeps the app's company boundary (ADR-20261025211616).
+			envelope.Producer = eventcontract.AppProducer(appID)
 			// A capture-only rehearsal keeps its ordinary network, but its
 			// events still belong to its run (ADR-20261020090000).
 			if captured, err := captureGuestEvent(publishCtx, store, appID, "", accountID, envelope); captured || err != nil {

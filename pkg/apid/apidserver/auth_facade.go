@@ -215,7 +215,7 @@ func (s *server) browserRequestFromTrustedOrigin(r *http.Request) bool {
 // customer app, unlike the <slug>.<domain> hosts this guard exists to stop.
 // Provider-admin mutations keep the narrower isTrustedAdminOrigin.
 func (s *server) isWebDashboardOrigin(origin *url.URL) bool {
-	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.domain), "."))
+	base := strings.ToLower(strings.TrimSuffix(strings.TrimSpace(s.platformHost()), "."))
 	return base != "" && base != domainUnset && strings.EqualFold(origin.Scheme, "https") &&
 		strings.ToLower(origin.Hostname()) == base && origin.Port() == ""
 }
@@ -459,7 +459,7 @@ func (s *server) isTrustedAdminOrigin(origin *url.URL, r *http.Request) bool {
 	if originHost == requestHost {
 		return true
 	}
-	base := strings.ToLower(strings.TrimSpace(s.domain))
+	base := strings.ToLower(strings.TrimSpace(s.platformHost()))
 	return base != "" && originHost == "operations."+base
 }
 

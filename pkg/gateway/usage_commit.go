@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/onebox-faas/faas/pkg/api"
 	authmw "github.com/onebox-faas/faas/pkg/auth/middleware"
 	"github.com/onebox-faas/faas/pkg/usageoutbox"
 )
@@ -97,7 +98,7 @@ func (h *Handler) usageEvent(r *http.Request, in usageEventInput) usageoutbox.Ev
 			}
 		}
 	}
-	if h.requestAuditEnabled || h.apiDiscoveryEnabled {
+	if (h.requestAuditEnabled || h.apiDiscoveryEnabled) && api.RouteDiscoverableStatus(in.status) {
 		event.DiscoveredRoute = auditRouteFrom(r)
 		if event.DiscoveredRoute == otherRouteLabel {
 			event.DiscoveredRoute = ""

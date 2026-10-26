@@ -117,8 +117,9 @@
       - prom_loki_metrics_port | int < 65536
       - prom_loki_metrics_server_name | length > 0
     fail_msg: >-
-      prom_loki_metrics_target must be the dedicated observability host (not
-      loopback), and prom_loki_metrics_server_name must match its certificate.
+      prom_loki_metrics_target must be Loki's private address
+      (faas_obs_loki_address, not loopback), and prom_loki_metrics_server_name
+      must match its certificate (faas_obs_loki_server_name).
   when: prom_loki_metrics_target | length > 0
 
 - name: prometheus — stat Loki meta-monitoring mTLS material
@@ -140,7 +141,9 @@
       - (item.stat.mode | default('0000')) in ['0400', '0440', '0444', '0640', '0644']
     fail_msg: >-
       Loki meta-monitoring TLS {{ item.item.name }} is missing or has an
-      unsupported mode; provision the provider-owned bundle for Prometheus.
+      unsupported mode. The platform_logs_pki role issues Prometheus's Loki
+      client leaf from the fleet CA (ADR-20261023124955 §2); converge it
+      before this role.
   loop: "{{ prom_loki_tls_stats.results | default([]) }}"
   loop_control:
     label: "{{ item.item.name }}"
@@ -155,6 +158,17 @@
     home: "{{ prom_data_dir }}"
     createhome: false
   register: prom_user
+
+# pkg/pki writes keys root:root 0400; platform_logs_pki repeats this on
+# renewal (ADR-20261023124955 §2).
+- name: prometheus — let prometheus read its Loki client key
+  ansible.builtin.file:
+    path: "{{ prom_loki_metrics_client_key_file }}"
+    state: file
+    owner: root
+    group: prometheus
+    mode: "0440"
+  when: prom_loki_metrics_target | length > 0
 
 - name: prometheus — mkdir /etc/prometheus and data dir
   ansible.builtin.file:
