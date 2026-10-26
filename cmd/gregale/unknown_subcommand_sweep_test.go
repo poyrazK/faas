@@ -145,3 +145,24 @@ func TestLogsNamesTheFlagThatChoseHTTPLogs(t *testing.T) {
 		t.Fatalf("explicit --source http: exit=%d stderr=%q", code, stderr())
 	}
 }
+
+// TestOpenAPIGetPointsAtTheDiscoveredDocument: `inspect h14-py` showed an
+// OpenAPI document and `openapi get h14-py` answered only "no OpenAPI
+// document imported" on production-us rc.294 (Hunt 14 H14-64).
+func TestOpenAPIGetPointsAtTheDiscoveredDocument(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/problem+json")
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write([]byte(`{"title":"Not found","status":404,"code":"not_found","detail":"no OpenAPI document imported for this app"}`))
+	}))
+	defer srv.Close()
+	t.Setenv("FAAS_API", srv.URL)
+	t.Setenv("FAAS_TOKEN", "test-token")
+	main.ResetJSONOut(t)
+	_, stderr, restore := main.SwapIO(t)
+	code := main.Run([]string{"openapi", "get", "h14-py"})
+	restore()
+	if code == 0 || !strings.Contains(stderr(), "gregale openapi get h14-py --source auto") {
+		t.Fatalf("exit=%d stderr=%q", code, stderr())
+	}
+}
