@@ -36,8 +36,8 @@ func cmdApprovals(args []string) int {
 	case "reject":
 		return approvalsDecide(args[1:], api.ReleaseApprovalDecisionReject)
 	}
-	fmt.Fprintf(os.Stderr, "gregale approvals: unknown subcommand %q\n", args[0])
-	return 1
+	printCommandValidation(os.Stderr, "gregale approvals: unknown subcommand %q\n", args[0])
+	return unknownSubcommandChoices(os.Stderr, "approvals", nestedCliCommand("approvals"), args[0])
 }
 
 // approvalsApp resolves --app from the flag or the linked project.

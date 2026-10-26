@@ -124,9 +124,7 @@ func cmdJobs(args []string) int {
 		return cmdJobsRegistry(rest)
 	}
 	printCommandValidation(os.Stderr, "unknown jobs subcommand %q\n", subcommand)
-	sug, _ := suggestSubcommand(subcommand, parent)
-	maybeSuggestSub(sug)
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "jobs", parent, subcommand)
 }
 
 // cmdJobsList implements `gregale jobs list`. Returns the

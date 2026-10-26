@@ -32,10 +32,8 @@ func cmdDLQ(args []string) int {
 	case "purge", "rm", "delete":
 		return cmdDLQPurge(args[1:])
 	default:
-		fmt.Fprintf(os.Stderr, "gregale dlq: unknown subcommand %q\n", args[0])
-		sug, _ := suggestSubcommand(args[0], parent)
-		maybeSuggestSub(sug)
-		return 1
+		printCommandValidation(os.Stderr, "gregale dlq: unknown subcommand %q\n", args[0])
+		return unknownSubcommandChoices(os.Stderr, "dlq", parent, args[0])
 	}
 }
 
