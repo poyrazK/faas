@@ -21,6 +21,7 @@ import (
 	"github.com/BurntSushi/toml"
 
 	"github.com/onebox-faas/faas/pkg/gateway"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/role"
 	"github.com/onebox-faas/faas/pkg/wire"
 )
@@ -70,6 +71,10 @@ type Config struct {
 	// applies the apps-suffix host guard. Empty disables wildcard routing
 	// (custom-domain-only deployments).
 	AppsDomain string `toml:"apps_domain"`
+	// FileConfig carries platform_domain, deploy_domain,
+	// apps_domain_aliases and apps_domain_alias_mode (ADR-20261026100000).
+	// Each FAAS_* variable wins over its key.
+	hostidentity.FileConfig
 
 	// APIDLoopback is the in-box URL gatewayd reverse-proxies the apid
 	// public surface (/v1/*, /dashboard/*, /oauth/*, /login*,

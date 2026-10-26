@@ -100,7 +100,7 @@ func readTrafficHostAnalysis(ctx context.Context, tx pgx.Tx, account pgtype.UUID
 		AccountID: account, MaxInputs: api.TrafficPolicyMaxAnalysisInputs, MaxBytes: api.TrafficPolicyMaxAnalysisMetadataBytes,
 		// Scoped domains can be longer than a generated environment host.
 		// Reserve maximum hostname length and JSON escape amplification.
-		Defaults: defaults, AppsSuffix: appsSuffix, DeploySuffix: hostidentity.DeployWildcardSuffix, EnvironmentHostBytes: 6 * api.TrafficPolicyMaxHostnameBytes})
+		Defaults: defaults, AppsSuffix: appsSuffix, DeploySuffix: hostidentity.DeploySuffix(), EnvironmentHostBytes: 6 * api.TrafficPolicyMaxHostnameBytes})
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == pgerrcode.QueryCanceled {
@@ -143,7 +143,7 @@ func prepareTrafficEnvironmentHosts(view *trafficHostAnalysis) error {
 	hosts := make(map[string]string, len(view.Environments))
 	for i := range view.Environments {
 		environment := &view.Environments[i]
-		environment.Host = hostidentity.BuildEnvironmentHost(hostidentity.DeployWildcardSuffix, environment.ID, environment.App)
+		environment.Host = hostidentity.BuildEnvironmentHost(hostidentity.DeploySuffix(), environment.ID, environment.App)
 		if environment.Host == "" {
 			return analysisLimit("environment_identity", "bindings", 0, 1)
 		}

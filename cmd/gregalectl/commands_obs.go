@@ -14,6 +14,10 @@
 //	gregalectl obs bundle    — export bounded incident evidence and source health.
 //	gregalectl obs overview  — fetch the bounded fleet/account KPI snapshot.
 //	gregalectl obs capacity  — fetch the bounded fleet capacity snapshot.
+//	gregalectl obs logs      — search platform logs in Loki (commands_obs_logs.go).
+//	gregalectl obs wake      — one wake's events and log lines as one timeline.
+//	gregalectl obs app       — one app's support page (commands_obs_app.go).
+//	gregalectl obs node      — one compute node's support page (commands_obs_node.go).
 //
 // The CLI dials apid via HTTP (not gRPC) — same path the operator
 // would use from a browser. The endpoint requires admin scope +
@@ -98,48 +102,57 @@ const defaultAPIDURL = "http://127.0.0.1:8080"
 // for `manifest validate` without --file).
 func cmdObsDispatch(args []string) int {
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|input-health|rule-health|rule-coverage|recording-coverage|notification-health|summary|response-times|recurrence|collection-history|incidents|triage|triage-history|evidence|context|bundle|overview|capacity")
+		fmt.Fprintln(os.Stderr, "gregalectl obs: missing subcommand; want health|input-health|rule-health|rule-coverage|recording-coverage|notification-health|summary|response-times|recurrence|collection-history|incidents|triage|triage-history|evidence|context|bundle|overview|capacity|logs|wake|app|node")
 		return 2
 	}
-	switch args[0] {
+	sub, rest := args[0], args[1:]
+	switch sub {
 	case subObsRecordingCoverage:
-		return cmdObsRecordingCoverage(args[1:])
+		return cmdObsRecordingCoverage(rest)
 	case subObsInputHealth:
-		return cmdObsInputHealth(args[1:])
+		return cmdObsInputHealth(rest)
 	case subObsRuleCoverage:
-		return cmdObsRuleCoverage(args[1:])
+		return cmdObsRuleCoverage(rest)
 	case subObsRuleHealth:
-		return cmdObsRuleHealth(args[1:])
+		return cmdObsRuleHealth(rest)
 	case subObsNotificationHealth:
-		return cmdObsNotificationHealth(args[1:])
+		return cmdObsNotificationHealth(rest)
 	case subObsCollectionHistory:
-		return cmdObsCollectionHistory(args[1:])
+		return cmdObsCollectionHistory(rest)
 	case subObsRecurrence:
-		return cmdObsRecurrence(args[1:])
+		return cmdObsRecurrence(rest)
 	case subObsResponseTimes:
-		return cmdObsResponseTimes(args[1:])
+		return cmdObsResponseTimes(rest)
 	case subObsSummary:
-		return cmdObsSummary(args[1:])
+		return cmdObsSummary(rest)
 	case subObsHealth:
-		return cmdObsHealth(args[1:])
+		return cmdObsHealth(rest)
 	case subObsTriageHistory:
-		return cmdObsTriageHistory(args[1:])
+		return cmdObsTriageHistory(rest)
 	case subObsTriage:
-		return cmdObsTriage(args[1:])
+		return cmdObsTriage(rest)
 	case subObsIncidents:
-		return cmdObsIncidents(args[1:])
+		return cmdObsIncidents(rest)
 	case subObsEvidence:
-		return cmdObsEvidence(args[1:])
+		return cmdObsEvidence(rest)
 	case subObsContext:
-		return cmdObsContext(args[1:])
+		return cmdObsContext(rest)
 	case subObsBundle:
-		return cmdObsBundle(args[1:])
+		return cmdObsBundle(rest)
 	case subObsOverview:
-		return cmdObsOverview(args[1:])
+		return cmdObsOverview(rest)
 	case subObsCapacity:
-		return cmdObsCapacity(args[1:])
+		return cmdObsCapacity(rest)
+	case subObsLogs:
+		return cmdObsLogs(rest)
+	case subObsWake:
+		return cmdObsWake(rest)
+	case subObsApp:
+		return cmdObsApp(rest)
+	case subObsNode:
+		return cmdObsNode(rest)
 	default:
-		fmt.Fprintf(os.Stderr, "gregalectl obs: unknown subcommand %q\nRun 'gregalectl obs overview --help' for usage.\n", args[0])
+		fmt.Fprintf(os.Stderr, "gregalectl obs: unknown subcommand %q\nRun 'gregalectl obs overview --help' for usage.\n", sub)
 		return 2
 	}
 }

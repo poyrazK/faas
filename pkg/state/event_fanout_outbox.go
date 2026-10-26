@@ -136,6 +136,10 @@ type PublishedEventRecipientProgress struct {
 	Retryable             bool       `json:"retryable,omitempty"`
 	LastError             string     `json:"last_error,omitempty"`
 	UpdatedAt             time.Time  `json:"updated_at"`
+	// DeliveryID is the delivery a re-accepted event routed to when an earlier
+	// acceptance's delivery still held the original identity
+	// (PublishedEventReacceptanceID). Empty means the original identity.
+	DeliveryID string `json:"delivery_id,omitempty"`
 }
 
 // EventFanoutFailure is a terminal routing failure recorded before an
