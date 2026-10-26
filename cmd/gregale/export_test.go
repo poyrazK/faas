@@ -2469,3 +2469,19 @@ var PreviewCompanionsFromManifest = previewCompanionsFromManifest
 
 // FormatStageDuration is the live ticker's stage duration cell.
 var FormatStageDuration = formatStageDuration
+
+// ADR-20261026145832: the new command tree.
+type CliTreeAlias = cliTreeAlias
+type CliTreeNoun = cliTreeNoun
+
+var CliTreeAliases = &cliTreeAliases
+var CliTreeNouns = &cliTreeNouns
+var RewriteCliTree = rewriteCliTree
+var IsOldCommandPath = isOldCommandPath
+
+// CliPathHasVerbs reports whether words name a manifest command or verb, and
+// whether it has verbs of its own that a tree noun can expose.
+func CliPathHasVerbs(words []string) (exists, hasVerbs bool) {
+	node, ok := lookupCliPath(words)
+	return ok, ok && len(node.Subs) > 0 && !node.AfterPositionals
+}
