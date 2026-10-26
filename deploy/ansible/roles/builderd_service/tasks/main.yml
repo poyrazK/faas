@@ -143,6 +143,15 @@
     group: root
     mode: "0644"
 
+- name: builderd_service — install domain layout drop-in (ADR-20261026100000)
+  notify: restart faas-builderd
+  ansible.builtin.template:
+    src: ../../_shared/templates/99-faas-domain-layout.conf.j2
+    dest: /etc/systemd/system/faas-builderd.service.d/99-faas-domain-layout.conf
+    owner: root
+    group: root
+    mode: "0644"
+
 # Mega-PR-C (issue #911 / ADR-110): wire the per-box role gate
 # through to builderd via FAAS_BUILDERD_ROLE so
 # cmd/builderd/config.go::LoadConfig picks up faas_box_role

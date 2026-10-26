@@ -33,6 +33,7 @@ import (
 	"github.com/onebox-faas/faas/pkg/circuit"
 	"github.com/onebox-faas/faas/pkg/gateway/drain"
 	"github.com/onebox-faas/faas/pkg/gateway/egresssink"
+	"github.com/onebox-faas/faas/pkg/hostidentity"
 	"github.com/onebox-faas/faas/pkg/logsanitize"
 	"github.com/onebox-faas/faas/pkg/platformflags"
 	"github.com/onebox-faas/faas/pkg/realtime"
@@ -2361,7 +2362,7 @@ func (h *Handler) matchAndSubstituteRoute(r *http.Request, appHost string, app *
 	}
 	// A named-environment host must resolve its encoded app/environment pair
 	// before any application-wide route rule can substitute another target.
-	if _, _, ok := EnvironmentIDsFromHost(wire.DeployWildcardSuffix, hostname(r.Host)); ok {
+	if _, _, ok := EnvironmentIDsFromHost(hostidentity.DeploySuffix(), hostname(r.Host)); ok {
 		return false
 	}
 	rule := h.routeRuleForHost(r, appHost)

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/url"
-	"os"
 	"strings"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -72,17 +71,14 @@ func syncDeploymentCheck(ctx context.Context, pool *pgxpool.Pool, checks *github
 	if !ok {
 		return nil
 	}
-	domain := strings.Trim(strings.TrimSpace(os.Getenv("FAAS_APPS_DOMAIN")), ".")
-	if domain == "" || domain == "apps.gregale.dev" {
-		domain = "gregale.dev"
-	}
+	platform, domain := githubd.PlatformDomain(), githubd.AppsDomain()
 	// Annotation fields are customer-controlled text. Keep the Check Run
 	// summary and PR comment single-line and predictable; the provider writer
 	// applies the same compaction to the Deployment payload.
 	deployedByText := strings.Join(strings.Fields(deployedBy), " ")
 	reasonText := strings.Join(strings.Fields(reason), " ")
-	deploymentURL := fmt.Sprintf("https://%s/dashboard/apps/%s/deployments/%s", domain, appSlug, deploymentID)
-	logsURL := fmt.Sprintf("https://%s/v1/deployments/%s/logs", domain, deploymentID)
+	deploymentURL := fmt.Sprintf("https://%s/dashboard/apps/%s/deployments/%s", platform, appSlug, deploymentID)
+	logsURL := fmt.Sprintf("https://%s/v1/deployments/%s/logs", platform, deploymentID)
 	environmentURL := fmt.Sprintf("https://%s.%s", appSlug, domain)
 	environment := githubDeploymentEnvironment(kind, scope, appSlug)
 	if err := checks.WriteGitHubDeploymentStatus(ctx, githubd.GitHubDeploymentUpdate{
