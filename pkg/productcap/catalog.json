@@ -2997,7 +2997,7 @@
         "scale"
       ],
       "docs_url": "/docs/logs",
-      "acceptance_test": "pkg/api/client_test.go::TestStreamAppLogs_HappyPath",
+      "acceptance_test": "cmd/e2e/logs_archive_metal_test.go::TestLogsLiveAndArchivedMetal",
       "routes": [
         "/dashboard/apps/{}/logs",
         "/v1/apps/{}/logs",

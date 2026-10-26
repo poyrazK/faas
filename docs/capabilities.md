@@ -120,7 +120,7 @@ This customer capability matrix is generated from [`pkg/productcap/catalog.json`
 | [Jobs](../docs/faas_openapi_spec) | async | `beta` | `hobby`, `pro`, `scale` | Run batch jobs with runs, tasks, retries and artifacts. | `pkg/apid/apidserver/handlers_dashboard_jobs_test.go::TestParseAppJobsPath` |
 | [Live queries](../docs/realtime) | data | `preview` | `hobby`, `pro`, `scale` | Stream incremental SQL query results to clients. | `pkg/apid/livequeries/service_test.go::TestLiveQueriesLogins` |
 | [Log drains](../docs/logs#log-drains) | observability | `beta` | `hobby`, `pro`, `scale` | Forward logs to an external destination. | `cmd/gregale/commands_log_drains_test.go::TestCmdLogDrainsListJSON` |
-| [Logs](../docs/logs) | observability | `ga` | `free`, `hobby`, `pro`, `scale` | View, tail, filter and archive app logs. | `pkg/api/client_test.go::TestStreamAppLogs_HappyPath` |
+| [Logs](../docs/logs) | observability | `ga` | `free`, `hobby`, `pro`, `scale` | View, tail, filter and archive app logs. | `cmd/e2e/logs_archive_metal_test.go::TestLogsLiveAndArchivedMetal` |
 | [Managed PostgreSQL](../docs/managed-postgres) | data | `preview` | `hobby`, `pro`, `scale` | Provision and bind a managed PostgreSQL database to an API. | `pkg/managedpostgres/service_test.go::TestCreateIsIdempotentAndPersistsPlacement` |
 | [Management MCP server](../docs/mcp) | developer | `preview` | `free`, `hobby`, `pro`, `scale` | Let AI agents manage Gregale over MCP with OAuth. | `pkg/mcpmanagement/server_test.go::TestManagementMCPJourney` |
 | [MCP catalog monitor](../docs/mcp) | runtime | `preview` | `hobby`, `pro`, `scale` | Watch an MCP server's tool catalog for changes. | `pkg/apid/apidserver/handlers_mcp_catalog_monitor_test.go::TestMCPCatalogMonitorHTTPRoles` |
