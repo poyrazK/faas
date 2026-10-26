@@ -41,7 +41,23 @@ type Envelope struct {
 	AppID            string `json:"appid,omitempty"`
 	PlatformTenantID string `json:"platformtenantid,omitempty"`
 	TenantEventID    string `json:"tenanteventid,omitempty"`
+	// Producer is the server-stamped publisher (AppProducer, OrgProducer or
+	// ProducerPersonal). Fanout uses it to keep an event inside its company
+	// when the account's owner has lost access to the company
+	// (ADR-20261025211616). An event without one routes as before.
+	Producer string `json:"producer,omitempty"`
 }
+
+// ProducerPersonal marks an event published outside any company: a personal
+// session or key on the account routes.
+const ProducerPersonal = "personal"
+
+// AppProducer marks an event an app published; fanout reads the app's
+// company when it routes the event.
+func AppProducer(appID string) string { return "app:" + appID }
+
+// OrgProducer marks an event published with a key bound to an organization.
+func OrgProducer(orgID string) string { return "org:" + orgID }
 
 func (e *Envelope) UnmarshalJSON(data []byte) error {
 	type wire Envelope
