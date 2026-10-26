@@ -1679,6 +1679,8 @@ var cliCommands = []cliCommand{
 				{Name: "limit", Short: "history page size", Value: "N"},
 				{Name: "before", Short: "history cursor", Value: "CURSOR"},
 				{Name: "environment", Short: "assess this project environment instead of the default scope; excludes history options", Value: "SLUG"},
+				{Name: "explain", Short: "explain health from runtime, release, data and scaling (what inspect shows); stands alone", Bool: true},
+				{Name: "errors", Short: "explain the latest failed deployment (what inspect --errors shows); stands alone", Bool: true},
 			}},
 			{Name: subChanges, Short: "List recorded changes and health transitions, newest first", Examples: []string{
 				"gregale app my-api changes",
