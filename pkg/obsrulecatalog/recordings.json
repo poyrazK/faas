@@ -3,7 +3,7 @@
   "fingerprint_algorithm": "promql_ast_v1",
   "sets": [
     {
-      "revision": "532671e390f5e176c89a20f4ccc8839ef550677321e5e9ed4fc390c14323ac88",
+      "revision": "4cd305a3836315b20e4f546ad36cdf632f5d0fcc46d649fb463f45444d0e4529",
       "expected": {
         "id": "gregale-core-v1",
         "revision": "be4034dd7b68bd053ec30f3c03135059d5f6a9978854a3ec9600f9d0eb410251",
@@ -1248,8 +1248,8 @@
           }
         ]
       },
-      "alert_set_revision": "bd2220b18e7aa3faeb1a6d5f92eb59667db824124fcbe8bcbc94f22186342e66",
-      "alert_count": 415,
+      "alert_set_revision": "9bb4195ebeac8a8c6d1b4b14c4e20769296b8720ddf7df41614a7c57c7a52377",
+      "alert_count": 423,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -1339,11 +1339,25 @@
         },
         {
           "rule_id": "1504f96bdb5f68cca86d49f3eb2b5937b662fa6e552a652a92f9146e5f754571",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "870bd876a48feb957aab40a299f6ed25f75b0e79898b8f9adc6ca75acab10dde",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyPlatformWakeGateMissed"
+            }
+          ]
         },
         {
           "rule_id": "17057289d7be895db7e37587d1006ec215aadc6f63108b18e6b474405047e735",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "870bd876a48feb957aab40a299f6ed25f75b0e79898b8f9adc6ca75acab10dde",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyPlatformWakeGateMissed"
+            }
+          ]
         },
         {
           "rule_id": "170930a0892146c382331f0a05d4e7e641478ec511500a48f0a97ae60fe8826c",
@@ -1497,7 +1511,14 @@
         },
         {
           "rule_id": "294070674ad044df9ef5e5ff8dfa0c0b2d6207f4b85becef04eda8cc97afd2ff",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "ba35ae421a792d9d755746c603d5aa091eab28d2108b13fa2a5419ae8a9f7054",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyWakeLatencyBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "2c604ad9741d72351e437805c2af4373807e7d426c42cb72879e03d4e5ea03d7",
@@ -1614,7 +1635,14 @@
         },
         {
           "rule_id": "32e8db659d869a95702b1b45498a864cb382473dc5ebd0d55cbb385e0f538c7b",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "62f35045dd8018f36b5cce08e64f987f412bb1d9ab20629014125b12a5ee56c6",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyApiAvailabilityBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "343405ea395490186090c1b29f5e52cf412491d34b053d801e9756ff7f5181b1",
@@ -1716,7 +1744,14 @@
         },
         {
           "rule_id": "4e7321a718bfe4b6c5bc9924f234cbf29cccead2b109caef80ca895a67c8df70",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "ba845d4623cd232043d55099dfe1dccf205d0fd7e887b6d9619dd0c244bd9084",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyBuildSuccessBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "53b31facbad130e736f3d2545880de34084a0c118cc9e143e32dc07a9200e60a",
@@ -1880,7 +1915,14 @@
         },
         {
           "rule_id": "76acecb93b6613af74f1085734759ff3ad9bbbdd1b90ba8701247a16a110b3ac",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "870bd876a48feb957aab40a299f6ed25f75b0e79898b8f9adc6ca75acab10dde",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyPlatformWakeGateMissed"
+            }
+          ]
         },
         {
           "rule_id": "78a8c2bb8f8eeea2864b16827dcd25b1b3a6b940ae17f19cb622d02621877b84",
@@ -2144,11 +2186,25 @@
         },
         {
           "rule_id": "b5dd5403d6620c2caba07a9770fd160dc8c1aa2b2447e9a6fb0540c1fb0e8493",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "62f35045dd8018f36b5cce08e64f987f412bb1d9ab20629014125b12a5ee56c6",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyApiAvailabilityBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "b7a242befac54ebf1310210f54f569060f48137041594fa27e1b4f6d616ebb47",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "ba35ae421a792d9d755746c603d5aa091eab28d2108b13fa2a5419ae8a9f7054",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyWakeLatencyBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "b9638d40c81c7d80c2c08fa484abf494434ae4a4dda6a7a4591dd4d6548923c3",
@@ -2405,7 +2461,14 @@
         },
         {
           "rule_id": "d7a0c22b5d6d1547571ae9eae28a271585bb03500ba768e2a848aefb0acc7551",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "62f35045dd8018f36b5cce08e64f987f412bb1d9ab20629014125b12a5ee56c6",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyApiAvailabilityBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "da57c4d54025efe227eb14cef9b4bc08dcc56833b24a7369e6dd3d7efb0b4aa2",
@@ -2432,7 +2495,14 @@
         },
         {
           "rule_id": "dffa73a6dfb4670c23b632339e64eb34688c29926f5a4e59ea3bf1f8862d1251",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "ba845d4623cd232043d55099dfe1dccf205d0fd7e887b6d9619dd0c244bd9084",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyBuildSuccessBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "e78fb05f4bf856409c0491cde7920f33e10c06ab3ba545e3fbd5a6910eb2dfad",
@@ -2520,7 +2590,14 @@
         },
         {
           "rule_id": "f4309d4693ca4418b5fa8bdbfef90668103dcfe6b5a25028a66121755acfd057",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "ba845d4623cd232043d55099dfe1dccf205d0fd7e887b6d9619dd0c244bd9084",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyBuildSuccessBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "f465333da9e1e2628fa628ed9346c5bce20084c6d507f0ed12f9bbbd8590bc25",
@@ -2592,7 +2669,14 @@
         },
         {
           "rule_id": "fbd89267843acaf8602b5c75cf6ffa17beeb90392ee716fb396ed2be83ede7bf",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "ba35ae421a792d9d755746c603d5aa091eab28d2108b13fa2a5419ae8a9f7054",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyWakeLatencyBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "fcb8f8d9a72e85168c9298b9f857075916b06b965e08ecedfff90befc7f435ee",
@@ -2742,7 +2826,7 @@
       ]
     },
     {
-      "revision": "681feb3e71ab4d4a98fa99410325e5970d7dda7a83456306bfdd1d45f025fc59",
+      "revision": "95a80fca3851163386978fdf15089d992f13126195e66dd4d2836cbb485fb6c7",
       "expected": {
         "id": "gregale-full-v1",
         "revision": "a8b18642a93fd08eba4bcd7d170c605b9fc402d02e4e87444c687b85d5309605",
@@ -3991,8 +4075,8 @@
           }
         ]
       },
-      "alert_set_revision": "68f095e7e86ac64d59a80606a8ad8458b1aca4e7659e2656b139aca9079b64af",
-      "alert_count": 435,
+      "alert_set_revision": "05f77456124aee34fb7882f1f28ddbd09376c863eaacfdec28f2745d5983aa56",
+      "alert_count": 443,
       "dependents": [
         {
           "rule_id": "04e71a8f5cf3db701f2c7083e95693cd02058aa3b83e91279b44abcac2192ea5",
@@ -4082,11 +4166,25 @@
         },
         {
           "rule_id": "1504f96bdb5f68cca86d49f3eb2b5937b662fa6e552a652a92f9146e5f754571",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "870bd876a48feb957aab40a299f6ed25f75b0e79898b8f9adc6ca75acab10dde",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyPlatformWakeGateMissed"
+            }
+          ]
         },
         {
           "rule_id": "17057289d7be895db7e37587d1006ec215aadc6f63108b18e6b474405047e735",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "870bd876a48feb957aab40a299f6ed25f75b0e79898b8f9adc6ca75acab10dde",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyPlatformWakeGateMissed"
+            }
+          ]
         },
         {
           "rule_id": "170930a0892146c382331f0a05d4e7e641478ec511500a48f0a97ae60fe8826c",
@@ -4240,7 +4338,14 @@
         },
         {
           "rule_id": "294070674ad044df9ef5e5ff8dfa0c0b2d6207f4b85becef04eda8cc97afd2ff",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "ba35ae421a792d9d755746c603d5aa091eab28d2108b13fa2a5419ae8a9f7054",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyWakeLatencyBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "2c604ad9741d72351e437805c2af4373807e7d426c42cb72879e03d4e5ea03d7",
@@ -4357,7 +4462,14 @@
         },
         {
           "rule_id": "32e8db659d869a95702b1b45498a864cb382473dc5ebd0d55cbb385e0f538c7b",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "62f35045dd8018f36b5cce08e64f987f412bb1d9ab20629014125b12a5ee56c6",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyApiAvailabilityBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "343405ea395490186090c1b29f5e52cf412491d34b053d801e9756ff7f5181b1",
@@ -4459,7 +4571,14 @@
         },
         {
           "rule_id": "4e7321a718bfe4b6c5bc9924f234cbf29cccead2b109caef80ca895a67c8df70",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "ba845d4623cd232043d55099dfe1dccf205d0fd7e887b6d9619dd0c244bd9084",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyBuildSuccessBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "53b31facbad130e736f3d2545880de34084a0c118cc9e143e32dc07a9200e60a",
@@ -4623,7 +4742,14 @@
         },
         {
           "rule_id": "76acecb93b6613af74f1085734759ff3ad9bbbdd1b90ba8701247a16a110b3ac",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "870bd876a48feb957aab40a299f6ed25f75b0e79898b8f9adc6ca75acab10dde",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyPlatformWakeGateMissed"
+            }
+          ]
         },
         {
           "rule_id": "78a8c2bb8f8eeea2864b16827dcd25b1b3a6b940ae17f19cb622d02621877b84",
@@ -4887,11 +5013,25 @@
         },
         {
           "rule_id": "b5dd5403d6620c2caba07a9770fd160dc8c1aa2b2447e9a6fb0540c1fb0e8493",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "62f35045dd8018f36b5cce08e64f987f412bb1d9ab20629014125b12a5ee56c6",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyApiAvailabilityBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "b7a242befac54ebf1310210f54f569060f48137041594fa27e1b4f6d616ebb47",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "ba35ae421a792d9d755746c603d5aa091eab28d2108b13fa2a5419ae8a9f7054",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyWakeLatencyBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "b9638d40c81c7d80c2c08fa484abf494434ae4a4dda6a7a4591dd4d6548923c3",
@@ -5148,7 +5288,14 @@
         },
         {
           "rule_id": "d7a0c22b5d6d1547571ae9eae28a271585bb03500ba768e2a848aefb0acc7551",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "62f35045dd8018f36b5cce08e64f987f412bb1d9ab20629014125b12a5ee56c6",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyApiAvailabilityBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "da57c4d54025efe227eb14cef9b4bc08dcc56833b24a7369e6dd3d7efb0b4aa2",
@@ -5175,7 +5322,14 @@
         },
         {
           "rule_id": "dffa73a6dfb4670c23b632339e64eb34688c29926f5a4e59ea3bf1f8862d1251",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "ba845d4623cd232043d55099dfe1dccf205d0fd7e887b6d9619dd0c244bd9084",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyBuildSuccessBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "e78fb05f4bf856409c0491cde7920f33e10c06ab3ba545e3fbd5a6910eb2dfad",
@@ -5263,7 +5417,14 @@
         },
         {
           "rule_id": "f4309d4693ca4418b5fa8bdbfef90668103dcfe6b5a25028a66121755acfd057",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "ba845d4623cd232043d55099dfe1dccf205d0fd7e887b6d9619dd0c244bd9084",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyBuildSuccessBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "f465333da9e1e2628fa628ed9346c5bce20084c6d507f0ed12f9bbbd8590bc25",
@@ -5335,7 +5496,14 @@
         },
         {
           "rule_id": "fbd89267843acaf8602b5c75cf6ffa17beeb90392ee716fb396ed2be83ede7bf",
-          "alerts": []
+          "alerts": [
+            {
+              "id": "ba35ae421a792d9d755746c603d5aa091eab28d2108b13fa2a5419ae8a9f7054",
+              "file_name": "faas.rules.yml",
+              "group_name": "faas_slo_monthly",
+              "rule_name": "FaasMonthlyWakeLatencyBelowSLO"
+            }
+          ]
         },
         {
           "rule_id": "fcb8f8d9a72e85168c9298b9f857075916b06b965e08ecedfff90befc7f435ee",

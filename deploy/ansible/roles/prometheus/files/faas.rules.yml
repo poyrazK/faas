@@ -1238,6 +1238,41 @@ groups:
   # `loki_send_total` is intentionally an aggregate across Promtail targets,
   # while the alerts retain the Prometheus `instance` label for triage.
   # ────────────────────────────────────────────────────────────────────
+  # ────────────────────────────────────────────────────
+  # Serving probe (ADR-20261023124955 §5). faas-serving-probe on each compute
+  # node already posts failures straight to a chat webhook, which works with
+  # the control plane down. These alerts put the same signal in the
+  # Alertmanager review queue and the fleet dashboard while it is up, and
+  # notice a probe that stopped running.
+  - name: faas_serving_probe
+    interval: 1m
+    rules:
+      - alert: FaasServingProbeFailing
+        expr: faas_serving_probe_success == 0
+        for: 10m
+        labels:
+          severity: warn
+          component: gatewayd-public
+          family: serving_probe
+          public_status: internal
+        annotations:
+          summary: "The serving probe on {{ $labels.instance }} cannot reach {{ $labels.url }}"
+          description: "Two attempts 30 s apart have missed a 2xx on every run for 10 minutes; faas_serving_probe_http_status shows the last status (0 means nothing answered). The node's webhook has already posted. If every compute node reports it, look at the edge or the probe app; if only one does, look at that node's network."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbe.md"
+
+      - alert: FaasServingProbeStale
+        expr: time() - faas_serving_probe_last_run_timestamp_seconds > 900
+        for: 5m
+        labels:
+          severity: warn
+          component: node
+          family: serving_probe
+          public_status: internal
+        annotations:
+          summary: "The serving probe on {{ $labels.instance }} has not run for 15 minutes"
+          description: "faas-serving-probe.timer has not completed a run on {{ $labels.instance }} for over 15 minutes, so an outage seen from that node would not be reported. Check systemctl status faas-serving-probe.timer and journalctl -u faas-serving-probe."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasServingProbe.md"
+
   - name: faas_loki_pipeline
     interval: 30s
     rules:
@@ -2009,6 +2044,75 @@ groups:
         expr: |
           sum_over_time(faas_slo_builds_ok:rate5m[30d])
             / (sum_over_time(faas_slo_builds_eligible:rate5m[30d]) > 0)
+
+      # The rolling 30 d ratio is below a public SLO (spec §12). Warn, not
+      # page: the burn-rate alerts in faas_slo already page on the fast
+      # burns; this is the daily-review signal that the month is lost or close.
+
+      - alert: FaasMonthlyApiAvailabilityBelowSLO
+        expr: faas_slo_api_availability:ratio_30d < 0.995
+        for: 1h
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: slo_monthly
+          public_status: internal
+        annotations:
+          summary: "30-day API availability is {{ $value | humanizePercentage }}, below the 99.5% SLO"
+          description: "Requests answered without a platform-produced 5xx over the last 30 days are below the public 99.5% SLO (spec §12). The error budget for the window is spent; check the API availability panels for the days that consumed it before the status page reports the month."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
+
+      - alert: FaasMonthlyWakeLatencyBelowSLO
+        expr: faas_slo_wakes_within_1s:ratio_30d < 0.95
+        for: 1h
+        labels:
+          severity: warn
+          component: gatewayd-internal
+          family: slo_monthly
+          public_status: internal
+        annotations:
+          summary: "Only {{ $value | humanizePercentage }} of wakes in 30 days finished within 1 s (SLO: p95 < 1 s)"
+          description: "Fewer than 95% of wakes over the last 30 days reached the first upstream byte within 1 s, so wake p95 is above the public 1 s SLO (spec §12). Compare with the platform-only histogram to separate platform restore time from app start time."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
+
+      - alert: FaasMonthlyPlatformWakeGateMissed
+        expr: faas_slo_platform_wakes_within_350ms:ratio_30d < 0.95
+        for: 1h
+        labels:
+          severity: warn
+          component: vmmd
+          family: slo_monthly
+          public_status: internal
+        annotations:
+          summary: "Only {{ $value | humanizePercentage }} of platform wakes in 30 days finished within 350 ms"
+          description: "Fewer than 95% of platform-only wakes over the last 30 days finished within 350 ms, so the platform restore p95 misses the public-beta gate. vmmd_restore_phase_duration_seconds shows which restore phase grew."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
+
+      - alert: FaasMonthlyBuildSuccessBelowSLO
+        expr: faas_slo_build_success:ratio_30d < 0.99
+        for: 1h
+        labels:
+          severity: warn
+          component: builderd
+          family: slo_monthly
+          public_status: internal
+        annotations:
+          summary: "30-day build success is {{ $value | humanizePercentage }}, below the 99% SLO"
+          description: "Builds that did not fail on the customer's code succeeded less than 99% of the time over the last 30 days (spec §12). builderd_ops_total by code shows which failure class consumed the budget."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
+
+      - alert: FaasPrometheusRetentionBelowSLOWindow
+        expr: (time() - prometheus_tsdb_lowest_timestamp_seconds) < 31 * 86400 and on (instance, job) increase(prometheus_tsdb_size_retentions_total[6h]) > 0
+        for: 15m
+        labels:
+          severity: warn
+          component: prometheus
+          family: slo_monthly
+          public_status: internal
+        annotations:
+          summary: "Prometheus is deleting blocks for size before it holds 31 days"
+          description: "The size cap (prom_retention_size) removed blocks in the last 6 hours while the oldest sample is less than 31 days old, so the faas_slo_monthly 30-day ratios cover only part of a month. Raise prom_retention_size if the disk allows, or drop high-cardinality bucket series as ADR-20261023124955 §3 describes."
+          runbook_url: "https://github.com/poyrazK/faas/blob/main/docs/runbooks/FaasMonthlySLO.md"
 
   - name: faas_slo
     interval: 30s
