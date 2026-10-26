@@ -70,7 +70,7 @@ func cmdAdd(args []string) int {
 		return cmdAddDatadog(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown add resource %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "add", nestedCliCommand("add"), args[0])
 	}
 }
 

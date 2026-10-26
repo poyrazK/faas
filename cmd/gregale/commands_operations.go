@@ -41,7 +41,7 @@ func cmdOperations(args []string) int {
 		return cmdOperationCancel(args[1:])
 	default:
 		printCommandValidation(os.Stderr, "unknown operations command %q\n", args[0])
-		return 1
+		return unknownSubcommandChoices(os.Stderr, "operations", nestedCliCommand("operations"), args[0])
 	}
 }
 

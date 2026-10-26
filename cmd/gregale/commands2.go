@@ -2203,9 +2203,17 @@ func cmdDeployTarballToExisting(ctx context.Context, args []string, existingApp 
 				"gregale deploy names the app with --name; --app only selects the app shape. Did you mean `gregale deploy --name %s`?",
 				fs.Arg(0)))
 		}
-		return printErr("Invalid arguments", fmt.Errorf(
+		// `deploy ./my-app` named neither --path nor the deploy verbs on
+		// production-us rc.294 (Hunt 14 H14-64).
+		if dir, ok := sourceDirPositional(fs); ok {
+			return printErr("Invalid arguments", fmt.Errorf(
+				"gregale deploy takes the source directory with --path. Did you mean `gregale deploy --path %s`?", dir))
+		}
+		code := printErr("Invalid arguments", fmt.Errorf(
 			"gregale deploy accepts flags only; unexpected positional arguments: %s",
 			strings.Join(fs.Args(), " ")))
+		_ = unknownSubcommandChoices(os.Stderr, "deploy", nestedCliCommand("deploy"), fs.Arg(0))
+		return code
 	}
 	// Capture explicit presence once. Several deploy flags use sentinel values,
 	// and create-only/preflight validation must distinguish an omitted default
@@ -6752,6 +6760,17 @@ func cmdLogsWithPreviewContext(args []string, viewPreview *logQueryPreviewView) 
 		archiveSelector = &api.ArchiveLogSelector{InstanceID: *archiveInstance, Date: *archiveDate}
 	}
 	if logSource == logsSourceHTTP && (*follow || *grep != "" || *level != "" || *explain || archiveRequested) {
+		if inferred := logsHTTPOnlyFlagsSet(fs); !logsFlagWasSet(fs, "source") && len(inferred) > 0 {
+			// `logs h14-py --grep healthz --limit 3` never asked for HTTP logs;
+			// --limit chose them silently (Hunt 14 H14-64).
+			flags, verb := strings.Join(inferred, ", "), "applies"
+			if len(inferred) > 1 {
+				verb = "apply"
+			}
+			PrintUsage(os.Stderr, fmt.Sprintf("%s %s only to HTTP request logs, which cannot be combined with --follow, --grep, --level, --explain, or --archive; drop %s to read runtime logs",
+				flags, verb, flags), "logs")
+			return 2
+		}
 		PrintUsage(os.Stderr, "HTTP log queries cannot be combined with --follow, --grep, --level, --explain, or --archive", "logs")
 		return 2
 	}

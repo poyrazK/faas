@@ -1733,3 +1733,7 @@ func StatusPageFromStore(ctx context.Context, promURL string, store state.Store)
 
 // WriteExclusiveError maps a managed operation store error to its problem.
 var WriteExclusiveError = writeExclusiveError
+
+// ResolveAndCheckEgress is the create-time egress check every outbound URL
+// (alert, log drain, webhook, channel) passes.
+var ResolveAndCheckEgress = resolveAndCheckEgress

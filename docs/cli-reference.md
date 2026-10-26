@@ -1059,22 +1059,29 @@ provider-check catalog observer
 
 ### mcp access
 
-Audit stored MCP policy and admission evidence
+Audit MCP access-policy drift and admission evidence
 
 #### mcp access audit
 
-audit MCP access evidence
+Compare source and role policy with stored account gateway rules
 
-`gregale mcp access audit [--app <VALUE>] [--path <VALUE>] [--auth-placement <VALUE>] [--algorithms <VALUE>] [--release-policy <VALUE>] [--timeout <VALUE>]`
+`gregale mcp access audit --app <SLUG> [--path <DIR>] --auth-placement <PLACEMENT> [--algorithms <LIST>] [--release-policy <PATH>] [--timeout <DURATION>]`
 
 | Flag | Meaning | |
 |---|---|---|
-| `--app <VALUE>` | MCP application slug |  |
-| `--path <VALUE>` | reviewed MCP source directory |  |
-| `--auth-placement <VALUE>` | gateway or guest-only (required) |  |
-| `--algorithms <VALUE>` | reviewed gateway algorithms (default RS256,ES256) |  |
-| `--release-policy <VALUE>` | optional role baselines and authorization exclusions |  |
-| `--timeout <VALUE>` | overall audit deadline, at most 2m |  |
+| `--app <SLUG>` | MCP application slug | required |
+| `--path <DIR>` | reviewed source directory (default .) |  |
+| `--auth-placement <PLACEMENT>` | explicit authentication placement | required; one of `gateway` · `guest-only` |
+| `--algorithms <LIST>` | reviewed gateway algorithms (default RS256,ES256) |  |
+| `--release-policy <PATH>` | optional confined role baselines and exclusions; tokens are not read |  |
+| `--timeout <DURATION>` | overall audit deadline (default 30s, at most 2m) |  |
+
+Examples:
+
+```sh
+gregale mcp access audit --app my-mcp --path ./my-mcp --auth-placement gateway --json
+gregale mcp access audit --app my-mcp --auth-placement guest-only --release-policy release.json
+```
 
 #### mcp access history
 
@@ -1226,32 +1233,6 @@ Examples:
 
 ```sh
 gregale mcp deploy --path ./my-mcp --name my-mcp --size small
-```
-
-### mcp access
-
-Inspect reviewed OAuth and gateway access-policy drift
-
-#### mcp access audit
-
-Compare source and role policy with stored account gateway rules
-
-`gregale mcp access audit --app <SLUG> [--path <DIR>] --auth-placement <PLACEMENT> [--algorithms <LIST>] [--release-policy <PATH>] [--timeout <DURATION>]`
-
-| Flag | Meaning | |
-|---|---|---|
-| `--app <SLUG>` | MCP application slug | required |
-| `--path <DIR>` | reviewed source directory (default .) |  |
-| `--auth-placement <PLACEMENT>` | explicit authentication placement | required; one of `gateway` · `guest-only` |
-| `--algorithms <LIST>` | reviewed gateway algorithms (default RS256,ES256) |  |
-| `--release-policy <PATH>` | optional confined role baselines and exclusions; tokens are not read |  |
-| `--timeout <DURATION>` | overall audit deadline (default 30s, at most 2m) |  |
-
-Examples:
-
-```sh
-gregale mcp access audit --app my-mcp --path ./my-mcp --auth-placement gateway --json
-gregale mcp access audit --app my-mcp --auth-placement guest-only --release-policy release.json
 ```
 
 ### mcp overview
@@ -6687,7 +6668,11 @@ Inspect and manage background worker pools
 
 List background worker pools, or one pool by app
 
-`gregale workers list [<app>]`
+`gregale workers list [--app <slug>] [<app>]`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <slug>` | list only this app&#39;s worker pool |  |
 
 ### workers status
 
@@ -16933,7 +16918,7 @@ Qualify binds probes to release, config and secret revisions.
 
 List environments
 
-`gregale projects environments list`
+`gregale projects environments list <project-slug>`
 
 #### projects environments create
 
