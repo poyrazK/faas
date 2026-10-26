@@ -1,0 +1,34 @@
+# Managed by Ansible (audit_anchor). Local edits are overwritten.
+# ADR-20261026163015: recompute the whole audit log anchor chain.
+[Unit]
+Description=Gregale audit log verification
+After=network-online.target postgresql.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart={{ faas_audit_anchor_gregalectl }} audit verify --db-env {{ faas_audit_anchor_db_env }} --metrics-file {{ faas_audit_anchor_textfile_dir }}/faas_audit_verify.prom
+# Exit 1 reports findings; the metric pages, the unit need not fail.
+SuccessExitStatus=1
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=yes
+ProtectSystem=strict
+ReadWritePaths={{ faas_audit_anchor_textfile_dir }}
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+SystemCallArchitectures=native
+UMask=0077
+TimeoutStartSec=2h
+StandardOutput=journal
+StandardError=journal

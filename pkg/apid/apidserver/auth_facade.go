@@ -647,12 +647,10 @@ func sessionFrom(r *http.Request) (state.Session, bool) {
 	return *sess, true
 }
 
-// clearSessionCookie evicts the faas_sid cookie on the client.
-// Bridges to pkg/auth's Middleware.ClearSessionCookie so the cookie
-// attribute set matches the issuer in handlers_auth.go (Path "/" +
-// Secure + SameSite=Lax). The cookie name reads from
-// pkg/auth.Middleware.SessionCookieName — default "faas_sid"; cmd/apid
-// never overrides the name so the default is what callers see.
+// clearSessionCookie evicts the session cookie on the client, under both
+// pkg/sessioncookie names. Bridges to pkg/auth's
+// Middleware.ClearSessionCookie so the cookie attribute set matches the
+// issuers (Path "/" + Secure + SameSite=Lax).
 func (s *server) clearSessionCookie(w http.ResponseWriter, _ *http.Request) {
 	s.authMw.ClearSessionCookie(w)
 }

@@ -3925,6 +3925,7 @@
       "acceptance_test": "pkg/apid/apidserver/handlers_managed_postgres_overage_test.go::TestManagedPostgresOverageRoutes",
       "parent": "managed-postgres",
       "routes": [
+        "/dashboard/postgres/overage",
         "/v1/postgres/overage"
       ],
       "cli": [

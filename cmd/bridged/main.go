@@ -47,25 +47,7 @@ func run(ctx context.Context, log *slog.Logger) error {
 	}
 	defer pool.Close()
 	store := state.NewPgStore(pool)
-	lookup := func(ctx context.Context, account, id string) (devbridge.Session, error) {
-		owner, err := store.AccountByID(ctx, account)
-		if err != nil || owner.Status != state.AccountActive || owner.AbuseHoldAt != nil {
-			return devbridge.Session{}, devbridge.ErrUnauthorized
-		}
-		session, err := store.DevBridgeByID(ctx, account, id)
-		if err != nil {
-			return session, err
-		}
-		env, err := store.ProjectEnvironmentByID(ctx, session.Scope.EnvironmentID)
-		if err != nil || env.AccountID != account || env.ProjectID != session.Scope.ProjectID || env.Protected || env.Slug == "production" || env.Slug == "default" {
-			return devbridge.Session{}, devbridge.ErrUnauthorized
-		}
-		app, err := store.AppByID(ctx, session.Scope.TargetAppID)
-		if err != nil || app.AccountID != account || app.ProjectID != env.ProjectID || app.Status != state.AppActive {
-			return devbridge.Session{}, devbridge.ErrUnauthorized
-		}
-		return session, nil
-	}
+	lookup := relayLookup(store)
 	relay := devbridge.NewRelay(api.DevBridgeMaxConcurrentRequests).WithUpgradeLimits(devbridge.UpgradeLimits{
 		MaxConnections: api.DevBridgeMaxUpgradedConnections,
 		IdleTimeout:    api.DevBridgeUpgradeIdleTimeout,
