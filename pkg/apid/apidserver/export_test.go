@@ -1765,3 +1765,11 @@ var WriteExclusiveError = writeExclusiveError
 // ResolveAndCheckEgress is the create-time egress check every outbound URL
 // (alert, log drain, webhook, channel) passes.
 var ResolveAndCheckEgress = resolveAndCheckEgress
+
+// RequestBillingMailOutboxesForTest selects the three webhook billing-mail
+// outboxes without configuring one, so a delivery that reaches an outbox
+// fails closed with 503 (Hunt 17 H17-3).
+func (r *server) RequestBillingMailOutboxesForTest() {
+	on := func() bool { return true }
+	r.paymentFailedOutboxRequested, r.accountRestoredOutboxRequested, r.subscriptionEndedOutboxRequested = on, on, on
+}
