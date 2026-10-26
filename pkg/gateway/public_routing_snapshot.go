@@ -12,6 +12,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/onebox-faas/faas/pkg/api"
+	"github.com/onebox-faas/faas/pkg/state"
 )
 
 type PublicRoutingInputs struct {
@@ -28,8 +29,12 @@ type PublicRoutingSnapshot struct {
 	HostDeploymentID, HostScope                                      string
 	HostChecked, HostAllowed, Async                                  bool
 	Weights                                                          []DeploymentWeightsRow
-	SelectedDeploymentID                                             string `json:"-"`
-	SelectionReason                                                  string `json:"-"`
+	// RosterScope is set when the production lane's roster came from the
+	// other production scope (a project app still on the legacy default
+	// scope); the selected deployment is admitted there.
+	RosterScope          string `json:",omitempty"`
+	SelectedDeploymentID string `json:"-"`
+	SelectionReason      string `json:"-"`
 }
 
 type PublicRoutingPinner func(context.Context, App, PublicRoutingInputs) (PublicRoutingSnapshot, error)
@@ -185,6 +190,10 @@ func validatePublicRoutingSnapshot(snapshot PublicRoutingSnapshot, app App, inpu
 	if inputs.ResolveRelease && snapshot.ReleaseVerdict != "allowed" && snapshot.ReleaseVerdict != "gone" && snapshot.ReleaseVerdict != "conflict" {
 		return errors.New("missing public release verdict")
 	}
+	if snapshot.RosterScope != "" && (!state.IsProductionRoutingScope(inputs.Scope) || !state.IsProductionRoutingScope(snapshot.RosterScope) ||
+		snapshot.RosterScope == inputs.Scope || inputs.Scope == "" && snapshot.RosterScope == state.DefaultEnvScope) {
+		return errors.New("invalid public routing roster scope")
+	}
 	seen := make(map[string]bool, len(snapshot.Weights))
 	for _, weight := range snapshot.Weights {
 		if weight.ID == "" || weight.TrafficPercent <= 0 || weight.TrafficPercent > api.TrafficPolicyMaxWeight || seen[weight.ID] {
@@ -232,6 +241,19 @@ func (h *Handler) selectPublicRoutingDeployment(r *http.Request, app App, inputs
 		snapshot.SelectedDeploymentID, _ = h.publicRoutingStride.pick(app, inputs.Scope, snapshot.Weights)
 		snapshot.SelectionReason = "weighted"
 	}
+}
+
+// admissionScope is the scope the selected deployment is admitted in. A
+// deployment picked from a roster read in the other production scope is
+// admitted in that scope, as the weighted picker's wakes were.
+func (s PublicRoutingSnapshot) admissionScope() string {
+	switch s.SelectionReason {
+	case "weighted", "version", "session":
+		if s.RosterScope != "" {
+			return s.RosterScope
+		}
+	}
+	return s.Scope
 }
 
 // Only the bounded per-app cursor is retained. Every choice uses the frozen

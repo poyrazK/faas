@@ -1809,6 +1809,9 @@ const (
 	CodeCliAuthUnavailable         = "cli_auth_code_unavailable"
 	CodeBrowserApprovalPending     = "browser_approval_pending"
 	CodeBrowserApprovalUnavailable = "browser_approval_unavailable"
+	// CodeSecretEntryUnavailable covers an expired, used, unknown or
+	// mismatched secret entry request (ADR-20261026174727).
+	CodeSecretEntryUnavailable = "secret_entry_unavailable"
 
 	// CodeAppConcurReached is the typed "already at max_concurrency"
 	// result from Engine.AdmitInstance (issue #168). Distinct from
@@ -2395,7 +2398,7 @@ func StatusForCode(code string) int {
 		return http.StatusConflict
 	case CodeCliAuthPending, CodeBrowserApprovalPending:
 		return http.StatusNotFound
-	case CodeCliAuthUnavailable, CodeBrowserApprovalUnavailable:
+	case CodeCliAuthUnavailable, CodeBrowserApprovalUnavailable, CodeSecretEntryUnavailable:
 		return http.StatusGone
 	case CodePlanQueueDepth, CodePlanDelayedCap, CodePlanQueueBacklogBytes:
 		return http.StatusForbidden

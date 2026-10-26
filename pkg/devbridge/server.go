@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/onebox-faas/faas/pkg/sessioncookie"
 )
 
 const AccountHeader = "X-Gregale-Dev-Bridge-Account"
@@ -195,7 +196,7 @@ func stripDashboardCookie(r *http.Request) {
 	cookies := r.Cookies()
 	r.Header.Del("Cookie")
 	for _, cookie := range cookies {
-		if cookie.Name != "faas_sid" {
+		if !sessioncookie.IsName(cookie.Name) {
 			r.AddCookie(cookie)
 		}
 	}

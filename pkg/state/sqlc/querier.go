@@ -967,6 +967,9 @@ type Querier interface {
 	EffectiveWorkflowDefinitions(ctx context.Context, db DBTX, arg EffectiveWorkflowDefinitionsParams) ([]byte, error)
 	EnableReleaseSecretRekey(ctx context.Context, db DBTX) error
 	EnqueueAppHealthNotification(ctx context.Context, db DBTX, arg EnqueueAppHealthNotificationParams) error
+	// A company project keeps its creator's account; the account's webhooks get
+	// its notifications only while the account may still see the project's
+	// organization (ADR-20261026151103).
 	EnqueueEnvironmentGitNotification(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitNotificationParams) error
 	EnqueueEnvironmentGitOps(ctx context.Context, db DBTX, arg EnqueueEnvironmentGitOpsParams) error
 	EnqueueExclusiveWebhookEffect(ctx context.Context, db DBTX, arg EnqueueExclusiveWebhookEffectParams) error
@@ -5407,8 +5410,17 @@ type Querier interface {
 	ReadPublicHostTenantSurface(ctx context.Context, db DBTX, host string) ([]byte, error)
 	ReadPublicRoutingHostPin(ctx context.Context, db DBTX, arg ReadPublicRoutingHostPinParams) (bool, error)
 	ReadPublicRoutingOwner(ctx context.Context, db DBTX, arg ReadPublicRoutingOwnerParams) (bool, error)
+	// ADR-570 production routing follows ProductionRoutingDeployments, as the
+	// weighted picker does: the named production scope once it carries traffic,
+	// otherwise the legacy default scope. One read returns the chosen lane.
+	ReadPublicRoutingProductionWeights(ctx context.Context, db DBTX, arg ReadPublicRoutingProductionWeightsParams) ([]ReadPublicRoutingProductionWeightsRow, error)
 	ReadPublicRoutingRelease(ctx context.Context, db DBTX, arg ReadPublicRoutingReleaseParams) ([]ReadPublicRoutingReleaseRow, error)
 	ReadPublicRoutingRevision(ctx context.Context, db DBTX, arg ReadPublicRoutingRevisionParams) (bool, error)
+	// imaged's hosting smoke verifies a candidate before MarkDeploymentLive, so
+	// the candidate is still snapshotting. The smoke always uses the app's own
+	// host, whatever the candidate's environment, so no scope applies; the smoke
+	// challenge already binds the app and deployment.
+	ReadPublicRoutingSmokeCandidate(ctx context.Context, db DBTX, arg ReadPublicRoutingSmokeCandidateParams) (bool, error)
 	ReadPublicRoutingWeights(ctx context.Context, db DBTX, arg ReadPublicRoutingWeightsParams) ([]ReadPublicRoutingWeightsRow, error)
 	ReadQueueCanary(ctx context.Context, db DBTX, arg ReadQueueCanaryParams) (ReadQueueCanaryRow, error)
 	ReadQueueLeaseReceipt(ctx context.Context, db DBTX, invocationID pgtype.UUID) (InvocationQueueLeaseReceipt, error)

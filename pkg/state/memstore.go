@@ -26631,6 +26631,7 @@ func (m *MemStore) RemoveOrgMember(ctx context.Context, orgID, accountID string)
 	now := time.Now().UTC()
 	mem.RemovedAt = &now
 	m.setOrgMembershipLocked(k, mem)
+	m.pauseDepartedMemberIntegrationsLocked(orgID, accountID)
 	return nil
 }
 
