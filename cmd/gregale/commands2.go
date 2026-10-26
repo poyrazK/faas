@@ -5229,6 +5229,9 @@ func cmdCrons(args []string) int {
 	case "next":
 		return cmdCronsNext(args[1:])
 	case subList:
+		if rest, oneOff := takeBoolFlag(args[1:], "one-off"); oneOff {
+			return cmdDelayedTaskList(rest)
+		}
 		fs := newFlagSet("crons-list", flag.ContinueOnError)
 		slug := fs.String("app", "", "app slug (required)")
 		if err := fs.Parse(args[1:]); err != nil {
@@ -5270,6 +5273,9 @@ func cmdCrons(args []string) int {
 		}
 		return 0
 	case subAdd:
+		if oneOff, ok := cronOneOffArgs(args[1:]); ok {
+			return cmdCronsAddOneOff(args[1:], oneOff)
+		}
 		fs := newFlagSet("crons-add", flag.ContinueOnError)
 		interactive := fs.Bool("interactive", false, "choose and review a scheduled HTTP task")
 		slug := fs.String("app", "", "app slug (required)")
@@ -5384,12 +5390,18 @@ func cmdCrons(args []string) int {
 	case subUpdate:
 		return cmdCronsUpdate(args[1:])
 	case subInfo:
+		if rest, oneOff := takeBoolFlag(args[1:], "one-off"); oneOff {
+			return cmdDelayedTaskGet(rest)
+		}
 		return cmdCronsInfo(args[1:])
 	case subRuns:
 		return cmdCronsRuns(args[1:])
 	case "occurrences":
 		return cmdCronsOccurrences(args[1:])
 	case "cancel":
+		if cronCancelsOneOff(args[1:]) {
+			return cmdDelayedTaskCancel(args[1:])
+		}
 		return cmdCronsCancel(args[1:])
 	case subRm:
 		return cmdCronsRm(args[1:])

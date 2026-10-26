@@ -6375,20 +6375,23 @@ Includes state and policy caveats.
 
 List cron rules
 
-`gregale crons list --app <slug>`
+`gregale crons list --app <slug> [--one-off]`
 
 | Flag | Meaning | |
 |---|---|---|
 | `--app <slug>` | app slug | required |
+| `--one-off` | list one-off requests (--at or --in) instead of cron rules |  |
 
 ### crons add
 
 Schedule a POST to an app path, or a deployment command
 
-`gregale crons add [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
+`gregale crons add [--at <RFC3339>] [--in <DURATION>] [--interactive] [--app <slug>] [--schedule <EXPR>] [--path <PATH>] [--command <EXEC>] [--arg <ARG>] [--shell] [--timeout-seconds <N>] [--max-output-bytes <N>] [--timezone <TZ>] [--skip-if-running] [--retry-max] [--retry-backoff-seconds] [--schedule-policy <JSON>] [--failure-rules <JSON>]`
 
 | Flag | Meaning | |
 |---|---|---|
+| `--at <RFC3339>` | send one request at this RFC3339 time instead of on a schedule |  |
+| `--in <DURATION>` | send one request after this delay (such as 30m) instead of on a schedule |  |
 | `--interactive` | choose an HTTP path, schedule, and timezone, preview run times, and confirm creation |  |
 | `--app <slug>` | app slug (interactive mode can use linked app or picker) |  |
 | `--schedule <EXPR>` | five-field cron expression (required unless interactive) |  |
@@ -6409,13 +6412,22 @@ Examples:
 
 ```sh
 gregale crons add --app my-api --interactive
+gregale crons add --app my-api --at 2030-01-01T09:00:00Z --path /report
+gregale crons add --app my-api --in 30m --path /reminders
 ```
+
+With --at or --in, add schedules one request instead of a recurring cron and takes the flags of `gregale delayed-task add` (--payload, --method, --header, retries); --schedule and the command flags belong to recurring crons.
 
 ### crons info
 
 Show one cron rule
 
-`gregale crons info <id>`
+`gregale crons info [--one-off] [--app <SLUG>] <id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--one-off` | show a one-off request (--at or --in) instead of a cron rule |  |
+| `--app <SLUG>` | with --one-off, require the request to belong to this app |  |
 
 ### crons update
 
@@ -6527,9 +6539,15 @@ Inspect scheduled occurrence decisions
 
 ### crons cancel
 
-Request cancellation of one command-cron run
+Cancel a command-cron run, or a one-off request
 
-`gregale crons cancel <cron-id> <run-id>`
+`gregale crons cancel [--app <SLUG>] <cron-id> <run-id> | <request-id>`
+
+| Flag | Meaning | |
+|---|---|---|
+| `--app <SLUG>` | with a one-off request, require it to belong to this app |  |
+
+With one id, cancels a one-off request made with --at or --in; --app then requires it to belong to that app.
 
 
 ## triggers
