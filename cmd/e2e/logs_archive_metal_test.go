@@ -203,13 +203,18 @@ func TestLogsLiveAndArchivedMetal(t *testing.T) {
 	}
 
 	// Park: vmmd retires the ring into the spool and the shipper uploads it.
+	// apid answers 204 once the instances have drained; 202 means the park
+	// was only queued.
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	if _, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status != http.StatusAccepted {
-		t.Fatalf("park %s: status=%d", slug, status)
-	}
-	if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 50*time.Second); err != nil {
-		t.Fatalf("park %s: %v", slug, err)
+	switch body, status := doReq(t, h, key, http.MethodPost, "/v1/apps/"+slug+"/park", nil); status {
+	case http.StatusNoContent:
+	case http.StatusAccepted:
+		if _, err := e2etest.WaitForInstanceState(ctx, t, pool, appID, state.StateParked, 50*time.Second); err != nil {
+			t.Fatalf("park %s: %v", slug, err)
+		}
+	default:
+		t.Fatalf("park %s: status=%d body=%s", slug, status, body)
 	}
 	prefix := "faas-logs/" + live.Instance + "/"
 	for !bucket.has(prefix) {
