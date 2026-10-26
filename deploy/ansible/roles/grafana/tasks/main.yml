@@ -178,25 +178,40 @@
       must match the provider-issued Loki certificate.
   when: gv_loki_url | length > 0
 
-- name: grafana — stat Loki datasource credential environment file
+- name: grafana — stat Loki datasource TLS material
   ansible.builtin.stat:
-    path: "{{ gv_loki_credentials_file }}"
-  register: gv_loki_secret_stat
+    path: "{{ item }}"
+  loop:
+    - "{{ gv_loki_ca_file }}"
+    - "{{ gv_loki_client_cert_file }}"
+    - "{{ gv_loki_client_key_file }}"
+  register: gv_loki_tls_stat
   when: gv_loki_url | length > 0
-  no_log: true
 
-- name: grafana — require Loki datasource credential environment file
+- name: grafana — require Loki datasource TLS material
   ansible.builtin.assert:
     that:
-      - gv_loki_secret_stat.stat.exists
-      - gv_loki_secret_stat.stat.isreg
-      - (gv_loki_secret_stat.stat.mode | default('0000')) in ['0400', '0440']
+      - item.stat.exists
+      - item.stat.isreg
     fail_msg: >-
-      {{ gv_loki_credentials_file }} is missing or too permissive. Provision
-      the provider-owned Loki PEM environment file as root-only or
-      root:grafana 0440 before enabling the datasource.
+      {{ item.item }} is missing. The platform_logs_pki role issues Grafana's
+      Loki client leaf from the fleet CA (ADR-20261023124955 §2); converge it
+      before this role.
+  loop: "{{ gv_loki_tls_stat.results | default([]) }}"
+  loop_control:
+    label: "{{ item.item }}"
   when: gv_loki_url | length > 0
-  no_log: true
+
+# The datasource reads the key with $__file{}, as the grafana user. pkg/pki
+# writes keys root:root 0400; platform_logs_pki repeats this on renewal.
+- name: grafana — let grafana read its Loki client key
+  ansible.builtin.file:
+    path: "{{ gv_loki_client_key_file }}"
+    state: file
+    owner: root
+    group: grafana
+    mode: "0440"
+  when: gv_loki_url | length > 0
 
 - name: grafana — render grafana.ini
   ansible.builtin.template:
@@ -366,7 +381,7 @@
     - restart grafana-server
     - reload grafana provisioning
 
-# Issue #274 — off-host journald → Promtail → Loki pipeline health.
+# Issue #274 — journald → Promtail → Loki pipeline health.
 # Byte-identical copy of deploy/grafana/loki-pipeline.json; the dashboard
 # shows target availability, source ingestion, successful sends, drops, and
 # the stable loki_send_total recording rule.
