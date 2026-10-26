@@ -111,6 +111,17 @@ ADR-568 requires.
     (`fcvm.QualificationRestoreAPIEnvSHA256`).
   - The n2 rerun with the in-restore wait had the receipt rejected
     (`did not match this attempt`) until this change.
+- **The restored smoke reaches its target.** schedd probes a restored graph
+  through vmmd's private HTTP forward, which resolves instances with
+  `NetnsFor`.
+  - A source candidate boots through the generic wake, so it sits in the
+    serving index, flagged `QualificationOnly`.
+  - A restored target stays in the private qualification registry, so the
+    probe failed with `instance "…" not live`.
+  - `NetnsFor` now also resolves a restored qualification target (restore
+    method, not a Job) from that registry.
+  - This gives the probe the same reach a source candidate already has. The
+    serving index and routing are unchanged.
 - **What the receipt proves.** A capture made from different inputs cannot
   satisfy the restore request's expectation. Restore still refuses sidecars,
   so only the main workload re-attests.
@@ -132,8 +143,12 @@ ADR-568 requires.
   - vmmd rejected the receipt because of the instance identity mismatch
     described above.
   - The github capture failed on a full scratch disk.
-- Pending: the n2 native GitOps journey with the capture-identity
-  expectation.
+- 2026-10-26, n2, rerun with 7f95c9cbee on a private PostgreSQL:
+  - All four graph members, two per provider, were captured and restored.
+  - Every restored guest's receipt arrived within 110–292 ms and was
+    accepted.
+  - The restored-graph smoke then failed with `not live`, as described above.
+- Pending: the n2 native GitOps journey with the restored-target lookup.
 
 ## Rejected alternatives
 

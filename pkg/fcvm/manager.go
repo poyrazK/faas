@@ -6704,7 +6704,13 @@ func (m *Manager) NetnsFor(instance string) (string, bool) {
 	defer m.mu.Unlock()
 	inst, ok := m.live[instance]
 	if !ok {
-		return "", false
+		// A restored qualification target stays out of the serving index,
+		// but its isolated smoke must reach it the way a source candidate's
+		// does (ADR 20261023093000). Held qualification Jobs stay unreachable.
+		inst, ok = m.qualificationInstances[instance]
+		if !ok || inst == nil || !inst.QualificationOnly || inst.Method != WakeRestore || inst.IsJob {
+			return "", false
+		}
 	}
 	return inst.Lease.Netns, true
 }

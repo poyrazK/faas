@@ -410,6 +410,26 @@ func TestNativeQualificationManagerRestoresPrivatelyAndRetiresFromRestoreJournal
 	}
 }
 
+// The restored-graph smoke forwards through NetnsFor. A restored target is
+// reachable from its private registry; a held qualification Job and any other
+// private member are not, and the serving index is unchanged.
+func TestNetnsForReachesRestoredQualificationTargetsOnly(t *testing.T) {
+	m := NewManager(&fakeRunner{}, nil, Paths{}, "test", nil, nil)
+	m.live["serving"] = &Instance{Lease: Lease{Instance: "serving", Netns: "fc-serving"}}
+	m.qualificationInstances["restored"] = &Instance{Lease: Lease{Instance: "restored", Netns: "fc-restored"}, Method: WakeRestore, QualificationOnly: true}
+	m.qualificationInstances["job"] = &Instance{Lease: Lease{Instance: "job", Netns: "fc-job"}, Method: WakeRestore, QualificationOnly: true, IsJob: true}
+	m.qualificationInstances["cold"] = &Instance{Lease: Lease{Instance: "cold", Netns: "fc-cold"}, Method: WakeColdBoot, QualificationOnly: true}
+	for instance, want := range map[string]string{"serving": "fc-serving", "restored": "fc-restored", "job": "", "cold": "", "absent": ""} {
+		got, ok := m.NetnsFor(instance)
+		if got != want || ok != (want != "") {
+			t.Fatalf("NetnsFor(%s) = %q, %v; want %q", instance, got, ok, want)
+		}
+	}
+	if m.live["restored"] != nil {
+		t.Fatal("a restored qualification target entered the serving index")
+	}
+}
+
 func TestNativeQualificationManagerRetireBeforeCreateProvesNoNativeEffects(t *testing.T) {
 	m, v, frame, req, ctx := nativeQualificationManagerFixture(t)
 	proof, err := m.RetireEnvironmentQualification(ctx, frame)
