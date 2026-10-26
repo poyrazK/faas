@@ -16,6 +16,7 @@ func TestPreRPCWithPreWake(t *testing.T) {
 	t0 := time.Date(2026, 10, 26, 12, 0, 0, 0, time.UTC)
 	at := func(ms int) time.Time { return t0.Add(time.Duration(ms) * time.Millisecond) }
 	set := events.PreRPCTimings{Set: true}
+	clock := sched.WithPreWakeClockForTest(context.Background(), at(0), at(3), at(40), at(41))
 	cases := []struct {
 		name    string
 		ctx     context.Context
@@ -23,18 +24,22 @@ func TestPreRPCWithPreWake(t *testing.T) {
 		attempt time.Time
 		want    events.PreWakeTimings
 	}{
-		{name: "ends at Engine.Wake's start",
-			ctx:  sched.WithWakeStartedForTest(sched.WithPreWakeClockForTest(context.Background(), at(0), at(3), at(40), at(41)), at(55)),
-			in:   set, attempt: at(70),
-			want: events.PreWakeTimings{Set: true, AuthorizeMs: 3, EnvironmentMs: 37, CoordinateMs: 1, TransitionMs: 14}},
-		{name: "falls back to the admission attempt",
-			ctx:  sched.WithPreWakeClockForTest(context.Background(), at(0), at(3), at(40), at(41)),
-			in:   set, attempt: at(60),
-			want: events.PreWakeTimings{Set: true, AuthorizeMs: 3, EnvironmentMs: 37, CoordinateMs: 1, TransitionMs: 19}},
-		{name: "no clock: not an EnsureWake", ctx: context.Background(), in: set, attempt: at(60), want: events.PreWakeTimings{}},
-		{name: "unset pre-RPC stays unset",
-			ctx:  sched.WithPreWakeClockForTest(context.Background(), at(0), at(3), at(40), at(41)),
-			in:   events.PreRPCTimings{}, attempt: at(60), want: events.PreWakeTimings{}},
+		{
+			name:    "ends at Engine.Wake's start",
+			ctx:     sched.WithWakeStartedForTest(clock, at(55)),
+			in:      set,
+			attempt: at(70),
+			want:    events.PreWakeTimings{Set: true, AuthorizeMs: 3, EnvironmentMs: 37, CoordinateMs: 1, TransitionMs: 14},
+		},
+		{
+			name:    "falls back to the admission attempt",
+			ctx:     clock,
+			in:      set,
+			attempt: at(60),
+			want:    events.PreWakeTimings{Set: true, AuthorizeMs: 3, EnvironmentMs: 37, CoordinateMs: 1, TransitionMs: 19},
+		},
+		{name: "no clock: not an EnsureWake", ctx: context.Background(), in: set, attempt: at(60)},
+		{name: "unset pre-RPC stays unset", ctx: clock, in: events.PreRPCTimings{}, attempt: at(60)},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
