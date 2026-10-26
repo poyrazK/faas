@@ -8547,6 +8547,19 @@ SELECT id, traffic_percent FROM deployments
 WHERE app_id = sqlc.arg(app_id)::uuid AND scope = sqlc.arg(scope)::text AND status = 'live' AND deleted_at IS NULL AND traffic_percent > 0
 ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
 
+-- ADR-570 production routing follows ProductionRoutingDeployments, as the
+-- weighted picker does: the named production scope once it carries traffic,
+-- otherwise the legacy default scope. One read returns the chosen lane.
+-- name: ReadPublicRoutingProductionWeights :many
+WITH live AS (
+    SELECT id, traffic_percent, scope FROM deployments
+    WHERE app_id = sqlc.arg(app_id)::uuid AND scope IN ('production', 'default') AND status = 'live'
+      AND deleted_at IS NULL AND traffic_percent > 0
+)
+SELECT id, traffic_percent, scope FROM live
+WHERE scope = CASE WHEN EXISTS (SELECT 1 FROM live WHERE scope = 'production') THEN 'production' ELSE 'default' END
+ORDER BY id LIMIT sqlc.arg(row_limit)::integer;
+
 -- name: ReadPublicRoutingRelease :many
 SELECT rs.id, member.deployment_id,
        EXISTS (
@@ -19108,10 +19121,10 @@ INSERT INTO alert_historical_rollback_claims(deployment_id,fire_id)
 
 -- name: InsertCustomerAlertRule :one
 INSERT INTO alert_rules(account_id,app_id,name,enabled,metric,comparison,threshold,window_spec,failure_source,event_subscription_id,
- edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query)
+ edge_rule_id,action,webhook_url,webhook_secret_sealed,cooldown_minutes,state,post_deploy_rollback_window_seconds,custom_metric_name,slo_id,synthetic_check_id,mcp_min_calls,mcp_for_minutes,mcp_readiness_scope,log_query,created_by_account_id)
 VALUES(sqlc.arg(account_id),sqlc.narg(app_id),sqlc.arg(name),sqlc.arg(enabled),sqlc.arg(metric),sqlc.arg(comparison),
  sqlc.arg(threshold),sqlc.arg(window_spec),sqlc.narg(failure_source),sqlc.narg(event_subscription_id),sqlc.narg(edge_rule_id),sqlc.arg(action),sqlc.arg(webhook_url),
- sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query))
+ sqlc.arg(webhook_secret_sealed),sqlc.arg(cooldown_minutes),sqlc.arg(state),sqlc.arg(post_deploy_rollback_window_seconds),sqlc.narg(custom_metric_name),sqlc.narg(slo_id),sqlc.narg(synthetic_check_id),sqlc.arg(mcp_min_calls),sqlc.arg(mcp_for_minutes),sqlc.arg(mcp_readiness_scope),sqlc.narg(log_query),sqlc.narg(created_by_account_id))
 RETURNING *;
 
 -- name: UpdateCustomerAlertRule :one
@@ -25375,6 +25388,9 @@ UPDATE environment_git_sources SET notification_state = sqlc.arg(notification_st
 WHERE id = sqlc.arg(source_id)::uuid AND NOT detached;
 
 -- name: EnqueueEnvironmentGitNotification :exec
+-- A company project keeps its creator's account; the account's webhooks get
+-- its notifications only while the account may still see the project's
+-- organization (ADR-20261026151103).
 INSERT INTO app_webhook_deliveries
     (source_event_id, webhook_id, account_id, event, payload, created_at, updated_at, next_attempt_at)
 SELECT sqlc.arg(event_id)::uuid, h.id, h.account_id, 'environment.gitops.changed',
@@ -25383,6 +25399,8 @@ FROM app_webhooks h JOIN accounts a ON a.id = h.account_id
 WHERE h.account_id = sqlc.arg(account_id)::uuid AND h.scope = 'account' AND h.enabled
   AND 'environment.gitops.changed' = ANY(h.event_filter)
   AND a.status = 'active' AND a.abuse_hold_at IS NULL
+  AND account_may_see_org_resources(h.account_id, (SELECT p.org_id FROM environment_git_sources g
+      JOIN projects p ON p.id = g.project_id WHERE g.id = sqlc.arg(source_id)::uuid))
 ON CONFLICT (source_event_id, webhook_id) WHERE source_event_id IS NOT NULL DO NOTHING;
 
 -- name: InstanceLogsOwnedByApp :one

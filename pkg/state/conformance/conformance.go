@@ -148,6 +148,8 @@ func Run(t *testing.T, open Open) {
 		{"compute_node_service_address_readiness_is_sticky_and_clearable", testComputeNodeServiceAddressReady},
 		{"service_address_caller_is_gated_on_node_readiness", testServiceAddressCallerByHostIP},
 		{"removed_member_can_rejoin", testRemovedMemberCanRejoin},
+		{"account_release_webhook_follows_org_access", testAccountReleaseWebhookFollowsOrgAccess},
+		{"departed_member_integrations_pause", testDepartedMemberIntegrationsPause},
 		{"object_storage_timeline_fence", testObjectStorageTimelineFence},
 		{"audit_log_anchors_seal_and_verify", testAuditLogAnchors},
 		{"api_key_requires_scopes", testAPIKeyRequiresScopes},

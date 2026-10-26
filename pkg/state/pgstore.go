@@ -28602,6 +28602,9 @@ func (s *PgStore) RemoveOrgMember(ctx context.Context, orgID, accountID string) 
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
+	if _, err := pauseDepartedMemberIntegrationsTx(ctx, tx, orgID, accountID); err != nil {
+		return err
+	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("state: remove org member commit: %w", err)
 	}

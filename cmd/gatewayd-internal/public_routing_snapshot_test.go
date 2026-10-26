@@ -253,6 +253,10 @@ func (r cachedRoutingReader) PublicDeploymentWeights(context.Context, string, st
 	return []state.ServiceDeploymentWeight{{ID: r.deployment, TrafficPercent: 100}}, nil
 }
 
+func (r cachedRoutingReader) PublicProductionDeploymentWeights(context.Context, string) ([]state.ServiceDeploymentWeight, string, error) {
+	return []state.ServiceDeploymentWeight{{ID: r.deployment, TrafficPercent: 100}}, "production", nil
+}
+
 func (cachedRoutingReader) ResolvePublicProjectRelease(context.Context, string, string, string) (string, string, error) {
 	return "", "", nil
 }
@@ -355,5 +359,45 @@ func TestPublicRoutingPinnerChecksSmokeAsCandidate(t *testing.T) {
 		if err != nil || !snapshot.HostChecked || snapshot.HostAllowed != smoke {
 			t.Fatalf("smoke=%v: snapshot=%+v err=%v; want allowed=%v", smoke, snapshot, err, smoke)
 		}
+	}
+}
+
+// The weighted picker routes an app's production lane by
+// state.ProductionRoutingDeployments: named production once it carries
+// traffic, otherwise the legacy default scope. rc.296's pinner read only
+// "production" for a project app, so one still serving from the default
+// scope had an empty roster and every request was refused.
+func TestPublicRoutingSnapshotPostgresFollowsProductionLane(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		project   bool
+		scopes    []string
+		wantScope string // scope of the expected roster row
+		roster    string // RosterScope the pinner reports
+	}{
+		{"project app on the legacy default scope", true, []string{"default"}, "default", "default"},
+		{"project app on production", true, []string{"production"}, "production", ""},
+		{"project app with both lanes", true, []string{"default", "production"}, "production", ""},
+		{"unscoped app", false, []string{"default"}, "default", ""},
+		{"unscoped app on named production", false, []string{"default", "production"}, "production", "production"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := newPublicRoutingPGFixture(t)
+			app := gateway.App{ID: f.app.ID, AccountID: f.app.AccountID, ProjectID: f.project.ID}
+			inputs := gateway.PublicRoutingInputs{Valid: true, Scope: "production", ResolveRelease: true}
+			if !tc.project {
+				f.app = f.sourceApp(t, "public-routing-unscoped", f.app.AccountID)
+				app = gateway.App{ID: f.app.ID, AccountID: f.app.AccountID}
+				inputs = gateway.PublicRoutingInputs{Valid: true}
+			}
+			want := map[string]string{}
+			for _, scope := range tc.scopes {
+				want[scope] = f.deployment(t, scope, "sha256:"+scope).ID
+			}
+			snapshot, err := publicRoutingPinnerFor(f.store, true)(t.Context(), app, inputs)
+			if err != nil || len(snapshot.Weights) != 1 || snapshot.Weights[0].ID != want[tc.wantScope] || snapshot.RosterScope != tc.roster {
+				t.Fatalf("snapshot=%+v err=%v; want the %s deployment with roster scope %q", snapshot, err, tc.wantScope, tc.roster)
+			}
+		})
 	}
 }
