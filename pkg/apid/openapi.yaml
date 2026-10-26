@@ -113859,7 +113859,7 @@ components:
         wake_id: { type: string }
         method: { type: string, description: "How the instance started, for example restore or cold_boot. A planned restore that fell back to a cold boot reads cold_boot." }
         ready_in_ms: { type: integer, format: int32, minimum: 0, description: "Milliseconds from boot start to ready; omitted until the wake completed." }
-        planned_method: { type: string, description: "The method schedd planned when vmmd ran another one, for example restore on a wake that fell back to a cold boot. Absent otherwise." }
+        planned_method: { type: string, description: "What schedd planned for this wake when it differs from method, such as restore for a restore that fell back to a cold boot." }
         restore_fallback_reason: { type: string, enum: [after_restore_failed], description: "Closed reason for a restore that fell back to a cold boot, when one is reported." }
 
     AccountTraceInvocation:
