@@ -460,6 +460,11 @@ type EdgeRuleCache struct {
 // loadHost builds the entry. PR 5 widens with CORS / JWT / IP slots.
 type HostEntry struct {
 	expiresAt time.Time
+	// owner is the account whose rules the set holds (ADR-091 amendment
+	// 2026-10-26), or "" for a set read with every account's rules.
+	// InvalidateAccountHosts drops an owned set only for its own account's
+	// mutations. Cache metadata, like expiresAt: not part of the sealed policy.
+	owner string
 	// NotAfter is the earliest expires_at among the loaded rules (zero when
 	// none expire). The entry is neither served as current nor used as the
 	// last-known fallback past it, so a time-boxed rule stops applying on
@@ -1136,6 +1141,55 @@ func (c *EdgeRuleCache) InvalidateHosts(patterns []string) {
 // It mirrors the store's LIKE translation and the gateway's glob recheck.
 func EdgeRuleHostPatternMatches(pattern, host string) bool {
 	return api.EdgeRuleHostMatches(pattern, host)
+}
+
+// HasHost reports whether a current (unexpired) set is cached for key,
+// without copying it.
+func (c *EdgeRuleCache) HasHost(key string) bool {
+	_, ok := c.getEntry(key)
+	return ok
+}
+
+// SetOwner records the account whose rules the set holds; the loader calls it
+// when it read only that account's rules.
+func (e *HostEntry) SetOwner(accountID string) { e.owner = accountID }
+
+// InvalidateAccountHosts drops the cached entries (current and last-known)
+// that one account's rule mutation can have changed: entries holding that
+// account's rules, or every account's, whose host one of patterns covers.
+// The app-wide pattern ("@app") covers only appID's entries. Another
+// account's owned entries cannot hold the mutated rule and are kept, so one
+// tenant's edit of a "*" or "@app" rule no longer flushes the fleet's
+// compiled rules. An empty account falls back to InvalidateHosts.
+func (c *EdgeRuleCache) InvalidateAccountHosts(accountID, appID string, patterns []string) {
+	if accountID == "" {
+		c.InvalidateHosts(patterns)
+		return
+	}
+	if len(patterns) == 0 {
+		c.Reset()
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.generation++
+	for key, el := range c.byID {
+		entry := el.Value.(*HostEntry)
+		if entry.owner != "" && entry.owner != accountID {
+			continue
+		}
+		host, entryApp := EdgeRuleCacheKeyHost(key), edgeRuleCacheKeyApp(key)
+		for _, pattern := range patterns {
+			covered := EdgeRuleHostPatternMatches(pattern, host)
+			if api.IsEdgeRuleAppHosts(pattern) {
+				covered = appID == "" || entryApp == "" || entryApp == appID
+			}
+			if covered {
+				c.removeElement(el)
+				break
+			}
+		}
+	}
 }
 
 // Len returns the number of cached host entries.

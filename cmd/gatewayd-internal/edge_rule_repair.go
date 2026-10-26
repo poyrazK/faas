@@ -55,7 +55,7 @@ func repairDurableEdgeRuleChanges(ctx context.Context, store edgeRuleRepairStore
 		*lastID = latest
 	} else {
 		for _, change := range changes {
-			invalidateEdgeRuleScope(ctx, inv, change.AppID, change.MatchHosts)
+			invalidateEdgeRuleScope(ctx, inv, "", change.AppID, change.MatchHosts)
 		}
 		*lastID = changes[len(changes)-1].ID
 	}
