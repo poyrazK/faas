@@ -143,13 +143,16 @@ func TestRegistry_EdgeIsWiredToGatewaydInternalAlone(t *testing.T) {
 	}
 }
 
-func TestRegistry_BuildIsWiredToImagedAlone(t *testing.T) {
+// imaged opens registry passwords to pull images; vmmd opens them into a
+// builder VM's Docker config for its base-image pulls (ADR-20261026090000).
+// Both run on compute nodes, where root already holds the build identity.
+func TestRegistry_BuildIsWiredToImagedAndVmmd(t *testing.T) {
 	s, ok := sealdomain.Lookup(sealdomain.Build)
 	if !ok || !s.Wired {
 		t.Fatalf("build domain = %+v, %v; want wired", s, ok)
 	}
-	if len(s.Readers) != 1 || s.Readers[0] != "imaged" {
-		t.Fatalf("build readers = %v, want [imaged]", s.Readers)
+	if len(s.Readers) != 2 || s.Readers[0] != "imaged" || s.Readers[1] != "vmmd" {
+		t.Fatalf("build readers = %v, want [imaged vmmd]", s.Readers)
 	}
 	if got := sealdomain.ReaderDomains("apid"); containsDomain(got, sealdomain.Build) {
 		t.Fatalf("apid reads %v; it must only seal registry passwords", got)

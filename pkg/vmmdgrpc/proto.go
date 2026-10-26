@@ -628,7 +628,24 @@ func toColdBootRequest(ctx context.Context, req *vmmdpb.CreateColdBootRequest) (
 		// after the VM exits.
 		ExportDir:       buildSpecExportDir(req.GetBuild()),
 		BuildTimeoutSec: buildSpecTimeoutSec(req.GetBuild()),
+		// ADR-20261026090000: the built app's sealed registry
+		// credentials, for the builder's FROM pulls.
+		BuildRegistryCredentials: buildRegistryCredentialsFromProto(req.GetBuild()),
 	}, nil
+}
+
+// buildRegistryCredentialsFromProto copies a builder's sealed registry
+// credentials; vmmd opens them only while staging the builder's files.
+func buildRegistryCredentialsFromProto(b *vmmdpb.BuildSpec) []fcvm.BuildRegistryCredential {
+	creds := b.GetRegistryCredentials()
+	if len(creds) == 0 {
+		return nil
+	}
+	out := make([]fcvm.BuildRegistryCredential, 0, len(creds))
+	for _, c := range creds {
+		out = append(out, fcvm.BuildRegistryCredential{Registry: c.GetRegistry(), Username: c.GetUsername(), PasswordSealed: c.GetPasswordSealed()})
+	}
+	return out
 }
 
 func validateAppHealthcheck(app *vmmdpb.AppSpec) *api.Problem {
