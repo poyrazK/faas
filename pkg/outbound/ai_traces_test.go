@@ -430,6 +430,30 @@ func TestNewTracesPastTheDayAreRefusedOnlyWithLimits(t *testing.T) {
 	}
 }
 
+// A traceparent can come from the app's own clients: past the day's traces
+// a new one is let through untracked, so whoever reaches the app cannot
+// fill the day and stop the integration's AI calls. A trace the app named
+// is still refused.
+func TestNewTraceparentTracesPastTheDayGoUntracked(t *testing.T) {
+	f := newTraceFixture(t, func(i *Integration) {
+		i.AIRequestLogEnabled = true
+		i.AITraceMaxCalls = limit(100)
+	})
+	f.backend.mu.Lock()
+	f.backend.states["llm"].traceDayCount = api.OutboundAITracesPerDay
+	f.backend.mu.Unlock()
+	traceparent := "00-4bf92f3577b34da6a3ce929d0e0e4736-00f067aa0ba902b7-01"
+	if got := f.call("Traceparent", traceparent); got.Code != http.StatusOK {
+		t.Fatalf("a new traceparent trace past the day = %d %v", got.Code, got.Header())
+	}
+	if _, ok := f.backend.AITrace("llm", "4bf92f3577b34da6a3ce929d0e0e4736"); ok {
+		t.Fatal("a trace past the day's cap was recorded")
+	}
+	if got := f.call(api.OutboundAITraceHeader, "named", "Traceparent", traceparent); got.Header().Get("X-Gregale-Outbound-Rejection") != ReasonTraceUntracked {
+		t.Fatalf("a new named trace past the day = %d %v", got.Code, got.Header())
+	}
+}
+
 func TestAITraceRejectionCountsInflightCalls(t *testing.T) {
 	limits := aiTraceLimits{calls: 3, cost: 1_000}
 	for _, tc := range []struct {
@@ -442,7 +466,8 @@ func TestAITraceRejectionCountsInflightCalls(t *testing.T) {
 		{aiTraceState{known: true, cost: 600, inflightCost: 300}, 100, ""},
 		{aiTraceState{known: true, cost: 600, inflightCost: 300}, 101, ReasonTraceCostLimit},
 		{aiTraceState{known: true, cost: 1_000}, 0, ReasonTraceCostLimit},
-		{aiTraceState{dayTraces: api.OutboundAITracesPerDay}, 0, ReasonTraceUntracked},
+		{aiTraceState{dayTraces: api.OutboundAITracesPerDay, named: true}, 0, ReasonTraceUntracked},
+		{aiTraceState{dayTraces: api.OutboundAITracesPerDay}, 0, ""},
 		{aiTraceState{known: true, dayTraces: api.OutboundAITracesPerDay}, 0, ""},
 	} {
 		if got := aiTraceRejection(tc.state, limits, aiReservation{cost: tc.reserve}); got != tc.want {
