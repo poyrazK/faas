@@ -96,10 +96,7 @@ func cmdCors(args []string) int {
 		return cmdCorsShow(args[1:])
 	}
 	printCommandValidation(os.Stderr, "unknown cors subcommand %q\n", args[0])
-	if sug, _ := suggestSubcommand(args[0], parent); sug != "" {
-		maybeSuggestSub(sug)
-	}
-	return 1
+	return unknownSubcommandChoices(os.Stderr, "cors", parent, args[0])
 }
 
 // cmdCorsAllow attaches a kind=cors edge rule to the slug's app.

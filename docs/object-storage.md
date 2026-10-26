@@ -495,6 +495,30 @@ metadata, tagging, checksum, and conditional headers. Subsequent requests requir
 normal SigV4 authentication. Existing provider buckets still need CORS updates
 when provider CORS configuration changes.
 
+### Bucket CORS for your own sites
+
+A bucket can allow your own sites' browsers to use its presigned URLs and
+upload grants ([ADR-20261025202805](adr/20261025202805-object-storage-bucket-cors.md);
+preview, released per account). Set S3-shaped rules with
+`PUT /v1/apps/{app}/buckets/{bucket}/cors`:
+
+```json
+{"rules": [{"allowed_origins": ["https://app.example.com"],
+            "allowed_methods": ["PUT", "GET"],
+            "allowed_headers": ["content-type", "x-amz-*"],
+            "expose_headers": ["ETag"],
+            "max_age_seconds": 3600}]}
+```
+
+A bucket holds up to 100 rules; the first rule matching a request's origin,
+method and requested headers applies. An origin is `*` or an `http(s)` origin
+with at most one `*` (`https://*.example.com`). `GET` returns the rules and
+their revision; `DELETE` removes them. The branded endpoint finds the bucket of
+a preflight from the URL's upload grant or presigned access key, so requests
+signed with an `Authorization` header can only be preflighted from the
+console's origins. CORS is not authorization: every request still needs a valid
+signature or grant.
+
 Every streamed part reserves capacity and a transfer token durably before its
 provider request. Retries preserve the largest admitted size for each part;
 concurrent writes to the same part return 409. Different parts remain concurrent.

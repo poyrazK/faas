@@ -344,8 +344,10 @@ func TestDirectMaxConnsFollowsNotifyHubMode(t *testing.T) {
 	}{
 		{"hub on is the small pooled budget", "", "faas-schedd", directHubOnMaxConns},
 		{"hub on, unprefixed", "1", "gatewayd-internal", directHubOnMaxConns},
-		{"hub on reserves apid's nested guard", "", "faas-apid", directAPIDHubOnMaxConns},
-		{"hub on reserves apid's nested guard, unprefixed", "1", "apid", directAPIDHubOnMaxConns},
+		{"hub on reserves apid's nested guard", "", "faas-apid", directNestedGuardHubOnMaxConns},
+		{"hub on reserves apid's nested guard, unprefixed", "1", "apid", directNestedGuardHubOnMaxConns},
+		{"hub on reserves imaged's nested guard", "", "faas-imaged", directNestedGuardHubOnMaxConns},
+		{"hub on reserves imaged's nested guard, unprefixed", "1", "imaged", directNestedGuardHubOnMaxConns},
 		// Hub off: LISTEN moves onto the direct pool wholesale, so the direct
 		// pool needs the pre-hub per-subscriber sizing.
 		{"hub off uses the legacy per-subscriber budget", "0", "faas-schedd",

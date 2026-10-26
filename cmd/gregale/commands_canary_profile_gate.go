@@ -4,13 +4,29 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"github.com/onebox-faas/faas/pkg/api"
 	"strings"
+
+	"github.com/google/uuid"
+	"github.com/onebox-faas/faas/pkg/api"
 )
+
+// appSlugForDeploymentID answers an app slug passed where a deployment ID
+// belongs. `canary gate h14-py` reached the API and came back 503 on
+// production-us rc.294 (Hunt 14 H14-65).
+func appSlugForDeploymentID(command, arg string) (int, bool) {
+	if _, err := uuid.Parse(arg); err == nil || !api.ValidAppSlug(arg) {
+		return 0, false
+	}
+	return printErr("Deployment ID required", fmt.Errorf(
+		"gregale %s takes a deployment ID, not an app; list %s's deployments with `gregale deployments %s`", command, arg, arg)), true
+}
 
 func cmdCanaryProfileGate(args []string) int {
 	if len(args) != 1 || strings.HasPrefix(args[0], "-") {
 		return printErr("Usage", fmt.Errorf("gregale canary gate DEPLOYMENT_ID [--json]"))
+	}
+	if code, ok := appSlugForDeploymentID("canary gate", args[0]); ok {
+		return code
 	}
 	client, err := authedClient()
 	if err != nil {
@@ -51,6 +67,9 @@ func cmdCanaryAdvance(args []string) int {
 	reason := fs.String("profile-override-reason", "", "audited reason for overriding only the profiling gate")
 	if err := fs.Parse(args[1:]); err != nil {
 		return 1
+	}
+	if code, ok := appSlugForDeploymentID("canary advance", args[0]); ok {
+		return code
 	}
 	if fs.NArg() != 0 || *step < 0 || (*revision >= 0) != (strings.TrimSpace(*reason) != "") || len(*reason) > api.ProfileGateOverrideMaxReasonBytes {
 		return printErr("Invalid advance", fmt.Errorf("require --expected-step; an override needs both the current revision and a bounded nonblank reason"))

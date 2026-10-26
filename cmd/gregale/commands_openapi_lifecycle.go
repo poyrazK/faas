@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	"github.com/onebox-faas/faas/pkg/api"
 
@@ -275,6 +276,12 @@ func cmdOpenapiGet(args []string) int {
 		return printErr("Not logged in", err)
 	}
 	doc, err := client.GetAppOpenAPI(context.Background(), slug, *source)
+	var ae *APIError
+	if errors.As(err, &ae) && *source == openapiDefaultSource && ae.Problem.Hint == "" && strings.Contains(ae.Problem.Detail, "no OpenAPI document imported") {
+		// `inspect` showed an OpenAPI document that `openapi get` then said did
+		// not exist: it was the discovered one (Hunt 14 H14-64).
+		ae.Problem.Hint = fmt.Sprintf("Read the document discovered from the app's traffic with `gregale openapi get %s --source auto`, or store one with `gregale openapi import`.", slug)
+	}
 	if err != nil {
 		return printErr("Could not fetch OpenAPI document", err)
 	}

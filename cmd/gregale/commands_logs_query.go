@@ -18,6 +18,18 @@ const (
 	traceLogsLookupLimit = 200
 )
 
+// logsHTTPOnlyFlagsSet lists the HTTP-request-only flags the caller passed;
+// any of them selects HTTP logs when --source is not given.
+func logsHTTPOnlyFlagsSet(fs *flag.FlagSet) []string {
+	var set []string
+	for _, name := range []string{"status", "route", "request", "trace", "limit", "all"} {
+		if logsFlagWasSet(fs, name) {
+			set = append(set, "--"+name)
+		}
+	}
+	return set
+}
+
 func logsFlagWasSet(fs *flag.FlagSet, name string) bool {
 	set := false
 	fs.Visit(func(f *flag.Flag) {

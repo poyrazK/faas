@@ -147,6 +147,7 @@ func (l *Loop) prepareOperatorPark(ctx context.Context, store state.OperatorPark
 				t.VMStateKey = state.SnapshotVMStateKey(state.Snapshot{StorageKey: t.MemoryKey})
 				t.FCVersion = l.engine.fcVer
 				t.BaseImageVersion = fcvm.FAAS_BASE_IMAGE_VERSION
+				t.CPUTemplate, t.CPUModel = l.engine.nodeCPUIdentity(ctx, ins.NodeID)
 				t.BeforeCheckpoint = app.Manifest.BeforeCheckpoint != nil || app.Manifest.Profiling != nil && app.Manifest.Profiling.Enabled
 			} else {
 				t.Reason = "Runtime configuration, RAM or ephemeral-secret policy requires a cold boot."

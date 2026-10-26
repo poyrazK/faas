@@ -522,6 +522,16 @@ func secretsSet(args []string) int {
 	if err := fs.Parse(orderedArgs); err != nil {
 		return 1
 	}
+	// A leading word without "=" is no KEY=VALUE pair; it is the app, as in
+	// `secrets list h14-py`. `secrets set h14-py FOO=bar` answered only "no
+	// linked Gregale project context" on production-us rc.294 (Hunt 14 H14-64).
+	positionals := fs.Args()
+	if len(positionals) > 0 && !strings.Contains(positionals[0], "=") && api.ValidAppSlug(positionals[0]) {
+		if err := mergeLeadingSlug(app, positionals[0]); err != nil {
+			return printErr("Invalid arguments", err)
+		}
+		positionals = positionals[1:]
+	}
 	timeoutSpecified := false
 	fileSpecified := false
 	fs.Visit(func(f *flag.Flag) {
@@ -535,7 +545,7 @@ func secretsSet(args []string) int {
 	if *timeout <= 0 || (timeoutSpecified && !*waitForAck) {
 		return printErr("Invalid secret wait options", errors.New("--timeout must be positive and requires --wait-for-ack when supplied"))
 	}
-	if fileSpecified && (strings.TrimSpace(*file) == "" || *fromStdin || *interactive || fs.NArg() != 0) {
+	if fileSpecified && (strings.TrimSpace(*file) == "" || *fromStdin || *interactive || len(positionals) != 0) {
 		return printErr("Invalid secret input", errors.New("--file requires a non-empty path and cannot be combined with --from-stdin, --interactive, or positional KEY=VALUE pairs"))
 	}
 	resolvedApp, appErr := resolveSecretApp(*app)
@@ -550,7 +560,7 @@ func secretsSet(args []string) int {
 		return 1
 	}
 	if *interactive {
-		if *fromStdin || fs.NArg() != 0 || *restart || *dryRun || *waitForAck || timeoutSpecified {
+		if *fromStdin || len(positionals) != 0 || *restart || *dryRun || *waitForAck || timeoutSpecified {
 			return printErr("Invalid interactive secret flags", errors.New("--interactive takes no KEY=VALUE pairs, --from-stdin, --restart, --dry-run, --wait-for-ack, or --timeout; the flow offers a restart after saving"))
 		}
 		return secretsSetInteractive(*app, *scope, *secretClass)
@@ -570,7 +580,7 @@ func secretsSet(args []string) int {
 			return printErr("Could not read secrets file", err)
 		}
 	} else if *fromStdin {
-		if fs.NArg() != 0 {
+		if len(positionals) != 0 {
 			fmt.Fprintln(os.Stderr, "secret set: --from-stdin takes no positional pairs")
 			return 1
 		}
@@ -594,7 +604,7 @@ func secretsSet(args []string) int {
 			return 1
 		}
 	} else {
-		for _, a := range fs.Args() {
+		for _, a := range positionals {
 			p, err := parseSecretsPair(a)
 			if err != nil {
 				fmt.Fprintln(os.Stderr, err)

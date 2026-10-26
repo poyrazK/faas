@@ -9130,6 +9130,61 @@ paths:
             application/problem+json:
               schema: { $ref: '#/components/schemas/Problem' }
 
+  /v1/apps/{slug}/buckets/{bucket}/cors:
+    parameters:
+      - { name: slug, in: path, required: true, description: App whose bucket CORS rules are managed., schema: { type: string } }
+      - { name: bucket, in: path, required: true, description: Logical bucket whose CORS rules are managed., schema: { type: string, format: uuid } }
+    get:
+      operationId: getObjectBucketCORS
+      summary: Read a bucket's CORS rules
+      description: Requires storage manage scope and the bucket write grant. Returns an empty rule list at revision 0 when none are set. The branded S3 endpoint applies the rules to browser requests that carry the bucket's presigned URLs or upload grants (ADR-20261025202805).
+      tags: [storage]
+      responses:
+        '200':
+          description: The bucket's CORS rules
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketCORS' }
+        default:
+          description: Bucket not found or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    put:
+      operationId: putObjectBucketCORS
+      summary: Replace a bucket's CORS rules
+      description: Requires storage manage scope and the bucket write grant. Replaces every rule and advances the revision. Up to 100 rules, as in S3 PutBucketCors; the first rule matching a request's origin, method and requested headers applies. CORS is not authorization; requests still need a valid signature or upload grant.
+      tags: [storage]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/ObjectBucketCORSRequest' }
+      responses:
+        '200':
+          description: The stored rules
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ObjectBucketCORS' }
+        default:
+          description: Invalid rules, bucket not ready or access denied
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+    delete:
+      operationId: deleteObjectBucketCORS
+      summary: Remove a bucket's CORS rules
+      description: Requires storage manage scope and the bucket write grant. Afterwards only the console's origins are allowed. Removing absent rules succeeds.
+      tags: [storage]
+      responses:
+        '204':
+          description: Rules removed
+        default:
+          description: Bucket not found, or its CORS rules are not yours to remove
+          content:
+            application/problem+json:
+              schema: { $ref: '#/components/schemas/Problem' }
+
   /v1/apps/{slug}/buckets/{bucket}/objects/protection/retention:
     parameters:
       - { name: slug, in: path, required: true, description: Application owning this retention target., schema: { type: string } }
@@ -40288,8 +40343,8 @@ paths:
         - name: outcome
           in: query
           required: false
-          description: Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes.
-          schema: { type: string, enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed] }
+          description: Only events with this outcome; detected, warned and blocked are kind=waf detections; challenged, rejected, solved and failed are kind=challenge outcomes; boxed is a client put in a penalty box.
+          schema: { type: string, enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed, boxed] }
         - name: request_id
           in: query
           required: false
@@ -81907,6 +81962,20 @@ components:
         storage_byte_seconds_remaining: { type: integer, format: int64, minimum: 0 }
         history_byte_seconds: { type: integer, format: int64, minimum: 0 }
         egress_bytes: { type: integer, format: int64, minimum: 0 }
+        compute_allowance_unit_seconds:
+          description: The plan's monthly compute allowance in compute-unit seconds, pooled across the account's databases (ADR-20261025094915).
+          type: integer
+          format: int64
+          minimum: 0
+        compute_ceiling_unit_seconds:
+          description: Compute-unit seconds this month at which running databases are suspended. Absent while the usage ledger is off.
+          type: integer
+          format: int64
+          minimum: 0
+        compute_cap_state:
+          description: "healthy; warning at 80% of the allowance; overage past the allowance while the account allows overage; suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and resume next month or after an upgrade."
+          type: string
+          enum: [healthy, warning, overage, suspended]
     ManagedPostgresUsageLineItem:
       description: Normalized operator-only managed PostgreSQL ledger line.
       type: object
@@ -83105,6 +83174,34 @@ components:
         observed_configuration: { $ref: '#/components/schemas/ObjectBucketObjectLockConfiguration' }
         desired_configuration: { $ref: '#/components/schemas/ObjectBucketObjectLockConfiguration' }
         last_error_code: { type: string, enum: [versioning_pending, untracked_writes, unsettled_writes, multipart_active, capacity_active, provider_failed, provider_mismatch, provider_unsupported] }
+        updated_at: { type: string, format: date-time }
+    ObjectBucketCORSRule:
+      type: object
+      description: One S3 CORSRule. Origins are "*" or an http(s) origin with at most one "*"; header patterns allow one "*".
+      additionalProperties: false
+      required: [allowed_origins, allowed_methods]
+      properties:
+        id: { type: string, maxLength: 255 }
+        allowed_origins: { type: array, minItems: 1, maxItems: 100, items: { type: string, maxLength: 1024 } }
+        allowed_methods: { type: array, minItems: 1, maxItems: 100, items: { type: string, enum: [GET, PUT, POST, DELETE, HEAD] } }
+        allowed_headers: { type: array, maxItems: 100, items: { type: string, maxLength: 1024 } }
+        expose_headers: { type: array, maxItems: 100, items: { type: string, maxLength: 1024 } }
+        max_age_seconds: { type: integer, minimum: 0, maximum: 86400 }
+    ObjectBucketCORSRequest:
+      type: object
+      description: The complete set of CORS rules for a bucket.
+      additionalProperties: false
+      required: [rules]
+      properties:
+        rules: { type: array, minItems: 1, maxItems: 100, items: { $ref: '#/components/schemas/ObjectBucketCORSRule' } }
+    ObjectBucketCORS:
+      type: object
+      description: A bucket's CORS rules; revision 0 means none are set.
+      required: [bucket_id, rules, revision, updated_at]
+      properties:
+        bucket_id: { type: string, format: uuid }
+        rules: { type: array, items: { $ref: '#/components/schemas/ObjectBucketCORSRule' } }
+        revision: { type: integer, format: int64, minimum: 0 }
         updated_at: { type: string, format: date-time }
     ObjectBucketVersioningRequest:
       type: object
@@ -92314,6 +92411,19 @@ components:
         error_code: { type: string }
         error: { type: string }
 
+    DeploymentCompanion:
+      type: object
+      description: "One companion of a deployment: identity, image, port and size. Environment values and secret grants are never included."
+      required: [name]
+      properties:
+        name: { type: string, description: "Companion name." }
+        image: { type: string, description: "Digest-pinned image reference." }
+        preset: { type: string, description: "Built-in preset the companion uses, when any." }
+        type: { type: string, description: "init or sidecar." }
+        port: { type: integer, description: "Declared port; it also opens the public <app>--<name> hostname." }
+        ram_mb: { type: integer, description: "Reserved RAM in MB." }
+        primary_ingress: { type: boolean, description: "Whether the companion receives the app's public traffic." }
+
     DeploymentResponse:
       description: "One deployment: id, app, source ref, build status, commit SHA, and lifecycle timestamps. The optional `has_overrides` and `override_*` fields are the persisted echo of the create-time overrides object (issue #460 / ADR-053); they round-trip via `GET /v1/apps/{slug}/deployments/{id}` so a customer can audit what their last deploy pinned. Env values are NEVER echoed — only the keys (`override_env_keys`); env_secrets refs ARE echoed because the ref shape is non-secret by design."
       type: object
@@ -92521,6 +92631,10 @@ components:
           type: array
           items: { $ref: '#/components/schemas/WorkflowSpec' }
           description: "Validated workflow definitions persisted with this immutable deployment revision."
+        companions:
+          type: array
+          description: "Companions this deployment carries: name, image, port and size. Environment values and secret grants are never included."
+          items: { $ref: '#/components/schemas/DeploymentCompanion' }
         hosting_receipt:
           type: [object, "null"]
           additionalProperties: true
@@ -105904,6 +106018,38 @@ components:
         env_hint: { type: string, example: DATABASE_URL }
         source: { type: string }
         image: { type: string }
+        provision:
+          $ref: '#/components/schemas/PlanManagedProvision'
+        not_provisioned_reason:
+          type: string
+          enum: [unavailable, plan, quota, unsupported, configured, not_referenced]
+          description: "Why apply does not provide a Compose postgres service (ADR-20261025111824). Omitted for other datastores and when provision is set."
+
+    PlanManagedProvision:
+      description: "The managed PostgreSQL database a project apply creates or reuses for a Compose postgres service, and the service keys it binds (ADR-20261025111824)."
+      type: object
+      required: [database, bindings]
+      properties:
+        database: { type: string, example: shop-db }
+        existing:
+          type: boolean
+          description: "True when a database with this name already exists and is reused."
+        postgres_major:
+          type: integer
+          example: 17
+          description: "The database's PostgreSQL major: the Compose image's, or the nearest newer one the platform offers."
+        bindings:
+          type: array
+          items:
+            $ref: '#/components/schemas/PlanManagedBinding'
+
+    PlanManagedBinding:
+      description: "One service key bound to the database a project apply provides (ADR-20261025111824)."
+      type: object
+      required: [workload, env_key]
+      properties:
+        workload: { type: string }
+        env_key: { type: string, example: DATABASE_URL }
 
     PlanAffectedApp:
       description: |
@@ -107395,8 +107541,8 @@ components:
         rule_kind: { type: string }
         outcome:
           type: string
-          enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed]
-          description: 'matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests were answered with 403). challenged, rejected, solved and failed are kind=challenge outcomes: the challenge page served to a browser, a request that is not a browser navigation answered with 403, a solution that earned a pass, and a solution answered with 403. An enforced challenge rule records these instead of matched.'
+          enum: [matched, logged, detected, warned, blocked, challenged, rejected, solved, failed, boxed]
+          description: 'matched (enforced rule) and logged (log-mode rule) are rule matches. detected is a kind=waf detection in a sampled request; warned and blocked are kind=waf detections in-path by a warn or block rule (blocked requests were answered with 403). challenged, rejected, solved and failed are kind=challenge outcomes: the challenge page served to a browser, a request that is not a browser navigation answered with 403, a solution that earned a pass, and a solution answered with 403. An enforced challenge rule records these instead of matched. boxed is a client put in a penalty box by the rule, recorded from the request whose refusal tipped it in.'
         occurred_at: { type: string, format: date-time }
         request_id: { type: string }
         method: { type: string }

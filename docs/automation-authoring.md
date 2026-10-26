@@ -2352,8 +2352,10 @@ validation/authorization errors remain terminal. All attempts retain the
 same step idempotency key; app handlers must deduplicate their side effects.
 Unsafe outbound actions keep their existing no-retry policy.
 
-Workflow dispatch uses four execution slots per scheduler. Every tick fills
-available slots, and each slot drains at most eight runs. Eligible applications
+Workflow dispatch uses up to 32 execution slots per scheduler. Every tick
+offers four, and one more while every slot is busy, so capacity grows with
+load; each slot drains at most eight runs. A slot waiting on a handler does not
+hold up other slots' bookkeeping. Eligible applications
 and tenant scopes within an application take turns according to their persisted
 last claim; older due work wins within a scope. A large backlog cannot keep an
 eligible scope behind all its older runs.

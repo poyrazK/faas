@@ -61,7 +61,7 @@ func (s *Service) objectVersionProtection(w http.ResponseWriter, r *http.Request
 }
 func versionProtectionSelection(r *http.Request) (string, string, string, error) {
 	q, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil || len(q) != 2 || len(q["key"]) != 1 || len(q["version_id"]) != 1 || !objectstorage.ValidKey(q.Get("key")) || !state.ValidObjectVersionID(q.Get("version_id")) {
+	if err != nil || len(q) != 2 || len(q["key"]) != 1 || len(q["version_id"]) != 1 || !objectstorage.ValidRequestKey(q.Get("key")) || !state.ValidObjectVersionID(q.Get("version_id")) {
 		return "", "", "", objectstorage.ErrInvalid
 	}
 	kind := r.PathValue("protection")

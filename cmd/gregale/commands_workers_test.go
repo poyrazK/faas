@@ -662,7 +662,7 @@ func TestCmdWorkersList_AppArgumentSelectsOnePool(t *testing.T) {
 		{name: "no argument lists every pool", args: nil, want: []string{"email-worker", "order-worker"}, reject: []string{"web-api"}},
 		{name: "not a worker", args: []string{"web-api"}, wantCode: 1, want: []string{"web-api", "not a worker pool"}},
 		{name: "unknown app", args: []string{"missing"}, wantCode: 1, want: []string{"missing", "not found"}},
-		{name: "two apps", args: []string{"email-worker", "order-worker"}, wantCode: 1, want: []string{"usage: gregale workers [list] [<app>]"}},
+		{name: "two apps", args: []string{"email-worker", "order-worker"}, wantCode: 1, want: []string{"usage: gregale workers [list] [<app> | --app <app>]"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			instanceReads = nil
