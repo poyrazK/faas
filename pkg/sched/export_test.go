@@ -20,6 +20,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
+	"github.com/segmentio/kafka-go"
 
 	vmmdpb "github.com/onebox-faas/faas/api/proto/onebox/faas/vmmd/v1"
 	"github.com/onebox-faas/faas/pkg/api"
@@ -161,6 +162,15 @@ var NewNodePresenceTracker = newNodePresenceTracker
 var NewQueuePoller = newQueuePoller
 var NewRealtimePoller = newRealtimePoller
 
+type KafkaBrokerOp = kafkaBrokerOp
+
+// NewKafkaPollerWithReader is a kafka poller over reader instead of a
+// broker connection.
+func NewKafkaPollerWithReader(reader KafkaBrokerOp) TriggerSource {
+	return &kafkaPoller{reader: reader, batchMax: 100, inFlight: map[string]kafka.Message{},
+		open: map[int]map[int64]bool{}, settled: map[int][]kafka.Message{}}
+}
+
 type NATSBroker = natsBroker
 
 // NewNATSBrokerPool is a broker pool that dials with dial instead of
@@ -266,6 +276,9 @@ var XDeploymentRuntimePort = deploymentRuntimePort
 var XLayerKey = layerKey
 var XNewEngine = newEngine
 var ReadWakeRPC = readWakeRPC
+
+// XWakeLeaderBudget is the deadline a coordinated wake's leader runs under.
+func (e *Engine) XWakeLeaderBudget() time.Duration { return e.wakeLeaderBudget() }
 
 // XEventFanoutSafetyTick and XRunEventFanoutSweep let the event substrate
 // benchmark schedule fanout exactly as Loop.Run does (spec Appendix D V12).
