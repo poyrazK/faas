@@ -1579,6 +1579,21 @@ LEFT JOIN LATERAL (
 ) bc ON true
 ORDER BY p.started_at ASC, p.wake_id;
 
+-- The account trace view's frozen-VM thaws (ADR-1151): a thaw resumes an
+-- instance under its original wake_id, so a request that thawed one names
+-- that wake. Read within the trace's time window through events_kind_at_idx.
+-- name: ListWakeThawsByWakeIDs :many
+SELECT (data->>'wake_id')::text AS wake_id, at,
+       (CASE WHEN jsonb_typeof(data->'total_ms') = 'number' THEN (data->>'total_ms')::numeric ELSE 0 END)::bigint AS total_ms
+FROM events
+WHERE kind = 'wake.thaw_breakdown'
+  AND at >= sqlc.arg(since)::timestamptz
+  AND at <= sqlc.arg(until)::timestamptz
+  AND data->>'app_id' = ANY(sqlc.arg(app_ids)::text[])
+  AND data->>'wake_id' = ANY(sqlc.arg(wake_ids)::text[])
+ORDER BY at ASC, id ASC
+LIMIT sqlc.arg(row_limit)::int;
+
 -- name: ListAllEventsPaged :many
 -- ADR-091 §3.7 / PR #3 — operator-obs backend audit-reading surface.
 -- Reads the live events table (NOT audit_log — distinct source of

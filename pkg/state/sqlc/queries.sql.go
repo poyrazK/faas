@@ -52173,6 +52173,62 @@ func (q *Queries) ListWakeHistoryByWakeIDs(ctx context.Context, db DBTX, arg Lis
 	return items, nil
 }
 
+const listWakeThawsByWakeIDs = `-- name: ListWakeThawsByWakeIDs :many
+SELECT (data->>'wake_id')::text AS wake_id, at,
+       (CASE WHEN jsonb_typeof(data->'total_ms') = 'number' THEN (data->>'total_ms')::numeric ELSE 0 END)::bigint AS total_ms
+FROM events
+WHERE kind = 'wake.thaw_breakdown'
+  AND at >= $1::timestamptz
+  AND at <= $2::timestamptz
+  AND data->>'app_id' = ANY($3::text[])
+  AND data->>'wake_id' = ANY($4::text[])
+ORDER BY at ASC, id ASC
+LIMIT $5::int
+`
+
+type ListWakeThawsByWakeIDsParams struct {
+	Since    pgtype.Timestamptz
+	Until    pgtype.Timestamptz
+	AppIds   []string
+	WakeIds  []string
+	RowLimit int32
+}
+
+type ListWakeThawsByWakeIDsRow struct {
+	WakeID  string
+	At      pgtype.Timestamptz
+	TotalMs int64
+}
+
+// The account trace view's frozen-VM thaws (ADR-1151): a thaw resumes an
+// instance under its original wake_id, so a request that thawed one names
+// that wake. Read within the trace's time window through events_kind_at_idx.
+func (q *Queries) ListWakeThawsByWakeIDs(ctx context.Context, db DBTX, arg ListWakeThawsByWakeIDsParams) ([]ListWakeThawsByWakeIDsRow, error) {
+	rows, err := db.Query(ctx, listWakeThawsByWakeIDs,
+		arg.Since,
+		arg.Until,
+		arg.AppIds,
+		arg.WakeIds,
+		arg.RowLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListWakeThawsByWakeIDsRow{}
+	for rows.Next() {
+		var i ListWakeThawsByWakeIDsRow
+		if err := rows.Scan(&i.WakeID, &i.At, &i.TotalMs); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listWarmPoolReconciliationAppIDs = `-- name: ListWarmPoolReconciliationAppIDs :many
 SELECT a.id::text AS app_id FROM apps a
 WHERE a.status <> 'deleted'

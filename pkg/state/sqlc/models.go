@@ -7688,6 +7688,13 @@ type MailSuppression struct {
 	CreatedAt       pgtype.Timestamptz
 }
 
+// Whether a paid account runs its managed PostgreSQL databases past the monthly compute allowance, up to 2x, before suspension; written only by apid (ADR-20261025094915).
+type ManagedPostgresAccountOverage struct {
+	SubjectID pgtype.UUID
+	Enabled   bool
+	UpdatedAt pgtype.Timestamptz
+}
+
 type ManagedPostgresAccountingReconciliation struct {
 	AccountID          pgtype.UUID
 	ReconciliationID   pgtype.UUID

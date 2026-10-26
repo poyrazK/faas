@@ -54,6 +54,21 @@ func (c *Client) GetManagedPostgresUsage(ctx context.Context) (ManagedPostgresUs
 	return out, err
 }
 
+// GetManagedPostgresOverage reads the account's compute overage setting
+// (ADR-20261025094915).
+func (c *Client) GetManagedPostgresOverage(ctx context.Context) (ManagedPostgresOverage, error) {
+	var out ManagedPostgresOverage
+	err := c.do(ctx, http.MethodGet, "/v1/postgres/overage", nil, &out)
+	return out, err
+}
+
+// SetManagedPostgresOverage turns the account's compute overage on or off.
+func (c *Client) SetManagedPostgresOverage(ctx context.Context, enabled bool) (ManagedPostgresOverage, error) {
+	var out ManagedPostgresOverage
+	err := c.do(ctx, http.MethodPut, "/v1/postgres/overage", ManagedPostgresOverageRequest{Enabled: &enabled}, &out)
+	return out, err
+}
+
 func (c *Client) PreviewManagedPostgresAccountingReconciliation(ctx context.Context, accountID string, request ManagedPostgresAccountingReconciliationRequest) (ManagedPostgresAccountingReconciliationResult, error) {
 	var out ManagedPostgresAccountingReconciliationResult
 	err := c.do(ctx, http.MethodPost, "/v1/admin/managed-postgres/accounting/"+url.PathEscape(accountID)+"/reconciliations/preview", request, &out)

@@ -430,6 +430,11 @@ const DeploymentResponseCheckPreflightTimeout = 5 * time.Second
 const OperationBusinessConditionsMax = 16
 const OperationBusinessConditionDescriptionMaxBytes = 1024
 
+// ManagedPostgresOverageCeilingMultiplier is how far past the plan's monthly
+// compute allowance a paid account with overage on may run its managed
+// PostgreSQL databases before the cap suspends them (ADR-20261025094915).
+const ManagedPostgresOverageCeilingMultiplier = 2
+
 // Bounded recovery of explicitly requested PostgreSQL cutover retirements.
 const ManagedPostgresCutoverDrainBatchMax = 32
 const ManagedPostgresCutoverDrainTimeout = 20 * time.Second
@@ -12617,7 +12622,8 @@ const (
 	MCPWakeHistoryTimeMaxBytes                    = 64
 	WakeHistoryPageDefault                        = 20
 	WakeHistoryPageMax                            = 100
-	AccountTraceWakesMax                          = 32 // wakes one account trace lookup reads to show each request's restore
+	AccountTraceWakesMax                          = 32  // wakes one account trace lookup reads to show each request's restore
+	AccountTraceThawsMax                          = 256 // frozen-VM thaws one account trace lookup reads for those wakes (Hunt 12 H12-49)
 	WakeHistoryCursorMaxBytes                     = 2048
 	MCPWakeHistoryCursorMaxBytes                  = 8192
 	MCPProfileFunctionsDefault                    = 10

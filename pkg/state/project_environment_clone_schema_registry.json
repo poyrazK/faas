@@ -9003,6 +9003,15 @@
     "kind": "account_identity"
   },
   {
+    "table": "managed_postgres_account_overage",
+    "columns": [
+      "enabled",
+      "subject_id",
+      "updated_at"
+    ],
+    "kind": "account_identity"
+  },
+  {
     "table": "managed_postgres_bindings",
     "columns": [
       "access",

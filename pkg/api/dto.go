@@ -5849,6 +5849,12 @@ type AccountTraceWake struct {
 	// fell back to a cold boot, as on WakeTimelineJSONRow.
 	PlannedMethod         string `json:"planned_method,omitempty"`
 	RestoreFallbackReason string `json:"restore_fallback_reason,omitempty"`
+	// Thawed marks a request that resumed this wake's frozen instance
+	// (ADR-1151) instead of waiting for its boot; a thaw keeps the instance's
+	// original wake ID. ThawMS is how long the thaw took, and Method and
+	// ReadyInMS, which describe the original boot, are omitted.
+	Thawed bool  `json:"thawed,omitempty"`
+	ThawMS int32 `json:"thaw_ms,omitempty"`
 }
 
 // AccountTraceInvocation is a safe durable invocation lifecycle projection.
@@ -7526,8 +7532,8 @@ type PlanManaged struct {
 	// NotProvisionedReason.
 	Provision *PlanManagedProvision `json:"provision,omitempty"`
 	// NotProvisionedReason says why a Compose postgres service is not
-	// provided: unavailable, plan, quota, unsupported, configured or
-	// not_referenced. Empty for other datastores.
+	// provided: unavailable, plan, quota, unsupported, configured,
+	// not_referenced or permission. Empty for other datastores.
 	NotProvisionedReason string `json:"not_provisioned_reason,omitempty"`
 }
 

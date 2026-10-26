@@ -32,5 +32,9 @@ export type ManagedPostgresUsageResponse = {
    * healthy; warning at 80% of the allowance; overage past the allowance while the account allows overage; suspended once the ceiling is reached and the platform enforces caps. Suspended databases keep their data and resume next month or after an upgrade.
    */
   compute_cap_state?: 'healthy' | 'warning' | 'overage' | 'suspended';
+  /**
+   * True while the account runs its databases past the allowance, up to the ceiling.
+   */
+  overage_enabled?: boolean;
 };
 
