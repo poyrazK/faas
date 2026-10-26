@@ -10819,6 +10819,16 @@
     "kind": "account_identity"
   },
   {
+    "table": "object_bucket_cors",
+    "columns": [
+      "bucket_id",
+      "revision",
+      "rules",
+      "updated_at"
+    ],
+    "kind": "configuration"
+  },
+  {
     "table": "object_bucket_encryption",
     "columns": [
       "account_id",

@@ -67,6 +67,9 @@ func (h *Handler) serveUploadGrant(w http.ResponseWriter, r *http.Request, reque
 		writeS3Error(w, 403, "AccessDenied", "The request does not match this upload grant.", r.URL.Path, requestID)
 		return
 	}
+	if !h.applyBucketCORS(w, r, g.Bucket, requestID) {
+		return
+	}
 	backend, err := h.registry.Resolve(g.Bucket.BackendID, g.Bucket.BackendFingerprint)
 	if err != nil {
 		h.uploadGrantError(w, r, requestID, objectstorage.ErrUnavailable)
