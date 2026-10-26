@@ -13,8 +13,12 @@
 -- +goose Up
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
-ALTER TABLE scenario_test_members ADD CONSTRAINT scenario_test_members_service_name_check
-    CHECK (workload_name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$') NOT VALID;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'scenario_test_members'::regclass AND conname = 'scenario_test_members_service_name_check') THEN
+        ALTER TABLE scenario_test_members ADD CONSTRAINT scenario_test_members_service_name_check
+            CHECK (workload_name ~ '^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$') NOT VALID;
+    END IF;
+END $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
@@ -30,8 +34,12 @@ ALTER TABLE scenario_test_members DROP CONSTRAINT IF EXISTS scenario_test_member
 -- +goose Down
 -- +goose StatementBegin
 SET LOCAL lock_timeout = '5s';
-ALTER TABLE scenario_test_members ADD CONSTRAINT scenario_test_members_workload_name_check
-    CHECK (workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$') NOT VALID;
+DO $$ BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid = 'scenario_test_members'::regclass AND conname = 'scenario_test_members_workload_name_check') THEN
+        ALTER TABLE scenario_test_members ADD CONSTRAINT scenario_test_members_workload_name_check
+            CHECK (workload_name ~ '^[a-z0-9]([a-z0-9-]{1,38})[a-z0-9]$') NOT VALID;
+    END IF;
+END $$;
 -- +goose StatementEnd
 
 -- +goose StatementBegin
