@@ -9,11 +9,10 @@ import (
 	"os"
 	"strings"
 
-	"filippo.io/age"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/onebox-faas/faas/pkg/livequery/liveserver"
-	"github.com/onebox-faas/faas/pkg/secretbox"
+	"github.com/onebox-faas/faas/pkg/sealdomain"
 	"github.com/onebox-faas/faas/pkg/state/livekeys"
 )
 
@@ -30,7 +29,8 @@ func runReseal(ctx context.Context, log *slog.Logger) error {
 	if *keysIdentity == "" || *resealDSNFile == "" {
 		return errors.New("livequeryd: -reseal needs -keys-identity and -reseal-dsn-file")
 	}
-	identity, err := secretbox.LoadHostKey(*keysIdentity)
+	// The live-key identity and, during its rotation, its previous twin.
+	identities, err := sealdomain.LoadReaderIdentities(*keysIdentity)
 	if err != nil {
 		return fmt.Errorf("livequeryd: live key identity: %w", err)
 	}
@@ -49,7 +49,7 @@ func runReseal(ctx context.Context, log *slog.Logger) error {
 		return fmt.Errorf("livequeryd: control-plane pool: %w", err)
 	}
 	defer pool.Close()
-	report, err := liveserver.Reseal(ctx, livekeys.New(pool), []*age.X25519Identity{identity}, log)
+	report, err := liveserver.Reseal(ctx, livekeys.New(pool), identities, log)
 	log.InfoContext(ctx, "livequeryd: re-seal finished",
 		"keys_resealed", report.Keys.Resealed, "keys_bound", report.Keys.Bound, "keys_changed", report.Keys.Changed, "keys_refused", report.Keys.Refused,
 		"logins_resealed", report.Logins.Resealed, "logins_bound", report.Logins.Bound, "logins_changed", report.Logins.Changed, "logins_refused", report.Logins.Refused)
