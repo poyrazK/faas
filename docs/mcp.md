@@ -36,6 +36,21 @@ command = "gregale"
 args = ["mcp", "serve", "--transport", "stdio"]
 ```
 
+A client loads every listed tool's schema into the model's context on each
+turn. `--tools` lists only the selected toolsets, comma-separated
+(ADR-20261026152009):
+
+| Toolset | Tools |
+|---|---|
+| `core` | Context, apps, app deployments, logs, metrics, health, error groups, local deploy and env changes, promote and rollback (18 tools, about a fifth of the catalog) |
+| `release` | Image and Git source releases, service and worker rollouts, named environments, route budgets, preflight, account deployment history |
+| `diagnose` | Request, analytics, profile, wake, trace, regression and incident diagnostics |
+| `all` | Every tool (the default) |
+
+For example, `gregale mcp serve --transport stdio --tools core,diagnose`.
+Write tools still need `--allow-writes`. Resources and prompts are always
+listed.
+
 Use an absolute executable path if the client cannot find `gregale` on its PATH.
 To select a named connection, place the prefix before the command, for example
 `["--profile", "staging", "mcp", "serve", "--transport", "stdio"]`.
