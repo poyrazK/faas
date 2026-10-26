@@ -427,9 +427,9 @@ func TestMemStoreUploadSession_ReaperKeepsInFlightSource(t *testing.T) {
 	}
 	const acct = "11111111-1111-1111-1111-111111111111"
 	for _, s := range []seed{
-		{id: "inflight", account: acct, slug: "a", totalSize: 1, received: 1, status: "committed", lastPatched: -48 * time.Hour},
-		{id: "done", account: acct, slug: "a", totalSize: 1, received: 1, status: "committed", lastPatched: -48 * time.Hour},
-		{id: "cancelled", account: acct, slug: "a", totalSize: 1, received: 0, status: "cancelled", lastPatched: -2 * time.Hour},
+		{id: "inflight", account: acct, slug: "a", totalSize: 1, received: 1, status: "committed", expiresIn: -1 * time.Hour, lastPatched: -48 * time.Hour},
+		{id: "done", account: acct, slug: "a", totalSize: 1, received: 1, status: "committed", expiresIn: -1 * time.Hour, lastPatched: -48 * time.Hour},
+		{id: "cancelled", account: acct, slug: "a", totalSize: 1, received: 0, status: "cancelled", expiresIn: -1 * time.Hour, lastPatched: -2 * time.Hour},
 	} {
 		seedUploadSession(t, m, s)
 	}
