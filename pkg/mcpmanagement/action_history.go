@@ -71,7 +71,7 @@ type actionCursor struct {
 
 func registerActionHistory(s *mcp.Server, m *management) {
 	register(s, m, "gregale_list_actions", "List this connection's bounded, redacted deploy, rollback, service/worker rollout, service abort, route-budget and regression-triage action history for one exact app/environment. Historical receipts do not prove deployment completion or grant retry authority. Regression records require current diagnostic consent.", m.listActions)
-	register(s, m, "gregale_get_action", "Inspect one connection-local plan's recorded attempts and receipts, including after plan expiry. Lost responses remain outcome_unknown until recovered through the existing guarded apply tool. Never substitute a new plan for an ambiguous expired attempt.", m.getAction)
+	register(s, m, "gregale_get_action", "Inspect one connection-local plan's recorded attempts and receipts, including after plan expiry. Lost responses remain outcome_unknown in recorded history; eligible attempts expose independent native acceptance lookups. Never substitute a new plan for an ambiguous expired attempt.", m.getAction)
 }
 
 func (m *management) actionTarget(ctx context.Context, args appArgs) (actionRecord, error) {

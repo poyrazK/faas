@@ -456,11 +456,15 @@ func (m *management) applyRollback(ctx context.Context, args applyArgs) (any, er
 			return nil, err
 		}
 	}
+	ctx, err = m.prepareRollbackOutcome(ctx, p)
+	if err != nil {
+		return nil, err
+	}
 	p.attempted = true
 	if err := m.persistPlans(); err != nil {
 		return nil, err
 	}
-	d, err := m.client.CheckedRollback(api.ContextWithIdempotencyKey(ctx, "mcp-rollback-"+p.ID), p.App, api.RollbackRequest{ExpectedCurrentDeploymentID: &p.ExpectedCurrentID, TargetDeploymentID: &p.TargetDeploymentID, Reason: p.Reason})
+	d, err := m.client.CheckedRollback(api.ContextWithIdempotencyKey(ctx, "mcp-rollback-"+p.ID), p.App, rollbackRequest(p))
 	if err != nil {
 		return nil, err
 	}

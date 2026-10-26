@@ -7,6 +7,31 @@ does not mirror this list; customer-facing maturity belongs in the generated
 release or acceptance state changes, and keep older milestone notes clearly
 historical.
 
+## Management MCP request rollback outcomes — 2026-10-26 (branch, not released)
+
+Exact default-scope request rollbacks persist an opaque attempt before POST.
+The existing native operation ledger commits that identity and readiness work
+atomically; accepted attempts cannot execute twice, even after completion.
+The bridge verifies the original operation/pair and request fingerprint after
+restart or expiry, returning historical acceptance and an exact progress call.
+Passive history/prompts/resources discover recovery without native receipt reads
+or renewed authority. Service rollback/abort remain separate. No migration,
+new tool or quota is added.
+
+Full API/MCP race tests and pinned Codex acceptance pass. All three read-only
+Codex profiles follow expired recovery links through restart/refresh/revocation,
+verify acceptance and separately observe later failure, with zero model requests
+and zero native writes. Native memory/PostgreSQL races cover concurrent attempts,
+stale serving guards, insert-failure rollback, terminal retries, ownership and
+UUID spelling. The concurrency test exposed and verified a fix for transaction
+app reads borrowing a second pooled connection while holding the app lock.
+Real HTTP tests drop an accepted network reply, recover the operation, reject
+changed attempts and preserve existing worker/traffic guards. Go SDK tests,
+Node build/transport, Python transport and deterministic SDK regeneration pass.
+Spec/docs, typed coverage, test-store, seal-domain and ADR gates pass. API, MCP, state and HTTP-server lint pass. Native/provider
+execution qualification remains separate. See
+[ADR-20261026090000](adr/20261026090000-management-mcp-rollback-outcomes.md).
+
 ## Management MCP promotion outcome recovery — 2026-10-25 (branch, not released)
 
 Explicit request promotion now has an independent durable native receipt,

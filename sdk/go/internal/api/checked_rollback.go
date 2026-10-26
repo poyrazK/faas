@@ -1,7 +1,9 @@
 package api
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/url"
 	"time"
@@ -27,7 +29,21 @@ type RollbackOperation struct {
 
 func (c *Client) CheckedRollback(ctx context.Context, slug string, request RollbackRequest) (DeploymentResponse, error) {
 	var out DeploymentResponse
-	err := c.do(ctx, http.MethodPost, "/v1/apps/"+url.PathEscape(slug)+"/rollback", request, &out)
+	body, err := json.Marshal(request)
+	if err != nil {
+		return out, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.baseURL+"/v1/apps/"+url.PathEscape(slug)+"/rollback", bytes.NewReader(body))
+	if err != nil {
+		return out, err
+	}
+	c.addAuthHeader(req)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Idempotency-Key", newUUIDv4())
+	if id, _ := ctx.Value(rollbackAttemptContextKey{}).(string); id != "" {
+		req.Header.Set("Rollback-Attempt-ID", id)
+	}
+	err = c.doReq(c.http, req, &out)
 	return out, err
 }
 func (c *Client) GetRollbackOperation(ctx context.Context, slug, id string) (RollbackOperation, error) {
@@ -41,4 +57,11 @@ type RollbackRequest struct {
 	ExpectedCurrentDeploymentID *string `json:"expected_current_deployment_id,omitempty"`
 	Reason                      string  `json:"reason,omitempty"`
 	AlertRuleID                 *string `json:"alert_rule_id,omitempty"`
+}
+
+type rollbackAttemptContextKey struct{}
+
+// ContextWithRollbackAttempt sets the optional durable checked-rollback identity.
+func ContextWithRollbackAttempt(ctx context.Context, id string) context.Context {
+	return context.WithValue(ctx, rollbackAttemptContextKey{}, id)
 }

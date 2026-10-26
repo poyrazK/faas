@@ -1553,6 +1553,33 @@ only currently consented identities. These are independent reads, not an atomic
 snapshot. The tool and prompt add no probes, replay, collection, model requests
 or platform writes, and do not plan/apply configuration changes.
 
+## Resolve an ambiguous request rollback
+
+Exact default-scope request rollbacks persist an opaque attempt before POST.
+The native `Rollback-Attempt-ID` is 32 lowercase hexadecimal characters; its UUID
+representation identifies the original checked operation. Acceptance commits that
+identity and readiness work atomically. Reusing an accepted identity returns
+`409 rollback_attempt_accepted` without another rollback, including after the
+operation finishes or fails. A changed original pair or reason returns
+`rollback_attempt_conflict`. Implicit targets, alert attribution, release
+acknowledgement and service/worker attempts cannot use this header.
+
+Call `gregale_get_action_outcome` with the original app/plan ID and default
+`apply` phase. It verifies the exact operation, target/current pair, immutable
+app/scope and request fingerprint. A `verified_receipt` establishes historical
+acceptance and returns a redacted operation ID plus an exact
+`gregale_get_rollback` call. Observe asynchronous completion and current
+traffic/health separately; later failure preserves historical acceptance.
+
+Encrypted references survive restart and plan expiry. History and passive saved
+recipes expose `recovery.outcome` without reading native receipts or changing
+history. Current read consent, original identities, retention and storage remain
+mandatory. Missing evidence stays unresolved; never reconstruct an expired
+request or issue another rollback to resolve ambiguity. Legacy attempted plans
+receive no replacement identity. Service rollback and service-abort outcome
+recovery remain unsupported. No tool or migration is added. See
+[ADR-20261026090000](adr/20261026090000-management-mcp-rollback-outcomes.md).
+
 ## Resolve an ambiguous request promotion
 
 Action history and saved-plan recipes now expose `promotion_outcome` separately
@@ -1608,7 +1635,7 @@ known deployment ID contains history/outcome calls only; follow the observation
 returned by the outcome rather than inventing a target. Current read consent,
 immutable identities, storage and the retained reference are checked again before
 release. No read replays a write, extends expiry or changes recorded uncertainty.
-Rollback and service-abort outcomes remain unsupported. Explicit request promotion recovery is described above. See
+Service rollback and service-abort outcomes remain unsupported; exact request rollback recovery is described above. Explicit request promotion recovery is described above. See
 [ADR-20261024234500](adr/20261024234500-management-mcp-deployment-submission-outcomes.md).
 
 ## Resolve an ambiguous route-budget write
@@ -1629,7 +1656,7 @@ plan or extends its expiry. `native_completion` remains `not_observed`.
 
 Unavailable, missing or mismatched receipts return `unresolved`. This never
 proves that the original write did not commit. Deployment and service/worker rollout apply acceptance use the submission lookup
-described above; explicit request promotions support phase=promotion. Rollback and service-abort outcomes remain unsupported. Older bridges/APIs and expired legacy actions without a saved
+described above; explicit request promotions support phase=promotion. Service rollback and service-abort outcomes remain unsupported; exact request rollback recovery is described above. Older bridges/APIs and expired legacy actions without a saved
 lookup reference also remain unresolved; do not create a replacement request
 to resolve ambiguity.
 

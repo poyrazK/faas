@@ -72,6 +72,7 @@ type management struct {
 	budgetOutcomes     map[string]budgetOutcomeLookup
 	deploymentOutcomes map[string]deploymentOutcomeLookup
 	promotionOutcomes  map[string]promotionOutcomeLookup
+	rollbackOutcomes   map[string]rollbackOutcomeLookup
 }
 
 // NewServer constructs a management server without making API calls.

@@ -37,7 +37,7 @@ func deploymentOutcomeBinding(entry actionRecord) string {
 	return hex.EncodeToString(digest[:])
 }
 func actionOutcomeBinding(entry actionRecord) string {
-	if deploymentOutcomeAction(entry.Action) {
+	if deploymentOutcomeAction(entry.Action) || entry.Action == "rollback" {
 		return deploymentOutcomeBinding(entry)
 	}
 	return budgetOutcomeBinding(entry)

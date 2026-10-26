@@ -27,7 +27,7 @@ type actionOutcomeArgs struct {
 }
 
 func registerActionOutcomes(s *mcp.Server, m *management) {
-	register(s, m, "gregale_get_action_outcome", "Read native durable receipts for the original apply phase of retained route-budget, deployment and service/worker rollout actions, including after plan expiry. Requires current immutable target/read consent. Receipt verification confirms historical policy intent or deployment acceptance only; missing or unavailable evidence remains unresolved. Never replays a write, changes history or renews expiry. Explicit request-deployment promotion receipts are available with phase=promotion. Rollback and service-abort outcomes remain unsupported.", m.getPhasedActionOutcome)
+	register(s, m, "gregale_get_action_outcome", "Read native durable receipts for the original apply phase of retained route-budget, deployment and service/worker rollout actions, including after plan expiry. Requires current immutable target/read consent. Receipt verification confirms historical policy intent or deployment acceptance only; missing or unavailable evidence remains unresolved. Never replays a write, changes history or renews expiry. Explicit request-deployment promotion receipts are available with phase=promotion. Exact default-scope request rollback acceptance is also recoverable through its original native operation; service rollback and service-abort outcomes remain unsupported.", m.getPhasedActionOutcome)
 }
 
 func (m *management) getActionOutcome(ctx context.Context, args getActionArgs) (any, error) {
@@ -53,6 +53,7 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 	lookup, found := m.budgetOutcomes[args.PlanID]
 	deploymentLookup, deploymentFound := m.deploymentOutcomes[args.PlanID]
 	promotionLookup, promotionFound := m.promotionOutcomes[args.PlanID]
+	rollbackLookup, rollbackFound := m.rollbackOutcomes[args.PlanID]
 	m.mu.Unlock()
 	out := actionOutcome{Phase: phase, PlanID: entry.PlanID, Action: entry.Action, ObservedAt: time.Now().UTC(), Outcome: "unresolved", NativeCompletion: "not_observed", Instruction: "A verified receipt confirms historical acceptance of the selected phase only. Follow the exact observation call when supplied; current traffic, rollout completion, health and worker queue acknowledgement remain separate. Missing evidence never proves non-commit. Inspect native state; never replace an ambiguous original request or renew its write authority."}
 	switch {
@@ -68,6 +69,16 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 			return nil, invalid("state_unavailable", "promotion outcome reference is invalid")
 		default:
 			m.readPromotionOutcome(ctx, entry, promotionLookup, &out)
+		}
+	case entry.Action == "rollback":
+		if entry.Apply.State == "not_attempted" {
+			out.Reason = "no_recorded_attempt"
+		} else if !rollbackFound {
+			out.Reason = "lookup_unavailable"
+		} else if !rollbackReferenceMatches(entry, rollbackLookup) {
+			return nil, invalid("state_unavailable", "rollback outcome reference is invalid")
+		} else {
+			m.readRollbackOutcome(ctx, entry, rollbackLookup, &out)
 		}
 	case entry.Action != "route_budgets" && !deploymentOutcomeAction(entry.Action):
 		out.Reason = "unsupported_action"
@@ -103,6 +114,9 @@ func (m *management) getPhasedActionOutcome(ctx context.Context, input actionOut
 		}
 		if deploymentFound && m.deploymentOutcomes[entry.PlanID] != deploymentLookup {
 			return invalid("state_unavailable", "original deployment reference changed during read")
+		}
+		if rollbackFound && (m.rollbackOutcomes[entry.PlanID] != rollbackLookup || !rollbackReferenceMatches(current, rollbackLookup)) {
+			return invalid("state_unavailable", "original rollback reference changed during read")
 		}
 		if promotionFound && (m.promotionOutcomes[entry.PlanID] != promotionLookup || !promotionReferenceMatches(current, promotionLookup)) {
 			return invalid("state_unavailable", "original promotion reference changed during read")

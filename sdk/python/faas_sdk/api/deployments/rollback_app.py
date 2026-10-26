@@ -17,10 +17,14 @@ def _get_kwargs(
     *,
     body: RollbackRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
+    rollback_attempt_id: str | Unset = UNSET,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
     if not isinstance(idempotency_key, Unset):
         headers["Idempotency-Key"] = idempotency_key
+
+    if not isinstance(rollback_attempt_id, Unset):
+        headers["Rollback-Attempt-ID"] = rollback_attempt_id
 
     _kwargs: dict[str, Any] = {
         "method": "post",
@@ -94,6 +98,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: RollbackRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
+    rollback_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     """Roll back to the previous deployment, or to a specific historical deployment.
 
@@ -119,6 +124,7 @@ def sync_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        rollback_attempt_id (str | Unset):
         body (RollbackRequest | Unset): Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G,
             issue #976). All fields optional. Without a body the handler falls back to rolling back to
             the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id`
@@ -137,6 +143,7 @@ def sync_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        rollback_attempt_id=rollback_attempt_id,
     )
 
     response = client.get_httpx_client().request(
@@ -152,6 +159,7 @@ def sync(
     client: AuthenticatedClient | Client,
     body: RollbackRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
+    rollback_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     """Roll back to the previous deployment, or to a specific historical deployment.
 
@@ -177,6 +185,7 @@ def sync(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        rollback_attempt_id (str | Unset):
         body (RollbackRequest | Unset): Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G,
             issue #976). All fields optional. Without a body the handler falls back to rolling back to
             the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id`
@@ -196,6 +205,7 @@ def sync(
         client=client,
         body=body,
         idempotency_key=idempotency_key,
+        rollback_attempt_id=rollback_attempt_id,
     ).parsed
 
 
@@ -205,6 +215,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: RollbackRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
+    rollback_attempt_id: str | Unset = UNSET,
 ) -> Response[DeploymentResponse | Problem]:
     """Roll back to the previous deployment, or to a specific historical deployment.
 
@@ -230,6 +241,7 @@ async def asyncio_detailed(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        rollback_attempt_id (str | Unset):
         body (RollbackRequest | Unset): Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G,
             issue #976). All fields optional. Without a body the handler falls back to rolling back to
             the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id`
@@ -248,6 +260,7 @@ async def asyncio_detailed(
         slug=slug,
         body=body,
         idempotency_key=idempotency_key,
+        rollback_attempt_id=rollback_attempt_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -261,6 +274,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: RollbackRequest | Unset = UNSET,
     idempotency_key: str | Unset = UNSET,
+    rollback_attempt_id: str | Unset = UNSET,
 ) -> DeploymentResponse | Problem | None:
     """Roll back to the previous deployment, or to a specific historical deployment.
 
@@ -286,6 +300,7 @@ async def asyncio(
     Args:
         slug (str):
         idempotency_key (str | Unset):
+        rollback_attempt_id (str | Unset):
         body (RollbackRequest | Unset): Body for POST /v1/apps/{slug}/rollback (SAFE-RELEASES-G,
             issue #976). All fields optional. Without a body the handler falls back to rolling back to
             the most-recent superseded deployment (pre-#976 behaviour). With `target_deployment_id`
@@ -306,5 +321,6 @@ async def asyncio(
             client=client,
             body=body,
             idempotency_key=idempotency_key,
+            rollback_attempt_id=rollback_attempt_id,
         )
     ).parsed

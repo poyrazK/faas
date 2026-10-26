@@ -10,10 +10,12 @@ test('historical rollback accepts exact pair and reads its operation', async (t)
   res.setHeader('Content-Type', 'application/json');
   if (req.method === 'POST') {
    assert.equal(req.url, '/v1/apps/api/rollback');
+   assert.equal(req.headers['rollback-attempt-id'], '3e9f323aade6442b8444c91da107fe44');
    let body = ''; for await (const chunk of req) body += String(chunk);
    assert.deepEqual(JSON.parse(body), { target_deployment_id: operation.target_deployment_id, expected_current_deployment_id: operation.current_deployment_id });
    res.statusCode = 202; res.end(JSON.stringify({ id: operation.target_deployment_id, app_id: operation.app_id, status: 'snapshotting', rollback_operation: operation }));
   } else {
+   assert.equal(req.headers['rollback-attempt-id'], undefined); assert.equal(req.headers['idempotency-key'], undefined);
    assert.equal(req.method, 'GET'); assert.equal(req.url, `/v1/apps/api/rollbacks/${operation.id}`); res.end(JSON.stringify(operation));
   }
  })().catch(error => { res.statusCode = 500; res.end(String(error)); }); });
@@ -21,7 +23,7 @@ test('historical rollback accepts exact pair and reads its operation', async (t)
  t.after(() => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())));
  const address = server.address(); assert.ok(address && typeof address !== 'string');
  new FaaSClient(`http://127.0.0.1:${address.port}`, { token: 'fixture-token', retry: { maxAttempts: 1, backoffMs: 0 } });
- const accepted = await DeploymentsService.rollbackApp({ slug: 'api', requestBody: { target_deployment_id: operation.target_deployment_id, expected_current_deployment_id: operation.current_deployment_id } });
+ const accepted = await DeploymentsService.rollbackApp({ slug: 'api', rollbackAttemptId: '3e9f323aade6442b8444c91da107fe44', requestBody: { target_deployment_id: operation.target_deployment_id, expected_current_deployment_id: operation.current_deployment_id } });
  assert.deepEqual(accepted.rollback_operation, operation);
  assert.deepEqual(await DeploymentsService.getRollbackOperation({ slug: 'api', operation: operation.id }), operation);
 });

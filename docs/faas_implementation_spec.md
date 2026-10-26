@@ -3118,6 +3118,28 @@ no native API, schema or catalog count changes. See
 [ADR-20261023130958](adr/20261023130958-management-mcp-route-budget-action-history.md).
 
 
+## Management MCP request rollback outcomes (ADR-20261026090000)
+
+An exact default-scope manual request rollback may carry a 32-character lowercase
+hexadecimal `Rollback-Attempt-ID`; its UUID representation identifies the existing
+checked operation. Both stores atomically bind acceptance and readiness work
+under the app lock. Accepted attempts, including terminal ones, cannot execute
+again; changed pairs or reasons conflict. Serving, release, artifact, contract
+and binding gates remain required. Implicit selection, alert attribution, release
+acknowledgement and service/worker attempts do not use this contract.
+
+The bridge persists the original attempt and encrypted bounded lookup before
+POST. The default apply outcome reader validates the original app/scope, exact
+operation/pair, request fingerprint and creation evidence after restart/expiry.
+It returns redacted historical acceptance and an exact rollback progress call.
+Current traffic/health and completion require separate reads. Passive history
+and recipes discover the lookup without fetching receipts. Legacy attempted
+plans receive no new identity; missing evidence stays unresolved. Retention,
+storage, immutable identity and read consent are rechecked before release.
+Recovery never rewrites history, renews expiry or replays a mutation. The existing
+ledger/API are reused; no migration, new tool or quota is added. See
+[ADR-20261026090000](adr/20261026090000-management-mcp-rollback-outcomes.md).
+
 ## Management MCP request promotion outcomes (ADR-20261025090000)
 
 New guarded request promotions persist a stable opaque identity before PATCH.

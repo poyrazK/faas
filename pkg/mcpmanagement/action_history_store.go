@@ -96,6 +96,13 @@ func (m *management) restoreActionHistory() error {
 	if err := m.restorePromotionOutcomeLookups(); err != nil {
 		return err
 	}
+	if err := m.restoreRollbackOutcomeLookups(); err != nil {
+		return err
+	}
+	rollbackBefore := make(map[string]rollbackOutcomeLookup, len(m.rollbackOutcomes))
+	for id, ref := range m.rollbackOutcomes {
+		rollbackBefore[id] = ref
+	}
 	promotionBefore := make(map[string]promotionOutcomeLookup, len(m.promotionOutcomes))
 	for id, ref := range m.promotionOutcomes {
 		promotionBefore[id] = ref
@@ -119,7 +126,7 @@ func (m *management) restoreActionHistory() error {
 	if err := m.syncActionHistory(time.Now().UTC()); err != nil {
 		return err
 	}
-	if !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) || !reflect.DeepEqual(promotionBefore, m.promotionOutcomes) {
+	if !reflect.DeepEqual(before, m.actions) || !reflect.DeepEqual(environmentsBefore, m.environmentActions) || !reflect.DeepEqual(lookupsBefore, m.budgetOutcomes) || !reflect.DeepEqual(deploymentBefore, m.deploymentOutcomes) || !reflect.DeepEqual(promotionBefore, m.promotionOutcomes) || !reflect.DeepEqual(rollbackBefore, m.rollbackOutcomes) {
 		// Import only still-live legacy plans. History cannot reconstruct plans
 		// already discarded by an older bridge, or mint new replay authority.
 		return m.persistPlans()
@@ -164,7 +171,10 @@ func (m *management) syncActionHistory(now time.Time) error {
 	if err := m.syncDeploymentOutcomeLookups(now); err != nil {
 		return err
 	}
-	return m.syncPromotionOutcomeLookups(now)
+	if err := m.syncPromotionOutcomeLookups(now); err != nil {
+		return err
+	}
+	return m.syncRollbackOutcomeLookups(now)
 }
 
 func recordAction(p *releasePlan) actionRecord {

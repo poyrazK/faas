@@ -1075,6 +1075,7 @@ export class DeploymentsService {
   public static rollbackApp({
     slug,
     idempotencyKey,
+    rollbackAttemptId,
     requestBody,
   }: {
     /**
@@ -1087,6 +1088,10 @@ export class DeploymentsService {
      *
      */
     idempotencyKey?: string,
+    /**
+     * Persisted opaque identity for an exact default-scope request rollback without alert attribution or release acknowledgement. The accepted operation UUID is this hexadecimal identity. Reuse returns 409 rollback_attempt_accepted or rollback_attempt_conflict without starting another operation; GET the original operation separately.
+     */
+    rollbackAttemptId?: string,
     requestBody?: RollbackRequest,
   }): CancelablePromise<DeploymentResponse> {
     return __request(OpenAPI, {
@@ -1097,6 +1102,7 @@ export class DeploymentsService {
       },
       headers: {
         'Idempotency-Key': idempotencyKey,
+        'Rollback-Attempt-ID': rollbackAttemptId,
       },
       body: requestBody,
       mediaType: 'application/json',

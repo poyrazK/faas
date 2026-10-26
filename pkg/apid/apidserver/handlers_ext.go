@@ -2341,8 +2341,17 @@ func (s *server) rollbackApp(w http.ResponseWriter, r *http.Request, acct state.
 			return
 		}
 	}
+	attempt, problem := s.rollbackAttempt(r.Context(), r, acct, app, req)
+	if problem != nil {
+		api.WriteProblem(w, problem)
+		return
+	}
 	if req.ExpectedCurrentDeploymentID != nil {
-		s.startCheckedRollback(w, r, acct, app, req)
+		checkedRequest := r
+		if attempt != "" {
+			checkedRequest = r.WithContext(state.ContextWithCheckedRollbackAttempt(r.Context(), attempt))
+		}
+		s.startCheckedRollback(w, checkedRequest, acct, app, req)
 		return
 	}
 	if req.Reason != "" {
