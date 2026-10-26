@@ -10911,6 +10911,9 @@ func (s *PgStore) AppendDeploymentStage(ctx context.Context, id string, from, to
 		EndedAt:    &endedAt,
 		DurationMs: durMs,
 		Status:     stageHistoryStatusCompleted,
+		// A note on the closed stage, such as the builder-slot wait booked to
+		// source_download (Hunt 12 H12-5).
+		Reason: reason,
 	})
 	state.Current = to
 	state.CurrentStartedAt = &startedAt
